@@ -71,7 +71,7 @@ directory and a prompt (the card's, by default) and runs:
 | the JSON-carried program runs bit for bit and reproduces the headline's prefix | a JSON chain that only round-trips |
 | GEM within 1.5x of the monolithic runner (the ratio row, a wide band) | a dispatch cost that grows with the program |
 | counted traffic == planned traffic, op for op | kernels moving other octets than the plan priced |
-| simulated memory traffic present (`--require-callgrind`, CI) | a skipped measurement reading as a pass |
+| simulated memory traffic present, one profile part per rail read by callgrind's grammar (`--require-callgrind`, CI) | a skipped measurement reading as a pass; a rail never measured read as zero, or two runs read as one |
 
 The float reference's agreement is reported, not gated: it measures quantization, not the stack.
 
@@ -130,7 +130,11 @@ op: 57,539,312 octets read and 4,236,480 written per request. Simulated with cal
 model (I1/D1 32 KiB 8-way, LL 8 MiB 16-way, 64-octet lines, fixed so reports compare across
 hosts), per request: 243.6 M data references for GEM against 237.4 M for the monolithic runner
 (+2.6%), 1.09 M / 1.07 M D1 misses, and almost no last-level misses -- the 0.9 MB of weights fit
-the modelled 8 MiB LL. No hardware counter is read: this host has no PMU
+the modelled 8 MiB LL. Each row is one run of one rail: bcir-qualify's callgrind build
+(`-DBCIR_QUALIFY_CALLGRIND`) brackets each rail's first run with callgrind client requests, which
+work alike on every architecture valgrind runs on, and the harness reads each rail's profile part
+in callgrind's own format, refusing a missing, repeated or malformed part rather than reading it
+as zero. No hardware counter is read: this host has no PMU
 ([target access](BCIR_TARGET_ACCESS.md)), and a simulated row is labelled simulated.
 
 ## Reproduce

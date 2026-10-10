@@ -29,10 +29,10 @@ stack on it:
    breach.
 7. **Memory traffic** -- the octets the program PLANS (decoder_program.program_traffic), the
    octets the C kernels COUNT as they run (they must be equal, op for op), and the memory
-   references and misses a cache model SIMULATES for each rail (callgrind's cache simulation,
-   collected only inside bcir_dgem_run and bcir_llama_generate_greedy). No hardware counter
-   is read: a simulated row is labelled simulated, and an unavailable valgrind is a recorded
-   skip unless `--require-callgrind`.
+   references and misses a cache model SIMULATES for one run of each rail (callgrind's cache
+   simulation over bcir-qualify's callgrind build, which brackets each rail's first run with
+   client requests). No hardware counter is read: a simulated row is labelled simulated, and
+   an unavailable valgrind is a recorded skip unless `--require-callgrind`.
 
 One JSON report (`bcir.qualification_report.v1`) carries every number with its provenance:
 the model card's digests, every artifact's SHA-256, the host and the toolchain. The exit status
@@ -103,8 +103,9 @@ QUALIFY_SOURCES = (
 )
 #: The cross-rail logit bound of the BCIRQ8 parity gate (test_model_weights_io.py).
 CROSS_RAIL_BOUND = 1e-9
-#: The functions callgrind collects inside, one per rail.
-RAIL_FUNCTIONS = {"gem": "bcir_dgem_run", "monolithic": "bcir_llama_generate_greedy"}
+#: The rails the callgrind build of bcir-qualify (`-DBCIR_QUALIFY_CALLGRIND`) brackets: the first
+#: run of each is one profile part, dumped by a callgrind client request under the rail's name.
+CALLGRIND_RAILS = ("gem", "monolithic")
 #: The simulated cache geometry, fixed rather than read from the host, so a report's simulated
 #: rows compare across hosts (size, associativity, line): 32 KiB L1s, an 8 MiB last level.
 CACHE_MODEL = {"I1": (32768, 8, 64), "D1": (32768, 8, 64), "LL": (8388608, 16, 64)}
@@ -148,15 +149,31 @@ class Checks:
 # --- the C rail --------------------------------------------------------------------------------
 
 
-def build_qualify(directory: Path) -> Path:
-    """bcir-qualify from the checkout's runtime sources, under the host C compiler."""
+def _valgrind_include() -> list[str]:
+    """The include directory of the valgrind on PATH, appended after every other directory
+    (`-idirafter`), when its client-request header is there: a compiler with a sysroot of its
+    own (a conda clang) does not search the system's, and appended last the directory supplies
+    only what the compiler's own headers do not."""
+    valgrind = shutil.which("valgrind")
+    if valgrind is None:
+        return []
+    include = Path(os.path.realpath(valgrind)).parent.parent / "include"
+    return ["-idirafter", str(include)] if (include / "valgrind" / "callgrind.h").is_file() else []
+
+
+def build_qualify(directory: Path, *, callgrind: bool = False) -> Path:
+    """bcir-qualify from the checkout's runtime sources, under the host C compiler; with
+    `callgrind`, its callgrind build, which brackets the first run of each rail with callgrind
+    client requests from the valgrind on PATH (<valgrind/callgrind.h>)."""
     from bcir.toolchain import host_c_compiler, host_link_args
 
     cc = host_c_compiler()
     if cc is None:
         raise QualificationError("no C compiler: the C rail cannot be built")
+    directory.mkdir(parents=True, exist_ok=True)
     exe = directory / ("bcir-qualify.exe" if os.name == "nt" else "bcir-qualify")
     command = [cc, "-std=c11", "-O2", "-ffp-contract=off", "-Wall", "-Wextra", "-Werror", "-g"]
+    command += ["-DBCIR_QUALIFY_CALLGRIND", *_valgrind_include()] if callgrind else []
     command += ["-I", str(RUNTIME), *(str(RUNTIME / s) for s in QUALIFY_SOURCES)]
     command += ["-o", str(exe), *host_link_args(["-lm"])]
     result = subprocess.run(command, capture_output=True, text=True, timeout=600)
@@ -192,56 +209,141 @@ def _read_logits(path: Path, vocab: int) -> list[float]:
     return list(struct.unpack(f"<{vocab}d", path.read_bytes()))
 
 
+#: The events callgrind's cache simulation counts, each of which a rail's part must carry.
 _CALLGRIND_EVENTS = ("Ir", "Dr", "Dw", "I1mr", "D1mr", "D1mw", "ILmr", "DLmr", "DLmw")
+_CALLGRIND_EVENT = re.compile(r"[A-Za-z][A-Za-z0-9]*", re.ASCII)
+_CALLGRIND_COUNT = re.compile(r"[0-9]+", re.ASCII)
+_CALLGRIND_REQUEST = "Client Request: "
 
 
-def callgrind_traffic(exe: Path, model: Path, pack: Path, prompt_ids, workdir: Path):
-    """Per-run simulated memory references and misses of each rail (None and a reason when
-    valgrind is not here). One bcir-qualify run under callgrind's cache simulation, collected
-    only inside each rail's entry point; the GEM rail runs twice in it (one repetition and the
-    instrumented run), the monolithic once."""
-    valgrind, annotate = shutil.which("valgrind"), shutil.which("callgrind_annotate")
-    if not valgrind or not annotate:
-        return None, "valgrind/callgrind_annotate not found"
-    out = workdir / "callgrind.out"
-    argv = [valgrind, "--tool=callgrind", "--cache-sim=yes", f"--callgrind-out-file={out}"]
+def callgrind_part(text: str) -> tuple[str, dict[str, int]]:
+    """One part of a callgrind profile, read by the Callgrind format's own grammar: the dump's
+    trigger (`desc: Trigger:`) and its `totals:` by event (`events:`). The format lets a cost line
+    leave out trailing zero counts, so a short `totals:` is padded with zeros. Anything else is a
+    ValueError, never a guessed number: one of the three lines missing or repeated, an event
+    named twice or outside the grammar, more counts than events, or a count that is not ASCII
+    decimal digits (no host-language parser reads one: `int` would take `1_000`, a sign or a
+    non-ASCII digit)."""
+    found: dict[str, list[str]] = {"events:": [], "totals:": [], "desc: Trigger:": []}
+    for line in text.split("\n"):
+        for key, values in found.items():
+            if line.startswith(key + " "):
+                values.append(line[len(key) + 1 :])
+    for key, values in found.items():
+        if len(values) != 1:
+            raise ValueError(f"a callgrind part needs one '{key}' line, not {len(values)}")
+    events_text, totals_text, trigger = (values[-1] for values in found.values())
+    events, counts = events_text.split(" "), totals_text.split(" ")
+    if len(set(events)) != len(events) or not all(map(_CALLGRIND_EVENT.fullmatch, events)):
+        raise ValueError(f"callgrind events outside the grammar: {events_text[:200]!r}")
+    if len(counts) > len(events) or not all(map(_CALLGRIND_COUNT.fullmatch, counts)):
+        raise ValueError(f"callgrind totals outside the grammar: {totals_text[:200]!r}")
+    totals = dict.fromkeys(events, 0)
+    totals.update(zip(events, map(int, counts)))
+    return trigger, totals
+
+
+def callgrind_rails(texts) -> dict[str, dict[str, int]]:
+    """Each rail's one run, from the parts of one callgrind profile of bcir-qualify's callgrind
+    build: exactly one part per rail -- the one its client request dumped under the rail's name
+    -- counting every event of the cache simulation and at least one instruction. Every part is
+    read by the grammar (callgrind_part); the dump at program termination is the process around
+    the rails and is not used. A rail with no part (a binary built without the brackets) or with
+    two, a part from a request no rail makes, or a rail's part that counted nothing is a
+    ValueError: a measurement that did not happen is not a zero."""
+    rails: dict[str, dict[str, int]] = {}
+    for text in texts:
+        trigger, totals = callgrind_part(text)
+        if not trigger.startswith(_CALLGRIND_REQUEST):
+            continue
+        rail = trigger[len(_CALLGRIND_REQUEST) :]
+        if rail not in CALLGRIND_RAILS:
+            raise ValueError(f"a callgrind part from a client request no rail makes: {rail[:80]!r}")
+        if rail in rails:
+            raise ValueError(f"two callgrind parts for the {rail} rail")
+        missing = [event for event in _CALLGRIND_EVENTS if event not in totals]
+        if missing:
+            raise ValueError(f"the {rail} part does not count {', '.join(missing)}")
+        if not totals["Ir"]:
+            raise ValueError(f"the {rail} part counted no instructions")
+        rails[rail] = totals
+    absent = [rail for rail in CALLGRIND_RAILS if rail not in rails]
+    if absent:
+        raise ValueError(
+            f"no callgrind part for the {' and '.join(absent)} rail: the profiled binary does "
+            "not bracket it (bcir-qualify's callgrind build, -DBCIR_QUALIFY_CALLGRIND)"
+        )
+    return rails
+
+
+def traffic_row(totals: dict[str, int]) -> dict[str, int]:
+    """One rail's simulated row: its counts, and the data references, last-level data misses and
+    octets those misses move (one last-level line each, CACHE_MODEL) that they sum to."""
+    row = {event: totals[event] for event in _CALLGRIND_EVENTS}
+    row["data_refs"] = totals["Dr"] + totals["Dw"]
+    row["ll_data_misses"] = totals["DLmr"] + totals["DLmw"]
+    row["ll_miss_octets"] = row["ll_data_misses"] * CACHE_MODEL["LL"][2]
+    return row
+
+
+def profile_rails(exe: Path, model: Path, pack: Path, prompt_ids, out_dir: Path, *, reps: int = 1):
+    """Run `exe` (a bcir-qualify) on the native pack under callgrind's cache simulation with the
+    fixed cache model, writing its parts into `out_dir`, which must hold no earlier profile, and
+    read each rail's part (callgrind_rails). QualificationError when callgrind cannot run;
+    ValueError when its profile is not one part per rail."""
+    valgrind = shutil.which("valgrind")
+    if not valgrind:
+        raise QualificationError("valgrind not found")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if any(out_dir.glob("callgrind.out*")):
+        raise QualificationError(f"{out_dir} already holds a callgrind profile")
+    argv = [valgrind, "--tool=callgrind", "--cache-sim=yes"]
+    argv += [f"--callgrind-out-file={out_dir / 'callgrind.out'}"]
     argv += [
         f"--{level}={size},{assoc},{line}" for level, (size, assoc, line) in CACHE_MODEL.items()
     ]
-    argv += [f"--toggle-collect={fn}" for fn in RAIL_FUNCTIONS.values()]
     argv += [str(exe), str(model), str(pack), "--native"]
-    argv += ["--prompt", ",".join(map(str, prompt_ids)), "--reps", "1"]
-    r = subprocess.run(argv, capture_output=True, text=True, timeout=7200)
-    if r.returncode not in (0, 3) or not out.is_file():
-        return None, f"callgrind run failed ({r.returncode}): {r.stderr.strip()[-500:]}"
-    a = subprocess.run(
-        [annotate, "--inclusive=yes", "--threshold=100", str(out)],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    events_line = next((ln for ln in a.stdout.splitlines() if ln.startswith("Events shown:")), "")
-    events = events_line.split(":", 1)[1].split() if events_line else []
-    rows = {}
-    for rail, fn in RAIL_FUNCTIONS.items():
-        line = next((ln for ln in a.stdout.splitlines() if re.search(rf"\b{fn}\b", ln)), None)
-        if line is None or not events:
-            return None, f"callgrind collected nothing in {fn}"
-        numbers = [int(x.replace(",", "")) for x in re.findall(r"[\d,]+(?= )", line)][: len(events)]
-        totals = dict(zip(events, numbers))
-        runs = 2 if rail == "gem" else 1
-        per_run = {k: totals[k] // runs for k in _CALLGRIND_EVENTS if k in totals}
-        refs = per_run.get("Dr", 0) + per_run.get("Dw", 0)
-        misses_ll = per_run.get("DLmr", 0) + per_run.get("DLmw", 0)
-        per_run["data_refs"] = refs
-        per_run["ll_data_misses"] = misses_ll
-        per_run["ll_miss_octets"] = misses_ll * 64
-        rows[rail] = per_run
+    argv += ["--prompt", ",".join(map(str, prompt_ids)), "--reps", str(reps)]
+    try:
+        r = subprocess.run(
+            argv, capture_output=True, text=True, errors="replace", timeout=7200, check=False
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise QualificationError(f"callgrind could not run: {error}") from error
+    if r.returncode not in (0, 3):
+        raise QualificationError(
+            f"callgrind run failed ({r.returncode}): {r.stderr.strip()[-500:]}"
+        )
+    parts = sorted(out_dir.glob("callgrind.out*"))
+    return callgrind_rails(p.read_bytes().decode("utf-8", "replace") for p in parts)
+
+
+def callgrind_traffic(model: Path, pack: Path, prompt_ids, workdir: Path):
+    """Per-run simulated memory references and misses of each rail, or None and the reason the
+    measurement could not be made. bcir-qualify's callgrind build brackets the first run of each
+    rail with callgrind client requests (runtime/c/bcir_qualify_cli.c), so a rail's part is one
+    run of that rail on any architecture valgrind runs on. The parts are read in callgrind's own
+    machine format: QUAL-3 first scraped callgrind_annotate's human-readable function table for
+    each rail's entry point, and on AArch64 the line it took was not that function's row."""
+    if not shutil.which("valgrind"):
+        return None, "valgrind not found"
+    try:
+        exe = build_qualify(workdir / "callgrind-build", callgrind=True)
+        rails = profile_rails(exe, model, pack, prompt_ids, workdir / "callgrind")
+    except (QualificationError, ValueError, OSError) as error:
+        return None, str(error)
+    rows = {rail: traffic_row(totals) for rail, totals in rails.items()}
     caches = {
         level: {"bytes": size, "ways": assoc, "line": line}
         for level, (size, assoc, line) in CACHE_MODEL.items()
     }
-    return {"simulated": True, "tool": "callgrind --cache-sim=yes", "caches": caches, **rows}, ""
+    return {
+        "simulated": True,
+        "tool": "callgrind --cache-sim=yes",
+        "measured": "one run of each rail, bracketed by callgrind client requests",
+        "caches": caches,
+        **rows,
+    }, ""
 
 
 # --- the oracle rail ---------------------------------------------------------------------------
@@ -487,7 +589,7 @@ def qualify(
         if callgrind != "off":
             log("simulating each rail's memory traffic under callgrind (slow) ...")
             traffic_sim, sim_reason = callgrind_traffic(
-                exe, q8_path, work / "pack.bin", prompt_ids, work
+                q8_path, work / "pack.bin", prompt_ids, work
             )
             if traffic_sim is None and callgrind == "require":
                 checks.add("simulated memory traffic", False, sim_reason)

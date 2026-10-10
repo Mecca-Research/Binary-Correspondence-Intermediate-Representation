@@ -2465,10 +2465,23 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     JER (913,010 octets) needs 100,001 nodes and the bounded JER reader refuses it by design, so
     the JSON chain is qualified on a 12-token request of the same model, which reproduces the
     headline's prefix.
+  - The simulated traffic is one run of each rail, read in callgrind's own format. The first CI
+    run collected it with `--toggle-collect` on each rail's entry point and scraped
+    `callgrind_annotate`'s human-readable function table: on AArch64 the line it took for a rail
+    was no function's row and the parse died on it (`int('')`), and on any host a `.` (zero)
+    column would have shifted every later event onto the wrong name. bcir-qualify's callgrind
+    build (`-DBCIR_QUALIFY_CALLGRIND`) now brackets each rail's first run with callgrind client
+    requests, a profile part per rail, and the harness reads the parts by the format's grammar:
+    exactly one part per rail, every cache event counted, ASCII decimal counts, a refusal for
+    anything else. Profiling two repetitions counts the same instructions and data references
+    per rail as profiling one, and the unbracketed build measures nothing rather than zero. The
+    header comes from the valgrind on PATH (`-idirafter` its include directory), since a
+    compiler with its own sysroot -- the local clang 23 -- does not search the system's.
   - RED: `tools/testing/faults/qual.json` holds 28 faults (QL1-QL15 on the linear walk and
     dispatch, QG1-QG14 on the interpreters and the planned work), each caught by its own
     witness. QG12 was dropped as an equivalent mutant: the oracle's cache is a list, which
-    cannot hold the hole the C fault leaves.
+    cannot hold the hole the C fault leaves. `qual-sim.json` holds 18 more (QS1-QS18) on the
+    profile reader, the derived rows, the brackets and the callgrind build.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

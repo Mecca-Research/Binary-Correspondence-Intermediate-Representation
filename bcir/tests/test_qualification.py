@@ -9,6 +9,11 @@ two training steps -- so every stage runs in seconds, and assert the failures as
 pass: a recipe the builder must refuse before any work, a model card that names another
 artifact, a tokenizer that is not the one the weights were trained with.
 
+The simulated memory traffic is read from callgrind's own profile parts, one per rail, which
+bcir-qualify's callgrind build dumps around one run of each rail; the reader is held to that
+format's grammar here without valgrind, and, where valgrind is installed, the bracketed build
+is held to measuring one run of each rail and the plain build to measuring nothing.
+
 The CI job `qualification` runs the real recipe (`configs/bcir-docs-860k.json`) under
 `--require-callgrind` on x86-64 and AArch64; this module is its unit half. It needs the
 checkout's tools/ tree, git and a C compiler, so it is repository-only (`run_all`).
@@ -29,6 +34,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 _RECIPE = ROOT / "tools" / "models" / "configs" / "bcir-docs-860k.json"
 _CC = __import__("bcir.toolchain", fromlist=["host_c_compiler"]).host_c_compiler()
+#: The tiny model is built (C trainer, BCIRQ8) only in the thorough tier.
+_THOROUGH = os.environ.get("BCIR_THOROUGH") == "1"
+#: valgrind's callgrind, for the bracketed build's own test; CI's qualification job requires it.
+_VALGRIND = shutil.which("valgrind")
 
 
 def _tool(name: str):
@@ -101,7 +110,7 @@ def test_a_recipe_is_checked_whole_before_any_work():
 @functools.lru_cache(maxsize=1)
 def _tiny_model() -> tuple[Path, dict] | None:
     """The tiny recipe built once per process: (output directory, model card)."""
-    if _CC is None or os.environ.get("BCIR_THOROUGH") != "1":
+    if _CC is None or not _THOROUGH:
         return None
     builder = _tool("build_lab_model")
     root = Path(tempfile.mkdtemp(prefix="bcir-qual-"))
@@ -237,3 +246,172 @@ def test_the_harness_refuses_arguments_that_would_measure_nothing():
         ["--max-gem-ratio", "nan"],
     ):
         assert harness.main(base + extra) == 2, extra
+
+
+_EVENTS = "Ir Dr Dw I1mr D1mr D1mw ILmr DLmr DLmw"
+
+
+def _part(trigger: str, totals: str, *, events: str = _EVENTS) -> str:
+    """A callgrind profile part laid out as callgrind 3.22 writes one -- its header, a cost entry,
+    a call, the totals line -- with the given trigger, events and totals."""
+    return (
+        "# callgrind format\nversion: 1\ncreator: callgrind-3.22.0\npid: 1019\n"
+        "cmd:  ./bcir-qualify model.bcirq8 pack.bin --native --prompt 1,36,271 --reps 1\n"
+        "part: 2\n\n\n"
+        "desc: I1 cache: 32768 B, 64 B, 8-way associative\n"
+        "desc: D1 cache: 32768 B, 64 B, 8-way associative\n"
+        "desc: LL cache: 8388608 B, 64 B, 16-way associative\n\n"
+        "desc: Timerange: Basic block 69696 - 109699\n"
+        f"desc: Trigger: {trigger}\n\n"
+        f"positions: line\nevents: {events}\nsummary: {totals}\n\n\n"
+        "ob=(5) ./bcir-qualify\nfl=(168) runtime/c/bcir_qualify_cli.c\nfn=(552) main\n"
+        "10 3 0 1 1 0 0 1\n-5 1 0 1\ncfn=(522)\ncalls=0 0 \n0 1040017 0 8 3 0 0 3\n\n"
+        f"totals: {totals}\n"
+    )
+
+
+def _part_refusal(harness, text: str) -> str:
+    try:
+        harness.callgrind_part(text)
+    except ValueError as error:
+        return str(error)
+    raise AssertionError(f"a malformed callgrind part was read: {text[-120:]!r}")
+
+
+def test_a_callgrind_part_is_read_by_its_own_grammar():
+    """The simulated rows come from callgrind's machine format, read by its grammar: the trigger,
+    the events and the totals, a short totals line padded with the zero counts the format leaves
+    out. QUAL-3's first reader scraped callgrind_annotate's human-readable table instead, and on
+    AArch64 it parsed a line that was no function's row (`int('')`). A part outside the grammar
+    is refused, never read as a number: a header line missing or twice, an event twice or not
+    ASCII, more counts than events, and each count a host-language parser would take but the
+    format never writes -- the annotate table's thousands separators, an underscore, a sign, a
+    non-ASCII digit -- or a doubled, trailing or missing separator."""
+    harness = _tool("run_qualification")
+    good = _part("Client Request: gem", "1040019 0 9 4 0 0 4")
+    trigger, totals = harness.callgrind_part(good)
+    assert trigger == "Client Request: gem"
+    assert totals == {
+        "Ir": 1040019, "Dr": 0, "Dw": 9, "I1mr": 4, "D1mr": 0,
+        "D1mw": 0, "ILmr": 4, "DLmr": 0, "DLmw": 0,
+    }  # fmt: skip
+    refusals = {
+        "one 'totals:' line, not 0": [good.replace("totals: ", "total: ")],
+        "one 'totals:' line, not 2": [good + "totals: 1040019\n"],
+        "one 'events:' line, not 0": [good.replace("events: ", "event: ")],
+        "one 'desc: Trigger:' line, not 2": [
+            good.replace("desc: Timerange", "desc: Trigger: Client Request: monolithic\ndesc: T")
+        ],
+        "events outside the grammar": [
+            _part("Client Request: gem", "5", events=events)
+            for events in ("Ir Ir Dw", "Ir Dr İr", "Ir  Dr", "Ir Dr ", "")
+        ],
+        "totals outside the grammar": [
+            _part("Client Request: gem", totals)
+            for totals in (
+                "1,040,019 0 9",
+                "1_040_019 0 9",
+                "+1040019 0 9",
+                "١٠٤٠٠١٩ 0 9",
+                "1040019  0 9",
+                "1040019 0 9 ",
+                "1 2 3 4 5 6 7 8 9 10",
+                "",
+            )
+        ],
+    }
+    for message, texts in refusals.items():
+        for text in texts:
+            refusal = _part_refusal(harness, text)
+            assert message in refusal, (message, refusal)
+
+
+def test_each_rail_is_one_part_and_an_absent_part_is_not_a_zero():
+    """A profile yields exactly one part per rail, the one its client request named, and the
+    row derived from it sums its counts (data references, last-level data misses and the octets
+    those move, one modelled line each). A profile of a binary that brackets nothing (only the
+    termination dump), a rail dumped twice, a request no rail makes, a rail's part counted
+    without the cache simulation or counting no instruction, and a malformed part anywhere in
+    the profile are each refused: a measurement that did not happen is not a zero."""
+    harness = _tool("run_qualification")
+    gem = _part("Client Request: gem", "1040019 7 9 4 5 6 4 2 3")
+    mono = _part("Client Request: monolithic", "520017 0 8 4 0 0 4")
+    end = _part("Program termination", "4580 1001 849 231 49 56 215 23 48")
+    rails = harness.callgrind_rails([mono, end, gem])
+    assert sorted(rails) == ["gem", "monolithic"]
+    assert rails["gem"]["DLmw"] == 3 and rails["monolithic"]["DLmw"] == 0
+    row = harness.traffic_row(rails["gem"])
+    assert row["data_refs"] == 7 + 9 and row["ll_data_misses"] == 2 + 3
+    assert row["ll_miss_octets"] == 5 * harness.CACHE_MODEL["LL"][2] == 320
+    assert {k: row[k] for k in rails["gem"]} == rails["gem"]
+    refusals = {
+        "no callgrind part for the gem and monolithic rail": [end],
+        "no callgrind part for the monolithic rail": [gem, end],
+        "two callgrind parts for the gem rail": [gem, mono, gem],
+        "a client request no rail makes": [gem, mono, _part("Client Request: gem2", "5")],
+        "the gem part does not count Dr, Dw, I1mr, D1mr, D1mw, ILmr, DLmr, DLmw": [
+            _part("Client Request: gem", "5", events="Ir"),
+            mono,
+        ],
+        "the gem part counted no instructions": [_part("Client Request: gem", "0 7 9"), mono],
+        "one 'totals:' line, not 0": [gem, mono, end.replace("totals: ", "total: ")],
+    }
+    for message, parts in refusals.items():
+        try:
+            harness.callgrind_rails(parts)
+        except ValueError as error:
+            assert message in str(error), (message, str(error))
+        else:
+            raise AssertionError(f"accepted: {message}")
+
+
+def test_the_callgrind_build_measures_one_run_of_each_rail():
+    """Under valgrind, bcir-qualify's callgrind build yields one part per rail: profiling two
+    repetitions counts the same instructions and data references per rail as profiling one (a
+    bracket around every repetition would dump each rail twice, and be refused), the rows are
+    the counts' sums, a directory holding an earlier profile is refused before anything runs,
+    and the plain build, which brackets nothing, measures nothing rather than zero. The real
+    model runs the same path in CI (`--require-callgrind`, x86-64 and AArch64)."""
+    built = _tiny_model()
+    if built is None or not _VALGRIND:
+        return  # the thorough tier with valgrind's callgrind
+    from bcir.frontends.models.weights_io import read_q8_decoder
+
+    model_dir, card = built
+    harness = _tool("run_qualification")
+    q8 = model_dir / "model.bcirq8"
+    spec, _weights, _meta = read_q8_decoder(q8)
+    ids = card["sample"]["prompt_ids"]
+    program = harness.decoder_program(spec, len(ids), 4)
+    result = harness.optimize(
+        program.module, harness.TargetProfile.for_host(), harness.Theta.cool()
+    )
+    pack = harness.hydrate_pipelined(program.module, result, depth=2)
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        native = work / "pack.bin"
+        native.write_bytes(harness.encode(pack))
+        sim, reason = harness.callgrind_traffic(q8, native, ids, work)
+        assert sim is not None, reason
+        exe = work / "callgrind-build" / "bcir-qualify"
+        twice = harness.profile_rails(exe, q8, native, ids, work / "twice", reps=2)
+        for rail in harness.CALLGRIND_RAILS:
+            row = sim[rail]
+            assert row["Ir"] > 0 and row["Dr"] > 0 and row["Dw"] > 0, (rail, row)
+            assert row["data_refs"] == row["Dr"] + row["Dw"], (rail, row)
+            assert row["ll_miss_octets"] == 64 * row["ll_data_misses"], (rail, row)
+            once = {event: row[event] for event in ("Ir", "Dr", "Dw")}
+            assert once == {event: twice[rail][event] for event in once}, (rail, once, twice)
+        try:  # parts an earlier profile left would be read as this one's
+            harness.profile_rails(exe, q8, native, ids, work / "twice")
+        except harness.QualificationError as error:
+            assert "already holds a callgrind profile" in str(error), error
+        else:
+            raise AssertionError("a profile was read from a directory an earlier one wrote")
+        plain = harness.build_qualify(work / "plain")
+        try:
+            harness.profile_rails(plain, q8, native, ids, work / "plain-profile")
+        except ValueError as error:
+            assert "no callgrind part for the gem and monolithic rail" in str(error), error
+        else:
+            raise AssertionError("the plain build's profile was read as a measurement")

@@ -1131,8 +1131,10 @@ jobs:
   # under R1-R25, its plan and pack, every JSON <-> ASN.1 <-> GEM projection, GEM against the
   # monolithic runner on both rails (bit for bit), latency, and planned == counted memory
   # traffic, with callgrind's simulated cache traffic REQUIRED (valgrind is installed here, so
-  # its absence is a failure, L2). The model trains for 200 of the recipe's 1200 steps: this
-  # gates the pipeline's correctness, not the model's perplexity.
+  # its absence is a failure, L2): one run of each rail, bracketed by client requests from the
+  # package's <valgrind/callgrind.h>, so no architecture's call-graph tracking is relied on.
+  # The model trains for 200 of the recipe's 1200 steps: this gates the pipeline's
+  # correctness, not the model's perplexity.
   qualification:
     name: Qualification on a concrete target (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

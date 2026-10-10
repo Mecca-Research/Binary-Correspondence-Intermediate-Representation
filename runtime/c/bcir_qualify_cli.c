@@ -14,6 +14,13 @@
  * reports whether every GEM run -- each repetition and the instrumented one -- produced the same
  * tokens and logits. The process exits 0 only when both rails produced identical tokens and
  * bit-identical logits.
+ *
+ * Built with -DBCIR_QUALIFY_CALLGRIND (valgrind's <valgrind/callgrind.h>), the first repetition
+ * of each rail is bracketed by callgrind client requests: the profile is zeroed before it and
+ * dumped after it as a part named for the rail ("monolithic", "gem"), so a run under callgrind
+ * measures one run of each rail on every architecture valgrind supports, without relying on its
+ * call-graph tracking. Outside valgrind a client request does nothing; without the define the
+ * brackets are empty.
  *===----------------------------------------------------------------------===*/
 #define _POSIX_C_SOURCE 200809L
 #include "bcir_asn1_streampack.h"
@@ -26,6 +33,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#ifdef BCIR_QUALIFY_CALLGRIND
+#include <valgrind/callgrind.h>
+static void rail_begin(void) { CALLGRIND_ZERO_STATS; }
+static void rail_end(const char *rail) { CALLGRIND_DUMP_STATS_AT(rail); }
+#else
+static void rail_begin(void) {}
+static void rail_end(const char *rail) { (void)rail; }
+#endif
 
 #define MAX_PROMPT 4096
 #define MAX_REPS 1000
@@ -227,14 +243,18 @@ int main(int argc, char **argv) {
   /* Interleaved: the same request on both rails, alternately, `reps` times each. */
   for (i = 0; i < reps; ++i) {
     t0 = now_ns(NULL);
+    if (!i) rail_begin();
     rc = bcir_llama_generate_greedy(&model, prompt, prompt_len, max_new, gen_mono, logits_mono);
+    if (!i) rail_end("monolithic");
     mono_ns[i] = now_ns(NULL) - t0;
     if (rc) {
       fprintf(stderr, "bcir-qualify: the monolithic runner refused (%d)\n", rc);
       return 1;
     }
     t0 = now_ns(NULL);
+    if (!i) rail_begin();
     rc = bcir_dgem_run(&g, prompt, prompt_len, gen_gem, max_new, logits_gem);
+    if (!i) rail_end("gem");
     gem_ns[i] = now_ns(NULL) - t0;
     if (rc) {
       fprintf(stderr, "bcir-qualify: GEM refused the program (%d, pack status %d)\n", rc,
