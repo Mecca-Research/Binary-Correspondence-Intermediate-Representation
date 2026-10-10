@@ -173,12 +173,22 @@ static int decode(const char *codec, const uint8_t *in, size_t len, int *match, 
   return 16 + itst_uper_encode_SecuredMessagePer(&tp, re, re_cap, re_len);
 }
 
+/* Two hex digits per octet, nothing else. `sscanf("%2x")` was the parser here, and it reads ONE
+ * digit before a NUL (then `s += 2` stepped past the string's end), a sign, or a "0x" prefix:
+ * three inputs the harness then decoded as if they were octets. */
+static int nibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
 static int unhex(const char *s, uint8_t *out, size_t cap, size_t *n) {
   size_t k = 0;
   while (s[0] && s[0] != '\n') {
-    unsigned v;
-    if (k >= cap || sscanf(s, "%2x", &v) != 1) return -1;
-    out[k++] = (uint8_t)v;
+    int hi = nibble(s[0]), lo = hi < 0 ? -1 : nibble(s[1]);
+    if (lo < 0 || k >= cap) return -1;
+    out[k++] = (uint8_t)(hi << 4 | lo);
     s += 2;
   }
   *n = k;
@@ -397,6 +407,12 @@ int main(void) {
   static uint8_t buf[1 << 15], out[1 << 15];
   while (fgets(line, sizeof(line), stdin)) {
     char op[16], codec[32], arg[1 << 15];
+    if (!strchr(line, '\n') && !feof(stdin)) {  /* longer than the buffer: refused whole */
+      int ch;
+      while ((ch = getchar()) != EOF && ch != '\n') continue;
+      printf("ERR long\n");
+      continue;
+    }
     if (sscanf(line, "%15s", op) != 1) continue;
     if (!strcmp(op, "enc")) {
       int i, st;
@@ -415,6 +431,7 @@ int main(void) {
       int match, st;
       arg[0] = 0;
       if (sscanf(line, "%15s %31s %32767s", op, codec, arg) < 2) { printf("ERR usage\n"); continue; }
+      if (strlen(arg) == sizeof(arg) - 1u) { printf("ERR hex\n"); continue; }  /* cut by %s */
       if (!strcmp(arg, "-")) arg[0] = 0;
       if (unhex(arg, buf, sizeof(buf), &n) != 0) { printf("ERR hex\n"); continue; }
       st = decode(codec, buf, n, &match, &used, out, sizeof(out), &re_len);

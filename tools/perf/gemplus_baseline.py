@@ -2581,6 +2581,7 @@ METRICS: tuple[Metric, ...] = (
         # a memcpy of 216 octets is a few nanoseconds, so this ratio's denominator is the
         # noisiest number in the run: 4.4 to 7.1 over six runs on one host
         noise=0.5,
+        host_dependent=True,  # a ratio of two COMPILED kernels: it measures this host, not the code
     ),
     Metric(
         "its.coer.decode.floor",
@@ -2595,6 +2596,7 @@ METRICS: tuple[Metric, ...] = (
         "roofline, not a decoder",
         slice_owner="C-PERF",
         noise=0.5,
+        host_dependent=True,  # a ratio of two COMPILED kernels: it measures this host, not the code
     ),
     Metric(
         "its.coer.vs.binary",
@@ -2610,6 +2612,9 @@ METRICS: tuple[Metric, ...] = (
         "decode. Below 1.0 the ASN.1 codec is the faster one -- the 2015 study's runtime "
         "conclusion inverted",
         slice_owner="ITS",
+        # Two separately compiled codecs: the ratio moves with the compiler (the C-PERF ledger
+        # has GCC and clang apart) and the host, so off the baseline host it is INDICATIVE.
+        host_dependent=True,
     ),
     Metric(
         "its.uper.vs.binary",
@@ -2625,6 +2630,7 @@ METRICS: tuple[Metric, ...] = (
         "smallest encoding still costs more time than binary: the bit-aligned octet runs (keys, "
         "digests, signatures at any bit offset) are the remaining gap",
         slice_owner="C-PERF",
+        host_dependent=True,  # a ratio of two COMPILED kernels: it measures this host, not the code
     ),
 )
 

@@ -21,7 +21,7 @@ towards usage of ASN.1". On the same content, measured here:
   metric (the CAM stream average) that is **97.7 octets against binary's 108.6 and the paper's
   winner, optimized EXI, at 98.4**.
 * **Time: an ASN.1 codec is faster than binary in every case.** Schema-compiled C for
-  CANONICAL-OER on the TMSAO schema encodes and decodes every envelope in 0.59–0.78 of the time
+  CANONICAL-OER on the TMSAO schema encodes and decodes every envelope in 0.55–0.74 of the time
   of a binary codec from the same generator, under clang 18, GCC 13 and clang 23 alike, and
   executes 0.60–0.73 of its instructions. That same encoding is *also* smaller than binary in all
   four profiles (93/216/226/224; average 105.3).
@@ -33,7 +33,7 @@ towards usage of ASN.1". On the same content, measured here:
 So there is no gap left to close on the paper's metrics, and the overturn does not rest on one
 point: TMSAO-COER is a single ASN.1 encoding that is smaller, faster and lighter than binary on
 every envelope. What remains is a trade inside ASN.1. The smallest encoding (UPER on the PER
-instance) costs 1.2–1.9x binary's time, because its 32-octet keys, digests and signatures sit at
+instance) costs 1.1–1.8x binary's time, because its 32-octet keys, digests and signatures sit at
 arbitrary bit offsets (§4.3).
 
 ## 1. The 2015 study
@@ -150,8 +150,12 @@ Shared by all of them:
 ### 2.6 Measurement
 
 `its_native` builds one harness per compiler, with `-O2`, over both generated files. Timing
-takes the median of rounds of thousands of iterations. The final tables are the median of five
-interleaved repetitions per compiler, each of 24 rounds × 3,000 iterations. Every case is
+takes the median of rounds of thousands of iterations. The final tables are the median of fifteen
+interleaved repetitions per compiler, each of 24 rounds × 3,000 iterations. **Code placement moves
+these numbers more than repetition does.** Two builds whose codecs differ only in an unrelated
+function timed byte-identical codecs up to 17% apart, interleaved in one window, while their
+instruction counts did not move at all. So every timing ratio below carries a band of that width,
+and the instruction ratios (§4.2), which carry none, are the claim's firm footing. Every case is
 encoded, decoded and re-encoded to its own octets once before any clock starts, so a refusal is
 never timed as a decode. A `memcpy` of the encoding is timed beside each
 codec as the memory roofline. Because this host is a shared virtual machine with no PMU,
@@ -250,36 +254,36 @@ Medians, `-O2`, this container's x86-64 vCPU.
 
 | codec | p1 | p1cert | p2 | p3 |
 |---|---|---|---|---|
-| **V1.1.1 binary** | 23.9 / 21.0 | 61.5 / 55.2 | 63.2 / 57.2 | 61.5 / 54.6 |
-| transcription, COER | 18.6 / 19.6 | 48.6 / 46.6 | 47.5 / 48.1 | 47.3 / 46.4 |
-| transcription, UPER | 31.9 / 39.8 | 80.8 / 98.3 | 89.5 / 102.8 | 84.2 / 100.5 |
-| **TMSAO, COER** | **16.8 / 15.3** | **37.8 / 39.0** | **37.5 / 37.3** | **37.7 / 37.6** |
-| TMSAO PER instance, UPER | 33.4 / 36.8 | 80.8 / 87.8 | 86.7 / 88.8 | 86.5 / 86.8 |
+| **V1.1.1 binary** | 30.7 / 23.5 | 74.4 / 63.9 | 77.7 / 66.8 | 75.7 / 65.7 |
+| transcription, COER | 22.4 / 20.8 | 55.5 / 53.7 | 58.5 / 55.9 | 56.4 / 55.0 |
+| transcription, UPER | 33.9 / 43.8 | 84.6 / 115.8 | 91.7 / 121.5 | 90.2 / 118.4 |
+| **TMSAO, COER** | **18.2 / 16.6** | **44.3 / 39.7** | **44.9 / 40.0** | **45.8 / 38.6** |
+| TMSAO PER instance, UPER | 35.8 / 39.9 | 85.6 / 95.1 | 92.4 / 100.4 | 92.2 / 102.2 |
 
 **GCC 13.3**
 
 | codec | p1 | p1cert | p2 | p3 |
 |---|---|---|---|---|
-| **V1.1.1 binary** | 24.0 / 20.1 | 62.3 / 50.2 | 64.7 / 52.8 | 63.4 / 49.4 |
-| transcription, COER | 21.2 / 20.3 | 47.2 / 49.7 | 51.6 / 51.3 | 49.7 / 48.4 |
-| transcription, UPER | 34.7 / 39.6 | 81.3 / 103.8 | 89.1 / 105.9 | 84.5 / 105.9 |
-| **TMSAO, COER** | **18.8 / 15.0** | **39.7 / 36.7** | **41.9 / 38.8** | **40.6 / 38.2** |
-| TMSAO PER instance, UPER | 33.4 / 38.9 | 75.0 / 91.4 | 82.8 / 95.6 | 80.6 / 94.9 |
+| **V1.1.1 binary** | 27.1 / 22.8 | 74.9 / 55.0 | 78.1 / 56.1 | 76.9 / 54.6 |
+| transcription, COER | 25.2 / 23.4 | 57.0 / 54.6 | 62.3 / 56.5 | 60.8 / 55.6 |
+| transcription, UPER | 39.8 / 38.8 | 94.5 / 101.8 | 104.9 / 105.5 | 101.7 / 104.9 |
+| **TMSAO, COER** | **19.8 / 14.2** | **41.3 / 34.9** | **43.6 / 38.2** | **45.0 / 37.1** |
+| TMSAO PER instance, UPER | 34.6 / 38.5 | 79.6 / 91.8 | 85.9 / 96.7 | 87.5 / 94.5 |
 
 **clang 23.1.3**
 
 | codec | p1 | p1cert | p2 | p3 |
 |---|---|---|---|---|
-| **V1.1.1 binary** | 21.9 / 25.0 | 60.4 / 57.4 | 63.2 / 60.3 | 60.8 / 59.3 |
-| transcription, COER | 19.7 / 18.7 | 49.1 / 46.5 | 49.7 / 48.3 | 48.6 / 47.0 |
-| transcription, UPER | 32.6 / 39.1 | 81.2 / 97.7 | 86.7 / 103.7 | 85.2 / 102.5 |
-| **TMSAO, COER** | **16.2 / 15.1** | **36.1 / 36.3** | **37.3 / 36.4** | **37.8 / 36.6** |
-| TMSAO PER instance, UPER | 34.2 / 38.4 | 81.7 / 89.0 | 87.4 / 92.5 | 85.2 / 90.5 |
+| **V1.1.1 binary** | 24.7 / 22.2 | 67.7 / 61.7 | 70.8 / 64.6 | 69.1 / 62.4 |
+| transcription, COER | 22.1 / 20.0 | 53.8 / 49.7 | 56.1 / 52.5 | 54.5 / 51.3 |
+| transcription, UPER | 34.8 / 42.5 | 85.8 / 106.1 | 92.7 / 115.1 | 90.6 / 110.9 |
+| **TMSAO, COER** | **18.4 / 16.2** | **42.6 / 39.3** | **43.4 / 39.7** | **43.1 / 39.6** |
+| TMSAO PER instance, UPER | 34.4 / 40.0 | 84.2 / 95.4 | 92.2 / 101.8 | 91.0 / 100.1 |
 
-TMSAO-COER over binary, per operation: 0.59–0.73 (clang 18), 0.64–0.78 (GCC 13), 0.59–0.74
+TMSAO-COER over binary, per operation: 0.58–0.71 (clang 18), 0.55–0.73 (GCC 13), 0.61–0.74
 (clang 23). Even the *transcription* under COER, the same model with the type codes turned into
-CHOICE tags, takes 0.75–1.01 of binary's time: less in every case except GCC's decodes, which
-are at parity.
+CHOICE tags, takes 0.73–1.02 of binary's time: less in every case under both clangs, and under
+GCC less on every encode and within 3% of parity on the decodes (0.99–1.03).
 
 The absolute figures are not comparable with the paper's: different hardware, compiler and
 decade, and the paper's figures are on log axes in microseconds. The ratios are comparable,
@@ -289,11 +293,11 @@ because both sides of each ratio were built by one generator and timed in one ru
 
 | codec | GCC 13: p1 | GCC 13: p1cert | clang 18: p1 | clang 18: p1cert |
 |---|---|---|---|---|
-| V1.1.1 binary | 454 / 419 | 1196 / 1041 | 413 / 407 | 1073 / 1073 |
-| transcription, COER | 351 / 389 | 836 / 944 | 354 / 391 | 909 / 1027 |
-| transcription, UPER | 650 / 708 | 1534 / 1742 | 591 / 765 | 1506 / 1896 |
-| **TMSAO, COER** | **314 / 282** | **720 / 712** | **301 / 272** | **738 / 758** |
-| TMSAO PER instance, UPER | 620 / 658 | 1433 / 1541 | 616 / 674 | 1502 / 1586 |
+| V1.1.1 binary | 454 / 435 | 1196 / 1086 | 413 / 405 | 1073 / 1074 |
+| transcription, COER | 351 / 398 | 836 / 969 | 354 / 394 | 909 / 1034 |
+| transcription, UPER | 650 / 707 | 1534 / 1755 | 591 / 768 | 1506 / 1894 |
+| **TMSAO, COER** | **314 / 282** | **720 / 719** | **301 / 272** | **738 / 760** |
+| TMSAO PER instance, UPER | 620 / 655 | 1433 / 1541 | 616 / 674 | 1502 / 1588 |
 
 **Why COER wins.** A presence bitmap replaces a type-code dispatch per field. Every 32-octet key
 and signature is octet-aligned, so it moves as a `memcpy`. Fixed-width integers are single
@@ -302,7 +306,7 @@ byte-swapped loads. The binary rule pays a type code and a branch per field, and
 
 ### 4.3 What the smallest encoding costs
 
-UPER on the PER instance runs at 1.20–1.94x binary's time (1.20–1.66x its instructions). Its
+UPER on the PER instance runs at 1.06–1.80x binary's time (1.20–1.66x its instructions). Its
 content is mostly 32-octet keys, digests and signatures at arbitrary bit offsets, and each eight
 octets of such a run costs a load, two shifts and a store, where an aligned rule copies. The
 line profile puts most of the remaining decoder time in exactly that loop and in the per-field
@@ -315,22 +319,34 @@ octets (average 102.0, smaller than binary everywhere) and aligns every such run
 TMSAO-COER on the certificate envelope encodes in 4.5x and decodes in 4.5x the time of one
 `memcpy` of its 216 octets (`its.coer.encode.floor`, `its.coer.decode.floor`). Its encode +
 decode sits at 0.64 of binary's, with the two-copy roofline at 0.14 (`its.coer.vs.binary`). UPER
-sits at 1.41 against the same kind of roofline (`its.uper.vs.binary`).
+sits at 1.41 against the same kind of roofline (`its.uper.vs.binary`). Those are the rows' frozen
+values; the final build measures 0.60 and 1.31. Both rows divide one compiled codec by another,
+so they are host-dependent: graded on the baseline host, INDICATIVE elsewhere.
 
 ## 5. Memory
 
 | codec (clang 18) | heap | arena p1 / p1cert | stack enc/dec p1cert |
 |---|---|---|---|
-| V1.1.1 binary | 0 | 1,200 / 1,928 | 464 / 424 |
+| V1.1.1 binary | 0 | 1,200 / 1,928 | 464 / 376 |
 | transcription, COER | 0 | 684 / 1,180 | 328 / 312 |
 | transcription, UPER | 0 | 688 / 1,192 | 920 / 656 |
 | **TMSAO, COER** | 0 | **0 / 512** | **248 / 232** |
 | TMSAO PER instance, UPER | 0 | 1 / 516 | 984 / 544 |
 
-Under GCC 13 the stacks are smaller still: at most 463 octets, and TMSAO-COER 223/231. The
+Under GCC 13 the stacks are smaller still: at most 479 octets, and TMSAO-COER 223/247. The
 transcription's arena holds its field lists (arrays of CHOICE structs). The TMSAO schema has no
 lists, so the CAM envelope decodes into the caller's struct alone, and the certificate case
 allocates only the certificate (it sits behind a pointer because `SignerInfo` is recursive).
+
+**V1.1.1's arena column is what its decoder reserves, not what its structs need.** The binary
+codec fills the same C structs as the transcription's COER codec, so the structs need exactly
+what COER takes: 684 / 1,180 octets. V1.1.1's vectors carry their length in octets with no
+count, so a decoder cannot size a list's array before decoding the list. This one starts each
+array at four slots and grows it in place while it is still the arena's last allocation, and the
+capacity a short list leaves unused stays reserved. Both ways to size the arrays exactly cost
+time: counting the elements first measured 1.5–1.8x the decoder's time, and giving the unused
+slots back cost 3–9% more of its instructions. So the binary codec keeps the reservation: §4
+times its fastest decoder, and this column shows what that decoder reserves.
 
 The paper measured 240–4,327 octets of heap and 12,168–20,528 octets of stack per operation
 for its binary and ASN.1 codecs.
@@ -398,7 +414,28 @@ witness that fails on the defect:
 * **The stack harness** read a freed pointer (GCC 13's `-Werror=use-after-free`), and its bench
   timed decodes without checking that they succeeded.
 
-**The witnesses can fail.** `tools/testing/faults/its.json` injects 13 of these defects, or their
+**A review before merge** found ten more, in code no envelope reaches; each witness compiles a
+small schema of its own:
+
+* `cgen`'s decoders skipped the INTEGER value constraint its encoders check (variable-size forms
+  only: a decoded value could fail its own re-encode). Its UPER preamble went out in one 57-bit
+  `P_put` however many OPTIONALs there were. An extensible INTEGER with an open root bound did
+  not compile. A SEQUENCE OF elements that encode in no bits under UPER (a one-enumerator
+  ENUMERATED, a single-value INTEGER) refused its own encodings as truncated. The byte rule
+  ignored a variable string's SIZE. Its vectors moved at every doubling, abandoning each copy.
+  The new witnesses found one more: a function that never names its cursor did not compile
+  under `-Werror`. A last re-read found another: the arena rounded its fill offset up to an
+  element's alignment rather than the address it hands out, so caller memory starting off an
+  8-octet boundary got misaligned arrays. It aligns the address now.
+* The Python OER rail accepted, under CANONICAL, a set padding bit in the root preamble (the C
+  plan decoder reports it as non-canonical), set unused bits in the additions' bitmap, and an
+  addition sent equal to its DEFAULT: three second spellings.
+* The V1.1.1 binary decoder copied the data's prefix for each vector element and read an
+  element of no octets forever; it ignored SIZE as the byte rule did.
+* The harness read `0g` as an octet. GEM+'s ITS timing ratios, which divide one compiled codec
+  by another, were graded on every host; like the `native.*` rows they are host-dependent now.
+
+**The witnesses can fail.** `tools/testing/faults/its.json` injects 29 of these defects, or their
 inverses, into the oracle, both C twins, the generator and the harness, and each one is caught by
 its own test (`tools/testing/red_sweep.py`). The sweep also found a gap. A bit reader that
 over-reads its input and skips the truncation check is still refused by the decoder's final
@@ -434,6 +471,9 @@ would make the same point inside X.692 (§11).
 * **Hardware.** One x86-64 vCPU on a shared virtual machine, with no PMU. The tables are
   medians of interleaved repetitions, and the instruction counts are deterministic. An embedded
   core (the paper's Geode) is not measured.
+* **Code placement.** Relinking moved byte-identical codecs by up to 17% (§2.6). The weakest
+  timing margin, TMSAO-COER at 0.74 of binary (the CAM encode under clang 23), survives that
+  band, and the instruction ratio (0.60–0.73) does not depend on it.
 * **Mandatory fields and a one-octet payload, as in the paper.** Optional header fields and
   real payloads would add the same content octets to every column.
 * **The TMSAO schema is a schema for V1.1.1's content**, not today's TS 103 097 (whose later
@@ -465,3 +505,7 @@ differential and a bounded libFuzzer campaign over all five generated decoders.
 * **ECN `self-delimiting-values`** for `TO BITS` mappings, then V1.1.1's rules as an X.692
   encoding object set held byte-for-byte to the byte rule.
 * The same study on the current TS 103 097 schema.
+* **INTEGER value constraints on the Python OER rail.** It checks none on either side
+  (`encode_oer` writes 9 for an `INTEGER (0..7)`), where the generated codecs and the PER rail
+  refuse it. No ITS schema has such a constraint, so no number here depends on it; the rails
+  should still agree.

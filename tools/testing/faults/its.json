@@ -16,7 +16,21 @@
     "bcir.tests.test_asn1_cgen:test_the_bench_refuses_to_time_a_decoder_that_refuses",
     "bcir.tests.test_asn1_cgen:test_every_generated_codec_writes_and_reads_the_oracles_octets",
     "bcir.tests.test_asn1_cgen:test_a_cut_encoding_is_refused_as_truncated_by_every_decoder",
-    "bcir.tests.test_asn1_cgen:test_the_generated_decoders_agree_with_the_oracle_on_damaged_input"
+    "bcir.tests.test_asn1_cgen:test_the_generated_decoders_agree_with_the_oracle_on_damaged_input",
+    "bcir.tests.test_asn1_cgen:test_a_decoder_refuses_every_integer_its_encoder_refuses",
+    "bcir.tests.test_asn1_cgen:test_a_preamble_wider_than_one_bit_read_is_written_in_pieces",
+    "bcir.tests.test_asn1_cgen:test_an_extensible_integer_with_an_open_root_bound_compiles_and_round_trips",
+    "bcir.tests.test_asn1_cgen:test_a_count_of_empty_elements_is_bounded_by_its_size_not_the_input",
+    "bcir.tests.test_asn1_cgen:test_the_byte_rule_holds_a_strings_size_as_coer_does",
+    "bcir.tests.test_asn1_cgen:test_a_vector_grows_in_place_in_the_arena",
+    "bcir.tests.test_asn1_cgen:test_the_harness_refuses_what_is_not_hex",
+    "bcir.tests.test_asn1_oer:test_canonical_oer_refuses_a_set_padding_bit_in_either_bitmap",
+    "bcir.tests.test_asn1_oer:test_canonical_oer_refuses_a_present_addition_equal_to_its_default",
+    "bcir.tests.test_its_security:test_a_vector_is_read_against_its_own_end",
+    "bcir.tests.test_its_security:test_a_vector_of_empty_elements_is_refused_rather_than_read_forever",
+    "bcir.tests.test_its_security:test_the_binary_rules_hold_a_size_constraint",
+    "bcir.tests.test_gemplus_baseline:test_every_ratio_of_compiled_kernels_is_indicative_off_its_host",
+    "bcir.tests.test_asn1_cgen:test_the_arena_aligns_an_address_not_an_offset"
   ],
   "faults": [
     {
@@ -108,6 +122,118 @@
       "label": "CG6 the bit reader takes its one-load path at the input's end, past the input",
       "new": "  if (1) {\n    w = P_be64(r->base + byte);\n",
       "old": "  if (byte + 8u <= r->nbytes) {\n    w = P_be64(r->base + byte);\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_decoder_refuses_every_integer_its_encoder_refuses",
+      "label": "RV1 a variable-size INTEGER's decoder skips the value constraint its encoder applies",
+      "new": "            f\"    if (st != P_OK) return st;\\n    {lv} = ({k.ctype}){t};\\n  }}\\n\"\n",
+      "old": "            f\"    if (st != P_OK) return st;\\n    {lv} = ({k.ctype}){t};\\n  }}\\n\"\n            + self._int_check(k, lv, \"P_E_MALFORMED\")\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_preamble_wider_than_one_bit_read_is_written_in_pieces",
+      "label": "RV2 the UPER preamble goes out in one P_put however wide it is",
+      "new": "_BITS_PER_CALL = 64\n",
+      "old": "_BITS_PER_CALL = 57\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_an_extensible_integer_with_an_open_root_bound_compiles_and_round_trips",
+      "label": "RV3 an extensible INTEGER's root test prints an absent bound",
+      "new": "    return f\"{var} >= {low} && {var} <= {high}\"\n",
+      "old": "    return \" && \".join(tests) if tests else \"1\"\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_count_of_empty_elements_is_bounded_by_its_size_not_the_input",
+      "label": "RV4 a one-enumerator ENUMERATED is taken to encode in a bit under UPER",
+      "new": "            return 1\n",
+      "old": "            return 0 if len(k.asn1.enumeration) == 1 and not k.extensible else 1\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_the_byte_rule_holds_a_strings_size_as_coer_does",
+      "label": "RV5 the byte rule's decoder skips a variable string's SIZE",
+      "new": "                f\"    {lv}.p = r->p;\\n    {lv}.n = (size_t){t};\\n    r->p += {lv}.n;\\n  }}\\n\"\n",
+      "old": "                f\"    {lv}.p = r->p;\\n    {lv}.n = (size_t){t};\\n    r->p += {lv}.n;\\n  }}\\n\"\n                + self._size_check(k, lv, \"P_E_MALFORMED\")\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_vector_grows_in_place_in_the_arena",
+      "label": "RV6 a byte-rule vector moves at every doubling instead of growing in place",
+      "new": "                \"          if (0 &&\\n\"\n",
+      "old": "                \"          if ((uint8_t *)(items + cap) == a->base + a->used &&\\n\"\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_vector_grows_in_place_in_the_arena",
+      "label": "RV7 a function that never names its cursor leaves it unused",
+      "new": "    return \"\"\n",
+      "old": "    return \"\" if re.search(rf\"\\b{name}\\b\", body) else f\"  (void){name};\\n\"\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_the_harness_refuses_what_is_not_hex",
+      "label": "RV8 the harness takes a character that is not a hex digit as a zero",
+      "new": "  if (c >= 'A' && c <= 'F') return c - 'A' + 10;\n  return 0;\n}\n",
+      "old": "  if (c >= 'A' && c <= 'F') return c - 'A' + 10;\n  return -1;\n}\n",
+      "path": "bcir/asn1/its_native.py"
+    },
+    {
+      "expects": "test_canonical_oer_refuses_a_set_padding_bit_in_either_bitmap",
+      "label": "RV9 CANONICAL-OER accepts a set padding bit in the root preamble",
+      "new": "        if False:\n",
+      "old": "        if rules is OerRules.CANONICAL and \"1\" in bits[width_bits:]:\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_refuses_a_set_padding_bit_in_either_bitmap",
+      "label": "RV10 CANONICAL-OER accepts set unused bits in the additions' bitmap",
+      "new": "        if False:\n",
+      "old": "        if rules is OerRules.CANONICAL and bitmap[-1] & ((1 << bitmap[0]) - 1):\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_refuses_a_present_addition_equal_to_its_default",
+      "label": "RV11 CANONICAL-OER accepts an addition sent equal to its DEFAULT",
+      "new": "                if False:\n",
+      "old": "                if rules is OerRules.CANONICAL and comp.has_default and item == comp.default:\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_a_vector_is_read_against_its_own_end",
+      "label": "RV12 the binary decoder reads a vector's element past the vector's end",
+      "new": "            item, after = _decode(kind.element, data, at)\n",
+      "old": "            item, after = _decode(kind.element, data, at, stop)\n",
+      "path": "bcir/asn1/its_security.py"
+    },
+    {
+      "expects": "test_a_vector_of_empty_elements_is_refused_rather_than_read_forever",
+      "label": "RV13 the binary decoder keeps reading an element that takes no octets",
+      "new": "            if False:\n",
+      "old": "            if after == at:\n",
+      "path": "bcir/asn1/its_security.py"
+    },
+    {
+      "expects": "test_the_binary_rules_hold_a_size_constraint",
+      "label": "RV14 the binary rules ignore a SIZE constraint",
+      "new": "    if False:\n",
+      "old": "    if (low and count < low) or (high is not None and count > high):\n",
+      "path": "bcir/asn1/its_security.py"
+    },
+    {
+      "expects": "test_every_ratio_of_compiled_kernels_is_indicative_off_its_host",
+      "label": "RV15 a ratio of two compiled codecs is graded on every host",
+      "new": "        slice_owner=\"C-PERF\",\n    ),\n)\n",
+      "old": "        slice_owner=\"C-PERF\",\n        host_dependent=True,  # a ratio of two COMPILED kernels: it measures this host, not the code\n    ),\n)\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_arena_aligns_an_address_not_an_offset",
+      "label": "RV16 the arena aligns its fill offset, not the address it hands out",
+      "new": "  at = (a->used + (align - 1u)) & ~(align - 1u);",
+      "old": "  at = a->used + (size_t)(((uintptr_t)0 - ((uintptr_t)a->base + a->used)) & (align - 1u));",
       "path": "bcir/asn1/cgen.py"
     }
   ]

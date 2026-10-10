@@ -2284,9 +2284,9 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     the same 680 with 32.
   - Time: `bcir.asn1.cgen` compiles the modules to straight-line C for COER, UPER and the
     V1.1.1 byte rule (`ByteRule`) from one value model, so the binary codec comes from the same
-    generator as the ASN.1 ones. TMSAO-COER encodes and decodes every envelope in 0.59-0.78 of
+    generator as the ASN.1 ones. TMSAO-COER encodes and decodes every envelope in 0.55-0.74 of
     binary's time under clang 18, GCC 13 and clang 23 (0.60-0.73 of its instructions) and is
-    smaller than binary everywhere too; UPER, the smallest, costs 1.20-1.94x, its 32-octet runs
+    smaller than binary everywhere too; UPER, the smallest, costs 1.06-1.80x, its 32-octet runs
     at arbitrary bit offsets. No generated codec references an allocator, and the deepest stack
     measured is 1,008 octets, where the paper measured 12-20 KB.
   - Witnesses: `test_its_security.py` -- the reconstruction against Table VI, IntX's single
@@ -2345,6 +2345,51 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     which the accept/refuse differential cannot tell from TRUNC. Every cut of every encoding is
     now held to TRUNC. Phase H's selector, given the paper's objective, selects canonical
     UNALIGNED PER at exactly the study's sizes (`test_its_security.py`).
+  REVIEW-812 (2026-10-10): an adversarial review of the ITS / OER-EXT / C-PERF diff before it
+  merged. Ten findings, each verified against the tree before it was fixed, one more that the new
+  witnesses found themselves, and one on the last re-read.
+  - The generator (`cgen`). A variable-size INTEGER's decoder skipped the value constraint its
+    encoder checks (COER's length-prefixed forms, UPER's semi-constrained and unconstrained ones,
+    the byte rule's), so a decoded value could fail its own re-encode. A UPER preamble wider than
+    one bit read's 57 bits went out in one `P_put`: after five bits of another field, a shift by
+    a negative count. An extensible INTEGER with an open root bound printed `None` into the C. A
+    one-enumerator ENUMERATED, a single-value INTEGER and their kin were taken to encode in a bit,
+    so a SEQUENCE OF them refused its own valid encodings as truncated; such a count is now
+    bounded by its SIZE, and refused at generation without one. The byte rule ignored a variable
+    string's SIZE. A byte-rule vector moved at every doubling and abandoned each copy (33 elements
+    took 124 slots); it now grows in place while it is the arena's last allocation (64), and a
+    vector of one-size elements is counted by division (33, as COER's). The witnesses, each
+    compiled from a small schema, also found a function that never names its cursor leaving it
+    unused, which `-Werror` refuses. The last re-read found the arena rounding its fill OFFSET up
+    to an element's alignment, where it needed the address: caller memory starting off an
+    8-octet boundary got misaligned arrays (undefined behaviour, and a bus error on a core that
+    traps misaligned loads). The arena aligns the address now.
+  - The oracle. CANONICAL-OER accepted a set padding bit in the root preamble -- the C plan
+    decoder reports it as non-canonical and the generated codecs refuse it -- and, in the
+    additions' bitmap, set unused bits and an addition sent equal to its DEFAULT. Each is a second
+    spelling of one value, now refused under CANONICAL; BASIC still reads them. The V1.1.1 binary
+    decoder copied the data's prefix for every vector element and read an element of no octets
+    forever; it now threads the vector's end through and refuses both. The binary rules and the
+    byte rule hold a SIZE alike.
+  - The harness read hex with `sscanf("%2x")`, which takes one digit, a sign or a `0x` prefix as
+    an octet. GEM+'s four ITS timing ratios divide one compiled codec by another (or by a
+    `memcpy`), so like the `native.*` rows they measure the host and the compiler; they are
+    host-dependent now, INDICATIVE off the baseline host.
+  - The memory table's V1.1.1 arena (1,200 / 1,928 octets) is what its count-less vectors
+    reserve; the same structs need 684 / 1,180, what the transcription's COER codec takes. Sizing
+    them exactly costs a counting pass (1.5-1.8x the decode's time) or a give-back per vector
+    (3-9% of its instructions), so the time-optimal decoder keeps the reservation and the study
+    reports both numbers.
+  - Re-measured on the final code, fifteen interleaved repetitions per compiler: TMSAO-COER at
+    0.55-0.74 of binary's time (0.60-0.73 of its instructions, unchanged), UPER at 1.06-1.80x. An
+    A/B of two builds showed byte-identical codecs timed up to 17% apart -- code placement, with
+    the instruction counts unmoved -- so the study now states that band and rests its ratios on
+    the instruction counts.
+  - Recorded, not changed: the Python OER rail checks no INTEGER value constraint on either side
+    (`encode_oer` writes 9 for an `INTEGER (0..7)`), where the generated codecs refuse it. No ITS
+    schema has such a constraint, so no number moves.
+  - RED: 16 more faults in `tools/testing/faults/its.json` (29 in all), each caught by its own
+    witness.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

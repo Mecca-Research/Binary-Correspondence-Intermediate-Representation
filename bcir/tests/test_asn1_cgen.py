@@ -457,3 +457,305 @@ def test_libfuzzer_finds_no_crash_and_no_second_spelling():
         )
     assert run.returncode == 0, run.stderr[-3000:]
     assert "Done 200000 runs" in run.stderr, run.stderr[-500:]
+
+
+# --- the generator's contract on small schemas, compiled -------------------------------------------
+#
+# Each witness below builds one small schema with a short driver and holds the generated codec
+# to the oracle or to its own encoder. Every one failed on the generator before its fix.
+
+
+def _schema_codec(text: str, root: str, rules, values=()):
+    """`root` of the module `text`, generated for `rules` and compiled with a driver: a function
+    running driver lines, or None without a C compiler. Lines are `enc <rule> <i>` -- the i-th
+    of `values` -> `OK <hex>` | `ERR <status>` -- and `dec <rule> <cap> <hex>` -- a decode into
+    a `cap`-octet arena -> `OK <arena octets> <hex of the re-encoding>` | `ERR <status>`. The
+    arena's memory is 64-aligned; `decat <rule> <off> <cap> <hex>` starts it `off` octets in."""
+    import subprocess
+
+    from bcir.asn1.cgen import CModel, ValueWriter, _rule_name
+
+    if _CC is None:
+        return None
+    types = _types(text)
+    out = generate(types, [root], prefix="t_", rules=list(rules))
+    model = CModel(types, [root], "t_")
+    cname = model.ctype_of(types[root], root).cname
+    writer = ValueWriter(model)
+    decls = ""
+    for i, value in enumerate(values):
+        decls = writer.define(f"t_value{i}", root, value)
+    names = [_rule_name(r) for r in rules]
+    refs = ", ".join(f"&t_value{i}" for i in range(len(values))) or "0"
+    enc = "".join(
+        f'  if (!strcmp(rule, "{n}")) return t_{n}_encode_{cname}(v, out, cap, len);\n'
+        for n in names
+    )
+    dec = "".join(
+        f'  if (!strcmp(rule, "{n}")) return t_{n}_decode_{cname}(in, len, v, a);\n' for n in names
+    )
+    driver = f"""#include <stdio.h>
+#include <string.h>
+#include "t_codec.h"
+{decls}
+static const t_{cname} *const VALUES[] = {{{refs}}};
+#define N_VALUES {len(values)}
+static int nibble(char c) {{
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  return -1;
+}}
+static int enc(const char *rule, const t_{cname} *v, uint8_t *out, size_t cap, size_t *len) {{
+{enc}  return -1;
+}}
+static int dec(const char *rule, const uint8_t *in, size_t len, t_{cname} *v, t_arena *a) {{
+{dec}  return -1;
+}}
+static _Alignas(64) uint8_t arena_mem[1 << 20];
+int main(void) {{
+  static char line[1 << 16], arg[1 << 15];
+  static uint8_t in[1 << 15], out[1 << 15];
+  while (fgets(line, sizeof line, stdin)) {{
+    char op[8], rule[32];
+    size_t n = 0, len = 0, k;
+    long i = 0;
+    int st;
+    if (sscanf(line, "%7s %31s", op, rule) != 2) {{ puts("ERR usage"); continue; }}
+    if (!strcmp(op, "enc")) {{
+      if (sscanf(line, "%*s %*s %ld", &i) != 1 || i < 0 || i >= N_VALUES) {{ puts("ERR usage"); continue; }}
+      st = enc(rule, VALUES[i], out, sizeof out, &len);
+    }} else {{
+      t_{cname} v;
+      t_arena a;
+      long cap = 0, off = 0;
+      int got;
+      arg[0] = 0;
+      if (!strcmp(op, "decat"))
+        got = sscanf(line, "%*s %*s %ld %ld %32767s", &off, &cap, arg) - 1;
+      else
+        got = sscanf(line, "%*s %*s %ld %32767s", &cap, arg);
+      if (got != 2 || off < 0 || off > 63 || cap < 0 || cap > (long)sizeof arena_mem - off) {{
+        puts("ERR usage");
+        continue;
+      }}
+      if (!strcmp(arg, "-")) arg[0] = 0;
+      for (k = 0; arg[k] && arg[k + 1]; k += 2) {{
+        int hi = nibble(arg[k]), lo = nibble(arg[k + 1]);
+        if (hi < 0 || lo < 0) break;
+        in[n++] = (uint8_t)(hi << 4 | lo);
+      }}
+      if (arg[k]) {{ puts("ERR hex"); continue; }}
+      a.base = arena_mem + off; a.cap = (size_t)cap; a.used = 0;
+      memset(&v, 0, sizeof v);
+      st = dec(rule, in, n, &v, &a);
+      if (st == 0) {{
+        size_t used = a.used;
+        st = enc(rule, &v, out, sizeof out, &len);
+        if (st != 0) {{ printf("REENCODE %d\\n", st); continue; }}
+        printf("OK %zu ", used);
+        for (k = 0; k < len; k++) printf("%02x", out[k]);
+        puts("");
+        continue;
+      }}
+    }}
+    if (st != 0) {{ printf("ERR %d\\n", st); continue; }}
+    printf("OK ");
+    for (k = 0; k < len; k++) printf("%02x", out[k]);
+    puts("");
+  }}
+  return 0;
+}}
+"""
+    tmp = tempfile.mkdtemp()
+    for name, body in (
+        (out.header_name, out.header),
+        ("t_codec.c", out.source),
+        ("main.c", driver),
+    ):
+        with open(os.path.join(tmp, name), "w", encoding="utf-8", newline="\n") as f:
+            f.write(body)
+    binary = os.path.join(tmp, "codec")
+    proc = subprocess.run(
+        [_CC, "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror", "-I", tmp,
+         os.path.join(tmp, "main.c"), os.path.join(tmp, "t_codec.c"), "-o", binary],
+        capture_output=True, text=True, timeout=600,
+    )  # fmt: skip
+    assert proc.returncode == 0, proc.stderr[-3000:]
+
+    def run(lines: list[str]) -> list[str]:
+        done = subprocess.run(
+            [binary], input="\n".join(lines) + "\n", capture_output=True, text=True, timeout=600
+        )
+        assert done.returncode == 0, done.stderr[-2000:]
+        return done.stdout.splitlines()
+
+    return run
+
+
+_HEAD = "T DEFINITIONS AUTOMATIC TAGS ::= BEGIN\n"
+_ARENA = 1 << 20
+
+
+def test_a_decoder_refuses_every_integer_its_encoder_refuses():
+    """The value constraint of a variable-size INTEGER -- COER's length-prefixed forms, UPER's
+    semi-constrained and unconstrained ones (`(MIN..10)` is unconstrained in PER) -- was checked
+    by the encoders alone, so a decoder handed back values its own encoder then refused to
+    write: decode-then-re-encode, the fuzz target's invariant, failed on them."""
+    from bcir.asn1.oer import encode_oer
+    from bcir.asn1.per import encode_per
+
+    text = _HEAD + "S ::= SEQUENCE { a INTEGER (5..MAX), b INTEGER (MIN..10) }\nEND"
+    loose = _types(_HEAD + "S ::= SEQUENCE { a INTEGER (0..MAX), b INTEGER }\nEND")["S"]
+    semi = _types(_HEAD + "S ::= SEQUENCE { a INTEGER (5..MAX), b INTEGER }\nEND")["S"]
+    good, low, high = {"a": 5, "b": 10}, {"a": 3, "b": 0}, {"a": 5, "b": 20}
+    run = _schema_codec(text, "S", [COER, UPER], [good, low, high])
+    if run is None:
+        return
+    kind = _types(text)["S"]
+    got = run([f"enc {r} {i}" for r in ("coer", "uper") for i in range(3)])
+    assert got == [
+        "OK " + encode_oer(kind, good).hex(), "ERR 4", "ERR 4",
+        "OK " + encode_per(kind, good).hex(), "ERR 4", "ERR 4",
+    ]  # fmt: skip
+    got = run(
+        [f"dec coer {_ARENA} {encode_oer(loose, v).hex()}" for v in (good, low, high)]
+        + [f"dec uper {_ARENA} {encode_per(semi, v).hex()}" for v in (good, high)]
+    )
+    assert [line.split()[0] for line in got] == ["OK", "ERR", "ERR", "OK", "ERR"], got
+    assert got[1:3] == ["ERR 3", "ERR 3"] and got[4] == "ERR 3", got
+
+
+def test_a_preamble_wider_than_one_bit_read_is_written_in_pieces():
+    """64 OPTIONAL components make a 64-bit preamble, wider than the 57 bits one P_put or P_get
+    carries; after five bits of another field it was one shift by a negative count. The
+    encoding is held to the oracle's and decodes back to itself."""
+    from bcir.asn1.per import encode_per
+
+    fields = ", ".join(f"c{i} BOOLEAN OPTIONAL" for i in range(64))
+    text = (
+        _HEAD + f"R ::= SEQUENCE {{ x INTEGER (0..31), s S }}\nS ::= SEQUENCE {{ {fields} }}\nEND"
+    )
+    value = {"x": 17, "s": {f"c{i}": i % 2 == 0 for i in range(64) if i % 3 != 1}}
+    run = _schema_codec(text, "R", [UPER], [value])
+    if run is None:
+        return
+    want = encode_per(_types(text)["R"], value).hex()
+    (enc,) = run(["enc uper 0"])
+    assert enc == "OK " + want, (enc, want)
+    (dec,) = run([f"dec uper {_ARENA} {want}"])
+    assert dec.split()[0] == "OK" and dec.split()[2] == want, dec
+
+
+def test_an_extensible_integer_with_an_open_root_bound_compiles_and_round_trips():
+    """`(0..MAX, ...)` has no upper root bound and `(MIN..5, ...)` no lower one; the root test
+    printed the absent bound as `None`, so the generated codec did not compile."""
+    from bcir.asn1.per import encode_per
+
+    text = _HEAD + "S ::= SEQUENCE { a INTEGER (0..MAX, ...), b INTEGER (MIN..5, ...) }\nEND"
+    values = [{"a": 7, "b": -3}, {"a": -1, "b": 9}]  # inside both roots, then outside both
+    run = _schema_codec(text, "S", [UPER], values)
+    if run is None:
+        return
+    kind = _types(text)["S"]
+    want = [encode_per(kind, v).hex() for v in values]
+    assert run([f"enc uper {i}" for i in range(2)]) == ["OK " + w for w in want]
+    for w, line in zip(want, run([f"dec uper {_ARENA} {w}" for w in want])):
+        assert line.split()[0] == "OK" and line.split()[2] == w, line
+
+
+def test_a_count_of_empty_elements_is_bounded_by_its_size_not_the_input():
+    """A one-enumerator ENUMERATED and a single-value INTEGER encode in no bits under UPER, so
+    ten of them take only the count's four bits. The decoder bounded a count by the input left
+    as if each element took a bit, and refused these valid encodings as truncated; an empty
+    element's count is bounded by its SIZE instead, and without one the type is refused."""
+    from bcir.asn1.per import encode_per
+
+    text = _HEAD + (
+        "S ::= SEQUENCE { l SEQUENCE (SIZE(0..10)) OF ENUMERATED { y }, "
+        "m SEQUENCE (SIZE(0..10)) OF INTEGER (3..3) }\nEND"
+    )
+    value = {"l": [0] * 10, "m": [3] * 9}
+    run = _schema_codec(text, "S", [UPER], [value])
+    if run is None:
+        return
+    want = encode_per(_types(text)["S"], value).hex()
+    assert run(["enc uper 0"]) == ["OK " + want]
+    (dec,) = run([f"dec uper {_ARENA} {want}"])
+    assert dec.split()[0] == "OK" and dec.split()[2] == want, dec
+    unbounded = _HEAD + "S ::= SEQUENCE { l SEQUENCE OF ENUMERATED { y } }\nEND"
+    assert "zero bits" in _refusal(unbounded, "S", rules=(UPER,))
+
+
+def test_the_byte_rule_holds_a_strings_size_as_coer_does():
+    """A variable OCTET STRING's SIZE bounds were checked by the COER and UPER codecs and not by
+    the byte rule's, so one C value was valid under one rule and invalid under another."""
+    byte = ByteRule(name="b", type_codes={})
+    text = _HEAD + "S ::= SEQUENCE { a OCTET STRING (SIZE(1..32)) }\nEND"
+    values = [{"a": b""}, {"a": b"x" * 40}, {"a": b"abcde"}]
+    run = _schema_codec(text, "S", [COER, byte], values)
+    if run is None:
+        return
+    got = run([f"enc {r} {i}" for r in ("coer", "b") for i in range(3)])
+    assert [g.split()[0] for g in got] == ["ERR", "ERR", "OK"] * 2, got
+    assert got[:2] == got[3:5] == ["ERR 4", "ERR 4"], got
+    long_ = "28" + "78" * 40  # IntX 40, then forty octets
+    assert run([f"dec b {_ARENA} {long_}", f"dec b {_ARENA} 00"]) == ["ERR 3", "ERR 3"]
+
+
+def test_a_vector_grows_in_place_in_the_arena():
+    """V1.1.1 gives a vector's length in octets, so the decoder grows its array as elements
+    arrive. It moved the array at every doubling and abandoned each copy: thirty-three
+    elements took 124 slots. Grown in place while it is the arena's last allocation it takes
+    64, the doubling's own bound -- and a vector of one-size elements is counted by division
+    and takes exactly what COER's counted vector takes."""
+    byte = ByteRule(name="b", type_codes={})
+    items = [{"a": i, "b": 1000 * i} for i in range(33)]
+    for element, slots in (("b INTEGER (0..MAX)", 64), ("b INTEGER (0..65535)", 33)):
+        text = _HEAD + (
+            f"L ::= SEQUENCE {{ items SEQUENCE OF E }}\n"
+            f"E ::= SEQUENCE {{ a INTEGER (0..255), {element} }}\nEND"
+        )
+        run = _schema_codec(text, "L", [COER, byte], [{"items": items}])
+        if run is None:
+            return
+        enc = [line.split()[1] for line in run(["enc coer 0", "enc b 0"])]
+        dec = run([f"dec coer {_ARENA} {enc[0]}", f"dec b {_ARENA} {enc[1]}"])
+        used = [int(line.split()[1]) for line in dec]
+        slot = used[0] // 33  # COER counts first, so its array is exactly 33 elements
+        assert used == [33 * slot, slots * slot], (element, used, slot)
+
+
+def test_the_arena_aligns_an_address_not_an_offset():
+    """The arena is caller memory, which may start at any octet. Its allocator rounded the fill
+    OFFSET up to an element's alignment, so an arena starting one octet past an 8-octet boundary
+    handed out arrays one octet past one too: undefined behaviour, and a bus error on a core
+    that traps misaligned loads. Each array now starts at the next aligned ADDRESS, so starting
+    the arena `off` octets into aligned memory costs exactly the padding back to a boundary."""
+    byte = ByteRule(name="b", type_codes={})
+    text = _HEAD + "L ::= SEQUENCE { items SEQUENCE OF INTEGER (0..MAX) }\nEND"
+    run = _schema_codec(text, "L", [COER, UPER, byte], [{"items": [1, 2, 3, 4, 5]}])
+    if run is None:
+        return
+    for rule in ("coer", "uper", "b"):
+        (enc,) = run([f"enc {rule} 0"])
+        want = enc.split()[1]
+        got = run([f"decat {rule} {off} {_ARENA - 64} {want}" for off in range(9)])
+        assert all(line.split()[0] == "OK" and line.split()[2] == want for line in got), got
+        used = [int(line.split()[1]) for line in got]
+        # The elements are 8-aligned uint64_t: an arena `off` octets past a boundary pads
+        # (8 - off) % 8 octets before its first array, and the rest is laid out as at 0.
+        assert used == [used[0] + (8 - off) % 8 for off in range(9)], (rule, used)
+
+
+def test_the_harness_refuses_what_is_not_hex():
+    """The harness read hex with `sscanf("%2x")`, which takes one digit, a sign or a `0x`
+    prefix as an octet -- so `0g` decoded as `00` and `+f` as `0f`, and an odd digit count
+    stepped past the end of the string. Each is refused as what it is, before any decoder."""
+    from bcir.asn1 import its_native as nat
+
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _harness(tmp)
+        if binary is None:
+            return
+        out = nat.run(binary, [f"dec coer {bad}" for bad in ("abc", "0g", "+f", "0x12", "f")])
+    assert out == ["ERR hex"] * 5, out

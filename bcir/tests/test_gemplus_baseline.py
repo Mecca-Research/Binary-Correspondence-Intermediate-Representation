@@ -611,3 +611,22 @@ def test_the_its_rows_hold_the_study_and_measure_the_codecs_or_not():
     assert out["its.coer.encode.floor"] > 1.0 and out["its.coer.decode.floor"] > 1.0
     assert 0 < out["its.coer.vs.binary.floor"] < out["its.coer.vs.binary"]
     assert 0 < out["its.uper.vs.binary.floor"] < out["its.uper.vs.binary"]
+
+
+def test_every_ratio_of_compiled_kernels_is_indicative_off_its_host():
+    """A ratio of two separately compiled kernels measures the host and the compiler, not the
+    code -- the `native.*` rows' lesson, and the ITS codec rows' too (GCC and clang put them
+    apart). Every such row is host-dependent, so `--compare` off the baseline host reports it
+    INDICATIVE instead of failing a slice on the machine."""
+    from tools.perf.gemplus_baseline import METRICS
+
+    rows = [m for m in METRICS if m.group in ("native", "its") and m.kind == "ratio"]
+    assert {m.key for m in rows} >= {
+        "its.coer.encode.floor",
+        "its.coer.decode.floor",
+        "its.coer.vs.binary",
+        "its.uper.vs.binary",
+    }
+    for metric in rows:
+        assert metric.host_dependent, metric.key
+        assert metric.verdict(metric.baseline * 3, same_host=False) == "INDICATIVE", metric.key

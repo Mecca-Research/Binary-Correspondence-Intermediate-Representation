@@ -569,6 +569,16 @@ def _decode_fields(kind, data: bytes, offset: int, rules: OerRules) -> tuple[dic
         for comp in optional:
             flags[comp.name] = bits[at] == "1"
             at += 1
+        # §16.2.4 pads the preamble to an octet with ZERO bits. A set padding bit leaves every
+        # presence bit the same, so under CANONICAL it is a second spelling of one value -- the
+        # C plan decoder reports it as non-canonical and the generated codecs refuse it; this
+        # rail accepted it as canonical. BASIC keeps accepting it, as the plan decoder does.
+        if rules is OerRules.CANONICAL and "1" in bits[width_bits:]:
+            raise Asn1Error(
+                f"{kind.name}: the preamble's padding bits are not zero; CANONICAL-OER "
+                f"writes them as zero (X.696 16.2.4)",
+                offset,
+            )
         cursor += width
 
     out: dict[str, object] = {}
@@ -601,6 +611,14 @@ def _decode_fields(kind, data: bytes, offset: int, rules: OerRules) -> tuple[dic
                 cursor,
             )
         count = (len(bitmap) - 1) * 8 - bitmap[0]
+        # The bitmap's unused trailing bits, like the preamble's padding: zero, or under
+        # CANONICAL a second spelling of the same additions.
+        if rules is OerRules.CANONICAL and bitmap[-1] & ((1 << bitmap[0]) - 1):
+            raise Asn1Error(
+                f"{kind.name}: the addition bitmap's {bitmap[0]} unused bit(s) are not zero; "
+                f"CANONICAL-OER writes them as zero (X.696 16.4)",
+                cursor,
+            )
         present = [
             index for index in range(count) if bitmap[1 + index // 8] & (0x80 >> (index % 8))
         ]
@@ -630,6 +648,16 @@ def _decode_fields(kind, data: bytes, offset: int, rules: OerRules) -> tuple[dic
             if comp.group is not None:
                 out.update(item)  # a version bracket's members are flat
             else:
+                # §31.9 holds for an addition exactly as for a root component (checked above):
+                # the encoder leaves one equal to its DEFAULT out, so sent anyway it is the
+                # second spelling of the same value.
+                if rules is OerRules.CANONICAL and comp.has_default and item == comp.default:
+                    raise Asn1Error(
+                        f"{kind.name}: addition {comp.name!r} is present and equal to its "
+                        f"DEFAULT {comp.default!r}; CANONICAL-OER encodes it as absent "
+                        f"(X.696 31.9)",
+                        cursor,
+                    )
                 out[comp.name] = item
     for comp in additions:
         if comp.group is None and comp.name not in out and comp.has_default:

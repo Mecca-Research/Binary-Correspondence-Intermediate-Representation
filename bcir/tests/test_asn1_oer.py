@@ -316,6 +316,8 @@ def _extensible_types():
       W  ::= SEQUENCE { a INTEGER (0..255), ..., [[ d INTEGER (0..255), e BOOLEAN OPTIONAL ]] }
       C  ::= CHOICE { x INTEGER (0..255), ..., y INTEGER (0..255) }
       C0 ::= CHOICE { x INTEGER (0..255), ... }
+      D  ::= SEQUENCE { a INTEGER (0..255), ..., c INTEGER (0..255) OPTIONAL,
+                        d INTEGER (0..255) DEFAULT 3 }
     END"""
     return compile_module(source, "t.asn1").module.types
 
@@ -389,6 +391,44 @@ def test_an_extension_bit_with_no_addition_in_the_bitmap_is_refused():
                 raise AssertionError(f"{octets} decoded under {rules}")
             except Asn1Error:
                 pass
+
+
+def _refused_under(kind, octets: str, rules) -> str:
+    try:
+        decode_oer(kind, bytes.fromhex(octets), rules=rules)
+    except Asn1Error as error:
+        return str(error)
+    raise AssertionError(f"{octets} decoded under {rules}")
+
+
+def test_canonical_oer_refuses_a_set_padding_bit_in_either_bitmap():
+    """§16.2.4 pads the root preamble with zero bits, and the additions' bitmap (§16.4) has
+    zero unused bits. A set one leaves every presence bit as it was, so under CANONICAL each
+    is a second spelling of one value: the C plan decoder reports the preamble's as
+    non-canonical and the generated codecs refuse it, while this rail accepted both. BASIC
+    still reads them, as the plan decoder does."""
+    t = _extensible_types()
+    cases = [
+        (t["S2"], "800506", "810506", {"a": 5, "b": 6}),  # the root preamble's padding
+        (t["Y"], "80010206800102", "80010206810102", {"a": 1, "c": 2}),  # the bitmap's
+    ]
+    for kind, good, bad, value in cases:
+        assert decode_oer(kind, bytes.fromhex(good), rules=OerRules.CANONICAL) == value
+        assert "not zero" in _refused_under(kind, bad, OerRules.CANONICAL)
+        assert decode_oer(kind, bytes.fromhex(bad), rules=OerRules.BASIC) == value
+
+
+def test_canonical_oer_refuses_a_present_addition_equal_to_its_default():
+    """§31.9 for an extension addition as for a root component: the encoder leaves one equal
+    to its DEFAULT out, so a peer that sends it anyway spells the same value a second way."""
+    kind = _extensible_types()["D"]
+    assert encode_oer(kind, {"a": 1, "d": 3}) == encode_oer(kind, {"a": 1}) == bytes.fromhex("0001")
+    explicit = "80010206400103"  # the bitmap names d, and d's open type holds its DEFAULT, 3
+    assert "DEFAULT" in _refused_under(kind, explicit, OerRules.CANONICAL)
+    assert decode_oer(kind, bytes.fromhex(explicit), rules=OerRules.BASIC) == {"a": 1, "d": 3}
+    other = encode_oer(kind, {"a": 1, "d": 4})
+    assert other.hex() == "80010206400104"
+    assert decode_oer(kind, other, rules=OerRules.CANONICAL) == {"a": 1, "d": 4}
 
 
 # --- §17 SEQUENCE OF quantity field -----------------------------------------------------

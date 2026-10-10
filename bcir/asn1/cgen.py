@@ -36,9 +36,10 @@ memory, and a difference in their cost is a difference of encoding rule -- never
   struct has a finite size.
 
 **No heap.** A decoder takes a caller's arena (`prefix_arena`, a bump allocator over caller
-memory) for the three things that need storage beyond the struct -- SEQUENCE OF elements,
-recursion targets, and UPER's unaligned strings -- and never calls an allocator. Running out
-is a status, not a crash. Recursion is bounded by `PREFIX_MAX_DEPTH`.
+memory, which may start at any address) for the three things that need storage beyond the
+struct -- SEQUENCE OF elements, recursion targets, and UPER's unaligned strings -- and never
+calls an allocator. Running out is a status, not a crash. Recursion is bounded by
+`PREFIX_MAX_DEPTH`.
 
 **Total and canonical.** Every decoder is a trust-boundary decoder: every read is bounds-
 checked, every count is checked against what the input can hold before anything is allocated,
@@ -67,6 +68,7 @@ The rules:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from .tags import Asn1Error, Universal
@@ -396,7 +398,8 @@ static void *P_alloc(P_arena *a, size_t count, size_t size, size_t align) {
   size_t at, bytes;
   if (count != 0 && size > (SIZE_MAX / count)) return NULL;
   bytes = count * size;
-  at = (a->used + (align - 1u)) & ~(align - 1u);
+  /* Aligned as an ADDRESS: the arena is caller memory, which may start at any octet. */
+  at = a->used + (size_t)(((uintptr_t)0 - ((uintptr_t)a->base + a->used)) & (align - 1u));
   if (at < a->used || at > a->cap || bytes > a->cap - at) return NULL;
   a->used = at + bytes;
   return a->base + at;
@@ -923,7 +926,9 @@ class _Emitter:
         return (
             f"static int {self.fn('enc', c)}({self.W} *win, const {self.P}{c.cname} *v, "
             f"unsigned depth) {{\n"
-            f"  int st = P_OK;\n  {self.W} ws = *win;\n  {self.W} *w = &ws;\n  (void)depth;\n{body}"
+            f"  int st = P_OK;\n  {self.W} ws = *win;\n  {self.W} *w = &ws;\n  (void)depth;\n"
+            + _unused("w", body)
+            + body
             + "".join(f"  win->{f} = ws.{f};\n" for f in self._mutable("enc"))
             + "  return st;\n}\n"
         )
@@ -934,7 +939,9 @@ class _Emitter:
             f"static int {self.fn('dec', c)}({self.R} *rin, {self.P}{c.cname} *v, "
             f"{self.P}arena *a, unsigned depth) {{\n"
             f"  int st = P_OK;\n  {self.R} rs = *rin;\n  {self.R} *r = &rs;\n"
-            f"  (void)a; (void)depth;\n{body}"
+            f"  (void)a; (void)depth;\n"
+            + _unused("r", body)
+            + body
             + "".join(f"  rin->{f} = rs.{f};\n" for f in self._mutable("dec"))
             + "  return st;\n}\n"
         )
@@ -986,12 +993,15 @@ class _Emitter:
                     out.append(f"  w->p[{k}] = (uint8_t)({' | '.join(parts)});\n")
                 out.append(f"  w->p += {n};\n")
             else:  # X.691 19.1-19.2: the extension bit, then one bit per OPTIONAL
-                expr = " | ".join(
-                    f"((uint64_t){b} << {len(bits) - 1 - i})" for i, b in enumerate(bits)
-                )
-                out.append(
-                    f"  st = P_put(w, {expr}, {len(bits)}u);\n  if (st != P_OK) return st;\n"
-                )
+                # In pieces P_put can carry: a type with more OPTIONAL components than that has
+                # a preamble wider than one call's 57 bits.
+                for chunk in _bit_chunks(bits):
+                    expr = " | ".join(
+                        f"((uint64_t){b} << {len(chunk) - 1 - i})" for i, b in enumerate(chunk)
+                    )
+                    out.append(
+                        f"  st = P_put(w, {expr}, {len(chunk)}u);\n  if (st != P_OK) return st;\n"
+                    )
         for m in c.members:
             code = self._enc_member(m, f"v->{m.field}")
             if m.optional:
@@ -1028,20 +1038,21 @@ class _Emitter:
                     out.append(f"  if (r->p[{n - 1}] & {(1 << pad) - 1}u) return P_E_MALFORMED;\n")
                 out.append(f"  r->p += {n};\n")
             else:
-                t = self.t()
-                out.append(
-                    f"  {{\n    uint64_t {t};\n    st = P_get(r, {len(bits)}u, &{t});\n"
-                    f"    if (st != P_OK) return st;\n"
-                )
-                for i, m in enumerate(bits):
-                    test = f"({t} >> {len(bits) - 1 - i}) & 1u"
-                    if m is None:
-                        out.append(
-                            f"    if ({test}) return P_E_LIMIT; /* additions: not built */\n"
-                        )
-                    else:
-                        out.append(f"    v->has_{m.field} = (uint8_t)({test});\n")
-                out.append("  }\n")
+                for chunk in _bit_chunks(bits):  # as the encoder writes it: P_get's 57 at a time
+                    t = self.t()
+                    out.append(
+                        f"  {{\n    uint64_t {t};\n    st = P_get(r, {len(chunk)}u, &{t});\n"
+                        f"    if (st != P_OK) return st;\n"
+                    )
+                    for i, m in enumerate(chunk):
+                        test = f"({t} >> {len(chunk) - 1 - i}) & 1u"
+                        if m is None:
+                            out.append(
+                                f"    if ({test}) return P_E_LIMIT; /* additions: not built */\n"
+                            )
+                        else:
+                            out.append(f"    v->has_{m.field} = (uint8_t)({test});\n")
+                    out.append("  }\n")
         for m in c.members:
             code = self._dec_member(m, f"v->{m.field}")
             if m.optional:
@@ -1214,29 +1225,80 @@ class _Emitter:
         elem = self._ctype_decl(c.element)
         out = ["  size_t i;\n"]
         if isinstance(self.rule, ByteRule):
-            # The count is not on the wire: decode into a growing arena array until the
-            # vector's octets are used up exactly. The elements read through `sub`, a reader
-            # over exactly the vector's octets, so no element can run past the vector.
+            # The count is not on the wire: a vector gives its length in OCTETS. When every
+            # element has one size the count is a division and the array is allocated once,
+            # exactly. Otherwise the array starts at four slots and doubles as the elements
+            # decode -- IN PLACE while it is still the arena's last allocation (its elements
+            # allocated nothing), moved to a fresh one only when they did. It used to move at
+            # every doubling, abandoning each outgrown copy, so a long vector took about four
+            # times its own size and ran out of arena well before the arena was full.
+            #
+            # This is the time-optimal spelling, and the arena it reserves is more than the
+            # structs need: the capacity a short vector leaves unused stays reserved, since
+            # giving it back costs a compare and a store per vector -- 4-10% of the whole
+            # decode's instructions on these envelopes, by callgrind -- and counting the
+            # elements first (one pass over each vector before decoding it) sizes every array
+            # exactly but measured 1.5-1.8x the decode's time. V1.1.1 has no count to size
+            # an array by; the study reports both the arena this decoder reserves and what the
+            # same structs need (`docs/research/BCIR_ITS_ASN1_BINARY_STUDY.md` §5). The
+            # elements read through `sub`, a reader over exactly the vector's octets, so no
+            # element can run past the vector.
+            if self._min_bits(c.element) == 0:
+                raise Asn1Error(
+                    f"cgen: {c.cname}'s element can encode in zero octets, so {self.rname} "
+                    f"cannot count its vector; this compiler refuses it"
+                )
+            size = self._byte_size(c.element)
             out.append(
-                "  {\n    uint64_t body_len;\n    P_br sub;\n    size_t cap = 4u;\n"
-                f"    {elem} *items;\n"
+                "  {\n    uint64_t body_len;\n    P_br sub;\n"
                 "    st = P_get_intx(r, &body_len);\n    if (st != P_OK) return st;\n"
                 "    if (body_len > (uint64_t)(r->end - r->p)) return P_E_TRUNC;\n"
                 "    sub.p = r->p; sub.end = r->p + (size_t)body_len;\n"
-                f"    items = ({elem} *)P_alloc(a, cap, sizeof({elem}), _Alignof({elem}));\n"
-                "    if (items == NULL) return P_E_LIMIT;\n"
-                "    v->n = 0u;\n"
-                "    while (sub.p != sub.end) {\n"
-                "      if (v->n == cap) {\n"
-                f"        {elem} *grown = ({elem} *)P_alloc(a, 2u * cap, sizeof({elem}), "
+            )
+            if size is not None:
+                out.append(
+                    f"    size_t n;\n    if (body_len % {size}u != 0u) return P_E_MALFORMED;\n"
+                    f"    n = (size_t)(body_len / {size}u);\n"
+                )
+                if low:  # the SIZE bounds, on the count, before anything is allocated for it
+                    out.append(f"    if (n < {low}u) return P_E_MALFORMED;\n")
+                if high is not None:
+                    out.append(f"    if (n > {high}u) return P_E_MALFORMED;\n")
+                out.append(
+                    "    v->n = n;\n    v->v = NULL;\n    if (n) {\n"
+                    f"      v->v = ({elem} *)P_alloc(a, n, sizeof({elem}), _Alignof({elem}));\n"
+                    "      if (v->v == NULL) return P_E_LIMIT;\n    }\n"
+                    "    for (i = 0; i < n; i++) {\n"
+                    "      P_br *r = &sub; /* the element reads the vector, not past it */\n"
+                    + _indent(_indent(self._in_sub_member(c.element, "v->v[i]")))
+                    + "    }\n    r->p = sub.end;\n  }\n"
+                )
+                return "".join(out)
+            # The array is the arena's last allocation exactly when its end is the arena's fill;
+            # the test reads only what the loop already holds, so the loop is unchanged by it.
+            out.append(
+                "    {\n      size_t cap = 4u;\n"
+                f"      {elem} *items = ({elem} *)P_alloc(a, cap, sizeof({elem}), "
                 f"_Alignof({elem}));\n"
-                "        if (grown == NULL) return P_E_LIMIT;\n"
-                f"        memcpy(grown, items, cap * sizeof({elem}));\n"
-                "        items = grown;\n        cap *= 2u;\n      }\n"
-                "      {\n        P_br *r = &sub; /* the element reads the vector, not past it */\n"
+                "      if (items == NULL) return P_E_LIMIT;\n"
+                "      v->n = 0u;\n"
+                "      while (sub.p != sub.end) {\n"
+                "        if (v->n == cap) {\n"
+                "          if ((uint8_t *)(items + cap) == a->base + a->used &&\n"
+                f"              (a->cap - a->used) / sizeof({elem}) >= cap) {{\n"
+                f"            a->used += cap * sizeof({elem}); /* in place */\n"
+                "          } else {\n"
+                f"            {elem} *grown = ({elem} *)P_alloc(a, 2u * cap, sizeof({elem}), "
+                f"_Alignof({elem}));\n"
+                "            if (grown == NULL) return P_E_LIMIT;\n"
+                f"            memcpy(grown, items, cap * sizeof({elem}));\n"
+                "            items = grown;\n          }\n"
+                "          cap *= 2u;\n        }\n"
+                "        {\n          P_br *r = &sub; /* the element reads the vector, not past it */\n"
                 + _indent(_indent(_indent(_indent(self._in_sub_member(c.element, "items[v->n]")))))
-                + "      }\n      v->n++;\n    }\n"
-                "    v->v = items;\n    r->p = sub.end;\n  }\n"
+                + "        }\n        v->n++;\n      }\n"
+                "      v->v = items;\n    }\n"
+                "    r->p = sub.end;\n  }\n"
             )
             if low:
                 out.append(f"  if (v->n < {low}u) return P_E_MALFORMED;\n")
@@ -1258,15 +1320,18 @@ class _Emitter:
             out.append(f"  if (v->n < {low}u) return P_E_MALFORMED;\n")
         if high is not None:
             out.append(f"  if (v->n > {high}u) return P_E_MALFORMED;\n")
-        # A hostile count must not reserve arena memory the input cannot fill: each element
-        # occupies at least one bit (UPER) or one octet (COER) -- unless it is empty, which
-        # these schemas never are (an empty element type is refused at generation time).
+        # A hostile count must not reserve arena memory the input cannot fill. An element of at
+        # least one bit (UPER) or one octet (COER) bounds the count by the input left. One that
+        # can encode in no bits bounds nothing -- ten empty elements are a valid encoding of a
+        # count of ten -- so only the SIZE upper bound checked above can, and without one the
+        # type is refused at generation time.
         if self._min_bits(c.element) == 0:
-            raise Asn1Error(
-                f"cgen: {c.cname}'s element can encode in zero bits, so a count "
-                f"is not bounded by the input; this compiler refuses it"
-            )
-        if self.rule == COER:
+            if high is None:
+                raise Asn1Error(
+                    f"cgen: {c.cname}'s element can encode in zero bits, so a count "
+                    f"is not bounded by the input; this compiler refuses it"
+                )
+        elif self.rule == COER:
             out.append("  if (v->n > (size_t)(r->end - r->p)) return P_E_TRUNC;\n")
         else:
             out.append("  if (v->n > r->len - r->pos) return P_E_TRUNC;\n")
@@ -1287,24 +1352,62 @@ class _Emitter:
         finally:
             self._in_sub = False
 
+    def _byte_size(self, m: CMember):
+        """The octets every encoding of `m` takes under the byte rule, or None when it varies --
+        a vector of such elements is counted by division, with no pass at all."""
+        k = m.kind
+        if m.pointer:
+            return None  # a recursive reference: no fixed size
+        if k.kind == "octfix":
+            return k.size
+        if k.kind == "enum":
+            return 1
+        if k.kind == "null":
+            return 0
+        if k.kind == "int":
+            return _byte_rule_width(k)
+        if k.kind == "seq":
+            sizes = [self._byte_size(x) for x in k.members]
+            return None if any(s is None for s in sizes) else sum(sizes)
+        return None  # a CHOICE's alternatives and a vector's length vary
+
     def _min_bits(self, m: CMember) -> int:
-        """A lower bound on an encoding's size, enough to say whether it can be empty."""
+        """A lower bound on the bits of any encoding of `m` under this rule, and zero EXACTLY
+        when some value of it encodes in no bits at all -- the one fact a count's bound turns
+        on. UPER spells several such values: a single-value INTEGER, a one-enumerator
+        ENUMERATED, a one-alternative CHOICE of one, a SIZE-fixed count of them (13.2.1, 14.2,
+        23.4, 20.5). This used to answer 1 for every one of those, so a SEQUENCE OF them
+        refused its own valid encodings as truncated."""
+        from .per import _size_bounds, _value_bounds
+
         k = m.kind
         if m.pointer:
             return self._min_bits(CMember(m.name, k))
         if k.kind == "null":
             return 0
-        if k.kind in ("octfix",):
+        if k.kind == "octfix":
             return 8 * k.size
         if k.kind == "seq":
-            if self.rule == COER and (k.extensible or any(x.optional for x in k.members)):
-                return 8
-            if self.rule == UPER and (k.extensible or any(x.optional for x in k.members)):
-                return 1
+            if k.extensible or any(x.optional for x in k.members):
+                return 1 if self.rule == UPER else 8  # the preamble
             return sum(self._min_bits(x) for x in k.members if not x.optional)
+        if self.rule != UPER:
+            return 8  # octet-aligned: a tag, a type code, a length or the value's own octet
+        if k.kind == "int":
+            (low, high), ext = _value_bounds(k.asn1)
+            return 0 if not ext and low is not None and low == high else 1
+        if k.kind == "enum":
+            return 0 if len(k.asn1.enumeration) == 1 and not k.extensible else 1
         if k.kind == "choice":
-            return 1  # a tag octet, a type code, or an index/extension bit (n > 1 or ext)
-        return 1
+            if len(k.members) == 1 and not k.extensible:
+                return self._min_bits(k.members[0])
+            return 1
+        if k.kind in ("octvar", "seqof"):
+            low, high, ext = _size_bounds(k.asn1)
+            if not ext and high is not None and low == high:  # no length on the wire
+                return 8 * low if k.kind == "octvar" else low * self._min_bits(k.element)
+            return 1
+        return 1  # BOOLEAN
 
     # PER length helpers -----------------------------------------------------------------------
 
@@ -1486,18 +1589,23 @@ class _Emitter:
                     + _indent(self._int_check(k, t, "P_E_MALFORMED"))
                     + f"    {lv} = {t};\n  }}\n"
                 )
+            # The value constraint is checked on the way in exactly as on the way out: a decoder
+            # that accepted what its own encoder refuses would hand the caller a value no
+            # canonical encoding of the type carries (`_int_check`'s one spelling, both ways).
             if signed:
                 return (
                     f"  {{\n    int64_t {t};\n    st = P_oer_get_svar(r, &{t});\n"
                     f"    if (st != P_OK) return st;\n"
                     + _indent(self._int_range_from(k, t, signed=True))
                     + f"    {lv} = ({k.ctype}){t};\n  }}\n"
+                    + self._int_check(k, lv, "P_E_MALFORMED")
                 )
             return (
                 f"  {{\n    uint64_t {t};\n    st = P_oer_get_uvar(r, &{t});\n"
                 f"    if (st != P_OK) return st;\n"
                 + _indent(self._int_range_from(k, t, signed=False))
                 + f"    {lv} = ({k.ctype}){t};\n  }}\n"
+                + self._int_check(k, lv, "P_E_MALFORMED")
             )
         raise Asn1Error(f"cgen: no COER decoding for {k.kind}")  # pragma: no cover
 
@@ -1539,7 +1647,7 @@ class _Emitter:
             out = []
             if ext:  # 13.1: one bit, then the root form inside the root, unconstrained outside
                 out.append(
-                    f"  if ((int64_t){lv} >= {low} && (int64_t){lv} <= {high}) {{\n"
+                    f"  if ({_root_test(f'(int64_t){lv}', low, high, k)}) {{\n"
                     f"    st = P_put(w, 0u, 1u);\n    if (st != P_OK) return st;\n"
                     + _indent(self._per_int_root(lv, low, high))
                     + f"  }} else {{\n    st = P_put(w, 1u, 1u);\n"
@@ -1622,7 +1730,7 @@ class _Emitter:
                     + f"    }} else {{\n      int64_t {t};\n"
                     f"      st = P_get_svar(r, &{t});\n      if (st != P_OK) return st;\n"
                     f"      /* inside the root a value MUST take the root form */\n"
-                    f"      if ({t} >= {low} && {t} <= {high}) return P_E_MALFORMED;\n"
+                    f"      if ({_root_test(t, low, high, k)}) return P_E_MALFORMED;\n"
                     f"      {lv} = ({k.ctype}){t};\n    }}\n  }}\n"
                 )
             return self._per_int_root_dec(k, lv, low, high)
@@ -1646,16 +1754,21 @@ class _Emitter:
                 f"    if (st != P_OK) return st;\n{check}"
                 f"    {lv} = ({k.ctype})({t} + (uint64_t)({_c_int(low)}));\n  }}\n"
             )
+        # A semi-constrained or unconstrained root form carries no upper bound on the wire (13.2.5,
+        # 13.2.4: `(MIN..10)` is unconstrained in PER), so the type's own bounds are checked
+        # after the read, as the encoder checks them before the write.
         if low is not None:
             return (
                 f"  {{\n    uint64_t {t};\n    st = P_get_uvar(r, &{t});\n"
                 f"    if (st != P_OK) return st;\n"
                 + _indent(self._int_range_from(k, t, signed=False, offset=low))
                 + f"    {lv} = ({k.ctype})({t} + (uint64_t)({_c_int(low)}));\n  }}\n"
+                + self._int_check(k, lv, "P_E_MALFORMED")
             )
         return (
             f"  {{\n    int64_t {t};\n    st = P_get_svar(r, &{t});\n"
             f"    if (st != P_OK) return st;\n    {lv} = ({k.ctype}){t};\n  }}\n"
+            + self._int_check(k, lv, "P_E_MALFORMED")
         )
 
     # primitives: the byte rule ----------------------------------------------------------------
@@ -1671,7 +1784,8 @@ class _Emitter:
             )
         if k.kind == "octvar":
             return (
-                f"  if ({lv}.n != 0u && {lv}.p == NULL) return P_E_VALUE;\n"
+                self._size_check(k, lv, "P_E_VALUE")
+                + f"  if ({lv}.n != 0u && {lv}.p == NULL) return P_E_VALUE;\n"
                 f"  st = P_put_intx(w, (uint64_t){lv}.n);\n  if (st != P_OK) return st;\n"
                 f"  P_NEED(w, {lv}.n);\n  if ({lv}.n) memcpy(w->p, {lv}.p, {lv}.n);\n"
                 f"  w->p += {lv}.n;\n"
@@ -1679,7 +1793,10 @@ class _Emitter:
         if k.kind == "int":
             width = _byte_rule_width(k)
             if width is None:
-                return f"  st = P_put_intx(w, (uint64_t){lv});\n  if (st != P_OK) return st;\n"
+                return (
+                    self._int_check(k, lv)
+                    + f"  st = P_put_intx(w, (uint64_t){lv});\n  if (st != P_OK) return st;\n"
+                )
             return (
                 self._int_check(k, lv) + f"  P_NEED(w, {width});\n"
                 f"  P_store_be(w->p, (uint64_t){lv}, {width});\n  w->p += {width};\n"
@@ -1704,6 +1821,7 @@ class _Emitter:
                 f"    if (st != P_OK) return st;\n"
                 f"    if ({t} > (uint64_t)(r->end - r->p)) return P_E_TRUNC;\n"
                 f"    {lv}.p = r->p;\n    {lv}.n = (size_t){t};\n    r->p += {lv}.n;\n  }}\n"
+                + self._size_check(k, lv, "P_E_MALFORMED")
             )
         if k.kind == "int":
             width = _byte_rule_width(k)
@@ -1711,6 +1829,7 @@ class _Emitter:
                 return (
                     f"  {{\n    uint64_t {t};\n    st = P_get_intx(r, &{t});\n"
                     f"    if (st != P_OK) return st;\n    {lv} = ({k.ctype}){t};\n  }}\n"
+                    + self._int_check(k, lv, "P_E_MALFORMED")
                 )
             load = f"P_load_be(r->p, {width})"
             if k.signed:
@@ -1719,7 +1838,10 @@ class _Emitter:
                     f"(int64_t)(({load} ^ ((uint64_t)1 << {bits - 1})) - "
                     f"((uint64_t)1 << {bits - 1}))"
                 )
-            return f"  P_HAVE(r, {width});\n  {lv} = ({k.ctype}){load};\n  r->p += {width};\n"
+            return (
+                f"  P_HAVE(r, {width});\n  {lv} = ({k.ctype}){load};\n  r->p += {width};\n"
+                + self._int_check(k, lv, "P_E_MALFORMED")
+            )
         raise Asn1Error(f"cgen: {self.rname} has no decoding for {k.kind}")
 
     # checks -----------------------------------------------------------------------------------
@@ -1824,6 +1946,44 @@ def _c_int(value: int) -> str:
     if value < 0:
         return f"({value}LL)"
     return f"{value}ULL" if value > (1 << 63) - 1 else f"{value}LL"
+
+
+def _unused(name: str, body: str) -> str:
+    """`(void)name;` when `body` never names the cursor pointer `name` -- a SEQUENCE whose every
+    member is constructed reaches its cursor only through the calls' write-back, and an unused
+    local is an error under the -Wall -Wextra -Werror these files are held to."""
+    return "" if re.search(rf"\b{name}\b", body) else f"  (void){name};\n"
+
+
+#: The most bits one P_put or P_get carries: a 64-bit word less the 7 a cursor can already sit
+#: into its octet.
+_BITS_PER_CALL = 57
+
+
+def _bit_chunks(bits: list) -> list[list]:
+    """`bits`, in order, cut into the runs one P_put or P_get carries."""
+    return [bits[i : i + _BITS_PER_CALL] for i in range(0, len(bits), _BITS_PER_CALL)]
+
+
+def _root_test(var: str, low, high, k: "CType") -> str:
+    """The C test that `var`, an `int64_t`, lies in an extensible INTEGER's root (X.691 13.1).
+
+    Either bound may be absent -- `(0..MAX, ...)` has no upper one -- and is then no test at
+    all; a root with neither is every value. The C type of an extensible INTEGER is `int64_t`
+    (its extension can reach past any root), so a root bound outside it has no C spelling the
+    comparison could use, and the type is refused rather than compared through a conversion."""
+    for bound in (low, high):
+        if bound is not None and not -(1 << 63) <= bound <= (1 << 63) - 1:
+            raise Asn1Error(
+                f"cgen: {k.cname or 'an extensible INTEGER'}'s root bound {bound} is outside "
+                f"int64_t, the C type an extensible INTEGER is carried in"
+            )
+    tests = []
+    if low is not None:
+        tests.append(f"{var} >= {low if low > -(1 << 63) else _c_int(low)}")
+    if high is not None:
+        tests.append(f"{var} <= {high}")
+    return " && ".join(tests) if tests else "1"
 
 
 def _indent(code: str) -> str:
@@ -2137,7 +2297,6 @@ def _used_helpers(library: str, code: str) -> str:
     whenever any kept chunk names them, so a file that never decodes UPER carries no bit
     reader at all, and `-Wunused-function` has nothing to say about what remains. A chunk that
     defines nothing (an include, a banner comment) is always kept."""
-    import re
 
     chunks: list[str] = []
     current: list[str] = []
@@ -2202,7 +2361,6 @@ def current_is_open(lines: list[str]) -> bool:
 
 
 def _rename_helpers(text: str, prefix: str, up: str) -> str:
-    import re
 
     # Every macro the library spells `P_UPPER` (statuses, bounds, P_HOT, the byte-swap words)
     # takes the upper-case prefix, every function and type the lower-case one: nothing the
