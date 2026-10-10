@@ -116,19 +116,25 @@ class Component:
     #: Only PER and OER see the bracket; to every other rule, and to the value, its members
     #: are components of the enclosing type (`flat_components`).
     group: tuple["Component", ...] | None = None
-    #: For a bracket: its members as components of the enclosing type (`flat_components`),
-    #: made once from `group`, so a type's flat view is the same objects on every call.
+    #: How this component reads in its enclosing type's value where that is not as written
+    #: (`flat_components`): a bracket's members as components of the enclosing type, or an
+    #: extension addition that is mandatory as written as an OPTIONAL stand-in
+    #: (`may_be_absent`). Made once, so a type's flat view is the same objects on every call.
     flat: tuple["Component", ...] | None = field(
         default=None, init=False, repr=False, compare=False
     )
-    #: For one of a bracket's `flat` members that is a copy: the member of `group` it was made
-    #: from. That member is the one a schema names, so it is the object an encoding instruction
-    #: on it is filed under (`jer.JerInstructions` files them by identity).
+    #: For a stand-in in some component's `flat`: the component it stands for, a bracket's
+    #: member or the addition itself. That is the one a schema names, so it is the object an
+    #: encoding instruction on it is filed under (`jer.JerInstructions` files them by identity).
     origin: "Component | None" = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.group is not None:
-            object.__setattr__(self, "flat", tuple(_as_component(m) for m in self.group))
+            flat = tuple(_as_component(m, member=True) for m in self.group)
+        else:
+            view = _as_component(self)
+            flat = None if view is self else (view,)
+        object.__setattr__(self, "flat", flat)
 
     @property
     def has_default(self) -> bool:
@@ -187,38 +193,56 @@ def flat_components(components: tuple[Component, ...]) -> tuple[Component, ...]:
     §8.9.2, §8.11.2), as asn1tools 0.169.0 and pycrate 0.8.1 do; only PER and OER wrap a bracket
     into one open type (X.691 §19.9, X.696 §16.5), which they read from `Component.group`.
 
-    Each member is listed as the enclosing type sees it (`_as_component`): an extension
-    addition, which is where JER's ARRAY (X.697 §27.2.1) and canonical XER's SET (X.693 §9.6.2)
-    put it, and OPTIONAL when it is mandatory inside the bracket, because the bracket itself
-    may be absent; `bracket_violation` holds a present bracket to its mandatory members. The
-    list is made once per bracket (`Component.flat`), so every call returns the same objects,
-    and a copy leads back to its member (`Component.origin`).
+    Each component is listed as the enclosing type's value sees it (`_as_component`). A
+    bracket's member is an extension addition, which is where JER's ARRAY (X.697 §27.2.1) and
+    canonical XER's SET (X.693 §9.6.2) put it. Every extension addition that is mandatory as
+    written -- a bracket's member or not -- is OPTIONAL here, because a value of an earlier
+    version lacks it (`may_be_absent`); `bracket_violation` holds a present bracket to its
+    mandatory members. The view is made once per component (`Component.flat`), so every call
+    returns the same objects, and a copy leads back to the component it stands for
+    (`Component.origin`).
 
     The one predicate for this: JER, XER and BER/DER each had a copy of it, or none -- the
     typed BER/DER rail encoded a bracket as a nested SEQUENCE and refused its members by name,
     and JER's and XER's copies dropped the bracket's optionality and the members' place among
     the additions, so a value without a bracket holding a mandatory member was refused there
-    and accepted by PER and OER. A list without a bracket is returned as it is."""
-    if all(comp.group is None for comp in components):
+    and accepted by PER and OER; and all three refused a value without a mandatory addition
+    outside any bracket, which PER and OER carry. A list that reads as written is returned as
+    it is."""
+    if all(comp.flat is None for comp in components):
         return components
     out: list[Component] = []
     for comp in components:
-        if comp.group is None:
+        if comp.flat is None:
             out.append(comp)
         else:
             out.extend(comp.flat)
     return tuple(out)
 
 
-def _as_component(member: Component) -> Component:
-    """A bracket's member as a component of the enclosing type. X.680 §25.1 lists a bracket
-    among the ExtensionAdditions, so the member is an extension addition wherever it sits, and
-    one that is neither OPTIONAL nor DEFAULT is OPTIONAL here (see `flat_components`). A member
-    that already reads so is returned as it is; any other is a copy whose `origin` is it."""
-    required = not (member.optional or member.has_default)
-    if member.extension and not required:
-        return member
-    return replace(member, extension=True, optional=member.optional or required, origin=member)
+def may_be_absent(comp: Component, *, member: bool = False) -> bool:
+    """Whether a SEQUENCE or SET value may lack `comp` -- the one predicate every rule reads,
+    through `flat_components`. An OPTIONAL or DEFAULT component may be absent, and so may an
+    extension addition, mandatory or not, a version bracket's `member` included: a value
+    without it is a value of an earlier version of the type, which X.691 §19.8 and X.696 §16.4
+    carry with one presence bit per addition, so every rule encodes and decodes it
+    (docs/BCIR_LANGREF.md §17.3). Each addition is judged on its own, as those bits are; a
+    bracket is one addition, absent whole or present with its mandatory members
+    (`bracket_violation`). A mandatory root component may not be absent."""
+    return comp.optional or comp.has_default or comp.extension or member
+
+
+def _as_component(comp: Component, *, member: bool = False) -> Component:
+    """`comp` as a component of its enclosing type's value. A bracket's `member` is an extension
+    addition there (X.680 §25.1 lists a bracket among the ExtensionAdditions), and a component
+    that may be absent (`may_be_absent`) but is neither OPTIONAL nor DEFAULT as written is
+    OPTIONAL there. A component that already reads so is returned as it is; any other is a copy
+    whose `origin` is it."""
+    extension = comp.extension or member
+    optional = comp.optional or (may_be_absent(comp, member=member) and not comp.has_default)
+    if extension == comp.extension and optional == comp.optional:
+        return comp
+    return replace(comp, extension=extension, optional=optional, origin=comp)
 
 
 def bracket_violation(kind_name: str, components: tuple[Component, ...], value) -> str | None:

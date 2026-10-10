@@ -1332,6 +1332,33 @@ together, is the question a verifier asks (`Extensible.known`), never an encoder
 (`Extensible.permits` admits every value of the parent type). Serial application drops both
 halves (X.680 §50.11, `without_extension`).
 
+**An extension addition may be absent, mandatory or not.** A value of `SEQUENCE { a INTEGER,
+..., b INTEGER }` without `b` is a value of the version before `b` was added. X.691 §19.8 and
+X.696 §16.4 give each extension addition its own presence bit, so PER and OER carry that
+absence, and every rule now carries the same value set, encoding and decoding alike:
+
+- the typed BER/DER rail, JER and XER encode only what is present and read a value without the
+  addition (X.690 §8.9, X.697 §27, and for XER the XML value notation of X.680 §25.20);
+- each addition is judged on its own, as its presence bit is: `{a, c}` for
+  `SEQUENCE { a, ..., b INTEGER, c INTEGER OPTIONAL }` keeps `c` without the mandatory `b`
+  before it;
+- a version bracket is one addition, absent whole or present with its mandatory members
+  (X.691 §19.9; `schema.bracket_violation`);
+- a mandatory root component stays mandatory on every rule.
+
+One predicate decides it, `schema.may_be_absent`, read through `schema.flat_components`. In the
+flattened view, an addition that is mandatory as written becomes an OPTIONAL stand-in that
+leads back to the component itself (`Component.origin`), so JER's encoding instructions still
+reach it. Refusing such a value at encode time was the alternative, and it is refused for the
+constraints' reason: a relay that decoded an earlier version's value from a PER or OER peer
+must re-encode it under DER, JER or XER.
+
+The independent codecs agree on the decoders. pycrate 0.8.1 takes this posture on every rule,
+and asn1tools 0.169.0 decodes it on every rule and encodes it under BER, DER, PER and OER.
+asn1tools differs in two places: its JER and XER encoders refuse the value, and its binary
+encoders silently drop an addition that follows an absent mandatory one, a loss BCIR does not
+copy.
+
 ### 17.4 X.692 ECN — all three parts
 
 ECN is where an encoding stops being a fixed rule and becomes a **specification with its own

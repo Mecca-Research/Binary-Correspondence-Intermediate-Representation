@@ -693,6 +693,97 @@ def test_a_bracket_member_separates_no_unwrapped_alternatives():
         assert "19.2.3" in str(error) and "['first', 'second']" in str(error), error
 
 
+_MANDATORY_ADDITIONS = """T DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+  N  ::= SEQUENCE { a INTEGER (0..255), ..., b INTEGER (0..255) }
+  NC ::= SEQUENCE { a INTEGER (0..255), ..., b INTEGER (0..255), c INTEGER (0..255) OPTIONAL }
+  NS ::= SET { a INTEGER (0..255), ..., b INTEGER (0..255) }
+END"""
+
+#: Values without the mandatory addition `b`, as two independent codecs encode them. pycrate
+#: 0.8.1 writes every row; asn1tools 0.169.0 writes the rows without `c` and, given `c`, drops it
+#: without a word -- an addition after an absent mandatory one -- which this rail does not copy.
+#: (type, value, rail, octets)
+_WITHOUT_B = (
+    ("N", {"a": 1}, "typed/DER", "3003800101"),
+    ("NS", {"a": 1}, "typed/DER", "3103800101"),
+    ("NC", {"a": 1, "c": 3}, "typed/DER", "3006800101820103"),
+    ("N", {"a": 1}, "PER/UNALIGNED/BASIC", "0080"),
+    ("NS", {"a": 1}, "PER/UNALIGNED/BASIC", "0080"),
+    ("NC", {"a": 1, "c": 3}, "PER/UNALIGNED/BASIC", "80814040c0"),
+    ("N", {"a": 1}, "PER/ALIGNED/BASIC", "0001"),
+    ("NC", {"a": 1, "c": 3}, "PER/ALIGNED/BASIC", "800102800103"),
+    ("N", {"a": 1}, "OER/BASIC", "0001"),
+    ("NS", {"a": 1}, "OER/BASIC", "0001"),
+    ("NC", {"a": 1, "c": 3}, "OER/BASIC", "80010206400103"),
+)
+
+
+def test_a_value_without_a_mandatory_addition_is_a_value_on_every_rule():
+    """A value of an extensible type without one of its extension additions is a value of an
+    earlier version -- mandatory or not, the addition was not there yet -- and X.691 §19.8 and
+    X.696 §16.4 carry its absence, one presence bit per addition (LangRef §17.3). PER and OER
+    read and wrote such values; the typed BER/DER rail, JER and XER refused them both ways
+    ("component 'b' is mandatory"), so a relay that decoded `N` from a PER peer could not
+    re-encode it under DER. Every rule now carries `N` without `b`, the SET `NS` without it,
+    and `NC` with the later `c` but without `b`: each addition is judged on its own, as its
+    presence bit is. The octets are two independent codecs', not a round trip, and so are the
+    text spellings the decoders read. A root component stays mandatory on every rule."""
+    from bcir.asn1.jer import decode_jer
+    from bcir.asn1.xer import decode_xer
+    from bcir.frontends.asn1 import compile_module
+
+    t = compile_module(_MANDATORY_ADDITIONS, "t.asn1").module.types
+    rails = {name: (encode, decode) for name, encode, decode in _bracket_rails()}
+    values = (("N", {"a": 1}), ("N", {"a": 1, "b": 2}), ("NC", {"a": 1, "c": 3}), ("NS", {"a": 1}))
+    for name, (encode, decode) in rails.items():
+        for type_name, value in values:
+            got = decode(t[type_name], encode(t[type_name], value))
+            assert got == value, (name, type_name, value, got)
+        try:
+            encode(t["N"], {"b": 2})
+            raise AssertionError(f"{name}: N was encoded without its root component a")
+        except Asn1Error as error:
+            assert "'a'" in str(error), (name, error)
+    for type_name, value, rail, octets in _WITHOUT_B:
+        encode, decode = rails[rail]
+        assert encode(t[type_name], value).hex() == octets, (rail, type_name, value)
+        assert decode(t[type_name], bytes.fromhex(octets)) == value, (rail, type_name, octets)
+    # pycrate's JER and asn1tools' XER spellings of `N` without `b`.
+    assert decode_jer('{\n "a": 1\n}', t["N"]) == {"a": 1}
+    assert decode_jer('{\n "a": 1,\n "c": 3\n}', t["NC"]) == {"a": 1, "c": 3}
+    assert decode_xer(b"<N><a>1</a></N>", t["N"], name="N") == {"a": 1}
+
+
+def test_jer_carries_a_value_without_a_mandatory_addition_in_both_forms():
+    """X.697 §27.2.1's ARRAY writes an absent addition as `null`, and the canonical profile drops
+    the trailing ones (§27.2.2): `N` without `b` is `[1]`, `NC` without `b` is `[1,null,3]`. And
+    the flat view's OPTIONAL stand-in for `b` files a JER instruction under `b` itself
+    (`Component.origin`), so a NAME assigned to the component the schema holds still renames
+    the member."""
+    from bcir.asn1.jer import Array, JerInstructions, Name, decode_jer, encode_jer
+    from bcir.asn1.schema import flat_components
+    from bcir.frontends.asn1 import compile_module
+
+    t = compile_module(_MANDATORY_ADDITIONS, "t.asn1").module.types
+    rows = (
+        ("N", {"a": 1}, b"[1]", (b"[1]", b"[1,null]")),
+        ("N", {"a": 1, "b": 2}, b"[1,2]", (b"[1,2]",)),
+        ("NC", {"a": 1, "c": 3}, b"[1,null,3]", (b"[1,null,3]",)),
+    )
+    for name, value, octets, spellings in rows:
+        array = JerInstructions().assign(t[name], Array())
+        assert encode_jer(t[name], value, instructions=array) == octets, (name, value)
+        for text in spellings:
+            assert decode_jer(text, t[name], instructions=array) == value, (name, text)
+    b = t["N"].components[1]
+    stand_in = flat_components(t["N"].components)[1]
+    assert stand_in is not b and stand_in.origin is b and stand_in.optional and not b.optional
+    named = JerInstructions().assign(b, Name("bee"))
+    assert encode_jer(t["N"], {"a": 1, "b": 2}, instructions=named) == b'{"a":1,"bee":2}'
+    assert decode_jer(b'{"a":1,"bee":2}', t["N"], instructions=named) == {"a": 1, "b": 2}
+    assert encode_jer(t["N"], {"a": 1}, instructions=named) == b'{"a":1}'
+
+
 def test_canonical_oer_refuses_a_present_bracket_that_carries_nothing():
     """§16.5 and §31.9 for a version bracket: the encoder leaves out a bracket whose members are
     all absent or at their DEFAULT (`_supplied`), so a peer that sends one -- the bitmap naming

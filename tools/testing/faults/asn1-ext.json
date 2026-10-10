@@ -11,6 +11,8 @@
     "bcir.tests.test_asn1_oer:test_a_jer_instruction_on_a_bracket_member_reaches_it_through_the_flat_view",
     "bcir.tests.test_asn1_oer:test_a_bracket_member_is_an_extension_addition_on_jer_array_and_canonical_xer",
     "bcir.tests.test_asn1_oer:test_a_bracket_member_separates_no_unwrapped_alternatives",
+    "bcir.tests.test_asn1_oer:test_a_value_without_a_mandatory_addition_is_a_value_on_every_rule",
+    "bcir.tests.test_asn1_oer:test_jer_carries_a_value_without_a_mandatory_addition_in_both_forms",
     "bcir.tests.test_asn1_constraints:test_an_extensible_constraint_keeps_its_additional_set",
     "bcir.tests.test_asn1_constraints:test_every_rule_encodes_an_extensible_integer_as_if_its_additions_were_not_written",
     "bcir.tests.test_asn1_cgen:test_an_extensible_integers_additions_move_no_generated_octet",
@@ -49,8 +51,8 @@
       "label": "BK5 a bracket's mandatory member stays mandatory with its bracket absent",
       "expects": "test_a_bracket_is_absent_whole_or_present_with_its_mandatory_members_on_every_rule",
       "path": "bcir/asn1/schema.py",
-      "old": "    return replace(member, extension=True, optional=member.optional or required, origin=member)\n",
-      "new": "    return replace(member, extension=True, optional=member.optional, origin=member)\n"
+      "old": "    optional = comp.optional or (may_be_absent(comp, member=member) and not comp.has_default)\n",
+      "new": "    optional = comp.optional\n"
     },
     {
       "label": "BK6 a carried bracket is never held to its mandatory members",
@@ -140,8 +142,8 @@
       "label": "BK18 a bracket member keeps its own extension flag in the flat view",
       "expects": "test_a_bracket_member_is_an_extension_addition_on_jer_array_and_canonical_xer",
       "path": "bcir/asn1/schema.py",
-      "old": "    return replace(member, extension=True, optional=member.optional or required, origin=member)\n",
-      "new": "    return replace(member, extension=member.extension, optional=member.optional or required, origin=member)\n"
+      "old": "    extension = comp.extension or member\n",
+      "new": "    extension = comp.extension\n"
     },
     {
       "label": "BK19 JER's 19.2.3 reads a bracket's members with their declared optionality",
@@ -149,6 +151,27 @@
       "path": "bcir/asn1/jer.py",
       "old": "        for comp in _flatten(kind.components)\n        if not (comp.optional or comp.has_default)\n",
       "new": "        for comp in (m for c in kind.components for m in (c.group or (c,)))\n        if not (comp.optional or comp.has_default)\n"
+    },
+    {
+      "label": "MA1 a mandatory addition outside a bracket reads as written in the flat view",
+      "expects": "test_a_value_without_a_mandatory_addition_is_a_value_on_every_rule",
+      "path": "bcir/asn1/schema.py",
+      "old": "            view = _as_component(self)\n",
+      "new": "            view = self\n"
+    },
+    {
+      "label": "MA2 the predicate lets a mandatory root component be absent",
+      "expects": "test_a_value_without_a_mandatory_addition_is_a_value_on_every_rule",
+      "path": "bcir/asn1/schema.py",
+      "old": "    return comp.optional or comp.has_default or comp.extension or member\n",
+      "new": "    return True\n"
+    },
+    {
+      "label": "MA3 a stand-in files a JER instruction under itself, not its component",
+      "expects": "test_jer_carries_a_value_without_a_mandatory_addition_in_both_forms",
+      "path": "bcir/asn1/schema.py",
+      "old": "    return replace(comp, extension=extension, optional=optional, origin=comp)\n",
+      "new": "    return replace(comp, extension=extension, optional=optional, origin=None)\n"
     },
     {
       "label": "AD1 the constraint parser drops the additional set",
