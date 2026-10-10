@@ -126,6 +126,25 @@ bcir_oer_status bcir_oer_integer(const uint8_t *data, size_t len, size_t pos,
   return BCIR_OER_OK;
 }
 
+/* 31.2 and 31.4 for a variable-size integer bcir_oer_integer has already read at `pos`: its
+ * length determinant and its contents in the fewest octets. An unsigned number's first octet
+ * is zero only when it is the number's one octet; a signed number's is redundant when it is
+ * all sign bits and the next octet's top bit repeats them -- what the generated codecs'
+ * P_oer_get_uvar / P_oer_get_svar refuse and bcir/asn1/oer.py's CANONICAL decode refuses.
+ * Every octet named here was in bounds for the read that just succeeded. */
+static int var_integer_canonical(const uint8_t *data, size_t len, size_t pos, int is_signed) {
+  uint64_t count = 0;
+  size_t start = pos;
+  int length_canonical = 1;
+  if (bcir_oer_length(data, len, pos, &count, &start, &length_canonical, 0) != BCIR_OER_OK)
+    return 0;
+  if (!length_canonical) return 0;
+  if (count < 2) return 1;
+  if (!is_signed) return data[start] != 0;
+  return !((data[start] == 0x00u && (data[start + 1] & 0x80u) == 0) ||
+           (data[start] == 0xFFu && (data[start + 1] & 0x80u) != 0));
+}
+
 /* --- 16.2 the SEQUENCE preamble --------------------------------------------------------------- */
 
 bcir_oer_status bcir_oer_preamble(const uint8_t *data, size_t len, size_t pos,
@@ -271,6 +290,12 @@ bcir_oer_status bcir_oer_decode_sequence_ext(const uint8_t *data, size_t len, si
         st = bcir_oer_integer(data, len, pos, f->width, f->is_signed, &slot->integer,
                               &after, diag);
         if (st != BCIR_OER_OK) return st;
+        /* A fixed-width word has one spelling; the variable-size form has a length and
+         * contents a BASIC-OER peer may pad, which `canonical` must report like any other
+         * length determinant this decoder reads. */
+        if (canonical != 0 && f->width == 0 &&
+            !var_integer_canonical(data, len, pos, f->is_signed))
+          *canonical = 0;
         break;
       case BCIR_OER_FIXED_OCTETS:
         /* 14.1: a SIZE-fixed string carries no length determinant at all. */

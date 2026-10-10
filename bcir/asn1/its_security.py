@@ -80,8 +80,10 @@ def transcription_type(name: str = "SecuredMessage"):
 
 @cache
 def tmsao():
-    """The compiled `ITS-SecuredMessage-TMSAO` module: the same value space, field lists as
-    sets of OPTIONAL components (see the module's header and `to_tmsao`)."""
+    """The compiled `ITS-SecuredMessage-TMSAO` module: V1.1.1's values, field lists as sets of
+    OPTIONAL components (see the module's header and `to_tmsao`). Its shaped integers are
+    extensible, so the module itself admits integers V1.1.1 cannot carry; `to_tmsao` and
+    `from_tmsao` hold V1.1.1's range."""
     from bcir.frontends.asn1 import compile_module
 
     return compile_module(module_source(TMSAO_MODULE), TMSAO_MODULE)
@@ -479,8 +481,30 @@ def _certificate_from_tmsao(cert: dict) -> dict:
     return out
 
 
+def _v111(message: dict, direction: str) -> dict:
+    """`message` when V1.1.1 carries it, refused by name otherwise.
+
+    The binary rules ARE V1.1.1's value space: `encode_binary` holds every width and bound the
+    presentation language states -- each fixed-width integer's range, IntX's 56 bits, every
+    opaque's size -- so a transcription value it writes is a V1.1.1 value. The TMSAO module's
+    shaped integers are extensible, and BCIR reads an extensible constraint by its root (the
+    frontend keeps no AdditionalElementSetSpec, X.680 §49.4), so that module admits any
+    integer there: protocolVersion 300 in `SecuredMessagePer`, a negative itsAid anywhere.
+    Without this check `from_tmsao` mapped such a value to a transcription value no V1.1.1
+    encoder writes and `to_tmsao` carried one in -- a bijection only on the values the
+    fixtures happen to use. Both directions hold it, so the mapping is a bijection between
+    V1.1.1's values and their images, and a TMSAO value outside that image is refused."""
+    try:
+        encode_binary(message)
+    except Asn1Error as error:
+        raise Asn1Error(f"TMSAO: {direction}: not a V1.1.1 value ({error})") from None
+    return message
+
+
 def to_tmsao(message: dict) -> dict:
-    """A `SecuredMessage` of the transcription as the TMSAO module's value of the same content."""
+    """A `SecuredMessage` of the transcription as the TMSAO module's value of the same content.
+    The message must be a V1.1.1 value (`_v111`)."""
+    _v111(message, "to_tmsao")
     headers = _as_set("HeaderField", message["headerFields"])
     if "signerInfo" in headers:
         headers["signerInfo"] = _signer_to(headers["signerInfo"], _certificate_to_tmsao)
@@ -494,17 +518,20 @@ def to_tmsao(message: dict) -> dict:
 
 
 def from_tmsao(message: dict) -> dict:
-    """The inverse of `to_tmsao`."""
+    """The inverse of `to_tmsao`: refuses a TMSAO value with no V1.1.1 image (`_v111`)."""
     headers = dict(message["headerFields"])
     if "signerInfo" in headers:
         headers["signerInfo"] = _signer_to(headers["signerInfo"], _certificate_from_tmsao)
-    return {
-        "protocolVersion": message["protocolVersion"],
-        "securityProfile": message["securityProfile"],
-        "headerFields": _as_list("HeaderField", headers),
-        "payloadField": message["payloadField"],
-        "trailerFields": _as_list("TrailerField", message["trailerFields"]),
-    }
+    return _v111(
+        {
+            "protocolVersion": message["protocolVersion"],
+            "securityProfile": message["securityProfile"],
+            "headerFields": _as_list("HeaderField", headers),
+            "payloadField": message["payloadField"],
+            "trailerFields": _as_list("TrailerField", message["trailerFields"]),
+        },
+        "from_tmsao",
+    )
 
 
 # --- the paper's four envelopes ----------------------------------------------------------------

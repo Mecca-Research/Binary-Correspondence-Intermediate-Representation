@@ -9,8 +9,8 @@
 -- information first among the header fields). Under those rules a field list is a set of
 -- optional fields in a fixed order, and a SEQUENCE of OPTIONAL components carries exactly that
 -- set: one presence bit replaces a type code, and the list's length disappears. The study's
--- `to_tmsao` and `from_tmsao` are the bijection between the two modules' values, and they
--- refuse a list the prose rules forbid rather than reordering it.
+-- `to_tmsao` and `from_tmsao` are the bijection between V1.1.1's values and their images here,
+-- and they refuse a list the prose rules forbid rather than reordering it.
 --
 -- Nothing is narrowed. Every opaque keeps its size and every CHOICE its alternatives and its
 -- extension marker, and every INTEGER still carries its whole V1.1.1 range, so every V1.1.1
@@ -19,6 +19,13 @@
 -- of the V1.1.1 range as an extension addition. PER spends the root's width plus one bit on a
 -- value inside the root and a length-prefixed form outside it; OER does not see extensible
 -- constraints at all and spells such a value as a length and its octets.
+--
+-- The converse does not hold in the schema. A shaped integer is extensible, and BCIR reads an
+-- extensible constraint by its root (the frontend keeps no AdditionalElementSetSpec), so this
+-- module, and every codec generated from it, admits any integer there, past V1.1.1's range on
+-- either side. `to_tmsao` and `from_tmsao` hold V1.1.1's range instead: each refuses a value
+-- the V1.1.1 binary rules cannot carry, so a value of this module outside V1.1.1's image is
+-- refused rather than mapped.
 --
 -- IntX is shaped everywhere: root 0..127, the values IntX itself spells in one octet, so PER
 -- spends eight bits on a small one as IntX does and OER two octets, as for (0..MAX).

@@ -318,6 +318,9 @@ def _extensible_types():
       C0 ::= CHOICE { x INTEGER (0..255), ... }
       D  ::= SEQUENCE { a INTEGER (0..255), ..., c INTEGER (0..255) OPTIONAL,
                         d INTEGER (0..255) DEFAULT 3 }
+      V  ::= SEQUENCE { a INTEGER (0..255), ..., b INTEGER (0..255) DEFAULT 5,
+                        [[ c BOOLEAN OPTIONAL, d INTEGER (0..255) DEFAULT 3 ]],
+                        f INTEGER (0..255) DEFAULT 9 }
     END"""
     return compile_module(source, "t.asn1").module.types
 
@@ -370,6 +373,135 @@ def test_a_version_bracket_is_one_addition_encoded_as_a_sequence():
     assert encode_oer(t["W"], {"a": 1, "d": 3, "e": True}) == bytes.fromhex("8001020780038003ff")
     for value in ({"a": 1, "d": 3}, {"a": 1, "d": 3, "e": True}):
         assert decode_oer(t["W"], encode_oer(t["W"], value)) == value
+
+
+def _bracket_rails():
+    """Every rule that reads `V`, as (name, encode, decode) over one abstract value: OER under
+    both decoders, PER in both variants under both rule sets, JER and XER."""
+    from bcir.asn1.jer import decode_jer, encode_jer
+    from bcir.asn1.per import PerRules, PerVariant, decode_per, encode_per
+    from bcir.asn1.xer import decode_xer, encode_xer
+
+    rails = [
+        (f"OER/{r.name}", encode_oer, lambda k, o, r=r: decode_oer(k, o, rules=r)) for r in OerRules
+    ]
+    for a in PerVariant:
+        for r in PerRules:
+            rails.append(
+                (
+                    f"PER/{a.name}/{r.name}",
+                    lambda k, v, a=a, r=r: encode_per(k, v, variant=a, rules=r),
+                    lambda k, o, a=a, r=r: decode_per(o, k, variant=a, rules=r),
+                )
+            )
+    rails.append(("JER", encode_jer, lambda k, o: decode_jer(o, k)))
+    rails.append(("XER", encode_xer, lambda k, o: decode_xer(o, k)))
+    return rails
+
+
+def test_an_absent_bracket_leaves_its_default_members_at_their_defaults_on_every_rule():
+    """X.680 §25.12: a DEFAULT component the encoding leaves out has its default -- and a
+    version bracket's members are components of the SEQUENCE like any other, so a bracket left
+    out whole leaves its DEFAULT members at theirs. PER and OER filled the defaults of single
+    additions only (and PER, with the extension bit clear, took a path of its own), so
+    `{"a": 1}` decoded to `{"a": 1, "b": 5, "f": 9}` on both while JER and XER, which flatten
+    a bracket, returned `d` too: one abstract value, two decodings. Every rule now reads the
+    one predicate, `schema.addition_defaults`."""
+    from bcir.asn1.per import PerVariant, encode_per
+
+    kind = _extensible_types()["V"]
+    full = {"a": 1, "b": 5, "d": 3, "f": 9}
+    cases = [
+        ({"a": 1}, full),
+        ({"a": 1, "d": 3}, full),  # d at its default: the bracket is left out
+        ({"a": 1, "b": 6}, dict(full, b=6)),  # an addition present, the bracket not
+        ({"a": 1, "c": True}, dict(full, c=True)),  # the bracket present, d inside it absent
+    ]
+    # The paths the law lives on are the ones these values take: the bracket omitted whole,
+    # with the extension bit clear and with it set.
+    assert encode_oer(kind, {"a": 1, "d": 3}) == encode_oer(kind, {"a": 1}) == b"\x00\x01"
+    assert not encode_per(kind, {"a": 1}, variant=PerVariant.UNALIGNED)[0] & 0x80
+    assert encode_per(kind, {"a": 1, "b": 6}, variant=PerVariant.UNALIGNED)[0] & 0x80
+    for name, encode, decode in _bracket_rails():
+        for value, expected in cases:
+            assert decode(kind, encode(kind, value)) == expected, (name, value)
+
+
+def test_canonical_oer_refuses_a_present_bracket_that_carries_nothing():
+    """§16.5 and §31.9 for a version bracket: the encoder leaves out a bracket whose members are
+    all absent or at their DEFAULT (`_supplied`), so a peer that sends one -- the bitmap naming
+    it, its open type holding a SEQUENCE with nothing in it -- spells the value without it a
+    second way. The single-addition check (§31.9 for `D` above) never looked at a bracket."""
+    kind = _extensible_types()["V"]
+    full = {"a": 1, "b": 5, "d": 3, "f": 9}
+    empty = "80010205400100"  # the bitmap names [[c, d]]; its open type: c and d absent
+    assert decode_oer(kind, bytes.fromhex(empty), rules=OerRules.BASIC) == full
+    assert "version bracket" in _refused_under(kind, empty, OerRules.CANONICAL)
+    # Both halves: the value's canonical spelling, and a bracket that carries c, still read.
+    assert decode_oer(kind, encode_oer(kind, {"a": 1}), rules=OerRules.CANONICAL) == full
+    with_c = encode_oer(kind, {"a": 1, "c": True})
+    assert with_c.hex() == "80010205400280ff"
+    assert decode_oer(kind, with_c, rules=OerRules.CANONICAL) == dict(full, c=True)
+
+
+def test_canonical_oer_spells_every_length_and_number_once():
+    """§31.2 (a length determinant short below 128, else in the fewest octets), §31.4 (a
+    variable-size number in the fewest octets), §11.3 (an ENUMERATED 0..127 in the short
+    form), §8.7.2 (a tag in its shortest form) and §31.8 (a SET OF in its encodings' order).
+    Each second spelling below is the canonical one padded at one of those sites -- among
+    them the extension bitmap's and an addition's open-type lengths. BASIC reads each as the
+    same value; CANONICAL accepted every one, so a peer chose the digest by choosing the
+    spelling, and now refuses each. Both halves: every canonical spelling still decodes under
+    CANONICAL, the forms a careless check would take for padding among them (the `00` that
+    keeps 128 positive, the `ff` that keeps -129 negative)."""
+    from bcir.frontends.asn1 import compile_module
+
+    types = compile_module(
+        """T DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+      L  ::= OCTET STRING
+      I  ::= INTEGER
+      U  ::= INTEGER (0..MAX)
+      E  ::= ENUMERATED { a(1), big(200), neg(-5) }
+      Q  ::= SEQUENCE OF BOOLEAN
+      SO ::= SET OF OCTET STRING
+      CH ::= CHOICE { x [5] BOOLEAN, y [70] BOOLEAN }
+    END""",
+        "t.asn1",
+    ).module.types
+    ext = _extensible_types()
+    cases = [  # (type, value, canonical spelling, second spellings)
+        ("L", b"\x01\x02", "020102", ["81020102", "8200020102"]),
+        ("L", b"\xaa" * 200, "81c8" + "aa" * 200, ["8200c8" + "aa" * 200]),
+        ("I", 5, "0105", ["020005", "810105"]),
+        ("I", -1, "01ff", ["02ffff"]),
+        ("I", 128, "020080", ["03000080"]),
+        ("I", -129, "02ff7f", ["03ffff7f"]),
+        ("U", 128, "0180", ["020080"]),
+        ("U", 0, "0100", ["020000"]),
+        ("E", 1, "01", ["8101"]),
+        ("E", 200, "8200c8", ["830000c8"]),
+        ("E", -5, "81fb", ["82fffb"]),
+        ("Q", [True], "0101ff", ["020001ff", "810101ff"]),
+        ("SO", [b"\x01", b"\x02"], "010201010102", ["010201020101"]),
+        ("CH", ("x", True), "85ff", ["bf05ff"]),
+        ("CH", ("y", True), "bf46ff", ["bf8046ff"]),
+        ("Y", {"a": 1, "c": 2}, "80010206800102", ["8001810206800102", "8001020680810102"]),
+        ("C", ("y", 2), "810102", ["81810102"]),
+    ]
+
+    def same(name, got, value):  # a SET OF value has no order
+        return sorted(got) == sorted(value) if name == "SO" else got == value
+
+    for name, value, canonical, seconds in cases:
+        kind = types[name] if name in types else ext[name]
+        assert encode_oer(kind, value).hex() == canonical, (name, value)
+        assert same(
+            name, decode_oer(kind, bytes.fromhex(canonical), rules=OerRules.CANONICAL), value
+        )
+        for second in seconds:
+            got = decode_oer(kind, bytes.fromhex(second), rules=OerRules.BASIC)
+            assert same(name, got, value), (name, second, got)
+            assert "CANONICAL-OER" in _refused_under(kind, second, OerRules.CANONICAL), second
 
 
 def test_an_older_decoder_skips_a_newer_peers_addition():

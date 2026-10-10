@@ -163,6 +163,19 @@ class Component:
         return (tag,)
 
 
+def addition_defaults(additions):
+    """(name, default) of every DEFAULT component among a SEQUENCE's extension `additions`,
+    a version bracket's members included. An addition the encoding leaves out has its DEFAULT
+    value -- alone, or as a member of a bracket left out whole (X.680 §25.12: an absent DEFAULT
+    component takes its default) -- so a decoder fills these in on every rule. The bracket's
+    members were the case PER and OER skipped while JER and XER filled them: one abstract
+    value decoded two ways depending on the encoding rule."""
+    for comp in additions:
+        for member in comp.group if comp.group is not None else (comp,):
+            if member.has_default:
+                yield member.name, member.default
+
+
 class Asn1Type:
     """Base of the type model. Subclasses encode/decode a Python value."""
 

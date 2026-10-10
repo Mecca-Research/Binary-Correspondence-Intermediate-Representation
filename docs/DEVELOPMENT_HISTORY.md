@@ -2390,6 +2390,44 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     schema has such a constraint, so no number moves.
   - RED: 16 more faults in `tools/testing/faults/its.json` (29 in all), each caught by its own
     witness.
+  REVIEW-812b (2026-10-10): Codex's four findings on the ready PR, each verified against the tree
+  and fixed with a witness, and the family each belonged to closed on every rail that had it.
+  - The defaults of an absent version bracket. X.680 §25.12 gives an absent DEFAULT component its
+    default, and a bracket's members are components like any other. PER and OER filled the
+    defaults of single additions only (PER, with the extension bit clear, on a path of its own),
+    so a value of `SEQUENCE { a INTEGER, ..., [[ c BOOLEAN OPTIONAL, d INTEGER DEFAULT 3 ]] }`
+    decoded without `d` on both while JER and XER returned it. Both read one predicate now,
+    `schema.addition_defaults`.
+  - One spelling under CANONICAL-OER. The oracle's CANONICAL decoder read every length
+    determinant as BASIC -- a long form for a short length, leading zero octets -- so the
+    extension bitmap's and each open type's lengths, and a string's and a quantity's, had second
+    spellings at the digest boundary; so did a variable-size INTEGER's contents, an ENUMERATED in
+    the long form, a CHOICE tag's long form and a SET OF out of order. `decode_length` takes the
+    caller's rules and every site passes them, and §31.4's fewest-octets rule is one predicate
+    (`_require_fewest`) for the INTEGER, the ENUMERATED and the quantity. The plan-driven C
+    decoder had the same hole: it read a variable-size INTEGER as BASIC, rightly, but reported it
+    canonical; `canonical` now says what the oracle refuses, field for field. A present addition
+    its encoder omits is refused under CANONICAL too, by the encoder's own `_supplied`: on OER a
+    version bracket of nothing but absent or default members (the earlier §31.9 fix looked at
+    single additions only), on PER any addition equal to its DEFAULT (§19.5) or such a bracket
+    (§19.9).
+  - Fixed sizes from 64K under UPER. X.691 §17.8 gives a SIZE-fixed OCTET STRING of 64K octets or
+    more a length determinant, fragmented at that size; the generated UPER codec wrote and read
+    the octets bare. Generation now refuses the type in both directions, at exactly the size
+    where the oracle's encoding changes form; COER is unaffected (X.696 §14.1).
+  - The TMSAO mapping's value space. A shaped integer is extensible, and BCIR reads an extensible
+    constraint by its root (the frontend keeps no AdditionalElementSetSpec), so the TMSAO module
+    admits integers V1.1.1 cannot spell, and `from_tmsao` mapped them to transcription values no
+    V1.1.1 encoder writes. Both directions now hold V1.1.1's range through the binary rules' own
+    bounds, and the module header and the study say the bijection is between V1.1.1's values and
+    their images. Keeping the additional set in the constraint model decides BCIR's posture for
+    every extensible constraint, not this module's, and is a follow-up of its own.
+  - Recorded, not changed: the typed BER/DER rail treats a version bracket as one OPTIONAL
+    component of its own (a nested SEQUENCE named `[[n]]`), so a value with the bracket's members
+    flat -- the form PER, OER, JER and XER read -- is refused by its encoder and decoded without
+    them. A follow-up of its own.
+  - RED: 19 more faults in `tools/testing/faults/its.json` (48 in all), each caught by its own
+    witness.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

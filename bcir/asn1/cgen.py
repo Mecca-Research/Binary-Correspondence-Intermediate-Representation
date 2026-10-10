@@ -84,6 +84,22 @@ MAX_DEPTH = 8
 PER_FRAGMENT_UNIT = 16384
 
 
+def _uper_bare_size(k) -> None:
+    """X.691 §17.5-§17.7 write a SIZE-fixed OCTET STRING bare only below 64K octets; at 64K or
+    more §17.8 gives it a length determinant like any other, and at that size the determinant
+    is fragmented (§11.9.3.8). The oracle writes SIZE(65536) as 65538 octets starting `c4`; a
+    codec writing the 65536 bare octets is a different wire format, so the generator refuses
+    the type for UPER -- in both directions, at generation -- as it refuses every other
+    fragmented length. COER has no such bound (X.696 §14.1: a fixed size is never prefixed)."""
+    from .per import _64K
+
+    if k.size >= _64K:
+        raise Asn1Error(
+            f"cgen: a SIZE ({k.size}) OCTET STRING takes a fragmented length determinant under "
+            f"UPER (X.691 17.8, 11.9.3.8), which this compiler does not build"
+        )
+
+
 @dataclass(frozen=True)
 class ByteRule:
     """A schema-directed byte rule in the style of TS 103 097 V1.1.1's presentation language.
@@ -1631,6 +1647,7 @@ class _Emitter:
                 )
             return "".join(out)
         if k.kind == "octfix":  # 17.6/17.7: no length; UNALIGNED never aligns
+            _uper_bare_size(k)
             return f"  st = P_put_octets(w, {lv}.b, {k.size});\n  if (st != P_OK) return st;\n"
         if k.kind == "octvar":
             low, high, ext = _size_bounds(k.asn1)
@@ -1705,6 +1722,7 @@ class _Emitter:
             out.append("    default: return P_E_MALFORMED;\n    }\n  }\n")
             return "".join(out)
         if k.kind == "octfix":
+            _uper_bare_size(k)
             return f"  st = P_get_octets(r, {lv}.b, {k.size});\n  if (st != P_OK) return st;\n"
         if k.kind == "octvar":  # copied: an unaligned string has no octet slice to point at
             low, high, _ext = _size_bounds(k.asn1)

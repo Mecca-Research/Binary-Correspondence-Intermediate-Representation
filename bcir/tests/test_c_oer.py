@@ -32,7 +32,7 @@ import subprocess
 import tempfile
 
 from bcir.asn1.constraints import Size, ValueRange
-from bcir.asn1.oer import OerRules, decode_length, encode_length, encode_oer
+from bcir.asn1.oer import OerRules, decode_length, decode_oer, encode_length, encode_oer
 from bcir.asn1.schema import Component, Primitive, Sequence
 from bcir.asn1.tags import Asn1Error, Universal
 
@@ -345,6 +345,54 @@ def test_a_record_decodes_field_for_field_against_the_python_encoder():
                 assert parts[6] == "s" + (value["note"].encode().hex() or "-")
             else:
                 assert parts[6] == "-", f"{value}: an absent component was read as present"
+
+
+def test_a_padded_variable_size_integer_is_reported_as_non_canonical():
+    """§31.2 and §31.4 for the variable-size INTEGER forms (§10.3 e, §10.4 e), whose length and
+    contents a BASIC-OER peer may pad. The sequence decoder read them as BASIC -- correctly --
+    but reported every one as canonical, so a caller digesting on `canonical` took a second
+    spelling of the value. It now reports exactly what `bcir/asn1/oer.py` refuses under
+    CANONICAL, and both rails read the same value from every spelling: the leading `00` that
+    keeps 128 positive and the `ff` that keeps -129 negative are not padding."""
+    signed = Primitive(Universal.INTEGER, "INTEGER")
+    unsigned = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, None))
+    cases = [  # (signed?, octets, value, canonical?)
+        (1, "0105", 5, 1),
+        (1, "020005", 5, 0),
+        (1, "810105", 5, 0),  # the length in the long form
+        (1, "020080", 128, 1),
+        (1, "03000080", 128, 0),
+        (1, "01ff", -1, 1),
+        (1, "02ffff", -1, 0),
+        (1, "02ff7f", -129, 1),
+        (1, "03ffff7f", -129, 0),
+        (0, "0180", 128, 1),
+        (0, "020080", 128, 0),
+        (0, "0100", 0, 1),
+        (0, "020000", 0, 0),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _build(tmp)
+        if binary is None:
+            return
+        answers = _run(
+            binary,
+            [f"sequence {octets} {_plan((_INTEGER, 0, s, 0, 0))}" for s, octets, _v, _c in cases],
+        )
+        for (s, octets, value, canonical), got in zip(cases, answers):
+            parts = got.split()
+            assert parts[:2] == ["OK", str(len(octets) // 2)], (octets, got)
+            assert parts[2] == str(canonical), f"{octets}: C reported canonical={parts[2]}"
+            assert parts[3] == f"i{value}", (octets, got)
+            kind = Sequence((Component("n", signed if s else unsigned),), name="N")
+            data = bytes.fromhex(octets)
+            assert decode_oer(kind, data, rules=OerRules.BASIC) == {"n": value}
+            try:
+                decode_oer(kind, data, rules=OerRules.CANONICAL)
+                oracle = 1
+            except Asn1Error:
+                oracle = 0
+            assert oracle == canonical, f"{octets}: the oracle's CANONICAL verdict differs"
 
 
 def test_an_absent_optional_component_consumes_no_octets():

@@ -64,6 +64,38 @@ def test_a_construct_the_compiler_does_not_build_is_refused_by_name():
         assert name in _refusal(head + body + "\nEND", "S"), name
 
 
+def test_a_fixed_size_of_64k_or_more_is_refused_for_uper_in_both_directions():
+    """X.691 §17.5-§17.7 write a SIZE-fixed OCTET STRING bare only below 64K octets; from 64K
+    §17.8 gives it a length determinant, which at that size is fragmented (§11.9.3.8). The
+    generated UPER codec wrote and read the 65536 octets bare -- a wire format the oracle
+    neither writes nor reads -- and now refuses the type by name, encoder and decoder alike,
+    at exactly the size where the oracle's encoding changes form. COER never prefixes a fixed
+    size (X.696 §14.1), so it still builds the type."""
+    from bcir.asn1.cgen import CModel, CType, _Emitter
+    from bcir.asn1.per import encode_per
+
+    def module(size: int) -> str:
+        return _HEAD + f"S ::= SEQUENCE {{ a OCTET STRING (SIZE({size})), b BOOLEAN }}\nEND"
+
+    for size in (65536, 70000):
+        assert "17.8" in _refusal(module(size), "S", rules=(UPER,))
+        generate(_types(module(size)), ["S"], prefix="t_", rules=[COER])
+        emitter = _Emitter(CModel(_types(module(size)), ["S"], "t_"), UPER)
+        big = CType("octfix", None, cname=f"oct{size}", size=size)
+        for direction in (emitter._enc_prim_uper, emitter._dec_prim_uper):
+            try:
+                direction(big, "v")
+            except Asn1Error as error:
+                assert "17.8" in str(error), direction.__name__
+            else:
+                raise AssertionError(f"{direction.__name__} built SIZE({size}) bare")
+    generate(_types(module(65535)), ["S"], prefix="t_", rules=[UPER, COER])
+    # The oracle's form changes at the same size: bare below 64K, four 16K fragments (`c4`) at it.
+    below = encode_per(_types(module(65535))["S"], {"a": bytes(65535), "b": True})
+    at = encode_per(_types(module(65536))["S"], {"a": bytes(65536), "b": True})
+    assert len(below) == 65536 and at[:1] == b"\xc4" and len(at) == 65539
+
+
 def test_a_byte_rule_choice_without_type_codes_is_refused():
     source = "T DEFINITIONS AUTOMATIC TAGS ::= BEGIN\nS ::= CHOICE { a NULL, b NULL }\nEND"
     rule = ByteRule(name="b", type_codes={})

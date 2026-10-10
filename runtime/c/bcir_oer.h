@@ -93,7 +93,9 @@ bcir_oer_status bcir_oer_length(const uint8_t *data, size_t len, size_t pos,
  * comes from clause 10.2's split, which turns on whether a lower bound EXISTS and is
  * non-negative -- not on whether the bounds happen to be small. Both are the CALLER's
  * facts, from the schema; this file never infers them from the octets, because 6.2 says it
- * cannot. */
+ * cannot. The variable-size form is read as BASIC-OER (a padded length or contents is
+ * accepted); bcir_oer_decode_sequence's `canonical` reports whether it was spelled in the
+ * fewest octets (31.2, 31.4). */
 bcir_oer_status bcir_oer_integer(const uint8_t *data, size_t len, size_t pos,
                                  unsigned width, int is_signed, int64_t *value,
                                  size_t *end, bcir_oer_diag *diag);

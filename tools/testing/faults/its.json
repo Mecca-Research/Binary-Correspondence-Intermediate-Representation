@@ -30,7 +30,14 @@
     "bcir.tests.test_its_security:test_a_vector_of_empty_elements_is_refused_rather_than_read_forever",
     "bcir.tests.test_its_security:test_the_binary_rules_hold_a_size_constraint",
     "bcir.tests.test_gemplus_baseline:test_every_ratio_of_compiled_kernels_is_indicative_off_its_host",
-    "bcir.tests.test_asn1_cgen:test_the_arena_aligns_an_address_not_an_offset"
+    "bcir.tests.test_asn1_cgen:test_the_arena_aligns_an_address_not_an_offset",
+    "bcir.tests.test_asn1_oer:test_an_absent_bracket_leaves_its_default_members_at_their_defaults_on_every_rule",
+    "bcir.tests.test_asn1_oer:test_canonical_oer_refuses_a_present_bracket_that_carries_nothing",
+    "bcir.tests.test_asn1_oer:test_canonical_oer_spells_every_length_and_number_once",
+    "bcir.tests.test_asn1_per:test_canonical_per_refuses_a_present_addition_its_encoder_omits",
+    "bcir.tests.test_c_oer:test_a_padded_variable_size_integer_is_reported_as_non_canonical",
+    "bcir.tests.test_asn1_cgen:test_a_fixed_size_of_64k_or_more_is_refused_for_uper_in_both_directions",
+    "bcir.tests.test_its_security:test_the_tmsao_mapping_refuses_a_value_v111_cannot_carry"
   ],
   "faults": [
     {
@@ -197,8 +204,8 @@
     {
       "expects": "test_canonical_oer_refuses_a_present_addition_equal_to_its_default",
       "label": "RV11 CANONICAL-OER accepts an addition sent equal to its DEFAULT",
-      "new": "                if False:\n",
-      "old": "                if rules is OerRules.CANONICAL and comp.has_default and item == comp.default:\n",
+      "new": "            if rules is OerRules.CANONICAL and comp.group is not None and not _supplied(\n",
+      "old": "            if rules is OerRules.CANONICAL and not _supplied(\n",
       "path": "bcir/asn1/oer.py"
     },
     {
@@ -235,6 +242,139 @@
       "new": "  at = (a->used + (align - 1u)) & ~(align - 1u);",
       "old": "  at = a->used + (size_t)(((uintptr_t)0 - ((uintptr_t)a->base + a->used)) & (align - 1u));",
       "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_an_absent_bracket_leaves_its_default_members_at_their_defaults_on_every_rule",
+      "label": "RV17 the shared predicate gives an absent bracket's DEFAULT members nothing",
+      "new": "        for member in () if comp.group is not None else (comp,):\n",
+      "old": "        for member in comp.group if comp.group is not None else (comp,):\n",
+      "path": "bcir/asn1/schema.py"
+    },
+    {
+      "expects": "test_an_absent_bracket_leaves_its_default_members_at_their_defaults_on_every_rule",
+      "label": "RV18 OER fills no addition's DEFAULT",
+      "new": "    return out, cursor\n",
+      "old": "    for name, default in addition_defaults(additions):\n        out.setdefault(name, default)\n    return out, cursor\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_an_absent_bracket_leaves_its_default_members_at_their_defaults_on_every_rule",
+      "label": "RV19 PER with the extension bit clear returns before the shared defaults (the old early return)",
+      "new": "    if not has_additions:\n        for comp in additions:\n            if comp.has_default:\n                out[comp.name] = comp.default\n        return out\n    _decode_additions(reader, additions, rules, out)\n",
+      "old": "    if has_additions:\n        _decode_additions(reader, additions, rules, out)\n",
+      "path": "bcir/asn1/per.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV20 CANONICAL-OER takes a long-form length unless it is both padded and short",
+      "new": "    if rules is OerRules.CANONICAL and (data[offset + 1] == 0 and value < 0x80):\n",
+      "old": "    if rules is OerRules.CANONICAL and (data[offset + 1] == 0 or value < 0x80):\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV21 an open type's length is read under BASIC whatever the caller's rules",
+      "new": "    \"\"\"\u00a730: a length determinant and that many octets, returned for a nested decode.\"\"\"\n    length, cursor = decode_length(data, offset)\n",
+      "old": "    \"\"\"\u00a730: a length determinant and that many octets, returned for a nested decode.\"\"\"\n    length, cursor = decode_length(data, offset, rules)\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV22 a signed variable-size number's redundant 0xFF octet is taken",
+      "new": "        redundant = first == 0x00 and not second & 0x80\n",
+      "old": "        redundant = (first == 0x00 and not second & 0x80) or (first == 0xFF and second & 0x80)\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV23 a variable-size INTEGER's contents are not held to the fewest octets",
+      "new": "",
+      "old": "        if rules is OerRules.CANONICAL:\n            _require_fewest(data, cursor, end, signed, \"a variable-size INTEGER\")\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV24 CANONICAL-OER takes an ENUMERATED 0..127 in the long form",
+      "new": "",
+      "old": "            if 0 <= value < 0x80:\n                raise Asn1Error(\n                    f\"CANONICAL-OER spells ENUMERATED {value} in the short form (X.696 11.3)\",\n                    offset,\n                )\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV25 a SEQUENCE OF quantity keeps a leading zero octet",
+      "new": "",
+      "old": "        if rules is OerRules.CANONICAL:\n            _require_fewest(data, cursor, end, False, f\"{kind.name}'s quantity\")\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV26 CANONICAL-OER takes a high tag number padded with a leading 0x80",
+      "new": "    if rules is OerRules.CANONICAL and number < 63:\n",
+      "old": "    if rules is OerRules.CANONICAL and (number < 63 or data[offset + 1] == 0x80):\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV27 CANONICAL-OER takes a SET OF out of its encodings' order",
+      "new": "            if isinstance(kind, SequenceOf) and rules is OerRules.CANONICAL:\n",
+      "old": "            if isinstance(kind, SetOf) and rules is OerRules.CANONICAL:\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_refuses_a_present_bracket_that_carries_nothing",
+      "label": "RV28 CANONICAL-OER takes a present version bracket that carries nothing",
+      "new": "            if rules is OerRules.CANONICAL and comp.group is None and not _supplied(\n",
+      "old": "            if rules is OerRules.CANONICAL and not _supplied(\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_per_refuses_a_present_addition_its_encoder_omits",
+      "label": "RV29 CANONICAL-PER takes a present addition equal to its DEFAULT",
+      "new": "        if rules is PerRules.CANONICAL and comp.group is not None and not _supplied(\n",
+      "old": "        if rules is PerRules.CANONICAL and not _supplied(\n",
+      "path": "bcir/asn1/per.py"
+    },
+    {
+      "expects": "test_a_padded_variable_size_integer_is_reported_as_non_canonical",
+      "label": "RV30 the C plan decoder reports a long-form length of a variable-size INTEGER as canonical",
+      "new": "  (void)length_canonical;\n  if (count < 2) return 1;\n",
+      "old": "  if (!length_canonical) return 0;\n  if (count < 2) return 1;\n",
+      "path": "runtime/c/bcir_oer.c"
+    },
+    {
+      "expects": "test_a_padded_variable_size_integer_is_reported_as_non_canonical",
+      "label": "RV31 the C plan decoder reports a negative number's redundant 0xFF octet as canonical",
+      "new": "  return !(data[start] == 0x00u && (data[start + 1] & 0x80u) == 0);\n",
+      "old": "  return !((data[start] == 0x00u && (data[start + 1] & 0x80u) == 0) ||\n           (data[start] == 0xFFu && (data[start + 1] & 0x80u) != 0));\n",
+      "path": "runtime/c/bcir_oer.c"
+    },
+    {
+      "expects": "test_a_fixed_size_of_64k_or_more_is_refused_for_uper_in_both_directions",
+      "label": "RV32 the UPER decoder reads a SIZE(64K) OCTET STRING bare",
+      "new": "            return f\"  st = P_get_octets(r, {lv}.b, {k.size});\\n  if (st != P_OK) return st;\\n\"\n",
+      "old": "            _uper_bare_size(k)\n            return f\"  st = P_get_octets(r, {lv}.b, {k.size});\\n  if (st != P_OK) return st;\\n\"\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_fixed_size_of_64k_or_more_is_refused_for_uper_in_both_directions",
+      "label": "RV33 the UPER refusal starts one octet past 64K",
+      "new": "    if k.size > _64K:\n",
+      "old": "    if k.size >= _64K:\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_the_tmsao_mapping_refuses_a_value_v111_cannot_carry",
+      "label": "RV34 the TMSAO mapping holds no V1.1.1 range",
+      "new": "    try:\n        pass\n    except Asn1Error as error:\n",
+      "old": "    try:\n        encode_binary(message)\n    except Asn1Error as error:\n",
+      "path": "bcir/asn1/its_security.py"
+    },
+    {
+      "expects": "test_the_tmsao_mapping_refuses_a_value_v111_cannot_carry",
+      "label": "RV35 to_tmsao carries a value V1.1.1 cannot in",
+      "new": "",
+      "old": "    _v111(message, \"to_tmsao\")\n",
+      "path": "bcir/asn1/its_security.py"
     }
   ]
 }

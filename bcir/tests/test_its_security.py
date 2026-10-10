@@ -162,6 +162,48 @@ def test_the_tmsao_mapping_is_a_bijection_on_the_envelopes():
         assert its.from_tmsao(its.to_tmsao(value)) == value, profile
 
 
+def test_the_tmsao_mapping_refuses_a_value_v111_cannot_carry():
+    """A shaped integer is extensible, and BCIR reads an extensible constraint by its root, so
+    the TMSAO module admits integers V1.1.1 has no spelling for -- protocolVersion 300 in
+    `SecuredMessagePer`, a negative itsAid anywhere -- and `from_tmsao` mapped them to
+    transcription values no V1.1.1 encoder writes. Both directions now hold V1.1.1's range
+    (the binary rules' bounds), so the mapping is a bijection between V1.1.1's values and
+    their images. Both halves: every envelope still maps there and back, at the edges of
+    each range too."""
+    value = its.envelope("p1cert")
+    image = its.to_tmsao(value)
+    assert its.from_tmsao(image) == value
+    # The edges of V1.1.1's ranges map; one past them is refused, in both directions.
+    edges = {"protocolVersion": (0, 255), "securityProfile": (0, 255)}
+    for field, (low, high) in edges.items():
+        for good in (low, high):
+            assert its.from_tmsao(its.to_tmsao(dict(value, **{field: good}))) == dict(
+                value, **{field: good}
+            )
+        for bad in (low - 1, high + 1):
+            assert "not a V1.1.1 value" in _refused(its.from_tmsao, dict(image, **{field: bad}))
+            assert "not a V1.1.1 value" in _refused(its.to_tmsao, dict(value, **{field: bad}))
+    # The shaped header fields of SecuredMessagePer: the message type and the generation time.
+    headers = image["headerFields"]
+    for field, bad in (("messageType", 65536), ("generationTime", 2**64), ("messageType", -1)):
+        assert field in headers, field
+        wide = dict(image, headerFields=dict(headers, **{field: bad}))
+        assert "not a V1.1.1 value" in _refused(its.from_tmsao, wide), field
+    # IntX, shaped in every envelope: the certificate's ITS-AIDs past 56 bits or below zero.
+    cert = image["headerFields"]["signerInfo"][1]
+    attributes = cert["subjectAttributes"]
+    name = next(n for n in attributes if n in ("itsAidList", "itsAidSspList"))
+    for bad in (-1, 2**56):
+        items = attributes[name]
+        changed = (
+            [bad, *items[1:]] if name == "itsAidList" else [dict(items[0], itsAid=bad), *items[1:]]
+        )
+        cert2 = dict(cert, subjectAttributes=dict(attributes, **{name: changed}))
+        signer = ("certificate", cert2)
+        wide = dict(image, headerFields=dict(headers, signerInfo=signer))
+        assert "IntX" in _refused(its.from_tmsao, wide), bad
+
+
 def test_a_list_the_prose_forbids_is_refused_not_reordered():
     """Reordering would map two binary encodings to one TMSAO value, and dropping a duplicate
     would lose content: both are refusals."""

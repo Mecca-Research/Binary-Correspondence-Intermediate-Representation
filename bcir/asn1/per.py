@@ -42,6 +42,7 @@ from .schema import (
     SequenceOf,
     Set,
     SetOf,
+    addition_defaults,
     through,
 )
 from .tags import Tag, Universal
@@ -1089,11 +1090,18 @@ def _decode_sequence(reader: BitReader, kind, rules: PerRules) -> dict:
                 f"DEFAULT ({comp.default!r}), but it was present in the encoding"
             )
         out[comp.name] = decoded
-    if not has_additions:
-        for comp in additions:
-            if comp.has_default:
-                out[comp.name] = comp.default
-        return out
+    if has_additions:
+        _decode_additions(reader, additions, rules, out)
+    # An addition the encoding leaves out -- the extension bit clear, its bitmap bit clear, or
+    # a member of a bracket left out whole -- has its DEFAULT, as on every other rule.
+    for name, default in addition_defaults(additions):
+        out.setdefault(name, default)
+    return out
+
+
+def _decode_additions(reader: BitReader, additions, rules: PerRules, out: dict) -> None:
+    """§19.7-19.9: the extension-addition bitmap, then each present addition's open-type
+    wrapper, decoded into `out` (a bracket's members flat)."""
     count = _decode_normally_small_length(reader)
     flags = [bool(reader.get_bit()) for _ in range(count)]
     for index, flag in enumerate(flags):
@@ -1120,14 +1128,26 @@ def _decode_sequence(reader: BitReader, kind, rules: PerRules) -> dict:
         decoded = _decode(inner, comp.type, rules)
         # §19.9 wraps the addition as a COMPLETE encoding, so §11.1 governs its contents too.
         _check_complete(inner, wrapper, f"PER 19.9 ({comp.name})")
+        if rules is PerRules.CANONICAL and not _supplied(
+            comp, decoded if comp.group is not None else {comp.name: decoded}, rules
+        ):
+            # The encoder's own predicate: CANONICAL-PER leaves out an addition equal to its
+            # DEFAULT (§19.5) and a version bracket whose members are all absent or at their
+            # defaults (§19.9), so one sent anyway spells the value without it a second way --
+            # what the root's presence bits already refuse (`_decode_sequence`), for the
+            # additions' bitmap.
+            label = (
+                comp.name if comp.group is None else f"[[{', '.join(m.name for m in comp.group)}]]"
+            )
+            raise Asn1Error(
+                f"{label}: CANONICAL-PER omits an addition equal to its DEFAULT and a "
+                f"version bracket with nothing but absent or default members (X.691 19.5, "
+                f"19.9), but it was present in the encoding"
+            )
         if comp.group is not None:
             out.update(decoded)  # the bracket's members are flat
         else:
             out[comp.name] = decoded
-    for comp in additions:
-        if comp.group is None and comp.name not in out and comp.has_default:
-            out[comp.name] = comp.default
-    return out
 
 
 def _encode_normally_small_length(writer: BitWriter, count: int) -> None:

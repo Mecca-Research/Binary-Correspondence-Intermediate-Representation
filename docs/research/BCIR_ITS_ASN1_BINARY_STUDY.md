@@ -101,19 +101,23 @@ between two columns is therefore a difference of one octet of encoding.
 
 ### 2.3 The TMSAO schema
 
-`ITS-SecuredMessage-TMSAO.asn1` is the Theoretical-Maximum pass on the schema. It has the same
-value space, with what V1.1.1's prose states and its presentation language cannot moved into the
+`ITS-SecuredMessage-TMSAO.asn1` is the Theoretical-Maximum pass on the schema. It carries every
+V1.1.1 value, with what V1.1.1's prose states and its presentation language cannot moved into the
 type:
 
 * **Field lists become sets.** The prose allows each header field, trailer field, subject
   attribute and validity restriction at most once, in ascending type order (signer information
   first). A list with those rules is a set of optional fields in a fixed order, which a
   `SEQUENCE` of `OPTIONAL` components carries exactly: one presence bit replaces a uint8 type
-  code, and the list's length disappears. `to_tmsao`/`from_tmsao` are the bijection, and they
-  *refuse* a list the prose forbids rather than reorder it, since reordering would map two
-  binary encodings to one value.
+  code, and the list's length disappears. `to_tmsao`/`from_tmsao` are the bijection between
+  V1.1.1's values and their images, and they *refuse* a list the prose forbids rather than
+  reorder it, since reordering would map two binary encodings to one value.
 * **Nothing is narrowed.** Every opaque keeps its size, every CHOICE its alternatives and its
-  extension marker, and every INTEGER its whole V1.1.1 range.
+  extension marker, and every INTEGER its whole V1.1.1 range. The converse does not hold in the
+  schema: a shaped integer (below) is extensible, and BCIR reads an extensible constraint by its
+  root, so the module and the codecs generated from it admit integers past V1.1.1's range. The
+  mapping holds the range instead -- both directions refuse a value the V1.1.1 binary rules
+  cannot carry (`test_the_tmsao_mapping_refuses_a_value_v111_cannot_carry`).
 * **Some integers are shaped**: an extensible constraint whose root is the range the protocol
   produces, with the rest of V1.1.1's range as an extension addition. IntX is shaped everywhere
   (root 0..127). The rest depend on the rule, through X.683. `SecuredMessage` keeps V1.1.1's
