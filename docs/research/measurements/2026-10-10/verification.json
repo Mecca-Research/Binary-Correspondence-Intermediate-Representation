@@ -1,0 +1,156 @@
+[
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "-m",
+      "bcir.tests.run_all",
+      "--tier",
+      "quick",
+      "-j",
+      "2"
+    ],
+    "returncode": 0,
+    "seconds": 120.55356264399961,
+    "log_tail": "t_is_true_today\nPASS bcir.tests.test_docs_claims.test_law_range_checker_fires_on_a_former_last_law_and_honours_both_markers\nPASS bcir.tests.test_docs_claims.test_no_active_doc_states_a_stale_verifier_law_range\nPASS bcir.tests.test_docs_claims.test_the_registry_is_listable_without_running_the_predicates\nPASS bcir.tests.test_docs_claims.test_the_twin_table_claim_reads_the_document_rather_than_a_hardcoded_list\nPASS bcir.tests.test_red_sweep.test_a_caught_fault_is_red_and_the_tree_is_restored\nPASS bcir.tests.test_red_sweep.test_a_control_run_that_is_already_red_invalidates_the_sweep\nPASS bcir.tests.test_red_sweep.test_a_gate_that_cannot_be_launched_is_a_verdict_not_a_catch\nPASS bcir.tests.test_red_sweep.test_a_gate_that_passes_with_the_defect_in_is_not_caught\nPASS bcir.tests.test_red_sweep.test_a_malformed_table_is_refused_rather_than_partly_run\nPASS bcir.tests.test_red_sweep.test_a_replacement_identical_to_its_anchor_is_refused\nPASS bcir.tests.test_red_sweep.test_a_same_length_fault_is_not_compiled_away\nPASS bcir.tests.test_red_sweep.test_a_test_that_ends_the_process_is_a_finding_not_a_pass\nPASS bcir.tests.test_red_sweep.test_an_anchor_that_matches_nothing_is_a_harness_error\nPASS bcir.tests.test_red_sweep.test_an_anchor_that_matches_twice_is_refused\nPASS bcir.tests.test_red_sweep.test_an_empty_fault_table_is_refused\nPASS bcir.tests.test_red_sweep.test_discarding_bytecode_removes_what_a_run_leaves_behind\nPASS bcir.tests.test_red_sweep.test_every_committed_table_loads_and_anchors_exactly_once\nPASS bcir.tests.test_red_sweep.test_the_test_gate_is_unavailable_rather_than_vacuous\nPASS bcir.tests.test_red_sweep.test_the_test_gate_names_each_failing_test_as_a_finding\nPASS bcir.tests.test_red_sweep.test_the_wrong_check_firing_is_not_a_catch\nPASS bcir.tests.test_ubsan_witnesses.test_a_build_that_is_no_witness_passes_through_the_shim_untouched\nPASS bcir.tests.test_ubsan_witnesses.test_a_c23_witness_is_sanitized_by_an_engine_that_spells_c23_by_its_draft_name\nPASS bcir.tests.test_ubsan_witnesses.test_a_run_that_sanitizes_nothing_or_fails_a_test_is_no_pass\nPASS bcir.tests.test_ubsan_witnesses.test_a_shimmed_witness_fails_on_undefined_behaviour_and_runs_a_defined_one_unchanged\nPASS bcir.tests.test_ubsan_witnesses.test_a_witness_link_is_an_executable_built_from_sources_outside_the_repository\nPASS bcir.tests.test_ubsan_witnesses.test_a_witness_no_engine_can_build_is_recorded_unsanitized\nPASS bcir.tests.test_ubsan_witnesses.test_a_witness_whose_original_and_emit_overflow_alike_is_reported_by_every_engine\nPASS bcir.tests.test_ubsan_witnesses.test_a_witness_whose_original_discards_an_overflow_is_reported_by_the_gates_engines\nPASS bcir.tests.test_ubsan_witnesses.test_an_engine_that_builds_but_never_reports_is_no_engine\nPASS bcir.tests.test_ubsan_witnesses.test_no_ubsan_runtime_is_a_skip_unless_one_was_required\nPASS bcir.tests.test_ubsan_witnesses.test_shards_partition_the_witnesses_and_an_empty_or_malformed_shard_is_refused\nPASS bcir.tests.test_ubsan_witnesses.test_the_ci_job_that_installs_the_runtime_requires_it\nPASS bcir.tests.test_ubsan_witnesses.test_the_gate_fires_on_a_witness_whose_original_runs_undefined_behaviour\nPASS bcir.tests.test_ubsan_witnesses.test_the_sanitized_build_keeps_the_program_and_drops_only_optimisation_and_warnings\nPASS bcir.tests.test_registry_complete.test_every_registered_module_actually_yields_tests_to_the_runner\nPASS bcir.tests.test_registry_complete.test_every_test_file_on_disk_is_registered_and_vice_versa\n\n4538 passed, 0 failed\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "bcir/tests/test_collector.py",
+      "bcir/tests/test_native_program.py",
+      "bcir/tests/test_native_hydrate.py",
+      "bcir/tests/test_asn1_cgen.py::test_every_generated_codec_writes_and_reads_the_oracles_octets",
+      "bcir/tests/test_asn1_cgen.py::test_a_cut_encoding_is_refused_as_truncated_by_every_decoder",
+      "bcir/tests/test_asn1_cgen.py::test_a_count_of_empty_elements_is_bounded_by_its_size_not_the_input",
+      "bcir/tests/test_asn1_cgen.py::test_the_arena_aligns_an_address_not_an_offset"
+    ],
+    "returncode": 0,
+    "seconds": 31.30981102899932,
+    "log_tail": "......................                                                   [100%]\n22 passed in 31.00s\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/docs/gen_status.py",
+      "--check"
+    ],
+    "returncode": 0,
+    "seconds": 0.10655646699979116,
+    "output": "docs/STATUS.md is current.\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/docs/check_links.py"
+    ],
+    "returncode": 0,
+    "seconds": 0.0741078330001983,
+    "output": "[check_links] no broken relative links.\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/docs/check_retired_paths.py"
+    ],
+    "returncode": 0,
+    "seconds": 0.06963737899968692,
+    "output": "[check_retired_paths] no active-doc references to retired trees.\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/docs/check_claims.py"
+    ],
+    "returncode": 0,
+    "seconds": 0.20380884900077945,
+    "output": "[check_claims] 6 summary claim(s) still match the code they summarise.\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/docs/check_law_range.py"
+    ],
+    "returncode": 0,
+    "seconds": 0.13419043399971997,
+    "output": "[check_law_range] no stale verifier-law ranges (last law R25, 423 files).\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/perf/import_graph.py",
+      "--check"
+    ],
+    "returncode": 0,
+    "seconds": 0.21104497600026662,
+    "output": "[import_graph] hot/cold quarantine holds across 4 entry points (80 cold organs, none eager).\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/perf/oracle_inventory.py",
+      "--check"
+    ],
+    "returncode": 0,
+    "seconds": 0.7463271140004508,
+    "output": "docs/BCIR_ORACLE_INVENTORY.md is current.\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--check",
+      "--force-exclude",
+      "."
+    ],
+    "returncode": 0,
+    "seconds": 0.11912530500012508,
+    "output": "793 files already formatted\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "-m",
+      "ruff",
+      "check",
+      "--force-exclude",
+      "."
+    ],
+    "returncode": 0,
+    "seconds": 0.09141018099944631,
+    "output": "All checks passed!\n"
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "returncode": 0,
+    "seconds": 0.003099039000517223,
+    "output": ""
+  },
+  {
+    "command": [
+      "python3",
+      "tools/local/latest_toolchain.py",
+      "status"
+    ],
+    "returncode": 1,
+    "status": "UNAVAILABLE",
+    "output": "LLVM/Clang/MLIR 23 missing; Node 24.19.0 installed, 24.21.0 newest reported."
+  },
+  {
+    "command": [
+      "bash",
+      "tools/local/check_latest.sh"
+    ],
+    "returncode": 1,
+    "status": "UNAVAILABLE",
+    "output": "Stopped at environment discovery: LLVM 23 missing; no latest-toolchain leg ran."
+  }
+]

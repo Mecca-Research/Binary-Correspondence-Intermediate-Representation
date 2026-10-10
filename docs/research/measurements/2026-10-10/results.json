@@ -1,0 +1,3842 @@
+{
+  "asn1": {
+    "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
+    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "results": {
+      "rows": [
+        {
+          "bytes": {
+            "coer": 130,
+            "packed9": 72,
+            "raw16": 128,
+            "uper": 72
+          },
+          "compiler_command": [
+            "gcc",
+            "-std=c11",
+            "-O3",
+            "-march=native",
+            "-ffp-contract=off",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-shared",
+            "-fPIC",
+            "-I",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-64",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-64/codec.c",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-64/bench.c",
+            "-o",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-64/codec.so"
+          ],
+          "generated_source_sha256": "1afc7325404074c12ba07cb57a50242434003918d977d2f565135cad7b95a8a7",
+          "parity_checks": 8,
+          "rejection_checks": 20,
+          "timing": {
+            "coer": {
+              "decode_ns": [
+                41.154624,
+                42.16928,
+                47.47584,
+                41.330304,
+                48.156608,
+                48.457792,
+                43.274944,
+                43.221696,
+                41.402624,
+                40.88736,
+                45.836224
+              ],
+              "encode_ns": [
+                38.717696,
+                39.159296,
+                38.58944,
+                38.442688,
+                39.955968,
+                39.459904,
+                39.408,
+                39.159936,
+                41.182208,
+                40.400192,
+                39.454784
+              ],
+              "median_decode_ns": 43.221696,
+              "median_encode_ns": 39.408
+            },
+            "packed9": {
+              "decode_ns": [
+                34.372544,
+                34.371264,
+                39.364416,
+                34.380224,
+                35.256384,
+                35.38336,
+                35.17504,
+                35.274368,
+                35.136576,
+                35.319232,
+                35.16992
+              ],
+              "encode_ns": [
+                319.201408,
+                318.25024,
+                316.80288,
+                333.14112,
+                314.829312,
+                317.42784,
+                315.816448,
+                318.08608,
+                315.5472,
+                315.447936,
+                328.711424
+              ],
+              "median_decode_ns": 35.17504,
+              "median_encode_ns": 317.42784
+            },
+            "raw16": {
+              "decode_ns": [
+                38.992,
+                43.744128,
+                43.983872,
+                38.631808,
+                44.092224,
+                43.743488,
+                43.889024,
+                38.511232,
+                42.770496,
+                42.501952,
+                44.604992
+              ],
+              "encode_ns": [
+                5.10912,
+                5.034752,
+                5.063616,
+                5.08992,
+                5.07648,
+                5.30592,
+                5.050176,
+                5.159744,
+                5.209792,
+                5.163008,
+                6.526976
+              ],
+              "median_decode_ns": 43.743488,
+              "median_encode_ns": 5.10912
+            },
+            "uper": {
+              "decode_ns": [
+                64.935808,
+                65.347328,
+                65.532544,
+                70.546176,
+                65.4672,
+                65.3056,
+                65.133888,
+                65.464576,
+                65.175552,
+                65.290944,
+                65.06528
+              ],
+              "encode_ns": [
+                49.682688,
+                49.833984,
+                58.064,
+                49.750656,
+                49.454528,
+                49.601984,
+                49.057152,
+                49.628864,
+                49.003264,
+                49.839104,
+                48.590464
+              ],
+              "median_decode_ns": 65.3056,
+              "median_encode_ns": 49.628864
+            }
+          },
+          "tokens": 64
+        },
+        {
+          "bytes": {
+            "coer": 1027,
+            "packed9": 576,
+            "raw16": 1024,
+            "uper": 576
+          },
+          "compiler_command": [
+            "gcc",
+            "-std=c11",
+            "-O3",
+            "-march=native",
+            "-ffp-contract=off",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-shared",
+            "-fPIC",
+            "-I",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-512",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-512/codec.c",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-512/bench.c",
+            "-o",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-512/codec.so"
+          ],
+          "generated_source_sha256": "7442f052dfe413f186519dd9c6c5f70ba2d781c93aa04a4eddb73c1142f022d3",
+          "parity_checks": 8,
+          "rejection_checks": 20,
+          "timing": {
+            "coer": {
+              "decode_ns": [
+                324.63236047107017,
+                315.9047619047619,
+                303.84331797235023,
+                311.89400921658984,
+                310.73015873015873,
+                312.9866871479775,
+                316.7557603686636,
+                405.65130568356375,
+                317.1915002560164,
+                534.3860727086534,
+                323.3046594982079
+              ],
+              "encode_ns": [
+                295.31029185867897,
+                295.5202252944188,
+                301.8637992831541,
+                297.29493087557603,
+                289.8182283666155,
+                288.50025601638504,
+                294.08448540706604,
+                343.4731182795699,
+                309.3563748079877,
+                296.43830005120327,
+                591.8305171530978
+              ],
+              "median_decode_ns": 316.7557603686636,
+              "median_encode_ns": 296.43830005120327
+            },
+            "packed9": {
+              "decode_ns": [
+                281.70558115719405,
+                289.71018945212495,
+                296.28469022017407,
+                288.720942140297,
+                333.6886840757808,
+                287.6441372247824,
+                317.38658474142346,
+                374.836661546339,
+                345.5652841781874,
+                287.4336917562724,
+                297.5412186379928
+              ],
+              "encode_ns": [
+                2716.272913466462,
+                2528.831541218638,
+                2593.6246799795185,
+                2561.3282130056323,
+                2543.3958013312854,
+                2750.8361495135687,
+                2541.9441884280595,
+                2725.6881720430106,
+                2634.2339989759344,
+                2791.9011776753714,
+                2638.726062467998
+              ],
+              "median_decode_ns": 296.28469022017407,
+              "median_encode_ns": 2634.2339989759344
+            },
+            "raw16": {
+              "decode_ns": [
+                235.963133640553,
+                241.38863287250385,
+                272.326164874552,
+                235.88069636456734,
+                238.52176139272913,
+                270.6031746031746,
+                256.96774193548384,
+                296.41269841269843,
+                548.3701996927804,
+                237.12186379928315,
+                237.0757808499744
+              ],
+              "encode_ns": [
+                24.59447004608295,
+                24.60931899641577,
+                24.886328725038403,
+                24.502304147465438,
+                24.927803379416282,
+                40.029697900665646,
+                24.691756272401435,
+                24.619559651817717,
+                24.604710701484894,
+                24.53814644137225,
+                24.681515616999487
+              ],
+              "median_decode_ns": 241.38863287250385,
+              "median_encode_ns": 24.619559651817717
+            },
+            "uper": {
+              "decode_ns": [
+                446.1321044546851,
+                464.55760368663596,
+                444.16282642089095,
+                460.84434203789044,
+                505.9718381976447,
+                492.31541218637994,
+                444.72657450076804,
+                525.3712237583205,
+                478.4490527393753,
+                445.19354838709677,
+                452.7322068612391
+              ],
+              "encode_ns": [
+                381.14951356886843,
+                373.90834613415257,
+                506.3922171018945,
+                394.3230926779314,
+                388.0921658986175,
+                375.9902713773682,
+                390.7690732206861,
+                393.7178699436764,
+                377.5494111623144,
+                381.621095750128,
+                439.97337429595495
+              ],
+              "median_decode_ns": 460.84434203789044,
+              "median_encode_ns": 388.0921658986175
+            }
+          },
+          "tokens": 512
+        },
+        {
+          "bytes": {
+            "coer": 8195,
+            "packed9": 4608,
+            "raw16": 8192,
+            "uper": 4608
+          },
+          "compiler_command": [
+            "gcc",
+            "-std=c11",
+            "-O3",
+            "-march=native",
+            "-ffp-contract=off",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-shared",
+            "-fPIC",
+            "-I",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-4096",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-4096/codec.c",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-4096/bench.c",
+            "-o",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-4096/codec.so"
+          ],
+          "generated_source_sha256": "971fe9f73966ddf80f42cb8d75bca729b2aff60baef9e58bce007b439c5a1a1e",
+          "parity_checks": 8,
+          "rejection_checks": 20,
+          "timing": {
+            "coer": {
+              "decode_ns": [
+                2666.7295081967213,
+                3433.7090163934427,
+                2794.1803278688526,
+                3374.0696721311474,
+                3122.0081967213114,
+                2611.811475409836,
+                2619.5696721311474,
+                2607.5450819672133,
+                2563.9139344262294,
+                2614.688524590164,
+                2664.8032786885246
+              ],
+              "encode_ns": [
+                2534.2745901639346,
+                2288.659836065574,
+                2677.405737704918,
+                2310.745901639344,
+                2240.594262295082,
+                2304.0532786885246,
+                2238.75,
+                2376.622950819672,
+                2238.622950819672,
+                2352.2418032786886,
+                2338.5737704918033
+              ],
+              "median_decode_ns": 2664.8032786885246,
+              "median_encode_ns": 2310.745901639344
+            },
+            "packed9": {
+              "decode_ns": [
+                2269.3278688524592,
+                2271.094262295082,
+                2344.3196721311474,
+                2319.159836065574,
+                2417.1352459016393,
+                2277.0860655737706,
+                2319.565573770492,
+                2267.9754098360654,
+                2348.754098360656,
+                2498.032786885246,
+                2372.3934426229507
+              ],
+              "encode_ns": [
+                22067.877049180326,
+                20772.930327868853,
+                22156.94262295082,
+                20143.655737704918,
+                20765.372950819674,
+                20212.081967213115,
+                20322.07786885246,
+                20377.536885245903,
+                20045.47950819672,
+                21141.639344262294,
+                20079.008196721312
+              ],
+              "median_decode_ns": 2319.565573770492,
+              "median_encode_ns": 20377.536885245903
+            },
+            "raw16": {
+              "decode_ns": [
+                1957.5040983606557,
+                2158.6680327868853,
+                1866.0122950819673,
+                1894.2540983606557,
+                1867.577868852459,
+                1867.5737704918033,
+                1866.7090163934427,
+                1951.8032786885246,
+                1988.25,
+                1926.4344262295083,
+                1920.1147540983607
+              ],
+              "encode_ns": [
+                191.80737704918033,
+                188.4795081967213,
+                185.0327868852459,
+                186.84016393442624,
+                188.48360655737704,
+                185.68852459016392,
+                188.60245901639345,
+                344.2090163934426,
+                243.15573770491804,
+                186.4262295081967,
+                186.5122950819672
+              ],
+              "median_decode_ns": 1920.1147540983607,
+              "median_encode_ns": 188.4795081967213
+            },
+            "uper": {
+              "decode_ns": [
+                3903.598360655738,
+                3555.122950819672,
+                3594.6475409836066,
+                3563.5368852459014,
+                3827.2131147540986,
+                3751.651639344262,
+                4338.188524590164,
+                3691.72131147541,
+                3707.155737704918,
+                3732.2336065573772,
+                3734.1188524590166
+              ],
+              "encode_ns": [
+                3327.565573770492,
+                3086.4221311475408,
+                2931.2295081967213,
+                2992.877049180328,
+                2983.151639344262,
+                3206.0737704918033,
+                4380.262295081967,
+                3005.19262295082,
+                2991.3196721311474,
+                2998.2991803278687,
+                3080.1024590163934
+              ],
+              "median_decode_ns": 3732.2336065573772,
+              "median_encode_ns": 3005.19262295082
+            }
+          },
+          "tokens": 4096
+        },
+        {
+          "bytes": {
+            "coer": 65539,
+            "packed9": 36864,
+            "raw16": 65536,
+            "uper": 36864
+          },
+          "compiler_command": [
+            "gcc",
+            "-std=c11",
+            "-O3",
+            "-march=native",
+            "-ffp-contract=off",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-shared",
+            "-fPIC",
+            "-I",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-32768",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-32768/codec.c",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-32768/bench.c",
+            "-o",
+            "/workspace/scratch/d4904b8a62c3/gemplus-perf-2026-10-10-final/asn1/codec-32768/codec.so"
+          ],
+          "generated_source_sha256": "6fe057e900b7fd5a081d0eff15a71b0ff7f1574039cd565c7ec1b3a6e0277f87",
+          "parity_checks": 8,
+          "rejection_checks": 20,
+          "timing": {
+            "coer": {
+              "decode_ns": [
+                23928.78125,
+                20819.109375,
+                21180.890625,
+                20788.578125,
+                20702.984375,
+                21160.546875,
+                22267.21875,
+                20938.96875,
+                20813.78125,
+                20934.75,
+                22186.46875
+              ],
+              "encode_ns": [
+                18074.171875,
+                18747.984375,
+                18325.015625,
+                18105.46875,
+                23778.71875,
+                18385.421875,
+                19012.0,
+                20249.484375,
+                20305.984375,
+                19455.15625,
+                19594.75
+              ],
+              "median_decode_ns": 20938.96875,
+              "median_encode_ns": 19012.0
+            },
+            "packed9": {
+              "decode_ns": [
+                18958.15625,
+                18598.71875,
+                20620.359375,
+                18825.609375,
+                18613.578125,
+                21470.078125,
+                19060.34375,
+                21642.671875,
+                18412.34375,
+                18876.46875,
+                19731.828125
+              ],
+              "encode_ns": [
+                177203.0625,
+                187847.578125,
+                162119.828125,
+                160788.921875,
+                161340.046875,
+                163507.546875,
+                165039.53125,
+                173926.875,
+                169802.984375,
+                168485.828125,
+                166717.390625
+              ],
+              "median_decode_ns": 18958.15625,
+              "median_encode_ns": 166717.390625
+            },
+            "raw16": {
+              "decode_ns": [
+                16391.3125,
+                16669.859375,
+                16009.796875,
+                16110.265625,
+                16899.109375,
+                16344.84375,
+                16296.484375,
+                16747.484375,
+                16044.859375,
+                16025.609375,
+                16990.96875
+              ],
+              "encode_ns": [
+                1774.09375,
+                1766.421875,
+                1761.25,
+                2322.40625,
+                1996.296875,
+                1750.9375,
+                1798.8125,
+                1751.546875,
+                4942.921875,
+                1767.046875,
+                1760.625
+              ],
+              "median_decode_ns": 16344.84375,
+              "median_encode_ns": 1767.046875
+            },
+            "uper": {
+              "decode_ns": [
+                29347.140625,
+                29470.28125,
+                29565.109375,
+                28819.78125,
+                28832.765625,
+                32224.609375,
+                29233.828125,
+                29010.375,
+                29314.734375,
+                30543.640625,
+                29301.28125
+              ],
+              "encode_ns": [
+                25467.21875,
+                23959.296875,
+                24920.765625,
+                24070.890625,
+                23971.5,
+                23696.875,
+                24123.453125,
+                23740.53125,
+                26994.046875,
+                23864.171875,
+                24070.71875
+              ],
+              "median_decode_ns": 29314.734375,
+              "median_encode_ns": 24070.71875
+            }
+          },
+          "tokens": 32768
+        }
+      ],
+      "scope": "Fixed schema SIZE(N), token range 0..259, no explicit metadata. Warm single frame per size. Native encode; native decode+range check+uint32 materialization. Generated decoders additionally construct uint16 arena arrays. Packed9 is a schema-specialized control with identical UPER bytes. No tensor arithmetic or disk/network I/O."
+    },
+    "source_commit": "75d50d4f6e280e35a25032024edffd92f25c52f2",
+    "stage": "asn1"
+  },
+  "attention": {
+    "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
+    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "results": {
+      "rows": [
+        {
+          "batch": 4,
+          "context": 64,
+          "head_dim": 48,
+          "kv_heads": 4,
+          "max_abs_error": 3.3527612686157227e-08,
+          "median_ms": {
+            "native_c": 2.245941,
+            "torch_sdpa": 0.481454
+          },
+          "native_probabilities_bytes": 524288,
+          "query_heads": 8,
+          "samples_ms": {
+            "native_c": [
+              2.315044,
+              2.191629,
+              2.206301,
+              2.245941,
+              2.43815,
+              2.210367,
+              2.227473,
+              2.207403,
+              2.265469,
+              2.562416,
+              2.314363
+            ],
+            "torch_sdpa": [
+              0.500453,
+              0.489397,
+              0.463798,
+              0.494875,
+              0.460053,
+              0.501895,
+              0.439491,
+              0.461714,
+              0.476848,
+              0.527694,
+              0.481454
+            ]
+          },
+          "torch_repeated_kv_extra_bytes": 393216
+        },
+        {
+          "batch": 4,
+          "context": 128,
+          "head_dim": 48,
+          "kv_heads": 4,
+          "max_abs_error": 3.725290298461914e-08,
+          "median_ms": {
+            "native_c": 8.737571,
+            "torch_sdpa": 1.71448
+          },
+          "native_probabilities_bytes": 2097152,
+          "query_heads": 8,
+          "samples_ms": {
+            "native_c": [
+              8.737571,
+              8.63738,
+              8.769078,
+              8.727005,
+              9.196832,
+              8.728768,
+              8.997171,
+              9.106195,
+              8.685643,
+              8.631681,
+              8.808618
+            ],
+            "torch_sdpa": [
+              1.761992,
+              1.71448,
+              1.579837,
+              2.316587,
+              1.703955,
+              2.043065,
+              1.658446,
+              1.776454,
+              1.550954,
+              1.791376,
+              1.685547
+            ]
+          },
+          "torch_repeated_kv_extra_bytes": 786432
+        },
+        {
+          "batch": 4,
+          "context": 256,
+          "head_dim": 48,
+          "kv_heads": 4,
+          "max_abs_error": 4.842877388000488e-08,
+          "median_ms": {
+            "native_c": 35.676477,
+            "torch_sdpa": 6.103586
+          },
+          "native_probabilities_bytes": 8388608,
+          "query_heads": 8,
+          "samples_ms": {
+            "native_c": [
+              35.81226,
+              35.310155,
+              35.687543,
+              35.081972,
+              36.264361,
+              35.434092,
+              36.647438,
+              35.676477,
+              35.217015,
+              35.856027,
+              34.953027
+            ],
+            "torch_sdpa": [
+              6.480153,
+              6.275726,
+              6.088934,
+              6.148644,
+              5.998298,
+              6.200192,
+              5.650514,
+              6.141553,
+              5.684686,
+              6.103586,
+              5.814701
+            ]
+          },
+          "torch_repeated_kv_extra_bytes": 1572864
+        }
+      ],
+      "scope": "C causal GQA forward versus CPU Torch SDPA, single thread FP32, equal outputs. C BT-head-channel layout with preallocated full probability matrix; Torch contiguous B-head-T-channel, K/V repetition/preparation excluded, output allocation included. No backward/full-training speedup inferred.",
+      "torch": "2.14.1+cpu"
+    },
+    "source_commit": "75d50d4f6e280e35a25032024edffd92f25c52f2",
+    "stage": "attention"
+  },
+  "crc": {
+    "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
+    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "results": {
+      "rows": [
+        {
+          "bytes": 16384,
+          "crc32": 3116241089,
+          "median_ms": {
+            "bcir_c": 0.036075,
+            "zlib": 0.004367
+          },
+          "samples_ms": {
+            "bcir_c": [
+              0.037566,
+              0.036705,
+              0.036245,
+              0.035995,
+              0.036134,
+              0.036025,
+              0.036055,
+              0.036005,
+              0.036055,
+              0.036125,
+              0.036075
+            ],
+            "zlib": [
+              0.005808,
+              0.004667,
+              0.004467,
+              0.004407,
+              0.004366,
+              0.004376,
+              0.004337,
+              0.004357,
+              0.004337,
+              0.004367,
+              0.004336
+            ]
+          }
+        },
+        {
+          "bytes": 131072,
+          "crc32": 793215266,
+          "median_ms": {
+            "bcir_c": 0.28466,
+            "zlib": 0.032729
+          },
+          "samples_ms": {
+            "bcir_c": [
+              0.321896,
+              0.325732,
+              0.285281,
+              0.28466,
+              0.29764,
+              0.28466,
+              0.28452,
+              0.284389,
+              0.285311,
+              0.28459,
+              0.28445
+            ],
+            "zlib": [
+              0.03331,
+              0.033261,
+              0.032619,
+              0.032779,
+              0.032539,
+              0.033029,
+              0.032589,
+              0.045969,
+              0.032729,
+              0.03268,
+              0.032529
+            ]
+          }
+        },
+        {
+          "bytes": 1048576,
+          "crc32": 596407720,
+          "median_ms": {
+            "bcir_c": 2.35112,
+            "zlib": 0.259812
+          },
+          "samples_ms": {
+            "bcir_c": [
+              2.316288,
+              2.367826,
+              2.338762,
+              2.310269,
+              2.33767,
+              2.511813,
+              2.35112,
+              2.333604,
+              2.363318,
+              2.375677,
+              2.3769
+            ],
+            "zlib": [
+              0.259812,
+              0.25814,
+              0.273072,
+              0.382809,
+              0.257599,
+              0.258751,
+              0.307454,
+              0.258751,
+              0.274244,
+              0.362668,
+              0.257679
+            ]
+          }
+        },
+        {
+          "bytes": 8388608,
+          "crc32": 3340058518,
+          "median_ms": {
+            "bcir_c": 18.855003,
+            "zlib": 2.121814
+          },
+          "samples_ms": {
+            "bcir_c": [
+              22.075858,
+              19.288157,
+              18.582311,
+              18.820282,
+              19.186685,
+              18.779359,
+              19.128897,
+              18.849015,
+              18.855003,
+              18.785358,
+              19.047745
+            ],
+            "zlib": [
+              2.212952,
+              2.10612,
+              2.107923,
+              2.121814,
+              2.091017,
+              3.412264,
+              2.169326,
+              2.101815,
+              2.110327,
+              2.138149,
+              2.729913
+            ]
+          }
+        }
+      ],
+      "scope": "Identical IEEE CRC32 input/output, warm buffers, GCC13 -O2 production runtime versus Python zlib's native implementation. C ctypes/zlib Python entry overhead included; no checksum validation removed."
+    },
+    "source_commit": "75d50d4f6e280e35a25032024edffd92f25c52f2",
+    "stage": "crc"
+  },
+  "environment": {
+    "cpu": "AMD EPYC 9V74 VM",
+    "cpu_compute_threads": 1,
+    "cpu_quota": "800000/100000 = 8 cores",
+    "gpu": false,
+    "harness_sha256": "85f3a710eb9c13b37b1f08b87fbc1f6195f3f27b989a8af09d2ba19422fcca8c",
+    "memory_limit_bytes": 8589934592,
+    "native_arm": false,
+    "production_source_hashes": {
+      "bcir/asn1/cgen.py": "70b851b068692a1a72b9103abf608e4bed93474dd5ee440a60904589a33fc15f",
+      "bcir/gem/async_tokens.py": "7bb7ddfc9356a6bfda34a2fc62504b02edb3ec068da1702ae2fa157898332718",
+      "bcir/gem/concurrency.py": "f321789e30f2032bf423679f7f213bb7bd1e1aeeb52907c139da49014387d926",
+      "bcir/gem/delta_chain.py": "dc9cec2a24f380c4951839fbc8d6ba022352ae6dc457d1852bba27f2fe0f7065",
+      "bcir/gem/streampack.py": "25edf35d0d580db8a7dc53bbc51c156f08bf442ed9368f590563fcf81fb04869",
+      "runtime/c/bcir_decoder_train.c": "2092f558bd2cadac5118797eb1d3bfd6a967fa89d697e60976044cd4b7a915d4",
+      "runtime/c/bcir_kplan.c": "10ebe60fc53f8d6d45c950c183a51c87e6f7a4b08df370fd6c93cabc6c45f632",
+      "runtime/c/bcir_runtime.c": "d24970eb3735aa316146b3c1f3d6978e7a168f6e7aaf1e1eb73a736d5880ec17",
+      "runtime/c/bcir_tensor.c": "0331aabd33045e69cea23edfd89ac39ed4f1e7a3c7c8f8def15bf22fad513b02"
+    }
+  },
+  "frontier": {
+    "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
+    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "results": {
+      "rows": [
+        {
+          "all_edges": 189,
+          "all_hazards": {
+            "median_ms": 0.409047,
+            "samples_ms": [
+              0.410961,
+              0.396709,
+              0.395928,
+              0.412182,
+              0.409047
+            ]
+          },
+          "claims": 512,
+          "frontier": {
+            "median_ms": 0.401536,
+            "samples_ms": [
+              0.4238,
+              0.40387,
+              0.401536,
+              0.401146,
+              0.383419
+            ]
+          },
+          "frontier_edges": 189,
+          "transitive_closure_equal": true
+        },
+        {
+          "all_edges": 810,
+          "all_hazards": {
+            "median_ms": 0.885637,
+            "samples_ms": [
+              0.899999,
+              0.862572,
+              0.86723,
+              0.885637,
+              0.930915
+            ]
+          },
+          "claims": 1024,
+          "frontier": {
+            "median_ms": 0.837905,
+            "samples_ms": [
+              0.803163,
+              0.818726,
+              0.837905,
+              1.019079,
+              0.839017
+            ]
+          },
+          "frontier_edges": 810,
+          "transitive_closure_equal": true
+        },
+        {
+          "all_edges": 3304,
+          "all_hazards": {
+            "median_ms": 2.871976,
+            "samples_ms": [
+              3.150578,
+              2.900921,
+              2.871976,
+              2.846338,
+              2.833048
+            ]
+          },
+          "claims": 2048,
+          "frontier": {
+            "median_ms": 2.463891,
+            "samples_ms": [
+              2.458012,
+              2.523781,
+              2.463891,
+              2.45,
+              2.551749
+            ]
+          },
+          "frontier_edges": 2776,
+          "transitive_closure_equal": true
+        },
+        {
+          "all_edges": 13344,
+          "all_hazards": {
+            "median_ms": 4.412864,
+            "samples_ms": [
+              4.558294,
+              4.389568,
+              4.412864,
+              4.404672,
+              4.497481
+            ]
+          },
+          "claims": 4096,
+          "frontier": {
+            "median_ms": 3.588569,
+            "samples_ms": [
+              3.588569,
+              3.400756,
+              3.515599,
+              3.663642,
+              3.654528
+            ]
+          },
+          "frontier_edges": 6768,
+          "transitive_closure_equal": true
+        },
+        {
+          "all_edges": 53616,
+          "all_hazards": {
+            "median_ms": 12.308618,
+            "samples_ms": [
+              12.308618,
+              12.112682,
+              12.711205,
+              12.600689,
+              12.24426
+            ]
+          },
+          "claims": 8192,
+          "frontier": {
+            "median_ms": 7.330103,
+            "samples_ms": [
+              7.723794,
+              7.3571,
+              7.286394,
+              7.308998,
+              7.330103
+            ]
+          },
+          "frontier_edges": 14752,
+          "transitive_closure_equal": true
+        }
+      ],
+      "scope": "Current hazard_predecessors versus existing private _frontier_predecessors, same fence-free scheduler fixtures. Every node's reachability mask identical. Recommendation only; async plan/verifier/MLIR not changed. Fence, phase and event corpora still required before production adoption."
+    },
+    "source_commit": "75d50d4f6e280e35a25032024edffd92f25c52f2",
+    "stage": "frontier"
+  },
+  "gem": {
+    "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
+    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "results": {
+      "rows": [
+        {
+          "claims": 64,
+          "delta": {
+            "byte_parity_cases": 7,
+            "diagnostic_count": 0,
+            "full_chain": {
+              "median_ms": 1.466288,
+              "samples_ms": [
+                1.457045,
+                1.46014,
+                1.49379,
+                1.466288,
+                1.491587
+              ]
+            },
+            "median_ms": 0.203839,
+            "rebuilds": 0,
+            "samples_ms": [
+              0.248516,
+              0.209046,
+              0.182286,
+              0.188805,
+              0.223008,
+              0.203839,
+              0.195326
+            ],
+            "updated_wire_bytes": 11181
+          },
+          "native": {
+            "hydrate": {
+              "median_ms": 0.034924,
+              "samples_ms": [
+                0.035355,
+                0.034924,
+                0.034919
+              ]
+            },
+            "hydrate_write_floor": {
+              "bytes": 11181,
+              "median_ms": 0.000102,
+              "samples_ms": [
+                0.000102,
+                0.000102,
+                0.0001
+              ]
+            },
+            "planner": {
+              "median_ms": 0.031161,
+              "samples_ms": [
+                0.031131,
+                0.031161,
+                0.031177
+              ]
+            },
+            "planner_write_floor": {
+              "bytes": 7716,
+              "median_ms": 7.4e-05,
+              "samples_ms": [
+                7.2e-05,
+                7.4e-05,
+                7.4e-05
+              ]
+            }
+          },
+          "native_hydrate_byte_parity": true,
+          "python": {
+            "decode": {
+              "median_ms": 0.35035,
+              "samples_ms": [
+                0.366765,
+                0.35035,
+                0.345984,
+                0.374877,
+                0.35023
+              ]
+            },
+            "encode": {
+              "median_ms": 0.209647,
+              "samples_ms": [
+                0.210448,
+                0.203829,
+                0.201235,
+                0.218521,
+                0.209647
+              ]
+            },
+            "hydrate_pipelined": {
+              "median_ms": 0.153052,
+              "samples_ms": [
+                0.195897,
+                0.132721,
+                0.153442,
+                0.153052,
+                0.130547
+              ]
+            },
+            "hydrate_plain": {
+              "median_ms": 0.133712,
+              "samples_ms": [
+                0.134303,
+                0.127463,
+                0.15212,
+                0.126312,
+                0.133712
+              ]
+            },
+            "hydrate_plain_plus_encode": {
+              "median_ms": 0.352003,
+              "samples_ms": [
+                0.645506,
+                0.368267,
+                0.350069,
+                0.352003,
+                0.339434
+              ]
+            },
+            "plan": {
+              "median_ms": 0.430732,
+              "samples_ms": [
+                0.430732,
+                0.485495,
+                0.387676,
+                0.42346,
+                0.545045
+              ]
+            }
+          },
+          "python_peak_allocated_bytes": {
+            "decode": 92738,
+            "plan": 83832
+          },
+          "scale": 1,
+          "wire_bytes": 11181,
+          "wire_sha256": "9305cf948602daaf227308a7feea87fe32d08939b3dab43eb8c5d0110b034b1a"
+        },
+        {
+          "claims": 512,
+          "delta": {
+            "byte_parity_cases": 7,
+            "diagnostic_count": 0,
+            "full_chain": {
+              "median_ms": 10.53412,
+              "samples_ms": [
+                10.436882,
+                10.604236,
+                10.37547,
+                10.587571,
+                10.53412
+              ]
+            },
+            "median_ms": 0.347065,
+            "rebuilds": 0,
+            "samples_ms": [
+              0.485544,
+              0.348908,
+              0.347065,
+              0.32385,
+              0.343079,
+              0.335268,
+              0.369499
+            ],
+            "updated_wire_bytes": 88577
+          },
+          "native": {
+            "hydrate": {
+              "median_ms": 0.28577,
+              "samples_ms": [
+                0.285604,
+                0.286277,
+                0.28577
+              ]
+            },
+            "hydrate_write_floor": {
+              "bytes": 88577,
+              "median_ms": 0.000771,
+              "samples_ms": [
+                0.000771,
+                0.000771,
+                0.000771
+              ]
+            },
+            "planner": {
+              "median_ms": 0.263506,
+              "samples_ms": [
+                0.263506,
+                0.265111,
+                0.261509
+              ]
+            },
+            "planner_write_floor": {
+              "bytes": 61476,
+              "median_ms": 0.000536,
+              "samples_ms": [
+                0.000536,
+                0.000536,
+                0.000534
+              ]
+            }
+          },
+          "native_hydrate_byte_parity": true,
+          "python": {
+            "decode": {
+              "median_ms": 2.618502,
+              "samples_ms": [
+                2.597871,
+                2.624641,
+                4.300728,
+                2.605702,
+                2.618502
+              ]
+            },
+            "encode": {
+              "median_ms": 1.446579,
+              "samples_ms": [
+                1.470245,
+                1.46061,
+                1.443945,
+                1.446579,
+                1.428552
+              ]
+            },
+            "hydrate_pipelined": {
+              "median_ms": 0.895536,
+              "samples_ms": [
+                1.056258,
+                0.895536,
+                0.880782,
+                0.888384,
+                0.911179
+              ]
+            },
+            "hydrate_plain": {
+              "median_ms": 0.893802,
+              "samples_ms": [
+                0.881354,
+                0.893802,
+                0.904569,
+                0.879921,
+                0.989877
+              ]
+            },
+            "hydrate_plain_plus_encode": {
+              "median_ms": 2.586073,
+              "samples_ms": [
+                2.615888,
+                2.508806,
+                2.607916,
+                2.586073,
+                2.567875
+              ]
+            },
+            "plan": {
+              "median_ms": 2.98697,
+              "samples_ms": [
+                3.265371,
+                2.870574,
+                2.98697,
+                2.864804,
+                3.196837
+              ]
+            }
+          },
+          "python_peak_allocated_bytes": {
+            "decode": 702874,
+            "plan": 676716
+          },
+          "scale": 2,
+          "wire_bytes": 88577,
+          "wire_sha256": "f667f27e9db1a7323fdb9380695f1f8ca81d2c041ca6feec42b25b650901216e"
+        },
+        {
+          "claims": 4096,
+          "delta": {
+            "byte_parity_cases": 7,
+            "diagnostic_count": 0,
+            "full_chain": {
+              "median_ms": 93.180164,
+              "samples_ms": [
+                93.431505,
+                92.96492,
+                93.180164,
+                92.815833,
+                95.164477
+              ]
+            },
+            "median_ms": 1.47316,
+            "rebuilds": 0,
+            "samples_ms": [
+              2.494464,
+              1.47316,
+              1.414931,
+              1.651509,
+              1.4669,
+              1.429043,
+              1.770218
+            ],
+            "updated_wire_bytes": 712521
+          },
+          "native": {
+            "hydrate": {
+              "median_ms": 2.461939,
+              "samples_ms": [
+                2.595343,
+                2.453981,
+                2.461939
+              ]
+            },
+            "hydrate_write_floor": {
+              "bytes": 712521,
+              "median_ms": 0.006932,
+              "samples_ms": [
+                0.006632,
+                0.007036,
+                0.006932
+              ]
+            },
+            "planner": {
+              "median_ms": 2.241173,
+              "samples_ms": [
+                2.241173,
+                2.250026,
+                2.128076
+              ]
+            },
+            "planner_write_floor": {
+              "bytes": 491556,
+              "median_ms": 0.004216,
+              "samples_ms": [
+                0.004222,
+                0.004216,
+                0.004214
+              ]
+            }
+          },
+          "native_hydrate_byte_parity": true,
+          "python": {
+            "decode": {
+              "median_ms": 20.878722,
+              "samples_ms": [
+                20.991904,
+                20.878722,
+                20.418436,
+                20.756648,
+                20.896389
+              ]
+            },
+            "encode": {
+              "median_ms": 11.498279,
+              "samples_ms": [
+                11.498279,
+                11.485099,
+                11.537337,
+                12.032938,
+                11.33412
+              ]
+            },
+            "hydrate_pipelined": {
+              "median_ms": 7.28943,
+              "samples_ms": [
+                7.16435,
+                7.661884,
+                7.28943,
+                7.251422,
+                7.492757
+              ]
+            },
+            "hydrate_plain": {
+              "median_ms": 7.26286,
+              "samples_ms": [
+                7.077599,
+                7.399136,
+                7.130049,
+                7.316781,
+                7.26286
+              ]
+            },
+            "hydrate_plain_plus_encode": {
+              "median_ms": 23.377884,
+              "samples_ms": [
+                22.070936,
+                23.377884,
+                23.417825,
+                24.869931,
+                21.530489
+              ]
+            },
+            "plan": {
+              "median_ms": 25.063564,
+              "samples_ms": [
+                25.332492,
+                25.257418,
+                24.696439,
+                24.909441,
+                25.063564
+              ]
+            }
+          },
+          "python_peak_allocated_bytes": {
+            "decode": 5553086,
+            "plan": 4426176
+          },
+          "scale": 4,
+          "wire_bytes": 712521,
+          "wire_sha256": "0e337e4242d5496aebd0cc2d846b8699a16b026a240100548ce9976caed1c6c3"
+        },
+        {
+          "claims": 32768,
+          "delta": {
+            "byte_parity_cases": 7,
+            "diagnostic_count": 0,
+            "full_chain": {
+              "median_ms": 1052.663737,
+              "samples_ms": [
+                1002.305426,
+                997.588189,
+                1052.663737,
+                1111.212997,
+                1053.502802
+              ]
+            },
+            "median_ms": 11.847355,
+            "rebuilds": 0,
+            "samples_ms": [
+              17.962693,
+              11.847355,
+              11.530706,
+              11.722406,
+              12.107709,
+              14.046375,
+              11.654116
+            ],
+            "updated_wire_bytes": 5762585
+          },
+          "native": {
+            "hydrate": {
+              "median_ms": 19.946466,
+              "samples_ms": [
+                19.334759,
+                19.946466,
+                20.29101
+              ]
+            },
+            "hydrate_write_floor": {
+              "bytes": 5762585,
+              "median_ms": 0.057739,
+              "samples_ms": [
+                0.057739,
+                0.058434,
+                0.057515
+              ]
+            },
+            "planner": {
+              "median_ms": 17.760161,
+              "samples_ms": [
+                17.788661,
+                17.760161,
+                17.545034
+              ]
+            },
+            "planner_write_floor": {
+              "bytes": 3932196,
+              "median_ms": 0.039269,
+              "samples_ms": [
+                0.039325,
+                0.039269,
+                0.039155
+              ]
+            }
+          },
+          "native_hydrate_byte_parity": true,
+          "python": {
+            "decode": {
+              "median_ms": 177.669705,
+              "samples_ms": [
+                178.288421,
+                179.83845,
+                177.635212,
+                177.669705,
+                176.666507
+              ]
+            },
+            "encode": {
+              "median_ms": 115.628322,
+              "samples_ms": [
+                117.298208,
+                118.041872,
+                114.692627,
+                114.817697,
+                115.628322
+              ]
+            },
+            "hydrate_pipelined": {
+              "median_ms": 80.019978,
+              "samples_ms": [
+                78.790956,
+                79.536468,
+                80.110986,
+                82.034775,
+                80.019978
+              ]
+            },
+            "hydrate_plain": {
+              "median_ms": 81.53482,
+              "samples_ms": [
+                83.989875,
+                78.317017,
+                80.581563,
+                81.53482,
+                83.11658
+              ]
+            },
+            "hydrate_plain_plus_encode": {
+              "median_ms": 273.119189,
+              "samples_ms": [
+                342.331921,
+                298.688873,
+                273.119189,
+                270.897628,
+                261.866852
+              ]
+            },
+            "plan": {
+              "median_ms": 259.80627,
+              "samples_ms": [
+                257.011249,
+                259.80627,
+                257.812585,
+                264.210204,
+                276.053759
+              ]
+            }
+          },
+          "python_peak_allocated_bytes": {
+            "decode": 44367102,
+            "plan": 33830212
+          },
+          "scale": 8,
+          "wire_bytes": 5762585,
+          "wire_sha256": "310e1bf6a59a422265d1bc7e2c6cff0dba7d6f91886a3f86f9fe6ec8cc405cd8"
+        }
+      ],
+      "schedulers": [
+        {
+          "await_edges": 189,
+          "claims": 512,
+          "makespan": 1690,
+          "timing": {
+            "eft": {
+              "median_ms": 2.036901,
+              "samples_ms": [
+                2.026376,
+                2.036901,
+                2.079086,
+                2.012945,
+                2.093627
+              ]
+            },
+            "tokens": {
+              "median_ms": 0.740701,
+              "samples_ms": [
+                0.721061,
+                0.739209,
+                0.742534,
+                0.740701,
+                0.881494
+              ]
+            },
+            "waves": {
+              "median_ms": 0.608342,
+              "samples_ms": [
+                0.613078,
+                0.608342,
+                0.602803,
+                0.637144,
+                0.601441
+              ]
+            }
+          }
+        },
+        {
+          "await_edges": 810,
+          "claims": 1024,
+          "makespan": 3614,
+          "timing": {
+            "eft": {
+              "median_ms": 4.222884,
+              "samples_ms": [
+                4.279279,
+                6.503372,
+                4.195833,
+                4.169834,
+                4.222884
+              ]
+            },
+            "tokens": {
+              "median_ms": 1.500638,
+              "samples_ms": [
+                1.560823,
+                1.506912,
+                1.464979,
+                1.482461,
+                1.500638
+              ]
+            },
+            "waves": {
+              "median_ms": 1.141373,
+              "samples_ms": [
+                1.186526,
+                1.141373,
+                1.133832,
+                1.158149,
+                1.118379
+              ]
+            }
+          }
+        },
+        {
+          "await_edges": 3304,
+          "claims": 2048,
+          "makespan": 7500,
+          "timing": {
+            "eft": {
+              "median_ms": 8.547322,
+              "samples_ms": [
+                8.547322,
+                8.40661,
+                8.640362,
+                8.994036,
+                8.528323
+              ]
+            },
+            "tokens": {
+              "median_ms": 2.989879,
+              "samples_ms": [
+                2.966565,
+                3.157292,
+                3.398176,
+                2.909579,
+                2.989879
+              ]
+            },
+            "waves": {
+              "median_ms": 1.979632,
+              "samples_ms": [
+                2.067375,
+                2.198373,
+                1.954395,
+                1.979632,
+                1.96235
+              ]
+            }
+          }
+        },
+        {
+          "await_edges": 13344,
+          "claims": 4096,
+          "makespan": 15407,
+          "timing": {
+            "eft": {
+              "median_ms": 18.578121,
+              "samples_ms": [
+                18.578121,
+                17.216174,
+                19.118167,
+                20.228053,
+                17.91471
+              ]
+            },
+            "tokens": {
+              "median_ms": 6.529811,
+              "samples_ms": [
+                6.529811,
+                6.497913,
+                7.86121,
+                6.877104,
+                6.459314
+              ]
+            },
+            "waves": {
+              "median_ms": 3.790216,
+              "samples_ms": [
+                3.790216,
+                3.773211,
+                3.992202,
+                3.78586,
+                3.835202
+              ]
+            }
+          }
+        },
+        {
+          "await_edges": 53616,
+          "claims": 8192,
+          "makespan": 31276,
+          "timing": {
+            "eft": {
+              "median_ms": 41.687033,
+              "samples_ms": [
+                37.051433,
+                41.687033,
+                40.710207,
+                46.047479,
+                84.553697
+              ]
+            },
+            "tokens": {
+              "median_ms": 16.726765,
+              "samples_ms": [
+                16.296416,
+                17.33945,
+                16.726765,
+                16.095533,
+                17.073569
+              ]
+            },
+            "waves": {
+              "median_ms": 7.630151,
+              "samples_ms": [
+                8.1328,
+                7.630151,
+                7.752166,
+                7.47068,
+                7.408086
+              ]
+            }
+          }
+        }
+      ],
+      "scope": "Python fixture construction excluded; result allocation included. Native records decoded once outside timer, caller-owned output/scratch reused. Native hydrate compares plain hydrate+encode, not pipelined hydrate. Warm working sets; VM timings indicative."
+    },
+    "source_commit": "75d50d4f6e280e35a25032024edffd92f25c52f2",
+    "stage": "gem"
+  },
+  "its": {
+    "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
+    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "results": {
+      "parity_checks": 40,
+      "runs": [
+        [
+          {
+            "codec": "v111",
+            "envelope": 0,
+            "median_ns": 21.82,
+            "octets": 96,
+            "op": "encode",
+            "q1_ns": 21.77,
+            "q3_ns": 22.046
+          },
+          {
+            "codec": "v111",
+            "envelope": 0,
+            "median_ns": 20.565,
+            "octets": 96,
+            "op": "decode",
+            "q1_ns": 20.558,
+            "q3_ns": 20.608
+          },
+          {
+            "codec": "v111",
+            "envelope": 0,
+            "median_ns": 2.988,
+            "octets": 96,
+            "op": "floor",
+            "q1_ns": 2.984,
+            "q3_ns": 2.988
+          },
+          {
+            "codec": "v111",
+            "envelope": 1,
+            "median_ns": 53.507,
+            "octets": 222,
+            "op": "encode",
+            "q1_ns": 53.464,
+            "q3_ns": 57.948
+          },
+          {
+            "codec": "v111",
+            "envelope": 1,
+            "median_ns": 52.81,
+            "octets": 222,
+            "op": "decode",
+            "q1_ns": 52.723,
+            "q3_ns": 56.869
+          },
+          {
+            "codec": "v111",
+            "envelope": 1,
+            "median_ns": 3.425,
+            "octets": 222,
+            "op": "floor",
+            "q1_ns": 3.318,
+            "q3_ns": 3.535
+          },
+          {
+            "codec": "v111",
+            "envelope": 2,
+            "median_ns": 56.615,
+            "octets": 233,
+            "op": "encode",
+            "q1_ns": 55.881,
+            "q3_ns": 56.896
+          },
+          {
+            "codec": "v111",
+            "envelope": 2,
+            "median_ns": 55.11,
+            "octets": 233,
+            "op": "decode",
+            "q1_ns": 54.966,
+            "q3_ns": 58.936
+          },
+          {
+            "codec": "v111",
+            "envelope": 2,
+            "median_ns": 16.254,
+            "octets": 233,
+            "op": "floor",
+            "q1_ns": 16.248,
+            "q3_ns": 16.261
+          },
+          {
+            "codec": "v111",
+            "envelope": 3,
+            "median_ns": 54.756,
+            "octets": 230,
+            "op": "encode",
+            "q1_ns": 54.542,
+            "q3_ns": 55.2
+          },
+          {
+            "codec": "v111",
+            "envelope": 3,
+            "median_ns": 54.329,
+            "octets": 230,
+            "op": "decode",
+            "q1_ns": 54.275,
+            "q3_ns": 54.436
+          },
+          {
+            "codec": "v111",
+            "envelope": 3,
+            "median_ns": 16.251,
+            "octets": 230,
+            "op": "floor",
+            "q1_ns": 16.248,
+            "q3_ns": 16.288
+          },
+          {
+            "codec": "coer",
+            "envelope": 0,
+            "median_ns": 18.224,
+            "octets": 98,
+            "op": "encode",
+            "q1_ns": 18.211,
+            "q3_ns": 18.314
+          },
+          {
+            "codec": "coer",
+            "envelope": 0,
+            "median_ns": 19.276,
+            "octets": 98,
+            "op": "decode",
+            "q1_ns": 19.216,
+            "q3_ns": 19.413
+          },
+          {
+            "codec": "coer",
+            "envelope": 0,
+            "median_ns": 2.988,
+            "octets": 98,
+            "op": "floor",
+            "q1_ns": 2.985,
+            "q3_ns": 2.991
+          },
+          {
+            "codec": "coer",
+            "envelope": 1,
+            "median_ns": 40.999,
+            "octets": 227,
+            "op": "encode",
+            "q1_ns": 40.955,
+            "q3_ns": 41.997
+          },
+          {
+            "codec": "coer",
+            "envelope": 1,
+            "median_ns": 51.868,
+            "octets": 227,
+            "op": "decode",
+            "q1_ns": 51.721,
+            "q3_ns": 52.008
+          },
+          {
+            "codec": "coer",
+            "envelope": 1,
+            "median_ns": 16.251,
+            "octets": 227,
+            "op": "floor",
+            "q1_ns": 16.248,
+            "q3_ns": 16.254
+          },
+          {
+            "codec": "coer",
+            "envelope": 2,
+            "median_ns": 43.623,
+            "octets": 238,
+            "op": "encode",
+            "q1_ns": 43.342,
+            "q3_ns": 47.602
+          },
+          {
+            "codec": "coer",
+            "envelope": 2,
+            "median_ns": 51.621,
+            "octets": 238,
+            "op": "decode",
+            "q1_ns": 51.421,
+            "q3_ns": 51.989
+          },
+          {
+            "codec": "coer",
+            "envelope": 2,
+            "median_ns": 16.251,
+            "octets": 238,
+            "op": "floor",
+            "q1_ns": 16.248,
+            "q3_ns": 16.258
+          },
+          {
+            "codec": "coer",
+            "envelope": 3,
+            "median_ns": 42.481,
+            "octets": 235,
+            "op": "encode",
+            "q1_ns": 42.287,
+            "q3_ns": 42.675
+          },
+          {
+            "codec": "coer",
+            "envelope": 3,
+            "median_ns": 50.8,
+            "octets": 235,
+            "op": "decode",
+            "q1_ns": 50.737,
+            "q3_ns": 54.239
+          },
+          {
+            "codec": "coer",
+            "envelope": 3,
+            "median_ns": 16.255,
+            "octets": 235,
+            "op": "floor",
+            "q1_ns": 16.248,
+            "q3_ns": 16.281
+          },
+          {
+            "codec": "uper",
+            "envelope": 0,
+            "median_ns": 30.63,
+            "octets": 92,
+            "op": "encode",
+            "q1_ns": 30.516,
+            "q3_ns": 30.786
+          },
+          {
+            "codec": "uper",
+            "envelope": 0,
+            "median_ns": 33.35,
+            "octets": 92,
+            "op": "decode",
+            "q1_ns": 33.283,
+            "q3_ns": 33.447
+          },
+          {
+            "codec": "uper",
+            "envelope": 0,
+            "median_ns": 2.988,
+            "octets": 92,
+            "op": "floor",
+            "q1_ns": 2.978,
+            "q3_ns": 2.991
+          },
+          {
+            "codec": "uper",
+            "envelope": 1,
+            "median_ns": 71.698,
+            "octets": 212,
+            "op": "encode",
+            "q1_ns": 71.274,
+            "q3_ns": 75.774
+          },
+          {
+            "codec": "uper",
+            "envelope": 1,
+            "median_ns": 85.185,
+            "octets": 212,
+            "op": "decode",
+            "q1_ns": 84.728,
+            "q3_ns": 89.635
+          },
+          {
+            "codec": "uper",
+            "envelope": 1,
+            "median_ns": 3.439,
+            "octets": 212,
+            "op": "floor",
+            "q1_ns": 3.285,
+            "q3_ns": 3.519
+          },
+          {
+            "codec": "uper",
+            "envelope": 2,
+            "median_ns": 76.949,
+            "octets": 223,
+            "op": "encode",
+            "q1_ns": 76.465,
+            "q3_ns": 80.501
+          },
+          {
+            "codec": "uper",
+            "envelope": 2,
+            "median_ns": 88.854,
+            "octets": 223,
+            "op": "decode",
+            "q1_ns": 88.417,
+            "q3_ns": 93.361
+          },
+          {
+            "codec": "uper",
+            "envelope": 2,
+            "median_ns": 3.325,
+            "octets": 223,
+            "op": "floor",
+            "q1_ns": 3.312,
+            "q3_ns": 3.458
+          },
+          {
+            "codec": "uper",
+            "envelope": 3,
+            "median_ns": 75.898,
+            "octets": 220,
+            "op": "encode",
+            "q1_ns": 75.681,
+            "q3_ns": 80.174
+          },
+          {
+            "codec": "uper",
+            "envelope": 3,
+            "median_ns": 87.646,
+            "octets": 220,
+            "op": "decode",
+            "q1_ns": 87.529,
+            "q3_ns": 91.632
+          },
+          {
+            "codec": "uper",
+            "envelope": 3,
+            "median_ns": 3.489,
+            "octets": 220,
+            "op": "floor",
+            "q1_ns": 3.388,
+            "q3_ns": 3.535
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 0,
+            "median_ns": 17.156,
+            "octets": 93,
+            "op": "encode",
+            "q1_ns": 17.122,
+            "q3_ns": 17.189
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 0,
+            "median_ns": 14.185,
+            "octets": 93,
+            "op": "decode",
+            "q1_ns": 14.178,
+            "q3_ns": 14.232
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 0,
+            "median_ns": 2.988,
+            "octets": 93,
+            "op": "floor",
+            "q1_ns": 2.985,
+            "q3_ns": 2.991
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 1,
+            "median_ns": 35.871,
+            "octets": 216,
+            "op": "encode",
+            "q1_ns": 35.811,
+            "q3_ns": 39.603
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 1,
+            "median_ns": 33.504,
+            "octets": 216,
+            "op": "decode",
+            "q1_ns": 33.474,
+            "q3_ns": 37.29
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 1,
+            "median_ns": 3.425,
+            "octets": 216,
+            "op": "floor",
+            "q1_ns": 3.325,
+            "q3_ns": 3.562
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 2,
+            "median_ns": 37.714,
+            "octets": 226,
+            "op": "encode",
+            "q1_ns": 37.567,
+            "q3_ns": 37.957
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 2,
+            "median_ns": 34.943,
+            "octets": 226,
+            "op": "decode",
+            "q1_ns": 34.926,
+            "q3_ns": 35.026
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 2,
+            "median_ns": 16.251,
+            "octets": 226,
+            "op": "floor",
+            "q1_ns": 16.248,
+            "q3_ns": 16.254
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 3,
+            "median_ns": 37.356,
+            "octets": 224,
+            "op": "encode",
+            "q1_ns": 37.219,
+            "q3_ns": 41.249
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 3,
+            "median_ns": 35.497,
+            "octets": 224,
+            "op": "decode",
+            "q1_ns": 35.384,
+            "q3_ns": 36.482
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 3,
+            "median_ns": 3.252,
+            "octets": 224,
+            "op": "floor",
+            "q1_ns": 3.248,
+            "q3_ns": 3.258
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 0,
+            "median_ns": 29.959,
+            "octets": 86,
+            "op": "encode",
+            "q1_ns": 29.905,
+            "q3_ns": 30.085
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 0,
+            "median_ns": 31.531,
+            "octets": 86,
+            "op": "decode",
+            "q1_ns": 31.498,
+            "q3_ns": 31.615
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 0,
+            "median_ns": 2.988,
+            "octets": 86,
+            "op": "floor",
+            "q1_ns": 2.978,
+            "q3_ns": 2.988
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 1,
+            "median_ns": 69.378,
+            "octets": 203,
+            "op": "encode",
+            "q1_ns": 69.104,
+            "q3_ns": 72.977
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 1,
+            "median_ns": 71.394,
+            "octets": 203,
+            "op": "decode",
+            "q1_ns": 71.321,
+            "q3_ns": 74.509
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 1,
+            "median_ns": 3.462,
+            "octets": 203,
+            "op": "floor",
+            "q1_ns": 3.332,
+            "q3_ns": 3.542
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 2,
+            "median_ns": 75.784,
+            "octets": 213,
+            "op": "encode",
+            "q1_ns": 75.618,
+            "q3_ns": 79.293
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 2,
+            "median_ns": 74.863,
+            "octets": 213,
+            "op": "decode",
+            "q1_ns": 74.756,
+            "q3_ns": 78.883
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 2,
+            "median_ns": 3.335,
+            "octets": 213,
+            "op": "floor",
+            "q1_ns": 3.288,
+            "q3_ns": 3.495
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 3,
+            "median_ns": 75.047,
+            "octets": 212,
+            "op": "encode",
+            "q1_ns": 74.646,
+            "q3_ns": 78.432
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 3,
+            "median_ns": 73.872,
+            "octets": 212,
+            "op": "decode",
+            "q1_ns": 73.728,
+            "q3_ns": 77.764
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 3,
+            "median_ns": 3.402,
+            "octets": 212,
+            "op": "floor",
+            "q1_ns": 3.282,
+            "q3_ns": 3.515
+          }
+        ],
+        [
+          {
+            "codec": "v111",
+            "envelope": 0,
+            "median_ns": 21.529,
+            "octets": 96,
+            "op": "encode",
+            "q1_ns": 21.305,
+            "q3_ns": 25.301
+          },
+          {
+            "codec": "v111",
+            "envelope": 0,
+            "median_ns": 20.635,
+            "octets": 96,
+            "op": "decode",
+            "q1_ns": 20.591,
+            "q3_ns": 20.698
+          },
+          {
+            "codec": "v111",
+            "envelope": 0,
+            "median_ns": 2.991,
+            "octets": 96,
+            "op": "floor",
+            "q1_ns": 2.988,
+            "q3_ns": 3.014
+          },
+          {
+            "codec": "v111",
+            "envelope": 1,
+            "median_ns": 53.548,
+            "octets": 222,
+            "op": "encode",
+            "q1_ns": 53.364,
+            "q3_ns": 53.801
+          },
+          {
+            "codec": "v111",
+            "envelope": 1,
+            "median_ns": 52.696,
+            "octets": 222,
+            "op": "decode",
+            "q1_ns": 52.576,
+            "q3_ns": 52.806
+          },
+          {
+            "codec": "v111",
+            "envelope": 1,
+            "median_ns": 3.375,
+            "octets": 222,
+            "op": "floor",
+            "q1_ns": 3.322,
+            "q3_ns": 3.502
+          },
+          {
+            "codec": "v111",
+            "envelope": 2,
+            "median_ns": 56.662,
+            "octets": 233,
+            "op": "encode",
+            "q1_ns": 55.808,
+            "q3_ns": 60.295
+          },
+          {
+            "codec": "v111",
+            "envelope": 2,
+            "median_ns": 54.97,
+            "octets": 233,
+            "op": "decode",
+            "q1_ns": 54.836,
+            "q3_ns": 59.553
+          },
+          {
+            "codec": "v111",
+            "envelope": 2,
+            "median_ns": 16.254,
+            "octets": 233,
+            "op": "floor",
+            "q1_ns": 16.248,
+            "q3_ns": 16.258
+          },
+          {
+            "codec": "v111",
+            "envelope": 3,
+            "median_ns": 54.733,
+            "octets": 230,
+            "op": "encode",
+            "q1_ns": 54.612,
+            "q3_ns": 60.428
+          },
+          {
+            "codec": "v111",
+            "envelope": 3,
+            "median_ns": 56.569,
+            "octets": 230,
+            "op": "decode",
+            "q1_ns": 56.442,
+            "q3_ns": 56.883
+          },
+          {
+            "codec": "v111",
+            "envelope": 3,
+            "median_ns": 16.255,
+            "octets": 230,
+            "op": "floor",
+            "q1_ns": 16.251,
+            "q3_ns": 16.331
+          },
+          {
+            "codec": "coer",
+            "envelope": 0,
+            "median_ns": 18.167,
+            "octets": 98,
+            "op": "encode",
+            "q1_ns": 18.004,
+            "q3_ns": 18.227
+          },
+          {
+            "codec": "coer",
+            "envelope": 0,
+            "median_ns": 19.272,
+            "octets": 98,
+            "op": "decode",
+            "q1_ns": 19.229,
+            "q3_ns": 19.339
+          },
+          {
+            "codec": "coer",
+            "envelope": 0,
+            "median_ns": 2.988,
+            "octets": 98,
+            "op": "floor",
+            "q1_ns": 2.985,
+            "q3_ns": 2.988
+          },
+          {
+            "codec": "coer",
+            "envelope": 1,
+            "median_ns": 40.985,
+            "octets": 227,
+            "op": "encode",
+            "q1_ns": 40.805,
+            "q3_ns": 41.282
+          },
+          {
+            "codec": "coer",
+            "envelope": 1,
+            "median_ns": 49.405,
+            "octets": 227,
+            "op": "decode",
+            "q1_ns": 49.138,
+            "q3_ns": 53.357
+          },
+          {
+            "codec": "coer",
+            "envelope": 1,
+            "median_ns": 16.251,
+            "octets": 227,
+            "op": "floor",
+            "q1_ns": 16.248,
+            "q3_ns": 16.258
+          },
+          {
+            "codec": "coer",
+            "envelope": 2,
+            "median_ns": 43.502,
+            "octets": 238,
+            "op": "encode",
+            "q1_ns": 43.345,
+            "q3_ns": 46.681
+          },
+          {
+            "codec": "coer",
+            "envelope": 2,
+            "median_ns": 55.233,
+            "octets": 238,
+            "op": "decode",
+            "q1_ns": 54.776,
+            "q3_ns": 59.056
+          },
+          {
+            "codec": "coer",
+            "envelope": 2,
+            "median_ns": 16.251,
+            "octets": 238,
+            "op": "floor",
+            "q1_ns": 16.248,
+            "q3_ns": 16.255
+          },
+          {
+            "codec": "coer",
+            "envelope": 3,
+            "median_ns": 42.013,
+            "octets": 235,
+            "op": "encode",
+            "q1_ns": 41.987,
+            "q3_ns": 46.891
+          },
+          {
+            "codec": "coer",
+            "envelope": 3,
+            "median_ns": 49.565,
+            "octets": 235,
+            "op": "decode",
+            "q1_ns": 49.234,
+            "q3_ns": 54.008
+          },
+          {
+            "codec": "coer",
+            "envelope": 3,
+            "median_ns": 16.254,
+            "octets": 235,
+            "op": "floor",
+            "q1_ns": 16.251,
+            "q3_ns": 16.258
+          },
+          {
+            "codec": "uper",
+            "envelope": 0,
+            "median_ns": 30.576,
+            "octets": 92,
+            "op": "encode",
+            "q1_ns": 30.52,
+            "q3_ns": 30.663
+          },
+          {
+            "codec": "uper",
+            "envelope": 0,
+            "median_ns": 33.377,
+            "octets": 92,
+            "op": "decode",
+            "q1_ns": 33.303,
+            "q3_ns": 33.544
+          },
+          {
+            "codec": "uper",
+            "envelope": 0,
+            "median_ns": 2.985,
+            "octets": 92,
+            "op": "floor",
+            "q1_ns": 2.984,
+            "q3_ns": 2.988
+          },
+          {
+            "codec": "uper",
+            "envelope": 1,
+            "median_ns": 72.403,
+            "octets": 212,
+            "op": "encode",
+            "q1_ns": 71.982,
+            "q3_ns": 77.093
+          },
+          {
+            "codec": "uper",
+            "envelope": 1,
+            "median_ns": 84.821,
+            "octets": 212,
+            "op": "decode",
+            "q1_ns": 84.571,
+            "q3_ns": 88.988
+          },
+          {
+            "codec": "uper",
+            "envelope": 1,
+            "median_ns": 3.505,
+            "octets": 212,
+            "op": "floor",
+            "q1_ns": 3.328,
+            "q3_ns": 3.539
+          },
+          {
+            "codec": "uper",
+            "envelope": 2,
+            "median_ns": 80.251,
+            "octets": 223,
+            "op": "encode",
+            "q1_ns": 77.043,
+            "q3_ns": 81.663
+          },
+          {
+            "codec": "uper",
+            "envelope": 2,
+            "median_ns": 92.229,
+            "octets": 223,
+            "op": "decode",
+            "q1_ns": 88.21,
+            "q3_ns": 94.166
+          },
+          {
+            "codec": "uper",
+            "envelope": 2,
+            "median_ns": 3.429,
+            "octets": 223,
+            "op": "floor",
+            "q1_ns": 3.335,
+            "q3_ns": 3.515
+          },
+          {
+            "codec": "uper",
+            "envelope": 3,
+            "median_ns": 80.755,
+            "octets": 220,
+            "op": "encode",
+            "q1_ns": 75.831,
+            "q3_ns": 84.591
+          },
+          {
+            "codec": "uper",
+            "envelope": 3,
+            "median_ns": 87.859,
+            "octets": 220,
+            "op": "decode",
+            "q1_ns": 87.636,
+            "q3_ns": 91.341
+          },
+          {
+            "codec": "uper",
+            "envelope": 3,
+            "median_ns": 3.438,
+            "octets": 220,
+            "op": "floor",
+            "q1_ns": 3.365,
+            "q3_ns": 3.529
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 0,
+            "median_ns": 17.213,
+            "octets": 93,
+            "op": "encode",
+            "q1_ns": 17.169,
+            "q3_ns": 17.48
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 0,
+            "median_ns": 14.201,
+            "octets": 93,
+            "op": "decode",
+            "q1_ns": 14.178,
+            "q3_ns": 14.218
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 0,
+            "median_ns": 2.988,
+            "octets": 93,
+            "op": "floor",
+            "q1_ns": 2.988,
+            "q3_ns": 2.991
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 1,
+            "median_ns": 35.851,
+            "octets": 216,
+            "op": "encode",
+            "q1_ns": 35.827,
+            "q3_ns": 35.964
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 1,
+            "median_ns": 33.167,
+            "octets": 216,
+            "op": "decode",
+            "q1_ns": 33.103,
+            "q3_ns": 33.25
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 1,
+            "median_ns": 3.479,
+            "octets": 216,
+            "op": "floor",
+            "q1_ns": 3.298,
+            "q3_ns": 3.529
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 2,
+            "median_ns": 37.717,
+            "octets": 226,
+            "op": "encode",
+            "q1_ns": 37.527,
+            "q3_ns": 38.168
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 2,
+            "median_ns": 34.722,
+            "octets": 226,
+            "op": "decode",
+            "q1_ns": 34.659,
+            "q3_ns": 40.451
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 2,
+            "median_ns": 16.251,
+            "octets": 226,
+            "op": "floor",
+            "q1_ns": 16.248,
+            "q3_ns": 16.281
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 3,
+            "median_ns": 41.446,
+            "octets": 224,
+            "op": "encode",
+            "q1_ns": 37.3,
+            "q3_ns": 47.241
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 3,
+            "median_ns": 35.183,
+            "octets": 224,
+            "op": "decode",
+            "q1_ns": 35.096,
+            "q3_ns": 35.65
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 3,
+            "median_ns": 3.258,
+            "octets": 224,
+            "op": "floor",
+            "q1_ns": 3.251,
+            "q3_ns": 3.265
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 0,
+            "median_ns": 30.032,
+            "octets": 86,
+            "op": "encode",
+            "q1_ns": 29.982,
+            "q3_ns": 30.132
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 0,
+            "median_ns": 31.554,
+            "octets": 86,
+            "op": "decode",
+            "q1_ns": 31.521,
+            "q3_ns": 31.671
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 0,
+            "median_ns": 2.988,
+            "octets": 86,
+            "op": "floor",
+            "q1_ns": 2.988,
+            "q3_ns": 2.991
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 1,
+            "median_ns": 69.218,
+            "octets": 203,
+            "op": "encode",
+            "q1_ns": 68.984,
+            "q3_ns": 73.645
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 1,
+            "median_ns": 71.435,
+            "octets": 203,
+            "op": "decode",
+            "q1_ns": 71.351,
+            "q3_ns": 80.622
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 1,
+            "median_ns": 3.469,
+            "octets": 203,
+            "op": "floor",
+            "q1_ns": 3.362,
+            "q3_ns": 3.552
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 2,
+            "median_ns": 75.955,
+            "octets": 213,
+            "op": "encode",
+            "q1_ns": 75.638,
+            "q3_ns": 80.047
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 2,
+            "median_ns": 74.893,
+            "octets": 213,
+            "op": "decode",
+            "q1_ns": 74.783,
+            "q3_ns": 80.041
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 2,
+            "median_ns": 3.392,
+            "octets": 213,
+            "op": "floor",
+            "q1_ns": 3.298,
+            "q3_ns": 3.512
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 3,
+            "median_ns": 75.17,
+            "octets": 212,
+            "op": "encode",
+            "q1_ns": 74.442,
+            "q3_ns": 79.761
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 3,
+            "median_ns": 74.279,
+            "octets": 212,
+            "op": "decode",
+            "q1_ns": 73.958,
+            "q3_ns": 79.073
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 3,
+            "median_ns": 3.435,
+            "octets": 212,
+            "op": "floor",
+            "q1_ns": 3.312,
+            "q3_ns": 3.522
+          }
+        ],
+        [
+          {
+            "codec": "v111",
+            "envelope": 0,
+            "median_ns": 21.743,
+            "octets": 96,
+            "op": "encode",
+            "q1_ns": 21.356,
+            "q3_ns": 21.82
+          },
+          {
+            "codec": "v111",
+            "envelope": 0,
+            "median_ns": 20.615,
+            "octets": 96,
+            "op": "decode",
+            "q1_ns": 20.591,
+            "q3_ns": 20.658
+          },
+          {
+            "codec": "v111",
+            "envelope": 0,
+            "median_ns": 2.988,
+            "octets": 96,
+            "op": "floor",
+            "q1_ns": 2.988,
+            "q3_ns": 2.991
+          },
+          {
+            "codec": "v111",
+            "envelope": 1,
+            "median_ns": 53.567,
+            "octets": 222,
+            "op": "encode",
+            "q1_ns": 53.28,
+            "q3_ns": 58.675
+          },
+          {
+            "codec": "v111",
+            "envelope": 1,
+            "median_ns": 52.876,
+            "octets": 222,
+            "op": "decode",
+            "q1_ns": 52.683,
+            "q3_ns": 58.535
+          },
+          {
+            "codec": "v111",
+            "envelope": 1,
+            "median_ns": 3.459,
+            "octets": 222,
+            "op": "floor",
+            "q1_ns": 3.395,
+            "q3_ns": 3.542
+          },
+          {
+            "codec": "v111",
+            "envelope": 2,
+            "median_ns": 56.615,
+            "octets": 233,
+            "op": "encode",
+            "q1_ns": 56.158,
+            "q3_ns": 56.903
+          },
+          {
+            "codec": "v111",
+            "envelope": 2,
+            "median_ns": 54.973,
+            "octets": 233,
+            "op": "decode",
+            "q1_ns": 54.89,
+            "q3_ns": 62.264
+          },
+          {
+            "codec": "v111",
+            "envelope": 2,
+            "median_ns": 16.255,
+            "octets": 233,
+            "op": "floor",
+            "q1_ns": 16.251,
+            "q3_ns": 16.261
+          },
+          {
+            "codec": "v111",
+            "envelope": 3,
+            "median_ns": 54.719,
+            "octets": 230,
+            "op": "encode",
+            "q1_ns": 54.599,
+            "q3_ns": 54.956
+          },
+          {
+            "codec": "v111",
+            "envelope": 3,
+            "median_ns": 57.156,
+            "octets": 230,
+            "op": "decode",
+            "q1_ns": 57.0,
+            "q3_ns": 61.366
+          },
+          {
+            "codec": "v111",
+            "envelope": 3,
+            "median_ns": 16.254,
+            "octets": 230,
+            "op": "floor",
+            "q1_ns": 16.251,
+            "q3_ns": 16.255
+          },
+          {
+            "codec": "coer",
+            "envelope": 0,
+            "median_ns": 18.061,
+            "octets": 98,
+            "op": "encode",
+            "q1_ns": 17.977,
+            "q3_ns": 18.224
+          },
+          {
+            "codec": "coer",
+            "envelope": 0,
+            "median_ns": 19.463,
+            "octets": 98,
+            "op": "decode",
+            "q1_ns": 19.426,
+            "q3_ns": 19.546
+          },
+          {
+            "codec": "coer",
+            "envelope": 0,
+            "median_ns": 2.988,
+            "octets": 98,
+            "op": "floor",
+            "q1_ns": 2.984,
+            "q3_ns": 2.988
+          },
+          {
+            "codec": "coer",
+            "envelope": 1,
+            "median_ns": 41.005,
+            "octets": 227,
+            "op": "encode",
+            "q1_ns": 40.962,
+            "q3_ns": 44.878
+          },
+          {
+            "codec": "coer",
+            "envelope": 1,
+            "median_ns": 49.204,
+            "octets": 227,
+            "op": "decode",
+            "q1_ns": 49.054,
+            "q3_ns": 49.565
+          },
+          {
+            "codec": "coer",
+            "envelope": 1,
+            "median_ns": 16.254,
+            "octets": 227,
+            "op": "floor",
+            "q1_ns": 16.248,
+            "q3_ns": 16.271
+          },
+          {
+            "codec": "coer",
+            "envelope": 2,
+            "median_ns": 43.392,
+            "octets": 238,
+            "op": "encode",
+            "q1_ns": 43.262,
+            "q3_ns": 47.315
+          },
+          {
+            "codec": "coer",
+            "envelope": 2,
+            "median_ns": 51.191,
+            "octets": 238,
+            "op": "decode",
+            "q1_ns": 50.813,
+            "q3_ns": 54.255
+          },
+          {
+            "codec": "coer",
+            "envelope": 2,
+            "median_ns": 16.254,
+            "octets": 238,
+            "op": "floor",
+            "q1_ns": 16.248,
+            "q3_ns": 16.288
+          },
+          {
+            "codec": "coer",
+            "envelope": 3,
+            "median_ns": 41.99,
+            "octets": 235,
+            "op": "encode",
+            "q1_ns": 41.82,
+            "q3_ns": 42.267
+          },
+          {
+            "codec": "coer",
+            "envelope": 3,
+            "median_ns": 49.518,
+            "octets": 235,
+            "op": "decode",
+            "q1_ns": 49.224,
+            "q3_ns": 53.534
+          },
+          {
+            "codec": "coer",
+            "envelope": 3,
+            "median_ns": 16.254,
+            "octets": 235,
+            "op": "floor",
+            "q1_ns": 16.251,
+            "q3_ns": 16.261
+          },
+          {
+            "codec": "uper",
+            "envelope": 0,
+            "median_ns": 30.589,
+            "octets": 92,
+            "op": "encode",
+            "q1_ns": 30.526,
+            "q3_ns": 31.09
+          },
+          {
+            "codec": "uper",
+            "envelope": 0,
+            "median_ns": 33.35,
+            "octets": 92,
+            "op": "decode",
+            "q1_ns": 33.263,
+            "q3_ns": 33.571
+          },
+          {
+            "codec": "uper",
+            "envelope": 0,
+            "median_ns": 2.988,
+            "octets": 92,
+            "op": "floor",
+            "q1_ns": 2.984,
+            "q3_ns": 2.991
+          },
+          {
+            "codec": "uper",
+            "envelope": 1,
+            "median_ns": 72.102,
+            "octets": 212,
+            "op": "encode",
+            "q1_ns": 71.722,
+            "q3_ns": 76.319
+          },
+          {
+            "codec": "uper",
+            "envelope": 1,
+            "median_ns": 84.698,
+            "octets": 212,
+            "op": "decode",
+            "q1_ns": 84.561,
+            "q3_ns": 89.528
+          },
+          {
+            "codec": "uper",
+            "envelope": 1,
+            "median_ns": 3.515,
+            "octets": 212,
+            "op": "floor",
+            "q1_ns": 3.372,
+            "q3_ns": 3.562
+          },
+          {
+            "codec": "uper",
+            "envelope": 2,
+            "median_ns": 77.574,
+            "octets": 223,
+            "op": "encode",
+            "q1_ns": 76.819,
+            "q3_ns": 82.548
+          },
+          {
+            "codec": "uper",
+            "envelope": 2,
+            "median_ns": 88.737,
+            "octets": 223,
+            "op": "decode",
+            "q1_ns": 88.394,
+            "q3_ns": 93.171
+          },
+          {
+            "codec": "uper",
+            "envelope": 2,
+            "median_ns": 3.499,
+            "octets": 223,
+            "op": "floor",
+            "q1_ns": 3.298,
+            "q3_ns": 3.542
+          },
+          {
+            "codec": "uper",
+            "envelope": 3,
+            "median_ns": 75.554,
+            "octets": 220,
+            "op": "encode",
+            "q1_ns": 74.966,
+            "q3_ns": 79.861
+          },
+          {
+            "codec": "uper",
+            "envelope": 3,
+            "median_ns": 87.402,
+            "octets": 220,
+            "op": "decode",
+            "q1_ns": 87.255,
+            "q3_ns": 91.381
+          },
+          {
+            "codec": "uper",
+            "envelope": 3,
+            "median_ns": 3.408,
+            "octets": 220,
+            "op": "floor",
+            "q1_ns": 3.308,
+            "q3_ns": 3.495
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 0,
+            "median_ns": 17.206,
+            "octets": 93,
+            "op": "encode",
+            "q1_ns": 17.176,
+            "q3_ns": 17.303
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 0,
+            "median_ns": 14.198,
+            "octets": 93,
+            "op": "decode",
+            "q1_ns": 14.175,
+            "q3_ns": 14.312
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 0,
+            "median_ns": 2.988,
+            "octets": 93,
+            "op": "floor",
+            "q1_ns": 2.988,
+            "q3_ns": 2.991
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 1,
+            "median_ns": 35.821,
+            "octets": 216,
+            "op": "encode",
+            "q1_ns": 35.811,
+            "q3_ns": 35.874
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 1,
+            "median_ns": 33.036,
+            "octets": 216,
+            "op": "decode",
+            "q1_ns": 32.996,
+            "q3_ns": 38.625
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 1,
+            "median_ns": 3.489,
+            "octets": 216,
+            "op": "floor",
+            "q1_ns": 3.335,
+            "q3_ns": 3.559
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 2,
+            "median_ns": 37.707,
+            "octets": 226,
+            "op": "encode",
+            "q1_ns": 37.447,
+            "q3_ns": 37.837
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 2,
+            "median_ns": 34.592,
+            "octets": 226,
+            "op": "decode",
+            "q1_ns": 34.585,
+            "q3_ns": 34.806
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 2,
+            "median_ns": 16.254,
+            "octets": 226,
+            "op": "floor",
+            "q1_ns": 16.251,
+            "q3_ns": 16.261
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 3,
+            "median_ns": 37.623,
+            "octets": 224,
+            "op": "encode",
+            "q1_ns": 37.453,
+            "q3_ns": 39.056
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 3,
+            "median_ns": 35.053,
+            "octets": 224,
+            "op": "decode",
+            "q1_ns": 34.983,
+            "q3_ns": 35.45
+          },
+          {
+            "codec": "tmsao-coer",
+            "envelope": 3,
+            "median_ns": 3.258,
+            "octets": 224,
+            "op": "floor",
+            "q1_ns": 3.248,
+            "q3_ns": 3.261
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 0,
+            "median_ns": 30.676,
+            "octets": 86,
+            "op": "encode",
+            "q1_ns": 30.326,
+            "q3_ns": 30.997
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 0,
+            "median_ns": 31.551,
+            "octets": 86,
+            "op": "decode",
+            "q1_ns": 31.524,
+            "q3_ns": 31.644
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 0,
+            "median_ns": 2.988,
+            "octets": 86,
+            "op": "floor",
+            "q1_ns": 2.988,
+            "q3_ns": 2.991
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 1,
+            "median_ns": 69.572,
+            "octets": 203,
+            "op": "encode",
+            "q1_ns": 69.145,
+            "q3_ns": 73.708
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 1,
+            "median_ns": 71.615,
+            "octets": 203,
+            "op": "decode",
+            "q1_ns": 71.321,
+            "q3_ns": 75.788
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 1,
+            "median_ns": 3.419,
+            "octets": 203,
+            "op": "floor",
+            "q1_ns": 3.328,
+            "q3_ns": 3.529
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 2,
+            "median_ns": 76.025,
+            "octets": 213,
+            "op": "encode",
+            "q1_ns": 75.614,
+            "q3_ns": 81.176
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 2,
+            "median_ns": 74.9,
+            "octets": 213,
+            "op": "decode",
+            "q1_ns": 74.763,
+            "q3_ns": 79.967
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 2,
+            "median_ns": 3.515,
+            "octets": 213,
+            "op": "floor",
+            "q1_ns": 3.312,
+            "q3_ns": 3.549
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 3,
+            "median_ns": 75.18,
+            "octets": 212,
+            "op": "encode",
+            "q1_ns": 74.553,
+            "q3_ns": 78.675
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 3,
+            "median_ns": 74.345,
+            "octets": 212,
+            "op": "decode",
+            "q1_ns": 73.718,
+            "q3_ns": 79.136
+          },
+          {
+            "codec": "tmsao-uper",
+            "envelope": 3,
+            "median_ns": 3.512,
+            "octets": 212,
+            "op": "floor",
+            "q1_ns": 3.315,
+            "q3_ns": 3.552
+          }
+        ]
+      ],
+      "scope": "Repository reconstructed 2015 ITS protocol versus raw/tuned ASN.1 schemas, same logical content and generator, GCC13 -O2; not a universal pure-binary baseline.",
+      "summary": [
+        {
+          "bytes": 96,
+          "codec": "v111",
+          "decode": 20.615,
+          "encode": 21.743,
+          "envelope": 0
+        },
+        {
+          "bytes": 98,
+          "codec": "coer",
+          "decode": 19.276,
+          "encode": 18.167,
+          "envelope": 0
+        },
+        {
+          "bytes": 92,
+          "codec": "uper",
+          "decode": 33.35,
+          "encode": 30.589,
+          "envelope": 0
+        },
+        {
+          "bytes": 93,
+          "codec": "tmsao-coer",
+          "decode": 14.198,
+          "encode": 17.206,
+          "envelope": 0
+        },
+        {
+          "bytes": 86,
+          "codec": "tmsao-uper",
+          "decode": 31.551,
+          "encode": 30.032,
+          "envelope": 0
+        },
+        {
+          "bytes": 222,
+          "codec": "v111",
+          "decode": 52.81,
+          "encode": 53.548,
+          "envelope": 1
+        },
+        {
+          "bytes": 227,
+          "codec": "coer",
+          "decode": 49.405,
+          "encode": 40.999,
+          "envelope": 1
+        },
+        {
+          "bytes": 212,
+          "codec": "uper",
+          "decode": 84.821,
+          "encode": 72.102,
+          "envelope": 1
+        },
+        {
+          "bytes": 216,
+          "codec": "tmsao-coer",
+          "decode": 33.167,
+          "encode": 35.851,
+          "envelope": 1
+        },
+        {
+          "bytes": 203,
+          "codec": "tmsao-uper",
+          "decode": 71.435,
+          "encode": 69.378,
+          "envelope": 1
+        },
+        {
+          "bytes": 233,
+          "codec": "v111",
+          "decode": 54.973,
+          "encode": 56.615,
+          "envelope": 2
+        },
+        {
+          "bytes": 238,
+          "codec": "coer",
+          "decode": 51.621,
+          "encode": 43.502,
+          "envelope": 2
+        },
+        {
+          "bytes": 223,
+          "codec": "uper",
+          "decode": 88.854,
+          "encode": 77.574,
+          "envelope": 2
+        },
+        {
+          "bytes": 226,
+          "codec": "tmsao-coer",
+          "decode": 34.722,
+          "encode": 37.714,
+          "envelope": 2
+        },
+        {
+          "bytes": 213,
+          "codec": "tmsao-uper",
+          "decode": 74.893,
+          "encode": 75.955,
+          "envelope": 2
+        },
+        {
+          "bytes": 230,
+          "codec": "v111",
+          "decode": 56.569,
+          "encode": 54.733,
+          "envelope": 3
+        },
+        {
+          "bytes": 235,
+          "codec": "coer",
+          "decode": 49.565,
+          "encode": 42.013,
+          "envelope": 3
+        },
+        {
+          "bytes": 220,
+          "codec": "uper",
+          "decode": 87.646,
+          "encode": 75.898,
+          "envelope": 3
+        },
+        {
+          "bytes": 224,
+          "codec": "tmsao-coer",
+          "decode": 35.183,
+          "encode": 37.623,
+          "envelope": 3
+        },
+        {
+          "bytes": 212,
+          "codec": "tmsao-uper",
+          "decode": 74.279,
+          "encode": 75.17,
+          "envelope": 3
+        }
+      ]
+    },
+    "source_commit": "75d50d4f6e280e35a25032024edffd92f25c52f2",
+    "stage": "its"
+  },
+  "kernels": {
+    "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
+    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "results": {
+      "numpy": "2.3.5",
+      "rows": [
+        {
+          "k": 48,
+          "m": 64,
+          "max_abs_error_vs_fp64": {
+            "c_openblas": 9.725739399946143e-08,
+            "portable_c": 1.0847230991206658e-07,
+            "pytorch": 9.725739399946143e-08
+          },
+          "median_ms": {
+            "c_openblas": 0.011009125,
+            "portable_c": 0.0817788125,
+            "pytorch": 0.00652453125
+          },
+          "n": 64,
+          "samples_ms": {
+            "c_openblas": [
+              0.011272953125,
+              0.03410103125,
+              0.010627921875,
+              0.010170671875,
+              0.01063075,
+              0.011709875,
+              0.011327890625,
+              0.01267978125,
+              0.0102676875,
+              0.009296234375,
+              0.011009125
+            ],
+            "portable_c": [
+              0.081134859375,
+              0.08263228125,
+              0.0817788125,
+              0.081590078125,
+              0.083065453125,
+              0.0816185625,
+              0.08730278125,
+              0.0776873125,
+              0.08033740625,
+              0.0897711875,
+              0.1130275625
+            ],
+            "pytorch": [
+              0.0056915625,
+              0.005957125,
+              0.005846015625,
+              0.00652453125,
+              0.00696990625,
+              0.007943546875,
+              0.008739609375,
+              0.00699196875,
+              0.005720828125,
+              0.005812046875,
+              0.008124765625
+            ]
+          },
+          "transpose_b": 0
+        },
+        {
+          "k": 384,
+          "m": 256,
+          "max_abs_error_vs_fp64": {
+            "c_openblas": 9.790785242547173e-07,
+            "portable_c": 1.038683169030108e-06,
+            "pytorch": 6.04204595244795e-07
+          },
+          "median_ms": {
+            "c_openblas": 0.786708,
+            "portable_c": 14.623023,
+            "pytorch": 0.778265
+          },
+          "n": 384,
+          "samples_ms": {
+            "c_openblas": [
+              0.805397,
+              0.868752,
+              0.785717,
+              0.811806,
+              0.797725,
+              0.786708,
+              0.791796,
+              0.7688,
+              0.78117,
+              0.753638,
+              0.786648
+            ],
+            "portable_c": [
+              14.527569,
+              15.026582,
+              15.214065,
+              13.86659,
+              15.029436,
+              14.219964,
+              16.066904,
+              14.623023,
+              14.113864,
+              14.752499,
+              14.265864
+            ],
+            "pytorch": [
+              0.798826,
+              0.793679,
+              0.780418,
+              0.809512,
+              0.80098,
+              0.770544,
+              0.778265,
+              0.766517,
+              0.771034,
+              0.754269,
+              0.773388
+            ]
+          },
+          "transpose_b": 0
+        },
+        {
+          "k": 384,
+          "m": 256,
+          "max_abs_error_vs_fp64": {
+            "c_openblas": 1.135535896312767e-06,
+            "portable_c": 1.1951405410881577e-06,
+            "pytorch": 6.559633077829474e-07
+          },
+          "median_ms": {
+            "c_openblas": 2.140953,
+            "portable_c": 24.635553,
+            "pytorch": 2.156046
+          },
+          "n": 1024,
+          "samples_ms": {
+            "c_openblas": [
+              2.15213,
+              2.140953,
+              2.115214,
+              2.128525,
+              2.09958,
+              2.144619,
+              2.125239,
+              2.144999,
+              2.595189,
+              2.101013,
+              2.146231
+            ],
+            "portable_c": [
+              24.550214,
+              24.635332,
+              24.680421,
+              24.724467,
+              24.469232,
+              24.637757,
+              26.343172,
+              24.58724,
+              24.751418,
+              24.635553,
+              24.542583
+            ],
+            "pytorch": [
+              2.121334,
+              2.129165,
+              2.627938,
+              2.194735,
+              2.177007,
+              2.163316,
+              2.156046,
+              2.075474,
+              2.361436,
+              2.088394,
+              2.15211
+            ]
+          },
+          "transpose_b": 1
+        },
+        {
+          "k": 256,
+          "m": 384,
+          "max_abs_error_vs_fp64": {
+            "c_openblas": 8.101182549236086e-07,
+            "portable_c": 7.505136101482179e-07,
+            "pytorch": 3.993175248240277e-07
+          },
+          "median_ms": {
+            "c_openblas": 0.793438,
+            "portable_c": 14.834252,
+            "pytorch": 0.819077
+          },
+          "n": 384,
+          "samples_ms": {
+            "c_openblas": [
+              0.804004,
+              0.791325,
+              0.793438,
+              0.788401,
+              0.779227,
+              0.833679,
+              0.833619,
+              0.944035,
+              0.802843,
+              0.747269,
+              0.792267
+            ],
+            "portable_c": [
+              15.372855,
+              14.461959,
+              14.81994,
+              14.039361,
+              14.834252,
+              15.000032,
+              15.379985,
+              14.828463,
+              15.185021,
+              14.860682,
+              14.211492
+            ],
+            "pytorch": [
+              0.782101,
+              0.819077,
+              0.781931,
+              0.870345,
+              0.816693,
+              0.835061,
+              0.832618,
+              0.825497,
+              0.827239,
+              0.752527,
+              0.811585
+            ]
+          },
+          "transpose_b": 0
+        }
+      ],
+      "scipy": "1.17.0",
+      "scope": "Single-thread FP32 GEMM, preallocated outputs, same alpha=1 beta=0/transpose, data preparation excluded, C ctypes/PyTorch call overhead included. Torch eager mm delegates to optimized CPU BLAS; this is a kernel comparison, not full training.",
+      "torch": "2.14.1+cpu"
+    },
+    "source_commit": "75d50d4f6e280e35a25032024edffd92f25c52f2",
+    "stage": "kernels"
+  }
+}
