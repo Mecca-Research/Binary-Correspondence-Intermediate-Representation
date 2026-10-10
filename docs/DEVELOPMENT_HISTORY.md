@@ -2475,7 +2475,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Recorded, not changed: a mandatory extension addition outside any bracket (`SEQUENCE { a,
     ..., b INTEGER }` without `b`) is accepted by PER and OER and refused by DER, JER and XER --
     the same question outside brackets. Whether a value of an earlier version is a value of the
-    type is a posture for every rule, and a follow-up of its own.
+    type is a posture for every rule, and a follow-up of its own (closed by ASN1-MAND, below).
   - An extensible constraint keeps its additional set, and the codecs keep the relay posture
     (LangRef §17.3). Both parser sites dropped the AdditionalElementSetSpec, so `(0..7, ...,
     8..255)` and `(0..7, ...)` were one constraint to the model, to the printer (the module did
@@ -2494,6 +2494,28 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     on the additional set), each caught by its own witness. `its.json`'s RV17 -- the shared
     predicate giving a bracket's DEFAULT members nothing -- is re-anchored on `flat_components`,
     which `addition_defaults` now reads, and still fires (the table gate found the drift).
+  ASN1-MAND (2026-10-10): ASN1-EXT's recorded split -- a value without a mandatory extension
+  addition -- decided once for every rule.
+  - The posture is the relay's (LangRef §17.3): an extension addition may be absent, mandatory
+    or not, because a value without it is a value of the version before it was added, and
+    X.691 §19.8 and X.696 §16.4 carry the absence with one presence bit per addition. PER and
+    OER read and wrote such values; the typed BER/DER rail, JER and XER refused them both ways,
+    so a relay that decoded one from a PER peer could not re-encode it under DER. Every rule now
+    encodes and decodes it. Each addition is judged on its own, as its presence bit is, so
+    `{a, c}` keeps the later `c` without the mandatory `b`; a bracket stays one addition (absent
+    whole or present with its mandatory members); a mandatory root component stays mandatory.
+  - One predicate, `schema.may_be_absent`, read through `flat_components`: an addition that is
+    mandatory as written reads as an OPTIONAL stand-in, made once (`Component.flat`) and leading
+    back to the component (`Component.origin`), so JER's instructions still reach it. No rail
+    has a check of its own: every missing-component check on the typed rail, JER, XER, the JER
+    plan's `required` flag and §19.2.3's mandatory names read the flat view.
+  - Checked against independent codecs, not round trips: pycrate 0.8.1 takes the same posture
+    on every rule and writes the same octets, `{a, c}` included; asn1tools 0.169.0 decodes it
+    on every rule and encodes it under BER, DER, PER and OER, but refuses it under JER and XER,
+    and its binary encoders drop `c` after the absent `b` without a word.
+  - RED: `asn1-ext.json` gains MA1-MA3 (the flat view reading a mandatory addition as written,
+    the predicate letting a root component go absent, a stand-in filing an instruction under
+    itself), and BK5/BK18 are re-anchored on the rewritten `_as_component`.
   QUAL (2026-10-10): qualification on a concrete target -- one BCIR-native model, built from the
   checkout, run through the whole stack on real hardware (`docs/BCIR_QUALIFICATION.md`).
   - QUAL-1 made a decoder a BCIR program: `decoder_program` writes the greedy generation as one
