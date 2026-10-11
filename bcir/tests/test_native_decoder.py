@@ -154,7 +154,7 @@ def test_native_c_harness_c11_and_c23():
             result = subprocess.run(
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
-            assert result.stdout.count("PASS") == 4
+            assert result.stdout.count("PASS") == 6
 
 
 def test_native_provider_c_abi_keeps_frameworks_off_execution_path():
@@ -215,9 +215,9 @@ def test_the_compiled_plan_and_gemm_are_the_programs():
 
 def test_the_rows_fire_on_wrong_kernels_and_plans():
     """Wrong copies of the C units, built from copies of their sources (never by editing the
-    tree): the packed B^T tile read without its depth offset, accumulated in descending order,
-    or fused into one rounding; the tb=0 path reading A untransposed; the plan's workspace or
-    cache count off by one span. Each turns its row red."""
+    tree): the packed B^T tile read without its depth offset, the register block accumulated in
+    descending order or fused into one rounding, A read untransposed whatever ta says; the plan's
+    workspace or cache count off by one span. Each turns its row red."""
     from bcir.tests import native_decoder_fixtures as nf
 
     if nf.compiler() is None:
@@ -225,13 +225,14 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
     tensor, train = nf.source("bcir_tensor.c"), nf.source("bcir_decoder_train.c")
     mutants = (
         ("mm", "bcir_tensor.c", tensor,
-         "bt[l*32+j]=b[(jb+j)*k+lb+l];", "bt[l*32+j]=b[(jb+j)*k+l];"),
+         "x->b[(jb+j)*x->ldb+lb+l]", "x->b[(jb+j)*x->ldb+l]"),
         ("mm", "bcir_tensor.c", tensor,
-         "for (i=0;i<m;i++) for (l=0;l<nl;l++) {", "for (i=0;i<m;i++) for (l=nl;l-->0;) {"),
+         "for (l=0;l<nl;l++) {\n    const float *bl=bt+l*nr;",
+         "for (l=nl;l-->0;) {\n    const float *bl=bt+l*nr;"),
         ("mm", "bcir_tensor.c", tensor,
-         "for (j=0;j<nj;j++) ci[j]+=av*bl[j];", "for (j=0;j<nj;j++) ci[j]=fmaf(av,bl[j],ci[j]);"),
+         "acc[r][j]+=av[r]*bl[j];", "acc[r][j]=fmaf(av[r],bl[j],acc[r][j]);"),
         ("mm", "bcir_tensor.c", tensor,
-         "float av=alpha*a[ta ? l*m+i : i*k+l];", "float av=alpha*a[i*k+l];"),
+         "x->a[x->ta ? (lb+l)*x->lda+i+r : (i+r)*x->lda+lb+l]", "x->a[(i+r)*x->lda+lb+l]"),
         ("plan", "bcir_decoder_train.c", train,
          "!term(&p.scratch,5,nd)", "!term(&p.scratch,6,nd)"),
         ("plan", "bcir_decoder_train.c", train,

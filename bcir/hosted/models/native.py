@@ -218,6 +218,8 @@ class NativeDecoder:
                 "-std=c11",
                 "-O3",
                 "-ffp-contract=off",
+                # sqrt without errno, so the AdamW passes vectorize; results are unchanged
+                "-fno-math-errno",
                 "-Wall",
                 "-Wextra",
                 "-Wpedantic",

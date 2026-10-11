@@ -208,7 +208,9 @@ int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
     bcir_tensor_rms_backward(g.n,g.d,(float)s->plan.spec.rms_eps,a.x2,p.norm2,dn,tmp,grad.norm2);
     for (i=0;i<g.nd;i++) cur[i]+=tmp[i];
     bcir_tensor_linear_backward(&s->provider,g.n,g.d,g.d,a.ctx,p.o,cur,dc,grad.o,0.0f);
-    bcir_tensor_attention_backward(g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,dc,dq,dk,dv);
+    /* the layer's probabilities are read for the last time here: the in-place backward
+     * leaves its score adjoint in their place (same dq/dk/dv as the reference, bit for bit) */
+    bcir_tensor_attention_backward_inplace(g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,dc,dq,dk,dv);
     bcir_tensor_rope(g.b,g.t,g.h,g.hd,s->plan.spec.rope_base,dq,1);
     bcir_tensor_rope(g.b,g.t,g.kh,g.hd,s->plan.spec.rope_base,dk,1);
     bcir_tensor_linear_backward(&s->provider,g.n,g.d,g.d,a.n1,p.q,dq,dn,grad.q,0.0f);
@@ -221,6 +223,99 @@ int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
   if (!finite_span(s->gradients,s->plan.parameters) || !isfinite(ce)) return BCIR_DT_NUMERIC;
   *loss=ce/(double)g.n; return BCIR_DT_OK;
 }
+/* The AdamW candidate for one element, exactly as the update has always computed it: the
+ * moments rounded to float before they are used, the step in double. The preflight and the
+ * commit both evaluate it; contraction is off by the build contract, so every lane of a vector
+ * variant performs the same rounded operations as the scalar loop. */
+typedef struct adamw_terms { double scale,d1,d2,decay,lr,eps,b1,b2; } adamw_terms;
+#if defined(__GNUC__) || defined(__clang__)
+#define BCIR_DT_INLINE static inline __attribute__((always_inline))
+#else
+#define BCIR_DT_INLINE static inline
+#endif
+BCIR_DT_INLINE int adamw_preflight(const adamw_terms *t,size_t n,const float *gr,
+    const float *wt,const float *m1,const float *m2) {
+  /* One flag for every refusal: !(|x| <= FLT_MAX) is exactly "not finite or above FLT_MAX",
+   * NaN included, so the loop has no early exit and no branch per element. A moment out of
+   * float's range is refused, and only an in-range one is converted (C11 6.3.1.5 leaves the
+   * conversion undefined outside Annex F). */
+  size_t i; int bad=0;
+  for (i=0;i<n;i++) {
+    double g=gr[i]*t->scale,mc=t->d1*m1[i]+(1-t->d1)*g,vc=t->d2*m2[i]+(1-t->d2)*g*g,wc;
+    int in=fabs(mc)<=FLT_MAX && fabs(vc)<=FLT_MAX;
+    float m=in ? (float)mc : 0.0f,v=in ? (float)vc : 0.0f;
+    wc=(double)wt[i]*t->decay-t->lr*((double)m/(1-t->b1))/(sqrt((double)v/(1-t->b2))+t->eps);
+    bad|=!in | !(fabs(wc)<=FLT_MAX);
+  }
+  return bad;
+}
+BCIR_DT_INLINE void adamw_commit(const adamw_terms *t,size_t n,const float *gr,float *wt,
+    float *m1,float *m2) {
+  size_t i;
+  for (i=0;i<n;i++) {
+    double g=gr[i]*t->scale,mc=t->d1*m1[i]+(1-t->d1)*g,vc=t->d2*m2[i]+(1-t->d2)*g*g;
+    float m=(float)mc,v=(float)vc;
+    wt[i]=(float)((double)wt[i]*t->decay-t->lr*((double)m/(1-t->b1))/
+        (sqrt((double)v/(1-t->b2))+t->eps));
+    m1[i]=m; m2[i]=v;
+  }
+}
+static int preflight_generic(const adamw_terms *t,size_t n,const float *gr,const float *wt,
+    const float *m1,const float *m2) { return adamw_preflight(t,n,gr,wt,m1,m2); }
+static void commit_generic(const adamw_terms *t,size_t n,const float *gr,float *wt,
+    float *m1,float *m2) { adamw_commit(t,n,gr,wt,m1,m2); }
+/* The same AVX2/AVX-512 variants bcir_tensor_mm carries; they need the build's
+ * -fno-math-errno to vectorize sqrt, and are bit-identical with or without it. */
+#if defined(__x86_64__) && defined(__linux__) && (defined(__GNUC__) || defined(__clang__)) && \
+    !defined(BCIR_TENSOR_NO_DISPATCH)
+#define BCIR_DT_DISPATCH 1
+__attribute__((target("avx2"))) static int preflight_avx2(const adamw_terms *t,size_t n,
+    const float *gr,const float *wt,const float *m1,const float *m2) {
+  return adamw_preflight(t,n,gr,wt,m1,m2);
+}
+__attribute__((target("avx2"))) static void commit_avx2(const adamw_terms *t,size_t n,
+    const float *gr,float *wt,float *m1,float *m2) { adamw_commit(t,n,gr,wt,m1,m2); }
+__attribute__((target("avx512f"))) static int preflight_avx512(const adamw_terms *t,size_t n,
+    const float *gr,const float *wt,const float *m1,const float *m2) {
+  return adamw_preflight(t,n,gr,wt,m1,m2);
+}
+__attribute__((target("avx512f"))) static void commit_avx512(const adamw_terms *t,size_t n,
+    const float *gr,float *wt,float *m1,float *m2) { adamw_commit(t,n,gr,wt,m1,m2); }
+#endif
+static int adamw_preflight_any(const adamw_terms *t,size_t n,const float *gr,const float *wt,
+    const float *m1,const float *m2) {
+  int v=bcir_tensor_mm_variants();
+  (void)v;
+#ifdef BCIR_DT_DISPATCH
+  if (v&4) return preflight_avx512(t,n,gr,wt,m1,m2);
+  if (v&2) return preflight_avx2(t,n,gr,wt,m1,m2);
+#endif
+  return preflight_generic(t,n,gr,wt,m1,m2);
+}
+static void adamw_commit_any(const adamw_terms *t,size_t n,const float *gr,float *wt,
+    float *m1,float *m2) {
+  int v=bcir_tensor_mm_variants();
+  (void)v;
+#ifdef BCIR_DT_DISPATCH
+  if (v&4) { commit_avx512(t,n,gr,wt,m1,m2); return; }
+  if (v&2) { commit_avx2(t,n,gr,wt,m1,m2); return; }
+#endif
+  commit_generic(t,n,gr,wt,m1,m2);
+}
+/* Whether the magnitudes the first pass saw prove that no candidate can leave float's range,
+ * so the preflight would admit every element and may be skipped. With G = max|g| after scaling,
+ * M = max|m1|, V = max m2 and W = max|w|: |mc| <= M + G and |vc| <= V + G*G (convex combinations
+ * of non-negative magnitudes), |m| <= 2|mc| after rounding to float, the step's denominator is
+ * at least eps, and |wc| <= W|decay| + lr*(|m|/(1-b1))/eps. Every rounded operation is
+ * monotone in its operands, so evaluating those bounds in the same operation order bounds the
+ * rounded values; any overflow in the bound itself (inf, or NaN from it) fails the comparisons
+ * and keeps the preflight. Half of FLT_MAX is left as margin throughout. */
+static int adamw_bounded(const adamw_terms *t,double grmax,double mmax,double vmax,double wmax) {
+  double half=0.5*(double)FLT_MAX,g=grmax*t->scale,mb=mmax>g ? mmax : g,gg=g*g;
+  double vb=vmax>gg ? vmax : gg,m=4.0*mb,step=t->lr*(m/(1-t->b1))/t->eps;
+  double w=wmax*fabs(t->decay);
+  return 2.0*mb<=half && 2.0*vb<=half && step<=0.5*half && w<=0.5*half && w+step<=half;
+}
 static int optimizer_valid(const bcir_decoder_adamw *o) {
   return o && isfinite(o->lr) && o->lr>=0 && isfinite(o->beta1) && o->beta1>=0 && o->beta1<1 &&
     isfinite(o->beta2) && o->beta2>=0 && o->beta2<1 && isfinite(o->epsilon) && o->epsilon>0 &&
@@ -228,7 +323,7 @@ static int optimizer_valid(const bcir_decoder_adamw *o) {
 }
 int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     double gs,double *grad_norm) {
-  size_t i; double norm=0.0,scale,b1,b2; int rc=valid(s);
+  size_t i; double norm=0.0,scale,b1,b2,grmax=0.0,wmax=0.0,mmax=0.0,vmax=0.0; int rc=valid(s);
   bcir_decoder_adamw options;
   if (rc) return rc;
   if (!o) return BCIR_DT_INVALID;
@@ -239,41 +334,37 @@ int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,
       (!s->step && (s->beta1_power!=1 || s->beta2_power!=1)) ||
       !external(s,grad_norm,sizeof(*grad_norm)) || (uintptr_t)grad_norm%_Alignof(double))
     return BCIR_DT_INVALID;
-  for (i=0;i<s->plan.parameters;i++) {
-    double g=(double)s->gradients[i]*gs;
-    if (!isfinite(g) || !isfinite(s->weights[i]) || !isfinite(s->moment1[i]) ||
-        !isfinite(s->moment2[i]) || s->moment2[i]<0) return BCIR_DT_NUMERIC;
-    norm+=g*g;
+  /* The first pass: every element finite (the second moment also not negative) and the
+   * gradient norm summed in double in index order, as always; it also records the largest
+   * magnitudes adamw_bounded reads. One flag replaces the early exit -- the verdict and the
+   * untouched state are the same, the loop just finishes the pass. */
+  {
+    const float *gr=s->gradients,*wt=s->weights,*m1=s->moment1,*m2=s->moment2;
+    size_t n=s->plan.parameters; int bad=0;
+    for (i=0;i<n;i++) {
+      double g=(double)gr[i]*gs,ag=fabsf(gr[i]),aw=fabsf(wt[i]),am=fabsf(m1[i]),av=m2[i];
+      bad|=!(fabs(g)<=DBL_MAX) | !(aw<=FLT_MAX) | !(am<=FLT_MAX) | !(av>=0 && av<=FLT_MAX);
+      norm+=g*g;
+      grmax=ag>grmax ? ag : grmax; wmax=aw>wmax ? aw : wmax;
+      mmax=am>mmax ? am : mmax; vmax=av>vmax ? av : vmax;
+    }
+    if (bad) return BCIR_DT_NUMERIC;
   }
   norm=sqrt(norm); if (!isfinite(norm)) return BCIR_DT_NUMERIC;
   scale=gs;
   if (o->grad_clip>0 && norm>o->grad_clip) scale*=o->grad_clip/(norm+1e-6);
   b1=s->beta1_power*o->beta1; b2=s->beta2_power*o->beta2;
-  /* Round moments before using them; preflight every candidate before any commit. The
-   * preflight folds every refusal into one flag -- !(|x| <= FLT_MAX) is exactly "not finite
-   * or above FLT_MAX", NaN included -- so neither loop has an early exit or a branch per
-   * element; the commit recomputes the candidates the preflight admitted, operation for
-   * operation. */
+  /* Round moments before using them; preflight every candidate before any commit. The commit
+   * recomputes the candidates the preflight admitted, operation for operation; the preflight
+   * is skipped only when adamw_bounded proves it would admit them all. */
   {
-    const float *gr=s->gradients; float *wt=s->weights,*m1=s->moment1,*m2=s->moment2;
-    double d1=o->beta1,d2=o->beta2,decay=1-o->lr*o->weight_decay,lr=o->lr,eps=o->epsilon;
-    size_t n=s->plan.parameters; int bad=0;
-    for (i=0;i<n;i++) {
-      double g=gr[i]*scale,mc=d1*m1[i]+(1-d1)*g,vc=d2*m2[i]+(1-d2)*g*g,wc;
-      int in=fabs(mc)<=FLT_MAX && fabs(vc)<=FLT_MAX;
-      /* a moment out of float's range is refused, and only an in-range one is converted
-       * (C11 6.3.1.5 leaves the conversion undefined outside Annex F) */
-      float m=in ? (float)mc : 0.0f,v=in ? (float)vc : 0.0f;
-      wc=(double)wt[i]*decay-lr*((double)m/(1-b1))/(sqrt((double)v/(1-b2))+eps);
-      bad|=!in | !(fabs(wc)<=FLT_MAX);
-    }
-    if (bad) return BCIR_DT_NUMERIC;
-    for (i=0;i<n;i++) {
-      double g=gr[i]*scale,mc=d1*m1[i]+(1-d1)*g,vc=d2*m2[i]+(1-d2)*g*g;
-      float m=(float)mc,v=(float)vc;
-      wt[i]=(float)((double)wt[i]*decay-lr*((double)m/(1-b1))/(sqrt((double)v/(1-b2))+eps));
-      m1[i]=m; m2[i]=v;
-    }
+    adamw_terms t;
+    t.scale=scale; t.d1=o->beta1; t.d2=o->beta2; t.decay=1-o->lr*o->weight_decay;
+    t.lr=o->lr; t.eps=o->epsilon; t.b1=b1; t.b2=b2;
+    if (!adamw_bounded(&t,grmax,mmax,vmax,wmax) &&
+        adamw_preflight_any(&t,s->plan.parameters,s->gradients,s->weights,s->moment1,
+            s->moment2)) return BCIR_DT_NUMERIC;
+    adamw_commit_any(&t,s->plan.parameters,s->gradients,s->weights,s->moment1,s->moment2);
   }
   s->step++; s->beta1_power=b1; s->beta2_power=b2; *grad_norm=norm;
   return BCIR_DT_OK;

@@ -1,8 +1,10 @@
 /* Native float32 tensor kernels. Row-major spans are caller-owned, non-overlapping
  * except the documented in-place vector/RoPE operations. Dimensions and capacities
  * are admitted by bcir_decoder_plan before these hot kernels are called. No heap,
- * global state, fast-math, framework dependency or device discovery. Providers
- * complete all writes before returning and never throw across the C ABI. */
+ * global state, fast-math, framework dependency or device discovery; the one host
+ * query is the CPU's instruction-set support, which only chooses among bit-identical
+ * variants of the same kernels. Providers complete all writes before returning and
+ * never throw across the C ABI. */
 #ifndef BCIR_TENSOR_H
 #define BCIR_TENSOR_H
 #include <stddef.h>
@@ -26,6 +28,14 @@ typedef struct bcir_tensor_provider {
 } bcir_tensor_provider;
 BCIR_DT_API void bcir_tensor_mm(void *ctx, int ta, int tb, size_t m, size_t n, size_t k,
     float alpha, const float *a, const float *b, float beta, float *c);
+/* The portable GEMM's instruction-set variants: bit 1 portable C, bit 2 AVX2, bit 4 AVX-512F
+ * (x86-64 Linux with GCC or Clang). Every variant computes the same rounded operations in the
+ * same order, so all of them are bit-identical; bcir_tensor_mm runs the widest one the host
+ * supports. bcir_tensor_mm_variant runs one variant and returns it, or returns 0 and writes
+ * nothing when the host cannot run it. */
+BCIR_DT_API int bcir_tensor_mm_variants(void);
+BCIR_DT_API int bcir_tensor_mm_variant(int variant, int ta, int tb, size_t m, size_t n,
+    size_t k, float alpha, const float *a, const float *b, float beta, float *c);
 /* Optional LP64 CBLAS adapter: ctx points to a caller-owned function pointer.
  * No BLAS headers or link dependency. The adapter uses portable C on shapes beyond
  * the LP64 provider's INT_MAX dimensions. */
@@ -56,6 +66,11 @@ BCIR_DT_API void bcir_tensor_attention(size_t batch, size_t time, size_t heads, 
 BCIR_DT_API void bcir_tensor_attention_backward(size_t batch, size_t time, size_t heads,
     size_t kvheads, size_t dim, const float *q, const float *k, const float *v,
     const float *p, const float *dy, float *dq, float *dk, float *dv);
+/* The same dq, dk and dv, bit for bit, through the GEMM kernel; p is rewritten in place with
+ * the score adjoint (p_ij (dp_ij - dot_i) / sqrt(dim)), so it no longer holds probabilities. */
+BCIR_DT_API void bcir_tensor_attention_backward_inplace(size_t batch, size_t time,
+    size_t heads, size_t kvheads, size_t dim, const float *q, const float *k, const float *v,
+    float *p, const float *dy, float *dq, float *dk, float *dv);
 #ifdef __cplusplus
 }
 #endif

@@ -309,7 +309,9 @@ def training_step_program(spec: DecoderSpec, batch: int, time: int) -> TrainingS
         s.step(c("rms2.vjp"), (c("x2"), p("norm2"), "dn"), (q("norm2"),), new=("tmp",))
         s.step(c("residual2.vjp"), ("tmp",), ("cur",))
         s.linear_vjp(c("o.vjp"), n, d, d, c("ctx"), p("o"), "cur", q("o"), "dc", False)
-        s.step(c("attention.vjp"), (c("q"), c("k"), c("v"), c("p"), "dc"),
+        # the in-place backward rewrites the layer's probabilities with their score adjoint:
+        # p is read-modify-written, so its lifetime ends here exactly as when it was only read
+        s.step(c("attention.vjp"), (c("q"), c("k"), c("v"), "dc"), (c("p"),),
                new=("dq", "dk", "dv"), work=8 * causal)  # fmt: skip
         s.step(c("rope.q.vjp"), (), ("dq",))
         s.step(c("rope.k.vjp"), (), ("dk",))

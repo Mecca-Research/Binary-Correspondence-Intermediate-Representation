@@ -41,8 +41,9 @@ BCIR_DT_API uint32_t bcir_decoder_abi_version(void);
  * Capacities are float element counts, not bytes. */
 BCIR_DT_API int bcir_decoder_make_plan(const bcir_decoder_spec *spec,bcir_decoder_plan *plan);
 /* Forward stores logits at the end of the activation arena. Backward computes mean
- * causal-token CE and every parameter gradient including tied-head accumulation.
- * IDs: batch*time, strictly [0,vocab), rejected before arena mutation.
+ * causal-token CE and every parameter gradient including tied-head accumulation; it consumes
+ * the forward cache it recomputes, leaving each layer's attention probabilities replaced by
+ * their score adjoint. IDs: batch*time, strictly [0,vocab), rejected before arena mutation.
  * accumulate=1 adds another mean batch gradient. */
 BCIR_DT_API int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t count);
 BCIR_DT_API int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
