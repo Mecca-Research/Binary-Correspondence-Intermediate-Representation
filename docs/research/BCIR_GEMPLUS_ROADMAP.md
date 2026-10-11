@@ -56,6 +56,14 @@ So metrics are classified by what survives a change of machine:
 The `ratio` band is 25% because the same host produced 68.95 and then 76.29 minutes apart. The
 `exact` band is 2% because a solver's optimum does not vary at all.
 
+**A ratio is only as steady as the timing of its two sides.** `verify.plan.scope.overhead` used
+to time three planner calls, then three verifier calls. Measured that way, it read 0.68 to 1.47
+on an idle container and 0.54 to 2.19 under a phased load on its CPU, giving false GAIN and
+REGRESSION verdicts in both directions. `paired_ratios` times the two sides back to back, in
+rounds of the thread's CPU time (`thread_clock`). A load then reaches both sides or neither, and
+the row reads 0.90 to 0.99 idle and 0.93 to 1.01 under the same load (VPS-STABLE in the
+development history). Any new ratio of two callables in one thread should be timed the same way.
+
 **A slice is gated on its `exact` rows.** Wall rows are evidence for a human, not a gate. This
 is not a lowering of standards — it is the only way the gate means the same thing on CI, on a
 laptop, and on the report's host.

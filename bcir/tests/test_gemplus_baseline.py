@@ -630,3 +630,256 @@ def test_every_ratio_of_compiled_kernels_is_indicative_off_its_host():
     for metric in rows:
         assert metric.host_dependent, metric.key
         assert metric.verdict(metric.baseline * 3, same_host=False) == "INDICATIVE", metric.key
+
+
+# --- the paired-rounds estimator: what a load on the host can and cannot move a ratio row by ---
+
+
+class _Host:
+    """A clock and callables whose costs are known. A call advances the clock by its cost times a
+    load that is `heavy` from call `step` until call `leave` (a busy neighbour arriving, and
+    leaving, mid-measurement) and 1 otherwise, times `drift` to the power of the call's index (a
+    host that slows down call by call). The clock records how many calls had run at each read."""
+
+    def __init__(self, step=None, leave=None, heavy=5, drift=1):
+        self.now, self.calls, self.reads = 0, [], []
+        self.step, self.leave, self.heavy, self.drift = step, leave, heavy, drift
+
+    def clock(self):
+        self.reads.append(len(self.calls))
+        return self.now
+
+    def callable(self, name, cost):
+        def call():
+            index = len(self.calls)
+            self.calls.append(name)
+            loaded = self.step is not None and self.step <= index
+            if loaded and self.leave is not None:
+                loaded = index < self.leave
+            self.now += cost * (self.heavy if loaded else 1) * self.drift**index
+
+        return call
+
+
+def _row(host, plan=10, verify=9, floor=1):
+    """The verifier row's three callables on `host`: the planner, the verifier and the floor."""
+    return host.callable("plan", plan), {
+        "verify": host.callable("verify", verify),
+        "floor": host.callable("floor", floor),
+    }
+
+
+def test_the_paired_ratio_cancels_a_load_that_moves_between_windows() -> None:
+    """`paired_ratios`, which times `verify.plan.scope.overhead` and its floor, held to
+    JER-PAIRED's property on callables whose costs are known: a planner of cost 10, a verifier of
+    9 and a floor of 1, under a load that steps from 1x to 5x at a chosen call.
+
+    The estimator it replaces -- the planner once untimed, three timed planner calls, then three
+    verifier calls, a median each -- reads that step as 4.5x on a true 0.9x, far outside the 25%
+    band, so the witness's load is strong enough to break what it replaces and a pass here is not
+    vacuous. The paired ratio reads exactly 0.9, and its floor exactly 0.1, wherever the step
+    falls, including inside a round, and when the load leaves again. And it still sees a real
+    regression: a verifier that truly costs twice the planner reads 2.0 under every load.
+    """
+    import statistics
+
+    from tools.perf.gemplus_baseline import paired_ratios
+
+    def sequential(host: _Host) -> float:
+        plan, others = _row(host)
+
+        def median(fn):
+            samples = []
+            for _ in range(3):
+                start = host.clock()
+                fn()
+                samples.append(host.clock() - start)
+            return statistics.median(samples)
+
+        plan()
+        planned = median(plan)
+        return median(others["verify"]) / planned
+
+    old = sequential(_Host(step=4))
+    assert old == 4.5, f"the load did not break the sequential estimator ({old}x)"
+    calls = 3 + 16 * 3  # the warm-up, then sixteen rounds of three
+    for step in range(calls + 1):
+        for leave in (None, step + 1, step + 7):
+            host = _Host(step=step, leave=leave)
+            got = paired_ratios(*_row(host), clock=host.clock)
+            assert got == {"verify": 0.9, "floor": 0.1}, (step, leave, got)
+            host = _Host(step=step, leave=leave)
+            got = paired_ratios(*_row(host, verify=20), clock=host.clock)
+            assert got["verify"] == 2.0, f"a true 2.0x regression read {got} (load {step}-{leave})"
+
+
+def test_the_paired_ratio_weighs_both_orders_of_a_round_equally() -> None:
+    """A host that slows down call by call -- here by 30% a call, far beyond any real one --
+    makes whatever runs later in a round read slow. Rounds always timed in one order put the
+    verifier after the planner every time and read 0.9 * 1.3 = 1.17, past the 25% band: so the
+    drift is strong enough to break a fixed order. Each round of `paired_ratios` runs in the
+    reverse of the order before it, so the planner, always at one end, runs before every other
+    callable in half the rounds and after it in the other half; the drift lifts half the rounds'
+    ratios and lowers the other half's, and with an even count of rounds the median lands between
+    them, within 4% of the true 0.9 (the ratio's error falls from first order in the drift to
+    second)."""
+    import statistics
+
+    from tools.perf.gemplus_baseline import paired_ratios
+
+    host = _Host(drift=1.3)
+    plan, others = _row(host)
+    plan(), others["verify"]()
+    ratios = []
+    for _ in range(16):
+        start = host.clock()
+        plan()
+        planned = host.clock() - start
+        start = host.clock()
+        others["verify"]()
+        ratios.append((host.clock() - start) / planned)
+    fixed = statistics.median(ratios)
+    assert fixed > 0.9 * 1.25, f"the drift did not break a fixed order ({fixed}x)"
+    host = _Host(drift=1.3)
+    got = paired_ratios(*_row(host), clock=host.clock)
+    assert abs(got["verify"] - 0.9) < 0.9 * 0.04, got
+    assert abs(got["floor"] - 0.1) < 0.1 * 0.25, got  # two calls of drift apart, so second order
+
+
+def test_the_paired_ratio_refuses_what_it_cannot_measure() -> None:
+    """Every call is warmed up before the clock is first read, every round times every callable
+    once with the planner first in the even rounds and last in the odd ones, and the estimator
+    refuses what it cannot measure: an odd or too-small count of rounds (the median would weigh
+    one order more than the other, or have no round to discard), nothing to compare, and a call
+    that measured no time or less -- a failed measurement, never a free one (laws.md L1, L2)."""
+    from tools.perf.gemplus_baseline import paired_ratios
+
+    host = _Host()
+    paired_ratios(*_row(host), rounds=4, clock=host.clock)
+    assert host.calls[:3] == ["plan", "verify", "floor"] and min(host.reads) == 3, host.reads
+    rounds = [host.calls[3 + 3 * i : 6 + 3 * i] for i in range(4)]
+    assert rounds == [["plan", "verify", "floor"], ["floor", "verify", "plan"]] * 2, rounds
+    assert len(host.calls) == 3 + 4 * 3
+
+    for rounds in (0, 2, 3, 15, -4, True, 16.0, "16", None):
+        host = _Host()
+        try:
+            paired_ratios(*_row(host), rounds=rounds, clock=host.clock)
+        except ValueError as exc:
+            assert "even count" in str(exc), exc
+        else:
+            raise AssertionError(f"{rounds!r} rounds were accepted")
+        assert host.calls == [], f"{rounds!r} rounds ran calls before being refused"
+    host = _Host()
+    try:
+        paired_ratios(host.callable("plan", 10), {}, clock=host.clock)
+    except ValueError as exc:
+        assert "against the base" in str(exc), exc
+    else:
+        raise AssertionError("a base with nothing to compare was accepted")
+
+    for plan, verify, floor in ((10, 0, 1), (0, 9, 1), (10, 9, 0), (10, -9, 1)):
+        host = _Host()
+        try:
+            paired_ratios(*_row(host, plan, verify, floor), clock=host.clock)
+        except RuntimeError as exc:
+            assert "no time" in str(exc), exc
+        else:
+            raise AssertionError(f"a call of cost {(plan, verify, floor)} was believed")
+
+    def nan():
+        return float("nan")
+
+    try:
+        paired_ratios(*_row(_Host()), clock=nan)
+    except RuntimeError as exc:
+        assert "no time" in str(exc), exc
+    else:
+        raise AssertionError("a clock that reads NaN was believed")
+
+
+def test_the_paired_ratio_times_this_threads_work_where_its_clock_steps_finely() -> None:
+    """`thread_clock` picks the clock: this thread's CPU time, which stands still while the thread
+    is descheduled, wherever it steps by 10 us or less -- on Linux that is `time.thread_time` --
+    and the wall clock wherever it does not: a clock that steps once per 15.6 ms scheduler tick
+    (Windows' thread times), one that never steps, and one that fails. `paired_ratios` times with
+    it unless it is handed a clock."""
+    import time
+
+    from tools.perf import gemplus_baseline as gb
+
+    if sys.platform.startswith("linux"):
+        assert gb.thread_clock() is time.thread_time, gb.thread_clock()
+
+    def stepping(step, every):
+        calls = [0]
+
+        def clock():
+            calls[0] += 1
+            return calls[0] // every * step
+
+        return clock
+
+    def failing():
+        raise OSError("no thread clock")
+
+    fine = stepping(1e-6, 1)
+    assert gb.thread_clock(fine) is fine
+    assert gb.thread_clock(stepping(0.015625, 1000)) is time.perf_counter
+    assert gb.thread_clock(lambda: 0.0, limit_s=0.01) is time.perf_counter
+    assert gb.thread_clock(failing) is time.perf_counter
+
+    host = _Host()
+    real = gb.thread_clock
+    gb.thread_clock = lambda: host.clock
+    try:
+        got = gb.paired_ratios(*_row(host))
+    finally:
+        gb.thread_clock = real
+    assert got == {"verify": 0.9, "floor": 0.1}, (
+        f"paired_ratios did not time with thread_clock: {got}"
+    )
+
+
+def test_the_verifier_row_is_read_in_paired_rounds() -> None:
+    """`verify.plan.scope.overhead` and its floor are `paired_ratios`' two readings, over the
+    planner, a verify of the planner's own plan that passes, and the floor's re-derivation of the
+    plan's score -- not windows of their own. And a plan that does not verify is refused rather
+    than timed: the row prices a clean pass."""
+    from bcir import verify as verifier
+    from tools.perf import gemplus_baseline as gb
+
+    seen: dict = {}
+
+    def recording(base, others, rounds=16, clock=None):
+        seen["score"], seen["rounds"] = base().score, rounds
+        seen["diagnostics"], seen["floor"] = others["verify"](), others["floor"]()
+        return {"verify": 0.625, "floor": 0.0625}
+
+    real = gb.paired_ratios
+    gb.paired_ratios = recording
+    try:
+        out = gb.measure_verifier()
+    finally:
+        gb.paired_ratios = real
+    assert out["verify.plan.scope.overhead"] == 0.625, out
+    assert out["verify.plan.scope.overhead.floor"] == 0.0625, out
+    assert seen["diagnostics"] == [] and seen["floor"] == seen["score"] > 0, seen
+    assert seen["rounds"] == 16 and out["verify.plan.r9.vacuous"] == 0.0, (seen, out)
+
+    honest = verifier.verify_plan
+
+    def failing(module, result, host, **kwargs):
+        return honest(module, result, host, **kwargs) or ["R9: a forged diagnostic"]
+
+    verifier.verify_plan = failing
+    gb.paired_ratios = recording
+    try:
+        gb.measure_verifier()
+    except AssertionError as exc:
+        assert "does not verify" in str(exc), exc
+    else:
+        raise AssertionError("a plan that does not verify was timed")
+    finally:
+        verifier.verify_plan = honest
+        gb.paired_ratios = real

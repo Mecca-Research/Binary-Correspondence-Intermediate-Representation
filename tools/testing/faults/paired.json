@@ -1,0 +1,119 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_gemplus_baseline:test_the_paired_ratio_cancels_a_load_that_moves_between_windows",
+    "bcir.tests.test_gemplus_baseline:test_the_paired_ratio_weighs_both_orders_of_a_round_equally",
+    "bcir.tests.test_gemplus_baseline:test_the_paired_ratio_refuses_what_it_cannot_measure",
+    "bcir.tests.test_gemplus_baseline:test_the_paired_ratio_times_this_threads_work_where_its_clock_steps_finely",
+    "bcir.tests.test_gemplus_baseline:test_the_verifier_row_is_read_in_paired_rounds",
+    "bcir.tests.test_gemplus_floors:test_the_verifier_floor_re_derives_every_step"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_paired_ratio_cancels_a_load_that_moves_between_windows",
+      "label": "the estimator times every base call, then every other call: two windows, not rounds (the loops interchanged)",
+      "new": "    for name, fn in order:\n        for index in range(rounds):\n",
+      "old": "    for index in range(rounds):\n        for name, fn in order if index % 2 == 0 else order[::-1]:\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_paired_ratio_cancels_a_load_that_moves_between_windows",
+      "label": "the rounds are averaged instead of their median taken, so the round a load splits moves the row",
+      "new": "        name: statistics.fmean(t / b for t, b in zip(took[name], base_times, strict=True))\n",
+      "old": "        name: statistics.median(t / b for t, b in zip(took[name], base_times, strict=True))\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_paired_ratio_weighs_both_orders_of_a_round_equally",
+      "label": "every round runs in one order, so a drift across a round moves every round's ratio the same way",
+      "new": "        for name, fn in order:\n",
+      "old": "        for name, fn in order if index % 2 == 0 else order[::-1]:\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_paired_ratio_refuses_what_it_cannot_measure",
+      "label": "an odd count of rounds is accepted, so the median weighs one order more than the other",
+      "new": "rounds < 4:",
+      "old": "rounds < 4 or rounds % 2:",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_paired_ratio_refuses_what_it_cannot_measure",
+      "label": "two rounds are accepted: one per order, and no round left for the median to discard",
+      "new": "rounds < 2 or rounds % 2:",
+      "old": "rounds < 4 or rounds % 2:",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_paired_ratio_refuses_what_it_cannot_measure",
+      "label": "a call that measured no time (or a NaN clock) is believed instead of refused",
+      "new": "            if took[name][-1] < 0:\n",
+      "old": "            if not took[name][-1] > 0:\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_paired_ratio_refuses_what_it_cannot_measure",
+      "label": "no warm-up: the first round times each callable's first call",
+      "new": "    for _, fn in ():  # the warm-up\n        fn()\n",
+      "old": "    for _, fn in order:  # the warm-up\n        fn()\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_verifier_row_is_read_in_paired_rounds",
+      "label": "the verifier row's floor is read from the verifier's rounds instead of the floor's",
+      "new": "    out[\"verify.plan.scope.overhead.floor\"] = ratios[\"verify\"]\n",
+      "old": "    out[\"verify.plan.scope.overhead.floor\"] = ratios[\"floor\"]\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_verifier_row_is_read_in_paired_rounds",
+      "label": "the verifier row times a plan that does not verify instead of refusing it",
+      "new": "    if False:  # the row times a clean pass\n",
+      "old": "    if verify_plan(module, result, host, theta=theta, policy=PERF):  # the row times a clean pass\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_verifier_row_is_read_in_paired_rounds",
+      "label": "the verifier row's rounds are timed against the verifier, not the planner",
+      "new": "        lambda: verify_plan(module, result, host, theta=theta, policy=PERF),\n",
+      "old": "        lambda: optimize(module, host, theta, PERF),\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_paired_ratio_times_this_threads_work_where_its_clock_steps_finely",
+      "label": "a thread clock that steps once per scheduler tick (Windows' 15.6 ms) is taken for a fine one",
+      "new": "    return candidate if 0 < third - second <= 1.0 else wall\n",
+      "old": "    return candidate if 0 < third - second <= 1e-5 else wall\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_paired_ratio_times_this_threads_work_where_its_clock_steps_finely",
+      "label": "the step a fine clock must stay under is set below Linux's thread clock, so the wall clock times every round there",
+      "new": "    return candidate if 0 < third - second <= 1e-9 else wall\n",
+      "old": "    return candidate if 0 < third - second <= 1e-5 else wall\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_paired_ratio_times_this_threads_work_where_its_clock_steps_finely",
+      "label": "a thread clock that never steps is taken instead of passed over at the deadline",
+      "new": "        while (second := candidate()) == first:  # to the clock's next step ...\n            if wall() > deadline:\n                return candidate\n",
+      "old": "        while (second := candidate()) == first:  # to the clock's next step ...\n            if wall() > deadline:\n                return wall\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_paired_ratio_times_this_threads_work_where_its_clock_steps_finely",
+      "label": "a thread clock that fails is taken instead of passed over",
+      "new": "    except OSError:\n        return candidate\n",
+      "old": "    except OSError:\n        return wall\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_paired_ratio_times_this_threads_work_where_its_clock_steps_finely",
+      "label": "the paired rounds time with the wall clock unless handed one, not this thread's CPU time",
+      "new": "    clock = clock or __import__(\"time\").perf_counter\n",
+      "old": "    clock = clock or thread_clock()\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    }
+  ]
+}

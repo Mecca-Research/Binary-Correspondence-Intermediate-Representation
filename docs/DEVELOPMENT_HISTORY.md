@@ -2662,6 +2662,46 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     B's last column or an untransposed B's last depth row dropped from the tile) are each caught;
     NG1, and the same mutant in `test_the_rows_fire_on_wrong_kernels_and_plans`, are re-anchored
     on the new packing loop; NG1-NG7 and NP1-NP9 are caught again.
+  VPS-STABLE (2026-10-11): `verify.plan.scope.overhead` timed in paired rounds of the thread's CPU
+  time, so a load on the host no longer moves its verdict.
+  - NDT-CLANG's audit was the third to flag the row over code it does not touch. AUDIT-0 read
+    1.02 -> 1.47, ASN1-T 0.80 -> 1.07, and NDT-CLANG's six runs of identical code 0.49 to 1.03. The
+    harness timed three `optimize` calls, then three `verify_plan` calls, the first of them cold,
+    and divided the medians: two windows that a load could reach one at a time. In twelve processes
+    on this container with nothing else running, it read 0.68 to 1.47. That is two false gains and
+    a false regression against the frozen 1.07. Under a phased load on the measuring CPU (one
+    process pinned to it, busy and idle in phases of 20-300 ms), it read 0.54 to 2.19: three false
+    gains and four false regressions in twelve.
+  - `paired_ratios` (`tools/perf/gemplus_baseline.py`) is JER-PAIRED's estimator for callables in
+    one thread. Each callable runs once untimed. Then sixteen rounds time the planner, the verifier
+    and the floor back to back, in reverse order every other round, and the row is the median of
+    the per-round ratios. On the wall clock, rounds alone read 0.88 to 0.99 with nothing else
+    running. Under the phased load they still read 0.72 to 1.02, because its phases split rounds
+    faster than the median discards them.
+  - `thread_clock` times the rounds in the thread's CPU time, which stands still while the thread
+    is descheduled. Under the same load it read 0.92 to 0.99, and with nothing else running the
+    two clocks agree (medians 0.950 and 0.953, ten processes each). Windows advances thread time
+    once per scheduler tick, so the clock's step is measured, not read: a clock coarser than
+    10 us, one that never steps, or one that fails gives way to the wall clock.
+  - The final instrument, measured alternately with the old one: 0.90 to 0.99 in twelve processes
+    with nothing else running, and 0.93 to 1.01 in twelve under the phased load, every verdict
+    NO-CHANGE. The quantity, the frozen baseline (1.07) and the 25% band are unchanged. Measuring
+    the verifier group now takes about 1.9 s, up from 0.5 s.
+  - It still sees a regression. A `verify_plan` that does its work twice reads 1.93-1.96 against
+    0.94-0.97 clean, REGRESSION in every process. `ab_audit.py` grades it 0.99 -> 1.90, confirmed,
+    next to the exact call count it moves (`kbcir-streampack.full.calls`). An R9 that re-derives
+    each step's cost twice adds 13%: 0.93-0.96 -> 1.05-1.09. That is inside the band, so it is
+    graded NO-CHANGE as the band intends, but its readings no longer overlap the clean ones.
+  - Witnesses, in `bcir/tests/test_gemplus_baseline.py`, use callables of known cost and a fake
+    clock, so every tier runs them:
+    - a load that steps from 1x to 5x reads 4.5x on a true 0.9x through the old estimator, and
+      exactly 0.9x in rounds wherever it arrives or leaves;
+    - a drift of 30% a call reads 1.17 in one fixed order, and within 4% of 0.9 reversed;
+    - the refusals: an odd or too-small count of rounds, nothing to compare, a call that measured
+      no time or NaN;
+    - the clock choice;
+    - the row reads the estimator over the planner, a clean verify and the floor.
+  - `tools/testing/faults/paired.json` injects 15 defects, and each is caught by its own test.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

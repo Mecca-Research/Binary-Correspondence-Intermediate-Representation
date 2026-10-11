@@ -691,5 +691,7 @@ fresh worktree of this commit as its after tree, passes: every exact row and eve
 digest is unchanged, every ratio row is inside its band, and the `train.step.ms` wall row reads
 1.37x faster. A first run against the working checkout flagged `verify.plan.scope.overhead`, a
 timing ratio over code this update does not touch; six more runs of identical code, three in each
-tree, read it from 0.49 to 1.03 on this VM. The pull request that adds this report quotes each
-command's output.
+tree, read it from 0.49 to 1.03 on this VM. That row is now timed in paired rounds of the thread's
+CPU time (VPS-STABLE in the development history), and twelve runs read it from 0.90 to 0.99, or
+from 0.93 to 1.01 under a phased load on the measuring CPU. The pull request that adds this report
+quotes each command's output.
