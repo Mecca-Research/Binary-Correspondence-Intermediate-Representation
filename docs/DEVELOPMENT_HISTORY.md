@@ -2758,6 +2758,13 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `tools/testing/faults/native-paired.json` injects 13 defects, each caught. Among them are the
     counter named `k` and a strided driver whose timed calls run another stride than its
     checked ones.
+  - The audit of record, `origin/main` against the slice's head, passes. Four ratio rows left
+    their band on the first reading and came back NO-CHANGE: `native.blocked-reduction`,
+    `native.dense-parity`, `native.gather-avoidance` and `verify.plan.scope.overhead`. It grades one
+    GAIN, `ring.throughput` 22.9 -> 15.8, the median of three measurements per tree. That gain is
+    the instrument's: the ring's code did not change, the before tree reads the medians' ratio
+    and the after tree the best repeats'. The frozen 26x is the medians' number, so a reading
+    below it on the reference host is the instrument's too, until the baseline is re-read there.
   - Cost: the native group takes about 5.6 s instead of 2 s, and the ring bench about 1 s more.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.

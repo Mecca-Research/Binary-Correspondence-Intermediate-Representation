@@ -1508,7 +1508,10 @@ METRICS: tuple[Metric, ...] = (
     # pinned per vCPU pair it ranged ~13-49x within the hour (a minimal unchecked Lamport queue
     # moving the same bytes, ~1.1-6x), so the row is reported, never graded, and no code change is
     # attributable to it there. host_dependent: it measures the host's placement and coherence
-    # latency, not only the code.
+    # latency, not only the code. Since NATIVE-PAIRED the row reads each side's best of 16 repeats,
+    # which reads lower than the medians wherever the ring's repeats spread and memcpy's hold still
+    # (twelve runs of one build on a 4-vCPU VM: 15.0-19.0x, the medians' ratio 16.3-44.9x). 26.0 is
+    # the medians' number, so a reading below it is the instrument's until it is re-read there.
     Metric(
         "ring.throughput",
         "ring",
