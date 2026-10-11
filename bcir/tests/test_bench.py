@@ -155,7 +155,7 @@ def _paired_program(tmp: str) -> str:
     import os
     import subprocess
 
-    from bcir.bench import _paired_rounds_c
+    from bcir.bench import DRIVER_HEADERS_C, _paired_rounds_c
 
     names = "size_t k = 4; int r = 7, half = 1, i = 2, j = 3; long a = 5, b = 6, d = 8, t0 = 9;"
     same = (
@@ -164,12 +164,10 @@ def _paired_program(tmp: str) -> str:
     timing = _paired_rounds_c(
         f"kernel(1000); bad |= !({same});", f"kernel(cost_b); bad |= !({same});", "A", "B", 30
     )
-    src = f"""#include <limits.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-static long fake_ns, calls, step, drift, cost_b;
-static long now_ns(void) {{ return fake_ns; }}
+    src = f"""{DRIVER_HEADERS_C}
+static int64_t fake_ns;
+static long calls, step, drift, cost_b;
+static int64_t now_ns(void) {{ return fake_ns; }}
 static void kernel(long cost) {{
   fake_ns += cost * (1000 + calls * drift) / 1000 * (calls >= step ? 5 : 1);
   ++calls;
@@ -232,3 +230,250 @@ def test_the_paired_rounds_cancel_a_load_and_keep_the_drivers_names():
             assert read(exe, step, cost_b=2000)[0] == 2.0, step
         drifted = read(exe, 10**9, drift=50)[0]
         assert abs(drifted - 0.9) < 0.009, drifted
+
+
+# --- the one clock every driver reads, held to 64 bits where a `long` has 32 ------------------
+
+
+class _Toolchain:
+    """Truthy where `bcir.toolchain` resolves `tools` here (and `node` is on PATH, when asked),
+    resolved when first read: what `check_tests.py --require` asks of this module when
+    `tools/testing/faults/now-ns64.json` runs it. The tests that need them return without."""
+
+    def __init__(self, *tools: str, node: bool = False) -> None:
+        self._tools, self._node, self._paths = tools, node, None
+
+    def paths(self) -> dict[str, str] | None:
+        if self._paths is None:
+            from shutil import which
+
+            from bcir.toolchain import resolve_llvm_tools
+
+            found = resolve_llvm_tools(*self._tools, pipeline="the drivers' 32-bit long witness")
+            paths = dict(found.paths) if found.ok else {}
+            node = which("node") if self._node else None
+            if self._node:
+                paths = {**paths, "node": node} if paths and node else {}
+            self._paths = paths
+        return self._paths or None
+
+    def __bool__(self) -> bool:
+        return self.paths() is not None
+
+
+#: clang (any target's front end serves): every driver type-checked where a `long` has 32 bits.
+_CLANG = _Toolchain("clang")
+#: clang, wasm-ld and node: the clock run on wasm32, where a `long` has 32 bits.
+_WASM = _Toolchain("clang", "wasm-ld", node=True)
+
+#: The targets where a `long` has 32 bits: 64-bit Windows (LLP64) and wasm32 (ILP32).
+_LONG32_TARGETS = ("x86_64-pc-windows-msvc", "wasm32")
+
+#: The C library a driver calls, declared for a front end that has none for the target at hand
+#: (`-ffreestanding -nostdinc`): the shapes C11 gives them, `time_t` 64 bits as in the UCRT and
+#: wasi-libc, and `PRId64` the compiler's own spelling for the target. <stdint.h>, <stddef.h>
+#: and <limits.h> are the compiler's.
+_STAND_INS = {
+    "inttypes.h": "#include <stdint.h>\n#define PRId64 __INT64_FMTd__\n",
+    "stdio.h": "int printf(const char *restrict format, ...) __attribute__((format(printf, 1, 2)));\n",
+    "stdlib.h": (
+        "#include <stddef.h>\nvoid *malloc(size_t size);\nvoid free(void *ptr);\n"
+        "int atoi(const char *s);\n"
+    ),
+    "time.h": (
+        "struct timespec { long long tv_sec; long tv_nsec; };\n#define TIME_UTC 1\n"
+        "int timespec_get(struct timespec *ts, int base);\n"
+    ),
+}
+
+#: The clock's <time.h> on wasm32: a `timespec_get` that answers what the probe was handed, its
+#: `time_t` 64 bits as in wasi-libc and the UCRT, so only the clock's own arithmetic can lose
+#: the seconds.
+_CLOCK_PROBE_C = """#include <stdint.h>
+struct timespec { long long tv_sec; long tv_nsec; };
+#define TIME_UTC 1
+static long long probe_sec;
+static long probe_nsec;
+static int timespec_get(struct timespec *t, int base) {
+  t->tv_sec = probe_sec;
+  t->tv_nsec = probe_nsec;
+  return base;
+}
+"""
+
+_CLOCK_PROBE_JS = r"""
+const fs = require('fs');
+const [path, ...pairs] = process.argv.slice(2);
+WebAssembly.instantiate(fs.readFileSync(path), {}).then(({ instance }) => {
+  for (const pair of pairs) {
+    const [sec, nsec] = pair.split(':');
+    console.log(`NS ${instance.exports.probe(BigInt(sec), Number(nsec))}`);
+  }
+}).catch((e) => { console.log('ERROR ' + e); process.exit(2); });
+"""
+
+
+def _driver_sources() -> dict[str, str]:
+    """Every timing driver the oracle emits, each built small: `bcir.bench`'s `_emit_*_c` (the
+    timed driver for both element types) and both drivers of each `bcir.clang_compare`
+    `_*_srcs` pair. An emitter this does not build fails every test that reads it, so a new
+    driver cannot skip the clock's law."""
+    import re
+
+    from bcir import bench, clang_compare
+    from bcir.lower.c_kernel import find_strided
+
+    target = TARGETS["x86_avx512"]
+
+    def plan(module):
+        return module, optimize(module, target, Theta.cool())
+
+    m, r = plan(vector_add(1024))
+    mg, rg = plan(gather_reduce(1024))
+    ms, rs = plan(saxpy_strided(1024))
+    k = max(1, find_strided(ms, rs)[0].stride_k)
+    w = target.vector_width
+    built = {
+        "_emit_timed_c": [
+            bench._emit_timed_c(m, r, "bcir_kernel", elem, 1024, 4, None, hw_width=w)
+            for elem in ("f32", "i32")
+        ],
+        "_emit_parity_bench_c": [bench._emit_parity_bench_c(m, r, "f32", 1024, 4, hw_width=w)],
+        "_emit_gather_bench_c": [
+            bench._emit_gather_bench_c(m, r, "f32", 1024, 4, True, hw_width=w)
+        ],
+        "_emit_reduce_bench_c": [bench._emit_reduce_bench_c(mg, rg, 1024, 4)],
+        "_emit_strided_bench_c": [bench._emit_strided_bench_c(ms, rs, 1024, 4, k)],
+        "_elementwise_srcs": list(clang_compare._elementwise_srcs(1024)),
+        "_gather_srcs": list(clang_compare._gather_srcs(1024)),
+        "_reduce_srcs": list(clang_compare._reduce_srcs(1024)),
+        "_strided_srcs": list(clang_compare._strided_srcs(1024)),
+    }
+    emitters = {name for name in vars(bench) if re.fullmatch(r"_emit_\w+_c", name)}
+    emitters |= {name for name in vars(clang_compare) if re.fullmatch(r"_\w+_srcs", name)}
+    assert emitters == set(built), sorted(emitters ^ set(built))  # an emitter not built here
+    return {f"{name}[{i}]": src for name, srcs in built.items() for i, src in enumerate(srcs)}
+
+
+def test_every_driver_reads_the_one_64_bit_clock():
+    """Every timing driver the oracle emits -- `bcir.bench`'s and `bcir.clang_compare`'s -- reads
+    `bcir.bench.NOW_NS_C`: it includes `DRIVER_HEADERS_C`, then defines `now_ns` once, as that
+    clock. The clock used to be defined six times, computed in `long` each time; six copies of
+    one clock are six places for its defect to come back."""
+    from bcir.bench import DRIVER_HEADERS_C, NOW_NS_C
+
+    sources = _driver_sources()
+    assert len(sources) == 14, sorted(sources)
+    for name, src in sources.items():
+        assert src.count(NOW_NS_C) == 1, name
+        assert src.count("now_ns(void)") == 1, name  # no clock of its own beside it
+        assert src.count(DRIVER_HEADERS_C) == 1, name
+        assert src.index(DRIVER_HEADERS_C) < src.index(NOW_NS_C), name
+
+
+def test_every_driver_compiles_where_long_has_32_bits():
+    """Every driver, type-checked for the targets where a `long` has 32 bits (64-bit Windows and
+    wasm32), with a clock reading narrowed into 32 bits (`-Wshorten-64-to-32`) or printed with
+    a `long`'s format (`-Wformat`) an error. Where a `long` has 64 bits, as on every host CI
+    builds the drivers on, both compile silently. Needs clang (the thorough tier)."""
+    import os
+    import subprocess
+    import tempfile
+
+    if not _CLANG:
+        return  # no clang: the witness is a skip, never a pass
+    clang = _CLANG.paths()["clang"]
+    resource = subprocess.run(
+        [clang, "-print-resource-dir"], capture_output=True, text=True, timeout=60, check=True
+    ).stdout.strip()
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, text in _STAND_INS.items():
+            with open(os.path.join(tmp, name), "w", newline="\n") as f:
+                f.write(text)
+        path = os.path.join(tmp, "driver.c")
+        for name, src in _driver_sources().items():
+            with open(path, "w", newline="\n") as f:
+                f.write(src)
+            for target in _LONG32_TARGETS:
+                run = subprocess.run(
+                    [
+                        clang,
+                        f"--target={target}",
+                        "-fsyntax-only",
+                        "-ffreestanding",
+                        "-nostdinc",
+                        "-isystem",
+                        tmp,
+                        "-isystem",
+                        os.path.join(resource, "include"),
+                        "-std=c2x",
+                        "-Werror=shorten-64-to-32",
+                        "-Werror=format",
+                        "-Werror=implicit-function-declaration",
+                        path,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                assert run.returncode == 0, (name, target, run.stderr[-3000:])
+
+
+def test_the_clock_reads_the_epoch_in_64_bits_where_long_has_32():
+    """`NOW_NS_C` run on wasm32, where a `long` has 32 bits as on 64-bit Windows, against a clock
+    that answers what it is handed: 2026-10-11, the first second past a 32-bit `time_t`, the
+    last instant an `int64_t` of nanoseconds holds, and a nanosecond field alone. Each reads
+    back exactly, seconds * 10^9 + nanoseconds. The drivers' former clock read 2026-10-11 as
+    -696082667: `(long)t.tv_sec * 1000000000L` wrapped in 32 bits. Built with -fwrapv, so a
+    computation in 32 bits answers wrongly instead of however undefined behaviour resolves.
+    Needs clang, wasm-ld and node (the thorough tier)."""
+    import os
+    import subprocess
+    import tempfile
+
+    from bcir.bench import NOW_NS_C
+
+    if not _WASM:
+        return  # no wasm toolchain or node: the witness is a skip, never a pass
+    tools = _WASM.paths()
+    cases = [(1791737781, 123456789), (2**31, 0), (9223372036, 854775807), (0, 999999999)]
+    probe = (
+        "int64_t probe(long long sec, long nsec) {\n"
+        "  probe_sec = sec;\n  probe_nsec = nsec;\n  return now_ns();\n}\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        src, wasm, js = (os.path.join(tmp, name) for name in ("clock.c", "clock.wasm", "clock.js"))
+        with open(src, "w", newline="\n") as f:
+            f.write(_CLOCK_PROBE_C + NOW_NS_C + probe)
+        with open(js, "w", newline="\n") as f:
+            f.write(_CLOCK_PROBE_JS)
+        build = subprocess.run(
+            [
+                tools["clang"],
+                "--target=wasm32",
+                f"-fuse-ld={tools['wasm-ld']}",
+                "-ffreestanding",
+                "-nostdlib",
+                "-O2",
+                "-fwrapv",
+                "-Wl,--no-entry",
+                "-Wl,--export=probe",
+                src,
+                "-o",
+                wasm,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert build.returncode == 0, build.stdout + build.stderr
+        run = subprocess.run(
+            [tools["node"], js, wasm, *(f"{sec}:{nsec}" for sec, nsec in cases)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert run.stdout.splitlines() == [f"NS {sec * 10**9 + nsec}" for sec, nsec in cases], (
+            run.stdout
+        )

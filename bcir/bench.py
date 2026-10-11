@@ -54,14 +54,35 @@ _PAIRED_RE = re.compile(r"^PAIRED (\d+\.\d+)$", re.MULTILINE)
 #: block's best call, so a round never times a kernel's first call after the other kernel's.
 _BLOCK = 3
 
+#: The headers every emitted timing driver includes, here and in `bcir.clang_compare`: what
+#: `NOW_NS_C` needs (<stdint.h>, <time.h>), and <inttypes.h> to print its readings with
+#: `PRId64`, since an `int64_t` is a `long` on one host and a `long long` on another.
+DRIVER_HEADERS_C = (
+    "#include <inttypes.h>\n#include <limits.h>\n#include <stddef.h>\n#include <stdint.h>\n"
+    "#include <stdio.h>\n#include <stdlib.h>\n#include <time.h>\n"
+)
+
+#: The one clock every emitted timing driver reads: nanoseconds since the epoch, in 64 bits
+#: wherever the driver is compiled. Each driver used to carry a clock of its own, computed in
+#: `long`: `(long)t.tv_sec * 1000000000L` needs 61 bits, and a `long` has 32 on LLP64 hosts
+#: (64-bit Windows) and ILP32 ones, where it overflowed -- undefined behaviour, and a timing
+#: that is garbage where it is not a trap. A reading is held in an `int64_t` and printed with
+#: `PRId64`. It follows `DRIVER_HEADERS_C`.
+NOW_NS_C = """static int64_t now_ns(void) {
+  struct timespec t;
+  timespec_get(&t, TIME_UTC);
+  return (int64_t)t.tv_sec * INT64_C(1000000000) + (int64_t)t.tv_nsec;
+}
+"""
+
 
 def _paired_rounds_c(call_a: str, call_b: str, label_a: str, label_b: str, reps: int) -> str:
     """The timing loop every driver here shares: at least `reps` calls of each kernel, in rounds
     of `_BLOCK` calls a side, back to back in one process over the same buffers, the order
     alternating round by round (an even count of rounds). It prints each kernel's best call over
-    every round (`<label> <ns>`) and the median over rounds of the per-round ratio of the two
-    blocks' best calls, b over a (`PAIRED <ratio>`); a round in which a kernel measured no time
-    is a failed run.
+    every round (`<label> <ns>`, nanoseconds of `NOW_NS_C`, held in `int64_t`) and the median
+    over rounds of the per-round ratio of the two blocks' best calls, b over a
+    (`PAIRED <ratio>`); a round in which a kernel measured no time is a failed run.
 
     WHY ROUNDS. These drivers timed every call of one kernel, then every call of the other, and
     the dense-parity pair ran in two processes. Ten harness runs of identical code read
@@ -78,24 +99,24 @@ def _paired_rounds_c(call_a: str, call_b: str, label_a: str, label_b: str, reps:
     # time the kernel on the counter instead.
     return f"""
   {{
-  long pr_best_a = LONG_MAX, pr_best_b = LONG_MAX;
+  int64_t pr_best_a = INT64_MAX, pr_best_b = INT64_MAX;
   double pr_ratio[{rounds}];
   for (int pr_r = 0; pr_r < {rounds}; ++pr_r) {{
-    long pr_a = LONG_MAX, pr_b = LONG_MAX;
+    int64_t pr_a = INT64_MAX, pr_b = INT64_MAX;
     for (int pr_half = 0; pr_half < 2; ++pr_half) {{
       if ((pr_half == 0) == (pr_r % 2 == 0)) {{
         for (int pr_k = 0; pr_k < {_BLOCK}; ++pr_k) {{
-          long pr_t0 = now_ns(); {call_a} long pr_d = now_ns() - pr_t0;
+          int64_t pr_t0 = now_ns(); {call_a} int64_t pr_d = now_ns() - pr_t0;
           if (pr_d > 0 && pr_d < pr_a) pr_a = pr_d;
         }}
       }} else {{
         for (int pr_k = 0; pr_k < {_BLOCK}; ++pr_k) {{
-          long pr_t0 = now_ns(); {call_b} long pr_d = now_ns() - pr_t0;
+          int64_t pr_t0 = now_ns(); {call_b} int64_t pr_d = now_ns() - pr_t0;
           if (pr_d > 0 && pr_d < pr_b) pr_b = pr_d;
         }}
       }}
     }}
-    if (pr_a == LONG_MAX || pr_b == LONG_MAX) {{
+    if (pr_a == INT64_MAX || pr_b == INT64_MAX) {{
       printf("FAIL round %d measured no time\\n", pr_r);
       return 1;
     }}
@@ -109,7 +130,7 @@ def _paired_rounds_c(call_a: str, call_b: str, label_a: str, label_b: str, reps:
     while (pr_j >= 0 && pr_ratio[pr_j] > pr_v) {{ pr_ratio[pr_j + 1] = pr_ratio[pr_j]; --pr_j; }}
     pr_ratio[pr_j + 1] = pr_v;
   }}
-  printf("{label_a} %ld\\n{label_b} %ld\\nPAIRED %.6f\\n", pr_best_a, pr_best_b,
+  printf("{label_a} %" PRId64 "\\n{label_b} %" PRId64 "\\nPAIRED %.6f\\n", pr_best_a, pr_best_b,
          (pr_ratio[{rounds} / 2 - 1] + pr_ratio[{rounds} / 2]) / 2.0);
   }}
 """
@@ -171,30 +192,27 @@ def _emit_timed_c(
         else "A[i] = (int32_t)(i % 1000); B[i] = (int32_t)(i % 7);"
     )
     return (
-        "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
-        "#include <time.h>\n#include <limits.h>\n"
-        + ("#include <stdint.h>\n" if elem == "i32" else "")
+        DRIVER_HEADERS_C
         + "\n"
         + kernel
+        + "\n"
+        + NOW_NS_C
         + f"""
-static long now_ns(void) {{ struct timespec t; timespec_get(&t, TIME_UTC);
-  return (long)t.tv_sec * 1000000000L + (long)t.tv_nsec; }}
-
 int main(void) {{
   size_t n = {n}u;
   {ctype} *A = malloc(n*sizeof *A), *B = malloc(n*sizeof *B), *C = malloc(n*sizeof *C);
   if (!A || !B || !C) return 2;
   for (size_t i = 0; i < n; ++i) {{ {init} C[i] = 0; }}
   {fn_name}(A, B, C, n);                         /* warm up */
-  long best = LONG_MAX;
+  int64_t best = INT64_MAX;
   for (int r = 0; r < {reps}; ++r) {{
-    long t0 = now_ns();
+    int64_t t0 = now_ns();
     {fn_name}(A, B, C, n);
-    long dt = now_ns() - t0;
+    int64_t dt = now_ns() - t0;
     if (dt > 0 && dt < best) best = dt;
   }}
   volatile {ctype} sink = C[n - 1]; (void)sink;  /* keep the kernel live */
-  printf("NS %ld\\n", best);
+  printf("NS %" PRId64 "\\n", best);
   free(A); free(B); free(C);
   return 0;
 }}
@@ -287,15 +305,14 @@ def _emit_parity_bench_c(module, result, elem: str, n: int, reps: int, hw_width=
     if (C[i] != want) {{ printf("FAIL i=%zu\\n", i); return 1; }}
   }}"""
     return (
-        "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
-        "#include <time.h>\n#include <limits.h>\n#include <stdint.h>\n\n"
+        DRIVER_HEADERS_C
+        + "\n"
         + selected
         + "\n"
         + scalar
+        + "\n"
+        + NOW_NS_C
         + f"""
-static long now_ns(void) {{ struct timespec t; timespec_get(&t, TIME_UTC);
-  return (long)t.tv_sec * 1000000000L + (long)t.tv_nsec; }}
-
 int main(void) {{
   size_t n = {n}u;
   {ctype} *A = malloc(n*sizeof *A), *B = malloc(n*sizeof *B), *C = malloc(n*sizeof *C);
@@ -444,15 +461,14 @@ def _emit_gather_bench_c(
     if (Cd[i] != wd || Cg[i] != wg) {{ printf("FAIL i=%zu\\n", i); return 1; }}
   }}"""
     return (
-        "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
-        "#include <time.h>\n#include <limits.h>\n#include <stdint.h>\n\n"
+        DRIVER_HEADERS_C
+        + "\n"
         + direct
         + "\n"
         + gather
-        + f"""
-static long now_ns(void) {{ struct timespec t; timespec_get(&t, TIME_UTC);
-  return (long)t.tv_sec * 1000000000L + (long)t.tv_nsec; }}
-static uint64_t g_st = 0xBC12u;
+        + "\n"
+        + NOW_NS_C
+        + f"""static uint64_t g_st = 0xBC12u;
 static uint64_t lcg(void) {{ g_st = g_st * 6364136223846793005ULL + 1442695040888963407ULL; return g_st; }}
 
 int main(void) {{
@@ -580,15 +596,14 @@ def _emit_reduce_bench_c(module, result, n: int, reps: int) -> str:
         reps,
     )
     return (
-        "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
-        "#include <time.h>\n#include <limits.h>\n#include <stdint.h>\n\n"
+        DRIVER_HEADERS_C
+        + "\n"
         + blocked
         + "\n"
         + gather
-        + f"""
-static long now_ns(void) {{ struct timespec t; timespec_get(&t, TIME_UTC);
-  return (long)t.tv_sec * 1000000000L + (long)t.tv_nsec; }}
-static uint64_t g_st = 0xBC12u;
+        + "\n"
+        + NOW_NS_C
+        + f"""static uint64_t g_st = 0xBC12u;
 static uint64_t lcg(void) {{ g_st = g_st * 6364136223846793005ULL + 1442695040888963407ULL; return g_st; }}
 
 int main(void) {{
@@ -678,15 +693,14 @@ def _emit_strided_bench_c(module, result, n: int, reps: int, k: int) -> str:
         reps,
     )
     return (
-        "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
-        "#include <time.h>\n#include <limits.h>\n\n"
+        DRIVER_HEADERS_C
+        + "\n"
         + direct
         + "\n"
         + gather
+        + "\n"
+        + NOW_NS_C
         + f"""
-static long now_ns(void) {{ struct timespec t; timespec_get(&t, TIME_UTC);
-  return (long)t.tv_sec * 1000000000L + (long)t.tv_nsec; }}
-
 int main(void) {{
   size_t n = {n}u, k = {k}u;
   float *X = malloc(n*k*sizeof *X), *Yd = malloc(n*sizeof *Yd), *Yg = malloc(n*sizeof *Yg);

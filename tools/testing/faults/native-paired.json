@@ -36,8 +36,8 @@
     {
       "expects": "test_the_paired_rounds_cancel_a_load_and_keep_the_drivers_names",
       "label": "the timing loop's block counter is named k, so a driver's call sees the counter (the strided kernel timed at strides 0-2)",
-      "new": "        for (int k = 0; k < {_BLOCK}; ++k) {{\n          long pr_t0 = now_ns(); {call_a} long pr_d",
-      "old": "        for (int pr_k = 0; pr_k < {_BLOCK}; ++pr_k) {{\n          long pr_t0 = now_ns(); {call_a} long pr_d",
+      "new": "        for (int k = 0; k < {_BLOCK}; ++k) {{\n          int64_t pr_t0 = now_ns(); {call_a} int64_t pr_d",
+      "old": "        for (int pr_k = 0; pr_k < {_BLOCK}; ++pr_k) {{\n          int64_t pr_t0 = now_ns(); {call_a} int64_t pr_d",
       "path": "bcir/bench.py"
     },
     {

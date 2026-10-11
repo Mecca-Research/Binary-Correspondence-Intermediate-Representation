@@ -2766,6 +2766,39 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     and the after tree the best repeats'. The frozen 26x is the medians' number, so a reading
     below it on the reference host is the instrument's too, until the baseline is re-read there.
   - Cost: the native group takes about 5.6 s instead of 2 s, and the ring bench about 1 s more.
+  NOW-NS64 (2026-10-11): every timing driver the oracle emits reads one clock, in 64 bits.
+  - The drivers of `bcir/bench.py` (five emitters) and of `bcir/clang_compare.py` (one harness for
+    eight) each defined their own `now_ns`, computed in `long`: `(long)t.tv_sec * 1000000000L`.
+    The nanoseconds since 1970 need 61 bits, and a `long` has 32 on LLP64 hosts (64-bit Windows)
+    and on ILP32 ones, where the product overflowed: undefined behaviour, and a reading that is
+    garbage where it is not a trap. Run on wasm32, the old clock read 2026-10-11 as -696082667.
+    Every reading was held in a `long` and printed with `%ld` as well. No CI cell compiled a driver
+    where a `long` has 32 bits: Windows runs the quick tier, which hides the compilers.
+  - One clock now: `bcir.bench.NOW_NS_C`, an `int64_t` from `(int64_t)t.tv_sec *
+    INT64_C(1000000000)`, after one header block, `DRIVER_HEADERS_C` (<inttypes.h> for `PRId64`).
+    Every driver includes both, keeps its readings in `int64_t` with `INT64_MAX` as the sentinel,
+    and prints them with `PRId64`. `clang_compare`'s seven best-of loops are one `_best_of`. What
+    the drivers print, and how `bench` and `clang_compare` parse it, did not change. The gather
+    drivers' `long` indices belong to the kernel ABI, are bounded by the problem size, and stay.
+  - Witnesses, in `bcir/tests/test_bench.py`:
+    - `test_every_driver_reads_the_one_64_bit_clock` (no compiler): all fourteen driver sources
+      include the headers and define `now_ns` once, as `NOW_NS_C`, and an emitter the witnesses do
+      not build fails it;
+    - `test_every_driver_compiles_where_long_has_32_bits`: every driver type-checked for
+      `x86_64-pc-windows-msvc` and `wasm32` against stand-in C library declarations, with a
+      reading narrowed to 32 bits (`-Wshorten-64-to-32`) or printed with `%ld` (`-Wformat`) an
+      error. Where a `long` has 64 bits, both compile silently;
+    - `test_the_clock_reads_the_epoch_in_64_bits_where_long_has_32`: `NOW_NS_C` built for wasm32
+      with `-fwrapv` and run under node, against a clock that answers what it is handed: 2026-10-11,
+      2^31 seconds, the last instant an `int64_t` of nanoseconds holds, and a nanosecond field
+      alone. Each reads back exactly.
+    `tools/testing/faults/now-ns64.json` injects 10 defects, each caught, and each witness is the
+    only one to catch some of them. Only the wasm32 run catches the old clock's arithmetic. Only
+    the type check catches a reading kept in a `long` or printed with `%ld`. Only the first
+    witness catches a driver with a clock of its own.
+  - Every driver builds with the same warnings as before under GCC 13, clang 18 and clang 23
+    (`-Wall -Wextra`), and the native rows read as before: dense-parity 1.004, gather-avoidance
+    4.544, direct-stride 1.293 and blocked-reduction 32.57.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

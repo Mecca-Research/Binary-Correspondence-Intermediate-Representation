@@ -1,0 +1,85 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_bench:_CLANG",
+    "--require",
+    "bcir.tests.test_bench:_WASM",
+    "bcir.tests.test_bench:test_every_driver_reads_the_one_64_bit_clock",
+    "bcir.tests.test_bench:test_every_driver_compiles_where_long_has_32_bits",
+    "bcir.tests.test_bench:test_the_clock_reads_the_epoch_in_64_bits_where_long_has_32"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_clock_reads_the_epoch_in_64_bits_where_long_has_32",
+      "label": "the shared clock computes in long, as each driver's own clock did, so 2026's epoch wraps where a long has 32 bits",
+      "new": "  return (long)t.tv_sec * 1000000000L + (long)t.tv_nsec;\n",
+      "old": "  return (int64_t)t.tv_sec * INT64_C(1000000000) + (int64_t)t.tv_nsec;\n",
+      "path": "bcir/bench.py"
+    },
+    {
+      "expects": "test_the_clock_reads_the_epoch_in_64_bits_where_long_has_32",
+      "label": "the shared clock returns a long, so every reading is cut to 32 bits where a long has 32 bits",
+      "new": "NOW_NS_C = \"\"\"static long now_ns(void) {\n",
+      "old": "NOW_NS_C = \"\"\"static int64_t now_ns(void) {\n",
+      "path": "bcir/bench.py"
+    },
+    {
+      "expects": "test_every_driver_reads_the_one_64_bit_clock",
+      "label": "the strided driver keeps a clock of its own, computed in long",
+      "new": "        + \"static long now_ns(void) { struct timespec t; timespec_get(&t, TIME_UTC);\\n\"\n        \"  return (long)t.tv_sec * 1000000000L + (long)t.tv_nsec; }\\n\"\n        + f\"\"\"\nint main(void) {{\n  size_t n = {n}u, k = {k}u;\n",
+      "old": "        + NOW_NS_C\n        + f\"\"\"\nint main(void) {{\n  size_t n = {n}u, k = {k}u;\n",
+      "path": "bcir/bench.py"
+    },
+    {
+      "expects": "test_every_driver_reads_the_one_64_bit_clock",
+      "label": "the clang comparison's drivers keep a clock of their own, computed in long",
+      "new": "    + \"static long now_ns(void){ struct timespec t; timespec_get(&t, TIME_UTC);\\n\"\n    \"  return (long)t.tv_sec*1000000000L + t.tv_nsec; }\\n\"\n    + \"static uint64_t g=0xBC12u;",
+      "old": "    + NOW_NS_C\n    + \"static uint64_t g=0xBC12u;",
+      "path": "bcir/clang_compare.py"
+    },
+    {
+      "expects": "test_every_driver_reads_the_one_64_bit_clock",
+      "label": "a new driver emitter the clock's witnesses do not build",
+      "new": "def _emit_unbuilt_bench_c(module, result):\n    return \"\"\n\n\ndef _emit_strided_bench_c(",
+      "old": "def _emit_strided_bench_c(",
+      "path": "bcir/bench.py"
+    },
+    {
+      "expects": "test_every_driver_compiles_where_long_has_32_bits",
+      "label": "the paired rounds keep a reading in a long: silent where a long has 64 bits, cut to 32 where it has 32",
+      "new": "          long pr_t0 = now_ns(); {call_a} long pr_d = now_ns() - pr_t0;\n",
+      "old": "          int64_t pr_t0 = now_ns(); {call_a} int64_t pr_d = now_ns() - pr_t0;\n",
+      "path": "bcir/bench.py"
+    },
+    {
+      "expects": "test_every_driver_compiles_where_long_has_32_bits",
+      "label": "the paired rounds print their int64_t readings with a long's %ld",
+      "new": "  printf(\"{label_a} %ld\\\\n{label_b} %ld\\\\nPAIRED %.6f\\\\n\", pr_best_a, pr_best_b,\n",
+      "old": "  printf(\"{label_a} %\" PRId64 \"\\\\n{label_b} %\" PRId64 \"\\\\nPAIRED %.6f\\\\n\", pr_best_a, pr_best_b,\n",
+      "path": "bcir/bench.py"
+    },
+    {
+      "expects": "test_every_driver_compiles_where_long_has_32_bits",
+      "label": "the timed driver keeps its best call in a long",
+      "new": "  long best = LONG_MAX;\n",
+      "old": "  int64_t best = INT64_MAX;\n",
+      "path": "bcir/bench.py"
+    },
+    {
+      "expects": "test_every_driver_compiles_where_long_has_32_bits",
+      "label": "the clang comparison's drivers keep a reading in a long",
+      "new": "        \"  for(int r=0;r<reps;++r){long t0=now_ns();\"\n",
+      "old": "        \"  for(int r=0;r<reps;++r){int64_t t0=now_ns();\"\n",
+      "path": "bcir/clang_compare.py"
+    },
+    {
+      "expects": "test_every_driver_compiles_where_long_has_32_bits",
+      "label": "the clang comparison's drivers print their int64_t best with a long's %ld",
+      "new": "_PRINT_BEST = 'printf(\"%ld\\\\n\",best);'\n",
+      "old": "_PRINT_BEST = 'printf(\"%\" PRId64 \"\\\\n\",best);'\n",
+      "path": "bcir/clang_compare.py"
+    }
+  ]
+}
