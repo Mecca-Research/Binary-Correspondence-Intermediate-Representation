@@ -1,0 +1,35 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_the_compiled_plan_and_gemm_are_the_programs",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23",
+    "bcir.tests.test_native_program:test_the_arenas_are_the_plans_closed_forms",
+    "bcir.tests.test_native_program:test_the_counted_work_is_the_contractions_worked_by_hand"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NC1 a ragged block leaves its last column unstored",
+      "new": "    else for (j=0;j<nr;j++) if (j+1<end) ci[j]=acc[r][j];",
+      "old": "    else for (j=0;j<nr;j++) if (j<end) ci[j]=acc[r][j];",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NC2 the packed tile of a transposed B drops each block's last column",
+      "new": "        for (j=0;j+1<nj;j++) {\n          const float *src=x->b+(jb+j)*x->ldb+lb;",
+      "old": "        for (j=0;j<nj;j++) {\n          const float *src=x->b+(jb+j)*x->ldb+lb;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NC3 the packed tile of an untransposed B drops each depth block's last row",
+      "new": "        for (l=0;l+1<nl;l++) {\n          const float *src=x->b+(lb+l)*x->ldb+jb;",
+      "old": "        for (l=0;l<nl;l++) {\n          const float *src=x->b+(lb+l)*x->ldb+jb;",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

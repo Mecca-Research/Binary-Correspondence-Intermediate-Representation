@@ -24,7 +24,8 @@ from bcir.hosted.models.native import (
 
 
 #: The compiler the NDT-GEM witnesses build with (`bcir.toolchain.host_c_compiler`), or None: the
-#: capability their fault table (tools/testing/faults/ndt-gem.json) requires.
+#: capability their fault tables (tools/testing/faults/ndt-gem.json, ndt-perf.json and
+#: ndt-clang.json) require.
 _CC = __import__("bcir.toolchain", fromlist=["host_c_compiler"]).host_c_compiler()
 
 
@@ -225,7 +226,7 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
     tensor, train = nf.source("bcir_tensor.c"), nf.source("bcir_decoder_train.c")
     mutants = (
         ("mm", "bcir_tensor.c", tensor,
-         "x->b[(jb+j)*x->ldb+lb+l]", "x->b[(jb+j)*x->ldb+l]"),
+         "const float *src=x->b+(jb+j)*x->ldb+lb;", "const float *src=x->b+(jb+j)*x->ldb;"),
         ("mm", "bcir_tensor.c", tensor,
          "for (l=0;l<nl;l++) {\n    const float *bl=bt+l*nr;",
          "for (l=nl;l-->0;) {\n    const float *bl=bt+l*nr;"),

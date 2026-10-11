@@ -13,8 +13,8 @@
     {
       "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
       "label": "NG1 the packed B tile reads B^T without its depth offset",
-      "new": "x->b[(jb+j)*x->ldb+l]",
-      "old": "x->b[(jb+j)*x->ldb+lb+l]",
+      "new": "const float *src=x->b+(jb+j)*x->ldb;",
+      "old": "const float *src=x->b+(jb+j)*x->ldb+lb;",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

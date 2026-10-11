@@ -68,8 +68,10 @@ BCIR_MM_INLINE void mm_block(size_t mr, size_t nr, const mm_args *x, const float
   for (r=0;r<mr;r++) {
     float *ci=x->c+(i+r)*x->ldc+jb; size_t end=nj;
     if (mode==MM_LOWER) end=i+r<jb ? 0 : i+r-jb+1<nj ? i+r-jb+1 : nj;
+    /* every index into acc is a constant once the loops unroll, so clang keeps the block in
+     * registers; a bound read from the masks would leave it on the stack across the depth */
     if (end==nr) { for (j=0;j<nr;j++) ci[j]=acc[r][j]; }
-    else for (j=0;j<end;j++) ci[j]=acc[r][j];
+    else for (j=0;j<nr;j++) if (j<end) ci[j]=acc[r][j];
   }
 }
 /* Whether rows [i, i+mr) of this (column, depth) block are outside the mask's reach entirely. */
@@ -79,7 +81,10 @@ BCIR_MM_INLINE int mm_unmasked(int mode, size_t i, size_t mr, size_t jb, size_t 
     (mode==MM_KGE && i+mr-1<=lb);
 }
 BCIR_MM_INLINE void mm_kernel(size_t mr, size_t nr, const mm_args *x) {
-  float bt[BCIR_MM_KC*BCIR_MM_NRMAX];
+  /* Aligned to a cache line: every row of the tile is then read in whole vectors that never
+   * straddle two lines. GCC realigns the stack for the AVX-512 instance on its own; clang keeps
+   * the ABI's 16 bytes, which left the tile's offset to the caller's stack depth and to ASLR. */
+  _Alignas(64) float bt[BCIR_MM_KC*BCIR_MM_NRMAX];
   size_t i,j,l,jb,lb;
   for (jb=0;jb<x->n;jb+=nr) {
     size_t nj=x->n-jb<nr ? x->n-jb : nr;
@@ -91,8 +96,19 @@ BCIR_MM_INLINE void mm_kernel(size_t mr, size_t nr, const mm_args *x) {
       if (x->mode==MM_KLE) i0=lb;
       if (x->mode==MM_KGE && lb+nl<i1) i1=lb+nl;
       if (i0>=i1) continue;
-      for (l=0;l<nl;l++) for (j=0;j<nr;j++)
-        bt[l*nr+j]=j>=nj ? 0.0f : x->tb ? x->b[(jb+j)*x->ldb+lb+l] : x->b[(lb+l)*x->ldb+jb+j];
+      /* pack the tile, reading each source row contiguously; the padding columns are zero */
+      if (x->tb) {
+        for (j=0;j<nj;j++) {
+          const float *src=x->b+(jb+j)*x->ldb+lb;
+          for (l=0;l<nl;l++) bt[l*nr+j]=src[l];
+        }
+      } else {
+        for (l=0;l<nl;l++) {
+          const float *src=x->b+(lb+l)*x->ldb+jb;
+          for (j=0;j<nj;j++) bt[l*nr+j]=src[j];
+        }
+      }
+      if (nj<nr) for (l=0;l<nl;l++) for (j=nj;j<nr;j++) bt[l*nr+j]=0.0f;
       for (i=i0;i+mr<=i1;i+=mr) {
         if (mm_unmasked(x->mode,i,mr,jb,nj,lb,nl)) mm_block(mr,nr,x,bt,i,jb,nj,lb,nl,MM_FULL);
         else mm_block(mr,nr,x,bt,i,jb,nj,lb,nl,x->mode);
