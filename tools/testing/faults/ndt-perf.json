@@ -1,0 +1,77 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_the_compiled_plan_and_gemm_are_the_programs",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23",
+    "bcir.tests.test_native_program:test_the_arenas_are_the_plans_closed_forms",
+    "bcir.tests.test_native_program:test_the_counted_work_is_the_contractions_worked_by_hand"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NP1 the context and query-adjoint products drop each row's diagonal term",
+      "new": "(mode==MM_KLE && lb+l>=i+r)",
+      "old": "(mode==MM_KLE && lb+l>i+r)",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NP2 the key and value adjoints take one term from above the causal diagonal",
+      "new": "(mode==MM_KGE && lb+l+1<i+r)",
+      "old": "(mode==MM_KGE && lb+l<i+r)",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NP3 the scores store one entry past the causal diagonal",
+      "new": "end=i+r<jb ? 0 : i+r-jb+2<nj ? i+r-jb+2 : nj;",
+      "old": "end=i+r<jb ? 0 : i+r-jb+1<nj ? i+r-jb+1 : nj;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NP4 the adjoint products skip the last row each depth block reaches",
+      "new": "if (x->mode==MM_KGE && lb+nl-1<i1) i1=lb+nl-1;",
+      "old": "if (x->mode==MM_KGE && lb+nl<i1) i1=lb+nl;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NP5 the probability adjoint's row sum keeps accumulating in the second pass",
+      "new": "            dot[i]+=pi[j]*dp;\n            if (pass) pi[j]=pi[j]*(dp-dot[i])*scale;",
+      "old": "            if (!pass) dot[i]+=pi[j]*dp;\n            else pi[j]=pi[j]*(dp-dot[i])*scale;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NP6 the value adjoint adds the masked-out terms as zeros",
+      "new": "x.c=dv+(r*t*nk+kh)*d; x.ldc=ldk; x.mode=MM_FULL;",
+      "old": "x.c=dv+(r*t*nk+kh)*d; x.ldc=ldk; x.mode=MM_KGE;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NP7 the update skips its preflight whatever the magnitudes say",
+      "new": "  return 1 || (2.0*mb<=half && 2.0*vb<=half && step<=0.5*half && w<=0.5*half && w+step<=half);",
+      "old": "  return 2.0*mb<=half && 2.0*vb<=half && step<=0.5*half && w<=0.5*half && w+step<=half;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NP8 the first pass admits a negative second moment",
+      "new": "!(av<=FLT_MAX)",
+      "old": "!(av>=0 && av<=FLT_MAX)",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NP9 a GEMM variant the kernel does not define runs instead of being refused",
+      "new": "if (!(bcir_tensor_mm_variants()&variant)) return 0;",
+      "old": "if ((variant!=1 && variant!=2 && variant!=4) || !(bcir_tensor_mm_variants()&variant)) return 0;",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

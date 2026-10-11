@@ -12,16 +12,16 @@
   "faults": [
     {
       "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
-      "label": "NG1 the packed B^T tile reads B without its depth offset",
-      "new": "bt[l*32+j]=b[(jb+j)*k+l];",
-      "old": "bt[l*32+j]=b[(jb+j)*k+lb+l];",
+      "label": "NG1 the packed B tile reads B^T without its depth offset",
+      "new": "x->b[(jb+j)*x->ldb+l]",
+      "old": "x->b[(jb+j)*x->ldb+lb+l]",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
-      "label": "NG2 the packed B^T path accumulates each tile's depth in descending order",
-      "new": "for (i=0;i<m;i++) for (l=nl;l-->0;) {",
-      "old": "for (i=0;i<m;i++) for (l=0;l<nl;l++) {",
+      "label": "NG2 the register block accumulates each tile's depth in descending order",
+      "new": "  for (l=nl;l-->0;) {\n    const float *bl=bt+l*nr;",
+      "old": "  for (l=0;l<nl;l++) {\n    const float *bl=bt+l*nr;",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -34,8 +34,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NG4 the update's preflight no longer refuses a moment out of float's range",
-      "new": "      bad|=!(fabs(wc)<=FLT_MAX);",
-      "old": "      bad|=!in | !(fabs(wc)<=FLT_MAX);",
+      "new": "    bad|=!(fabs(wc)<=FLT_MAX);",
+      "old": "    bad|=!in | !(fabs(wc)<=FLT_MAX);",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
