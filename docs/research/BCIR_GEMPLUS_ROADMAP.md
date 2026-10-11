@@ -63,6 +63,10 @@ REGRESSION verdicts in both directions. `paired_ratios` times the two sides back
 rounds of the thread's CPU time (`thread_clock`). A load then reaches both sides or neither, and
 the row reads 0.90 to 0.99 idle and 0.93 to 1.01 under the same load (VPS-STABLE in the
 development history). Any new ratio of two callables in one thread should be timed the same way.
+The compiled `native.*` rows follow the same rule in C. Their two kernels run in one program, in
+paired rounds (`bcir.bench._paired_rounds_c`), and each row is the median of three programs.
+`ring.throughput` takes each side's best of 16 repeats, because no pair cancels where the host
+puts the ring's two threads (NATIVE-PAIRED).
 
 **A slice is gated on its `exact` rows.** Wall rows are evidence for a human, not a gate. This
 is not a lowering of standards — it is the only way the gate means the same thing on CI, on a
@@ -177,7 +181,8 @@ one interpreter and graded the same way: both trees are read with this checkout'
 (`bcir/tests/call_counts.py`), one entry per code object. The row groups are `sp` and `sp8` (the
 K_BCIR -> StreamPack chain), `sched` (the schedulers and the phase DAG), `audit` (the
 performance audit's cases) and `asn1` (the ASN.1 front end over the repository's own modules and
-an X.683 module). A `ratio` row is held to its 25% band, and a time is
+an X.683 module). A `ratio` row is held to its 25% band, and one that leaves it in either
+direction is measured again in both trees, alternating, and graded on the median; a time is
 reported as the before/after ratio and never graded. A metric present before and gone after is a
 failure: it is coverage lost. A regression lands only with its explanation recorded
 (`--explain ROW=reason`), and the table goes into the PR. The first run of the tool proved the

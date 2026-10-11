@@ -965,14 +965,20 @@ def run_harness(tree: str, scratch: str, label: str, timeout: int, group: str = 
 
 
 def confirm_ratios(graded, before_rows, after_rows, before, after, scratch, args):
-    """A `ratio` row that left its band earns confirming measurements before it is graded.
+    """A `ratio` row that left its band, either way, earns confirming measurements before it is
+    graded.
 
     A timed ratio cancels the machine's speed, not its load: one sample per tree on a busy host
     can leave the 25% band with no change in the code (bcir-cicd: a ratio row earns a confirming
-    re-run, and a second failure is real). Each regressed ratio row's harness group is measured
-    again `--ratio-confirm` times per tree, alternating which tree goes first, and the row is
-    graded on the median of every measurement it has."""
-    suspects = [f for f in graded if f.kind == "ratio" and f.verdict == "REGRESSION"]
+    re-run, and a second failure is real). It leaves toward a gain as readily as toward a
+    regression, and a false gain is not free: the roadmap's §0.2 owes every GAIN an analysis of
+    its magnitude and headroom, which for a gain the host made is an analysis of nothing. Between
+    two trees with the same compiled kernels, one run read `native.dense-parity` 0.813 -> 1.108
+    and `ring.throughput` 38.7 -> 25.2, both GAIN. So each ratio row that left its band has its
+    harness group measured again `--ratio-confirm` times per tree, alternating which tree goes
+    first, and is graded on the median of every measurement it has. A row whose first reading
+    was a gain can come out NO-CHANGE, or a REGRESSION."""
+    suspects = [f for f in graded if f.kind == "ratio" and f.verdict in ("REGRESSION", "GAIN")]
     if not suspects or args.ratio_confirm < 1:
         return graded
     group_of = {r["key"]: r.get("group", "") for r in after_rows}
@@ -995,9 +1001,10 @@ def confirm_ratios(graded, before_rows, after_rows, before, after, scratch, args
             continue
         b_med = statistics.median(samples[f.key][0])
         a_med = statistics.median(samples[f.key][1])
-        # The first grading called before -> after worse, which fixes the row's direction.
-        lower_is_better = f.after > f.before
-        worse = a_med > b_med if lower_is_better else a_med < b_med
+        # The first grading fixes the row's direction: a REGRESSION moved it the worse way, a
+        # GAIN the better way.
+        higher_is_worse = (f.after > f.before) == (f.verdict == "REGRESSION")
+        worse = a_med > b_med if higher_is_worse else a_med < b_med
         outside = bool(b_med) and abs(a_med - b_med) / abs(b_med) > RATIO_BAND
         verdict = "REGRESSION" if outside and worse else ("GAIN" if outside else "NO-CHANGE")
         n = len(samples[f.key][0])

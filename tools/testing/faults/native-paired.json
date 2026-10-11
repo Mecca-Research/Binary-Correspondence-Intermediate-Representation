@@ -1,0 +1,107 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_bench:_CC",
+    "bcir.tests.test_bench:test_the_paired_rounds_cancel_a_load_and_keep_the_drivers_names",
+    "bcir.tests.test_bench:test_strided_gather_avoidance_is_measured_non_reduction",
+    "bcir.tests.test_bench:test_gather_avoidance_is_measured_and_correct",
+    "bcir.tests.test_bench:test_both_realizations_are_correct_under_timing",
+    "bcir.tests.test_gemplus_baseline:test_the_native_rows_are_the_median_of_three_paired_programs",
+    "bcir.tests.test_gemplus_baseline:test_the_throughput_row_is_the_best_repeats_ratio"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_paired_rounds_cancel_a_load_and_keep_the_drivers_names",
+      "label": "every round times its kernels in one order, so a drift across a round lifts every round's ratio",
+      "new": "      if (pr_half == 0) {{\n",
+      "old": "      if ((pr_half == 0) == (pr_r % 2 == 0)) {{\n",
+      "path": "bcir/bench.py"
+    },
+    {
+      "expects": "test_the_paired_rounds_cancel_a_load_and_keep_the_drivers_names",
+      "label": "the paired reading is the slowest round instead of the median, so the round a load splits is the reading",
+      "new": "         pr_ratio[{rounds} - 1]);\n",
+      "old": "         (pr_ratio[{rounds} / 2 - 1] + pr_ratio[{rounds} / 2]) / 2.0);\n",
+      "path": "bcir/bench.py"
+    },
+    {
+      "expects": "test_the_paired_rounds_cancel_a_load_and_keep_the_drivers_names",
+      "label": "the paired reading is the ratio of the kernels' best calls, not the median per round",
+      "new": "         (double)pr_best_b / (double)pr_best_a);\n",
+      "old": "         (pr_ratio[{rounds} / 2 - 1] + pr_ratio[{rounds} / 2]) / 2.0);\n",
+      "path": "bcir/bench.py"
+    },
+    {
+      "expects": "test_the_paired_rounds_cancel_a_load_and_keep_the_drivers_names",
+      "label": "the timing loop's block counter is named k, so a driver's call sees the counter (the strided kernel timed at strides 0-2)",
+      "new": "        for (int k = 0; k < {_BLOCK}; ++k) {{\n          long pr_t0 = now_ns(); {call_a} long pr_d",
+      "old": "        for (int pr_k = 0; pr_k < {_BLOCK}; ++pr_k) {{\n          long pr_t0 = now_ns(); {call_a} long pr_d",
+      "path": "bcir/bench.py"
+    },
+    {
+      "expects": "test_strided_gather_avoidance_is_measured_non_reduction",
+      "label": "the strided driver's timed calls run another stride than its checked ones, and the check after timing is what sees it",
+      "new": "        \"bcir_strided(X, Yd, n, k - 1);\",\n        \"bcir_strided_gather(X, idx, Yg, n);\",\n",
+      "old": "        \"bcir_strided(X, Yd, n, k);\",\n        \"bcir_strided_gather(X, idx, Yg, n);\",\n",
+      "path": "bcir/bench.py"
+    },
+    {
+      "expects": "test_the_native_rows_are_the_median_of_three_paired_programs",
+      "label": "a native row is one program's reading instead of the median of three",
+      "new": "            out[key] = paired[0] / 1000\n",
+      "old": "            out[key] = statistics.median(paired) / 1000\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_native_rows_are_the_median_of_three_paired_programs",
+      "label": "a native row reads the ratio of the kernels' best calls, not the paired ratio",
+      "new": "            run(program, opt=opt, n=n, reps=reps).speedup_milli for _ in range(NATIVE_PROGRAMS)\n",
+      "old": "            run(program, opt=opt, n=n, reps=reps).paired_milli for _ in range(NATIVE_PROGRAMS)\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_native_rows_are_the_median_of_three_paired_programs",
+      "label": "a native row is measured although one of its programs failed",
+      "new": "        if any(paired):\n            out[key] = statistics.median(paired) / 1000\n",
+      "old": "        if all(paired):\n            out[key] = statistics.median(paired) / 1000\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_native_rows_are_the_median_of_three_paired_programs",
+      "label": "each native row takes one program again",
+      "new": "NATIVE_PROGRAMS = 1\n",
+      "old": "NATIVE_PROGRAMS = 3\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_throughput_row_is_the_best_repeats_ratio",
+      "label": "ring.throughput reads the ratio of the medians, which follows where the host puts the two threads",
+      "new": "{\"ring.throughput\": bench[\"ratio\"]}",
+      "old": "{\"ring.throughput\": bench[\"best_ratio\"]}",
+      "path": "bcir/tests/ring_fixtures.py"
+    },
+    {
+      "expects": "test_the_throughput_row_is_the_best_repeats_ratio",
+      "label": "the ring bench runs five repeats again",
+      "new": "BENCH_REPEATS = 5\n",
+      "old": "BENCH_REPEATS = 16\n",
+      "path": "bcir/tests/ring_fixtures.py"
+    },
+    {
+      "expects": "test_the_throughput_row_is_the_best_repeats_ratio",
+      "label": "the ring's 'best' repeat is its worst",
+      "new": "  double ring_best = (double)ring_ns[repeats - 1u] / (double)records;\n",
+      "old": "  double ring_best = (double)ring_ns[0] / (double)records;\n",
+      "path": "runtime/c/test_ring.c"
+    },
+    {
+      "expects": "test_the_throughput_row_is_the_best_repeats_ratio",
+      "label": "the best ratio divides the ring's median by memcpy's best",
+      "new": "copy_best > 0.0 ? ring / copy_best : 0.0",
+      "old": "copy_best > 0.0 ? ring_best / copy_best : 0.0",
+      "path": "runtime/c/test_ring.c"
+    }
+  ]
+}

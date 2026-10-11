@@ -1513,7 +1513,7 @@ METRICS: tuple[Metric, ...] = (
         "ring.throughput",
         "ring",
         "ring time per record / memcpy time per record, the same 124-byte envelopes (two threads "
-        "vs one)",
+        "vs one), each side's best of 16 repeats",
         26.0,
         "x",
         "ratio",
@@ -2421,7 +2421,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "native.gather-avoidance",
         "native",
-        "blocked realization vs gather form",
+        "blocked realization vs gather form, median of 3 paired programs",
         5.58,
         "x",
         "ratio",
@@ -2434,7 +2434,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "native.blocked-reduction",
         "native",
-        "blocked reduction vs naive",
+        "blocked reduction vs naive, median of 3 paired programs",
         11.68,
         "x",
         "ratio",
@@ -2447,7 +2447,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "native.direct-stride",
         "native",
-        "direct strided access vs gather form",
+        "direct strided access vs gather form, median of 3 paired programs",
         1.27,
         "x",
         "ratio",
@@ -2460,7 +2460,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "native.dense-parity",
         "native",
-        "dense streaming BCIR vs equivalent compiler loop",
+        "dense streaming BCIR vs equivalent compiler loop, median of 3 paired programs",
         0.98,
         "x",
         "ratio",
@@ -3291,29 +3291,44 @@ def measure_workload() -> dict[str, float]:
     }
 
 
+#: Programs each native row takes the median of (`measure_native`).
+NATIVE_PROGRAMS = 3
+
+
 def measure_native() -> dict[str, float]:
     """The §4.4 native structural wins through the measured-evidence rail (`bcir.bench`),
     compiled and timed on this host -- guardrails, not targets (G6). A ratio here is a
     same-host number: the report's baselines were measured on other silicon, and this host's
     tenancy is what `kbcir.microbench.host_attestation` says it is. Empty when no C
-    toolchain is available."""
+    toolchain is available.
+
+    Each row is the median, over `NATIVE_PROGRAMS` programs, of the program's paired ratio: its
+    two kernels timed in one process over the same buffers, in rounds that alternate which goes
+    first (`bcir.bench._paired_rounds_c`). The rounds cancel what the host does between two
+    windows of calls, and the dense-parity pair, two programs until then, shares a process. The
+    median over programs is for what one process draws and the next does not. A random-access
+    kernel's cost follows the pages its process lands on: one `gather_reduce` program read 23.6
+    and the next 31.7, from rounds that cancel load but not placement. A row whose programs did
+    not all measure is not measured."""
+    import statistics
+
     from bcir.bench import bench_available, compare, compare_gather, compare_reduce, compare_strided
 
     if not bench_available():
         return {}
+    rows = {  # row: (comparison, program, opt, n, reps)
+        "native.gather-avoidance": (compare_gather, "vector_add", "-O2", 1 << 16, 30),
+        "native.blocked-reduction": (compare_reduce, "gather_reduce", "-O2", 1 << 20, 30),
+        "native.direct-stride": (compare_strided, "saxpy_strided", "-O2", 1 << 22, 30),
+        "native.dense-parity": (compare, "vector_add", "-O3", 1 << 20, 100),
+    }
     out: dict[str, float] = {}
-    gather = compare_gather("vector_add", opt="-O2", n=1 << 16, reps=30)
-    if gather.speedup_milli:
-        out["native.gather-avoidance"] = gather.speedup_milli / 1000
-    reduce = compare_reduce("gather_reduce", opt="-O2", n=1 << 20, reps=30)
-    if reduce.speedup_milli:
-        out["native.blocked-reduction"] = reduce.speedup_milli / 1000
-    strided = compare_strided("saxpy_strided", opt="-O2", n=1 << 22, reps=30)
-    if strided.speedup_milli:
-        out["native.direct-stride"] = strided.speedup_milli / 1000
-    dense = compare("vector_add", opt="-O3", n=1 << 20, reps=100)
-    if dense.speedup_milli:
-        out["native.dense-parity"] = dense.speedup_milli / 1000
+    for key, (run, program, opt, n, reps) in rows.items():
+        paired = [
+            run(program, opt=opt, n=n, reps=reps).paired_milli for _ in range(NATIVE_PROGRAMS)
+        ]
+        if all(paired):
+            out[key] = statistics.median(paired) / 1000
     return out
 
 

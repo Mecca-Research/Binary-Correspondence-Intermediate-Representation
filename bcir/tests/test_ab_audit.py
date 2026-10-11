@@ -350,6 +350,53 @@ def test_a_ratio_regression_is_confirmed_before_it_is_graded():
         ab_audit.run_harness = real
 
 
+def test_a_ratio_gain_is_confirmed_before_it_is_graded():
+    """A ratio leaves its band toward a gain as readily as toward a regression, and the roadmap's
+    §0.2 owes every GAIN an analysis, so a gain earns the same confirming measurements. The median
+    of the measurements can keep the GAIN, find no change, or find a REGRESSION: here the first
+    reading's direction is the only thing it is trusted for, on a row where lower is better (a
+    cost ratio) and on one where higher is (a throughput)."""
+    import types
+
+    rows = [dict(_row("r", "ratio", 1.0, 0.5), group="g")]
+    args = types.SimpleNamespace(ratio_confirm=2, timeout=10)
+    cases = (
+        # first after-reading, its improvement, the confirmations, the confirmed verdict
+        (0.6, 0.7, [0.98, 1.03], "NO-CHANGE"),  # lower is better: a false gain
+        (0.6, 0.7, [0.62, 0.58], "GAIN"),
+        (0.6, 0.7, [1.4, 1.5], "REGRESSION"),  # the first reading pointed the wrong way
+        (1.5, 0.7, [1.02, 0.97], "NO-CHANGE"),  # higher is better
+        (1.5, 0.7, [1.55, 1.6], "GAIN"),
+        (1.5, 0.7, [0.6, 0.62], "REGRESSION"),
+    )
+    real = ab_audit.run_harness
+    try:
+        for first, improved, confirmations, want in cases:
+            graded = grade_harness(
+                [_row("r", "ratio", 1.0, 0.5)], [_row("r", "ratio", first, improved)]
+            )
+            assert [f.verdict for f in graded] == ["GAIN"], (first, graded)
+            calls = []
+
+            def fake(tree, scratch, label, timeout, group="", _after=confirmations, _calls=calls):
+                _calls.append((tree, group))
+                value = 1.0
+                if tree == "AFTER":
+                    value = _after[len([c for c in _calls if c[0] == tree]) - 1]
+                return [dict(_row("r", "ratio", value, 0.5), group="g")]
+
+            ab_audit.run_harness = fake
+            (confirmed,) = ab_audit.confirm_ratios(
+                graded, rows, rows, "BEFORE", "AFTER", "/tmp", args
+            )
+            assert confirmed.verdict == want, (first, confirmations, confirmed)
+            assert len(calls) == 4 and "confirmed" in confirmed.note, (calls, confirmed)
+            fails = ab_audit.verdict_of([confirmed], {}, []) == FAIL
+            assert fails == (want == "REGRESSION"), (first, confirmations, confirmed)
+    finally:
+        ab_audit.run_harness = real
+
+
 def test_measuring_processes_share_one_hash_seed():
     proc = ab_audit._run(
         [sys.executable, "-c", "import os; print(os.environ['PYTHONHASHSEED'])"], _ROOT, 60

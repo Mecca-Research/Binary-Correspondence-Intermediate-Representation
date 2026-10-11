@@ -138,3 +138,97 @@ def test_strided_gather_avoidance_is_measured_non_reduction():
     # measurement is best-effort -- honest where realized, never faked.
     if platform.machine() in ("x86_64", "amd64"):
         assert c.avoidance_wins and c.speedup_milli >= 1100
+
+
+# --- the paired rounds every driver times with, on a clock whose answers are known ----------
+
+#: The compiler the paired-rounds witness builds with (`bcir.bench`'s own choice), or None: the
+#: capability `tools/testing/faults/native-paired.json` requires.
+_CC = __import__("bcir.bench", fromlist=["_which"])._which("clang", "cc", "gcc")
+
+
+def _paired_program(tmp: str) -> str:
+    """`bcir.bench._paired_rounds_c` around two fake kernels on a fake clock, built: a call costs
+    its cost times (1000 + 5% per call made before it) / 1000, five times over from call `step`
+    on. argv: step, drift (per mille a call), cost_b; kernel a costs 1000. The program declares
+    the names a driver might (`k`, `r`, `a`, ...) and every call checks it still sees them."""
+    import os
+    import subprocess
+
+    from bcir.bench import _paired_rounds_c
+
+    names = "size_t k = 4; int r = 7, half = 1, i = 2, j = 3; long a = 5, b = 6, d = 8, t0 = 9;"
+    same = (
+        "k == 4 && r == 7 && half == 1 && i == 2 && j == 3 && a == 5 && b == 6 && d == 8 && t0 == 9"
+    )
+    timing = _paired_rounds_c(
+        f"kernel(1000); bad |= !({same});", f"kernel(cost_b); bad |= !({same});", "A", "B", 30
+    )
+    src = f"""#include <limits.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+static long fake_ns, calls, step, drift, cost_b;
+static long now_ns(void) {{ return fake_ns; }}
+static void kernel(long cost) {{
+  fake_ns += cost * (1000 + calls * drift) / 1000 * (calls >= step ? 5 : 1);
+  ++calls;
+}}
+int main(int argc, char **argv) {{
+  if (argc != 4) return 2;
+  step = atol(argv[1]);
+  drift = atol(argv[2]);
+  cost_b = atol(argv[3]);
+  int bad = 0;
+  {names}
+{timing}
+  if (bad) printf("BAD a call saw the timing loop's names, not the driver's\\n");
+  printf("CALLS %ld\\n", calls);
+  return 0;
+}}
+"""
+    path = os.path.join(tmp, "paired.c")
+    with open(path, "w", newline="\n") as f:
+        f.write(src)
+    exe = os.path.join(tmp, "paired")
+    subprocess.run([_CC, "-std=c2x", "-O1", path, "-o", exe], check=True, capture_output=True)
+    return exe
+
+
+def test_the_paired_rounds_cancel_a_load_and_keep_the_drivers_names():
+    """The timing loop every native driver shares, held to its properties on fake kernels whose
+    costs are known: kernel a costs 1000 and kernel b 900, a true ratio of 0.9.
+
+    A load that steps from 1x to 5x at a chosen call reads 4.5 through the windowed estimator it
+    replaces -- every a call, then every b call, the best of each -- when it lands between the
+    windows; through rounds the ratio reads exactly 0.9 wherever it lands, and a b that truly
+    costs 2000 reads 2.0 under every load. A host that slows down 5% a call reads 0.958 in one
+    fixed order and within 1% of 0.9 alternated. And every call still sees the driver's own `k`,
+    `r`, `a`, `b`: the first version named its counter `k`, and the strided driver timed its
+    kernel at strides 0, 1 and 2 instead of 4."""
+    import subprocess
+    import tempfile
+
+    if _CC is None:
+        return  # no C compiler: the witness is a skip, never a pass
+
+    def read(exe, step, drift=0, cost_b=900):
+        out = subprocess.run(
+            [exe, str(step), str(drift), str(cost_b)], capture_output=True, text=True, timeout=60
+        )
+        assert out.returncode == 0, out
+        assert "BAD" not in out.stdout, out.stdout
+        fields = dict(line.split() for line in out.stdout.splitlines())
+        return float(fields["PAIRED"]), int(fields["A"]), int(fields["B"]), int(fields["CALLS"])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = _paired_program(tmp)
+        paired, a, b, calls = read(exe, 10**9)
+        assert (paired, a, b, calls) == (0.9, 1000, 900, 60), (paired, a, b, calls)
+        windowed = (900 * 5) / 1000  # a's 30 calls unloaded, b's 30 after the step
+        assert windowed == 4.5
+        for step in range(calls + 1):
+            assert read(exe, step)[0] == 0.9, step
+            assert read(exe, step, cost_b=2000)[0] == 2.0, step
+        drifted = read(exe, 10**9, drift=50)[0]
+        assert abs(drifted - 0.9) < 0.009, drifted

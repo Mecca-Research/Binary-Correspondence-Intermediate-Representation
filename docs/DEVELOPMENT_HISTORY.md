@@ -2702,6 +2702,58 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     - the clock choice;
     - the row reads the estimator over the planner, a clean verify and the floor.
   - `tools/testing/faults/paired.json` injects 15 defects, and each is caught by its own test.
+  GAIN-CONFIRM and NATIVE-PAIRED (2026-10-11): the before/after audit confirms a gain the way it
+  confirms a regression, and the native and ring ratio rows are timed in pairs.
+  - Found by VPS-STABLE's RED audit. Between two trees with the same compiled kernels,
+    `ab_audit.py` graded three rows GAIN: `native.blocked-reduction` 19.8 -> 24.8,
+    `native.dense-parity` 0.813 -> 1.108 and `ring.throughput` 38.7 -> 25.2. It re-measured a
+    ratio row only when its first reading was a regression, so a gain the host made was never
+    checked. The roadmap's §0.2 owes every gain an analysis.
+  - GAIN-CONFIRM: `confirm_ratios` re-measures a ratio row that leaves its band in either
+    direction, alternating the trees, and grades the median of every measurement. The first
+    reading fixes only the row's direction. A gain can come out a gain, NO-CHANGE or a
+    REGRESSION, and the last fails the audit. `test_a_ratio_gain_is_confirmed_before_it_is_graded`
+    runs all three outcomes, on a row where lower is better and on one where higher is.
+    `tools/testing/faults/ab-audit.json` injects 4 defects, each caught.
+  - NATIVE-PAIRED. Ten harness runs of identical code read `native.dense-parity` 0.65 to 1.60,
+    `native.gather-avoidance` 3.9 to 6.2, `native.direct-stride` 1.18 to 1.40 and
+    `ring.throughput` 15.9 to 39.8. The two dense-parity kernels compile from the same C, yet they
+    ran as two programs in two processes. The other three drivers timed every call of one kernel,
+    then every call of the other.
+    - Every driver in `bcir/bench.py` now times both kernels in one program over the same buffers
+      (`_paired_rounds_c`). Each round runs three calls of each kernel back to back, and the order
+      alternates round by round. A round's ratio is the ratio of its two blocks' best calls, and
+      the program reports the median over rounds (`paired_milli`). Each row
+      (`measure_native`) is the median of three programs. A random-access kernel's cost follows
+      the pages its process draws: one `gather_reduce` program read 23.6, the next 31.7.
+    - `ring.throughput` reads each side's best of 16 repeats (`best_ratio`), not the ratio of the
+      medians of five. In one process, pinned or not, the two-thread handoff cost 193 to 786 ns a
+      record from one repeat to the next, while the one-thread memcpy held still. Pairing ring and
+      memcpy cannot cancel that. Over twelve runs of one build, the medians' ratio read 16.3 to
+      44.9 and the best repeats' 15.0 to 19.0.
+    - After, ten harness runs per tree, alternated with the old: `native.dense-parity` 0.97 to
+      1.01, `native.gather-avoidance` 4.47 to 5.05, `native.direct-stride` 1.23 to 1.31, and
+      `ring.throughput` 15.8 to 30.2 (nine of the ten from 15.8 to 19.8).
+    - `native.blocked-reduction` did not tighten: 23.1 to 35.7, against 20.4 to 29.6 before. Its
+      random gather follows the memory system's latency, which moves over seconds on a shared
+      host and reaches the two kernels unequally, so no pairing cancels it. GAIN-CONFIRM is its
+      safety net.
+  - Found while building it: the first timing loop named its block counter `k`. The strided
+    driver's calls saw the counter instead of their stride, so the kernel ran at strides 0, 1 and
+    2, and `native.direct-stride` read 4.5 where the old driver read 1.24. Every name in the loop
+    is now prefixed and scoped. Every driver checks its outputs after the timed calls as well as
+    before, so a timed call that computes something else fails the run.
+  - Witnesses:
+    - in C on a fake clock, `test_the_paired_rounds_cancel_a_load_and_keep_the_drivers_names`.
+      A 1x-to-5x load step reads 4.5 on a true 0.9 through the windowed estimator, and exactly 0.9
+      through rounds wherever it lands. A true 2.0 reads 2.0. A 5%-per-call drift reads 0.958 in
+      one fixed order and 0.902 alternated. Every call sees the program's own `k`, `r`, `a`, `b`;
+    - `test_the_native_rows_are_the_median_of_three_paired_programs`;
+    - `test_the_throughput_row_is_the_best_repeats_ratio`.
+    `tools/testing/faults/native-paired.json` injects 13 defects, each caught. Among them are the
+    counter named `k` and a strided driver whose timed calls run another stride than its
+    checked ones.
+  - Cost: the native group takes about 5.6 s instead of 2 s, and the ring bench about 1 s more.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

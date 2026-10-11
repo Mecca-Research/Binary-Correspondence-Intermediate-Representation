@@ -883,3 +883,87 @@ def test_the_verifier_row_is_read_in_paired_rounds() -> None:
     finally:
         verifier.verify_plan = honest
         gb.paired_ratios = real
+
+
+def test_the_native_rows_are_the_median_of_three_paired_programs() -> None:
+    """Each §4.4 row is the median of `NATIVE_PROGRAMS` programs' paired ratios -- not one
+    program, and not the ratio of the kernels' best calls -- because a random-access kernel's
+    cost follows the pages its process lands on. A row whose programs did not all measure is not
+    measured. Fakes stand in for the compiled comparisons, so this needs no compiler."""
+    from types import SimpleNamespace
+
+    import bcir.bench as bench
+    from tools.perf import gemplus_baseline as gb
+
+    readings = {
+        "compare_gather": [4100, 4500, 5300],
+        "compare_reduce": [30000, 24000, 27000],
+        "compare_strided": [1300, 1200, 1250],
+        "compare": [1000, 990, 0],  # one program failed
+    }
+    calls: dict = {}
+
+    def fake(name):
+        def run(program, **kwargs):
+            index = calls.setdefault(name, 0)
+            calls[name] = index + 1
+            return SimpleNamespace(paired_milli=readings[name][index], speedup_milli=99999)
+
+        return run
+
+    saved = {name: getattr(bench, name) for name in (*readings, "bench_available")}
+    try:
+        for name in readings:
+            setattr(bench, name, fake(name))
+        bench.bench_available = lambda: True
+        out = gb.measure_native()
+    finally:
+        for name, fn in saved.items():
+            setattr(bench, name, fn)
+    assert out == {
+        "native.gather-avoidance": 4.5,
+        "native.blocked-reduction": 27.0,
+        "native.direct-stride": 1.25,
+    }, out
+    assert gb.NATIVE_PROGRAMS == 3 and calls == {name: 3 for name in readings}, calls
+
+
+def test_the_throughput_row_is_the_best_repeats_ratio() -> None:
+    """`ring.throughput` reads the bench's `best_ratio` -- each side's best of 16 repeats, over the
+    same span -- not the ratio of medians, which follows where the host puts the two threads. A
+    stand-in bench (a script printing one line) pins what the row reads and the repeats it asks
+    for; the real bench, where a compiler exists, prints bests no larger than its medians and a
+    best ratio that is their quotient."""
+    import os
+    import stat
+    import tempfile
+
+    from bcir.tests import ring_fixtures as rf
+
+    if os.name != "posix":
+        return  # the stand-in bench is an executable script
+    with tempfile.TemporaryDirectory() as tmp:
+        argv_log = os.path.join(tmp, "argv")
+        fake = os.path.join(tmp, "bench")
+        with open(fake, "w", encoding="utf-8") as script:
+            script.write(
+                f"#!{sys.executable}\n"
+                "import sys\n"
+                f"open({argv_log!r}, 'w').write(' '.join(sys.argv[1:]))\n"
+                "print('bench records=9 bytes=124 slot=192 slots=256 ring_ns=300.000 "
+                "memcpy_ns=6.000 ratio=50.000 ring_best_ns=120.000 memcpy_best_ns=6.000 "
+                "best_ratio=20.000 records_per_s=1 sink=0')\n"
+            )
+        os.chmod(fake, os.stat(fake).st_mode | stat.S_IXUSR)
+        assert rf.measure_throughput(fake) == {"ring.throughput": 20.0}
+        with open(argv_log, encoding="utf-8") as fh:
+            assert fh.read().split() == ["--bench", "300000", "192", "256", "16"]
+        exe = rf.build_harness(tmp)
+        if exe is None:
+            return
+        bench = rf.c_bench(exe, records=20000, repeats=4)
+        assert bench is not None
+        assert bench["ring_best_ns"] <= bench["ring_ns"], bench
+        assert bench["memcpy_best_ns"] <= bench["memcpy_ns"], bench
+        quotient = bench["ring_best_ns"] / bench["memcpy_best_ns"]
+        assert abs(bench["best_ratio"] - quotient) <= 0.01 * quotient, bench

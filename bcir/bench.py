@@ -48,6 +48,77 @@ from .lower.llvm import find_elementwise
 
 _THETAS = {"cool": Theta.cool(), "hot": Theta.hot(), "mem_bound": Theta.mem_bound()}
 _NS_RE = re.compile(r"^NS (\d+)$", re.MULTILINE)
+_PAIRED_RE = re.compile(r"^PAIRED (\d+\.\d+)$", re.MULTILINE)
+
+#: Calls of one kernel that a round times back to back; the round's time for that kernel is the
+#: block's best call, so a round never times a kernel's first call after the other kernel's.
+_BLOCK = 3
+
+
+def _paired_rounds_c(call_a: str, call_b: str, label_a: str, label_b: str, reps: int) -> str:
+    """The timing loop every driver here shares: at least `reps` calls of each kernel, in rounds
+    of `_BLOCK` calls a side, back to back in one process over the same buffers, the order
+    alternating round by round (an even count of rounds). It prints each kernel's best call over
+    every round (`<label> <ns>`) and the median over rounds of the per-round ratio of the two
+    blocks' best calls, b over a (`PAIRED <ratio>`); a round in which a kernel measured no time
+    is a failed run.
+
+    WHY ROUNDS. These drivers timed every call of one kernel, then every call of the other, and
+    the dense-parity pair ran in two processes. Ten harness runs of identical code read
+    `native.dense-parity` from 0.65 to 1.60, though its two kernels compile from the same C, and
+    `native.gather-avoidance` from 3.9 to 6.2; in rounds, 0.97 to 1.01 and 4.5 to 5.1. Calls a few
+    milliseconds apart see the same host, the same pages and the same clock speed, and the median
+    discards the round a change splits. What reaches one kernel and not the other is the kernels'
+    own difference, not the timing's: `native.blocked-reduction`'s random gather follows the
+    memory system's latency, which no pairing cancels."""
+    rounds = max(4, -(-reps // _BLOCK))
+    rounds += rounds % 2
+    # Every name is prefixed and scoped to its own block: the calls are the driver's statements,
+    # and a counter named like one of the driver's variables (the strided driver's `k`) would
+    # time the kernel on the counter instead.
+    return f"""
+  {{
+  long pr_best_a = LONG_MAX, pr_best_b = LONG_MAX;
+  double pr_ratio[{rounds}];
+  for (int pr_r = 0; pr_r < {rounds}; ++pr_r) {{
+    long pr_a = LONG_MAX, pr_b = LONG_MAX;
+    for (int pr_half = 0; pr_half < 2; ++pr_half) {{
+      if ((pr_half == 0) == (pr_r % 2 == 0)) {{
+        for (int pr_k = 0; pr_k < {_BLOCK}; ++pr_k) {{
+          long pr_t0 = now_ns(); {call_a} long pr_d = now_ns() - pr_t0;
+          if (pr_d > 0 && pr_d < pr_a) pr_a = pr_d;
+        }}
+      }} else {{
+        for (int pr_k = 0; pr_k < {_BLOCK}; ++pr_k) {{
+          long pr_t0 = now_ns(); {call_b} long pr_d = now_ns() - pr_t0;
+          if (pr_d > 0 && pr_d < pr_b) pr_b = pr_d;
+        }}
+      }}
+    }}
+    if (pr_a == LONG_MAX || pr_b == LONG_MAX) {{
+      printf("FAIL round %d measured no time\\n", pr_r);
+      return 1;
+    }}
+    if (pr_a < pr_best_a) pr_best_a = pr_a;
+    if (pr_b < pr_best_b) pr_best_b = pr_b;
+    pr_ratio[pr_r] = (double)pr_b / (double)pr_a;
+  }}
+  for (int pr_i = 1; pr_i < {rounds}; ++pr_i) {{
+    double pr_v = pr_ratio[pr_i];
+    int pr_j = pr_i - 1;
+    while (pr_j >= 0 && pr_ratio[pr_j] > pr_v) {{ pr_ratio[pr_j + 1] = pr_ratio[pr_j]; --pr_j; }}
+    pr_ratio[pr_j + 1] = pr_v;
+  }}
+  printf("{label_a} %ld\\n{label_b} %ld\\nPAIRED %.6f\\n", pr_best_a, pr_best_b,
+         (pr_ratio[{rounds} / 2 - 1] + pr_ratio[{rounds} / 2]) / 2.0);
+  }}
+"""
+
+
+def _paired_milli(stdout: str) -> int:
+    """The driver's `PAIRED` line in milli, or 0 when it printed none."""
+    m = _PAIRED_RE.search(stdout or "")
+    return round(float(m.group(1)) * 1000) if m else 0
 
 
 @dataclass(frozen=True)
@@ -69,6 +140,7 @@ class Comparison:
     opt: str
     bcir: Measurement  # BCIR's cost-model-selected realization
     baseline: Measurement  # the naive scalar (width-1) baseline
+    paired_milli: int = 0  # median over paired rounds of baseline / bcir, in milli (0: none)
 
     @property
     def speedup_milli(self) -> int:
@@ -187,6 +259,61 @@ def measure(
         return Measurement(label, w, opt, n, reps, int(m.group(1)), True)
 
 
+_SELECTED_RE = re.compile(r"^SELECTED (\d+)$", re.MULTILINE)
+_SCALAR_RE = re.compile(r"^SCALAR (\d+)$", re.MULTILINE)
+
+
+def _emit_parity_bench_c(module, result, elem: str, n: int, reps: int, hw_width=None) -> str:
+    """BCIR's selected realization and the scalar (width-1) baseline in ONE program over the same
+    buffers, timed in paired rounds (`_paired_rounds_c`). Each used to be its own program, timed
+    in its own process, so their ratio carried the two processes' pages and the time between
+    them as well as the kernels."""
+    selected = emit_kernel_c(module, result, "bcir_selected", elem, hw_width=hw_width)
+    scalar = emit_kernel_c(module, result, "bcir_scalar", elem, width_override=1, hw_width=hw_width)
+    ctype = "int32_t" if elem == "i32" else "float"
+    init = (
+        "A[i] = (float)(i % 1000); B[i] = (float)(i % 7);"
+        if elem != "i32"
+        else "A[i] = (int32_t)(i % 1000); B[i] = (int32_t)(i % 7);"
+    )
+    timing = _paired_rounds_c(
+        "bcir_selected(A, B, C, n);", "bcir_scalar(A, B, C, n);", "SELECTED", "SCALAR", reps
+    )
+    opcode = find_elementwise(module, result)[0].opcode.name
+    op = "+" if opcode == "ADD" else ("-" if opcode == "SUB" else "*")
+    # both kernels write C; checked before the timed calls and after them (`_emit_gather_bench_c`)
+    check = f"""  for (size_t i = 0; i < n; ++i) {{
+    {ctype} want = A[i] {op} B[i];
+    if (C[i] != want) {{ printf("FAIL i=%zu\\n", i); return 1; }}
+  }}"""
+    return (
+        "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
+        "#include <time.h>\n#include <limits.h>\n#include <stdint.h>\n\n"
+        + selected
+        + "\n"
+        + scalar
+        + f"""
+static long now_ns(void) {{ struct timespec t; timespec_get(&t, TIME_UTC);
+  return (long)t.tv_sec * 1000000000L + (long)t.tv_nsec; }}
+
+int main(void) {{
+  size_t n = {n}u;
+  {ctype} *A = malloc(n*sizeof *A), *B = malloc(n*sizeof *B), *C = malloc(n*sizeof *C);
+  if (!A || !B || !C) return 2;
+  for (size_t i = 0; i < n; ++i) {{ {init} C[i] = 0; }}
+  bcir_selected(A, B, C, n);                      /* warm up */
+  bcir_scalar(A, B, C, n);
+{check}
+{timing}
+{check}
+  volatile {ctype} sink = C[n - 1]; (void)sink;  /* keep the kernels live */
+  free(A); free(B); free(C);
+  return 0;
+}}
+"""
+    )
+
+
 def compare(
     program,
     *,
@@ -199,35 +326,51 @@ def compare(
     reps: int = 200,
 ) -> Comparison:
     """Time BCIR's selected realization against the naive scalar (width-1) baseline
-    at one optimization level -- the measured evidence for the lane-geometry choice."""
+    at one optimization level -- the measured evidence for the lane-geometry choice.
+    Both kernels run in one program, over the same buffers, in paired rounds; `measure`
+    still times one realization alone."""
     module = PROGRAMS[program]() if isinstance(program, str) else program
     name = program if isinstance(program, str) else getattr(program, "name", "module")
     h = TARGETS[target]
     th = _THETAS.get(theta, Theta.cool())
     pol = POLICIES.get(policy, PERF)
     result = optimize(module, h, th, pol)
-    bcir = measure(
-        module,
-        result,
-        label="bcir-selected",
-        elem=elem,
-        opt=opt,
-        n=n,
-        reps=reps,
-        hw_width=h.vector_width,
-    )
-    base = measure(
-        module,
-        result,
-        label="scalar-baseline",
-        elem=elem,
-        opt=opt,
-        n=n,
-        reps=reps,
-        width_override=1,
-        hw_width=h.vector_width,
-    )
-    return Comparison(program=name, target=h.name, opt=opt, bcir=bcir, baseline=base)
+    _, cand = find_elementwise(module, result)
+
+    def failed(detail: str) -> Comparison:
+        bcir = Measurement("bcir-selected", int(cand.width), opt, n, reps, 0, False, detail)
+        base = Measurement("scalar-baseline", 1, opt, n, reps, 0, False, detail)
+        return Comparison(program=name, target=h.name, opt=opt, bcir=bcir, baseline=base)
+
+    cc = _which("clang", "cc", "gcc")
+    if cc is None:
+        return failed("no C compiler")
+    with tempfile.TemporaryDirectory() as d:
+        src = os.path.join(d, "pbench.c")
+        exe = os.path.join(d, "pbench")
+        with open(src, "w", newline="\n") as f:
+            f.write(_emit_parity_bench_c(module, result, elem, n, reps, hw_width=h.vector_width))
+        build = None
+        for std in ("-std=c23", "-std=c2x"):
+            build = subprocess.run([cc, std, opt, src, "-o", exe], capture_output=True, text=True)
+            if build.returncode == 0:
+                break
+        if build is None or build.returncode != 0:
+            return failed("build failed: " + (build.stderr if build else ""))
+        run = subprocess.run([exe], capture_output=True, text=True)
+        sm, bm = _SELECTED_RE.search(run.stdout or ""), _SCALAR_RE.search(run.stdout or "")
+        if run.returncode != 0 or "FAIL" in run.stdout or not (sm and bm):
+            return failed("run failed: " + run.stdout + run.stderr)
+        bcir = Measurement("bcir-selected", int(cand.width), opt, n, reps, int(sm.group(1)), True)
+        base = Measurement("scalar-baseline", 1, opt, n, reps, int(bm.group(1)), True)
+        return Comparison(
+            program=name,
+            target=h.name,
+            opt=opt,
+            bcir=bcir,
+            baseline=base,
+            paired_milli=_paired_milli(run.stdout),
+        )
 
 
 def bench_available() -> bool:
@@ -246,6 +389,7 @@ class GatherComparison:
     shuffle: bool
     direct: Measurement  # BCIR's cost-model choice (contiguous, vectorizable)
     gather: Measurement  # the avoided realization (indexed loads -> gather_penalty)
+    paired_milli: int = 0  # median over paired rounds of gather / direct, in milli (0: none)
 
     @property
     def speedup_milli(self) -> int:
@@ -289,6 +433,16 @@ def _emit_gather_bench_c(
         if shuffle
         else ""
     )
+    timing = _paired_rounds_c(
+        "bcir_direct(A, B, Cd, n);", "bcir_gather(A, B, Cg, idx, n);", "DIRECT", "GATHER", reps
+    )
+    # checked before the timed calls and after them: a timed call that computed something else
+    # (the wrong buffer, the wrong stride) fails the run instead of timing the wrong work
+    check = f"""  for (size_t i = 0; i < n; ++i) {{
+    {ctype} wd = A[i] {op} B[i];
+    {ctype} wg = A[idx[i]] {op} B[i];
+    if (Cd[i] != wd || Cg[i] != wg) {{ printf("FAIL i=%zu\\n", i); return 1; }}
+  }}"""
     return (
         "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
         "#include <time.h>\n#include <limits.h>\n#include <stdint.h>\n\n"
@@ -311,18 +465,10 @@ int main(void) {{
   {shuf}
   bcir_direct(A, B, Cd, n);                       /* warm up + correctness baseline */
   bcir_gather(A, B, Cg, idx, n);
-  for (size_t i = 0; i < n; ++i) {{
-    {ctype} wd = A[i] {op} B[i];
-    {ctype} wg = A[idx[i]] {op} B[i];
-    if (Cd[i] != wd || Cg[i] != wg) {{ printf("FAIL i=%zu\\n", i); return 1; }}
-  }}
-  long bd = LONG_MAX, bg = LONG_MAX;
-  for (int r = 0; r < {reps}; ++r) {{ long t0 = now_ns(); bcir_direct(A, B, Cd, n);
-    long d = now_ns() - t0; if (d > 0 && d < bd) bd = d; }}
-  for (int r = 0; r < {reps}; ++r) {{ long t0 = now_ns(); bcir_gather(A, B, Cg, idx, n);
-    long d = now_ns() - t0; if (d > 0 && d < bg) bg = d; }}
+{check}
+{timing}
+{check}
   volatile {ctype} s = Cd[n - 1] + Cg[n - 1]; (void)s;
-  printf("DIRECT %ld\\nGATHER %ld\\n", bd, bg);
   free(A); free(B); free(Cd); free(Cg); free(idx);
   return 0;
 }}
@@ -383,7 +529,9 @@ def compare_gather(
             return GatherComparison(name, opt, n, reps, shuffle, bad, bad)
         direct = Measurement("bcir-direct", cand.width, opt, n, reps, int(dm.group(1)), True)
         gather = Measurement("gather-avoided", 1, opt, n, reps, int(gm.group(1)), True)
-        return GatherComparison(name, opt, n, reps, shuffle, direct, gather)
+        return GatherComparison(
+            name, opt, n, reps, shuffle, direct, gather, _paired_milli(run.stdout)
+        )
 
 
 # --- gather/blocked reduction: a genuine gather program, lowered two ways --------
@@ -399,6 +547,7 @@ class ReduceComparison:
     correct: bool  # blocked and gather computed the identical sum
     blocked: Measurement
     gather: Measurement
+    paired_milli: int = 0  # median over paired rounds of gather / blocked, in milli (0: none)
 
     @property
     def speedup_milli(self) -> int:
@@ -423,6 +572,13 @@ _GRD_RE = re.compile(r"^GATHER (\d+)$", re.MULTILINE)
 def _emit_reduce_bench_c(module, result, n: int, reps: int) -> str:
     blocked = emit_reduce_c(module, result, "bcir_blocked", "i32", gather=False)
     gather = emit_reduce_c(module, result, "bcir_gather_reduce", "i32", gather=True)
+    timing = _paired_rounds_c(
+        "{ volatile int32_t s = bcir_blocked(T, n); (void)s; }",
+        "{ volatile int32_t s = bcir_gather_reduce(T, idx, n); (void)s; }",
+        "BLOCKED",
+        "GATHER",
+        reps,
+    )
     return (
         "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
         "#include <time.h>\n#include <limits.h>\n#include <stdint.h>\n\n"
@@ -446,12 +602,11 @@ int main(void) {{
   int32_t sb = bcir_blocked(T, n);
   int32_t sg = bcir_gather_reduce(T, idx, n);
   if (sb != sg) {{ printf("FAIL %d != %d\\n", sb, sg); return 1; }}  /* identical sum */
-  long bb = LONG_MAX, bg = LONG_MAX;
-  for (int r = 0; r < {reps}; ++r) {{ long t0 = now_ns(); volatile int32_t s = bcir_blocked(T, n);
-    (void)s; long d = now_ns() - t0; if (d > 0 && d < bb) bb = d; }}
-  for (int r = 0; r < {reps}; ++r) {{ long t0 = now_ns(); volatile int32_t s = bcir_gather_reduce(T, idx, n);
-    (void)s; long d = now_ns() - t0; if (d > 0 && d < bg) bg = d; }}
-  printf("BLOCKED %ld\\nGATHER %ld\\n", bb, bg);
+{timing}
+  if (bcir_blocked(T, n) != sb || bcir_gather_reduce(T, idx, n) != sg) {{
+    printf("FAIL the sums moved under timing\\n");
+    return 1;
+  }}
   free(T); free(idx);
   return 0;
 }}
@@ -504,7 +659,9 @@ def compare_reduce(
             return ReduceComparison(name, opt, n, reps, cand.name, False, bad, bad)
         blocked = Measurement("blocked", 1, opt, n, reps, int(bm.group(1)), True)
         gather = Measurement("gather", 1, opt, n, reps, int(gm.group(1)), True)
-        return ReduceComparison(name, opt, n, reps, cand.name, True, blocked, gather)
+        return ReduceComparison(
+            name, opt, n, reps, cand.name, True, blocked, gather, _paired_milli(run.stdout)
+        )
 
 
 # --- strided gather avoidance: a non-reduction gather program, lowered two ways --
@@ -513,6 +670,13 @@ def compare_reduce(
 def _emit_strided_bench_c(module, result, n: int, reps: int, k: int) -> str:
     direct = emit_strided_c(module, result, "bcir_strided", "f32", gather=False)
     gather = emit_strided_c(module, result, "bcir_strided_gather", "f32", gather=True)
+    timing = _paired_rounds_c(
+        "bcir_strided(X, Yd, n, k);",
+        "bcir_strided_gather(X, idx, Yg, n);",
+        "BLOCKED",
+        "GATHER",
+        reps,
+    )
     return (
         "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
         "#include <time.h>\n#include <limits.h>\n\n"
@@ -533,13 +697,9 @@ int main(void) {{
   bcir_strided(X, Yd, n, k);
   bcir_strided_gather(X, idx, Yg, n);
   for (size_t i = 0; i < n; ++i) if (Yd[i] != Yg[i]) {{ printf("FAIL i=%zu\\n", i); return 1; }}
-  long bd = LONG_MAX, bg = LONG_MAX;
-  for (int r = 0; r < {reps}; ++r) {{ long t0 = now_ns(); bcir_strided(X, Yd, n, k);
-    long d = now_ns() - t0; if (d > 0 && d < bd) bd = d; }}
-  for (int r = 0; r < {reps}; ++r) {{ long t0 = now_ns(); bcir_strided_gather(X, idx, Yg, n);
-    long d = now_ns() - t0; if (d > 0 && d < bg) bg = d; }}
+{timing}
+  for (size_t i = 0; i < n; ++i) if (Yd[i] != Yg[i]) {{ printf("FAIL i=%zu\\n", i); return 1; }}
   volatile float s = Yd[n - 1] + Yg[n - 1]; (void)s;
-  printf("BLOCKED %ld\\nGATHER %ld\\n", bd, bg);
   free(X); free(Yd); free(Yg); free(idx);
   return 0;
 }}
@@ -593,4 +753,6 @@ def compare_strided(
             return ReduceComparison(name, opt, n, reps, cand.name, False, bad, bad)
         direct = Measurement("strided", 1, opt, n, reps, int(bm.group(1)), True)
         gather = Measurement("gather", 1, opt, n, reps, int(gm.group(1)), True)
-        return ReduceComparison(name, opt, n, reps, cand.name, True, direct, gather)
+        return ReduceComparison(
+            name, opt, n, reps, cand.name, True, direct, gather, _paired_milli(run.stdout)
+        )
