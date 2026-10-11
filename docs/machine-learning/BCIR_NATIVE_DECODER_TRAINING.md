@@ -9,11 +9,11 @@ executes in C. PyTorch remains an independent optional reference.
 
 | Component | Native implementation |
 |---|---|
-| Tensor linear algebra | Blocked row-major GEMM (B^T tiles packed once per tile and reused by every row, bit-identical to the ascending-k loop), transpose variants, linear forward, input and accumulated weight VJPs; optional explicit LP64 CBLAS adapter |
+| Tensor linear algebra | Register-blocked row-major GEMM: a KCxNR tile of B packed once per (column, depth) block and reused by every row, an MRxNR block of C kept in registers across the tile's depth; bit-identical to the ascending-k loop on every input. Portable C everywhere, plus AVX2 and AVX-512 variants on x86-64 Linux (GCC or Clang) chosen per call from the CPU, all bit-identical (`bcir_tensor_mm_variant` runs one). Transpose variants, linear forward, input and accumulated weight VJPs; optional explicit LP64 CBLAS adapter |
 | Vector math | Stable sigmoid/SiLU, SwiGLU VJP, RMSNorm and gamma VJP, half-split RoPE and its transpose; standard libm without fast-math |
-| Attention | Causal softmax attention, Q/K/V backward, GQA group-gradient accumulation, output projection backward |
+| Attention | Causal softmax attention as two masked products per (batch, head) through the GEMM kernel; a backward that rewrites the layer's probabilities in place with their score adjoint and feeds the GEMM kernel (no workspace beyond them); Q/K/V backward, GQA group-gradient accumulation, output projection backward. Both are bit-identical to the scalar reference loops, which `bcir_tensor_attention_backward` keeps |
 | Decoder | Embedding scatter-add backward, both residual paths, both per-layer norms, gate/up/down projections, final norm, tied or untied vocabulary head, mean token cross-entropy |
-| Optimizer | AdamW moments, constant-time bias powers, decoupled decay, global L2 clipping, mean micro-batch accumulation, per-update learning rates |
+| Optimizer | AdamW moments, constant-time bias powers, decoupled decay, global L2 clipping, mean micro-batch accumulation, per-update learning rates. The atomic preflight is skipped only when the magnitudes the first pass records prove it would admit every element; the passes carry the same AVX2/AVX-512 variants and stay bit-identical |
 | Buffer plan | Checked element/byte products, exact sizes for the selected retained-cache algorithm, caller-owned disjoint arenas, one adjoint workspace reused across all layers; no allocation in C |
 | Checkpoint | Atomic JSON + little-endian FP32 weights/moments; SHA-256 covers configuration, counter, bias powers and payload; bounded strict resume, no pickle |
 | Deployment | Existing strict HF tensor ingest performs projection transposes and RoPE permutation; `decoder_weights()` feeds the existing Q8 writer and decoder |
@@ -108,10 +108,17 @@ context-one Q/K gradients, which Adam's small epsilon amplifies. The timed refer
 uses PyTorch's default eager path and `torch.optim.AdamW` without foreach/fused updates.
 
 `runtime/c/test_decoder_train.c` checks the GEMM contract bit for bit against the
-ascending-k loop over every transpose pair, finite differences for every parameter,
+ascending-k loop over every transpose pair, the register blocks' and tiles' edges and every
+instruction-set variant the host can run; attention forward and the in-place backward against
+the scalar reference loops (finite and non-finite operands); the AdamW update against the
+reference update on both its bounded and preflight paths; finite differences for every parameter,
 gradient accumulation, invalid IDs/capacities/aliasing, atomic numerical update
 rejection and falling loss in the complete native loop. It runs under C11 and
-C23 via `tools/c/sections/decoder_train.sh`; the Python oracle also exercises it.
+C23, and again with the kernels held to their portable and AVX2 variants, via
+`tools/c/sections/decoder_train.sh`; the Python oracle also exercises it. The library is built
+with `-O3 -ffp-contract=off -fno-math-errno` (the manifest's options for the unit and
+`NativeDecoder.build` alike): `-fno-math-errno` lets the AdamW passes vectorize `sqrt` and changes
+no result.
 The hosted CI cells require the tensor differential, including exact native resume
 and training-to-Q8-to-C-inference parity.
 
@@ -121,7 +128,9 @@ eager PyTorch is not evidence against compiled PyTorch, large transformers,
 accelerators or distributed training.
 
 The plan retains every layer's forward cache and reuses backward scratch; it is not
-a globally optimal liveness solver. Attention storage is quadratic in context length.
+a globally optimal liveness solver. The backward consumes the cache it recomputes each step:
+after `bcir_decoder_loss_backward` each layer's probability span holds its score adjoint.
+Attention storage is quadratic in context length.
 Flash/blocked attention, activation recomputation, mixed precision, accelerator
 backward kernels, distributed collectives and device-resident checkpoints remain
 separate work. The direct loop does not issue StreamPack claims for every tensor;
