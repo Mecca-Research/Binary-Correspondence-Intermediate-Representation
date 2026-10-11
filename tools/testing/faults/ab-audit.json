@@ -4,7 +4,8 @@
     "tools/testing/check_tests.py",
     "bcir.tests.test_ab_audit:test_a_ratio_row_moves_only_past_its_band",
     "bcir.tests.test_ab_audit:test_a_ratio_regression_is_confirmed_before_it_is_graded",
-    "bcir.tests.test_ab_audit:test_a_ratio_gain_is_confirmed_before_it_is_graded"
+    "bcir.tests.test_ab_audit:test_a_ratio_gain_is_confirmed_before_it_is_graded",
+    "bcir.tests.test_ab_audit:test_a_ratio_row_is_held_to_the_band_it_declares"
   ],
   "faults": [
     {
@@ -34,6 +35,34 @@
       "new": "        a_med = samples[f.key][1][0]\n",
       "old": "        a_med = statistics.median(samples[f.key][1])\n",
       "path": "tools/perf/ab_audit.py"
+    },
+    {
+      "expects": "test_a_ratio_row_is_held_to_the_band_it_declares",
+      "label": "the first grading holds every ratio row to 25%, whatever band the row declares",
+      "new": "        band = RATIO_BAND\n",
+      "old": "        band = _ratio_band(a, b)\n",
+      "path": "tools/perf/ab_audit.py"
+    },
+    {
+      "expects": "test_a_ratio_row_is_held_to_the_band_it_declares",
+      "label": "the confirmation holds every ratio row to 25%, whatever band the row declares",
+      "new": "        band = RATIO_BAND\n",
+      "old": "        band = _ratio_band(after_of.get(f.key), before_of.get(f.key))\n",
+      "path": "tools/perf/ab_audit.py"
+    },
+    {
+      "expects": "test_a_ratio_row_is_held_to_the_band_it_declares",
+      "label": "a declared band is believed whatever it is (zero, a string, a bool)",
+      "new": "        if band is not None:\n",
+      "old": "        if isinstance(band, (int, float)) and not isinstance(band, bool) and band > 0:\n",
+      "path": "tools/perf/ab_audit.py"
+    },
+    {
+      "expects": "test_a_ratio_row_is_held_to_the_band_it_declares",
+      "label": "the harness stops publishing the band each row is graded within",
+      "new": "",
+      "old": "                \"noise\": metric.noise,\n",
+      "path": "tools/perf/gemplus_baseline.py"
     }
   ]
 }

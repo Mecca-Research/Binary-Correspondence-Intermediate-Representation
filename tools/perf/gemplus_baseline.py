@@ -4331,6 +4331,8 @@ def compare(measured: dict[str, float], *, same_host: bool | None = None) -> lis
                 "bound_source": metric.bound_source,
                 "headroom": headroom,
                 "floor_violated": bool(metric.floor_key) and metric.floor_violated(value, bound),
+                # the band the row is graded within, which a before/after audit holds it to too
+                "noise": metric.noise,
             }
         )
     return rows

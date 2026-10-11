@@ -2714,7 +2714,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     reading fixes only the row's direction. A gain can come out a gain, NO-CHANGE or a
     REGRESSION, and the last fails the audit. `test_a_ratio_gain_is_confirmed_before_it_is_graded`
     runs all three outcomes, on a row where lower is better and on one where higher is.
-    `tools/testing/faults/ab-audit.json` injects 4 defects, each caught.
+  - A ratio row is held to the band it declares. The harness publishes each row's `noise` band,
+    and the audit grades and confirms a ratio row against it, falling back to 25% for a table
+    without one. The ITS codec floors declare 50%, because their denominator, a memcpy of 216
+    octets, is the noisiest number in the run. Held to 25%, `its.coer.decode.floor` read a
+    confirmed GAIN of 14.8 -> 9.9 on a path no change in this PR touches, inside the row's own
+    band. `tools/testing/faults/ab-audit.json` injects 8 defects, each caught.
   - NATIVE-PAIRED. Ten harness runs of identical code read `native.dense-parity` 0.65 to 1.60,
     `native.gather-avoidance` 3.9 to 6.2, `native.direct-stride` 1.18 to 1.40 and
     `ring.throughput` 15.9 to 39.8. The two dense-parity kernels compile from the same C, yet they

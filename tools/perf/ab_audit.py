@@ -61,8 +61,23 @@ _ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__))
 #: The harness's grading bands (tools/perf/gemplus_baseline.py `_DEFAULT_NOISE`) for the two
 #: graded kinds. An A/B on one interpreter makes an `exact` row bit-identical unless the change
 #: moved it, so this audit grades `exact` with zero tolerance; the harness's 2% band is for
-#: comparing against a baseline frozen on another host.
+#: comparing against a baseline frozen on another host. A ratio row that declares its own band
+#: (`noise` in the harness's table) is held to that band instead (`_ratio_band`).
 RATIO_BAND = 0.25
+
+
+def _ratio_band(*rows) -> float:
+    """The band a ratio row is graded within: the one its harness row declares (`noise`), read
+    from the first row given that has one -- the after tree's, where the change is judged --
+    else `RATIO_BAND`, for a table written before rows carried it. The ITS codec floors declare
+    50%, because their denominator, a memcpy of 216 octets, is the noisiest number in the run;
+    held to 25% here, one read a confirmed GAIN of 14.8 -> 9.9 on a path no change touched."""
+    for row in rows:
+        band = row.get("noise") if row else None
+        if isinstance(band, (int, float)) and not isinstance(band, bool) and band > 0:
+            return float(band)
+    return RATIO_BAND
+
 
 PASS, FAIL, UNAVAILABLE = 0, 1, 2
 
@@ -733,10 +748,10 @@ def grade_harness(before_rows: list[dict], after_rows: list[dict]) -> list[Findi
                 Finding("harness", key, kind, mb, ma, "CHANGED", "moved with no direction to grade")
             )
             continue
-        if kind == "ratio" and mb and abs(ma - mb) / abs(mb) <= RATIO_BAND:
-            out.append(
-                Finding("harness", key, kind, mb, ma, "NO-CHANGE", "inside the 25% ratio band")
-            )
+        band = _ratio_band(a, b)
+        if kind == "ratio" and mb and abs(ma - mb) / abs(mb) <= band:
+            note = f"inside the {band:.0%} ratio band"
+            out.append(Finding("harness", key, kind, mb, ma, "NO-CHANGE", note))
             continue
         out.append(Finding("harness", key, kind, mb, ma, "GAIN" if direction > 0 else "REGRESSION"))
     return out
@@ -982,6 +997,8 @@ def confirm_ratios(graded, before_rows, after_rows, before, after, scratch, args
     if not suspects or args.ratio_confirm < 1:
         return graded
     group_of = {r["key"]: r.get("group", "") for r in after_rows}
+    before_of = {r["key"]: r for r in before_rows}
+    after_of = {r["key"]: r for r in after_rows}
     samples = {f.key: ([f.before], [f.after]) for f in suspects}
     groups = sorted({group_of.get(f.key, "") for f in suspects} - {""})
     for i in range(args.ratio_confirm):
@@ -1005,7 +1022,8 @@ def confirm_ratios(graded, before_rows, after_rows, before, after, scratch, args
         # GAIN the better way.
         higher_is_worse = (f.after > f.before) == (f.verdict == "REGRESSION")
         worse = a_med > b_med if higher_is_worse else a_med < b_med
-        outside = bool(b_med) and abs(a_med - b_med) / abs(b_med) > RATIO_BAND
+        band = _ratio_band(after_of.get(f.key), before_of.get(f.key))
+        outside = bool(b_med) and abs(a_med - b_med) / abs(b_med) > band
         verdict = "REGRESSION" if outside and worse else ("GAIN" if outside else "NO-CHANGE")
         n = len(samples[f.key][0])
         note = f"median of {n} measurements per tree, confirmed after the first left the band"
