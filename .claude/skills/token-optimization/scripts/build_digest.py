@@ -54,9 +54,17 @@ def doc_map() -> str:
     for p in sorted(docs):
         rel = os.path.relpath(p, ROOT).replace(os.sep, "/")
         lines = open(p, encoding="utf-8").read().splitlines()
-        heads = [l.lstrip("# ").strip() for l in lines if re.match(r"^##? ", l)][:14]
+        # a `# comment` inside a fenced code block is not a heading
+        heads, fenced = [], False
+        for l in lines:
+            if l.startswith("```"):
+                fenced = not fenced
+            elif not fenced and re.match(r"^##? ", l):
+                heads.append(l.lstrip("# ").strip())
+        heads = heads[:14]
         out.append(
-            f"- **{rel}** ({len(lines)}L): " + " · ".join(h[:60] for h in heads[1:] or heads)
+            f"- **{rel}** ({len(lines)}L): "
+            + " · ".join(h[:60].rstrip() for h in heads[1:] or heads)
         )
     return "\n".join(out)
 

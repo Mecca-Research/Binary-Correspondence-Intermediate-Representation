@@ -5,23 +5,31 @@ the BCIR side needs only a C compiler. Stages run serially, and every `train` is
 process so its peak resident memory is its own:
 
   prepare   the corpus (the repository's tracked Markdown at a pinned commit, bytes), the
-            associative-recall and addition tasks with held-out problems, identical initial
-            weights and one batch schedule per task, as long as its step budget -> DIR
+            copy, associative-recall and addition tasks with held-out problems, identical
+            initial weights and one batch schedule per task, as long as its step budget -> DIR
   train     one backend on one task -> DIR/runs/<task>-<backend>.json
   identity  BCIR's training state, bit for bit, across ISA variants, compilers and a repeat
   baseline  the pre-update kernels against these, same steps: identical state, time per step
   kernels   the same, kernel by kernel: every GEMM shape of a step on every ISA variant,
             attention forward and backward, AdamW; identical outputs, time per call
+  breakdown where one step's time goes: BCIR's step by kernel family (per compiler, and with
+            OpenBLAS), eager PyTorch's by phase and by operator family
+  context   time and memory against context at 1,024 tokens per step: one attention layer
+            forward and backward on BCIR and on PyTorch, and the decoder's step at T=64..1024
+            on BCIR, BCIR with OpenBLAS and eager PyTorch, each in its own process; and the
+            step at T=128 on two and four threads where the backend has them
   summarize every run -> DIR/summary.json and a Markdown table
 
   python train_comparison.py prepare --output DIR
   python train_comparison.py train --data DIR --task lm --backend bcir
   python train_comparison.py summarize --data DIR
 
-Tasks: lm (next-byte prediction on the corpus), recall (in-context key/value retrieval: six
-pairs, then a query, scored by held-out exact match) and add (three-digit addition, the sum
-least-significant digit first; kept because no run left its plateau in budget, see the
-report). The structured tasks mask unpredictable bytes out of the loss through their targets.
+Tasks: lm (next-byte prediction on the corpus, scored by cross-entropy and held-out word
+completion), copy (eight letters, then the same eight: held-out exact match), recall
+(in-context key/value retrieval: six pairs, then a query) and add (three-digit addition, the sum
+least-significant digit first). The report trains lm and copy on every backend; recall and add
+are kept for the configurations it records. The structured tasks mask unpredictable bytes out
+of the loss through their targets.
 
 Backends: bcir (BCIR's own C kernels: the widest bit-identical ISA variant the CPU runs, no
 FMA), bcir-openblas (the same trainer with OpenBLAS sgemm behind its CBLAS seam), torch-eager
@@ -371,7 +379,7 @@ def _metrics(logits, y, mask, spans):
     ce = (lse - picked)[mask]
     pred = logits.argmax(-1)
     hit = (pred == y)[mask]
-    out = {"cross_entropy": float(ce.mean()), "bits_per_token": float(ce.mean() / math.log(2)),
+    out = {"cross_entropy": float(ce.mean()), "bits_per_byte": float(ce.mean() / math.log(2)),
            "accuracy": float(hit.mean()), "tokens": int(mask.sum())}  # fmt: skip
     if spans:
         # teacher-forced: every answer position right is exactly greedy decoding's answer
@@ -382,9 +390,9 @@ def _metrics(logits, y, mask, spans):
     return out
 
 
-def _rss_mb() -> float:
+def _rss_mb(field: str = "VmRSS") -> float:
     for line in Path("/proc/self/status").read_text().splitlines():
-        if line.startswith("VmRSS:"):
+        if line.startswith(field + ":"):
             return int(line.split()[1]) / 1024
     return float("nan")
 
@@ -409,12 +417,12 @@ def build_library(out: Path, cc: str, defines=(), sources: Path | None = None, f
     return target
 
 
-def _openblas():
+def _openblas(threads: int = 1):
     import scipy_openblas32
 
     path = Path(scipy_openblas32.get_lib_dir()) / "libscipy_openblas.so"
     lib = ctypes.CDLL(str(path))
-    lib.scipy_openblas_set_num_threads(1)
+    lib.scipy_openblas_set_num_threads(threads)
     lib.scipy_openblas_get_config.restype = ctypes.c_char_p
     return path, lib.scipy_openblas_get_config().decode()
 
@@ -714,11 +722,12 @@ def _base_sources(data: Path, base: str) -> Path:
     return old_src
 
 
-def baseline(data: Path, steps: int, cc: str, base: str):
-    """The kernels before this update (the sources at `base`) against these on the same steps:
-    the portable trainer's state must not move a bit, and each pair is timed interleaved."""
+def baseline(data: Path, steps: int, cc: str, base: str, old_flags=BASE_FLAGS):
+    """The kernels before this update (the sources at `base`, built with `old_flags`) against
+    these on the same steps: the portable trainer's state must not move a bit, and each pair is
+    timed interleaved."""
     old_src = _base_sources(data, base)
-    old = build_library(data / "lib" / "baseline-old", cc, sources=old_src, flags=BASE_FLAGS)
+    old = build_library(data / "lib" / "baseline-old", cc, sources=old_src, flags=tuple(old_flags))
     new = build_library(data / "lib" / "baseline-new", cc)
     rows = {}
     for provider in ("portable", "openblas"):
@@ -742,7 +751,8 @@ def baseline(data: Path, steps: int, cc: str, base: str):
             json.dumps({provider: {k: v for k, v in rows[provider].items() if k != "samples"}}),
             flush=True,
         )
-    result = {"base": base, "compiler": _compiler(cc), "steps": steps, "rows": rows}
+    result = {"base": base, "compiler": _compiler(cc), "steps": steps, "rows": rows,
+              "flags": {"old": list(old_flags), "new": list(FLAGS)}}  # fmt: skip
     (data / "baseline.json").write_text(json.dumps(result, indent=1) + "\n")
 
 
@@ -912,17 +922,20 @@ int main(void) {
 """
 
 
-def kernels(data: Path, cc: str, base: str, rounds: int):
-    """The trainer's kernels before this update (the sources at `base`, built as they shipped)
-    and after, at the comparison's shape: every GEMM shape of one step on every ISA variant,
-    attention forward and backward, AdamW. Rounds alternate the builds; every output must hash
-    the same before and after, and across the variants."""
+def kernels(data: Path, cc: str, base: str, rounds: int, old_flags=BASE_FLAGS):
+    """The trainer's kernels before this update (the sources at `base`, built as they shipped:
+    `old_flags`) and after, at the comparison's shape: every GEMM shape of one step on every ISA
+    variant, attention forward and backward, AdamW. Rounds alternate the builds; every output must
+    hash the same before and after, and across the variants."""
     out = data / "kernels"
     out.mkdir(parents=True, exist_ok=True)
     (out / "kernel_bench.c").write_text(KERNEL_C)
     builds = {}
+    old_src = _base_sources(data, base)
+    # a base that already has the instruction-set variants is measured variant by variant too
+    old_new_api = "bcir_tensor_mm_variant" in (old_src / "bcir_tensor.h").read_text()
     for label, src, flags, defines in (
-        ("old", _base_sources(data, base), BASE_FLAGS, ()),
+        ("old", old_src, tuple(old_flags), ("-DBCIR_KB_NEW",) if old_new_api else ()),
         ("new", REPO / "runtime" / "c", FLAGS, ("-DBCIR_KB_NEW",)),
     ):
         exe = out / f"kernels-{label}"
@@ -948,9 +961,10 @@ def kernels(data: Path, cc: str, base: str, rounds: int):
         ]
         for label, runs in samples.items()
     }  # fmt: skip
+    checked = ("old", "new") if old_new_api else ("new",)
     identical = (
         all(h == hashes["old"][0] for h in hashes["old"] + hashes["new"])
-        and all(g["variants_agree"] for s in samples["new"] for g in s["gemm"])
+        and all(g["variants_agree"] for label in checked for s in samples[label] for g in s["gemm"])
     )  # fmt: skip
 
     def med(label, pick):
@@ -958,18 +972,24 @@ def kernels(data: Path, cc: str, base: str, rounds: int):
 
     rows, totals = [], {}
     variants = sorted(first["new"]["gemm"][0]["ms"], key=int)
+    old_variants = variants if old_new_api else []
     for i, g in enumerate(first["old"]["gemm"]):
         row = {key: g[key] for key in ("name", "ta", "tb", "m", "n", "k", "calls")}
-        row["old_ms"] = med("old", lambda s, i=i: s["gemm"][i]["ms"]["mm"])
+        # the base's own entry point: its single kernel, or its widest variant
+        widest = "mm" if not old_new_api else variants[-1]
+        row["old_ms"] = med("old", lambda s, i=i, w=widest: s["gemm"][i]["ms"][w])
+        for v in old_variants:
+            row[f"old_ms_variant_{v}"] = med("old", lambda s, i=i, v=v: s["gemm"][i]["ms"][v])
         for v in variants:
             row[f"new_ms_variant_{v}"] = med("new", lambda s, i=i, v=v: s["gemm"][i]["ms"][v])
         rows.append(row)
-    for key in ["old_ms"] + [f"new_ms_variant_{v}" for v in variants]:
+    keys = ["old_ms"] + [f"old_ms_variant_{v}" for v in old_variants]
+    for key in keys + [f"new_ms_variant_{v}" for v in variants]:
         totals[key] = sum(row["calls"] * row[key] for row in rows)
     result = {
         "base": base,
         "compiler": _compiler(cc),
-        "flags": {"old": list(BASE_FLAGS), "new": list(FLAGS)},
+        "flags": {"old": list(old_flags), "new": list(FLAGS)},
         "rounds": rounds,
         "variants": first["new"]["variants"],
         "outputs_identical": identical,
@@ -989,7 +1009,530 @@ def kernels(data: Path, cc: str, base: str, rounds: int):
     print(json.dumps({k: v for k, v in result.items() if k not in ("samples", "gemm")}), flush=True)
 
 
+# --- breakdown -------------------------------------------------------------------------------
+def _median_ms(fn, rounds: int) -> float:
+    """The median wall time of fn() in milliseconds over `rounds` calls, after one untimed call."""
+    fn()
+    samples = []
+    for _ in range(rounds):
+        t0 = time.perf_counter()
+        fn()
+        samples.append(1000 * (time.perf_counter() - t0))
+    return statistics.median(samples)
+
+
+def _bcir_breakdown(data: Path, library: Path, rounds: int, openblas: bool) -> dict:
+    """One BCIR step at the comparison's shape, whole and by part: the binding's stages, then
+    every kernel family the step calls, each timed alone through the library's own entry points
+    with the calls one step makes (and the provider the run uses for the linears)."""
+    import numpy as np
+    from bcir.hosted.models.native import NativeAdamW
+
+    spec = _spec()
+    nd, provider = _native(data, library, openblas=openblas)
+    lib = nd.lib
+    n, d, f, v = BATCH * CONTEXT, spec.d_model, spec.d_ff, spec.vocab_size
+    h, kh, hd, layers = spec.n_heads, spec.kv_heads, spec.d_k, spec.n_layers
+    kv = kh * hd
+    P, Z, F32 = ctypes.c_void_p, ctypes.c_size_t, ctypes.c_float
+    signatures = {
+        "rms": [Z, Z, F32, P, P, P],
+        "rms_backward": [Z, Z, F32, P, P, P, P, P],
+        "rope": [Z, Z, Z, Z, ctypes.c_double, P, ctypes.c_int],
+        "silu": [P, Z, P, P],
+        "swiglu_backward": [Z, P, P, P, P, P],
+        "attention": [Z, Z, Z, Z, Z, P, P, P, P, P],
+        "attention_backward_inplace": [Z, Z, Z, Z, Z, P, P, P, P, P, P, P, P],
+        "linear": [P, Z, Z, Z, P, P, P],
+        "linear_backward": [P, Z, Z, Z, P, P, P, P, P, F32],
+    }
+    fn = {}
+    for name, args in signatures.items():
+        fn[name] = getattr(lib, "bcir_tensor_" + name)
+        fn[name].argtypes, fn[name].restype = args, None
+    rng = np.random.default_rng(SEED)
+
+    def buf(*shape, scale=1.0):
+        return (rng.standard_normal(shape) * scale).astype(np.float32)
+
+    def zero(*shape):
+        return np.zeros(shape, np.float32)
+
+    p = lambda a: a.ctypes.data  # noqa: E731
+    prov = ctypes.addressof(nd.state.provider)
+    eps, base = float(spec.rms_norm_eps), float(spec.rope_base)
+    x, g, y, dy, dx, dg = buf(n, d), buf(d), zero(n, d), buf(n, d), zero(n, d), zero(d)
+    q, k, val, ctx, dq, dk, dv = buf(n, d), buf(n, kv), buf(n, kv), zero(n, d), zero(n, d), \
+        zero(n, kv), zero(n, kv)  # fmt: skip
+    probs = zero(BATCH, h, CONTEXT, CONTEXT)
+    gate, up, hidden, dh, dgate, dup = buf(n, f), buf(n, f), zero(n, f), buf(n, f), zero(n, f), \
+        zero(n, f)  # fmt: skip
+    weights = {"q": (d, d), "k": (kv, d), "v": (kv, d), "o": (d, d), "gate": (f, d),
+               "up": (f, d), "down": (d, f), "head": (v, d)}  # fmt: skip
+    w = {name: buf(*shape, scale=0.02) for name, shape in weights.items()}
+    dw = {name: zero(*shape) for name, shape in weights.items()}
+    outs = {"q": zero(n, d), "k": zero(n, kv), "v": zero(n, kv), "o": zero(n, d),
+            "gate": zero(n, f), "up": zero(n, f), "down": zero(n, d), "head": zero(n, v)}  # fmt: skip
+    ins = {"q": x, "k": x, "v": x, "o": ctx, "gate": x, "up": x, "down": hidden, "head": x}
+    # dx beta per linear in the backward's order (0 overwrites, 1 accumulates into the shared dx)
+    beta = {"down": 0.0, "gate": 0.0, "up": 1.0, "o": 0.0, "q": 0.0, "k": 1.0, "v": 1.0,
+            "head": 0.0}  # fmt: skip
+    dys = {"q": buf(n, d), "k": buf(n, kv), "v": buf(n, kv), "o": buf(n, d), "gate": buf(n, f),
+           "up": buf(n, f), "down": buf(n, d), "head": buf(n, v)}  # fmt: skip
+    dxs = {"q": dx, "k": dx, "v": dx, "o": zero(n, d), "gate": dx, "up": dx, "down": zero(n, f),
+           "head": dx}  # fmt: skip
+    per_layer = ("q", "k", "v", "o", "gate", "up", "down")
+
+    def linear(name):
+        i, o = weights[name][1], weights[name][0]
+        fn["linear"](prov, n, i, o, p(ins[name]), p(w[name]), p(outs[name]))
+
+    def linear_backward(name):
+        i, o = weights[name][1], weights[name][0]
+        fn["linear_backward"](prov, n, i, o, p(ins[name]), p(w[name]), p(dys[name]),
+                              p(dxs[name]), p(dw[name]), beta[name])  # fmt: skip
+
+    def gemm_forward():
+        for _ in range(layers):
+            for name in per_layer:
+                linear(name)
+        linear("head")
+
+    def gemm_backward():
+        linear_backward("head")
+        for _ in range(layers):
+            for name in ("down", "gate", "up", "o", "q", "k", "v"):
+                linear_backward(name)
+
+    att = {"forward": [], "backward": []}
+
+    def attention():
+        # the backward consumes the probabilities the forward leaves, so each layer runs both
+        tf = tb = 0.0
+        for _ in range(layers):
+            t0 = time.perf_counter()
+            fn["attention"](BATCH, CONTEXT, h, kh, hd, p(q), p(k), p(val), p(probs), p(ctx))
+            t1 = time.perf_counter()
+            fn["attention_backward_inplace"](BATCH, CONTEXT, h, kh, hd, p(q), p(k), p(val),
+                                             p(probs), p(dy), p(dq), p(dk), p(dv))  # fmt: skip
+            t2 = time.perf_counter()
+            tf, tb = tf + t1 - t0, tb + t2 - t1
+        att["forward"].append(1000 * tf)
+        att["backward"].append(1000 * tb)
+
+    def norms():
+        for _ in range(2 * layers + 1):
+            fn["rms"](n, d, eps, p(x), p(g), p(y))
+
+    def norms_backward():
+        for _ in range(2 * layers + 1):
+            fn["rms_backward"](n, d, eps, p(x), p(g), p(dy), p(dx), p(dg))
+
+    def rope(inverse):
+        for _ in range(layers):
+            fn["rope"](BATCH, CONTEXT, h, hd, base, p(dq if inverse else q), inverse)
+            fn["rope"](BATCH, CONTEXT, kh, hd, base, p(dk if inverse else k), inverse)
+
+    def silu():
+        for _ in range(layers):
+            fn["silu"](None, n * f, p(gate), p(hidden))
+
+    def swiglu_backward():
+        for _ in range(layers):
+            fn["swiglu_backward"](n * f, p(gate), p(up), p(dh), p(dgate), p(dup))
+
+    parts = {
+        "gemm_forward": _median_ms(gemm_forward, rounds),
+        "gemm_backward": _median_ms(gemm_backward, rounds),
+    }
+    _median_ms(attention, rounds)
+    parts["attention_forward"] = statistics.median(att["forward"][1:])
+    parts["attention_backward"] = statistics.median(att["backward"][1:])
+    parts.update(
+        rms=_median_ms(norms, rounds), rms_backward=_median_ms(norms_backward, rounds),
+        rope=_median_ms(lambda: rope(0), rounds), rope_inverse=_median_ms(lambda: rope(1), rounds),
+        silu=_median_ms(silu, rounds), swiglu_backward=_median_ms(swiglu_backward, rounds),
+    )  # fmt: skip
+    # the decoder's own stages through the binding, on the comparison's batches
+    stream = _load(data, "lm-train.u16", "H")
+    offsets = _load(data, "lm-schedule.u32", "I")
+    opt = NativeAdamW(
+        lr=OPT["peak"] * 0.25, beta1=OPT["beta1"], beta2=OPT["beta2"], epsilon=OPT["eps"],
+        weight_decay=OPT["decay"], grad_clip=OPT["clip"],
+    )  # fmt: skip
+    xs, ys = _batch(stream, offsets, 0, "lm")
+    stages = {
+        "batch": _median_ms(lambda: _batch(stream, offsets, 1, "lm"), rounds),
+        "binding": _median_ms(lambda: (nd._tokens(xs), nd._tokens(ys)), rounds),
+        "step": _median_ms(lambda: nd.run(xs, ys, steps=1, optimizer=opt), rounds),
+        "forward": _median_ms(lambda: nd.forward(xs), rounds),
+        "loss_backward": _median_ms(lambda: nd.backward(xs, ys), rounds),
+        "update": _median_ms(lambda: nd.update(opt), rounds),
+    }
+    kernels = sum(parts.values()) + stages["update"]
+    return {
+        **provider, "parts_ms": parts, "stages_ms": stages,
+        "rest_ms": stages["step"] - stages["binding"] - kernels,
+        "training_step_ms": stages["batch"] + stages["step"],
+    }  # fmt: skip
+
+
+def _torch_breakdown(data: Path, rounds: int) -> dict:
+    """One eager PyTorch step at the comparison's shape: its phases by wall time, then the
+    forward and backward's operators under torch.profiler, self CPU time by family."""
+    import torch
+    from torch.profiler import ProfilerActivity, profile
+
+    torch.set_num_threads(1)
+    torch.set_num_interop_threads(1)
+    model = _torch_model(data)
+    opt = torch.optim.AdamW(
+        model.parameters(), lr=OPT["peak"] * 0.25, betas=(OPT["beta1"], OPT["beta2"]),
+        eps=OPT["eps"], weight_decay=OPT["decay"],
+    )  # fmt: skip
+    stream = _load(data, "lm-train.u16", "H")
+    offsets = _load(data, "lm-schedule.u32", "I")
+    names = ("batch", "zero_grad", "forward", "backward", "clip", "optimizer")
+    phases = {name: [] for name in names}
+    ops: dict = {}
+
+    def step(s, record=False, profiled=False):
+        t = [time.perf_counter()]
+        x, y = _batch(stream, offsets, s, "lm")
+        xt = torch.tensor(x, dtype=torch.long).view(BATCH, CONTEXT)
+        yt = torch.tensor(y, dtype=torch.long).view(BATCH, CONTEXT)
+        t.append(time.perf_counter())
+        opt.zero_grad(set_to_none=True)
+        t.append(time.perf_counter())
+        if profiled:
+            with profile(activities=[ProfilerActivity.CPU]) as prof:
+                loss = model(xt, yt)[1]
+                loss.backward()
+            for event in prof.key_averages():
+                ops[event.key] = ops.get(event.key, 0.0) + event.self_cpu_time_total / 1000
+            t += [t[-1], time.perf_counter()]
+        else:
+            loss = model(xt, yt)[1]
+            t.append(time.perf_counter())
+            loss.backward()
+            t.append(time.perf_counter())
+        torch.nn.utils.clip_grad_norm_(model.parameters(), OPT["clip"])
+        t.append(time.perf_counter())
+        opt.step()
+        t.append(time.perf_counter())
+        if record:
+            for name, a, b in zip(names, t, t[1:]):
+                phases[name].append(1000 * (b - a))
+
+    for s in range(2):
+        step(s)
+    for s in range(2, 2 + rounds):
+        step(s, record=True)
+    for s in range(2 + rounds, 2 + 2 * rounds):
+        step(s, profiled=True)
+    medians = {name: statistics.median(values) for name, values in phases.items()}
+    per_step = {key: ms / rounds for key, ms in ops.items()}
+
+    def family(key):
+        if "scaled_dot_product" in key or "flash_attention" in key:
+            return "attention"
+        if key in ("aten::mm", "aten::addmm", "aten::bmm", "aten::baddbmm", "aten::matmul",
+                   "aten::linear"):  # fmt: skip
+            return "gemm"
+        return "other"
+
+    families: dict = {}
+    for key, ms in per_step.items():
+        families[family(key)] = families.get(family(key), 0.0) + ms
+    top = sorted(per_step.items(), key=lambda kv: -kv[1])[:15]
+    return {
+        "phases_ms": medians,
+        "training_step_ms": sum(medians.values()),
+        "profile_forward_backward_self_cpu_ms": families,
+        "profile_total_ms": sum(per_step.values()),
+        "top_operators_ms": dict(top),
+        "torch": torch.__version__,
+    }
+
+
+def breakdown(data: Path, compilers, rounds: int):
+    """Where one training step's time goes at the comparison's shape: on BCIR's own kernels as
+    each compiler builds them, on BCIR with OpenBLAS behind the CBLAS seam (the first compiler's
+    build), and on eager PyTorch. One thread each."""
+    os.environ.update(OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
+    result = {
+        "rounds": rounds,
+        "shape": {"batch": BATCH, "context": CONTEXT, **SPEC},
+        "bcir": {},
+        "environment": _environment(),
+    }
+    for i, cc in enumerate(compilers):
+        library = build_library(data / "lib" / f"breakdown-{i}", cc)
+        result["bcir"][_compiler(cc)] = _bcir_breakdown(data, library, rounds, openblas=False)
+        print(json.dumps({"compiler": _compiler(cc), "done": "bcir"}), flush=True)
+        if i == 0:
+            result["bcir-openblas"] = {
+                "compiler": _compiler(cc),
+                **_bcir_breakdown(data, library, rounds, openblas=True),
+            }
+    result["torch-eager"] = _torch_breakdown(data, rounds)
+    (data / "breakdown.json").write_text(json.dumps(result, indent=1, sort_keys=True) + "\n")
+    print(json.dumps(result, indent=1, sort_keys=True), flush=True)
+
+
+# --- context ---------------------------------------------------------------------------------
+# The 2026-10-10 plan's acceptance evidence for attention: time and memory against context, and
+# the decoder trained at 64, 128, 256 tokens and beyond. Every row keeps the comparison's 1,024
+# tokens per call or step (B*T), so the linears do the same work at every context and only the
+# attention's work grows, with T. The same runs at the comparison's context on more threads
+# answer the plan's other open question: BCIR's own kernels run one thread, while OpenBLAS and
+# PyTorch can use every core.
+CONTEXTS = (64, 128, 256, 512, 1024)
+TOKENS = BATCH * CONTEXT
+CONTEXT_BACKENDS = ("bcir", "bcir-openblas", "torch-eager")
+THREADS = (2, 4)
+
+
+def _attention_at(t: int, rounds: int, forward, backward, rng) -> dict:
+    """One attention layer at context `t` and batch TOKENS // t, forward then backward: BCIR's
+    kernels, and PyTorch's `HostedAttention` path (KV heads repeated, causal SDPA) through
+    autograd, on the same values. Medians of `rounds` alternating calls after one untimed call,
+    and the largest difference between the two frameworks' results."""
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+    from torch.profiler import ProfilerActivity, profile
+
+    spec = _spec()
+    h, kh, hd = spec.n_heads, spec.kv_heads, spec.d_k
+    b = TOKENS // t
+    p = lambda a: a.ctypes.data  # noqa: E731
+    q, dy = (rng.standard_normal((b * t, h * hd)).astype(np.float32) for _ in range(2))
+    k, v = (rng.standard_normal((b * t, kh * hd)).astype(np.float32) for _ in range(2))
+    probs = np.zeros((b, h, t, t), np.float32)
+    ctx, dq, dk, dv = np.zeros_like(q), np.zeros_like(q), np.zeros_like(k), np.zeros_like(v)
+
+    def bcir_layer():
+        dq[:], dk[:], dv[:] = 0.0, 0.0, 0.0
+        t0 = time.perf_counter()
+        forward(b, t, h, kh, hd, p(q), p(k), p(v), p(probs), p(ctx))
+        t1 = time.perf_counter()
+        backward(b, t, h, kh, hd, p(q), p(k), p(v), p(probs), p(dy), p(dq), p(dk), p(dv))
+        return t1 - t0, time.perf_counter() - t1
+
+    # PyTorch's operands are the same values in HostedAttention's [batch, head, time, dim]
+    def heads(a, n):
+        return torch.from_numpy(a).view(b, t, n, hd).transpose(1, 2).contiguous()
+
+    tq, tk, tv, tdy = heads(q, h), heads(k, kh), heads(v, kh), heads(dy, h)
+    for tensor in (tq, tk, tv):
+        tensor.requires_grad_()
+
+    def torch_layer():
+        tq.grad = tk.grad = tv.grad = None
+        t0 = time.perf_counter()
+        out = F.scaled_dot_product_attention(
+            tq, tk.repeat_interleave(h // kh, dim=1), tv.repeat_interleave(h // kh, dim=1),
+            dropout_p=0.0, is_causal=True,
+        )  # fmt: skip
+        t1 = time.perf_counter()
+        out.backward(tdy)
+        return t1 - t0, time.perf_counter() - t1, out
+
+    times = {"bcir": ([], []), "torch": ([], [])}
+    for i in range(rounds + 1):  # alternating, the first round untimed
+        fb, bb = bcir_layer()
+        ft, bt, out = torch_layer()
+        if i:
+            for name, (f_s, b_s) in (("bcir", (fb, bb)), ("torch", (ft, bt))):
+                times[name][0].append(1000 * f_s)
+                times[name][1].append(1000 * b_s)
+
+    def flat(a, n):
+        return a.detach().transpose(1, 2).reshape(b * t, n * hd).numpy()
+
+    row = {
+        "context": t, "batch": b,
+        "bcir_forward_ms": statistics.median(times["bcir"][0]),
+        "bcir_backward_ms": statistics.median(times["bcir"][1]),
+        "torch_forward_ms": statistics.median(times["torch"][0]),
+        "torch_backward_ms": statistics.median(times["torch"][1]),
+        "bcir_probabilities_bytes": probs.nbytes,
+        "max_abs_diff_vs_torch": {
+            "y": float(np.abs(ctx - flat(out, h)).max()),
+            "dq": float(np.abs(dq - flat(tq.grad, h)).max()),
+            "dk": float(np.abs(dk - flat(tk.grad, kh)).max()),
+            "dv": float(np.abs(dv - flat(tv.grad, kh)).max()),
+        },
+    }  # fmt: skip
+    if t == CONTEXT:  # which of PyTorch's kernels ran: one profiled layer
+        with profile(activities=[ProfilerActivity.CPU]) as prof:
+            torch_layer()
+        row["torch_attention_operators"] = sorted(
+            e.key for e in prof.key_averages() if "scaled_dot_product" in e.key or "flash" in e.key
+        )
+    return row
+
+
+def _attention_curve(library: Path, rounds: int) -> list:
+    """One attention layer at the decoder's head shape at every context (`_attention_at`)."""
+    import numpy as np
+    import torch
+
+    torch.set_num_threads(1)
+    torch.set_num_interop_threads(1)
+    lib = ctypes.CDLL(str(library))
+    P, Z = ctypes.c_void_p, ctypes.c_size_t
+    forward = lib.bcir_tensor_attention
+    forward.argtypes, forward.restype = [Z, Z, Z, Z, Z, P, P, P, P, P], None
+    backward = lib.bcir_tensor_attention_backward_inplace
+    backward.argtypes, backward.restype = [Z, Z, Z, Z, Z, P, P, P, P, P, P, P, P], None
+    rng = np.random.default_rng(SEED)
+    rows = []
+    for t in CONTEXTS:
+        rows.append(_attention_at(t, rounds, forward, backward, rng))
+        print(json.dumps(rows[-1]), flush=True)
+    return rows
+
+
+def _context_run(
+    data: Path, backend: str, t: int, steps: int, library: Path | None, threads: int = 1
+) -> dict:
+    """One process: `steps` training steps of the 9.84M decoder at context `t` and batch
+    TOKENS // t on one backend and `threads` compute threads (BCIR's own kernels have one), from
+    the comparison's initial weights and at its per-step learning rates (`--lr-scale 0.25`), on
+    language-model windows drawn for this context. Its peak resident memory is its own."""
+    n = str(threads)
+    os.environ.update(OMP_NUM_THREADS=n, MKL_NUM_THREADS=n, OPENBLAS_NUM_THREADS=n)
+    b = TOKENS // t
+    stream = _load(data, "lm-train.u16", "H")
+    rng = random.Random(SEED + t)
+    offsets = [rng.randrange(len(stream) - t - 1) for _ in range(steps * b)]
+
+    def batch(s):
+        xs, ys = [], []
+        for offset in offsets[s * b : (s + 1) * b]:
+            xs.extend(stream[offset : offset + t])
+            ys.extend(stream[offset + 1 : offset + t + 1])
+        return xs, ys
+
+    rates = [0.25 * _rate(s, 1000) for s in range(steps)]
+    out: dict = {"backend": backend, "context": t, "batch": b, "steps": steps, "threads": threads}
+    if backend.startswith("bcir"):
+        from bcir.hosted.models.native import NativeAdamW, NativeDecoder, parameter_layout
+
+        spec = _spec()
+        nd = NativeDecoder(library, spec, batch_size=b, context_length=t, max_memory_bytes=8 << 30)
+        flat = _load(data, "weights.f32", "f")
+        nd.load_state_dict({name: flat[o : o + n] for name, _s, o, n in parameter_layout(spec)})
+        if backend == "bcir-openblas":
+            nd.use_cblas(_openblas(threads)[0], symbol="scipy_cblas_sgemm")
+        opt = NativeAdamW(
+            lr=OPT["peak"], beta1=OPT["beta1"], beta2=OPT["beta2"], epsilon=OPT["eps"],
+            weight_decay=OPT["decay"], grad_clip=OPT["clip"],
+        )  # fmt: skip
+        out["arena_bytes"] = nd.memory_bytes
+
+        def step(s):
+            x, y = batch(s)
+            return nd.run(x, y, steps=1, optimizer=opt, learning_rates=[rates[s]])[0]["loss"]
+    else:
+        import torch
+
+        torch.set_num_threads(threads)
+        torch.set_num_interop_threads(1)
+        model = _torch_model(data)
+        opt = torch.optim.AdamW(
+            model.parameters(), lr=OPT["peak"], betas=(OPT["beta1"], OPT["beta2"]),
+            eps=OPT["eps"], weight_decay=OPT["decay"],
+        )  # fmt: skip
+        out["torch"] = torch.__version__
+
+        def step(s):
+            x, y = batch(s)
+            xt = torch.tensor(x, dtype=torch.long).view(b, t)
+            yt = torch.tensor(y, dtype=torch.long).view(b, t)
+            for group in opt.param_groups:
+                group["lr"] = rates[s]
+            opt.zero_grad(set_to_none=True)
+            loss = model(xt, yt)[1]
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), OPT["clip"])
+            opt.step()
+            return float(loss.detach())
+
+    losses, seconds = [], []
+    for s in range(steps):
+        t0 = time.perf_counter()
+        losses.append(step(s))
+        seconds.append(time.perf_counter() - t0)
+    # VmHWM is this address space's own peak: ru_maxrss would also carry the parent's resident
+    # set across fork and exec, and the parent has PyTorch loaded
+    out.update(
+        losses=losses, step_seconds=seconds, median_step_ms=1000 * statistics.median(seconds[2:]),
+        peak_rss_mb=_rss_mb("VmHWM"),
+    )  # fmt: skip
+    return out
+
+
+def context(data: Path, cc: str, rounds: int, steps: int, repeats: int):
+    """Time and memory against context, at the comparison's 1,024 tokens per call or step: one
+    attention layer forward and backward on BCIR and on PyTorch, then the decoder's training
+    step at every context on BCIR's own kernels, BCIR with OpenBLAS and eager PyTorch, each run
+    in its own process, and at the comparison's context on more threads where a backend has
+    them. The runs repeat `repeats` times, in alternating order, and a configuration's step time
+    is the median of every timed step it ran. The decoder's losses on the same batches are
+    compared with eager PyTorch's."""
+    os.environ.update(OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
+    library = build_library(data / "lib" / "context", cc)
+    result = {
+        "tokens": TOKENS, "contexts": list(CONTEXTS), "rounds": rounds, "steps": steps,
+        "compiler": _compiler(cc), "attention": _attention_curve(library, rounds), "decoder": [],
+        "environment": _environment(),
+    }  # fmt: skip
+    runs = [(t, backend, 1) for t in CONTEXTS for backend in CONTEXT_BACKENDS]
+    runs += [(CONTEXT, backend, n) for n in THREADS for backend in CONTEXT_BACKENDS[1:]]
+    for repeat in range(repeats):
+        for t, backend, threads in runs if repeat % 2 == 0 else runs[::-1]:
+            command = [sys.executable, str(Path(__file__).resolve()), "context-run",
+                       "--data", str(data), "--backend", backend, "--context", str(t),
+                       "--steps", str(steps), "--library", str(library),
+                       "--threads", str(threads)]  # fmt: skip
+            proc = subprocess.run(command, check=True, capture_output=True, text=True,
+                                  timeout=3600)  # fmt: skip
+            row = {"repeat": repeat, **json.loads(proc.stdout.strip().splitlines()[-1])}
+            result["decoder"].append(row)
+            print(json.dumps({key: row.get(key) for key in ("repeat", "backend", "context",
+                  "threads", "median_step_ms", "peak_rss_mb", "arena_bytes")}), flush=True)  # fmt: skip
+    summary = []
+    for t, backend, threads in runs:
+        mine = [r for r in result["decoder"]
+                if (r["context"], r["backend"], r["threads"]) == (t, backend, threads)]  # fmt: skip
+        timed = [s for r in mine for s in r["step_seconds"][2:]]
+        row = {"context": t, "batch": TOKENS // t, "backend": backend, "threads": threads,
+               "median_step_ms": 1000 * statistics.median(timed), "timed_steps": len(timed),
+               "peak_rss_mb": max(r["peak_rss_mb"] for r in mine),
+               "arena_bytes": mine[0].get("arena_bytes")}  # fmt: skip
+        if backend != "torch-eager":  # the same batches, so the same losses up to rounding
+            reference = {r["repeat"]: r["losses"] for r in result["decoder"]
+                         if (r["context"], r["backend"], r["threads"]) ==
+                         (t, "torch-eager", threads)}  # fmt: skip
+            row["max_abs_loss_diff_vs_torch_eager"] = max(
+                abs(a - b) for r in mine for a, b in zip(r["losses"], reference[r["repeat"]])
+            )
+        summary.append(row)
+    result["decoder_summary"] = summary
+    (data / "context.json").write_text(json.dumps(result, indent=1, sort_keys=True) + "\n")
+    print(json.dumps({"saved": str(data / "context.json")}), flush=True)
+
+
 # --- summarize -------------------------------------------------------------------------------
+# Quality levels for time to quality: the language model's validation cross-entropy (nats per
+# byte), and the structured tasks' held-out exact match.
+LM_LEVELS = (2.0, 1.75, 1.6)
+EXACT_LEVELS = (0.5, 0.9, 0.99)
+
+
 def summarize(data: Path):
     runs = {}
     for path in sorted((data / "runs").glob("*.json")):
@@ -1003,40 +1546,42 @@ def summarize(data: Path):
             pairs = list(zip(r["losses"], ref["losses"]))
             agree = {
                 "max_abs_loss_diff": max(abs(a - b) for a, b in pairs),
+                "max_abs_loss_diff_first_10": max(abs(a - b) for a, b in pairs[:10]),
                 "mean_abs_loss_diff_last_100": statistics.mean(abs(a - b) for a, b in pairs[-100:]),
             }
-        key = "test"
-        fin = r["final"][key]
+        fin = r["final"]["test"]
         row = {
             "task": task, "backend": backend, "median_step_ms": r["median_step_ms"],
             "tokens_per_second": r["tokens_per_second"], "train_seconds": r["train_seconds"],
-            "peak_rss_mb": r["rss_mb"]["peak"], "final_test": fin,
-            "final_validation": r["final"].get("validation"), "loss_agreement_vs_torch_eager": agree,
+            "wall_seconds": r["wall_seconds"], "peak_rss_mb": r["rss_mb"]["peak"],
+            "final_test": fin, "final_validation": r["final"].get("validation"),
+            "loss_agreement_vs_torch_eager": agree, "state_sha256": r["state_sha256"],
             "compile_and_first_steps_seconds": r.get("compile_and_first_steps_seconds"),
         }  # fmt: skip
         out["runs"][f"{task}/{backend}"] = row
-        metric = fin.get("exact_match", fin["bits_per_token"])
         table.append(
             f"| {task} | {backend} | {r['median_step_ms']:.0f} | {r['tokens_per_second']:.0f} | "
             f"{r['train_seconds'] / 60:.1f} | {fin['cross_entropy']:.4f} | {fin['accuracy']:.4f} | "
-            f"{metric:.4f} | {r['rss_mb']['peak']:.0f} |"
+            f"{fin['exact_match']:.4f} | {r['rss_mb']['peak']:.0f} |"
         )
     header = ("| task | backend | ms/step | tokens/s | train min | test CE (nats) | test accuracy | "
-              "bits/byte or exact match | peak RSS MB |\n|---|---|---|---|---|---|---|---|---|")  # fmt: skip
+              "exact match (lm: words) | peak RSS MiB |\n|---|---|---|---|---|---|---|---|---|")  # fmt: skip
     out["table"] = header + "\n" + "\n".join(table)
-    # Time to quality: for the language model, the worst final validation cross-entropy among
-    # the backends (a quality every backend reached); for addition, fixed held-out exact-match
-    # levels. Each backend's step and training seconds at the first evaluation that met it.
+    # Time to quality: each backend's step and training seconds at the first evaluation that
+    # reached a level -- for the language model fixed validation cross-entropies and the worst
+    # final one among the backends (a quality every backend reached), for the structured tasks
+    # fixed held-out exact-match levels.
     out["time_to_target"] = {}
     for task in sorted({t for t, _ in runs}):
         group = {b: r for (t, b), r in runs.items() if t == task}
         if task == "lm":
             worst = max(r["evals"][-1]["cross_entropy"] for r in group.values())
-            goals = {f"validation cross-entropy <= {worst:.4f} nats/byte":
-                     lambda e, worst=worst: e["cross_entropy"] <= worst}  # fmt: skip
+            goals = {f"validation cross-entropy <= {level:.4f} nats/byte":
+                     lambda e, level=level: e["cross_entropy"] <= level
+                     for level in (*LM_LEVELS, worst)}  # fmt: skip
         else:
             goals = {f"held-out exact match >= {g}": lambda e, g=g: e["exact_match"] >= g
-                     for g in (0.5, 0.9, 0.99)}  # fmt: skip
+                     for g in EXACT_LEVELS}  # fmt: skip
         out["time_to_target"][task] = {
             what: {b: next(({"step": e["step"], "seconds": e["train_seconds"]}
                             for e in r["evals"] if hit(e)), None) for b, r in group.items()}
@@ -1076,11 +1621,34 @@ def main():
     b.add_argument("--steps", type=int, default=6)
     b.add_argument("--cc", default="gcc")
     b.add_argument("--base", default=CORPUS_COMMIT)
+    b.add_argument(
+        "--old-flags", default=" ".join(BASE_FLAGS), help="the base build's optimization flags"
+    )
     k = sub.add_parser("kernels")
     k.add_argument("--data", type=Path, required=True)
     k.add_argument("--rounds", type=int, default=3)
     k.add_argument("--cc", default="gcc")
     k.add_argument("--base", default=CORPUS_COMMIT)
+    k.add_argument(
+        "--old-flags", default=" ".join(BASE_FLAGS), help="the base build's optimization flags"
+    )
+    r = sub.add_parser("breakdown")
+    r.add_argument("--data", type=Path, required=True)
+    r.add_argument("--rounds", type=int, default=5)
+    r.add_argument("--cc", action="append")
+    c = sub.add_parser("context")
+    c.add_argument("--data", type=Path, required=True)
+    c.add_argument("--cc", default="gcc")
+    c.add_argument("--rounds", type=int, default=5)
+    c.add_argument("--steps", type=int, default=12)
+    c.add_argument("--repeats", type=int, default=2)
+    cr = sub.add_parser("context-run", help="one process of the context stage (internal)")
+    cr.add_argument("--data", type=Path, required=True)
+    cr.add_argument("--backend", choices=CONTEXT_BACKENDS, required=True)
+    cr.add_argument("--context", type=int, choices=CONTEXTS, required=True)
+    cr.add_argument("--steps", type=int, default=8)
+    cr.add_argument("--library", type=Path)
+    cr.add_argument("--threads", type=int, default=1)
     s = sub.add_parser("summarize")
     s.add_argument("--data", type=Path, required=True)
     a = parser.parse_args()
@@ -1093,9 +1661,16 @@ def main():
     elif a.stage == "identity":
         identity(a.data, a.steps, a.cc or ["gcc"])
     elif a.stage == "baseline":
-        baseline(a.data, a.steps, a.cc, a.base)
+        baseline(a.data, a.steps, a.cc, a.base, a.old_flags.split())
     elif a.stage == "kernels":
-        kernels(a.data, a.cc, a.base, a.rounds)
+        kernels(a.data, a.cc, a.base, a.rounds, a.old_flags.split())
+    elif a.stage == "breakdown":
+        breakdown(a.data, a.cc or ["gcc"], a.rounds)
+    elif a.stage == "context":
+        context(a.data, a.cc, a.rounds, a.steps, a.repeats)
+    elif a.stage == "context-run":
+        row = _context_run(a.data, a.backend, a.context, a.steps, a.library, a.threads)
+        print(json.dumps(row), flush=True)
     else:
         summarize(a.data)
 

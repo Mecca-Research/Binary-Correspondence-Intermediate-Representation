@@ -947,10 +947,17 @@ static int run_bench(uint64_t records, uint32_t slot_size, uint32_t slots, unsig
   qsort(copy_ns, repeats, sizeof copy_ns[0], cmp_u64);
   double ring = (double)ring_ns[repeats / 2u] / (double)records;
   double copy = (double)copy_ns[repeats / 2u] / (double)records;
+  /* Each side's best repeat as well as its median: the two threads' handoff costs what the host's
+   * scheduling of them allows, 193-786 ns a record from one repeat to the next of one process on a
+   * virtualized host, pinned or not, while the one-thread memcpy holds still. The medians carry
+   * that; the best repeats are the ring's own cost, measured over the same span as the copy's. */
+  double ring_best = (double)ring_ns[0] / (double)records;
+  double copy_best = (double)copy_ns[0] / (double)records;
   printf("bench records=%" PRIu64 " bytes=%zu slot=%u slots=%u ring_ns=%.3f memcpy_ns=%.3f ratio=%.3f "
-         "records_per_s=%.0f sink=%" PRIu64 "\n",
-         records, n, slot_size, slots, ring, copy, copy > 0.0 ? ring / copy : 0.0,
-         ring > 0.0 ? 1e9 / ring : 0.0, sink & 1u);
+         "ring_best_ns=%.3f memcpy_best_ns=%.3f best_ratio=%.3f records_per_s=%.0f sink=%" PRIu64 "\n",
+         records, n, slot_size, slots, ring, copy, copy > 0.0 ? ring / copy : 0.0, ring_best,
+         copy_best, copy_best > 0.0 ? ring_best / copy_best : 0.0, ring > 0.0 ? 1e9 / ring : 0.0,
+         sink & 1u);
   free(region);
   return 0;
 }

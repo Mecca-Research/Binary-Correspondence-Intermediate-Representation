@@ -2570,6 +2570,235 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     witness. QG12 was dropped as an equivalent mutant: the oracle's cache is a list, which
     cannot hold the hole the C fault leaves. `qual-sim.json` holds 18 more (QS1-QS18) on the
     profile reader, the derived rows, the brackets and the callgrind build.
+  NDT-PERF (2026-10-11): the native-training half of the 2026-10-10 assessment's next update
+  (#814), every output bit unchanged, and the 9.84M decoder trained on BCIR and on PyTorch side
+  by side (`docs/research/BCIR_NATIVE_TRAINING_PERFORMANCE_2026-10-11.md`).
+  - Reviewed first: every table of the 2026-10-10 assessment regenerates from its `results.json`,
+    and its gaps were of scope. Its GEMM rows were forward shapes only, its attention forward
+    only, the production AdamW unmeasured, and the decoder evidence ran BCIR on vendor BLAS,
+    never on its own kernels. At the comparison's shape the base kernel spent 11.6 s of a step
+    in GEMMs, 86.2% of it in the backward's shapes (dx = dy W with beta, dW += dy^T x with A
+    transposed), which ran at 4.0 GFLOP/s against the forward's 12.5.
+  - `bcir_tensor_mm` became a register-blocked kernel. A KCxNR tile of B is packed once per
+    (column, depth) block and reused by every row, and an MRxNR block of C stays in registers
+    across the tile's depth. There is a portable C instance everywhere, and on x86-64 Linux with
+    GCC or Clang AVX2 and AVX-512 instances chosen per call from the CPU (`bcir_tensor_mm_variants`,
+    `bcir_tensor_mm_variant`; `BCIR_TENSOR_NO_DISPATCH` / `BCIR_TENSOR_MAX_VARIANT` cap the
+    choice). The contract is unchanged: each element starts at its beta-scaled value and adds
+    (alpha*a)*b for l ascending, one rounded multiply and one rounded add per term, so every
+    instance is bit-identical to the ascending-k loop. Per step: 11.6 s -> 2.98 s portable,
+    1.99 s AVX2, 1.24 s AVX-512 (5.2 -> 48.8 GFLOP/s).
+  - Attention runs its products through the same kernel with a mask over the matrices' own
+    indices (store only j <= i; take term l only when l <= i, or only when l >= i). A masked term
+    is skipped, never added as a zero, so nothing outside the causal mask reaches a result, a
+    non-finite value included. The new `bcir_tensor_attention_backward_inplace` rewrites the
+    layer's probabilities with their score adjoint and needs no workspace. dq, dk and dv receive
+    the reference's terms in its order (heads in order for the shared GQA rows), so they are
+    bit-identical to `bcir_tensor_attention_backward`, which stays as the reference. Per layer:
+    forward 18.5 -> 8.3 ms, backward 53.4 -> 15.5 ms.
+  - AdamW's two passes carry the same instances (the build's `-fno-math-errno` lets `sqrt`
+    vectorize, changing no result). The first pass records the largest magnitudes, from which
+    `adamw_bounded` proves that the preflight would admit every element (monotone rounding, half
+    of FLT_MAX in reserve) and skips it; anything else still runs it. 147 -> 65 ms.
+  - A step of the 9.84M decoder at B=8, T=128: 12,297 -> 1,702 ms on BCIR's own kernels
+    (7.23x), 1,322 -> 958 ms with OpenBLAS behind the CBLAS seam, the training state the steps
+    leave identical. Twenty steps end in one state on GCC 13, clang 18 and clang 23, each with
+    all three instruction-set variants -- but clang's builds were 20-59% slower (NDT-CLANG,
+    below).
+  - The comparison trained one model from identical weights, batches and learning rates on four
+    backends: BCIR's own kernels, BCIR with OpenBLAS, eager PyTorch and compiled PyTorch, one
+    thread each. On the repository's documentation as a byte-level language model, all four end
+    at 1.6319 nats per byte on the test split (compiled PyTorch: 1.6318), 1,000 steps. On a copy
+    task, all four copy every one of 2,000 held-out strings. Per step: 1,726 / 963 / 774 / 712 ms,
+    so time to any validation loss is 2.2x eager PyTorch's on BCIR's own kernels and 1.24x with
+    OpenBLAS; BCIR's processes peak at about half of PyTorch's resident memory (544 against
+    1,056-1,140 MiB). The harness's planned peak rate of 2e-3 left every structured task on its
+    plateau, so all runs use a quarter of it, and the abandoned configurations are recorded.
+    The step breakdown puts the gap in the GEMM: MKL runs a step's 60.4 GFLOP in 476 ms, BCIR's
+    no-FMA kernel in 1,329 ms, and everything else together is faster on BCIR (162 against
+    229 ms).
+  - At 1,024 tokens per step from T=64 to T=1024 (the `context` stage), BCIR's own kernels stay at
+    2.0-2.1x eager PyTorch's step and the losses agree at every context. BCIR's attention, which
+    stores every probability, goes from 0.88x to 1.87x PyTorch's flash-attention path per layer,
+    and the arena grows by those probabilities (323 -> 503 MiB). On four threads PyTorch's step is
+    6.1x faster than BCIR's single-threaded kernels and 2.1x faster than BCIR with a four-thread
+    OpenBLAS.
+  - Witnesses: the C harness checks every instance the host runs against the ascending-k loop
+    and refuses an instance the host cannot run, with nothing written. It checks attention
+    forward and the in-place backward against the reference loops, finite and non-finite, and the
+    update against the reference update on both paths. The decoder_train section runs it as C11,
+    C23, portable-only and AVX2-capped builds. RED: `ndt-perf.json` NP1-NP9 are each caught;
+    `ndt-gem.json`'s NG1, NG2 and NG4 were re-anchored on the new kernel and are still caught.
+    `clang --analyze` cannot see that every caller passes a block no wider than its tile, so it
+    is told so under `__clang_analyzer__` alone, and the object code is identical with and
+    without the hint on all three compilers.
+  NDT-CLANG (2026-10-11): the native trainer's GEMM as fast under clang as under GCC, every output
+  bit unchanged.
+  - Found by NDT-PERF's identity stage: twenty steps leave one state under GCC 13, clang 18 and
+    clang 23, but clang's builds ran 30-34% slower with AVX-512, 20% with AVX2 and 58-59% as
+    portable C. `NativeDecoder.build`, and every Python harness through `host_c_compiler`, picks
+    clang before gcc, so the default build was the slow one wherever clang is installed.
+  - The cause was in the generated code. GCC realigns the stack to 64 bytes for the AVX-512
+    instance; clang keeps the ABI's 16, so the packed tile's offset within a cache line was left to
+    the caller's stack depth and ASLR, and every 64-byte load of a misaligned tile read two lines.
+    Across five runs of the same kernel, a step's AVX-512 GEMMs took 1.86-2.80 s under clang 18 and
+    1.21-1.31 s under GCC. A store-back bounded by the masks gave clang a variable index into the
+    accumulators, and clang 18 kept the block on the stack across the depth loop. The packing loop
+    tested layout and padding per element.
+  - The fix: the tile is `_Alignas(64)`, the store-back runs to the block width and tests each
+    column, and the packing loop is split by layout, each source row read contiguously and the
+    padding written once. A fourth change, forming the A operand's address once per block, was
+    measured and dropped: it slowed GCC's AVX-512 instance and clang's portable one.
+    Against main (`fb8d3a0`), interleaved on one host, the step's AVX-512 GEMMs went
+    1,905 -> 1,175 ms under clang 18, 1,604 -> 1,396 under clang 23 and 1,234 -> 1,161 under GCC
+    13, and a training step 3,214 -> 1,594 ms (2.02x), 2,187 -> 1,774 (1.23x) and 1,683 -> 1,602
+    (1.05x). Twenty steps now take 1.57-1.59 s each on all three compilers with AVX-512, and end in
+    the same state as before the fix on all ten builds. The GEM+ row `train.step.ms` (clang 18,
+    the host's default) reads 3.40 ms against a 0.78 ms floor, from 4.58 against 1.34. Clang's
+    portable instance on x86-64, which runs only without dispatch, is still 1.5-1.7x GCC's.
+  - Witnesses: the C harness passes under GCC 13, clang 18 and clang 23, as C11, C23,
+    portable-only and AVX2-capped builds and under ASan+UBSan; `clang --analyze` is clean on 18
+    and 23. RED: `ndt-clang.json` NC1-NC3 (a ragged block's last column unstored, a transposed
+    B's last column or an untransposed B's last depth row dropped from the tile) are each caught;
+    NG1, and the same mutant in `test_the_rows_fire_on_wrong_kernels_and_plans`, are re-anchored
+    on the new packing loop; NG1-NG7 and NP1-NP9 are caught again.
+  VPS-STABLE (2026-10-11): `verify.plan.scope.overhead` timed in paired rounds of the thread's CPU
+  time, so a load on the host no longer moves its verdict.
+  - NDT-CLANG's audit was the third to flag the row over code it does not touch. AUDIT-0 read
+    1.02 -> 1.47, ASN1-T 0.80 -> 1.07, and NDT-CLANG's six runs of identical code 0.49 to 1.03. The
+    harness timed three `optimize` calls, then three `verify_plan` calls, the first of them cold,
+    and divided the medians: two windows that a load could reach one at a time. In twelve processes
+    on this container with nothing else running, it read 0.68 to 1.47. That is two false gains and
+    a false regression against the frozen 1.07. Under a phased load on the measuring CPU (one
+    process pinned to it, busy and idle in phases of 20-300 ms), it read 0.54 to 2.19: three false
+    gains and four false regressions in twelve.
+  - `paired_ratios` (`tools/perf/gemplus_baseline.py`) is JER-PAIRED's estimator for callables in
+    one thread. Each callable runs once untimed. Then sixteen rounds time the planner, the verifier
+    and the floor back to back, in reverse order every other round, and the row is the median of
+    the per-round ratios. On the wall clock, rounds alone read 0.88 to 0.99 with nothing else
+    running. Under the phased load they still read 0.72 to 1.02, because its phases split rounds
+    faster than the median discards them.
+  - `thread_clock` times the rounds in the thread's CPU time, which stands still while the thread
+    is descheduled. Under the same load it read 0.92 to 0.99, and with nothing else running the
+    two clocks agree (medians 0.950 and 0.953, ten processes each). Windows advances thread time
+    once per scheduler tick, so the clock's step is measured, not read: a clock coarser than
+    10 us, one that never steps, or one that fails gives way to the wall clock.
+  - The final instrument, measured alternately with the old one: 0.90 to 0.99 in twelve processes
+    with nothing else running, and 0.93 to 1.01 in twelve under the phased load, every verdict
+    NO-CHANGE. The quantity, the frozen baseline (1.07) and the 25% band are unchanged. Measuring
+    the verifier group now takes about 1.9 s, up from 0.5 s.
+  - It still sees a regression. A `verify_plan` that does its work twice reads 1.93-1.96 against
+    0.94-0.97 clean, REGRESSION in every process. `ab_audit.py` grades it 0.99 -> 1.90, confirmed,
+    next to the exact call count it moves (`kbcir-streampack.full.calls`). An R9 that re-derives
+    each step's cost twice adds 13%: 0.93-0.96 -> 1.05-1.09. That is inside the band, so it is
+    graded NO-CHANGE as the band intends, but its readings no longer overlap the clean ones.
+  - Witnesses, in `bcir/tests/test_gemplus_baseline.py`, use callables of known cost and a fake
+    clock, so every tier runs them:
+    - a load that steps from 1x to 5x reads 4.5x on a true 0.9x through the old estimator, and
+      exactly 0.9x in rounds wherever it arrives or leaves;
+    - a drift of 30% a call reads 1.17 in one fixed order, and within 4% of 0.9 reversed;
+    - the refusals: an odd or too-small count of rounds, nothing to compare, a call that measured
+      no time or NaN;
+    - the clock choice;
+    - the row reads the estimator over the planner, a clean verify and the floor.
+  - `tools/testing/faults/paired.json` injects 15 defects, and each is caught by its own test.
+  GAIN-CONFIRM and NATIVE-PAIRED (2026-10-11): the before/after audit confirms a gain the way it
+  confirms a regression, and the native and ring ratio rows are timed in pairs.
+  - Found by VPS-STABLE's RED audit. Between two trees with the same compiled kernels,
+    `ab_audit.py` graded three rows GAIN: `native.blocked-reduction` 19.8 -> 24.8,
+    `native.dense-parity` 0.813 -> 1.108 and `ring.throughput` 38.7 -> 25.2. It re-measured a
+    ratio row only when its first reading was a regression, so a gain the host made was never
+    checked. The roadmap's §0.2 owes every gain an analysis.
+  - GAIN-CONFIRM: `confirm_ratios` re-measures a ratio row that leaves its band in either
+    direction, alternating the trees, and grades the median of every measurement. The first
+    reading fixes only the row's direction. A gain can come out a gain, NO-CHANGE or a
+    REGRESSION, and the last fails the audit. `test_a_ratio_gain_is_confirmed_before_it_is_graded`
+    runs all three outcomes, on a row where lower is better and on one where higher is.
+  - A ratio row is held to the band it declares. The harness publishes each row's `noise` band,
+    and the audit grades and confirms a ratio row against it, falling back to 25% for a table
+    without one. The ITS codec floors declare 50%, because their denominator, a memcpy of 216
+    octets, is the noisiest number in the run. Held to 25%, `its.coer.decode.floor` read a
+    confirmed GAIN of 14.8 -> 9.9 on a path no change in this PR touches, inside the row's own
+    band. `tools/testing/faults/ab-audit.json` injects 8 defects, each caught.
+  - NATIVE-PAIRED. Ten harness runs of identical code read `native.dense-parity` 0.65 to 1.60,
+    `native.gather-avoidance` 3.9 to 6.2, `native.direct-stride` 1.18 to 1.40 and
+    `ring.throughput` 15.9 to 39.8. The two dense-parity kernels compile from the same C, yet they
+    ran as two programs in two processes. The other three drivers timed every call of one kernel,
+    then every call of the other.
+    - Every driver in `bcir/bench.py` now times both kernels in one program over the same buffers
+      (`_paired_rounds_c`). Each round runs three calls of each kernel back to back, and the order
+      alternates round by round. A round's ratio is the ratio of its two blocks' best calls, and
+      the program reports the median over rounds (`paired_milli`). Each row
+      (`measure_native`) is the median of three programs. A random-access kernel's cost follows
+      the pages its process draws: one `gather_reduce` program read 23.6, the next 31.7.
+    - `ring.throughput` reads each side's best of 16 repeats (`best_ratio`), not the ratio of the
+      medians of five. In one process, pinned or not, the two-thread handoff cost 193 to 786 ns a
+      record from one repeat to the next, while the one-thread memcpy held still. Pairing ring and
+      memcpy cannot cancel that. Over twelve runs of one build, the medians' ratio read 16.3 to
+      44.9 and the best repeats' 15.0 to 19.0.
+    - After, ten harness runs per tree, alternated with the old: `native.dense-parity` 0.97 to
+      1.01, `native.gather-avoidance` 4.47 to 5.05, `native.direct-stride` 1.23 to 1.31, and
+      `ring.throughput` 15.8 to 30.2 (nine of the ten from 15.8 to 19.8).
+    - `native.blocked-reduction` did not tighten: 23.1 to 35.7, against 20.4 to 29.6 before. Its
+      random gather follows the memory system's latency, which moves over seconds on a shared
+      host and reaches the two kernels unequally, so no pairing cancels it. GAIN-CONFIRM is its
+      safety net.
+  - Found while building it: the first timing loop named its block counter `k`. The strided
+    driver's calls saw the counter instead of their stride, so the kernel ran at strides 0, 1 and
+    2, and `native.direct-stride` read 4.5 where the old driver read 1.24. Every name in the loop
+    is now prefixed and scoped. Every driver checks its outputs after the timed calls as well as
+    before, so a timed call that computes something else fails the run.
+  - Witnesses:
+    - in C on a fake clock, `test_the_paired_rounds_cancel_a_load_and_keep_the_drivers_names`.
+      A 1x-to-5x load step reads 4.5 on a true 0.9 through the windowed estimator, and exactly 0.9
+      through rounds wherever it lands. A true 2.0 reads 2.0. A 5%-per-call drift reads 0.958 in
+      one fixed order and 0.902 alternated. Every call sees the program's own `k`, `r`, `a`, `b`;
+    - `test_the_native_rows_are_the_median_of_three_paired_programs`;
+    - `test_the_throughput_row_is_the_best_repeats_ratio`.
+    `tools/testing/faults/native-paired.json` injects 13 defects, each caught. Among them are the
+    counter named `k` and a strided driver whose timed calls run another stride than its
+    checked ones.
+  - The audit of record, `origin/main` against the slice's head, passes. Four ratio rows left
+    their band on the first reading and came back NO-CHANGE: `native.blocked-reduction`,
+    `native.dense-parity`, `native.gather-avoidance` and `verify.plan.scope.overhead`. It grades one
+    GAIN, `ring.throughput` 22.9 -> 15.8, the median of three measurements per tree. That gain is
+    the instrument's: the ring's code did not change, the before tree reads the medians' ratio
+    and the after tree the best repeats'. The frozen 26x is the medians' number, so a reading
+    below it on the reference host is the instrument's too, until the baseline is re-read there.
+  - Cost: the native group takes about 5.6 s instead of 2 s, and the ring bench about 1 s more.
+  NOW-NS64 (2026-10-11): every timing driver the oracle emits reads one clock, in 64 bits.
+  - The drivers of `bcir/bench.py` (five emitters) and of `bcir/clang_compare.py` (one harness for
+    eight) each defined their own `now_ns`, computed in `long`: `(long)t.tv_sec * 1000000000L`.
+    The nanoseconds since 1970 need 61 bits, and a `long` has 32 on LLP64 hosts (64-bit Windows)
+    and on ILP32 ones, where the product overflowed: undefined behaviour, and a reading that is
+    garbage where it is not a trap. Run on wasm32, the old clock read 2026-10-11 as -696082667.
+    Every reading was held in a `long` and printed with `%ld` as well. No CI cell compiled a driver
+    where a `long` has 32 bits: Windows runs the quick tier, which hides the compilers.
+  - One clock now: `bcir.bench.NOW_NS_C`, an `int64_t` from `(int64_t)t.tv_sec *
+    INT64_C(1000000000)`, after one header block, `DRIVER_HEADERS_C` (<inttypes.h> for `PRId64`).
+    Every driver includes both, keeps its readings in `int64_t` with `INT64_MAX` as the sentinel,
+    and prints them with `PRId64`. `clang_compare`'s seven best-of loops are one `_best_of`. What
+    the drivers print, and how `bench` and `clang_compare` parse it, did not change. The gather
+    drivers' `long` indices belong to the kernel ABI, are bounded by the problem size, and stay.
+  - Witnesses, in `bcir/tests/test_bench.py`:
+    - `test_every_driver_reads_the_one_64_bit_clock` (no compiler): all fourteen driver sources
+      include the headers and define `now_ns` once, as `NOW_NS_C`, and an emitter the witnesses do
+      not build fails it;
+    - `test_every_driver_compiles_where_long_has_32_bits`: every driver type-checked for
+      `x86_64-pc-windows-msvc` and `wasm32` against stand-in C library declarations, with a
+      reading narrowed to 32 bits (`-Wshorten-64-to-32`) or printed with `%ld` (`-Wformat`) an
+      error. Where a `long` has 64 bits, both compile silently;
+    - `test_the_clock_reads_the_epoch_in_64_bits_where_long_has_32`: `NOW_NS_C` built for wasm32
+      with `-fwrapv` and run under node, against a clock that answers what it is handed: 2026-10-11,
+      2^31 seconds, the last instant an `int64_t` of nanoseconds holds, and a nanosecond field
+      alone. Each reads back exactly.
+    `tools/testing/faults/now-ns64.json` injects 10 defects, each caught, and each witness is the
+    only one to catch some of them. Only the wasm32 run catches the old clock's arithmetic. Only
+    the type check catches a reading kept in a `long` or printed with `%ld`. Only the first
+    witness catches a driver with a clock of its own.
+  - Every driver builds with the same warnings as before under GCC 13, clang 18 and clang 23
+    (`-Wall -Wextra`), and the native rows read as before: dense-parity 1.004, gather-avoidance
+    4.544, direct-stride 1.293 and blocked-reduction 32.57.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

@@ -1479,8 +1479,15 @@ def c_concurrent(
     return out
 
 
-def c_bench(exe: str, records: int = 300000, repeats: int = 5) -> dict[str, float] | None:
-    """The throughput row: ring time / memcpy time for the same bytes (lower is better)."""
+#: Repeats of the throughput bench: each times the ring, then memcpy over the same bytes.
+BENCH_REPEATS = 16
+
+
+def c_bench(
+    exe: str, records: int = 300000, repeats: int = BENCH_REPEATS
+) -> dict[str, float] | None:
+    """The throughput row: ring time / memcpy time for the same bytes (lower is better), as the
+    ratio of the medians over `repeats` and as the ratio of each side's best repeat."""
     try:
         run = _run([exe, "--bench", str(records), "192", "256", str(repeats)], timeout=300)
     except RuntimeError:
@@ -1488,10 +1495,9 @@ def c_bench(exe: str, records: int = 300000, repeats: int = 5) -> dict[str, floa
     if run.returncode != 0:
         return None
     fields = dict(part.split("=", 1) for part in run.stdout.split() if "=" in part)
+    keys = ("ring_ns", "memcpy_ns", "ratio", "ring_best_ns", "memcpy_best_ns", "best_ratio")
     try:
-        return {
-            key: float(fields[key]) for key in ("ring_ns", "memcpy_ns", "ratio", "records_per_s")
-        }
+        return {key: float(fields[key]) for key in (*keys, "records_per_s")}
     except (KeyError, ValueError):
         return None
 
@@ -1698,8 +1704,12 @@ def cf_exe(tmp: str) -> str:
 
 
 def measure_throughput(exe: str) -> dict[str, float]:
+    """`ring.throughput`: the ring's best repeat over memcpy's best, the same 16 repeats. The
+    two-thread handoff costs what the host's scheduling of the two threads allows, so its median
+    moves with placement: over twelve runs of one build, the ratio of the medians of five repeats
+    (the row until then) read 16.3 to 44.9, and the ratio of the best repeats 15.0 to 19.0."""
     bench = c_bench(exe)
-    return {} if bench is None else {"ring.throughput": bench["ratio"]}
+    return {} if bench is None else {"ring.throughput": bench["best_ratio"]}
 
 
 __all__ = [

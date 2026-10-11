@@ -31,6 +31,7 @@ import tempfile
 from dataclasses import dataclass
 from shutil import which
 
+from .bench import DRIVER_HEADERS_C, NOW_NS_C
 from .examples import saxpy_strided, vector_add
 from .kbcir import TARGETS, optimize
 from .kbcir.cost import Theta
@@ -43,17 +44,28 @@ from .lower.c_kernel import (
     find_strided,
 )
 
-_HARNESS = """
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
-#include <limits.h>
-#include <stdint.h>
-static long now_ns(void){ struct timespec t; timespec_get(&t, TIME_UTC);
-  return (long)t.tv_sec*1000000000L + t.tv_nsec; }
-static uint64_t g=0xBC12u; static uint64_t lcg(void){ g=g*6364136223846793005ULL+1442695040888963407ULL; return g; }
-"""
+_HARNESS = (
+    "\n"
+    + DRIVER_HEADERS_C
+    + NOW_NS_C
+    + "static uint64_t g=0xBC12u; static uint64_t lcg(void){ g=g*6364136223846793005ULL"
+    "+1442695040888963407ULL; return g; }\n"
+)
+
+#: How every driver here prints its timing: the best call alone on a line (what `_median_ns`
+#: reads), an `int64_t` of `NOW_NS_C`'s nanoseconds.
+_PRINT_BEST = 'printf("%" PRId64 "\\n",best);'
+
+
+def _best_of(call: str) -> str:
+    """Every driver's timing: the best of `reps` calls of `call`, each read off `NOW_NS_C`'s
+    64-bit clock and held in an `int64_t`."""
+    return (
+        "int64_t best=INT64_MAX;\n"
+        "  for(int r=0;r<reps;++r){int64_t t0=now_ns();"
+        + call
+        + "int64_t dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}"
+    )
 
 
 def clang_available() -> bool:
@@ -130,15 +142,15 @@ def _elementwise_srcs(n: int):
         "#include <stddef.h>\nvoid k(const float*restrict A,const float*restrict B,"
         "float*restrict C,size_t n){for(size_t i=0;i<n;++i)C[i]=A[i]+B[i];}\n"
     )
+    timed = _best_of("k(A,B,C,n);")
     main = (
         _HARNESS
         + f"""
 int main(int c,char**v){{ size_t n={n}u; int reps=atoi(v[1]);
   float*A=malloc(n*4),*B=malloc(n*4),*C=malloc(n*4);
   for(size_t i=0;i<n;++i){{A[i]=(float)(i%1000);B[i]=(float)(i%7);C[i]=0;}}
-  k(A,B,C,n); long best=LONG_MAX;
-  for(int r=0;r<reps;++r){{long t0=now_ns();k(A,B,C,n);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
-  volatile float s=C[n-1];(void)s; printf("%ld\\n",best); return 0; }}
+  k(A,B,C,n); {timed}
+  volatile float s=C[n-1];(void)s; {_PRINT_BEST} return 0; }}
 """
     )
     return bcir_k + main, naive_k + main
@@ -153,15 +165,15 @@ def _gather_srcs(n: int):
     r = optimize(m, h, Theta.cool())
     bcir_k = emit_kernel_c(m, r, "kd", "f32", hw_width=h.vector_width)  # contiguous
     gather_k = emit_gather_kernel_c(m, r, "kg", "f32")  # A[idx[i]]+B[i]
+    timed_b, timed_n = _best_of("kd(A,B,C,n);"), _best_of("kg(A,B,C,idx,n);")
     main_b = (
         _HARNESS
         + f"""
 int main(int c,char**v){{ size_t n={n}u; int reps=atoi(v[1]);
   float*A=malloc(n*4),*B=malloc(n*4),*C=malloc(n*4);
   for(size_t i=0;i<n;++i){{A[i]=(float)(i%1000);B[i]=(float)(i%7);C[i]=0;}}
-  kd(A,B,C,n); long best=LONG_MAX;
-  for(int r=0;r<reps;++r){{long t0=now_ns();kd(A,B,C,n);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
-  volatile float s=C[n-1];(void)s; printf("%ld\\n",best); return 0; }}
+  kd(A,B,C,n); {timed_b}
+  volatile float s=C[n-1];(void)s; {_PRINT_BEST} return 0; }}
 """
     )
     main_n = (
@@ -171,9 +183,8 @@ int main(int c,char**v){{ size_t n={n}u; int reps=atoi(v[1]);
   float*A=malloc(n*4),*B=malloc(n*4),*C=malloc(n*4); long*idx=malloc(n*sizeof*idx);
   for(size_t i=0;i<n;++i){{A[i]=(float)(i%1000);B[i]=(float)(i%7);C[i]=0;idx[i]=(long)i;}}
   for(size_t i=n-1;i>0;--i){{size_t j=(size_t)(lcg()%(i+1));long t=idx[i];idx[i]=idx[j];idx[j]=t;}}
-  kg(A,B,C,idx,n); long best=LONG_MAX;
-  for(int r=0;r<reps;++r){{long t0=now_ns();kg(A,B,C,idx,n);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
-  volatile float s=C[n-1];(void)s; printf("%ld\\n",best); return 0; }}
+  kg(A,B,C,idx,n); {timed_n}
+  volatile float s=C[n-1];(void)s; {_PRINT_BEST} return 0; }}
 """
     )
     return bcir_k + main_b, gather_k + main_n
@@ -188,14 +199,14 @@ def _reduce_srcs(n: int):
     r = optimize(m, h, Theta.cool())
     blk = emit_reduce_c(m, r, "kb", "i32", gather=False)
     grd = emit_reduce_c(m, r, "kr", "i32", gather=True)
+    timed_b, timed_n = _best_of("s=kb(T,n);"), _best_of("s=kr(T,idx,n);")
     main_b = (
         _HARNESS
         + f"""
 int main(int c,char**v){{ size_t n={n}u; int reps=atoi(v[1]);
   int32_t*T=malloc(n*4); for(size_t i=0;i<n;++i)T[i]=(int32_t)(i%1000);
-  volatile int32_t s=kb(T,n); long best=LONG_MAX;
-  for(int r=0;r<reps;++r){{long t0=now_ns();s=kb(T,n);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
-  (void)s; printf("%ld\\n",best); return 0; }}
+  volatile int32_t s=kb(T,n); {timed_b}
+  (void)s; {_PRINT_BEST} return 0; }}
 """
     )
     main_n = (
@@ -205,9 +216,8 @@ int main(int c,char**v){{ size_t n={n}u; int reps=atoi(v[1]);
   int32_t*T=malloc(n*4); long*idx=malloc(n*sizeof*idx);
   for(size_t i=0;i<n;++i){{T[i]=(int32_t)(i%1000);idx[i]=(long)i;}}
   for(size_t i=n-1;i>0;--i){{size_t j=(size_t)(lcg()%(i+1));long t=idx[i];idx[i]=idx[j];idx[j]=t;}}
-  volatile int32_t s=kr(T,idx,n); long best=LONG_MAX;
-  for(int r=0;r<reps;++r){{long t0=now_ns();s=kr(T,idx,n);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
-  (void)s; printf("%ld\\n",best); return 0; }}
+  volatile int32_t s=kr(T,idx,n); {timed_n}
+  (void)s; {_PRINT_BEST} return 0; }}
 """
     )
     return blk + main_b, grd + main_n
@@ -223,14 +233,14 @@ def _strided_srcs(n: int):
     k = max(1, claim.stride_k)
     direct = emit_strided_c(m, r, "ks", "f32", gather=False)
     gath = emit_strided_c(m, r, "kg", "f32", gather=True)
+    timed_b, timed_n = _best_of("ks(X,Y,n,k);"), _best_of("kg(X,idx,Y,n);")
     main_b = (
         _HARNESS
         + f"""
 int main(int c,char**v){{ size_t n={n}u,k={k}u; int reps=atoi(v[1]);
   float*X=malloc(n*k*4),*Y=malloc(n*4); for(size_t i=0;i<n*k;++i)X[i]=(float)(i%1000);
-  ks(X,Y,n,k); long best=LONG_MAX;
-  for(int r=0;r<reps;++r){{long t0=now_ns();ks(X,Y,n,k);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
-  volatile float s=Y[n-1];(void)s; printf("%ld\\n",best); return 0; }}
+  ks(X,Y,n,k); {timed_b}
+  volatile float s=Y[n-1];(void)s; {_PRINT_BEST} return 0; }}
 """
     )
     main_n = (
@@ -239,9 +249,8 @@ int main(int c,char**v){{ size_t n={n}u,k={k}u; int reps=atoi(v[1]);
 int main(int c,char**v){{ size_t n={n}u,k={k}u; int reps=atoi(v[1]);
   float*X=malloc(n*k*4),*Y=malloc(n*4); long*idx=malloc(n*sizeof*idx);
   for(size_t i=0;i<n*k;++i)X[i]=(float)(i%1000); for(size_t i=0;i<n;++i)idx[i]=(long)(i*k);
-  kg(X,idx,Y,n); long best=LONG_MAX;
-  for(int r=0;r<reps;++r){{long t0=now_ns();kg(X,idx,Y,n);long dt=now_ns()-t0;if(dt>0&&dt<best)best=dt;}}
-  volatile float s=Y[n-1];(void)s; printf("%ld\\n",best); return 0; }}
+  kg(X,idx,Y,n); {timed_n}
+  volatile float s=Y[n-1];(void)s; {_PRINT_BEST} return 0; }}
 """
     )
     return direct + main_b, gath + main_n

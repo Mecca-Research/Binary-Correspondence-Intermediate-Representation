@@ -1,0 +1,159 @@
+{
+ "bcir": {
+  "Ubuntu clang version 18.1.3 (1ubuntu1)": {
+   "parts_ms": {
+    "attention_backward": 114.33698700420791,
+    "attention_forward": 69.40909600598388,
+    "gemm_backward": 1064.166838001256,
+    "gemm_forward": 950.3944300013245,
+    "rms": 4.484413999307435,
+    "rms_backward": 6.384372998581966,
+    "rope": 4.607918999681715,
+    "rope_inverse": 3.646694000053685,
+    "silu": 34.02835800079629,
+    "swiglu_backward": 37.780732000101125
+   },
+   "provider": "portable-c",
+   "rest_ms": -3.1953470097505488,
+   "stages_ms": {
+    "batch": 0.011751002602977678,
+    "binding": 0.2292019999003969,
+    "forward": 1090.2163129976543,
+    "loss_backward": 2215.7811819997733,
+    "step": 2354.305773998931,
+    "update": 68.03207799748634
+   },
+   "training_step_ms": 2354.317525001534
+  },
+  "clang version 23.1.3 (https://github.com/conda-forge/clangdev-feedstock 25b3b037ec2a28639e5f42c2012b1e4e80d96bcf)": {
+   "parts_ms": {
+    "attention_backward": 84.36888999858638,
+    "attention_forward": 49.38388400114491,
+    "gemm_backward": 995.1380159982364,
+    "gemm_forward": 582.3345009994227,
+    "rms": 4.233937001117738,
+    "rms_backward": 5.736656003136886,
+    "rope": 3.9924379998410586,
+    "rope_inverse": 3.964592000556877,
+    "silu": 32.73547500066343,
+    "swiglu_backward": 36.92714799763053
+   },
+   "provider": "portable-c",
+   "rest_ms": 121.92528699961258,
+   "stages_ms": {
+    "batch": 0.0152060019900091,
+    "binding": 0.36607600122806616,
+    "forward": 646.1803149977641,
+    "loss_backward": 2156.408355000167,
+    "step": 1991.3307890019496,
+    "update": 70.22388900077203
+   },
+   "training_step_ms": 1991.3459950039396
+  },
+  "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0": {
+   "parts_ms": {
+    "attention_backward": 89.81595799923525,
+    "attention_forward": 50.71741999927326,
+    "gemm_backward": 899.9122129971511,
+    "gemm_forward": 428.80192899974645,
+    "rms": 4.32225899930927,
+    "rms_backward": 5.766981001215754,
+    "rope": 3.9254760013136547,
+    "rope_inverse": 3.9109219978854526,
+    "silu": 48.116592999576824,
+    "swiglu_backward": 53.65373300082865
+   },
+   "provider": "portable-c",
+   "rest_ms": -12.744468996970681,
+   "stages_ms": {
+    "batch": 0.011789998097810894,
+    "binding": 0.21474800087162293,
+    "forward": 576.1319450029987,
+    "loss_backward": 1652.806846999738,
+    "step": 1631.8562740016205,
+    "update": 55.44251100218389
+   },
+   "training_step_ms": 1631.8680639997183
+  }
+ },
+ "bcir-openblas": {
+  "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "openblas": "OpenBLAS 0.3.34.237.0 DYNAMIC_ARCH NO_AFFINITY SkylakeX MAX_THREADS=64",
+  "parts_ms": {
+   "attention_backward": 90.3609140041226,
+   "attention_forward": 50.702772994554834,
+   "gemm_backward": 381.57236100232694,
+   "gemm_forward": 183.8598379981704,
+   "rms": 4.47084199913661,
+   "rms_backward": 6.461304001277313,
+   "rope": 3.919022001355188,
+   "rope_inverse": 4.070998002134729,
+   "silu": 49.48158300248906,
+   "swiglu_backward": 42.73928300244734
+  },
+  "provider": "scipy_cblas_sgemm",
+  "rest_ms": -1.092484006221639,
+  "stages_ms": {
+   "batch": 0.01161099862656556,
+   "binding": 0.22743199951946735,
+   "forward": 329.53738500145846,
+   "loss_backward": 863.9389109994227,
+   "step": 885.2785089984536,
+   "update": 68.50464299714076
+  },
+  "training_step_ms": 885.2901199970802
+ },
+ "environment": {
+  "commit": "fb8d3a07752f08be326e8857b4b6132abe2c2fcd",
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "cpus": 4,
+  "platform": "Linux-6.18.44-fc-v114-x86_64-with-glibc2.39",
+  "python": "3.11.15"
+ },
+ "rounds": 5,
+ "shape": {
+  "batch": 8,
+  "context": 128,
+  "ff": 1024,
+  "heads": 8,
+  "kvheads": 4,
+  "layers": 6,
+  "vocab": 260,
+  "width": 384
+ },
+ "torch-eager": {
+  "phases_ms": {
+   "backward": 463.6453849998361,
+   "batch": 0.21716499759349972,
+   "clip": 9.044739999808371,
+   "forward": 243.3979389970773,
+   "optimizer": 45.598789998621214,
+   "zero_grad": 0.17174800086650066
+  },
+  "profile_forward_backward_self_cpu_ms": {
+   "attention": 59.47086899999988,
+   "gemm": 475.71780860000104,
+   "other": 174.2208799999993
+  },
+  "profile_total_ms": 709.4095576000003,
+  "top_operators_ms": {
+   "aten::_scaled_dot_product_flash_attention_for_cpu": 20.584724399999974,
+   "aten::_scaled_dot_product_flash_attention_for_cpu_backward": 38.7753331999999,
+   "aten::add": 10.924731000000046,
+   "aten::add_": 9.518894200000108,
+   "aten::cat": 4.18080700000001,
+   "aten::copy_": 12.981019000000321,
+   "aten::div": 3.305148599999908,
+   "aten::fill_": 6.826367999999905,
+   "aten::mm": 474.43850980000104,
+   "aten::mul": 65.95528460000027,
+   "aten::pow": 5.515300000000146,
+   "aten::silu": 6.942093199999986,
+   "aten::silu_backward": 8.014151399999975,
+   "aten::sum": 9.455816600000158,
+   "autograd::engine::evaluate_function: MulBackward0": 2.3460287999996567
+  },
+  "torch": "2.13.0+cu130",
+  "training_step_ms": 762.075766993803
+ }
+}

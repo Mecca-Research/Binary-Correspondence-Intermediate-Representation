@@ -350,6 +350,102 @@ def test_a_ratio_regression_is_confirmed_before_it_is_graded():
         ab_audit.run_harness = real
 
 
+def test_a_ratio_gain_is_confirmed_before_it_is_graded():
+    """A ratio leaves its band toward a gain as readily as toward a regression, and the roadmap's
+    §0.2 owes every GAIN an analysis, so a gain earns the same confirming measurements. The median
+    of the measurements can keep the GAIN, find no change, or find a REGRESSION: here the first
+    reading's direction is the only thing it is trusted for, on a row where lower is better (a
+    cost ratio) and on one where higher is (a throughput)."""
+    import types
+
+    rows = [dict(_row("r", "ratio", 1.0, 0.5), group="g")]
+    args = types.SimpleNamespace(ratio_confirm=2, timeout=10)
+    cases = (
+        # first after-reading, its improvement, the confirmations, the confirmed verdict
+        (0.6, 0.7, [0.98, 1.03], "NO-CHANGE"),  # lower is better: a false gain
+        (0.6, 0.7, [0.62, 0.58], "GAIN"),
+        (0.6, 0.7, [1.4, 1.5], "REGRESSION"),  # the first reading pointed the wrong way
+        (1.5, 0.7, [1.02, 0.97], "NO-CHANGE"),  # higher is better
+        (1.5, 0.7, [1.55, 1.6], "GAIN"),
+        (1.5, 0.7, [0.6, 0.62], "REGRESSION"),
+    )
+    real = ab_audit.run_harness
+    try:
+        for first, improved, confirmations, want in cases:
+            graded = grade_harness(
+                [_row("r", "ratio", 1.0, 0.5)], [_row("r", "ratio", first, improved)]
+            )
+            assert [f.verdict for f in graded] == ["GAIN"], (first, graded)
+            calls = []
+
+            def fake(tree, scratch, label, timeout, group="", _after=confirmations, _calls=calls):
+                _calls.append((tree, group))
+                value = 1.0
+                if tree == "AFTER":
+                    value = _after[len([c for c in _calls if c[0] == tree]) - 1]
+                return [dict(_row("r", "ratio", value, 0.5), group="g")]
+
+            ab_audit.run_harness = fake
+            (confirmed,) = ab_audit.confirm_ratios(
+                graded, rows, rows, "BEFORE", "AFTER", "/tmp", args
+            )
+            assert confirmed.verdict == want, (first, confirmations, confirmed)
+            assert len(calls) == 4 and "confirmed" in confirmed.note, (calls, confirmed)
+            fails = ab_audit.verdict_of([confirmed], {}, []) == FAIL
+            assert fails == (want == "REGRESSION"), (first, confirmations, confirmed)
+    finally:
+        ab_audit.run_harness = real
+
+
+def test_a_ratio_row_is_held_to_the_band_it_declares():
+    """The harness declares a wider band for a row whose denominator is the run's noisiest number
+    (the ITS codec floors over a 216-octet memcpy declare `noise=0.5`), and the audit holds the row
+    to that band, in its first grading and in its confirmation alike. A 33% move is NO-CHANGE
+    there and a GAIN on a row that declares nothing; the after tree's declaration governs, a table
+    written before rows carried one falls back to 25%, and a nonsensical band is ignored."""
+    import types
+
+    from tools.perf.ab_audit import RATIO_BAND, _ratio_band
+    from tools.perf.gemplus_baseline import METRICS, compare
+
+    published = {row["key"]: row["noise"] for row in compare({}, same_host=False)}
+    assert published == {m.key: m.noise for m in METRICS}  # the band the harness grades within
+    assert published["its.coer.decode.floor"] == 0.5 and published["native.dense-parity"] == 0.25
+
+    declared = dict(_row("w", "ratio", 1.0, 0.5), noise=0.5)
+    moved = dict(_row("w", "ratio", 0.67, 0.6), noise=0.5)
+    (finding,) = grade_harness([declared], [moved])
+    assert finding.verdict == "NO-CHANGE" and "50%" in finding.note, finding
+    (finding,) = grade_harness([_row("w", "ratio", 1.0, 0.5)], [_row("w", "ratio", 0.67, 0.6)])
+    assert finding.verdict == "GAIN", finding
+    (finding,) = grade_harness([_row("w", "ratio", 1.0, 0.5)], [moved])
+    assert finding.verdict == "NO-CHANGE", finding  # the after tree's band governs
+    for band in (None, 0, -0.5, True, float("nan"), "0.5"):
+        assert _ratio_band({"noise": band}) == RATIO_BAND, band
+    assert _ratio_band(None, {"noise": 0.4}) == 0.4
+
+    # past even its own band the row moves, and the confirmation is read within that band too
+    graded = grade_harness([declared], [dict(_row("w", "ratio", 0.4, 0.8), noise=0.5)])
+    assert [f.verdict for f in graded] == ["GAIN"], graded
+    rows = [dict(declared, group="g")]
+    args = types.SimpleNamespace(ratio_confirm=2, timeout=10)
+    real = ab_audit.run_harness
+    try:
+        calls = []
+
+        def fake(tree, scratch, label, timeout, group="", _calls=calls):
+            _calls.append(tree)
+            value = [0.62, 0.6][_calls.count(tree) - 1] if tree == "AFTER" else 1.0
+            return [dict(_row("w", "ratio", value, 0.5), group="g", noise=0.5)]
+
+        ab_audit.run_harness = fake
+        (confirmed,) = ab_audit.confirm_ratios(graded, rows, rows, "BEFORE", "AFTER", "/tmp", args)
+    finally:
+        ab_audit.run_harness = real
+    # median of 0.4, 0.62, 0.6 is 0.6: a 40% move, inside the declared 50% (a GAIN at 25%)
+    assert confirmed.verdict == "NO-CHANGE", confirmed
+
+
 def test_measuring_processes_share_one_hash_seed():
     proc = ab_audit._run(
         [sys.executable, "-c", "import os; print(os.environ['PYTHONHASHSEED'])"], _ROOT, 60

@@ -1508,12 +1508,15 @@ METRICS: tuple[Metric, ...] = (
     # pinned per vCPU pair it ranged ~13-49x within the hour (a minimal unchecked Lamport queue
     # moving the same bytes, ~1.1-6x), so the row is reported, never graded, and no code change is
     # attributable to it there. host_dependent: it measures the host's placement and coherence
-    # latency, not only the code.
+    # latency, not only the code. Since NATIVE-PAIRED the row reads each side's best of 16 repeats,
+    # which reads lower than the medians wherever the ring's repeats spread and memcpy's hold still
+    # (twelve runs of one build on a 4-vCPU VM: 15.0-19.0x, the medians' ratio 16.3-44.9x). 26.0 is
+    # the medians' number, so a reading below it is the instrument's until it is re-read there.
     Metric(
         "ring.throughput",
         "ring",
         "ring time per record / memcpy time per record, the same 124-byte envelopes (two threads "
-        "vs one)",
+        "vs one), each side's best of 16 repeats",
         26.0,
         "x",
         "ratio",
@@ -2421,7 +2424,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "native.gather-avoidance",
         "native",
-        "blocked realization vs gather form",
+        "blocked realization vs gather form, median of 3 paired programs",
         5.58,
         "x",
         "ratio",
@@ -2434,7 +2437,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "native.blocked-reduction",
         "native",
-        "blocked reduction vs naive",
+        "blocked reduction vs naive, median of 3 paired programs",
         11.68,
         "x",
         "ratio",
@@ -2447,7 +2450,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "native.direct-stride",
         "native",
-        "direct strided access vs gather form",
+        "direct strided access vs gather form, median of 3 paired programs",
         1.27,
         "x",
         "ratio",
@@ -2460,7 +2463,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "native.dense-parity",
         "native",
-        "dense streaming BCIR vs equivalent compiler loop",
+        "dense streaming BCIR vs equivalent compiler loop, median of 3 paired programs",
         0.98,
         "x",
         "ratio",
@@ -2496,16 +2499,16 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "verify.plan.scope.overhead",
         "verifier",
-        "scope-aware verify_plan / optimize, same fixture (4,096 claims)",
+        "scope-aware verify_plan / optimize, same fixture (4,096 claims), median of paired rounds",
         1.07,
         "x",
         "ratio",
         floor_key="verify.plan.scope.overhead.floor",
         bound_source="re-deriving each chosen step's cost once through R9's own predicate "
         "(`realize.edge_cost`, the phase weights once per phase run), over the same optimize "
-        "median in the same run: scope-aware R9 re-derives every step, and the floor's costs sum "
-        "to the plan's score, so it did that work -- the offer re-derivation and the other laws "
-        "are above it",
+        "calls in the same paired rounds: scope-aware R9 re-derives every step, and the floor's "
+        "costs sum to the plan's score, so it did that work -- the offer re-derivation and the "
+        "other laws are above it",
         slice_owner="G17",
     ),
     # --- ITS: the security-envelope study (docs/research/BCIR_ITS_ASN1_BINARY_STUDY.md) -------
@@ -3291,30 +3294,145 @@ def measure_workload() -> dict[str, float]:
     }
 
 
+#: Programs each native row takes the median of (`measure_native`).
+NATIVE_PROGRAMS = 3
+
+
 def measure_native() -> dict[str, float]:
     """The §4.4 native structural wins through the measured-evidence rail (`bcir.bench`),
     compiled and timed on this host -- guardrails, not targets (G6). A ratio here is a
     same-host number: the report's baselines were measured on other silicon, and this host's
     tenancy is what `kbcir.microbench.host_attestation` says it is. Empty when no C
-    toolchain is available."""
+    toolchain is available.
+
+    Each row is the median, over `NATIVE_PROGRAMS` programs, of the program's paired ratio: its
+    two kernels timed in one process over the same buffers, in rounds that alternate which goes
+    first (`bcir.bench._paired_rounds_c`). The rounds cancel what the host does between two
+    windows of calls, and the dense-parity pair, two programs until then, shares a process. The
+    median over programs is for what one process draws and the next does not. A random-access
+    kernel's cost follows the pages its process lands on: one `gather_reduce` program read 23.6
+    and the next 31.7, from rounds that cancel load but not placement. A row whose programs did
+    not all measure is not measured."""
+    import statistics
+
     from bcir.bench import bench_available, compare, compare_gather, compare_reduce, compare_strided
 
     if not bench_available():
         return {}
+    rows = {  # row: (comparison, program, opt, n, reps)
+        "native.gather-avoidance": (compare_gather, "vector_add", "-O2", 1 << 16, 30),
+        "native.blocked-reduction": (compare_reduce, "gather_reduce", "-O2", 1 << 20, 30),
+        "native.direct-stride": (compare_strided, "saxpy_strided", "-O2", 1 << 22, 30),
+        "native.dense-parity": (compare, "vector_add", "-O3", 1 << 20, 100),
+    }
     out: dict[str, float] = {}
-    gather = compare_gather("vector_add", opt="-O2", n=1 << 16, reps=30)
-    if gather.speedup_milli:
-        out["native.gather-avoidance"] = gather.speedup_milli / 1000
-    reduce = compare_reduce("gather_reduce", opt="-O2", n=1 << 20, reps=30)
-    if reduce.speedup_milli:
-        out["native.blocked-reduction"] = reduce.speedup_milli / 1000
-    strided = compare_strided("saxpy_strided", opt="-O2", n=1 << 22, reps=30)
-    if strided.speedup_milli:
-        out["native.direct-stride"] = strided.speedup_milli / 1000
-    dense = compare("vector_add", opt="-O3", n=1 << 20, reps=100)
-    if dense.speedup_milli:
-        out["native.dense-parity"] = dense.speedup_milli / 1000
+    for key, (run, program, opt, n, reps) in rows.items():
+        paired = [
+            run(program, opt=opt, n=n, reps=reps).paired_milli for _ in range(NATIVE_PROGRAMS)
+        ]
+        if all(paired):
+            out[key] = statistics.median(paired) / 1000
     return out
+
+
+def thread_clock(candidate=None, limit_s: float = 0.25):
+    """The clock `paired_ratios` times with: this thread's CPU time (`time.thread_time`) where it
+    steps finely, else the wall clock (`time.perf_counter`).
+
+    WHY CPU TIME. A round cancels a load that reaches both of its calls, but a load that comes and
+    goes within a round splits rounds faster than their median can discard them. With one process
+    pinned to the measuring CPU, busy and idle in phases of 20-300 ms, the verifier row timed in
+    wall-clock rounds read 0.72 to 1.02 over ten processes; timed in this thread's CPU time it
+    read 0.92 to 0.99. A thread's CPU time stands still while the thread is descheduled (and, under
+    paravirtual steal accounting, while the hypervisor runs someone else), so it times the call's
+    own work. The callables it is meant for compute in this thread and wait on nothing, so on an
+    idle host the two clocks agree: 0.950 and 0.953, the medians of ten processes each.
+
+    WHY "WHERE IT STEPS FINELY". Windows reports thread time in 100 ns units but advances it once
+    per scheduler tick, about 15.6 ms, and would read the verifier floor's few milliseconds as no
+    time at all. So the clock's step is measured rather than read from `time.get_clock_info`: a
+    clock that steps by more than 10 us, that does not step within `limit_s`, or that fails is
+    passed over for the wall clock.
+    """
+    import time
+
+    wall = time.perf_counter
+    if candidate is None:
+        candidate = getattr(time, "thread_time", None)
+        if candidate is None:
+            return wall
+    deadline = wall() + limit_s
+    try:
+        first = candidate()
+        while (second := candidate()) == first:  # to the clock's next step ...
+            if wall() > deadline:
+                return wall
+        while (third := candidate()) == second:  # ... and the size of the one after it
+            if wall() > deadline:
+                return wall
+    except OSError:
+        return wall
+    return candidate if 0 < third - second <= 1e-5 else wall
+
+
+def paired_ratios(base, others, rounds: int = 16, clock=None) -> dict[str, float]:
+    """For each `others[name]`, the median over `rounds` of its time over `base`'s time, where a
+    round times `base` and every one of `others` once, back to back in this thread, in the reverse
+    of the order the round before it used, by `clock` (`thread_clock()` unless one is given). Each
+    callable runs once untimed first.
+
+    WHY ROUNDS. A ratio of two timed callables measured as two windows -- every `base` call, then
+    every other call -- divides measurements of two different machines in all but name: whatever
+    the host does during one window and not the other moves the ratio as far as it likes.
+    `verify.plan.scope.overhead`, three calls a side that way, left its 25% band in audits that
+    changed nothing on its path (1.02 -> 1.47 in AUDIT-0's, 0.80 -> 1.07 in ASN1-T's, 0.49 to 1.03
+    over six runs in NDT-CLANG's), and in twelve processes on one container with nothing else
+    running read 0.68 to 1.47: two false gains and a false regression against its frozen baseline.
+    The calls of a round sit milliseconds apart, so a load that reaches one reaches its neighbour
+    and cancels in their ratio, and the median over rounds discards the round a change of load
+    happens to split. In twelve processes interleaved with those, this estimator read 0.90 to
+    0.99. It is JER-PAIRED's estimator (`bcir/tests/test_cpp_jer_simd.py`, `_paired_gain`) for
+    callables in this thread, held to the same property by
+    `test_the_paired_ratio_cancels_a_load_that_moves_between_windows`.
+
+    WHY REVERSED, AND AN EVEN COUNT. The base is first in one round and last in the next, so every
+    other callable runs after it in half the rounds and before it in the other half: a host that
+    speeds up or slows down across a round lifts half the rounds' ratios and lowers the other
+    half's instead of moving them all one way, and an even count weighs the two halves equally in
+    the median (`test_the_paired_ratio_weighs_both_orders_of_a_round_equally`).
+
+    WHY A WARM-UP. A first call pays for what later calls find ready: in six processes the first
+    `verify_plan` ran 4% to 50% slower than the median of the three after it.
+
+    Every interval is checked before it is believed: a call that measured no time is a failed
+    measurement, never a free one.
+    """
+    import statistics
+
+    if isinstance(rounds, bool) or not isinstance(rounds, int) or rounds < 4 or rounds % 2:
+        raise ValueError(f"paired rounds must be an even count of at least 4, not {rounds!r}")
+    if not others:
+        raise ValueError("paired rounds need a callable to time against the base")
+    clock = clock or thread_clock()
+    order = [(None, base), *others.items()]
+    for _, fn in order:  # the warm-up
+        fn()
+    took: dict[str | None, list[float]] = {name: [] for name, _ in order}
+    for index in range(rounds):
+        for name, fn in order if index % 2 == 0 else order[::-1]:
+            start = clock()
+            fn()
+            took[name].append(clock() - start)
+            if not took[name][-1] > 0:
+                raise RuntimeError(
+                    f"{name or 'the base'} measured no time in round {index}: a failed "
+                    "measurement, never a free one"
+                )
+    base_times = took[None]  # each round's ratio is over its own base call
+    return {
+        name: statistics.median(t / b for t, b in zip(took[name], base_times, strict=True))
+        for name in others
+    }
 
 
 def measure_verifier() -> dict[str, float]:
@@ -3332,13 +3450,12 @@ def measure_verifier() -> dict[str, float]:
     one regression this row exists to catch.
 
     The overhead row is the price of the fix, as a same-process ratio so it carries across
-    hosts: scope-aware verification currently re-derives the planner's whole offer
-    (`fused_candidates`) to price each chosen step. G17's single-candidate re-derivation is
-    the slice that must move it; no floor is recorded because the 3-5x it projects is a
-    projection, not a proved bound.
+    hosts: verifying the planner's own plan, which verifies clean, over planning it. Its floor
+    is R9's irreducible work, each chosen step's cost re-derived once (`reprice`). Both are
+    timed in the same paired rounds of this thread's CPU time (`paired_ratios`, `thread_clock`):
+    the planner, the verifier and the floor back to back in each round, so a load on the host
+    reaches all three and cancels.
     """
-    import statistics
-    import time
     from dataclasses import replace
 
     from bcir.examples import matmul_tiled
@@ -3350,18 +3467,7 @@ def measure_verifier() -> dict[str, float]:
     out: dict[str, float] = {}
     module = matmul_tiled(n=128, tile=8)
     host, theta = TargetProfile.x86_avx2(), Theta.mem_bound()
-
-    def median_ms(fn, repeats=3):
-        samples = []
-        for _ in range(repeats):
-            start = time.perf_counter()
-            fn()
-            samples.append((time.perf_counter() - start) * 1e3)
-        return statistics.median(samples)
-
     result = optimize(module, host, theta, PERF)
-    plan_ms = median_ms(lambda: optimize(module, host, theta, PERF))
-    verify_ms = median_ms(lambda: verify_plan(module, result, host, theta=theta, policy=PERF))
 
     def reprice():
         """R9's irreducible work: each chosen step's cost re-derived once through the shared
@@ -3376,9 +3482,17 @@ def measure_verifier() -> dict[str, float]:
 
     if reprice() != result.score:  # the floor must do the work it stands for
         raise AssertionError("the re-derived step costs do not sum to the plan's score")
-    if plan_ms:
-        out["verify.plan.scope.overhead"] = verify_ms / plan_ms
-        out["verify.plan.scope.overhead.floor"] = median_ms(reprice) / plan_ms
+    if verify_plan(module, result, host, theta=theta, policy=PERF):  # the row times a clean pass
+        raise AssertionError("the planner's own plan does not verify")
+    ratios = paired_ratios(
+        lambda: optimize(module, host, theta, PERF),
+        {
+            "verify": lambda: verify_plan(module, result, host, theta=theta, policy=PERF),
+            "floor": reprice,
+        },
+    )
+    out["verify.plan.scope.overhead"] = ratios["verify"]
+    out["verify.plan.scope.overhead.floor"] = ratios["floor"]
 
     forged = replace(
         result,
@@ -4220,6 +4334,8 @@ def compare(measured: dict[str, float], *, same_host: bool | None = None) -> lis
                 "bound_source": metric.bound_source,
                 "headroom": headroom,
                 "floor_violated": bool(metric.floor_key) and metric.floor_violated(value, bound),
+                # the band the row is graded within, which a before/after audit holds it to too
+                "noise": metric.noise,
             }
         )
     return rows

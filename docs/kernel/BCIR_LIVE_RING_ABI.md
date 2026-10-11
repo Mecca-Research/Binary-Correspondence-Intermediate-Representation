@@ -289,6 +289,13 @@ since (no heartbeat, no held test, no owner snapshot, no accounting commit, whol
 copies) stayed inside the placement noise. The row is host-dependent and INDICATIVE; a faithful
 A/B needs pinned threads on isolated cores of an attested host (the G7 discipline).
 
+Since NATIVE-PAIRED the row is each side's best of 16 repeats (`best_ratio` in the bench's line,
+which still prints the medians). Within one process the handoff cost 193 to 786 ns a record from
+one repeat to the next, pinned or not, while `memcpy` held still. A repeat pairs the two sides in
+time, but no pair can cancel a cost only one side pays. Over twelve runs of one build, the
+ratio of the medians of five repeats read 16.3 to 44.9, and the ratio of the best repeats 15.0 to
+19.0.
+
 ## Relation to the other surfaces
 
 - **The v1 snapshot ring** (`parse_shared_ring`, `emit_ring_header_c`) is unchanged and frozen.

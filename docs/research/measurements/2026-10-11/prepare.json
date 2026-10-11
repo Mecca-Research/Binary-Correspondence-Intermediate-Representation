@@ -1,0 +1,83 @@
+{
+  "batch": 8,
+  "context": 128,
+  "corpus_commit": "75d50d4f6e280e35a25032024edffd92f25c52f2",
+  "documents": 404,
+  "optimizer": {
+    "beta1": 0.9,
+    "beta2": 0.95,
+    "clip": 1.0,
+    "decay": 0.1,
+    "eps": 1e-08,
+    "floor": 0.0002,
+    "peak": 0.002,
+    "warmup": 50
+  },
+  "parameters": 9836928,
+  "spec": {
+    "ff": 1024,
+    "heads": 8,
+    "kvheads": 4,
+    "layers": 6,
+    "vocab": 260,
+    "width": 384
+  },
+  "tasks": {
+    "add": {
+      "format": "aaa+bbb= then the sum's four digits least-significant first, newline",
+      "metrics": "cross-entropy and accuracy over the answer bytes; teacher-forced exact match (every answer byte right, which is greedy decoding's answer)",
+      "schedule_sha256": "871db1ce25d4224b56ae0171becd1b3d70f14e20fc97011874786b1e583b1ff1",
+      "steps": 3000,
+      "targets": "the next byte; IGN where nothing before it predicts it (prompt-loss masking): the copied letters, an operand digit, a pair's key or value, the query",
+      "test_problems": 2000,
+      "train": {
+        "sha256": "b24c61d86d59859960174e18dd9e6dc99d95b404f72fe748335859dc19c9b4b0",
+        "tokens": 2000011
+      }
+    },
+    "copy": {
+      "format": "eight random lowercase letters, '=', the same eight letters, newline",
+      "metrics": "cross-entropy and accuracy over the answer bytes; teacher-forced exact match (every answer byte right, which is greedy decoding's answer)",
+      "schedule_sha256": "d87c76fa97b8248666162db279305b1da7b9bf2991d19391e6ed97ec2df9a9af",
+      "steps": 1000,
+      "targets": "the next byte; IGN where nothing before it predicts it (prompt-loss masking): the copied letters, an operand digit, a pair's key or value, the query",
+      "test_problems": 2000,
+      "train": {
+        "sha256": "56553154b00d8f8c049dcb29ad88c1de7d98856b165ec2598f373216b5559d17",
+        "tokens": 2000016
+      }
+    },
+    "lm": {
+      "schedule_sha256": "fe2ab3a16df2bfdd97792380f8078fe9924ec3bf5eae5590a174f87e8725e7bb",
+      "steps": 1000,
+      "test": {
+        "documents": 16,
+        "sha256": "78a40ea545549ff6a0f04485c1d981588a4a4c86eaea88d3d9aeb76878bd8273",
+        "tokens": 750068
+      },
+      "train": {
+        "documents": 368,
+        "sha256": "415bf4e309f7614a7ba1bc886d79d632de3db93a94288915d708d323ac782667",
+        "tokens": 4325548
+      },
+      "validation": {
+        "documents": 20,
+        "sha256": "0b9cef084c25e84875f463f98b23748014ec68824af805928c970435366f9726",
+        "tokens": 106726
+      }
+    },
+    "recall": {
+      "format": "six key/value pairs (distinct lowercase keys, digit values), ':', a query key, its value, newline",
+      "metrics": "cross-entropy and accuracy over the answer bytes; teacher-forced exact match (every answer byte right, which is greedy decoding's answer)",
+      "schedule_sha256": "a5983dfe8c6a0ca1ac34d9124742e4fac6044d5e7efa5421dd36d874a916dc96",
+      "steps": 1000,
+      "targets": "the next byte; IGN where nothing before it predicts it (prompt-loss masking): the copied letters, an operand digit, a pair's key or value, the query",
+      "test_problems": 2000,
+      "train": {
+        "sha256": "b5c80f360d82f4fb55a5087cde442bb55a7cf5c318b45e207ab1165d6857acfa",
+        "tokens": 2000000
+      }
+    }
+  },
+  "weights_sha256": "00e5b3593ee3159a2cb5b56b8827a74df5170f146d83b6bdad9421c77e477b82"
+}

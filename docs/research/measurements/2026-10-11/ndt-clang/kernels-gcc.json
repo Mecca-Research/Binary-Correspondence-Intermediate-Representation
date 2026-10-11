@@ -1,0 +1,3026 @@
+{
+ "base": "fb8d3a0",
+ "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+ "flags": {
+  "old": [
+   "-O3",
+   "-ffp-contract=off",
+   "-fno-math-errno"
+  ],
+  "new": [
+   "-O3",
+   "-ffp-contract=off",
+   "-fno-math-errno"
+  ]
+ },
+ "rounds": 5,
+ "variants": 7,
+ "outputs_identical": true,
+ "gemm": [
+  {
+   "name": "q,o forward",
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 384,
+   "k": 384,
+   "calls": 12,
+   "old_ms": 5.2951,
+   "old_ms_variant_1": 12.3713,
+   "old_ms_variant_2": 8.5858,
+   "old_ms_variant_4": 5.2951,
+   "new_ms_variant_1": 12.599,
+   "new_ms_variant_2": 7.6881,
+   "new_ms_variant_4": 5.2698
+  },
+  {
+   "name": "k,v forward",
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 192,
+   "k": 384,
+   "calls": 12,
+   "old_ms": 2.5655,
+   "old_ms_variant_1": 5.9878,
+   "old_ms_variant_2": 4.2668,
+   "old_ms_variant_4": 2.5655,
+   "new_ms_variant_1": 5.9817,
+   "new_ms_variant_2": 3.7406,
+   "new_ms_variant_4": 2.5621
+  },
+  {
+   "name": "gate,up forward",
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 1024,
+   "k": 384,
+   "calls": 12,
+   "old_ms": 16.3809,
+   "old_ms_variant_1": 38.3161,
+   "old_ms_variant_2": 26.0435,
+   "old_ms_variant_4": 16.3809,
+   "new_ms_variant_1": 38.4077,
+   "new_ms_variant_2": 24.3999,
+   "new_ms_variant_4": 15.8527
+  },
+  {
+   "name": "down forward",
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "calls": 6,
+   "old_ms": 17.0111,
+   "old_ms_variant_1": 38.9521,
+   "old_ms_variant_2": 27.6676,
+   "old_ms_variant_4": 17.0111,
+   "new_ms_variant_1": 39.3681,
+   "new_ms_variant_2": 25.2385,
+   "new_ms_variant_4": 15.8823
+  },
+  {
+   "name": "head forward",
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 260,
+   "k": 384,
+   "calls": 1,
+   "old_ms": 4.3928,
+   "old_ms_variant_1": 9.5072,
+   "old_ms_variant_2": 7.0936,
+   "old_ms_variant_4": 4.3928,
+   "new_ms_variant_1": 9.1761,
+   "new_ms_variant_2": 5.5299,
+   "new_ms_variant_4": 4.2086
+  },
+  {
+   "name": "q,o dx",
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 384,
+   "calls": 12,
+   "old_ms": 5.4263,
+   "old_ms_variant_1": 13.2383,
+   "old_ms_variant_2": 9.8608,
+   "old_ms_variant_4": 5.4263,
+   "new_ms_variant_1": 13.0176,
+   "new_ms_variant_2": 7.7224,
+   "new_ms_variant_4": 5.2106
+  },
+  {
+   "name": "k,v dx",
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 192,
+   "calls": 12,
+   "old_ms": 2.6293,
+   "old_ms_variant_1": 6.3504,
+   "old_ms_variant_2": 4.2742,
+   "old_ms_variant_4": 2.6293,
+   "new_ms_variant_1": 5.9626,
+   "new_ms_variant_2": 3.9938,
+   "new_ms_variant_4": 2.5261
+  },
+  {
+   "name": "gate dx",
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "calls": 6,
+   "old_ms": 16.8774,
+   "old_ms_variant_1": 40.3024,
+   "old_ms_variant_2": 29.2646,
+   "old_ms_variant_4": 16.8774,
+   "new_ms_variant_1": 39.01,
+   "new_ms_variant_2": 26.4643,
+   "new_ms_variant_4": 16.1545
+  },
+  {
+   "name": "up dx",
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "calls": 6,
+   "old_ms": 16.3537,
+   "old_ms_variant_1": 40.4758,
+   "old_ms_variant_2": 27.3596,
+   "old_ms_variant_4": 16.3537,
+   "new_ms_variant_1": 40.3608,
+   "new_ms_variant_2": 26.8594,
+   "new_ms_variant_4": 16.546
+  },
+  {
+   "name": "down dx",
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 1024,
+   "k": 384,
+   "calls": 6,
+   "old_ms": 17.2555,
+   "old_ms_variant_1": 36.7718,
+   "old_ms_variant_2": 27.7134,
+   "old_ms_variant_4": 17.2555,
+   "new_ms_variant_1": 39.3835,
+   "new_ms_variant_2": 23.7675,
+   "new_ms_variant_4": 16.4089
+  },
+  {
+   "name": "head dx",
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 260,
+   "calls": 1,
+   "old_ms": 3.6232,
+   "old_ms_variant_1": 8.7096,
+   "old_ms_variant_2": 6.1778,
+   "old_ms_variant_4": 3.6232,
+   "new_ms_variant_1": 8.5486,
+   "new_ms_variant_2": 5.3423,
+   "new_ms_variant_4": 3.5127
+  },
+  {
+   "name": "q,o dW",
+   "ta": 1,
+   "tb": 0,
+   "m": 384,
+   "n": 384,
+   "k": 1024,
+   "calls": 12,
+   "old_ms": 6.3984,
+   "old_ms_variant_1": 15.6695,
+   "old_ms_variant_2": 10.5355,
+   "old_ms_variant_4": 6.3984,
+   "new_ms_variant_1": 16.0487,
+   "new_ms_variant_2": 9.4795,
+   "new_ms_variant_4": 5.8956
+  },
+  {
+   "name": "k,v dW",
+   "ta": 1,
+   "tb": 0,
+   "m": 192,
+   "n": 384,
+   "k": 1024,
+   "calls": 12,
+   "old_ms": 3.1021,
+   "old_ms_variant_1": 7.4463,
+   "old_ms_variant_2": 4.9248,
+   "old_ms_variant_4": 3.1021,
+   "new_ms_variant_1": 7.1151,
+   "new_ms_variant_2": 4.3485,
+   "new_ms_variant_4": 2.63
+  },
+  {
+   "name": "gate,up dW",
+   "ta": 1,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "calls": 12,
+   "old_ms": 17.2513,
+   "old_ms_variant_1": 45.0855,
+   "old_ms_variant_2": 26.0922,
+   "old_ms_variant_4": 17.2513,
+   "new_ms_variant_1": 43.6878,
+   "new_ms_variant_2": 24.8824,
+   "new_ms_variant_4": 15.4477
+  },
+  {
+   "name": "down dW",
+   "ta": 1,
+   "tb": 0,
+   "m": 384,
+   "n": 1024,
+   "k": 1024,
+   "calls": 6,
+   "old_ms": 17.9139,
+   "old_ms_variant_1": 43.8866,
+   "old_ms_variant_2": 30.055,
+   "old_ms_variant_4": 17.9139,
+   "new_ms_variant_1": 44.4604,
+   "new_ms_variant_2": 25.1927,
+   "new_ms_variant_4": 15.8663
+  },
+  {
+   "name": "head dW",
+   "ta": 1,
+   "tb": 0,
+   "m": 260,
+   "n": 384,
+   "k": 1024,
+   "calls": 1,
+   "old_ms": 4.51,
+   "old_ms_variant_1": 11.2182,
+   "old_ms_variant_2": 6.9692,
+   "old_ms_variant_4": 4.51,
+   "new_ms_variant_1": 10.0329,
+   "new_ms_variant_2": 5.756,
+   "new_ms_variant_4": 3.6811
+  }
+ ],
+ "gemm_ms_per_step": {
+  "old_ms": 1233.5824000000002,
+  "old_ms_variant_1": 2965.349599999999,
+  "old_ms_variant_2": 2007.605,
+  "old_ms_variant_4": 1233.5824000000002,
+  "new_ms_variant_1": 2957.0968000000003,
+  "new_ms_variant_2": 1816.825,
+  "new_ms_variant_4": 1161.2856
+ },
+ "attention_per_layer_ms": {
+  "old": {
+   "forward": 7.8941,
+   "backward": 14.3588
+  },
+  "new": {
+   "forward": 6.9044,
+   "backward": 10.5004
+  }
+ },
+ "adamw_ms": {
+  "old": 66.3548,
+  "new": 66.6423
+ },
+ "samples": {
+  "old": [
+   {
+    "gemm": [
+     {
+      "name": "q,o forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 10.8546,
+       "2": 8.8102,
+       "4": 5.4002
+      },
+      "hash": "e32c4421b95b8ff0",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 192,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 6.1354,
+       "2": 4.4255,
+       "4": 2.6592
+      },
+      "hash": "48ab7053d99b40a3",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 38.6842,
+       "2": 24.6476,
+       "4": 15.5595
+      },
+      "hash": "bfdc10de0e90a9ba",
+      "variants_agree": true
+     },
+     {
+      "name": "down forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 38.9521,
+       "2": 27.6676,
+       "4": 16.7672
+      },
+      "hash": "2ae11da5ecb3990e",
+      "variants_agree": true
+     },
+     {
+      "name": "head forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 260,
+      "k": 384,
+      "calls": 1,
+      "ms": {
+       "1": 9.3358,
+       "2": 7.0936,
+       "4": 4.3928
+      },
+      "hash": "acf976d26505d3fc",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 13.3535,
+       "2": 10.117,
+       "4": 5.4249
+      },
+      "hash": "60f4594efb34ca9c",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 192,
+      "calls": 12,
+      "ms": {
+       "1": 6.6686,
+       "2": 5.1527,
+       "4": 3.0908
+      },
+      "hash": "7ace223f87b2dbdf",
+      "variants_agree": true
+     },
+     {
+      "name": "gate dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 42.8081,
+       "2": 27.7971,
+       "4": 16.5671
+      },
+      "hash": "fb76f44cfaa4ee17",
+      "variants_agree": true
+     },
+     {
+      "name": "up dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 45.6741,
+       "2": 30.5563,
+       "4": 16.3537
+      },
+      "hash": "ff76239e1bc3844b",
+      "variants_agree": true
+     },
+     {
+      "name": "down dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 6,
+      "ms": {
+       "1": 36.7289,
+       "2": 26.7342,
+       "4": 22.8557
+      },
+      "hash": "ff117f8e762d61aa",
+      "variants_agree": true
+     },
+     {
+      "name": "head dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 260,
+      "calls": 1,
+      "ms": {
+       "1": 13.4872,
+       "2": 9.0517,
+       "4": 3.6232
+      },
+      "hash": "697d670d3d38320a",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 15.5729,
+       "2": 12.6039,
+       "4": 10.2682
+      },
+      "hash": "261645a1a497d9d2",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 192,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 11.2404,
+       "2": 5.1917,
+       "4": 3.247
+      },
+      "hash": "7374342d1399b573",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 47.4565,
+       "2": 26.013,
+       "4": 17.1826
+      },
+      "hash": "3e51aabeb99c8842",
+      "variants_agree": true
+     },
+     {
+      "name": "down dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 1024,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 38.1966,
+       "2": 23.7942,
+       "4": 17.4142
+      },
+      "hash": "58168a4a567eab2e",
+      "variants_agree": true
+     },
+     {
+      "name": "head dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 260,
+      "n": 384,
+      "k": 1024,
+      "calls": 1,
+      "ms": {
+       "1": 9.9221,
+       "2": 6.7236,
+       "4": 4.3302
+      },
+      "hash": "401c4581111b9007",
+      "variants_agree": true
+     }
+    ],
+    "attention": {
+     "forward_ms": 7.8628,
+     "backward_ms": 14.1168,
+     "forward_hash": "42f878ed0450cac0",
+     "backward_hash": "271c88a433b11308"
+    },
+    "adamw": {
+     "parameters": 9836928,
+     "ms": 64.3919,
+     "hash": "252d5704a63f31c8"
+    },
+    "variants": 7
+   },
+   {
+    "gemm": [
+     {
+      "name": "q,o forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 20.1593,
+       "2": 8.2778,
+       "4": 5.2951
+      },
+      "hash": "e32c4421b95b8ff0",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 192,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 6.1937,
+       "2": 4.5214,
+       "4": 2.6082
+      },
+      "hash": "48ab7053d99b40a3",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 38.3161,
+       "2": 26.8563,
+       "4": 16.5458
+      },
+      "hash": "bfdc10de0e90a9ba",
+      "variants_agree": true
+     },
+     {
+      "name": "down forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 40.1883,
+       "2": 28.3115,
+       "4": 16.8908
+      },
+      "hash": "2ae11da5ecb3990e",
+      "variants_agree": true
+     },
+     {
+      "name": "head forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 260,
+      "k": 384,
+      "calls": 1,
+      "ms": {
+       "1": 9.3958,
+       "2": 10.1957,
+       "4": 7.0257
+      },
+      "hash": "acf976d26505d3fc",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 13.4519,
+       "2": 9.8608,
+       "4": 5.4099
+      },
+      "hash": "60f4594efb34ca9c",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 192,
+      "calls": 12,
+      "ms": {
+       "1": 6.0172,
+       "2": 4.1971,
+       "4": 2.5824
+      },
+      "hash": "7ace223f87b2dbdf",
+      "variants_agree": true
+     },
+     {
+      "name": "gate dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 38.8744,
+       "2": 27.7843,
+       "4": 16.5681
+      },
+      "hash": "fb76f44cfaa4ee17",
+      "variants_agree": true
+     },
+     {
+      "name": "up dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 39.3817,
+       "2": 27.3596,
+       "4": 16.1375
+      },
+      "hash": "ff76239e1bc3844b",
+      "variants_agree": true
+     },
+     {
+      "name": "down dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 6,
+      "ms": {
+       "1": 35.6614,
+       "2": 21.31,
+       "4": 13.6045
+      },
+      "hash": "ff117f8e762d61aa",
+      "variants_agree": true
+     },
+     {
+      "name": "head dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 260,
+      "calls": 1,
+      "ms": {
+       "1": 8.7096,
+       "2": 6.1778,
+       "4": 3.5973
+      },
+      "hash": "697d670d3d38320a",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 15.7454,
+       "2": 10.5355,
+       "4": 6.6016
+      },
+      "hash": "261645a1a497d9d2",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 192,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 7.3026,
+       "2": 5.0483,
+       "4": 3.2014
+      },
+      "hash": "7374342d1399b573",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 45.7934,
+       "2": 26.0922,
+       "4": 16.8185
+      },
+      "hash": "3e51aabeb99c8842",
+      "variants_agree": true
+     },
+     {
+      "name": "down dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 1024,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 43.8866,
+       "2": 30.055,
+       "4": 17.9139
+      },
+      "hash": "58168a4a567eab2e",
+      "variants_agree": true
+     },
+     {
+      "name": "head dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 260,
+      "n": 384,
+      "k": 1024,
+      "calls": 1,
+      "ms": {
+       "1": 10.2248,
+       "2": 6.9692,
+       "4": 7.2054
+      },
+      "hash": "401c4581111b9007",
+      "variants_agree": true
+     }
+    ],
+    "attention": {
+     "forward_ms": 10.5905,
+     "backward_ms": 17.8222,
+     "forward_hash": "42f878ed0450cac0",
+     "backward_hash": "271c88a433b11308"
+    },
+    "adamw": {
+     "parameters": 9836928,
+     "ms": 69.6613,
+     "hash": "252d5704a63f31c8"
+    },
+    "variants": 7
+   },
+   {
+    "gemm": [
+     {
+      "name": "q,o forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 12.3713,
+       "2": 8.619,
+       "4": 5.0967
+      },
+      "hash": "e32c4421b95b8ff0",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 192,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 5.9067,
+       "2": 4.1587,
+       "4": 2.5032
+      },
+      "hash": "48ab7053d99b40a3",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 38.3832,
+       "2": 26.0435,
+       "4": 15.8407
+      },
+      "hash": "bfdc10de0e90a9ba",
+      "variants_agree": true
+     },
+     {
+      "name": "down forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 38.5189,
+       "2": 27.6208,
+       "4": 17.0111
+      },
+      "hash": "2ae11da5ecb3990e",
+      "variants_agree": true
+     },
+     {
+      "name": "head forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 260,
+      "k": 384,
+      "calls": 1,
+      "ms": {
+       "1": 9.5072,
+       "2": 6.9242,
+       "4": 4.3025
+      },
+      "hash": "acf976d26505d3fc",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 12.6755,
+       "2": 10.2055,
+       "4": 5.6737
+      },
+      "hash": "60f4594efb34ca9c",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 192,
+      "calls": 12,
+      "ms": {
+       "1": 6.3504,
+       "2": 4.2353,
+       "4": 2.6969
+      },
+      "hash": "7ace223f87b2dbdf",
+      "variants_agree": true
+     },
+     {
+      "name": "gate dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 38.9674,
+       "2": 29.6638,
+       "4": 17.5694
+      },
+      "hash": "fb76f44cfaa4ee17",
+      "variants_agree": true
+     },
+     {
+      "name": "up dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 40.4758,
+       "2": 29.2335,
+       "4": 17.3349
+      },
+      "hash": "ff76239e1bc3844b",
+      "variants_agree": true
+     },
+     {
+      "name": "down dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 6,
+      "ms": {
+       "1": 36.7718,
+       "2": 27.7134,
+       "4": 17.2555
+      },
+      "hash": "ff117f8e762d61aa",
+      "variants_agree": true
+     },
+     {
+      "name": "head dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 260,
+      "calls": 1,
+      "ms": {
+       "1": 8.7484,
+       "2": 8.9221,
+       "4": 3.8745
+      },
+      "hash": "697d670d3d38320a",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 15.6695,
+       "2": 14.905,
+       "4": 6.3984
+      },
+      "hash": "261645a1a497d9d2",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 192,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 7.4981,
+       "2": 4.9166,
+       "4": 3.0881
+      },
+      "hash": "7374342d1399b573",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 42.7913,
+       "2": 25.9874,
+       "4": 17.563
+      },
+      "hash": "3e51aabeb99c8842",
+      "variants_agree": true
+     },
+     {
+      "name": "down dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 1024,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 41.9873,
+       "2": 30.3405,
+       "4": 21.2884
+      },
+      "hash": "58168a4a567eab2e",
+      "variants_agree": true
+     },
+     {
+      "name": "head dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 260,
+      "n": 384,
+      "k": 1024,
+      "calls": 1,
+      "ms": {
+       "1": 11.2182,
+       "2": 7.1183,
+       "4": 4.51
+      },
+      "hash": "401c4581111b9007",
+      "variants_agree": true
+     }
+    ],
+    "attention": {
+     "forward_ms": 7.8941,
+     "backward_ms": 14.3588,
+     "forward_hash": "42f878ed0450cac0",
+     "backward_hash": "271c88a433b11308"
+    },
+    "adamw": {
+     "parameters": 9836928,
+     "ms": 66.1226,
+     "hash": "252d5704a63f31c8"
+    },
+    "variants": 7
+   },
+   {
+    "gemm": [
+     {
+      "name": "q,o forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 11.9554,
+       "2": 8.3432,
+       "4": 5.1484
+      },
+      "hash": "e32c4421b95b8ff0",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 192,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 5.7418,
+       "2": 4.0317,
+       "4": 2.4477
+      },
+      "hash": "48ab7053d99b40a3",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 35.2759,
+       "2": 24.4731,
+       "4": 16.3809
+      },
+      "hash": "bfdc10de0e90a9ba",
+      "variants_agree": true
+     },
+     {
+      "name": "down forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 38.3951,
+       "2": 26.6986,
+       "4": 18.0001
+      },
+      "hash": "2ae11da5ecb3990e",
+      "variants_agree": true
+     },
+     {
+      "name": "head forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 260,
+      "k": 384,
+      "calls": 1,
+      "ms": {
+       "1": 9.5414,
+       "2": 6.8846,
+       "4": 4.4163
+      },
+      "hash": "acf976d26505d3fc",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 13.2383,
+       "2": 9.6848,
+       "4": 5.5023
+      },
+      "hash": "60f4594efb34ca9c",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 192,
+      "calls": 12,
+      "ms": {
+       "1": 6.5298,
+       "2": 4.5057,
+       "4": 2.6293
+      },
+      "hash": "7ace223f87b2dbdf",
+      "variants_agree": true
+     },
+     {
+      "name": "gate dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 42.1913,
+       "2": 31.0542,
+       "4": 17.7996
+      },
+      "hash": "fb76f44cfaa4ee17",
+      "variants_agree": true
+     },
+     {
+      "name": "up dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 41.6727,
+       "2": 26.5599,
+       "4": 16.8699
+      },
+      "hash": "ff76239e1bc3844b",
+      "variants_agree": true
+     },
+     {
+      "name": "down dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 6,
+      "ms": {
+       "1": 45.3503,
+       "2": 28.2917,
+       "4": 18.6218
+      },
+      "hash": "ff117f8e762d61aa",
+      "variants_agree": true
+     },
+     {
+      "name": "head dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 260,
+      "calls": 1,
+      "ms": {
+       "1": 8.0884,
+       "2": 5.6441,
+       "4": 3.5979
+      },
+      "hash": "697d670d3d38320a",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 14.9588,
+       "2": 9.8126,
+       "4": 6.2323
+      },
+      "hash": "261645a1a497d9d2",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 192,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 7.4463,
+       "2": 4.9248,
+       "4": 3.1021
+      },
+      "hash": "7374342d1399b573",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 44.6315,
+       "2": 27.7824,
+       "4": 17.7357
+      },
+      "hash": "3e51aabeb99c8842",
+      "variants_agree": true
+     },
+     {
+      "name": "down dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 1024,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 48.6669,
+       "2": 28.7489,
+       "4": 19.8776
+      },
+      "hash": "58168a4a567eab2e",
+      "variants_agree": true
+     },
+     {
+      "name": "head dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 260,
+      "n": 384,
+      "k": 1024,
+      "calls": 1,
+      "ms": {
+       "1": 11.4943,
+       "2": 6.086,
+       "4": 3.8865
+      },
+      "hash": "401c4581111b9007",
+      "variants_agree": true
+     }
+    ],
+    "attention": {
+     "forward_ms": 6.0509,
+     "backward_ms": 10.9043,
+     "forward_hash": "42f878ed0450cac0",
+     "backward_hash": "271c88a433b11308"
+    },
+    "adamw": {
+     "parameters": 9836928,
+     "ms": 66.3548,
+     "hash": "252d5704a63f31c8"
+    },
+    "variants": 7
+   },
+   {
+    "gemm": [
+     {
+      "name": "q,o forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 12.3931,
+       "2": 8.5858,
+       "4": 5.297
+      },
+      "hash": "e32c4421b95b8ff0",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 192,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 5.9878,
+       "2": 4.2668,
+       "4": 2.5655
+      },
+      "hash": "48ab7053d99b40a3",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 37.2219,
+       "2": 26.3177,
+       "4": 17.3174
+      },
+      "hash": "bfdc10de0e90a9ba",
+      "variants_agree": true
+     },
+     {
+      "name": "down forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 43.5989,
+       "2": 30.319,
+       "4": 18.6984
+      },
+      "hash": "2ae11da5ecb3990e",
+      "variants_agree": true
+     },
+     {
+      "name": "head forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 260,
+      "k": 384,
+      "calls": 1,
+      "ms": {
+       "1": 14.5772,
+       "2": 9.7198,
+       "4": 4.3737
+      },
+      "hash": "acf976d26505d3fc",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 12.9633,
+       "2": 9.3067,
+       "4": 5.4263
+      },
+      "hash": "60f4594efb34ca9c",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 192,
+      "calls": 12,
+      "ms": {
+       "1": 6.1194,
+       "2": 4.2742,
+       "4": 2.6157
+      },
+      "hash": "7ace223f87b2dbdf",
+      "variants_agree": true
+     },
+     {
+      "name": "gate dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 40.3024,
+       "2": 29.2646,
+       "4": 16.8774
+      },
+      "hash": "fb76f44cfaa4ee17",
+      "variants_agree": true
+     },
+     {
+      "name": "up dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 40.4581,
+       "2": 25.7871,
+       "4": 14.4609
+      },
+      "hash": "ff76239e1bc3844b",
+      "variants_agree": true
+     },
+     {
+      "name": "down dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 6,
+      "ms": {
+       "1": 44.1905,
+       "2": 27.7473,
+       "4": 16.5878
+      },
+      "hash": "ff117f8e762d61aa",
+      "variants_agree": true
+     },
+     {
+      "name": "head dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 260,
+      "calls": 1,
+      "ms": {
+       "1": 8.5234,
+       "2": 5.8963,
+       "4": 3.6454
+      },
+      "hash": "697d670d3d38320a",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 15.9294,
+       "2": 9.6183,
+       "4": 6.1989
+      },
+      "hash": "261645a1a497d9d2",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 192,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 6.9882,
+       "2": 4.8132,
+       "4": 3.0344
+      },
+      "hash": "7374342d1399b573",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 45.0855,
+       "2": 27.7452,
+       "4": 17.2513
+      },
+      "hash": "3e51aabeb99c8842",
+      "variants_agree": true
+     },
+     {
+      "name": "down dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 1024,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 43.9356,
+       "2": 30.9716,
+       "4": 17.7479
+      },
+      "hash": "58168a4a567eab2e",
+      "variants_agree": true
+     },
+     {
+      "name": "head dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 260,
+      "n": 384,
+      "k": 1024,
+      "calls": 1,
+      "ms": {
+       "1": 18.7511,
+       "2": 7.1662,
+       "4": 4.6347
+      },
+      "hash": "401c4581111b9007",
+      "variants_agree": true
+     }
+    ],
+    "attention": {
+     "forward_ms": 8.1647,
+     "backward_ms": 14.6984,
+     "forward_hash": "42f878ed0450cac0",
+     "backward_hash": "271c88a433b11308"
+    },
+    "adamw": {
+     "parameters": 9836928,
+     "ms": 66.8068,
+     "hash": "252d5704a63f31c8"
+    },
+    "variants": 7
+   }
+  ],
+  "new": [
+   {
+    "gemm": [
+     {
+      "name": "q,o forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 12.599,
+       "2": 7.6881,
+       "4": 5.1825
+      },
+      "hash": "e32c4421b95b8ff0",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 192,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 5.9817,
+       "2": 3.7406,
+       "4": 2.5233
+      },
+      "hash": "48ab7053d99b40a3",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 38.4077,
+       "2": 24.3999,
+       "4": 16.2934
+      },
+      "hash": "bfdc10de0e90a9ba",
+      "variants_agree": true
+     },
+     {
+      "name": "down forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 39.484,
+       "2": 24.3413,
+       "4": 16.2755
+      },
+      "hash": "2ae11da5ecb3990e",
+      "variants_agree": true
+     },
+     {
+      "name": "head forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 260,
+      "k": 384,
+      "calls": 1,
+      "ms": {
+       "1": 9.6166,
+       "2": 6.7658,
+       "4": 4.2086
+      },
+      "hash": "acf976d26505d3fc",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 13.0176,
+       "2": 8.2197,
+       "4": 5.294
+      },
+      "hash": "60f4594efb34ca9c",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 192,
+      "calls": 12,
+      "ms": {
+       "1": 6.0713,
+       "2": 4.0206,
+       "4": 2.8497
+      },
+      "hash": "7ace223f87b2dbdf",
+      "variants_agree": true
+     },
+     {
+      "name": "gate dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 43.5467,
+       "2": 36.0277,
+       "4": 14.9845
+      },
+      "hash": "fb76f44cfaa4ee17",
+      "variants_agree": true
+     },
+     {
+      "name": "up dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 36.1679,
+       "2": 31.669,
+       "4": 18.8902
+      },
+      "hash": "ff76239e1bc3844b",
+      "variants_agree": true
+     },
+     {
+      "name": "down dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 6,
+      "ms": {
+       "1": 38.1187,
+       "2": 23.7675,
+       "4": 16.9423
+      },
+      "hash": "ff117f8e762d61aa",
+      "variants_agree": true
+     },
+     {
+      "name": "head dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 260,
+      "calls": 1,
+      "ms": {
+       "1": 9.6972,
+       "2": 6.3182,
+       "4": 4.0458
+      },
+      "hash": "697d670d3d38320a",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 19.234,
+       "2": 12.0506,
+       "4": 6.9098
+      },
+      "hash": "261645a1a497d9d2",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 192,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 8.8035,
+       "2": 4.5221,
+       "4": 2.7147
+      },
+      "hash": "7374342d1399b573",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 44.2826,
+       "2": 23.3492,
+       "4": 13.7531
+      },
+      "hash": "3e51aabeb99c8842",
+      "variants_agree": true
+     },
+     {
+      "name": "down dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 1024,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 43.0528,
+       "2": 25.7199,
+       "4": 15.8663
+      },
+      "hash": "58168a4a567eab2e",
+      "variants_agree": true
+     },
+     {
+      "name": "head dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 260,
+      "n": 384,
+      "k": 1024,
+      "calls": 1,
+      "ms": {
+       "1": 10.0329,
+       "2": 5.756,
+       "4": 5.0952
+      },
+      "hash": "401c4581111b9007",
+      "variants_agree": true
+     }
+    ],
+    "attention": {
+     "forward_ms": 7.6475,
+     "backward_ms": 10.1517,
+     "forward_hash": "42f878ed0450cac0",
+     "backward_hash": "271c88a433b11308"
+    },
+    "adamw": {
+     "parameters": 9836928,
+     "ms": 62.941,
+     "hash": "252d5704a63f31c8"
+    },
+    "variants": 7
+   },
+   {
+    "gemm": [
+     {
+      "name": "q,o forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 13.3375,
+       "2": 7.8834,
+       "4": 5.3869
+      },
+      "hash": "e32c4421b95b8ff0",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 192,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 6.0075,
+       "2": 3.7966,
+       "4": 2.6299
+      },
+      "hash": "48ab7053d99b40a3",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 38.4995,
+       "2": 23.07,
+       "4": 15.3077
+      },
+      "hash": "bfdc10de0e90a9ba",
+      "variants_agree": true
+     },
+     {
+      "name": "down forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 38.3954,
+       "2": 24.4362,
+       "4": 15.8823
+      },
+      "hash": "2ae11da5ecb3990e",
+      "variants_agree": true
+     },
+     {
+      "name": "head forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 260,
+      "k": 384,
+      "calls": 1,
+      "ms": {
+       "1": 9.1508,
+       "2": 5.4243,
+       "4": 4.2063
+      },
+      "hash": "acf976d26505d3fc",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 12.1417,
+       "2": 7.386,
+       "4": 5.0612
+      },
+      "hash": "60f4594efb34ca9c",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 192,
+      "calls": 12,
+      "ms": {
+       "1": 5.8329,
+       "2": 3.6132,
+       "4": 2.4894
+      },
+      "hash": "7ace223f87b2dbdf",
+      "variants_agree": true
+     },
+     {
+      "name": "gate dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 39.01,
+       "2": 24.7193,
+       "4": 16.1545
+      },
+      "hash": "fb76f44cfaa4ee17",
+      "variants_agree": true
+     },
+     {
+      "name": "up dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 41.7871,
+       "2": 24.5463,
+       "4": 15.7928
+      },
+      "hash": "ff76239e1bc3844b",
+      "variants_agree": true
+     },
+     {
+      "name": "down dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 6,
+      "ms": {
+       "1": 36.5429,
+       "2": 22.3329,
+       "4": 16.4978
+      },
+      "hash": "ff117f8e762d61aa",
+      "variants_agree": true
+     },
+     {
+      "name": "head dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 260,
+      "calls": 1,
+      "ms": {
+       "1": 8.4355,
+       "2": 5.3423,
+       "4": 3.5127
+      },
+      "hash": "697d670d3d38320a",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 16.0487,
+       "2": 9.8925,
+       "4": 5.8956
+      },
+      "hash": "261645a1a497d9d2",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 192,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 7.2963,
+       "2": 4.3485,
+       "4": 2.6071
+      },
+      "hash": "7374342d1399b573",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 43.8513,
+       "2": 31.5023,
+       "4": 16.0825
+      },
+      "hash": "3e51aabeb99c8842",
+      "variants_agree": true
+     },
+     {
+      "name": "down dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 1024,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 44.4604,
+       "2": 22.3915,
+       "4": 16.0993
+      },
+      "hash": "58168a4a567eab2e",
+      "variants_agree": true
+     },
+     {
+      "name": "head dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 260,
+      "n": 384,
+      "k": 1024,
+      "calls": 1,
+      "ms": {
+       "1": 11.0113,
+       "2": 5.7932,
+       "4": 3.6811
+      },
+      "hash": "401c4581111b9007",
+      "variants_agree": true
+     }
+    ],
+    "attention": {
+     "forward_ms": 6.607,
+     "backward_ms": 11.0328,
+     "forward_hash": "42f878ed0450cac0",
+     "backward_hash": "271c88a433b11308"
+    },
+    "adamw": {
+     "parameters": 9836928,
+     "ms": 68.2804,
+     "hash": "252d5704a63f31c8"
+    },
+    "variants": 7
+   },
+   {
+    "gemm": [
+     {
+      "name": "q,o forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 10.3738,
+       "2": 6.5412,
+       "4": 4.618
+      },
+      "hash": "e32c4421b95b8ff0",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 192,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 5.124,
+       "2": 3.0594,
+       "4": 2.0394
+      },
+      "hash": "48ab7053d99b40a3",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 31.014,
+       "2": 20.5978,
+       "4": 13.0735
+      },
+      "hash": "bfdc10de0e90a9ba",
+      "variants_agree": true
+     },
+     {
+      "name": "down forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 38.252,
+       "2": 25.2385,
+       "4": 15.8572
+      },
+      "hash": "2ae11da5ecb3990e",
+      "variants_agree": true
+     },
+     {
+      "name": "head forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 260,
+      "k": 384,
+      "calls": 1,
+      "ms": {
+       "1": 9.1761,
+       "2": 5.5299,
+       "4": 4.3424
+      },
+      "hash": "acf976d26505d3fc",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 13.7682,
+       "2": 6.3274,
+       "4": 4.1944
+      },
+      "hash": "60f4594efb34ca9c",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 192,
+      "calls": 12,
+      "ms": {
+       "1": 4.8851,
+       "2": 3.1497,
+       "4": 2.1145
+      },
+      "hash": "7ace223f87b2dbdf",
+      "variants_agree": true
+     },
+     {
+      "name": "gate dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 38.7165,
+       "2": 26.9789,
+       "4": 16.6732
+      },
+      "hash": "fb76f44cfaa4ee17",
+      "variants_agree": true
+     },
+     {
+      "name": "up dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 41.7426,
+       "2": 29.7055,
+       "4": 16.6753
+      },
+      "hash": "ff76239e1bc3844b",
+      "variants_agree": true
+     },
+     {
+      "name": "down dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 6,
+      "ms": {
+       "1": 41.4764,
+       "2": 22.0974,
+       "4": 13.4598
+      },
+      "hash": "ff117f8e762d61aa",
+      "variants_agree": true
+     },
+     {
+      "name": "head dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 260,
+      "calls": 1,
+      "ms": {
+       "1": 7.7445,
+       "2": 4.5529,
+       "4": 2.7391
+      },
+      "hash": "697d670d3d38320a",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 12.766,
+       "2": 7.3993,
+       "4": 4.8204
+      },
+      "hash": "261645a1a497d9d2",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 192,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 5.9169,
+       "2": 5.175,
+       "4": 3.102
+      },
+      "hash": "7374342d1399b573",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 38.1387,
+       "2": 20.939,
+       "4": 12.6095
+      },
+      "hash": "3e51aabeb99c8842",
+      "variants_agree": true
+     },
+     {
+      "name": "down dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 1024,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 35.9648,
+       "2": 20.3447,
+       "4": 13.195
+      },
+      "hash": "58168a4a567eab2e",
+      "variants_agree": true
+     },
+     {
+      "name": "head dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 260,
+      "n": 384,
+      "k": 1024,
+      "calls": 1,
+      "ms": {
+       "1": 8.281,
+       "2": 4.6382,
+       "4": 2.9328
+      },
+      "hash": "401c4581111b9007",
+      "variants_agree": true
+     }
+    ],
+    "attention": {
+     "forward_ms": 5.3766,
+     "backward_ms": 8.8205,
+     "forward_hash": "42f878ed0450cac0",
+     "backward_hash": "271c88a433b11308"
+    },
+    "adamw": {
+     "parameters": 9836928,
+     "ms": 52.7106,
+     "hash": "252d5704a63f31c8"
+    },
+    "variants": 7
+   },
+   {
+    "gemm": [
+     {
+      "name": "q,o forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 13.0115,
+       "2": 7.9532,
+       "4": 5.3985
+      },
+      "hash": "e32c4421b95b8ff0",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 192,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 6.324,
+       "2": 3.9596,
+       "4": 2.6546
+      },
+      "hash": "48ab7053d99b40a3",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 39.6065,
+       "2": 25.8497,
+       "4": 20.2579
+      },
+      "hash": "bfdc10de0e90a9ba",
+      "variants_agree": true
+     },
+     {
+      "name": "down forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 40.4275,
+       "2": 26.0546,
+       "4": 16.7292
+      },
+      "hash": "2ae11da5ecb3990e",
+      "variants_agree": true
+     },
+     {
+      "name": "head forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 260,
+      "k": 384,
+      "calls": 1,
+      "ms": {
+       "1": 9.5157,
+       "2": 5.8485,
+       "4": 5.2846
+      },
+      "hash": "acf976d26505d3fc",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 16.7553,
+       "2": 9.2753,
+       "4": 5.2293
+      },
+      "hash": "60f4594efb34ca9c",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 192,
+      "calls": 12,
+      "ms": {
+       "1": 5.9626,
+       "2": 3.9938,
+       "4": 2.5261
+      },
+      "hash": "7ace223f87b2dbdf",
+      "variants_agree": true
+     },
+     {
+      "name": "gate dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 41.7638,
+       "2": 26.4643,
+       "4": 16.2536
+      },
+      "hash": "fb76f44cfaa4ee17",
+      "variants_agree": true
+     },
+     {
+      "name": "up dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 39.4649,
+       "2": 25.2034,
+       "4": 16.1869
+      },
+      "hash": "ff76239e1bc3844b",
+      "variants_agree": true
+     },
+     {
+      "name": "down dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 6,
+      "ms": {
+       "1": 47.3116,
+       "2": 24.0042,
+       "4": 16.4089
+      },
+      "hash": "ff117f8e762d61aa",
+      "variants_agree": true
+     },
+     {
+      "name": "head dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 260,
+      "calls": 1,
+      "ms": {
+       "1": 12.2183,
+       "2": 8.2626,
+       "4": 3.4825
+      },
+      "hash": "697d670d3d38320a",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 15.3141,
+       "2": 8.9912,
+       "4": 5.9472
+      },
+      "hash": "261645a1a497d9d2",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 192,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 7.1151,
+       "2": 4.0817,
+       "4": 2.63
+      },
+      "hash": "7374342d1399b573",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 43.6878,
+       "2": 26.0967,
+       "4": 16.501
+      },
+      "hash": "3e51aabeb99c8842",
+      "variants_agree": true
+     },
+     {
+      "name": "down dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 1024,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 45.7194,
+       "2": 25.1927,
+       "4": 15.7926
+      },
+      "hash": "58168a4a567eab2e",
+      "variants_agree": true
+     },
+     {
+      "name": "head dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 260,
+      "n": 384,
+      "k": 1024,
+      "calls": 1,
+      "ms": {
+       "1": 10.7402,
+       "2": 5.8523,
+       "4": 4.0713
+      },
+      "hash": "401c4581111b9007",
+      "variants_agree": true
+     }
+    ],
+    "attention": {
+     "forward_ms": 9.6977,
+     "backward_ms": 10.7133,
+     "forward_hash": "42f878ed0450cac0",
+     "backward_hash": "271c88a433b11308"
+    },
+    "adamw": {
+     "parameters": 9836928,
+     "ms": 66.6423,
+     "hash": "252d5704a63f31c8"
+    },
+    "variants": 7
+   },
+   {
+    "gemm": [
+     {
+      "name": "q,o forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 12.3915,
+       "2": 7.5528,
+       "4": 5.2698
+      },
+      "hash": "e32c4421b95b8ff0",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 192,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 5.8904,
+       "2": 3.6806,
+       "4": 2.5621
+      },
+      "hash": "48ab7053d99b40a3",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 37.4877,
+       "2": 34.2375,
+       "4": 15.8527
+      },
+      "hash": "bfdc10de0e90a9ba",
+      "variants_agree": true
+     },
+     {
+      "name": "down forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 39.3681,
+       "2": 26.7316,
+       "4": 14.1216
+      },
+      "hash": "2ae11da5ecb3990e",
+      "variants_agree": true
+     },
+     {
+      "name": "head forward",
+      "ta": 0,
+      "tb": 1,
+      "m": 1024,
+      "n": 260,
+      "k": 384,
+      "calls": 1,
+      "ms": {
+       "1": 7.9591,
+       "2": 4.4703,
+       "4": 3.3526
+      },
+      "hash": "acf976d26505d3fc",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 384,
+      "calls": 12,
+      "ms": {
+       "1": 10.6555,
+       "2": 7.7224,
+       "4": 5.2106
+      },
+      "hash": "60f4594efb34ca9c",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 192,
+      "calls": 12,
+      "ms": {
+       "1": 6.0176,
+       "2": 4.77,
+       "4": 2.9484
+      },
+      "hash": "7ace223f87b2dbdf",
+      "variants_agree": true
+     },
+     {
+      "name": "gate dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 37.9612,
+       "2": 25.5404,
+       "4": 15.9894
+      },
+      "hash": "fb76f44cfaa4ee17",
+      "variants_agree": true
+     },
+     {
+      "name": "up dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 40.3608,
+       "2": 26.8594,
+       "4": 16.546
+      },
+      "hash": "ff76239e1bc3844b",
+      "variants_agree": true
+     },
+     {
+      "name": "down dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 1024,
+      "k": 384,
+      "calls": 6,
+      "ms": {
+       "1": 39.3835,
+       "2": 24.7558,
+       "4": 16.1191
+      },
+      "hash": "ff117f8e762d61aa",
+      "variants_agree": true
+     },
+     {
+      "name": "head dx",
+      "ta": 0,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 260,
+      "calls": 1,
+      "ms": {
+       "1": 8.5486,
+       "2": 5.0895,
+       "4": 3.733
+      },
+      "hash": "697d670d3d38320a",
+      "variants_agree": true
+     },
+     {
+      "name": "q,o dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 16.1301,
+       "2": 9.4795,
+       "4": 5.6969
+      },
+      "hash": "261645a1a497d9d2",
+      "variants_agree": true
+     },
+     {
+      "name": "k,v dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 192,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 6.8321,
+       "2": 3.8585,
+       "4": 2.4936
+      },
+      "hash": "7374342d1399b573",
+      "variants_agree": true
+     },
+     {
+      "name": "gate,up dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 1024,
+      "n": 384,
+      "k": 1024,
+      "calls": 12,
+      "ms": {
+       "1": 42.8397,
+       "2": 24.8824,
+       "4": 15.4477
+      },
+      "hash": "3e51aabeb99c8842",
+      "variants_agree": true
+     },
+     {
+      "name": "down dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 384,
+      "n": 1024,
+      "k": 1024,
+      "calls": 6,
+      "ms": {
+       "1": 48.6359,
+       "2": 29.8701,
+       "4": 17.0174
+      },
+      "hash": "58168a4a567eab2e",
+      "variants_agree": true
+     },
+     {
+      "name": "head dW",
+      "ta": 1,
+      "tb": 0,
+      "m": 260,
+      "n": 384,
+      "k": 1024,
+      "calls": 1,
+      "ms": {
+       "1": 10.0161,
+       "2": 5.5619,
+       "4": 3.6166
+      },
+      "hash": "401c4581111b9007",
+      "variants_agree": true
+     }
+    ],
+    "attention": {
+     "forward_ms": 6.9044,
+     "backward_ms": 10.5004,
+     "forward_hash": "42f878ed0450cac0",
+     "backward_hash": "271c88a433b11308"
+    },
+    "adamw": {
+     "parameters": 9836928,
+     "ms": 67.1229,
+     "hash": "252d5704a63f31c8"
+    },
+    "variants": 7
+   }
+  ]
+ }
+}
