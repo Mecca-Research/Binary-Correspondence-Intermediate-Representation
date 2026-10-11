@@ -1,0 +1,70 @@
+{
+ "base": "75d50d4f6e280e35a25032024edffd92f25c52f2",
+ "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+ "builds": {
+  "2026-10-10 harness": [
+   "-O3",
+   "-march=native",
+   "-fno-math-errno",
+   "-ffp-contract=off"
+  ],
+  "NativeDecoder.build": [
+   "-O3",
+   "-ffp-contract=off"
+  ],
+  "gates (default -O2)": [
+   "-O2",
+   "-ffp-contract=off"
+  ]
+ },
+ "rows": [
+  {
+   "m": 64,
+   "n": 64,
+   "k": 48,
+   "transpose_b": 0,
+   "median_ms": {
+    "2026-10-10 harness": 0.26715399872045964,
+    "NativeDecoder.build": 0.1623799980734475,
+    "gates (default -O2)": 0.16382100147893652
+   },
+   "outputs_identical": true
+  },
+  {
+   "m": 256,
+   "n": 384,
+   "k": 384,
+   "transpose_b": 0,
+   "median_ms": {
+    "2026-10-10 harness": 36.67694799878518,
+    "NativeDecoder.build": 18.190227998275077,
+    "gates (default -O2)": 18.404962997010443
+   },
+   "outputs_identical": true
+  },
+  {
+   "m": 256,
+   "n": 1024,
+   "k": 384,
+   "transpose_b": 1,
+   "median_ms": {
+    "2026-10-10 harness": 14.775100997212576,
+    "NativeDecoder.build": 14.371916000527563,
+    "gates (default -O2)": 44.49791799925151
+   },
+   "outputs_identical": true
+  },
+  {
+   "m": 384,
+   "n": 384,
+   "k": 256,
+   "transpose_b": 0,
+   "median_ms": {
+    "2026-10-10 harness": 34.7167330000957,
+    "NativeDecoder.build": 17.599555001652334,
+    "gates (default -O2)": 17.762125997251133
+   },
+   "outputs_identical": true
+  }
+ ]
+}

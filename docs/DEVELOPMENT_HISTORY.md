@@ -2570,6 +2570,98 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     witness. QG12 was dropped as an equivalent mutant: the oracle's cache is a list, which
     cannot hold the hole the C fault leaves. `qual-sim.json` holds 18 more (QS1-QS18) on the
     profile reader, the derived rows, the brackets and the callgrind build.
+  NDT-PERF (2026-10-11): the native-training half of the 2026-10-10 assessment's next update
+  (#814), every output bit unchanged, and the 9.84M decoder trained on BCIR and on PyTorch side
+  by side (`docs/research/BCIR_NATIVE_TRAINING_PERFORMANCE_2026-10-11.md`).
+  - Reviewed first: every table of the 2026-10-10 assessment regenerates from its `results.json`,
+    and its gaps were of scope. Its GEMM rows were forward shapes only, its attention forward
+    only, the production AdamW unmeasured, and the decoder evidence ran BCIR on vendor BLAS,
+    never on its own kernels. At the comparison's shape the base kernel spent 11.6 s of a step
+    in GEMMs, 86.2% of it in the backward's shapes (dx = dy W with beta, dW += dy^T x with A
+    transposed), which ran at 4.0 GFLOP/s against the forward's 12.5.
+  - `bcir_tensor_mm` became a register-blocked kernel. A KCxNR tile of B is packed once per
+    (column, depth) block and reused by every row, and an MRxNR block of C stays in registers
+    across the tile's depth. There is a portable C instance everywhere, and on x86-64 Linux with
+    GCC or Clang AVX2 and AVX-512 instances chosen per call from the CPU (`bcir_tensor_mm_variants`,
+    `bcir_tensor_mm_variant`; `BCIR_TENSOR_NO_DISPATCH` / `BCIR_TENSOR_MAX_VARIANT` cap the
+    choice). The contract is unchanged: each element starts at its beta-scaled value and adds
+    (alpha*a)*b for l ascending, one rounded multiply and one rounded add per term, so every
+    instance is bit-identical to the ascending-k loop. Per step: 11.6 s -> 2.98 s portable,
+    1.99 s AVX2, 1.24 s AVX-512 (5.2 -> 48.8 GFLOP/s).
+  - Attention runs its products through the same kernel with a mask over the matrices' own
+    indices (store only j <= i; take term l only when l <= i, or only when l >= i). A masked term
+    is skipped, never added as a zero, so nothing outside the causal mask reaches a result, a
+    non-finite value included. The new `bcir_tensor_attention_backward_inplace` rewrites the
+    layer's probabilities with their score adjoint and needs no workspace. dq, dk and dv receive
+    the reference's terms in its order (heads in order for the shared GQA rows), so they are
+    bit-identical to `bcir_tensor_attention_backward`, which stays as the reference. Per layer:
+    forward 18.5 -> 8.3 ms, backward 53.4 -> 15.5 ms.
+  - AdamW's two passes carry the same instances (the build's `-fno-math-errno` lets `sqrt`
+    vectorize, changing no result). The first pass records the largest magnitudes, from which
+    `adamw_bounded` proves that the preflight would admit every element (monotone rounding, half
+    of FLT_MAX in reserve) and skips it; anything else still runs it. 147 -> 65 ms.
+  - A step of the 9.84M decoder at B=8, T=128: 12,297 -> 1,702 ms on BCIR's own kernels
+    (7.23x), 1,322 -> 958 ms with OpenBLAS behind the CBLAS seam, the training state the steps
+    leave identical. Twenty steps end in one state on GCC 13, clang 18 and clang 23, each with
+    all three instruction-set variants -- but clang's builds were 20-59% slower (NDT-CLANG,
+    below).
+  - The comparison trained one model from identical weights, batches and learning rates on four
+    backends: BCIR's own kernels, BCIR with OpenBLAS, eager PyTorch and compiled PyTorch, one
+    thread each. On the repository's documentation as a byte-level language model, all four end
+    at 1.6319 nats per byte on the test split (compiled PyTorch: 1.6318), 1,000 steps. On a copy
+    task, all four copy every one of 2,000 held-out strings. Per step: 1,726 / 963 / 774 / 712 ms,
+    so time to any validation loss is 2.2x eager PyTorch's on BCIR's own kernels and 1.24x with
+    OpenBLAS; BCIR's processes peak at about half of PyTorch's resident memory (544 against
+    1,056-1,140 MiB). The harness's planned peak rate of 2e-3 left every structured task on its
+    plateau, so all runs use a quarter of it, and the abandoned configurations are recorded.
+    The step breakdown puts the gap in the GEMM: MKL runs a step's 60.4 GFLOP in 476 ms, BCIR's
+    no-FMA kernel in 1,329 ms, and everything else together is faster on BCIR (162 against
+    229 ms).
+  - At 1,024 tokens per step from T=64 to T=1024 (the `context` stage), BCIR's own kernels stay at
+    2.0-2.1x eager PyTorch's step and the losses agree at every context. BCIR's attention, which
+    stores every probability, goes from 0.88x to 1.87x PyTorch's flash-attention path per layer,
+    and the arena grows by those probabilities (323 -> 503 MiB). On four threads PyTorch's step is
+    6.1x faster than BCIR's single-threaded kernels and 2.1x faster than BCIR with a four-thread
+    OpenBLAS.
+  - Witnesses: the C harness checks every instance the host runs against the ascending-k loop
+    and refuses an instance the host cannot run, with nothing written. It checks attention
+    forward and the in-place backward against the reference loops, finite and non-finite, and the
+    update against the reference update on both paths. The decoder_train section runs it as C11,
+    C23, portable-only and AVX2-capped builds. RED: `ndt-perf.json` NP1-NP9 are each caught;
+    `ndt-gem.json`'s NG1, NG2 and NG4 were re-anchored on the new kernel and are still caught.
+    `clang --analyze` cannot see that every caller passes a block no wider than its tile, so it
+    is told so under `__clang_analyzer__` alone, and the object code is identical with and
+    without the hint on all three compilers.
+  NDT-CLANG (2026-10-11): the native trainer's GEMM as fast under clang as under GCC, every output
+  bit unchanged.
+  - Found by NDT-PERF's identity stage: twenty steps leave one state under GCC 13, clang 18 and
+    clang 23, but clang's builds ran 30-34% slower with AVX-512, 20% with AVX2 and 58-59% as
+    portable C. `NativeDecoder.build`, and every Python harness through `host_c_compiler`, picks
+    clang before gcc, so the default build was the slow one wherever clang is installed.
+  - The cause was in the generated code. GCC realigns the stack to 64 bytes for the AVX-512
+    instance; clang keeps the ABI's 16, so the packed tile's offset within a cache line was left to
+    the caller's stack depth and ASLR, and every 64-byte load of a misaligned tile read two lines.
+    Across five runs of the same kernel, a step's AVX-512 GEMMs took 1.86-2.80 s under clang 18 and
+    1.21-1.31 s under GCC. A store-back bounded by the masks gave clang a variable index into the
+    accumulators, and clang 18 kept the block on the stack across the depth loop. The packing loop
+    tested layout and padding per element.
+  - The fix: the tile is `_Alignas(64)`, the store-back runs to the block width and tests each
+    column, and the packing loop is split by layout, each source row read contiguously and the
+    padding written once. A fourth change, forming the A operand's address once per block, was
+    measured and dropped: it slowed GCC's AVX-512 instance and clang's portable one.
+    Against main (`fb8d3a0`), interleaved on one host, the step's AVX-512 GEMMs went
+    1,905 -> 1,175 ms under clang 18, 1,604 -> 1,396 under clang 23 and 1,234 -> 1,161 under GCC
+    13, and a training step 3,214 -> 1,594 ms (2.02x), 2,187 -> 1,774 (1.23x) and 1,683 -> 1,602
+    (1.05x). Twenty steps now take 1.57-1.59 s each on all three compilers with AVX-512, and end in
+    the same state as before the fix on all ten builds. The GEM+ row `train.step.ms` (clang 18,
+    the host's default) reads 3.40 ms against a 0.78 ms floor, from 4.58 against 1.34. Clang's
+    portable instance on x86-64, which runs only without dispatch, is still 1.5-1.7x GCC's.
+  - Witnesses: the C harness passes under GCC 13, clang 18 and clang 23, as C11, C23,
+    portable-only and AVX2-capped builds and under ASan+UBSan; `clang --analyze` is clean on 18
+    and 23. RED: `ndt-clang.json` NC1-NC3 (a ragged block's last column unstored, a transposed
+    B's last column or an untransposed B's last depth row dropped from the tile) are each caught;
+    NG1, and the same mutant in `test_the_rows_fire_on_wrong_kernels_and_plans`, are re-anchored
+    on the new packing loop; NG1-NG7 and NP1-NP9 are caught again.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

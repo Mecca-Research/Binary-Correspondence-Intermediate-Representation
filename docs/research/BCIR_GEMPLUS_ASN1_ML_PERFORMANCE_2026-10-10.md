@@ -6,9 +6,17 @@ ASN.1 fixed-width array decoding, and improve the native training kernels. The
 current C BLAS seam already performs close to PyTorch on the tested dense shapes;
 the portable matrix fallback and attention kernels have considerably more work left.
 
-This is a measured assessment and a proposed update plan. This PR changes research
-documentation and its reproducible measurement harness; it does not change the
+This is a measured assessment and a proposed update plan. The commit that adds it changes
+research documentation and its reproducible measurement harness; it does not change the
 execution core, codecs, model architecture, runtime manifest or training semantics.
+
+> **Update, 2026-10-11.** The native-training part of the plan below landed with this report
+> in #814: the GEMM, attention and AdamW kernels, each bit-identical to the base commit's.
+> [BCIR_NATIVE_TRAINING_PERFORMANCE_2026-10-11.md](BCIR_NATIVE_TRAINING_PERFORMANCE_2026-10-11.md)
+> measures them before and after on one host, trains a 9.84M-parameter decoder on BCIR and on
+> PyTorch from identical weights, data and learning rates, reviews this report against its
+> evidence (its §1) and re-runs this harness's `kernels` and `attention` stages before and after
+> (its §6). The measurements below are unchanged.
 
 ## Source and measurement scope
 

@@ -1,0 +1,389 @@
+{
+ "libraries": {
+  "numpy": "2.2.6",
+  "openblas_config": "OpenBLAS 0.3.34.237.0 DYNAMIC_ARCH NO_AFFINITY SkylakeX MAX_THREADS=64",
+  "scipy_openblas32": "0.3.34.237.0",
+  "torch": "2.13.0+cu130",
+  "torch_config": "PyTorch built with:\n  - GCC 13.3\n  - C++ Version: 202002\n  - Intel(R) oneAPI Math Kernel Library Version 2024.2-Product Build 20240605 for Intel(R) 64 architecture applications\n  - Intel(R) MKL-DNN v3.12.0 (Git Hash 80afa71049cd69a3df32adcccb623b12cd7baa22)\n  - OpenMP 201511 (a.k.a. OpenMP 4.5)\n  - LAPACK is enabled (usually provided by MKL)\n  - NNPACK is enabled\n  - CPU capability usage: AVX512\n  - Build settings: BLAS_INFO=mkl, BUILD_TYPE=Release, COMMIT_SHA=cf30153c4c131c8164ee7798e5022d810682e2cb, CUDA_FLAGS= -DLIBCUDACXX_ENABLE_SIMPLIFIED_COMPLEX_OPERATIONS -Xfatbin -compress-all -DONNX_NAMESPACE=onnx_torch -gencode arch=compute_75,code=sm_75 -gencode arch=compute_80,code=sm_80 -gencode arch=compute_86,code=sm_86 -gencode arch=compute_90,code=sm_90 -gencode arch=compute_100,code=sm_100 -gencode arch=compute_120,code=sm_120 -Xcudafe --diag_suppress=cc_clobber_ignored,--diag_suppress=field_without_dll_interface,--diag_suppress=base_class_has_different_dll_interface,--diag_suppress=dll_interface_conflict_none_assumed,--diag_suppress=dll_interface_conflict_dllexport_assumed,--diag_suppress=bad_friend_decl --expt-relaxed-constexpr --expt-extended-lambda -Xfatbin -compress-all --threads 2 -compress-mode=size -Wno-deprecated-gpu-targets --expt-extended-lambda -DCUB_WRAPPED_NAMESPACE=at_cuda_detail -DDISABLE_CUSPARSE_DEPRECATED -DCUDA_HAS_FP16=1 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -DC10_NODEPRECATED, CUDA_VERSION=13.0, CUDNN_VERSION=9.20.0, CXX_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/c++, CXX_FLAGS= -fvisibility-inlines-hidden -DUSE_PTHREADPOOL -DNDEBUG -DUSE_KINETO -DHAS_CUPTI -DUSE_FBGEMM -DUSE_MSLK -DUSE_PYTORCH_QNNPACK -DSYMBOLICATE_MOBILE_DEBUG_HANDLE -O2 -fPIC -DC10_NODEPRECATED -Wall -Wextra -Werror=return-type -Werror=non-virtual-dtor -Werror=range-loop-construct -Werror=bool-operation -Wnarrowing -Wno-missing-field-initializers -Wno-unknown-pragmas -Wno-unused-parameter -Wno-strict-overflow -Wno-strict-aliasing -Wno-stringop-overflow -Wsuggest-override -Wno-psabi -Wno-error=old-style-cast -faligned-new -Wno-maybe-uninitialized -fno-math-errno -fno-trapping-math -Werror=format -Wno-dangling-reference -Wno-error=dangling-reference -Wno-stringop-overflow, LAPACK_INFO=mkl, PERF_WITH_AVX=1, PERF_WITH_AVX2=1, TORCH_VERSION=2.13.0, USE_CUDA=1, USE_CUDNN=ON, USE_CUSPARSELT=1, USE_GFLAGS=OFF, USE_GLOG=OFF, USE_GLOO=ON, USE_MKL=ON, USE_MKLDNN=ON, USE_MPI=OFF, USE_NCCL=ON, USE_NNPACK=ON, USE_OPENMP=ON, USE_ROCM=OFF, USE_ROCM_KERNEL_ASSERT=OFF, USE_XCCL=OFF, USE_XPU=OFF, \n",
+  "torch_cpu_capability": "AVX512"
+ },
+ "runs": {
+  "copy/bcir": {
+   "backend": "bcir",
+   "compile_and_first_steps_seconds": null,
+   "final_test": {
+    "accuracy": 1.0,
+    "answer_accuracy": 1.0,
+    "bits_per_byte": 0.001462234805150895,
+    "cross_entropy": 0.0010135439325069638,
+    "exact_match": 1.0,
+    "problems": 2000,
+    "seconds": 21.262282125999263,
+    "tokens": 18000
+   },
+   "final_validation": null,
+   "loss_agreement_vs_torch_eager": {
+    "max_abs_loss_diff": 0.842030438600097,
+    "max_abs_loss_diff_first_10": 6.426687750860083e-07,
+    "mean_abs_loss_diff_last_100": 0.0010920701820154666
+   },
+   "median_step_ms": 1724.817728500966,
+   "peak_rss_mb": 606.9765625,
+   "state_sha256": "7bec2d223c355f2eee21c1463b867132bacbb8554866382364236af63ae8407d",
+   "task": "copy",
+   "tokens_per_second": 593.6859200130992,
+   "train_seconds": 1722.2905712340453,
+   "wall_seconds": 2203.4881782720004
+  },
+  "copy/bcir-openblas": {
+   "backend": "bcir-openblas",
+   "compile_and_first_steps_seconds": null,
+   "final_test": {
+    "accuracy": 1.0,
+    "answer_accuracy": 1.0,
+    "bits_per_byte": 0.0010071217298115757,
+    "cross_entropy": 0.0006980835874995486,
+    "exact_match": 1.0,
+    "problems": 2000,
+    "seconds": 13.653068956000425,
+    "tokens": 18000
+   },
+   "final_validation": null,
+   "loss_agreement_vs_torch_eager": {
+    "max_abs_loss_diff": 1.0241032780836068,
+    "max_abs_loss_diff_first_10": 6.415235693779664e-07,
+    "mean_abs_loss_diff_last_100": 0.00048383494420898123
+   },
+   "median_step_ms": 954.4801340007325,
+   "peak_rss_mb": 611.8125,
+   "state_sha256": "ddcc42b09f79c02f6ee7a9577883e5e4fcce5ffe75285566f009dbffb7e6cc44",
+   "task": "copy",
+   "tokens_per_second": 1072.835320005952,
+   "train_seconds": 945.6656045190048,
+   "wall_seconds": 1241.9736411689992
+  },
+  "copy/torch-compiled": {
+   "backend": "torch-compiled",
+   "compile_and_first_steps_seconds": 5.968119931001638,
+   "final_test": {
+    "accuracy": 1.0,
+    "answer_accuracy": 1.0,
+    "bits_per_byte": 0.001106389059221239,
+    "cross_entropy": 0.0007668904570015721,
+    "exact_match": 1.0,
+    "problems": 2000,
+    "seconds": 9.482785632000741,
+    "tokens": 18000
+   },
+   "final_validation": null,
+   "loss_agreement_vs_torch_eager": {
+    "max_abs_loss_diff": 0.38207632303237915,
+    "max_abs_loss_diff_first_10": 4.76837158203125e-07,
+    "mean_abs_loss_diff_last_100": 0.000430537536740303
+   },
+   "median_step_ms": 713.1694884992612,
+   "peak_rss_mb": 1235.30859375,
+   "state_sha256": "c600ac0b8bac64d19b091367e3bee362c7cba3bb64f9f4136607d618a3318e2e",
+   "task": "copy",
+   "tokens_per_second": 1435.8438162502248,
+   "train_seconds": 714.2636326230113,
+   "wall_seconds": 918.3122012700005
+  },
+  "copy/torch-eager": {
+   "backend": "torch-eager",
+   "compile_and_first_steps_seconds": null,
+   "final_test": {
+    "accuracy": 1.0,
+    "answer_accuracy": 1.0,
+    "bits_per_byte": 0.0012123574020725448,
+    "cross_entropy": 0.0008403421150775643,
+    "exact_match": 1.0,
+    "problems": 2000,
+    "seconds": 9.74321643499934,
+    "tokens": 18000
+   },
+   "final_validation": null,
+   "loss_agreement_vs_torch_eager": null,
+   "median_step_ms": 788.0462484999953,
+   "peak_rss_mb": 1248.9765625,
+   "state_sha256": "4b0f78e712a4c2c98856d1f838d3f42e07e4709cc3239462d084ba92a6385244",
+   "task": "copy",
+   "tokens_per_second": 1299.416121768399,
+   "train_seconds": 785.2512856969915,
+   "wall_seconds": 989.6903348960004
+  },
+  "lm/bcir": {
+   "backend": "bcir",
+   "compile_and_first_steps_seconds": null,
+   "final_test": {
+    "accuracy": 0.5364990234375,
+    "answer_accuracy": 0.6191798941798942,
+    "bits_per_byte": 2.3543077267809114,
+    "cross_entropy": 1.6318817629886826,
+    "exact_match": 0.06984334203655353,
+    "problems": 1532,
+    "seconds": 9.25202847899891,
+    "tokens": 16384
+   },
+   "final_validation": {
+    "accuracy": 0.5684814453125,
+    "answer_accuracy": 0.6627587927163882,
+    "bits_per_byte": 2.164466860843438,
+    "cross_entropy": 1.5002941020090643,
+    "exact_match": 0.12362637362637363,
+    "problems": 728,
+    "seconds": 4.71702884700062,
+    "tokens": 8192
+   },
+   "loss_agreement_vs_torch_eager": {
+    "max_abs_loss_diff": 0.00822283261920087,
+    "max_abs_loss_diff_first_10": 6.827195475622716e-07,
+    "mean_abs_loss_diff_last_100": 0.00041298280316332426
+   },
+   "median_step_ms": 1726.438675499594,
+   "peak_rss_mb": 544.17578125,
+   "state_sha256": "aed5ffbfd54d746be0cca227d57c91aa31398edd1d46183af7158ddaf5d9bee7",
+   "task": "lm",
+   "tokens_per_second": 593.1285104602263,
+   "train_seconds": 1720.3722391209503,
+   "wall_seconds": 1839.2370577379988
+  },
+  "lm/bcir-openblas": {
+   "backend": "bcir-openblas",
+   "compile_and_first_steps_seconds": null,
+   "final_test": {
+    "accuracy": 0.53668212890625,
+    "answer_accuracy": 0.6194444444444445,
+    "bits_per_byte": 2.3543245419522725,
+    "cross_entropy": 1.6318934183773024,
+    "exact_match": 0.07114882506527415,
+    "problems": 1532,
+    "seconds": 5.942389889001788,
+    "tokens": 16384
+   },
+   "final_validation": {
+    "accuracy": 0.568603515625,
+    "answer_accuracy": 0.6635071090047393,
+    "bits_per_byte": 2.1644975917939315,
+    "cross_entropy": 1.500315403080755,
+    "exact_match": 0.12225274725274725,
+    "problems": 728,
+    "seconds": 2.9118263319978723,
+    "tokens": 8192
+   },
+   "loss_agreement_vs_torch_eager": {
+    "max_abs_loss_diff": 0.005211779329424404,
+    "max_abs_loss_diff_first_10": 7.021140264740211e-07,
+    "mean_abs_loss_diff_last_100": 0.00045089228012066494
+   },
+   "median_step_ms": 962.6137240011303,
+   "peak_rss_mb": 544.3359375,
+   "state_sha256": "ff6b793d4625cd1202d4a633952874a92a28e96c9b9403786a1395f5459228ab",
+   "task": "lm",
+   "tokens_per_second": 1063.77041430878,
+   "train_seconds": 953.3449777899823,
+   "wall_seconds": 1029.903303107998
+  },
+  "lm/torch-compiled": {
+   "backend": "torch-compiled",
+   "compile_and_first_steps_seconds": 6.873545107000609,
+   "final_test": {
+    "accuracy": 0.5369873046875,
+    "answer_accuracy": 0.6195767195767196,
+    "bits_per_byte": 2.3541436110379284,
+    "cross_entropy": 1.6317680066241487,
+    "exact_match": 0.07114882506527415,
+    "problems": 1532,
+    "seconds": 3.8319585009994626,
+    "tokens": 16384
+   },
+   "final_validation": {
+    "accuracy": 0.5687255859375,
+    "answer_accuracy": 0.6632576702419556,
+    "bits_per_byte": 2.164153913314398,
+    "cross_entropy": 1.5000771833116473,
+    "exact_match": 0.12087912087912088,
+    "problems": 728,
+    "seconds": 1.7799903230006748,
+    "tokens": 8192
+   },
+   "loss_agreement_vs_torch_eager": {
+    "max_abs_loss_diff": 0.005433559417724609,
+    "max_abs_loss_diff_first_10": 9.5367431640625e-07,
+    "mean_abs_loss_diff_last_100": 0.00035239696502685546
+   },
+   "median_step_ms": 711.8039410006531,
+   "peak_rss_mb": 1056.38671875,
+   "state_sha256": "99445b0fbdea7eb7e208a78ed33f6993e9db2d0bb184c72158f9f0f2e286b0fe",
+   "task": "lm",
+   "tokens_per_second": 1438.5983850559496,
+   "train_seconds": 710.6866088900115,
+   "wall_seconds": 758.3306832830003
+  },
+  "lm/torch-eager": {
+   "backend": "torch-eager",
+   "compile_and_first_steps_seconds": null,
+   "final_test": {
+    "accuracy": 0.53668212890625,
+    "answer_accuracy": 0.6197089947089947,
+    "bits_per_byte": 2.354320499081441,
+    "cross_entropy": 1.6318906160727842,
+    "exact_match": 0.07114882506527415,
+    "problems": 1532,
+    "seconds": 4.2195940840010735,
+    "tokens": 16384
+   },
+   "final_validation": {
+    "accuracy": 0.568603515625,
+    "answer_accuracy": 0.6632576702419556,
+    "bits_per_byte": 2.1641723361656813,
+    "cross_entropy": 1.5000899530590721,
+    "exact_match": 0.12362637362637363,
+    "problems": 728,
+    "seconds": 1.8851915139985067,
+    "tokens": 8192
+   },
+   "loss_agreement_vs_torch_eager": null,
+   "median_step_ms": 774.2633774996648,
+   "peak_rss_mb": 1139.625,
+   "state_sha256": "a7cd43d5054befc87cb36b2efbc7a8e7a34226874ce3f14dc441c82063806e89",
+   "task": "lm",
+   "tokens_per_second": 1322.5473782665683,
+   "train_seconds": 773.8438629839948,
+   "wall_seconds": 822.1712649439996
+  }
+ },
+ "table": "| task | backend | ms/step | tokens/s | train min | test CE (nats) | test accuracy | exact match (lm: words) | peak RSS MiB |\n|---|---|---|---|---|---|---|---|---|\n| copy | bcir | 1725 | 594 | 28.7 | 0.0010 | 1.0000 | 1.0000 | 607 |\n| copy | bcir-openblas | 954 | 1073 | 15.8 | 0.0007 | 1.0000 | 1.0000 | 612 |\n| copy | torch-compiled | 713 | 1436 | 11.9 | 0.0008 | 1.0000 | 1.0000 | 1235 |\n| copy | torch-eager | 788 | 1299 | 13.1 | 0.0008 | 1.0000 | 1.0000 | 1249 |\n| lm | bcir | 1726 | 593 | 28.7 | 1.6319 | 0.5365 | 0.0698 | 544 |\n| lm | bcir-openblas | 963 | 1064 | 15.9 | 1.6319 | 0.5367 | 0.0711 | 544 |\n| lm | torch-compiled | 712 | 1439 | 11.8 | 1.6318 | 0.5370 | 0.0711 | 1056 |\n| lm | torch-eager | 774 | 1323 | 12.9 | 1.6319 | 0.5367 | 0.0711 | 1140 |",
+ "time_to_target": {
+  "copy": {
+   "held-out exact match >= 0.5": {
+    "bcir": {
+     "seconds": 686.2237690240217,
+     "step": 400
+    },
+    "bcir-openblas": {
+     "seconds": 233.4778099820196,
+     "step": 250
+    },
+    "torch-compiled": {
+     "seconds": 218.1360790039962,
+     "step": 300
+    },
+    "torch-eager": {
+     "seconds": 235.04970740800127,
+     "step": 300
+    }
+   },
+   "held-out exact match >= 0.9": {
+    "bcir": {
+     "seconds": 773.0610149030144,
+     "step": 450
+    },
+    "bcir-openblas": {
+     "seconds": 233.4778099820196,
+     "step": 250
+    },
+    "torch-compiled": {
+     "seconds": 218.1360790039962,
+     "step": 300
+    },
+    "torch-eager": {
+     "seconds": 235.04970740800127,
+     "step": 300
+    }
+   },
+   "held-out exact match >= 0.99": {
+    "bcir": {
+     "seconds": 859.9674868310194,
+     "step": 500
+    },
+    "bcir-openblas": {
+     "seconds": 233.4778099820196,
+     "step": 250
+    },
+    "torch-compiled": {
+     "seconds": 218.1360790039962,
+     "step": 300
+    },
+    "torch-eager": {
+     "seconds": 235.04970740800127,
+     "step": 300
+    }
+   }
+  },
+  "lm": {
+   "validation cross-entropy <= 1.5003 nats/byte": {
+    "bcir": {
+     "seconds": 1720.3722391209503,
+     "step": 1000
+    },
+    "bcir-openblas": {
+     "seconds": 953.3449777899823,
+     "step": 1000
+    },
+    "torch-compiled": {
+     "seconds": 710.6866088900115,
+     "step": 1000
+    },
+    "torch-eager": {
+     "seconds": 773.8438629839948,
+     "step": 1000
+    }
+   },
+   "validation cross-entropy <= 1.6000 nats/byte": {
+    "bcir": {
+     "seconds": 1287.7851209729488,
+     "step": 750
+    },
+    "bcir-openblas": {
+     "seconds": 718.2135380860182,
+     "step": 750
+    },
+    "torch-compiled": {
+     "seconds": 534.321010391006,
+     "step": 750
+    },
+    "torch-eager": {
+     "seconds": 582.2168957220001,
+     "step": 750
+    }
+   },
+   "validation cross-entropy <= 1.7500 nats/byte": {
+    "bcir": {
+     "seconds": 943.2369987289603,
+     "step": 550
+    },
+    "bcir-openblas": {
+     "seconds": 527.7658427150291,
+     "step": 550
+    },
+    "torch-compiled": {
+     "seconds": 393.58953883201684,
+     "step": 550
+    },
+    "torch-eager": {
+     "seconds": 428.2082203159971,
+     "step": 550
+    }
+   },
+   "validation cross-entropy <= 2.0000 nats/byte": {
+    "bcir": {
+     "seconds": 687.4453514339584,
+     "step": 400
+    },
+    "bcir-openblas": {
+     "seconds": 383.46740716702516,
+     "step": 400
+    },
+    "torch-compiled": {
+     "seconds": 287.2943068520217,
+     "step": 400
+    },
+    "torch-eager": {
+     "seconds": 311.7536048960028,
+     "step": 400
+    }
+   }
+  }
+ }
+}

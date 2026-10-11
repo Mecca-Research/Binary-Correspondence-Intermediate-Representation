@@ -1,0 +1,139 @@
+{
+  "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "platform": "Linux-6.18.44-fc-v114-x86_64-with-glibc2.39",
+  "python": "3.11.15 (main, Mar  3 2026, 09:26:23) [GCC 13.3.0]",
+  "results": {
+    "rows": [
+      {
+        "batch": 4,
+        "context": 64,
+        "head_dim": 48,
+        "kv_heads": 4,
+        "max_abs_error": 3.3527612686157227e-08,
+        "median_ms": {
+          "native_c": 2.126717,
+          "torch_sdpa": 0.542965
+        },
+        "native_probabilities_bytes": 524288,
+        "query_heads": 8,
+        "samples_ms": {
+          "native_c": [
+            2.379126,
+            2.039124,
+            2.234021,
+            2.181281,
+            2.139014,
+            2.126717,
+            2.032332,
+            1.955496,
+            2.036363,
+            6.070958,
+            2.074805
+          ],
+          "torch_sdpa": [
+            0.683528,
+            0.927877,
+            0.542965,
+            0.711744,
+            0.54081,
+            0.535598,
+            0.499267,
+            0.65459,
+            0.521215,
+            0.606367,
+            0.437919
+          ]
+        },
+        "torch_repeated_kv_extra_bytes": 393216
+      },
+      {
+        "batch": 4,
+        "context": 128,
+        "head_dim": 48,
+        "kv_heads": 4,
+        "max_abs_error": 3.725290298461914e-08,
+        "median_ms": {
+          "native_c": 8.911341,
+          "torch_sdpa": 1.916679
+        },
+        "native_probabilities_bytes": 2097152,
+        "query_heads": 8,
+        "samples_ms": {
+          "native_c": [
+            10.729661,
+            10.486318,
+            12.868255,
+            9.148473,
+            8.53086,
+            9.265905,
+            8.311643,
+            8.618423,
+            8.911341,
+            8.290175,
+            8.232805
+          ],
+          "torch_sdpa": [
+            2.035009,
+            1.916679,
+            3.910483,
+            2.105287,
+            1.828399,
+            1.996124,
+            1.801785,
+            1.804934,
+            1.683392,
+            2.015596,
+            1.657783
+          ]
+        },
+        "torch_repeated_kv_extra_bytes": 786432
+      },
+      {
+        "batch": 4,
+        "context": 256,
+        "head_dim": 48,
+        "kv_heads": 4,
+        "max_abs_error": 4.842877388000488e-08,
+        "median_ms": {
+          "native_c": 35.863813,
+          "torch_sdpa": 6.018541
+        },
+        "native_probabilities_bytes": 8388608,
+        "query_heads": 8,
+        "samples_ms": {
+          "native_c": [
+            35.863813,
+            34.395502,
+            34.777178,
+            34.030527,
+            41.041223,
+            38.365425,
+            37.735117,
+            37.730777,
+            35.13186,
+            34.707862,
+            37.912961
+          ],
+          "torch_sdpa": [
+            5.626708,
+            5.54956,
+            5.277509,
+            5.758561,
+            6.018541,
+            6.060241,
+            6.078695,
+            6.643305,
+            5.611653,
+            6.317409,
+            6.296806
+          ]
+        },
+        "torch_repeated_kv_extra_bytes": 1572864
+      }
+    ],
+    "scope": "C causal GQA forward versus CPU Torch SDPA, single thread FP32, equal outputs. C BT-head-channel layout with preallocated full probability matrix; Torch contiguous B-head-T-channel, K/V repetition/preparation excluded, output allocation included. No backward/full-training speedup inferred.",
+    "torch": "2.13.0+cu130"
+  },
+  "source_commit": "75d50d4f6e280e35a25032024edffd92f25c52f2",
+  "stage": "attention"
+}
