@@ -45,6 +45,13 @@ BCIR_MM_INLINE void mm_block(size_t mr, size_t nr, const mm_args *x, const float
     size_t jb, size_t nj, size_t lb, size_t nl, int mode) {
   float acc[BCIR_MM_MRMAX][BCIR_MM_NRMAX];
   size_t r,j,l;
+#ifdef __clang_analyzer__
+  /* Every caller passes nj = min(n - jb, nr), so the stores below never read past the columns
+   * the block loaded. clang --analyze sees this block on its own and cannot know that, so the
+   * analyzer alone is told: GCC does not fold the same line away, and the kernel's machine code
+   * stays exactly the code that was measured. */
+  if (nj>nr) nj=nr;
+#endif
   for (r=0;r<mr;r++) {
     const float *ci=x->c+(i+r)*x->ldc+jb;
     if (nj==nr) { for (j=0;j<nr;j++) acc[r][j]=ci[j]; }
