@@ -99,6 +99,51 @@ def test_data_preparation_rejects_duplicate_ids_and_hard_control_policy():
     assert corpus.report.accepted == 0 and corpus.report.rejected_control == 1
 
 
+def test_the_rank_ordered_encoder_is_the_pass_encoder():
+    """`encode` merges by rank through a heap over (merge index, position) in O(n log n); the
+    definition is one greedy left-to-right pass per merge, in order, O(merges x bytes). The two
+    agree where they could differ: overlapping occurrences (`aaaa`, `aaaaa`), a pair one merge
+    creates for a later one, multi-byte text, CR/LF and NFC normalisation, and random text over a
+    small alphabet, where merges nest deepest. The tokenizer's own `encode` is the rank-ordered
+    one, and the differential can fail: a rank table that reverses the merge order disagrees."""
+    import random
+
+    from bcir.hosted.training import bpe as m
+
+    texts = [
+        "aaaa", "aaaaa", "aaaaaaa", "abababab", "the the the the", "a a a a", "mississippi " * 40,
+        "x\r\ny\rz\n", "e\u0301" * 30, "\u00e9" * 30, "\U0001f642\U0001f643" * 20, "ab", "a", "",
+    ]  # fmt: skip
+    rng = random.Random(7)
+    texts += ["".join(rng.choice("ab c\n") for _ in range(rng.randint(1, 300))) for _ in range(200)]
+    texts += [
+        "".join(chr(rng.randint(0, 0x2FF)) for _ in range(rng.randint(1, 120))) for _ in range(60)
+    ]
+    tokenizer = BytePairTokenizer.train([t for t in texts if t], vocab_size=400, min_frequency=2)
+    assert tokenizer.vocab_size > 300, "too few merges to nest"
+    ranks = tokenizer._ranks()
+    long = ["".join(rng.choice("abcdefgh \n") for _ in range(3000)) for _ in range(20)]
+    for text in texts + long:
+        sequence = [byte + len(m._SPECIALS) for byte in m._normalize(text).encode("utf-8")]
+        by_passes = m._encode_by_passes(list(sequence), tokenizer.merges)
+        assert m._encode_by_rank(sequence, ranks) == by_passes, text[:40]
+        assert tokenizer.encode(text) == by_passes
+        assert tokenizer.decode(tokenizer.encode(text)) == m._normalize(text)
+    reversed_ranks = {
+        pair: (len(tokenizer.merges) - 1 - index, token) for pair, (index, token) in ranks.items()
+    }
+    disagreements = sum(
+        1
+        for text in texts + long
+        if m._encode_by_rank(
+            [byte + len(m._SPECIALS) for byte in m._normalize(text).encode("utf-8")],
+            reversed_ranks,
+        )
+        != tokenizer.encode(text)
+    )
+    assert disagreements > 0, "the differential cannot tell the merge order apart"
+
+
 def test_byte_bpe_roundtrips_utf8_and_builds_indexed_token_source():
     corpus = prepare_corpus(
         _documents()[:2], DataPreparationSpec(("CC0-1.0",), validation_permyriad=0)

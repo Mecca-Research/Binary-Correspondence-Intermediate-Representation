@@ -9,6 +9,7 @@ checks rather than pretending to be a trillion-token tokenizer trainer.
 from __future__ import annotations
 
 import hashlib
+import heapq
 import unicodedata
 from dataclasses import dataclass
 
@@ -37,6 +38,64 @@ def _merge_sequence(sequence: list[int], pair: tuple[int, int], token: int) -> l
             output.append(sequence[index])
             index += 1
     return output
+
+
+def _encode_by_passes(sequence: list[int], merges) -> list[int]:
+    """The definition: every merge, in order, as one greedy left-to-right pass over the whole
+    sequence. Linear in merges x bytes; the reference `_encode_by_rank` is held to."""
+    for left, right, token in merges:
+        sequence = _merge_sequence(sequence, (left, right), token)
+    return sequence
+
+
+def _encode_by_rank(
+    sequence: list[int], ranks: dict[tuple[int, int], tuple[int, int]]
+) -> list[int]:
+    """The same tokens as `_encode_by_passes`, in O(n log n): the adjacent pairs that are merges
+    sit in a heap keyed by (merge index, position), so the lowest-ranked pair present is merged
+    first and, within one merge, the leftmost occurrence first, as the pass does. A merge can only
+    create pairs of a higher rank than its own (its token is newer than any token in an earlier
+    merge's pair), so the heap pops ranks in the order the passes apply them; an entry whose pair
+    has since changed under it is dropped when popped. The tokens are a linked list over the
+    original positions, so "position" keeps meaning the pass's left-to-right order."""
+    n = len(sequence)
+    if n < 2:
+        return list(sequence)
+    tok = list(sequence)
+    nxt = list(range(1, n + 1))
+    prv = list(range(-1, n - 1))
+    alive = [True] * n
+    heap = []
+    for i in range(n - 1):
+        rank = ranks.get((tok[i], tok[i + 1]))
+        if rank is not None:
+            heap.append((rank[0], i))
+    heapq.heapify(heap)
+    while heap:
+        rank_index, i = heapq.heappop(heap)
+        if not alive[i]:
+            continue
+        j = nxt[i]
+        if j >= n:
+            continue
+        rank = ranks.get((tok[i], tok[j]))
+        if rank is None or rank[0] != rank_index:
+            continue  # the pair under this entry changed; its current pair has its own entry
+        tok[i] = rank[1]
+        alive[j] = False
+        k = nxt[j]
+        nxt[i] = k
+        if k < n:
+            prv[k] = i
+            later = ranks.get((tok[i], tok[k]))
+            if later is not None:
+                heapq.heappush(heap, (later[0], i))
+        h = prv[i]
+        if h >= 0:
+            later = ranks.get((tok[h], tok[i]))
+            if later is not None:
+                heapq.heappush(heap, (later[0], h))
+    return [tok[i] for i in range(n) if alive[i]]
 
 
 @dataclass(frozen=True)
@@ -114,12 +173,22 @@ class BytePairTokenizer:
             sequences = [_merge_sequence(sequence, pair, token) for sequence in sequences]
         return cls(tuple(merges))
 
+    def _ranks(self) -> dict[tuple[int, int], tuple[int, int]]:
+        """pair -> (merge index, token), computed once per tokenizer (the dataclass is frozen)."""
+        ranks = self.__dict__.get("_rank_table")
+        if ranks is None:
+            ranks = {
+                (left, right): (index, token)
+                for index, (left, right, token) in enumerate(self.merges)
+            }
+            object.__setattr__(self, "_rank_table", ranks)
+        return ranks
+
     def encode(self, text: str, *, add_bos: bool = False, add_eos: bool = False) -> list[int]:
         if not isinstance(text, str):
             raise ValueError("text must be a string")
         sequence = [byte + len(_SPECIALS) for byte in _normalize(text).encode("utf-8")]
-        for left, right, token in self.merges:
-            sequence = _merge_sequence(sequence, (left, right), token)
+        sequence = _encode_by_rank(sequence, self._ranks())
         if add_bos:
             sequence.insert(0, self.bos_token_id)
         if add_eos:

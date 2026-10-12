@@ -2846,6 +2846,26 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     pre-release's `--version` is not a release -- `env` exports `BCIR_PYTHON_LATEST`, and
     `check_latest.sh` gains a `python` leg (quick tier + security gates on 3.15), confirms the
     interpreter in `confirm`, and runs its `thorough` leg on 3.15.
+  BPE-FAST (2026-10-12): the byte-BPE encoder in O(n log n), the same tokens.
+  - `BytePairTokenizer.encode` applied every merge as one greedy left-to-right pass over the
+    whole sequence, in order: O(merges x bytes). The train rail's 40-step smoke spent 568 s, 22 of
+    them training; encoding the 5.3 MB corpus through 763 passes was most of the rest. The
+    encoder now merges by rank: the adjacent pairs that are merges sit in a heap keyed by (merge
+    index, position) over a linked list of the original positions, so the lowest-ranked pair
+    present is merged first and, within one merge, the leftmost occurrence first, as the pass
+    did. A merge can only create pairs of a higher rank than its own (its token is newer than any
+    token in an earlier merge's pair), so the heap pops ranks in the order the passes applied
+    them, and an entry whose pair changed under it is dropped when popped. The pass encoder stays
+    as the definition (`_encode_by_passes`); the rank table is computed once per tokenizer.
+  - Measured on 319 KB of `docs/` in 60 sections with a 764-merge tokenizer: passes 21.13 s,
+    ranks 0.61 s (34.7x), identical tokens. BPE training (the 768 KB sample to 1,024 tokens:
+    about 44 s per 262 KB here) is now the smoke's largest cost; the trainer's pair recount per
+    merge is the same O(merges x bytes) shape and stays for a later slice.
+  - `test_the_rank_ordered_encoder_is_the_pass_encoder`: the two agree on overlapping
+    occurrences, on a pair one merge creates for a later one, on multi-byte, CR/LF and NFC text
+    and on random text over small alphabets (where merges nest deepest); the tokenizer's own
+    `encode` is the rank-ordered one; and a rank table that reverses the merge order disagrees,
+    so the differential can fail.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:
