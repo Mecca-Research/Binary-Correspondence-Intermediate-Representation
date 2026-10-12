@@ -2866,6 +2866,31 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     and on random text over small alphabets (where merges nest deepest); the tokenizer's own
     `encode` is the rank-ordered one; and a rank table that reverses the merge order disagrees,
     so the differential can fail.
+  TRAIN-RAIL (2026-10-12): the training corpus is the IR's data, one way.
+  - The law TRAIN-0 stated now has its rail. `tools/models/configs/bcir-corpus-860k.json` is the
+    docs recipe with `training/*.md` and `training/**/*.md` beside `docs/`'s patterns (407 tracked
+    files, 5.3 MB; the docs recipe reads 79), the same 860K-parameter decoder, tokenizer and
+    licence, its own split salt. `tools/models/train_rail.sh` runs it through `build_lab_model.py`
+    with the trainer compiled by CC, then reads the corpus witness `tools/models/train_rail.py`:
+    the tracked Markdown files of `docs/` and `training/` the model did not see,
+    `train.corpus.unselected`, 328 before the rail (every file of `training/`), 0 under it. The
+    witness reads the row from the recipe's own selection (`corpus_documents`, the builder's one
+    predicate) without a training run, so the GEM+ harness measures it beside `train.step.ms`.
+  - One script in every place the rail lives (L14): CTest's `train-corpus` (label `train`,
+    `ctest --preset train`, `BCIR_TRAIN_STEPS` 40 by default, refused at 0); BCIR Make's task
+    `train.corpus` in the rails' BCIRfile, the same script and count through `run_section.sh`,
+    reading the recipe, the trainer's two C units, `bcir/`, `docs/` and `training/` -- a corpus
+    edit retrains, a runtime edit elsewhere does not, and the make gate's scratch copy carries the
+    two trees so its generation tags can say so; the qualification job, which trains the corpus
+    recipe for 200 steps and qualifies that model where it trained and qualified the docs model;
+    the gcc cell of `cmake-build` runs the entry. `test_train_rail.py` holds the recipe's selection
+    to the tree, fires the witness on the docs recipe (exit 1) and on a manifest it cannot read
+    (exit 2), refuses the script's four ways of not running (exit 2, before any work), and reads
+    the script, recipe, roots and step count out of each place.
+  - Found by the task: the make gate's change step copies the tracked tree, so a target reading a
+    file git does not track got a traceback from the scratch copy minutes in. `untracked_reads`
+    now refuses before any run (UNUSABLE, exit 2) naming the files, with its witness in
+    `test_make_rails.py`. The smoke's own cost, 568 s for 40 steps, was the encoder's: BPE-FAST.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

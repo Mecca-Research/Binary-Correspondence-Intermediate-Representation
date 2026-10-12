@@ -42,6 +42,10 @@ whether the IR builds or how it verifies. Its conventions live in `CONTRIBUTING.
 - Changing the IR law (ops/types/attrs) → `mlir/` (validate with `tools/` and the `mlir` preset's
   `ctest -L mlir`, whose lit suite runs every fixture's RUN lines as written: `mlir/lit.cfg.py`).
 - Writing/curating training material → `training/<subject>/` (compiler material: `training/llvm/`).
+- Changing what the IR trains on → the corpus recipe `tools/models/configs/bcir-corpus-860k.json`
+  and the rail `tools/models/train_rail.sh` (CTest `train-corpus`, label `train`, `BCIR_TRAIN_STEPS`;
+  BCIR Make's task `train.corpus`; the qualification job), whose witness `tools/models/train_rail.py`
+  holds `train.corpus.unselected` at 0 -- the corpus itself stays `training/`'s, read as data (§2).
 - Adding or moving a C/C++ source → `runtime/manifest.json` (the one source list; CMake reads it,
   `tools/build/manifest.py --check` holds the gates and harnesses to it) → [`docs/BCIR_BUILD_ROADMAP.md`](docs/BCIR_BUILD_ROADMAP.md).
 - Changing a migrated runtime-gate section → its `tools/c/sections/<name>.sh` (BCIR Make runs that

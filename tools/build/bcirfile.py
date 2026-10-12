@@ -44,6 +44,23 @@ OUT = "build/bcir-make"
 # (the oracle it runs, the fixtures and sources it compiles, the gate's own tools, the channel
 # examples), claimed whole -- an edit anywhere in them re-runs the sections, never too few.
 SECTION_TREES = ("bcir", "channels", "runtime/c", "tools")
+# The train rail (TRAIN-RAIL): the corpus recipe trained on the native trainer as a task. It reads
+# what decides the model -- the recipe, the trainer's two C units, the oracle and the two corpus
+# trees the one-way corpus law names (AGENTS.md section 2) -- so a corpus edit retrains and a
+# runtime edit elsewhere does not. The step count is the CTest entry's default (BCIR_TRAIN_STEPS):
+# the bounded smoke; the recipe's own count is the full run, `bash tools/models/train_rail.sh`.
+TRAIN_RECIPE = "tools/models/configs/bcir-corpus-860k.json"
+TRAIN_SCRIPT = "tools/models/train_rail.sh"
+TRAIN_READS = (
+    "tools/models/train_rail.py",
+    "tools/models/build_lab_model.py",
+    f"{C_DIR}/bcir_tensor.h",
+    f"{C_DIR}/bcir_tensor.c",
+    f"{C_DIR}/bcir_decoder_train.h",
+    f"{C_DIR}/bcir_decoder_train.c",
+)
+TRAIN_TREES = ("bcir", "docs", "training")
+TRAIN_STEPS = 40
 INCLUDE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.M)
 
 
@@ -222,6 +239,7 @@ def generate(
             w.tool(name, path)
     planned: dict[str, list[str]] = {
         "sections": [],
+        "train": [],
         "libraries": [],
         "tools": [],
         "harnesses": [],
@@ -429,6 +447,29 @@ def generate(
                 ),
             )
             planned["sections"].append(name)
+        # --- train: the corpus recipe trained on the native trainer (TRAIN-RAIL) ---
+        # The same script CTest runs as `train-corpus`, through run_section.sh as a section is,
+        # its verdict the task's outputs; the model it writes under {out}/train is the script's.
+        verdict = f"{out}/verdicts/train.corpus"
+        writes = [f"{verdict}/stdout", f"{verdict}/stderr", f"{verdict}/status"]
+        w.target(
+            "train.corpus",
+            ["tools/build/run_section.sh", TRAIN_SCRIPT, TRAIN_RECIPE, *TRAIN_READS],
+            writes,
+            [
+                [
+                    "bash",
+                    "tools/build/run_section.sh",
+                    *writes,
+                    TRAIN_SCRIPT,
+                    f"{out}/train",
+                    str(TRAIN_STEPS),
+                ]
+            ],
+            trees=TRAIN_TREES,
+            uses=("cc", "python"),
+        )
+        planned["train"].append("corpus")
     return w.text(), planned
 
 

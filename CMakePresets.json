@@ -103,6 +103,14 @@
       "execution": {"jobs": 2}
     },
     {
+      "name": "train",
+      "displayName": "The train rail: the corpus recipe trained for BCIR_TRAIN_STEPS steps on the native trainer",
+      "configurePreset": "default",
+      "filter": {"include": {"label": "^train$"}},
+      "output": {"outputOnFailure": true},
+      "execution": {"jobs": 2}
+    },
+    {
       "name": "c",
       "displayName": "The C and C++ shell gates under the configured compilers",
       "configurePreset": "default",

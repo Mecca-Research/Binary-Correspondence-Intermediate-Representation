@@ -65,6 +65,23 @@ fallback. The C ABI accepts native GEMM and SiLU function pointers: C++ belongs 
 framework/vendor/SYCL adapter when that integration requires it. The core contains
 no C++ objects, accelerator discovery or framework runtime.
 
+## The train rail (TRAIN-RAIL)
+
+The IR's build trains this decoder on the repository's own text. `tools/models/train_rail.sh`
+runs the corpus recipe `tools/models/configs/bcir-corpus-860k.json` -- every tracked Markdown file
+of `docs/` and `training/`, read as data under the one-way corpus law of `AGENTS.md` §2 (the IR
+never imports the corpus; the corpus keeps its own gates) -- through `tools/models/build_lab_model.py`:
+the corpus standard's preparation, BCIR's BPE, this trainer compiled with `CC`, the BCIRQ8 export
+and its sample. It ends by reading the corpus witness, `tools/models/train_rail.py`: every tracked
+Markdown file of both trees is in what the model trained on (`train.corpus.unselected` 0, the
+rail's exact GEM+ row; the docs recipe alone reads 328). CTest runs it as `train-corpus`
+(`ctest --preset train`; `BCIR_TRAIN_STEPS`, 40 by default, the bounded smoke), BCIR Make as the
+task `train.corpus` with the same count (a corpus edit retrains; a runtime edit elsewhere does not),
+and CI's qualification job for 200 steps before qualifying the model. The full run is the recipe's
+own step count: `bash tools/models/train_rail.sh build/corpus-model`. The optimizations of
+[the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md) reach this
+model by construction, because the rail trains it on this trainer.
+
 ## The step as a GEM+ program (NDT-GEM)
 
 [`native_program.training_step_program`](../../bcir/hosted/models/native_program.py) states one

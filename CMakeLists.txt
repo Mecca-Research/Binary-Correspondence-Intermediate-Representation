@@ -52,6 +52,10 @@ set(BCIR_FUZZ_RUNS 1000 CACHE STRING "libFuzzer iterations per CTest fuzz entry 
 if(NOT BCIR_FUZZ_RUNS MATCHES "^[1-9][0-9]*$")
   message(FATAL_ERROR "BCIR_FUZZ_RUNS must be a positive integer, got '${BCIR_FUZZ_RUNS}' (a zero-run fuzz is vacuous)")
 endif()
+set(BCIR_TRAIN_STEPS 40 CACHE STRING "Optimizer steps the `train-corpus` CTest entry trains the corpus recipe for (bounded; > 0; the recipe's own count is the full run: bash tools/models/train_rail.sh <dir>)")
+if(NOT BCIR_TRAIN_STEPS MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR "BCIR_TRAIN_STEPS must be a positive integer, got '${BCIR_TRAIN_STEPS}' (a zero-step training is vacuous)")
+endif()
 
 # Release is -O2 with the asserts kept: the gates never define NDEBUG, and a verifier whose
 # checks compile out is not the verifier that was tested.

@@ -807,6 +807,24 @@ METRICS: tuple[Metric, ...] = (
         "cache-resident across steps, so first-touch traffic is not the loop's)",
         slice_owner="NDT-GEM",
     ),
+    # --- TRAIN-RAIL: the training corpus as the IR's data ---------------------------------------
+    Metric(
+        "train.corpus.unselected",
+        "train",
+        "tracked Markdown files under docs/ and training/ -- the two corpus roots the one-way corpus "
+        "law names (AGENTS.md section 2) -- that the train rail's recipe "
+        "(tools/models/configs/bcir-corpus-860k.json) does not select, read without a training "
+        "run (tools/models/train_rail.py); before the rail the lab recipe read docs/ alone, and "
+        "every one of training/'s 328 files was outside the IR's training data",
+        328,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the recipe's selection against `git ls-files` of the two roots, the one "
+        "predicate the builder selects with (`corpus_documents`): a file the rail cannot name is "
+        "a file the model never saw",
+        slice_owner="TRAIN-RAIL",
+    ),
     Metric(
         "transform.export.mismatch",
         "transform",

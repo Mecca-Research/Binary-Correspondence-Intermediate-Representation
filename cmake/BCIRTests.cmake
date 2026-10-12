@@ -6,6 +6,8 @@
 #             section-parity gate and the install gate (`ctest --preset build`)
 #   section   the gate sections that moved into tools/c/sections/, over the harnesses built here
 #   python    the oracle's quick tier
+#   train     the train rail: the corpus recipe (docs/ + training/, read as data) trained for
+#             BCIR_TRAIN_STEPS steps on the native trainer under the configured compiler
 #   shell     the shell gates, wrapped as they are: c-runtime, the gates it delegates to (one entry
 #             each, from the manifest's `delegated`), the cfront sanitizer and the fuzzers
 #   c / cpp / fuzz / mlir / docs   what each gate is about
@@ -158,6 +160,19 @@ add_test(NAME python-quick
          WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 set_tests_properties(python-quick PROPERTIES LABELS "python" PROCESSORS 2 TIMEOUT 1800
                      ENVIRONMENT "BCIR_DEPS_INDEX=${CMAKE_BINARY_DIR}/bcir-deps.json")
+
+# --- train: the training corpus as the IR's data (TRAIN-RAIL) ---
+# tools/models/train_rail.sh trains the BCIR-native decoder on the corpus recipe
+# (tools/models/configs/bcir-corpus-860k.json: docs/ and training/, read as data under the one-way
+# corpus law of AGENTS.md section 2) for BCIR_TRAIN_STEPS steps, the trainer compiled with the
+# configured compiler, and reads the corpus witness (every tracked Markdown file of both trees is
+# in what it trained on). BCIR Make runs the same script as the task `train.corpus`
+# (tools/build/bcirfile.py); CI's qualification job runs it for 200 steps before qualifying the model.
+add_test(NAME train-corpus
+         COMMAND ${CMAKE_COMMAND} -E env ${_bcir_gate_env} "PYTHON=${BCIR_PYTHON}"
+                 bash "${CMAKE_SOURCE_DIR}/tools/models/train_rail.sh" "${CMAKE_BINARY_DIR}/train" "${BCIR_TRAIN_STEPS}"
+         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+set_tests_properties(train-corpus PROPERTIES LABELS "train" PROCESSORS 2 TIMEOUT 1800)
 
 # --- shell: the gates as they are ---
 # c-runtime runs tools/c/check_runtime.sh without the gates it delegates to: each of those is an entry

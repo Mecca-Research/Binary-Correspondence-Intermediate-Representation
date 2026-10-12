@@ -24,6 +24,7 @@ Without a C compiler the native rows are not measured -- a skip, never a pass.
 from __future__ import annotations
 
 import ctypes as ct
+import importlib.util
 import os
 import shutil
 import statistics
@@ -298,11 +299,31 @@ def measure_step(path, bench=BENCH) -> dict[str, float]:
 # --- every row --------------------------------------------------------------------------------
 
 
+def corpus_unselected() -> int | None:
+    """TRAIN-RAIL's row, `train.corpus.unselected`: the tracked Markdown files of docs/ and
+    training/ that the train rail's recipe does not select, read by tools/models/train_rail.py
+    without a training run; None outside a source checkout (the wheel ships neither tools/ nor
+    the trees), where the row is not measured rather than read as zero."""
+    root = Path(__file__).resolve().parents[2]
+    tool = root / "tools" / "models" / "train_rail.py"
+    if not tool.is_file() or not (root / "training").is_dir() or not (root / "docs").is_dir():
+        return None
+    spec = importlib.util.spec_from_file_location("bcir_tools_train_rail", tool)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    selected = module.selected_by_recipe(root, module.DEFAULT_RECIPE)
+    return len(module.unselected(root, selected))
+
+
 def measure(*, timed: bool = True) -> dict[str, float]:
-    """Every NDT-GEM row this host can measure: the memory row always, the native rows with a
-    compiler (and the timed one only when `timed`)."""
+    """Every NDT-GEM row this host can measure: the memory row always, the corpus row in a source
+    checkout, the native rows with a compiler (and the timed one only when `timed`)."""
     ratio = transient_ratio()[0]
     out = {"train.memory.transient": ratio}
+    unselected = corpus_unselected()
+    if unselected is not None:
+        out["train.corpus.unselected"] = float(unselected)
     tmp = tempfile.mkdtemp(prefix="bcir-ndt-")
     try:
         path = build_library(tmp)
@@ -323,6 +344,7 @@ __all__ = [
     "MM_CASES",
     "PLAN_CORPUS",
     "build_library",
+    "corpus_unselected",
     "measure",
     "measure_step",
     "mm_mismatch",

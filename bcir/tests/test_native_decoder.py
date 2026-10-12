@@ -263,8 +263,9 @@ def test_the_step_floor_is_measured_beside_the_step():
 
 def test_the_harness_rows_are_the_programs_numbers():
     """`train.memory.transient`'s frozen baseline is the bench program's own ratio, and every
-    NDT-GEM row the harness declares is one the fixtures measure -- a change to the program or
-    the C plan cannot leave the harness quoting a stale number."""
+    row of the harness's `train` group is one the fixtures measure -- the four NDT-GEM rows, and
+    TRAIN-RAIL's corpus row -- so a change to the program, the C plan or the corpus recipe
+    cannot leave the harness quoting a stale number."""
     import sys
 
     from bcir.tests import native_decoder_fixtures as nf
@@ -274,7 +275,11 @@ def test_the_harness_rows_are_the_programs_numbers():
 
     rows = {m.key: m for m in METRICS if m.group == "train"}
     assert set(rows) == {"train.plan.mismatch", "train.mm.mismatch", "train.memory.transient",
-                         "train.step.ms"}  # fmt: skip
+                         "train.step.ms", "train.corpus.unselected"}  # fmt: skip
+    corpus = rows["train.corpus.unselected"]
+    assert corpus.kind == "exact" and corpus.bound == 0 and corpus.baseline == 328
+    unselected = nf.corpus_unselected()
+    assert unselected is None or unselected == 0, unselected  # None outside a source checkout
     ratio, held, bound, incumbent = nf.transient_ratio()
     assert rows["train.memory.transient"].baseline == ratio == held / bound
     assert (held, bound, incumbent) == (999_424, 753_664, 753_664)
