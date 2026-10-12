@@ -1,0 +1,21 @@
+{
+ "what": "The native trainer's update on the 9.84M decoder's parameter count (9,836,928): the first pass as written (gradient, weights and both moments streamed once, the gradient norm summed in double in index order, the four maxima and the finiteness verdict), the gradient stream alone with its chain and maximum, and bcir_decoder_update whole on a pool of one and of four -- medians of 7 timed rounds after one, two runs, update-passes.c built with gcc -std=c11 -O3 -ffp-contract=off -fno-math-errno against the tree at 9d75c38; this 4-vCPU container, indicative wall times",
+ "date": "2026-10-12",
+ "slice": "NDT-NORM (measured, not built)",
+ "parameters": 9836928,
+ "runs": [
+  {
+   "first_pass_ms": 41.5,
+   "gradient_chain_ms": 15.5,
+   "update_pool1_ms": 74.4,
+   "update_pool4_ms": 53.2
+  },
+  {
+   "first_pass_ms": 40.9,
+   "gradient_chain_ms": 15.7,
+   "update_pool1_ms": 75.4,
+   "update_pool4_ms": 54.0
+  }
+ ],
+ "reading": "the first pass is 41 ms of the 53-ms four-thread update: 16 of it the gradient's double chain (the contract's index-order sum, serial by definition), 25 the three state streams' maxima and finiteness, which are associative and could run on the pool; the commit is 33 ms serial and 12 pooled. A pooled first pass keeps every bit (the chain stays serial, the maxima and verdicts are the same values) and would take the four-thread update to about 34 ms: 19 ms, under 4% of the four-thread step with the admitted provider."
+}

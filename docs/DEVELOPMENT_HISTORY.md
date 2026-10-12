@@ -2909,7 +2909,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     the attention, the update and the norms between two GEMMs (the attention 57 to 115 ms);
     `OPENBLAS_THREAD_TIMEOUT=4` before the library loads (the harness's `_openblas` sets it)
     puts them to sleep at once -- the 1,000-step run's median 616 ms a step on four threads
-    (655 spinning), the step by kernel 527 (632), the same state.
+    (655 spinning), the step by kernel 527 (632), the same state. The update's passes were
+    measured next ([update-passes.json](research/measurements/2026-10-12/update-passes.json)):
+    41 of its 53 four-thread ms are the first pass (16 the gradient's index-order chain, 25 the
+    weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
+    NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
+    streams on the pool, the chain kept) instead of a guess.
   NDT-ATTN-0 (2026-10-12): the v2 softmax's row through the vector exponential.
   - NDT-MEASURE's finding, fixed the same day: `att_head`'s `exp` branch called the scalar
     exponential element by element with the row sum in the same loop, which GCC does not

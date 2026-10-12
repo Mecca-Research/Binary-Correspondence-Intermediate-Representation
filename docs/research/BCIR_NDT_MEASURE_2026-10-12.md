@@ -245,8 +245,11 @@ Row by row:
 - **AdamW and the clipping norm.** The commit scales on the pool; the clipping norm and the
   finiteness check are the serial pass they were, and the update reads 76.5, 84.1
   and 71.5 ms at one, three and four threads under v1 -- the budget's "~30 ms at four
-  threads" needs NDT-NORM (the norm's partial sums gathered as the backward writes each gradient,
-  the index-order sum kept) to be true.
+  threads" needs NDT-NORM to be true -- measured since ([update-passes.json](measurements/2026-10-12/update-passes.json)):
+  41 of the update's 53 four-thread ms are its first pass, 16 of them the gradient's index-order
+  chain (serial by the contract) and 25 the weight and moment streams' maxima and finiteness, which
+  are associative and can go on the pool; the commit is 12 ms pooled (33 serial). About 34 ms is
+  the honest expectation, not 30.
 - **The rest.** The loss, the embedding scatter and the gamma VJP's row sum are index-order
   reductions the pool leaves serial by design; at 105.2 ms on three threads they are
   12% of the step and will be a larger share of every faster step. A deterministic
