@@ -85,6 +85,29 @@ BCIR_DT_API void bcir_tensor_mm_fused_pool(bcir_tensor_pool *pool, int ta, int t
 BCIR_DT_API int bcir_tensor_mm_fused_variants(void);
 BCIR_DT_API int bcir_tensor_mm_fused_variant(int variant, int ta, int tb, size_t m, size_t n,
     size_t k, float alpha, const float *a, const float *b, float beta, float *c);
+/* The blocked fused contract, v3 (NDT-KBLOCK): c[i][j] starts at its beta-scaled value; the
+ * depth [0, k) is split into blocks by one rule -- while terms remain, a whole block of
+ * BCIR_MM_KBLOCK terms when at least two blocks' worth remain, else half the remainder rounded
+ * up to a multiple of BCIR_MM_KBLOCK_UNROLL when more than one block's worth remains, else the
+ * remainder -- and for each block in order P = the fused chain of its terms from zero
+ * (P = fma(A(i,l), B(l,j), P) for l ascending), then c = c + alpha*P (the product rounded, then
+ * the addition). It is the arithmetic of a level-3 BLAS whose kernel accumulates each K panel
+ * in registers and adds it to C: OpenBLAS's sgemm computes exactly this on its SkylakeX target
+ * (Q 448, unroll 16) for alpha 1, so a provider that matches it on a differential can be
+ * admitted under v3 (NativeDecoder.use_cblas), and a state trained under v3 is one state with
+ * the provider or without it. For k <= BCIR_MM_KBLOCK, beta 0 and alpha 1 the result is v2's;
+ * otherwise its own. bcir_tensor_kblock_split writes the rule's block lengths for k in order
+ * (up to capacity) and returns their count; the instances are the fused ones. */
+#define BCIR_MM_KBLOCK 448
+#define BCIR_MM_KBLOCK_UNROLL 16
+BCIR_DT_API size_t bcir_tensor_kblock_split(size_t k, size_t *lengths, size_t capacity);
+BCIR_DT_API void bcir_tensor_mm_kblock(void *ctx, int ta, int tb, size_t m, size_t n, size_t k,
+    float alpha, const float *a, const float *b, float beta, float *c);
+BCIR_DT_API void bcir_tensor_mm_kblock_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m,
+    size_t n, size_t k, float alpha, const float *a, const float *b, float beta, float *c);
+BCIR_DT_API int bcir_tensor_mm_kblock_variants(void);
+BCIR_DT_API int bcir_tensor_mm_kblock_variant(int variant, int ta, int tb, size_t m, size_t n,
+    size_t k, float alpha, const float *a, const float *b, float beta, float *c);
 /* The BCIR exponential (NDT-EXP): one operation sequence on every instance -- a Cody-Waite
  * reduction x = k ln2 + r, a degree-7 polynomial in r, 2^k as two exact power-of-two scalings
  * (one rounding into the subnormals), the three special cases selected at the end -- so the

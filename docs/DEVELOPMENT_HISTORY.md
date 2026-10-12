@@ -2866,6 +2866,44 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     and on random text over small alphabets (where merges nest deepest); the tokenizer's own
     `encode` is the rank-ordered one; and a rank table that reverses the merge order disagrees,
     so the differential can fail.
+  NDT-KBLOCK (2026-10-12): the blocked fused GEMM contract (v3) and the admitted provider.
+  - Found while reading NDT-MEASURE's GEMM gap: OpenBLAS's `sgemm` (scipy_openblas32, the
+    SkylakeX target) is bit-identical to BCIR's fused contract on every step shape whose depth
+    is one K block, and to a K-blocked form of it on the rest -- its level-3 driver's split (Q
+    448, unroll 16: whole blocks while two remain, then half the remainder rounded up to 16,
+    then the remainder), each block's fused chain from zero, c = beta*c + P1 + P2 + ... in order
+    -- on all 15 shapes, 14 further depths, beta 0 and 1, 1 and 4 threads, alpha 1 (its
+    small-matrix path, below about 10^6 multiply-adds, keeps other orders).
+  - Declared as a third GEMM contract: `bcir_tensor_kblock_split` (the rule, one predicate on
+    both rails), `bcir_tensor_mm_kblock` (`_pool`, `_variant`, `_variants`): per column block
+    and K block the block's tile packed once and every row group's partial kept in registers
+    across the whole block, then c = c + alpha*P -- the fused instances' widths and fusion; the
+    state's `BCIR_DT_CONTRACT_KBLOCK` (4, never with the fused bit), `NativeDecoder(contract=
+    "kblock" | "kblock+exp")`. `use_cblas` under it runs the admission differential over the
+    trainer's own GEMM shapes at beta 0 and 1 and refuses a provider that differs on any case,
+    leaving the state on BCIR's kernels; `provider_admission` records the verdict.
+  - Evidence. The C harness's `gemm_kblock_contract`: every instance against the K-blocked
+    `fmaf` chains over 64 cases (the v2 shapes and five deeper ones crossing the rule's three
+    cases), serially and on a pool of three, equal to v2 exactly on the 8 cases the contract
+    says (one block, beta 0, alpha 1) and apart on 56; the rule on ten depths; `pool_identity`
+    under all six contracts, each its own state, each identical at 1..4 threads; the undefined
+    bit 8 and the pair fused|kblock refused. `train.mm.kblock.mismatch` 0 of 40 against
+    `mm_reference_kblock` (exact rationals per term, two binary32 operations per block) with
+    the C and Python split rules agreeing on every depth; `train.mm.provider.mismatch` 0 of 30
+    (OpenBLAS on the comparison decoder's shapes, where the wheel is importable). The admission
+    witness: BCIR's blocked kernel behind a CBLAS callback admitted, the v1 kernel refused on
+    30 of 30 cases, the fused kernel on the 15 beta-1 cases, an empty differential refused, and
+    OpenBLAS refused on the threads bench's small products and admitted on the comparison
+    decoder's -- the admission is per shape set. `ndt-kblock.json`: 6 defects, 6 caught (the rule
+    without its halving, a chain from c, a fused add, the trainer and the one-thread pool entry
+    on the fused kernel, an admission that does not read its differential); NF5 re-anchored.
+  - Measured ([measurements/2026-10-12/kblock/](research/measurements/2026-10-12/kblock/)): the
+    1,000-step `kblock+exp` run ends in one state (`d7fc618c…`) on BCIR's own kernel and on
+    OpenBLAS admitted, at one and at four threads -- validation 1.5001, test 1.6319 on all four;
+    655 ms a step with the provider on four threads (753 on BCIR's kernel; §4's `fused+exp` 758),
+    1,066 on one (1,425). BCIR's own v3 kernel is faster than its v2 kernel at one thread (the
+    step's GEMMs 1,081 to 952 ms: the partial in registers across a whole block) and equal at
+    four; the provider's rate is now the ceiling the kernel is measured against (NDT-BLOCK).
   NDT-ATTN-0 (2026-10-12): the v2 softmax's row through the vector exponential.
   - NDT-MEASURE's finding, fixed the same day: `att_head`'s `exp` branch called the scalar
     exponential element by element with the row sum in the same loop, which GCC does not

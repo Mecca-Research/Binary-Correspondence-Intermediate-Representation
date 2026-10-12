@@ -84,6 +84,22 @@ MM_CASES = tuple(
     )
 )
 
+#: The blocked contract's cases (NDT-KBLOCK): the 20 above and twenty deeper ones that cross the
+#: split rule's three cases (one block, half-and-half, whole blocks then halves), an alpha the
+#: binary32 product does not scale exactly, and beta 1 (the trainer's dW accumulations).
+MM_KBLOCK_CASES = MM_CASES + tuple(
+    (ta, tb, m, n, k, alpha, beta)
+    for ta in (0, 1)
+    for tb in (0, 1)
+    for (m, n, k), alpha, beta in (
+        ((2, 3, 1000), 1.0, 1.0),
+        ((1, 2, 2048), 1.0, 0.0),
+        ((3, 2, 449), 1.0, 1.0),
+        ((2, 2, 897), 0.5, 1.0),
+        ((2, 2, 100), 1.1, 1.0),
+    )
+)
+
 #: The step the threads row trains (NDT-THREADS): 80 tokens (one 64-row GEMM task and a 16-row
 #: tail), T=40 (past the attention backward's 32-row chunks), GQA groups of two, a width, a KV
 #: width, an FF width and a vocabulary off every 32- and 64-wide block edge; three steps.
@@ -246,8 +262,48 @@ def mm_reference_fused(ta, tb, m, n, k, alpha, a, b, beta, c):
     return out
 
 
-def mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c, *, fused=False):
-    fn = lib.bcir_tensor_mm_fused if fused else lib.bcir_tensor_mm
+def kblock_split(k: int, q: int = 448, u: int = 16) -> list[int]:
+    """The blocked contract's depth split (bcir_tensor_kblock_split): while terms remain, a
+    whole block of q when at least 2q remain, else half the remainder rounded up to a
+    multiple of u when more than q remain, else the remainder."""
+    out, ls = [], 0
+    while ls < k:
+        rem = k - ls
+        length = q if rem >= 2 * q else (rem // 2 + u - 1) // u * u if rem > q else rem
+        out.append(length)
+        ls += length
+    return out
+
+
+def mm_reference_kblock(ta, tb, m, n, k, alpha, a, b, beta, c):
+    """The blocked fused contract (v3): beta first; for each block of `kblock_split(k)` in
+    order, P = the fused chain of its terms from zero (exact rationals, rounded once per
+    term, a unscaled), then c = round(c + round(alpha*P)) -- two binary32 operations."""
+    alpha, beta = _f32(alpha), _f32(beta)
+    out = [0.0 if beta == 0.0 else _f32(beta * x) for x in c]
+    blocks = kblock_split(k)
+    for i in range(m):
+        for j in range(n):
+            acc, l0 = out[i * n + j], 0
+            for length in blocks:
+                p = Fraction(0)
+                for l in range(l0, l0 + length):
+                    av = Fraction(a[l * m + i if ta else i * k + l])
+                    p = Fraction(round_f32(p + av * Fraction(b[j * k + l if tb else l * n + j])))
+                acc = _f32(acc + _f32(alpha * float(p)))
+                l0 += length
+            out[i * n + j] = acc
+    return out
+
+
+def mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c, *, fused=False, kblock=False):
+    fn = (
+        lib.bcir_tensor_mm_kblock
+        if kblock
+        else lib.bcir_tensor_mm_fused
+        if fused
+        else lib.bcir_tensor_mm
+    )
     fn.argtypes = [ct.c_void_p, ct.c_int, ct.c_int, ct.c_size_t, ct.c_size_t, ct.c_size_t,
                    ct.c_float, _FP, _FP, ct.c_float, _FP]  # fmt: skip
     fn.restype = None
@@ -256,14 +312,14 @@ def mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c, *, fused=False):
     return list(cc)
 
 
-def mm_mismatch(lib, cases=MM_CASES, *, fused=False) -> int:
+def mm_mismatch(lib, cases=MM_CASES, *, fused=False, kblock=False) -> int:
     """Cases whose native output differs in any bit from the reference of its contract."""
     bad = 0
-    reference = mm_reference_fused if fused else mm_reference
+    reference = mm_reference_kblock if kblock else mm_reference_fused if fused else mm_reference
     for seed, (ta, tb, m, n, k, alpha, beta) in enumerate(cases, 1):
         a, b, c = _operands(m, n, k, seed)
         want = reference(ta, tb, m, n, k, alpha, a, b, beta, c)
-        got = mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c, fused=fused)
+        got = mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c, fused=fused, kblock=kblock)
         bad += struct.pack(f"<{len(want)}f", *want) != struct.pack(f"<{len(got)}f", *got)
     return bad
 
@@ -271,6 +327,53 @@ def mm_mismatch(lib, cases=MM_CASES, *, fused=False) -> int:
 def mm_fused_mismatch(lib, cases=MM_CASES) -> int:
     """`train.mm.fused.mismatch`: the fused kernel against its exact emulation."""
     return mm_mismatch(lib, cases, fused=True)
+
+
+def mm_kblock_mismatch(lib, cases=MM_KBLOCK_CASES) -> int:
+    """`train.mm.kblock.mismatch`: the blocked kernel against its exact emulation, and the C
+    split rule against the Python one on the cases' depths and the rule's edges."""
+    split = lib.bcir_tensor_kblock_split
+    split.argtypes = [ct.c_size_t, ct.POINTER(ct.c_size_t), ct.c_size_t]
+    split.restype = ct.c_size_t
+    bad = 0
+    for k in sorted({case[4] for case in cases} | {0, 447, 448, 449, 896, 897, 1024, 3000}):
+        lengths = (ct.c_size_t * 64)()
+        count = split(k, lengths, 64)
+        bad += list(lengths[:count]) != kblock_split(k)
+    return bad + mm_mismatch(lib, cases, kblock=True)
+
+
+def openblas_library() -> Path | None:
+    """The scipy_openblas32 wheel's shared library, when the wheel is importable here."""
+    spec = importlib.util.find_spec("scipy_openblas32")
+    if spec is None:
+        return None
+    module = importlib.import_module("scipy_openblas32")
+    for name in ("libscipy_openblas.so", "libscipy_openblas.dylib", "libscipy_openblas.dll"):
+        path = Path(module.get_lib_dir()) / name
+        if path.exists():
+            return path
+    return None
+
+
+def provider_mismatch(lib, shapes=None) -> int | None:
+    """`train.mm.provider.mismatch`: OpenBLAS's sgemm (scipy_openblas32, one thread) against the
+    blocked contract over the comparison decoder's step shapes at beta 0 and 1 -- the admission
+    differential `NativeDecoder.use_cblas` runs; None where the wheel is not importable."""
+    from bcir.hosted.models.native import _CBLAS, provider_mismatch as differential
+    from bcir.hosted.models.native_program import training_step_program
+
+    path = openblas_library()
+    if path is None:
+        return None
+    if shapes is None:
+        spec = DecoderSpec(260, 384, 8, 6, 1024, activation="silu_gate", n_kv_heads=4)
+        shapes = tuple(dict.fromkeys(training_step_program(spec, 8, 128).gemm_shapes()))
+    blas = ct.CDLL(str(path))
+    blas.scipy_openblas_set_num_threads.argtypes = [ct.c_int]
+    blas.scipy_openblas_set_num_threads(1)
+    slot = ct.cast(blas.scipy_cblas_sgemm, _CBLAS)
+    return differential(lib, ct.cast(ct.pointer(slot), ct.c_void_p), shapes)
 
 
 # --- train.memory.transient -----------------------------------------------------------------
@@ -457,6 +560,10 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         out["train.plan.mismatch"] = float(plan_mismatch(lib))
         out["train.mm.mismatch"] = float(mm_mismatch(lib))
         out["train.mm.fused.mismatch"] = float(mm_fused_mismatch(lib))
+        out["train.mm.kblock.mismatch"] = float(mm_kblock_mismatch(lib))
+        provider = provider_mismatch(lib)
+        if provider is not None:
+            out["train.mm.provider.mismatch"] = float(provider)
         swept, mismatch, ulp = exp_sweep(lib)
         assert swept > 8_000_000, swept
         out["train.exp.mismatch"] = float(mismatch)
@@ -481,6 +588,12 @@ __all__ = [
     "measure",
     "measure_step",
     "mm_fused_mismatch",
+    "mm_kblock_mismatch",
+    "MM_KBLOCK_CASES",
+    "kblock_split",
+    "mm_reference_kblock",
+    "provider_mismatch",
+    "openblas_library",
     "mm_mismatch",
     "mm_reference",
     "mm_reference_fused",

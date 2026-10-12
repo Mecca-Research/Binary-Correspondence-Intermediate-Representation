@@ -47,7 +47,7 @@ typedef struct bcir_decoder_adamw {
 } bcir_decoder_adamw;
 typedef struct bcir_decoder_event { double loss,grad_norm; uint64_t step; } bcir_decoder_event;
 enum { BCIR_DT_OK=0, BCIR_DT_INVALID=1, BCIR_DT_CAPACITY=2, BCIR_DT_NUMERIC=3 };
-enum { BCIR_DT_CONTRACT_FUSED=1u, BCIR_DT_CONTRACT_EXP=2u };
+enum { BCIR_DT_CONTRACT_FUSED=1u, BCIR_DT_CONTRACT_EXP=2u, BCIR_DT_CONTRACT_KBLOCK=4u };
 /* 1: the state through its provider; 2: the state ends in its pool (NDT-THREADS); 3: and in its
  * contract (NDT-FMA, NDT-EXP). */
 BCIR_DT_API uint32_t bcir_decoder_abi_version(void);

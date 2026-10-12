@@ -443,10 +443,10 @@ def _native(data: Path, library: Path, *, openblas=False, threads=1, contract="v
     nd.load_state_dict({name: flat[off : off + n] for name, _s, off, n in parameter_layout(spec)})
     info = {"provider": "portable-c", "contract": contract, "threads": threads}
     if openblas:
-        path, config = _openblas()
+        path, config = _openblas(threads)
         nd.use_cblas(path, symbol="scipy_cblas_sgemm")
         info = {"provider": "scipy_cblas_sgemm", "openblas": config, "contract": contract,
-                "threads": threads}  # fmt: skip
+                "threads": threads, "admission": nd.provider_admission}  # fmt: skip
     return nd, info
 
 
@@ -1055,9 +1055,9 @@ def _bcir_breakdown(
 ) -> dict:
     """One BCIR step at the comparison's shape, whole and by part: the binding's stages, then
     every kernel family the step calls, each timed alone through the entry points the trainer
-    calls under the run's pool and contracts (the pooled kernels, the fused GEMM and the v2
-    exponential kernels when the contract selects them, and the provider the run uses for the
-    linears), with the calls one step makes."""
+    calls under the run's pool and contracts (the pooled kernels, the fused or blocked GEMM and
+    the v2 exponential kernels when the contract selects them, and the provider the run uses for
+    the linears), with the calls one step makes."""
     import numpy as np
     from bcir.hosted.models.native import NativeAdamW
 
@@ -1082,6 +1082,7 @@ def _bcir_breakdown(
         "attention_backward_inplace_pool": [P, Z, Z, Z, Z, Z, P, P, P, P, P, P, P, P],
         "mm_pool": MM,
         "mm_fused_pool": MM,
+        "mm_kblock_pool": MM,
         "linear": [P, Z, Z, Z, P, P, P],
         "linear_backward": [P, Z, Z, Z, P, P, P, P, P, F32],
     }
@@ -1093,7 +1094,13 @@ def _bcir_breakdown(
     # state's pool (NULL when serial), the fused GEMM under "fused", the v2 kernels under "exp"
     pool = nd.state.pool
     parts_of = set(contract.split("+"))
-    mm = fn["mm_fused_pool" if "fused" in parts_of else "mm_pool"]
+    mm = fn[
+        "mm_kblock_pool"
+        if "kblock" in parts_of
+        else "mm_fused_pool"
+        if "fused" in parts_of
+        else "mm_pool"
+    ]
     v2 = "_v2_pool" if "exp" in parts_of else "_pool"
     silu_fn, swiglu_fn, att_fn = fn["silu" + v2], fn["swiglu_backward" + v2], fn["attention" + v2]
     rng = np.random.default_rng(SEED)

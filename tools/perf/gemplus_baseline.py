@@ -863,6 +863,45 @@ METRICS: tuple[Metric, ...] = (
         "fused instance to the fmaf ascending-k loop",
         slice_owner="NDT-FMA",
     ),
+    # --- NDT-KBLOCK: the blocked fused GEMM contract and the admitted provider ----------------
+    Metric(
+        "train.mm.kblock.mismatch",
+        "train",
+        "of 40 GEMM cases (the 20 fused cases and 20 deeper ones crossing the split rule's three "
+        "cases, an inexact alpha, beta 1), those whose bcir_tensor_mm_kblock output differs in any "
+        "bit from an exact rational emulation of the blocked fused contract (v3): beta first, the "
+        "depth split by the rule (whole 448-blocks while two remain, then half the rest rounded up "
+        "to 16, then the rest), each block's fused chain from zero added to c as c + alpha*P; plus "
+        "the depths where the C split rule and the Python one disagree "
+        "(bcir/tests/native_decoder_fixtures.py)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the blocked contract is two binary32 operations per block on top of the fused "
+        "chain, and the split rule is a function of k alone: the emulation rounded once per term and "
+        "once per block operation is the kernel's bits wherever fmaf is an IEEE fusedMultiplyAdd -- "
+        "the C harness holds every instance to the K-blocked fmaf chains",
+        slice_owner="NDT-KBLOCK",
+    ),
+    Metric(
+        "train.mm.provider.mismatch",
+        "train",
+        "of 30 GEMM cases (the 2026-10-11 comparison decoder's 15 step shapes at beta 0 and 1, alpha "
+        "1), those where OpenBLAS's sgemm (scipy_openblas32, one thread) differs in any bit from "
+        "bcir_tensor_mm_kblock -- the admission differential NativeDecoder.use_cblas runs under "
+        "the blocked contract; measured only where the wheel is importable",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="OpenBLAS's level-3 driver on its SkylakeX target splits K by the same rule (Q 448, "
+        "unroll 16) and its kernel accumulates each panel in registers from zero and adds it to C, "
+        "so for the trainer's shapes (above its small-matrix threshold) its output is the contract's "
+        "bit for bit; a host whose OpenBLAS target blocks differently reads a nonzero count and the "
+        "trainer refuses the provider",
+        slice_owner="NDT-KBLOCK",
+    ),
     # --- NDT-EXP: the BCIR exponential --------------------------------------------------------
     Metric(
         "train.exp.mismatch",

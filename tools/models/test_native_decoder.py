@@ -239,11 +239,18 @@ def _threads(library, cblas, symbol):
         native = NativeDecoder(library, spec, batch_size=2, context_length=36, threads=threads)
         if cblas:
             native.use_cblas(cblas, symbol=symbol)
+        blocked = NativeDecoder(library, spec, batch_size=2, context_length=36, threads=threads,
+                                contract="kblock")  # fmt: skip
+        blocked.run(x, y, steps=5, optimizer=options)
+        states[("kblock", threads)] = _snapshot(blocked)
+        blocked.close()
         assert native.lib.bcir_tensor_pool_threads(native.state.pool) == threads
         events[threads] = native.run(x, y, steps=5, optimizer=options)
         states[threads] = _snapshot(native)
         native.close()
     assert states[1] == states[2] == states[4], "the state differs across thread counts"
+    assert states[("kblock", 1)] == states[("kblock", 2)] == states[("kblock", 4)]
+    assert states[("kblock", 1)] != states[1], "the blocked contract's state is v1's"
     assert events[1] == events[2] == events[4]
     return {
         "spec": asdict(spec),

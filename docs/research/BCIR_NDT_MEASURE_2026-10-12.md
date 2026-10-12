@@ -44,6 +44,11 @@ the mismatch counts, the ulp bound -- are the claims.
   calls the exponential element by element inside its row loop, so the attention forward costs a
   quarter more under `exp` than under libm (§3) -- fixed the same day as NDT-ATTN's first item: the
   row through the vector instance, the same values, 79 to 55 ms (§3).
+- **OpenBLAS is now a BCIR contract, not a trust.** Reading the GEMM gap found that its `sgemm`
+  computes a K-blocked fused chain, bit for bit, on every one of the trainer's shapes. Declared as
+  the blocked fused contract (v3, NDT-KBLOCK) with a differential admission, it trains the same
+  9.84M state on BCIR's own kernel and on OpenBLAS, at one and at four threads -- and the admitted
+  provider trains at 655 ms a step on four threads (§7).
 
 ## 1. Identity: the state is the state, at every thread count and under each contract
 
@@ -271,6 +276,11 @@ python $H train --data DIR --task lm --backend bcir --threads 1 --contract v1   
 python $H train --data DIR --task lm --backend bcir --threads 3 --contract v1        --eval-every 100 --lr-scale 0.25
 python $H train --data DIR --task lm --backend bcir --threads 3 --contract fused+exp --eval-every 100 --lr-scale 0.25
 python $H train --data DIR --task lm --backend bcir --threads 4 --contract fused+exp --eval-every 100 --lr-scale 0.25
+# §7: the blocked contract on BCIR's kernel and on OpenBLAS admitted (scipy_openblas32 installed)
+python $H identity --data DIR --steps 20 --cc gcc --threads 1,3 --contract kblock,kblock+exp --variants widest
+for n in 1 4; do python $H bcir-breakdown --data DIR --cc gcc --rounds 5 --threads $n --contract kblock+exp; done
+for b in bcir bcir-openblas; do for n in 1 4; do
+  python $H train --data DIR --task lm --backend $b --threads $n --contract kblock+exp --eval-every 100 --lr-scale 0.25; done; done
 ```
 
 The GEMM-rate record is the output of a scratch driver over the trainer's own entry points
@@ -278,3 +288,68 @@ The GEMM-rate record is the output of a scratch driver over the trainer's own en
 shapes (`native_program.training_step_program(...).gemm_shapes()`); its arguments are in the
 record. The exact rows are the GEM+ `train` group's
 (`python tools/perf/gemplus_baseline.py --compare --group train`).
+
+## 7. The blocked contract, and OpenBLAS as an admitted provider (NDT-KBLOCK)
+
+The one surprise in §2's GEMM table was that OpenBLAS's `sgemm` was bit-identical to BCIR's fused
+contract on every shape whose depth fits one K block, and a K-blocked form of it on the rest: its
+level-3 driver splits the depth by one rule (Q 448, unroll 16 -- whole 448-blocks while two remain,
+then half the remainder rounded up to a multiple of 16, then the remainder), its kernel accumulates
+each block from zero in registers, and it adds the blocks to the beta-scaled c in order. That
+arithmetic, declared as BCIR's **blocked fused contract (v3)** and implemented by BCIR's own kernel
+on every host (the partial kept in registers across a whole block), makes OpenBLAS an admissible
+provider: `use_cblas` under v3 runs a differential over the trainer's own GEMM shapes at beta 0 and
+1 and admits the provider only where every output is the contract's, bit for bit; a provider that
+differs is refused and the state keeps BCIR's kernels. Measured in the same session, on this host:
+
+| Exact rows | Result |
+|---|---|
+| `train.mm.kblock.mismatch` (the kernel against its exact rational emulation, 40 cases; the split rule on both rails) | 0 |
+| `train.mm.provider.mismatch` (OpenBLAS's `sgemm` against the kernel over the 15 step shapes at beta 0 and 1) | 0 of 30 |
+| the `identity` stage, `kblock` and `kblock+exp`, 1 and 3 threads, the widest build and a repeat ([kblock/identity-kblock.json](measurements/2026-10-12/kblock/identity-kblock.json)) | one state per contract: `5b92ff75…`, `f19b0d7d…`, apart from the other four |
+| the 1,000-step `kblock+exp` run on BCIR's kernel and on OpenBLAS admitted, at 1 and at 4 threads | one state, `d7fc618c9eeb8b6f…`, on all four ([kblock/runs/](measurements/2026-10-12/kblock/runs/)): BCIR's own kernel at one and at four threads, OpenBLAS admitted at one and at four |
+| the small products OpenBLAS computes on its small-matrix path (the threads bench's shapes) | refused by the differential (4 of 30 cases differ): the admission is per shape set |
+
+**The 1,000-step language-model run under `kblock+exp`** (same data, optimizer and schedule as §4):
+
+| Run (1,000 steps, batch 8 x 128, `kblock+exp`) | ms/step | tokens/s | train s | val CE | test CE | test acc | answer acc | peak RSS MB | state |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| BCIR's own kernel, 1 thread | 1,424.6 | 719 | 1,447 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| BCIR's own kernel, 4 threads | 753.0 | 1,360 | 756 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| OpenBLAS admitted, 1 thread (OpenBLAS at 1) | 1,065.5 | 961 | 1,078 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| OpenBLAS admitted, 4 threads (OpenBLAS at 4, the pool at 4) | 655.0 | 1,563 | 662 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| §4: `fused+exp` on BCIR's kernel, 4 threads | 758.4 | 1,350 | 763 | 1.5003 | 1.6319 | 0.5368 | 0.6198 | 547 | `eb43c96d` |
+| §4, the 10-11 host: PyTorch 2.13 eager, 1 thread | 774.3 | 1,323 | 774 | 1.5001 | 1.6319 | 0.5367 | 0.6197 | 1,140 | `a7cd43d5` |
+
+Three readings:
+
+- **The contract is the state.** Four runs through two GEMM implementations -- BCIR's own blocked
+  kernel and OpenBLAS's `sgemm` -- each at one and at four threads, end in the same 9.84M-parameter
+  state after 1,000 steps, byte for byte. The provider is admitted into a declared contract, not
+  trusted; where it is not the contract (the small products its small-matrix path computes) it is
+  refused, and BCIR's kernel runs.
+- **The provider's rate is the step's.** OpenBLAS admitted takes the four-thread step from 753 to
+  655 ms (x1.15) and the one-thread step from 1,425 to 1,066 (x1.34). Against the 10-11 report's
+  eager PyTorch run -- 774 ms a step on one thread, on a host about 13% faster -- BCIR with the
+  admitted provider trains the same model at 655 ms on four threads: faster than eager PyTorch's
+  one-thread step, and about 2.5x slower than PyTorch's four-thread step there (257 ms, the 10-11
+  context stage), both measured on different hosts. The equal-thread comparison on one host stays
+  the measurement that decides the roadmap's "ahead at four".
+- **BCIR's own v3 kernel is faster than its v2 kernel.** At one thread the step's GEMMs go from
+  1,081 ms (`fused+exp`, §3) to 952 under `kblock+exp`: the partial stays in registers across a
+  whole K block of 448 instead of a 64-deep chunk, so c is read and written once per block. At
+  four threads the two are equal within the host's spread (742 against 742 ms a step). The gap
+  that remains to the provider (952 ms against OpenBLAS's rate on the same shapes) is NDT-BLOCK's
+  to close, and under v3 the provider's rate is the ceiling the kernel is measured against.
+
+The step by kernel under `kblock+exp` on BCIR's own kernel ([kblock/breakdown-bcir-kblock+exp-t{1,4}.json](measurements/2026-10-12/kblock/)):
+
+| One step (ms), `kblock+exp`, BCIR's kernel | 1 thread | 4 threads |
+|---|---:|---:|
+| GEMMs, forward | 285.7 | 210.8 |
+| GEMMs, backward (dx and dW) | 666.7 | 320.7 |
+| attention, forward and backward | 163.8 | 57.0 |
+| SiLU and the SwiGLU VJP | 23.1 | 7.2 |
+| AdamW update | 75.8 | 74.4 |
+| the rest | 92.7 | 50.6 |
+| **step** | **1,342.3** | **741.8** |

@@ -59,7 +59,8 @@ static int valid(bcir_decoder_state *s) {
   if (rc) return rc;
   if (p.parameters!=s->plan.parameters || p.activations!=s->plan.activations ||
       p.scratch!=s->plan.scratch) return BCIR_DT_INVALID;
-  if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP)) return BCIR_DT_INVALID;
+  if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_KBLOCK)) return BCIR_DT_INVALID;
+  if ((s->contract&BCIR_DT_CONTRACT_FUSED) && (s->contract&BCIR_DT_CONTRACT_KBLOCK)) return BCIR_DT_INVALID;  /* one GEMM contract */
   ptr[0]=s->weights; ptr[1]=s->gradients; ptr[2]=s->moment1; ptr[3]=s->moment2;
   ptr[4]=s->activations; ptr[5]=s->scratch;
   len[0]=len[1]=len[2]=len[3]=p.parameters; len[4]=p.activations; len[5]=p.scratch;
@@ -139,6 +140,7 @@ static void gemm(bcir_decoder_state *s,int ta,int tb,size_t m,size_t n,size_t k,
     const float *a,const float *b,float beta,float *c) {
   if (s->provider.mm) s->provider.mm(s->provider.ctx,ta,tb,m,n,k,alpha,a,b,beta,c);
   else if (s->contract&BCIR_DT_CONTRACT_FUSED) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
+  else if (s->contract&BCIR_DT_CONTRACT_KBLOCK) bcir_tensor_mm_kblock_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
   else bcir_tensor_mm_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
 }
 static void linear(bcir_decoder_state *s,size_t r,size_t in,size_t out,const float *x,

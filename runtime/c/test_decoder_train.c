@@ -76,7 +76,9 @@ static void refusals(void) {
   assert(bcir_decoder_make_plan(&shape,&p)==BCIR_DT_CAPACITY && p.parameters==oldplan.parameters);
   bad=s; bad.plan.scratch++;
   assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
-  bad=s; bad.contract=4;  /* a contract bit the ABI does not define */
+  bad=s; bad.contract=8;  /* a contract bit the ABI does not define */
+  assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
+  bad=s; bad.contract=BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_KBLOCK;  /* two GEMM contracts at once */
   assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
   bad=s; bad.activation_capacity=bad.plan.activations-1; act[0]=123;
   assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_CAPACITY && act[0]==123);
@@ -325,7 +327,9 @@ static void pool_identity(void) {
       p1[2*8*70*70],y0[2*70*8*48],y1[2*70*8*48],dq0[2*70*8*48],dq1[2*70*8*48],
       dk0[2*70*4*130],dk1[2*70*4*130],dv0[2*70*4*130],dv1[2*70*4*130];
   static float x[20000],u[20000],g[20000],e0[20000],e1[20000],f0[20000],f1[20000],gamma[37];
-  static float ref[4][3][4096]; static unsigned char hits[300]; uint32_t contract,other;
+  static float ref[8][3][4096]; static unsigned char hits[300]; uint32_t contract,other;
+  static const uint32_t contracts[]={0,1,2,3,4,6};  /* v1; fused; exp; fused+exp; kblock; kblock+exp */
+  size_t ci,cj;
   static _Alignas(max_align_t) unsigned char pool_memory[4096];
   static const size_t gemm_shapes[][3]={{200,100,70},{1,1,1},{65,33,64},{129,65,3},{64,130,1},{3,200,2}};
   static const size_t att_shapes[][5]={{2,70,8,4,48},{1,33,3,1,65},{2,64,4,1,24},{1,1,1,1,2}};
@@ -341,13 +345,15 @@ static void pool_identity(void) {
   for (i=0;i<20000;i++) { x[i]=sinf((float)i*0.37f)*3.0f; u[i]=cosf((float)i*0.53f)*1.3f; g[i]=sinf((float)i*0.29f)-0.1f; }
   for (i=0;i<37;i++) gamma[i]=1.0f+0.1f*sinf((float)i);
   for (i=0;i<12;i++) { ids[i]=(uint32_t)(i%4+1); targets[i]=(uint32_t)(i%4+2); }
-  for (contract=0;contract<4;contract++) {
-    bcir_decoder_state st=fixture(); st.contract=contract;
+  for (ci=0;ci<6;ci++) {
+    bcir_decoder_state st=fixture(); contract=contracts[ci]; st.contract=contract;
     assert(bcir_decoder_run(&st,&opt,ids,targets,12,NULL,3,events,3,&done)==0 && done==3);
     memcpy(ref[contract][0],w,sizeof(w)); memcpy(ref[contract][1],m,sizeof(m)); memcpy(ref[contract][2],v,sizeof(v));
   }
-  for (contract=0;contract<4;contract++) for (other=0;other<contract;other++)
+  for (ci=0;ci<6;ci++) for (cj=0;cj<ci;cj++) {
+    contract=contracts[ci]; other=contracts[cj];
     assert(memcmp(ref[contract][0],ref[other][0],sizeof(w))!=0);  /* each contract its own state */
+  }
   for (threads=1;threads<=4;threads++) {
     size_t need=bcir_tensor_pool_size(threads); bcir_tensor_pool *pool;
     if (!need) { assert(threads>1 && rails==0); continue; }
@@ -402,9 +408,9 @@ static void pool_identity(void) {
     assert(!memcmp(f0,f1,2*40*3*8*sizeof(float)));
     bcir_tensor_rope(2,40,3,8,10000.0,f0,1); bcir_tensor_rope_pool(pool,2,40,3,8,10000.0,f1,1);
     assert(!memcmp(f0,f1,2*40*3*8*sizeof(float)));
-    /* the state after three steps on this pool is the serial state, under either contract */
-    for (contract=0;contract<4;contract++) {
-      bcir_decoder_state st=fixture(); st.pool=pool; st.contract=contract;
+    /* the state after three steps on this pool is the serial state, under every contract */
+    for (ci=0;ci<6;ci++) {
+      bcir_decoder_state st=fixture(); contract=contracts[ci]; st.pool=pool; st.contract=contract;
       assert(bcir_decoder_run(&st,&opt,ids,targets,12,NULL,3,events,3,&done)==0 && done==3);
       assert(!memcmp(ref[contract][0],w,sizeof(w)) && !memcmp(ref[contract][1],m,sizeof(m)) &&
           !memcmp(ref[contract][2],v,sizeof(v)));
@@ -468,6 +474,87 @@ static void gemm_fused_contract(void) {
   bcir_tensor_pool_stop(pool);
   printf("  PASS native GEMM fused contract (v2): bit-identical to the fmaf ascending-k loop, every "
       "transpose, %d variant run(s) (mask %d); %zu of 44 cases differ from v1\n",ran,mask,differ);
+}
+/* The blocked fused contract (v3, NDT-KBLOCK): beta first; the depth split by the one rule
+ * (bcir_tensor_kblock_split: whole 448-blocks while two remain, then half the rest rounded up to
+ * 16, then the rest); each block a fused chain from zero, added to c as c + alpha*P -- checked
+ * bit for bit against that loop over the v2 shapes and five deeper ones that cross the rule's
+ * three cases, on every instance, serially and on a pool of three; equal to v2 exactly where the
+ * contract says (one block, beta 0, alpha 1) and apart from it elsewhere; the rule on ten depths. */
+static void ref_kblock(size_t ta, size_t tb, size_t m, size_t n, size_t k, float alpha,
+    const float *a, const float *b, float beta, const float *init, float *want) {
+  size_t lens[64],nb=bcir_tensor_kblock_split(k,lens,64),i,j,l,bi,l0=0;
+  assert(nb<=64);
+  for (i=0;i<m*n;i++) want[i]=beta==0.0f ? 0.0f : beta*init[i];
+  for (bi=0;bi<nb;bi++) {
+    for (i=0;i<m;i++) for (j=0;j<n;j++) {
+      float p=0.0f; volatile float ap;
+      for (l=l0;l<l0+lens[bi];l++) p=fmaf(a[ta ? l*m+i : i*k+l],b[tb ? j*k+l : l*n+j],p);
+      ap=alpha*p; want[i*n+j]=want[i*n+j]+ap;
+    }
+    l0+=lens[bi];
+  }
+  assert(l0==k);
+}
+static void gemm_kblock_contract(void) {
+  static float a[140*140],b[140*140],c[140*140],want[140*140],init[140*140],v2[140*140];
+  static const size_t shapes[][3]={{1,1,1},{3,33,5},{33,31,65},{32,32,32},{7,65,40},{64,1,33},
+                                   {5,129,130},{66,64,64},{9,63,128},{4,96,1},{130,7,3},
+                                   {17,9,1000},{3,9,2048},{33,7,449},{16,16,897},{9,5,448}};
+  static const size_t depths[]={0,1,447,448,449,897,1000,1024,2048,3000};
+  static const size_t rule[][8]={{0},{1},{447},{448},{224,225},{448,224,225},{448,288,264},
+                                 {448,288,288},{448,448,448,352,352},{448,448,448,448,448,384,376}};
+  static const size_t counts[]={0,1,1,1,2,3,3,3,5,7};
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  size_t s,i,ta,tb,differ=0,equal=0,lens[8]; int variant,ran=0,mask=bcir_tensor_mm_kblock_variants();
+  bcir_tensor_pool *pool=bcir_tensor_pool_size(3) ? bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),3) : NULL;
+  assert(mask==bcir_tensor_mm_fused_variants() && (mask&1) && !(mask&~7));
+  for (s=0;s<sizeof(depths)/sizeof(depths[0]);s++) {
+    size_t n=bcir_tensor_kblock_split(depths[s],lens,8),total=0;
+    assert(n==counts[s]);
+    for (i=0;i<n;i++) { assert(lens[i]==rule[s][i]); total+=lens[i]; }
+    assert(total==depths[s] && bcir_tensor_kblock_split(depths[s],NULL,0)==n);
+  }
+  for (i=0;i<140*140;i++) {
+    a[i]=sinf((float)i*0.71f)*(i%3 ? 4.0f : 0.125f); b[i]=cosf((float)i*1.37f)-0.25f;
+  }
+  for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) for (ta=0;ta<2;ta++) for (tb=0;tb<2;tb++) {
+    size_t m=shapes[s][0],n=shapes[s][1],k=shapes[s][2];
+    float alpha=s%2 ? 0.75f : 1.0f,beta=s%3==1 ? 1.0f : s%3==2 ? 0.5f : 0.0f;
+    int one=k<=BCIR_MM_KBLOCK && beta==0.0f && alpha==1.0f;
+    assert(m*k<=140*140 && k*n<=140*140 && m*n<=140*140);
+    for (i=0;i<m*n;i++) init[i]=0.01f*(float)(i%17)-0.05f;
+    ref_kblock(ta,tb,m,n,k,alpha,a,b,beta,init,want);
+    memcpy(c,init,m*n*sizeof(float));
+    bcir_tensor_mm_kblock(NULL,(int)ta,(int)tb,m,n,k,alpha,a,b,beta,c);
+    assert(!memcmp(c,want,m*n*sizeof(float)));
+    memcpy(v2,init,m*n*sizeof(float));
+    bcir_tensor_mm_fused(NULL,(int)ta,(int)tb,m,n,k,alpha,a,b,beta,v2);
+    if (one) { assert(!memcmp(v2,want,m*n*sizeof(float))); equal++; }
+    else differ+=memcmp(v2,want,m*n*sizeof(float))!=0;
+    if (pool) {
+      memcpy(c,init,m*n*sizeof(float));
+      bcir_tensor_mm_kblock_pool(pool,(int)ta,(int)tb,m,n,k,alpha,a,b,beta,c);
+      assert(!memcmp(c,want,m*n*sizeof(float)));
+    }
+    for (variant=1;variant<=4;variant*=2) {
+      memcpy(c,init,m*n*sizeof(float));
+      if (!(mask&variant)) {
+        assert(bcir_tensor_mm_kblock_variant(variant,(int)ta,(int)tb,m,n,k,alpha,a,b,beta,c)==0);
+        assert(!memcmp(c,init,m*n*sizeof(float)));
+        continue;
+      }
+      assert(bcir_tensor_mm_kblock_variant(variant,(int)ta,(int)tb,m,n,k,alpha,a,b,beta,c)==variant);
+      assert(!memcmp(c,want,m*n*sizeof(float)));
+      ran++;
+    }
+  }
+  assert(differ>0 && equal>0);
+  assert(bcir_tensor_mm_kblock_variant(3,0,0,1,1,1,1.0f,a,b,0.0f,c)==0);
+  bcir_tensor_pool_stop(pool);
+  printf("  PASS native GEMM blocked contract (v3): bit-identical to the K-blocked fmaf chains, every "
+      "transpose, %d variant run(s) (mask %d); %zu of 64 cases apart from v2, %zu equal where the "
+      "contract says; the split rule on 10 depths\n",ran,mask,differ,equal);
 }
 /* The BCIR exponential and the v2 contracts that use it (NDT-EXP): every instance this host runs
  * agrees bit for bit over 2^24 inputs (every binary32 in [-104, 89] at stride 2^8), within 1 ulp
@@ -545,5 +632,5 @@ static void exp_contract(void) {
 }
 int main(void) {
   gemm_contract(); attention_reference(); adamw_reference(); finite_differences(); refusals();
-  learning(); pool_identity(); gemm_fused_contract(); exp_contract(); return 0;
+  learning(); pool_identity(); gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); return 0;
 }

@@ -112,6 +112,18 @@ two are two contracts, not an approximation of one, and the trainer records whic
 state. The Python oracle emulates the fused contract exactly (an exact rational product and sum,
 rounded once to binary32), as it emulates today's.
 
+**A third contract, found by measuring (NDT-KBLOCK, landed 2026-10-12).** OpenBLAS's `sgemm` on
+this host's SkylakeX target computes a K-blocked fused chain -- the depth split by its level-3
+driver's rule (Q 448, unroll 16: whole 448-blocks while two remain, then half the rest rounded
+up to 16, then the rest), each block's fused chain from zero added to c in order -- bit for bit,
+for every one of the trainer's shapes (its small-matrix path, below about 10^6 multiply-adds,
+keeps other orders). Declared as BCIR's blocked fused contract (v3) and implemented by BCIR's
+own kernel on every host, it makes OpenBLAS an admissible provider: `use_cblas` admits it by a
+differential over the trainer's shapes at beta 0 and 1, refuses it otherwise, and the state is
+one state with the provider or without it. Under v3 the GEMM's ceiling is the provider's rate
+(87-103 GFLOP/s at one thread here, 241-266 at four), with BCIR's own v3 kernel at 56-76 at one
+thread; the measurement report's §7 has the step and the 1,000-step run under it.
+
 **Threads.** Four cores give at most 4x to compute-bound kernels and less to memory-bound ones.
 The GEMM, attention and SiLU are compute-bound at this shape; the AdamW passes and the norm pass
 stream 157-197 MB each and share one memory system. PyTorch's 2.9x on the whole step is the
@@ -183,13 +195,14 @@ hardware.
 | **NDT-NORM** (P3) | one pass fewer in the update where the order allows: the finiteness check and the maxima gathered as the backward writes each gradient, the norm's index-order sum kept | the same state | the `breakdown` stage's optimizer row | candidate |
 | **NDT-MEM** (P2) | the transient arena laid out by lifetime (the GEM+ roadmap's open item) | `train.memory.transient` 1.326 -> 1.0 | as stated there | open |
 | **NDT-MEASURE** (P1) | the comparison re-run on the pool and the contracts ([BCIR_NDT_MEASURE_2026-10-12.md](BCIR_NDT_MEASURE_2026-10-12.md)): `identity` per contract and thread count, `bcir-breakdown` at 1, 3 and 4 threads under each contract, the 1,000-step language-model run on three and four threads under v1 and `fused+exp` | every state its contract's own and identical at 1..4 threads; the 1,000-step v1 run on three threads ends in the 10-11 one-thread run's state (`aed5ffbf…`) | the exact rows; the step read against §2 row by row (§2's measured table) -- the fused contract gains 1.2x on the step's GEMMs, not 2x, and three threads 1.7x on the step, not 3x, which names the next slices: the register block and packing (NDT-BLOCK), the partition and the concurrent VJPs (NDT-SCHED), the serial reductions (NDT-REDUCE) | **landed** |
+| **NDT-KBLOCK** (P1) | the blocked fused GEMM contract, v3: the depth split by one rule (whole 448-blocks while two remain, then half the rest rounded up to a multiple of 16, then the rest), each block's fused chain from zero added to c as c + alpha*P; BCIR's own kernel on every host (the partial in registers across a whole block, the fused instances' widths); the state's `kblock` bit (`NativeDecoder(contract="kblock" | "kblock+exp")`, one GEMM contract at a time); a CBLAS provider admitted under v3 only by a differential over the trainer's own GEMM shapes at beta 0 and 1 (`use_cblas`), refused otherwise | the same state with the provider or without it; OpenBLAS's `sgemm` is the contract bit for bit on its SkylakeX target for the trainer's shapes (its small-matrix path is not, and is refused where a trainer's shapes are small) | `train.mm.kblock.mismatch` 0 of 40 against the exact emulation, with the split rule on both rails; `train.mm.provider.mismatch` 0 of 30 where the wheel is importable; the C harness holds every instance to the K-blocked fmaf chains, serially and on a pool, equal to v2 exactly where the contract says it is; the six contracts' states each their own and each identical at 1..4 threads; `ndt-kblock.json`: the rule without its halving, a chain from c, a fused add, a trainer or a one-thread pool entry on the fused kernel, an admission that does not read its differential; measured: the 1,000-step `kblock+exp` run ends in one state (`d7fc618c…`) on BCIR's own kernel and on OpenBLAS admitted, at one and at four threads; 655 ms a step with the provider on four threads (753 on BCIR's kernel), 1,066 on one (1,425); BCIR's own v3 kernel faster than v2 at one thread (the step's GEMMs 1,081 to 952 ms) -- the report's §7 | **landed** |
 | **NDT-BLOCK** (P1) | the fused kernel's wider register block and the per-panel packing of the transposed-A operand (NDT-FMA's open item), under the same contract: the result is fixed by the contract, so only the schedule changes | `train.mm.fused.mismatch` stays 0 and every state digest stays | the kernel-rate record against OpenBLAS's 87 GFLOP/s at one thread on the step's shapes (the fused kernel reads 56-67 today); the `bcir-breakdown` GEMM rows | candidate |
 | **NDT-REDUCE** (P3) | the index-order reductions the pool leaves serial (the loss, the embedding scatter, the gamma VJP's row sum, the clipping norm) under a declared fixed-shape tree-reduction contract, so that they thread without the result depending on the thread count | a third declared contract, its own state, identical at every thread count | the `bcir-breakdown` "rest" row; `train.state.threads.mismatch` under the new bit | candidate |
 | **NDT-BF16 / AMX** (P3) | BF16 computation with an explicit accumulation and master-weight policy, AMX tiles where the host has them | quality parity across seeds | hardware-gated: this host has neither `avx512_bf16` nor AMX; an explicit skip, never simulated | hardware-gated |
 
 Order of work (TRAIN-0, TRAIN-RAIL, NDT-THREADS, NDT-FMA, NDT-EXP and NDT-MEASURE landed 2026-10-12): TRAIN-0 -> TRAIN-RAIL -> NDT-THREADS -> NDT-FMA -> NDT-EXP -> NDT-MEASURE (the
-comparison re-run) -> NDT-SCHED -> NDT-BLOCK -> NDT-ATTN, with NDT-MEASURE's reading (§2's measured table) setting
-SCHED's and BLOCK's targets. THREADS precedes FMA because it changes no
+comparison re-run) -> NDT-KBLOCK (the provider contract the measurement found) -> NDT-SCHED -> NDT-BLOCK -> NDT-ATTN, with
+NDT-MEASURE's reading (§2's measured table) setting SCHED's and BLOCK's targets. THREADS precedes FMA because it changes no
 arithmetic, so its witness is the strongest kind (the existing state digest reproduced at every
 thread count) and it lands on the contract every existing gate already holds. FMA is then a
 provider choice on a kernel that is already partitioned. EXP is independent of both and small.

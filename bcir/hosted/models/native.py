@@ -53,11 +53,56 @@ _CBLAS = ct.CFUNCTYPE(
     ct.c_int,
 )
 _MAGIC = b"BCIRDT1\0"
+
+
+def provider_mismatch(lib, slot, shapes) -> int:
+    """The blocked contract's admission differential (NDT-KBLOCK): over `shapes` (ta, tb, m, n,
+    k), at beta 0 and 1 with alpha 1 -- the trainer's calls -- the provider behind `slot` (a
+    pointer to a CBLAS sgemm function pointer, as `bcir_tensor_cblas_mm` reads it) against
+    `bcir_tensor_mm_kblock` on deterministic operands, bit for bit; returns the cases that
+    differ. Empty `shapes` is refused: a differential over nothing admits nothing."""
+    shapes = tuple(shapes)
+    if not shapes:
+        raise ValueError("the admission differential needs at least one GEMM shape")
+    sig = [ct.c_void_p, ct.c_int, ct.c_int, _SZ, _SZ, _SZ, ct.c_float, _FP, _FP, ct.c_float, _FP]
+    provider, kblock = lib.bcir_tensor_cblas_mm, lib.bcir_tensor_mm_kblock
+    provider.argtypes = kblock.argtypes = sig
+    provider.restype = kblock.restype = None
+    state = 0x2545F491
+    pattern = []
+    for _ in range(4096):  # one block of mixed signs and magnitudes, tiled with an offset
+        state = (state * 1103515245 + 12345) % 2**31
+        pattern.append((state / 2**31 - 0.5) * (8.0 if state & 1 else 0.125))
+
+    def operand(count, offset):
+        out = (ct.c_float * count)()
+        out[:] = (pattern[offset:] + pattern * (count // 4096 + 1))[:count]
+        return out
+
+    bad = 0
+    for index, (ta, tb, m, n, k) in enumerate(shapes):
+        a, b = operand(m * k, (7 * index) % 4096), operand(k * n, (13 * index + 5) % 4096)
+        start = operand(m * n, (29 * index + 11) % 4096)
+        for beta in (0.0, 1.0):
+            want, got = (ct.c_float * (m * n))(), (ct.c_float * (m * n))()
+            ct.memmove(want, start, 4 * m * n)
+            ct.memmove(got, start, 4 * m * n)
+            kblock(None, ta, tb, m, n, k, 1.0, a, b, beta, want)
+            provider(slot, ta, tb, m, n, k, 1.0, a, b, beta, got)
+            bad += bytes(want) != bytes(got)
+    return bad
+
+
 #: The contracts a state trains under (ABI 3): v1 rounds each GEMM term's product and its addition
 #: and takes exp from libm; "fused" rounds the two once (one IEEE fmaf per term, NDT-FMA); "exp" puts
-#: SiLU, the SwiGLU VJP and the softmax on the BCIR exponential (NDT-EXP); "fused+exp" both. A
-#: provider's GEMM or SiLU keeps its own.
-_CONTRACTS = {"v1": 0, "fused": 1, "exp": 2, "fused+exp": 3}
+#: SiLU, the SwiGLU VJP and the softmax on the BCIR exponential (NDT-EXP); "fused+exp" both;
+#: "kblock" is the blocked fused GEMM contract (v3, NDT-KBLOCK: the depth split by one rule into
+#: blocks of up to 448, each block's fused chain from zero added to c in order -- the arithmetic
+#: OpenBLAS's sgemm performs, so such a provider can be admitted under it by `use_cblas`'s
+#: differential), "kblock+exp" both. Under v1, "fused" and "exp" a provider's GEMM keeps its own
+#: arithmetic; under "kblock" it is admitted only where it is the contract's, bit for bit.
+_CONTRACTS = {"v1": 0, "fused": 1, "exp": 2, "fused+exp": 3, "kblock": 4, "kblock+exp": 6}
+_KBLOCK = 4
 
 
 class _Spec(ct.Structure):
@@ -380,6 +425,7 @@ class NativeDecoder:
                 self.buffers["weights"][offset + i] = 1.0 if norm else rng.gauss(0.0, 0.02)
         self.backend = "portable-c"
         self._provider_refs = ()
+        self.provider_admission = None
 
     def close(self):
         """Release the pool's threads; a later call runs serially (the same state). Idempotent."""
@@ -438,7 +484,7 @@ class NativeDecoder:
         )
         self.lib.bcir_decoder_run_accum.restype = ct.c_int
 
-    def use_cblas(self, library, *, symbol="cblas_sgemm"):
+    def use_cblas(self, library, *, symbol="cblas_sgemm", admit=True):
         """Explicit LP64 CBLAS integration; caller configures provider threads (the trainer's
         own pool keeps running every kernel but the GEMM).
 
@@ -456,11 +502,52 @@ class NativeDecoder:
         ):
             raise ValueError("LP64 CBLAS requires dimensions within INT_MAX")
         lib = ct.CDLL(str(library))
-        slot = ct.cast(getattr(lib, symbol), _CBLAS)
+        self.use_cblas_function(ct.cast(getattr(lib, symbol), _CBLAS), name=symbol, keep=lib,
+                                admit=admit)  # fmt: skip
+
+    def use_cblas_function(self, function, *, name="cblas_sgemm", keep=None, admit=True):
+        """`use_cblas` for a CBLAS sgemm the caller already holds as a ctypes function (a
+        library's symbol, or a callback). Under the blocked contract the provider is admitted
+        by a differential over this trainer's GEMM shapes (`provider_mismatch`): every output
+        bit for bit the contract's, at beta 0 and 1, or the provider is refused and the state
+        keeps BCIR's kernels. `admit=False` installs it without the differential (for measuring
+        the differential itself); under the other contracts a provider's GEMM keeps its own
+        arithmetic and `provider_admission` is None."""
+        slot = ct.cast(function, _CBLAS)
         fn = ct.cast(self.lib.bcir_tensor_cblas_mm, _MM)
         self.state.provider = _Provider(ct.cast(ct.pointer(slot), ct.c_void_p), fn, _SILU())
-        self._provider_refs = (lib, slot, fn)
-        self.backend = f"cblas:{symbol}"
+        self._provider_refs = (keep, function, slot, fn)
+        self.backend = f"cblas:{name}"
+        self.provider_admission = None
+        if admit and _CONTRACTS[self.contract] & _KBLOCK:
+            shapes = self.gemm_shapes()
+            bad = provider_mismatch(self.lib, self.state.provider.ctx, shapes)
+            if bad:
+                self.state.provider = _Provider()
+                self._provider_refs = ()
+                self.backend = "portable-c"
+                raise ValueError(
+                    f"provider {name} not admitted under the {self.contract} contract: "
+                    f"{bad} of {2 * len(shapes)} GEMM cases differ from bcir_tensor_mm_kblock"
+                )
+            self.provider_admission = {
+                "contract": self.contract, "provider": name, "cases": 2 * len(shapes),
+                "mismatch": 0,
+            }  # fmt: skip
+
+    def gemm_shapes(self):
+        """The distinct (ta, tb, m, n, k) of this trainer's step, from the step program."""
+        from .native_program import training_step_program
+
+        program = training_step_program(self.spec, self.batch_size, self.context_length)
+        return tuple(dict.fromkeys(program.gemm_shapes()))
+
+    def provider_mismatch(self):
+        """The admission differential of the installed provider: GEMM cases (this trainer's
+        shapes at beta 0 and 1) whose provider output differs from bcir_tensor_mm_kblock."""
+        if not self.state.provider.ctx:
+            raise ValueError("no CBLAS provider is installed")
+        return provider_mismatch(self.lib, self.state.provider.ctx, self.gemm_shapes())
 
     def _tokens(self, values, *, steps=1):
         n = self.batch_size * self.context_length * steps
