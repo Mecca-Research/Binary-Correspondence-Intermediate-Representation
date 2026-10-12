@@ -1,7 +1,16 @@
 #include "bcir_tensor.h"
 #include <math.h>
+#include <stdint.h>
 #include <string.h>
 #include <limits.h>
+#if defined(_WIN32)
+#define BCIR_POOL_WIN32 1
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#elif defined(__unix__) || defined(__APPLE__)
+#define BCIR_POOL_PTHREADS 1
+#include <pthread.h>
+#endif
 
 void bcir_tensor_cblas_mm(void *ctx, int ta, int tb, size_t m, size_t n, size_t k,
     float alpha, const float *a, const float *b, float beta, float *c) {
@@ -80,20 +89,25 @@ BCIR_MM_INLINE int mm_unmasked(int mode, size_t i, size_t mr, size_t jb, size_t 
   return mode==MM_FULL || (mode==MM_LOWER && i>=jb+nj-1) || (mode==MM_KLE && i>=lb+nl-1) ||
     (mode==MM_KGE && i+mr-1<=lb);
 }
-BCIR_MM_INLINE void mm_kernel(size_t mr, size_t nr, const mm_args *x) {
+/* The nest over column blocks [jb0, jb1) and rows [r0, r1): the serial kernel passes the whole
+ * matrix, a pool task its own column block and row range. Rows are grouped mr at a time from r0
+ * and the rest singly; each row's accumulator sees the same terms in the same order whatever the
+ * grouping, so any row partition is bit-identical to the whole. */
+BCIR_MM_INLINE void mm_kernel(size_t mr, size_t nr, const mm_args *x, size_t jb0, size_t jb1,
+    size_t r0, size_t r1) {
   /* Aligned to a cache line: every row of the tile is then read in whole vectors that never
    * straddle two lines. GCC realigns the stack for the AVX-512 instance on its own; clang keeps
    * the ABI's 16 bytes, which left the tile's offset to the caller's stack depth and to ASLR. */
   _Alignas(64) float bt[BCIR_MM_KC*BCIR_MM_NRMAX];
   size_t i,j,l,jb,lb;
-  for (jb=0;jb<x->n;jb+=nr) {
+  for (jb=jb0;jb<jb1;jb+=nr) {
     size_t nj=x->n-jb<nr ? x->n-jb : nr;
     for (lb=0;lb<x->k;lb+=BCIR_MM_KC) {
-      size_t nl=x->k-lb<BCIR_MM_KC ? x->k-lb : BCIR_MM_KC,i0=0,i1=x->m;
+      size_t nl=x->k-lb<BCIR_MM_KC ? x->k-lb : BCIR_MM_KC,i0=r0,i1=r1;
       /* the rows this block reaches at all: under MM_LOWER none above jb stores here, under
        * MM_KLE none above lb takes a term, under MM_KGE none past lb+nl-1 does */
-      if (x->mode==MM_LOWER) i0=jb;
-      if (x->mode==MM_KLE) i0=lb;
+      if (x->mode==MM_LOWER && jb>i0) i0=jb;
+      if (x->mode==MM_KLE && lb>i0) i0=lb;
       if (x->mode==MM_KGE && lb+nl<i1) i1=lb+nl;
       if (i0>=i1) continue;
       /* pack the tile, reading each source row contiguously; the padding columns are zero */
@@ -120,7 +134,9 @@ BCIR_MM_INLINE void mm_kernel(size_t mr, size_t nr, const mm_args *x) {
     }
   }
 }
-static void mm_generic(const mm_args *x) { mm_kernel(2,32,x); }
+/* The column width of a variant's register block: a task's column range is whole blocks. */
+typedef struct mm_range { size_t jb0,jb1,r0,r1; } mm_range;
+static void mm_generic(const mm_args *x, const mm_range *r) { mm_kernel(2,32,x,r->jb0,r->jb1,r->r0,r->r1); }
 /* x86-64 Linux with GCC or Clang also carries AVX2 and AVX-512 variants of the same kernel,
  * chosen per call from what the CPU and OS support; anything else runs mm_generic.
  * BCIR_TENSOR_MAX_VARIANT caps the choice (1, 2 or 4) so a build can run a narrower one. */
@@ -130,9 +146,14 @@ static void mm_generic(const mm_args *x) { mm_kernel(2,32,x); }
 #if defined(__x86_64__) && defined(__linux__) && (defined(__GNUC__) || defined(__clang__)) && \
     !defined(BCIR_TENSOR_NO_DISPATCH) && BCIR_TENSOR_MAX_VARIANT>1
 #define BCIR_MM_DISPATCH 1
-__attribute__((target("avx2"))) static void mm_avx2(const mm_args *x) { mm_kernel(2,32,x); }
-__attribute__((target("avx512f"))) static void mm_avx512(const mm_args *x) { mm_kernel(4,64,x); }
+__attribute__((target("avx2"))) static void mm_avx2(const mm_args *x, const mm_range *r) {
+  mm_kernel(2,32,x,r->jb0,r->jb1,r->r0,r->r1);
+}
+__attribute__((target("avx512f"))) static void mm_avx512(const mm_args *x, const mm_range *r) {
+  mm_kernel(4,64,x,r->jb0,r->jb1,r->r0,r->r1);
+}
 #endif
+static size_t mm_nr(int variant) { return variant==4 ? 64 : 32; }
 int bcir_tensor_mm_variants(void) {
   int v=1;
 #ifdef BCIR_MM_DISPATCH
@@ -142,14 +163,19 @@ int bcir_tensor_mm_variants(void) {
 #endif
   return v;
 }
-static void mm_run(int variant, const mm_args *x) {
-  if (!x->m || !x->n || !x->k) return;
+static void mm_run_range(int variant, const mm_args *x, const mm_range *r) {
 #ifdef BCIR_MM_DISPATCH
-  if (variant==4) { mm_avx512(x); return; }
-  if (variant==2) { mm_avx2(x); return; }
+  if (variant==4) { mm_avx512(x,r); return; }
+  if (variant==2) { mm_avx2(x,r); return; }
 #endif
   (void)variant;
-  mm_generic(x);
+  mm_generic(x,r);
+}
+static void mm_run(int variant, const mm_args *x) {
+  mm_range r;
+  if (!x->m || !x->n || !x->k) return;
+  r.jb0=0; r.jb1=x->n; r.r0=0; r.r1=x->m;
+  mm_run_range(variant,x,&r);
 }
 static int mm_widest(void) {
   int v=bcir_tensor_mm_variants();
@@ -169,6 +195,286 @@ void bcir_tensor_mm(void *ctx, int ta, int tb, size_t m, size_t n, size_t k,
     float alpha, const float *a, const float *b, float beta, float *c) {
   (void)ctx;
   bcir_tensor_mm_variant(mm_widest(),ta,tb,m,n,k,alpha,a,b,beta,c);
+}
+/* --- the deterministic pool (NDT-THREADS) ------------------------------------------------------
+ * Thread 0 is the caller; the others wait for a generation, run their share of its tasks and
+ * report. Task t goes to thread t % threads: the assignment is fixed, no task is taken by two
+ * threads, and no thread takes a task the serial run would not have run in the same position.
+ * Every task writes outputs no other task writes and reads nothing a task of the same job
+ * writes, so the run order does not reach the arithmetic; the partitions below make it so.
+ * The pool, its thread handles and its worker records live in one block the caller provides
+ * (bcir_tensor_pool_size): the unit allocates nothing, as the trainer's arenas allocate nothing. */
+typedef struct pool_worker { bcir_tensor_pool *pool; unsigned id; } pool_worker;
+struct bcir_tensor_pool {
+  unsigned threads,pending; unsigned long generation; int stop;
+  bcir_tensor_task_fn fn; void *ctx; size_t tasks;
+#if defined(BCIR_POOL_PTHREADS)
+  pthread_mutex_t mutex; pthread_cond_t wake,done; pthread_t *workers;
+#elif defined(BCIR_POOL_WIN32)
+  CRITICAL_SECTION mutex; CONDITION_VARIABLE wake,done; HANDLE *workers;
+#endif
+  pool_worker *records;
+};
+static size_t pool_align_up(size_t n, size_t a) { return (n+a-1)/a*a; }
+/* The block: the pool, then the thread handles, then the worker records, each at its alignment. */
+static size_t pool_layout(unsigned threads, size_t *handles, size_t *records) {
+  size_t off=sizeof(bcir_tensor_pool),n=threads-1;
+#if defined(BCIR_POOL_PTHREADS)
+  off=pool_align_up(off,_Alignof(pthread_t)); *handles=off; off+=n*sizeof(pthread_t);
+#elif defined(BCIR_POOL_WIN32)
+  off=pool_align_up(off,_Alignof(HANDLE)); *handles=off; off+=n*sizeof(HANDLE);
+#else
+  *handles=off;
+#endif
+  off=pool_align_up(off,_Alignof(pool_worker)); *records=off; off+=n*sizeof(pool_worker);
+  return pool_align_up(off,_Alignof(max_align_t));
+}
+size_t bcir_tensor_pool_size(unsigned threads) {
+  size_t h,r;
+  if (!threads || threads>4096) return 0;
+#if !defined(BCIR_POOL_PTHREADS) && !defined(BCIR_POOL_WIN32)
+  if (threads>1) return 0;
+#endif
+  return pool_layout(threads,&h,&r);
+}
+int bcir_tensor_pool_rails(void) {
+#if defined(BCIR_POOL_PTHREADS)
+  return 1;
+#elif defined(BCIR_POOL_WIN32)
+  return 2;
+#else
+  return 0;
+#endif
+}
+unsigned bcir_tensor_pool_threads(const bcir_tensor_pool *pool) { return pool ? pool->threads : 1; }
+static void pool_tasks(bcir_tensor_pool *p, unsigned id) {
+  size_t t;
+  for (t=id;t<p->tasks;t+=p->threads) p->fn(p->ctx,t);
+}
+#if defined(BCIR_POOL_PTHREADS) || defined(BCIR_POOL_WIN32)
+#if defined(BCIR_POOL_PTHREADS)
+#define POOL_LOCK(p) pthread_mutex_lock(&(p)->mutex)
+#define POOL_UNLOCK(p) pthread_mutex_unlock(&(p)->mutex)
+#define POOL_WAIT(p,c) pthread_cond_wait(&(p)->c,&(p)->mutex)
+#define POOL_SIGNAL(p,c) pthread_cond_signal(&(p)->c)
+#define POOL_BROADCAST(p,c) pthread_cond_broadcast(&(p)->c)
+static void *pool_main(void *arg)
+#else
+#define POOL_LOCK(p) EnterCriticalSection(&(p)->mutex)
+#define POOL_UNLOCK(p) LeaveCriticalSection(&(p)->mutex)
+#define POOL_WAIT(p,c) SleepConditionVariableCS(&(p)->c,&(p)->mutex,INFINITE)
+#define POOL_SIGNAL(p,c) WakeConditionVariable(&(p)->c)
+#define POOL_BROADCAST(p,c) WakeAllConditionVariable(&(p)->c)
+static DWORD WINAPI pool_main(LPVOID arg)
+#endif
+{
+  pool_worker *w=(pool_worker *)arg; bcir_tensor_pool *p=w->pool; unsigned id=w->id;
+  unsigned long seen=0;
+  for (;;) {
+    POOL_LOCK(p);
+    while (p->generation==seen && !p->stop) POOL_WAIT(p,wake);
+    if (p->stop) { POOL_UNLOCK(p); break; }
+    seen=p->generation;
+    POOL_UNLOCK(p);
+    pool_tasks(p,id);
+    POOL_LOCK(p);
+    if (--p->pending==0) POOL_SIGNAL(p,done);
+    POOL_UNLOCK(p);
+  }
+  return 0;
+}
+static void pool_sync_destroy(bcir_tensor_pool *p) {
+#if defined(BCIR_POOL_PTHREADS)
+  pthread_cond_destroy(&p->done); pthread_cond_destroy(&p->wake); pthread_mutex_destroy(&p->mutex);
+#else
+  DeleteCriticalSection(&p->mutex);
+#endif
+}
+static int pool_start(bcir_tensor_pool *p) {
+  unsigned i;
+#if defined(BCIR_POOL_PTHREADS)
+  if (pthread_mutex_init(&p->mutex,NULL)) return 0;
+  if (pthread_cond_init(&p->wake,NULL)) { pthread_mutex_destroy(&p->mutex); return 0; }
+  if (pthread_cond_init(&p->done,NULL)) {
+    pthread_cond_destroy(&p->wake); pthread_mutex_destroy(&p->mutex); return 0;
+  }
+#else
+  InitializeCriticalSection(&p->mutex); InitializeConditionVariable(&p->wake);
+  InitializeConditionVariable(&p->done);
+#endif
+  for (i=1;i<p->threads;i++) {
+    pool_worker *w=&p->records[i-1];
+    w->pool=p; w->id=i;
+#if defined(BCIR_POOL_PTHREADS)
+    if (pthread_create(&p->workers[i-1],NULL,pool_main,w)) break;
+#else
+    p->workers[i-1]=CreateThread(NULL,0,pool_main,w,0,NULL);
+    if (!p->workers[i-1]) break;
+#endif
+  }
+  if (i<p->threads) {
+    /* a thread that could not start: stop the ones that did, release everything, refuse */
+    unsigned started=i-1,j;
+    POOL_LOCK(p); p->stop=1; POOL_BROADCAST(p,wake); POOL_UNLOCK(p);
+    for (j=0;j<started;j++) {
+#if defined(BCIR_POOL_PTHREADS)
+      pthread_join(p->workers[j],NULL);
+#else
+      WaitForSingleObject(p->workers[j],INFINITE); CloseHandle(p->workers[j]);
+#endif
+    }
+    pool_sync_destroy(p);
+    return 0;
+  }
+  return 1;
+}
+static void pool_join(bcir_tensor_pool *p) {
+  unsigned j;
+  POOL_LOCK(p); p->stop=1; POOL_BROADCAST(p,wake); POOL_UNLOCK(p);
+  for (j=0;j+1<p->threads;j++) {
+#if defined(BCIR_POOL_PTHREADS)
+    pthread_join(p->workers[j],NULL);
+#else
+    WaitForSingleObject(p->workers[j],INFINITE); CloseHandle(p->workers[j]);
+#endif
+  }
+  pool_sync_destroy(p);
+}
+#endif
+bcir_tensor_pool *bcir_tensor_pool_init(void *memory, size_t bytes, unsigned threads) {
+  size_t need=bcir_tensor_pool_size(threads),h,r; bcir_tensor_pool *p;
+  if (!need || !memory || bytes<need || (uintptr_t)memory%_Alignof(max_align_t)) return NULL;
+  pool_layout(threads,&h,&r);
+  memset(memory,0,need);
+  p=(bcir_tensor_pool *)memory; p->threads=threads;
+#if defined(BCIR_POOL_PTHREADS)
+  p->workers=(pthread_t *)(void *)((unsigned char *)memory+h);
+#elif defined(BCIR_POOL_WIN32)
+  p->workers=(HANDLE *)(void *)((unsigned char *)memory+h);
+#endif
+  p->records=(pool_worker *)(void *)((unsigned char *)memory+r);
+#if defined(BCIR_POOL_PTHREADS) || defined(BCIR_POOL_WIN32)
+  if (threads>1 && !pool_start(p)) return NULL;
+#endif
+  return p;
+}
+/* After stop the block still reads as a pool of one, so a kernel handed it runs serially. */
+void bcir_tensor_pool_stop(bcir_tensor_pool *p) {
+  if (!p) return;
+#if defined(BCIR_POOL_PTHREADS) || defined(BCIR_POOL_WIN32)
+  if (p->threads>1) pool_join(p);
+#endif
+  p->threads=1;
+}
+void bcir_tensor_pool_run(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx, size_t tasks) {
+  size_t t;
+  if (!tasks) return;
+  if (!p || p->threads==1 || tasks==1) { for (t=0;t<tasks;t++) fn(ctx,t); return; }
+#if defined(BCIR_POOL_PTHREADS) || defined(BCIR_POOL_WIN32)
+  POOL_LOCK(p);
+  p->fn=fn; p->ctx=ctx; p->tasks=tasks; p->pending=p->threads-1; p->generation++;
+  POOL_BROADCAST(p,wake);
+  POOL_UNLOCK(p);
+  pool_tasks(p,0);
+  POOL_LOCK(p);
+  while (p->pending) POOL_WAIT(p,done);
+  POOL_UNLOCK(p);
+#else
+  for (t=0;t<tasks;t++) fn(ctx,t);
+#endif
+}
+#define pool_run bcir_tensor_pool_run
+/* --- the partitions: each a function of the shapes alone ----------------------------------- */
+/* GEMM: one task per (column block of the variant's width, row range of BCIR_MM_ROWS rows). The
+ * task scales its own elements of C by beta, then runs the serial nest over its block and rows
+ * -- every depth chunk, in order -- so each element of C receives its terms in the serial order;
+ * the task packs its own tiles. */
+#define BCIR_MM_ROWS 64
+typedef struct mm_job { mm_args x; float beta; int variant; size_t nr,cols,rowsets; } mm_job;
+static void mm_task(void *ctx, size_t task) {
+  mm_job *j=(mm_job *)ctx; mm_range r; size_t col=task%j->cols,row=task/j->cols,i,jj;
+  r.jb0=col*j->nr; r.jb1=r.jb0+j->nr<j->x.n ? r.jb0+j->nr : j->x.n;
+  r.r0=row*BCIR_MM_ROWS; r.r1=r.r0+BCIR_MM_ROWS<j->x.m ? r.r0+BCIR_MM_ROWS : j->x.m;
+  for (i=r.r0;i<r.r1;i++) {
+    float *ci=j->x.c+i*j->x.ldc;
+    for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=j->beta==0.0f ? 0.0f : j->beta*ci[jj];
+  }
+  if (j->x.k) mm_run_range(j->variant,&j->x,&r);
+}
+void bcir_tensor_mm_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m, size_t n, size_t k,
+    float alpha, const float *a, const float *b, float beta, float *c) {
+  mm_job j;
+  if (!pool || pool->threads==1) { bcir_tensor_mm(NULL,ta,tb,m,n,k,alpha,a,b,beta,c); return; }
+  if (!m || !n) return;
+  j.beta=beta; j.variant=mm_widest(); j.nr=mm_nr(j.variant);
+  j.x.ta=ta; j.x.tb=tb; j.x.m=m; j.x.n=n; j.x.k=k; j.x.alpha=alpha; j.x.a=a; j.x.lda=ta ? m : k;
+  j.x.b=b; j.x.ldb=tb ? k : n; j.x.c=c; j.x.ldc=n; j.x.mode=MM_FULL;
+  j.cols=(n+j.nr-1)/j.nr; j.rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;
+  pool_run(pool,mm_task,&j,j.cols*j.rowsets);
+}
+/* Elements in ranges of BCIR_EW_CHUNK: y[i] depends on x[i] alone. */
+#define BCIR_EW_CHUNK 8192
+typedef struct ew_job { size_t n; const float *x,*u,*dy; float *y,*du; int op; } ew_job;
+enum { EW_SILU, EW_ADD, EW_MUL, EW_SWIGLU };
+static void ew_task(void *ctx, size_t task) {
+  ew_job *j=(ew_job *)ctx; size_t i0=task*BCIR_EW_CHUNK,i1=i0+BCIR_EW_CHUNK<j->n ? i0+BCIR_EW_CHUNK : j->n;
+  switch (j->op) {
+    case EW_SILU: bcir_tensor_silu(NULL,i1-i0,j->x+i0,j->y+i0); break;
+    case EW_ADD: { size_t i; for (i=i0;i<i1;i++) j->y[i]+=j->x[i]; } break;
+    case EW_MUL: { size_t i; for (i=i0;i<i1;i++) j->y[i]*=j->x[i]; } break;
+    default: bcir_tensor_swiglu_backward(i1-i0,j->x+i0,j->u+i0,j->dy+i0,j->y+i0,j->du+i0); break;
+  }
+}
+static void ew_run(bcir_tensor_pool *pool, ew_job *j) {
+  pool_run(pool,ew_task,j,(j->n+BCIR_EW_CHUNK-1)/BCIR_EW_CHUNK);
+}
+void bcir_tensor_silu_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y) {
+  ew_job j; j.n=n; j.x=x; j.y=y; j.u=NULL; j.dy=NULL; j.du=NULL; j.op=EW_SILU; ew_run(pool,&j);
+}
+void bcir_tensor_add_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y) {
+  ew_job j; j.n=n; j.x=x; j.y=y; j.u=NULL; j.dy=NULL; j.du=NULL; j.op=EW_ADD; ew_run(pool,&j);
+}
+void bcir_tensor_mul_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y) {
+  ew_job j; j.n=n; j.x=x; j.y=y; j.u=NULL; j.dy=NULL; j.du=NULL; j.op=EW_MUL; ew_run(pool,&j);
+}
+void bcir_tensor_swiglu_backward_pool(bcir_tensor_pool *pool, size_t n, const float *g,
+    const float *u, const float *dy, float *dg, float *du) {
+  ew_job j; j.n=n; j.x=g; j.u=u; j.dy=dy; j.y=dg; j.du=du; j.op=EW_SWIGLU; ew_run(pool,&j);
+}
+/* Rows in ranges of BCIR_ROW_CHUNK: each row's statistics are its own. */
+#define BCIR_ROW_CHUNK 16
+typedef struct rms_job { size_t rows,width; float eps; const float *x,*g; float *y; } rms_job;
+static void rms_task(void *ctx, size_t task) {
+  rms_job *j=(rms_job *)ctx; size_t r0=task*BCIR_ROW_CHUNK,r1=r0+BCIR_ROW_CHUNK<j->rows ? r0+BCIR_ROW_CHUNK : j->rows;
+  bcir_tensor_rms(r1-r0,j->width,j->eps,j->x+r0*j->width,j->g,j->y+r0*j->width);
+}
+void bcir_tensor_rms_pool(bcir_tensor_pool *pool, size_t rows, size_t width, float eps,
+    const float *x, const float *g, float *y) {
+  rms_job j; j.rows=rows; j.width=width; j.eps=eps; j.x=x; j.g=g; j.y=y;
+  pool_run(pool,rms_task,&j,(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);
+}
+/* Positions in ranges of BCIR_ROW_CHUNK: a position's angles and rotations are its own. */
+typedef struct rope_job { size_t b,t,heads,dim; double base; float *x; int inverse; } rope_job;
+static void rope_rows(size_t b, size_t t, size_t heads, size_t dim, double base, float *x,
+    int inverse, size_t p0, size_t p1) {
+  size_t r,pos,h,j;
+  for (pos=p0;pos<p1;pos++) for (j=0;j<dim/2;j++) {
+    double angle=(double)pos*pow(base,-2.0*(double)j/(double)dim);
+    float c=(float)cos(angle),s=(float)sin(angle)*(inverse ? -1.0f : 1.0f);
+    for (r=0;r<b;r++) for (h=0;h<heads;h++) {
+      size_t off=((r*t+pos)*heads+h)*dim+j;
+      float a=x[off],z=x[off+dim/2]; x[off]=a*c-z*s; x[off+dim/2]=z*c+a*s;
+    }
+  }
+}
+static void rope_task(void *ctx, size_t task) {
+  rope_job *j=(rope_job *)ctx; size_t p0=task*BCIR_ROW_CHUNK,p1=p0+BCIR_ROW_CHUNK<j->t ? p0+BCIR_ROW_CHUNK : j->t;
+  rope_rows(j->b,j->t,j->heads,j->dim,j->base,j->x,j->inverse,p0,p1);
+}
+void bcir_tensor_rope_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t heads, size_t dim,
+    double base, float *x, int inverse) {
+  rope_job j; j.b=b; j.t=t; j.heads=heads; j.dim=dim; j.base=base; j.x=x; j.inverse=inverse;
+  pool_run(pool,rope_task,&j,(t+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);
 }
 static bcir_tensor_mm_fn mm(const bcir_tensor_provider *p) {
   return p && p->mm ? p->mm : bcir_tensor_mm;
@@ -226,40 +532,47 @@ void bcir_tensor_rms_backward(size_t rows, size_t width, float eps,
 }
 void bcir_tensor_rope(size_t b, size_t t, size_t heads, size_t dim,
     double base, float *x, int inverse) {
-  size_t r,pos,h,j;
-  for (pos=0;pos<t;pos++) for (j=0;j<dim/2;j++) {
-    double angle=(double)pos*pow(base,-2.0*(double)j/(double)dim);
-    float c=(float)cos(angle),s=(float)sin(angle)*(inverse ? -1.0f : 1.0f);
-    for (r=0;r<b;r++) for (h=0;h<heads;h++) {
-      size_t off=((r*t+pos)*heads+h)*dim+j;
-      float a=x[off],z=x[off+dim/2]; x[off]=a*c-z*s; x[off+dim/2]=z*c+a*s;
-    }
-  }
+  rope_rows(b,t,heads,dim,base,x,inverse,0,t);
 }
 /* Causal attention as two masked products per (batch, head) through the GEMM kernel, then the
  * reference loop's softmax: each score is the dot product accumulated from zero over the channels
  * in order and then scaled, each context row adds p_ij v_j for j ascending -- the operations the
  * reference loop (test_decoder_train.c keeps it) performs, in its order, so the result is
  * bit-identical; future scores stay exactly zero. */
+typedef struct att_job {
+  size_t b,t,nh,nk,d,group; const float *q,*k,*v,*dy; float *p,*y,*dq,*dk,*dv; int variant;
+} att_job;
+/* One (batch, query head): its scores, softmax rows and context; nothing shared with another. */
+static void att_head(const att_job *a, size_t r, size_t h) {
+  size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),i,j; float scale=1.0f/sqrtf((float)d);
+  float *ph=a->p+(r*nh+h)*t*t; mm_args x;
+  x.ta=0; x.tb=1; x.m=t; x.n=t; x.k=d; x.alpha=1.0f; x.a=a->q+(r*t*nh+h)*d; x.lda=nh*d;
+  x.b=a->k+(r*t*nk+kh)*d; x.ldb=nk*d; x.c=ph; x.ldc=t; x.mode=MM_LOWER;
+  mm_run(a->variant,&x);
+  for (i=0;i<t;i++) {
+    float *pi=ph+i*t,maxv=-INFINITY,sum=0.0f;
+    for (j=0;j<=i;j++) { pi[j]*=scale; if (pi[j]>maxv) maxv=pi[j]; }
+    for (j=0;j<=i;j++) { pi[j]=expf(pi[j]-maxv); sum+=pi[j]; }
+    for (j=0;j<=i;j++) pi[j]/=sum;
+  }
+  x.tb=0; x.n=d; x.k=t; x.a=ph; x.lda=t; x.b=a->v+(r*t*nk+kh)*d; x.ldb=nk*d;
+  x.c=a->y+(r*t*nh+h)*d; x.ldc=nh*d; x.mode=MM_KLE;
+  mm_run(a->variant,&x);
+}
+static void att_task(void *ctx, size_t task) {
+  att_job *a=(att_job *)ctx; att_head(a,task/a->nh,task%a->nh);
+}
+void bcir_tensor_attention_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
+    size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
+  att_job a;
+  memset(y,0,b*t*nh*d*sizeof(float)); memset(p,0,b*nh*t*t*sizeof(float));
+  a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.group=1; a.q=q; a.k=k; a.v=v; a.dy=NULL; a.p=p; a.y=y;
+  a.dq=NULL; a.dk=NULL; a.dv=NULL; a.variant=mm_widest();
+  pool_run(pool,att_task,&a,b*nh);
+}
 void bcir_tensor_attention(size_t b, size_t t, size_t nh, size_t nk, size_t d,
     const float *q, const float *k, const float *v, float *p, float *y) {
-  size_t r,h,i,j; float scale=1.0f/sqrtf((float)d); int variant=mm_widest();
-  memset(y,0,b*t*nh*d*sizeof(float)); memset(p,0,b*nh*t*t*sizeof(float));
-  for (r=0;r<b;r++) for (h=0;h<nh;h++) {
-    size_t kh=h/(nh/nk); float *ph=p+(r*nh+h)*t*t; mm_args x;
-    x.ta=0; x.tb=1; x.m=t; x.n=t; x.k=d; x.alpha=1.0f; x.a=q+(r*t*nh+h)*d; x.lda=nh*d;
-    x.b=k+(r*t*nk+kh)*d; x.ldb=nk*d; x.c=ph; x.ldc=t; x.mode=MM_LOWER;
-    mm_run(variant,&x);
-    for (i=0;i<t;i++) {
-      float *pi=ph+i*t,maxv=-INFINITY,sum=0.0f;
-      for (j=0;j<=i;j++) { pi[j]*=scale; if (pi[j]>maxv) maxv=pi[j]; }
-      for (j=0;j<=i;j++) { pi[j]=expf(pi[j]-maxv); sum+=pi[j]; }
-      for (j=0;j<=i;j++) pi[j]/=sum;
-    }
-    x.tb=0; x.n=d; x.k=t; x.a=ph; x.lda=t; x.b=v+(r*t*nk+kh)*d; x.ldb=nk*d;
-    x.c=y+(r*t*nh+h)*d; x.ldc=nh*d; x.mode=MM_KLE;
-    mm_run(variant,&x);
-  }
+  bcir_tensor_attention_pool(NULL,b,t,nh,nk,d,q,k,v,p,y);
 }
 void bcir_tensor_attention_backward(size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, const float *p,
@@ -296,13 +609,14 @@ void bcir_tensor_attention_backward(size_t b, size_t t, size_t nh, size_t nk,
  * shared GQA dk/dv, i ascending within a head -- so dq, dk and dv are bit-identical to it. */
 #define BCIR_ATT_ROWS 32
 #define BCIR_ATT_COLS 64
-void bcir_tensor_attention_backward_inplace(size_t b, size_t t, size_t nh, size_t nk,
-    size_t d, const float *q, const float *k, const float *v, float *p, const float *dy,
-    float *dq, float *dk, float *dv) {
-  size_t r,h,i,j,i0; float scale=1.0f/sqrtf((float)d); int variant=mm_widest();
-  memset(dq,0,b*t*nh*d*sizeof(float)); memset(dk,0,b*t*nk*d*sizeof(float));
-  memset(dv,0,b*t*nk*d*sizeof(float));
-  for (r=0;r<b;r++) for (h=0;h<nh;h++) {
+/* One (batch, query head) of the backward; the heads of one KV head share dk and dv, so a task
+ * is a (batch, KV head) and runs its `group` = heads/kvheads query heads in order -- the order
+ * the serial loop adds. A task of fewer heads would put one KV head's query heads on two threads,
+ * racing on its dk and dv (the TSan section's injected fault). */
+static void att_head_backward(const att_job *a, size_t r, size_t h) {
+  size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,i,j,i0; float scale=1.0f/sqrtf((float)d);
+  int variant=a->variant; const float *q=a->q,*k=a->k,*v=a->v,*dy=a->dy; float *p=a->p,*dq=a->dq,*dk=a->dk,*dv=a->dv;
+  {
     size_t kh=h/(nh/nk),ldh=nh*d,ldk=nk*d; float *ph=p+(r*nh+h)*t*t;
     const float *qh=q+(r*t*nh+h)*d,*dyh=dy+(r*t*nh+h)*d;
     const float *kk=k+(r*t*nk+kh)*d,*vk=v+(r*t*nk+kh)*d;
@@ -336,4 +650,24 @@ void bcir_tensor_attention_backward_inplace(size_t b, size_t t, size_t nh, size_
     x.ta=1; x.b=qh; x.ldb=ldh; x.c=dk+(r*t*nk+kh)*d; x.ldc=ldk; x.mode=MM_KGE;
     mm_run(variant,&x);
   }
+}
+static void att_task_backward(void *ctx, size_t task) {
+  att_job *a=(att_job *)ctx; size_t per=a->nh/a->group,r=task/per,first=(task%per)*a->group,h;
+  for (h=first;h<first+a->group;h++) att_head_backward(a,r,h);
+}
+void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *pool, size_t b, size_t t,
+    size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v, float *p,
+    const float *dy, float *dq, float *dk, float *dv) {
+  att_job a;
+  memset(dq,0,b*t*nh*d*sizeof(float)); memset(dk,0,b*t*nk*d*sizeof(float));
+  memset(dv,0,b*t*nk*d*sizeof(float));
+  a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.q=q; a.k=k; a.v=v; a.dy=dy; a.p=p; a.y=NULL;
+  a.dq=dq; a.dk=dk; a.dv=dv; a.variant=mm_widest();
+  a.group=nh/nk;
+  pool_run(pool,att_task_backward,&a,b*nh/a.group);
+}
+void bcir_tensor_attention_backward_inplace(size_t b, size_t t, size_t nh, size_t nk,
+    size_t d, const float *q, const float *k, const float *v, float *p, const float *dy,
+    float *dq, float *dk, float *dv) {
+  bcir_tensor_attention_backward_inplace_pool(NULL,b,t,nh,nk,d,q,k,v,p,dy,dq,dk,dv);
 }

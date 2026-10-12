@@ -412,7 +412,7 @@ def build_library(out: Path, cc: str, defines=(), sources: Path | None = None, f
     target = out / "bcir_decoder_train.so"
     command = [cc, "-std=c11", *flags, *WARNINGS, "-DBCIR_DT_BUILD_SHARED", "-shared", "-fPIC",
                *defines, "-I", str(src), str(src / "bcir_tensor.c"),
-               str(src / "bcir_decoder_train.c"), "-o", str(target), "-lm"]  # fmt: skip
+               str(src / "bcir_decoder_train.c"), "-o", str(target), "-lm", "-pthread"]  # fmt: skip
     subprocess.run(command, check=True, capture_output=True, timeout=300)
     return target
 
@@ -427,13 +427,14 @@ def _openblas(threads: int = 1):
     return path, lib.scipy_openblas_get_config().decode()
 
 
-def _native(data: Path, library: Path, *, openblas=False):
+def _native(data: Path, library: Path, *, openblas=False, threads=1):
     from bcir.hosted.models.native import NativeDecoder, parameter_layout
 
     spec = _spec()
     nd = NativeDecoder(
-        library, spec, batch_size=BATCH, context_length=CONTEXT, max_memory_bytes=4 << 30
-    )
+        library, spec, batch_size=BATCH, context_length=CONTEXT, max_memory_bytes=4 << 30,
+        threads=threads,
+    )  # fmt: skip
     flat = _load(data, "weights.f32", "f")
     nd.load_state_dict({name: flat[off : off + n] for name, _s, off, n in parameter_layout(spec)})
     info = {"provider": "portable-c"}
@@ -666,12 +667,12 @@ def _libraries():
 
 
 # --- identity and baseline -------------------------------------------------------------------
-def _native_steps(data, library, steps, *, openblas=False):
+def _native_steps(data, library, steps, *, openblas=False, threads=1):
     from bcir.hosted.models.native import NativeAdamW
 
     stream = _load(data, "lm-train.u16", "H")
     offsets = _load(data, "lm-schedule.u32", "I")
-    nd, _ = _native(data, library, openblas=openblas)
+    nd, _ = _native(data, library, openblas=openblas, threads=threads)
     opt = NativeAdamW(
         lr=OPT["peak"], beta1=OPT["beta1"], beta2=OPT["beta2"], epsilon=OPT["eps"],
         weight_decay=OPT["decay"], grad_clip=OPT["clip"],
@@ -684,11 +685,14 @@ def _native_steps(data, library, steps, *, openblas=False):
             nd.run(x, y, steps=1, optimizer=opt, learning_rates=[_rate(s, 1000)])[0]["loss"]
         )
         times.append(time.perf_counter() - t0)
-    return _state_digest_native(nd), times, losses
+    digest = _state_digest_native(nd)
+    nd.close()
+    return digest, times, losses
 
 
-def identity(data: Path, steps: int, compilers):
-    """The same 20 BCIR steps through every ISA variant, every compiler and a repeat: one state."""
+def identity(data: Path, steps: int, compilers, threads=(1,)):
+    """The same 20 BCIR steps through every ISA variant, every compiler, every thread count of
+    the deterministic pool (NDT-THREADS) and a repeat: one state."""
     builds = []
     for cc in compilers:
         for label, defines in (("widest", ()), ("avx2", ("-DBCIR_TENSOR_MAX_VARIANT=2",)),
@@ -697,10 +701,12 @@ def identity(data: Path, steps: int, compilers):
             builds.append((f"{_compiler(cc)} / {label}", lib))
     rows = []
     for name, lib in builds + builds[:1]:
-        digest, times, losses = _native_steps(data, lib, steps)
-        rows.append({"build": name, "state_sha256": digest, "last_loss": losses[-1],
-                     "median_step_ms": 1000 * statistics.median(times)})  # fmt: skip
-        print(json.dumps(rows[-1]), flush=True)
+        for n in threads:
+            digest, times, losses = _native_steps(data, lib, steps, threads=n)
+            rows.append({"build": name, "threads": n, "state_sha256": digest,
+                         "last_loss": losses[-1],
+                         "median_step_ms": 1000 * statistics.median(times)})  # fmt: skip
+            print(json.dumps(rows[-1]), flush=True)
     result = {"steps": steps, "rows": rows,
               "identical": len({r["state_sha256"] for r in rows}) == 1}  # fmt: skip
     (data / "identity.json").write_text(json.dumps(result, indent=1) + "\n")
@@ -1616,6 +1622,7 @@ def main():
     i.add_argument("--data", type=Path, required=True)
     i.add_argument("--steps", type=int, default=20)
     i.add_argument("--cc", action="append")
+    i.add_argument("--threads", default="1", help="comma-separated pool sizes, each a row")
     b = sub.add_parser("baseline")
     b.add_argument("--data", type=Path, required=True)
     b.add_argument("--steps", type=int, default=6)
@@ -1659,7 +1666,7 @@ def main():
     elif a.stage == "train":
         train(a.data, a.task, a.backend, a.steps, a.eval_every, a.cc, a.lr_scale)
     elif a.stage == "identity":
-        identity(a.data, a.steps, a.cc or ["gcc"])
+        identity(a.data, a.steps, a.cc or ["gcc"], tuple(int(n) for n in a.threads.split(",")))
     elif a.stage == "baseline":
         baseline(a.data, a.steps, a.cc, a.base, a.old_flags.split())
     elif a.stage == "kernels":

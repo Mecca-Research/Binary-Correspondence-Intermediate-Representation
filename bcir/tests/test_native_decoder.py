@@ -155,7 +155,7 @@ def test_native_c_harness_c11_and_c23():
             result = subprocess.run(
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
-            assert result.stdout.count("PASS") == 6
+            assert result.stdout.count("PASS") == 7
 
 
 def test_native_provider_c_abi_keeps_frameworks_off_execution_path():
@@ -247,6 +247,73 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
             assert fired > 0, f"train.{row}.mismatch cannot see {new!r}"
 
 
+def test_the_training_state_is_identical_at_every_thread_count():
+    """NDT-THREADS: three steps of the threads bench on a trainer of one, two, three and four
+    threads leave one state, bit for bit (the row at zero); a trainer resumed on more threads
+    continues the same state; a thread count outside [1, 4096] is refused before any pool."""
+    from bcir.hosted.models.native import NativeAdamW, NativeDecoder
+    from bcir.tests import native_decoder_fixtures as nf
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.build_library(tmp)
+        if path is None:
+            return  # no C compiler: the row is a skip, never a pass
+        states = nf.thread_states(path)
+        assert set(states) == set(nf.THREAD_COUNTS) and len(set(states.values())) == 1, states
+        assert nf.threads_mismatch(path) == 0
+        spec, batch, time_ = nf.THREADS_BENCH
+        one = NativeDecoder(path, spec, batch_size=batch, context_length=time_)
+        assert one.threads == 1 and one.lib.bcir_tensor_pool_threads(one.state.pool) == 1
+        x = [(3 * i + 1) % spec.vocab_size for i in range(batch * time_ * 2)]
+        y = [(3 * i + 2) % spec.vocab_size for i in range(batch * time_ * 2)]
+        one.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3))
+        one.save(Path(tmp) / "two-steps.bcirdt")
+        four = NativeDecoder.resume(path, Path(tmp) / "two-steps.bcirdt", threads=4)
+        assert four.threads == 4 and four.lib.bcir_tensor_pool_threads(four.state.pool) == 4
+        assert one.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)) == four.run(
+            x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)
+        )
+        assert nf.state_digest(one) == nf.state_digest(four)
+        four.close()
+        four.close()  # idempotent
+        assert four.state.pool is None
+        one.close()
+        for bad in (0, -1, 4097, 2.0, True):
+            try:
+                NativeDecoder(path, spec, batch_size=batch, context_length=time_, threads=bad)
+            except ValueError:
+                continue
+            raise AssertionError(f"threads={bad!r} admitted")
+
+
+def test_the_threads_row_fires_on_a_partition_that_depends_on_the_thread_count():
+    """Wrong copies of the tensor unit whose wrong partition reaches the state only on a pool
+    of more than one thread (one thread runs the serial kernels): the GEMM's row tasks that
+    stop before the ragged tail, and a runner that drops each thread's last task. Each turns
+    the row red (the C harness holds the partitions to the serial kernels at every count,
+    and the TSan section holds their memory discipline)."""
+    from bcir.tests import native_decoder_fixtures as nf
+
+    if nf.compiler() is None:
+        return
+    tensor = nf.source("bcir_tensor.c")
+    mutants = (
+        ("j.cols=(n+j.nr-1)/j.nr; j.rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;",
+         "j.cols=(n+j.nr-1)/j.nr; j.rowsets=m/BCIR_MM_ROWS;"),
+        ("  for (t=id;t<p->tasks;t+=p->threads) p->fn(p->ctx,t);",
+         "  for (t=id;t+p->threads<p->tasks;t+=p->threads) p->fn(p->ctx,t);"),
+    )  # fmt: skip
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        for i, (old, new) in enumerate(mutants):
+            assert tensor.count(old) == 1, old
+            path = nf.build_library(
+                Path(tmp) / str(i), sources={"bcir_tensor.c": tensor.replace(old, new)}
+            )
+            states = nf.thread_states(path)
+            assert states[1] != states[2], f"train.state.threads.mismatch cannot see {new!r}"
+            assert nf.threads_mismatch(path) > 0
+
+
 def test_the_step_floor_is_measured_beside_the_step():
     """`train.step.ms`'s floor is G26's compute term at the best rate the same library reaches on
     the step's own GEMM shapes, in the same run: positive and below the step on a small bench."""
@@ -275,7 +342,11 @@ def test_the_harness_rows_are_the_programs_numbers():
 
     rows = {m.key: m for m in METRICS if m.group == "train"}
     assert set(rows) == {"train.plan.mismatch", "train.mm.mismatch", "train.memory.transient",
-                         "train.step.ms", "train.corpus.unselected"}  # fmt: skip
+                         "train.step.ms", "train.corpus.unselected",
+                         "train.state.threads.mismatch"}  # fmt: skip
+    threads = rows["train.state.threads.mismatch"]
+    assert threads.kind == "exact" and threads.bound == 0 and threads.baseline == 0
+    assert threads.what.startswith(f"thread counts among {nf.THREAD_COUNTS[1:]}")
     corpus = rows["train.corpus.unselected"]
     assert corpus.kind == "exact" and corpus.bound == 0 and corpus.baseline == 328
     unselected = nf.corpus_unselected()

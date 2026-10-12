@@ -17,6 +17,9 @@ spec alone. One function per row family grades it against the C rail; the tests,
                                reaches on any of the step's own GEMM shapes, timed alone
                                (`NativeProgram.roofline`, compute term) -- a bound on this host's
                                kernel, TMSAO-3, never on the silicon
+    train.state.threads.mismatch  thread counts among `THREAD_COUNTS[1:]` whose state after three
+                               steps of `THREADS_BENCH` differs in any bit from the one-thread
+                               state of the same library, weights, tokens and rates (NDT-THREADS)
 
 Without a C compiler the native rows are not measured -- a skip, never a pass.
 """
@@ -24,6 +27,7 @@ Without a C compiler the native rows are not measured -- a skip, never a pass.
 from __future__ import annotations
 
 import ctypes as ct
+import hashlib
 import importlib.util
 import os
 import shutil
@@ -72,6 +76,12 @@ MM_CASES = tuple(
     )
 )
 
+#: The step the threads row trains (NDT-THREADS): 80 tokens (one 64-row GEMM task and a 16-row
+#: tail), T=40 (past the attention backward's 32-row chunks), GQA groups of two, a width, a KV
+#: width, an FF width and a vocabulary off every 32- and 64-wide block edge; three steps.
+THREADS_BENCH = (DecoderSpec(250, 72, 4, 2, 200, activation="silu_gate", n_kv_heads=2), 2, 40)
+THREAD_COUNTS = (1, 2, 3, 4)
+
 
 def compiler() -> str | None:
     from bcir.toolchain import host_c_compiler
@@ -105,7 +115,7 @@ def build_library(directory, *, sources: dict[str, str] | None = None) -> Path |
 
     cmd = [cc, "-std=c11", "-O3", "-ffp-contract=off", "-DBCIR_DT_BUILD_SHARED", "-shared"]
     if sys.platform != "win32":
-        cmd.append("-fPIC")
+        cmd += ["-fPIC", "-pthread"]
     cmd += ["-I", str(_C), *units, "-o", str(out)]
     run = subprocess.run(cmd + host_link_args(["-lm"]), capture_output=True, text=True,
                          timeout=180)  # fmt: skip
@@ -296,6 +306,49 @@ def measure_step(path, bench=BENCH) -> dict[str, float]:
     return {"train.step.ms": value, "train.step.ms.floor": float(seconds) * 1000}
 
 
+# --- train.state.threads.mismatch -----------------------------------------------------------
+
+
+def state_digest(trainer) -> str:
+    """SHA-256 over the weights, both moments, the step and the bias powers."""
+    digest = hashlib.sha256()
+    for name in ("weights", "moment1", "moment2"):
+        digest.update(ct.string_at(trainer.buffers[name], trainer.state.plan.parameters * 4))
+    digest.update(struct.pack("<Qdd", trainer.state.step, trainer.state.beta1_power,
+                              trainer.state.beta2_power))  # fmt: skip
+    return digest.hexdigest()
+
+
+def thread_states(path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS) -> dict[int, str]:
+    """The state digest after `steps` steps of `bench` -- the same seeded weights, tokens and
+    rates -- on a trainer of each thread count in `counts` (one thread is the serial trainer);
+    each trainer's pool is released before the next is made."""
+    from bcir.hosted.models.native import NativeAdamW, NativeDecoder
+
+    spec, batch, time_ = bench
+    n = batch * time_
+    tokens = [(7 * i + 3) % spec.vocab_size for i in range(n * steps)]
+    targets = [(7 * i + 4) % spec.vocab_size for i in range(n * steps)]
+    rates = [1e-3 * (1 - 0.1 * s) for s in range(steps)]
+    out = {}
+    for threads in counts:
+        trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
+                                threads=threads)  # fmt: skip
+        try:
+            trainer.run(tokens, targets, steps=steps, optimizer=NativeAdamW(lr=1e-3),
+                        learning_rates=rates)  # fmt: skip
+            out[threads] = state_digest(trainer)
+        finally:
+            trainer.close()
+    return out
+
+
+def threads_mismatch(path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS) -> int:
+    """Thread counts after the first whose state differs from the first count's."""
+    states = thread_states(path, bench, steps, counts)
+    return sum(states[t] != states[counts[0]] for t in counts[1:])
+
+
 # --- every row --------------------------------------------------------------------------------
 
 
@@ -332,6 +385,7 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         lib = ct.CDLL(str(path))
         out["train.plan.mismatch"] = float(plan_mismatch(lib))
         out["train.mm.mismatch"] = float(mm_mismatch(lib))
+        out["train.state.threads.mismatch"] = float(threads_mismatch(path))
         if timed:
             out.update(measure_step(path))
         return out
@@ -343,6 +397,8 @@ __all__ = [
     "BENCH",
     "MM_CASES",
     "PLAN_CORPUS",
+    "THREAD_COUNTS",
+    "THREADS_BENCH",
     "build_library",
     "corpus_unselected",
     "measure",
@@ -351,6 +407,9 @@ __all__ = [
     "mm_reference",
     "plan_mismatch",
     "source",
+    "state_digest",
+    "thread_states",
+    "threads_mismatch",
     "transient_ratio",
 ]
 

@@ -28,6 +28,46 @@ typedef struct bcir_tensor_provider {
 } bcir_tensor_provider;
 BCIR_DT_API void bcir_tensor_mm(void *ctx, int ta, int tb, size_t m, size_t n, size_t k,
     float alpha, const float *a, const float *b, float beta, float *c);
+/* A caller-owned deterministic thread pool (NDT-THREADS). A kernel that takes one splits its work
+ * into tasks whose partition is a function of the shapes alone, never of the thread count, and
+ * every output element -- and every reduction -- is produced by one task in the serial order, so
+ * the result is bit-identical at every thread count and to the serial kernel (a NULL pool, or a
+ * pool of one). The pool lives in memory the caller provides -- bcir_tensor_pool_size bytes,
+ * aligned to max_align_t -- so nothing here allocates; its threads are OS resources, started by
+ * init and joined by stop, after which the memory is the caller's again. pthreads on POSIX,
+ * Win32 threads on Windows; elsewhere only threads == 1 has a size. A pool is used by one caller
+ * at a time, like the state that names it. */
+typedef struct bcir_tensor_pool bcir_tensor_pool;
+BCIR_DT_API int bcir_tensor_pool_rails(void);   /* 1 pthreads, 2 Win32, 0 serial only */
+BCIR_DT_API size_t bcir_tensor_pool_size(unsigned threads); /* 0: a count this host refuses */
+BCIR_DT_API bcir_tensor_pool *bcir_tensor_pool_init(void *memory, size_t bytes, unsigned threads);
+BCIR_DT_API void bcir_tensor_pool_stop(bcir_tensor_pool *pool); /* joins; NULL or stopped: no-op */
+BCIR_DT_API unsigned bcir_tensor_pool_threads(const bcir_tensor_pool *pool); /* NULL: 1 */
+/* Run `tasks` tasks of `fn` over the pool's threads -- task t on thread t mod threads, each
+ * thread its tasks in ascending order -- and return when every one has finished; a NULL pool,
+ * one thread or one task runs them in order on the caller. A caller's partition keeps every
+ * output element, and every reduction, with one task, as the kernels below do. */
+typedef void (*bcir_tensor_task_fn)(void *ctx, size_t task);
+BCIR_DT_API void bcir_tensor_pool_run(bcir_tensor_pool *pool, bcir_tensor_task_fn fn, void *ctx,
+    size_t tasks);
+BCIR_DT_API void bcir_tensor_mm_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m, size_t n,
+    size_t k, float alpha, const float *a, const float *b, float beta, float *c);
+BCIR_DT_API void bcir_tensor_silu_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);
+BCIR_DT_API void bcir_tensor_swiglu_backward_pool(bcir_tensor_pool *pool, size_t n,
+    const float *gate, const float *up, const float *dy, float *dg, float *du);
+BCIR_DT_API void bcir_tensor_rms_pool(bcir_tensor_pool *pool, size_t rows, size_t width,
+    float eps, const float *x, const float *g, float *y);
+BCIR_DT_API void bcir_tensor_rope_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
+    size_t heads, size_t dim, double base, float *x, int inverse);
+/* y[i] += x[i] and y[i] *= x[i] over elements, as the trainer's residual and gate paths do. */
+BCIR_DT_API void bcir_tensor_add_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);
+BCIR_DT_API void bcir_tensor_mul_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);
+BCIR_DT_API void bcir_tensor_attention_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
+    size_t heads, size_t kvheads, size_t dim, const float *q, const float *k, const float *v,
+    float *p, float *y);
+BCIR_DT_API void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *pool,
+    size_t batch, size_t time, size_t heads, size_t kvheads, size_t dim, const float *q,
+    const float *k, const float *v, float *p, const float *dy, float *dq, float *dk, float *dv);
 /* The portable GEMM's instruction-set variants: bit 1 portable C, bit 2 AVX2, bit 4 AVX-512F
  * (x86-64 Linux with GCC or Clang). Every variant computes the same rounded operations in the
  * same order, so all of them are bit-identical; bcir_tensor_mm runs the widest one the host

@@ -224,6 +224,37 @@ def _accumulation(library, cblas, symbol):
     return {"micro_batches": 2, "updates": 5, "max_weight_error": error}
 
 
+def _threads(library, cblas, symbol):
+    """NDT-THREADS: five steps on a trainer of one, two and four threads of the deterministic
+    pool leave one state, bit for bit -- pthreads on POSIX, Win32 threads on Windows (this gate
+    runs on both); a CBLAS provider threads its own GEMM, the pool the rest."""
+    spec = DecoderSpec(
+        64, 40, 4, 2, 96, activation="silu_gate", n_kv_heads=2, tied_embeddings=False
+    )
+    x = [(5 * i + 1) % spec.vocab_size for i in range(2 * 36 * 5)]
+    y = [(5 * i + 2) % spec.vocab_size for i in range(2 * 36 * 5)]
+    options = NativeAdamW(lr=0.002, weight_decay=0.03, grad_clip=0.5)
+    states, events = {}, {}
+    for threads in (1, 2, 4):
+        native = NativeDecoder(library, spec, batch_size=2, context_length=36, threads=threads)
+        if cblas:
+            native.use_cblas(cblas, symbol=symbol)
+        assert native.lib.bcir_tensor_pool_threads(native.state.pool) == threads
+        events[threads] = native.run(x, y, steps=5, optimizer=options)
+        states[threads] = _snapshot(native)
+        native.close()
+    assert states[1] == states[2] == states[4], "the state differs across thread counts"
+    assert events[1] == events[2] == events[4]
+    return {
+        "spec": asdict(spec),
+        "threads": [1, 2, 4],
+        "steps": 5,
+        "rail": {1: "pthreads", 2: "win32"}[native.lib.bcir_tensor_pool_rails()],
+        "identical_state": True,
+        "last_loss": events[1][-1]["loss"],
+    }
+
+
 def _benchmark(library, cblas, symbol):
     spec = DecoderSpec(
         128, 64, 4, 2, 128, activation="silu_gate", n_kv_heads=2, tied_embeddings=False
@@ -301,6 +332,7 @@ def main():
         "torch": torch.__version__,
         "cases": cases,
         "accumulation": accumulation,
+        "threads": _threads(library, args.cblas, args.cblas_symbol),
         "benchmark": _benchmark(library, args.cblas, args.cblas_symbol),
         "hardware": "CPU only; no accelerator/backward/distributed validation",
     }

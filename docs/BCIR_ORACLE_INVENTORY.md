@@ -69,7 +69,7 @@ a native twin.
 | `bcir_cpp.c` | `bcir.frontends.cfront.clex`, `bcir.frontends.cfront.cpp` | cfront, cfront_abi, cfront_loop, diag, linkflags_cerf, linkflags_fftw, linkflags_gsl, linkflags_lapack, linkflags_sleef | — |
 | `bcir_decode.c` | `bcir.frontends.models.decode`, `bcir.kbcir.transformer_grads` | cfront_loop, encoder, executor, handoff, telemetry_frame | fuzz_binrec, fuzz_encode, fuzz_exec, fuzz_handoff, fuzz_telemetry_frame |
 | `bcir_decoder_gem.c` | `bcir.frontends.models.decoder_program` | — | fuzz_decoder_gem, fuzz_q8_model |
-| `bcir_decoder_train.c` | `bcir.hosted.models.native_program` | decoder_train | — |
+| `bcir_decoder_train.c` | `bcir.hosted.models.native_program` | decoder_train, decoder_train_tsan | — |
 | `bcir_diag.c` | `bcir.frontends.cfront.diagnostics` | cfront, cfront_abi, cfront_loop, diag, linkflags_cerf, linkflags_fftw, linkflags_gsl, linkflags_lapack, linkflags_sleef | — |
 | `bcir_ed25519.c` | `bcir.abi.ed25519` | artifact_bundle, asn1fast, cfront, cfront_abi, cfront_loop, control_plane, encoder, execution_plan, executor, handoff, jer, kplan, plan_sign, ring, ring_tsan, runtime, telemetry_frame | fuzz_artifact_bundle, fuzz_asn1_streampack, fuzz_control_plane, fuzz_encode, fuzz_exec, fuzz_handoff, fuzz_jer, fuzz_kplan, fuzz_plan_sign, fuzz_ring, fuzz_streampack, fuzz_telemetry_frame |
 | `bcir_emit.c` | `bcir.asn1.emit` | artifact_bundle, asn1_emit, asn1fast, jer, oer, per, per_plan, xer | fuzz_asn1, fuzz_asn1_streampack, fuzz_emit, fuzz_jer, fuzz_oer, fuzz_per, fuzz_per_plan, fuzz_xer |

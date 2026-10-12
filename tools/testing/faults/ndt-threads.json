@@ -1,0 +1,68 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_the_training_state_is_identical_at_every_thread_count",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_training_state_is_identical_at_every_thread_count",
+      "label": "NT1 the GEMM's row tasks stop before the ragged tail (rows past the last whole 64-row task are never computed on a pool)",
+      "new": "j.cols=(n+j.nr-1)/j.nr; j.rowsets=m/BCIR_MM_ROWS;",
+      "old": "j.cols=(n+j.nr-1)/j.nr; j.rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_training_state_is_identical_at_every_thread_count",
+      "label": "NT2 the runner drops each thread's last task",
+      "new": "  for (t=id;t+p->threads<p->tasks;t+=p->threads) p->fn(p->ctx,t);",
+      "old": "  for (t=id;t<p->tasks;t+=p->threads) p->fn(p->ctx,t);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT3 a GEMM task adds its terms without first scaling its elements by beta",
+      "new": "    for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=j->beta==0.0f ? ci[jj] : j->beta*ci[jj];",
+      "old": "    for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=j->beta==0.0f ? 0.0f : j->beta*ci[jj];",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT4 the elementwise kernels' last chunk is dropped (at every thread count, the serial kernel keeps it)",
+      "new": "  pool_run(pool,ew_task,j,j->n/BCIR_EW_CHUNK);",
+      "old": "  pool_run(pool,ew_task,j,(j->n+BCIR_EW_CHUNK-1)/BCIR_EW_CHUNK);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT5 RMSNorm's last row chunk is dropped",
+      "new": "  pool_run(pool,rms_task,&j,rows/BCIR_ROW_CHUNK);",
+      "old": "  pool_run(pool,rms_task,&j,(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT6 RoPE's last position chunk is dropped",
+      "new": "  pool_run(pool,rope_task,&j,t/BCIR_ROW_CHUNK);",
+      "old": "  pool_run(pool,rope_task,&j,(t+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT7 the AdamW commit's last chunk is dropped (the reference update sees it, at one thread)",
+      "new": "  bcir_tensor_pool_run(pool,commit_task,&j,n/BCIR_DT_CHUNK);",
+      "old": "  bcir_tensor_pool_run(pool,commit_task,&j,(n+BCIR_DT_CHUNK-1)/BCIR_DT_CHUNK);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT8 the backward's task runs one query head short of its KV head's group (the serial run too: the reference catches it)",
+      "new": "  for (h=first;h+1<first+a->group;h++) att_head_backward(a,r,h);",
+      "old": "  for (h=first;h<first+a->group;h++) att_head_backward(a,r,h);",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

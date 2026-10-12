@@ -306,7 +306,111 @@ static void adamw_reference(void) {
   }
   puts("  PASS native AdamW: bit-identical to the reference update, bounded and preflight paths");
 }
+/* NDT-THREADS: the pool kernels at one to four threads against the serial kernels and the
+ * scalar references, bit for bit -- GEMM shapes that cross the 64-row tasks and both column-block
+ * widths over every transpose pair with a beta that scales, causal GQA attention forward and
+ * in-place backward against the reference loops (one task per KV head, its query heads in order),
+ * SiLU, the SwiGLU VJP, RMSNorm, RoPE, the residual add and gate multiply over more than one
+ * chunk, the task runner itself, and three complete training steps of the fixture through
+ * bcir_decoder_run on a state that names the pool. The pool lives in the harness's own block
+ * (no memory, too little, or misaligned memory is refused); a host without a thread rail admits
+ * one thread only: the kernels still run there, serially, and the wider pools have no size. */
+static void count_task(void *ctx, size_t task) { ((unsigned char *)ctx)[task]++; }
+static void pool_identity(void) {
+  static float a[14000],b[14000],c0[20000],c1[20000],init[20000];
+  static float aq[2*70*8*48],ak[2*70*4*130],av[2*70*4*130],ady[2*70*8*48],p0[2*8*70*70],
+      p1[2*8*70*70],y0[2*70*8*48],y1[2*70*8*48],dq0[2*70*8*48],dq1[2*70*8*48],
+      dk0[2*70*4*130],dk1[2*70*4*130],dv0[2*70*4*130],dv1[2*70*4*130];
+  static float x[20000],u[20000],g[20000],e0[20000],e1[20000],f0[20000],f1[20000],gamma[37];
+  static float w0[4096],m0[4096],v0[4096]; static unsigned char hits[300];
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  static const size_t gemm_shapes[][3]={{200,100,70},{1,1,1},{65,33,64},{129,65,3},{64,130,1},{3,200,2}};
+  static const size_t att_shapes[][5]={{2,70,8,4,48},{1,33,3,1,65},{2,64,4,1,24},{1,1,1,1,2}};
+  uint32_t ids[12],targets[12]; bcir_decoder_event events[3]; size_t done;
+  bcir_decoder_adamw opt={0.01,0.9,0.95,1e-8,0.01,1.0};
+  unsigned threads,ran=0; size_t i,s,ta,tb; int rails=bcir_tensor_pool_rails();
+  assert(bcir_tensor_pool_size(0)==0 && bcir_tensor_pool_size(4097)==0);
+  assert(bcir_tensor_pool_init(NULL,sizeof(pool_memory),1)==NULL);
+  assert(bcir_tensor_pool_init(pool_memory,bcir_tensor_pool_size(1)-1,1)==NULL);
+  assert(bcir_tensor_pool_init(pool_memory+1,sizeof(pool_memory)-1,1)==NULL);
+  assert(bcir_tensor_pool_threads(NULL)==1);
+  for (i=0;i<14000;i++) { a[i]=sinf((float)i*0.71f)*(i%3 ? 4.0f : 0.125f); b[i]=cosf((float)i*1.37f)-0.25f; }
+  for (i=0;i<20000;i++) { x[i]=sinf((float)i*0.37f)*3.0f; u[i]=cosf((float)i*0.53f)*1.3f; g[i]=sinf((float)i*0.29f)-0.1f; }
+  for (i=0;i<37;i++) gamma[i]=1.0f+0.1f*sinf((float)i);
+  for (i=0;i<12;i++) { ids[i]=(uint32_t)(i%4+1); targets[i]=(uint32_t)(i%4+2); }
+  {
+    bcir_decoder_state st=fixture();
+    assert(bcir_decoder_run(&st,&opt,ids,targets,12,NULL,3,events,3,&done)==0 && done==3);
+    memcpy(w0,w,sizeof(w)); memcpy(m0,m,sizeof(m)); memcpy(v0,v,sizeof(v));
+  }
+  for (threads=1;threads<=4;threads++) {
+    size_t need=bcir_tensor_pool_size(threads); bcir_tensor_pool *pool;
+    if (!need) { assert(threads>1 && rails==0); continue; }
+    assert(need<=sizeof(pool_memory));
+    pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads);
+    assert(pool!=NULL && bcir_tensor_pool_threads(pool)==threads);
+    ran++;
+    /* the runner: every task once, whatever the count */
+    memset(hits,0,sizeof(hits)); bcir_tensor_pool_run(pool,count_task,hits,300);
+    for (i=0;i<300;i++) assert(hits[i]==1);
+    bcir_tensor_pool_run(pool,count_task,hits,1); assert(hits[0]==2 && hits[1]==1);
+    bcir_tensor_pool_run(pool,count_task,hits,0); assert(hits[0]==2);
+    for (s=0;s<sizeof(gemm_shapes)/sizeof(gemm_shapes[0]);s++) for (ta=0;ta<2;ta++) for (tb=0;tb<2;tb++) {
+      size_t mm=gemm_shapes[s][0],n=gemm_shapes[s][1],kk=gemm_shapes[s][2];
+      float alpha=s%2 ? 0.75f : 1.0f,beta=s%3==1 ? 1.0f : s%3==2 ? 0.5f : 0.0f;
+      for (i=0;i<mm*n;i++) init[i]=0.01f*(float)(i%17)-0.05f;
+      memcpy(c0,init,mm*n*sizeof(float)); bcir_tensor_mm(NULL,(int)ta,(int)tb,mm,n,kk,alpha,a,b,beta,c0);
+      memcpy(c1,init,mm*n*sizeof(float)); bcir_tensor_mm_pool(pool,(int)ta,(int)tb,mm,n,kk,alpha,a,b,beta,c1);
+      assert(!memcmp(c0,c1,mm*n*sizeof(float)));
+      /* a depth of zero still scales by beta */
+      memcpy(c1,init,mm*n*sizeof(float)); bcir_tensor_mm_pool(pool,(int)ta,(int)tb,mm,n,0,alpha,a,b,beta,c1);
+      for (i=0;i<mm*n;i++) assert(c1[i]==(beta==0.0f ? 0.0f : beta*init[i]));
+    }
+    for (s=0;s<sizeof(att_shapes)/sizeof(att_shapes[0]);s++) {
+      size_t bb=att_shapes[s][0],t=att_shapes[s][1],nh=att_shapes[s][2],nk=att_shapes[s][3],d=att_shapes[s][4];
+      size_t nq=bb*t*nh*d,nkv=bb*t*nk*d,np=bb*nh*t*t;
+      for (i=0;i<nq;i++) { aq[i]=sinf((float)i*0.37f)*1.7f; ady[i]=cosf((float)i*0.11f)*0.5f; }
+      for (i=0;i<nkv;i++) { ak[i]=cosf((float)i*0.53f)*1.3f; av[i]=sinf((float)i*0.29f)-0.1f; }
+      ref_attention(bb,t,nh,nk,d,aq,ak,av,p0,y0);
+      memset(p1,0xff,np*sizeof(float)); memset(y1,0xff,nq*sizeof(float));
+      bcir_tensor_attention_pool(pool,bb,t,nh,nk,d,aq,ak,av,p1,y1);
+      assert(!memcmp(p0,p1,np*sizeof(float)) && !memcmp(y0,y1,nq*sizeof(float)));
+      ref_attention_backward(bb,t,nh,nk,d,aq,ak,av,p0,ady,dq0,dk0,dv0);
+      memset(dq1,0xff,nq*sizeof(float)); memset(dk1,0xff,nkv*sizeof(float)); memset(dv1,0xff,nkv*sizeof(float));
+      bcir_tensor_attention_backward_inplace_pool(pool,bb,t,nh,nk,d,aq,ak,av,p1,ady,dq1,dk1,dv1);
+      assert(!memcmp(dq0,dq1,nq*sizeof(float)) && !memcmp(dk0,dk1,nkv*sizeof(float)) &&
+          !memcmp(dv0,dv1,nkv*sizeof(float)));
+    }
+    /* elementwise over three chunks, rows over three row chunks, positions over three */
+    bcir_tensor_silu(NULL,20000,x,e0); bcir_tensor_silu_pool(pool,20000,x,e1);
+    assert(!memcmp(e0,e1,sizeof(e0)));
+    bcir_tensor_swiglu_backward(20000,x,u,g,e0,f0); bcir_tensor_swiglu_backward_pool(pool,20000,x,u,g,e1,f1);
+    assert(!memcmp(e0,e1,sizeof(e0)) && !memcmp(f0,f1,sizeof(f0)));
+    memcpy(e0,u,sizeof(e0)); for (i=0;i<20000;i++) e0[i]+=x[i];
+    memcpy(e1,u,sizeof(e1)); bcir_tensor_add_pool(pool,20000,x,e1); assert(!memcmp(e0,e1,sizeof(e0)));
+    memcpy(e0,u,sizeof(e0)); for (i=0;i<20000;i++) e0[i]*=x[i];
+    memcpy(e1,u,sizeof(e1)); bcir_tensor_mul_pool(pool,20000,x,e1); assert(!memcmp(e0,e1,sizeof(e0)));
+    bcir_tensor_rms(40,37,1e-5f,x,gamma,e0); bcir_tensor_rms_pool(pool,40,37,1e-5f,x,gamma,e1);
+    assert(!memcmp(e0,e1,40*37*sizeof(float)));
+    memcpy(f0,x,sizeof(f0)); bcir_tensor_rope(2,40,3,8,10000.0,f0,0);
+    memcpy(f1,x,sizeof(f1)); bcir_tensor_rope_pool(pool,2,40,3,8,10000.0,f1,0);
+    assert(!memcmp(f0,f1,2*40*3*8*sizeof(float)));
+    bcir_tensor_rope(2,40,3,8,10000.0,f0,1); bcir_tensor_rope_pool(pool,2,40,3,8,10000.0,f1,1);
+    assert(!memcmp(f0,f1,2*40*3*8*sizeof(float)));
+    /* the state after three steps on this pool is the serial state */
+    {
+      bcir_decoder_state st=fixture(); st.pool=pool;
+      assert(bcir_decoder_run(&st,&opt,ids,targets,12,NULL,3,events,3,&done)==0 && done==3);
+      assert(!memcmp(w0,w,sizeof(w)) && !memcmp(m0,m,sizeof(m)) && !memcmp(v0,v,sizeof(v)));
+    }
+    bcir_tensor_pool_stop(pool); bcir_tensor_pool_stop(pool);
+    assert(bcir_tensor_pool_threads(pool)==1);
+  }
+  bcir_tensor_pool_stop(NULL);
+  printf("  PASS native pool kernels and the training step bit-identical to the serial kernels and "
+      "references at %u thread count(s) (rail %d)\n",ran,rails);
+}
 int main(void) {
   gemm_contract(); attention_reference(); adamw_reference(); finite_differences(); refusals();
-  learning(); return 0;
+  learning(); pool_identity(); return 0;
 }

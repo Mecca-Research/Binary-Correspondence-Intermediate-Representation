@@ -645,6 +645,7 @@ done; done
 python $H kernels   --data DIR --rounds 3         # §3: 75d50d4 against this tree, every GEMM shape
 python $H baseline  --data DIR --steps 6          # §4: 75d50d4 against this tree, identical state
 python $H identity  --data DIR --steps 20 --cc gcc --cc CLANG23 --cc CLANG18
+python $H identity  --data DIR --steps 20 --cc gcc --threads 1,2,3,4   # NDT-THREADS (2026-10-12): one state at every pool size
 python $H breakdown --data DIR --cc gcc --cc CLANG23 --cc CLANG18   # §4.1, §5.5
 python $H context   --data DIR                    # §5.8: T=64..1024, and 2 and 4 threads
 python $H summarize --data DIR

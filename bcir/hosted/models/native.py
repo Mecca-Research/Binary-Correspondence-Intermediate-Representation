@@ -86,6 +86,7 @@ class _State(ct.Structure):
             ("beta1_power", ct.c_double),
             ("beta2_power", ct.c_double),
             ("provider", _Provider),
+            ("pool", ct.c_void_p),  # ABI 2 (NDT-THREADS): the state ends in its pool
         ]
     )
 
@@ -190,6 +191,11 @@ class NativeDecoder:
 
     Explicit build, no framework fallback. The memory budget bounds arena allocations,
     not all process memory. Serialize access to each training state.
+
+    `threads` is the trainer's deterministic pool (NDT-THREADS): BCIR's kernels run on it in
+    partitions fixed by the shapes, so the state after any number of steps is bit-identical at
+    every thread count and to the one-thread (serial) trainer; `close()` releases the threads.
+    A CBLAS provider threads its own GEMM as it is configured; the pool runs the rest.
     """
 
     @staticmethod
@@ -228,7 +234,8 @@ class NativeDecoder:
                 "-shared",
             ]
             if sys.platform != "win32":
-                command.append("-fPIC")
+                # the pool's threads (NDT-THREADS) are pthreads here; Win32 threads need no flag
+                command += ["-fPIC", "-pthread"]
             command += [
                 "-I",
                 str(_C),
@@ -256,6 +263,7 @@ class NativeDecoder:
         context_length=4,
         seed=1729,
         max_memory_bytes=512 * 1024 * 1024,
+        threads=1,
     ):
         if not isinstance(spec, DecoderSpec) or spec.activation != "silu_gate":
             raise ValueError("native decoder requires Llama/SwiGLU DecoderSpec")
@@ -278,10 +286,30 @@ class NativeDecoder:
             raise ValueError("batch, context and memory budget must be positive integers")
         if type(seed) is not int or not 0 <= seed <= 0x7FFFFFFF:
             raise ValueError("seed must be in [0, 2^31-1]")
+        if type(threads) is not int or not 1 <= threads <= 4096:
+            raise ValueError("threads must be an integer in [1, 4096]")
         self.spec, self.batch_size, self.context_length = spec, batch_size, context_length
         self.library = Path(library).resolve()
         self.lib = ct.CDLL(str(self.library))
         self._bind()
+        self.threads = threads
+        size = self.lib.bcir_tensor_pool_size(threads)
+        if not size:
+            rail = {1: "pthreads", 2: "Win32 threads"}.get(
+                self.lib.bcir_tensor_pool_rails(), "no thread rail"
+            )
+            raise RuntimeError(
+                f"native decoder pool of {threads} thread(s) refused ({rail} on this host)"
+            )
+        # the pool lives in this buffer, aligned by hand to 64 bytes, for as long as the trainer
+        self._pool_memory = (ct.c_ubyte * (size + 64))()
+        base = ct.addressof(self._pool_memory)
+        aligned = (base + 63) & ~63
+        self._pool = self.lib.bcir_tensor_pool_init(
+            ct.c_void_p(aligned), size + 64 - (aligned - base), threads
+        )
+        if not self._pool:
+            raise RuntimeError(f"native decoder pool of {threads} thread(s) could not start")
         plan = _Plan()
         shape = _Spec(
             spec.vocab_size,
@@ -329,6 +357,7 @@ class NativeDecoder:
             1.0,
             1.0,
             _Provider(),
+            self._pool,
         )
         rng = random.Random(seed)
         for name, _, offset, count in self.layout:
@@ -338,11 +367,36 @@ class NativeDecoder:
         self.backend = "portable-c"
         self._provider_refs = ()
 
+    def close(self):
+        """Release the pool's threads; a later call runs serially (the same state). Idempotent."""
+        pool = getattr(self, "_pool", None)
+        if pool:
+            self._pool = None
+            if hasattr(self, "state"):
+                self.state.pool = None
+            self.lib.bcir_tensor_pool_stop(pool)
+            self._pool_memory = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:  # pragma: no cover - interpreter shutdown
+            pass
+
     def _bind(self):
         self.lib.bcir_decoder_abi_version.argtypes = []
         self.lib.bcir_decoder_abi_version.restype = ct.c_uint32
-        if self.lib.bcir_decoder_abi_version() != 1:
+        if self.lib.bcir_decoder_abi_version() != 2:
             raise ValueError("unsupported native decoder ABI")
+        for name, args, result in (
+            ("rails", [], ct.c_int),
+            ("size", [ct.c_uint], _SZ),
+            ("init", [ct.c_void_p, _SZ, ct.c_uint], ct.c_void_p),
+            ("stop", [ct.c_void_p], None),
+            ("threads", [ct.c_void_p], ct.c_uint),
+        ):
+            fn = getattr(self.lib, "bcir_tensor_pool_" + name)
+            fn.argtypes, fn.restype = args, result
         sp = ct.POINTER(_State)
         functions = {
             "make_plan": [ct.POINTER(_Spec), ct.POINTER(_Plan)],
@@ -371,7 +425,8 @@ class NativeDecoder:
         self.lib.bcir_decoder_run_accum.restype = ct.c_int
 
     def use_cblas(self, library, *, symbol="cblas_sgemm"):
-        """Explicit LP64 CBLAS integration; caller configures provider threads.
+        """Explicit LP64 CBLAS integration; caller configures provider threads (the trainer's
+        own pool keeps running every kernel but the GEMM).
 
         Native adapter calls native BLAS directly, without Python callbacks. Missing
         library/symbol is an error. No implicit framework or backend switch.
@@ -544,7 +599,7 @@ class NativeDecoder:
             Path(tmp).unlink(missing_ok=True)
 
     @classmethod
-    def resume(cls, library, path, *, max_memory_bytes=512 * 1024 * 1024):
+    def resume(cls, library, path, *, max_memory_bytes=512 * 1024 * 1024, threads=1):
         with Path(path).open("rb") as stream:
             prefix = stream.read(12)
             if len(prefix) != 12 or prefix[:8] != _MAGIC:
@@ -584,6 +639,7 @@ class NativeDecoder:
                 batch_size=meta["batch_size"],
                 context_length=meta["context_length"],
                 max_memory_bytes=max_memory_bytes,
+                threads=threads,
             )
             expected = obj.state.plan.parameters * 12
             payload = stream.read(expected + 1)

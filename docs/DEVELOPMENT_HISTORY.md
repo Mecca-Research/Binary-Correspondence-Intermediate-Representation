@@ -2866,6 +2866,56 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     and on random text over small alphabets (where merges nest deepest); the tokenizer's own
     `encode` is the rank-ordered one; and a rank table that reverses the merge order disagrees,
     so the differential can fail.
+  NDT-THREADS (2026-10-12): a deterministic thread pool under the native trainer, bit-identical
+  at every thread count.
+  - `bcir_tensor_pool` (`bcir_tensor.c`): pthreads on POSIX, Win32 threads on Windows, one thread
+    elsewhere, in memory the caller provides (`bcir_tensor_pool_size`, `_init`, `_stop`: the unit
+    allocates nothing, as the trainer's arenas allocate nothing -- the memory-discipline check
+    refused the first draft's `calloc`, L5's class rule doing its job); thread 0 is the caller, task t runs on thread t mod threads, each thread its tasks
+    in order, and every partition is a function of the shapes alone -- the GEMM over (column block
+    of the variant's width, 64-row range) with its beta scaling inside the task, so each element
+    of C keeps its depth order; attention over (batch, query head) forward and (batch, KV head)
+    backward with the `group` = heads/kvheads query heads of one KV head in order, the order the
+    serial loop adds the shared dk/dv; SiLU, the SwiGLU VJP, the residual add and the gate
+    multiply in 8192-element chunks; RMSNorm rows and RoPE positions in chunks of 16; the AdamW
+    commit in 65536-element chunks with the instruction-set variant chosen once per call. The
+    loss, the embedding scatter, the gamma VJP's row sum and the update's norm pass stay serial:
+    each is an index-order reduction (the training roadmap's 3.1). The old entry points are the
+    NULL-pool kernels, unchanged in every bit; ABI 2 ends `bcir_decoder_state` in its pool and the
+    step routes BCIR's kernels through it (a provider's GEMM or SiLU is threaded as the provider
+    is). `NativeDecoder(threads=n)`, `close()`, `resume(threads=n)`; the checkpoint does not name
+    the count, since the state does not depend on it.
+  - Evidence, three kinds. `test_decoder_train.c`'s `pool_identity`: every pool kernel at one to
+    four threads against the serial kernels and the scalar references (GEMM shapes crossing the
+    64-row tasks and both block widths under every transpose pair and a beta that scales, a depth
+    of zero that still scales; attention forward and in-place backward on the reference test's
+    shapes; the elementwise, row and position kernels over three chunks; the task runner itself;
+    three training steps through `bcir_decoder_run`), in the C23, C11, portable and AVX2-capped
+    builds. `tools/c/sections/decoder_train_tsan.sh` runs that harness under ThreadSanitizer (no
+    report, exit 0) and holds the same build of `test_decoder_train_race` -- the manifest's
+    mutation `a.group=nh/nk` -> `a.group=1`, one query head per task, so one KV head's two heads
+    land on two threads -- to a race report on its dk/dv; the sanitizer finds it from the
+    happens-before order, so on every run, and the run halts on the first report (TSan exits 66)
+    so the harness's own assertions, which the racing sums fail, are not what decides.
+    `train.state.threads.mismatch` (GEM+ group `train`, exact, bound 0): the state after three
+    steps of the threads bench (vocab 250, width 72, 4 heads over 2 KV heads, 2 layers, batch 2 x
+    40 tokens: an 80-row GEMM with a 16-row tail, T past the backward's 32-row chunks, every width
+    off the block edges) at 2, 3 and 4 threads against one -- 0 of 3; its fault table
+    `ndt-threads.json`: NT1 (the GEMM's row tasks stop before the ragged tail) and NT2 (the runner
+    drops each thread's last task) fire the row -- they reach the state only on a pool, which is
+    why the row compares thread counts and not kernels -- and NT3-NT8 (a task adding before
+    scaling by beta; a dropped last chunk of the elementwise, RMSNorm, RoPE and commit partitions;
+    a backward task one query head short) fire the C harness.
+  - The report's `identity` stage, with `--threads 1,2,3,4` (the 2026-10-11 harness): the 9.84M
+    decoder's 20-step state SHA-256 `6c0419e85d345904...` on GCC 13.3 at every thread count and
+    every instruction-set variant, 16 rows with a repeat, one state
+    (`docs/research/measurements/2026-10-12/identity-threads.json`) -- the digest the report
+    measured on the serial trainer, so the slice changed no arithmetic. The same rows' per-step
+    medians on this four-vCPU container, indicative only: the widest build 1,786 / 1,229 / 976 /
+    1,103 ms at 1, 2, 3 and 4 threads (three threads the best on a host that is not the pool's
+    alone), AVX2 2,512 / 1,655 / 1,254 / 1,409, portable 4,155 / 2,508 / 1,825 / 2,125. The hosted-model gate (`tools/models/test_native_decoder.py`)
+    trains five steps at 1, 2 and 4 threads on both of its hosts, the Windows cell on Win32
+    threads. Speed is not this slice's claim: NDT-MEASURE re-runs the comparison on the pool.
   TRAIN-RAIL (2026-10-12): the training corpus is the IR's data, one way.
   - The law TRAIN-0 stated now has its rail. `tools/models/configs/bcir-corpus-860k.json` is the
     docs recipe with `training/*.md` and `training/**/*.md` beside `docs/`'s patterns (407 tracked

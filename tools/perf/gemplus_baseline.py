@@ -825,6 +825,26 @@ METRICS: tuple[Metric, ...] = (
         "a file the model never saw",
         slice_owner="TRAIN-RAIL",
     ),
+    # --- NDT-THREADS: the deterministic pool ---------------------------------------------------
+    Metric(
+        "train.state.threads.mismatch",
+        "train",
+        "thread counts among (2, 3, 4) whose training state (weights, both moments, the step and "
+        "the bias powers) after three steps of the threads bench (vocab 250, width 72, 4 heads over "
+        "2 KV heads, 2 layers, batch 2 x 40 tokens) differs in any bit from the one-thread state "
+        "of the same library, seeded weights, tokens and rates (bcir/tests/"
+        "native_decoder_fixtures.py); one thread is the serial trainer",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the pool's law (bcir_tensor.h): every partition is a function of the shapes "
+        "alone, each output element and each reduction produced by one task in the serial order, "
+        "so a pool of any size computes the serial kernels' bits -- the C harness holds every pool "
+        "kernel to the serial kernels and the scalar references at one to four threads, the TSan "
+        "section holds the partitions race-free and fires on an injected one",
+        slice_owner="NDT-THREADS",
+    ),
     Metric(
         "transform.export.mismatch",
         "transform",

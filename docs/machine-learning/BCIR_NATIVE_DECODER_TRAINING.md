@@ -14,6 +14,7 @@ executes in C. PyTorch remains an independent optional reference.
 | Attention | Causal softmax attention as two masked products per (batch, head) through the GEMM kernel; a backward that rewrites the layer's probabilities in place with their score adjoint and feeds the GEMM kernel (no workspace beyond them); Q/K/V backward, GQA group-gradient accumulation, output projection backward. Both are bit-identical to the scalar reference loops, which `bcir_tensor_attention_backward` keeps |
 | Decoder | Embedding scatter-add backward, both residual paths, both per-layer norms, gate/up/down projections, final norm, tied or untied vocabulary head, mean token cross-entropy |
 | Optimizer | AdamW moments, constant-time bias powers, decoupled decay, global L2 clipping, mean micro-batch accumulation, per-update learning rates. The atomic preflight is skipped only when the magnitudes the first pass records prove it would admit every element; the passes carry the same AVX2/AVX-512 variants and stay bit-identical |
+| Threads | A deterministic pool in memory the caller provides (`bcir_tensor_pool`: `size`/`init`/`stop`, no allocation in the unit; pthreads on POSIX, Win32 threads on Windows, one thread elsewhere; ABI 2 names it in the state, NDT-THREADS). The GEMM is partitioned over (column block, 64-row range) so every output element keeps its depth order; attention over (batch, query head) forward and (batch, KV head) backward with the query heads of one KV head in order, so the shared `dk`/`dv` accumulate as the reference does; SiLU, the SwiGLU VJP, the residual add and gate multiply, RMSNorm, RoPE and the AdamW commit over fixed chunks of elements, rows and positions. The loss, the embedding scatter, the gamma VJP's row sum and the update's norm pass stay serial (index-order reductions). The state after any number of steps is bit-identical at every thread count and to the one-thread trainer; a provider's GEMM or SiLU is threaded as the provider is, the pool runs the rest |
 | Buffer plan | Checked element/byte products, exact sizes for the selected retained-cache algorithm, caller-owned disjoint arenas, one adjoint workspace reused across all layers; no allocation in C |
 | Checkpoint | Atomic JSON + little-endian FP32 weights/moments; SHA-256 covers configuration, counter, bias powers and payload; bounded strict resume, no pickle |
 | Deployment | Existing strict HF tensor ingest performs projection transposes and RoPE permutation; `decoder_weights()` feeds the existing Q8 writer and decoder |
@@ -54,13 +55,15 @@ tokenization, validation splits and sampling remain caller responsibilities.
 `state_dict(gradients=True)` exposes every parameter gradient. Checkpoint between
 optimizer updates: activations and gradients recompute on resume. Restoring a
 different execution provider can change rounding; exact resume is gated on the same
-provider and thread configuration. Supply the same optimizer options and subsequent
+provider (the pool's thread count does not reach the state). Supply the same optimizer options and subsequent
 learning-rate schedule on resume; these are caller inputs rather than checkpoint
 fields. Checkpoint hashes detect corruption and do not authenticate an artifact.
 
-An explicit provider is selected with
+`NativeDecoder(..., threads=n)` runs BCIR's kernels on a pool of `n` threads (one by default;
+`close()` releases them, and `resume(..., threads=n)` continues a checkpoint on any count, since the
+state does not depend on it). An explicit provider is selected with
 `trainer.use_cblas(library_path, symbol="cblas_sgemm")`. Configure its thread count
-before measuring. Missing providers fail visibly. There is no automatic PyTorch
+before measuring; the pool keeps running every kernel but the GEMM. Missing providers fail visibly. There is no automatic PyTorch
 fallback. The C ABI accepts native GEMM and SiLU function pointers: C++ belongs in a
 framework/vendor/SYCL adapter when that integration requires it. The core contains
 no C++ objects, accelerator discovery or framework runtime.
@@ -102,6 +105,7 @@ the C rail to it:
 | `train.plan.mismatch` | exact | the program's arena sums against `bcir_decoder_make_plan` over a six-spec corpus (tied and untied, MHA and GQA, context one, tile-crossing widths) | 0 of 36 (spec, arena) pairs; the parent checked the 24 parameter pairs only |
 | `train.mm.mismatch` | exact | `bcir_tensor_mm` against an independent binary32 emulation of its contract, bit for bit, on 20 cases (every transpose pair, the tiles' edges) | 0 of 20, and 0 on the parent kernel: the contract both keep |
 | `train.memory.transient` | exact | the bytes the C plan reserves for activations and workspace over G26's concurrent-live bound on the same values | 1.326x: 999,424 bytes held over a 753,664-byte bound at the bench shape |
+| `train.state.threads.mismatch` | exact | the state (weights, both moments, the step, the bias powers) after three steps of the threads bench (vocab 250, width 72, 4 heads over 2 KV heads, 2 layers, batch 2 x 40 tokens) on two, three and four threads of the pool, against the one-thread state of the same library, seeded weights, tokens and rates | 0 of 3 (2026-10-12, NDT-THREADS) |
 | `train.step.ms` | wall, floor in the same run | one native step of the bench decoder against G26's roofline compute term: the counted work at the best rate the same kernel reaches on any of the step's own GEMM shapes | 3.4 ms against a 0.78 ms floor measured beside it (2026-10-11, clang 18; the same host read 4.6 against 1.3 before NDT-CLANG, and NDT-GEM's reading was 6.9 against 2.8) |
 
 The step's floor is a bound on this host's kernel (TMSAO-3), not on the silicon: its peak is a
@@ -146,9 +150,19 @@ weights, batches and learning rates. It reports time per step, held-out quality 
 language model of the repository's documentation and on a copy task, time to quality and memory,
 and where each framework's step spends its time.
 
-What comes next for this trainer -- a deterministic thread pool, the fused GEMM contract, a
-BCIR-owned exponential, the plan driving the step's dispatch, and the training corpus as its data --
-is the ladder of [the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md).
+The training corpus as the trainer's data (TRAIN-RAIL) and the deterministic thread pool
+(NDT-THREADS) landed on 2026-10-12. The pool's evidence is three-fold: `runtime/c/test_decoder_train.c`
+holds every pool kernel (GEMM shapes crossing the 64-row tasks and both column-block widths under
+every transpose pair, causal GQA attention forward and in-place backward, SiLU, the SwiGLU VJP,
+RMSNorm, RoPE, the residual add and gate multiply, the task runner) and three complete training
+steps at one to four threads to the serial kernels and the scalar references, bit for bit; the
+runtime gate's `decoder_train_tsan` section runs that harness under ThreadSanitizer and holds the
+same build of a pool whose attention backward puts one KV head's query heads on two threads to a
+race report (the manifest's `test_decoder_train_race` mutation); and `train.state.threads.mismatch`
+holds the Python trainer's state across thread counts, with `tools/testing/faults/ndt-threads.json`
+the injected partition faults each witness catches. What comes next for this trainer -- the fused
+GEMM contract, a BCIR-owned exponential, the plan driving the step's dispatch -- is the ladder of
+[the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
