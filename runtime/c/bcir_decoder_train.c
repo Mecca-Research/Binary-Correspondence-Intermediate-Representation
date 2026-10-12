@@ -6,7 +6,7 @@
 
 _Static_assert(sizeof(float)==4 && FLT_RADIX==2 && FLT_MANT_DIG==24,
     "native decoder ABI requires IEEE binary32");
-uint32_t bcir_decoder_abi_version(void) { return 2; }
+uint32_t bcir_decoder_abi_version(void) { return 3; }
 static int add(size_t *n,size_t a) {
   if (a>SIZE_MAX-*n) return 0;
   *n+=a; return 1;
@@ -59,6 +59,7 @@ static int valid(bcir_decoder_state *s) {
   if (rc) return rc;
   if (p.parameters!=s->plan.parameters || p.activations!=s->plan.activations ||
       p.scratch!=s->plan.scratch) return BCIR_DT_INVALID;
+  if (s->contract&~(uint32_t)BCIR_DT_CONTRACT_FUSED) return BCIR_DT_INVALID;
   ptr[0]=s->weights; ptr[1]=s->gradients; ptr[2]=s->moment1; ptr[3]=s->moment2;
   ptr[4]=s->activations; ptr[5]=s->scratch;
   len[0]=len[1]=len[2]=len[3]=p.parameters; len[4]=p.activations; len[5]=p.scratch;
@@ -128,13 +129,15 @@ static cache activations(float *x,geometry g) {
   a.gate=x; x+=g.nf; a.up=x; x+=g.nf; a.hidden=x; return a;
 }
 /* The step's kernels: a provider's GEMM or SiLU replaces BCIR's (threaded as the provider
- * threads it); every other kernel runs on the state's pool, serial when it is NULL. The pool
+ * threads it); BCIR's GEMM keeps the state's contract (v1, or the fused v2); every other kernel
+ * runs on the state's pool, serial when it is NULL. The pool
  * kernels' partitions are fixed by the shapes (bcir_tensor.h), so the step is bit-identical at
  * every thread count; the loss, the embedding scatter, the gamma VJP's row sum and the
  * update's first pass stay serial, each an index-order reduction. */
 static void gemm(bcir_decoder_state *s,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
     const float *a,const float *b,float beta,float *c) {
   if (s->provider.mm) s->provider.mm(s->provider.ctx,ta,tb,m,n,k,alpha,a,b,beta,c);
+  else if (s->contract&BCIR_DT_CONTRACT_FUSED) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
   else bcir_tensor_mm_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
 }
 static void linear(bcir_decoder_state *s,size_t r,size_t in,size_t out,const float *x,

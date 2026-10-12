@@ -53,6 +53,9 @@ _CBLAS = ct.CFUNCTYPE(
     ct.c_int,
 )
 _MAGIC = b"BCIRDT1\0"
+#: The GEMM contract a state trains under (ABI 3, NDT-FMA): v1 rounds each term's product and
+#: its addition; "fused" rounds them once (one IEEE fmaf per term). A provider's GEMM keeps its own.
+_CONTRACTS = {"v1": 0, "fused": 1}
 
 
 class _Spec(ct.Structure):
@@ -86,7 +89,8 @@ class _State(ct.Structure):
             ("beta1_power", ct.c_double),
             ("beta2_power", ct.c_double),
             ("provider", _Provider),
-            ("pool", ct.c_void_p),  # ABI 2 (NDT-THREADS): the state ends in its pool
+            ("pool", ct.c_void_p),  # ABI 2 (NDT-THREADS): the pool the kernels run on
+            ("contract", ct.c_uint32),  # ABI 3 (NDT-FMA): the GEMM contract, _CONTRACTS
         ]
     )
 
@@ -196,6 +200,8 @@ class NativeDecoder:
     partitions fixed by the shapes, so the state after any number of steps is bit-identical at
     every thread count and to the one-thread (serial) trainer; `close()` releases the threads.
     A CBLAS provider threads its own GEMM as it is configured; the pool runs the rest.
+    `contract` selects the GEMM contract (`"v1"`, the default of every gate and record, or
+    `"fused"`, one IEEE fmaf per term); the checkpoint names it and `resume` restores it.
     """
 
     @staticmethod
@@ -264,6 +270,7 @@ class NativeDecoder:
         seed=1729,
         max_memory_bytes=512 * 1024 * 1024,
         threads=1,
+        contract="v1",
     ):
         if not isinstance(spec, DecoderSpec) or spec.activation != "silu_gate":
             raise ValueError("native decoder requires Llama/SwiGLU DecoderSpec")
@@ -288,6 +295,9 @@ class NativeDecoder:
             raise ValueError("seed must be in [0, 2^31-1]")
         if type(threads) is not int or not 1 <= threads <= 4096:
             raise ValueError("threads must be an integer in [1, 4096]")
+        if contract not in _CONTRACTS:
+            raise ValueError(f"contract must be one of {sorted(_CONTRACTS)}")
+        self.contract = contract
         self.spec, self.batch_size, self.context_length = spec, batch_size, context_length
         self.library = Path(library).resolve()
         self.lib = ct.CDLL(str(self.library))
@@ -358,6 +368,7 @@ class NativeDecoder:
             1.0,
             _Provider(),
             self._pool,
+            _CONTRACTS[contract],
         )
         rng = random.Random(seed)
         for name, _, offset, count in self.layout:
@@ -386,7 +397,7 @@ class NativeDecoder:
     def _bind(self):
         self.lib.bcir_decoder_abi_version.argtypes = []
         self.lib.bcir_decoder_abi_version.restype = ct.c_uint32
-        if self.lib.bcir_decoder_abi_version() != 2:
+        if self.lib.bcir_decoder_abi_version() != 3:
             raise ValueError("unsupported native decoder ABI")
         for name, args, result in (
             ("rails", [], ct.c_int),
@@ -575,8 +586,9 @@ class NativeDecoder:
                 values.byteswap()
             payload.extend(values.tobytes())
         meta = {
-            "schema": "bcir.native_decoder.v1",
+            "schema": "bcir.native_decoder.v2",
             "decoder": asdict(self.spec),
+            "contract": self.contract,
             "batch_size": self.batch_size,
             "context_length": self.context_length,
             "step": self.state.step,
@@ -617,10 +629,13 @@ class NativeDecoder:
                 "beta1_power",
                 "beta2_power",
                 "sha256",
+                "contract",
             }:
                 raise ValueError("invalid native checkpoint fields")
-            if meta["schema"] != "bcir.native_decoder.v1":
+            if meta["schema"] != "bcir.native_decoder.v2":
                 raise ValueError("unsupported native checkpoint schema")
+            if meta["contract"] not in _CONTRACTS:
+                raise ValueError("unknown native checkpoint contract")
             if not isinstance(meta["decoder"], dict) or set(meta["decoder"]) != {
                 f.name for f in fields(DecoderSpec)
             }:
@@ -640,6 +655,7 @@ class NativeDecoder:
                 context_length=meta["context_length"],
                 max_memory_bytes=max_memory_bytes,
                 threads=threads,
+                contract=meta["contract"],
             )
             expected = obj.state.plan.parameters * 12
             payload = stream.read(expected + 1)

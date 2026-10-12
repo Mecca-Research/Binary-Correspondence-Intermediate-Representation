@@ -68,6 +68,23 @@ BCIR_DT_API void bcir_tensor_attention_pool(bcir_tensor_pool *pool, size_t batch
 BCIR_DT_API void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *pool,
     size_t batch, size_t time, size_t heads, size_t kvheads, size_t dim, const float *q,
     const float *k, const float *v, float *p, const float *dy, float *dq, float *dk, float *dv);
+/* The fused contract, v2 (NDT-FMA): c[i][j] starts at its beta-scaled value and then, for l
+ * ascending, c = fma(alpha*A(i,l), B(l,j), c) -- the product alpha*A rounded as in v1, the term's
+ * product and its addition rounded once together (C99 fmaf, an IEEE fusedMultiplyAdd). The same
+ * nest as v1 with one operation per term in place of two, so a host with FMA hardware runs it at
+ * twice the arithmetic rate; the portable instance calls fmaf, the AVX2+FMA and AVX-512
+ * instances fuse in registers, all bit-identical to the fmaf loop. v1 stays the default of
+ * every state, row and record; a state selects v2 by its contract field (bcir_decoder_train.h), and a
+ * state trained under v2 is not the v1 state. */
+BCIR_DT_API void bcir_tensor_mm_fused(void *ctx, int ta, int tb, size_t m, size_t n, size_t k,
+    float alpha, const float *a, const float *b, float beta, float *c);
+BCIR_DT_API void bcir_tensor_mm_fused_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m,
+    size_t n, size_t k, float alpha, const float *a, const float *b, float beta, float *c);
+/* The fused instances this host can run: bit 1 portable (fmaf), bit 2 AVX2+FMA, bit 4 AVX-512F;
+ * bcir_tensor_mm_fused_variant runs one, or returns 0 and writes nothing. */
+BCIR_DT_API int bcir_tensor_mm_fused_variants(void);
+BCIR_DT_API int bcir_tensor_mm_fused_variant(int variant, int ta, int tb, size_t m, size_t n,
+    size_t k, float alpha, const float *a, const float *b, float beta, float *c);
 /* The portable GEMM's instruction-set variants: bit 1 portable C, bit 2 AVX2, bit 4 AVX-512F
  * (x86-64 Linux with GCC or Clang). Every variant computes the same rounded operations in the
  * same order, so all of them are bit-identical; bcir_tensor_mm runs the widest one the host

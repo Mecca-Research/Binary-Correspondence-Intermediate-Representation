@@ -17,6 +17,9 @@ spec alone. One function per row family grades it against the C rail; the tests,
                                reaches on any of the step's own GEMM shapes, timed alone
                                (`NativeProgram.roofline`, compute term) -- a bound on this host's
                                kernel, TMSAO-3, never on the silicon
+    train.mm.fused.mismatch    `MM_CASES` whose native `bcir_tensor_mm_fused` output differs in any bit
+                               from `mm_reference_fused` -- the fused contract (v2, NDT-FMA) as an
+                               exact rational emulation rounded once per term
     train.state.threads.mismatch  thread counts among `THREAD_COUNTS[1:]` whose state after three
                                steps of `THREADS_BENCH` differs in any bit from the one-thread
                                state of the same library, weights, tokens and rates (NDT-THREADS)
@@ -29,6 +32,7 @@ from __future__ import annotations
 import ctypes as ct
 import hashlib
 import importlib.util
+import math
 import os
 import shutil
 import statistics
@@ -197,8 +201,49 @@ def mm_reference(ta, tb, m, n, k, alpha, a, b, beta, c):
     return out
 
 
-def mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c):
-    fn = lib.bcir_tensor_mm
+def round_f32(x: Fraction) -> float:
+    """The binary32 nearest the rational x, ties to even, exactly -- never through a double, whose
+    own rounding would resolve a tie wrongly (1 + 2^-24 + 2^-60 rounds to 1 + 2^-23 in binary32
+    but to the tie 1 + 2^-24 in double first, and from there to 1). Overflow is the signed
+    infinity; the result may be subnormal or zero."""
+    if x == 0:
+        return 0.0
+    sign = -1.0 if x < 0 else 1.0
+    a = abs(x)
+    n, d = a.numerator, a.denominator
+    e = n.bit_length() - d.bit_length()  # 2^(e-1) < a < 2^(e+1)
+    if a < Fraction(2) ** e:
+        e -= 1  # 2^e <= a < 2^(e+1)
+    scale = max(e - 23, -149)  # the quantum: 2^(e-23), floored at the subnormal quantum
+    num, den = (n, d << scale) if scale >= 0 else (n << -scale, d)
+    q, r = divmod(num, den)
+    if 2 * r > den or (2 * r == den and q & 1):
+        q += 1
+    if q >> 24:  # rounding carried into the next binade
+        q >>= 1
+        scale += 1
+    if scale + 23 > 127:
+        return sign * math.inf
+    return sign * math.ldexp(q, scale)  # exact: q < 2^24 and the exponent is in range
+
+
+def mm_reference_fused(ta, tb, m, n, k, alpha, a, b, beta, c):
+    """The fused contract (v2): beta first, then for k ascending acc = round(acc + av * b) rounded
+    ONCE, av the binary32 product alpha*a as in v1 -- exact rationals, so no double stands in."""
+    alpha, beta = _f32(alpha), _f32(beta)
+    out = [0.0 if beta == 0.0 else _f32(beta * x) for x in c]
+    for i in range(m):
+        for j in range(n):
+            acc = Fraction(out[i * n + j])
+            for l in range(k):
+                av = Fraction(_f32(alpha * a[l * m + i if ta else i * k + l]))
+                acc = Fraction(round_f32(acc + av * Fraction(b[j * k + l if tb else l * n + j])))
+            out[i * n + j] = float(acc)
+    return out
+
+
+def mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c, *, fused=False):
+    fn = lib.bcir_tensor_mm_fused if fused else lib.bcir_tensor_mm
     fn.argtypes = [ct.c_void_p, ct.c_int, ct.c_int, ct.c_size_t, ct.c_size_t, ct.c_size_t,
                    ct.c_float, _FP, _FP, ct.c_float, _FP]  # fmt: skip
     fn.restype = None
@@ -207,15 +252,21 @@ def mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c):
     return list(cc)
 
 
-def mm_mismatch(lib, cases=MM_CASES) -> int:
-    """Cases whose native output differs in any bit from the reference."""
+def mm_mismatch(lib, cases=MM_CASES, *, fused=False) -> int:
+    """Cases whose native output differs in any bit from the reference of its contract."""
     bad = 0
+    reference = mm_reference_fused if fused else mm_reference
     for seed, (ta, tb, m, n, k, alpha, beta) in enumerate(cases, 1):
         a, b, c = _operands(m, n, k, seed)
-        want = mm_reference(ta, tb, m, n, k, alpha, a, b, beta, c)
-        got = mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c)
+        want = reference(ta, tb, m, n, k, alpha, a, b, beta, c)
+        got = mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c, fused=fused)
         bad += struct.pack(f"<{len(want)}f", *want) != struct.pack(f"<{len(got)}f", *got)
     return bad
+
+
+def mm_fused_mismatch(lib, cases=MM_CASES) -> int:
+    """`train.mm.fused.mismatch`: the fused kernel against its exact emulation."""
+    return mm_mismatch(lib, cases, fused=True)
 
 
 # --- train.memory.transient -----------------------------------------------------------------
@@ -319,7 +370,9 @@ def state_digest(trainer) -> str:
     return digest.hexdigest()
 
 
-def thread_states(path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS) -> dict[int, str]:
+def thread_states(
+    path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS, *, contract="v1"
+) -> dict[int, str]:
     """The state digest after `steps` steps of `bench` -- the same seeded weights, tokens and
     rates -- on a trainer of each thread count in `counts` (one thread is the serial trainer);
     each trainer's pool is released before the next is made."""
@@ -333,7 +386,7 @@ def thread_states(path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS) -> d
     out = {}
     for threads in counts:
         trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
-                                threads=threads)  # fmt: skip
+                                threads=threads, contract=contract)  # fmt: skip
         try:
             trainer.run(tokens, targets, steps=steps, optimizer=NativeAdamW(lr=1e-3),
                         learning_rates=rates)  # fmt: skip
@@ -385,6 +438,7 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         lib = ct.CDLL(str(path))
         out["train.plan.mismatch"] = float(plan_mismatch(lib))
         out["train.mm.mismatch"] = float(mm_mismatch(lib))
+        out["train.mm.fused.mismatch"] = float(mm_fused_mismatch(lib))
         out["train.state.threads.mismatch"] = float(threads_mismatch(path))
         if timed:
             out.update(measure_step(path))
@@ -403,9 +457,12 @@ __all__ = [
     "corpus_unselected",
     "measure",
     "measure_step",
+    "mm_fused_mismatch",
     "mm_mismatch",
     "mm_reference",
+    "mm_reference_fused",
     "plan_mismatch",
+    "round_f32",
     "source",
     "state_digest",
     "thread_states",

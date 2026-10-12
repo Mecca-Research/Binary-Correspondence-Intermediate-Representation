@@ -49,9 +49,12 @@ typedef struct mm_args {
   int ta,tb; size_t m,n,k; float alpha;
   const float *a; size_t lda; const float *b; size_t ldb; float *c; size_t ldc; int mode;
 } mm_args;
+/* The contract an instance keeps, a compile-time constant of the instance: v1 adds one rounded
+ * product per term, v2 (NDT-FMA) one fmaf. */
+enum { MM_V1=0, MM_FUSED=1 };
 /* Rows [i, i+mr) of C over columns [jb, jb+nj) and depths [lb, lb+nl); bt is the packed tile. */
-BCIR_MM_INLINE void mm_block(size_t mr, size_t nr, const mm_args *x, const float *bt, size_t i,
-    size_t jb, size_t nj, size_t lb, size_t nl, int mode) {
+BCIR_MM_INLINE void mm_block(size_t mr, size_t nr, int fused, const mm_args *x, const float *bt,
+    size_t i, size_t jb, size_t nj, size_t lb, size_t nl, int mode) {
   float acc[BCIR_MM_MRMAX][BCIR_MM_NRMAX];
   size_t r,j,l;
 #ifdef __clang_analyzer__
@@ -71,7 +74,8 @@ BCIR_MM_INLINE void mm_block(size_t mr, size_t nr, const mm_args *x, const float
     for (r=0;r<mr;r++) av[r]=x->alpha*x->a[x->ta ? (lb+l)*x->lda+i+r : (i+r)*x->lda+lb+l];
     for (r=0;r<mr;r++) {
       if ((mode==MM_KLE && lb+l>i+r) || (mode==MM_KGE && lb+l<i+r)) continue;
-      for (j=0;j<nr;j++) acc[r][j]+=av[r]*bl[j];
+      if (fused) { for (j=0;j<nr;j++) acc[r][j]=fmaf(av[r],bl[j],acc[r][j]); }
+      else for (j=0;j<nr;j++) acc[r][j]+=av[r]*bl[j];
     }
   }
   for (r=0;r<mr;r++) {
@@ -93,8 +97,8 @@ BCIR_MM_INLINE int mm_unmasked(int mode, size_t i, size_t mr, size_t jb, size_t 
  * matrix, a pool task its own column block and row range. Rows are grouped mr at a time from r0
  * and the rest singly; each row's accumulator sees the same terms in the same order whatever the
  * grouping, so any row partition is bit-identical to the whole. */
-BCIR_MM_INLINE void mm_kernel(size_t mr, size_t nr, const mm_args *x, size_t jb0, size_t jb1,
-    size_t r0, size_t r1) {
+BCIR_MM_INLINE void mm_kernel(size_t mr, size_t nr, int fused, const mm_args *x, size_t jb0,
+    size_t jb1, size_t r0, size_t r1) {
   /* Aligned to a cache line: every row of the tile is then read in whole vectors that never
    * straddle two lines. GCC realigns the stack for the AVX-512 instance on its own; clang keeps
    * the ABI's 16 bytes, which left the tile's offset to the caller's stack depth and to ASLR. */
@@ -124,19 +128,20 @@ BCIR_MM_INLINE void mm_kernel(size_t mr, size_t nr, const mm_args *x, size_t jb0
       }
       if (nj<nr) for (l=0;l<nl;l++) for (j=nj;j<nr;j++) bt[l*nr+j]=0.0f;
       for (i=i0;i+mr<=i1;i+=mr) {
-        if (mm_unmasked(x->mode,i,mr,jb,nj,lb,nl)) mm_block(mr,nr,x,bt,i,jb,nj,lb,nl,MM_FULL);
-        else mm_block(mr,nr,x,bt,i,jb,nj,lb,nl,x->mode);
+        if (mm_unmasked(x->mode,i,mr,jb,nj,lb,nl)) mm_block(mr,nr,fused,x,bt,i,jb,nj,lb,nl,MM_FULL);
+        else mm_block(mr,nr,fused,x,bt,i,jb,nj,lb,nl,x->mode);
       }
       for (;i<i1;i++) {
-        if (mm_unmasked(x->mode,i,1,jb,nj,lb,nl)) mm_block(1,nr,x,bt,i,jb,nj,lb,nl,MM_FULL);
-        else mm_block(1,nr,x,bt,i,jb,nj,lb,nl,x->mode);
+        if (mm_unmasked(x->mode,i,1,jb,nj,lb,nl)) mm_block(1,nr,fused,x,bt,i,jb,nj,lb,nl,MM_FULL);
+        else mm_block(1,nr,fused,x,bt,i,jb,nj,lb,nl,x->mode);
       }
     }
   }
 }
 /* The column width of a variant's register block: a task's column range is whole blocks. */
 typedef struct mm_range { size_t jb0,jb1,r0,r1; } mm_range;
-static void mm_generic(const mm_args *x, const mm_range *r) { mm_kernel(2,32,x,r->jb0,r->jb1,r->r0,r->r1); }
+static void mm_generic(const mm_args *x, const mm_range *r) { mm_kernel(2,32,MM_V1,x,r->jb0,r->jb1,r->r0,r->r1); }
+static void mm_generic_fused(const mm_args *x, const mm_range *r) { mm_kernel(2,32,MM_FUSED,x,r->jb0,r->jb1,r->r0,r->r1); }
 /* x86-64 Linux with GCC or Clang also carries AVX2 and AVX-512 variants of the same kernel,
  * chosen per call from what the CPU and OS support; anything else runs mm_generic.
  * BCIR_TENSOR_MAX_VARIANT caps the choice (1, 2 or 4) so a build can run a narrower one. */
@@ -147,10 +152,18 @@ static void mm_generic(const mm_args *x, const mm_range *r) { mm_kernel(2,32,x,r
     !defined(BCIR_TENSOR_NO_DISPATCH) && BCIR_TENSOR_MAX_VARIANT>1
 #define BCIR_MM_DISPATCH 1
 __attribute__((target("avx2"))) static void mm_avx2(const mm_args *x, const mm_range *r) {
-  mm_kernel(2,32,x,r->jb0,r->jb1,r->r0,r->r1);
+  mm_kernel(2,32,MM_V1,x,r->jb0,r->jb1,r->r0,r->r1);
 }
 __attribute__((target("avx512f"))) static void mm_avx512(const mm_args *x, const mm_range *r) {
-  mm_kernel(4,64,x,r->jb0,r->jb1,r->r0,r->r1);
+  mm_kernel(4,64,MM_V1,x,r->jb0,r->jb1,r->r0,r->r1);
+}
+/* the fused instances: AVX2 with the FMA extension (fmaf fuses in registers), AVX-512F (which
+ * carries FMA); the compiler folds the fmaf call into the vector fused multiply-add */
+__attribute__((target("avx2,fma"))) static void mm_avx2_fused(const mm_args *x, const mm_range *r) {
+  mm_kernel(2,32,MM_FUSED,x,r->jb0,r->jb1,r->r0,r->r1);
+}
+__attribute__((target("avx512f"))) static void mm_avx512_fused(const mm_args *x, const mm_range *r) {
+  mm_kernel(4,64,MM_FUSED,x,r->jb0,r->jb1,r->r0,r->r1);
 }
 #endif
 static size_t mm_nr(int variant) { return variant==4 ? 64 : 32; }
@@ -163,38 +176,67 @@ int bcir_tensor_mm_variants(void) {
 #endif
   return v;
 }
-static void mm_run_range(int variant, const mm_args *x, const mm_range *r) {
+int bcir_tensor_mm_fused_variants(void) {
+  int v=1;
 #ifdef BCIR_MM_DISPATCH
-  if (variant==4) { mm_avx512(x,r); return; }
-  if (variant==2) { mm_avx2(x,r); return; }
+  __builtin_cpu_init();
+  if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma")) v|=2;
+  if (BCIR_TENSOR_MAX_VARIANT>=4 && __builtin_cpu_supports("avx512f")) v|=4;
+#endif
+  return v;
+}
+static void mm_run_range(int variant, int fused, const mm_args *x, const mm_range *r) {
+#ifdef BCIR_MM_DISPATCH
+  if (variant==4) { if (fused) mm_avx512_fused(x,r); else mm_avx512(x,r); return; }
+  if (variant==2) { if (fused) mm_avx2_fused(x,r); else mm_avx2(x,r); return; }
 #endif
   (void)variant;
-  mm_generic(x,r);
+  if (fused) mm_generic_fused(x,r); else mm_generic(x,r);
 }
 static void mm_run(int variant, const mm_args *x) {
   mm_range r;
   if (!x->m || !x->n || !x->k) return;
   r.jb0=0; r.jb1=x->n; r.r0=0; r.r1=x->m;
-  mm_run_range(variant,x,&r);
+  mm_run_range(variant,MM_V1,x,&r);
 }
 static int mm_widest(void) {
   int v=bcir_tensor_mm_variants();
   return v&4 ? 4 : v&2 ? 2 : 1;
 }
-int bcir_tensor_mm_variant(int variant, int ta, int tb, size_t m, size_t n, size_t k,
+static int mm_widest_fused(void) {
+  int v=bcir_tensor_mm_fused_variants();
+  return v&4 ? 4 : v&2 ? 2 : 1;
+}
+static int mm_variant_any(int variant, int fused, int ta, int tb, size_t m, size_t n, size_t k,
     float alpha, const float *a, const float *b, float beta, float *c) {
-  mm_args x; size_t i;
-  if ((variant!=1 && variant!=2 && variant!=4) || !(bcir_tensor_mm_variants()&variant)) return 0;
+  mm_args x; mm_range r; size_t i;
+  int have=fused ? bcir_tensor_mm_fused_variants() : bcir_tensor_mm_variants();
+  if ((variant!=1 && variant!=2 && variant!=4) || !(have&variant)) return 0;
   for (i=0;i<m*n;i++) c[i]=beta==0.0f ? 0.0f : beta*c[i];
+  if (!m || !n || !k) return variant;
   x.ta=ta; x.tb=tb; x.m=m; x.n=n; x.k=k; x.alpha=alpha; x.a=a; x.lda=ta ? m : k;
   x.b=b; x.ldb=tb ? k : n; x.c=c; x.ldc=n; x.mode=MM_FULL;
-  mm_run(variant,&x);
+  r.jb0=0; r.jb1=n; r.r0=0; r.r1=m;
+  mm_run_range(variant,fused,&x,&r);
   return variant;
+}
+int bcir_tensor_mm_variant(int variant, int ta, int tb, size_t m, size_t n, size_t k,
+    float alpha, const float *a, const float *b, float beta, float *c) {
+  return mm_variant_any(variant,MM_V1,ta,tb,m,n,k,alpha,a,b,beta,c);
+}
+int bcir_tensor_mm_fused_variant(int variant, int ta, int tb, size_t m, size_t n, size_t k,
+    float alpha, const float *a, const float *b, float beta, float *c) {
+  return mm_variant_any(variant,MM_FUSED,ta,tb,m,n,k,alpha,a,b,beta,c);
 }
 void bcir_tensor_mm(void *ctx, int ta, int tb, size_t m, size_t n, size_t k,
     float alpha, const float *a, const float *b, float beta, float *c) {
   (void)ctx;
-  bcir_tensor_mm_variant(mm_widest(),ta,tb,m,n,k,alpha,a,b,beta,c);
+  mm_variant_any(mm_widest(),MM_V1,ta,tb,m,n,k,alpha,a,b,beta,c);
+}
+void bcir_tensor_mm_fused(void *ctx, int ta, int tb, size_t m, size_t n, size_t k,
+    float alpha, const float *a, const float *b, float beta, float *c) {
+  (void)ctx;
+  mm_variant_any(mm_widest_fused(),MM_FUSED,ta,tb,m,n,k,alpha,a,b,beta,c);
 }
 /* --- the deterministic pool (NDT-THREADS) ------------------------------------------------------
  * Thread 0 is the caller; the others wait for a generation, run their share of its tasks and
@@ -390,7 +432,7 @@ void bcir_tensor_pool_run(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx
  * -- every depth chunk, in order -- so each element of C receives its terms in the serial order;
  * the task packs its own tiles. */
 #define BCIR_MM_ROWS 64
-typedef struct mm_job { mm_args x; float beta; int variant; size_t nr,cols,rowsets; } mm_job;
+typedef struct mm_job { mm_args x; float beta; int variant,fused; size_t nr,cols,rowsets; } mm_job;
 static void mm_task(void *ctx, size_t task) {
   mm_job *j=(mm_job *)ctx; mm_range r; size_t col=task%j->cols,row=task/j->cols,i,jj;
   r.jb0=col*j->nr; r.jb1=r.jb0+j->nr<j->x.n ? r.jb0+j->nr : j->x.n;
@@ -399,18 +441,28 @@ static void mm_task(void *ctx, size_t task) {
     float *ci=j->x.c+i*j->x.ldc;
     for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=j->beta==0.0f ? 0.0f : j->beta*ci[jj];
   }
-  if (j->x.k) mm_run_range(j->variant,&j->x,&r);
+  if (j->x.k) mm_run_range(j->variant,j->fused,&j->x,&r);
 }
-void bcir_tensor_mm_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m, size_t n, size_t k,
-    float alpha, const float *a, const float *b, float beta, float *c) {
+static void mm_pool_any(bcir_tensor_pool *pool, int fused, int ta, int tb, size_t m, size_t n,
+    size_t k, float alpha, const float *a, const float *b, float beta, float *c) {
   mm_job j;
-  if (!pool || pool->threads==1) { bcir_tensor_mm(NULL,ta,tb,m,n,k,alpha,a,b,beta,c); return; }
+  if (!pool || pool->threads==1) {
+    (fused ? bcir_tensor_mm_fused : bcir_tensor_mm)(NULL,ta,tb,m,n,k,alpha,a,b,beta,c); return;
+  }
   if (!m || !n) return;
-  j.beta=beta; j.variant=mm_widest(); j.nr=mm_nr(j.variant);
+  j.beta=beta; j.fused=fused; j.variant=fused ? mm_widest_fused() : mm_widest(); j.nr=mm_nr(j.variant);
   j.x.ta=ta; j.x.tb=tb; j.x.m=m; j.x.n=n; j.x.k=k; j.x.alpha=alpha; j.x.a=a; j.x.lda=ta ? m : k;
   j.x.b=b; j.x.ldb=tb ? k : n; j.x.c=c; j.x.ldc=n; j.x.mode=MM_FULL;
   j.cols=(n+j.nr-1)/j.nr; j.rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;
   pool_run(pool,mm_task,&j,j.cols*j.rowsets);
+}
+void bcir_tensor_mm_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m, size_t n, size_t k,
+    float alpha, const float *a, const float *b, float beta, float *c) {
+  mm_pool_any(pool,MM_V1,ta,tb,m,n,k,alpha,a,b,beta,c);
+}
+void bcir_tensor_mm_fused_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m, size_t n,
+    size_t k, float alpha, const float *a, const float *b, float beta, float *c) {
+  mm_pool_any(pool,MM_FUSED,ta,tb,m,n,k,alpha,a,b,beta,c);
 }
 /* Elements in ranges of BCIR_EW_CHUNK: y[i] depends on x[i] alone. */
 #define BCIR_EW_CHUNK 8192

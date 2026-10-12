@@ -845,6 +845,24 @@ METRICS: tuple[Metric, ...] = (
         "section holds the partitions race-free and fires on an injected one",
         slice_owner="NDT-THREADS",
     ),
+    # --- NDT-FMA: the fused GEMM contract ---------------------------------------------------
+    Metric(
+        "train.mm.fused.mismatch",
+        "train",
+        "of 20 GEMM cases (every transpose pair, the 32-wide tiles' edges, alpha and beta forms), "
+        "those whose bcir_tensor_mm_fused output differs in any bit from an exact rational "
+        "emulation of the fused contract (v2): beta first, then each term's product and addition "
+        "rounded once together, k ascending (bcir/tests/native_decoder_fixtures.py)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the fused contract, one rounded operation per term: an IEEE fmaf is the "
+        "exact product-sum rounded once, so the rational emulation rounded once per term is the "
+        "kernel's bits wherever fmaf is an IEEE fusedMultiplyAdd -- the C harness holds every "
+        "fused instance to the fmaf ascending-k loop",
+        slice_owner="NDT-FMA",
+    ),
     Metric(
         "transform.export.mismatch",
         "transform",

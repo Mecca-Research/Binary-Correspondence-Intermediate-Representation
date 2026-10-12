@@ -2866,6 +2866,34 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     and on random text over small alphabets (where merges nest deepest); the tokenizer's own
     `encode` is the rank-ordered one; and a rank table that reverses the merge order disagrees,
     so the differential can fail.
+  NDT-FMA (2026-10-12): the fused GEMM contract, v2, beside v1.
+  - `bcir_tensor_mm_fused` (and `_fused_pool`, `_fused_variant`, `_fused_variants`): the same
+    register-blocked nest as v1 with one `fmaf` per term in place of a rounded multiply and a
+    rounded add -- the product `alpha*A` still rounded as in v1 -- so each element receives its
+    terms k ascending, rounded once each. Three instances: portable (the libm `fmaf`, correctly
+    rounded where the C library keeps Annex F), AVX2+FMA and AVX-512F, the last two fusing in
+    registers; `-ffp-contract=off` stays, since the fusion is spelled, not left to the compiler.
+    ABI 3: `bcir_decoder_state` ends in `contract` (0 v1, `BCIR_DT_CONTRACT_FUSED` v2, other bits
+    refused); the trainer's `gemm` routes by it, a provider's GEMM keeps its own;
+    `NativeDecoder(contract="fused")`; the checkpoint schema is `bcir.native_decoder.v2` and
+    names the contract, which `resume` restores -- a state trained under one is not the other's.
+  - Evidence. The C harness's `gemm_fused_contract`: every fused instance this host runs, serially
+    and on a pool of three, bit for bit against the `fmaf` ascending-k loop over the 44 (shape,
+    transpose) cases, and apart from v1 on them; `pool_identity` now runs its three training steps
+    under both contracts, each identical at 1..4 threads and the two states different; an
+    undefined contract bit is refused. `train.mm.fused.mismatch` (GEM+ `train`, exact, bound 0):
+    0 of 20 against `mm_reference_fused`, an exact rational emulation rounded once per term through
+    `round_f32` -- never through a double, whose own rounding resolves a tie wrongly (the fixture
+    shows 1 + 2^-24 + 2^-60); `round_f32` agreed with glibc's `fmaf` on 20,000 random operand
+    triples before it was trusted. `ndt-fma.json`: 5 defects injected, 5 caught. The threads
+    witness holds the fused state identical at every thread count and apart from v1's, and a
+    fused checkpoint resumes as fused.
+  - Measured: the fused kernel against v1 at one thread on the 9.84M decoder's 13 GEMM shapes, best of 7 calls each:
+    work-weighted 46.9 -> 66.9 GFLOP/s, x1.43, every shape between x1.33 and x1.51
+    (`docs/research/measurements/2026-10-12/gemm-fused-rates.json`; GCC 13.3, the AVX-512 instance, a
+    4-vCPU container, indicative). Short of the arithmetic's x2: the kernel is not only its
+    multiply-adds -- the packing, the loads and the block's stores stay -- which is what the wider
+    register block and the per-panel packing of the transposed operand, still open, are for.
   NDT-THREADS (2026-10-12): a deterministic thread pool under the native trainer, bit-identical
   at every thread count.
   - `bcir_tensor_pool` (`bcir_tensor.c`): pthreads on POSIX, Win32 threads on Windows, one thread

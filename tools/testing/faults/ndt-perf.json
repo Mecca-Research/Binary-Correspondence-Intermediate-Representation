@@ -69,8 +69,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NP9 a GEMM variant the kernel does not define runs instead of being refused",
-      "new": "if (!(bcir_tensor_mm_variants()&variant)) return 0;",
-      "old": "if ((variant!=1 && variant!=2 && variant!=4) || !(bcir_tensor_mm_variants()&variant)) return 0;",
+      "new": "if (!(have&variant)) return 0;",
+      "old": "if ((variant!=1 && variant!=2 && variant!=4) || !(have&variant)) return 0;",
       "path": "runtime/c/bcir_tensor.c"
     }
   ]

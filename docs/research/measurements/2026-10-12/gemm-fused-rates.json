@@ -1,0 +1,162 @@
+{
+ "what": "bcir_tensor_mm (v1) against bcir_tensor_mm_fused (v2), one thread, best of 7 calls per shape, on the GEMM shapes of the 2026-10-11 report's 9,836,928-parameter decoder (vocab 260, width 384, 8 heads over 4 KV heads, 6 layers, ff 1024; batch 8 x 128 tokens), GCC 13.3 -O3 -ffp-contract=off -fno-math-errno, the widest instance (AVX-512) on this 4-vCPU container; indicative wall rates, not a certificate",
+ "date": "2026-10-12",
+ "slice": "NDT-FMA",
+ "rows": [
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 384,
+   "n": 1024,
+   "k": 1024,
+   "v1_gflops": 44.9,
+   "fused_gflops": 62.0,
+   "ratio": 1.38
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "v1_gflops": 47.4,
+   "fused_gflops": 68.3,
+   "ratio": 1.44
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 1024,
+   "k": 384,
+   "v1_gflops": 45.8,
+   "fused_gflops": 61.0,
+   "ratio": 1.33
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "v1_gflops": 44.7,
+   "fused_gflops": 61.6,
+   "ratio": 1.38
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 1024,
+   "k": 384,
+   "v1_gflops": 46.5,
+   "fused_gflops": 66.9,
+   "ratio": 1.44
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "v1_gflops": 46.7,
+   "fused_gflops": 70.6,
+   "ratio": 1.51
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 384,
+   "n": 384,
+   "k": 1024,
+   "v1_gflops": 49.8,
+   "fused_gflops": 71.5,
+   "ratio": 1.44
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 384,
+   "k": 384,
+   "v1_gflops": 50.3,
+   "fused_gflops": 74.8,
+   "ratio": 1.49
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 384,
+   "v1_gflops": 48.9,
+   "fused_gflops": 73.3,
+   "ratio": 1.5
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 260,
+   "n": 384,
+   "k": 1024,
+   "v1_gflops": 49.5,
+   "fused_gflops": 73.8,
+   "ratio": 1.49
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 260,
+   "v1_gflops": 53.2,
+   "fused_gflops": 77.7,
+   "ratio": 1.46
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 260,
+   "k": 384,
+   "v1_gflops": 42.1,
+   "fused_gflops": 61.9,
+   "ratio": 1.47
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 192,
+   "n": 384,
+   "k": 1024,
+   "v1_gflops": 49.8,
+   "fused_gflops": 71.6,
+   "ratio": 1.44
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 192,
+   "k": 384,
+   "v1_gflops": 52.3,
+   "fused_gflops": 77.4,
+   "ratio": 1.48
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 192,
+   "v1_gflops": 50.6,
+   "fused_gflops": 72.8,
+   "ratio": 1.44
+  }
+ ],
+ "work_weighted": {
+  "v1_gflops": 46.9,
+  "fused_gflops": 66.9,
+  "ratio": 1.43
+ }
+}
