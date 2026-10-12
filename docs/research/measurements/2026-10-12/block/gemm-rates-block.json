@@ -1,0 +1,268 @@
+{
+ "what": "NDT-BLOCK kernel-rate record: the v3 (K-blocked fused) GEMM kernel before and after the register block and the vector packing, and OpenBLAS's sgemm, on the step program's 15 GEMM shapes (9.84M decoder, batch 8 x 128); best of 7 calls per cell, one process; @1 serial, @4 the pool at four threads (OpenBLAS at four with OPENBLAS_THREAD_TIMEOUT=4, its workers sleeping between calls); every result at beta 1 checked against the old serial kernel bit for bit",
+ "date": "2026-10-12",
+ "slice": "NDT-BLOCK",
+ "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+ "flags": "-std=c11 -O3 -ffp-contract=off -fno-math-errno",
+ "host": "x86_64",
+ "old": "HEAD's v3 kernel: 4 x 64 plain-C block (AVX-512 instance), scalar tile packing, 64-row tasks",
+ "new": "8 x 48 intrinsic block, vector tile packing, 128-row tasks",
+ "openblas": "OpenBLAS 0.3.34.237.0 DYNAMIC_ARCH NO_AFFINITY SkylakeX MAX_THREADS=64",
+ "mismatches_vs_old_serial": {
+  "new@1": 0,
+  "old@4": 0,
+  "new@4": 0,
+  "openblas@1": 0,
+  "openblas@4": 0
+ },
+ "rows": [
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 384,
+   "k": 384,
+   "flop": 301989888.0,
+   "gflops": {
+    "old@1": 71.5,
+    "new@1": 119.3,
+    "openblas@1": 79.0,
+    "old@4": 105.1,
+    "new@4": 188.6,
+    "openblas@4": 185.3
+   }
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 192,
+   "k": 384,
+   "flop": 150994944.0,
+   "gflops": {
+    "old@1": 62.1,
+    "new@1": 82.0,
+    "openblas@1": 86.5,
+    "old@4": 92.9,
+    "new@4": 164.5,
+    "openblas@4": 155.0
+   }
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 1024,
+   "k": 384,
+   "flop": 805306368.0,
+   "gflops": {
+    "old@1": 74.1,
+    "new@1": 106.5,
+    "openblas@1": 92.6,
+    "old@4": 100.8,
+    "new@4": 215.3,
+    "openblas@4": 251.2
+   }
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "flop": 805306368.0,
+   "gflops": {
+    "old@1": 80.0,
+    "new@1": 122.1,
+    "openblas@1": 93.2,
+    "old@4": 124.7,
+    "new@4": 257.0,
+    "openblas@4": 257.2
+   }
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 260,
+   "k": 384,
+   "flop": 204472320.0,
+   "gflops": {
+    "old@1": 64.8,
+    "new@1": 101.9,
+    "openblas@1": 79.4,
+    "old@4": 84.1,
+    "new@4": 203.3,
+    "openblas@4": 183.6
+   }
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 260,
+   "flop": 204472320.0,
+   "gflops": {
+    "old@1": 56.2,
+    "new@1": 75.6,
+    "openblas@1": 63.1,
+    "old@4": 131.9,
+    "new@4": 168.8,
+    "openblas@4": 167.2
+   }
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 260,
+   "n": 384,
+   "k": 1024,
+   "flop": 204472320.0,
+   "gflops": {
+    "old@1": 84.4,
+    "new@1": 116.0,
+    "openblas@1": 88.8,
+    "old@4": 147.6,
+    "new@4": 194.7,
+    "openblas@4": 161.9
+   }
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 1024,
+   "k": 384,
+   "flop": 805306368.0,
+   "gflops": {
+    "old@1": 53.9,
+    "new@1": 94.7,
+    "openblas@1": 94.3,
+    "old@4": 151.4,
+    "new@4": 208.5,
+    "openblas@4": 204.5
+   }
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 384,
+   "n": 1024,
+   "k": 1024,
+   "flop": 805306368.0,
+   "gflops": {
+    "old@1": 78.9,
+    "new@1": 106.3,
+    "openblas@1": 93.8,
+    "old@4": 192.6,
+    "new@4": 246.8,
+    "openblas@4": 255.6
+   }
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "flop": 805306368.0,
+   "gflops": {
+    "old@1": 79.5,
+    "new@1": 119.4,
+    "openblas@1": 91.2,
+    "old@4": 199.9,
+    "new@4": 297.8,
+    "openblas@4": 262.1
+   }
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "flop": 805306368.0,
+   "gflops": {
+    "old@1": 31.2,
+    "new@1": 73.6,
+    "openblas@1": 89.6,
+    "old@4": 142.7,
+    "new@4": 239.1,
+    "openblas@4": 270.9
+   }
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 384,
+   "flop": 301989888.0,
+   "gflops": {
+    "old@1": 80.3,
+    "new@1": 113.9,
+    "openblas@1": 88.9,
+    "old@4": 145.5,
+    "new@4": 180.6,
+    "openblas@4": 179.1
+   }
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 384,
+   "n": 384,
+   "k": 1024,
+   "flop": 301989888.0,
+   "gflops": {
+    "old@1": 76.2,
+    "new@1": 95.2,
+    "openblas@1": 86.7,
+    "old@4": 174.1,
+    "new@4": 208.0,
+    "openblas@4": 181.2
+   }
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 192,
+   "flop": 150994944.0,
+   "gflops": {
+    "old@1": 47.1,
+    "new@1": 67.4,
+    "openblas@1": 91.1,
+    "old@4": 106.9,
+    "new@4": 114.0,
+    "openblas@4": 114.0
+   }
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 192,
+   "n": 384,
+   "k": 1024,
+   "flop": 150994944.0,
+   "gflops": {
+    "old@1": 63.4,
+    "new@1": 91.9,
+    "openblas@1": 70.1,
+    "old@4": 110.4,
+    "new@4": 194.7,
+    "openblas@4": 212.4
+   }
+  }
+ ],
+ "work_weighted_gflops": {
+  "old@1": 61.2,
+  "new@1": 99.4,
+  "openblas@1": 88.8,
+  "old@4": 135.9,
+  "new@4": 218.9,
+  "openblas@4": 219.1
+ }
+}

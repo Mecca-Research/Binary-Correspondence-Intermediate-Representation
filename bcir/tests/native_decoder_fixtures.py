@@ -296,31 +296,55 @@ def mm_reference_kblock(ta, tb, m, n, k, alpha, a, b, beta, c):
     return out
 
 
-def mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c, *, fused=False, kblock=False):
-    fn = (
-        lib.bcir_tensor_mm_kblock
-        if kblock
-        else lib.bcir_tensor_mm_fused
-        if fused
-        else lib.bcir_tensor_mm
+_MM_SIG = [ct.c_void_p, ct.c_int, ct.c_int, ct.c_size_t, ct.c_size_t, ct.c_size_t,
+           ct.c_float, _FP, _FP, ct.c_float, _FP]  # fmt: skip
+
+
+def mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c, *, fused=False, kblock=False,
+              variant=None):  # fmt: skip
+    """The contract's default entry (the widest instance the host runs), or with `variant` one
+    named instance (1 generic, 2 AVX2, 4 AVX-512) through the contract's `_variant` entry,
+    which refuses -- returns 0 and writes nothing -- an instance the host lacks."""
+    name = (
+        "bcir_tensor_mm_kblock" if kblock else "bcir_tensor_mm_fused" if fused else "bcir_tensor_mm"
     )
-    fn.argtypes = [ct.c_void_p, ct.c_int, ct.c_int, ct.c_size_t, ct.c_size_t, ct.c_size_t,
-                   ct.c_float, _FP, _FP, ct.c_float, _FP]  # fmt: skip
-    fn.restype = None
+    fn = getattr(lib, name + ("_variant" if variant is not None else ""))
+    fn.argtypes = ([ct.c_int] if variant is not None else [ct.c_void_p]) + _MM_SIG[1:]
+    fn.restype = ct.c_int if variant is not None else None
     ca, cb, cc = (ct.c_float * len(a))(*a), (ct.c_float * len(b))(*b), (ct.c_float * len(c))(*c)
-    fn(None, ta, tb, m, n, k, alpha, ca, cb, beta, cc)
+    ran = fn(variant if variant is not None else None, ta, tb, m, n, k, alpha, ca, cb, beta, cc)
+    if variant is not None and ran != variant:
+        raise RuntimeError(f"instance {variant} is not one this host runs")
     return list(cc)
 
 
+def mm_variants(lib, *, fused=False, kblock=False) -> list[int]:
+    """The instances the host runs under a contract, as the unit reports them (1, 2, 4)."""
+    name = (
+        "bcir_tensor_mm_kblock" if kblock else "bcir_tensor_mm_fused" if fused else "bcir_tensor_mm"
+    )
+    fn = getattr(lib, name + "_variants")
+    fn.argtypes = []
+    fn.restype = ct.c_int
+    mask = fn()
+    return [v for v in (1, 2, 4) if mask & v]
+
+
 def mm_mismatch(lib, cases=MM_CASES, *, fused=False, kblock=False) -> int:
-    """Cases whose native output differs in any bit from the reference of its contract."""
+    """Cases whose native output differs in any bit from the reference of its contract. Under
+    the blocked contract every instance the host runs is held to it (NDT-BLOCK: the AVX-512 and
+    AVX2 instances are their own code, not the generic block under a wider target), so a case
+    counts once per instance that differs."""
     bad = 0
     reference = mm_reference_kblock if kblock else mm_reference_fused if fused else mm_reference
+    variants = mm_variants(lib, kblock=True) if kblock else [None]
     for seed, (ta, tb, m, n, k, alpha, beta) in enumerate(cases, 1):
         a, b, c = _operands(m, n, k, seed)
-        want = reference(ta, tb, m, n, k, alpha, a, b, beta, c)
-        got = mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c, fused=fused, kblock=kblock)
-        bad += struct.pack(f"<{len(want)}f", *want) != struct.pack(f"<{len(got)}f", *got)
+        want = struct.pack(f"<{m * n}f", *reference(ta, tb, m, n, k, alpha, a, b, beta, c))
+        for variant in variants:
+            got = mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c, fused=fused,
+                            kblock=kblock, variant=variant)  # fmt: skip
+            bad += want != struct.pack(f"<{len(got)}f", *got)
     return bad
 
 
@@ -330,8 +354,9 @@ def mm_fused_mismatch(lib, cases=MM_CASES) -> int:
 
 
 def mm_kblock_mismatch(lib, cases=MM_KBLOCK_CASES) -> int:
-    """`train.mm.kblock.mismatch`: the blocked kernel against its exact emulation, and the C
-    split rule against the Python one on the cases' depths and the rule's edges."""
+    """`train.mm.kblock.mismatch`: every instance of the blocked kernel the host runs against
+    its exact emulation, and the C split rule against the Python one on the cases' depths and
+    the rule's edges."""
     split = lib.bcir_tensor_kblock_split
     split.argtypes = [ct.c_size_t, ct.POINTER(ct.c_size_t), ct.c_size_t]
     split.restype = ct.c_size_t
@@ -595,6 +620,7 @@ __all__ = [
     "provider_mismatch",
     "openblas_library",
     "mm_mismatch",
+    "mm_variants",
     "mm_reference",
     "mm_reference_fused",
     "plan_mismatch",

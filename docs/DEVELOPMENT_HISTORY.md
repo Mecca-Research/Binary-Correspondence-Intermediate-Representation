@@ -2915,6 +2915,46 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-BLOCK (2026-10-12): the v3 GEMM kernel's register block and packing, under the same contract.
+  - The gap NDT-KBLOCK left to the admitted provider (BCIR's own v3 kernel at 61 GFLOP/s
+    work-weighted against OpenBLAS's 89 at one thread on the step's shapes) was the schedule,
+    not the arithmetic: the 4 x 64 block read its 112 KB tile from L2 for every four rows
+    (272 bytes per 16 fused multiply-adds, at the L2 limit), the autovectorized A gathers went
+    through the stack, the tile was packed scalar (16 us a transposed tile) and the transposed-A
+    operand's lines came one per depth without prefetch. Measured first in a scratch prototype
+    against the tree's kernel bit for bit on 42 cases: 12 x 32 (92 GFLOP/s), 8 x 48 (108), 6 x
+    64, 4 x 96, and the row-panel-outer nest that repacks the tile per row panel (worse at every
+    panel height, 60-77, because the packing is the cost).
+  - The AVX-512 and AVX2 instances of v3 are now intrinsic micro-kernels (`kb512_block`,
+    `kb256_block`): 8 x 48 and 6 x 16 accumulators, every A term one broadcast from memory,
+    the tile three (two) vector loads per depth -- eleven loads per 24 fused multiply-adds --
+    and the block's partial added as a rounded product and a rounded sum; rows that do not fill
+    a block run 4-row (2-row) and single-row blocks of the same chain. The tile is packed by
+    vector (`kb512_pack`: masked row loads, 16 x 16 register transposes of B^T, ragged edges
+    scalar); a transposed A's next line is prefetched eight depths ahead; the pool's tasks are
+    128 rows by one column block of the instance's width (`mm_nr` per contract: 48, 16, 32),
+    so each tile is packed half as often. The generic instance keeps the plain-C block.
+  - Evidence: the C harness's `gemm_kblock_contract` over 19 shapes (three new ones with 4-row
+    and single-row tails and 16..48-wide ragged blocks) on every instance, serially and on a
+    pool; `train.mm.kblock.mismatch` now holds every instance the host runs to the exact
+    emulation (`mm_variants`, `mm_native(variant=)`), so the generic block's injected faults
+    fire where the AVX-512 instance runs and the instance has its own: `ndt-kblock.json`
+    NK7-NK10 (its last single row dropped, a task's column block narrower than its register
+    block, a transposed tile's ragged columns stale, a ragged block's fused epilogue), 10 of 10
+    caught; the kernel mutants test carries the same three AVX-512 copies with an honest skip
+    where the host lacks the instance. gcc and clang builds bit-identical on every case.
+  - Measured ([measurements/2026-10-12/block/](research/measurements/2026-10-12/block/)): the
+    kernel-rate record over the step's 15 shapes, best of 7 -- work-weighted 61.2 -> 99.4
+    GFLOP/s at one thread against OpenBLAS's 88.8 in the same process, 135.9 -> 218.9 on the
+    pool at four against OpenBLAS's 219.1 at four (its workers sleeping); every result at beta
+    1 identical to the old serial kernel's. Still behind the provider: `dW` with 1,024 rows and
+    depth 1,024 (73.6 against 89.6; its A lines alias one cache set, and the per-panel packing
+    that would fix it needs a buffer the serial path has no allocation law for) and the
+    depth-192 product (67.4 against 91.1). The step by kernel under `kblock+exp`: the GEMMs
+    569 ms at one thread (952 before) and 290 at four (531); the 1,000-step
+    run on BCIR's kernel ends in `d7fc618c…` at 516 ms a step on four threads (753
+    before) and 974 on one (1,425); the identity rows on the widest, AVX2 and portable
+    builds end in §7's kblock states.
   NDT-ATTN-0 (2026-10-12): the v2 softmax's row through the vector exponential.
   - NDT-MEASURE's finding, fixed the same day: `att_head`'s `exp` branch called the scalar
     exponential element by element with the row sum in the same loop, which GCC does not

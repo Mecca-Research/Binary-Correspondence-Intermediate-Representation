@@ -160,7 +160,7 @@ and where each framework's step spends its time.
 
 The training corpus as the trainer's data (TRAIN-RAIL) and the deterministic thread pool
 (NDT-THREADS) landed on 2026-10-12. The pool's evidence is three-fold: `runtime/c/test_decoder_train.c`
-holds every pool kernel (GEMM shapes crossing the 64-row tasks and both column-block widths under
+holds every pool kernel (GEMM shapes crossing the row tasks and every column-block width under
 every transpose pair, causal GQA attention forward and in-place backward, SiLU, the SwiGLU VJP,
 RMSNorm, RoPE, the residual add and gate multiply, the task runner) and three complete training
 steps at one to four threads to the serial kernels and the scalar references, bit for bit; the
@@ -190,9 +190,19 @@ worker threads spin between calls contends with the pool's kernels: OpenBLAS's s
 cycles after each call cost the four-thread step a fifth until `OPENBLAS_THREAD_TIMEOUT` was set
 low before the library loaded (the comparison harness sets it; the report's §7 measures it). What
 comes next for
-this trainer -- the plan driving the step's dispatch, the fused kernel's register block and packing,
-tiled attention -- is the ladder of
+this trainer -- the plan driving the step's dispatch, tiled attention, the serial reductions --
+is the ladder of
 [the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md).
+
+The v3 kernel's own rate (NDT-BLOCK, 2026-10-12) is the provider's. Its AVX-512 and AVX2
+instances are intrinsic register blocks of 8 x 48 and 6 x 16 accumulators over a tile packed by
+vector, with a transposed A prefetched a few depths ahead and the pool's tasks 128 rows by one
+column block of the instance's width; the generic instance keeps the plain-C block, and every
+instance is held to the K-blocked `fmaf` chain by the C harness and by `train.mm.kblock.mismatch`,
+which now runs per instance. On the step's 15 GEMM shapes the kernel reads 99 GFLOP/s
+work-weighted at one thread against OpenBLAS's 89 in the same process and 219 on the pool at four
+against OpenBLAS's 219 ([the record](../research/measurements/2026-10-12/block/gemm-rates-block.json);
+the report's §8). The result is the contract's, so the state digests of §7 are unchanged.
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over

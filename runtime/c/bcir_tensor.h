@@ -97,7 +97,9 @@ BCIR_DT_API int bcir_tensor_mm_fused_variant(int variant, int ta, int tb, size_t
  * admitted under v3 (NativeDecoder.use_cblas), and a state trained under v3 is one state with
  * the provider or without it. For k <= BCIR_MM_KBLOCK, beta 0 and alpha 1 the result is v2's;
  * otherwise its own. bcir_tensor_kblock_split writes the rule's block lengths for k in order
- * (up to capacity) and returns their count; the instances are the fused ones. */
+ * (up to capacity) and returns their count. The instances are v3's own (NDT-BLOCK): the
+ * generic one the plain-C block, the AVX-512 and AVX2 ones intrinsic register blocks of 8 x 48
+ * and 6 x 16 accumulators over a tile packed by vector, held to the same chain bit for bit. */
 #define BCIR_MM_KBLOCK 448
 #define BCIR_MM_KBLOCK_UNROLL 16
 BCIR_DT_API size_t bcir_tensor_kblock_split(size_t k, size_t *lengths, size_t capacity);

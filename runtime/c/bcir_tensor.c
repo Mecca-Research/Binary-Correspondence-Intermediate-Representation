@@ -204,7 +204,7 @@ BCIR_MM_INLINE void mm_kernel_kb(size_t mr, size_t nr, const mm_args *x, size_t 
     }
   }
 }
-/* The column width of a variant's register block: a task's column range is whole blocks. */
+/* A task's range: whole column blocks of the instance's width (mm_nr) and a row range. */
 typedef struct mm_range { size_t jb0,jb1,r0,r1; } mm_range;
 static void mm_generic(const mm_args *x, const mm_range *r) { mm_kernel(2,32,MM_V1,x,r->jb0,r->jb1,r->r0,r->r1); }
 static void mm_generic_fused(const mm_args *x, const mm_range *r) { mm_kernel(2,32,MM_FUSED,x,r->jb0,r->jb1,r->r0,r->r1); }
@@ -218,8 +218,13 @@ static void mm_generic_kb(const mm_args *x, const mm_range *r) { mm_kernel_kb(2,
 #if defined(__x86_64__) && defined(__linux__) && (defined(__GNUC__) || defined(__clang__)) && \
     !defined(BCIR_TENSOR_NO_DISPATCH) && BCIR_TENSOR_MAX_VARIANT>1
 #define BCIR_MM_DISPATCH 1
+#include <immintrin.h>
 __attribute__((target("avx2"))) static void mm_avx2(const mm_args *x, const mm_range *r) {
   mm_kernel(2,32,MM_V1,x,r->jb0,r->jb1,r->r0,r->r1);
+}
+/* the AVX2 lane mask with the first `count` (0..8) lanes set */
+__attribute__((target("avx2"))) BCIR_MM_INLINE __m256i kb256_mask(size_t count) {
+  return _mm256_cmpgt_epi32(_mm256_set1_epi32((int)count),_mm256_setr_epi32(0,1,2,3,4,5,6,7));
 }
 __attribute__((target("avx512f"))) static void mm_avx512(const mm_args *x, const mm_range *r) {
   mm_kernel(4,64,MM_V1,x,r->jb0,r->jb1,r->r0,r->r1);
@@ -232,15 +237,196 @@ __attribute__((target("avx2,fma"))) static void mm_avx2_fused(const mm_args *x, 
 __attribute__((target("avx512f"))) static void mm_avx512_fused(const mm_args *x, const mm_range *r) {
   mm_kernel(4,64,MM_FUSED,x,r->jb0,r->jb1,r->r0,r->r1);
 }
-/* the blocked instances (v3): the fused instances' widths and fusion */
-__attribute__((target("avx2,fma"))) static void mm_avx2_kb(const mm_args *x, const mm_range *r) {
-  mm_kernel_kb(2,32,x,r->jb0,r->jb1,r->r0,r->r1);
+/* The blocked instances (v3, NDT-BLOCK): written in intrinsics, so the register block is the
+ * block that runs on both compilers -- 8 rows x 48 columns of accumulators on AVX-512 (24 of
+ * the 32 vector registers), 6 x 16 on AVX2 (12 of 16); per depth the tile is three (two) vector
+ * loads and every A term one broadcast from memory: eleven loads per 24 fused multiply-adds, and
+ * the tile's traffic from L2 per fma a third of the 4 x 64 block's (measured on the step's
+ * shapes against 12 x 32, 6 x 64 and 4 x 96; NDT-BLOCK's record). Rows that do not fill a block
+ * run 4-row (2-row) and single-row blocks of the same chain. Per element the arithmetic is
+ * mm_block_kb's exactly: the block from zero,
+ * one fma per term with l ascending, then c = c + alpha*P as a rounded product and a rounded
+ * sum; the generic instance keeps the plain-C block, and test_decoder_train.c holds every
+ * instance to the fmaf chain. The tile is packed by vector: rows of B through masked loads
+ * (the padding columns zero, nothing read past the matrix), columns of B^T through 16 x 16
+ * (8 x 8) register transposes with the ragged edges copied scalar. A transposed A is read one
+ * cache line per depth, so its next lines are prefetched BCIR_MM_KB_PREFETCH depths ahead. */
+#define BCIR_MM_KB_PREFETCH 8
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void kb512_block(size_t mr, const mm_args *x,
+    const float *bt, size_t i, size_t jb, size_t nj, size_t lb, size_t nl) {
+  __m512 acc0[8],acc1[8],acc2[8],alpha; size_t r,l;
+  for (r=0;r<mr;r++) { acc0[r]=_mm512_setzero_ps(); acc1[r]=_mm512_setzero_ps(); acc2[r]=_mm512_setzero_ps(); }
+  if (x->ta) {
+    const float *ap=x->a+lb*x->lda+i; size_t lda=x->lda;
+    for (l=0;l<nl;l++,ap+=lda) {
+      __m512 b0=_mm512_load_ps(bt+l*48),b1=_mm512_load_ps(bt+l*48+16),b2=_mm512_load_ps(bt+l*48+32);
+      _mm_prefetch((const char *)(ap+BCIR_MM_KB_PREFETCH*lda),_MM_HINT_T0);
+      for (r=0;r<mr;r++) {
+        __m512 av=_mm512_set1_ps(ap[r]);
+        acc0[r]=_mm512_fmadd_ps(av,b0,acc0[r]); acc1[r]=_mm512_fmadd_ps(av,b1,acc1[r]);
+        acc2[r]=_mm512_fmadd_ps(av,b2,acc2[r]);
+      }
+    }
+  } else {
+    const float *ap=x->a+i*x->lda+lb; size_t lda=x->lda;
+    for (l=0;l<nl;l++) {
+      __m512 b0=_mm512_load_ps(bt+l*48),b1=_mm512_load_ps(bt+l*48+16),b2=_mm512_load_ps(bt+l*48+32);
+      for (r=0;r<mr;r++) {
+        __m512 av=_mm512_set1_ps(ap[r*lda+l]);
+        acc0[r]=_mm512_fmadd_ps(av,b0,acc0[r]); acc1[r]=_mm512_fmadd_ps(av,b1,acc1[r]);
+        acc2[r]=_mm512_fmadd_ps(av,b2,acc2[r]);
+      }
+    }
+  }
+  alpha=_mm512_set1_ps(x->alpha);
+  if (nj==48) {
+    for (r=0;r<mr;r++) {
+      float *ci=x->c+(i+r)*x->ldc+jb;
+      _mm512_storeu_ps(ci,_mm512_add_ps(_mm512_loadu_ps(ci),_mm512_mul_ps(alpha,acc0[r])));
+      _mm512_storeu_ps(ci+16,_mm512_add_ps(_mm512_loadu_ps(ci+16),_mm512_mul_ps(alpha,acc1[r])));
+      _mm512_storeu_ps(ci+32,_mm512_add_ps(_mm512_loadu_ps(ci+32),_mm512_mul_ps(alpha,acc2[r])));
+    }
+  } else {
+    __mmask16 m0=(__mmask16)(nj>=16 ? 0xffffu : (1u<<nj)-1u);
+    __mmask16 m1=(__mmask16)(nj>=32 ? 0xffffu : nj>16 ? (1u<<(nj-16))-1u : 0u);
+    __mmask16 m2=(__mmask16)(nj>32 ? (1u<<(nj-32))-1u : 0u);
+    for (r=0;r<mr;r++) {
+      float *ci=x->c+(i+r)*x->ldc+jb;
+      _mm512_mask_storeu_ps(ci,m0,_mm512_add_ps(_mm512_maskz_loadu_ps(m0,ci),_mm512_mul_ps(alpha,acc0[r])));
+      _mm512_mask_storeu_ps(ci+16,m1,_mm512_add_ps(_mm512_maskz_loadu_ps(m1,ci+16),_mm512_mul_ps(alpha,acc1[r])));
+      _mm512_mask_storeu_ps(ci+32,m2,_mm512_add_ps(_mm512_maskz_loadu_ps(m2,ci+32),_mm512_mul_ps(alpha,acc2[r])));
+    }
+  }
+}
+/* 16 depths x 16 columns of B^T (src: one row per column, ld apart) into the tile (dst: one row
+ * per depth, ldd apart): unpack pairs, shuffle quads, then the 128-bit lanes twice. */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void kb512_transpose16(const float *src,
+    size_t ld, float *dst, size_t ldd) {
+  __m512 u[16],v[16]; int q;
+  for (q=0;q<16;q++) u[q]=_mm512_loadu_ps(src+(size_t)q*ld);
+  for (q=0;q<8;q++) { v[2*q]=_mm512_unpacklo_ps(u[2*q],u[2*q+1]); v[2*q+1]=_mm512_unpackhi_ps(u[2*q],u[2*q+1]); }
+  for (q=0;q<4;q++) {
+    u[4*q]=_mm512_shuffle_ps(v[4*q],v[4*q+2],0x44); u[4*q+1]=_mm512_shuffle_ps(v[4*q],v[4*q+2],0xEE);
+    u[4*q+2]=_mm512_shuffle_ps(v[4*q+1],v[4*q+3],0x44); u[4*q+3]=_mm512_shuffle_ps(v[4*q+1],v[4*q+3],0xEE);
+  }
+  for (q=0;q<4;q++) {
+    v[q]=_mm512_shuffle_f32x4(u[q],u[q+4],0x88); v[q+4]=_mm512_shuffle_f32x4(u[q],u[q+4],0xDD);
+    v[q+8]=_mm512_shuffle_f32x4(u[q+8],u[q+12],0x88); v[q+12]=_mm512_shuffle_f32x4(u[q+8],u[q+12],0xDD);
+  }
+  for (q=0;q<8;q++) { u[q]=_mm512_shuffle_f32x4(v[q],v[q+8],0x88); u[q+8]=_mm512_shuffle_f32x4(v[q],v[q+8],0xDD); }
+  for (q=0;q<16;q++) _mm512_storeu_ps(dst+(size_t)q*ldd,u[q]);
+}
+__attribute__((target("avx512f"))) static void kb512_pack(const mm_args *x, float *bt, size_t jb,
+    size_t nj, size_t lb, size_t nl) {
+  size_t j,l;
+  if (x->tb) {
+    size_t jw=nj/16*16,lw=nl/16*16;  /* the whole 16 x 16 blocks, then the ragged edges */
+    for (j=0;j<jw;j+=16) for (l=0;l<lw;l+=16) kb512_transpose16(x->b+(jb+j)*x->ldb+lb+l,x->ldb,bt+l*48+j,48);
+    for (j=0;j<nj;j++) {
+      const float *column=x->b+(jb+j)*x->ldb+lb;
+      for (l=j<jw ? lw : 0;l<nl;l++) bt[l*48+j]=column[l];
+    }
+    for (j=nj;j<48;j++) for (l=0;l<nl;l++) bt[l*48+j]=0.0f;
+  } else {
+    __mmask16 m0=(__mmask16)(nj>=16 ? 0xffffu : (1u<<nj)-1u);
+    __mmask16 m1=(__mmask16)(nj>=32 ? 0xffffu : nj>16 ? (1u<<(nj-16))-1u : 0u);
+    __mmask16 m2=(__mmask16)(nj>32 ? (1u<<(nj-32))-1u : 0u);
+    for (l=0;l<nl;l++) {
+      const float *row=x->b+(lb+l)*x->ldb+jb;
+      _mm512_store_ps(bt+l*48,_mm512_maskz_loadu_ps(m0,row));
+      _mm512_store_ps(bt+l*48+16,_mm512_maskz_loadu_ps(m1,row+16));
+      _mm512_store_ps(bt+l*48+32,_mm512_maskz_loadu_ps(m2,row+32));
+    }
+  }
 }
 __attribute__((target("avx512f"))) static void mm_avx512_kb(const mm_args *x, const mm_range *r) {
-  mm_kernel_kb(4,64,x,r->jb0,r->jb1,r->r0,r->r1);
+  _Alignas(64) float bt[BCIR_MM_KBLOCK*48]; size_t i,jb,lb,nl;
+  for (jb=r->jb0;jb<r->jb1;jb+=48) {
+    size_t nj=x->n-jb<48 ? x->n-jb : 48;
+    for (lb=0;lb<x->k;lb+=nl) {
+      nl=kblock_next(x->k-lb);
+      kb512_pack(x,bt,jb,nj,lb,nl);
+      for (i=r->r0;i+8<=r->r1;i+=8) kb512_block(8,x,bt,i,jb,nj,lb,nl);
+      for (;i+4<=r->r1;i+=4) kb512_block(4,x,bt,i,jb,nj,lb,nl);
+      for (;i<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);
+    }
+  }
+}
+__attribute__((target("avx2,fma"))) BCIR_MM_INLINE void kb256_block(size_t mr, const mm_args *x,
+    const float *bt, size_t i, size_t jb, size_t nj, size_t lb, size_t nl) {
+  __m256 acc0[6],acc1[6],alpha; size_t r,l;
+  for (r=0;r<mr;r++) { acc0[r]=_mm256_setzero_ps(); acc1[r]=_mm256_setzero_ps(); }
+  if (x->ta) {
+    const float *ap=x->a+lb*x->lda+i; size_t lda=x->lda;
+    for (l=0;l<nl;l++,ap+=lda) {
+      __m256 b0=_mm256_load_ps(bt+l*16),b1=_mm256_load_ps(bt+l*16+8);
+      _mm_prefetch((const char *)(ap+BCIR_MM_KB_PREFETCH*lda),_MM_HINT_T0);
+      for (r=0;r<mr;r++) {
+        __m256 av=_mm256_set1_ps(ap[r]);
+        acc0[r]=_mm256_fmadd_ps(av,b0,acc0[r]); acc1[r]=_mm256_fmadd_ps(av,b1,acc1[r]);
+      }
+    }
+  } else {
+    const float *ap=x->a+i*x->lda+lb; size_t lda=x->lda;
+    for (l=0;l<nl;l++) {
+      __m256 b0=_mm256_load_ps(bt+l*16),b1=_mm256_load_ps(bt+l*16+8);
+      for (r=0;r<mr;r++) {
+        __m256 av=_mm256_set1_ps(ap[r*lda+l]);
+        acc0[r]=_mm256_fmadd_ps(av,b0,acc0[r]); acc1[r]=_mm256_fmadd_ps(av,b1,acc1[r]);
+      }
+    }
+  }
+  alpha=_mm256_set1_ps(x->alpha);
+  if (nj==16) {
+    for (r=0;r<mr;r++) {
+      float *ci=x->c+(i+r)*x->ldc+jb;
+      _mm256_storeu_ps(ci,_mm256_add_ps(_mm256_loadu_ps(ci),_mm256_mul_ps(alpha,acc0[r])));
+      _mm256_storeu_ps(ci+8,_mm256_add_ps(_mm256_loadu_ps(ci+8),_mm256_mul_ps(alpha,acc1[r])));
+    }
+  } else {
+    __m256i m0=kb256_mask(nj>=8 ? 8 : nj),m1=kb256_mask(nj>8 ? nj-8 : 0);
+    for (r=0;r<mr;r++) {
+      float *ci=x->c+(i+r)*x->ldc+jb;
+      _mm256_maskstore_ps(ci,m0,_mm256_add_ps(_mm256_maskload_ps(ci,m0),_mm256_mul_ps(alpha,acc0[r])));
+      _mm256_maskstore_ps(ci+8,m1,_mm256_add_ps(_mm256_maskload_ps(ci+8,m1),_mm256_mul_ps(alpha,acc1[r])));
+    }
+  }
+}
+__attribute__((target("avx2,fma"))) static void kb256_pack(const mm_args *x, float *bt, size_t jb,
+    size_t nj, size_t lb, size_t nl) {
+  size_t j,l;
+  if (x->tb) {
+    for (j=0;j<nj;j++) { const float *column=x->b+(jb+j)*x->ldb+lb; for (l=0;l<nl;l++) bt[l*16+j]=column[l]; }
+    for (j=nj;j<16;j++) for (l=0;l<nl;l++) bt[l*16+j]=0.0f;
+  } else {
+    __m256i m0=kb256_mask(nj>=8 ? 8 : nj),m1=kb256_mask(nj>8 ? nj-8 : 0);
+    for (l=0;l<nl;l++) {
+      const float *row=x->b+(lb+l)*x->ldb+jb;
+      _mm256_store_ps(bt+l*16,_mm256_maskload_ps(row,m0));
+      _mm256_store_ps(bt+l*16+8,_mm256_maskload_ps(row+8,m1));
+    }
+  }
+}
+__attribute__((target("avx2,fma"))) static void mm_avx2_kb(const mm_args *x, const mm_range *r) {
+  _Alignas(32) float bt[BCIR_MM_KBLOCK*16]; size_t i,jb,lb,nl;
+  for (jb=r->jb0;jb<r->jb1;jb+=16) {
+    size_t nj=x->n-jb<16 ? x->n-jb : 16;
+    for (lb=0;lb<x->k;lb+=nl) {
+      nl=kblock_next(x->k-lb);
+      kb256_pack(x,bt,jb,nj,lb,nl);
+      for (i=r->r0;i+6<=r->r1;i+=6) kb256_block(6,x,bt,i,jb,nj,lb,nl);
+      for (;i+2<=r->r1;i+=2) kb256_block(2,x,bt,i,jb,nj,lb,nl);
+      for (;i<r->r1;i++) kb256_block(1,x,bt,i,jb,nj,lb,nl);
+    }
+  }
 }
 #endif
-static size_t mm_nr(int variant) { return variant==4 ? 64 : 32; }
+/* The column width of a variant's register block under each contract: a task's column range
+ * is whole blocks. */
+static size_t mm_nr(int variant, int fused) {
+  if (fused==MM_KBLOCK) return variant==4 ? 48 : variant==2 ? 16 : 32;
+  return variant==4 ? 64 : 32;
+}
 int bcir_tensor_mm_variants(void) {
   int v=1;
 #ifdef BCIR_MM_DISPATCH
@@ -642,7 +828,9 @@ void bcir_tensor_pool_run(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx
  * task scales its own elements of C by beta, then runs the serial nest over its block and rows
  * -- every depth chunk, in order -- so each element of C receives its terms in the serial order;
  * the task packs its own tiles. */
-#define BCIR_MM_ROWS 64
+#ifndef BCIR_MM_ROWS
+#define BCIR_MM_ROWS 128
+#endif
 typedef struct mm_job { mm_args x; float beta; int variant,fused; size_t nr,cols,rowsets; } mm_job;
 static void mm_task(void *ctx, size_t task) {
   mm_job *j=(mm_job *)ctx; mm_range r; size_t col=task%j->cols,row=task/j->cols,i,jj;
@@ -663,7 +851,7 @@ static void mm_pool_any(bcir_tensor_pool *pool, int fused, int ta, int tb, size_
     return;
   }
   if (!m || !n) return;
-  j.beta=beta; j.fused=fused; j.variant=fused ? mm_widest_fused() : mm_widest(); j.nr=mm_nr(j.variant);
+  j.beta=beta; j.fused=fused; j.variant=fused ? mm_widest_fused() : mm_widest(); j.nr=mm_nr(j.variant,fused);
   j.x.ta=ta; j.x.tb=tb; j.x.m=m; j.x.n=n; j.x.k=k; j.x.alpha=alpha; j.x.a=a; j.x.lda=ta ? m : k;
   j.x.b=b; j.x.ldb=tb ? k : n; j.x.c=c; j.x.ldc=n; j.x.mode=MM_FULL;
   j.cols=(n+j.nr-1)/j.nr; j.rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;

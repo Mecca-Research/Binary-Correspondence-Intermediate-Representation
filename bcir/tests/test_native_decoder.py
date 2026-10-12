@@ -224,7 +224,8 @@ def test_the_compiled_plan_and_gemm_are_the_programs():
 def test_the_rows_fire_on_wrong_kernels_and_plans():
     """Wrong copies of the C units, built from copies of their sources (never by editing the
     tree): the packed B^T tile read without its depth offset, the register block accumulated in
-    descending order or fused into one rounding, A read untransposed whatever ta says; the plan's
+    descending order or fused into one rounding, A read untransposed whatever ta says, the
+    blocked kernel's generic and AVX-512 instances each wrong in their own code; the plan's
     workspace or cache count off by one span. Each turns its row red."""
     from bcir.tests import native_decoder_fixtures as nf
 
@@ -253,6 +254,18 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
         ("mm_kblock", "bcir_tensor.c", tensor,
          "    else for (j=0;j<nr;j++) if (j<nj) ci[j]=ci[j]+x->alpha*acc[r][j];\n",
          "    else for (j=0;j<nr;j++) if (j<nj) ci[j]=fmaf(x->alpha,acc[r][j],ci[j]);\n"),
+        # NDT-BLOCK: the AVX-512 instance is its own code, so its own wrong copies -- the last
+        # single row left at its beta-scaled value, a transposed tile's ragged columns stale
+        # below the whole blocks, a ragged block's partial added with one fused rounding
+        ("mm_kblock@4", "bcir_tensor.c", tensor,
+         "      for (;i<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);\n",
+         "      for (;i+1<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);\n"),
+        ("mm_kblock@4", "bcir_tensor.c", tensor,
+         "      for (l=j<jw ? lw : 0;l<nl;l++) bt[l*48+j]=column[l];\n",
+         "      for (l=lw;l<nl;l++) bt[l*48+j]=column[l];\n"),
+        ("mm_kblock@4", "bcir_tensor.c", tensor,
+         "      _mm512_mask_storeu_ps(ci,m0,_mm512_add_ps(_mm512_maskz_loadu_ps(m0,ci),_mm512_mul_ps(alpha,acc0[r])));\n",
+         "      _mm512_mask_storeu_ps(ci,m0,_mm512_fmadd_ps(alpha,acc0[r],_mm512_maskz_loadu_ps(m0,ci)));\n"),
         ("exp_ulp", "bcir_tensor.c", tensor,
          "p=1.0f/5040.0f; p=p*r+1.0f/720.0f; p=p*r+1.0f/120.0f;", "p=1.0f/120.0f;"),
         ("exp_ulp", "bcir_tensor.c", tensor,
@@ -279,6 +292,11 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
                         __import__("ctypes").CDLL(str(lib._name)).bcir_tensor_mm_variants() == 1
                     )
                 )  # a host without an AVX2 instance cannot see this one: not a pass, a skip
+            elif row.startswith("mm_kblock@"):
+                need = int(row.partition("@")[2])
+                fired = (
+                    nf.mm_kblock_mismatch(lib) if need in nf.mm_variants(lib, kblock=True) else 1
+                )  # a host without that instance cannot see this one: not a pass, a skip
             else:
                 fired = {"mm": nf.mm_mismatch, "mm_fused": nf.mm_fused_mismatch,
                          "mm_kblock": nf.mm_kblock_mismatch, "plan": nf.plan_mismatch}[row](lib)  # fmt: skip

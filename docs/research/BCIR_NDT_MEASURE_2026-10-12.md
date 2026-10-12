@@ -49,6 +49,13 @@ the mismatch counts, the ulp bound -- are the claims.
   the blocked fused contract (v3, NDT-KBLOCK) with a differential admission, it trains the same
   9.84M state on BCIR's own kernel and on OpenBLAS, at one and at four threads -- and the admitted
   provider trains at 616 ms a step on four threads once its workers sleep between calls (§7).
+- **BCIR's own kernel is at the provider's rate (NDT-BLOCK, §8).** The gap §7 left to OpenBLAS
+  was the schedule, not the arithmetic: with the v3 instances rewritten as intrinsic register
+  blocks (8 x 48 on AVX-512) over a tile packed by vector, the kernel reads 99 GFLOP/s
+  work-weighted at one thread against OpenBLAS's 89 in the same process and 219 on the pool at
+  four against its 219, bit-identical to the chain on every instance; the step's GEMMs
+  569 ms at one thread (952 before), and the 1,000-step run 516 ms a step on four
+  threads (753), the same state `d7fc618c…`.
 
 ## 1. Identity: the state is the state, at every thread count and under each contract
 
@@ -378,3 +385,128 @@ runs are [kblock/runs/](measurements/2026-10-12/kblock/runs/), the spinning one 
 | AdamW update | 81.1 | 81.9 | 66.9 |
 | the rest | 53.5 | 146.4 | 70.7 |
 | **step** | **1,039.6** | **631.9** | **526.5** |
+
+## 8. The kernel at the provider's rate (NDT-BLOCK)
+
+§7 left BCIR's own v3 kernel at 952 ms of GEMMs a step against the admitted provider's 718 at one
+thread, and the kernel-rate record at 0.7x OpenBLAS. The gap was the schedule, not the arithmetic
+-- the contract fixes every element's chain, so only the order of loads and stores could change --
+and three things in it: the 4 x 64 register block read its 112 KB tile from L2 once per four rows
+(272 bytes per 16 fused multiply-adds, at the L2's limit), the compiler gathered the block's A
+terms through the stack, and the tile was packed scalar (16 us for a transposed tile) while a
+transposed A's lines arrived one per depth with no prefetch. A scratch prototype measured the
+candidates against the tree's kernel bit for bit on 42 cases: 12 x 32 at 92 GFLOP/s, 8 x 48 at
+108, 6 x 64 and 4 x 96 between, and the row-panel-outer nest that repacks the tile per row panel
+worse at every panel height (60-77), because the packing is the cost. What landed: the AVX-512 and
+AVX2 instances of v3 as intrinsic micro-kernels (8 x 48 and 6 x 16 accumulators, every A term one
+broadcast from memory, the tile three or two vector loads per depth -- eleven loads per 24 fused
+multiply-adds), the tile packed by vector (masked row loads; 16 x 16 register transposes of B^T),
+the transposed A prefetched eight depths ahead, the pool's tasks 128 rows by one column block of
+the instance's width; the generic instance keeps the plain-C block. The C harness holds every
+instance to the K-blocked `fmaf` chains on 19 shapes serially and on a pool, and
+`train.mm.kblock.mismatch` now runs per instance.
+
+**The kernel-rate record** ([block/gemm-rates-block.json](measurements/2026-10-12/block/gemm-rates-block.json);
+the step's 15 GEMM shapes, best of 7 calls per cell, one process, GCC 13.3, OpenBLAS 0.3.34
+SkylakeX with `OPENBLAS_THREAD_TIMEOUT=4`; every result at beta 1 identical to the old serial
+kernel's, 0 of 75 cells differ):
+
+| GEMM (ta, tb, m, n, k) | v3 kernel before (4 x 64, plain C) | v3 kernel after (8 x 48, intrinsics) | OpenBLAS `sgemm` |
+|---|---:|---:|---:|
+| (0, 1, 1024, 384, 384) | 71.5 | 119.3 | 79.0 |
+| (0, 1, 1024, 192, 384) | 62.1 | 82.0 | 86.5 |
+| (0, 1, 1024, 1024, 384) | 74.1 | 106.5 | 92.6 |
+| (0, 1, 1024, 384, 1024) | 80.0 | 122.1 | 93.2 |
+| (0, 1, 1024, 260, 384) | 64.8 | 101.9 | 79.4 |
+| (0, 0, 1024, 384, 260) | 56.2 | 75.6 | 63.1 |
+| (1, 0, 260, 384, 1024) | 84.4 | 116.0 | 88.8 |
+| (0, 0, 1024, 1024, 384) | 53.9 | 94.7 | 94.3 |
+| (1, 0, 384, 1024, 1024) | 78.9 | 106.3 | 93.8 |
+| (0, 0, 1024, 384, 1024) | 79.5 | 119.4 | 91.2 |
+| (1, 0, 1024, 384, 1024) | 31.2 | 73.6 | 89.6 |
+| (0, 0, 1024, 384, 384) | 80.3 | 113.9 | 88.9 |
+| (1, 0, 384, 384, 1024) | 76.2 | 95.2 | 86.7 |
+| (0, 0, 1024, 384, 192) | 47.1 | 67.4 | 91.1 |
+| (1, 0, 192, 384, 1024) | 63.4 | 91.9 | 70.1 |
+| **work-weighted** | **61.2** | **99.4** | **88.8** |
+
+| GEMM (ta, tb, m, n, k) | v3 kernel before, the pool at 4 | v3 kernel after, the pool at 4 | OpenBLAS at 4, workers sleeping |
+|---|---:|---:|---:|
+| (0, 1, 1024, 384, 384) | 105.1 | 188.6 | 185.3 |
+| (0, 1, 1024, 192, 384) | 92.9 | 164.5 | 155.0 |
+| (0, 1, 1024, 1024, 384) | 100.8 | 215.3 | 251.2 |
+| (0, 1, 1024, 384, 1024) | 124.7 | 257.0 | 257.2 |
+| (0, 1, 1024, 260, 384) | 84.1 | 203.3 | 183.6 |
+| (0, 0, 1024, 384, 260) | 131.9 | 168.8 | 167.2 |
+| (1, 0, 260, 384, 1024) | 147.6 | 194.7 | 161.9 |
+| (0, 0, 1024, 1024, 384) | 151.4 | 208.5 | 204.5 |
+| (1, 0, 384, 1024, 1024) | 192.6 | 246.8 | 255.6 |
+| (0, 0, 1024, 384, 1024) | 199.9 | 297.8 | 262.1 |
+| (1, 0, 1024, 384, 1024) | 142.7 | 239.1 | 270.9 |
+| (0, 0, 1024, 384, 384) | 145.5 | 180.6 | 179.1 |
+| (1, 0, 384, 384, 1024) | 174.1 | 208.0 | 181.2 |
+| (0, 0, 1024, 384, 192) | 106.9 | 114.0 | 114.0 |
+| (1, 0, 192, 384, 1024) | 110.4 | 194.7 | 212.4 |
+| **work-weighted** | **135.9** | **218.9** | **219.1** |
+
+Reading: BCIR's own kernel is now at or past the provider's rate on this host -- 1.12x OpenBLAS
+at one thread and equal on four, 1.62x its own previous rate -- on 13 of the 15 shapes. The two
+it still loses: `dW` with 1,024 rows and depth 1,024 (73.6 against 89.6, from 31.2), whose
+transposed-A lines are 4 KB apart and so alias one cache set at every level, which the prefetch
+halves but packing the panel would remove -- the serial path has no buffer for it under the
+unit's no-allocation law, so it stays the open item of the ladder's row -- and the depth-192
+product (67.4 against 91.1), one short K block whose per-call costs (the beta pass over c, the
+tile) the chain does not cover.
+
+**The step and the run.** Under `kblock+exp` on BCIR's kernel ([block/breakdown-bcir-kblock+exp-t{1,4}.json](measurements/2026-10-12/block/)):
+
+| One step (ms), `kblock+exp`, BCIR's kernel | 1 thread, §7 | 1 thread, now | 4 threads, §7 | 4 threads, now |
+|---|---:|---:|---:|---:|
+| GEMMs, forward | 285.7 | 187.3 | 210.8 | 93.9 |
+| GEMMs, backward (dx and dW) | 666.7 | 381.8 | 320.7 | 196.3 |
+| attention, forward and backward | 163.8 | 128.2 | 57.0 | 54.9 |
+| SiLU and the SwiGLU VJP | 23.1 | 17.5 | 7.2 | 7.5 |
+| norms and RoPE | -- | 27.8 | -- | 20.7 |
+| AdamW update | 75.8 | 73.3 | 74.4 | 53.1 |
+| the rest | -- | 198.4 | -- | 123.7 |
+| **step** | **1,342.3** | **1,014.3** | **741.8** | **550.1** |
+
+(§7's table had no norms-and-RoPE row, so its "rest" holds them; here they are their own row. The rest grows with the faster kernel because the parts are timed on warm operands in paired rounds while the step reads its 39 MB of weights once per pass, and that traffic lands in the unattributed row; the step is the number.)
+
+The 1,000-step language-model run (same data, optimizer and schedule as §4; [block/runs/](measurements/2026-10-12/block/runs/)):
+
+| Run (1,000 steps, batch 8 x 128, `kblock+exp`) | ms/step | tokens/s | train s | val CE | test CE | test acc | answer acc | peak RSS MB | state |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| BCIR's kernel, 1 thread, §7 (the 4 x 64 block) | 1,424.6 | 719 | 1,447 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| BCIR's kernel, 1 thread, now | 973.7 | 1,052 | 983 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| OpenBLAS admitted, 1 thread, §7 | 1,065.5 | 961 | 1,078 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| BCIR's kernel, 4 threads, §7 | 753.0 | 1,360 | 756 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| BCIR's kernel, 4 threads, now | 516.3 | 1,983 | 518 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| OpenBLAS admitted, 4 threads, its workers sleeping, §7 | 615.9 | 1,663 | 619 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| eager PyTorch, 1 thread, the 10-11 host | 774.3 | -- | -- | 1.5001 | 1.6319 | -- | -- | -- | -- |
+
+Reading:
+
+- **The state is the state.** Both runs end in `d7fc618c…`, the state of §7's four runs: the
+  kernel's new schedule is the contract's arithmetic, so the same 9.84M model to the last bit,
+  and the same held-out numbers to four decimals.
+- **BCIR's own kernel now trains faster than the admitted provider did.** 973.7 ms a step on
+  one thread (1,424.6 before, x1.46; OpenBLAS admitted 1,065.5) and 516.3 on four (753.0 before,
+  x1.46; OpenBLAS admitted with its workers sleeping 615.9) -- 1,983 tokens a second. Against
+  the 10-11 host's eager PyTorch on one thread (774.3) the four-thread BCIR step is 1.5x
+  faster and the one-thread step 0.8x, both on a host about 13% slower than that one; the
+  equal-thread comparison on one host stays the measurement that decides "ahead at four"
+  (PyTorch's four-thread step there was about 257 ms).
+- **Where the step is now.** By kernel at four threads: GEMMs 290 ms (531 before), attention
+  55, the update 53, norms and RoPE 21, SiLU and the VJP 8, the rest 124 -- the GEMMs are half
+  the step for the first time, and the residuals are the ones the ladder names: the serial
+  reductions and the update's first pass (NDT-REDUCE, NDT-NORM), the partition and the two VJPs
+  run concurrently (NDT-SCHED), and the transposed-A packing this slice left open.
+
+| Exact rows | Result |
+|---|---|
+| `train.mm.kblock.mismatch`, now over every instance the host runs (generic, AVX2, AVX-512; 40 cases each) | 0 |
+| the C harness's blocked-contract section: 19 shapes x 4 transposes x 3 instances, serially and on a pool of three | every run bit-identical to the chain |
+| the `identity` stage, `kblock` and `kblock+exp`, 1 and 3 threads, the widest, AVX2 and portable builds ([block/identity-block.json](measurements/2026-10-12/block/identity-block.json)) | 9 rows, two states, §7's: `5b92ff75…` under `kblock` and `f19b0d7d…` under `kblock+exp` -- the widest (AVX-512) and AVX2 builds at 1 and 3 threads under both contracts, and the portable build's `kblock` row at one thread; its other three rows were stopped (the portable build's v3 kernel calls `fmaf` per term and takes 66 s a step), an honest gap, not a pass |
+| the 1,000-step `kblock+exp` run on BCIR's kernel, 1 and 4 threads | one state, `d7fc618c9eeb8b6f…`, on both -- §7's state |
+| `ndt-kblock.json`, NK1-NK10 | 10 injected, 10 caught |
