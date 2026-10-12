@@ -48,7 +48,7 @@ the mismatch counts, the ulp bound -- are the claims.
   computes a K-blocked fused chain, bit for bit, on every one of the trainer's shapes. Declared as
   the blocked fused contract (v3, NDT-KBLOCK) with a differential admission, it trains the same
   9.84M state on BCIR's own kernel and on OpenBLAS, at one and at four threads -- and the admitted
-  provider trains at 655 ms a step on four threads (§7).
+  provider trains at 616 ms a step on four threads once its workers sleep between calls (§7).
 
 ## 1. Identity: the state is the state, at every thread count and under each contract
 
@@ -317,7 +317,8 @@ differs is refused and the state keeps BCIR's kernels. Measured in the same sess
 | BCIR's own kernel, 1 thread | 1,424.6 | 719 | 1,447 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
 | BCIR's own kernel, 4 threads | 753.0 | 1,360 | 756 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
 | OpenBLAS admitted, 1 thread (OpenBLAS at 1) | 1,065.5 | 961 | 1,078 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
-| OpenBLAS admitted, 4 threads (OpenBLAS at 4, the pool at 4) | 655.0 | 1,563 | 662 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| OpenBLAS admitted, 4 threads (OpenBLAS at 4, the pool at 4; its workers spinning between calls, OpenBLAS's default) | 655.0 | 1,563 | 662 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| OpenBLAS admitted, 4 threads, its workers sleeping between calls (`OPENBLAS_THREAD_TIMEOUT=4`) | 615.9 | 1,663 | 619 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
 | §4: `fused+exp` on BCIR's kernel, 4 threads | 758.4 | 1,350 | 763 | 1.5003 | 1.6319 | 0.5368 | 0.6198 | 547 | `eb43c96d` |
 | §4, the 10-11 host: PyTorch 2.13 eager, 1 thread | 774.3 | 1,323 | 774 | 1.5001 | 1.6319 | 0.5367 | 0.6197 | 1,140 | `a7cd43d5` |
 
@@ -328,13 +329,20 @@ Three readings:
   state after 1,000 steps, byte for byte. The provider is admitted into a declared contract, not
   trusted; where it is not the contract (the small products its small-matrix path computes) it is
   refused, and BCIR's kernel runs.
-- **The provider's rate is the step's.** OpenBLAS admitted takes the four-thread step from 753 to
-  655 ms (x1.15) and the one-thread step from 1,425 to 1,066 (x1.34). Against the 10-11 report's
-  eager PyTorch run -- 774 ms a step on one thread, on a host about 13% faster -- BCIR with the
-  admitted provider trains the same model at 655 ms on four threads: faster than eager PyTorch's
-  one-thread step, and about 2.5x slower than PyTorch's four-thread step there (257 ms, the 10-11
-  context stage), both measured on different hosts. The equal-thread comparison on one host stays
-  the measurement that decides the roadmap's "ahead at four".
+- **The provider's rate is the step's -- once its workers stop spinning.** OpenBLAS admitted takes
+  the one-thread step from 1,425 to 1,066 ms (x1.34) and the four-thread step from 753 to 655
+  (x1.15) -- and the step by kernel under the provider (below) says why only x1.15: OpenBLAS's
+  worker threads spin for 2^28 cycles after each call before they sleep, so between two GEMMs
+  three of the four cores are burning while the pool runs the attention, the update and the
+  norms (the attention 57 to 114 ms, the rest 51 to 146). With `OPENBLAS_THREAD_TIMEOUT=4` set
+  before the library loads (the harness's `_openblas` now sets it) the workers sleep at once: the
+  step by kernel reads 527 ms against 632 spinning, and the 1,000-step run's median 615.9 ms
+  against 655.0 (x1.22 over BCIR's kernel's 753; the same state). Against the
+  10-11 report's eager PyTorch run -- 774 ms a step on one thread, on a host about 13% faster --
+  BCIR with the admitted provider trains the same model at 615.9 ms on four threads: faster
+  than eager PyTorch's one-thread step, and about 2.4 times PyTorch's four-thread step there
+  (257 ms, the 10-11 context stage), both measured on different hosts. The equal-thread comparison
+  on one host stays the measurement that decides the roadmap's "ahead at four".
 - **BCIR's own v3 kernel is faster than its v2 kernel.** At one thread the step's GEMMs go from
   1,081 ms (`fused+exp`, §3) to 952 under `kblock+exp`: the partial stays in registers across a
   whole K block of 448 instead of a 64-deep chunk, so c is read and written once per block. At
@@ -353,3 +361,17 @@ The step by kernel under `kblock+exp` on BCIR's own kernel ([kblock/breakdown-bc
 | AdamW update | 75.8 | 74.4 |
 | the rest | 92.7 | 50.6 |
 | **step** | **1,342.3** | **741.8** |
+
+and with OpenBLAS admitted ([kblock/breakdown-bcir-openblas-kblock+exp-t{1,4}.json](measurements/2026-10-12/kblock/)
+and [-t4-spinning.json](measurements/2026-10-12/kblock/breakdown-bcir-openblas-kblock+exp-t4-spinning.json); the
+runs are [kblock/runs/](measurements/2026-10-12/kblock/runs/), the spinning one `-t4-spinning.json`):
+
+| One step (ms), `kblock+exp`, OpenBLAS admitted | 1 thread | 4 threads, workers spinning | 4 threads, workers sleeping |
+|---|---:|---:|---:|
+| GEMMs, forward and backward | 718.3 | 260.0 | 299.2 |
+| attention, forward and backward | 137.3 | 114.2 | 61.1 |
+| SiLU and the SwiGLU VJP | 20.7 | 9.0 | 7.5 |
+| norms and RoPE | 28.2 | 20.0 | 20.5 |
+| AdamW update | 81.1 | 81.9 | 66.9 |
+| the rest | 53.5 | 146.4 | 70.7 |
+| **step** | **1,039.6** | **631.9** | **526.5** |

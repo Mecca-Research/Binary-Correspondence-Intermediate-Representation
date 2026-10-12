@@ -424,11 +424,17 @@ def build_library(out: Path, cc: str, defines=(), sources: Path | None = None, f
 def _openblas(threads: int = 1):
     import scipy_openblas32
 
+    # OpenBLAS's worker threads spin after each call for 2^OPENBLAS_THREAD_TIMEOUT cycles before
+    # they sleep (2^28 by default, about a tenth of a second): beside the trainer's pool they
+    # burn the cores the attention, the update and the norms run on between two GEMMs. Read at
+    # load, so it is set before the library loads; a value in the environment already wins.
+    os.environ.setdefault("OPENBLAS_THREAD_TIMEOUT", "4")
     path = Path(scipy_openblas32.get_lib_dir()) / "libscipy_openblas.so"
     lib = ctypes.CDLL(str(path))
     lib.scipy_openblas_set_num_threads(threads)
     lib.scipy_openblas_get_config.restype = ctypes.c_char_p
-    return path, lib.scipy_openblas_get_config().decode()
+    config = lib.scipy_openblas_get_config().decode()
+    return path, f"{config} THREAD_TIMEOUT={os.environ['OPENBLAS_THREAD_TIMEOUT']}"
 
 
 def _native(data: Path, library: Path, *, openblas=False, threads=1, contract="v1"):
@@ -1328,14 +1334,18 @@ def _torch_breakdown(data: Path, rounds: int) -> dict:
     }
 
 
-def bcir_breakdown_stage(data: Path, cc: str, rounds: int, threads: int, contract: str):
+def bcir_breakdown_stage(
+    data: Path, cc: str, rounds: int, threads: int, contract: str, openblas: bool = False
+):
     """The BCIR side of `breakdown` for one (contract, thread count): where a step spends its
-    time on the pool under each contract (NDT-MEASURE); no PyTorch is needed."""
+    time on the pool under each contract (NDT-MEASURE), with OpenBLAS behind the linears when
+    asked (admitted under the blocked contract, its own arithmetic under the others); no
+    PyTorch is needed."""
     library = build_library(data / "lib" / cc.replace("/", "_"), cc)
     result = {"compiler": _compiler(cc), "threads": threads, "contract": contract, "rounds": rounds,
-              **_bcir_breakdown(data, library, rounds, openblas=False, threads=threads,
+              **_bcir_breakdown(data, library, rounds, openblas=openblas, threads=threads,
                                 contract=contract)}  # fmt: skip
-    name = f"breakdown-bcir-{contract}-t{threads}"
+    name = f"breakdown-bcir{'-openblas' if openblas else ''}-{contract}-t{threads}"
     (data / f"{name}.json").write_text(json.dumps(result, indent=1, sort_keys=True) + "\n")
     print(json.dumps({"saved": name, **{k: v for k, v in result.items() if isinstance(v, (int, float))}}),
           flush=True)  # fmt: skip
@@ -1715,6 +1725,7 @@ def main():
     bb.add_argument("--rounds", type=int, default=5)
     bb.add_argument("--threads", type=int, default=1)
     bb.add_argument("--contract", default="v1")
+    bb.add_argument("--openblas", action="store_true")
     b = sub.add_parser("baseline")
     b.add_argument("--data", type=Path, required=True)
     b.add_argument("--steps", type=int, default=6)
@@ -1762,7 +1773,7 @@ def main():
         identity(a.data, a.steps, a.cc or ["gcc"], tuple(int(n) for n in a.threads.split(",")),
                  tuple(a.contract.split(",")), tuple(a.variants.split(",")))  # fmt: skip
     elif a.stage == "bcir-breakdown":
-        bcir_breakdown_stage(a.data, a.cc, a.rounds, a.threads, a.contract)
+        bcir_breakdown_stage(a.data, a.cc, a.rounds, a.threads, a.contract, a.openblas)
     elif a.stage == "baseline":
         baseline(a.data, a.steps, a.cc, a.base, a.old_flags.split())
     elif a.stage == "kernels":

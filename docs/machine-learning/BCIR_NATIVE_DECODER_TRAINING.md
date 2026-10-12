@@ -185,7 +185,11 @@ to the K-blocked `fmaf` chains and the split rule on ten depths, `train.mm.kbloc
 the kernel to its exact emulation, and `use_cblas` admits a CBLAS provider under v3 only by a
 differential over the trainer's own shapes (`train.mm.provider.mismatch`: OpenBLAS's `sgemm`, 0 of
 30 on this host) -- the first provider that is a BCIR contract bit for bit rather than its own
-arithmetic; `tools/testing/faults/ndt-kblock.json` holds the injected faults. What comes next for
+arithmetic; `tools/testing/faults/ndt-kblock.json` holds the injected faults. A provider whose
+worker threads spin between calls contends with the pool's kernels: OpenBLAS's spin for 2^28
+cycles after each call cost the four-thread step a fifth until `OPENBLAS_THREAD_TIMEOUT` was set
+low before the library loaded (the comparison harness sets it; the report's §7 measures it). What
+comes next for
 this trainer -- the plan driving the step's dispatch, the fused kernel's register block and packing,
 tiled attention -- is the ladder of
 [the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md).
