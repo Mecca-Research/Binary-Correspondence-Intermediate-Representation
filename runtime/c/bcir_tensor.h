@@ -85,6 +85,27 @@ BCIR_DT_API void bcir_tensor_mm_fused_pool(bcir_tensor_pool *pool, int ta, int t
 BCIR_DT_API int bcir_tensor_mm_fused_variants(void);
 BCIR_DT_API int bcir_tensor_mm_fused_variant(int variant, int ta, int tb, size_t m, size_t n,
     size_t k, float alpha, const float *a, const float *b, float beta, float *c);
+/* The BCIR exponential (NDT-EXP): one operation sequence on every instance -- a Cody-Waite
+ * reduction x = k ln2 + r, a degree-7 polynomial in r, 2^k as two exact power-of-two scalings
+ * (one rounding into the subnormals), the three special cases selected at the end -- so the
+ * scalar, AVX2 and AVX-512 instances agree bit for bit, with no libm and no fma; within 1 ulp
+ * of exp evaluated in double and rounded to binary32 (bcir_tensor_exp_sweep measures the bound).
+ * SiLU, the SwiGLU VJP and the attention softmax under their v2 contracts use it (the sigmoid is
+ * 1/(1+e) for x >= 0 and e*(1/(1+e)) for x < 0, e = exp(-|x|)); v1 keeps libm's expf. */
+BCIR_DT_API float bcir_tensor_expf(float x);
+BCIR_DT_API void bcir_tensor_exp(size_t n, const float *x, float *y);  /* the widest instance */
+BCIR_DT_API int bcir_tensor_exp_variant(int variant, size_t n, const float *x, float *y);
+/* Every binary32 in [-104, 89] at `stride` (a power of two) through every instance this host
+ * runs: `mismatch` counts the inputs where two instances differ, `ulp` the largest distance from
+ * exp in double rounded to binary32. Returns the inputs swept; 0 for a stride that is not a
+ * power of two. */
+BCIR_DT_API size_t bcir_tensor_exp_sweep(unsigned stride, size_t *mismatch, unsigned *ulp);
+BCIR_DT_API void bcir_tensor_silu_v2_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);
+BCIR_DT_API void bcir_tensor_swiglu_backward_v2_pool(bcir_tensor_pool *pool, size_t n,
+    const float *gate, const float *up, const float *dy, float *dg, float *du);
+BCIR_DT_API void bcir_tensor_attention_v2_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
+    size_t heads, size_t kvheads, size_t dim, const float *q, const float *k, const float *v,
+    float *p, float *y);
 /* The portable GEMM's instruction-set variants: bit 1 portable C, bit 2 AVX2, bit 4 AVX-512F
  * (x86-64 Linux with GCC or Clang). Every variant computes the same rounded operations in the
  * same order, so all of them are bit-identical; bcir_tensor_mm runs the widest one the host

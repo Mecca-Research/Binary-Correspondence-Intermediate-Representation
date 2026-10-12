@@ -155,7 +155,7 @@ def test_native_c_harness_c11_and_c23():
             result = subprocess.run(
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
-            assert result.stdout.count("PASS") == 8
+            assert result.stdout.count("PASS") == 9
 
 
 def test_native_provider_c_abi_keeps_frameworks_off_execution_path():
@@ -212,6 +212,8 @@ def test_the_compiled_plan_and_gemm_are_the_programs():
         assert nf.plan_mismatch(lib) == 0
         assert nf.mm_mismatch(lib) == 0
         assert nf.mm_fused_mismatch(lib) == 0
+        swept, mismatch, ulp = nf.exp_sweep(lib)
+        assert swept > 8_000_000 and mismatch == 0 and ulp <= 1, (swept, mismatch, ulp)
         assert len(nf.MM_CASES) == 20 and len(nf.PLAN_CORPUS) == 6
 
 
@@ -239,6 +241,13 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
          "acc[r][j]=fmaf(av[r],bl[j],acc[r][j]);", "acc[r][j]+=av[r]*bl[j];"),
         ("mm_fused", "bcir_tensor.c", tensor,
          "mm_variant_any(mm_widest_fused(),MM_FUSED,", "mm_variant_any(mm_widest_fused(),MM_V1,"),
+        ("exp_ulp", "bcir_tensor.c", tensor,
+         "p=1.0f/5040.0f; p=p*r+1.0f/720.0f; p=p*r+1.0f/120.0f;", "p=1.0f/120.0f;"),
+        ("exp_ulp", "bcir_tensor.c", tensor,
+         "#define BCIR_EXP_LN2_LO 1.428606765330187e-06f", "#define BCIR_EXP_LN2_LO 0.0f"),
+        ("exp_mismatch", "bcir_tensor.c", tensor,
+         "static void exp_avx2(size_t n, const float *x, float *y) { exp_body(n,x,y); }",
+         "static void exp_avx2(size_t n, const float *x, float *y) { size_t i; for (i=0;i<n;i++) y[i]=expf(x[i]); }"),
         ("plan", "bcir_decoder_train.c", train,
          "!term(&p.scratch,5,nd)", "!term(&p.scratch,6,nd)"),
         ("plan", "bcir_decoder_train.c", train,
@@ -248,8 +257,19 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
         for i, (row, unit, text, old, new) in enumerate(mutants):
             assert text.count(old) == 1, old
             lib = _ndt_library(Path(tmp) / str(i), {unit: text.replace(old, new)})
-            fired = {"mm": nf.mm_mismatch, "mm_fused": nf.mm_fused_mismatch,
-                     "plan": nf.plan_mismatch}[row](lib)  # fmt: skip
+            if row == "exp_ulp":
+                fired = nf.exp_sweep(lib)[2] > 1
+            elif row == "exp_mismatch":
+                fired = (
+                    nf.exp_sweep(lib)[1]
+                    if nf.exp_sweep(lib)[1]
+                    else int(
+                        __import__("ctypes").CDLL(str(lib._name)).bcir_tensor_mm_variants() == 1
+                    )
+                )  # a host without an AVX2 instance cannot see this one: not a pass, a skip
+            else:
+                fired = {"mm": nf.mm_mismatch, "mm_fused": nf.mm_fused_mismatch,
+                         "plan": nf.plan_mismatch}[row](lib)  # fmt: skip
             assert fired > 0, f"train.{row}.mismatch cannot see {new!r}"
 
 
@@ -271,6 +291,11 @@ def test_the_training_state_is_identical_at_every_thread_count():
         assert nf.threads_mismatch(path) == 0
         fused = nf.thread_states(path, contract="fused")
         assert len(set(fused.values())) == 1 and fused[1] != states[1], fused
+        digests = {states[1], fused[1]}
+        for name in ("exp", "fused+exp"):
+            under = nf.thread_states(path, contract=name)
+            assert len(set(under.values())) == 1 and under[1] not in digests, (name, under)
+            digests.add(under[1])
         spec, batch, time_ = nf.THREADS_BENCH
         one = NativeDecoder(path, spec, batch_size=batch, context_length=time_)
         assert one.threads == 1 and one.lib.bcir_tensor_pool_threads(one.state.pool) == 1
@@ -369,7 +394,10 @@ def test_the_harness_rows_are_the_programs_numbers():
     rows = {m.key: m for m in METRICS if m.group == "train"}
     assert set(rows) == {"train.plan.mismatch", "train.mm.mismatch", "train.memory.transient",
                          "train.step.ms", "train.corpus.unselected",
-                         "train.state.threads.mismatch", "train.mm.fused.mismatch"}  # fmt: skip
+                         "train.state.threads.mismatch", "train.mm.fused.mismatch",
+                         "train.exp.mismatch", "train.exp.ulp.max"}  # fmt: skip
+    for key, baseline in (("train.exp.mismatch", 0), ("train.exp.ulp.max", 1)):
+        assert rows[key].kind == "exact" and rows[key].bound == baseline == rows[key].baseline
     fused = rows["train.mm.fused.mismatch"]
     assert fused.kind == "exact" and fused.bound == 0 and fused.baseline == 0
     assert fused.what.startswith(f"of {len(nf.MM_CASES)} GEMM cases")

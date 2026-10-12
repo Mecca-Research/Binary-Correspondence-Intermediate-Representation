@@ -20,6 +20,10 @@ spec alone. One function per row family grades it against the C rail; the tests,
     train.mm.fused.mismatch    `MM_CASES` whose native `bcir_tensor_mm_fused` output differs in any bit
                                from `mm_reference_fused` -- the fused contract (v2, NDT-FMA) as an
                                exact rational emulation rounded once per term
+    train.exp.mismatch         inputs among the 2^24 `exp_sweep` sweeps (every binary32 in [-104, 89]
+                               at stride 2^8) where two instances of the BCIR exponential differ
+    train.exp.ulp.max          the largest distance, in ulps, of the BCIR exponential from exp in
+                               double rounded to binary32 over the same inputs (stated: 1)
     train.state.threads.mismatch  thread counts among `THREAD_COUNTS[1:]` whose state after three
                                steps of `THREADS_BENCH` differs in any bit from the one-thread
                                state of the same library, weights, tokens and rates (NDT-THREADS)
@@ -357,6 +361,20 @@ def measure_step(path, bench=BENCH) -> dict[str, float]:
     return {"train.step.ms": value, "train.step.ms.floor": float(seconds) * 1000}
 
 
+# --- train.exp.mismatch, train.exp.ulp.max ----------------------------------------------------
+
+
+def exp_sweep(lib, stride: int = 256) -> tuple[int, int, int]:
+    """(inputs swept, inputs where two instances differ, max ulp from exp in double rounded to
+    binary32) of `bcir_tensor_exp_sweep` at `stride`."""
+    fn = lib.bcir_tensor_exp_sweep
+    fn.argtypes = [ct.c_uint, ct.POINTER(ct.c_size_t), ct.POINTER(ct.c_uint)]
+    fn.restype = ct.c_size_t
+    mismatch, ulp = ct.c_size_t(), ct.c_uint()
+    swept = fn(stride, ct.byref(mismatch), ct.byref(ulp))
+    return swept, mismatch.value, ulp.value
+
+
 # --- train.state.threads.mismatch -----------------------------------------------------------
 
 
@@ -439,6 +457,10 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         out["train.plan.mismatch"] = float(plan_mismatch(lib))
         out["train.mm.mismatch"] = float(mm_mismatch(lib))
         out["train.mm.fused.mismatch"] = float(mm_fused_mismatch(lib))
+        swept, mismatch, ulp = exp_sweep(lib)
+        assert swept > 8_000_000, swept
+        out["train.exp.mismatch"] = float(mismatch)
+        out["train.exp.ulp.max"] = float(ulp)
         out["train.state.threads.mismatch"] = float(threads_mismatch(path))
         if timed:
             out.update(measure_step(path))
@@ -455,6 +477,7 @@ __all__ = [
     "THREADS_BENCH",
     "build_library",
     "corpus_unselected",
+    "exp_sweep",
     "measure",
     "measure_step",
     "mm_fused_mismatch",

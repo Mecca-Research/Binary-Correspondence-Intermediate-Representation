@@ -53,9 +53,11 @@ _CBLAS = ct.CFUNCTYPE(
     ct.c_int,
 )
 _MAGIC = b"BCIRDT1\0"
-#: The GEMM contract a state trains under (ABI 3, NDT-FMA): v1 rounds each term's product and
-#: its addition; "fused" rounds them once (one IEEE fmaf per term). A provider's GEMM keeps its own.
-_CONTRACTS = {"v1": 0, "fused": 1}
+#: The contracts a state trains under (ABI 3): v1 rounds each GEMM term's product and its addition
+#: and takes exp from libm; "fused" rounds the two once (one IEEE fmaf per term, NDT-FMA); "exp" puts
+#: SiLU, the SwiGLU VJP and the softmax on the BCIR exponential (NDT-EXP); "fused+exp" both. A
+#: provider's GEMM or SiLU keeps its own.
+_CONTRACTS = {"v1": 0, "fused": 1, "exp": 2, "fused+exp": 3}
 
 
 class _Spec(ct.Structure):
@@ -200,8 +202,9 @@ class NativeDecoder:
     partitions fixed by the shapes, so the state after any number of steps is bit-identical at
     every thread count and to the one-thread (serial) trainer; `close()` releases the threads.
     A CBLAS provider threads its own GEMM as it is configured; the pool runs the rest.
-    `contract` selects the GEMM contract (`"v1"`, the default of every gate and record, or
-    `"fused"`, one IEEE fmaf per term); the checkpoint names it and `resume` restores it.
+    `contract` selects the arithmetic contracts (`"v1"`, the default of every gate and record;
+    `"fused"`, one IEEE fmaf per GEMM term; `"exp"`, the BCIR exponential under SiLU, the SwiGLU
+    VJP and the softmax; `"fused+exp"`); the checkpoint names it and `resume` restores it.
     """
 
     @staticmethod

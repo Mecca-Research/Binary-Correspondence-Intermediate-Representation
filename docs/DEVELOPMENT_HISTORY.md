@@ -2866,6 +2866,30 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     and on random text over small alphabets (where merges nest deepest); the tokenizer's own
     `encode` is the rank-ordered one; and a rank table that reverses the merge order disagrees,
     so the differential can fail.
+  NDT-EXP (2026-10-12): a BCIR-owned exponential under the v2 contracts of SiLU, the SwiGLU VJP
+  and the softmax.
+  - `bcir_tensor_expf`: x = k ln2 + r by a Cody-Waite reduction (LN2_HI with 16 significant bits,
+    so k*LN2_HI is exact), a degree-7 polynomial in r by Horner, 2^k as two exact power-of-two
+    scalings (one rounding into the subnormals), the argument clamped and the three special cases
+    (+inf above ln FLT_MAX, 0 below the last subnormal, NaN) selected at the end -- branch-free, so
+    the scalar, AVX2 and AVX-512 instances run one operation sequence under -ffp-contract=off and
+    agree bit for bit (clang vectorizes both instances; GCC the AVX-512 one). SiLU v2, the SwiGLU
+    VJP v2 (the sigmoid 1/(1+e) for x >= 0 and e*(1/(1+e)) for x < 0, e = exp(-|x|), a declared
+    form) and the softmax v2 use it; the `exp` contract bit (BCIR_DT_CONTRACT_EXP) selects them, a
+    provider's SiLU keeps its own; `NativeDecoder(contract="exp" | "fused+exp")`.
+  - Evidence. `bcir_tensor_exp_sweep`: every binary32 in [-104, 89] at stride 2^8 (8,388,592
+    inputs) through every instance the host runs: 0 inputs where two instances differ, 1 ulp at
+    most from exp in double rounded to binary32 (99.6% exact) -- `train.exp.mismatch` 0 and
+    `train.exp.ulp.max` 1, the stated row, which the harness holds exactly (an exact row has no
+    band); identical sweeps from the gcc and clang builds. The C harness's `exp_contract`: the
+    instances against the scalar, the special values, SiLU/SwiGLU VJP/softmax v2 on a pool against
+    their definitions and apart from v1; `pool_identity` runs its three steps under all four
+    contracts, each state its own, each identical at 1..4 threads. `ndt-exp.json`: 5 defects, 5
+    caught -- NE5, the trainer's SiLU ignoring its contract, escaped the first witness (the four
+    states still differed, through the softmax), so `exp_contract` now holds a forward pass's
+    layer-0 hidden activations to each contract's own SiLU, the check that sees that kernel
+    alone (L11: the witness hits the law it exists to test). The threads witness holds the `exp`
+    and `fused+exp` states identical across thread counts and apart from the other contracts'.
   NDT-FMA (2026-10-12): the fused GEMM contract, v2, beside v1.
   - `bcir_tensor_mm_fused` (and `_fused_pool`, `_fused_variant`, `_fused_variants`): the same
     register-blocked nest as v1 with one `fmaf` per term in place of a rounded multiply and a

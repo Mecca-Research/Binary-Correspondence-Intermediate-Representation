@@ -863,6 +863,34 @@ METRICS: tuple[Metric, ...] = (
         "fused instance to the fmaf ascending-k loop",
         slice_owner="NDT-FMA",
     ),
+    # --- NDT-EXP: the BCIR exponential --------------------------------------------------------
+    Metric(
+        "train.exp.mismatch",
+        "train",
+        "inputs among 2^24 (every binary32 in [-104, 89] at stride 2^8) where two instruction-set "
+        "instances of the BCIR exponential (bcir_tensor_exp_sweep) differ in any bit",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one operation sequence on every instance -- the same rounded multiplies and "
+        "adds in the same order, no libm, no fma, contraction off -- so the instances cannot differ",
+        slice_owner="NDT-EXP",
+    ),
+    Metric(
+        "train.exp.ulp.max",
+        "train",
+        "the largest distance, in binary32 ulps, of the BCIR exponential from exp evaluated in "
+        "double and rounded to binary32, over the same 2^24 inputs",
+        1,
+        "ulp",
+        "exact",
+        bound=1,
+        bound_source="the stated bound of the v2 contracts: a degree-7 polynomial after a Cody-Waite "
+        "reduction stays within one ulp of the correctly rounded value; a kernel past it is a "
+        "different contract, not a faster one",
+        slice_owner="NDT-EXP",
+    ),
     Metric(
         "transform.export.mismatch",
         "transform",

@@ -59,7 +59,7 @@ static int valid(bcir_decoder_state *s) {
   if (rc) return rc;
   if (p.parameters!=s->plan.parameters || p.activations!=s->plan.activations ||
       p.scratch!=s->plan.scratch) return BCIR_DT_INVALID;
-  if (s->contract&~(uint32_t)BCIR_DT_CONTRACT_FUSED) return BCIR_DT_INVALID;
+  if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP)) return BCIR_DT_INVALID;
   ptr[0]=s->weights; ptr[1]=s->gradients; ptr[2]=s->moment1; ptr[3]=s->moment2;
   ptr[4]=s->activations; ptr[5]=s->scratch;
   len[0]=len[1]=len[2]=len[3]=p.parameters; len[4]=p.activations; len[5]=p.scratch;
@@ -129,7 +129,8 @@ static cache activations(float *x,geometry g) {
   a.gate=x; x+=g.nf; a.up=x; x+=g.nf; a.hidden=x; return a;
 }
 /* The step's kernels: a provider's GEMM or SiLU replaces BCIR's (threaded as the provider
- * threads it); BCIR's GEMM keeps the state's contract (v1, or the fused v2); every other kernel
+ * threads it); BCIR's GEMM keeps the state's contract (v1, or the fused v2), as do SiLU, the
+ * SwiGLU VJP and the attention softmax (v1 libm, or v2 the BCIR exponential); every other kernel
  * runs on the state's pool, serial when it is NULL. The pool
  * kernels' partitions are fixed by the shapes (bcir_tensor.h), so the step is bit-identical at
  * every thread count; the loss, the embedding scatter, the gamma VJP's row sum and the
@@ -149,7 +150,18 @@ static void linear_backward(bcir_decoder_state *s,size_t r,size_t in,size_t out,
 }
 static void silu(bcir_decoder_state *s,size_t n,const float *x,float *y) {
   if (s->provider.silu) s->provider.silu(s->provider.ctx,n,x,y);
+  else if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_v2_pool(s->pool,n,x,y);
   else bcir_tensor_silu_pool(s->pool,n,x,y);
+}
+static void swiglu_backward(bcir_decoder_state *s,size_t n,const float *g,const float *u,
+    const float *dy,float *dg,float *du) {
+  if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_swiglu_backward_v2_pool(s->pool,n,g,u,dy,dg,du);
+  else bcir_tensor_swiglu_backward_pool(s->pool,n,g,u,dy,dg,du);
+}
+static void attention(bcir_decoder_state *s,size_t b,size_t t,size_t h,size_t kh,size_t d,
+    const float *q,const float *k,const float *v,float *p,float *y) {
+  if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_attention_v2_pool(s->pool,b,t,h,kh,d,q,k,v,p,y);
+  else bcir_tensor_attention_pool(s->pool,b,t,h,kh,d,q,k,v,p,y);
 }
 static void forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
   const bcir_decoder_spec *sp=&s->plan.spec;
@@ -167,7 +179,7 @@ static void forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
     linear(s,g.n,g.d,g.k,a.n1,p.v,a.v);
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,sp->rope_base,a.q,0);
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,sp->rope_base,a.k,0);
-    bcir_tensor_attention_pool(s->pool,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx);
+    attention(s,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx);
     linear(s,g.n,g.d,g.d,a.ctx,p.o,a.x2);
     bcir_tensor_add_pool(s->pool,g.nd,x,a.x2);
     bcir_tensor_rms_pool(s->pool,g.n,g.d,(float)sp->rms_eps,a.x2,p.norm2,a.n2);
@@ -226,7 +238,7 @@ int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
     layer grad=params(s->gradients+g.v*g.d+l*g.lp,g);
     cache a=activations(cs+l*g.la,g); float *x=xs+l*g.nd;
     linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f);
-    bcir_tensor_swiglu_backward_pool(s->pool,g.nf,a.gate,a.up,dh,dg,du);
+    swiglu_backward(s,g.nf,a.gate,a.up,dh,dg,du);
     linear_backward(s,g.n,g.d,g.f,a.n2,p.gate,dg,dn,grad.gate,0.0f);
     linear_backward(s,g.n,g.d,g.f,a.n2,p.up,du,dn,grad.up,1.0f);
     bcir_tensor_rms_backward(g.n,g.d,(float)s->plan.spec.rms_eps,a.x2,p.norm2,dn,tmp,grad.norm2);

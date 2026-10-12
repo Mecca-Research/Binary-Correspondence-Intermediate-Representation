@@ -1,0 +1,47 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_the_compiled_plan_and_gemm_are_the_programs",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+      "label": "NE1 the exponential's polynomial loses its two highest terms (the ulp bound breaks)",
+      "new": "  p=1.0f/120.0f;",
+      "old": "  p=1.0f/5040.0f; p=p*r+1.0f/720.0f; p=p*r+1.0f/120.0f;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+      "label": "NE2 the reduction's low constant is dropped (the argument's tail is lost)",
+      "new": "#define BCIR_EXP_LN2_LO 0.0f",
+      "old": "#define BCIR_EXP_LN2_LO 1.428606765330187e-06f",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+      "label": "NE3 the AVX2 instance takes its exponential from libm (the instances disagree)",
+      "new": "static void exp_avx2(size_t n, const float *x, float *y) { size_t i; for (i=0;i<n;i++) y[i]=expf(x[i]); }",
+      "old": "static void exp_avx2(size_t n, const float *x, float *y) { exp_body(n,x,y); }",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NE4 the softmax under v2 keeps libm's expf (the v2 attention is the v1 attention)",
+      "new": "    if (a->exp2) { for (j=0;j<=i;j++) { pi[j]=expf(pi[j]-maxv); sum+=pi[j]; } }",
+      "old": "    if (a->exp2) { for (j=0;j<=i;j++) { pi[j]=exp1(pi[j]-maxv); sum+=pi[j]; } }",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NE5 the trainer's SiLU ignores the exponential contract",
+      "new": "  else if (s->contract&~BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_v2_pool(s->pool,n,x,y);",
+      "old": "  else if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_v2_pool(s->pool,n,x,y);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    }
+  ]
+}

@@ -10,8 +10,10 @@
  * `contract` (ABI 3, NDT-FMA) names the arithmetic contract BCIR's GEMM keeps: 0 is v1 (one
  * rounded multiply and one rounded add per term), BCIR_DT_CONTRACT_FUSED is v2 (one fmaf per
  * term, k ascending -- bit-identical wherever fmaf is an IEEE fusedMultiplyAdd). A provider's
- * GEMM keeps its own. Other bits are refused. A state trained under one contract is not the
- * other's: the checkpoint names it.
+ * GEMM keeps its own. BCIR_DT_CONTRACT_EXP (NDT-EXP) puts SiLU, the SwiGLU VJP and the attention
+ * softmax under their v2 contracts (the BCIR exponential, no libm); a provider's SiLU keeps its
+ * own. Other bits are refused. A state trained under one contract is not another's: the
+ * checkpoint names it.
  * The plan's three counts are the arena sums of the step program in
  * bcir/hosted/models/native_program.py (NDT-GEM), held to it by train.plan.mismatch. */
 #ifndef BCIR_DECODER_TRAIN_H
@@ -45,9 +47,9 @@ typedef struct bcir_decoder_adamw {
 } bcir_decoder_adamw;
 typedef struct bcir_decoder_event { double loss,grad_norm; uint64_t step; } bcir_decoder_event;
 enum { BCIR_DT_OK=0, BCIR_DT_INVALID=1, BCIR_DT_CAPACITY=2, BCIR_DT_NUMERIC=3 };
-enum { BCIR_DT_CONTRACT_FUSED=1u };
+enum { BCIR_DT_CONTRACT_FUSED=1u, BCIR_DT_CONTRACT_EXP=2u };
 /* 1: the state through its provider; 2: the state ends in its pool (NDT-THREADS); 3: and in its
- * contract (NDT-FMA). */
+ * contract (NDT-FMA, NDT-EXP). */
 BCIR_DT_API uint32_t bcir_decoder_abi_version(void);
 /* Checked shape/products; failure leaves *plan untouched. Parameter order:
  * embedding; each layer: attn_norm,q,k,v,o,ff_norm,gate,up,down;

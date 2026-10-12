@@ -10,7 +10,7 @@ executes in C. PyTorch remains an independent optional reference.
 | Component | Native implementation |
 |---|---|
 | Tensor linear algebra | Register-blocked row-major GEMM: a KCxNR tile of B packed once per (column, depth) block into cache-line-aligned storage and reused by every row, an MRxNR block of C kept in registers across the tile's depth; bit-identical to the ascending-k loop on every input. Portable C everywhere, plus AVX2 and AVX-512 variants on x86-64 Linux (GCC or Clang) chosen per call from the CPU, all bit-identical (`bcir_tensor_mm_variant` runs one). Transpose variants, linear forward, input and accumulated weight VJPs; optional explicit LP64 CBLAS adapter. Two contracts (NDT-FMA): v1, one rounded multiply and one rounded add per term, the default of every gate, row and record; and the fused v2, one IEEE `fmaf` per term for k ascending (a portable `fmaf` instance, AVX2+FMA and AVX-512 instances fusing in registers, all bit-identical to the `fmaf` loop), selected by the state's `contract` (ABI 3) and named in the checkpoint |
-| Vector math | Stable sigmoid/SiLU, SwiGLU VJP, RMSNorm and gamma VJP, half-split RoPE and its transpose; standard libm without fast-math |
+| Vector math | Stable sigmoid/SiLU, SwiGLU VJP, RMSNorm and gamma VJP, half-split RoPE and its transpose; standard libm without fast-math. Under the `exp` contract (NDT-EXP) SiLU, the SwiGLU VJP and the attention softmax take their exponential from BCIR's own `bcir_tensor_expf` -- one operation sequence on the scalar, AVX2 and AVX-512 instances, no libm, no fma, within 1 ulp of exp in double rounded to binary32 over 2^24 sampled inputs (`train.exp.ulp.max`, stated) |
 | Attention | Causal softmax attention as two masked products per (batch, head) through the GEMM kernel; a backward that rewrites the layer's probabilities in place with their score adjoint and feeds the GEMM kernel (no workspace beyond them); Q/K/V backward, GQA group-gradient accumulation, output projection backward. Both are bit-identical to the scalar reference loops, which `bcir_tensor_attention_backward` keeps |
 | Decoder | Embedding scatter-add backward, both residual paths, both per-layer norms, gate/up/down projections, final norm, tied or untied vocabulary head, mean token cross-entropy |
 | Optimizer | AdamW moments, constant-time bias powers, decoupled decay, global L2 clipping, mean micro-batch accumulation, per-update learning rates. The atomic preflight is skipped only when the magnitudes the first pass records prove it would admit every element; the passes carry the same AVX2/AVX-512 variants and stay bit-identical |
@@ -59,7 +59,8 @@ provider (the pool's thread count does not reach the state). Supply the same opt
 learning-rate schedule on resume; these are caller inputs rather than checkpoint
 fields. Checkpoint hashes detect corruption and do not authenticate an artifact.
 
-`NativeDecoder(..., contract="fused")` trains under the fused GEMM contract (v2; `"v1"` by default);
+`NativeDecoder(..., contract="fused")` trains under the fused GEMM contract (v2; `"v1"` by default),
+`contract="exp"` under the BCIR exponential, `"fused+exp"` under both;
 the checkpoint names the contract and `resume` restores it, since a state trained under one is not
 the other's. `NativeDecoder(..., threads=n)` runs BCIR's kernels on a pool of `n` threads (one by default;
 `close()` releases them, and `resume(..., threads=n)` continues a checkpoint on any count, since the
@@ -108,6 +109,8 @@ the C rail to it:
 | `train.mm.mismatch` | exact | `bcir_tensor_mm` against an independent binary32 emulation of its contract, bit for bit, on 20 cases (every transpose pair, the tiles' edges) | 0 of 20, and 0 on the parent kernel: the contract both keep |
 | `train.memory.transient` | exact | the bytes the C plan reserves for activations and workspace over G26's concurrent-live bound on the same values | 1.326x: 999,424 bytes held over a 753,664-byte bound at the bench shape |
 | `train.mm.fused.mismatch` | exact | `bcir_tensor_mm_fused` against an exact rational emulation of the fused contract rounded once per term, bit for bit, on the same 20 cases | 0 of 20 (2026-10-12, NDT-FMA) |
+| `train.exp.mismatch` | exact | inputs among 2^24 where two instruction-set instances of the BCIR exponential differ | 0 (2026-10-12, NDT-EXP) |
+| `train.exp.ulp.max` | exact, stated | the exponential's largest distance from exp in double rounded to binary32 over the same inputs | 1 ulp (2026-10-12, NDT-EXP) |
 | `train.state.threads.mismatch` | exact | the state (weights, both moments, the step, the bias powers) after three steps of the threads bench (vocab 250, width 72, 4 heads over 2 KV heads, 2 layers, batch 2 x 40 tokens) on two, three and four threads of the pool, against the one-thread state of the same library, seeded weights, tokens and rates | 0 of 3 (2026-10-12, NDT-THREADS) |
 | `train.step.ms` | wall, floor in the same run | one native step of the bench decoder against G26's roofline compute term: the counted work at the best rate the same kernel reaches on any of the step's own GEMM shapes | 3.4 ms against a 0.78 ms floor measured beside it (2026-10-11, clang 18; the same host read 4.6 against 1.3 before NDT-CLANG, and NDT-GEM's reading was 6.9 against 2.8) |
 
@@ -166,8 +169,9 @@ holds the Python trainer's state across thread counts, with `tools/testing/fault
 the injected partition faults each witness catches. The fused GEMM contract landed the same day (NDT-FMA): `gemm_fused_contract` in the C harness holds
 every fused instance to the `fmaf` loop, `train.mm.fused.mismatch` holds the kernel to an exact rational
 emulation rounded once per term (`round_f32`, never through a double), and
-`tools/testing/faults/ndt-fma.json` the injected faults. What comes next for this trainer -- a
-BCIR-owned exponential, the plan driving the step's dispatch -- is the ladder of
+`tools/testing/faults/ndt-fma.json` the injected faults. The BCIR-owned exponential landed too (NDT-EXP): `exp_contract` in the C harness, the two rows
+above, and `tools/testing/faults/ndt-exp.json`. What comes next for this trainer -- the plan
+driving the step's dispatch, tiled attention -- is the ladder of
 [the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
