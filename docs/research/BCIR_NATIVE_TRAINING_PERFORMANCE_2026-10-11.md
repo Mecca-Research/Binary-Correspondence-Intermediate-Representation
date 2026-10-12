@@ -623,6 +623,10 @@ be: the outputs are the same.
 | (found here) The compiler | Clang's builds aligned with GCC's on AVX-512 and AVX2 (NDT-CLANG, §4.1); §3 and §5 measured GCC's build of #814's kernel | Clang's portable C on x86-64 (no dispatch: macOS and Windows on x86-64) is 1.5-1.7x GCC's |
 | P1 Async graph, P1 StreamPack CRC, P2 ASN.1 arrays | Not in this update | As the assessment states them |
 
+The ladder that takes the open items forward -- with the ceiling each lever leaves, the budget they
+add up to, and the exact row each slice gates on -- is
+[the training-acceleration roadmap](BCIR_TRAINING_ACCELERATION_ROADMAP.md) (TRAIN-0).
+
 ## 8. Reproduction and validation
 
 Host: a four-core Intel Xeon VM at 2.1 GHz (AVX-512, one thread per core), 15 GiB, Linux 6.18; GCC

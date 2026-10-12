@@ -17,8 +17,9 @@ the line (see [`AGENTS.md`](AGENTS.md) and
   `bcir-opt`, and the IRDL projection. `tools/` holds the validation scripts.
 - **`training/`** — a separate training corpus for humans, agents, and model
   training; `training/llvm/` holds the LLVM/MLIR/compiler subject. It is
-  not part of the IR and the IR does not depend on it. The naming conventions
-  below are about this corpus.
+  not part of the IR and the IR never imports it; the IR's `train` rail reads
+  a pinned selection of it as training data, one way (the one-way corpus law,
+  `AGENTS.md` §2). The naming conventions below are about this corpus.
 
 ## Documentation and example naming conventions
 

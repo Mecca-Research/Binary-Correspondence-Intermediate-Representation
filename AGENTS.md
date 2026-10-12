@@ -24,9 +24,17 @@ validation scripts (tblgen / IRDL round-trip / build + check `bcir-opt`).
 
 Agent-readable teaching material: chaptered lessons, checked `.ll`/`.mlir`
 examples, exercises, and verify scripts. It exists to train agents that work on
-the IR. **It is not part of the BCIR IR and the IR does not depend on it.**
-Changes to the IR must not require changes here, and vice versa. Its conventions
-live in `CONTRIBUTING.md`.
+the IR. **It is not part of the BCIR IR, and the IR never imports it.** The one
+dependency between the two runs one way and carries data only: the IR's `train`
+rail (TRAIN-RAIL) reads a pinned selection of the corpus as training text for the
+BCIR-native decoder, the way the lab recipes read `docs/` — the one-way corpus law,
+stated with its witnesses in
+[`docs/research/BCIR_TRAINING_ACCELERATION_ROADMAP.md`](docs/research/BCIR_TRAINING_ACCELERATION_ROADMAP.md) §5.
+Nothing under `bcir/`, `mlir/` or `runtime/` imports or compiles anything from
+`training/`; the corpus keeps its own gates and reaches the IR only through the
+lazy edges its standard names. A change to the IR's semantics must not require a
+corpus change; a change to the corpus changes what the rail trains on, never
+whether the IR builds or how it verifies. Its conventions live in `CONTRIBUTING.md`.
 
 ## Where to work
 

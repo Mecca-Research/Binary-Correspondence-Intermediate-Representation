@@ -129,6 +129,10 @@ weights, batches and learning rates. It reports time per step, held-out quality 
 language model of the repository's documentation and on a copy task, time to quality and memory,
 and where each framework's step spends its time.
 
+What comes next for this trainer -- a deterministic thread pool, the fused GEMM contract, a
+BCIR-owned exponential, the plan driving the step's dispatch, and the training corpus as its data --
+is the ladder of [the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md).
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,

@@ -2799,6 +2799,27 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Every driver builds with the same warnings as before under GCC 13, clang 18 and clang 23
     (`-Wall -Wextra`), and the native rows read as before: dense-parity 1.004, gather-avoidance
     4.544, direct-stride 1.293 and blocked-reduction 32.57.
+  TRAIN-0 (2026-10-11): the training-acceleration ladder, and the corpus as the IR's training data.
+  - `docs/research/BCIR_TRAINING_ACCELERATION_ROADMAP.md` reads the 2026-10-11 report's breakdown
+    as a budget. Of BCIR's 1,632 ms step (B=8, T=128, 9.84M parameters, one thread), 1,329 ms are
+    GEMMs under contract v1, whose one rounded multiply and one rounded add per term cap the kernel
+    at half of an FMA peak (48.8 GFLOP/s is 73% of that cap; MKL reaches 127 with FMA); 102 ms are
+    libm's `expf`; and the whole step runs on one thread where PyTorch's runs on four. The levers,
+    and the ceiling each leaves: a second GEMM contract (`fused`: one IEEE fma per term, ascending
+    k, emulated exactly by the oracle, selected by the plan and recorded in the state's digest), a
+    deterministic thread pool whose partition keeps every element's reduction order, a BCIR-owned
+    exponential, then the GEM+ plan driving the step's dispatch. The budget they add up to: about
+    875 ms on one thread against PyTorch's 762, about 270 on four against 257. Each slice names the
+    exact row it gates on before its code, and what it may not do.
+  - The one-way corpus law (its §5). `training/` was "never a build dependency of BCIR" and
+    "neither may depend on the other". The amendment is one-way and data-only: the IR's `train`
+    rail (TRAIN-RAIL) reads a pinned selection of the corpus as training text the way the lab
+    recipes read `docs/`; nothing under `bcir/`, `mlir/` or `runtime/` imports or compiles
+    anything from `training/`; the corpus reaches the IR only through the lazy edges its standard
+    names; a change to the IR's semantics still must not require a corpus change, and a change to
+    the corpus changes what the rail trains on, never whether the IR builds. Stated in `AGENTS.md`
+    §2, the structure doc's table, the corpus README's scope note, `CONTRIBUTING.md` and
+    `training/ROADMAP.md`.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:
