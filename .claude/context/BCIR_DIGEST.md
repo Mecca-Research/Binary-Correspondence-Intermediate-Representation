@@ -159,7 +159,9 @@ laws (L1–L24)**, each with witness tests and a C/C++ port note, plus the per-f
 harvest in `docs/security/pr749-harvest.csv` (20 NEW-LAW / 181 INSTANCE / 39 LOCAL). Read
 that registry before writing or reviewing any gate. Side effects that are now repo facts:
 the Python floor is **3.11** (the 3.10 TOML fallback is deleted, and a `python-floor` CI
-job refuses to run on any other interpreter), the packaged wheel is a tested artifact
+job refuses to run on any other interpreter) and the newest CPython the package declares is
+**3.15** (classifiers 3.11–3.15, each a CI cell; `check_latest.sh`'s `python` and `thorough`
+legs and `oracle-llvm-latest` run on 3.15 — PY315), the packaged wheel is a tested artifact
 (`bcir.tests.run_all` runs from an installed wheel, and `_REPO_ONLY_MODULES` is a
 per-test-derived registry, not a per-module guess), and `tools/security/` carries shared
 predicates — `git_index`, `proc_bounds`, `report_hygiene` — that every rail must reuse

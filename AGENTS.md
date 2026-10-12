@@ -76,11 +76,11 @@ Python, C sanitizer/fuzzer, model, LLVM-training, or MLIR gates concurrently.
 
 1. Run focused regressions and the bounded complete quick oracle locally. Run
    broader local gates only when the host and resource budget support them.
-2. Judge the change on the newest LLVM/Clang/MLIR 23 and Node 24 as well as on the
-   CI-default Clang 18 / GCC 13: `python3 tools/local/latest_toolchain.py status`, then
-   `bash tools/local/check_latest.sh`
+2. Judge the change on the newest LLVM/Clang/MLIR 23, Node 24 and Python 3.15 as well as
+   on the CI-default Clang 18 / GCC 13 / Python 3.12 (the declared floor is 3.11):
+   `python3 tools/local/latest_toolchain.py status`, then `bash tools/local/check_latest.sh`
    ([`.claude/skills/bcir-latest-toolchain`](.claude/skills/bcir-latest-toolchain/SKILL.md)).
-   A Clang-18-only pass is not evidence about 23.
+   A Clang-18-only pass is not evidence about 23, nor a 3.12-only pass about 3.15.
 3. Delegate the full Python/differential/fuzz, C runtime/model, LLVM training,
    MLIR, Windows, and native ARM matrix to GitHub Actions as appropriate.
 4. Treat hardware-only validation that neither the local host nor CI provides as

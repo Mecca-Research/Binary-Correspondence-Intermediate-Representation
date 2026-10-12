@@ -195,11 +195,12 @@ runner, tool discovery, compiler harnesses, or workflows affect all oracle and
 host-portability cells even when those cells execute remotely.
 
 At minimum, run focused regressions and the complete quick oracle locally when
-the host supports them, and judge the change on the newest LLVM/Clang/MLIR 23 and
-Node 24 as well (`bash tools/local/check_latest.sh`, the first row below): a pass on
-the CI-default Clang 18 / GCC 13 alone is not evidence about 23. The complete thorough oracle, generated differential/fuzz
+the host supports them, and judge the change on the newest LLVM/Clang/MLIR 23,
+Node 24 and Python 3.15 as well (`bash tools/local/check_latest.sh`, the first row below): a pass on
+the CI-default Clang 18 / GCC 13 / Python 3.12 alone is not evidence about 23 or 3.15. The complete thorough oracle, generated differential/fuzz
 campaigns, C runtime and pinned model gate, LLVM training, MLIR rail, docs
-governance, Python 3.12 host matrix, and native aarch64 jobs remain required CI
+governance, the Python cells (the 3.11 floor, the 3.12 and 3.15 host matrix, the
+3.13-3.15 `python-newer` cells), and native aarch64 jobs remain required CI
 evidence when affected. Do not emulate a missing architecture on a constrained
 workstation. Hardware-only coverage absent from both the host and CI must be an
 explicit PR skip with residual risk, not a fabricated substitute. Record exact

@@ -51,15 +51,17 @@ do) — all against the true selected major.
 
 ## The newest toolchain, for every change
 
-Every BCIR change is judged on the newest LLVM/Clang/MLIR 23 and Node 24 as well as on the
-CI-default Clang 18 / GCC 13 (`.claude/skills/bcir-latest-toolchain/SKILL.md`):
+Every BCIR change is judged on the newest LLVM/Clang/MLIR 23, Node 24 and Python 3.15 as well
+as on the CI-default Clang 18 / GCC 13 / Python 3.12 (`.claude/skills/bcir-latest-toolchain/SKILL.md`):
 
 ```bash
-python3 tools/local/latest_toolchain.py status        # installed vs the newest llvmorg-23 tag / Node 24 release
+python3 tools/local/latest_toolchain.py status        # installed vs the newest llvmorg-23 tag / Node 24 release / v3.15 tag
 python3 tools/local/latest_toolchain.py install-node  # the newest Node 24, signature-verified, into the BCIR cache
-eval "$(python3 tools/local/latest_toolchain.py env)" # LLVM 23 and Node 24 first on PATH for this shell
-bash tools/local/check_latest.sh                      # status, confirm, cmake (clang23 preset), fuzz, gate,
-                                                      # thorough (BCIR_REQUIRE_LLVM=1) and mlir legs on them
+uv python install 3.15                                # or: micromamba create -n py315 -c conda-forge python=3.15
+eval "$(python3 tools/local/latest_toolchain.py env)" # LLVM 23 and Node 24 first on PATH; BCIR_PYTHON_LATEST the 3.15
+bash tools/local/check_latest.sh                      # status, confirm, python (quick tier + security gates on 3.15),
+                                                      # cmake (clang23 preset), fuzz, analyze, gate, thorough (on 3.15,
+                                                      # BCIR_REQUIRE_LLVM=1) and mlir legs on them
 ```
 
 `status` exits 0 only when every tool is the newest release; a source it cannot reach is

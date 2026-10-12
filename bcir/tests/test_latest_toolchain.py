@@ -21,11 +21,20 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import tomllib
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SKILL = _ROOT / ".claude" / "skills" / "bcir-latest-toolchain" / "SKILL.md"
 _SCRIPT = _ROOT / "tools" / "local" / "check_latest.sh"
+_WORKFLOW = _ROOT / ".github" / "workflows" / "ci.yml"
+
+
+def _job(workflow: str, name: str) -> str:
+    """One job's text out of ci.yml: from its key to the next top-level job key."""
+    found = re.search(rf"^  {name}:\n(.*?)(?=^  [a-z0-9-]+:\n|\Z)", workflow, re.S | re.M)
+    assert found, f"no {name} job"
+    return found.group(1)
 
 
 def _load(path: Path, name: str):
@@ -58,6 +67,32 @@ def test_the_newest_llvm_23_is_read_from_the_release_tags():
     assert tool.newest_llvm_from_tags(listing) == (23, 1, 10)
     assert tool.newest_llvm_from_tags("0123abcd\trefs/tags/llvmorg-23.1.0-rc1\n") is None
     assert tool.newest_llvm_from_tags("") is None
+
+
+def test_the_newest_python_3_15_is_read_from_the_release_tags():
+    """CPython's release tags are `v3.15.<patch>`; `a`, `b` and `rc` suffixes, other series
+    (3.14, 3.150) and peeled lines are not releases of 3.15, and 3.15.10 is newer than 3.15.2."""
+    listing = "\n".join(
+        f"0123abcd\t{ref}"
+        for ref in (
+            "refs/tags/v3.15.0a1",
+            "refs/tags/v3.15.0b4",
+            "refs/tags/v3.15.0rc3",
+            "refs/tags/v3.15.0",
+            "refs/tags/v3.15.2",
+            "refs/tags/v3.15.2^{}",
+            "refs/tags/v3.15.10",
+            "refs/tags/v3.14.7",
+            "refs/tags/v3.150.0",
+            "refs/tags/v3.16.0",
+        )
+    )
+    assert tool.newest_python_from_tags(listing) == (3, 15, 10)
+    assert tool.newest_python_from_tags("0123abcd\trefs/tags/v3.15.0rc3\n") is None
+    assert tool.newest_python_from_tags("") is None
+    # The installed side applies the same rule: `--version` of a release candidate is not a release.
+    assert tool.PYTHON_VERSION.search("Python 3.15.0\n") is not None
+    assert tool.PYTHON_VERSION.search("Python 3.15.0rc3\n") is None
 
 
 def test_the_newest_node_24_is_read_from_the_index():
@@ -93,16 +128,31 @@ def test_a_verdict_is_never_current_on_an_unread_source():
     assert tool.exit_code([]) == 2
 
 
-def _status(llvm, node, llvm_newest, node_newest) -> tuple[int, str]:
+_PYTHON = {"exe": Path("/opt/py315/bin/python3.15"), "python": (3, 15, 0)}
+_PYTHON_NEWEST = ((3, 15, 0), "v3.15.0 in cpython")
+
+
+def _status(
+    llvm, node, llvm_newest, node_newest, python=_PYTHON, python_newest=_PYTHON_NEWEST
+) -> tuple[int, str]:
     saved = {
         name: getattr(tool, name)
-        for name in ("installed_llvm", "installed_node", "query_llvm", "query_node")
+        for name in (
+            "installed_llvm",
+            "installed_node",
+            "installed_python",
+            "query_llvm",
+            "query_node",
+            "query_python",
+        )
     }
     try:
         tool.installed_llvm = lambda: llvm
         tool.installed_node = lambda: node
+        tool.installed_python = lambda: python
         tool.query_llvm = lambda: llvm_newest
         tool.query_node = lambda: node_newest
+        tool.query_python = lambda: python_newest
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             code = tool.status()
@@ -119,7 +169,8 @@ def test_status_reports_each_tool_and_fails_closed():
     current = ((23, 1, 2), "llvmorg-23.1.2"), ((24, 21, 0), "v24.21.0")
     code, text = _status(llvm, node, *current)
     assert code == 0 and text.rstrip().endswith("latest-toolchain: CURRENT"), text
-    code, text = _status(llvm, node, (None, "github.com: 403"), (None, "nodejs.org: 403"))
+    unread = (None, "github.com: 403")
+    code, text = _status(llvm, node, unread, (None, "nodejs.org: 403"), python_newest=unread)
     assert code == 2 and "latest-toolchain: UNKNOWN" in text and "CURRENT\n" not in text, text
     code, text = _status(llvm, node, ((23, 1, 3), "llvmorg-23.1.3"), current[1])
     assert code == 1 and "OUTDATED" in text and "setup_mlir.sh" in text, text
@@ -128,6 +179,15 @@ def test_status_reports_each_tool_and_fails_closed():
     assert code == 1 and "INCOHERENT" in text, text
     code, text = _status(llvm, {"bin": None, "node": None}, *current)
     assert code == 1 and "MISSING" in text and "install-node" in text, text
+    # The Python row fails closed the same three ways, and its hint names the installers.
+    code, text = _status(llvm, node, *current, python={"exe": None, "python": None})
+    assert code == 1 and "python 3.15 installed -" in text and "MISSING" in text, text
+    assert "uv python install 3.15" in text and "conda-forge" in text, text
+    code, text = _status(llvm, node, *current, python_newest=((3, 15, 1), "v3.15.1 in cpython"))
+    assert code == 1 and "OUTDATED" in text and "uv python install 3.15" in text, text
+    code, text = _status(llvm, node, *current, python_newest=(None, "github.com: 403"))
+    assert code == 2 and text.rstrip().endswith("latest-toolchain: UNKNOWN"), text
+    assert re.search(r"^latest-toolchain: python 3\.15 .* UNKNOWN$", text, re.M), text
 
 
 def _tarball(name: str, members: dict[str, bytes]) -> bytes:
@@ -219,7 +279,7 @@ def test_the_rule_is_stated_where_agents_and_ci_read_it():
     skill = _SKILL.read_text(encoding="utf-8")
     front = re.match(r"^---\n(.*?)\n---\n", skill, re.S)
     assert front and "name: bcir-latest-toolchain" in front.group(1), "the skill's frontmatter"
-    for needle in ("Clang 18", "23", "Node 24"):
+    for needle in ("Clang 18", "23", "Node 24", "Python 3.15"):
         assert needle in front.group(1), f"the skill's description does not name {needle}"
     for path in ("tools/local/check_latest.sh", "tools/local/latest_toolchain.py"):
         assert path in skill and (_ROOT / path).is_file(), path
@@ -243,9 +303,14 @@ def test_the_rule_is_stated_where_agents_and_ci_read_it():
             assert "-j 2" in line or "--preset" in line, line
     assert not re.search(r"-j ?0\b|--jobs=auto", script)
     assert "BCIR_REQUIRE_LLVM=1" in script and "BCIR_REQUIRE_TSAN" in script
+    # The Python legs run on the newest interpreter the tool found, never on whatever `python3` is.
+    assert 'PY_LATEST="${BCIR_PYTHON_LATEST}"' in script
+    for leg in ("quick", "thorough"):
+        assert f'"${{PY_LATEST}}" -m bcir.tests.run_all --tier {leg} -j 2' in script, leg
+    assert not re.search(r'"\$\{PY\}" -m bcir\.tests\.run_all', script)
 
     # The majors agree across the tool, the preset and the workflow.
-    assert (tool.LLVM_MAJOR, tool.NODE_MAJOR) == (23, 24)
+    assert (tool.LLVM_MAJOR, tool.NODE_MAJOR, tool.PYTHON_SERIES) == (23, 24, (3, 15))
     presets = json.loads((_ROOT / "CMakePresets.json").read_text(encoding="utf-8"))
     configure = {p["name"]: p for p in presets["configurePresets"]}
     assert configure["clang23"]["cacheVariables"] == {
@@ -253,20 +318,65 @@ def test_the_rule_is_stated_where_agents_and_ci_read_it():
         "CMAKE_CXX_COMPILER": f"clang++-{tool.LLVM_MAJOR}",
     }
     assert {"name": "clang23", "configurePreset": "clang23", "jobs": 2} in presets["buildPresets"]
-    workflow = (_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-
-    def job(name: str) -> str:
-        found = re.search(rf"^  {name}:\n(.*?)(?=^  [a-z0-9-]+:\n|\Z)", workflow, re.S | re.M)
-        assert found, f"no {name} job"
-        return found.group(1)
-
-    oracle = job("oracle-llvm-latest")
+    workflow = _WORKFLOW.read_text(encoding="utf-8")
+    oracle = _job(workflow, "oracle-llvm-latest")
     assert f"node-version: {tool.NODE_MAJOR}" in oracle and "BCIR_REQUIRE_LLVM=1" in oracle
     assert f"clang-{tool.LLVM_MAJOR}" in oracle
-    assert f"clang-{tool.LLVM_MAJOR}" in job("c-rails-llvm-latest")
-    cmake = job("cmake-build")
+    assert f'python-version: "{tool.PYTHON_LABEL}"' in oracle, "the oracle on 23 runs on 3.15"
+    assert f'"Python {tool.PYTHON_LABEL}."*)' in oracle, "and confirms the interpreter it got"
+    assert f"clang-{tool.LLVM_MAJOR}" in _job(workflow, "c-rails-llvm-latest")
+    cmake = _job(workflow, "cmake-build")
     assert re.search(r"compiler: \[[^\]]*\bclang23\b", cmake), "the CMake job has no clang23 cell"
     assert f"add_llvm_apt_repo.sh {tool.LLVM_MAJOR}" in cmake and "BCIR_REQUIRE_TSAN=ON" in cmake
+
+
+def _python_matrix(job_text: str) -> list[tuple[int, int]]:
+    """The `python: [...]` matrix of a job, as (major, minor) pairs."""
+    found = re.search(r"^\s+python: \[([^\]]*)\]", job_text, re.M)
+    assert found, "the job has no python matrix"
+    return sorted(
+        tuple(int(part) for part in cell.strip().strip('"').split("."))
+        for cell in found.group(1).split(",")
+    )
+
+
+def test_every_declared_python_version_is_a_ci_cell():
+    """pyproject.toml's classifiers, its `requires-python`, the tool's PYTHON_SERIES and the three
+    interpreter matrices of ci.yml are one list, read out of each place it lives (L14): the floor
+    job runs the floor, host-portability and python-newer run the rest, the newest is the series
+    the local check judges on, and the series has no gap -- a classifier no cell runs, or a cell
+    no classifier names, fails here rather than shipping as a claim nothing exercises."""
+    project = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    declared = sorted(
+        (3, int(found.group(1)))
+        for entry in project["classifiers"]
+        if (found := re.fullmatch(r"Programming Language :: Python :: 3\.(\d+)", entry, re.ASCII))
+    )
+    floor = tuple(int(part) for part in project["requires-python"].lstrip(">=~^ ").split(".")[:2])
+    assert declared, "pyproject.toml names no interpreter"
+    assert declared[0] == floor, (declared, floor)
+    assert declared[-1] == tool.PYTHON_SERIES, (declared, tool.PYTHON_SERIES)
+    assert declared == [(3, minor) for minor in range(floor[1], tool.PYTHON_SERIES[1] + 1)], (
+        declared
+    )
+    assert "Programming Language :: Python :: 3 :: Only" in project["classifiers"]
+
+    workflow = _WORKFLOW.read_text(encoding="utf-8")
+    floor_cells = _python_matrix(_job(workflow, "python-floor"))
+    host_cells = _python_matrix(_job(workflow, "host-portability"))
+    newer_cells = _python_matrix(_job(workflow, "python-newer"))
+    assert floor_cells == [floor], floor_cells
+    assert tool.PYTHON_SERIES in host_cells, "the host matrix does not run the newest interpreter"
+    assert tool.PYTHON_SERIES in newer_cells, "python-newer does not run the newest interpreter"
+    exercised = sorted(set(floor_cells) | set(host_cells) | set(newer_cells))
+    assert exercised == declared, (exercised, declared)
+    # The host matrix also keeps the CI default (ubuntu-latest's interpreter) every other job runs.
+    assert (3, 12) in host_cells, host_cells
+    # The job that runs the newest beside LLVM 23 and Node 24 is the one the skill names.
+    assert f'python-version: "{tool.PYTHON_LABEL}"' in _job(workflow, "oracle-llvm-latest")
+    skill = _SKILL.read_text(encoding="utf-8")
+    for job_name in ("python-newer", "host-portability", "oracle-llvm-latest", "python-floor"):
+        assert f"`{job_name}`" in skill, f"the skill does not name {job_name}"
 
 
 def test_the_analyzer_leg_fails_on_any_diagnostic():

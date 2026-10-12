@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Judge this tree on the newest LLVM/Clang/MLIR 23 and Node 24: the local half of the policy in
-# .claude/skills/bcir-latest-toolchain/SKILL.md. CI's oracle-llvm-latest, c-rails-llvm-latest,
-# mlir-rail-validate and the cmake-build clang23 cell are the remote half. Every change is checked
-# here as well as on the CI-default toolchain (Clang 18 / GCC 13) -- a pass there says nothing
-# about 23.
+# Judge this tree on the newest LLVM/Clang/MLIR 23, Node 24 and Python 3.15: the local half of the
+# policy in .claude/skills/bcir-latest-toolchain/SKILL.md. CI's oracle-llvm-latest, c-rails-llvm-latest,
+# mlir-rail-validate, the cmake-build clang23 cell, python-newer and host-portability's 3.15 cells
+# are the remote half. Every change is checked here as well as on the CI-default toolchain
+# (Clang 18 / GCC 13 / Python 3.12) -- a pass there says nothing about 23, or about 3.15.
 #
 #   bash tools/local/check_latest.sh                      every leg (about 35 minutes)
 #   bash tools/local/check_latest.sh --legs cmake,gate    a subset, in the order below
@@ -12,14 +12,18 @@
 #   bash tools/local/check_latest.sh --out DIR            keep the logs in DIR (default: a new temp dir)
 #
 # Legs (serialized, two workers -- AGENTS.md):
-#   status    tools/local/latest_toolchain.py status: the installed LLVM 23 and Node 24 are the newest
-#   confirm   the oracle's resolver finds one coherent LLVM 23; node is 24; clang 23's fuzzer,
-#             ASan/UBSan and TSan runtimes link and run (TSan through tools/build/sanitizer.py)
+#   status    tools/local/latest_toolchain.py status: the installed LLVM 23, Node 24 and Python 3.15
+#             are the newest
+#   confirm   the oracle's resolver finds one coherent LLVM 23; node is 24; BCIR_PYTHON_LATEST is a
+#             3.15; clang 23's fuzzer, ASan/UBSan and TSan runtimes link and run (TSan through
+#             tools/build/sanitizer.py)
+#   python    the quick tier and the three required security gates on Python 3.15 (the wheel build
+#             of CI's python-newer job needs PyPI and stays CI's)
 #   cmake     a fresh `clang23` preset tree, BCIR_REQUIRE_TSAN=ON: build, ctest -L section, -L build
 #   fuzz      a fresh `fuzzer` preset tree on clang 23: ctest -L fuzz
 #   analyze   clang 23's static analyzer over the hosted C units (tools/c/analyze_hosted.sh)
 #   gate      tools/c/check_runtime.sh on clang 23, BCIR_REQUIRE_TSAN=1
-#   thorough  the thorough tier on LLVM 23 + Node 24, BCIR_REQUIRE_LLVM=1
+#   thorough  the thorough tier on Python 3.15 with LLVM 23 + Node 24, BCIR_REQUIRE_LLVM=1
 #   mlir      a fresh `mlir` preset tree on MLIR 23: bcir-opt under the top-level project, -L mlir
 #             with its lit suite required (BCIR_REQUIRE_LIT=ON)
 #
@@ -29,7 +33,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LEGS_ALL="status confirm cmake fuzz analyze gate thorough mlir"
+LEGS_ALL="status confirm python cmake fuzz analyze gate thorough mlir"
 PY="${PYTHON:-python3}"
 legs="${LEGS_ALL}"; out=""; allow_outdated=0; cfront_sanitize=0
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"; }
@@ -55,13 +59,14 @@ out="${out:-$(mktemp -d "${TMPDIR:-/tmp}/bcir-check-latest.XXXXXX")}"
 mkdir -p "${out}" || exit 2
 cd "${ROOT}" || exit 2
 
-# The toolchain every leg below runs on: LLVM_BIN and BCIR_NODE_BIN, found by the same tool that
-# judges whether they are the newest.
+# The toolchain every leg below runs on: LLVM_BIN, BCIR_NODE_BIN and BCIR_PYTHON_LATEST, found by
+# the same tool that judges whether they are the newest.
 if ! exports="$("${PY}" tools/local/latest_toolchain.py env)"; then
-  echo "check_latest: FAIL: LLVM 23 or Node 24 is not installed here; see: ${PY} tools/local/latest_toolchain.py status"
+  echo "check_latest: FAIL: LLVM 23, Node 24 or Python 3.15 is not installed here; see: ${PY} tools/local/latest_toolchain.py status"
   exit 1
 fi
 eval "${exports}"
+PY_LATEST="${BCIR_PYTHON_LATEST}"  # the Python legs run on the newest interpreter, not on ${PY}
 LATEST_PATH="${PATH}"  # the env exports put LLVM_BIN and BCIR_NODE_BIN first
 PATH="${PATH#"${LLVM_BIN}:${BCIR_NODE_BIN}:"}"  # the legs opt in to LATEST_PATH one command at a time
 
@@ -87,6 +92,10 @@ leg_confirm() {
       v24.*) echo "node $(node --version)" ;;
       *) echo "node on PATH is not 24: $(node --version)"; exit 1 ;;
     esac
+    case "$("${PY_LATEST}" --version 2>&1)" in
+      "Python 3.15."*) echo "python $("${PY_LATEST}" --version 2>&1 | cut -d' ' -f2) (${PY_LATEST})" ;;
+      *) echo "BCIR_PYTHON_LATEST is not a 3.15: $("${PY_LATEST}" --version 2>&1)"; exit 1 ;;
+    esac
     "${PY}" - <<'PY'
 from bcir.toolchain import resolve_llvm_tools
 
@@ -103,6 +112,15 @@ PY
     echo "fuzzer + ASan + UBSan runtimes: link and run"
     "${PY}" tools/build/sanitizer.py --cc "$(command -v clang)" thread
   )
+}
+
+leg_python() {
+  # The oracle on the newest Python: the quick tier, then the three security gates every Python
+  # job of CI runs (python-floor on 3.11, python-newer on 3.13-3.15), each a verdict of its own.
+  "${PY_LATEST}" -m bcir.tests.run_all --tier quick -j 2 || return 1
+  "${PY_LATEST}" tools/security/audit_dependencies.py || return 1
+  "${PY_LATEST}" tools/security/scan_secrets.py || return 1
+  "${PY_LATEST}" tools/security/audit_tool_boundaries.py || return 1
 }
 
 leg_cmake() {
@@ -136,8 +154,9 @@ leg_gate() {
 }
 
 leg_thorough() {
+  # Python 3.15, LLVM 23 first on PATH, Node 24: the newest of each, as CI's oracle-llvm-latest.
   env PATH="${LATEST_PATH}" LLVM_BIN="${LLVM_BIN}" BCIR_THOROUGH=1 BCIR_REQUIRE_LLVM=1 \
-    "${PY}" -m bcir.tests.run_all --tier thorough -j 2
+    "${PY_LATEST}" -m bcir.tests.run_all --tier thorough -j 2
 }
 
 leg_mlir() {
@@ -161,20 +180,22 @@ leg_mlir() {
 detail() {  # <leg> <log> -> the one line a reader needs from it
   case "$1" in
     status) grep -E '^latest-toolchain: [A-Z]+$' "$2" | tail -1 ;;
-    confirm) grep -E 'resolved|^node v|runtimes|sanitizer thread' "$2" | tr '\n' ' ' | cut -c1-160 ;;
+    confirm) grep -E 'resolved|^node v|^python 3|runtimes|sanitizer thread' "$2" | tr '\n' ' ' | cut -c1-160 ;;
     cmake) printf '%s; %s; warnings=%s' "$(grep -E 'tests passed' "$2" | tr '\n' ' ')" \
       "$(grep -E '^section-parity: [0-9]' "${ROOT}/build/cmake-clang23/Testing/Temporary/LastTest.log" 2>/dev/null | head -1)" \
       "$(grep -c 'warning:' "$2")" ;;
     fuzz|mlir) grep -E 'tests passed' "$2" | tail -1 ;;
     analyze) grep -E '^analyze-hosted: ' "$2" | tail -1 | cut -c1-160 ;;
     gate) printf 'PASS lines=%s SKIP=%s FAIL=%s' "$(grep -c 'PASS' "$2")" "$(grep -c 'SKIP' "$2")" "$(grep -c 'FAIL' "$2")" ;;
+    python) printf '%s; gates: %s' "$(grep -E 'passed, ' "$2" | tail -1)" \
+      "$(grep -c -E '^(audit_dependencies|scan_secrets|audit_tool_boundaries): PASS' "$2")" ;;
     thorough) grep -E 'passed, ' "$2" | tail -1 ;;
   esac
 }
 
 failed=0
 summary=()
-echo "check_latest: $(git rev-parse --short HEAD 2>/dev/null || echo '?') on ${LLVM_BIN} + ${BCIR_NODE_BIN}; logs in ${out}"
+echo "check_latest: $(git rev-parse --short HEAD 2>/dev/null || echo '?') on ${LLVM_BIN} + ${BCIR_NODE_BIN} + ${PY_LATEST}; logs in ${out}"
 for leg in ${selected}; do
   log="${out}/${leg}.log"
   started="$(date +%s)"
@@ -189,7 +210,7 @@ for leg in ${selected}; do
   summary+=("$(printf '%-9s %-7s %5ss  %s' "${leg}" "${verdict}" "$(( $(date +%s) - started ))" "$(detail "${leg}" "${log}")")")
   echo "check_latest:   ${summary[-1]}"
 done
-echo "check_latest: summary (LLVM $("${LLVM_BIN}/clang" --version | sed -n 's/.*clang version \([0-9.]*\).*/\1/p' | head -1), Node $("${BCIR_NODE_BIN}/node" --version))"
+echo "check_latest: summary (LLVM $("${LLVM_BIN}/clang" --version | sed -n 's/.*clang version \([0-9.]*\).*/\1/p' | head -1), Node $("${BCIR_NODE_BIN}/node" --version), Python $("${PY_LATEST}" --version 2>&1 | cut -d' ' -f2))"
 for line in "${summary[@]}"; do echo "  ${line}"; done
 if [ "${failed}" -ne 0 ]; then
   echo "check_latest: FAIL (logs: ${out})"

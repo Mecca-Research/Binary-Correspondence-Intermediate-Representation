@@ -155,6 +155,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Set up Python 3.15 (the newest CPython the package declares)
+        # The newest of each: LLVM 23 and Node 24 below, and the interpreter here -- the
+        # thorough tier's one run on the newest Python (the floor job and python-newer run the
+        # quick tier). 3.15 is PYTHON_SERIES in tools/local/latest_toolchain.py, where the local
+        # `thorough` leg of check_latest.sh runs on it too; test_latest_toolchain.py reconciles
+        # the two spellings with pyproject.toml's classifiers.
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.15"
+
       - name: Add the apt.llvm.org signed repo + harden apt (LLVM 23)
         run: bash tools/ci/add_llvm_apt_repo.sh 23
 
@@ -199,6 +209,10 @@ jobs:
           case "$(node --version)" in
             v24.*) node --version ;;
             *) echo "::error::node is not the 24 line: $(node --version)"; exit 1 ;;
+          esac
+          case "$(python3 --version)" in
+            "Python 3.15."*) python3 --version ;;
+            *) echo "::error::python3 is not the 3.15 line: $(python3 --version)"; exit 1 ;;
           esac
 
       - name: BCIR oracle (Python conformance tests) on LLVM 23
@@ -462,20 +476,27 @@ jobs:
         run: python3 tools/testing/ubsan_witnesses.py --require-ubsan --shard ${{ matrix.shard }}/2 -j 4
 
   host-portability:
-    name: Host portability (${{ matrix.os }}, Python 3.12)
+    name: Host portability (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        # 3.12 is the interpreter ubuntu-latest ships, the CI default every other job runs; 3.15
+        # is the newest CPython the package declares (pyproject.toml's highest classifier, the
+        # PYTHON_SERIES of tools/local/latest_toolchain.py) -- the posture LLVM 23 and Node 24
+        # already have: a pass on the default says nothing about the newest. 3.15 is where UTF-8
+        # mode became the default (PEP 686), which only the Windows cell can show: a Linux
+        # runner's locale was UTF-8 already.
+        python: ["3.12", "3.15"]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Python 3.12
+      - name: Set up Python ${{ matrix.python }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
 
       - name: Quick tier (portable process pool; spawn on Windows)
         # -j0 = every core. The point of this step is the PORTABLE POOL (spawn on Windows), so
@@ -563,6 +584,10 @@ jobs:
 
   hosted-model:
     name: Hosted model train-to-C (${{ matrix.os }}, Python 3.12)
+    # Stays on 3.12 while the rest of the oracle is judged on 3.15 (host-portability, python-newer,
+    # oracle-llvm-latest): the pinned model-lab environment below -- torch 2.13.0, numpy 2.2.6,
+    # safetensors 0.8.0 -- publishes no 3.15 wheels (PyPI, 2026-10-11), and the 2026-10-11
+    # training report's PyTorch numbers are tied to those pins. Moving this job is a pin bump.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -1470,6 +1495,69 @@ jobs:
         # Packaging is part of the claim: a wheel that cannot be built or
         # imported on the advertised minimum is the same defect as code that
         # cannot run there.
+        run: |
+          python -m pip install --disable-pip-version-check --no-input build==1.6.0
+          python -m build --wheel --outdir dist/
+          python -m pip install --disable-pip-version-check --no-input dist/*.whl
+          cd "$RUNNER_TEMP" && python -c "import bcir; print('imported', bcir.__name__)"
+
+  python-newer:
+    name: Declared Python versions above the floor (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every interpreter pyproject.toml's classifiers name above the floor, except the 3.12
+        # ubuntu-latest ships (host-portability runs it, and 3.15, on both hosts). A classifier
+        # no cell runs would be a claim nothing exercises -- what `requires-python` was before
+        # the python-floor job. 3.15 is the newest: the one tools/local/check_latest.sh judges
+        # every change on (PYTHON_SERIES in tools/local/latest_toolchain.py) and the interpreter
+        # of oracle-llvm-latest's thorough shards. test_latest_toolchain.py reconciles this
+        # list, the host-portability matrix, the floor job, the classifiers and PYTHON_SERIES.
+        python: ["3.13", "3.14", "3.15"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: The interpreter IS one the package declares (anti-vacuity)
+        # As the floor job reads its cell against `requires-python`: the running interpreter is
+        # read against pyproject.toml's classifiers, so a classifier added without a cell, or a
+        # setup that silently resolved another interpreter, fails here rather than passing while
+        # testing nothing this job exists to test.
+        run: |
+          python - <<'PY'
+          import re, sys, tomllib
+          with open("pyproject.toml", "rb") as handle:
+              project = tomllib.load(handle)["project"]
+          declared = sorted(
+              (3, int(found.group(1)))
+              for entry in project["classifiers"]
+              if (found := re.fullmatch(r"Programming Language :: Python :: 3\.(\d+)", entry, re.ASCII))
+          )
+          running = sys.version_info[:2]
+          print(f"declared {declared}; running {running}")
+          if running not in declared:
+              raise SystemExit(f"this job must run a declared interpreter, not {running}")
+          PY
+
+      - name: Quick tier on the declared interpreter
+        run: python -m bcir.tests.run_all --tier quick -j0
+
+      - name: Required security gates on the declared interpreter
+        run: |
+          python tools/security/audit_dependencies.py
+          python tools/security/scan_secrets.py
+          python tools/security/audit_tool_boundaries.py
+
+      - name: The package builds and imports on the declared interpreter
+        # The same claim the floor job makes at the other end of the declared range.
         run: |
           python -m pip install --disable-pip-version-check --no-input build==1.6.0
           python -m build --wheel --outdir dist/

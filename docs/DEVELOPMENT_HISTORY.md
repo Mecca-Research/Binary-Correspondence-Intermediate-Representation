@@ -2820,6 +2820,32 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     the corpus changes what the rail trains on, never whether the IR builds. Stated in `AGENTS.md`
     §2, the structure doc's table, the corpus README's scope note, `CONTRIBUTING.md` and
     `training/ROADMAP.md`.
+  PY315 (2026-10-11): the oracle judged on the newest CPython, 3.15.0, beside the 3.11 floor.
+  - CI ran Python 3.11 (the floor job) and 3.12 (ubuntu-latest's interpreter: every other job and
+    the host matrix); no cell ran 3.13, 3.14 or 3.15, so `requires-python = ">=3.11"` was a claim
+    about three interpreters nothing exercised, and a 3.15-only break (what 3.13 and 3.14
+    deprecated is gone; UTF-8 mode is the default, PEP 686) would have shipped green. On 3.15.0
+    (conda-forge; github.com's and python.org's downloads were both proxy-denied in the container)
+    the quick tier passed 4551/4551, and again with every DeprecationWarning, PendingDeprecationWarning
+    and SyntaxWarning promoted to an error; the three security gates and the wheel build and
+    import passed; the thorough tier on 3.15.0 with LLVM 23.1.3 and Node 24.21.0 passed. No source
+    change was needed: the tree was a 3.15 tree already, unproven.
+  - The proof lives where the LLVM 23 / Node 24 policy already lives (L14). `pyproject.toml`
+    declares classifiers 3.11-3.15; `python-newer` runs the quick tier, the security gates and the
+    wheel on 3.13, 3.14 and 3.15, its first step reading the running interpreter against the
+    classifiers as the floor job reads `requires-python`; `host-portability` runs 3.12 and 3.15 on
+    ubuntu and windows (the Windows 3.15 cell is where UTF-8 mode changes behaviour);
+    `oracle-llvm-latest`'s thorough shards run on 3.15 and confirm it, so the newest LLVM, Node
+    and Python are judged together. `test_every_declared_python_version_is_a_ci_cell` holds the
+    classifiers, `requires-python`, `PYTHON_SERIES` and the three matrices to one gapless list.
+    `hosted-model` stays on 3.12: its pinned torch 2.13.0, numpy 2.2.6 and safetensors 0.8.0
+    publish no 3.15 wheels, and the training report's PyTorch numbers are tied to those pins.
+  - Locally, `latest_toolchain.py status` reports a `python 3.15` row -- the highest `v3.15.x` tag
+    of python/cpython through the one `release_tags` predicate LLVM's query now shares; an
+    interpreter from `BCIR_PYTHON_LATEST`, PATH, the BCIR cache's conda-forge envs, uv or pyenv; a
+    pre-release's `--version` is not a release -- `env` exports `BCIR_PYTHON_LATEST`, and
+    `check_latest.sh` gains a `python` leg (quick tier + security gates on 3.15), confirms the
+    interpreter in `confirm`, and runs its `thorough` leg on 3.15.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:
