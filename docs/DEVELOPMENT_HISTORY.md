@@ -2866,6 +2866,19 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     and on random text over small alphabets (where merges nest deepest); the tokenizer's own
     `encode` is the rank-ordered one; and a rank table that reverses the merge order disagrees,
     so the differential can fail.
+  NDT-ATTN-0 (2026-10-12): the v2 softmax's row through the vector exponential.
+  - NDT-MEASURE's finding, fixed the same day: `att_head`'s `exp` branch called the scalar
+    exponential element by element with the row sum in the same loop, which GCC does not
+    vectorize, so the attention forward read 79 ms under `exp` against 62 under libm at one
+    thread. The row now has its maximum subtracted in place, goes through the exponential's
+    vector instance (`exp_inplace_run`: one pointer, no alias check, the same `exp1` per
+    element) and is summed in the same index order -- the same values, so the `exp` and
+    `fused+exp` states are unchanged (`aaa9998c…`, `b18d89fa…`, at one and three threads).
+    Re-measured with the report's stages ([attn0/](research/measurements/2026-10-12/attn0/)):
+    the attention forward 79.0 to 55.2 ms under `exp` and 84.7 to 58.1 under `fused+exp` at one
+    thread (41.9 to 31.7 on three), v1's 62.7 in the same run; the C harness's `exp_contract`
+    holds the v2 softmax to its definition through the new path, and `ndt-exp.json`'s NE4 (the
+    v2 softmax on libm) is re-anchored to it.
   NDT-MEASURE (2026-10-12): the comparison re-run after the pool and the two v2 contracts
   ([BCIR_NDT_MEASURE_2026-10-12.md](research/BCIR_NDT_MEASURE_2026-10-12.md)).
   - The `identity` stage per contract and thread count (`--contract`, `--variants`): v1's 16 rows

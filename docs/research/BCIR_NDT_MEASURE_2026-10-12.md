@@ -42,8 +42,8 @@ the mismatch counts, the ulp bound -- are the claims.
   GEMM's packing and register block, the 64-row task partition behind one barrier per GEMM, the
   reductions the pool leaves serial -- and one defect of NDT-EXP's own, found here: the v2 softmax
   calls the exponential element by element inside its row loop, so the attention forward costs a
-  quarter more under `exp` than under libm (§3), the same values a row-wide call would produce
-  faster.
+  quarter more under `exp` than under libm (§3) -- fixed the same day as NDT-ATTN's first item: the
+  row through the vector instance, the same values, 79 to 55 ms (§3).
 
 ## 1. Identity: the state is the state, at every thread count and under each contract
 
@@ -155,8 +155,12 @@ What the two tables say, same-session pairs only:
   unchanged): the v2 softmax's row loop calls the scalar exponential element by element with the
   row sum in the same loop (`bcir_tensor.c`, `att_task`), which GCC does not vectorize. The fix is the
   row through the vector instance after the max-subtraction, then the sum in the same index order --
-  the same values, so the `exp` state digest stays -- and it is the first item of the next attention
-  slice (§5).
+  the same values, so the `exp` state digest stays -- and it landed the same day as NDT-ATTN's first
+  item ([attn0/](measurements/2026-10-12/attn0/), the same stages re-run after it): the attention
+  forward 79.0 to 55.2 ms under `exp` at one thread, 84.7 to 58.1 under `fused+exp` (41.9 to 31.7 on
+  three threads), against v1's 62.7 in the same run; the `exp` and `fused+exp` digests unchanged
+  (`aaa9998c…`, `b18d89fa…`, at one and three threads, the widest build and a repeat). The tables
+  above are the measurement before it, as the roadmap's budget was read against them.
 - **Threads.** Three take the `fused+exp` step from 1,506.9 to 881.5 ms
   (x1.71) and four to 741.7 (x2.03). The GEMMs scale by
   x1.81 on three and x2.26 on four, the attention by x2.05 and
@@ -231,7 +235,8 @@ Row by row:
   elementwise kernels (SiLU and the VJP from 119.9 to 22.8 ms) and the opposite for
   the attention forward (§3: the scalar row loop); the attention scales on the pool (one task per
   (batch, head): x2.36 on four threads). At this context (128 tokens) attention is a tenth
-  of the step; NDT-ATTN is for longer contexts, and the row-loop fix is its first item.
+  of the step; NDT-ATTN is for longer contexts, and the row-loop fix, its first item, landed with
+  this report (§3).
 - **AdamW and the clipping norm.** The commit scales on the pool; the clipping norm and the
   finiteness check are the serial pass they were, and the update reads 76.5, 84.1
   and 71.5 ms at one, three and four threads under v1 -- the budget's "~30 ms at four

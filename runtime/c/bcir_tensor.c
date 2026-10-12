@@ -237,6 +237,9 @@ BCIR_MM_INLINE float sigmoid2(float x) {
   return x>=0.0f ? s : e*s;
 }
 BCIR_MM_INLINE void exp_body(size_t n, const float *x, float *y) { size_t i; for (i=0;i<n;i++) y[i]=exp1(x[i]); }
+/* The same exponential over a row in place (the softmax's rows): one pointer, so the loop
+ * vectorizes without an alias check, and exp1 per element as exp_body applies it. */
+BCIR_MM_INLINE void exp_inplace_body(size_t n, float *x) { size_t i; for (i=0;i<n;i++) x[i]=exp1(x[i]); }
 BCIR_MM_INLINE void silu2_body(size_t n, const float *x, float *y) { size_t i; for (i=0;i<n;i++) y[i]=x[i]*sigmoid2(x[i]); }
 BCIR_MM_INLINE void swiglu2_body(size_t n, const float *g, const float *u, const float *dy,
     float *dg, float *du) {
@@ -247,12 +250,15 @@ BCIR_MM_INLINE void swiglu2_body(size_t n, const float *g, const float *u, const
   }
 }
 static void exp_generic(size_t n, const float *x, float *y) { exp_body(n,x,y); }
+static void exp_inplace_generic(size_t n, float *x) { exp_inplace_body(n,x); }
 static void silu2_generic(size_t n, const float *x, float *y) { silu2_body(n,x,y); }
 static void swiglu2_generic(size_t n, const float *g, const float *u, const float *dy, float *dg,
     float *du) { swiglu2_body(n,g,u,dy,dg,du); }
 #ifdef BCIR_MM_DISPATCH
 __attribute__((target("avx2"))) static void exp_avx2(size_t n, const float *x, float *y) { exp_body(n,x,y); }
 __attribute__((target("avx512f"))) static void exp_avx512(size_t n, const float *x, float *y) { exp_body(n,x,y); }
+__attribute__((target("avx2"))) static void exp_inplace_avx2(size_t n, float *x) { exp_inplace_body(n,x); }
+__attribute__((target("avx512f"))) static void exp_inplace_avx512(size_t n, float *x) { exp_inplace_body(n,x); }
 __attribute__((target("avx2"))) static void silu2_avx2(size_t n, const float *x, float *y) { silu2_body(n,x,y); }
 __attribute__((target("avx512f"))) static void silu2_avx512(size_t n, const float *x, float *y) { silu2_body(n,x,y); }
 __attribute__((target("avx2"))) static void swiglu2_avx2(size_t n, const float *g, const float *u,
@@ -266,6 +272,13 @@ static void exp_run(int variant, size_t n, const float *x, float *y) {
   if (variant==2) { exp_avx2(n,x,y); return; }
 #endif
   (void)variant; exp_generic(n,x,y);
+}
+static void exp_inplace_run(int variant, size_t n, float *x) {
+#ifdef BCIR_MM_DISPATCH
+  if (variant==4) { exp_inplace_avx512(n,x); return; }
+  if (variant==2) { exp_inplace_avx2(n,x); return; }
+#endif
+  (void)variant; exp_inplace_generic(n,x);
 }
 static void silu2_run(int variant, size_t n, const float *x, float *y) {
 #ifdef BCIR_MM_DISPATCH
@@ -708,7 +721,9 @@ void bcir_tensor_rope(size_t b, size_t t, size_t heads, size_t dim,
  * reference loop's softmax: each score is the dot product accumulated from zero over the channels
  * in order and then scaled, each context row adds p_ij v_j for j ascending -- the operations the
  * reference loop (test_decoder_train.c keeps it) performs, in its order, so the result is
- * bit-identical; future scores stay exactly zero. */
+ * bit-identical; future scores stay exactly zero. Under the exp contract the softmax row goes
+ * through the exponential's vector instance after the max-subtraction (the same exp1 per
+ * element, the same sum order; the scalar loop cost the forward a quarter more than libm). */
 typedef struct att_job {
   size_t b,t,nh,nk,d,group; const float *q,*k,*v,*dy; float *p,*y,*dq,*dk,*dv; int variant,exp2;
 } att_job;
@@ -722,8 +737,11 @@ static void att_head(const att_job *a, size_t r, size_t h) {
   for (i=0;i<t;i++) {
     float *pi=ph+i*t,maxv=-INFINITY,sum=0.0f;
     for (j=0;j<=i;j++) { pi[j]*=scale; if (pi[j]>maxv) maxv=pi[j]; }
-    if (a->exp2) { for (j=0;j<=i;j++) { pi[j]=exp1(pi[j]-maxv); sum+=pi[j]; } }
-    else for (j=0;j<=i;j++) { pi[j]=expf(pi[j]-maxv); sum+=pi[j]; }
+    if (a->exp2) {  /* v2: the row through the vector instance, then the sum in index order */
+      for (j=0;j<=i;j++) pi[j]-=maxv;
+      exp_inplace_run(a->variant,i+1,pi);
+      for (j=0;j<=i;j++) sum+=pi[j];
+    } else for (j=0;j<=i;j++) { pi[j]=expf(pi[j]-maxv); sum+=pi[j]; }
     for (j=0;j<=i;j++) pi[j]/=sum;
   }
   x.tb=0; x.n=d; x.k=t; x.a=ph; x.lda=t; x.b=a->v+(r*t*nk+kh)*d; x.ldb=nk*d;
