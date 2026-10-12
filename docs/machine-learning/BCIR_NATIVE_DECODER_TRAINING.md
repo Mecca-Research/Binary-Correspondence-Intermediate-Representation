@@ -170,8 +170,14 @@ the injected partition faults each witness catches. The fused GEMM contract land
 every fused instance to the `fmaf` loop, `train.mm.fused.mismatch` holds the kernel to an exact rational
 emulation rounded once per term (`round_f32`, never through a double), and
 `tools/testing/faults/ndt-fma.json` the injected faults. The BCIR-owned exponential landed too (NDT-EXP): `exp_contract` in the C harness, the two rows
-above, and `tools/testing/faults/ndt-exp.json`. What comes next for this trainer -- the plan
-driving the step's dispatch, tiled attention -- is the ladder of
+above, and `tools/testing/faults/ndt-exp.json`. The three were re-measured together the same day
+([BCIR_NDT_MEASURE_2026-10-12.md](../research/BCIR_NDT_MEASURE_2026-10-12.md)): every state its
+contract's own and identical at one to four threads, the 1,000-step v1 run on three threads ending
+in the 10-11 one-thread run's state byte for byte, and the 9.84M decoder's step on three threads at
+819 ms under `fused+exp` against 989 under v1 (the same model to four decimals), with the step's time
+by kernel at 1, 3 and 4 threads read against the roadmap's budget row by row. What comes next for
+this trainer -- the plan driving the step's dispatch, the fused kernel's register block and packing,
+tiled attention -- is the ladder of
 [the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference

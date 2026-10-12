@@ -2866,6 +2866,36 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     and on random text over small alphabets (where merges nest deepest); the tokenizer's own
     `encode` is the rank-ordered one; and a rank table that reverses the merge order disagrees,
     so the differential can fail.
+  NDT-MEASURE (2026-10-12): the comparison re-run after the pool and the two v2 contracts
+  ([BCIR_NDT_MEASURE_2026-10-12.md](research/BCIR_NDT_MEASURE_2026-10-12.md)).
+  - The `identity` stage per contract and thread count (`--contract`, `--variants`): v1's 16 rows
+    one state, the 10-11 serial digest; each v2 contract one state of its own at 1..4 threads on
+    the widest and AVX2 builds (the portable fused instance, libm's `fmaf` per term, is a
+    correctness path the C harness holds, not a run). The 1,000-step v1 run on three threads ends
+    in the 10-11 one-thread run's state byte for byte (`aed5ffbf…`); the `fused+exp` runs on
+    three and four threads end in one state of their own (`eb43c96d…`, the same at three and
+    at four threads).
+  - A `bcir-breakdown` stage: the step's kernels timed through the entry points the trainer calls
+    under the run's pool and contracts (the pooled kernels, `bcir_tensor_mm_fused_pool`, the v2
+    SiLU, SwiGLU VJP and softmax), so "the rest" is the step less its kernels under that pool --
+    the serial entry points the first cut timed read a negative rest under the pool, which is how
+    the stage found its own defect. At one thread the fused contract takes the step's GEMMs
+    x1.24, not the 2x of its instruction count (the packing, loads and stores are
+    the same under both contracts); three threads take the `fused+exp` step x1.71
+    and four x2.03 (the 64-row task partition behind one barrier per GEMM, and the
+    reductions the pool leaves serial by design). One finding against NDT-EXP itself: the v2
+    softmax calls the scalar exponential element by element inside its row loop, so the
+    attention forward reads 79 ms under `exp` against 62 under libm at one thread -- the row
+    through the vector instance (the same values, the same digest) is the next attention
+    slice's first item.
+  - The 1,000-step language-model run: v1 on three threads 989 ms a step, `fused+exp` 819 (v1 on
+    one thread here 1,952; the 10-11 one-thread v1 run 1,726, so that host was about 13%
+    faster; eager PyTorch there 774 on one thread), the same held-out model to four
+    decimals (validation 1.5003, test 1.6319 nats per byte; the two trajectories within 0.0002
+    nats at every hundredth step). The training roadmap's §2 budget gets its measured table and
+    the ladder two candidate slices the residual names, NDT-BLOCK (the fused kernel's register
+    block and packing) and NDT-REDUCE (the serial reductions under a declared tree contract);
+    PyTorch is not installable on this host, so the equal-thread comparison is the next run.
   NDT-EXP (2026-10-12): a BCIR-owned exponential under the v2 contracts of SiLU, the SwiGLU VJP
   and the softmax.
   - `bcir_tensor_expf`: x = k ln2 + r by a Cody-Waite reduction (LN2_HI with 16 significant bits,

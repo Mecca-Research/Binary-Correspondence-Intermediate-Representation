@@ -646,6 +646,11 @@ python $H kernels   --data DIR --rounds 3         # §3: 75d50d4 against this tr
 python $H baseline  --data DIR --steps 6          # §4: 75d50d4 against this tree, identical state
 python $H identity  --data DIR --steps 20 --cc gcc --cc CLANG23 --cc CLANG18
 python $H identity  --data DIR --steps 20 --cc gcc --threads 1,2,3,4   # NDT-THREADS (2026-10-12): one state at every pool size
+# NDT-MEASURE (2026-10-12): the step under the pool and the v2 contracts, kernel by kernel, and the
+# 1,000-step run on three and four threads -- BCIR_NDT_MEASURE_2026-10-12.md
+python $H identity  --data DIR --steps 20 --cc gcc --threads 1,2,3,4 --contract fused,exp,fused+exp --variants widest,avx2
+python $H bcir-breakdown --data DIR --cc gcc --rounds 5 --threads 3 --contract fused+exp
+python $H train --data DIR --task lm --backend bcir --threads 3 --contract fused+exp --eval-every 100 --lr-scale 0.25
 python $H breakdown --data DIR --cc gcc --cc CLANG23 --cc CLANG18   # §4.1, §5.5
 python $H context   --data DIR                    # §5.8: T=64..1024, and 2 and 4 threads
 python $H summarize --data DIR

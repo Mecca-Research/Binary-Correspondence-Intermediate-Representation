@@ -30,6 +30,18 @@
   exponential (PyTorch: 762), and at 255-285 ms on four (PyTorch: 257). Beating the four-thread
   step is the last 10%: a micro-kernel at MKL's efficiency, the two VJPs of a layer run
   concurrently, and the plan choosing per call. Those are slices with rows, not promises (§3).
+- **Measured (NDT-MEASURE, 2026-10-12).** The first three slices landed and were re-measured
+  together ([BCIR_NDT_MEASURE_2026-10-12.md](BCIR_NDT_MEASURE_2026-10-12.md)). The budget held for
+  the elementwise kernels and was wrong for the GEMM, for the threads and for the softmax under
+  `exp` (its row loop calls the exponential element by element, so the attention forward is slower
+  than under libm until the row goes through the vector instance, NDT-ATTN's first item): the
+  fused contract gains x1.24 on the step's GEMMs, not 2x, because the kernel's
+  packing, loads and stores are the same under both contracts; three threads give x1.71
+  on the step and four x2.03, not 3x, because the 64-row tasks sit behind one barrier
+  per GEMM and the reductions stay serial. On three threads the 9.84M decoder trains at 819 ms a
+  step under `fused+exp` against 989 under v1, the same model to four decimals; eager PyTorch's 774
+  on one thread is the 10-11 host's number. §2's measured table and §3's two candidate slices
+  (NDT-BLOCK, NDT-REDUCE) carry the correction.
 - **The training corpus is a one-way build dependency of the IR (TRAIN-RAIL, landed).** The IR's
   build has a `train` rail that reads `training/**/*.md` and `docs/**/*.md` as the pinned corpus
   of the BCIR-native lab model and trains it on the native trainer (`tools/models/train_rail.sh`:
@@ -128,6 +140,28 @@ at four only with the GEMM at MKL's efficiency or with the structural levers of 
 VJPs, the plan choosing per call, one pass fewer in the update). It is an expectation, and each
 slice replaces one row of it with a measurement before the next slice is designed.
 
+**Measured (NDT-MEASURE, 2026-10-12).** The `bcir-breakdown` step on a host whose v1 one-thread
+step is 1,859.9 ms (the 1,632 above was the 10-11 host's; the rows are the report's §3, the
+GEMM row the forward and backward GEMMs together, the last row the step less its kernels):
+
+| One step (ms) | v1, 1 thread | `fused+exp`, 1 thread | `fused+exp`, 3 threads | `fused+exp`, 4 threads |
+| --- | ---: | ---: | ---: | ---: |
+| GEMMs | 1,415.7 | 1,081.3 | 597.7 | 479.2 |
+| attention | 150.9 | 167.6 | 81.7 | 71.0 |
+| SiLU, SwiGLU VJP, norms, RoPE | 147.2 | 45.2 | 31.8 | 28.7 |
+| AdamW and the clipping norm | 76.5 | 78.3 | 64.2 | 59.4 |
+| loss, embedding, residuals (the rest) | 69.2 | 134.1 | 105.2 | 102.8 |
+| **step** | **1,859.9** | **1,506.9** | **881.5** | **741.7** |
+| eager PyTorch, the 10-11 host | 762 (1 thread) | -- | -- | ~257 (4 threads, the 10-11 context stage) |
+
+Read against the expectation: the GEMM row is where it was wrong -- x1.24 from
+the contract instead of 2x, and x2.26 from four threads instead of 3.6x -- the elementwise row
+is where it held, and the attention row did not move at one thread (the `exp` softmax's scalar
+row loop, NDT-ATTN's first item). The step's three residuals each name a slice
+(§3): the kernel's register block and packing (NDT-BLOCK), the task partition and the two VJPs
+run concurrently (NDT-SCHED), and the serial reductions (NDT-REDUCE, with NDT-NORM for the
+update's clipping pass).
+
 ## 3. The ladder
 
 One gated slice per entry, the slice ID in the PR title, every number in a PR body with its host,
@@ -143,13 +177,17 @@ hardware.
 | **NDT-FMA** (P1) | the fused contract: `bcir_tensor_mm_fused` (`c = beta*c`, then `c = fma(alpha*a(i,l), b(l,j), c)` for `l` ascending), a portable instance through `fmaf`, AVX2+FMA and AVX-512 instances fusing in registers (the same register block and packed tile as v1; the wider block and the per-panel packing of the transposed-A operand stay open, measured below); the state selects it (ABI 3 `contract`, `NativeDecoder(contract="fused")`); the checkpoint and every record name the contract | bit-identical across hosts and compilers with an IEEE `fma`; the oracle's exact emulation | `train.mm.fused.mismatch` 0 over the 20 GEMM cases against an exact rational emulation rounded once per term (`round_f32`, never through a double: a tie resolved by a double rounds wrongly); the C harness holds every fused instance to the `fmaf` ascending-`k` loop, serially and on a pool, and the fused state apart from v1's; `ndt-fma.json`: a term rounded twice, a fused entry running v1, a trainer ignoring its contract, an undefined bit admitted; measured: v2 against v1 at one thread on the 9.84M decoder's 13 GEMM shapes, best of 7: work-weighted 46.9 -> 66.9 GFLOP/s, x1.43 (x1.33 to x1.51 per shape; [gemm-fused-rates.json](measurements/2026-10-12/gemm-fused-rates.json), GCC 13.3, AVX-512 instance, indicative) -- short of the arithmetic's x2 because the kernel is not only its multiply-adds (packing, loads and the register block's stores stay), which the wider block and the per-panel packing above are for | **landed** |
 | **NDT-EXP** (P2) | a BCIR-owned `expf` (`bcir_tensor_expf`): one operation sequence -- a Cody-Waite reduction, a degree-7 polynomial, 2^k as two exact power-of-two scalings, the special cases selected at the end -- scalar and vectorized (AVX2, AVX-512 instances), no libm, no fma; SiLU, the SwiGLU VJP and the attention softmax under a declared v2 of their contracts (the `exp` contract bit, `NativeDecoder(contract="exp")`, with `"fused+exp"` for both v2 contracts); v1 keeps libm | identical scalar, AVX2 and AVX-512 results; a stated ulp bound against exp in double rounded to binary32 over every binary32 in [-104, 89] sampled at stride 2^8 | `train.exp.mismatch` 0 over 2^24 inputs across instances; `train.exp.ulp.max` 1, the stated row, held exactly; the C harness: the instances, the special values, SiLU/SwiGLU VJP/softmax v2 against their definitions and apart from v1, the four contracts' states each their own and each identical at 1..4 threads; `ndt-exp.json`: the polynomial's highest terms dropped, the reduction's low constant dropped, an instance on libm, the v2 softmax on libm, a trainer ignoring the bit | **landed** |
 | **NDT-SCHED** (P2) | the GEM+ step program drives the step: `training_step_program` emits an `ExecutionPlanV1` the C step reads -- per call the contract, the instance and the thread split chosen from the measured-candidate corpus (G13), and the two VJPs of a linear (`dx`, `dW`: independent reads, disjoint writes) scheduled concurrently where the narrow K/V projections leave cores idle | the plan that runs is the plan that was verified (G19's law extended to the trainer); R9 prices it | `train.plan.executed.mismatch` 0 (the trace of the C step equals the plan); the step's time against the plan's roofline; RED: a plan naming a variant the host lacks is refused before any kernel runs | open |
-| **NDT-ATTN** (P2) | tiled attention: the forward keeps one running maximum and log-sum-exp per row and stores no probabilities; the backward recomputes each tile's probabilities from the stored log-sum-exp; fixed tile order, so deterministic; a declared v2 of the attention contract | O(B·H·T) memory in place of O(B·H·T²); at T=1,024 a layer within PyTorch's flash path | `train.attention.tiled.mismatch` against the scalar reference under the v2 contract; the `context` stage's per-layer times and arena bytes at T=64..1,024 | open |
+| **NDT-ATTN** (P2) | first, the v2 softmax's row through the vector exponential after the max-subtraction (NDT-MEASURE's finding: the scalar row loop costs the attention forward a quarter more than libm; the same values, so the `exp` digest stays); then tiled attention: the forward keeps one running maximum and log-sum-exp per row and stores no probabilities; the backward recomputes each tile's probabilities from the stored log-sum-exp; fixed tile order, so deterministic; a declared v2 of the attention contract | O(B·H·T) memory in place of O(B·H·T²); at T=1,024 a layer within PyTorch's flash path | `train.attention.tiled.mismatch` against the scalar reference under the v2 contract; the `context` stage's per-layer times and arena bytes at T=64..1,024 | open |
 | **NDT-NORM** (P3) | one pass fewer in the update where the order allows: the finiteness check and the maxima gathered as the backward writes each gradient, the norm's index-order sum kept | the same state | the `breakdown` stage's optimizer row | candidate |
 | **NDT-MEM** (P2) | the transient arena laid out by lifetime (the GEM+ roadmap's open item) | `train.memory.transient` 1.326 -> 1.0 | as stated there | open |
+| **NDT-MEASURE** (P1) | the comparison re-run on the pool and the contracts ([BCIR_NDT_MEASURE_2026-10-12.md](BCIR_NDT_MEASURE_2026-10-12.md)): `identity` per contract and thread count, `bcir-breakdown` at 1, 3 and 4 threads under each contract, the 1,000-step language-model run on three and four threads under v1 and `fused+exp` | every state its contract's own and identical at 1..4 threads; the 1,000-step v1 run on three threads ends in the 10-11 one-thread run's state (`aed5ffbf…`) | the exact rows; the step read against §2 row by row (§2's measured table) -- the fused contract gains 1.2x on the step's GEMMs, not 2x, and three threads 1.7x on the step, not 3x, which names the next slices: the register block and packing (NDT-BLOCK), the partition and the concurrent VJPs (NDT-SCHED), the serial reductions (NDT-REDUCE) | **landed** |
+| **NDT-BLOCK** (P1) | the fused kernel's wider register block and the per-panel packing of the transposed-A operand (NDT-FMA's open item), under the same contract: the result is fixed by the contract, so only the schedule changes | `train.mm.fused.mismatch` stays 0 and every state digest stays | the kernel-rate record against OpenBLAS's 87 GFLOP/s at one thread on the step's shapes (the fused kernel reads 56-67 today); the `bcir-breakdown` GEMM rows | candidate |
+| **NDT-REDUCE** (P3) | the index-order reductions the pool leaves serial (the loss, the embedding scatter, the gamma VJP's row sum, the clipping norm) under a declared fixed-shape tree-reduction contract, so that they thread without the result depending on the thread count | a third declared contract, its own state, identical at every thread count | the `bcir-breakdown` "rest" row; `train.state.threads.mismatch` under the new bit | candidate |
 | **NDT-BF16 / AMX** (P3) | BF16 computation with an explicit accumulation and master-weight policy, AMX tiles where the host has them | quality parity across seeds | hardware-gated: this host has neither `avx512_bf16` nor AMX; an explicit skip, never simulated | hardware-gated |
 
-Order of work (TRAIN-0, TRAIN-RAIL, NDT-THREADS, NDT-FMA and NDT-EXP landed 2026-10-12): TRAIN-0 -> TRAIN-RAIL -> NDT-THREADS -> NDT-FMA -> NDT-EXP -> NDT-MEASURE (the
-comparison re-run) -> NDT-SCHED -> NDT-ATTN. THREADS precedes FMA because it changes no
+Order of work (TRAIN-0, TRAIN-RAIL, NDT-THREADS, NDT-FMA, NDT-EXP and NDT-MEASURE landed 2026-10-12): TRAIN-0 -> TRAIN-RAIL -> NDT-THREADS -> NDT-FMA -> NDT-EXP -> NDT-MEASURE (the
+comparison re-run) -> NDT-SCHED -> NDT-BLOCK -> NDT-ATTN, with NDT-MEASURE's reading (§2's measured table) setting
+SCHED's and BLOCK's targets. THREADS precedes FMA because it changes no
 arithmetic, so its witness is the strongest kind (the existing state digest reproduced at every
 thread count) and it lands on the contract every existing gate already holds. FMA is then a
 provider choice on a kernel that is already partitioned. EXP is independent of both and small.
@@ -176,8 +214,8 @@ interleaved; a slice is measured with all of them before and after, and its PR q
 | Level | Instrument | What it reads | Gates? |
 |---|---|---|---|
 | kernel | `train_comparison.py kernels --base <main>` | every GEMM shape of the step (16), both attention directions, AdamW, per instance; output hashes before against after | hashes equal under one contract: **exact** |
-| state | `train_comparison.py identity --steps 20 --cc <each>` (NDT-THREADS adds `--threads`) | the 20-step state SHA-256 across compilers, instances and thread counts | one SHA per contract: **exact** |
-| step | `train_comparison.py breakdown` and `baseline`, at 1, 2 and 4 threads | the step part by part, BCIR against eager PyTorch; the step before against after | **wall**, indicative |
+| state | `train_comparison.py identity --steps 20 --cc <each> --threads 1,2,3,4 --contract <each>` (`--variants` names the builds) | the 20-step state SHA-256 across compilers, instances, thread counts and contracts | one SHA per contract: **exact** |
+| step | `train_comparison.py breakdown` and `baseline` (BCIR against eager PyTorch); `bcir-breakdown --threads <n> --contract <c>` (the step by kernel through the entry points the trainer calls under the run's pool and contracts, no PyTorch needed), at 1, 3 and 4 threads | the step part by part; the step before against after | **wall**, indicative |
 | run | `train_comparison.py train --task lm --backend <each> --threads <n>` | 1,000 steps: time to each validation cross-entropy, final test cross-entropy, accuracy and words completed, peak RSS, the final state's SHA-256 | the model equal to PyTorch's (CE within 0.001 nats): **exact** in intent; the times indicative |
 | row | `tools/perf/gemplus_baseline.py --compare --group train`, `tools/perf/ab_audit.py` | `train.step.ms` and its roofline floor; the new rows above; the before/after audit of every PR | the exact rows gate; the ratio rows within their bands |
 
