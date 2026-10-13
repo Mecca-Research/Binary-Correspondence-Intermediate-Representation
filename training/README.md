@@ -3,8 +3,11 @@
 > **Scope:** this directory is a **training corpus**, not part of the BCIR IR.
 > The IR is realized by the executable oracle in [`../bcir/`](../bcir) and the
 > MLIR law in [`../mlir/`](../mlir). Nothing here is built into those
-> components, and neither may depend on the other. See
-> [`../AGENTS.md`](../AGENTS.md) and
+> components, and the IR never imports this directory; the one dependency runs
+> the other way and carries data only — the IR's `train` rail reads a pinned
+> selection of this corpus as training text (the one-way corpus law:
+> [`../AGENTS.md`](../AGENTS.md) §2,
+> [`../docs/research/BCIR_TRAINING_ACCELERATION_ROADMAP.md`](../docs/research/BCIR_TRAINING_ACCELERATION_ROADMAP.md) §5). See also
 > [`../docs/BCIR_Repo_Structure.md`](../docs/BCIR_Repo_Structure.md).
 
 One body of knowledge, delivered in three shapes:
@@ -193,9 +196,10 @@ The arithmetic is BCIR's own. `--backend both` runs the pure-Python reference
 read by `bcir_ai_q8_rows_dot_f64`, the kernel whose header names embedding
 projections as its purpose — at half the bytes per coordinate.
 
-The corpus is never a build dependency of BCIR: those imports are lazy, reached
-only when a native backend is asked for, and the reference backend is always
-sufficient on its own.
+Those imports are lazy, reached only when a native backend is asked for, and
+the reference backend is always sufficient on its own: the corpus never needs
+BCIR built. The dependency that does exist runs the other way, as data — the
+IR's `train` rail reads this corpus (`../AGENTS.md` §2).
 
 Both builders discover subjects automatically: any directory under `training/`
 that is not `tools/` or `schema/` is a subject, and a new folder joins both

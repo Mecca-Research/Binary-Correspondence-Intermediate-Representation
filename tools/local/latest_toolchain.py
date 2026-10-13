@@ -1,25 +1,31 @@
 #!/usr/bin/env python3
-"""The newest LLVM/Clang/MLIR 23 and Node 24 on this host: what is installed, what upstream ships,
-and how to get the newest -- the first leg of tools/local/check_latest.sh
+"""The newest LLVM/Clang/MLIR 23, Node 24 and Python 3.15 on this host: what is installed, what
+upstream ships, and how to get the newest -- the first leg of tools/local/check_latest.sh
 (.claude/skills/bcir-latest-toolchain/SKILL.md).
 
-Every BCIR change is judged on the CI-default toolchain (Ubuntu's Clang 18, GCC 13) AND on the
-newest release of the majors the law rail and the WASM tests track: LLVM 23 and Node 24. A pass on
-Clang 18 alone says nothing about 23 -- BUILD-2c's generated Q8 header built clean on Clang 18 and
-GCC 13 and failed on Clang 23.1.2, which offers C23 `#embed` to C11 as an extension.
+Every BCIR change is judged on the CI-default toolchain (Ubuntu's Clang 18, GCC 13, Python 3.12)
+AND on the newest release of the majors the law rail, the WASM tests and the oracle track: LLVM 23,
+Node 24 and Python 3.15. A pass on Clang 18 alone says nothing about 23 -- BUILD-2c's generated Q8
+header built clean on Clang 18 and GCC 13 and failed on Clang 23.1.2, which offers C23 `#embed` to
+C11 as an extension -- and a pass on Python 3.12 says nothing about 3.15, where UTF-8 mode is the
+default and what 3.13 and 3.14 deprecated is gone.
 
     latest_toolchain.py status          installed vs newest: exit 0 when everything is current,
                                         1 when something is behind, missing or incoherent, 2 when
                                         the newest release could not be determined
-    latest_toolchain.py env             shell exports putting the LLVM 23 bin and Node 24 first
+    latest_toolchain.py env             shell exports putting the LLVM 23 bin and Node 24 first,
+                                        and BCIR_PYTHON_LATEST naming the Python 3.15
     latest_toolchain.py install-node    the newest Node 24 into the BCIR cache, its tarball checked
                                         against a signature-verified checksum list before extraction
 
 "Newest" is read from the sources themselves: the highest `llvmorg-23.<minor>.<patch>` tag of
-llvm/llvm-project (release candidates excluded) and the highest v24.x of nodejs.org's release
-index. A source that cannot be reached makes the verdict UNKNOWN, never "current"
+llvm/llvm-project (release candidates excluded), the highest v24.x of nodejs.org's release index
+and the highest `v3.15.<patch>` tag of python/cpython (alphas, betas and release candidates
+excluded). A source that cannot be reached makes the verdict UNKNOWN, never "current"
 (docs/security/laws.md L1, L2). LLVM 23 comes from `BCIR_LOCAL_FULL=1 bash tools/local/setup_mlir.sh`
-(conda-forge, which tracks the upstream point releases) or from apt.llvm.org; this tool finds either.
+(conda-forge, which tracks the upstream point releases) or from apt.llvm.org; Python 3.15 from
+`uv python install 3.15` or conda-forge (`micromamba create -n py315 -c conda-forge python=3.15`
+under the same prefix as `m23`), both of which verify what they download; this tool finds either.
 """
 
 from __future__ import annotations
@@ -42,7 +48,13 @@ from pathlib import Path
 
 LLVM_MAJOR = 23
 NODE_MAJOR = 24
+# The newest CPython the package declares: pyproject.toml's highest `Programming Language ::
+# Python :: 3.x` classifier, which CI's python-newer, host-portability and oracle-llvm-latest cells
+# run (test_latest_toolchain.py holds the four spellings to one).
+PYTHON_SERIES = (3, 15)
+PYTHON_LABEL = f"{PYTHON_SERIES[0]}.{PYTHON_SERIES[1]}"
 LLVM_REPO = "https://github.com/llvm/llvm-project.git"
+CPYTHON_REPO = "https://github.com/python/cpython.git"
 NODE_DIST = "https://nodejs.org/dist"
 RELEASE_KEYS_REPO = "https://github.com/nodejs/release-keys.git"
 TIMEOUT = 120
@@ -58,6 +70,8 @@ PLATFORMS = {
 }
 
 TAG = re.compile(rf"^refs/tags/llvmorg-{LLVM_MAJOR}\.(\d+)\.(\d+)$")
+PYTHON_TAG = re.compile(rf"^refs/tags/v{PYTHON_SERIES[0]}\.{PYTHON_SERIES[1]}\.(\d+)$")
+PYTHON_VERSION = re.compile(r"^Python (\d+)\.(\d+)\.(\d+)$", re.M)  # `3.15.0rc3` is not a release
 CLANG_VERSION = re.compile(r"\bclang version (\d+)\.(\d+)\.(\d+)")
 LLVM_VERSION = re.compile(r"\bLLVM version (\d+)\.(\d+)\.(\d+)")
 NODE_VERSION = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
@@ -98,6 +112,18 @@ def newest_llvm_from_tags(listing: str) -> Version | None:
     return max(found) if found else None
 
 
+def newest_python_from_tags(listing: str) -> Version | None:
+    """The highest `v3.15.<patch>` of a `git ls-remote --tags` listing; alphas, betas, release
+    candidates (`v3.15.0rc3`), other series and peeled `^{}` lines do not match."""
+    found: list[Version] = []
+    for line in listing.splitlines():
+        fields = line.split()
+        match = PYTHON_TAG.match(fields[-1]) if fields else None
+        if match:
+            found.append((PYTHON_SERIES[0], PYTHON_SERIES[1], int(match[1])))
+    return max(found) if found else None
+
+
 def newest_node_from_index(entries: object) -> Version | None:
     """The highest v24.x of nodejs.org's index.json (a list of {version, ...} objects)."""
     found: list[Version] = []
@@ -120,28 +146,40 @@ def fetch(url: str, limit: int) -> bytes:
     return data
 
 
-def query_llvm() -> tuple[Version | None, str]:
+def release_tags(repo: str, pattern: str) -> tuple[str | None, str]:
+    """`git ls-remote --tags --refs <repo> <pattern>`: the listing, or None and why not. One
+    predicate for every repository whose tags name the newest release (L14)."""
     try:
         listing = subprocess.run(
-            [
-                "git",
-                "ls-remote",
-                "--tags",
-                "--refs",
-                LLVM_REPO,
-                f"refs/tags/llvmorg-{LLVM_MAJOR}.*",
-            ],
+            ["git", "ls-remote", "--tags", "--refs", repo, pattern],
             capture_output=True,
             timeout=TIMEOUT,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return None, f"git ls-remote could not run: {exc}"
     if listing.returncode != 0:
-        return None, f"git ls-remote {LLVM_REPO} failed: {_last_line(listing.stderr)}"
-    newest = newest_llvm_from_tags(listing.stdout.decode("utf-8", "replace"))
+        return None, f"git ls-remote {repo} failed: {_last_line(listing.stderr)}"
+    return listing.stdout.decode("utf-8", "replace"), ""
+
+
+def query_llvm() -> tuple[Version | None, str]:
+    listing, failure = release_tags(LLVM_REPO, f"refs/tags/llvmorg-{LLVM_MAJOR}.*")
+    if listing is None:
+        return None, failure
+    newest = newest_llvm_from_tags(listing)
     if newest is None:
         return None, f"{LLVM_REPO} lists no llvmorg-{LLVM_MAJOR}.x.y release tag"
     return newest, f"llvmorg-{fmt(newest)}"
+
+
+def query_python() -> tuple[Version | None, str]:
+    listing, failure = release_tags(CPYTHON_REPO, f"refs/tags/v{PYTHON_LABEL}.*")
+    if listing is None:
+        return None, failure
+    newest = newest_python_from_tags(listing)
+    if newest is None:
+        return None, f"{CPYTHON_REPO} lists no v{PYTHON_LABEL}.x release tag"
+    return newest, f"v{fmt(newest)} in {CPYTHON_REPO}"
 
 
 def query_node() -> tuple[Version | None, str]:
@@ -221,6 +259,44 @@ def installed_node() -> dict:
     return best
 
 
+def python_candidates() -> list[Path]:
+    """Where a Python 3.15 may live: BCIR_PYTHON_LATEST, PATH, the conda-forge envs under the BCIR
+    cache's prefix (beside setup_mlir.sh's `m23`), uv's and pyenv's interpreters, /usr/local, /usr."""
+    name = f"python{PYTHON_LABEL}"
+    found = [Path(os.environ["BCIR_PYTHON_LATEST"])] if os.environ.get("BCIR_PYTHON_LATEST") else []
+    on_path = shutil.which(name)
+    if on_path:
+        found.append(Path(on_path))
+    prefix = Path(os.environ.get("MAMBA_ROOT_PREFIX") or (cache_root() / "mamba"))
+    for base, pattern in (
+        (prefix / "envs", f"*/bin/{name}"),
+        (
+            Path.home() / ".local" / "share" / "uv" / "python",
+            f"cpython-{PYTHON_LABEL}.*/bin/{name}",
+        ),
+        (Path.home() / ".pyenv" / "versions", f"{PYTHON_LABEL}.*/bin/{name}"),
+    ):
+        if base.is_dir():
+            found.extend(sorted(base.glob(pattern)))
+    found.extend(Path(prefix) / name for prefix in ("/usr/local/bin", "/usr/bin"))
+    return found
+
+
+def installed_python() -> dict:
+    """The highest Python 3.15 release among the candidates; an interpreter that prints
+    `3.15.0rc3` is a pre-release, not one of them."""
+    best: dict = {"exe": None, "python": None}
+    for exe in python_candidates():
+        version = tool_version(exe, PYTHON_VERSION) if exe.is_file() else None
+        if (
+            version
+            and version[:2] == PYTHON_SERIES
+            and (best["python"] is None or version > best["python"])
+        ):
+            best = {"exe": exe, "python": version}
+    return best
+
+
 # --- verdicts -------------------------------------------------------------------------------------
 
 
@@ -245,8 +321,11 @@ def exit_code(verdicts: list[str]) -> int:
 def status(offline: bool = False) -> int:
     llvm = installed_llvm()
     node = installed_node()
-    llvm_newest, llvm_source = (None, "not queried (--offline)") if offline else query_llvm()
-    node_newest, node_source = (None, "not queried (--offline)") if offline else query_node()
+    python = installed_python()
+    unqueried = (None, "not queried (--offline)")
+    llvm_newest, llvm_source = unqueried if offline else query_llvm()
+    node_newest, node_source = unqueried if offline else query_node()
+    python_newest, python_source = unqueried if offline else query_python()
     rows = []
     for name, installed in (
         ("clang", llvm["clang"]),
@@ -263,9 +342,20 @@ def status(offline: bool = False) -> int:
     rows.append(
         (f"node {NODE_MAJOR}", node["node"], node["bin"], node_newest, node_source, node_state)
     )
+    python_state = verdict(python["python"], python_newest)
+    rows.append(
+        (
+            f"python {PYTHON_LABEL}",
+            python["python"],
+            python["exe"],
+            python_newest,
+            python_source,
+            python_state,
+        )
+    )
     for label, installed, where, newest, source, state in rows:
         print(
-            f"latest-toolchain: {label:8} installed {fmt(installed):9} ({where or 'not found'})  "
+            f"latest-toolchain: {label:11} installed {fmt(installed):9} ({where or 'not found'})  "
             f"newest {fmt(newest):9} ({source})  {state}"
         )
     code = exit_code([row[-1] for row in rows])
@@ -277,21 +367,33 @@ def status(offline: bool = False) -> int:
         )
     if node["bin"] is None or (node_newest and node["node"] and node["node"] < node_newest):
         print("  Node 24: python3 tools/local/latest_toolchain.py install-node")
+    if python["exe"] is None or (
+        python_newest and python["python"] and python["python"] < python_newest
+    ):
+        print(
+            f"  Python {PYTHON_LABEL}: uv python install {PYTHON_LABEL}  (or conda-forge: "
+            f"micromamba create -n py{PYTHON_SERIES[0]}{PYTHON_SERIES[1]} -c conda-forge "
+            f"python={PYTHON_LABEL}; then BCIR_PYTHON_LATEST=<its python{PYTHON_LABEL}> if it is "
+            "not on PATH)"
+        )
     return code
 
 
 def env() -> int:
     llvm = installed_llvm()
     node = installed_node()
-    if llvm["bin"] is None or node["bin"] is None:
+    python = installed_python()
+    if llvm["bin"] is None or node["bin"] is None or python["exe"] is None:
         print(
-            f"latest-toolchain: env needs both (LLVM {LLVM_MAJOR}: {llvm['bin'] or 'missing'}, "
-            f"Node {NODE_MAJOR}: {node['bin'] or 'missing'}); run `status` for the install commands",
+            f"latest-toolchain: env needs all three (LLVM {LLVM_MAJOR}: {llvm['bin'] or 'missing'}, "
+            f"Node {NODE_MAJOR}: {node['bin'] or 'missing'}, Python {PYTHON_LABEL}: "
+            f"{python['exe'] or 'missing'}); run `status` for the install commands",
             file=sys.stderr,
         )
         return 1
     print(f"export LLVM_BIN={shlex.quote(str(llvm['bin']))}")
     print(f"export BCIR_NODE_BIN={shlex.quote(str(node['bin']))}")
+    print(f"export BCIR_PYTHON_LATEST={shlex.quote(str(python['exe']))}")
     print('export PATH="${LLVM_BIN}:${BCIR_NODE_BIN}:${PATH}"')
     return 0
 
@@ -437,11 +539,16 @@ def install_node(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command")
-    st = sub.add_parser("status", help="installed vs newest LLVM/Clang/MLIR 23 and Node 24")
+    st = sub.add_parser(
+        "status", help="installed vs newest LLVM/Clang/MLIR 23, Node 24 and Python 3.15"
+    )
     st.add_argument(
         "--offline", action="store_true", help="do not query upstream (verdict UNKNOWN)"
     )
-    sub.add_parser("env", help="shell exports putting LLVM 23 and Node 24 first on PATH")
+    sub.add_parser(
+        "env",
+        help="shell exports putting LLVM 23 and Node 24 first on PATH, BCIR_PYTHON_LATEST the 3.15",
+    )
     inst = sub.add_parser("install-node", help="install the newest (or --version) Node 24")
     inst.add_argument("--version", help=f"a v{NODE_MAJOR}.x.y release (default: the newest)")
     inst.add_argument("--dest", type=Path, default=cache_root() / "node")

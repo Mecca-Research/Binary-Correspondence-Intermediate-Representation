@@ -1,0 +1,48 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_the_compiled_plan_and_gemm_are_the_programs",
+    "bcir.tests.test_native_decoder:test_the_training_state_is_identical_at_every_thread_count",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+      "label": "NF1 the fused instance rounds each term's product and its addition apart (the v1 arithmetic under the v2 name)",
+      "new": "      if (fused) { for (j=0;j<nr;j++) acc[r][j]+=av[r]*bl[j]; }",
+      "old": "      if (fused) { for (j=0;j<nr;j++) acc[r][j]=fmaf(av[r],bl[j],acc[r][j]); }",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+      "label": "NF2 the fused serial entry runs the v1 instances",
+      "new": "  mm_variant_any(mm_widest_fused(),MM_V1,ta,tb,m,n,k,alpha,a,b,beta,c);",
+      "old": "  mm_variant_any(mm_widest_fused(),MM_FUSED,ta,tb,m,n,k,alpha,a,b,beta,c);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_training_state_is_identical_at_every_thread_count",
+      "label": "NF3 the trainer's GEMM ignores the state's contract",
+      "new": "  else if (s->contract&~BCIR_DT_CONTRACT_FUSED) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);",
+      "old": "  else if (s->contract&BCIR_DT_CONTRACT_FUSED) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NF4 the pool's fused job runs the v1 instances (the pooled result is not the serial fused result)",
+      "new": "  if (j->x.k) mm_run_range(j->variant,MM_V1,&j->x,&r);",
+      "old": "  if (j->x.k) mm_run_range(j->variant,j->fused,&j->x,&r);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NF5 a contract bit the ABI does not define is admitted",
+      "new": "  if (s->contract&~(uint32_t)15u) return BCIR_DT_INVALID;",
+      "old": "  if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_KBLOCK)) return BCIR_DT_INVALID;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    }
+  ]
+}

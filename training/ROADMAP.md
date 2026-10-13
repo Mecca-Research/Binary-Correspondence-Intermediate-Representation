@@ -86,8 +86,9 @@ not been shown to work: the vectors are projected into BCIR's own symmetric Q15
 code space and searched by `bcir_ai_q15_topk` from `runtime/c` — the same
 exact-integer top-k kernel BCIR uses for its optimization memory — with a
 pure-Python reference as the definition and an exact differential between the
-two. The corpus is still never a build dependency of BCIR; the import is lazy
-and the reference path always suffices.
+two. The corpus still never needs BCIR built: the import is lazy and the
+reference path always suffices. The dependency that exists runs the other way,
+as data — the IR's `train` rail reads this corpus (`../AGENTS.md` §2).
 
 **Still open in this area, deliberately:** the corpus ships **no trained model**.
 The hermetic `lexical-hash-v1` baseline exists so the pipeline is gateable on any

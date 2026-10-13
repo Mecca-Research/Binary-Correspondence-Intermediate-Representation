@@ -170,10 +170,17 @@ show_section ring || exit 1
 # tools/build/sanitizer.py, the one predicate the CMake configure and the section-parity gate ask.
 if python3 "${ROOT}/tools/build/sanitizer.py" --cc "${CC}" thread >/dev/null 2>&1; then
   show_section ring_tsan || exit 1
+  # NDT-THREADS: the native trainer's deterministic pool under the same sanitizer (the decoder harness
+  # built with -fsanitize=thread: every pool kernel and three training steps at one to four threads
+  # race-free), and the same build of a pool whose attention backward puts one KV head's query
+  # heads on two threads (the manifest's test_decoder_train_race mutation), which must be REPORTED
+  # as racing on the shared dk/dv -- tools/c/sections/decoder_train_tsan.sh.
+  echo "[c-runtime] native decoder training on the deterministic pool under ThreadSanitizer (NDT-THREADS)"
+  show_section decoder_train_tsan || exit 1
 elif [ "${BCIR_REQUIRE_TSAN:-0}" = "1" ]; then
   echo "  FAIL: ThreadSanitizer is required here (BCIR_REQUIRE_TSAN=1), but a trivial TSan program does not build and run"; exit 1
 else
-  echo "  SKIP live ring under ThreadSanitizer: UNAVAILABLE on this host (no TSan runtime); CI's x86 C runtime job requires it"
+  echo "  SKIP live ring and the native trainer's pool under ThreadSanitizer: UNAVAILABLE on this host (no TSan runtime); CI's x86 C runtime job requires it"
 fi
 
 echo "[c-runtime] data-plane hand-off (G16): freestanding pack table + shard manifest + per-step freeze + oracle/C traces"

@@ -8,12 +8,16 @@ process so its peak resident memory is its own:
             copy, associative-recall and addition tasks with held-out problems, identical
             initial weights and one batch schedule per task, as long as its step budget -> DIR
   train     one backend on one task -> DIR/runs/<task>-<backend>.json
-  identity  BCIR's training state, bit for bit, across ISA variants, compilers and a repeat
+  identity  BCIR's training state, bit for bit, across ISA variants, compilers, a repeat,
+            thread counts (--threads) and contracts (--contract, --variants)
   baseline  the pre-update kernels against these, same steps: identical state, time per step
   kernels   the same, kernel by kernel: every GEMM shape of a step on every ISA variant,
             attention forward and backward, AdamW; identical outputs, time per call
   breakdown where one step's time goes: BCIR's step by kernel family (per compiler, and with
             OpenBLAS), eager PyTorch's by phase and by operator family
+  bcir-breakdown
+            one BCIR step by kernel family through the entry points the trainer calls under
+            the run's pool and contracts (--threads, --contract); no PyTorch needed
   context   time and memory against context at 1,024 tokens per step: one attention layer
             forward and backward on BCIR and on PyTorch, and the decoder's step at T=64..1024
             on BCIR, BCIR with OpenBLAS and eager PyTorch, each in its own process; and the
@@ -412,7 +416,7 @@ def build_library(out: Path, cc: str, defines=(), sources: Path | None = None, f
     target = out / "bcir_decoder_train.so"
     command = [cc, "-std=c11", *flags, *WARNINGS, "-DBCIR_DT_BUILD_SHARED", "-shared", "-fPIC",
                *defines, "-I", str(src), str(src / "bcir_tensor.c"),
-               str(src / "bcir_decoder_train.c"), "-o", str(target), "-lm"]  # fmt: skip
+               str(src / "bcir_decoder_train.c"), "-o", str(target), "-lm", "-pthread"]  # fmt: skip
     subprocess.run(command, check=True, capture_output=True, timeout=300)
     return target
 
@@ -420,27 +424,35 @@ def build_library(out: Path, cc: str, defines=(), sources: Path | None = None, f
 def _openblas(threads: int = 1):
     import scipy_openblas32
 
+    # OpenBLAS's worker threads spin after each call for 2^OPENBLAS_THREAD_TIMEOUT cycles before
+    # they sleep (2^28 by default, about a tenth of a second): beside the trainer's pool they
+    # burn the cores the attention, the update and the norms run on between two GEMMs. Read at
+    # load, so it is set before the library loads; a value in the environment already wins.
+    os.environ.setdefault("OPENBLAS_THREAD_TIMEOUT", "4")
     path = Path(scipy_openblas32.get_lib_dir()) / "libscipy_openblas.so"
     lib = ctypes.CDLL(str(path))
     lib.scipy_openblas_set_num_threads(threads)
     lib.scipy_openblas_get_config.restype = ctypes.c_char_p
-    return path, lib.scipy_openblas_get_config().decode()
+    config = lib.scipy_openblas_get_config().decode()
+    return path, f"{config} THREAD_TIMEOUT={os.environ['OPENBLAS_THREAD_TIMEOUT']}"
 
 
-def _native(data: Path, library: Path, *, openblas=False):
+def _native(data: Path, library: Path, *, openblas=False, threads=1, contract="v1"):
     from bcir.hosted.models.native import NativeDecoder, parameter_layout
 
     spec = _spec()
     nd = NativeDecoder(
-        library, spec, batch_size=BATCH, context_length=CONTEXT, max_memory_bytes=4 << 30
-    )
+        library, spec, batch_size=BATCH, context_length=CONTEXT, max_memory_bytes=4 << 30,
+        threads=threads, contract=contract,
+    )  # fmt: skip
     flat = _load(data, "weights.f32", "f")
     nd.load_state_dict({name: flat[off : off + n] for name, _s, off, n in parameter_layout(spec)})
-    info = {"provider": "portable-c"}
+    info = {"provider": "portable-c", "contract": contract, "threads": threads}
     if openblas:
-        path, config = _openblas()
+        path, config = _openblas(threads)
         nd.use_cblas(path, symbol="scipy_cblas_sgemm")
-        info = {"provider": "scipy_cblas_sgemm", "openblas": config}
+        info = {"provider": "scipy_cblas_sgemm", "openblas": config, "contract": contract,
+                "threads": threads, "admission": nd.provider_admission}  # fmt: skip
     return nd, info
 
 
@@ -484,7 +496,7 @@ def _state_digest_torch(model, optimizer) -> str:
 # --- train -----------------------------------------------------------------------------------
 def train(
     data: Path, task: str, backend: str, steps: int | None, eval_every: int, cc: str,
-    lr_scale: float = 1.0,
+    lr_scale: float = 1.0, threads: int = 1, contract: str = "v1",
 ):  # fmt: skip
     import numpy as np
 
@@ -498,14 +510,15 @@ def train(
     rates = [lr_scale * _rate(s, steps) for s in range(steps)]
     started = time.perf_counter()
     rss_start = _rss_mb()
-    info: dict = {"backend": backend, "task": task, "steps": steps, "threads": 1,
-                  "lr_scale": lr_scale}  # fmt: skip
+    info: dict = {"backend": backend, "task": task, "steps": steps, "threads": threads,
+                  "contract": contract, "lr_scale": lr_scale}  # fmt: skip
     compile_s = None
     if backend.startswith("bcir"):
         from bcir.hosted.models.native import NativeAdamW
 
         library = build_library(data / "lib" / cc.replace("/", "_"), cc)
-        nd, provider = _native(data, library, openblas=backend == "bcir-openblas")
+        nd, provider = _native(data, library, openblas=backend == "bcir-openblas",
+                               threads=threads, contract=contract)  # fmt: skip
         info.update(provider, compiler=_compiler(cc), library_sha256=_sha(library.read_bytes()))
         opt = NativeAdamW(
             lr=OPT["peak"], beta1=OPT["beta1"], beta2=OPT["beta2"], epsilon=OPT["eps"],
@@ -627,8 +640,13 @@ def train(
     )  # fmt: skip
     out = data / "runs"
     out.mkdir(exist_ok=True)
-    (out / f"{task}-{backend}.json").write_text(json.dumps(info, indent=1, sort_keys=True) + "\n")
-    print(json.dumps({"saved": f"{task}-{backend}", "median_step_ms": info["median_step_ms"],
+    name = (
+        f"{task}-{backend}"
+        + ("" if contract == "v1" else f"-{contract}")
+        + ("" if threads == 1 else f"-t{threads}")
+    )
+    (out / f"{name}.json").write_text(json.dumps(info, indent=1, sort_keys=True) + "\n")
+    print(json.dumps({"saved": name, "median_step_ms": info["median_step_ms"],
                       "final": final}), flush=True)  # fmt: skip
 
 
@@ -666,12 +684,12 @@ def _libraries():
 
 
 # --- identity and baseline -------------------------------------------------------------------
-def _native_steps(data, library, steps, *, openblas=False):
+def _native_steps(data, library, steps, *, openblas=False, threads=1, contract="v1"):
     from bcir.hosted.models.native import NativeAdamW
 
     stream = _load(data, "lm-train.u16", "H")
     offsets = _load(data, "lm-schedule.u32", "I")
-    nd, _ = _native(data, library, openblas=openblas)
+    nd, _ = _native(data, library, openblas=openblas, threads=threads, contract=contract)
     opt = NativeAdamW(
         lr=OPT["peak"], beta1=OPT["beta1"], beta2=OPT["beta2"], epsilon=OPT["eps"],
         weight_decay=OPT["decay"], grad_clip=OPT["clip"],
@@ -684,25 +702,42 @@ def _native_steps(data, library, steps, *, openblas=False):
             nd.run(x, y, steps=1, optimizer=opt, learning_rates=[_rate(s, 1000)])[0]["loss"]
         )
         times.append(time.perf_counter() - t0)
-    return _state_digest_native(nd), times, losses
+    digest = _state_digest_native(nd)
+    nd.close()
+    return digest, times, losses
 
 
-def identity(data: Path, steps: int, compilers):
-    """The same 20 BCIR steps through every ISA variant, every compiler and a repeat: one state."""
+def identity(
+    data: Path, steps: int, compilers, threads=(1,), contracts=("v1",),
+    variants=("widest", "avx2", "portable"),
+):  # fmt: skip
+    """The same 20 BCIR steps through every ISA variant, every compiler, every thread count of
+    the deterministic pool (NDT-THREADS), every contract (NDT-FMA, NDT-EXP) and a repeat: one
+    state per contract."""
     builds = []
     for cc in compilers:
         for label, defines in (("widest", ()), ("avx2", ("-DBCIR_TENSOR_MAX_VARIANT=2",)),
                                ("portable", ("-DBCIR_TENSOR_NO_DISPATCH",))):  # fmt: skip
+            if label not in variants:
+                continue  # the portable fused instance calls libm fmaf per term: correct, hours
             lib = build_library(data / "lib" / f"id-{Path(cc).name}-{label}", cc, defines)
             builds.append((f"{_compiler(cc)} / {label}", lib))
     rows = []
     for name, lib in builds + builds[:1]:
-        digest, times, losses = _native_steps(data, lib, steps)
-        rows.append({"build": name, "state_sha256": digest, "last_loss": losses[-1],
-                     "median_step_ms": 1000 * statistics.median(times)})  # fmt: skip
-        print(json.dumps(rows[-1]), flush=True)
-    result = {"steps": steps, "rows": rows,
-              "identical": len({r["state_sha256"] for r in rows}) == 1}  # fmt: skip
+        for contract in contracts:
+            for n in threads:
+                digest, times, losses = _native_steps(
+                    data, lib, steps, threads=n, contract=contract
+                )
+                rows.append({"build": name, "contract": contract, "threads": n,
+                             "state_sha256": digest, "last_loss": losses[-1],
+                             "median_step_ms": 1000 * statistics.median(times)})  # fmt: skip
+                print(json.dumps(rows[-1]), flush=True)
+    by_contract = {c: len({r["state_sha256"] for r in rows if r["contract"] == c}) == 1
+                   for c in contracts}  # fmt: skip
+    result = {"steps": steps, "rows": rows, "identical_by_contract": by_contract,
+              "identical": all(by_contract.values()),
+              "contracts_distinct": len({r["state_sha256"] for r in rows}) == len(contracts)}  # fmt: skip
     (data / "identity.json").write_text(json.dumps(result, indent=1) + "\n")
     print(json.dumps({"identical": result["identical"]}), flush=True)
 
@@ -1021,28 +1056,39 @@ def _median_ms(fn, rounds: int) -> float:
     return statistics.median(samples)
 
 
-def _bcir_breakdown(data: Path, library: Path, rounds: int, openblas: bool) -> dict:
+def _bcir_breakdown(
+    data: Path, library: Path, rounds: int, openblas: bool, threads: int = 1, contract: str = "v1"
+) -> dict:
     """One BCIR step at the comparison's shape, whole and by part: the binding's stages, then
-    every kernel family the step calls, each timed alone through the library's own entry points
-    with the calls one step makes (and the provider the run uses for the linears)."""
+    every kernel family the step calls, each timed alone through the entry points the trainer
+    calls under the run's pool and contracts (the pooled kernels, the fused or blocked GEMM and
+    the v2 exponential kernels when the contract selects them, and the provider the run uses for
+    the linears), with the calls one step makes."""
     import numpy as np
     from bcir.hosted.models.native import NativeAdamW
 
     spec = _spec()
-    nd, provider = _native(data, library, openblas=openblas)
+    nd, provider = _native(data, library, openblas=openblas, threads=threads, contract=contract)
     lib = nd.lib
     n, d, f, v = BATCH * CONTEXT, spec.d_model, spec.d_ff, spec.vocab_size
     h, kh, hd, layers = spec.n_heads, spec.kv_heads, spec.d_k, spec.n_layers
     kv = kh * hd
     P, Z, F32 = ctypes.c_void_p, ctypes.c_size_t, ctypes.c_float
+    MM = [P, ctypes.c_int, ctypes.c_int, Z, Z, Z, F32, P, P, F32, P]
     signatures = {
-        "rms": [Z, Z, F32, P, P, P],
-        "rms_backward": [Z, Z, F32, P, P, P, P, P],
-        "rope": [Z, Z, Z, Z, ctypes.c_double, P, ctypes.c_int],
-        "silu": [P, Z, P, P],
-        "swiglu_backward": [Z, P, P, P, P, P],
-        "attention": [Z, Z, Z, Z, Z, P, P, P, P, P],
-        "attention_backward_inplace": [Z, Z, Z, Z, Z, P, P, P, P, P, P, P, P],
+        "rms_pool": [P, Z, Z, F32, P, P, P],
+        "rms_backward": [Z, Z, F32, P, P, P, P, P],  # the trainer's gamma VJP stays serial
+        "rope_pool": [P, Z, Z, Z, Z, ctypes.c_double, P, ctypes.c_int],
+        "silu_pool": [P, Z, P, P],
+        "silu_v2_pool": [P, Z, P, P],
+        "swiglu_backward_pool": [P, Z, P, P, P, P, P],
+        "swiglu_backward_v2_pool": [P, Z, P, P, P, P, P],
+        "attention_pool": [P, Z, Z, Z, Z, Z, P, P, P, P, P],
+        "attention_v2_pool": [P, Z, Z, Z, Z, Z, P, P, P, P, P],
+        "attention_backward_inplace_pool": [P, Z, Z, Z, Z, Z, P, P, P, P, P, P, P, P],
+        "mm_pool": MM,
+        "mm_fused_pool": MM,
+        "mm_kblock_pool": MM,
         "linear": [P, Z, Z, Z, P, P, P],
         "linear_backward": [P, Z, Z, Z, P, P, P, P, P, F32],
     }
@@ -1050,6 +1096,19 @@ def _bcir_breakdown(data: Path, library: Path, rounds: int, openblas: bool) -> d
     for name, args in signatures.items():
         fn[name] = getattr(lib, "bcir_tensor_" + name)
         fn[name].argtypes, fn[name].restype = args, None
+    # the trainer's routing (bcir_decoder_train.c: gemm, silu, swiglu_backward, attention): the
+    # state's pool (NULL when serial), the fused GEMM under "fused", the v2 kernels under "exp"
+    pool = nd.state.pool
+    parts_of = set(contract.split("+"))
+    mm = fn[
+        "mm_kblock_pool"
+        if "kblock" in parts_of
+        else "mm_fused_pool"
+        if "fused" in parts_of
+        else "mm_pool"
+    ]
+    v2 = "_v2_pool" if "exp" in parts_of else "_pool"
+    silu_fn, swiglu_fn, att_fn = fn["silu" + v2], fn["swiglu_backward" + v2], fn["attention" + v2]
     rng = np.random.default_rng(SEED)
 
     def buf(*shape, scale=1.0):
@@ -1085,12 +1144,19 @@ def _bcir_breakdown(data: Path, library: Path, rounds: int, openblas: bool) -> d
 
     def linear(name):
         i, o = weights[name][1], weights[name][0]
-        fn["linear"](prov, n, i, o, p(ins[name]), p(w[name]), p(outs[name]))
+        if openblas:  # the provider's GEMM, threaded as the provider threads it
+            fn["linear"](prov, n, i, o, p(ins[name]), p(w[name]), p(outs[name]))
+        else:
+            mm(pool, 0, 1, n, o, i, 1.0, p(ins[name]), p(w[name]), 0.0, p(outs[name]))
 
     def linear_backward(name):
         i, o = weights[name][1], weights[name][0]
-        fn["linear_backward"](prov, n, i, o, p(ins[name]), p(w[name]), p(dys[name]),
-                              p(dxs[name]), p(dw[name]), beta[name])  # fmt: skip
+        if openblas:
+            fn["linear_backward"](prov, n, i, o, p(ins[name]), p(w[name]), p(dys[name]),
+                                  p(dxs[name]), p(dw[name]), beta[name])  # fmt: skip
+        else:
+            mm(pool, 0, 0, n, i, o, 1.0, p(dys[name]), p(w[name]), beta[name], p(dxs[name]))
+            mm(pool, 1, 0, o, i, n, 1.0, p(dys[name]), p(ins[name]), 1.0, p(dw[name]))
 
     def gemm_forward():
         for _ in range(layers):
@@ -1111,10 +1177,10 @@ def _bcir_breakdown(data: Path, library: Path, rounds: int, openblas: bool) -> d
         tf = tb = 0.0
         for _ in range(layers):
             t0 = time.perf_counter()
-            fn["attention"](BATCH, CONTEXT, h, kh, hd, p(q), p(k), p(val), p(probs), p(ctx))
+            att_fn(pool, BATCH, CONTEXT, h, kh, hd, p(q), p(k), p(val), p(probs), p(ctx))
             t1 = time.perf_counter()
-            fn["attention_backward_inplace"](BATCH, CONTEXT, h, kh, hd, p(q), p(k), p(val),
-                                             p(probs), p(dy), p(dq), p(dk), p(dv))  # fmt: skip
+            fn["attention_backward_inplace_pool"](pool, BATCH, CONTEXT, h, kh, hd, p(q), p(k),
+                                                  p(val), p(probs), p(dy), p(dq), p(dk), p(dv))  # fmt: skip
             t2 = time.perf_counter()
             tf, tb = tf + t1 - t0, tb + t2 - t1
         att["forward"].append(1000 * tf)
@@ -1122,7 +1188,7 @@ def _bcir_breakdown(data: Path, library: Path, rounds: int, openblas: bool) -> d
 
     def norms():
         for _ in range(2 * layers + 1):
-            fn["rms"](n, d, eps, p(x), p(g), p(y))
+            fn["rms_pool"](pool, n, d, eps, p(x), p(g), p(y))
 
     def norms_backward():
         for _ in range(2 * layers + 1):
@@ -1130,29 +1196,17 @@ def _bcir_breakdown(data: Path, library: Path, rounds: int, openblas: bool) -> d
 
     def rope(inverse):
         for _ in range(layers):
-            fn["rope"](BATCH, CONTEXT, h, hd, base, p(dq if inverse else q), inverse)
-            fn["rope"](BATCH, CONTEXT, kh, hd, base, p(dk if inverse else k), inverse)
+            fn["rope_pool"](pool, BATCH, CONTEXT, h, hd, base, p(dq if inverse else q), inverse)
+            fn["rope_pool"](pool, BATCH, CONTEXT, kh, hd, base, p(dk if inverse else k), inverse)
 
     def silu():
         for _ in range(layers):
-            fn["silu"](None, n * f, p(gate), p(hidden))
+            silu_fn(pool, n * f, p(gate), p(hidden))
 
     def swiglu_backward():
         for _ in range(layers):
-            fn["swiglu_backward"](n * f, p(gate), p(up), p(dh), p(dgate), p(dup))
+            swiglu_fn(pool, n * f, p(gate), p(up), p(dh), p(dgate), p(dup))
 
-    parts = {
-        "gemm_forward": _median_ms(gemm_forward, rounds),
-        "gemm_backward": _median_ms(gemm_backward, rounds),
-    }
-    _median_ms(attention, rounds)
-    parts["attention_forward"] = statistics.median(att["forward"][1:])
-    parts["attention_backward"] = statistics.median(att["backward"][1:])
-    parts.update(
-        rms=_median_ms(norms, rounds), rms_backward=_median_ms(norms_backward, rounds),
-        rope=_median_ms(lambda: rope(0), rounds), rope_inverse=_median_ms(lambda: rope(1), rounds),
-        silu=_median_ms(silu, rounds), swiglu_backward=_median_ms(swiglu_backward, rounds),
-    )  # fmt: skip
     # the decoder's own stages through the binding, on the comparison's batches
     stream = _load(data, "lm-train.u16", "H")
     offsets = _load(data, "lm-schedule.u32", "I")
@@ -1161,14 +1215,39 @@ def _bcir_breakdown(data: Path, library: Path, rounds: int, openblas: bool) -> d
         weight_decay=OPT["decay"], grad_clip=OPT["clip"],
     )  # fmt: skip
     xs, ys = _batch(stream, offsets, 0, "lm")
+    # paired rounds: every round times the stages and then each kernel family alone, so "the
+    # rest" (the step less its kernels) is a difference taken under one drift of a shared host,
+    # not between medians taken a minute apart; the first round warms up and is dropped
+    timed = {
+        "batch": lambda: _batch(stream, offsets, 1, "lm"),
+        "binding": lambda: (nd._tokens(xs), nd._tokens(ys)),
+        "step": lambda: nd.run(xs, ys, steps=1, optimizer=opt),
+        "forward": lambda: nd.forward(xs),
+        "loss_backward": lambda: nd.backward(xs, ys),
+        "update": lambda: nd.update(opt),
+        "gemm_forward": gemm_forward, "gemm_backward": gemm_backward, "attention": attention,
+        "rms": norms, "rms_backward": norms_backward,
+        "rope": lambda: rope(0), "rope_inverse": lambda: rope(1),
+        "silu": silu, "swiglu_backward": swiglu_backward,
+    }  # fmt: skip
+    samples = {name: [] for name in timed}
+    for _ in range(rounds + 1):
+        for name, call in timed.items():
+            t0 = time.perf_counter()
+            call()
+            samples[name].append(1000 * (time.perf_counter() - t0))
+
+    def median(name):
+        return statistics.median(samples[name][1:])
+
     stages = {
-        "batch": _median_ms(lambda: _batch(stream, offsets, 1, "lm"), rounds),
-        "binding": _median_ms(lambda: (nd._tokens(xs), nd._tokens(ys)), rounds),
-        "step": _median_ms(lambda: nd.run(xs, ys, steps=1, optimizer=opt), rounds),
-        "forward": _median_ms(lambda: nd.forward(xs), rounds),
-        "loss_backward": _median_ms(lambda: nd.backward(xs, ys), rounds),
-        "update": _median_ms(lambda: nd.update(opt), rounds),
+        k: median(k) for k in ("batch", "binding", "step", "forward", "loss_backward", "update")
     }
+    parts = {"gemm_forward": median("gemm_forward"), "gemm_backward": median("gemm_backward")}
+    parts["attention_forward"] = statistics.median(att["forward"][1:])
+    parts["attention_backward"] = statistics.median(att["backward"][1:])
+    parts.update({k: median(k) for k in ("rms", "rms_backward", "rope", "rope_inverse", "silu",
+                                         "swiglu_backward")})  # fmt: skip
     kernels = sum(parts.values()) + stages["update"]
     return {
         **provider, "parts_ms": parts, "stages_ms": stages,
@@ -1253,6 +1332,23 @@ def _torch_breakdown(data: Path, rounds: int) -> dict:
         "top_operators_ms": dict(top),
         "torch": torch.__version__,
     }
+
+
+def bcir_breakdown_stage(
+    data: Path, cc: str, rounds: int, threads: int, contract: str, openblas: bool = False
+):
+    """The BCIR side of `breakdown` for one (contract, thread count): where a step spends its
+    time on the pool under each contract (NDT-MEASURE), with OpenBLAS behind the linears when
+    asked (admitted under the blocked contract, its own arithmetic under the others); no
+    PyTorch is needed."""
+    library = build_library(data / "lib" / cc.replace("/", "_"), cc)
+    result = {"compiler": _compiler(cc), "threads": threads, "contract": contract, "rounds": rounds,
+              **_bcir_breakdown(data, library, rounds, openblas=openblas, threads=threads,
+                                contract=contract)}  # fmt: skip
+    name = f"breakdown-bcir{'-openblas' if openblas else ''}-{contract}-t{threads}"
+    (data / f"{name}.json").write_text(json.dumps(result, indent=1, sort_keys=True) + "\n")
+    print(json.dumps({"saved": name, **{k: v for k, v in result.items() if isinstance(v, (int, float))}}),
+          flush=True)  # fmt: skip
 
 
 def breakdown(data: Path, compilers, rounds: int):
@@ -1612,10 +1708,24 @@ def main():
     t.add_argument("--eval-every", type=int, default=100)
     t.add_argument("--cc", default="gcc")
     t.add_argument("--lr-scale", type=float, default=1.0, help="scale every learning rate")
+    t.add_argument("--threads", type=int, default=1, help="the BCIR pool's size (bcir backends)")
+    t.add_argument("--contract", default="v1", help="v1, fused, exp or fused+exp (bcir backends)")
     i = sub.add_parser("identity")
     i.add_argument("--data", type=Path, required=True)
     i.add_argument("--steps", type=int, default=20)
     i.add_argument("--cc", action="append")
+    i.add_argument("--threads", default="1", help="comma-separated pool sizes, each a row")
+    i.add_argument("--contract", default="v1", help="comma-separated contracts, each a row")
+    i.add_argument("--variants", default="widest,avx2,portable", help="comma-separated builds")
+    bb = sub.add_parser(
+        "bcir-breakdown", help="the BCIR side of breakdown alone: no PyTorch needed"
+    )
+    bb.add_argument("--data", type=Path, required=True)
+    bb.add_argument("--cc", default="gcc")
+    bb.add_argument("--rounds", type=int, default=5)
+    bb.add_argument("--threads", type=int, default=1)
+    bb.add_argument("--contract", default="v1")
+    bb.add_argument("--openblas", action="store_true")
     b = sub.add_parser("baseline")
     b.add_argument("--data", type=Path, required=True)
     b.add_argument("--steps", type=int, default=6)
@@ -1657,9 +1767,13 @@ def main():
                    "add": a.add_steps}  # fmt: skip
         prepare(a.output, budgets)
     elif a.stage == "train":
-        train(a.data, a.task, a.backend, a.steps, a.eval_every, a.cc, a.lr_scale)
+        train(a.data, a.task, a.backend, a.steps, a.eval_every, a.cc, a.lr_scale, a.threads,
+              a.contract)  # fmt: skip
     elif a.stage == "identity":
-        identity(a.data, a.steps, a.cc or ["gcc"])
+        identity(a.data, a.steps, a.cc or ["gcc"], tuple(int(n) for n in a.threads.split(",")),
+                 tuple(a.contract.split(",")), tuple(a.variants.split(",")))  # fmt: skip
+    elif a.stage == "bcir-breakdown":
+        bcir_breakdown_stage(a.data, a.cc, a.rounds, a.threads, a.contract, a.openblas)
     elif a.stage == "baseline":
         baseline(a.data, a.steps, a.cc, a.base, a.old_flags.split())
     elif a.stage == "kernels":

@@ -6,7 +6,7 @@
 
 _Static_assert(sizeof(float)==4 && FLT_RADIX==2 && FLT_MANT_DIG==24,
     "native decoder ABI requires IEEE binary32");
-uint32_t bcir_decoder_abi_version(void) { return 1; }
+uint32_t bcir_decoder_abi_version(void) { return 3; }
 static int add(size_t *n,size_t a) {
   if (a>SIZE_MAX-*n) return 0;
   *n+=a; return 1;
@@ -59,6 +59,8 @@ static int valid(bcir_decoder_state *s) {
   if (rc) return rc;
   if (p.parameters!=s->plan.parameters || p.activations!=s->plan.activations ||
       p.scratch!=s->plan.scratch) return BCIR_DT_INVALID;
+  if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_KBLOCK)) return BCIR_DT_INVALID;
+  if ((s->contract&BCIR_DT_CONTRACT_FUSED) && (s->contract&BCIR_DT_CONTRACT_KBLOCK)) return BCIR_DT_INVALID;  /* one GEMM contract */
   ptr[0]=s->weights; ptr[1]=s->gradients; ptr[2]=s->moment1; ptr[3]=s->moment2;
   ptr[4]=s->activations; ptr[5]=s->scratch;
   len[0]=len[1]=len[2]=len[3]=p.parameters; len[4]=p.activations; len[5]=p.scratch;
@@ -127,6 +129,42 @@ static cache activations(float *x,geometry g) {
   a.p=x; x+=g.a; a.ctx=x; x+=g.nd; a.x2=x; x+=g.nd; a.n2=x; x+=g.nd;
   a.gate=x; x+=g.nf; a.up=x; x+=g.nf; a.hidden=x; return a;
 }
+/* The step's kernels: a provider's GEMM or SiLU replaces BCIR's (threaded as the provider
+ * threads it); BCIR's GEMM keeps the state's contract (v1, or the fused v2), as do SiLU, the
+ * SwiGLU VJP and the attention softmax (v1 libm, or v2 the BCIR exponential); every other kernel
+ * runs on the state's pool, serial when it is NULL. The pool
+ * kernels' partitions are fixed by the shapes (bcir_tensor.h), so the step is bit-identical at
+ * every thread count; the loss, the embedding scatter, the gamma VJP's row sum and the
+ * update's first pass stay serial, each an index-order reduction. */
+static void gemm(bcir_decoder_state *s,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
+    const float *a,const float *b,float beta,float *c) {
+  if (s->provider.mm) s->provider.mm(s->provider.ctx,ta,tb,m,n,k,alpha,a,b,beta,c);
+  else if (s->contract&BCIR_DT_CONTRACT_FUSED) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
+  else if (s->contract&BCIR_DT_CONTRACT_KBLOCK) bcir_tensor_mm_kblock_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
+  else bcir_tensor_mm_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
+}
+static void linear(bcir_decoder_state *s,size_t r,size_t in,size_t out,const float *x,
+    const float *w,float *y) { gemm(s,0,1,r,out,in,1.0f,x,w,0.0f,y); }
+static void linear_backward(bcir_decoder_state *s,size_t r,size_t in,size_t out,
+    const float *x,const float *w,const float *dy,float *dx,float *dw,float beta) {
+  gemm(s,0,0,r,in,out,1.0f,dy,w,beta,dx);
+  gemm(s,1,0,out,in,r,1.0f,dy,x,1.0f,dw);
+}
+static void silu(bcir_decoder_state *s,size_t n,const float *x,float *y) {
+  if (s->provider.silu) s->provider.silu(s->provider.ctx,n,x,y);
+  else if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_v2_pool(s->pool,n,x,y);
+  else bcir_tensor_silu_pool(s->pool,n,x,y);
+}
+static void swiglu_backward(bcir_decoder_state *s,size_t n,const float *g,const float *u,
+    const float *dy,float *dg,float *du) {
+  if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_swiglu_backward_v2_pool(s->pool,n,g,u,dy,dg,du);
+  else bcir_tensor_swiglu_backward_pool(s->pool,n,g,u,dy,dg,du);
+}
+static void attention(bcir_decoder_state *s,size_t b,size_t t,size_t h,size_t kh,size_t d,
+    const float *q,const float *k,const float *v,float *p,float *y) {
+  if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_attention_v2_pool(s->pool,b,t,h,kh,d,q,k,v,p,y);
+  else bcir_tensor_attention_pool(s->pool,b,t,h,kh,d,q,k,v,p,y);
+}
 static void forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
   const bcir_decoder_spec *sp=&s->plan.spec;
   size_t i,l; float *xs=s->activations,*cs=xs+(g.l+1)*g.nd;
@@ -137,25 +175,25 @@ static void forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
   for (l=0;l<g.l;l++) {
     layer p=params(s->weights+g.v*g.d+l*g.lp,g);
     cache a=activations(cs+l*g.la,g); float *x=xs+l*g.nd,*y=x+g.nd;
-    bcir_tensor_rms(g.n,g.d,(float)sp->rms_eps,x,p.norm1,a.n1);
-    bcir_tensor_linear(&s->provider,g.n,g.d,g.d,a.n1,p.q,a.q);
-    bcir_tensor_linear(&s->provider,g.n,g.d,g.k,a.n1,p.k,a.k);
-    bcir_tensor_linear(&s->provider,g.n,g.d,g.k,a.n1,p.v,a.v);
-    bcir_tensor_rope(g.b,g.t,g.h,g.hd,sp->rope_base,a.q,0);
-    bcir_tensor_rope(g.b,g.t,g.kh,g.hd,sp->rope_base,a.k,0);
-    bcir_tensor_attention(g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx);
-    bcir_tensor_linear(&s->provider,g.n,g.d,g.d,a.ctx,p.o,a.x2);
-    for (i=0;i<g.nd;i++) a.x2[i]+=x[i];
-    bcir_tensor_rms(g.n,g.d,(float)sp->rms_eps,a.x2,p.norm2,a.n2);
-    bcir_tensor_linear(&s->provider,g.n,g.d,g.f,a.n2,p.gate,a.gate);
-    bcir_tensor_linear(&s->provider,g.n,g.d,g.f,a.n2,p.up,a.up);
-    (s->provider.silu ? s->provider.silu : bcir_tensor_silu)(s->provider.ctx,g.nf,a.gate,a.hidden);
-    for (i=0;i<g.nf;i++) a.hidden[i]*=a.up[i];
-    bcir_tensor_linear(&s->provider,g.n,g.f,g.d,a.hidden,p.down,y);
-    for (i=0;i<g.nd;i++) y[i]+=a.x2[i];
+    bcir_tensor_rms_pool(s->pool,g.n,g.d,(float)sp->rms_eps,x,p.norm1,a.n1);
+    linear(s,g.n,g.d,g.d,a.n1,p.q,a.q);
+    linear(s,g.n,g.d,g.k,a.n1,p.k,a.k);
+    linear(s,g.n,g.d,g.k,a.n1,p.v,a.v);
+    bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,sp->rope_base,a.q,0);
+    bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,sp->rope_base,a.k,0);
+    attention(s,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx);
+    linear(s,g.n,g.d,g.d,a.ctx,p.o,a.x2);
+    bcir_tensor_add_pool(s->pool,g.nd,x,a.x2);
+    bcir_tensor_rms_pool(s->pool,g.n,g.d,(float)sp->rms_eps,a.x2,p.norm2,a.n2);
+    linear(s,g.n,g.d,g.f,a.n2,p.gate,a.gate);
+    linear(s,g.n,g.d,g.f,a.n2,p.up,a.up);
+    silu(s,g.nf,a.gate,a.hidden);
+    bcir_tensor_mul_pool(s->pool,g.nf,a.up,a.hidden);
+    linear(s,g.n,g.f,g.d,a.hidden,p.down,y);
+    bcir_tensor_add_pool(s->pool,g.nd,a.x2,y);
   }
-  bcir_tensor_rms(g.n,g.d,(float)sp->rms_eps,xs+g.l*g.nd,final,norm);
-  bcir_tensor_linear(&s->provider,g.n,g.d,g.v,norm,head,logits);
+  bcir_tensor_rms_pool(s->pool,g.n,g.d,(float)sp->rms_eps,xs+g.l*g.nd,final,norm);
+  linear(s,g.n,g.d,g.v,norm,head,logits);
 }
 int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t n) {
   geometry g; int rc=valid(s);
@@ -195,29 +233,30 @@ int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
     for (j=0;j<g.v;j++) dl[i*g.v+j]=(float)((exp((double)logits[i*g.v+j]-maxv)/sum-
         (j==targets[i] ? 1.0 : 0.0))/(double)g.n);
   }
-  bcir_tensor_linear_backward(&s->provider,g.n,g.d,g.v,norm,head,dl,dn,dhead,0.0f);
+  linear_backward(s,g.n,g.d,g.v,norm,head,dl,dn,dhead,0.0f);
   bcir_tensor_rms_backward(g.n,g.d,(float)s->plan.spec.rms_eps,xs+g.l*g.nd,final,dn,cur,dfinal);
   for (l=g.l;l-->0;) {
     layer p=params(s->weights+g.v*g.d+l*g.lp,g);
     layer grad=params(s->gradients+g.v*g.d+l*g.lp,g);
     cache a=activations(cs+l*g.la,g); float *x=xs+l*g.nd;
-    bcir_tensor_linear_backward(&s->provider,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f);
-    bcir_tensor_swiglu_backward(g.nf,a.gate,a.up,dh,dg,du);
-    bcir_tensor_linear_backward(&s->provider,g.n,g.d,g.f,a.n2,p.gate,dg,dn,grad.gate,0.0f);
-    bcir_tensor_linear_backward(&s->provider,g.n,g.d,g.f,a.n2,p.up,du,dn,grad.up,1.0f);
+    linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f);
+    swiglu_backward(s,g.nf,a.gate,a.up,dh,dg,du);
+    linear_backward(s,g.n,g.d,g.f,a.n2,p.gate,dg,dn,grad.gate,0.0f);
+    linear_backward(s,g.n,g.d,g.f,a.n2,p.up,du,dn,grad.up,1.0f);
     bcir_tensor_rms_backward(g.n,g.d,(float)s->plan.spec.rms_eps,a.x2,p.norm2,dn,tmp,grad.norm2);
-    for (i=0;i<g.nd;i++) cur[i]+=tmp[i];
-    bcir_tensor_linear_backward(&s->provider,g.n,g.d,g.d,a.ctx,p.o,cur,dc,grad.o,0.0f);
+    bcir_tensor_add_pool(s->pool,g.nd,tmp,cur);
+    linear_backward(s,g.n,g.d,g.d,a.ctx,p.o,cur,dc,grad.o,0.0f);
     /* the layer's probabilities are read for the last time here: the in-place backward
      * leaves its score adjoint in their place (same dq/dk/dv as the reference, bit for bit) */
-    bcir_tensor_attention_backward_inplace(g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,dc,dq,dk,dv);
-    bcir_tensor_rope(g.b,g.t,g.h,g.hd,s->plan.spec.rope_base,dq,1);
-    bcir_tensor_rope(g.b,g.t,g.kh,g.hd,s->plan.spec.rope_base,dk,1);
-    bcir_tensor_linear_backward(&s->provider,g.n,g.d,g.d,a.n1,p.q,dq,dn,grad.q,0.0f);
-    bcir_tensor_linear_backward(&s->provider,g.n,g.d,g.k,a.n1,p.k,dk,dn,grad.k,1.0f);
-    bcir_tensor_linear_backward(&s->provider,g.n,g.d,g.k,a.n1,p.v,dv,dn,grad.v,1.0f);
+    bcir_tensor_attention_backward_inplace_pool(s->pool,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,
+        dc,dq,dk,dv);
+    bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,s->plan.spec.rope_base,dq,1);
+    bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,s->plan.spec.rope_base,dk,1);
+    linear_backward(s,g.n,g.d,g.d,a.n1,p.q,dq,dn,grad.q,0.0f);
+    linear_backward(s,g.n,g.d,g.k,a.n1,p.k,dk,dn,grad.k,1.0f);
+    linear_backward(s,g.n,g.d,g.k,a.n1,p.v,dv,dn,grad.v,1.0f);
     bcir_tensor_rms_backward(g.n,g.d,(float)s->plan.spec.rms_eps,x,p.norm1,dn,tmp,grad.norm1);
-    for (i=0;i<g.nd;i++) cur[i]+=tmp[i];
+    bcir_tensor_add_pool(s->pool,g.nd,tmp,cur);
   }
   for (i=0;i<g.n;i++) for (j=0;j<g.d;j++) s->gradients[(size_t)tokens[i]*g.d+j]+=cur[i*g.d+j];
   if (!finite_span(s->gradients,s->plan.parameters) || !isfinite(ce)) return BCIR_DT_NUMERIC;
@@ -292,15 +331,32 @@ static int adamw_preflight_any(const adamw_terms *t,size_t n,const float *gr,con
 #endif
   return preflight_generic(t,n,gr,wt,m1,m2);
 }
-static void adamw_commit_any(const adamw_terms *t,size_t n,const float *gr,float *wt,
+static void adamw_commit_variant(int v,const adamw_terms *t,size_t n,const float *gr,float *wt,
     float *m1,float *m2) {
-  int v=bcir_tensor_mm_variants();
   (void)v;
 #ifdef BCIR_DT_DISPATCH
   if (v&4) { commit_avx512(t,n,gr,wt,m1,m2); return; }
   if (v&2) { commit_avx2(t,n,gr,wt,m1,m2); return; }
 #endif
   commit_generic(t,n,gr,wt,m1,m2);
+}
+/* The commit over the pool: elements in ranges of BCIR_DT_CHUNK, each element's update its own
+ * and the variant chosen once, so the partition cannot reach the arithmetic. The first pass
+ * and the preflight stay serial (the norm is one index-order sum). */
+#define BCIR_DT_CHUNK 65536
+typedef struct commit_job {
+  const adamw_terms *t; size_t n; const float *gr; float *wt,*m1,*m2; int variant;
+} commit_job;
+static void commit_task(void *ctx,size_t task) {
+  commit_job *j=(commit_job *)ctx;
+  size_t i0=task*BCIR_DT_CHUNK,i1=i0+BCIR_DT_CHUNK<j->n ? i0+BCIR_DT_CHUNK : j->n;
+  adamw_commit_variant(j->variant,j->t,i1-i0,j->gr+i0,j->wt+i0,j->m1+i0,j->m2+i0);
+}
+static void adamw_commit_pool(bcir_tensor_pool *pool,const adamw_terms *t,size_t n,
+    const float *gr,float *wt,float *m1,float *m2) {
+  commit_job j;
+  j.t=t; j.n=n; j.gr=gr; j.wt=wt; j.m1=m1; j.m2=m2; j.variant=bcir_tensor_mm_variants();
+  bcir_tensor_pool_run(pool,commit_task,&j,(n+BCIR_DT_CHUNK-1)/BCIR_DT_CHUNK);
 }
 /* Whether the magnitudes the first pass saw prove that no candidate can leave float's range,
  * so the preflight would admit every element and may be skipped. With G = max|g| after scaling,
@@ -364,7 +420,8 @@ int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     if (!adamw_bounded(&t,grmax,mmax,vmax,wmax) &&
         adamw_preflight_any(&t,s->plan.parameters,s->gradients,s->weights,s->moment1,
             s->moment2)) return BCIR_DT_NUMERIC;
-    adamw_commit_any(&t,s->plan.parameters,s->gradients,s->weights,s->moment1,s->moment2);
+    adamw_commit_pool(s->pool,&t,s->plan.parameters,s->gradients,s->weights,s->moment1,
+        s->moment2);
   }
   s->step++; s->beta1_power=b1; s->beta2_power=b2; *grad_norm=norm;
   return BCIR_DT_OK;

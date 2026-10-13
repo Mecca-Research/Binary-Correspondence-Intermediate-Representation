@@ -1,0 +1,75 @@
+{
+ "steps": 20,
+ "rows": [
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "kblock",
+   "threads": 1,
+   "state_sha256": "5b92ff75073edd4c3d6757daedc1e85028280e000e3b914cd8f0ed75b8edadc1",
+   "last_loss": 3.524055538607784,
+   "median_step_ms": 1499.6944795020681
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "kblock",
+   "threads": 3,
+   "state_sha256": "5b92ff75073edd4c3d6757daedc1e85028280e000e3b914cd8f0ed75b8edadc1",
+   "last_loss": 3.524055538607784,
+   "median_step_ms": 1011.6860314992664
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "kblock+exp",
+   "threads": 1,
+   "state_sha256": "f19b0d7d7ad907e5ee70b246661b871bcc736cbd80a909c004bdf76551e536d2",
+   "last_loss": 3.52405553957469,
+   "median_step_ms": 1491.2337485002354
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "kblock+exp",
+   "threads": 3,
+   "state_sha256": "f19b0d7d7ad907e5ee70b246661b871bcc736cbd80a909c004bdf76551e536d2",
+   "last_loss": 3.52405553957469,
+   "median_step_ms": 920.4893620008079
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "kblock",
+   "threads": 1,
+   "state_sha256": "5b92ff75073edd4c3d6757daedc1e85028280e000e3b914cd8f0ed75b8edadc1",
+   "last_loss": 3.524055538607784,
+   "median_step_ms": 1633.4317265027494
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "kblock",
+   "threads": 3,
+   "state_sha256": "5b92ff75073edd4c3d6757daedc1e85028280e000e3b914cd8f0ed75b8edadc1",
+   "last_loss": 3.524055538607784,
+   "median_step_ms": 966.9423084997106
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "kblock+exp",
+   "threads": 1,
+   "state_sha256": "f19b0d7d7ad907e5ee70b246661b871bcc736cbd80a909c004bdf76551e536d2",
+   "last_loss": 3.52405553957469,
+   "median_step_ms": 1518.240261997562
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "kblock+exp",
+   "threads": 3,
+   "state_sha256": "f19b0d7d7ad907e5ee70b246661b871bcc736cbd80a909c004bdf76551e536d2",
+   "last_loss": 3.52405553957469,
+   "median_step_ms": 911.1304785001266
+  }
+ ],
+ "identical_by_contract": {
+  "kblock": true,
+  "kblock+exp": true
+ },
+ "identical": true,
+ "contracts_distinct": true
+}

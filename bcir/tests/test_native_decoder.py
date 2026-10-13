@@ -155,7 +155,7 @@ def test_native_c_harness_c11_and_c23():
             result = subprocess.run(
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
-            assert result.stdout.count("PASS") == 6
+            assert result.stdout.count("PASS") == 10
 
 
 def test_native_provider_c_abi_keeps_frameworks_off_execution_path():
@@ -211,13 +211,21 @@ def test_the_compiled_plan_and_gemm_are_the_programs():
             return  # no C compiler: the native rows are a skip, never a pass
         assert nf.plan_mismatch(lib) == 0
         assert nf.mm_mismatch(lib) == 0
-        assert len(nf.MM_CASES) == 20 and len(nf.PLAN_CORPUS) == 6
+        assert nf.mm_fused_mismatch(lib) == 0
+        assert nf.mm_kblock_mismatch(lib) == 0
+        assert nf.provider_mismatch(lib) in (None, 0)  # None: no OpenBLAS wheel here, a skip
+        swept, mismatch, ulp = nf.exp_sweep(lib)
+        assert swept > 8_000_000 and mismatch == 0 and ulp <= 1, (swept, mismatch, ulp)
+        assert len(nf.MM_CASES) == 20 and len(nf.MM_KBLOCK_CASES) == 40
+        assert len(nf.PLAN_CORPUS) == 6
+        assert nf.kblock_split(1024) == [448, 288, 288] and nf.kblock_split(0) == []
 
 
 def test_the_rows_fire_on_wrong_kernels_and_plans():
     """Wrong copies of the C units, built from copies of their sources (never by editing the
     tree): the packed B^T tile read without its depth offset, the register block accumulated in
-    descending order or fused into one rounding, A read untransposed whatever ta says; the plan's
+    descending order or fused into one rounding, A read untransposed whatever ta says, the
+    blocked kernel's generic and AVX-512 instances each wrong in their own code; the plan's
     workspace or cache count off by one span. Each turns its row red."""
     from bcir.tests import native_decoder_fixtures as nf
 
@@ -234,6 +242,37 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
          "acc[r][j]+=av[r]*bl[j];", "acc[r][j]=fmaf(av[r],bl[j],acc[r][j]);"),
         ("mm", "bcir_tensor.c", tensor,
          "x->a[x->ta ? (lb+l)*x->lda+i+r : (i+r)*x->lda+lb+l]", "x->a[(i+r)*x->lda+lb+l]"),
+        ("mm_fused", "bcir_tensor.c", tensor,
+         "acc[r][j]=fmaf(av[r],bl[j],acc[r][j]);", "acc[r][j]+=av[r]*bl[j];"),
+        ("mm_fused", "bcir_tensor.c", tensor,
+         "mm_variant_any(mm_widest_fused(),MM_FUSED,", "mm_variant_any(mm_widest_fused(),MM_V1,"),
+        ("mm_kblock", "bcir_tensor.c", tensor,
+         "return rem>=2*q ? q : rem>q ? (rem/2+u-1)/u*u : rem;", "return rem>q ? q : rem;"),
+        ("mm_kblock", "bcir_tensor.c", tensor,
+         "  for (r=0;r<mr;r++) for (j=0;j<nr;j++) acc[r][j]=0.0f;\n",
+         "  for (r=0;r<mr;r++) for (j=0;j<nr;j++) acc[r][j]=j<nj ? x->c[(i+r)*x->ldc+jb+j] : 0.0f;\n"),
+        ("mm_kblock", "bcir_tensor.c", tensor,
+         "    else for (j=0;j<nr;j++) if (j<nj) ci[j]=ci[j]+x->alpha*acc[r][j];\n",
+         "    else for (j=0;j<nr;j++) if (j<nj) ci[j]=fmaf(x->alpha,acc[r][j],ci[j]);\n"),
+        # NDT-BLOCK: the AVX-512 instance is its own code, so its own wrong copies -- the last
+        # single row left at its beta-scaled value, a transposed tile's ragged columns stale
+        # below the whole blocks, a ragged block's partial added with one fused rounding
+        ("mm_kblock@4", "bcir_tensor.c", tensor,
+         "      for (;i<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);\n",
+         "      for (;i+1<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);\n"),
+        ("mm_kblock@4", "bcir_tensor.c", tensor,
+         "      for (l=j<jw ? lw : 0;l<nl;l++) bt[l*48+j]=column[l];\n",
+         "      for (l=lw;l<nl;l++) bt[l*48+j]=column[l];\n"),
+        ("mm_kblock@4", "bcir_tensor.c", tensor,
+         "      _mm512_mask_storeu_ps(ci,m0,_mm512_add_ps(_mm512_maskz_loadu_ps(m0,ci),_mm512_mul_ps(alpha,acc0[r])));\n",
+         "      _mm512_mask_storeu_ps(ci,m0,_mm512_fmadd_ps(alpha,acc0[r],_mm512_maskz_loadu_ps(m0,ci)));\n"),
+        ("exp_ulp", "bcir_tensor.c", tensor,
+         "p=1.0f/5040.0f; p=p*r+1.0f/720.0f; p=p*r+1.0f/120.0f;", "p=1.0f/120.0f;"),
+        ("exp_ulp", "bcir_tensor.c", tensor,
+         "#define BCIR_EXP_LN2_LO 1.428606765330187e-06f", "#define BCIR_EXP_LN2_LO 0.0f"),
+        ("exp_mismatch", "bcir_tensor.c", tensor,
+         "static void exp_avx2(size_t n, const float *x, float *y) { exp_body(n,x,y); }",
+         "static void exp_avx2(size_t n, const float *x, float *y) { size_t i; for (i=0;i<n;i++) y[i]=expf(x[i]); }"),
         ("plan", "bcir_decoder_train.c", train,
          "!term(&p.scratch,5,nd)", "!term(&p.scratch,6,nd)"),
         ("plan", "bcir_decoder_train.c", train,
@@ -243,8 +282,193 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
         for i, (row, unit, text, old, new) in enumerate(mutants):
             assert text.count(old) == 1, old
             lib = _ndt_library(Path(tmp) / str(i), {unit: text.replace(old, new)})
-            fired = nf.mm_mismatch(lib) if row == "mm" else nf.plan_mismatch(lib)
+            if row == "exp_ulp":
+                fired = nf.exp_sweep(lib)[2] > 1
+            elif row == "exp_mismatch":
+                fired = (
+                    nf.exp_sweep(lib)[1]
+                    if nf.exp_sweep(lib)[1]
+                    else int(
+                        __import__("ctypes").CDLL(str(lib._name)).bcir_tensor_mm_variants() == 1
+                    )
+                )  # a host without an AVX2 instance cannot see this one: not a pass, a skip
+            elif row.startswith("mm_kblock@"):
+                need = int(row.partition("@")[2])
+                fired = (
+                    nf.mm_kblock_mismatch(lib) if need in nf.mm_variants(lib, kblock=True) else 1
+                )  # a host without that instance cannot see this one: not a pass, a skip
+            else:
+                fired = {"mm": nf.mm_mismatch, "mm_fused": nf.mm_fused_mismatch,
+                         "mm_kblock": nf.mm_kblock_mismatch, "plan": nf.plan_mismatch}[row](lib)  # fmt: skip
             assert fired > 0, f"train.{row}.mismatch cannot see {new!r}"
+
+
+def test_the_training_state_is_identical_at_every_thread_count():
+    """NDT-THREADS: three steps of the threads bench on a trainer of one, two, three and four
+    threads leave one state, bit for bit (the row at zero), under v1 and under the fused contract
+    (whose state is its own); a trainer resumed on more threads continues the same state, with
+    the checkpoint's contract; a thread count outside [1, 4096] or an unknown contract is refused
+    before any pool."""
+    from bcir.hosted.models.native import NativeAdamW, NativeDecoder
+    from bcir.tests import native_decoder_fixtures as nf
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.build_library(tmp)
+        if path is None:
+            return  # no C compiler: the row is a skip, never a pass
+        states = nf.thread_states(path)
+        assert set(states) == set(nf.THREAD_COUNTS) and len(set(states.values())) == 1, states
+        assert nf.threads_mismatch(path) == 0
+        fused = nf.thread_states(path, contract="fused")
+        assert len(set(fused.values())) == 1 and fused[1] != states[1], fused
+        digests = {states[1], fused[1]}
+        for name in ("exp", "fused+exp"):
+            under = nf.thread_states(path, contract=name)
+            assert len(set(under.values())) == 1 and under[1] not in digests, (name, under)
+            digests.add(under[1])
+        spec, batch, time_ = nf.THREADS_BENCH
+        one = NativeDecoder(path, spec, batch_size=batch, context_length=time_)
+        assert one.threads == 1 and one.lib.bcir_tensor_pool_threads(one.state.pool) == 1
+        x = [(3 * i + 1) % spec.vocab_size for i in range(batch * time_ * 2)]
+        y = [(3 * i + 2) % spec.vocab_size for i in range(batch * time_ * 2)]
+        one.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3))
+        one.save(Path(tmp) / "two-steps.bcirdt")
+        four = NativeDecoder.resume(path, Path(tmp) / "two-steps.bcirdt", threads=4)
+        assert four.threads == 4 and four.lib.bcir_tensor_pool_threads(four.state.pool) == 4
+        assert (one.contract, four.contract, four.state.contract) == ("v1", "v1", 0)
+        assert one.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)) == four.run(
+            x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)
+        )
+        assert nf.state_digest(one) == nf.state_digest(four)
+        four.close()
+        four.close()  # idempotent
+        assert four.state.pool is None
+        one.close()
+        for bad in (0, -1, 4097, 2.0, True):
+            try:
+                NativeDecoder(path, spec, batch_size=batch, context_length=time_, threads=bad)
+            except ValueError:
+                continue
+            raise AssertionError(f"threads={bad!r} admitted")
+        for bad in ("v2", 1, None):
+            try:
+                NativeDecoder(path, spec, batch_size=batch, context_length=time_, contract=bad)
+            except ValueError:
+                continue
+            raise AssertionError(f"contract={bad!r} admitted")
+        two = NativeDecoder(path, spec, batch_size=batch, context_length=time_, contract="fused")
+        assert two.state.contract == 1
+        two.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3))
+        two.save(Path(tmp) / "fused.bcirdt")
+        back = NativeDecoder.resume(path, Path(tmp) / "fused.bcirdt", threads=2)
+        assert (back.contract, back.state.contract) == ("fused", 1)
+        assert nf.state_digest(back) == nf.state_digest(two)
+        two.close()
+        back.close()
+
+
+def test_a_provider_is_admitted_under_the_blocked_contract_only_where_it_is_the_contract():
+    """`use_cblas` under "kblock" runs the admission differential over the trainer's own GEMM
+    shapes at beta 0 and 1: BCIR's blocked kernel behind a CBLAS callback is admitted; the v1
+    kernel is refused on every case and the fused kernel on the beta-1 cases (one block, but
+    the chain from c), each leaving the state on BCIR's kernels; the differential refuses an
+    empty shape set. Where the scipy_openblas32 wheel is importable, OpenBLAS is refused on
+    the threads bench's small products (its small-matrix path keeps the whole chain) and
+    admitted on the comparison decoder's shapes: the admission is per shape set, never a
+    claim about every shape. Under v1 a provider is installed with no admission."""
+    import ctypes as ct
+
+    from bcir.hosted.models.native import _CBLAS, NativeDecoder, provider_mismatch
+    from bcir.tests import native_decoder_fixtures as nf
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.build_library(tmp)
+        if path is None:
+            return
+        lib = ct.CDLL(str(path))
+        spec, batch, time_ = nf.THREADS_BENCH
+        fp = ct.POINTER(ct.c_float)
+        sig = [ct.c_void_p, ct.c_int, ct.c_int, ct.c_size_t, ct.c_size_t, ct.c_size_t,
+               ct.c_float, fp, fp, ct.c_float, fp]  # fmt: skip
+
+        def callback(name):
+            fn = getattr(lib, name)
+            fn.argtypes, fn.restype = sig, None
+            return _CBLAS(
+                lambda order, ta, tb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc: fn(
+                    None, ta == 112, tb == 112, m, n, k, alpha, a, b, beta, c
+                )
+            )
+
+        verdicts = {}
+        for name in ("bcir_tensor_mm_kblock", "bcir_tensor_mm", "bcir_tensor_mm_fused"):
+            trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
+                                    contract="kblock")  # fmt: skip
+            try:
+                trainer.use_cblas_function(callback(name), name=name)
+                verdicts[name] = (trainer.provider_admission["mismatch"], trainer.backend)
+            except ValueError as refusal:
+                verdicts[name] = (str(refusal), trainer.backend)
+                assert trainer.provider_admission is None and not trainer.state.provider.ctx
+            finally:
+                trainer.close()
+        cases = 30  # the threads bench's fifteen distinct GEMM shapes at beta 0 and 1
+        assert verdicts["bcir_tensor_mm_kblock"] == (0, "cblas:bcir_tensor_mm_kblock")
+        assert verdicts["bcir_tensor_mm"][1] == "portable-c"
+        assert f"{cases} of {cases} GEMM cases differ" in verdicts["bcir_tensor_mm"][0]
+        assert f"{cases // 2} of {cases} GEMM cases differ" in verdicts["bcir_tensor_mm_fused"][0]
+        try:
+            provider_mismatch(lib, None, ())
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("an empty differential admitted a provider")
+        trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_)
+        trainer.use_cblas_function(callback("bcir_tensor_mm"), name="v1")
+        assert trainer.backend == "cblas:v1" and trainer.provider_admission is None
+        trainer.close()
+        openblas = nf.openblas_library()
+        if openblas is None:
+            return  # the wheel is an experiment dependency, never BCIR's: a skip
+        trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
+                                contract="kblock")  # fmt: skip
+        try:
+            trainer.use_cblas(openblas, symbol="scipy_cblas_sgemm")
+        except ValueError as refusal:
+            assert "not admitted" in str(refusal) and trainer.backend == "portable-c"
+        else:
+            raise AssertionError("OpenBLAS admitted on products its small-matrix path computes")
+        finally:
+            trainer.close()
+        assert nf.provider_mismatch(lib) == 0  # the comparison decoder's shapes: admitted
+
+
+def test_the_threads_row_fires_on_a_partition_that_depends_on_the_thread_count():
+    """Wrong copies of the tensor unit whose wrong partition reaches the state only on a pool
+    of more than one thread (one thread runs the serial kernels): the GEMM's row tasks that
+    stop before the ragged tail, and a runner that drops each thread's last task. Each turns
+    the row red (the C harness holds the partitions to the serial kernels at every count,
+    and the TSan section holds their memory discipline)."""
+    from bcir.tests import native_decoder_fixtures as nf
+
+    if nf.compiler() is None:
+        return
+    tensor = nf.source("bcir_tensor.c")
+    mutants = (
+        ("j.cols=(n+j.nr-1)/j.nr; j.rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;",
+         "j.cols=(n+j.nr-1)/j.nr; j.rowsets=m/BCIR_MM_ROWS;"),
+        ("  for (t=id;t<p->tasks;t+=p->threads) p->fn(p->ctx,t);",
+         "  for (t=id;t+p->threads<p->tasks;t+=p->threads) p->fn(p->ctx,t);"),
+    )  # fmt: skip
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        for i, (old, new) in enumerate(mutants):
+            assert tensor.count(old) == 1, old
+            path = nf.build_library(
+                Path(tmp) / str(i), sources={"bcir_tensor.c": tensor.replace(old, new)}
+            )
+            states = nf.thread_states(path)
+            assert states[1] != states[2], f"train.state.threads.mismatch cannot see {new!r}"
+            assert nf.threads_mismatch(path) > 0
 
 
 def test_the_step_floor_is_measured_beside_the_step():
@@ -263,8 +487,9 @@ def test_the_step_floor_is_measured_beside_the_step():
 
 def test_the_harness_rows_are_the_programs_numbers():
     """`train.memory.transient`'s frozen baseline is the bench program's own ratio, and every
-    NDT-GEM row the harness declares is one the fixtures measure -- a change to the program or
-    the C plan cannot leave the harness quoting a stale number."""
+    row of the harness's `train` group is one the fixtures measure -- the four NDT-GEM rows, and
+    TRAIN-RAIL's corpus row -- so a change to the program, the C plan or the corpus recipe
+    cannot leave the harness quoting a stale number."""
     import sys
 
     from bcir.tests import native_decoder_fixtures as nf
@@ -274,7 +499,27 @@ def test_the_harness_rows_are_the_programs_numbers():
 
     rows = {m.key: m for m in METRICS if m.group == "train"}
     assert set(rows) == {"train.plan.mismatch", "train.mm.mismatch", "train.memory.transient",
-                         "train.step.ms"}  # fmt: skip
+                         "train.step.ms", "train.corpus.unselected",
+                         "train.state.threads.mismatch", "train.mm.fused.mismatch",
+                         "train.exp.mismatch", "train.exp.ulp.max",
+                         "train.mm.kblock.mismatch", "train.mm.provider.mismatch"}  # fmt: skip
+    kblock, provider = rows["train.mm.kblock.mismatch"], rows["train.mm.provider.mismatch"]
+    assert kblock.kind == "exact" and kblock.bound == 0 and kblock.baseline == 0
+    assert kblock.what.startswith(f"of {len(nf.MM_KBLOCK_CASES)} GEMM cases")
+    assert provider.kind == "exact" and provider.bound == 0 and provider.baseline == 0
+    assert provider.what.startswith("of 30 GEMM cases")
+    for key, baseline in (("train.exp.mismatch", 0), ("train.exp.ulp.max", 1)):
+        assert rows[key].kind == "exact" and rows[key].bound == baseline == rows[key].baseline
+    fused = rows["train.mm.fused.mismatch"]
+    assert fused.kind == "exact" and fused.bound == 0 and fused.baseline == 0
+    assert fused.what.startswith(f"of {len(nf.MM_CASES)} GEMM cases")
+    threads = rows["train.state.threads.mismatch"]
+    assert threads.kind == "exact" and threads.bound == 0 and threads.baseline == 0
+    assert threads.what.startswith(f"thread counts among {nf.THREAD_COUNTS[1:]}")
+    corpus = rows["train.corpus.unselected"]
+    assert corpus.kind == "exact" and corpus.bound == 0 and corpus.baseline == 328
+    unselected = nf.corpus_unselected()
+    assert unselected is None or unselected == 0, unselected  # None outside a source checkout
     ratio, held, bound, incumbent = nf.transient_ratio()
     assert rows["train.memory.transient"].baseline == ratio == held / bound
     assert (held, bound, incumbent) == (999_424, 753_664, 753_664)

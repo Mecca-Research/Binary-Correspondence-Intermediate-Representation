@@ -17,6 +17,16 @@ spec alone. One function per row family grades it against the C rail; the tests,
                                reaches on any of the step's own GEMM shapes, timed alone
                                (`NativeProgram.roofline`, compute term) -- a bound on this host's
                                kernel, TMSAO-3, never on the silicon
+    train.mm.fused.mismatch    `MM_CASES` whose native `bcir_tensor_mm_fused` output differs in any bit
+                               from `mm_reference_fused` -- the fused contract (v2, NDT-FMA) as an
+                               exact rational emulation rounded once per term
+    train.exp.mismatch         inputs among the 2^24 `exp_sweep` sweeps (every binary32 in [-104, 89]
+                               at stride 2^8) where two instances of the BCIR exponential differ
+    train.exp.ulp.max          the largest distance, in ulps, of the BCIR exponential from exp in
+                               double rounded to binary32 over the same inputs (stated: 1)
+    train.state.threads.mismatch  thread counts among `THREAD_COUNTS[1:]` whose state after three
+                               steps of `THREADS_BENCH` differs in any bit from the one-thread
+                               state of the same library, weights, tokens and rates (NDT-THREADS)
 
 Without a C compiler the native rows are not measured -- a skip, never a pass.
 """
@@ -24,6 +34,9 @@ Without a C compiler the native rows are not measured -- a skip, never a pass.
 from __future__ import annotations
 
 import ctypes as ct
+import hashlib
+import importlib.util
+import math
 import os
 import shutil
 import statistics
@@ -71,6 +84,28 @@ MM_CASES = tuple(
     )
 )
 
+#: The blocked contract's cases (NDT-KBLOCK): the 20 above and twenty deeper ones that cross the
+#: split rule's three cases (one block, half-and-half, whole blocks then halves), an alpha the
+#: binary32 product does not scale exactly, and beta 1 (the trainer's dW accumulations).
+MM_KBLOCK_CASES = MM_CASES + tuple(
+    (ta, tb, m, n, k, alpha, beta)
+    for ta in (0, 1)
+    for tb in (0, 1)
+    for (m, n, k), alpha, beta in (
+        ((2, 3, 1000), 1.0, 1.0),
+        ((1, 2, 2048), 1.0, 0.0),
+        ((3, 2, 449), 1.0, 1.0),
+        ((2, 2, 897), 0.5, 1.0),
+        ((2, 2, 100), 1.1, 1.0),
+    )
+)
+
+#: The step the threads row trains (NDT-THREADS): 80 tokens (one 64-row GEMM task and a 16-row
+#: tail), T=40 (past the attention backward's 32-row chunks), GQA groups of two, a width, a KV
+#: width, an FF width and a vocabulary off every 32- and 64-wide block edge; three steps.
+THREADS_BENCH = (DecoderSpec(250, 72, 4, 2, 200, activation="silu_gate", n_kv_heads=2), 2, 40)
+THREAD_COUNTS = (1, 2, 3, 4)
+
 
 def compiler() -> str | None:
     from bcir.toolchain import host_c_compiler
@@ -104,7 +139,7 @@ def build_library(directory, *, sources: dict[str, str] | None = None) -> Path |
 
     cmd = [cc, "-std=c11", "-O3", "-ffp-contract=off", "-DBCIR_DT_BUILD_SHARED", "-shared"]
     if sys.platform != "win32":
-        cmd.append("-fPIC")
+        cmd += ["-fPIC", "-pthread"]
     cmd += ["-I", str(_C), *units, "-o", str(out)]
     run = subprocess.run(cmd + host_link_args(["-lm"]), capture_output=True, text=True,
                          timeout=180)  # fmt: skip
@@ -186,25 +221,184 @@ def mm_reference(ta, tb, m, n, k, alpha, a, b, beta, c):
     return out
 
 
-def mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c):
-    fn = lib.bcir_tensor_mm
-    fn.argtypes = [ct.c_void_p, ct.c_int, ct.c_int, ct.c_size_t, ct.c_size_t, ct.c_size_t,
-                   ct.c_float, _FP, _FP, ct.c_float, _FP]  # fmt: skip
-    fn.restype = None
+def round_f32(x: Fraction) -> float:
+    """The binary32 nearest the rational x, ties to even, exactly -- never through a double, whose
+    own rounding would resolve a tie wrongly (1 + 2^-24 + 2^-60 rounds to 1 + 2^-23 in binary32
+    but to the tie 1 + 2^-24 in double first, and from there to 1). Overflow is the signed
+    infinity; the result may be subnormal or zero."""
+    if x == 0:
+        return 0.0
+    sign = -1.0 if x < 0 else 1.0
+    a = abs(x)
+    n, d = a.numerator, a.denominator
+    e = n.bit_length() - d.bit_length()  # 2^(e-1) < a < 2^(e+1)
+    if a < Fraction(2) ** e:
+        e -= 1  # 2^e <= a < 2^(e+1)
+    scale = max(e - 23, -149)  # the quantum: 2^(e-23), floored at the subnormal quantum
+    num, den = (n, d << scale) if scale >= 0 else (n << -scale, d)
+    q, r = divmod(num, den)
+    if 2 * r > den or (2 * r == den and q & 1):
+        q += 1
+    if q >> 24:  # rounding carried into the next binade
+        q >>= 1
+        scale += 1
+    if scale + 23 > 127:
+        return sign * math.inf
+    return sign * math.ldexp(q, scale)  # exact: q < 2^24 and the exponent is in range
+
+
+def mm_reference_fused(ta, tb, m, n, k, alpha, a, b, beta, c):
+    """The fused contract (v2): beta first, then for k ascending acc = round(acc + av * b) rounded
+    ONCE, av the binary32 product alpha*a as in v1 -- exact rationals, so no double stands in."""
+    alpha, beta = _f32(alpha), _f32(beta)
+    out = [0.0 if beta == 0.0 else _f32(beta * x) for x in c]
+    for i in range(m):
+        for j in range(n):
+            acc = Fraction(out[i * n + j])
+            for l in range(k):
+                av = Fraction(_f32(alpha * a[l * m + i if ta else i * k + l]))
+                acc = Fraction(round_f32(acc + av * Fraction(b[j * k + l if tb else l * n + j])))
+            out[i * n + j] = float(acc)
+    return out
+
+
+def kblock_split(k: int, q: int = 448, u: int = 16) -> list[int]:
+    """The blocked contract's depth split (bcir_tensor_kblock_split): while terms remain, a
+    whole block of q when at least 2q remain, else half the remainder rounded up to a
+    multiple of u when more than q remain, else the remainder."""
+    out, ls = [], 0
+    while ls < k:
+        rem = k - ls
+        length = q if rem >= 2 * q else (rem // 2 + u - 1) // u * u if rem > q else rem
+        out.append(length)
+        ls += length
+    return out
+
+
+def mm_reference_kblock(ta, tb, m, n, k, alpha, a, b, beta, c):
+    """The blocked fused contract (v3): beta first; for each block of `kblock_split(k)` in
+    order, P = the fused chain of its terms from zero (exact rationals, rounded once per
+    term, a unscaled), then c = round(c + round(alpha*P)) -- two binary32 operations."""
+    alpha, beta = _f32(alpha), _f32(beta)
+    out = [0.0 if beta == 0.0 else _f32(beta * x) for x in c]
+    blocks = kblock_split(k)
+    for i in range(m):
+        for j in range(n):
+            acc, l0 = out[i * n + j], 0
+            for length in blocks:
+                p = Fraction(0)
+                for l in range(l0, l0 + length):
+                    av = Fraction(a[l * m + i if ta else i * k + l])
+                    p = Fraction(round_f32(p + av * Fraction(b[j * k + l if tb else l * n + j])))
+                acc = _f32(acc + _f32(alpha * float(p)))
+                l0 += length
+            out[i * n + j] = acc
+    return out
+
+
+_MM_SIG = [ct.c_void_p, ct.c_int, ct.c_int, ct.c_size_t, ct.c_size_t, ct.c_size_t,
+           ct.c_float, _FP, _FP, ct.c_float, _FP]  # fmt: skip
+
+
+def mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c, *, fused=False, kblock=False,
+              variant=None):  # fmt: skip
+    """The contract's default entry (the widest instance the host runs), or with `variant` one
+    named instance (1 generic, 2 AVX2, 4 AVX-512) through the contract's `_variant` entry,
+    which refuses -- returns 0 and writes nothing -- an instance the host lacks."""
+    name = (
+        "bcir_tensor_mm_kblock" if kblock else "bcir_tensor_mm_fused" if fused else "bcir_tensor_mm"
+    )
+    fn = getattr(lib, name + ("_variant" if variant is not None else ""))
+    fn.argtypes = ([ct.c_int] if variant is not None else [ct.c_void_p]) + _MM_SIG[1:]
+    fn.restype = ct.c_int if variant is not None else None
     ca, cb, cc = (ct.c_float * len(a))(*a), (ct.c_float * len(b))(*b), (ct.c_float * len(c))(*c)
-    fn(None, ta, tb, m, n, k, alpha, ca, cb, beta, cc)
+    ran = fn(variant if variant is not None else None, ta, tb, m, n, k, alpha, ca, cb, beta, cc)
+    if variant is not None and ran != variant:
+        raise RuntimeError(f"instance {variant} is not one this host runs")
     return list(cc)
 
 
-def mm_mismatch(lib, cases=MM_CASES) -> int:
-    """Cases whose native output differs in any bit from the reference."""
+def mm_variants(lib, *, fused=False, kblock=False) -> list[int]:
+    """The instances the host runs under a contract, as the unit reports them (1, 2, 4)."""
+    name = (
+        "bcir_tensor_mm_kblock" if kblock else "bcir_tensor_mm_fused" if fused else "bcir_tensor_mm"
+    )
+    fn = getattr(lib, name + "_variants")
+    fn.argtypes = []
+    fn.restype = ct.c_int
+    mask = fn()
+    return [v for v in (1, 2, 4) if mask & v]
+
+
+def mm_mismatch(lib, cases=MM_CASES, *, fused=False, kblock=False) -> int:
+    """Cases whose native output differs in any bit from the reference of its contract. Under
+    the blocked contract every instance the host runs is held to it (NDT-BLOCK: the AVX-512 and
+    AVX2 instances are their own code, not the generic block under a wider target), so a case
+    counts once per instance that differs."""
     bad = 0
+    reference = mm_reference_kblock if kblock else mm_reference_fused if fused else mm_reference
+    variants = mm_variants(lib, kblock=True) if kblock else [None]
     for seed, (ta, tb, m, n, k, alpha, beta) in enumerate(cases, 1):
         a, b, c = _operands(m, n, k, seed)
-        want = mm_reference(ta, tb, m, n, k, alpha, a, b, beta, c)
-        got = mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c)
-        bad += struct.pack(f"<{len(want)}f", *want) != struct.pack(f"<{len(got)}f", *got)
+        want = struct.pack(f"<{m * n}f", *reference(ta, tb, m, n, k, alpha, a, b, beta, c))
+        for variant in variants:
+            got = mm_native(lib, ta, tb, m, n, k, alpha, a, b, beta, c, fused=fused,
+                            kblock=kblock, variant=variant)  # fmt: skip
+            bad += want != struct.pack(f"<{len(got)}f", *got)
     return bad
+
+
+def mm_fused_mismatch(lib, cases=MM_CASES) -> int:
+    """`train.mm.fused.mismatch`: the fused kernel against its exact emulation."""
+    return mm_mismatch(lib, cases, fused=True)
+
+
+def mm_kblock_mismatch(lib, cases=MM_KBLOCK_CASES) -> int:
+    """`train.mm.kblock.mismatch`: every instance of the blocked kernel the host runs against
+    its exact emulation, and the C split rule against the Python one on the cases' depths and
+    the rule's edges."""
+    split = lib.bcir_tensor_kblock_split
+    split.argtypes = [ct.c_size_t, ct.POINTER(ct.c_size_t), ct.c_size_t]
+    split.restype = ct.c_size_t
+    bad = 0
+    for k in sorted({case[4] for case in cases} | {0, 447, 448, 449, 896, 897, 1024, 3000}):
+        lengths = (ct.c_size_t * 64)()
+        count = split(k, lengths, 64)
+        bad += list(lengths[:count]) != kblock_split(k)
+    return bad + mm_mismatch(lib, cases, kblock=True)
+
+
+def openblas_library() -> Path | None:
+    """The scipy_openblas32 wheel's shared library, when the wheel is importable here."""
+    spec = importlib.util.find_spec("scipy_openblas32")
+    if spec is None:
+        return None
+    module = importlib.import_module("scipy_openblas32")
+    for name in ("libscipy_openblas.so", "libscipy_openblas.dylib", "libscipy_openblas.dll"):
+        path = Path(module.get_lib_dir()) / name
+        if path.exists():
+            return path
+    return None
+
+
+def provider_mismatch(lib, shapes=None) -> int | None:
+    """`train.mm.provider.mismatch`: OpenBLAS's sgemm (scipy_openblas32, one thread) against the
+    blocked contract over the comparison decoder's step shapes at beta 0 and 1 -- the admission
+    differential `NativeDecoder.use_cblas` runs; None where the wheel is not importable."""
+    from bcir.hosted.models.native import _CBLAS, provider_mismatch as differential
+    from bcir.hosted.models.native_program import training_step_program
+
+    path = openblas_library()
+    if path is None:
+        return None
+    if shapes is None:
+        spec = DecoderSpec(260, 384, 8, 6, 1024, activation="silu_gate", n_kv_heads=4)
+        shapes = tuple(dict.fromkeys(training_step_program(spec, 8, 128).gemm_shapes()))
+    blas = ct.CDLL(str(path))
+    blas.scipy_openblas_set_num_threads.argtypes = [ct.c_int]
+    blas.scipy_openblas_set_num_threads(1)
+    slot = ct.cast(blas.scipy_cblas_sgemm, _CBLAS)
+    return differential(lib, ct.cast(ct.pointer(slot), ct.c_void_p), shapes)
 
 
 # --- train.memory.transient -----------------------------------------------------------------
@@ -295,14 +489,93 @@ def measure_step(path, bench=BENCH) -> dict[str, float]:
     return {"train.step.ms": value, "train.step.ms.floor": float(seconds) * 1000}
 
 
+# --- train.exp.mismatch, train.exp.ulp.max ----------------------------------------------------
+
+
+def exp_sweep(lib, stride: int = 256) -> tuple[int, int, int]:
+    """(inputs swept, inputs where two instances differ, max ulp from exp in double rounded to
+    binary32) of `bcir_tensor_exp_sweep` at `stride`."""
+    fn = lib.bcir_tensor_exp_sweep
+    fn.argtypes = [ct.c_uint, ct.POINTER(ct.c_size_t), ct.POINTER(ct.c_uint)]
+    fn.restype = ct.c_size_t
+    mismatch, ulp = ct.c_size_t(), ct.c_uint()
+    swept = fn(stride, ct.byref(mismatch), ct.byref(ulp))
+    return swept, mismatch.value, ulp.value
+
+
+# --- train.state.threads.mismatch -----------------------------------------------------------
+
+
+def state_digest(trainer) -> str:
+    """SHA-256 over the weights, both moments, the step and the bias powers."""
+    digest = hashlib.sha256()
+    for name in ("weights", "moment1", "moment2"):
+        digest.update(ct.string_at(trainer.buffers[name], trainer.state.plan.parameters * 4))
+    digest.update(struct.pack("<Qdd", trainer.state.step, trainer.state.beta1_power,
+                              trainer.state.beta2_power))  # fmt: skip
+    return digest.hexdigest()
+
+
+def thread_states(
+    path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS, *, contract="v1"
+) -> dict[int, str]:
+    """The state digest after `steps` steps of `bench` -- the same seeded weights, tokens and
+    rates -- on a trainer of each thread count in `counts` (one thread is the serial trainer);
+    each trainer's pool is released before the next is made."""
+    from bcir.hosted.models.native import NativeAdamW, NativeDecoder
+
+    spec, batch, time_ = bench
+    n = batch * time_
+    tokens = [(7 * i + 3) % spec.vocab_size for i in range(n * steps)]
+    targets = [(7 * i + 4) % spec.vocab_size for i in range(n * steps)]
+    rates = [1e-3 * (1 - 0.1 * s) for s in range(steps)]
+    out = {}
+    for threads in counts:
+        trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
+                                threads=threads, contract=contract)  # fmt: skip
+        try:
+            trainer.run(tokens, targets, steps=steps, optimizer=NativeAdamW(lr=1e-3),
+                        learning_rates=rates)  # fmt: skip
+            out[threads] = state_digest(trainer)
+        finally:
+            trainer.close()
+    return out
+
+
+def threads_mismatch(path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS) -> int:
+    """Thread counts after the first whose state differs from the first count's."""
+    states = thread_states(path, bench, steps, counts)
+    return sum(states[t] != states[counts[0]] for t in counts[1:])
+
+
 # --- every row --------------------------------------------------------------------------------
 
 
+def corpus_unselected() -> int | None:
+    """TRAIN-RAIL's row, `train.corpus.unselected`: the tracked Markdown files of docs/ and
+    training/ that the train rail's recipe does not select, read by tools/models/train_rail.py
+    without a training run; None outside a source checkout (the wheel ships neither tools/ nor
+    the trees), where the row is not measured rather than read as zero."""
+    root = Path(__file__).resolve().parents[2]
+    tool = root / "tools" / "models" / "train_rail.py"
+    if not tool.is_file() or not (root / "training").is_dir() or not (root / "docs").is_dir():
+        return None
+    spec = importlib.util.spec_from_file_location("bcir_tools_train_rail", tool)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    selected = module.selected_by_recipe(root, module.DEFAULT_RECIPE)
+    return len(module.unselected(root, selected))
+
+
 def measure(*, timed: bool = True) -> dict[str, float]:
-    """Every NDT-GEM row this host can measure: the memory row always, the native rows with a
-    compiler (and the timed one only when `timed`)."""
+    """Every NDT-GEM row this host can measure: the memory row always, the corpus row in a source
+    checkout, the native rows with a compiler (and the timed one only when `timed`)."""
     ratio = transient_ratio()[0]
     out = {"train.memory.transient": ratio}
+    unselected = corpus_unselected()
+    if unselected is not None:
+        out["train.corpus.unselected"] = float(unselected)
     tmp = tempfile.mkdtemp(prefix="bcir-ndt-")
     try:
         path = build_library(tmp)
@@ -311,6 +584,16 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         lib = ct.CDLL(str(path))
         out["train.plan.mismatch"] = float(plan_mismatch(lib))
         out["train.mm.mismatch"] = float(mm_mismatch(lib))
+        out["train.mm.fused.mismatch"] = float(mm_fused_mismatch(lib))
+        out["train.mm.kblock.mismatch"] = float(mm_kblock_mismatch(lib))
+        provider = provider_mismatch(lib)
+        if provider is not None:
+            out["train.mm.provider.mismatch"] = float(provider)
+        swept, mismatch, ulp = exp_sweep(lib)
+        assert swept > 8_000_000, swept
+        out["train.exp.mismatch"] = float(mismatch)
+        out["train.exp.ulp.max"] = float(ulp)
+        out["train.state.threads.mismatch"] = float(threads_mismatch(path))
         if timed:
             out.update(measure_step(path))
         return out
@@ -322,13 +605,30 @@ __all__ = [
     "BENCH",
     "MM_CASES",
     "PLAN_CORPUS",
+    "THREAD_COUNTS",
+    "THREADS_BENCH",
     "build_library",
+    "corpus_unselected",
+    "exp_sweep",
     "measure",
     "measure_step",
+    "mm_fused_mismatch",
+    "mm_kblock_mismatch",
+    "MM_KBLOCK_CASES",
+    "kblock_split",
+    "mm_reference_kblock",
+    "provider_mismatch",
+    "openblas_library",
     "mm_mismatch",
+    "mm_variants",
     "mm_reference",
+    "mm_reference_fused",
     "plan_mismatch",
+    "round_f32",
     "source",
+    "state_digest",
+    "thread_states",
+    "threads_mismatch",
     "transient_ratio",
 ]
 

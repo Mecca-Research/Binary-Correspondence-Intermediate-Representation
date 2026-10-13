@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -78,6 +79,35 @@ def test_the_rails_build_plans_the_manifests_targets():
         for name in manifest["kernels"]:
             (run,) = runs[f"{name}.unit"]
             assert run[:3] == ("python", "tools/build/emit_kernel.py", name), run
+
+
+def test_the_gate_names_a_read_git_does_not_track_before_it_runs():
+    """The make gate's change step copies the tracked tree; a target reading an untracked file
+    would get a tag computed from nothing there, minutes in, as a traceback. `untracked_reads` is
+    the verdict's predicate: every read by name that is neither tracked nor another target's
+    output -- the rails' build has none against the tracked tree, and names the one it has when
+    a tracked read is withheld (the trainer's unit, read by the train task and its object)."""
+    if not _posix():
+        return
+    cc = shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")
+    ar = shutil.which("ar")
+    if cc is None or ar is None:
+        return
+    generator = _load("bcirfile")
+    gate = _load("make_gate")
+    text, _planned = generator.generate(
+        cc, None, ar, sys.executable, False, bash=shutil.which("bash"),
+        path_compilers=generator.path_compilers(),
+    )  # fmt: skip
+    bf = parse(text.encode("ascii"))
+    listed = subprocess.run(["git", "ls-files", "-z"], cwd=_ROOT, capture_output=True, check=True)
+    tracked = set(filter(None, listed.stdout.decode("utf-8").split("\0")))
+    assert gate.untracked_reads(bf, tracked) == []
+    withheld = gate.untracked_reads(bf, tracked - {"runtime/c/bcir_tensor.c"})
+    assert withheld == ["runtime/c/bcir_tensor.c"], withheld
+    assert gate.untracked_reads(bf, set()) and all(
+        not r.startswith(generator.OUT) for r in gate.untracked_reads(bf, set())
+    ), "an output of the build is never an untracked read"
 
 
 def test_every_section_is_a_task_of_the_rails_build():

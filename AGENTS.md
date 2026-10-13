@@ -24,9 +24,17 @@ validation scripts (tblgen / IRDL round-trip / build + check `bcir-opt`).
 
 Agent-readable teaching material: chaptered lessons, checked `.ll`/`.mlir`
 examples, exercises, and verify scripts. It exists to train agents that work on
-the IR. **It is not part of the BCIR IR and the IR does not depend on it.**
-Changes to the IR must not require changes here, and vice versa. Its conventions
-live in `CONTRIBUTING.md`.
+the IR. **It is not part of the BCIR IR, and the IR never imports it.** The one
+dependency between the two runs one way and carries data only: the IR's `train`
+rail (TRAIN-RAIL) reads a pinned selection of the corpus as training text for the
+BCIR-native decoder, the way the lab recipes read `docs/` — the one-way corpus law,
+stated with its witnesses in
+[`docs/research/BCIR_TRAINING_ACCELERATION_ROADMAP.md`](docs/research/BCIR_TRAINING_ACCELERATION_ROADMAP.md) §5.
+Nothing under `bcir/`, `mlir/` or `runtime/` imports or compiles anything from
+`training/`; the corpus keeps its own gates and reaches the IR only through the
+lazy edges its standard names. A change to the IR's semantics must not require a
+corpus change; a change to the corpus changes what the rail trains on, never
+whether the IR builds or how it verifies. Its conventions live in `CONTRIBUTING.md`.
 
 ## Where to work
 
@@ -34,6 +42,10 @@ live in `CONTRIBUTING.md`.
 - Changing the IR law (ops/types/attrs) → `mlir/` (validate with `tools/` and the `mlir` preset's
   `ctest -L mlir`, whose lit suite runs every fixture's RUN lines as written: `mlir/lit.cfg.py`).
 - Writing/curating training material → `training/<subject>/` (compiler material: `training/llvm/`).
+- Changing what the IR trains on → the corpus recipe `tools/models/configs/bcir-corpus-860k.json`
+  and the rail `tools/models/train_rail.sh` (CTest `train-corpus`, label `train`, `BCIR_TRAIN_STEPS`;
+  BCIR Make's task `train.corpus`; the qualification job), whose witness `tools/models/train_rail.py`
+  holds `train.corpus.unselected` at 0 -- the corpus itself stays `training/`'s, read as data (§2).
 - Adding or moving a C/C++ source → `runtime/manifest.json` (the one source list; CMake reads it,
   `tools/build/manifest.py --check` holds the gates and harnesses to it) → [`docs/BCIR_BUILD_ROADMAP.md`](docs/BCIR_BUILD_ROADMAP.md).
 - Changing a migrated runtime-gate section → its `tools/c/sections/<name>.sh` (BCIR Make runs that
@@ -68,11 +80,11 @@ Python, C sanitizer/fuzzer, model, LLVM-training, or MLIR gates concurrently.
 
 1. Run focused regressions and the bounded complete quick oracle locally. Run
    broader local gates only when the host and resource budget support them.
-2. Judge the change on the newest LLVM/Clang/MLIR 23 and Node 24 as well as on the
-   CI-default Clang 18 / GCC 13: `python3 tools/local/latest_toolchain.py status`, then
-   `bash tools/local/check_latest.sh`
+2. Judge the change on the newest LLVM/Clang/MLIR 23, Node 24 and Python 3.15 as well as
+   on the CI-default Clang 18 / GCC 13 / Python 3.12 (the declared floor is 3.11):
+   `python3 tools/local/latest_toolchain.py status`, then `bash tools/local/check_latest.sh`
    ([`.claude/skills/bcir-latest-toolchain`](.claude/skills/bcir-latest-toolchain/SKILL.md)).
-   A Clang-18-only pass is not evidence about 23.
+   A Clang-18-only pass is not evidence about 23, nor a 3.12-only pass about 3.15.
 3. Delegate the full Python/differential/fuzz, C runtime/model, LLVM training,
    MLIR, Windows, and native ARM matrix to GitHub Actions as appropriate.
 4. Treat hardware-only validation that neither the local host nor CI provides as

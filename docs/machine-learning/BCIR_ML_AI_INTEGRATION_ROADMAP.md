@@ -1387,3 +1387,13 @@ retain forward caches and reuse one backward workspace. An explicit CBLAS provid
 can accelerate GEMM; selective framework/vendor integrations use the C ABI.
 Accelerator backward, mixed precision, recomputation and distributed training remain
 open. This path preserves the existing scalar Tape and planned logistic trainers.
+
+The work that takes this trainer from behind PyTorch's step time to ahead of it is laid out in
+[the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md): where the
+2026-10-11 step's time goes, the ceiling each lever leaves, the TRAIN-RAIL / NDT-THREADS / NDT-FMA
+/ NDT-EXP / NDT-SCHED / NDT-ATTN ladder with the exact row each slice gates on, and the one-way
+corpus law under which `training/` becomes the trainer's data. The first three slices were
+re-measured on 2026-10-12 ([BCIR_NDT_MEASURE_2026-10-12.md](../research/BCIR_NDT_MEASURE_2026-10-12.md)):
+the pool and the v2 contracts changed no bit they did not declare, and the 9.84M decoder's step on
+three threads under `fused+exp` trains at 819 ms against v1's 989 on the same host, the same model to
+four decimals.

@@ -1,0 +1,36 @@
+{
+ "admission": {
+  "cases": 30,
+  "contract": "kblock+exp",
+  "mismatch": 0,
+  "provider": "scipy_cblas_sgemm"
+ },
+ "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+ "contract": "kblock+exp",
+ "openblas": "OpenBLAS 0.3.34.237.0 DYNAMIC_ARCH NO_AFFINITY SkylakeX MAX_THREADS=64 THREAD_TIMEOUT=28",
+ "parts_ms": {
+  "attention_backward": 65.52579300478101,
+  "attention_forward": 48.71971199463587,
+  "gemm_backward": 169.13850600394653,
+  "gemm_forward": 90.82058700005291,
+  "rms": 4.216966000967659,
+  "rms_backward": 9.215530997607857,
+  "rope": 3.4063130005961284,
+  "rope_inverse": 3.1511460038018413,
+  "silu": 3.5871900035999715,
+  "swiglu_backward": 5.378786001529079
+ },
+ "provider": "scipy_cblas_sgemm",
+ "rest_ms": 146.37528099410702,
+ "rounds": 5,
+ "stages_ms": {
+  "batch": 0.07013400318101048,
+  "binding": 0.41509599395794794,
+  "forward": 246.09044899989385,
+  "loss_backward": 566.4413170015905,
+  "step": 631.8150439983583,
+  "update": 81.86413699877448
+ },
+ "threads": 4,
+ "training_step_ms": 631.8851780015393
+}

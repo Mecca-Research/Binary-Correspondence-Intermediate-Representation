@@ -1,0 +1,99 @@
+{
+ "what": "NDT-BLOCK: the identity stage after the v3 instances' rewrite -- the kblock and kblock+exp states at 1 and 3 threads on the widest (AVX-512), AVX2 and portable builds, 20 steps each; the three portable rows after the first were stopped (the portable build's v3 kernel calls fmaf per term and takes about 75 s a step, so one portable row of 20 steps stands for the generic instance: the same state)",
+ "date": "2026-10-12",
+ "slice": "NDT-BLOCK",
+ "steps": 20,
+ "rows": [
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "kblock",
+   "threads": 1,
+   "state_sha256": "5b92ff75073edd4c3d6757daedc1e85028280e000e3b914cd8f0ed75b8edadc1",
+   "last_loss": 3.524055538607784,
+   "median_step_ms": 1071.1130925010366
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "kblock",
+   "threads": 3,
+   "state_sha256": "5b92ff75073edd4c3d6757daedc1e85028280e000e3b914cd8f0ed75b8edadc1",
+   "last_loss": 3.524055538607784,
+   "median_step_ms": 669.0306929995131
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "kblock+exp",
+   "threads": 1,
+   "state_sha256": "f19b0d7d7ad907e5ee70b246661b871bcc736cbd80a909c004bdf76551e536d2",
+   "last_loss": 3.52405553957469,
+   "median_step_ms": 996.0877294979582
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "kblock+exp",
+   "threads": 3,
+   "state_sha256": "f19b0d7d7ad907e5ee70b246661b871bcc736cbd80a909c004bdf76551e536d2",
+   "last_loss": 3.52405553957469,
+   "median_step_ms": 589.5289295003749
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / avx2",
+   "contract": "kblock",
+   "threads": 1,
+   "state_sha256": "5b92ff75073edd4c3d6757daedc1e85028280e000e3b914cd8f0ed75b8edadc1",
+   "last_loss": 3.524055538607784,
+   "median_step_ms": 1461.6520175004553
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / avx2",
+   "contract": "kblock",
+   "threads": 3,
+   "state_sha256": "5b92ff75073edd4c3d6757daedc1e85028280e000e3b914cd8f0ed75b8edadc1",
+   "last_loss": 3.524055538607784,
+   "median_step_ms": 841.4373009982228
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / avx2",
+   "contract": "kblock+exp",
+   "threads": 1,
+   "state_sha256": "f19b0d7d7ad907e5ee70b246661b871bcc736cbd80a909c004bdf76551e536d2",
+   "last_loss": 3.52405553957469,
+   "median_step_ms": 1576.600658496318
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / avx2",
+   "contract": "kblock+exp",
+   "threads": 3,
+   "state_sha256": "f19b0d7d7ad907e5ee70b246661b871bcc736cbd80a909c004bdf76551e536d2",
+   "last_loss": 3.52405553957469,
+   "median_step_ms": 867.6416374983091
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / portable",
+   "contract": "kblock",
+   "threads": 1,
+   "state_sha256": "5b92ff75073edd4c3d6757daedc1e85028280e000e3b914cd8f0ed75b8edadc1",
+   "last_loss": 3.524055538607784,
+   "median_step_ms": 65988.84580350204
+  }
+ ],
+ "identical_by_contract": {
+  "kblock": true,
+  "kblock+exp": true
+ },
+ "identical": true,
+ "contracts_distinct": true,
+ "states": {
+  "kblock": "5b92ff75073edd4c3d6757daedc1e85028280e000e3b914cd8f0ed75b8edadc1",
+  "kblock+exp": "f19b0d7d7ad907e5ee70b246661b871bcc736cbd80a909c004bdf76551e536d2"
+ },
+ "same_states_as_kblock_record": {
+  "kblock": true,
+  "kblock+exp": true
+ },
+ "portable_rows_skipped": [
+  "kblock t3",
+  "kblock+exp t1",
+  "kblock+exp t3"
+ ]
+}

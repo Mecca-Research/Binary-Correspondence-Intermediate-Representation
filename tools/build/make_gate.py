@@ -43,7 +43,9 @@ from bcir.make.run import execute  # noqa: E402
 # The unit the change step edits: a library unit with readers on every side of it (the library,
 # the tools and harnesses that link it, their sections), appended a comment so it builds the same.
 CHANGED_UNIT = "runtime/c/bcir_diag.c"
-COPIED = ("bcir", "channels", "runtime", "tools", "pyproject.toml")
+# Every tree a target reads: the rails' sources and the train task's two corpus trees (TRAIN-RAIL),
+# so the scratch copy carries what every generation tag is computed from.
+COPIED = ("bcir", "channels", "docs", "runtime", "tools", "training", "pyproject.toml")
 
 
 def _load(name: str):
@@ -77,6 +79,15 @@ def readers_of(bf, path: str) -> set[str]:
                 found.add(nxt)
                 todo.append(nxt)
     return found
+
+
+def untracked_reads(bf, tracked: set[str]) -> list[str]:
+    """The files the BCIRfile's targets read by name that git does not track and no target writes.
+    The change step copies the tracked tree, so such a read would be absent there and its
+    target's tag computed from nothing: a verdict before any run (L1), not a traceback in the
+    scratch minutes in. Reads that are other targets' outputs are the build's own."""
+    written = {w for t in bf.targets for w in t.writes}
+    return sorted({r for t in bf.targets for r in t.reads if r not in tracked and r not in written})
 
 
 def _run(bf, root: Path, meta: Path, workers: int):
@@ -136,6 +147,18 @@ def main(argv: list[str] | None = None) -> int:
         for f in findings:
             print(f"  {f}")
         return 1
+    listed = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=False)
+    if listed.returncode != 0:
+        print("make-gate: UNUSABLE: git ls-files did not run")
+        return 2
+    missing = untracked_reads(bf, set(filter(None, listed.stdout.decode("utf-8").split("\0"))))
+    if missing:
+        print(
+            f"make-gate: UNUSABLE: {len(missing)} file(s) the BCIRfile reads are not tracked, and "
+            f"the change step's copy of the tree would lack them: {', '.join(missing[:8])}"
+            + (" ..." if len(missing) > 8 else "")
+        )
+        return 2
     meta = ROOT / args.out_dir / ".bcir-make"
     shutil.rmtree(ROOT / args.out_dir, ignore_errors=True)
     failures: list[str] = []

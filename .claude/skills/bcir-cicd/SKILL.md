@@ -37,7 +37,8 @@ Three parallel workflows run on every push/PR; the main CI's jobs and what each
 | BCIR MLIR rail (LLVM 22 / LLVM 23) | tblgen, `bcir-opt` build, ODS corpus, pass tests — the only place compiled-law work is verified |
 | LLVM training corpus | the separate curriculum's validators |
 | Docs governance | STATUS drift, links, retired paths, claim markers |
-| Host portability (ubuntu/windows, 3.12) + hosted model gates | cross-host oracle + train-to-C |
+| Host portability (ubuntu/windows x Python 3.12/3.15) + hosted model gates (3.12: its pinned torch has no 3.15 wheels) | cross-host oracle + train-to-C |
+| Declared Python floor (3.11) + `python-newer` (3.13/3.14/3.15) | every classifier of pyproject.toml is a cell: the quick tier, the three security gates and the wheel; 3.15 is the newest, also `oracle-llvm-latest`'s interpreter (skill `bcir-latest-toolchain`) |
 | aarch64 oracle + C runtime | native ARM evidence (never emulate locally) |
 | Security assurance | secret scan, inventory audit, tool-boundary policy, decoder campaign, malformed differential, review contract |
 | CodeQL (3 languages) | GitHub-native static analysis |

@@ -15,6 +15,19 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "LicenseRef-BCIR-NC-1.0" }  # BCIR Non-Commercial License v1.0 — see LICENSE
 keywords = ["compiler", "mlir", "intermediate-representation", "optimization", "bcir"]
+# Every interpreter named here is run by a CI cell that refuses any other (ci.yml: python-floor on
+# the floor, host-portability on 3.12 and the newest, python-newer on the rest), and the newest is
+# the one tools/local/check_latest.sh judges every change on (PYTHON_SERIES in
+# tools/local/latest_toolchain.py). test_latest_toolchain.py holds those lists to this one: a
+# classifier no cell runs would be a claim nothing exercises, as `requires-python` once was.
+classifiers = [
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+]
 # The oracle is deterministic and dependency-free by design (pure-Python, integer/Q-fixed
 # hot-path math). Keep `dependencies` empty — a third-party dep on the oracle rail is a
 # regression. Heavy research organs stay import-quarantined (tools/perf/import_graph.py).

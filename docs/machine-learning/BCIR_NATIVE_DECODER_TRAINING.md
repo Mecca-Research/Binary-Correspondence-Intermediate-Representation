@@ -9,11 +9,12 @@ executes in C. PyTorch remains an independent optional reference.
 
 | Component | Native implementation |
 |---|---|
-| Tensor linear algebra | Register-blocked row-major GEMM: a KCxNR tile of B packed once per (column, depth) block into cache-line-aligned storage and reused by every row, an MRxNR block of C kept in registers across the tile's depth; bit-identical to the ascending-k loop on every input. Portable C everywhere, plus AVX2 and AVX-512 variants on x86-64 Linux (GCC or Clang) chosen per call from the CPU, all bit-identical (`bcir_tensor_mm_variant` runs one). Transpose variants, linear forward, input and accumulated weight VJPs; optional explicit LP64 CBLAS adapter |
-| Vector math | Stable sigmoid/SiLU, SwiGLU VJP, RMSNorm and gamma VJP, half-split RoPE and its transpose; standard libm without fast-math |
+| Tensor linear algebra | Register-blocked row-major GEMM: a KCxNR tile of B packed once per (column, depth) block into cache-line-aligned storage and reused by every row, an MRxNR block of C kept in registers across the tile's depth; bit-identical to the ascending-k loop on every input. Portable C everywhere, plus AVX2 and AVX-512 variants on x86-64 Linux (GCC or Clang) chosen per call from the CPU, all bit-identical (`bcir_tensor_mm_variant` runs one). Transpose variants, linear forward, input and accumulated weight VJPs; optional explicit LP64 CBLAS adapter. Two contracts (NDT-FMA): v1, one rounded multiply and one rounded add per term, the default of every gate, row and record; and the fused v2, one IEEE `fmaf` per term for k ascending (a portable `fmaf` instance, AVX2+FMA and AVX-512 instances fusing in registers, all bit-identical to the `fmaf` loop), selected by the state's `contract` (ABI 3) and named in the checkpoint. Three GEMM contracts, selected by the state: v1 (a rounded multiply and a rounded add per term), the fused v2 (one `fmaf` per term, NDT-FMA) and the blocked fused v3 (NDT-KBLOCK: the depth split by one rule into blocks of up to 448, each block's fused chain from zero added to c in order -- the arithmetic OpenBLAS's `sgemm` performs on its SkylakeX target, so that provider is admitted under v3 by a differential over the trainer's own shapes, and the state is one state with it or without it) |
+| Vector math | Stable sigmoid/SiLU, SwiGLU VJP, RMSNorm and gamma VJP, half-split RoPE and its transpose; standard libm without fast-math. Under the `exp` contract (NDT-EXP) SiLU, the SwiGLU VJP and the attention softmax take their exponential from BCIR's own `bcir_tensor_expf` -- one operation sequence on the scalar, AVX2 and AVX-512 instances, no libm, no fma, within 1 ulp of exp in double rounded to binary32 over 2^24 sampled inputs (`train.exp.ulp.max`, stated) |
 | Attention | Causal softmax attention as two masked products per (batch, head) through the GEMM kernel; a backward that rewrites the layer's probabilities in place with their score adjoint and feeds the GEMM kernel (no workspace beyond them); Q/K/V backward, GQA group-gradient accumulation, output projection backward. Both are bit-identical to the scalar reference loops, which `bcir_tensor_attention_backward` keeps |
 | Decoder | Embedding scatter-add backward, both residual paths, both per-layer norms, gate/up/down projections, final norm, tied or untied vocabulary head, mean token cross-entropy |
 | Optimizer | AdamW moments, constant-time bias powers, decoupled decay, global L2 clipping, mean micro-batch accumulation, per-update learning rates. The atomic preflight is skipped only when the magnitudes the first pass records prove it would admit every element; the passes carry the same AVX2/AVX-512 variants and stay bit-identical |
+| Threads | A deterministic pool in memory the caller provides (`bcir_tensor_pool`: `size`/`init`/`stop`, no allocation in the unit; pthreads on POSIX, Win32 threads on Windows, one thread elsewhere; ABI 2 names it in the state, NDT-THREADS). The GEMM is partitioned over (column block, 64-row range) so every output element keeps its depth order; attention over (batch, query head) forward and (batch, KV head) backward with the query heads of one KV head in order, so the shared `dk`/`dv` accumulate as the reference does; SiLU, the SwiGLU VJP, the residual add and gate multiply, RMSNorm, RoPE and the AdamW commit over fixed chunks of elements, rows and positions. The loss, the embedding scatter, the gamma VJP's row sum and the update's norm pass stay serial (index-order reductions). The state after any number of steps is bit-identical at every thread count and to the one-thread trainer; a provider's GEMM or SiLU is threaded as the provider is, the pool runs the rest |
 | Buffer plan | Checked element/byte products, exact sizes for the selected retained-cache algorithm, caller-owned disjoint arenas, one adjoint workspace reused across all layers; no allocation in C |
 | Checkpoint | Atomic JSON + little-endian FP32 weights/moments; SHA-256 covers configuration, counter, bias powers and payload; bounded strict resume, no pickle |
 | Deployment | Existing strict HF tensor ingest performs projection transposes and RoPE permutation; `decoder_weights()` feeds the existing Q8 writer and decoder |
@@ -54,16 +55,38 @@ tokenization, validation splits and sampling remain caller responsibilities.
 `state_dict(gradients=True)` exposes every parameter gradient. Checkpoint between
 optimizer updates: activations and gradients recompute on resume. Restoring a
 different execution provider can change rounding; exact resume is gated on the same
-provider and thread configuration. Supply the same optimizer options and subsequent
+provider (the pool's thread count does not reach the state). Supply the same optimizer options and subsequent
 learning-rate schedule on resume; these are caller inputs rather than checkpoint
 fields. Checkpoint hashes detect corruption and do not authenticate an artifact.
 
-An explicit provider is selected with
+`NativeDecoder(..., contract="fused")` trains under the fused GEMM contract (v2; `"v1"` by default),
+`contract="exp"` under the BCIR exponential, `"fused+exp"` under both;
+the checkpoint names the contract and `resume` restores it, since a state trained under one is not
+the other's. `NativeDecoder(..., threads=n)` runs BCIR's kernels on a pool of `n` threads (one by default;
+`close()` releases them, and `resume(..., threads=n)` continues a checkpoint on any count, since the
+state does not depend on it). An explicit provider is selected with
 `trainer.use_cblas(library_path, symbol="cblas_sgemm")`. Configure its thread count
-before measuring. Missing providers fail visibly. There is no automatic PyTorch
+before measuring; the pool keeps running every kernel but the GEMM. Missing providers fail visibly. There is no automatic PyTorch
 fallback. The C ABI accepts native GEMM and SiLU function pointers: C++ belongs in a
 framework/vendor/SYCL adapter when that integration requires it. The core contains
 no C++ objects, accelerator discovery or framework runtime.
+
+## The train rail (TRAIN-RAIL)
+
+The IR's build trains this decoder on the repository's own text. `tools/models/train_rail.sh`
+runs the corpus recipe `tools/models/configs/bcir-corpus-860k.json` -- every tracked Markdown file
+of `docs/` and `training/`, read as data under the one-way corpus law of `AGENTS.md` §2 (the IR
+never imports the corpus; the corpus keeps its own gates) -- through `tools/models/build_lab_model.py`:
+the corpus standard's preparation, BCIR's BPE, this trainer compiled with `CC`, the BCIRQ8 export
+and its sample. It ends by reading the corpus witness, `tools/models/train_rail.py`: every tracked
+Markdown file of both trees is in what the model trained on (`train.corpus.unselected` 0, the
+rail's exact GEM+ row; the docs recipe alone reads 328). CTest runs it as `train-corpus`
+(`ctest --preset train`; `BCIR_TRAIN_STEPS`, 40 by default, the bounded smoke), BCIR Make as the
+task `train.corpus` with the same count (a corpus edit retrains; a runtime edit elsewhere does not),
+and CI's qualification job for 200 steps before qualifying the model. The full run is the recipe's
+own step count: `bash tools/models/train_rail.sh build/corpus-model`. The optimizations of
+[the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md) reach this
+model by construction, because the rail trains it on this trainer.
 
 ## The step as a GEM+ program (NDT-GEM)
 
@@ -85,6 +108,12 @@ the C rail to it:
 | `train.plan.mismatch` | exact | the program's arena sums against `bcir_decoder_make_plan` over a six-spec corpus (tied and untied, MHA and GQA, context one, tile-crossing widths) | 0 of 36 (spec, arena) pairs; the parent checked the 24 parameter pairs only |
 | `train.mm.mismatch` | exact | `bcir_tensor_mm` against an independent binary32 emulation of its contract, bit for bit, on 20 cases (every transpose pair, the tiles' edges) | 0 of 20, and 0 on the parent kernel: the contract both keep |
 | `train.memory.transient` | exact | the bytes the C plan reserves for activations and workspace over G26's concurrent-live bound on the same values | 1.326x: 999,424 bytes held over a 753,664-byte bound at the bench shape |
+| `train.mm.fused.mismatch` | exact | `bcir_tensor_mm_fused` against an exact rational emulation of the fused contract rounded once per term, bit for bit, on the same 20 cases | 0 of 20 (2026-10-12, NDT-FMA) |
+| `train.mm.kblock.mismatch` | exact | `bcir_tensor_mm_kblock` against an exact rational emulation of the blocked fused contract (v3) on 40 cases (the 20 fused cases and 20 deeper ones crossing the split rule's three cases, an inexact alpha, beta 1), plus the depths where the C split rule and the Python one disagree | 0 of 40 (2026-10-12, NDT-KBLOCK) |
+| `train.mm.provider.mismatch` | exact | OpenBLAS's `sgemm` (scipy_openblas32, one thread) against `bcir_tensor_mm_kblock` over the comparison decoder's 15 step shapes at beta 0 and 1 -- the admission differential `use_cblas` runs under v3; measured where the wheel is importable | 0 of 30 (2026-10-12, NDT-KBLOCK, this host's SkylakeX target) |
+| `train.exp.mismatch` | exact | inputs among 2^24 where two instruction-set instances of the BCIR exponential differ | 0 (2026-10-12, NDT-EXP) |
+| `train.exp.ulp.max` | exact, stated | the exponential's largest distance from exp in double rounded to binary32 over the same inputs | 1 ulp (2026-10-12, NDT-EXP) |
+| `train.state.threads.mismatch` | exact | the state (weights, both moments, the step, the bias powers) after three steps of the threads bench (vocab 250, width 72, 4 heads over 2 KV heads, 2 layers, batch 2 x 40 tokens) on two, three and four threads of the pool, against the one-thread state of the same library, seeded weights, tokens and rates | 0 of 3 (2026-10-12, NDT-THREADS) |
 | `train.step.ms` | wall, floor in the same run | one native step of the bench decoder against G26's roofline compute term: the counted work at the best rate the same kernel reaches on any of the step's own GEMM shapes | 3.4 ms against a 0.78 ms floor measured beside it (2026-10-11, clang 18; the same host read 4.6 against 1.3 before NDT-CLANG, and NDT-GEM's reading was 6.9 against 2.8) |
 
 The step's floor is a bound on this host's kernel (TMSAO-3), not on the silicon: its peak is a
@@ -128,6 +157,52 @@ a 9.84M-parameter decoder on this trainer and on PyTorch (eager and compiled) fr
 weights, batches and learning rates. It reports time per step, held-out quality on a byte-level
 language model of the repository's documentation and on a copy task, time to quality and memory,
 and where each framework's step spends its time.
+
+The training corpus as the trainer's data (TRAIN-RAIL) and the deterministic thread pool
+(NDT-THREADS) landed on 2026-10-12. The pool's evidence is three-fold: `runtime/c/test_decoder_train.c`
+holds every pool kernel (GEMM shapes crossing the row tasks and every column-block width under
+every transpose pair, causal GQA attention forward and in-place backward, SiLU, the SwiGLU VJP,
+RMSNorm, RoPE, the residual add and gate multiply, the task runner) and three complete training
+steps at one to four threads to the serial kernels and the scalar references, bit for bit; the
+runtime gate's `decoder_train_tsan` section runs that harness under ThreadSanitizer and holds the
+same build of a pool whose attention backward puts one KV head's query heads on two threads to a
+race report (the manifest's `test_decoder_train_race` mutation); and `train.state.threads.mismatch`
+holds the Python trainer's state across thread counts, with `tools/testing/faults/ndt-threads.json`
+the injected partition faults each witness catches. The fused GEMM contract landed the same day (NDT-FMA): `gemm_fused_contract` in the C harness holds
+every fused instance to the `fmaf` loop, `train.mm.fused.mismatch` holds the kernel to an exact rational
+emulation rounded once per term (`round_f32`, never through a double), and
+`tools/testing/faults/ndt-fma.json` the injected faults. The BCIR-owned exponential landed too (NDT-EXP): `exp_contract` in the C harness, the two rows
+above, and `tools/testing/faults/ndt-exp.json`. The three were re-measured together the same day
+([BCIR_NDT_MEASURE_2026-10-12.md](../research/BCIR_NDT_MEASURE_2026-10-12.md)): every state its
+contract's own and identical at one to four threads, the 1,000-step v1 run on three threads ending
+in the 10-11 one-thread run's state byte for byte, and the 9.84M decoder's step on three threads at
+819 ms under `fused+exp` against 989 under v1 (the same model to four decimals), with the step's time
+by kernel at 1, 3 and 4 threads read against the roadmap's budget row by row. The blocked fused
+contract (v3, NDT-KBLOCK) landed the same day, from that measurement's one surprise: OpenBLAS's
+`sgemm` was bit-identical to the fused contract wherever one K block covered the depth, and a
+K-blocked form of it everywhere else. `gemm_kblock_contract` in the C harness holds every instance
+to the K-blocked `fmaf` chains and the split rule on ten depths, `train.mm.kblock.mismatch` holds
+the kernel to its exact emulation, and `use_cblas` admits a CBLAS provider under v3 only by a
+differential over the trainer's own shapes (`train.mm.provider.mismatch`: OpenBLAS's `sgemm`, 0 of
+30 on this host) -- the first provider that is a BCIR contract bit for bit rather than its own
+arithmetic; `tools/testing/faults/ndt-kblock.json` holds the injected faults. A provider whose
+worker threads spin between calls contends with the pool's kernels: OpenBLAS's spin for 2^28
+cycles after each call cost the four-thread step a fifth until `OPENBLAS_THREAD_TIMEOUT` was set
+low before the library loaded (the comparison harness sets it; the report's §7 measures it). What
+comes next for
+this trainer -- the plan driving the step's dispatch, tiled attention, the serial reductions --
+is the ladder of
+[the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md).
+
+The v3 kernel's own rate (NDT-BLOCK, 2026-10-12) is the provider's. Its AVX-512 and AVX2
+instances are intrinsic register blocks of 8 x 48 and 6 x 16 accumulators over a tile packed by
+vector, with a transposed A prefetched a few depths ahead and the pool's tasks 128 rows by one
+column block of the instance's width; the generic instance keeps the plain-C block, and every
+instance is held to the K-blocked `fmaf` chain by the C harness and by `train.mm.kblock.mismatch`,
+which now runs per instance. On the step's 15 GEMM shapes the kernel reads 99 GFLOP/s
+work-weighted at one thread against OpenBLAS's 89 in the same process and 219 on the pool at four
+against OpenBLAS's 219 ([the record](../research/measurements/2026-10-12/block/gemm-rates-block.json);
+the report's §8). The result is the contract's, so the state digests of §7 are unchanged.
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over

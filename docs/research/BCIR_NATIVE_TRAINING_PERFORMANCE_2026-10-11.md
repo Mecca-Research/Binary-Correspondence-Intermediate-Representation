@@ -623,6 +623,10 @@ be: the outputs are the same.
 | (found here) The compiler | Clang's builds aligned with GCC's on AVX-512 and AVX2 (NDT-CLANG, §4.1); §3 and §5 measured GCC's build of #814's kernel | Clang's portable C on x86-64 (no dispatch: macOS and Windows on x86-64) is 1.5-1.7x GCC's |
 | P1 Async graph, P1 StreamPack CRC, P2 ASN.1 arrays | Not in this update | As the assessment states them |
 
+The ladder that takes the open items forward -- with the ceiling each lever leaves, the budget they
+add up to, and the exact row each slice gates on -- is
+[the training-acceleration roadmap](BCIR_TRAINING_ACCELERATION_ROADMAP.md) (TRAIN-0).
+
 ## 8. Reproduction and validation
 
 Host: a four-core Intel Xeon VM at 2.1 GHz (AVX-512, one thread per core), 15 GiB, Linux 6.18; GCC
@@ -641,6 +645,12 @@ done; done
 python $H kernels   --data DIR --rounds 3         # §3: 75d50d4 against this tree, every GEMM shape
 python $H baseline  --data DIR --steps 6          # §4: 75d50d4 against this tree, identical state
 python $H identity  --data DIR --steps 20 --cc gcc --cc CLANG23 --cc CLANG18
+python $H identity  --data DIR --steps 20 --cc gcc --threads 1,2,3,4   # NDT-THREADS (2026-10-12): one state at every pool size
+# NDT-MEASURE (2026-10-12): the step under the pool and the v2 contracts, kernel by kernel, and the
+# 1,000-step run on three and four threads -- BCIR_NDT_MEASURE_2026-10-12.md
+python $H identity  --data DIR --steps 20 --cc gcc --threads 1,2,3,4 --contract fused,exp,fused+exp --variants widest,avx2
+python $H bcir-breakdown --data DIR --cc gcc --rounds 5 --threads 3 --contract fused+exp
+python $H train --data DIR --task lm --backend bcir --threads 3 --contract fused+exp --eval-every 100 --lr-scale 0.25
 python $H breakdown --data DIR --cc gcc --cc CLANG23 --cc CLANG18   # §4.1, §5.5
 python $H context   --data DIR                    # §5.8: T=64..1024, and 2 and 4 threads
 python $H summarize --data DIR
