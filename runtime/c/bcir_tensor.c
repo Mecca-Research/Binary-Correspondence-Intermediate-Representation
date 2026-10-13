@@ -1076,6 +1076,158 @@ void bcir_tensor_rope(size_t b, size_t t, size_t heads, size_t dim,
 typedef struct att_job {
   size_t b,t,nh,nk,d,group; const float *q,*k,*v,*dy; float *p,*y,*dq,*dk,*dv; int variant,exp2;
 } att_job;
+#ifdef BCIR_MM_DISPATCH
+/* The attention's masked products on AVX-512 (NDT-ATTN-2: the forward's scores and context;
+ * NDT-ATTN-3: the backward's dv, dq and dk) as register blocks of eight rows, with mm_block's v1
+ * arithmetic exactly -- an element starts at the value it holds (the zero its task filled, or the
+ * sum a KV head's earlier query heads left in dk and dv) and takes one rounded product and one
+ * rounded sum per term in the term order: a score its channels in order, stored where j <= i; a
+ * context element, and dq's, its keys j <= i in order; dv's and dk's their terms i >= j in order.
+ * The v1 blocks computed the scores' 64-wide column blocks whole above the diagonal and padded the
+ * 48 channels to 64 with a mask test per term; these compute a 32-wide block of scores only from
+ * its diagonal on and take each term only where the mask admits it. Whole blocks of eight rows
+ * only: att_rows runs a ragged tail through the v1 kernel, the same arithmetic. */
+#define BCIR_ATT_DC 128
+__attribute__((target("avx512f"))) BCIR_MM_INLINE __mmask16 att512_lanes(size_t count) {
+  return (__mmask16)(count>=16 ? 0xffffu : (1u<<count)-1u);
+}
+__attribute__((target("avx512f"))) static void att512_scores(size_t rows, size_t d,
+    const float *q, size_t ldq, const float *k, size_t ldk, float *s, size_t lds) {
+  _Alignas(64) float kt[BCIR_ATT_DC*32];
+  size_t j0,c0,i0,r,c,j;
+  for (j0=0;j0<rows;j0+=32) {
+    size_t nj=rows-j0<32 ? rows-j0 : 32;
+    __mmask16 m0=att512_lanes(nj),m1=att512_lanes(nj>16 ? nj-16 : 0);
+    for (c0=0;c0<d;c0+=BCIR_ATT_DC) {
+      size_t nc=d-c0<BCIR_ATT_DC ? d-c0 : BCIR_ATT_DC;
+      for (c=0;c<nc;c++) for (j=0;j<32;j++) kt[c*32+j]=j<nj ? k[(j0+j)*ldk+c0+c] : 0.0f;
+      for (i0=j0;i0<rows;i0+=8) {
+        __m512 a0[8],a1[8];
+        for (r=0;r<8;r++) {
+          const float *sr=s+(i0+r)*lds+j0;
+          a0[r]=_mm512_maskz_loadu_ps(m0,sr); a1[r]=_mm512_maskz_loadu_ps(m1,sr+16);
+        }
+        for (c=0;c<nc;c++) {
+          __m512 b0=_mm512_load_ps(kt+c*32),b1=_mm512_load_ps(kt+c*32+16);
+          for (r=0;r<8;r++) {
+            __m512 qv=_mm512_set1_ps(q[(i0+r)*ldq+c0+c]);
+            a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(qv,b0)); a1[r]=_mm512_add_ps(a1[r],_mm512_mul_ps(qv,b1));
+          }
+        }
+        for (r=0;r<8;r++) {
+          size_t i=i0+r,keep=i-j0+1<nj ? i-j0+1 : nj;
+          float *sr=s+i*lds+j0;
+          _mm512_mask_storeu_ps(sr,att512_lanes(keep),a0[r]);
+          _mm512_mask_storeu_ps(sr+16,att512_lanes(keep>16 ? keep-16 : 0),a1[r]);
+        }
+      }
+    }
+  }
+}
+__attribute__((target("avx512f"))) static void att512_context(size_t rows, size_t d,
+    const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy) {
+  size_t c0,i0,r,j,dj;
+  for (c0=0;c0<d;c0+=48) {
+    size_t nc=d-c0<48 ? d-c0 : 48;
+    __mmask16 m0=att512_lanes(nc),m1=att512_lanes(nc>16 ? nc-16 : 0),m2=att512_lanes(nc>32 ? nc-32 : 0);
+    for (i0=0;i0<rows;i0+=8) {
+      __m512 a0[8],a1[8],a2[8];
+      for (r=0;r<8;r++) {
+        const float *yr=y+(i0+r)*ldy+c0;
+        a0[r]=_mm512_maskz_loadu_ps(m0,yr); a1[r]=_mm512_maskz_loadu_ps(m1,yr+16);
+        a2[r]=_mm512_maskz_loadu_ps(m2,yr+32);
+      }
+      for (j=0;j<=i0;j++) {  /* every row of the block takes key j */
+        const float *vj=v+j*ldv+c0;
+        __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_maskz_loadu_ps(m1,vj+16),
+            b2=_mm512_maskz_loadu_ps(m2,vj+32);
+        for (r=0;r<8;r++) {
+          __m512 pv=_mm512_set1_ps(p[(i0+r)*ldp+j]);
+          a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(pv,b0)); a1[r]=_mm512_add_ps(a1[r],_mm512_mul_ps(pv,b1));
+          a2[r]=_mm512_add_ps(a2[r],_mm512_mul_ps(pv,b2));
+        }
+      }
+      for (dj=1;dj<8;dj++) {  /* key i0+dj: the rows r >= dj */
+        const float *vj=v+(i0+dj)*ldv+c0;
+        __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_maskz_loadu_ps(m1,vj+16),
+            b2=_mm512_maskz_loadu_ps(m2,vj+32);
+        for (r=dj;r<8;r++) {
+          __m512 pv=_mm512_set1_ps(p[(i0+r)*ldp+i0+dj]);
+          a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(pv,b0)); a1[r]=_mm512_add_ps(a1[r],_mm512_mul_ps(pv,b1));
+          a2[r]=_mm512_add_ps(a2[r],_mm512_mul_ps(pv,b2));
+        }
+      }
+      for (r=0;r<8;r++) {
+        float *yr=y+(i0+r)*ldy+c0;
+        _mm512_mask_storeu_ps(yr,m0,a0[r]); _mm512_mask_storeu_ps(yr+16,m1,a1[r]);
+        _mm512_mask_storeu_ps(yr+32,m2,a2[r]);
+      }
+    }
+  }
+}
+/* out_j += sum over i >= j, ascending, of m_ij x_i (the KGE products: dv from P and dY, dk from dS
+ * and Q): blocks of eight output rows j0..j0+7, the channels 48 at a time; term i reaches the rows
+ * j <= i -- the block's diagonal terms some rows, every later term all eight. */
+__attribute__((target("avx512f"))) static void att512_transposed(size_t rows, size_t t, size_t d,
+    const float *m, size_t ldm, const float *x, size_t ldx, float *out, size_t ldo) {
+  size_t c0,j0,r,i,di;
+  for (c0=0;c0<d;c0+=48) {
+    size_t nc=d-c0<48 ? d-c0 : 48;
+    __mmask16 m0=att512_lanes(nc),m1=att512_lanes(nc>16 ? nc-16 : 0),m2=att512_lanes(nc>32 ? nc-32 : 0);
+    for (j0=0;j0<rows;j0+=8) {
+      __m512 a0[8],a1[8],a2[8];
+      for (r=0;r<8;r++) {
+        const float *o=out+(j0+r)*ldo+c0;
+        a0[r]=_mm512_maskz_loadu_ps(m0,o); a1[r]=_mm512_maskz_loadu_ps(m1,o+16);
+        a2[r]=_mm512_maskz_loadu_ps(m2,o+32);
+      }
+      for (di=0;di<7;di++) {  /* term j0+di: the rows r <= di */
+        const float *xi=x+(j0+di)*ldx+c0,*mi=m+(j0+di)*ldm+j0;
+        __m512 b0=_mm512_maskz_loadu_ps(m0,xi),b1=_mm512_maskz_loadu_ps(m1,xi+16),
+            b2=_mm512_maskz_loadu_ps(m2,xi+32);
+        for (r=0;r<=di;r++) {
+          __m512 mv=_mm512_set1_ps(mi[r]);
+          a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(mv,b0)); a1[r]=_mm512_add_ps(a1[r],_mm512_mul_ps(mv,b1));
+          a2[r]=_mm512_add_ps(a2[r],_mm512_mul_ps(mv,b2));
+        }
+      }
+      for (i=j0+7;i<t;i++) {  /* every row of the block takes term i */
+        const float *xi=x+i*ldx+c0,*mi=m+i*ldm+j0;
+        __m512 b0=_mm512_maskz_loadu_ps(m0,xi),b1=_mm512_maskz_loadu_ps(m1,xi+16),
+            b2=_mm512_maskz_loadu_ps(m2,xi+32);
+        for (r=0;r<8;r++) {
+          __m512 mv=_mm512_set1_ps(mi[r]);
+          a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(mv,b0)); a1[r]=_mm512_add_ps(a1[r],_mm512_mul_ps(mv,b1));
+          a2[r]=_mm512_add_ps(a2[r],_mm512_mul_ps(mv,b2));
+        }
+      }
+      for (r=0;r<8;r++) {
+        float *o=out+(j0+r)*ldo+c0;
+        _mm512_mask_storeu_ps(o,m0,a0[r]); _mm512_mask_storeu_ps(o+16,m1,a1[r]);
+        _mm512_mask_storeu_ps(o+32,m2,a2[r]);
+      }
+    }
+  }
+}
+#endif
+enum { ATT_SCORES, ATT_CONTEXT, ATT_TRANSPOSED };
+/* One of the attention's masked products over its t rows: the AVX-512 register blocks for the
+ * whole blocks of eight, the rest (or every row, on another instance) through the v1 kernel. */
+static void att_rows(int variant, const mm_args *x, size_t t, int which) {
+  mm_range rest; size_t whole=0;
+#ifdef BCIR_MM_DISPATCH
+  if (variant==4) {
+    whole=t/8*8;
+    if (which==ATT_SCORES) att512_scores(whole,x->k,x->a,x->lda,x->b,x->ldb,x->c,x->ldc);
+    else if (which==ATT_CONTEXT) att512_context(whole,x->n,x->a,x->lda,x->b,x->ldb,x->c,x->ldc);
+    else att512_transposed(whole,t,x->n,x->a,x->lda,x->b,x->ldb,x->c,x->ldc);
+  }
+#endif
+  (void)which;
+  if (whole==t || !x->m || !x->n || !x->k) return;
+  rest.jb0=0; rest.jb1=x->n; rest.r0=whole; rest.r1=t;
+  mm_run_range(variant,MM_V1,x,&rest);
+}
 /* One (batch, query head): its scores, softmax rows and context; nothing shared with another. */
 static void att_head(const att_job *a, size_t r, size_t h) {
   size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),i,j; float scale=1.0f/sqrtf((float)d);
@@ -1086,7 +1238,7 @@ static void att_head(const att_job *a, size_t r, size_t h) {
   for (i=0;i<t;i++) memset(a->y+((r*t+i)*nh+h)*d,0,d*sizeof(float));
   x.ta=0; x.tb=1; x.m=t; x.n=t; x.k=d; x.alpha=1.0f; x.a=a->q+(r*t*nh+h)*d; x.lda=nh*d;
   x.b=a->k+(r*t*nk+kh)*d; x.ldb=nk*d; x.c=ph; x.ldc=t; x.mode=MM_LOWER;
-  mm_run(a->variant,&x);
+  att_rows(a->variant,&x,t,ATT_SCORES);
   for (i=0;i<t;i++) {
     float *pi=ph+i*t,maxv=-INFINITY,sum=0.0f;
     for (j=0;j<=i;j++) { pi[j]*=scale; if (pi[j]>maxv) maxv=pi[j]; }
@@ -1099,7 +1251,7 @@ static void att_head(const att_job *a, size_t r, size_t h) {
   }
   x.tb=0; x.n=d; x.k=t; x.a=ph; x.lda=t; x.b=a->v+(r*t*nk+kh)*d; x.ldb=nk*d;
   x.c=a->y+(r*t*nh+h)*d; x.ldc=nh*d; x.mode=MM_KLE;
-  mm_run(a->variant,&x);
+  att_rows(a->variant,&x,t,ATT_CONTEXT);
 }
 static void att_task(void *ctx, size_t task) {
   att_job *a=(att_job *)ctx; att_head(a,task/a->nh,task%a->nh);
@@ -1177,7 +1329,7 @@ static void att_head_backward(const att_job *a, size_t r, size_t h) {
     mm_args x;
     x.ta=1; x.tb=0; x.m=t; x.n=d; x.k=t; x.alpha=1.0f; x.a=ph; x.lda=t; x.b=dyh; x.ldb=ldh;
     x.c=dv+(r*t*nk+kh)*d; x.ldc=ldk; x.mode=MM_KGE;
-    mm_run(variant,&x);
+    att_rows(variant,&x,t,ATT_TRANSPOSED);
     for (i0=0;i0<t;i0+=BCIR_ATT_ROWS) {
       size_t rows=t-i0<BCIR_ATT_ROWS ? t-i0 : BCIR_ATT_ROWS,pass,jt;
       float dot[BCIR_ATT_ROWS],kept[BCIR_ATT_KEEP/BCIR_ATT_COLS][BCIR_ATT_ROWS*BCIR_ATT_COLS],
@@ -1204,9 +1356,9 @@ static void att_head_backward(const att_job *a, size_t r, size_t h) {
     }
     x.ta=0; x.tb=0; x.m=t; x.n=d; x.k=t; x.a=ph; x.lda=t; x.b=kk; x.ldb=ldk;
     x.c=dq+(r*t*nh+h)*d; x.ldc=ldh; x.mode=MM_KLE;
-    mm_run(variant,&x);
+    att_rows(variant,&x,t,ATT_CONTEXT);
     x.ta=1; x.b=qh; x.ldb=ldh; x.c=dk+(r*t*nk+kh)*d; x.ldc=ldk; x.mode=MM_KGE;
-    mm_run(variant,&x);
+    att_rows(variant,&x,t,ATT_TRANSPOSED);
   }
 }
 static void att_task_backward(void *ctx, size_t task) {

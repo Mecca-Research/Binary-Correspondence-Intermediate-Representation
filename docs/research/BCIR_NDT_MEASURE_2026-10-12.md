@@ -725,3 +725,35 @@ tiles past them again (through one spare slot). At T=128 that removes the second
 | attention kernels alone, 9.84M shape, one thread, best of 21, ms | before | NDT-ATTN-1 |
 |---|---|---|
 | the backward, three rounds | 14.71 / 14.55 / 15.36 | 12.07 / 12.28 / 12.48 |
+
+### 12.3 The masked products as register blocks (NDT-ATTN-2, NDT-ATTN-3)
+
+The attention's five masked products ran through the GEMM kernel's v1 blocks (4 x 64, written for
+the linears): the scores computed their 64-wide column blocks whole above the causal diagonal
+(590K multiply-adds a head at T=128 for the 396K the triangle needs), the context padded its 48
+channels to 64 and tested the mask per term in every block the diagonal crosses, and the
+backward's three products the same. On the AVX-512 instance they now run as blocks of eight rows
+with the v1 arithmetic exactly -- the scores 32 keys at a time from their diagonal on, the context
+and dq over keys `j <= i`, dv and dk over terms `i >= j`, the channels 48 at a time (three vectors,
+masked at the edge) -- and a ragged tail of rows through the kernel itself. The probabilities, the
+context and the adjoints are the reference loops' bit for bit; the AVX2 and generic instances keep
+the kernel.
+
+| attention kernels alone, 9.84M shape, best of 21, ms | before | NDT-ATTN-1 | the blocks alone | NDT-ATTN-1..3 |
+|---|---|---|---|---|
+| the forward, one thread | 11.12 / 11.22 / 11.31 | 10.98 / 11.06 / 11.23 | 9.13 / 9.22 / 9.18 | 9.09 / 9.28 / 9.42 |
+| the backward, one thread | 14.71 / 14.55 / 15.36 | 12.07 / 12.28 / 12.48 | 11.01 / 10.88 / 11.11 | 8.36 / 8.95 / 8.96 |
+| the forward, four threads | 3.36 / 3.72 / 3.89 | 3.79 / 3.56 / 3.67 | 2.71 / 3.61 / 4.16 | 3.61 / 3.12 / 3.71 |
+| the backward, four threads | 4.87 / 5.07 / 5.35 | 4.72 / 4.16 / 4.49 | 3.77 / 4.15 / 6.44 | 3.17 / 3.54 / 3.84 |
+
+In place at four threads, alternated in the same three rounds (the step's other rows drifted with
+the host, its GEMM rows 20% apart between rounds; the attention rows are the slices' own):
+
+| four threads, in place, ms | before | NDT-ATTN-1 | + NDT-ATTN-2 | + NDT-ATTN-3 |
+|---|---|---|---|---|
+| the attention forward | 26.6 / 32.1 / 27.6 | 30.8 / 33.4 / 28.5 | 20.1 / 24.8 / 21.0 | 24.1 / 21.6 / 22.8 |
+| the attention backward | 46.8 / 39.8 / 44.5 | 36.8 / 39.3 / 43.7 | 34.5 / 42.2 / 38.6 | 23.1 / 26.3 / 27.2 |
+
+The one-thread kernel rows are the slices' clean reading; at four threads each head is one task, so
+the kernels' time there is a few tasks' latency over three free cores and the pool's own costs
+(§12.4).

@@ -2915,6 +2915,22 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-ATTN-2/3 (2026-10-13): the attention's masked products as AVX-512 register blocks.
+  - The five masked products (the forward's scores and context, the backward's dv, dq and dk) ran
+    through the GEMM kernel's v1 blocks: 64-wide column blocks computed whole above the causal
+    diagonal, 48 channels padded to 64, a mask test per term where the diagonal crosses a block.
+  - On the AVX-512 instance: blocks of eight rows with mm_block's v1 arithmetic exactly (an element
+    from the value it holds, one rounded product and one rounded sum per term in the term order),
+    the scores 32 keys at a time from their diagonal on, the channels 48 at a time; a ragged tail
+    of rows through the kernel; the AVX2 and generic instances keep it.
+  - Evidence: the attention reference gains the blocks' edges (t = 7, 8, 9, 31, 32, 33, 40; d = 1,
+    3, 15, 16, 17, 47, 49), bit for bit, finite and not; `ndt-attn.json` NA4-NA9 (9 of 9 caught
+    with NA1-NA3).
+  - Measured ([measurements/2026-10-13/slices/](research/measurements/2026-10-13/slices/)): at one
+    thread, best of 21, the forward kernel 11.12 / 11.22 / 11.31 -> 9.09 / 9.28 / 9.42 ms and the
+    backward 14.71 / 14.55 / 15.36 -> 8.36 / 8.95 / 8.96 (with NDT-ATTN-1; 11.01 / 10.88 / 11.11 the
+    blocks alone); in place at four threads the attention backward 46.8 / 39.8 / 44.5 -> 23.1 /
+    26.3 / 27.2 and the forward 26.6 / 32.1 / 27.6 -> 24.1 / 21.6 / 22.8.
   NDT-ATTN-1 (2026-10-13): the attention backward's probability adjoint evaluated once.
   - The in-place backward evaluated each row block's `dp = dY V^T` tiles in both of its passes, as
     the reference does (the row sums first, the score adjoints second) -- the same product over

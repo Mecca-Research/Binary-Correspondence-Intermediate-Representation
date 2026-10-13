@@ -309,6 +309,24 @@ before; dq, dk and dv are the reference's bit for bit (the C harness adds a 330-
 past the kept columns, to its attention reference; `tools/testing/faults/ndt-attn.json` NA1-NA3).
 The backward kernel alone on the 9.84M decoder's shape: 14.6-15.4 -> 12.1-12.5 ms at one thread.
 
+The attention's masked products run as AVX-512 register blocks since NDT-ATTN-2 and NDT-ATTN-3
+(2026-10-13). They ran through the GEMM kernel's v1 blocks, written for the linears: the scores
+computed their 64-wide column blocks whole above the causal diagonal, the context padded its 48
+channels to 64 and tested the mask per term in every block the diagonal crosses, and the
+backward's dv, dq and dk the same. The forward's scores and context and the backward's dv
+(`P^T dY`), dq (`dS K`) and dk (`dS^T Q`) now run, on the AVX-512 instance, as blocks of eight
+rows with the v1 arithmetic exactly -- an element from the value it holds (the zero its task
+filled, or the sum a KV head's earlier query heads left in dk and dv), one rounded product and
+one rounded sum per term in the term order -- the scores 32 keys at a time from their diagonal
+on, the context and dq over keys `j <= i`, dv and dk over terms `i >= j`, the channels 48 at a
+time; rows that fill no block of eight run through the kernel itself, and the AVX2 and generic
+instances keep it whole. The probabilities, the context and the three adjoints are the reference
+loops' bit for bit (the C harness's attention reference gains the blocks' edges: rows of no whole
+block, exactly one, one and a row; channels of one, under and over a vector; `ndt-attn.json`
+NA4-NA9). The kernels alone at one thread on the 9.84M decoder's shape: the forward 11.1-11.3 ->
+9.1-9.4 ms, the backward 14.6-15.4 -> 8.4-9.0 with NDT-ATTN-1; in place at four threads the
+attention backward 46.8 / 39.8 / 44.5 -> 23.1 / 26.3 / 27.2 ms (the report's §12).
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,

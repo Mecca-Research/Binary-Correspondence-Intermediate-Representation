@@ -28,6 +28,48 @@
       "new": "if (!pass) {",
       "old": "if (!pass || jt>=BCIR_ATT_KEEP) {",
       "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA4 the scores' block stores one key past the diagonal (a score above it is written into the probabilities' zeros)",
+      "new": "size_t i=i0+r,keep=i-j0+2<nj ? i-j0+2 : nj;",
+      "old": "size_t i=i0+r,keep=i-j0+1<nj ? i-j0+1 : nj;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA5 the context's diagonal keys reach every row of the block (a row takes keys past itself)",
+      "new": "        for (r=0;r<8;r++) {\n          __m512 pv=_mm512_set1_ps(p[(i0+r)*ldp+i0+dj]);",
+      "old": "        for (r=dj;r<8;r++) {\n          __m512 pv=_mm512_set1_ps(p[(i0+r)*ldp+i0+dj]);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA6 the rows past the last whole block of eight are never computed (a context the register blocks do not cover keeps its zeros)",
+      "new": "  rest.jb0=0; rest.jb1=x->n; rest.r0=t; rest.r1=t;",
+      "old": "  rest.jb0=0; rest.jb1=x->n; rest.r0=whole; rest.r1=t;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA7 the scores stop after their first chunk of channels (a head wider than 128 channels loses the rest of every dot product)",
+      "new": "    for (c0=0;c0<d && c0<BCIR_ATT_DC;c0+=BCIR_ATT_DC) {",
+      "old": "    for (c0=0;c0<d;c0+=BCIR_ATT_DC) {",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA8 the transposed products' diagonal terms reach every row of the block (dv and dk take terms before their own row)",
+      "new": "        for (r=0;r<8;r++) {\n          __m512 mv=_mm512_set1_ps(mi[r]);",
+      "old": "        for (r=0;r<=di;r++) {\n          __m512 mv=_mm512_set1_ps(mi[r]);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA9 the transposed products' full terms start one term late (each block loses term j0+7 for every row)",
+      "new": "      for (i=j0+8;i<t;i++) {  /* every row of the block takes term i */",
+      "old": "      for (i=j0+7;i<t;i++) {  /* every row of the block takes term i */",
+      "path": "runtime/c/bcir_tensor.c"
     }
   ]
 }

@@ -255,7 +255,9 @@ static void ref_attention_backward(size_t b, size_t t, size_t nh, size_t nk, siz
 }
 /* Causal GQA attention through the GEMM kernel against the reference loops above, bit for bit:
  * single rows and channels, head groups of one to four, widths past the 64-deep tile, contexts
- * past the backward's 32-row chunks and 64-column tiles, and one past the columns whose
+ * past the backward's 32-row chunks and 64-column tiles, the forward's register blocks' edges (rows
+ * of no whole block of eight, exactly one, one and a row; channels of one, under and over a vector,
+ * past the scores' 128-channel chunk), and one past the columns whose
  * probability-adjoint tiles a row block keeps between its passes (330: the tiles at 256 and 320
  * evaluated in each pass, through one spare slot) -- and a non-finite operand, which the masked
  * products must keep out of every result the reference keeps it out of. */
@@ -264,7 +266,9 @@ static void attention_reference(void) {
       p1[2*330*330],y0[2*70*8*48],y1[2*70*8*48],dq0[2*70*8*48],dq1[2*70*8*48],
       dk0[2*70*4*130],dk1[2*70*4*130],dv0[2*70*4*130],dv1[2*70*4*130];
   static const size_t shapes[][5]={{1,1,1,1,2},{1,2,1,1,1},{2,5,4,2,6},{1,37,2,1,48},
-      {2,70,8,4,48},{1,33,3,1,65},{1,40,2,2,130},{2,64,4,1,24},{1,330,2,1,8}};
+      {2,70,8,4,48},{1,33,3,1,65},{1,40,2,2,130},{2,64,4,1,24},{1,330,2,1,8},
+      {1,7,1,1,3},{1,8,1,1,16},{1,9,2,1,17},{1,31,1,1,15},{1,32,2,2,47},{1,33,2,1,49},
+      {1,40,1,1,1}};
   size_t s,i,pass;
   for (pass=0;pass<2;pass++) for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) {
     size_t b=shapes[s][0],t=shapes[s][1],nh=shapes[s][2],nk=shapes[s][3],d=shapes[s][4];
