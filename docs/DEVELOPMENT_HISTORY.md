@@ -2915,6 +2915,24 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  TRAIN-POLICY (2026-10-13): the rail trains under the fast contract at the host's threads.
+  - The lab-model recipe's `native` block: `contract` (one the trainer admits; the shipped recipes
+    name `kblock+exp+reduce`) and `threads` (`"host"`: the CPUs the process may run on, or
+    `BCIR_TRAIN_THREADS`; else an integer). The contract is the model's -- it changes the bits, so
+    the recipe names it -- and the threads the host's, because the state is the serial one at
+    every count. `build_lab_model.py` checks the block before any work and the card records the
+    contract, the threads, the policy and the widest kernel instance the host ran. A CTest entry's
+    trainer takes the processors the entry declares (`train-corpus` two, the BCIR Make gate's
+    train task one).
+  - Evidence: the refusals (a contract the trainer does not admit, a count neither `"host"` nor
+    positive, a missing field); the tiny model the same checkpoint at another thread count and
+    another one under `v1`; `BCIR_TRAIN_THREADS` read only as a positive integer; the rail's
+    claim table names the policy. The 40-step smoke on this host: 2706 -> 6690
+    tokens/s (30.3 -> 12.2 s of training on 4 threads, avx512f;
+    3705 under the fast contract on one thread), the checkpoint at one thread and at
+    4 the same; the rail's run 314 -> 286 s, the
+    rest the corpus, the tokenizer, the validation and the export
+    ([measurements/2026-10-13/policy/](research/measurements/2026-10-13/policy/)).
   NDT-SCHED-0 (2026-10-13): the two VJPs of a linear as one pool job.
   - NDT-SCHED's first item. `dx = dy W` and `dW += dy^T x` read one adjoint and write apart, so
     `bcir_tensor_mm_pair_pool` runs the first GEMM's tasks and then the second's in one pool run,

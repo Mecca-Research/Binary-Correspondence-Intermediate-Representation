@@ -91,6 +91,28 @@ own step count: `bash tools/models/train_rail.sh build/corpus-model`. The optimi
 [the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md) reach this
 model by construction, because the rail trains it on this trainer.
 
+Which contract and how many threads is the recipe's `native` block (TRAIN-POLICY, 2026-10-13).
+The contract is the model's: it changes the bits, so the recipe -- the thing a model is
+reproducible from, with its commit -- names it, and the shipped recipes name the fast one,
+`kblock+exp+reduce`. The threads are the host's: the state is the serial one at every count under
+every contract, so `"threads": "host"` trains on the CPUs the process may run on (its affinity
+mask, else the CPU count; `BCIR_TRAIN_THREADS` overrides it with a positive integer and refuses
+anything else), and an integer trains on that many. Where a CTest entry declares fewer processors
+than the host has, the entry's trainer takes what it declares: `train-corpus` two, the BCIR Make
+gate's train task one (its two workers are its two processors); CI's qualification job runs the
+rail itself, on the runner's CPUs. `build_lab_model.py` checks the block with the
+rest of the recipe before any work (a contract the trainer does not admit, a thread count that is
+neither `"host"` nor positive) and the model card records the contract, the threads, the policy
+and the widest kernel instance the host ran (`avx512f`, `avx2-fma`, `portable` -- provenance, not
+a parameter: the contract's result is the same on each). The tests hold the law on the built
+model: the tiny recipe at another thread count is the same checkpoint byte for byte, under another
+contract another one. On this host the 40-step smoke trained at 2706 tokens/s under
+`v1` on one thread, at 3705 under the fast contract on one thread and at 6690
+on the host's 4 (avx512f; 30.3 -> 12.2 s of training
+inside a rail run of 314 -> 286 s, the rest of which is the corpus, the
+tokenizer, the validation batches and the export -- the next thing to measure), its checkpoint at one
+thread and at 4 the same ([policy/](../research/measurements/2026-10-13/policy/)).
+
 ## The step as a GEM+ program (NDT-GEM)
 
 [`native_program.training_step_program`](../../bcir/hosted/models/native_program.py) states one

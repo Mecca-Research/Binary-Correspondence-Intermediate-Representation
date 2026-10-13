@@ -1,0 +1,10 @@
+{
+ "what": "TRAIN-POLICY (2026-10-13): the train rail's 40-step smoke (tools/models/train_rail.sh <dir> 40, the corpus recipe, clang) on this host, three model cards: v1 on one thread (the tree before the policy), the fast contract kblock+exp+reduce on the host's four threads (the recipe's native.threads \"host\"), and the fast contract on one thread (BCIR_TRAIN_THREADS=1).",
+ "host": "4-vCPU Intel Xeon container (AVX-512), GCC 13.3 / Clang 18.1, Python 3.11.15 (the declared floor); indicative wall times, no PMU",
+ "files": {
+  "card-v1-t1.json": "before: v1, one thread",
+  "card-fast-t4.json": "after: kblock+exp+reduce, 4 threads (host policy)",
+  "card-fast-t1.json": "after: kblock+exp+reduce, BCIR_TRAIN_THREADS=1"
+ },
+ "reading": "training 30.3 -> 12.2 s (2706 -> 6690 tokens/s; 3705 on one thread under the fast contract); the fast contract's checkpoint identical at one and four threads (34c51a9d...); the rail's whole run 314 -> 286 s, the rest the corpus, the tokenizer, the validation batches and the export."
+}

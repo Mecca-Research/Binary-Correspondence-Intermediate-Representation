@@ -233,6 +233,19 @@ def test_the_rail_is_one_script_in_every_place_it_runs():
     )
     row = re.search(r"^\| \*\*TRAIN-RAIL\*\*.*\| \*\*landed\*\* \|$", roadmap, re.M)
     assert row, "the ladder's TRAIN-RAIL row is not landed"
+    recipe = json.loads(_RECIPE.read_text(encoding="utf-8"))
+    assert recipe["native"] == {"contract": "kblock+exp+reduce", "threads": "host"}, (
+        "the rail trains under the fast contract at the host's threads (TRAIN-POLICY)"
+    )
+    # the host's threads, except where a CTest entry declares fewer processors than the host has:
+    # there the entry's trainer takes what the entry declares (two; the Make gate's task one, its
+    # two workers being its two processors)
+    assert '"BCIR_TRAIN_THREADS=2"' in entry.group(1), "train-corpus declares PROCESSORS 2"
+    make = re.search(
+        r"add_test\(NAME build-make\n(.*?)\n\s*set_tests_properties\(build-make ", cmake, re.S
+    )
+    assert make and '"BCIR_TRAIN_THREADS=1"' in make.group(1), "build-make's train task"
+    assert 'set_tests_properties(build-make PROPERTIES LABELS "build;c" PROCESSORS 2' in cmake
     sys.path.insert(0, str(_ROOT / "tools" / "perf"))
     try:
         import gemplus_baseline as harness

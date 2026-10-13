@@ -142,8 +142,11 @@ set_tests_properties(build-make-parity PROPERTIES LABELS "build;c" PROCESSORS 2 
 # under the build tree only when that tree is inside the source tree, as the presets put it. ---
 file(RELATIVE_PATH _make_out "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/bcir-make-gate")
 if(BCIR_BUILD_HARNESSES AND NOT _make_out MATCHES "^\\.\\./")
+  # The gate's two workers are its two processors, so the train task's trainer takes one of them
+  # (BCIR_TRAIN_THREADS; the runner passes the environment to its tasks -- TRAIN-POLICY).
   add_test(NAME build-make
-           COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/make_gate.py"
+           COMMAND ${CMAKE_COMMAND} -E env "BCIR_TRAIN_THREADS=1"
+                   "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/make_gate.py"
                    --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}" --out-dir "${_make_out}"
            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
   set_tests_properties(build-make PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 3600)
@@ -168,8 +171,10 @@ set_tests_properties(python-quick PROPERTIES LABELS "python" PROCESSORS 2 TIMEOU
 # configured compiler, and reads the corpus witness (every tracked Markdown file of both trees is
 # in what it trained on). BCIR Make runs the same script as the task `train.corpus`
 # (tools/build/bcirfile.py); CI's qualification job runs it for 200 steps before qualifying the model.
+# The entry declares two processors, so its trainer takes two (the recipe's "host" policy reads
+# BCIR_TRAIN_THREADS first; the state is the same at every count -- TRAIN-POLICY).
 add_test(NAME train-corpus
-         COMMAND ${CMAKE_COMMAND} -E env ${_bcir_gate_env} "PYTHON=${BCIR_PYTHON}"
+         COMMAND ${CMAKE_COMMAND} -E env ${_bcir_gate_env} "PYTHON=${BCIR_PYTHON}" "BCIR_TRAIN_THREADS=2"
                  bash "${CMAKE_SOURCE_DIR}/tools/models/train_rail.sh" "${CMAKE_BINARY_DIR}/train" "${BCIR_TRAIN_STEPS}"
          WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 set_tests_properties(train-corpus PROPERTIES LABELS "train" PROCESSORS 2 TIMEOUT 1800)

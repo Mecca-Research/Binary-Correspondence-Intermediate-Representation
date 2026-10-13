@@ -112,6 +112,10 @@ _CONTRACTS.update({("reduce" if name == "v1" else name + "+reduce"): bits | 8
                    for name, bits in list(_CONTRACTS.items())})  # fmt: skip
 _KBLOCK = 4
 _REDUCE = 8
+#: The contract names `NativeDecoder(contract=...)` admits, sorted; a recipe names one of them.
+CONTRACTS = tuple(sorted(_CONTRACTS))
+#: The contract names `NativeDecoder(contract=...)` admits, sorted; a recipe names one of them.
+CONTRACTS = tuple(sorted(_CONTRACTS))
 
 
 class _Spec(ct.Structure):
