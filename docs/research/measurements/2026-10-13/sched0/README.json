@@ -1,0 +1,5 @@
+{
+ "what": "NDT-SCHED-0 (2026-10-13): a linear's two VJPs (dx, dW) as one pool job, measured on the 9.84M decoder of the 10-11 comparison (batch 8 x 128, kblock+exp+reduce, four threads) on this 4-vCPU container, GCC 13.3: breakdown-bcir-kblock+exp+reduce-t4-before-<i>.json is the bcir-breakdown stage on a detached worktree of the NDT-REDUCE commit (the two VJPs as two pool runs), -after-<i>.json the same stage on the NDT-SCHED-0 tree (the pair job), alternated three times so sample i of one pairs with sample i of the other and both see one host (medians of 5 paired rounds each).",
+ "host": "the same host and day as the NDT-REDUCE records (reduce/README.json): unchanged kernels 25-45% slower than the day before and drifting within the session, so the attributable stage (loss_backward, the one the pair job changes) carries the slice's effect and the step's own cell is within the noise (the report's section 10)",
+ "indicative": "wall times on a shared virtual host without a PMU; the slice's gate is its identity (the pair's results are the two entries' bit for bit, the C harness) and the fault entries NT9 and NT10"
+}

@@ -842,20 +842,48 @@ static void mm_task(void *ctx, size_t task) {
   }
   if (j->x.k) mm_run_range(j->variant,j->fused,&j->x,&r);
 }
+/* The job of one GEMM under a contract: its partition's task count (0 for an empty product). */
+static size_t mm_job_init(mm_job *j, int fused, int ta, int tb, size_t m, size_t n, size_t k,
+    float alpha, const float *a, const float *b, float beta, float *c) {
+  if (!m || !n) return 0;
+  j->beta=beta; j->fused=fused; j->variant=fused ? mm_widest_fused() : mm_widest(); j->nr=mm_nr(j->variant,fused);
+  j->x.ta=ta; j->x.tb=tb; j->x.m=m; j->x.n=n; j->x.k=k; j->x.alpha=alpha; j->x.a=a; j->x.lda=ta ? m : k;
+  j->x.b=b; j->x.ldb=tb ? k : n; j->x.c=c; j->x.ldc=n; j->x.mode=MM_FULL;
+  j->cols=(n+j->nr-1)/j->nr; j->rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;
+  return j->cols*j->rowsets;
+}
+static void mm_serial_any(int fused, int ta, int tb, size_t m, size_t n, size_t k, float alpha,
+    const float *a, const float *b, float beta, float *c) {
+  (fused==MM_KBLOCK ? bcir_tensor_mm_kblock : fused ? bcir_tensor_mm_fused : bcir_tensor_mm)
+    (NULL,ta,tb,m,n,k,alpha,a,b,beta,c);
+}
 static void mm_pool_any(bcir_tensor_pool *pool, int fused, int ta, int tb, size_t m, size_t n,
     size_t k, float alpha, const float *a, const float *b, float beta, float *c) {
-  mm_job j;
+  mm_job j; size_t tasks;
+  if (!pool || pool->threads==1) { mm_serial_any(fused,ta,tb,m,n,k,alpha,a,b,beta,c); return; }
+  tasks=mm_job_init(&j,fused,ta,tb,m,n,k,alpha,a,b,beta,c);
+  pool_run(pool,mm_task,&j,tasks);
+}
+/* Two GEMMs, one job (NDT-SCHED-0): tasks [0, split) are the first's, the rest the second's,
+ * each with its own partition, so the thread that runs task t runs the same work it would have
+ * run for that GEMM alone. */
+typedef struct mm_pair_job { mm_job a,b; size_t split; } mm_pair_job;
+static void mm_pair_task(void *ctx, size_t task) {
+  mm_pair_job *j=(mm_pair_job *)ctx;
+  if (task<j->split) mm_task(&j->a,task); else mm_task(&j->b,task-j->split);
+}
+void bcir_tensor_mm_pair_pool(bcir_tensor_pool *pool, int contract, const bcir_tensor_mm_call *x,
+    const bcir_tensor_mm_call *y) {
+  mm_pair_job j; size_t second;
+  int fused=contract==2 ? MM_KBLOCK : contract==1 ? MM_FUSED : MM_V1;
   if (!pool || pool->threads==1) {
-    (fused==MM_KBLOCK ? bcir_tensor_mm_kblock : fused ? bcir_tensor_mm_fused : bcir_tensor_mm)
-      (NULL,ta,tb,m,n,k,alpha,a,b,beta,c);
+    mm_serial_any(fused,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
+    mm_serial_any(fused,y->ta,y->tb,y->m,y->n,y->k,y->alpha,y->a,y->b,y->beta,y->c);
     return;
   }
-  if (!m || !n) return;
-  j.beta=beta; j.fused=fused; j.variant=fused ? mm_widest_fused() : mm_widest(); j.nr=mm_nr(j.variant,fused);
-  j.x.ta=ta; j.x.tb=tb; j.x.m=m; j.x.n=n; j.x.k=k; j.x.alpha=alpha; j.x.a=a; j.x.lda=ta ? m : k;
-  j.x.b=b; j.x.ldb=tb ? k : n; j.x.c=c; j.x.ldc=n; j.x.mode=MM_FULL;
-  j.cols=(n+j.nr-1)/j.nr; j.rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;
-  pool_run(pool,mm_task,&j,j.cols*j.rowsets);
+  j.split=mm_job_init(&j.a,fused,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
+  second=mm_job_init(&j.b,fused,y->ta,y->tb,y->m,y->n,y->k,y->alpha,y->a,y->b,y->beta,y->c);
+  pool_run(pool,mm_pair_task,&j,j.split+second);
 }
 void bcir_tensor_mm_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m, size_t n, size_t k,
     float alpha, const float *a, const float *b, float beta, float *c) {

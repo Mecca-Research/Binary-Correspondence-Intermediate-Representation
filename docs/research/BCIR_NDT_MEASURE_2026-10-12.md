@@ -621,3 +621,33 @@ Reading:
 | the C harness: `reduction_references` (the pooled loss and scatter against serial references written apart from the pool, 32 and 40 rows, no pool and a pool of two), `pool_identity` (twelve contracts, the states and the losses and norms the steps report, at one to four threads), the gamma VJP against the serial kernel over three row and three column chunks, `adamw_reference` under both norm contracts on a three-chunk fixture, serially and on a pool of three, the square against the reference's sum | every run bit-identical; the reduce norms apart from the chain's at 15 of 18 and 10 of 10 steps |
 | the `identity` stage, `reduce` and `kblock+exp+reduce`, 1 and 3 threads and a repeat, the widest build ([reduce/identity-reduce.json](measurements/2026-10-13/reduce/identity-reduce.json)) | 8 rows (two contracts, 1 and 3 threads, and a repeat), one state per contract: `4bf4e057…` under `kblock+exp+reduce`, `f5fede12…` under `reduce` -- each identical at every thread count and apart from its chain's 20-step state (`6c0419e8…` under v1, `f19b0d7d…` under `kblock+exp`) |
 | `ndt-reduce.json`, NR1-NR11 | 11 injected, 11 caught |
+
+## 10. The two VJPs of a linear as one job (NDT-SCHED-0)
+
+§5 named the partition behind one barrier per GEMM as the reason four threads gave x2.0 on the
+step and not more: the step's narrow products (the K/V projections at 1,024 x 192 x 384 have
+8 x 4 tasks of 128 rows by 48 columns on the AVX-512 instance) leave threads idle at every
+barrier, and the backward pays two barriers per linear. NDT-SCHED's first item removes one of
+them: a linear's two VJPs -- `dx = dy W` (beta-scaled) and `dW += dy^T x` -- read one adjoint and
+write apart, so `bcir_tensor_mm_pair_pool` runs the first GEMM's tasks and then the second's in
+one pool run, each with the partition its own entry would have used (the thread that runs task t
+runs the same work it would have run for that GEMM alone), so every output element keeps its
+depth order and the results are the two entries' bit for bit. The trainer's `linear_backward`
+dispatches the pair for BCIR's kernels under each GEMM contract; a provider's GEMM keeps its two
+calls, threaded as the provider threads it. The C harness holds every shape pair of its GEMM
+section under the three contracts, in both orders, to the two entries, and the twelve contracts'
+three-step states at one to four threads to the serial run through the trainer's own pairs;
+`ndt-threads.json` NT9 (a pair split at the first GEMM's column count) and NT10 (the pair's serial
+path skips the first GEMM) are the injected faults, and NF3 / NK4 (a contract's VJPs routed to the
+wrong kernel) now hit the one predicate (`gemm_contract`) the forward's linears and the pair read.
+
+Measured in 3 same-session pairs at four threads under `kblock+exp+reduce` (the pair
+job against the two calls, alternated minutes apart; [sched0/](measurements/2026-10-13/sched0/)):
+
+| four threads, ms | two calls | the pair job | pair difference |
+|---|---|---|---|
+| the backward pass (`loss_backward`, the forward recomputed inside; the stage the pair changes) | 631.9 / 633.8 / 622.4 | 601.0 / 586.3 / 594.6 | -30.9 / -47.5 / -27.8 |
+| GEMM backward (the 43 linears' VJPs), timed alone on synthetic operands | 292.7 / 285.9 / 266.6 | 238.0 / 254.8 / 282.6 | -54.6 / -31.0 / +16.0 |
+| step | 684.2 / 679.4 / 659.3 | 645.1 / 681.7 / 668.1 | -39.2 / +2.4 / +8.8 |
+
+Reading: the backward pass (the `loss_backward` stage, the forward recomputed inside it, as the trainer runs it -- the one stage the pair job changes) is below the two-call stage in 3 of 3 pairs, by -30.9 / -47.5 / -27.8 ms (631.9 / 633.8 / 622.4 against 601.0 / 586.3 / 594.6), and the GEMM-backward row timed alone by -54.6 / -31.0 / +16.0; the step's own cell (-39.2 / +2.4 / +8.8) is within this host's run-to-run noise, as NDT-REDUCE's was -- the one barrier fewer per linear and the narrow projections' tasks shared are worth about 5% of the backward at four threads here

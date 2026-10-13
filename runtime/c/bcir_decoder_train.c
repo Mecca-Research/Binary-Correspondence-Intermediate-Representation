@@ -140,19 +140,35 @@ static cache activations(float *x,geometry g) {
  * sum in row order (NDT-REDUCE); the update's first pass is tasks over fixed chunks whose maxima
  * and verdicts are exact, with the clipping norm one index-order chain unless the reduce
  * contract names the chunks. */
+/* The GEMM contract the state names, as the tensor unit's pair entry numbers them (0 v1, 1 the
+ * fused v2, 2 the blocked v3): one predicate for the forward's linears and the backward's pairs. */
+static int gemm_contract(const bcir_decoder_state *s) {
+  return (s->contract&BCIR_DT_CONTRACT_KBLOCK) ? 2 : (s->contract&BCIR_DT_CONTRACT_FUSED) ? 1 : 0;
+}
 static void gemm(bcir_decoder_state *s,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
     const float *a,const float *b,float beta,float *c) {
   if (s->provider.mm) s->provider.mm(s->provider.ctx,ta,tb,m,n,k,alpha,a,b,beta,c);
-  else if (s->contract&BCIR_DT_CONTRACT_FUSED) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
-  else if (s->contract&BCIR_DT_CONTRACT_KBLOCK) bcir_tensor_mm_kblock_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
+  else if (gemm_contract(s)==2) bcir_tensor_mm_kblock_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
+  else if (gemm_contract(s)==1) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
   else bcir_tensor_mm_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
 }
 static void linear(bcir_decoder_state *s,size_t r,size_t in,size_t out,const float *x,
     const float *w,float *y) { gemm(s,0,1,r,out,in,1.0f,x,w,0.0f,y); }
+/* A linear's two VJPs -- dx = dy W (beta-scaled) and dW += dy^T x -- read one adjoint and write
+ * apart, so BCIR's kernels run them as one pool job (NDT-SCHED-0: one barrier, the narrow
+ * product's idle threads on the other's tasks); a provider's GEMM runs them one after the other,
+ * threaded as the provider threads it. The results are the two calls', bit for bit. */
 static void linear_backward(bcir_decoder_state *s,size_t r,size_t in,size_t out,
     const float *x,const float *w,const float *dy,float *dx,float *dw,float beta) {
-  gemm(s,0,0,r,in,out,1.0f,dy,w,beta,dx);
-  gemm(s,1,0,out,in,r,1.0f,dy,x,1.0f,dw);
+  bcir_tensor_mm_call cx,cw;
+  if (s->provider.mm) {
+    gemm(s,0,0,r,in,out,1.0f,dy,w,beta,dx);
+    gemm(s,1,0,out,in,r,1.0f,dy,x,1.0f,dw);
+    return;
+  }
+  cx.ta=0; cx.tb=0; cx.m=r; cx.n=in; cx.k=out; cx.alpha=1.0f; cx.a=dy; cx.b=w; cx.beta=beta; cx.c=dx;
+  cw.ta=1; cw.tb=0; cw.m=out; cw.n=in; cw.k=r; cw.alpha=1.0f; cw.a=dy; cw.b=x; cw.beta=1.0f; cw.c=dw;
+  bcir_tensor_mm_pair_pool(s->pool,gemm_contract(s),&cx,&cw);
 }
 static void silu(bcir_decoder_state *s,size_t n,const float *x,float *y) {
   if (s->provider.silu) s->provider.silu(s->provider.ctx,n,x,y);

@@ -481,6 +481,26 @@ static void pool_identity(void) {
       /* a depth of zero still scales by beta */
       memcpy(c1,init,mm*n*sizeof(float)); bcir_tensor_mm_pool(pool,(int)ta,(int)tb,mm,n,0,alpha,a,b,beta,c1);
       for (i=0;i<mm*n;i++) assert(c1[i]==(beta==0.0f ? 0.0f : beta*init[i]));
+      /* the pair job (NDT-SCHED-0): this shape and the next, under each GEMM contract, against
+       * the two pool entries one after the other -- and against itself with the two swapped */
+      {
+        size_t s2=(s+1)%(sizeof(gemm_shapes)/sizeof(gemm_shapes[0]));
+        size_t m2=gemm_shapes[s2][0],n2=gemm_shapes[s2][1],k2=gemm_shapes[s2][2]; int contract;
+        bcir_tensor_mm_call x,y;
+        x.ta=(int)ta; x.tb=(int)tb; x.m=mm; x.n=n; x.k=kk; x.alpha=alpha; x.a=a; x.b=b; x.beta=beta; x.c=c1;
+        y.ta=(int)tb; y.tb=(int)ta; y.m=m2; y.n=n2; y.k=k2; y.alpha=1.0f; y.a=b; y.b=a; y.beta=0.5f; y.c=f1;
+        for (contract=0;contract<3;contract++) {
+          memcpy(c0,init,sizeof(c0)); memcpy(c1,init,sizeof(c1)); memcpy(f0,init,sizeof(f0)); memcpy(f1,init,sizeof(f1));
+          (contract==2 ? bcir_tensor_mm_kblock_pool : contract ? bcir_tensor_mm_fused_pool : bcir_tensor_mm_pool)
+            (pool,x.ta,x.tb,x.m,x.n,x.k,x.alpha,x.a,x.b,x.beta,c0);
+          (contract==2 ? bcir_tensor_mm_kblock_pool : contract ? bcir_tensor_mm_fused_pool : bcir_tensor_mm_pool)
+            (pool,y.ta,y.tb,y.m,y.n,y.k,y.alpha,y.a,y.b,y.beta,f0);
+          bcir_tensor_mm_pair_pool(pool,contract,&x,&y);
+          assert(!memcmp(c0,c1,mm*n*sizeof(float)) && !memcmp(f0,f1,m2*n2*sizeof(float)));
+          memcpy(c1,init,sizeof(c1)); memcpy(f1,init,sizeof(f1)); bcir_tensor_mm_pair_pool(pool,contract,&y,&x);
+          assert(!memcmp(c0,c1,mm*n*sizeof(float)) && !memcmp(f0,f1,m2*n2*sizeof(float)));
+        }
+      }
     }
     for (s=0;s<sizeof(att_shapes)/sizeof(att_shapes[0]);s++) {
       size_t bb=att_shapes[s][0],t=att_shapes[s][1],nh=att_shapes[s][2],nk=att_shapes[s][3],d=att_shapes[s][4];
@@ -531,8 +551,8 @@ static void pool_identity(void) {
     assert(bcir_tensor_pool_threads(pool)==1);
   }
   bcir_tensor_pool_stop(NULL);
-  printf("  PASS native pool kernels and the training step bit-identical to the serial kernels and "
-      "references at %u thread count(s) (rail %d), %u contracts, the reduce norms apart at %u of 18 steps\n",
+  printf("  PASS native pool kernels (the GEMM pair job included) and the training step bit-identical to the "
+      "serial kernels and references at %u thread count(s) (rail %d), %u contracts, the reduce norms apart at %u of 18 steps\n",
       ran,rails,(unsigned)nc,apart);
 }
 /* NDT-REDUCE: the pooled reductions against serial references written apart from the pool --

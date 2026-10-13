@@ -242,6 +242,18 @@ dropped, a rule that never doubles). Measured on the 9.84M decoder
 on one) and ends in `5137e013…`, its own, not §7's `d7fc618c…` (the norm's last bits crossed a float rounding boundary within the first steps, as the 20-step identity rows already show, and the state is the reduce contract's from there), and the one-thread run ends in the same state, the held-out model 1.5003 / 1.6319
 nats per byte as before.
 
+The two VJPs of a linear run as one pool job since NDT-SCHED-0 (2026-10-13): `dx = dy W` and
+`dW += dy^T x` read one adjoint and write apart, so `bcir_tensor_mm_pair_pool` runs the first
+GEMM's tasks and then the second's in one `pool_run`, each with the partition its own entry would
+have used, so every output element keeps its depth order and the results are the two entries' bit
+for bit (the C harness holds every shape pair under the three GEMM contracts in both orders, and
+the trainer's twelve contracts at one to four threads); a provider's GEMM keeps its two calls.
+One barrier in place of two for each of the step's 43 linears, and the narrow K/V projections'
+idle threads take the other product's tasks. Measured in 3 same-session pairs at four
+threads under `kblock+exp+reduce`: the GEMM-backward row 292.7 / 285.9 / 266.6 -> 238.0 / 254.8 / 282.6
+ms (-54.6 / -31.0 / +16.0), the step 684.2 / 679.4 / 659.3 -> 645.1 / 681.7 / 668.1 (-39.2 / +2.4 / +8.8);
+the backward pass (the `loss_backward` stage, the forward recomputed inside it, as the trainer runs it -- the one stage the pair job changes) is below the two-call stage in 3 of 3 pairs, by -30.9 / -47.5 / -27.8 ms (631.9 / 633.8 / 622.4 against 601.0 / 586.3 / 594.6), and the GEMM-backward row timed alone by -54.6 / -31.0 / +16.0; the step's own cell (-39.2 / +2.4 / +8.8) is within this host's run-to-run noise, as NDT-REDUCE's was -- the one barrier fewer per linear and the narrow projections' tasks shared are worth about 5% of the backward at four threads here.
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,

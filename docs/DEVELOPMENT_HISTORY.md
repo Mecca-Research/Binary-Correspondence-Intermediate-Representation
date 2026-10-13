@@ -2915,6 +2915,25 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-SCHED-0 (2026-10-13): the two VJPs of a linear as one pool job.
+  - NDT-SCHED's first item. `dx = dy W` and `dW += dy^T x` read one adjoint and write apart, so
+    `bcir_tensor_mm_pair_pool` runs the first GEMM's tasks and then the second's in one pool run,
+    each with the partition its own entry would have used, so every output element keeps its depth
+    order and the results are the two entries' bit for bit; one barrier in place of two for each of
+    the step's 43 linears, the narrow K/V projections' idle threads on the other product's tasks.
+    The trainer dispatches the pair under each GEMM contract; a provider's GEMM keeps its two calls;
+    the breakdown harness times the VJPs as the trainer runs them.
+  - Evidence: the C harness holds every shape pair of its GEMM section under the three contracts,
+    in both orders, to the two entries, and the twelve contracts' states at one to four threads to
+    the serial run through the trainer's pairs; `ndt-threads.json` NT9 (a pair split at the first
+    GEMM's column count) and NT10 (the pair's serial path skips the first GEMM); NT1, NF3, NK4 and
+    NK5 re-anchored to the partition's, the one routing predicate's (`gemm_contract`, read by the
+    forward's linears and the pair alike) and the serial branch's new homes.
+  - Measured ([measurements/2026-10-13/sched0/](research/measurements/2026-10-13/sched0/), the
+    report's §10) in 3 same-session pairs at four threads under `kblock+exp+reduce`: the
+    backward pass 631.9 / 633.8 / 622.4 -> 601.0 / 586.3 / 594.6 ms (-30.9 / -47.5 / -27.8), the
+    GEMM-backward row timed alone 292.7 / 285.9 / 266.6 -> 238.0 / 254.8 / 282.6 (-54.6 / -31.0 / +16.0),
+    the step 684.2 / 679.4 / 659.3 -> 645.1 / 681.7 / 668.1 (-39.2 / +2.4 / +8.8); the backward pass (the `loss_backward` stage, the forward recomputed inside it, as the trainer runs it -- the one stage the pair job changes) is below the two-call stage in 3 of 3 pairs, by -30.9 / -47.5 / -27.8 ms (631.9 / 633.8 / 622.4 against 601.0 / 586.3 / 594.6), and the GEMM-backward row timed alone by -54.6 / -31.0 / +16.0; the step's own cell (-39.2 / +2.4 / +8.8) is within this host's run-to-run noise, as NDT-REDUCE's was -- the one barrier fewer per linear and the narrow projections' tasks shared are worth about 5% of the backward at four threads here.
   NDT-REDUCE (2026-10-13): the reductions the pool left serial, on the pool; the clipping norm's
   declared contract.
   - NDT-THREADS admitted only partitions in which each output element, and each reduction, is

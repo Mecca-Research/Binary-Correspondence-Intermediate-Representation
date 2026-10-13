@@ -27,6 +27,9 @@ from bcir.hosted.models.native import (
 #: capability their fault tables (tools/testing/faults/ndt-gem.json, ndt-perf.json and
 #: ndt-clang.json) require.
 _CC = __import__("bcir.toolchain", fromlist=["host_c_compiler"]).host_c_compiler()
+#: The fault tables the sweeps inject (tools/testing/faults); the thorough tests that inject a
+#: fault of their own read it from here, so the two cannot drift apart.
+_FAULTS = Path(__file__).resolve().parents[2] / "tools" / "testing" / "faults"
 
 
 def _spec():
@@ -460,18 +463,23 @@ def test_the_threads_row_fires_on_a_partition_that_depends_on_the_thread_count()
     of more than one thread (one thread runs the serial kernels): the GEMM's row tasks that
     stop before the ragged tail, and a runner that drops each thread's last task. Each turns
     the row red (the C harness holds the partitions to the serial kernels at every count,
-    and the TSan section holds their memory discipline)."""
+    and the TSan section holds their memory discipline). The two copies are the sweep's own
+    faults, `ndt-threads.json` NT1 and NT2, read from the table: one anchor for the sweep and
+    for this test, so a kernel that moves (NDT-SCHED-0 moved the partition) cannot leave one
+    of them pointing at a line that is no longer there."""
     from bcir.tests import native_decoder_fixtures as nf
 
     if nf.compiler() is None:
         return
     tensor = nf.source("bcir_tensor.c")
-    mutants = (
-        ("j.cols=(n+j.nr-1)/j.nr; j.rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;",
-         "j.cols=(n+j.nr-1)/j.nr; j.rowsets=m/BCIR_MM_ROWS;"),
-        ("  for (t=id;t<p->tasks;t+=p->threads) p->fn(p->ctx,t);",
-         "  for (t=id;t+p->threads<p->tasks;t+=p->threads) p->fn(p->ctx,t);"),
-    )  # fmt: skip
+    table = json.loads(_FAULTS.joinpath("ndt-threads.json").read_text(encoding="utf-8"))
+    faults = {f["label"].split(" ", 1)[0]: f for f in table["faults"]}
+    mutants = [(faults[k]["old"], faults[k]["new"]) for k in ("NT1", "NT2")]
+    assert all(
+        faults[k]["path"] == "runtime/c/bcir_tensor.c"
+        and faults[k]["expects"] == "test_the_training_state_is_identical_at_every_thread_count"
+        for k in ("NT1", "NT2")
+    )
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         for i, (old, new) in enumerate(mutants):
             assert tensor.count(old) == 1, old

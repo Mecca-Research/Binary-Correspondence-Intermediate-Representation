@@ -113,6 +113,18 @@ BCIR_DT_API void bcir_tensor_mm_kblock(void *ctx, int ta, int tb, size_t m, size
     float alpha, const float *a, const float *b, float beta, float *c);
 BCIR_DT_API void bcir_tensor_mm_kblock_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m,
     size_t n, size_t k, float alpha, const float *a, const float *b, float beta, float *c);
+/* Two GEMMs as one pool job (NDT-SCHED-0): the first's tasks then the second's, each GEMM's
+ * partition exactly its own pool entry's, so every output element keeps its depth order and the
+ * results are the two entries' bit for bit; one barrier in place of two, and a narrow product's
+ * idle threads take the other's tasks. For two products whose writes are disjoint -- a linear's
+ * two VJPs, dx and dW, which read one adjoint. `contract` is 0 for v1, 1 for the fused v2, 2 for
+ * the blocked v3 (the three entries above, in that order); a NULL pool or one thread runs the
+ * first then the second serially. */
+typedef struct bcir_tensor_mm_call {
+  int ta, tb; size_t m, n, k; float alpha; const float *a, *b; float beta; float *c;
+} bcir_tensor_mm_call;
+BCIR_DT_API void bcir_tensor_mm_pair_pool(bcir_tensor_pool *pool, int contract,
+    const bcir_tensor_mm_call *x, const bcir_tensor_mm_call *y);
 BCIR_DT_API int bcir_tensor_mm_kblock_variants(void);
 BCIR_DT_API int bcir_tensor_mm_kblock_variant(int variant, int ta, int tb, size_t m, size_t n,
     size_t k, float alpha, const float *a, const float *b, float beta, float *c);

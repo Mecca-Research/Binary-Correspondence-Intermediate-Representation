@@ -25,9 +25,9 @@
     },
     {
       "expects": "test_the_training_state_is_identical_at_every_thread_count",
-      "label": "NF3 the trainer's GEMM ignores the state's contract",
-      "new": "  else if (s->contract&~BCIR_DT_CONTRACT_FUSED) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);",
-      "old": "  else if (s->contract&BCIR_DT_CONTRACT_FUSED) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);",
+      "label": "NF3 the trainer's GEMM ignores the fused bit (v1 under the fused name: the forward's linears and the backward's pairs read one predicate)",
+      "new": "  return (s->contract&BCIR_DT_CONTRACT_KBLOCK) ? 2 : 0;",
+      "old": "  return (s->contract&BCIR_DT_CONTRACT_KBLOCK) ? 2 : (s->contract&BCIR_DT_CONTRACT_FUSED) ? 1 : 0;",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

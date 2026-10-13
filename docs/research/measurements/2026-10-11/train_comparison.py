@@ -1089,6 +1089,7 @@ def _bcir_breakdown(
         "mm_pool": MM,
         "mm_fused_pool": MM,
         "mm_kblock_pool": MM,
+        "mm_pair_pool": [P, ctypes.c_int, P, P],  # a linear's two VJPs as one job (NDT-SCHED-0)
         "linear": [P, Z, Z, Z, P, P, P],
         "linear_backward": [P, Z, Z, Z, P, P, P, P, P, F32],
     }
@@ -1150,14 +1151,21 @@ def _bcir_breakdown(
         else:
             mm(pool, 0, 1, n, o, i, 1.0, p(ins[name]), p(w[name]), 0.0, p(outs[name]))
 
+    class Call(ctypes.Structure):  # bcir_tensor_mm_call
+        _fields_ = [("ta", ctypes.c_int), ("tb", ctypes.c_int), ("m", Z), ("n", Z), ("k", Z),
+                    ("alpha", F32), ("a", P), ("b", P), ("beta", F32), ("c", P)]  # fmt: skip
+
+    pair_contract = 2 if "kblock" in parts_of else 1 if "fused" in parts_of else 0
+
     def linear_backward(name):
         i, o = weights[name][1], weights[name][0]
         if openblas:
             fn["linear_backward"](prov, n, i, o, p(ins[name]), p(w[name]), p(dys[name]),
                                   p(dxs[name]), p(dw[name]), beta[name])  # fmt: skip
-        else:
-            mm(pool, 0, 0, n, i, o, 1.0, p(dys[name]), p(w[name]), beta[name], p(dxs[name]))
-            mm(pool, 1, 0, o, i, n, 1.0, p(dys[name]), p(ins[name]), 1.0, p(dw[name]))
+        else:  # the trainer's own dispatch: the two VJPs as one pool job
+            cx = Call(0, 0, n, i, o, 1.0, p(dys[name]), p(w[name]), beta[name], p(dxs[name]))
+            cw = Call(1, 0, o, i, n, 1.0, p(dys[name]), p(ins[name]), 1.0, p(dw[name]))
+            fn["mm_pair_pool"](pool, pair_contract, ctypes.byref(cx), ctypes.byref(cw))
 
     def gemm_forward():
         for _ in range(layers):
