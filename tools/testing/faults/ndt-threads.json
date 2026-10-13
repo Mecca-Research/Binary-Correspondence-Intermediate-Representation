@@ -17,9 +17,9 @@
     },
     {
       "expects": "test_the_training_state_is_identical_at_every_thread_count",
-      "label": "NT2 the runner drops each thread's last task",
-      "new": "  for (t=id;t+p->threads<p->tasks;t+=p->threads) p->fn(p->ctx,t);",
-      "old": "  for (t=id;t<p->tasks;t+=p->threads) p->fn(p->ctx,t);",
+      "label": "NT2 the runner's claim stops one task short (the last task of every job never runs on a pool)",
+      "new": "  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))+1<tasks) fn(ctx,t);",
+      "old": "  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<tasks) fn(ctx,t);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -76,6 +76,20 @@
       "label": "NT10 the pair job's serial path (no pool, one thread) skips the first GEMM (the one-thread pool's state is not the serial state, and the pair is not the two entries)",
       "new": "    (void)x;\n",
       "old": "    mm_serial_any(fused,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT11 a claim takes two tasks (every other task of a job never runs on a pool)",
+      "new": "__atomic_fetch_add(&p->next,(size_t)2,__ATOMIC_RELAXED)",
+      "old": "__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED)",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT12 the caller does not reset the claim counter (a job after the first starts where the last one's claims ended, so its first tasks never run)",
+      "new": "",
+      "old": "  __atomic_store_n(&p->next,(size_t)0,__ATOMIC_RELAXED);\n",
       "path": "runtime/c/bcir_tensor.c"
     }
   ]

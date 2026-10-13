@@ -10,6 +10,7 @@
 #elif defined(__unix__) || defined(__APPLE__)
 #define BCIR_POOL_PTHREADS 1
 #include <pthread.h>
+#include <sched.h>
 #endif
 
 void bcir_tensor_cblas_mm(void *ctx, int ta, int tb, size_t m, size_t n, size_t k,
@@ -639,18 +640,45 @@ void bcir_tensor_mm_kblock(void *ctx, int ta, int tb, size_t m, size_t n, size_t
   (void)ctx;
   mm_variant_any(mm_widest_fused(),MM_KBLOCK,ta,tb,m,n,k,alpha,a,b,beta,c);
 }
-/* --- the deterministic pool (NDT-THREADS) ------------------------------------------------------
- * Thread 0 is the caller; the others wait for a generation, run their share of its tasks and
- * report. Task t goes to thread t % threads: the assignment is fixed, no task is taken by two
- * threads, and no thread takes a task the serial run would not have run in the same position.
- * Every task writes outputs no other task writes and reads nothing a task of the same job
- * writes, so the run order does not reach the arithmetic; the partitions below make it so.
+/* --- the deterministic pool (NDT-THREADS, NDT-POOL) --------------------------------------------
+ * Thread 0 is the caller; the others wait for a generation, run tasks of it and report. Where the
+ * compiler has atomics (GCC's and Clang's builtins) every thread claims its tasks one at a time
+ * from the generation's counter, in ascending order, so a thread that wakes late or is preempted
+ * takes fewer and none waits on another's fixed share; elsewhere task t goes to thread
+ * t % threads. Either way every task runs once and no task is taken by two threads. Every task
+ * writes outputs no other task writes and reads nothing a task of the same job writes, so which
+ * thread runs a task, and when, does not reach the arithmetic; the partitions below make it so.
+ * With atomics the hot path takes no lock: the caller publishes a job with the generation's
+ * release store and a worker reports with one atomic decrement. A worker waits for the next
+ * generation BCIR_POOL_SPINS rounds on the processor, then BCIR_POOL_YIELDS rounds yielding it,
+ * then asleep on the condition variable; the caller waits for the reports the same way. A job
+ * that follows another closely starts without a wake-up, and on a host with fewer free
+ * processors than threads the yields hand the processor over. The reports stay the barrier --
+ * every worker reports every generation -- so no thread touches a job after its caller returns.
  * The pool, its thread handles and its worker records live in one block the caller provides
  * (bcir_tensor_pool_size): the unit allocates nothing, as the trainer's arenas allocate nothing. */
+#if defined(__GNUC__) || defined(__clang__)
+#define BCIR_POOL_ATOMIC 1
+#define POOL_LOAD(x) __atomic_load_n(&(x),__ATOMIC_ACQUIRE)
+#define POOL_STORE(x,v) __atomic_store_n(&(x),(v),__ATOMIC_RELEASE)
+#if defined(__x86_64__) || defined(__i386__)
+#define POOL_RELAX() __builtin_ia32_pause()
+#elif defined(__aarch64__)
+#define POOL_RELAX() __asm__ __volatile__("yield")
+#else
+#define POOL_RELAX() ((void)0)
+#endif
+#ifndef BCIR_POOL_SPINS
+#define BCIR_POOL_SPINS 64
+#endif
+#ifndef BCIR_POOL_YIELDS
+#define BCIR_POOL_YIELDS 512
+#endif
+#endif
 typedef struct pool_worker { bcir_tensor_pool *pool; unsigned id; } pool_worker;
 struct bcir_tensor_pool {
   unsigned threads,pending; unsigned long generation; int stop;
-  bcir_tensor_task_fn fn; void *ctx; size_t tasks;
+  bcir_tensor_task_fn fn; void *ctx; size_t tasks,next;
 #if defined(BCIR_POOL_PTHREADS)
   pthread_mutex_t mutex; pthread_cond_t wake,done; pthread_t *workers;
 #elif defined(BCIR_POOL_WIN32)
@@ -692,7 +720,13 @@ int bcir_tensor_pool_rails(void) {
 unsigned bcir_tensor_pool_threads(const bcir_tensor_pool *pool) { return pool ? pool->threads : 1; }
 static void pool_tasks(bcir_tensor_pool *p, unsigned id) {
   size_t t;
+#if defined(BCIR_POOL_ATOMIC)
+  bcir_tensor_task_fn fn=p->fn; void *ctx=p->ctx; size_t tasks=p->tasks;
+  (void)id;
+  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<tasks) fn(ctx,t);
+#else
   for (t=id;t<p->tasks;t+=p->threads) p->fn(p->ctx,t);
+#endif
 }
 #if defined(BCIR_POOL_PTHREADS) || defined(BCIR_POOL_WIN32)
 #if defined(BCIR_POOL_PTHREADS)
@@ -701,6 +735,7 @@ static void pool_tasks(bcir_tensor_pool *p, unsigned id) {
 #define POOL_WAIT(p,c) pthread_cond_wait(&(p)->c,&(p)->mutex)
 #define POOL_SIGNAL(p,c) pthread_cond_signal(&(p)->c)
 #define POOL_BROADCAST(p,c) pthread_cond_broadcast(&(p)->c)
+#define POOL_YIELD() sched_yield()
 static void *pool_main(void *arg)
 #else
 #define POOL_LOCK(p) EnterCriticalSection(&(p)->mutex)
@@ -708,12 +743,32 @@ static void *pool_main(void *arg)
 #define POOL_WAIT(p,c) SleepConditionVariableCS(&(p)->c,&(p)->mutex,INFINITE)
 #define POOL_SIGNAL(p,c) WakeConditionVariable(&(p)->c)
 #define POOL_BROADCAST(p,c) WakeAllConditionVariable(&(p)->c)
+#define POOL_YIELD() SwitchToThread()
 static DWORD WINAPI pool_main(LPVOID arg)
 #endif
 {
   pool_worker *w=(pool_worker *)arg; bcir_tensor_pool *p=w->pool; unsigned id=w->id;
   unsigned long seen=0;
   for (;;) {
+#if defined(BCIR_POOL_ATOMIC)
+    unsigned spin=0;
+    while (POOL_LOAD(p->generation)==seen && !POOL_LOAD(p->stop)) {
+      if (spin<BCIR_POOL_SPINS) POOL_RELAX();
+      else if (spin<BCIR_POOL_SPINS+BCIR_POOL_YIELDS) POOL_YIELD();
+      else {
+        POOL_LOCK(p);
+        while (POOL_LOAD(p->generation)==seen && !POOL_LOAD(p->stop)) POOL_WAIT(p,wake);
+        POOL_UNLOCK(p);
+      }
+      spin++;
+    }
+    if (POOL_LOAD(p->stop)) break;
+    seen=POOL_LOAD(p->generation);
+    pool_tasks(p,id);
+    if (__atomic_sub_fetch(&p->pending,1u,__ATOMIC_RELEASE)==0) {
+      POOL_LOCK(p); POOL_SIGNAL(p,done); POOL_UNLOCK(p);
+    }
+#else
     POOL_LOCK(p);
     while (p->generation==seen && !p->stop) POOL_WAIT(p,wake);
     if (p->stop) { POOL_UNLOCK(p); break; }
@@ -723,8 +778,18 @@ static DWORD WINAPI pool_main(LPVOID arg)
     POOL_LOCK(p);
     if (--p->pending==0) POOL_SIGNAL(p,done);
     POOL_UNLOCK(p);
+#endif
   }
   return 0;
+}
+/* Under the lock: stop, seen by a sleeping worker when it wakes and by a waiting one at once. */
+static void pool_signal_stop(bcir_tensor_pool *p) {
+#if defined(BCIR_POOL_ATOMIC)
+  POOL_STORE(p->stop,1);
+#else
+  p->stop=1;
+#endif
+  POOL_BROADCAST(p,wake);
 }
 static void pool_sync_destroy(bcir_tensor_pool *p) {
 #if defined(BCIR_POOL_PTHREADS)
@@ -758,7 +823,7 @@ static int pool_start(bcir_tensor_pool *p) {
   if (i<p->threads) {
     /* a thread that could not start: stop the ones that did, release everything, refuse */
     unsigned started=i-1,j;
-    POOL_LOCK(p); p->stop=1; POOL_BROADCAST(p,wake); POOL_UNLOCK(p);
+    POOL_LOCK(p); pool_signal_stop(p); POOL_UNLOCK(p);
     for (j=0;j<started;j++) {
 #if defined(BCIR_POOL_PTHREADS)
       pthread_join(p->workers[j],NULL);
@@ -773,7 +838,7 @@ static int pool_start(bcir_tensor_pool *p) {
 }
 static void pool_join(bcir_tensor_pool *p) {
   unsigned j;
-  POOL_LOCK(p); p->stop=1; POOL_BROADCAST(p,wake); POOL_UNLOCK(p);
+  POOL_LOCK(p); pool_signal_stop(p); POOL_UNLOCK(p);
   for (j=0;j+1<p->threads;j++) {
 #if defined(BCIR_POOL_PTHREADS)
     pthread_join(p->workers[j],NULL);
@@ -815,13 +880,34 @@ void bcir_tensor_pool_run(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx
   if (!p || p->threads==1 || tasks==1) { for (t=0;t<tasks;t++) fn(ctx,t); return; }
 #if defined(BCIR_POOL_PTHREADS) || defined(BCIR_POOL_WIN32)
   POOL_LOCK(p);
-  p->fn=fn; p->ctx=ctx; p->tasks=tasks; p->pending=p->threads-1; p->generation++;
+  p->fn=fn; p->ctx=ctx; p->tasks=tasks;
+#if defined(BCIR_POOL_ATOMIC)
+  __atomic_store_n(&p->pending,p->threads-1,__ATOMIC_RELAXED);
+  __atomic_store_n(&p->next,(size_t)0,__ATOMIC_RELAXED);
+  POOL_STORE(p->generation,p->generation+1);
+  POOL_BROADCAST(p,wake);
+  POOL_UNLOCK(p);
+  pool_tasks(p,0);
+  {
+    unsigned spin;
+    for (spin=0;spin<BCIR_POOL_SPINS+BCIR_POOL_YIELDS && POOL_LOAD(p->pending);spin++) {
+      if (spin<BCIR_POOL_SPINS) POOL_RELAX(); else POOL_YIELD();
+    }
+  }
+  if (POOL_LOAD(p->pending)) {
+    POOL_LOCK(p);
+    while (POOL_LOAD(p->pending)) POOL_WAIT(p,done);
+    POOL_UNLOCK(p);
+  }
+#else
+  p->pending=p->threads-1; p->generation++;
   POOL_BROADCAST(p,wake);
   POOL_UNLOCK(p);
   pool_tasks(p,0);
   POOL_LOCK(p);
   while (p->pending) POOL_WAIT(p,done);
   POOL_UNLOCK(p);
+#endif
 #else
   for (t=0;t<tasks;t++) fn(ctx,t);
 #endif

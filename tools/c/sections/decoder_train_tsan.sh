@@ -6,7 +6,7 @@
 # One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: BCIR Make
 # builds them (the decoder-training harness built with -fsanitize=thread, and the same build of a
 # tensor unit whose attention backward runs one query head per task, so the query heads of one KV
-# head -- which accumulate into the same dk and dv -- land on two threads) and runs this script as
+# head -- which accumulate into the same dk and dv -- are tasks two threads may claim) and runs this script as
 # a task, whose verdict the gate shows; the CMake project builds the same binaries from the same
 # manifest (sanitizer `variants`) and runs this script as the `c-section-decoder_train_tsan` CTest
 # entry; tools/build/section_parity.py holds the two builds' outputs byte-identical. Whether
@@ -16,7 +16,10 @@
 # kernels; this section holds their MEMORY DISCIPLINE: a partition that lets two tasks write one
 # element is a data race whether or not a given run's timing changes the sum (laws.md L11: the
 # witness hits the law it exists to test), and ThreadSanitizer finds it from the happens-before
-# order alone, so the injected fault is reported on every run.
+# order alone. Since NDT-POOL the pool's threads claim tasks as they come, so which of the fault's
+# conflicting pairs two threads split is the run's timing, never the arithmetic; the harness runs
+# the backward in many jobs at two to four threads, and the first of them reports it (every run
+# observed: the report comes before the harness's first PASS line).
 #
 #   usage: decoder_train_tsan.sh <test_decoder_train_tsan> <test_decoder_train_race>
 set -uo pipefail
@@ -38,7 +41,7 @@ if ! "${norandom[@]}" "${TSAN}" > "${tmp}/tsan.log" 2>&1 || grep -q "WARNING: Th
 fi
 grep -q "PASS native pool kernels" "${tmp}/tsan.log" \
   || { echo "  FAIL: the ThreadSanitizer harness did not run the pool identity"; tail -20 "${tmp}/tsan.log"; exit 1; }
-echo "  PASS native trainer's pool under ThreadSanitizer (GEMM, attention, elementwise, rows, the update and three training steps at 1..4 threads: no data race, every result the serial kernels')"
+echo "  PASS native trainer's pool under ThreadSanitizer (GEMM, attention, elementwise, rows, the update, the pool's claims and three training steps at 1..4 threads: no data race, every result the serial kernels')"
 # the first report ends the run (TSan exits 66): the harness's own assertions, which the racing
 # sums fail, are not reached, so the verdict is the sanitizer's report alone
 TSAN_OPTIONS="halt_on_error=1${TSAN_OPTIONS:+:$TSAN_OPTIONS}" "${norandom[@]}" "${RACE}" > "${tmp}/race.log" 2>&1

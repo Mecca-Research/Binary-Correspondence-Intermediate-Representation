@@ -757,3 +757,60 @@ the host, its GEMM rows 20% apart between rounds; the attention rows are the sli
 The one-thread kernel rows are the slices' clean reading; at four threads each head is one task, so
 the kernels' time there is a few tasks' latency over three free cores and the pool's own costs
 (§12.4).
+
+### 12.4 The pool's claims and its wait (NDT-POOL)
+
+The four vCPUs are four cores with their own FMA units
+([pool/fma-topology.json](measurements/2026-10-13/pool/fma-topology.json): twelve FMA chains in registers
+run 141-148 GFLOP/s pinned to one, 284-300 to any pair, 579-584 to all four), yet the GEMMs gained
+about 2x from four threads (99 GFLOP/s at one, about 200 at four: a third of the four cores' peak). The
+pool's own latency was the first suspect: a worker woke on a condition variable, took the mutex to
+read the job and again to report, and task t belonged to thread t % threads, so a thread that woke
+late held its share back. On this VM a futex wake costs tens of microseconds. NDT-POOL: every thread
+claims the next task from the job's counter (GCC's and Clang's atomics; MSVC keeps the fixed
+assignment), the caller publishes a job with the generation's release store, a worker reports with
+one atomic decrement and only the last reporter takes the lock (to signal the caller), and a
+worker waits 64 pauses, then 512 yields, then sleeps. Which thread runs a task never reached a
+result, so every state is the one it was. The budget was chosen in three stages
+([pool/pool-latency.json](measurements/2026-10-13/pool/pool-latency.json)): a long pure spin is fast on
+a quiet host and slow on a busy one (2,048 pauses: 63-83 us an empty job with two CPUs busy, 8,192
+pauses: 281-298), and yields carry a waiting thread through on both.
+
+| four threads, us per job (best of 5 rounds) | the pool before | NDT-POOL |
+|---|---|---|
+| an empty job of four tasks, back to back | 77.4 / 85.3 | 3.6 / 3.3 |
+| the same after a 200 us serial gap | 121.0 / 93.4 | 22.2 / 27.1 |
+| sixteen 25 us tasks (100 us of work a thread) | 195.0 / 190.8 | 113.5 / 117.2 |
+| thirteen 25 us tasks (100 us) | 165.9 / 161.4 | 107.2 / 111.5 |
+| sixty-four 25 us tasks (400 us) | 528.3 / 513.1 | 430.7 / 441.9 |
+| sixteen 25 us tasks, two CPUs busy | 253.2 | 224.7 |
+| sixty-four 25 us tasks, two CPUs busy | 934.8 | 873.9 |
+| sixteen 25 us tasks, three CPUs busy | 414.9 | 433.8 |
+| sixty-four 25 us tasks, three CPUs busy | 1513.5 | 1696.9 |
+
+With three of the four CPUs held by other processes -- four pool threads on one free core -- the
+largest job is 12% slower than with the old pool's sleeping workers; everywhere else it is faster.
+The step's GEMM shapes at four threads, alternated call by call, every result the serial kernel's:
+
+| work-weighted GFLOP/s, 15 shapes, 15 calls each | before | NDT-POOL |
+|---|---|---|
+| median, three runs | 179.6 / 174.2 / 196.1 | 199.7 / 210.1 / 222.0 |
+| best, three runs | 232.4 / 227.5 / 235.1 | 240.3 / 248.3 / 257.0 |
+| the claims alone (one protocol, fixed assignment -> claims), median / best | 205.8 / 242.6 | 232.0 / 270.3 |
+
+The step, in place and through the breakdown harness, the trees alternated in each round
+([pool/](measurements/2026-10-13/pool/)):
+
+| four threads, ms | before NDT-PASS..ATTN-3 | before NDT-POOL | NDT-POOL |
+|---|---|---|---|
+| the step in place (median of 5 steps) | 486.6 / 545.6 / 556.8 | 535.8 / 482.1 / 554.4 | 431.3 / 422.1 / 412.6 |
+| the breakdown's step | | 423.5 / 538.9 / 481.1 / 509.0 | 454.2 / 376.6 / 411.2 / 414.6 |
+| the breakdown's forward stage | | 176.5 / 190.0 / 175.6 / 169.6 | 148.1 / 141.0 / 137.3 / 147.1 |
+| the breakdown's backward stage | | 487.9 / 532.8 / 455.3 / 465.3 | 455.1 / 390.3 / 377.0 / 365.4 |
+
+The forward and backward stages are below in 4 of 4 pairs, the step in 3 of 4; in place, every
+small pooled row halves (the residual adds 7.6 / 6.8 / 10.4 -> 3.1 / 3.7 / 2.9 ms, the RoPE and
+RMSNorm rows alike) -- they were mostly the pool's latency. The 20-step state with all four slices
+at one and four threads is `4bf4e057…`, §11's. What the step is now, in place at four threads:
+the GEMMs about three quarters of it (the backward's 43 pairs 210-237 ms, the forward 84-93), the
+attention 38-40, the update's two passes 22-23, the RMSNorm VJP 13-15, everything else under 9 each.

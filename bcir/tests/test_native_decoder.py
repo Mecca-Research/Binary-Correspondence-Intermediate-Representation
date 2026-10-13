@@ -158,7 +158,7 @@ def test_native_c_harness_c11_and_c23():
             result = subprocess.run(
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
-            assert result.stdout.count("PASS") == 12  # scan_references since NDT-SCAN
+            assert result.stdout.count("PASS") == 13  # pool_claims since NDT-POOL
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -189,7 +189,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 12
+            assert result.stdout.count("PASS") == 13
             break
 
 
@@ -493,7 +493,8 @@ def test_a_provider_is_admitted_under_the_blocked_contract_only_where_it_is_the_
 def test_the_threads_row_fires_on_a_partition_that_depends_on_the_thread_count():
     """Wrong copies of the tensor unit whose wrong partition reaches the state only on a pool
     of more than one thread (one thread runs the serial kernels): the GEMM's row tasks that
-    stop before the ragged tail, and a runner that drops each thread's last task. Each turns
+    stop before the ragged tail, and a runner whose claims stop one task short of every job
+    (NDT-POOL: the threads claim their tasks from one counter). Each turns
     the row red (the C harness holds the partitions to the serial kernels at every count,
     and the TSan section holds their memory discipline) -- with a different state, or, since
     NDT-SCAN put the finiteness scans on the pool, with a refusal the serial trainer does not

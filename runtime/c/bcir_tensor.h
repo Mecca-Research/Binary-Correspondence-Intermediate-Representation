@@ -43,10 +43,12 @@ BCIR_DT_API size_t bcir_tensor_pool_size(unsigned threads); /* 0: a count this h
 BCIR_DT_API bcir_tensor_pool *bcir_tensor_pool_init(void *memory, size_t bytes, unsigned threads);
 BCIR_DT_API void bcir_tensor_pool_stop(bcir_tensor_pool *pool); /* joins; NULL or stopped: no-op */
 BCIR_DT_API unsigned bcir_tensor_pool_threads(const bcir_tensor_pool *pool); /* NULL: 1 */
-/* Run `tasks` tasks of `fn` over the pool's threads -- task t on thread t mod threads, each
- * thread its tasks in ascending order -- and return when every one has finished; a NULL pool,
- * one thread or one task runs them in order on the caller. A caller's partition keeps every
- * output element, and every reduction, with one task, as the kernels below do. */
+/* Run `tasks` tasks of `fn` over the pool's threads -- each thread claiming the next unclaimed
+ * task, in ascending order, where the compiler has GCC's or Clang's atomics, task t on thread
+ * t mod threads elsewhere -- and return when every one has finished; a NULL pool, one thread or
+ * one task runs them in order on the caller. Which thread runs a task is not part of the
+ * contract: a caller's partition keeps every output element, and every reduction, with one task,
+ * as the kernels below do. */
 typedef void (*bcir_tensor_task_fn)(void *ctx, size_t task);
 BCIR_DT_API void bcir_tensor_pool_run(bcir_tensor_pool *pool, bcir_tensor_task_fn fn, void *ctx,
     size_t tasks);

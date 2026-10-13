@@ -1,0 +1,15 @@
+{
+ "what": "NDT-POOL (2026-10-13): the pool's tasks claimed from one counter, a hot path without the lock, a worker's wait as pauses, then yields, then sleep. Measured as drafts in three stages, then the landed budget (64 pauses, 512 yields); the step's pairs alternate the tree with NDT-PASS and NDT-ATTN-1..3 applied ('slices', the tree before NDT-POOL) against it with NDT-POOL ('pool'), with the tree before all four ('before') in the same rounds.",
+ "host": "4-vCPU Intel Xeon container (AVX-512), GCC 13.3 (the trainer builds), Python 3.11.15 (the declared floor); indicative wall times, no PMU",
+ "files": {
+  "bench_pool.c": "the pool's latency: a job of N tasks each spinning W ns, back to back or after a serial gap on the caller; mean microseconds per job, best of 5 rounds (gcc -std=c11 -O3 -pthread bench_pool.c bcir_tensor.c -lm; -DBCIR_POOL_SPINS/-DBCIR_POOL_YIELDS for a budget)",
+  "pool-latency.json": "bench_pool.c at four threads over the three stages' builds, on the quiet host and with two (stages 1-3) and three (stage 3) CPUs held by busy loops",
+  "fma_topology.c, fma-topology.json": "twelve FMA chains in registers pinned to one CPU, to each pair and to all four, twice: 141-148 GFLOP/s one, 284-300 any pair, 579-584 all four -- four cores, each with its own FMA units",
+  "gemm_rates.py": "the step's 15 GEMM shapes at four threads on two builds, alternated call by call, every pooled result checked bit for bit against the serial kernel (python3 gemm_rates.py A.so B.so OUT.json 4 15)",
+  "gemm-rates-*.json": "stage1/2/3: the pool before against each stage's draft; static: the landed protocol with the fixed assignment against it with claims; landed-1..3: 51ec5bc against NDT-POOL as landed (landed-3 with the committed gemm_rates.py)",
+  "attribution-t4-{before,slices,pool}-{1,2,3}.json": "measurements/2026-10-13/scan/attribution.py in place at four threads, the three trees alternated in each of three rounds",
+  "breakdown-bcir-kblock+exp+reduce-t4-{before,after}-{1..4}.json": "four alternated pairs of the 2026-10-11 harness's bcir-breakdown stage (--rounds 5 --threads 4 --contract kblock+exp+reduce): before = the tree with NDT-PASS and NDT-ATTN-1..3, after = with NDT-POOL",
+  "identity-after.json": "the harness's identity stage on the tree with all four slices, 20 steps at 1 and 4 threads: 4bf4e057..., the state of measurements/2026-10-13/scan/"
+ },
+ "reading": "an empty four-task job 77.4 / 85.3 -> 3.6 / 3.3 us back to back on the quiet host, sixteen 25 us tasks 195.0 / 190.8 -> 113.5 / 117.2 (100 ideal); with two CPUs busy every case below the pool before (16 x 25 us 253.2 -> 224.7), with three the largest job 12% above it (64 x 25 us 1513.5 -> 1696.9); the GEMM shapes' work-weighted median 179.6 / 174.2 / 196.1 -> 199.7 / 210.1 / 222.0 GFLOP/s, the claims alone worth 205.8 -> 232.0; the step in place 535.8 / 482.1 / 554.4 -> 431.3 / 422.1 / 412.6 ms (486.6 / 545.6 / 556.8 before all four slices); the breakdown's forward stage below in 4 of 4 pairs (-28.4 / -49.0 / -38.3 / -22.5) and its backward stage in 4 of 4 (-32.8 / -142.5 / -78.3 / -100.0)."
+}

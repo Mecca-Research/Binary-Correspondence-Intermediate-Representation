@@ -2915,6 +2915,28 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-POOL (2026-10-13): the pool's tasks claimed from one counter, a hot path without the lock.
+  - The four vCPUs are four cores with their own FMA units (twelve FMA chains in registers:
+    141-148 GFLOP/s pinned to one, 579-584 to all four), yet the GEMMs gained about 2x from four
+    threads; the pool's latency was the first suspect and was part of it:
+    an empty four-task job cost about 80 us (a futex wake costs tens of microseconds on this VM),
+    sixteen 25 us tasks 191-195 us for 100 us of work a thread.
+  - Claims from one counter (GCC's and Clang's atomics; MSVC keeps task t on thread t mod threads),
+    the job published by the generation's release store, a report as one atomic decrement (the
+    last reporter alone takes the lock, to signal the caller), a wait of 64 pauses, 512 yields,
+    then sleep. The budget came from three measured stages: a long pure spin wins on a quiet host
+    and loses badly on a busy one (8,192 pauses: 281-298 us an empty job with two CPUs busy).
+  - Evidence: the harness's `pool_claims` (600 jobs of 1 to 1,024 tasks at two to four threads,
+    every task exactly once: back to back, after the workers sleep, at the stop); the runtime
+    gate's ThreadSanitizer section race-free, its injected partition fault still reported (the
+    split of a conflicting pair is now the run's timing; the first multi-threaded backward reports
+    it); `ndt-threads.json` NT2 re-anchored on the claim, NT11-NT12.
+  - Measured ([measurements/2026-10-13/pool/](research/measurements/2026-10-13/pool/), the
+    report's §12.4): an empty job 77.4 / 85.3 -> 3.6 / 3.3 us; the GEMM shapes' work-weighted
+    median 179.6 / 174.2 / 196.1 -> 199.7 / 210.1 / 222.0 GFLOP/s; the step in place 535.8 / 482.1 /
+    554.4 -> 431.3 / 422.1 / 412.6 ms (486.6 / 545.6 / 556.8 before NDT-PASS); with three of four
+    CPUs busy the largest job 12% slower than the sleeping pool. The 20-step state with all four
+    slices at one and four threads is the one it was (4bf4e057…).
   NDT-ATTN-2/3 (2026-10-13): the attention's masked products as AVX-512 register blocks.
   - The five masked products (the forward's scores and context, the backward's dv, dq and dk) ran
     through the GEMM kernel's v1 blocks: 64-wide column blocks computed whole above the causal

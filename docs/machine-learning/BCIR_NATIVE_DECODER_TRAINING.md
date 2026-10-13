@@ -327,6 +327,24 @@ NA4-NA9). The kernels alone at one thread on the 9.84M decoder's shape: the forw
 9.1-9.4 ms, the backward 14.6-15.4 -> 8.4-9.0 with NDT-ATTN-1; in place at four threads the
 attention backward 46.8 / 39.8 / 44.5 -> 23.1 / 26.3 / 27.2 ms (the report's §12).
 
+The pool's threads claim their tasks from one counter since NDT-POOL (2026-10-13). Task t went to
+thread t mod threads and every job went through one mutex: a worker woke on a condition variable,
+took the lock to read the job and again to report, and a thread that woke late held its fixed share
+back from the others -- on this four-vCPU VM an empty four-task job cost about 80 us. With GCC's
+and Clang's atomics every thread now takes the next unclaimed task in ascending order, the caller
+publishes a job with the generation's release store, a worker reports with one atomic decrement
+(only the last reporter takes the lock, to signal the caller), and a waiting thread spins
+`BCIR_POOL_SPINS` (64) pauses, then yields `BCIR_POOL_YIELDS` (512) times, then sleeps; MSVC keeps
+the locked protocol and the fixed assignment. Which thread runs a task never reached a result --
+every task writes outputs no other task writes -- so every state is the one it was, at every
+thread count (the C harness's `pool_claims`: every task of 600 jobs exactly once at two to four
+threads, back to back, after the workers sleep and at the stop; `ndt-threads.json` NT2, NT11-NT12;
+the runtime gate's ThreadSanitizer section on the new protocol). Measured at four threads (the
+report's §12.4): an empty job 77-85 -> 3-4 us, sixteen 25 us tasks 191-195 -> 114-117 us (100 of
+work a thread); the step's GEMM shapes' median 174-196 -> 200-222 GFLOP/s; the step in place
+482-554 -> 413-431 ms. With three of four CPUs held by other processes the largest job is 12%
+slower than with sleeping workers; everywhere else the pool is faster.
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,

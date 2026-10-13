@@ -1,0 +1,29 @@
+{
+ "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+ "contract": "kblock+exp+reduce",
+ "parts_ms": {
+  "attention_backward": 18.290398998942692,
+  "attention_forward": 15.221529996779282,
+  "gemm_backward": 188.72938500135206,
+  "gemm_forward": 74.32559500011848,
+  "rms": 2.4519950020476244,
+  "rms_backward": 8.17311900027562,
+  "rope": 2.0684979972429574,
+  "rope_inverse": 1.8472410010872409,
+  "silu": 2.6591850037220865,
+  "swiglu_backward": 4.045478002808522
+ },
+ "provider": "portable-c",
+ "rest_ms": 36.79734099569032,
+ "rounds": 5,
+ "stages_ms": {
+  "batch": 0.0692449975758791,
+  "binding": 0.6351230040309019,
+  "forward": 141.02924700273434,
+  "loss_backward": 390.25024899456184,
+  "step": 376.54215800284874,
+  "update": 21.29726899875095
+ },
+ "threads": 4,
+ "training_step_ms": 376.6114030004246
+}

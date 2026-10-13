@@ -615,6 +615,34 @@ static void reduction_references(void) {
   printf("  PASS native pooled reductions: the loss is the rows' chain and the embedding gradient "
       "the row-order scatter, %u runs over two shapes on no pool and a pool of two\n",pools);
 }
+/* NDT-POOL: the pool's threads claim their tasks from one counter. Every task of every job runs
+ * exactly once -- 600 jobs of 1 to 1,024 tasks at two to four threads, back to back (the workers
+ * spinning between generations), every hundredth after a pause longer than the spin (the workers
+ * asleep), the last just before the pool stops (the workers joined while they spin) -- each task
+ * counting into its own slot, so a skipped or a doubled claim shows in the counts. */
+static void tally_task(void *ctx, size_t task) { ((unsigned *)ctx)[task]++; }
+static void pool_claims(void) {
+  static _Alignas(max_align_t) unsigned char memory[4096];
+  static unsigned tally[1024]; unsigned threads,pools=0; size_t r,i;
+  for (threads=2;threads<=4;threads++) {
+    bcir_tensor_pool *pool; volatile unsigned long idle;
+    if (!bcir_tensor_pool_size(threads)) continue;
+    pool=bcir_tensor_pool_init(memory,sizeof(memory),threads); assert(pool!=NULL);
+    memset(tally,0,sizeof(tally));
+    for (r=0;r<600;r++) {
+      bcir_tensor_pool_run(pool,tally_task,tally,1+(r*389)%1024);
+      if (r%100==99) for (idle=0;idle<5000000ul;idle++) {}
+    }
+    for (i=0;i<1024;i++) {
+      unsigned want=0;
+      for (r=0;r<600;r++) want+=i<1+(r*389)%1024;
+      assert(tally[i]==want);
+    }
+    bcir_tensor_pool_stop(pool); pools++;
+  }
+  printf("  PASS native pool claims: every task of 600 jobs exactly once on %u pool(s), back to back, "
+      "after the workers sleep and at the stop\n",pools);
+}
 /* NDT-SCAN: the step's whole-buffer passes on the pool. A wider fixture -- width 32, feed-forward
  * 64, two layers: 19,104 parameters, one 16,384-element scan chunk and a 2,720-element tail -- on
  * no pool and on pools of two and three: a non-finite weight or accumulated gradient at either end
@@ -883,6 +911,6 @@ static void exp_contract(void) {
 }
 int main(void) {
   gemm_contract(); attention_reference(); adamw_reference(); finite_differences(); refusals();
-  learning(); pool_identity(); reduction_references(); scan_references(); gemm_fused_contract();
-  gemm_kblock_contract(); exp_contract(); return 0;
+  learning(); pool_identity(); pool_claims(); reduction_references(); scan_references();
+  gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); return 0;
 }
