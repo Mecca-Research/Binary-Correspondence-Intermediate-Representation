@@ -2915,6 +2915,16 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-ATTN-1 (2026-10-13): the attention backward's probability adjoint evaluated once.
+  - The in-place backward evaluated each row block's `dp = dY V^T` tiles in both of its passes, as
+    the reference does (the row sums first, the score adjoints second) -- the same product over
+    operands neither pass writes (0.98M multiply-adds a head at T=128, half of them repeated).
+  - A row block keeps its first 256 columns' tiles between the passes (32 KB on the task's
+    stack); a longer context evaluates its further tiles in each pass through one spare slot.
+  - Evidence: the attention reference gains a 330-token context (the tiles at 256 and 320 through
+    the spare slot), bit for bit, finite and not; `ndt-attn.json` NA1-NA3.
+  - Measured ([measurements/2026-10-13/slices/](research/measurements/2026-10-13/slices/)): the
+    backward kernel at one thread 14.71 / 14.55 / 15.36 -> 12.07 / 12.28 / 12.48 ms (best of 21).
   NDT-PASS (2026-10-13): the update's first pass as vector loops.
   - NDT-SCAN's in-place record put the first pass at about 20 ms of the four-thread step: four
     39 MB streams read by a loop GCC had compiled to scalar code ("control flow in loop": the

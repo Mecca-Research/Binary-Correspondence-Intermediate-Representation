@@ -1158,6 +1158,11 @@ void bcir_tensor_attention_backward(size_t b, size_t t, size_t nh, size_t nk,
  * shared GQA dk/dv, i ascending within a head -- so dq, dk and dv are bit-identical to it. */
 #define BCIR_ATT_ROWS 32
 #define BCIR_ATT_COLS 64
+/* The probability adjoint's tiles a row block keeps between its two passes (NDT-ATTN-1): its first
+ * BCIR_ATT_KEEP columns, so the second pass reads the values the first computed instead of
+ * evaluating the same product again; a longer context evaluates its further tiles twice, as every
+ * tile was evaluated before. */
+#define BCIR_ATT_KEEP 256
 /* One (batch, query head) of the backward; the heads of one KV head share dk and dv, so a task
  * is a (batch, KV head) and runs its `group` = heads/kvheads query heads in order -- the order
  * the serial loop adds. A task of fewer heads would put one KV head's query heads on two threads,
@@ -1175,14 +1180,18 @@ static void att_head_backward(const att_job *a, size_t r, size_t h) {
     mm_run(variant,&x);
     for (i0=0;i0<t;i0+=BCIR_ATT_ROWS) {
       size_t rows=t-i0<BCIR_ATT_ROWS ? t-i0 : BCIR_ATT_ROWS,pass,jt;
-      float dot[BCIR_ATT_ROWS],tile[BCIR_ATT_ROWS*BCIR_ATT_COLS];
+      float dot[BCIR_ATT_ROWS],kept[BCIR_ATT_KEEP/BCIR_ATT_COLS][BCIR_ATT_ROWS*BCIR_ATT_COLS],
+          spare[BCIR_ATT_ROWS*BCIR_ATT_COLS];
       for (i=0;i<rows;i++) dot[i]=0.0f;
       for (pass=0;pass<2;pass++) for (jt=0;jt<i0+rows;jt+=BCIR_ATT_COLS) {
         size_t cols=i0+rows-jt<BCIR_ATT_COLS ? i0+rows-jt : BCIR_ATT_COLS;
-        memset(tile,0,rows*BCIR_ATT_COLS*sizeof(float));
-        x.ta=0; x.tb=1; x.m=rows; x.n=cols; x.k=d; x.a=dyh+i0*ldh; x.lda=ldh; x.b=vk+jt*ldk;
-        x.ldb=ldk; x.c=tile; x.ldc=BCIR_ATT_COLS; x.mode=MM_FULL;
-        mm_run(variant,&x);
+        float *tile=jt<BCIR_ATT_KEEP ? kept[jt/BCIR_ATT_COLS] : spare;
+        if (!pass || jt>=BCIR_ATT_KEEP) {
+          memset(tile,0,rows*BCIR_ATT_COLS*sizeof(float));
+          x.ta=0; x.tb=1; x.m=rows; x.n=cols; x.k=d; x.a=dyh+i0*ldh; x.lda=ldh; x.b=vk+jt*ldk;
+          x.ldb=ldk; x.c=tile; x.ldc=BCIR_ATT_COLS; x.mode=MM_FULL;
+          mm_run(variant,&x);
+        }
         for (i=0;i<rows;i++) {
           float *pi=ph+(i0+i)*t; size_t end=i0+i+1<jt+cols ? i0+i+1 : jt+cols;
           for (j=jt;j<end;j++) {

@@ -714,3 +714,14 @@ refuses has none the update reads). GCC and Clang vectorize the generic, AVX2 an
 | four threads, in place, ms | before | NDT-PASS | pair difference |
 |---|---|---|---|
 | the update's first pass | 23.2 / 20.3 / 24.6 | 12.0 / 14.6 / 13.2 | -11.2 / -5.7 / -11.4 |
+
+### 12.2 The probability adjoint evaluated once (NDT-ATTN-1)
+
+The in-place backward evaluates `dp = dY V^T` per row block in two passes, a first for the rows'
+`dot_i` and a second for the score adjoints; both evaluate the same product over the same operands.
+A row block now keeps its first 256 columns' tiles between the passes and evaluates only the
+tiles past them again (through one spare slot). At T=128 that removes the second evaluation entirely: 0.49M of the two passes' 0.98M dp multiply-adds a head.
+
+| attention kernels alone, 9.84M shape, one thread, best of 21, ms | before | NDT-ATTN-1 |
+|---|---|---|
+| the backward, three rounds | 14.71 / 14.55 / 15.36 | 12.07 / 12.28 / 12.48 |

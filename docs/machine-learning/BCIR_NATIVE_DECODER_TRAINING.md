@@ -299,6 +299,16 @@ the loop one element short and the maximum kept as a minimum. Measured in place 
 (the report's §12): the first pass 23.2 / 20.3 / 24.6 -> 12.0 / 14.6 / 13.2 ms in three
 alternated pairs.
 
+The attention backward evaluates its probability adjoint once per row block since NDT-ATTN-1
+(2026-10-13). The in-place backward needs `dp_ij = dy_i . v_j` twice -- a first pass for each
+row's `dot_i = sum_j p_ij dp_ij`, a second for the score adjoint `p_ij (dp_ij - dot_i) scale` --
+and computed it twice, as the reference does, over operands neither pass writes. A row block now
+keeps its first 256 columns' tiles between the passes (32 KB on the task's stack) and a longer
+context evaluates its further tiles in both passes through one spare slot, as every tile was
+before; dq, dk and dv are the reference's bit for bit (the C harness adds a 330-token context,
+past the kept columns, to its attention reference; `tools/testing/faults/ndt-attn.json` NA1-NA3).
+The backward kernel alone on the 9.84M decoder's shape: 14.6-15.4 -> 12.1-12.5 ms at one thread.
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,
