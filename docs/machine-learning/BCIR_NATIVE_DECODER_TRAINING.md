@@ -12,8 +12,8 @@ executes in C. PyTorch remains an independent optional reference.
 | Tensor linear algebra | Register-blocked row-major GEMM: a KCxNR tile of B packed once per (column, depth) block into cache-line-aligned storage and reused by every row, an MRxNR block of C kept in registers across the tile's depth; bit-identical to the ascending-k loop on every input. Portable C everywhere, plus AVX2 and AVX-512 variants on x86-64 Linux (GCC or Clang) chosen per call from the CPU, all bit-identical (`bcir_tensor_mm_variant` runs one). Transpose variants, linear forward, input and accumulated weight VJPs; optional explicit LP64 CBLAS adapter. Two contracts (NDT-FMA): v1, one rounded multiply and one rounded add per term, the default of every gate, row and record; and the fused v2, one IEEE `fmaf` per term for k ascending (a portable `fmaf` instance, AVX2+FMA and AVX-512 instances fusing in registers, all bit-identical to the `fmaf` loop), selected by the state's `contract` (ABI 3) and named in the checkpoint. Three GEMM contracts, selected by the state: v1 (a rounded multiply and a rounded add per term), the fused v2 (one `fmaf` per term, NDT-FMA) and the blocked fused v3 (NDT-KBLOCK: the depth split by one rule into blocks of up to 448, each block's fused chain from zero added to c in order -- the arithmetic OpenBLAS's `sgemm` performs on its SkylakeX target, so that provider is admitted under v3 by a differential over the trainer's own shapes, and the state is one state with it or without it) |
 | Vector math | Stable sigmoid/SiLU, SwiGLU VJP, RMSNorm and gamma VJP, half-split RoPE and its transpose; standard libm without fast-math. Under the `exp` contract (NDT-EXP) SiLU, the SwiGLU VJP and the attention softmax take their exponential from BCIR's own `bcir_tensor_expf` -- one operation sequence on the scalar, AVX2 and AVX-512 instances, no libm, no fma, within 1 ulp of exp in double rounded to binary32 over 2^24 sampled inputs (`train.exp.ulp.max`, stated) |
 | Attention | Causal softmax attention as two masked products per (batch, head) through the GEMM kernel; a backward that rewrites the layer's probabilities in place with their score adjoint and feeds the GEMM kernel (no workspace beyond them); Q/K/V backward, GQA group-gradient accumulation, output projection backward. Both are bit-identical to the scalar reference loops, which `bcir_tensor_attention_backward` keeps |
-| Decoder | Embedding scatter-add backward, both residual paths, both per-layer norms, gate/up/down projections, final norm, tied or untied vocabulary head, mean token cross-entropy |
-| Optimizer | AdamW moments, constant-time bias powers, decoupled decay, global L2 clipping, mean micro-batch accumulation, per-update learning rates. The atomic preflight is skipped only when the magnitudes the first pass records prove it would admit every element; the passes carry the same AVX2/AVX-512 variants and stay bit-identical |
+| Decoder | Embedding scatter-add backward, both residual paths, both per-layer norms, gate/up/down projections, final norm, tied or untied vocabulary head, mean token cross-entropy; the loss's rows, the gamma VJPs' row sums and the embedding scatter run on the pool in the serial order (NDT-REDUCE: rows whose terms the caller adds in row order, column ranges whose sums run over the rows in row order), so every loss and state is the serial one at every thread count under every contract |
+| Optimizer | AdamW moments, constant-time bias powers, decoupled decay, global L2 clipping, mean micro-batch accumulation, per-update learning rates. The atomic preflight is skipped only when the magnitudes the first pass records prove it would admit every element; the passes carry the same AVX2/AVX-512 variants and stay bit-identical The first pass and the preflight run on the pool one task per chunk of `bcir_decoder_reduce_chunk` elements (1,024 doubled until at most 1,024 chunks), their verdicts and maxima exact whatever the partition; the clipping norm is the contract's -- the one index-order chain in double, or under the `reduce` contract (NDT-REDUCE) the chunks' sums added in chunk order from zero, a declared reduction whose shape is a function of the parameter count alone; `bcir_decoder_gradient_norm` reports the square the update takes its root of |
 | Threads | A deterministic pool in memory the caller provides (`bcir_tensor_pool`: `size`/`init`/`stop`, no allocation in the unit; pthreads on POSIX, Win32 threads on Windows, one thread elsewhere; ABI 2 names it in the state, NDT-THREADS). The GEMM is partitioned over (column block, 64-row range) so every output element keeps its depth order; attention over (batch, query head) forward and (batch, KV head) backward with the query heads of one KV head in order, so the shared `dk`/`dv` accumulate as the reference does; SiLU, the SwiGLU VJP, the residual add and gate multiply, RMSNorm, RoPE and the AdamW commit over fixed chunks of elements, rows and positions. The loss, the embedding scatter, the gamma VJP's row sum and the update's norm pass stay serial (index-order reductions). The state after any number of steps is bit-identical at every thread count and to the one-thread trainer; a provider's GEMM or SiLU is threaded as the provider is, the pool runs the rest |
 | Buffer plan | Checked element/byte products, exact sizes for the selected retained-cache algorithm, caller-owned disjoint arenas, one adjoint workspace reused across all layers; no allocation in C |
 | Checkpoint | Atomic JSON + little-endian FP32 weights/moments; SHA-256 covers configuration, counter, bias powers and payload; bounded strict resume, no pickle |
@@ -60,7 +60,10 @@ learning-rate schedule on resume; these are caller inputs rather than checkpoint
 fields. Checkpoint hashes detect corruption and do not authenticate an artifact.
 
 `NativeDecoder(..., contract="fused")` trains under the fused GEMM contract (v2; `"v1"` by default),
-`contract="exp"` under the BCIR exponential, `"fused+exp"` under both;
+`contract="exp"` under the BCIR exponential, `"fused+exp"` under both, `"kblock"` under the blocked
+fused GEMM contract (v3), and any of these with `+reduce` (`"reduce"` alone for v1) under the reduce
+contract, whose clipping norm is the fixed-chunk sum the update's one pooled pass computes
+(NDT-REDUCE);
 the checkpoint names the contract and `resume` restores it, since a state trained under one is not
 the other's. `NativeDecoder(..., threads=n)` runs BCIR's kernels on a pool of `n` threads (one by default;
 `close()` releases them, and `resume(..., threads=n)` continues a checkpoint on any count, since the
@@ -114,7 +117,8 @@ the C rail to it:
 | `train.mm.provider.differences` | exact, host-dependent | of the comparison decoder's 15 step shapes at beta 0 and 1, the cases where OpenBLAS's `sgemm` (one thread) differs in any bit from `bcir_tensor_mm_kblock`: the wheel's target kernels' arithmetic, not BCIR's -- reported everywhere, graded only on the baseline host (0 of 30 on the Intel host's SkylakeX kernels; 14 of 30 on PR #817's AMD host, where the trainer refuses the provider) | 0 (Intel), 14 (AMD) |
 | `train.exp.mismatch` | exact | inputs among 2^24 where two instruction-set instances of the BCIR exponential differ | 0 (2026-10-12, NDT-EXP) |
 | `train.exp.ulp.max` | exact, stated | the exponential's largest distance from exp in double rounded to binary32 over the same inputs | 1 ulp (2026-10-12, NDT-EXP) |
-| `train.state.threads.mismatch` | exact | the state (weights, both moments, the step, the bias powers) after three steps of the threads bench (vocab 250, width 72, 4 heads over 2 KV heads, 2 layers, batch 2 x 40 tokens) on two, three and four threads of the pool, against the one-thread state of the same library, seeded weights, tokens and rates | 0 of 3 (2026-10-12, NDT-THREADS) |
+| `train.state.threads.mismatch` | exact | the state (weights, both moments, the step, the bias powers) after three steps of the threads bench (vocab 250, width 72, 4 heads over 2 KV heads, 2 layers, batch 2 x 40 tokens) on two, three and four threads of the pool, and the losses and clipping norms those steps report, against the one-thread run's on the same library, seeded weights, tokens and rates, under v1 and under the reduce contract | 0 of 6 (2026-10-12, NDT-THREADS; the reduce contract and the reported losses and norms 2026-10-13) |
+| `train.norm.reduce.mismatch` | exact | the clipping norm's square the trainer's first pass computes (`bcir_decoder_gradient_norm`) and the root each update reports, under v1 and under the reduce contract, against the oracle's emulation of that contract from the gradients the backward left (three steps of the threads bench, bit for bit), plus the counts around the chunk rule's first doubling and the 9.84M decoder's on which the C rule and the Python one disagree | 0 of 6 norms and 8 counts (2026-10-13, NDT-REDUCE) |
 | `train.step.ms` | wall, floor in the same run | one native step of the bench decoder against G26's roofline compute term: the counted work at the best rate the same kernel reaches on any of the step's own GEMM shapes | 3.4 ms against a 0.78 ms floor measured beside it (2026-10-11, clang 18; the same host read 4.6 against 1.3 before NDT-CLANG, and NDT-GEM's reading was 6.9 against 2.8) |
 
 The step's floor is a bound on this host's kernel (TMSAO-3), not on the silicon: its peak is a
@@ -196,7 +200,7 @@ worker threads spin between calls contends with the pool's kernels: OpenBLAS's s
 cycles after each call cost the four-thread step a fifth until `OPENBLAS_THREAD_TIMEOUT` was set
 low before the library loaded (the comparison harness sets it; the report's §7 measures it). What
 comes next for
-this trainer -- the plan driving the step's dispatch, tiled attention, the serial reductions --
+this trainer -- the plan driving the step's dispatch, tiled attention --
 is the ladder of
 [the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md).
 
@@ -209,6 +213,34 @@ which now runs per instance. On the step's 15 GEMM shapes the kernel reads 99 GF
 work-weighted at one thread against OpenBLAS's 89 in the same process and 219 on the pool at four
 against OpenBLAS's 219 ([the record](../research/measurements/2026-10-12/block/gemm-rates-block.json);
 the report's §8). The result is the contract's, so the state digests of §7 are unchanged.
+
+The reductions the pool left serial run on it since NDT-REDUCE (2026-10-13). The loss's rows,
+the gamma VJPs' row sums and the embedding scatter are tasks in the serial order -- rows whose
+terms the caller adds in row order, column ranges whose sums run over the rows in row order --
+so every loss and state is the serial one at every thread count under every contract; the
+update's first pass and preflight are one task per chunk of `bcir_decoder_reduce_chunk` elements
+(1,024 doubled until at most 1,024 chunks), their verdicts and maxima exact, and the clipping
+norm is the contract's: the one index-order chain under the contracts that were, or under the
+`reduce` contract the chunks' sums added in chunk order from zero, a declared reduction whose
+shape is a function of the parameter count alone, so the first pass is pooled whole. The reduce
+bit changes the norm's last bits and nothing else; the float rounding of every update absorbs
+that difference for a while (the harness's three steps, the threads bench's three), and once a
+rounding boundary is crossed the state is the reduce contract's own (on the 9.84M decoder within
+twenty steps); the contract's witness is the norm, which the oracle emulates operation for
+operation, and `bcir_decoder_gradient_norm` reports the square the update takes its root of so the
+row compares the sum before the root rounds a difference away. `reduction_references` in the C
+harness holds the pooled loss and scatter to serial references written apart from the pool,
+`pool_identity` holds the twelve contracts' states, losses and norms at one to four threads to the
+serial run and the gamma VJP to the serial kernel, `adamw_reference` holds the update under both
+norm contracts to a reference of each, serially and pooled, `train.norm.reduce.mismatch` holds
+the norms to the oracle's emulation with the chunk rule on both rails, and
+`tools/testing/faults/ndt-reduce.json` holds eleven injected faults (a chunk following the thread
+count, the terms or the rows walked from the last, a chunk's verdict dropped, a ragged tail
+dropped, a rule that never doubles). Measured on the 9.84M decoder
+([the record](../research/measurements/2026-10-13/reduce/), the report's §9): in three same-session pairs at four threads (each contract's breakdown alternated with the other's, minutes apart, so both see one host) the update reads 40.7 / 49.7 / 47.5 ms under `kblock+exp` -- the first pass pooled, the chain serial, NDT-NORM's content -- against 31.8 / 47.2 / 39.6 under `kblock+exp+reduce`, below it in every pair (-9.0 / -2.6 / -7.9), with §8's 53.1 the day before on a faster host; the gamma VJP row 11.0 / 14.3 / 12.4 against 6.7 / 8.8 / 11.8 (-4.3 / -5.5 / -0.6; 9.2 in §8); the step itself is not resolved on this day's host, whose unchanged GEMM rows drifted 20% within the session, more than the slice's effect on the step; the
+1,000-step `kblock+exp+reduce` run trains at 625.8 ms a step on four threads (1419.6
+on one) and ends in `5137e013…`, its own, not §7's `d7fc618c…` (the norm's last bits crossed a float rounding boundary within the first steps, as the 20-step identity rows already show, and the state is the reduce contract's from there), and the one-thread run ends in the same state, the held-out model 1.5003 / 1.6319
+nats per byte as before.
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over

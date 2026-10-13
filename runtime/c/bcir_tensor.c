@@ -920,6 +920,39 @@ void bcir_tensor_rms_pool(bcir_tensor_pool *pool, size_t rows, size_t width, flo
   rms_job j; j.rows=rows; j.width=width; j.eps=eps; j.x=x; j.g=g; j.y=y;
   pool_run(pool,rms_task,&j,(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);
 }
+/* The RMSNorm VJP: rows in ranges of BCIR_ROW_CHUNK (each row's dx and 1/rms its own), then
+ * columns in ranges of BCIR_COL_CHUNK, a column's gamma adjoint summed over the rows in row order
+ * from the value it holds -- the serial kernel's operations, element for element. */
+#define BCIR_COL_CHUNK 16
+typedef struct rmsb_job {
+  size_t rows,width; float eps; const float *x,*g,*dy; float *dx,*dg,*inv;
+} rmsb_job;
+static void rmsb_rows_task(void *ctx, size_t task) {
+  rmsb_job *j=(rmsb_job *)ctx; size_t r,c,w=j->width;
+  size_t r0=task*BCIR_ROW_CHUNK,r1=r0+BCIR_ROW_CHUNK<j->rows ? r0+BCIR_ROW_CHUNK : j->rows;
+  for (r=r0;r<r1;r++) {
+    const float *xr=j->x+r*w,*dyr=j->dy+r*w; float *dxr=j->dx+r*w;
+    float sum=0.0f,dot=0.0f,inv,coeff;
+    for (c=0;c<w;c++) { sum+=xr[c]*xr[c]; dot+=dyr[c]*j->g[c]*xr[c]; }
+    inv=1.0f/sqrtf(sum/(float)w+j->eps); coeff=dot*inv*inv*inv/(float)w;
+    for (c=0;c<w;c++) dxr[c]=dyr[c]*j->g[c]*inv-xr[c]*coeff;
+    j->inv[r]=inv;
+  }
+}
+static void rmsb_cols_task(void *ctx, size_t task) {
+  rmsb_job *j=(rmsb_job *)ctx; size_t r,c,w=j->width;
+  size_t c0=task*BCIR_COL_CHUNK,c1=c0+BCIR_COL_CHUNK<w ? c0+BCIR_COL_CHUNK : w;
+  for (r=0;r<j->rows;r++) {
+    const float *xr=j->x+r*w,*dyr=j->dy+r*w; float inv=j->inv[r];
+    for (c=c0;c<c1;c++) j->dg[c]+=dyr[c]*xr[c]*inv;
+  }
+}
+void bcir_tensor_rms_backward_pool(bcir_tensor_pool *pool, size_t rows, size_t width, float eps,
+    const float *x, const float *g, const float *dy, float *dx, float *dg, float *inv) {
+  rmsb_job j; j.rows=rows; j.width=width; j.eps=eps; j.x=x; j.g=g; j.dy=dy; j.dx=dx; j.dg=dg; j.inv=inv;
+  pool_run(pool,rmsb_rows_task,&j,(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);
+  pool_run(pool,rmsb_cols_task,&j,(width+BCIR_COL_CHUNK-1)/BCIR_COL_CHUNK);
+}
 /* Positions in ranges of BCIR_ROW_CHUNK: a position's angles and rotations are its own. */
 typedef struct rope_job { size_t b,t,heads,dim; double base; float *x; int inverse; } rope_job;
 static void rope_rows(size_t b, size_t t, size_t heads, size_t dim, double base, float *x,

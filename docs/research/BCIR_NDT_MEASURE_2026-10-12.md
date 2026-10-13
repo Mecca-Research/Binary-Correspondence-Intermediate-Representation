@@ -56,6 +56,16 @@ the mismatch counts, the ulp bound -- are the claims.
   four against its 219, bit-identical to the chain on every instance; the step's GEMMs
   569 ms at one thread (952 before), and the 1,000-step run 516 ms a step on four
   threads (753), the same state `d7fc618c…`.
+- **The reductions are on the pool (NDT-REDUCE, §9).** The loss's rows, the gamma VJP's row sums
+  and the embedding scatter run as tasks in the serial order (no bit moves, under any contract);
+  the update's first pass is one task per fixed chunk, and the clipping norm has a declared
+  fixed-chunk contract, the `reduce` bit, emulated exactly by the oracle. In three same-session
+  pairs at four threads the update reads 40.7 / 49.7 / 47.5 ms under `kblock+exp` against
+  31.8 / 47.2 / 39.6 under `kblock+exp+reduce` (-9.0 / -2.6 / -7.9; 53 in §8), the gamma VJP row
+  11.0 / 14.3 / 12.4 against 6.7 / 8.8 / 11.8; the step is unresolved on this day's host
+  (its unchanged GEMM rows drifted 20% within the session), and the 1,000-step
+  `kblock+exp+reduce` run's 625.8 ms a step on four threads (516 the day before) is that
+  host's state, the same held-out model, its own state.
 
 ## 1. Identity: the state is the state, at every thread count and under each contract
 
@@ -291,6 +301,12 @@ python $H identity --data DIR --steps 20 --cc gcc --threads 1,3 --contract kbloc
 for n in 1 4; do python $H bcir-breakdown --data DIR --cc gcc --rounds 5 --threads $n --contract kblock+exp; done
 for b in bcir bcir-openblas; do for n in 1 4; do
   python $H train --data DIR --task lm --backend $b --threads $n --contract kblock+exp --eval-every 100 --lr-scale 0.25; done; done
+# §9: the reductions on the pool, and the reduce contract (the breakdowns alternated, three times each)
+for i in 1 2 3; do for c in kblock+exp kblock+exp+reduce; do
+  python $H bcir-breakdown --data DIR --cc gcc --rounds 5 --threads 4 --contract $c; done; done
+for c in kblock+exp kblock+exp+reduce; do python $H bcir-breakdown --data DIR --cc gcc --rounds 5 --threads 1 --contract $c; done
+python $H identity --data DIR --steps 20 --cc gcc --threads 1,3 --contract reduce,kblock+exp+reduce --variants widest
+for n in 4 1; do python $H train --data DIR --task lm --backend bcir --threads $n --contract kblock+exp+reduce --eval-every 100 --lr-scale 0.25; done
 ```
 
 The GEMM-rate record is the output of a scratch driver over the trainer's own entry points
@@ -500,8 +516,9 @@ Reading:
 - **Where the step is now.** By kernel at four threads: GEMMs 290 ms (531 before), attention
   55, the update 53, norms and RoPE 21, SiLU and the VJP 8, the rest 124 -- the GEMMs are half
   the step for the first time, and the residuals are the ones the ladder names: the serial
-  reductions and the update's first pass (NDT-REDUCE, NDT-NORM), the partition and the two VJPs
-  run concurrently (NDT-SCHED), and the transposed-A packing this slice left open.
+  reductions and the update's first pass (NDT-REDUCE, NDT-NORM -- landed the next day, §9), the
+  partition and the two VJPs run concurrently (NDT-SCHED), and the transposed-A packing this
+  slice left open.
 
 | Exact rows | Result |
 |---|---|
@@ -510,3 +527,97 @@ Reading:
 | the `identity` stage, `kblock` and `kblock+exp`, 1 and 3 threads, the widest, AVX2 and portable builds ([block/identity-block.json](measurements/2026-10-12/block/identity-block.json)) | 9 rows, two states, §7's: `5b92ff75…` under `kblock` and `f19b0d7d…` under `kblock+exp` -- the widest (AVX-512) and AVX2 builds at 1 and 3 threads under both contracts, and the portable build's `kblock` row at one thread; its other three rows were stopped (the portable build's v3 kernel calls `fmaf` per term and takes 66 s a step), an honest gap, not a pass |
 | the 1,000-step `kblock+exp` run on BCIR's kernel, 1 and 4 threads | one state, `d7fc618c9eeb8b6f…`, on both -- §7's state |
 | `ndt-kblock.json`, NK1-NK10 | 10 injected, 10 caught |
+
+## 9. The reductions on the pool (NDT-REDUCE)
+
+§8 left the four-thread step at 550 ms with the GEMMs at 290 and named the residuals: the update's
+53 ms, 41 of them a serial first pass (the clipping norm's index-order chain and the three state
+streams' maxima and finiteness), the gamma VJP's row sum, the loss's rows and the embedding scatter
+-- index-order reductions the pool left serial by the law of NDT-THREADS, which admits only
+partitions in which each output element, and each reduction, is produced by one task in the serial
+order. Three of the four admit such a partition after all, and only the norm needed a contract.
+
+- **The loss's rows** are tasks of sixteen rows: a row's softmax, its adjoint and its term
+  (log-sum-exp plus the maximum less the target's logit, in double, as the serial loop computed it)
+  are its own; the terms are kept as bytes at the scratch arena's start and added in row order by
+  the caller, so the mean is the serial chain, bit for bit.
+- **The gamma VJP** (`bcir_tensor_rms_backward_pool`) runs in two pooled phases: rows for `dx` and
+  each row's `1/rms`, kept in a row of scratch the trainer lends (the query adjoint's region, free
+  until the layer's query VJP), then columns of sixteen for the gamma adjoint, each column's sum
+  over the rows in row order from the value it holds -- the serial kernel's operations, element
+  for element.
+- **The embedding scatter** is tasks over column ranges: a task adds every row's columns to its
+  token's row in row order, so a token the batch repeats accumulates as the serial loop did.
+- **The update's first pass and preflight** are one task per chunk of `bcir_decoder_reduce_chunk`
+  elements -- 1,024 doubled until the chunks number at most 1,024 (16,384 for this decoder's
+  9,836,928 parameters, 601 tasks), their results on the caller's stack -- whose verdicts and
+  maxima are exact whatever the partition. **The clipping norm** is the contract's: under every
+  contract that was, the one index-order chain in double over every element, serial, as before;
+  under the new `reduce` bit (`NativeDecoder(contract="kblock+exp+reduce")`, any contract
+  `+reduce`), each chunk's squares summed in index order in double from zero and the chunk sums
+  added in chunk order from zero. The shape is a function of the parameter count alone, so the
+  norm is the same at every thread count; it is not the chain's norm, so a state trained under it
+  is its own, and the checkpoint names it. The oracle emulates both norms operation for operation
+  (`grad_norm_squared_reference`), `bcir_decoder_gradient_norm` reports the square the update
+  takes its root of (the root rounds a one-ulp difference of the sum away half the time; the
+  square never), and `train.norm.reduce.mismatch` holds every square and root the trainer reports
+  to that emulation.
+
+The reduce bit changes the norm's last bits and nothing else -- a part in 10^12 at most on the
+harness's and the threads bench's steps -- and the float rounding of every update absorbs that for
+a while: the harness's twelve contracts end in six states after three steps, each reduce state its
+chain's, with the norms apart at 15 of 18 steps. On the 9.84M decoder a rounding boundary is
+crossed within the first twenty steps (the identity rows below), and the state is the reduce
+contract's own from there. The contract's witness is the norm.
+
+Two of the sweep's eleven faults were first reported uncaught, and both were the witnesses'
+findings, not the trainer's: the wide fixture's token stream was periodic, so every repeat of a
+token was the same row bit for bit and a reversed accumulation summed the same values (the
+streams now repeat a token without repeating a row), and the norm's root hides a one-ulp change
+of the chunked sum half the time (hence the square's entry, and a three-chunk fixture, since two
+chunks commute).
+
+The step by kernel, GCC 13.3, medians of 5 paired rounds; the four-thread cells are medians over
+3 and 3 breakdowns of each contract alternated minutes apart, so the pair sees
+one host, with every sample in [reduce/](measurements/2026-10-13/reduce/). §8's record of the day
+before is beside them: on this day the host ran the unchanged kernels (the GEMMs, the attention,
+SiLU) 25-45% slower and drifted 20% on the GEMM rows within the session's hour, so
+the same-session pairs are the comparison, §8's column the earlier record, and the step's own
+cell says less than the attributable rows.
+
+| ms | `kblock+exp`, §8, 4 threads | `kblock+exp`, 4 threads | `kblock+exp+reduce`, 4 threads | `kblock+exp`, §8, 1 thread | `kblock+exp`, 1 thread | `kblock+exp+reduce`, 1 thread |
+|---|---:|---:|---:|---:|---:|---:|
+| GEMMs (forward + backward) | 290.2 | 370.9 | 367.4 | 569.1 | 836.9 | 865.0 |
+| attention (forward + backward) | 54.9 | 69.8 | 71.5 | 128.2 | 175.9 | 172.0 |
+| RMSNorm forward + gamma VJP | 13.1 | 17.9 | 13.3 | 18.0 | 26.3 | 21.6 |
+| RoPE, SiLU, the SwiGLU VJP | 15.0 | 19.5 | 20.4 | 27.3 | 40.5 | 48.0 |
+| AdamW update | 53.1 | 47.5 | 39.6 | 73.3 | 104.2 | 106.8 |
+| the rest | 123.2 | 94.0 | 127.4 | 198.1 | 202.8 | 157.0 |
+| **step** | **550.1** | **619.8** | **659.6** | **1014.3** | **1387.1** | **1370.9** |
+
+The 1,000-step language-model run (same data, optimizer and schedule as §4;
+[reduce/runs/](measurements/2026-10-13/reduce/runs/)):
+
+| Run (1,000 steps, batch 8 x 128) | ms/step | tokens/s | train s | val CE | test CE | test acc | answer acc | peak RSS MB | state |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| `kblock+exp`, BCIR's kernel, 4 threads, §8 | 516.3 | 1,983 | 518 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| `kblock+exp+reduce`, 4 threads | 625.8 | 1,636 | 627 | 1.5003 | 1.6319 | 0.5368 | 0.6196 | 546 | `5137e013` |
+| `kblock+exp`, BCIR's kernel, 1 thread, §8 | 973.7 | 1,052 | 983 | 1.5001 | 1.6319 | 0.5375 | 0.6200 | 547 | `d7fc618c` |
+| `kblock+exp+reduce`, 1 thread | 1419.6 | 721 | 1,437 | 1.5003 | 1.6319 | 0.5368 | 0.6196 | 546 | `5137e013` |
+
+Reading:
+
+- **Nothing moved that was not declared to move.** The `kblock+exp` state is §7's `d7fc618c…` on
+  the pooled reductions (the identity rows of the thread-identity test and the harness), and the
+  `reduce` run's state is its own, not §7's `d7fc618c…` (the norm's last bits crossed a float rounding boundary within the first steps, as the 20-step identity rows already show, and the state is the reduce contract's from there), and the one-thread run ends in the same state; its held-out model is the same to four decimals.
+- **The update.** in every pair the reduce contract's update is below its chain's: 40.7 / 49.7 / 47.5 ms under `kblock+exp` (the first pass pooled, its chain serial -- NDT-NORM's content) against 31.8 / 47.2 / 39.6 under `kblock+exp+reduce`, -9.0 / -2.6 / -7.9; §8's record read 53.1 the day before on a faster host. At one thread 104.2 against 106.8: the chain per element is the same work, the pass is one loop fewer.
+- **The rest.** the gamma VJP row, timed alone, 11.0 / 14.3 / 12.4 against 6.7 / 8.8 / 11.8 ms (-4.3 / -5.5 / -0.6; 9.2 in §8 -- the pooled kernel on a slower host); the rest row 94.0 / 50.6 / 141.7 against 57.6 / 141.1 / 127.4 (-36.4 / +90.5 / -14.3) is the step less its parts, each a separate median, so it carries every row's noise and says nothing on this day.
+- **The step.** not resolved on this day's host: the step read 558.0 / 619.8 / 667.8 ms under `kblock+exp` and 552.1 / 659.6 / 677.4 under `kblock+exp+reduce` (-5.8 / +39.8 / +9.6), while the unchanged GEMM rows drifted 20% between the quietest and the busiest breakdown of the session (329.0 / 396.4 / 370.9 under `kblock+exp` alone) -- more than the slice's whole effect on the step, which by its rows is the serial work it removed: about 10-15 ms of the update and 5 of the gamma VJPs at four threads. The 1,000-step run's 625.8 ms a step (516.3 the day before, under `kblock+exp`) is the host's state on this day, not the slice's; a re-measurement on a quiet host is owed and the exact rows are the slice's gate.
+
+| Exact rows | Result |
+|---|---|
+| `train.norm.reduce.mismatch` (the norm's square and root under v1 and under `reduce` against the oracle's emulation over three steps of the threads bench; the chunk rule on both rails at 8 counts) | 0 |
+| `train.state.threads.mismatch`, now under v1 and under `reduce` | 0 of 6 |
+| the C harness: `reduction_references` (the pooled loss and scatter against serial references written apart from the pool, 32 and 40 rows, no pool and a pool of two), `pool_identity` (twelve contracts, the states and the losses and norms the steps report, at one to four threads), the gamma VJP against the serial kernel over three row and three column chunks, `adamw_reference` under both norm contracts on a three-chunk fixture, serially and on a pool of three, the square against the reference's sum | every run bit-identical; the reduce norms apart from the chain's at 15 of 18 and 10 of 10 steps |
+| the `identity` stage, `reduce` and `kblock+exp+reduce`, 1 and 3 threads and a repeat, the widest build ([reduce/identity-reduce.json](measurements/2026-10-13/reduce/identity-reduce.json)) | 8 rows (two contracts, 1 and 3 threads, and a repeat), one state per contract: `4bf4e057…` under `kblock+exp+reduce`, `f5fede12…` under `reduce` -- each identical at every thread count and apart from its chain's 20-step state (`6c0419e8…` under v1, `f19b0d7d…` under `kblock+exp`) |
+| `ndt-reduce.json`, NR1-NR11 | 11 injected, 11 caught |

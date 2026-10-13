@@ -7,9 +7,15 @@
 #include <string.h>
 
 static float w[4096],grad[4096],m[4096],v[4096],act[32768],scratch[32768];
-static bcir_decoder_state fixture(void) {
+/* The fixture: vocab 16, width 8, two heads over one KV head, two layers, feed-forward 16; the
+ * head tied by default, batch 1 by 4 tokens (1,320 parameters: two of the reduce contract's
+ * chunks; four layers make 2,504, three chunks). The wide shape -- batch 5 by 8, 40 rows --
+ * crosses the loss's and the scatter's task chunks; an untied head leaves the embedding's
+ * gradient to the scatter alone. */
+static bcir_decoder_state fixture_of(uint32_t batch,uint32_t time,uint32_t tied,uint32_t layers) {
   bcir_decoder_state s; bcir_decoder_spec spec={16,8,2,1,2,16,1,4,1,10000.0,1e-6};
   size_t i,l,off=128;
+  spec.batch=batch; spec.time=time; spec.tied=tied; spec.layers=layers;
   memset(&s,0,sizeof(s));
   assert(bcir_decoder_make_plan(&spec,&s.plan)==0);
   s.weights=w; s.gradients=grad; s.moment1=m; s.moment2=v;
@@ -19,7 +25,7 @@ static bcir_decoder_state fixture(void) {
   s.beta1_power=s.beta2_power=1.0;
   memset(m,0,sizeof(m)); memset(v,0,sizeof(v)); memset(grad,0,sizeof(grad));
   for (i=0;i<4096;i++) w[i]=0.1f*sinf((float)(i+1)*0.37f);
-  for (l=0;l<2;l++) {
+  for (l=0;l<layers;l++) {
     for (i=0;i<8;i++) w[off+i]=1.0f;
     off+=8+64+32+32+64;
     for (i=0;i<8;i++) w[off+i]=1.0f;
@@ -27,6 +33,15 @@ static bcir_decoder_state fixture(void) {
   }
   for (i=0;i<8;i++) w[off+i]=1.0f;
   return s;
+}
+static bcir_decoder_state fixture(void) { return fixture_of(1,4,1,2); }
+/* Token streams the batch repeats without repeating a row: a period coprime to the batch's
+ * eight positions and the vocabulary, so the repeats of a token sit at different positions with
+ * different neighbours (a periodic stream made every repeat the same row, bit for bit, and a
+ * reversed accumulation of identical rows is the same sum). */
+static void stream(uint32_t *ids,uint32_t *targets,size_t n) {
+  size_t i;
+  for (i=0;i<n;i++) { ids[i]=(uint32_t)((i*37+11)%13+1); targets[i]=(uint32_t)((i*29+5)%16); }
 }
 static void learning(void) {
   bcir_decoder_state s=fixture(); bcir_decoder_adamw opt={0.01,0.9,0.95,1e-8,0.01,1.0};
@@ -76,7 +91,7 @@ static void refusals(void) {
   assert(bcir_decoder_make_plan(&shape,&p)==BCIR_DT_CAPACITY && p.parameters==oldplan.parameters);
   bad=s; bad.plan.scratch++;
   assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
-  bad=s; bad.contract=8;  /* a contract bit the ABI does not define */
+  bad=s; bad.contract=16;  /* a contract bit the ABI does not define */
   assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
   bad=s; bad.contract=BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_KBLOCK;  /* two GEMM contracts at once */
   assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
@@ -105,6 +120,22 @@ static void refusals(void) {
   v[0]=0; grad[0]=NAN;
   assert(bcir_decoder_update(&s,&opt,1,&norm)==BCIR_DT_NUMERIC && s.step==0);
   grad[0]=0;
+  /* the same refusals from the first pass's last chunk (the fixture has two), under the reduce
+   * contract too: every task's verdict reaches the caller */
+  assert(bcir_decoder_reduce_chunk(s.plan.parameters)==1024 && s.plan.parameters>1024);
+  for (i=0;i<2;i++) {
+    size_t last=s.plan.parameters-1; bad=s; bad.contract=i ? BCIR_DT_CONTRACT_REDUCE : 0;
+    grad[last]=NAN;
+    assert(bcir_decoder_update(&bad,&opt,1,&norm)==BCIR_DT_NUMERIC && bad.step==0);
+    grad[last]=0; v[last]=-1;
+    assert(bcir_decoder_update(&bad,&opt,1,&norm)==BCIR_DT_NUMERIC && bad.step==0);
+    v[last]=0; w[last]=INFINITY;
+    assert(bcir_decoder_update(&bad,&opt,1,&norm)==BCIR_DT_NUMERIC && bad.step==0);
+    w[last]=oldw[last]; opt.grad_clip=0; grad[last]=FLT_MAX;
+    assert(bcir_decoder_update(&bad,&opt,1,&norm)==BCIR_DT_NUMERIC && bad.step==0);
+    grad[last]=0; opt.grad_clip=1.0;
+    assert(!memcmp(oldw,w,sizeof(w)) && !memcmp(oldm,m,sizeof(m)) && !memcmp(oldv,v,sizeof(v)));
+  }
   /* a finite gradient whose second moment leaves float's range: refused, nothing written */
   opt.grad_clip=0; grad[7]=FLT_MAX;
   assert(bcir_decoder_update(&s,&opt,1,&norm)==BCIR_DT_NUMERIC && s.step==0);
@@ -247,14 +278,32 @@ static void attention_reference(void) {
 /* The AdamW update as it was written before its passes were restructured -- the reference the
  * update must match bit for bit, state and verdict, on the fast path (the magnitudes prove the
  * preflight would admit everything) and on the preflight path alike. */
+/* The reduce contract's chunk rule and norm, written apart from the unit: 1024 doubled until
+ * at most 1024 chunks; each chunk's squares in index order in double from zero, the chunk sums
+ * added in chunk order from zero. */
+static size_t ref_chunk(size_t n) {
+  size_t chunk=1024;
+  while ((n+chunk-1)/chunk>1024) chunk*=2;
+  return chunk;
+}
+static double ref_norm(const float *gr,size_t n,double gs,int reduce) {
+  size_t i,start,chunk=ref_chunk(n); double norm=0.0;
+  if (!reduce) { for (i=0;i<n;i++) { double g=(double)gr[i]*gs; norm+=g*g; } return norm; }
+  for (start=0;start<n;start+=chunk) {
+    size_t end=start+chunk<n ? start+chunk : n; double part=0.0;
+    for (i=start;i<end;i++) { double g=(double)gr[i]*gs; part+=g*g; }
+    norm+=part;
+  }
+  return norm;
+}
 static int ref_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,double gs,double *gn) {
-  size_t i,n=s->plan.parameters; double norm=0.0,scale,b1,b2; int bad=0;
+  size_t i,n=s->plan.parameters; double norm,scale,b1,b2; int bad=0;
   for (i=0;i<n;i++) {
     double g=(double)s->gradients[i]*gs;
     if (!isfinite(g) || !isfinite(s->weights[i]) || !isfinite(s->moment1[i]) ||
         !isfinite(s->moment2[i]) || s->moment2[i]<0) return BCIR_DT_NUMERIC;
-    norm+=g*g;
   }
+  norm=ref_norm(s->gradients,n,gs,(s->contract&BCIR_DT_CONTRACT_REDUCE)!=0);
   norm=sqrt(norm); if (!isfinite(norm)) return BCIR_DT_NUMERIC;
   scale=gs;
   if (o->grad_clip>0 && norm>o->grad_clip) scale*=o->grad_clip/(norm+1e-6);
@@ -281,45 +330,79 @@ static int ref_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,double g
   return BCIR_DT_OK;
 }
 static void adamw_reference(void) {
-  static float w2[4096],g2[4096],m12[4096],m22[4096];
-  bcir_decoder_state s=fixture(),r; size_t n=s.plan.parameters,i,step;
+  static float w2[4096],g2[4096],m12[4096],m22[4096]; static double norms[2][12];
+  bcir_decoder_state s=fixture_of(1,4,1,4),r; size_t n=s.plan.parameters,i,step,reduce;
   /* clipping on and off, scaled gradients, decay; a moment of 1e30 with an epsilon of 1e-40
    * fails the magnitude bound (the preflight runs and admits the update), and a learning rate
-   * of 1e300 fails it too and is refused by the preflight -- state untouched either way */
+   * of 1e300 fails it too and is refused by the preflight -- state untouched either way; the
+   * whole table under v1's chain and under the reduce contract's chunks (NDT-REDUCE), each
+   * against its own reference, on a pool of three as well as serially */
   static const double cases[][5]={{0.01,0.01,1.0,1.0,1e-8},{0.003,0.1,0.0,0.5,1e-8},
       {0.02,0.0,0.05,2.0,1e-8},{0.001,0.01,1.0,1.0,1e-40},{1e300,0.0,0.0,1.0,1e-8}};
-  r=s; r.weights=w2; r.gradients=g2; r.moment1=m12; r.moment2=m22;
-  for (i=0;i<n;i++) {
-    w[i]=0.1f*sinf((float)i*0.13f); grad[i]=0.05f*cosf((float)i*0.71f)*(i%5 ? 1.0f : 20.0f);
-    m[i]=0.0f; v[i]=0.0f;
+  static _Alignas(max_align_t) unsigned char pool_memory[4096]; bcir_tensor_pool *pool=NULL;
+  unsigned differ=0;
+  assert(ref_chunk(1)==1024 && ref_chunk(1048576)==1024 && ref_chunk(1048577)==2048 &&
+      ref_chunk(9836928)==16384 && bcir_decoder_reduce_chunk(1)==1024 &&
+      bcir_decoder_reduce_chunk(1048576)==1024 && bcir_decoder_reduce_chunk(1048577)==2048 &&
+      bcir_decoder_reduce_chunk(9836928)==16384);
+  if (bcir_tensor_pool_size(3)) {
+    pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),3); assert(pool!=NULL);
   }
-  memcpy(w2,w,n*sizeof(float)); memcpy(g2,grad,n*sizeof(float));
-  memcpy(m12,m,n*sizeof(float)); memcpy(m22,v,n*sizeof(float));
-  for (step=0;step<12;step++) {
-    const double *c=cases[step%5]; bcir_decoder_adamw o={c[0],0.9,0.95,c[4],c[1],c[2]};
-    double na=-1.0,nb=-2.0; int ra,rb;
-    if (step%5==3) { m[3]=m12[3]=1e30f; v[3]=m22[3]=1e30f; }
-    ra=bcir_decoder_update(&s,&o,c[3],&na); rb=ref_update(&r,&o,c[3],&nb);
-    assert(ra==rb && (ra==BCIR_DT_OK)==(step%5!=4));
-    assert(!memcmp(w,w2,n*sizeof(float)) && !memcmp(m,m12,n*sizeof(float)) &&
-        !memcmp(v,m22,n*sizeof(float)) && s.step==r.step);
-    assert(!memcmp(&s.beta1_power,&r.beta1_power,sizeof(double)) &&
-        !memcmp(&s.beta2_power,&r.beta2_power,sizeof(double)));
-    if (ra==BCIR_DT_OK) assert(!memcmp(&na,&nb,sizeof(double)));
-    for (i=0;i<n;i++) grad[i]=g2[i]=0.05f*sinf((float)(i+step)*0.97f)*(i%7 ? 1.0f : 30.0f);
+  assert(n==2504 && bcir_decoder_reduce_chunk(n)==1024);  /* three chunks: an order is visible */
+  for (reduce=0;reduce<4;reduce++) {
+    s=fixture_of(1,4,1,4); s.contract=reduce&1 ? BCIR_DT_CONTRACT_REDUCE : 0; s.pool=reduce&2 ? pool : NULL;
+    r=s; r.weights=w2; r.gradients=g2; r.moment1=m12; r.moment2=m22; r.pool=NULL;
+    for (i=0;i<n;i++) {
+      w[i]=0.1f*sinf((float)i*0.13f); grad[i]=0.05f*cosf((float)i*0.71f)*(i%5 ? 1.0f : 20.0f);
+      m[i]=0.0f; v[i]=0.0f;
+    }
+    memcpy(w2,w,n*sizeof(float)); memcpy(g2,grad,n*sizeof(float));
+    memcpy(m12,m,n*sizeof(float)); memcpy(m22,v,n*sizeof(float));
+    for (step=0;step<12;step++) {
+      const double *c=cases[step%5]; bcir_decoder_adamw o={c[0],0.9,0.95,c[4],c[1],c[2]};
+      double na=-1.0,nb=-2.0; int ra,rb;
+      if (step%5==3) { m[3]=m12[3]=1e30f; v[3]=m22[3]=1e30f; }
+      /* the square the update takes its root of is the reference's sum, bit for bit */
+      {
+        double have=-1.0,want=ref_norm(grad,n,c[3],(int)(reduce&1));
+        assert(bcir_decoder_gradient_norm(&s,c[3],&have)==BCIR_DT_OK && !memcmp(&have,&want,sizeof(double)));
+      }
+      ra=bcir_decoder_update(&s,&o,c[3],&na); rb=ref_update(&r,&o,c[3],&nb);
+      assert(ra==rb && (ra==BCIR_DT_OK)==(step%5!=4));
+      assert(!memcmp(w,w2,n*sizeof(float)) && !memcmp(m,m12,n*sizeof(float)) &&
+          !memcmp(v,m22,n*sizeof(float)) && s.step==r.step);
+      assert(!memcmp(&s.beta1_power,&r.beta1_power,sizeof(double)) &&
+          !memcmp(&s.beta2_power,&r.beta2_power,sizeof(double)));
+      if (ra==BCIR_DT_OK) assert(!memcmp(&na,&nb,sizeof(double)));
+      if (reduce<2) norms[reduce][step]=na; else assert(!memcmp(&norms[reduce&1][step],&na,sizeof(double)));
+      for (i=0;i<n;i++) grad[i]=g2[i]=0.05f*sinf((float)(i+step)*0.97f)*(i%7 ? 1.0f : 30.0f);
+    }
   }
-  puts("  PASS native AdamW: bit-identical to the reference update, bounded and preflight paths");
+  /* the two contracts' norms are one value to a part in 10^12 and not one double: the chunks
+   * round apart from the chain on these gradients at some of the admitted steps */
+  for (step=0;step<12;step++) if (step%5!=4) {
+    assert(fabs(norms[0][step]-norms[1][step])<=1e-12*norms[0][step]);
+    differ+=memcmp(&norms[0][step],&norms[1][step],sizeof(double))!=0;
+  }
+  assert(differ>0);
+  bcir_tensor_pool_stop(pool);
+  printf("  PASS native AdamW: bit-identical to the reference update, bounded and preflight paths, "
+      "under the chain and the reduce contract (norms apart at %u of 10 steps), serially and pooled\n",differ);
 }
 /* NDT-THREADS: the pool kernels at one to four threads against the serial kernels and the
  * scalar references, bit for bit -- GEMM shapes that cross the 64-row tasks and both column-block
  * widths over every transpose pair with a beta that scales, causal GQA attention forward and
  * in-place backward against the reference loops (one task per KV head, its query heads in order),
- * SiLU, the SwiGLU VJP, RMSNorm, RoPE, the residual add and gate multiply over more than one
- * chunk, the task runner itself, and three complete training steps of the fixture through
+ * SiLU, the SwiGLU VJP, RMSNorm and its VJP (three row chunks and three column chunks of the
+ * gamma adjoint, accumulated from what it holds), RoPE, the residual add and gate multiply over
+ * more than one chunk, the task runner itself, and three complete training steps of the wide
+ * fixture (40 rows: three chunks of the loss's rows, tokens the batch repeats) through
  * bcir_decoder_run on a state that names the pool, under every contract (v1, the fused GEMM, the
- * BCIR exponential, both: four states, each its own). The pool lives in the harness's own block
- * (no memory, too little, or misaligned memory is refused); a host without a thread rail admits
- * one thread only: the kernels still run there, serially, and the wider pools have no size. */
+ * BCIR exponential, both, the blocked GEMM alone and with the exponential, and each of the six
+ * under the reduce contract: twelve states, each its own, with the losses and norms the steps
+ * report). The pool lives in the harness's own block (no memory, too little, or misaligned
+ * memory is refused); a host without a thread rail admits one thread only: the kernels still run
+ * there, serially, and the wider pools have no size. */
 static void count_task(void *ctx, size_t task) { ((unsigned char *)ctx)[task]++; }
 static void pool_identity(void) {
   static float a[14000],b[14000],c0[20000],c1[20000],init[20000];
@@ -327,14 +410,18 @@ static void pool_identity(void) {
       p1[2*8*70*70],y0[2*70*8*48],y1[2*70*8*48],dq0[2*70*8*48],dq1[2*70*8*48],
       dk0[2*70*4*130],dk1[2*70*4*130],dv0[2*70*4*130],dv1[2*70*4*130];
   static float x[20000],u[20000],g[20000],e0[20000],e1[20000],f0[20000],f1[20000],gamma[37];
-  static float ref[8][3][4096]; static unsigned char hits[300]; uint32_t contract,other;
-  static const uint32_t contracts[]={0,1,2,3,4,6};  /* v1; fused; exp; fused+exp; kblock; kblock+exp */
-  size_t ci,cj;
+  static float dg0[37],dg1[37],inv[40];
+  static float ref[16][3][4096]; static bcir_decoder_event refev[16][3];
+  static unsigned char hits[300]; uint32_t contract,other;
+  /* v1; fused; exp; fused+exp; kblock; kblock+exp; each with the reduce bit */
+  static const uint32_t contracts[]={0,1,2,3,4,6,8,9,10,11,12,14};
+  size_t ci,cj,nc=sizeof(contracts)/sizeof(contracts[0]);
   static _Alignas(max_align_t) unsigned char pool_memory[4096];
   static const size_t gemm_shapes[][3]={{200,100,70},{1,1,1},{65,33,64},{129,65,3},{64,130,1},{3,200,2}};
   static const size_t att_shapes[][5]={{2,70,8,4,48},{1,33,3,1,65},{2,64,4,1,24},{1,1,1,1,2}};
-  uint32_t ids[12],targets[12]; bcir_decoder_event events[3]; size_t done;
-  bcir_decoder_adamw opt={0.01,0.9,0.95,1e-8,0.01,1.0};
+  uint32_t ids[120],targets[120]; bcir_decoder_event events[3]; size_t done; unsigned apart=0;
+  /* the clip engages at every step, so a norm that rounds apart leaves a state apart */
+  bcir_decoder_adamw opt={0.01,0.9,0.95,1e-8,0.01,0.05};
   unsigned threads,ran=0; size_t i,s,ta,tb; int rails=bcir_tensor_pool_rails();
   assert(bcir_tensor_pool_size(0)==0 && bcir_tensor_pool_size(4097)==0);
   assert(bcir_tensor_pool_init(NULL,sizeof(pool_memory),1)==NULL);
@@ -344,16 +431,34 @@ static void pool_identity(void) {
   for (i=0;i<14000;i++) { a[i]=sinf((float)i*0.71f)*(i%3 ? 4.0f : 0.125f); b[i]=cosf((float)i*1.37f)-0.25f; }
   for (i=0;i<20000;i++) { x[i]=sinf((float)i*0.37f)*3.0f; u[i]=cosf((float)i*0.53f)*1.3f; g[i]=sinf((float)i*0.29f)-0.1f; }
   for (i=0;i<37;i++) gamma[i]=1.0f+0.1f*sinf((float)i);
-  for (i=0;i<12;i++) { ids[i]=(uint32_t)(i%4+1); targets[i]=(uint32_t)(i%4+2); }
-  for (ci=0;ci<6;ci++) {
-    bcir_decoder_state st=fixture(); contract=contracts[ci]; st.contract=contract;
-    assert(bcir_decoder_run(&st,&opt,ids,targets,12,NULL,3,events,3,&done)==0 && done==3);
+  stream(ids,targets,120);
+  for (ci=0;ci<nc;ci++) {
+    bcir_decoder_state st=fixture_of(5,8,1,2); contract=contracts[ci]; st.contract=contract;
+    assert(bcir_decoder_run(&st,&opt,ids,targets,120,NULL,3,events,3,&done)==0 && done==3);
     memcpy(ref[contract][0],w,sizeof(w)); memcpy(ref[contract][1],m,sizeof(m)); memcpy(ref[contract][2],v,sizeof(v));
+    memcpy(refev[contract],events,sizeof(events));
   }
-  for (ci=0;ci<6;ci++) for (cj=0;cj<ci;cj++) {
+  /* each GEMM and exponential contract its own state; the reduce bit changes the norm's last
+   * bits and nothing else, so its states are compared through the norms the steps report: a part
+   * in 10^12 apart at most, the same loss at the first step (the state is the same until the
+   * first update), and apart in some bit at some step -- a difference the float rounding of every
+   * update absorbs over these three steps, so the reduce states coincide with their chain's here,
+   * while over a long run they need not (bcir_decoder_train.h: a state is its contract's) */
+  for (ci=0;ci<nc;ci++) for (cj=0;cj<ci;cj++) {
     contract=contracts[ci]; other=contracts[cj];
-    assert(memcmp(ref[contract][0],ref[other][0],sizeof(w))!=0);  /* each contract its own state */
+    if ((contract^other)==BCIR_DT_CONTRACT_REDUCE) continue;
+    assert(memcmp(ref[contract][0],ref[other][0],sizeof(w))!=0);
   }
+  for (ci=0;ci<nc;ci++) if (contracts[ci]&BCIR_DT_CONTRACT_REDUCE) {
+    contract=contracts[ci]; other=contract&~(uint32_t)BCIR_DT_CONTRACT_REDUCE;
+    assert(!memcmp(&refev[contract][0].loss,&refev[other][0].loss,sizeof(double)));
+    for (i=0;i<3;i++) {
+      double na=refev[contract][i].grad_norm,nb=refev[other][i].grad_norm;
+      assert(fabs(na-nb)<=1e-12*nb);
+      apart+=memcmp(&na,&nb,sizeof(double))!=0;
+    }
+  }
+  assert(apart>0);
   for (threads=1;threads<=4;threads++) {
     size_t need=bcir_tensor_pool_size(threads); bcir_tensor_pool *pool;
     if (!need) { assert(threads>1 && rails==0); continue; }
@@ -403,24 +508,70 @@ static void pool_identity(void) {
     memcpy(e1,u,sizeof(e1)); bcir_tensor_mul_pool(pool,20000,x,e1); assert(!memcmp(e0,e1,sizeof(e0)));
     bcir_tensor_rms(40,37,1e-5f,x,gamma,e0); bcir_tensor_rms_pool(pool,40,37,1e-5f,x,gamma,e1);
     assert(!memcmp(e0,e1,40*37*sizeof(float)));
+    for (i=0;i<37;i++) dg0[i]=dg1[i]=0.5f*cosf((float)i);
+    memset(inv,0,sizeof(inv));
+    bcir_tensor_rms_backward(40,37,1e-5f,x,gamma,g,e0,dg0);
+    bcir_tensor_rms_backward_pool(pool,40,37,1e-5f,x,gamma,g,e1,dg1,inv);
+    assert(!memcmp(e0,e1,40*37*sizeof(float)) && !memcmp(dg0,dg1,sizeof(dg0)) && inv[39]!=0.0f);
     memcpy(f0,x,sizeof(f0)); bcir_tensor_rope(2,40,3,8,10000.0,f0,0);
     memcpy(f1,x,sizeof(f1)); bcir_tensor_rope_pool(pool,2,40,3,8,10000.0,f1,0);
     assert(!memcmp(f0,f1,2*40*3*8*sizeof(float)));
     bcir_tensor_rope(2,40,3,8,10000.0,f0,1); bcir_tensor_rope_pool(pool,2,40,3,8,10000.0,f1,1);
     assert(!memcmp(f0,f1,2*40*3*8*sizeof(float)));
-    /* the state after three steps on this pool is the serial state, under every contract */
-    for (ci=0;ci<6;ci++) {
-      bcir_decoder_state st=fixture(); contract=contracts[ci]; st.pool=pool; st.contract=contract;
-      assert(bcir_decoder_run(&st,&opt,ids,targets,12,NULL,3,events,3,&done)==0 && done==3);
+    /* the state after three steps on this pool is the serial state, and the losses and norms
+     * the steps report the serial ones, under every contract */
+    for (ci=0;ci<nc;ci++) {
+      bcir_decoder_state st=fixture_of(5,8,1,2); contract=contracts[ci]; st.pool=pool; st.contract=contract;
+      memset(events,0,sizeof(events));
+      assert(bcir_decoder_run(&st,&opt,ids,targets,120,NULL,3,events,3,&done)==0 && done==3);
       assert(!memcmp(ref[contract][0],w,sizeof(w)) && !memcmp(ref[contract][1],m,sizeof(m)) &&
-          !memcmp(ref[contract][2],v,sizeof(v)));
+          !memcmp(ref[contract][2],v,sizeof(v)) && !memcmp(refev[contract],events,sizeof(events)));
     }
     bcir_tensor_pool_stop(pool); bcir_tensor_pool_stop(pool);
     assert(bcir_tensor_pool_threads(pool)==1);
   }
   bcir_tensor_pool_stop(NULL);
   printf("  PASS native pool kernels and the training step bit-identical to the serial kernels and "
-      "references at %u thread count(s) (rail %d)\n",ran,rails);
+      "references at %u thread count(s) (rail %d), %u contracts, the reduce norms apart at %u of 18 steps\n",
+      ran,rails,(unsigned)nc,apart);
+}
+/* NDT-REDUCE: the pooled reductions against serial references written apart from the pool --
+ * the loss as the row-order chain of the rows' terms recomputed from the logits the forward
+ * left, and the embedding's gradient (an untied head leaves it to the scatter alone) as the
+ * row-order scatter of the final adjoint the backward leaves at the scratch arena's start; the
+ * wide fixture (three row chunks, tokens the batch repeats) on no pool and on a pool of two. */
+static void reduction_references(void) {
+  static _Alignas(max_align_t) unsigned char pool_memory[4096]; static float ref[128];
+  uint32_t ids[40],targets[40]; size_t i,j,n,d=8,vocab=16; unsigned pools=0,p;
+  for (p=0;p<4;p++) {
+    /* batch 4 (32 rows: the mean's division by a power of two is exact, so the loss carries the
+     * chain's every bit) and batch 5 (40 rows: a ragged row chunk), on no pool and a pool of two */
+    bcir_decoder_state s=fixture_of(p&1 ? 5 : 4,8,0,2); bcir_tensor_pool *pool=NULL; double loss,ce=0.0;
+    const float *logits,*cur;
+    n=s.plan.spec.batch*8; stream(ids,targets,n);
+    if (p&2) {
+      if (!bcir_tensor_pool_size(2)) continue;
+      pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),2); assert(pool!=NULL);
+    }
+    s.pool=pool; pools++;
+    assert(s.plan.parameters==1448);  /* the untied head's 128 after the tied fixture's 1,320 */
+    assert(bcir_decoder_loss_backward(&s,ids,targets,n,0,&loss)==0);
+    logits=act+s.plan.activations-n*vocab; cur=scratch;
+    for (i=0;i<n;i++) {
+      float maxv=logits[i*vocab]; double sum=0.0;
+      for (j=1;j<vocab;j++) if (logits[i*vocab+j]>maxv) maxv=logits[i*vocab+j];
+      for (j=0;j<vocab;j++) sum+=exp((double)logits[i*vocab+j]-maxv);
+      ce+=log(sum)+(double)maxv-logits[i*vocab+targets[i]];
+    }
+    ce/=(double)n;
+    assert(!memcmp(&loss,&ce,sizeof(double)));
+    memset(ref,0,sizeof(ref));
+    for (i=0;i<n;i++) for (j=0;j<d;j++) ref[(size_t)ids[i]*d+j]+=cur[i*d+j];
+    assert(!memcmp(ref,grad,vocab*d*sizeof(float)));
+    bcir_tensor_pool_stop(pool);
+  }
+  printf("  PASS native pooled reductions: the loss is the rows' chain and the embedding gradient "
+      "the row-order scatter, %u runs over two shapes on no pool and a pool of two\n",pools);
 }
 /* The fused contract (v2, NDT-FMA): beta first, then one fmaf per term for k ascending -- checked
  * bit for bit against that loop over the same shapes, transposes and scalings as v1, on every
@@ -633,5 +784,6 @@ static void exp_contract(void) {
 }
 int main(void) {
   gemm_contract(); attention_reference(); adamw_reference(); finite_differences(); refusals();
-  learning(); pool_identity(); gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); return 0;
+  learning(); pool_identity(); reduction_references(); gemm_fused_contract(); gemm_kblock_contract();
+  exp_contract(); return 0;
 }

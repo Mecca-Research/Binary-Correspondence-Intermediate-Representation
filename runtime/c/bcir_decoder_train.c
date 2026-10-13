@@ -59,7 +59,8 @@ static int valid(bcir_decoder_state *s) {
   if (rc) return rc;
   if (p.parameters!=s->plan.parameters || p.activations!=s->plan.activations ||
       p.scratch!=s->plan.scratch) return BCIR_DT_INVALID;
-  if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_KBLOCK)) return BCIR_DT_INVALID;
+  if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_KBLOCK|
+      BCIR_DT_CONTRACT_REDUCE)) return BCIR_DT_INVALID;
   if ((s->contract&BCIR_DT_CONTRACT_FUSED) && (s->contract&BCIR_DT_CONTRACT_KBLOCK)) return BCIR_DT_INVALID;  /* one GEMM contract */
   ptr[0]=s->weights; ptr[1]=s->gradients; ptr[2]=s->moment1; ptr[3]=s->moment2;
   ptr[4]=s->activations; ptr[5]=s->scratch;
@@ -134,8 +135,11 @@ static cache activations(float *x,geometry g) {
  * SwiGLU VJP and the attention softmax (v1 libm, or v2 the BCIR exponential); every other kernel
  * runs on the state's pool, serial when it is NULL. The pool
  * kernels' partitions are fixed by the shapes (bcir_tensor.h), so the step is bit-identical at
- * every thread count; the loss, the embedding scatter, the gamma VJP's row sum and the
- * update's first pass stay serial, each an index-order reduction. */
+ * every thread count: the loss's rows are tasks whose terms the caller adds in row order, the
+ * gamma VJP's row sums and the embedding scatter are tasks over column ranges, each column's
+ * sum in row order (NDT-REDUCE); the update's first pass is tasks over fixed chunks whose maxima
+ * and verdicts are exact, with the clipping norm one index-order chain unless the reduce
+ * contract names the chunks. */
 static void gemm(bcir_decoder_state *s,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
     const float *a,const float *b,float beta,float *c) {
   if (s->provider.mm) s->provider.mm(s->provider.ctx,ta,tb,m,n,k,alpha,a,b,beta,c);
@@ -204,9 +208,46 @@ int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t n) 
   forward(s,tokens,g);
   return finite_span(s->activations,s->plan.activations) ? BCIR_DT_OK : BCIR_DT_NUMERIC;
 }
+/* The loss's rows in ranges of BCIR_DT_ROW_CHUNK: a row's softmax, its adjoint and its term
+ * (log-sum-exp plus the maximum less the target's logit, in double, as the serial loop computed
+ * it) are its own; the terms are kept as bytes in the scratch arena and added in row order by the
+ * caller, so the mean is the serial chain. */
+#define BCIR_DT_ROW_CHUNK 16
+#define BCIR_DT_COL_CHUNK 16
+typedef struct loss_job {
+  size_t n,v; const float *logits; const uint32_t *targets; float *dl; unsigned char *terms;
+} loss_job;
+static void loss_task(void *ctx,size_t task) {
+  loss_job *jb=(loss_job *)ctx; size_t i,j,v=jb->v;
+  size_t i0=task*BCIR_DT_ROW_CHUNK,i1=i0+BCIR_DT_ROW_CHUNK<jb->n ? i0+BCIR_DT_ROW_CHUNK : jb->n;
+  for (i=i0;i<i1;i++) {
+    const float *row=jb->logits+i*v; float *d=jb->dl+i*v; float maxv=row[0]; double sum=0.0,term;
+    for (j=1;j<v;j++) if (row[j]>maxv) maxv=row[j];
+    for (j=0;j<v;j++) sum+=exp((double)row[j]-maxv);
+    term=log(sum)+(double)maxv-row[jb->targets[i]];
+    for (j=0;j<v;j++) d[j]=(float)((exp((double)row[j]-maxv)/sum-
+        (j==jb->targets[i] ? 1.0 : 0.0))/(double)jb->n);
+    memcpy(jb->terms+i*sizeof(double),&term,sizeof(double));
+  }
+}
+/* The embedding scatter in column ranges: a task adds every row's columns to its token's row in
+ * row order, so a token the batch repeats accumulates as the serial loop did. */
+typedef struct scatter_job { size_t n,d; const uint32_t *tokens; const float *dx; float *grad; } scatter_job;
+static void scatter_task(void *ctx,size_t task) {
+  scatter_job *jb=(scatter_job *)ctx; size_t i,c,d=jb->d;
+  size_t c0=task*BCIR_DT_COL_CHUNK,c1=c0+BCIR_DT_COL_CHUNK<d ? c0+BCIR_DT_COL_CHUNK : d;
+  for (i=0;i<jb->n;i++) {
+    float *row=jb->grad+(size_t)jb->tokens[i]*d; const float *src=jb->dx+i*d;
+    for (c=c0;c<c1;c++) row[c]+=src[c];
+  }
+}
+static void rms_backward(bcir_decoder_state *s,size_t rows,size_t width,const float *x,
+    const float *g,const float *dy,float *dx,float *dg,float *inv) {
+  bcir_tensor_rms_backward_pool(s->pool,rows,width,(float)s->plan.spec.rms_eps,x,g,dy,dx,dg,inv);
+}
 int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
     const uint32_t *targets,size_t n,int accumulate,double *loss) {
-  geometry g; size_t i,j,l; double ce=0.0;
+  geometry g; size_t i,l; double ce=0.0; loss_job lj; scatter_job sj;
   float *xs,*cs,*norm,*logits,*cur,*tmp,*dn,*dq,*dk,*dv,*dc,*dg,*du,*dh,*dl;
   float *final,*dfinal,*head,*dhead; int rc=valid(s);
   if (rc) return rc;
@@ -225,16 +266,17 @@ int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
   final=s->weights+g.v*g.d+g.l*g.lp; dfinal=s->gradients+g.v*g.d+g.l*g.lp;
   head=s->plan.spec.tied ? s->weights : final+g.d;
   dhead=s->plan.spec.tied ? s->gradients : dfinal+g.d;
+  /* the rows' terms live at the arena's start (8n bytes within cur, tmp and dn: regions the
+   * head's VJP writes only after they are added) */
+  lj.n=g.n; lj.v=g.v; lj.logits=logits; lj.targets=targets; lj.dl=dl;
+  lj.terms=(unsigned char *)s->scratch;
+  bcir_tensor_pool_run(s->pool,loss_task,&lj,(g.n+BCIR_DT_ROW_CHUNK-1)/BCIR_DT_ROW_CHUNK);
   for (i=0;i<g.n;i++) {
-    float maxv=logits[i*g.v]; double sum=0.0;
-    for (j=1;j<g.v;j++) if (logits[i*g.v+j]>maxv) maxv=logits[i*g.v+j];
-    for (j=0;j<g.v;j++) sum+=exp((double)logits[i*g.v+j]-maxv);
-    ce+=log(sum)+(double)maxv-logits[i*g.v+targets[i]];
-    for (j=0;j<g.v;j++) dl[i*g.v+j]=(float)((exp((double)logits[i*g.v+j]-maxv)/sum-
-        (j==targets[i] ? 1.0 : 0.0))/(double)g.n);
+    double term; memcpy(&term,lj.terms+i*sizeof(double),sizeof(double)); ce+=term;
   }
   linear_backward(s,g.n,g.d,g.v,norm,head,dl,dn,dhead,0.0f);
-  bcir_tensor_rms_backward(g.n,g.d,(float)s->plan.spec.rms_eps,xs+g.l*g.nd,final,dn,cur,dfinal);
+  /* each gamma VJP keeps its rows' 1/rms in dq, free until the layer's query VJP */
+  rms_backward(s,g.n,g.d,xs+g.l*g.nd,final,dn,cur,dfinal,dq);
   for (l=g.l;l-->0;) {
     layer p=params(s->weights+g.v*g.d+l*g.lp,g);
     layer grad=params(s->gradients+g.v*g.d+l*g.lp,g);
@@ -243,7 +285,7 @@ int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
     swiglu_backward(s,g.nf,a.gate,a.up,dh,dg,du);
     linear_backward(s,g.n,g.d,g.f,a.n2,p.gate,dg,dn,grad.gate,0.0f);
     linear_backward(s,g.n,g.d,g.f,a.n2,p.up,du,dn,grad.up,1.0f);
-    bcir_tensor_rms_backward(g.n,g.d,(float)s->plan.spec.rms_eps,a.x2,p.norm2,dn,tmp,grad.norm2);
+    rms_backward(s,g.n,g.d,a.x2,p.norm2,dn,tmp,grad.norm2,dq);
     bcir_tensor_add_pool(s->pool,g.nd,tmp,cur);
     linear_backward(s,g.n,g.d,g.d,a.ctx,p.o,cur,dc,grad.o,0.0f);
     /* the layer's probabilities are read for the last time here: the in-place backward
@@ -255,10 +297,11 @@ int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
     linear_backward(s,g.n,g.d,g.d,a.n1,p.q,dq,dn,grad.q,0.0f);
     linear_backward(s,g.n,g.d,g.k,a.n1,p.k,dk,dn,grad.k,1.0f);
     linear_backward(s,g.n,g.d,g.k,a.n1,p.v,dv,dn,grad.v,1.0f);
-    bcir_tensor_rms_backward(g.n,g.d,(float)s->plan.spec.rms_eps,x,p.norm1,dn,tmp,grad.norm1);
+    rms_backward(s,g.n,g.d,x,p.norm1,dn,tmp,grad.norm1,dq);
     bcir_tensor_add_pool(s->pool,g.nd,tmp,cur);
   }
-  for (i=0;i<g.n;i++) for (j=0;j<g.d;j++) s->gradients[(size_t)tokens[i]*g.d+j]+=cur[i*g.d+j];
+  sj.n=g.n; sj.d=g.d; sj.tokens=tokens; sj.dx=cur; sj.grad=s->gradients;
+  bcir_tensor_pool_run(s->pool,scatter_task,&sj,(g.d+BCIR_DT_COL_CHUNK-1)/BCIR_DT_COL_CHUNK);
   if (!finite_span(s->gradients,s->plan.parameters) || !isfinite(ce)) return BCIR_DT_NUMERIC;
   *loss=ce/(double)g.n; return BCIR_DT_OK;
 }
@@ -321,9 +364,8 @@ __attribute__((target("avx512f"))) static int preflight_avx512(const adamw_terms
 __attribute__((target("avx512f"))) static void commit_avx512(const adamw_terms *t,size_t n,
     const float *gr,float *wt,float *m1,float *m2) { adamw_commit(t,n,gr,wt,m1,m2); }
 #endif
-static int adamw_preflight_any(const adamw_terms *t,size_t n,const float *gr,const float *wt,
-    const float *m1,const float *m2) {
-  int v=bcir_tensor_mm_variants();
+static int adamw_preflight_variant(int v,const adamw_terms *t,size_t n,const float *gr,
+    const float *wt,const float *m1,const float *m2) {
   (void)v;
 #ifdef BCIR_DT_DISPATCH
   if (v&4) return preflight_avx512(t,n,gr,wt,m1,m2);
@@ -340,9 +382,49 @@ static void adamw_commit_variant(int v,const adamw_terms *t,size_t n,const float
 #endif
   commit_generic(t,n,gr,wt,m1,m2);
 }
+/* The first pass and the preflight over the pool, in the reduce contract's chunks (NDT-REDUCE):
+ * a task's finiteness verdict and maxima are exact whatever the partition, and its chunk's
+ * squares summed in index order in double from zero are the reduce contract's partial; the caller
+ * ORs the verdicts, takes the maxima and, under the contract, adds the partials in chunk order
+ * from zero. Under the other contracts the norm stays the one index-order chain over every
+ * element, serial. The chunk is a function of the count alone, so the state is the same at every
+ * thread count; at most BCIR_DT_PASS_TASKS tasks, their results on the caller's stack. */
+#define BCIR_DT_PASS_CHUNK 1024
+#define BCIR_DT_PASS_TASKS 1024
+size_t bcir_decoder_reduce_chunk(size_t n) {
+  size_t chunk=BCIR_DT_PASS_CHUNK;
+  while ((n+chunk-1)/chunk>BCIR_DT_PASS_TASKS) chunk*=2;
+  return chunk;
+}
+typedef struct pass_part { double norm; float grmax,wmax,mmax,vmax; int bad; } pass_part;
+typedef struct pass_job {
+  const float *gr,*wt,*m1,*m2; size_t n,chunk; double gs; int reduce; pass_part *parts;
+} pass_job;
+static void pass_task(void *ctx,size_t task) {
+  pass_job *j=(pass_job *)ctx; pass_part p; size_t i;
+  size_t i0=task*j->chunk,i1=i0+j->chunk<j->n ? i0+j->chunk : j->n;
+  const float *gr=j->gr,*wt=j->wt,*m1=j->m1,*m2=j->m2; double gs=j->gs;
+  p.norm=0.0; p.grmax=p.wmax=p.mmax=p.vmax=0.0f; p.bad=0;
+  for (i=i0;i<i1;i++) {
+    double g=(double)gr[i]*gs; float ag=fabsf(gr[i]),aw=fabsf(wt[i]),am=fabsf(m1[i]),av=m2[i];
+    p.bad|=!(fabs(g)<=DBL_MAX) | !(aw<=FLT_MAX) | !(am<=FLT_MAX) | !(av>=0 && av<=FLT_MAX);
+    p.grmax=ag>p.grmax ? ag : p.grmax; p.wmax=aw>p.wmax ? aw : p.wmax;
+    p.mmax=am>p.mmax ? am : p.mmax; p.vmax=av>p.vmax ? av : p.vmax;
+  }
+  if (j->reduce) for (i=i0;i<i1;i++) { double g=(double)gr[i]*gs; p.norm+=g*g; }
+  j->parts[task]=p;
+}
+typedef struct preflight_job {
+  const adamw_terms *t; size_t n,chunk; const float *gr,*wt,*m1,*m2; int variant; pass_part *parts;
+} preflight_job;
+static void preflight_task(void *ctx,size_t task) {
+  preflight_job *j=(preflight_job *)ctx;
+  size_t i0=task*j->chunk,i1=i0+j->chunk<j->n ? i0+j->chunk : j->n;
+  j->parts[task].bad=adamw_preflight_variant(j->variant,j->t,i1-i0,j->gr+i0,j->wt+i0,j->m1+i0,
+      j->m2+i0);
+}
 /* The commit over the pool: elements in ranges of BCIR_DT_CHUNK, each element's update its own
- * and the variant chosen once, so the partition cannot reach the arithmetic. The first pass
- * and the preflight stay serial (the norm is one index-order sum). */
+ * and the variant chosen once, so the partition cannot reach the arithmetic. */
 #define BCIR_DT_CHUNK 65536
 typedef struct commit_job {
   const adamw_terms *t; size_t n; const float *gr; float *wt,*m1,*m2; int variant;
@@ -372,6 +454,43 @@ static int adamw_bounded(const adamw_terms *t,double grmax,double mmax,double vm
   double w=wmax*fabs(t->decay);
   return 2.0*mb<=half && 2.0*vb<=half && step<=0.5*half && w<=0.5*half && w+step<=half;
 }
+/* The first pass, one task per chunk: every element finite (the second moment also not
+ * negative) and the largest magnitudes adamw_bounded reads, exact whatever the partition; the
+ * gradient norm's square the contract's -- the chunks' partials added in chunk order under the
+ * reduce contract, else summed in double in index order over every element, as always. One flag
+ * per task replaces the early exit: the verdict and the untouched state are the same. */
+typedef struct pass_result { double norm2,grmax,wmax,mmax,vmax; size_t chunk,tasks; } pass_result;
+static int first_pass(bcir_decoder_state *s,double gs,pass_part *parts,pass_result *out) {
+  pass_job pj; size_t i; int bad=0; double norm=0.0;
+  pj.gr=s->gradients; pj.wt=s->weights; pj.m1=s->moment1; pj.m2=s->moment2;
+  pj.n=s->plan.parameters; pj.chunk=bcir_decoder_reduce_chunk(pj.n); pj.gs=gs;
+  pj.reduce=(s->contract&BCIR_DT_CONTRACT_REDUCE)!=0; pj.parts=parts;
+  out->tasks=(pj.n+pj.chunk-1)/pj.chunk; out->chunk=pj.chunk;
+  out->grmax=out->wmax=out->mmax=out->vmax=0.0;
+  bcir_tensor_pool_run(s->pool,pass_task,&pj,out->tasks);
+  for (i=0;i<out->tasks;i++) {
+    const pass_part *p=parts+i;
+    bad|=p->bad;
+    out->grmax=p->grmax>out->grmax ? p->grmax : out->grmax;
+    out->wmax=p->wmax>out->wmax ? p->wmax : out->wmax;
+    out->mmax=p->mmax>out->mmax ? p->mmax : out->mmax;
+    out->vmax=p->vmax>out->vmax ? p->vmax : out->vmax;
+  }
+  if (bad) return BCIR_DT_NUMERIC;
+  if (pj.reduce) { for (i=0;i<out->tasks;i++) norm+=parts[i].norm; }
+  else { const float *gr=s->gradients; for (i=0;i<pj.n;i++) { double g=(double)gr[i]*gs; norm+=g*g; } }
+  out->norm2=norm;
+  return BCIR_DT_OK;
+}
+int bcir_decoder_gradient_norm(bcir_decoder_state *s,double gs,double *squared) {
+  pass_part parts[BCIR_DT_PASS_TASKS]; pass_result pass; int rc=valid(s);
+  if (rc) return rc;
+  if (!isfinite(gs) || gs<=0 || !external(s,squared,sizeof(*squared)) ||
+      (uintptr_t)squared%_Alignof(double)) return BCIR_DT_INVALID;
+  rc=first_pass(s,gs,parts,&pass);
+  if (rc) return rc;
+  *squared=pass.norm2; return BCIR_DT_OK;
+}
 static int optimizer_valid(const bcir_decoder_adamw *o) {
   return o && isfinite(o->lr) && o->lr>=0 && isfinite(o->beta1) && o->beta1>=0 && o->beta1<1 &&
     isfinite(o->beta2) && o->beta2>=0 && o->beta2<1 && isfinite(o->epsilon) && o->epsilon>0 &&
@@ -379,8 +498,8 @@ static int optimizer_valid(const bcir_decoder_adamw *o) {
 }
 int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     double gs,double *grad_norm) {
-  size_t i; double norm=0.0,scale,b1,b2,grmax=0.0,wmax=0.0,mmax=0.0,vmax=0.0; int rc=valid(s);
-  bcir_decoder_adamw options;
+  size_t i; double norm,scale,b1,b2; int rc=valid(s);
+  bcir_decoder_adamw options; pass_part parts[BCIR_DT_PASS_TASKS]; pass_result pass;
   if (rc) return rc;
   if (!o) return BCIR_DT_INVALID;
   options=*o; o=&options;
@@ -390,23 +509,9 @@ int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,
       (!s->step && (s->beta1_power!=1 || s->beta2_power!=1)) ||
       !external(s,grad_norm,sizeof(*grad_norm)) || (uintptr_t)grad_norm%_Alignof(double))
     return BCIR_DT_INVALID;
-  /* The first pass: every element finite (the second moment also not negative) and the
-   * gradient norm summed in double in index order, as always; it also records the largest
-   * magnitudes adamw_bounded reads. One flag replaces the early exit -- the verdict and the
-   * untouched state are the same, the loop just finishes the pass. */
-  {
-    const float *gr=s->gradients,*wt=s->weights,*m1=s->moment1,*m2=s->moment2;
-    size_t n=s->plan.parameters; int bad=0;
-    for (i=0;i<n;i++) {
-      double g=(double)gr[i]*gs,ag=fabsf(gr[i]),aw=fabsf(wt[i]),am=fabsf(m1[i]),av=m2[i];
-      bad|=!(fabs(g)<=DBL_MAX) | !(aw<=FLT_MAX) | !(am<=FLT_MAX) | !(av>=0 && av<=FLT_MAX);
-      norm+=g*g;
-      grmax=ag>grmax ? ag : grmax; wmax=aw>wmax ? aw : wmax;
-      mmax=am>mmax ? am : mmax; vmax=av>vmax ? av : vmax;
-    }
-    if (bad) return BCIR_DT_NUMERIC;
-  }
-  norm=sqrt(norm); if (!isfinite(norm)) return BCIR_DT_NUMERIC;
+  rc=first_pass(s,gs,parts,&pass);
+  if (rc) return rc;
+  norm=sqrt(pass.norm2); if (!isfinite(norm)) return BCIR_DT_NUMERIC;
   scale=gs;
   if (o->grad_clip>0 && norm>o->grad_clip) scale*=o->grad_clip/(norm+1e-6);
   b1=s->beta1_power*o->beta1; b2=s->beta2_power*o->beta2;
@@ -417,9 +522,15 @@ int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     adamw_terms t;
     t.scale=scale; t.d1=o->beta1; t.d2=o->beta2; t.decay=1-o->lr*o->weight_decay;
     t.lr=o->lr; t.eps=o->epsilon; t.b1=b1; t.b2=b2;
-    if (!adamw_bounded(&t,grmax,mmax,vmax,wmax) &&
-        adamw_preflight_any(&t,s->plan.parameters,s->gradients,s->weights,s->moment1,
-            s->moment2)) return BCIR_DT_NUMERIC;
+    if (!adamw_bounded(&t,pass.grmax,pass.mmax,pass.vmax,pass.wmax)) {
+      preflight_job fj; int bad=0;
+      fj.t=&t; fj.n=s->plan.parameters; fj.chunk=pass.chunk; fj.gr=s->gradients;
+      fj.wt=s->weights; fj.m1=s->moment1; fj.m2=s->moment2;
+      fj.variant=bcir_tensor_mm_variants(); fj.parts=parts;
+      bcir_tensor_pool_run(s->pool,preflight_task,&fj,pass.tasks);
+      for (i=0;i<pass.tasks;i++) bad|=parts[i].bad;
+      if (bad) return BCIR_DT_NUMERIC;
+    }
     adamw_commit_pool(s->pool,&t,s->plan.parameters,s->gradients,s->weights,s->moment1,
         s->moment2);
   }

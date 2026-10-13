@@ -2915,6 +2915,50 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-REDUCE (2026-10-13): the reductions the pool left serial, on the pool; the clipping norm's
+  declared contract.
+  - NDT-THREADS admitted only partitions in which each output element, and each reduction, is
+    produced by one task in the serial order, and left four index-order reductions serial: the
+    loss's rows, the gamma VJP's row sum, the embedding scatter and the update's first pass
+    (41 of the four-thread update's 53 ms, measured for NDT-NORM). Three of them admit such a
+    partition: the loss's rows are tasks whose terms (in double, as the serial loop computed
+    them) the caller adds in row order; the gamma VJP runs rows for `dx` and each row's `1/rms`
+    (a row of scratch the trainer lends) and then column ranges, each column's sum over the rows
+    in row order (`bcir_tensor_rms_backward_pool`); the scatter is column ranges, every row's
+    columns added to its token's row in row order. Every loss and state is the serial one at
+    every thread count under every contract, bit for bit.
+  - The update's first pass and preflight are one task per chunk of `bcir_decoder_reduce_chunk`
+    elements (1,024 doubled until at most 1,024 chunks; the results on the caller's stack), the
+    verdicts and maxima exact whatever the partition. The norm is the contract's: the one
+    index-order chain in double where the contract was, or under the new `reduce` bit
+    (`BCIR_DT_CONTRACT_REDUCE`, `NativeDecoder(contract="<any>+reduce")`) each chunk's squares
+    summed in index order from zero and the chunk sums added in chunk order from zero -- a
+    declared reduction whose shape is a function of the parameter count alone, emulated by the
+    oracle operation for operation (`grad_norm_squared_reference`, `reduce_chunk`), with
+    `bcir_decoder_gradient_norm` reporting the square the update takes its root of. The bit
+    changes the norm's last bits and nothing else; the float rounding of every update absorbs
+    that for a while (the harness's reduce states coincide with their chain's after three steps
+    while the norms are apart at 15 of 18), and on the 9.84M decoder a rounding boundary is
+    crossed within twenty steps, after which the state is the contract's own.
+  - Evidence: `reduction_references` in the C harness holds the pooled loss and scatter to
+    serial references written apart from the pool (untied fixtures of 32 and 40 rows, tokens the
+    batch repeats without repeating a row, no pool and a pool of two); `pool_identity` holds
+    twelve contracts' states and the losses and norms the steps report at one to four threads to
+    the serial run, and the gamma VJP to the serial kernel over three row and three column
+    chunks; `adamw_reference` holds the update under both norm contracts to a reference of each
+    on a three-chunk fixture, serially and on a pool of three, the square against the
+    reference's sum, with the chunk rule on both rails; `refusals` holds a non-finite element in
+    the first pass's last chunk refused under both; `train.norm.reduce.mismatch` (0 of 6 norms
+    and 8 counts) and `train.state.threads.mismatch` (now under v1 and `reduce`) are the rows;
+    `ndt-reduce.json` NR1-NR11, 11 of 11 caught. Two faults were first reported uncaught and
+    both were the witnesses' findings: a periodic token stream made every repeat of a token the
+    same row, so a reversed accumulation summed the same values, and the norm's root hides a
+    one-ulp change of the chunked sum half the time -- hence the streams, the three-chunk
+    fixture and the square's entry.
+  - Measured ([measurements/2026-10-13/reduce/](research/measurements/2026-10-13/reduce/), the
+    report's §9): in three same-session pairs at four threads (each contract's breakdown alternated with the other's, minutes apart, so both see one host) the update reads 40.7 / 49.7 / 47.5 ms under `kblock+exp` -- the first pass pooled, the chain serial, NDT-NORM's content -- against 31.8 / 47.2 / 39.6 under `kblock+exp+reduce`, below it in every pair (-9.0 / -2.6 / -7.9), with §8's 53.1 the day before on a faster host; the gamma VJP row 11.0 / 14.3 / 12.4 against 6.7 / 8.8 / 11.8 (-4.3 / -5.5 / -0.6; 9.2 in §8); the step itself is not resolved on this day's host, whose unchanged GEMM rows drifted 20% within the session, more than the slice's effect on the step; the 1,000-step `kblock+exp+reduce` run at 625.8 ms a step on
+    four threads (1419.6 on one), ending in `5137e013…`, its own, not §7's `d7fc618c…` (the norm's last bits crossed a float rounding boundary within the first steps, as the 20-step identity rows already show, and the state is the reduce contract's from there), and the one-thread run ends in the same state, the held-out
+    model 1.5003 / 1.6319. NDT-NORM landed with it.
   PR817-P0 (2026-10-13): the two portability findings of PR #817's same-host rerun.
   - The provider admission is host-specific and the tests said otherwise. Two assertions held
     that every importable OpenBLAS wheel is admitted on the comparison decoder's shapes; on

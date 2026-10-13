@@ -39,9 +39,9 @@
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
-      "label": "NF5 a contract bit the ABI does not define is admitted",
-      "new": "  if (s->contract&~(uint32_t)15u) return BCIR_DT_INVALID;",
-      "old": "  if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_KBLOCK)) return BCIR_DT_INVALID;",
+      "label": "NF5 a contract bit the ABI does not define (16, past the reduce bit) is admitted",
+      "new": "  if (s->contract&~(uint32_t)31u) return BCIR_DT_INVALID;",
+      "old": "  if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_KBLOCK|\n      BCIR_DT_CONTRACT_REDUCE)) return BCIR_DT_INVALID;",
       "path": "runtime/c/bcir_decoder_train.c"
     }
   ]

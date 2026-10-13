@@ -25,8 +25,17 @@ spec alone. One function per row family grades it against the C rail; the tests,
     train.exp.ulp.max          the largest distance, in ulps, of the BCIR exponential from exp in
                                double rounded to binary32 over the same inputs (stated: 1)
     train.state.threads.mismatch  thread counts among `THREAD_COUNTS[1:]` whose state after three
-                               steps of `THREADS_BENCH` differs in any bit from the one-thread
-                               state of the same library, weights, tokens and rates (NDT-THREADS)
+                               steps of `THREADS_BENCH`, or the losses and norms those steps
+                               reported, differ in any bit from the one-thread run's on the same
+                               library, weights, tokens and rates (NDT-THREADS), under v1 and
+                               under the reduce contract
+    train.norm.reduce.mismatch  of the clipping norms' squares and roots three steps of
+                               `THREADS_BENCH` compute under v1 and under the reduce contract,
+                               those that differ in any bit from `grad_norm_squared_reference`
+                               and `grad_norm_reference` -- the oracle's emulation of each
+                               contract from the gradients the backward left -- plus the counts
+                               of `REDUCE_CHUNK_COUNTS` where the C chunk rule and `reduce_chunk`
+                               disagree (NDT-REDUCE)
 
 Without a C compiler the native rows are not measured -- a skip, never a pass.
 """
@@ -564,8 +573,11 @@ def thread_states(
     path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS, *, contract="v1"
 ) -> dict[int, str]:
     """The state digest after `steps` steps of `bench` -- the same seeded weights, tokens and
-    rates -- on a trainer of each thread count in `counts` (one thread is the serial trainer);
-    each trainer's pool is released before the next is made."""
+    rates -- with the loss and the clipping norm every step reported folded in (the norm is the
+    one reduction a partition could reach, NDT-REDUCE, and the float rounding of the update
+    absorbs its last bits for a while, so the state alone would not see a chunk that followed the
+    thread count), on a trainer of each thread count in `counts` (one thread is the serial
+    trainer); each trainer's pool is released before the next is made."""
     from bcir.hosted.models.native import NativeAdamW, NativeDecoder
 
     spec, batch, time_ = bench
@@ -578,18 +590,110 @@ def thread_states(
         trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
                                 threads=threads, contract=contract)  # fmt: skip
         try:
-            trainer.run(tokens, targets, steps=steps, optimizer=NativeAdamW(lr=1e-3),
-                        learning_rates=rates)  # fmt: skip
-            out[threads] = state_digest(trainer)
+            events = trainer.run(tokens, targets, steps=steps, optimizer=NativeAdamW(lr=1e-3),
+                                 learning_rates=rates)  # fmt: skip
+            digest = hashlib.sha256(state_digest(trainer).encode())
+            for event in events:
+                digest.update(struct.pack("<dd", event["loss"], event["grad_norm"]))
+            out[threads] = digest.hexdigest()
         finally:
             trainer.close()
     return out
 
 
-def threads_mismatch(path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS) -> int:
-    """Thread counts after the first whose state differs from the first count's."""
-    states = thread_states(path, bench, steps, counts)
-    return sum(states[t] != states[counts[0]] for t in counts[1:])
+def threads_mismatch(
+    path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS, contracts=("v1", "reduce")
+) -> int:
+    """Thread counts after the first whose state differs from the first count's, summed over
+    `contracts` (v1, and the reduce contract whose chunked norm is the one reduction the pool
+    could reach, NDT-REDUCE)."""
+    bad = 0
+    for contract in contracts:
+        states = thread_states(path, bench, steps, counts, contract=contract)
+        bad += sum(states[t] != states[counts[0]] for t in counts[1:])
+    return bad
+
+
+# --- train.norm.reduce.mismatch (NDT-REDUCE) --------------------------------------------------
+
+
+def reduce_chunk(count: int) -> int:
+    """The reduce contract's chunk rule (bcir_decoder_reduce_chunk): 1,024 doubled until the
+    chunks number at most 1,024 -- 1,024 up to 2^20 elements, 16,384 for the 9.84M decoder."""
+    chunk = 1024
+    while -(-count // chunk) > 1024:
+        chunk *= 2
+    return chunk
+
+
+def grad_norm_squared_reference(gradients, scale=1.0, *, reduce=False) -> float:
+    """The clipping norm's square under its two contracts, every operation an IEEE double one as
+    the C update performs it: v1's index-order chain over every element, or the reduce contract's
+    chunk chains from zero added in chunk order from zero (the chunks of `reduce_chunk`). The
+    update reports the square root; `bcir_decoder_gradient_norm` reports this sum, which the row
+    compares before the root rounds a difference of the chunks' order away."""
+    if not reduce:
+        norm = 0.0
+        for x in gradients:
+            g = x * scale
+            norm += g * g
+        return norm
+    chunk, norm = reduce_chunk(len(gradients)), 0.0
+    for start in range(0, len(gradients), chunk):
+        part = 0.0
+        for x in gradients[start : start + chunk]:
+            g = x * scale
+            part += g * g
+        norm += part
+    return norm
+
+
+def grad_norm_reference(gradients, scale=1.0, *, reduce=False) -> float:
+    """The clipping norm the update reports under either contract: the square's root."""
+    return math.sqrt(grad_norm_squared_reference(gradients, scale, reduce=reduce))
+
+
+#: The counts the chunk rule is held on, both rails: the first doubling, the record's decoder.
+REDUCE_CHUNK_COUNTS = (1, 1023, 1024, 1025, 1 << 20, (1 << 20) + 1, 9_836_928, 1 << 31)
+
+
+def norm_mismatch(path, bench=THREADS_BENCH, steps=3) -> int:
+    """NDT-REDUCE's row: the clipping norm's square the trainer computes under v1 and under the
+    reduce contract (`bcir_decoder_gradient_norm`, the update's own first pass) and the norm each
+    update then reports, against the oracle's emulation of that contract from the gradients the
+    backward left, bit for bit (2 * steps cases of the threads bench, each its square and its
+    root), plus the counts of `REDUCE_CHUNK_COUNTS` on which the C chunk rule and the Python one
+    disagree."""
+    from bcir.hosted.models.native import NativeAdamW, NativeDecoder
+
+    spec, batch, time_ = bench
+    n = batch * time_
+    tokens = [(7 * i + 3) % spec.vocab_size for i in range(n * steps)]
+    targets = [(7 * i + 4) % spec.vocab_size for i in range(n * steps)]
+    lib = ct.CDLL(str(path))
+    lib.bcir_decoder_reduce_chunk.argtypes = [ct.c_size_t]
+    lib.bcir_decoder_reduce_chunk.restype = ct.c_size_t
+    lib.bcir_decoder_gradient_norm.argtypes = [ct.c_void_p, ct.c_double, ct.POINTER(ct.c_double)]
+    lib.bcir_decoder_gradient_norm.restype = ct.c_int
+    bad = sum(lib.bcir_decoder_reduce_chunk(c) != reduce_chunk(c) for c in REDUCE_CHUNK_COUNTS)
+    for contract in ("v1", "reduce"):
+        trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
+                                contract=contract)  # fmt: skip
+        try:
+            count = trainer.state.plan.parameters
+            for step in range(steps):
+                at = slice(step * n, (step + 1) * n)
+                trainer.backward(tokens[at], targets[at])
+                want = grad_norm_squared_reference(trainer.buffers["gradients"][:count],
+                                                   reduce=contract == "reduce")  # fmt: skip
+                squared = ct.c_double(-1.0)
+                rc = lib.bcir_decoder_gradient_norm(ct.byref(trainer.state), 1.0,
+                                                    ct.byref(squared))  # fmt: skip
+                bad += rc != 0 or squared.value != want
+                bad += trainer.update(NativeAdamW(lr=1e-3)) != math.sqrt(want)
+        finally:
+            trainer.close()
+    return bad
 
 
 # --- every row --------------------------------------------------------------------------------
@@ -639,6 +743,7 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         out["train.exp.mismatch"] = float(mismatch)
         out["train.exp.ulp.max"] = float(ulp)
         out["train.state.threads.mismatch"] = float(threads_mismatch(path))
+        out["train.norm.reduce.mismatch"] = float(norm_mismatch(path))
         if timed:
             out.update(measure_step(path))
         return out
@@ -675,6 +780,11 @@ __all__ = [
     "state_digest",
     "thread_states",
     "threads_mismatch",
+    "reduce_chunk",
+    "grad_norm_reference",
+    "grad_norm_squared_reference",
+    "REDUCE_CHUNK_COUNTS",
+    "norm_mismatch",
     "transient_ratio",
 ]
 

@@ -57,6 +57,12 @@ BCIR_DT_API void bcir_tensor_swiglu_backward_pool(bcir_tensor_pool *pool, size_t
     const float *gate, const float *up, const float *dy, float *dg, float *du);
 BCIR_DT_API void bcir_tensor_rms_pool(bcir_tensor_pool *pool, size_t rows, size_t width,
     float eps, const float *x, const float *g, float *y);
+/* The RMSNorm VJP on the pool (NDT-REDUCE): rows in ranges of BCIR_ROW_CHUNK for dx and each row's
+ * 1/rms, kept in `inv` (rows floats the caller owns for the call, disjoint from the others), then
+ * columns in ranges of BCIR_COL_CHUNK for the gamma adjoint, each column's sum over the rows in row
+ * order -- bcir_tensor_rms_backward's result, bit for bit, at every thread count. */
+BCIR_DT_API void bcir_tensor_rms_backward_pool(bcir_tensor_pool *pool, size_t rows, size_t width,
+    float eps, const float *x, const float *g, const float *dy, float *dx, float *dg, float *inv);
 BCIR_DT_API void bcir_tensor_rope_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
     size_t heads, size_t dim, double base, float *x, int inverse);
 /* y[i] += x[i] and y[i] *= x[i] over elements, as the trainer's residual and gate paths do. */

@@ -12,8 +12,14 @@
  * term, k ascending -- bit-identical wherever fmaf is an IEEE fusedMultiplyAdd). A provider's
  * GEMM keeps its own. BCIR_DT_CONTRACT_EXP (NDT-EXP) puts SiLU, the SwiGLU VJP and the attention
  * softmax under their v2 contracts (the BCIR exponential, no libm); a provider's SiLU keeps its
- * own. Other bits are refused. A state trained under one contract is not another's: the
- * checkpoint names it.
+ * own. BCIR_DT_CONTRACT_REDUCE (NDT-REDUCE) puts the clipping norm under a fixed-shape reduction:
+ * the gradient in chunks of bcir_decoder_reduce_chunk elements (a function of the count alone),
+ * each chunk's squares summed in index order in double from zero, the chunk sums added in chunk
+ * order from zero -- so the update's one pass runs on the pool; without the bit the norm is the one
+ * index-order chain, serial. Other bits are refused. A state trained under one contract is not
+ * another's: the checkpoint names it. Whatever the contract, the loss's rows, the RMSNorm gamma
+ * adjoints and the embedding scatter run on the pool in the serial order (NDT-REDUCE), so every
+ * loss and state is the serial one, bit for bit, at every thread count.
  * The plan's three counts are the arena sums of the step program in
  * bcir/hosted/models/native_program.py (NDT-GEM), held to it by train.plan.mismatch. */
 #ifndef BCIR_DECODER_TRAIN_H
@@ -47,10 +53,24 @@ typedef struct bcir_decoder_adamw {
 } bcir_decoder_adamw;
 typedef struct bcir_decoder_event { double loss,grad_norm; uint64_t step; } bcir_decoder_event;
 enum { BCIR_DT_OK=0, BCIR_DT_INVALID=1, BCIR_DT_CAPACITY=2, BCIR_DT_NUMERIC=3 };
-enum { BCIR_DT_CONTRACT_FUSED=1u, BCIR_DT_CONTRACT_EXP=2u, BCIR_DT_CONTRACT_KBLOCK=4u };
+enum { BCIR_DT_CONTRACT_FUSED=1u, BCIR_DT_CONTRACT_EXP=2u, BCIR_DT_CONTRACT_KBLOCK=4u,
+  BCIR_DT_CONTRACT_REDUCE=8u };
 /* 1: the state through its provider; 2: the state ends in its pool (NDT-THREADS); 3: and in its
- * contract (NDT-FMA, NDT-EXP). */
+ * contract (NDT-FMA, NDT-EXP, NDT-KBLOCK, NDT-REDUCE: the same field, more bits). */
 BCIR_DT_API uint32_t bcir_decoder_abi_version(void);
+/* The reduce contract's chunk for `count` elements: 1024 doubled until the chunks number at most
+ * 1024 (so 1024 up to 2^20 elements, 16384 for the 9.84M decoder). The update's first pass runs
+ * one task per chunk under every contract; only under BCIR_DT_CONTRACT_REDUCE do the chunks reach
+ * the norm. */
+BCIR_DT_API size_t bcir_decoder_reduce_chunk(size_t count);
+/* The clipping norm's square as the update's first pass computes it under the state's contract
+ * -- the scaled gradient's squares in one index-order chain, or the reduce contract's chunk sums
+ * in chunk order -- with the pass's verdict: BCIR_DT_NUMERIC on a non-finite element of the
+ * gradient, weights or moments (a negative second moment included), nothing written then; the
+ * update reports its square root. For the oracle's emulation, which compares the sum before the
+ * root rounds a difference away. */
+BCIR_DT_API int bcir_decoder_gradient_norm(bcir_decoder_state *s,double gradient_scale,
+    double *squared);
 /* Checked shape/products; failure leaves *plan untouched. Parameter order:
  * embedding; each layer: attn_norm,q,k,v,o,ff_norm,gate,up,down;
  * final_norm; untied head. Retain caches; reuse adjoints across all layers.

@@ -101,8 +101,17 @@ def provider_mismatch(lib, slot, shapes) -> int:
 #: OpenBLAS's sgemm performs, so such a provider can be admitted under it by `use_cblas`'s
 #: differential), "kblock+exp" both. Under v1, "fused" and "exp" a provider's GEMM keeps its own
 #: arithmetic; under "kblock" it is admitted only where it is the contract's, bit for bit.
+#: "reduce" (NDT-REDUCE) puts the clipping norm under a fixed-shape reduction -- the gradient in
+#: chunks of `reduce_chunk` elements, each chunk's squares summed in index order in double from
+#: zero, the chunk sums added in chunk order from zero -- so the update's one pass runs on the pool;
+#: "<contract>+reduce" names it with any of the five above. Whatever the contract, the loss, the
+#: gamma adjoints and the embedding scatter run on the pool in the serial order: every loss and
+#: state is the serial one, bit for bit, at every thread count.
 _CONTRACTS = {"v1": 0, "fused": 1, "exp": 2, "fused+exp": 3, "kblock": 4, "kblock+exp": 6}
+_CONTRACTS.update({("reduce" if name == "v1" else name + "+reduce"): bits | 8
+                   for name, bits in list(_CONTRACTS.items())})  # fmt: skip
 _KBLOCK = 4
+_REDUCE = 8
 
 
 class _Spec(ct.Structure):

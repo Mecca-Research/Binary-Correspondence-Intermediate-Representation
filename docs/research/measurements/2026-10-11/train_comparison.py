@@ -1077,7 +1077,7 @@ def _bcir_breakdown(
     MM = [P, ctypes.c_int, ctypes.c_int, Z, Z, Z, F32, P, P, F32, P]
     signatures = {
         "rms_pool": [P, Z, Z, F32, P, P, P],
-        "rms_backward": [Z, Z, F32, P, P, P, P, P],  # the trainer's gamma VJP stays serial
+        "rms_backward_pool": [P, Z, Z, F32, P, P, P, P, P, P],  # pooled since NDT-REDUCE
         "rope_pool": [P, Z, Z, Z, Z, ctypes.c_double, P, ctypes.c_int],
         "silu_pool": [P, Z, P, P],
         "silu_v2_pool": [P, Z, P, P],
@@ -1121,6 +1121,7 @@ def _bcir_breakdown(
     prov = ctypes.addressof(nd.state.provider)
     eps, base = float(spec.rms_norm_eps), float(spec.rope_base)
     x, g, y, dy, dx, dg = buf(n, d), buf(d), zero(n, d), buf(n, d), zero(n, d), zero(d)
+    inv = zero(n)  # the gamma VJP's per-row 1/rms between its two pooled phases
     q, k, val, ctx, dq, dk, dv = buf(n, d), buf(n, kv), buf(n, kv), zero(n, d), zero(n, d), \
         zero(n, kv), zero(n, kv)  # fmt: skip
     probs = zero(BATCH, h, CONTEXT, CONTEXT)
@@ -1192,7 +1193,7 @@ def _bcir_breakdown(
 
     def norms_backward():
         for _ in range(2 * layers + 1):
-            fn["rms_backward"](n, d, eps, p(x), p(g), p(dy), p(dx), p(dg))
+            fn["rms_backward_pool"](pool, n, d, eps, p(x), p(g), p(dy), p(dx), p(dg), p(inv))
 
     def rope(inverse):
         for _ in range(layers):

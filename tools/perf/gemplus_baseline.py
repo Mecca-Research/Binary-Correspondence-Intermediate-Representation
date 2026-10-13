@@ -831,9 +831,10 @@ METRICS: tuple[Metric, ...] = (
         "train",
         "thread counts among (2, 3, 4) whose training state (weights, both moments, the step and "
         "the bias powers) after three steps of the threads bench (vocab 250, width 72, 4 heads over "
-        "2 KV heads, 2 layers, batch 2 x 40 tokens) differs in any bit from the one-thread state "
-        "of the same library, seeded weights, tokens and rates (bcir/tests/"
-        "native_decoder_fixtures.py); one thread is the serial trainer",
+        "2 KV heads, 2 layers, batch 2 x 40 tokens), or the losses and clipping norms those steps "
+        "reported, differ in any bit from the one-thread run's on the same library, seeded "
+        "weights, tokens and rates (bcir/tests/native_decoder_fixtures.py), under v1 and under "
+        "the reduce contract (NDT-REDUCE); one thread is the serial trainer",
         0,
         "count",
         "exact",
@@ -844,6 +845,27 @@ METRICS: tuple[Metric, ...] = (
         "kernel to the serial kernels and the scalar references at one to four threads, the TSan "
         "section holds the partitions race-free and fires on an injected one",
         slice_owner="NDT-THREADS",
+    ),
+    # --- NDT-REDUCE: the clipping norm's contracts ---------------------------------------------
+    Metric(
+        "train.norm.reduce.mismatch",
+        "train",
+        "of 6 clipping norms and 8 chunk counts, those that differ from the oracle: the norm's "
+        "square the trainer's first pass computes (bcir_decoder_gradient_norm) and the root each "
+        "update reports, under v1 (one index-order chain in double) and under the reduce "
+        "contract (the gradient in chunks of bcir_decoder_reduce_chunk elements, each chunk's "
+        "chain from zero, the chunk sums added in chunk order from zero) over three steps of the "
+        "threads bench against the oracle's emulation from the gradients the backward left, bit "
+        "for bit; the chunk rule on both rails at the counts around its first doubling and the "
+        "9.84M decoder's (bcir/tests/native_decoder_fixtures.py)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the contracts are definitions the oracle emulates in IEEE double operation "
+        "for operation (bcir_decoder_train.h); the C harness holds the update to a reference of "
+        "each, serially and pooled, and the first pass's verdicts to every chunk",
+        slice_owner="NDT-REDUCE",
     ),
     # --- NDT-FMA: the fused GEMM contract ---------------------------------------------------
     Metric(

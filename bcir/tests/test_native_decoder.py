@@ -155,7 +155,7 @@ def test_native_c_harness_c11_and_c23():
             result = subprocess.run(
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
-            assert result.stdout.count("PASS") == 10
+            assert result.stdout.count("PASS") == 11  # reduction_references since NDT-REDUCE
 
 
 def test_native_provider_c_abi_keeps_frameworks_off_execution_path():
@@ -306,9 +306,11 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
 def test_the_training_state_is_identical_at_every_thread_count():
     """NDT-THREADS: three steps of the threads bench on a trainer of one, two, three and four
     threads leave one state, bit for bit (the row at zero), under v1 and under the fused contract
-    (whose state is its own); a trainer resumed on more threads continues the same state, with
-    the checkpoint's contract; a thread count outside [1, 4096] or an unknown contract is refused
-    before any pool."""
+    (whose state is its own), and under the reduce contracts (NDT-REDUCE: the one reduction the
+    pool reaches is chunked by the count alone, so the state -- and the losses and norms the
+    steps report, which the digest folds in -- is the one-thread run's there too);
+    a trainer resumed on more threads continues the same state, with the checkpoint's contract; a
+    thread count outside [1, 4096] or an unknown contract is refused before any pool."""
     from bcir.hosted.models.native import NativeAdamW, NativeDecoder
     from bcir.tests import native_decoder_fixtures as nf
 
@@ -326,6 +328,11 @@ def test_the_training_state_is_identical_at_every_thread_count():
             under = nf.thread_states(path, contract=name)
             assert len(set(under.values())) == 1 and under[1] not in digests, (name, under)
             digests.add(under[1])
+        # the reduce bit changes the norm's last bits, which the float rounding of every update
+        # absorbs over three steps of this bench: one state at every thread count is the claim
+        for name in ("reduce", "kblock+exp+reduce"):
+            under = nf.thread_states(path, contract=name)
+            assert set(under) == set(nf.THREAD_COUNTS) and len(set(under.values())) == 1, under
         spec, batch, time_ = nf.THREADS_BENCH
         one = NativeDecoder(path, spec, batch_size=batch, context_length=time_)
         assert one.threads == 1 and one.lib.bcir_tensor_pool_threads(one.state.pool) == 1
@@ -476,6 +483,50 @@ def test_the_threads_row_fires_on_a_partition_that_depends_on_the_thread_count()
             assert nf.threads_mismatch(path) > 0
 
 
+def test_the_clipping_norm_keeps_its_contract():
+    """NDT-REDUCE: the norm every update reports is its contract's, bit for bit, against the
+    oracle's emulation from the gradients the backward left -- v1's index-order chain, and the
+    reduce contract's chunk chains added in chunk order (the row at zero); the C chunk rule and
+    the Python one agree on the counts around the first doubling and on the record's decoder; the
+    two contracts' norms are one value to a part in 10^12 and not one double at every step (the
+    threads bench's 135,864 parameters are 133 chunks)."""
+    from bcir.hosted.models.native import NativeAdamW, NativeDecoder
+    from bcir.tests import native_decoder_fixtures as nf
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.build_library(tmp)
+        if path is None:
+            return  # no C compiler: the row is a skip, never a pass
+        assert nf.norm_mismatch(path) == 0
+        assert [nf.reduce_chunk(c) for c in nf.REDUCE_CHUNK_COUNTS] == [
+            1024,
+            1024,
+            1024,
+            1024,
+            1024,
+            2048,
+            16384,
+            2048 * 1024,
+        ]
+        spec, batch, time_ = nf.THREADS_BENCH
+        n = batch * time_
+        x = [(3 * i + 1) % spec.vocab_size for i in range(n * 3)]
+        y = [(3 * i + 2) % spec.vocab_size for i in range(n * 3)]
+        norms = {}
+        for name in ("v1", "reduce"):
+            trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
+                                    contract=name)  # fmt: skip
+            try:
+                assert trainer.state.plan.parameters == 135_864
+                assert nf.reduce_chunk(trainer.state.plan.parameters) == 1024
+                norms[name] = [e["grad_norm"] for e in trainer.run(x, y, steps=3,
+                                                                   optimizer=NativeAdamW(lr=1e-3))]  # fmt: skip
+            finally:
+                trainer.close()
+        assert all(abs(a - b) <= 1e-12 * b for a, b in zip(norms["reduce"], norms["v1"]))
+        assert norms["reduce"] != norms["v1"], norms
+
+
 def test_the_step_floor_is_measured_beside_the_step():
     """`train.step.ms`'s floor is G26's compute term at the best rate the same library reaches on
     the step's own GEMM shapes, in the same run: positive and below the step on a small bench."""
@@ -508,7 +559,7 @@ def test_the_harness_rows_are_the_programs_numbers():
                          "train.state.threads.mismatch", "train.mm.fused.mismatch",
                          "train.exp.mismatch", "train.exp.ulp.max",
                          "train.mm.kblock.mismatch", "train.mm.provider.unsound",
-                         "train.mm.provider.differences"}  # fmt: skip
+                         "train.mm.provider.differences", "train.norm.reduce.mismatch"}  # fmt: skip
     kblock, unsound = rows["train.mm.kblock.mismatch"], rows["train.mm.provider.unsound"]
     differences = rows["train.mm.provider.differences"]
     assert kblock.kind == "exact" and kblock.bound == 0 and kblock.baseline == 0
@@ -526,6 +577,9 @@ def test_the_harness_rows_are_the_programs_numbers():
     threads = rows["train.state.threads.mismatch"]
     assert threads.kind == "exact" and threads.bound == 0 and threads.baseline == 0
     assert threads.what.startswith(f"thread counts among {nf.THREAD_COUNTS[1:]}")
+    reduce = rows["train.norm.reduce.mismatch"]
+    assert reduce.kind == "exact" and reduce.bound == 0 and reduce.baseline == 0
+    assert reduce.what.startswith("of 6 clipping norms and 8 chunk counts")
     corpus = rows["train.corpus.unselected"]
     assert corpus.kind == "exact" and corpus.bound == 0 and corpus.baseline == 328
     unselected = nf.corpus_unselected()
