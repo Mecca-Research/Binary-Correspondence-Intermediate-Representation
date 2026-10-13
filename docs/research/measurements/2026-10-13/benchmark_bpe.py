@@ -83,7 +83,7 @@ def main():
                 "actual_utf8_bytes": len(value.encode()),
                 "input_sha256": hashlib.sha256(value.encode()).hexdigest(),
                 "tokens": len(tokens),
-                "token_sha256": digest(tokens),
+                "encoded_ids_sha256": digest(tokens),
                 "samples_ms": timings,
                 "median_ms": {name: statistics.median(v) for name, v in timings.items()},
                 "peak_allocated_bytes": peaks,

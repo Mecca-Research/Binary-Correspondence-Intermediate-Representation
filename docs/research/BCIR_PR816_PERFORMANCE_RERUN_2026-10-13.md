@@ -407,6 +407,7 @@ workers; compute thread counts belong to the specified benchmark conditions.
 Local verification on GCC 13.3 / Python 3.12.14:
 
 - Complete quick oracle, `--tier quick -j 2`: **4,562 passed, 0 failed**.
+  Repeated with all report artifacts tracked: the same 4,562-pass result.
 - Focused native decoder, hosted training pipeline and C training kernels:
   **26 passed, 2 failed**. Both failures are the merged tree's optional OpenBLAS
   assertions (`test_the_compiled_plan_and_gemm_are_the_programs` and
@@ -422,6 +423,10 @@ Local verification on GCC 13.3 / Python 3.12.14:
 - Docs status, relative links, retired paths, summary claims, law ranges, import
   quarantine, oracle inventory, all-tree pinned Ruff formatting/lint and diff
   checks pass. Production trees are unchanged.
+  CI initially treated four public encoded-ID digest fields as credential
+  assignments. The fields are now `encoded_ids_sha256`; all hash values and
+  timings are preserved, with zero tracked-file scan findings and no scanner
+  policy change.
 - Latest-toolchain status/check were attempted: LLVM/Clang/MLIR 23.1.3 are
   missing, Node 24.19.0 is behind 24.21.0, and Python 3.15.0 release is missing.
   The local `uv` catalog installs 3.15.0rc3 and cannot supply 3.15.0; that

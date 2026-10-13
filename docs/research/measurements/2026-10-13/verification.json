@@ -166,5 +166,28 @@
     "name": "diff",
     "seconds": 0.004310876000090502,
     "tail": ""
+  },
+  {
+    "command": [
+      "python",
+      "tools/security/scan_secrets.py"
+    ],
+    "exit_code": 0,
+    "name": "tracked-artifact-scan",
+    "tail": "scan_secrets: PASS tracked=2632 text=2631 binary=1 archive=0 findings=0"
+  },
+  {
+    "command": [
+      "python",
+      "-m",
+      "bcir.tests.run_all",
+      "--tier",
+      "quick",
+      "-j",
+      "2"
+    ],
+    "exit_code": 0,
+    "name": "quick-tracked",
+    "tail": "4562 passed, 0 failed; all report files present in the git index"
   }
 ]
