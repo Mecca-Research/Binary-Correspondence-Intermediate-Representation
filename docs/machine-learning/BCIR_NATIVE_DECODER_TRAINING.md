@@ -285,6 +285,20 @@ attention's fills run in the tasks that own the slices; every verdict and value 
 pass's. Measured: 3 in-place pairs: the serial passes 60.9 / 68.4 / 68.3 -> 17.4 / 16.2 / 18.6 ms (-43.5 / -52.2 / -49.7); 6 breakdown pairs at four threads under `kblock+exp+reduce`: the step 575.4 / 634.9 / 601.2 / 653.9 / 682.9 / 621.1 -> 550.9 / 588.2 / 615.7 / 616.6 / 642.6 / 563.4 ms (-24.4 / -46.6 / +14.6 / -37.2 / -40.3 / -57.7, below in 5 of 6), the forward stage 213.3 / 223.2 / 219.4 / 233.0 / 263.7 / 201.5 -> 199.9 / 201.4 / 194.0 / 213.9 / 230.6 / 199.4 (-13.4 / -21.9 / -25.4 / -19.0 / -33.1 / -2.1); the 20-step state at one and four threads the same on both trees (4bf4e057…). The same run under UBSan found the BCIR exponential's clamp passing a
 NaN to an integer conversion; the clamp is total now, every other input's result unchanged.
 
+The update's first pass runs as vector loops since NDT-PASS (2026-10-13). Its loop -- each
+element finite, the second moment not negative, the largest magnitudes the preflight's bound
+reads -- had compiled to scalar code (the refusal flag's short-circuit and the floating maxima
+written as selects); it is now one refusal flag without a branch and the maxima as the largest
+bit patterns read as int32 (a non-negative float orders as its bits; a -0.0 second moment reads
+as INT32_MIN and never wins, as the select from +0.0 never took it), with AVX2 and AVX-512
+instances, all three vectorized by GCC and Clang. Every verdict and every maximum the update
+reads is the scalar loop's; the gradient norm's chunk partial stays the index-order chain in
+double. The C harness puts a first moment only the preflight refuses at either end of either
+chunk and at the vector instances' block edges, and `tools/testing/faults/ndt-pass.json` holds
+the loop one element short and the maximum kept as a minimum. Measured in place at four threads
+(the report's §12): the first pass 23.2 / 20.3 / 24.6 -> 12.0 / 14.6 / 13.2 ms in three
+alternated pairs.
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,

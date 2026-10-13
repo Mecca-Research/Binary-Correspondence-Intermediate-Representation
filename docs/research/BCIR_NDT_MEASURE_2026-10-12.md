@@ -690,3 +690,27 @@ maximum and then a minimum in the vector instructions' comparison order keeps it
 their old cost). What the rest is now: the GEMMs' in-place time exceeds their synthetic
 time (the backward's 43 pairs most), the update's two pooled passes are memory-bound, and the
 attention is a tenth of the step at this context -- the next slices' attribution.
+
+## 12. The update's first pass, the attention's products and the pool (NDT-PASS, NDT-ATTN-1..3, NDT-POOL)
+
+§11's in-place record named the next rows: the update's first pass (about 20 ms at four threads:
+four 39 MB streams read by a loop GCC had compiled to scalar code -- "control flow in loop"), the
+attention (about 40 and 27 ms backward and forward: the GEMM kernel's v1 blocks computing 64-wide
+column blocks whole above the causal diagonal, the context's 48 channels padded to 64 with a mask
+test per term, and the backward's probability-adjoint tiles evaluated twice), and the pool behind
+every barrier. Each slice was drafted, held to the C harness's references bit for bit, and
+measured before it landed, in one session on this host
+([slices/](measurements/2026-10-13/slices/): five builds -- the tree before, then each slice --
+alternated through the in-place instrument of §11, three rounds, four threads, `kblock+exp+reduce`).
+
+### 12.1 The first pass as vector loops (NDT-PASS)
+
+The loop's verdict is now one flag without a branch and its maxima the largest bit patterns read
+as int32: a non-negative float orders as its bits, and the one negative value the pass admits, a
+-0.0 second moment, reads as INT32_MIN and never wins, as `x > max ? x : max` from +0.0 never took
+it -- so on every chunk the pass admits, the maxima are the select loop's bit for bit (a chunk it
+refuses has none the update reads). GCC and Clang vectorize the generic, AVX2 and AVX-512 instances.
+
+| four threads, in place, ms | before | NDT-PASS | pair difference |
+|---|---|---|---|
+| the update's first pass | 23.2 / 20.3 / 24.6 | 12.0 / 14.6 / 13.2 | -11.2 / -5.7 / -11.4 |

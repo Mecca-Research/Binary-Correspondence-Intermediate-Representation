@@ -136,6 +136,18 @@ static void refusals(void) {
     grad[last]=0; opt.grad_clip=1.0;
     assert(!memcmp(oldw,w,sizeof(w)) && !memcmp(oldm,m,sizeof(m)) && !memcmp(oldv,v,sizeof(v)));
   }
+  /* the first pass's maxima decide whether the preflight runs (NDT-PASS: they are vector loops'
+   * now): a first moment whose step leaves float's range -- its gradient zero, so nothing bounds
+   * the step but epsilon -- is one only the preflight refuses; at either end of either chunk and at
+   * the vector instances' block edges it is refused and nothing is written, so each element of
+   * every chunk reaches the bound */
+  for (i=0;i<6;i++) {
+    size_t at=i==0 ? 0 : i==1 ? 15 : i==2 ? 16 : i==3 ? 1023 : i==4 ? 1024 : s.plan.parameters-1;
+    float keep=grad[at]; grad[at]=0; m[at]=FLT_MAX/4;
+    assert(bcir_decoder_update(&s,&opt,1,&norm)==BCIR_DT_NUMERIC && s.step==0);
+    m[at]=0; grad[at]=keep;
+    assert(!memcmp(oldw,w,sizeof(w)) && !memcmp(oldm,m,sizeof(m)) && !memcmp(oldv,v,sizeof(v)));
+  }
   /* a finite gradient whose second moment leaves float's range: refused, nothing written */
   opt.grad_clip=0; grad[7]=FLT_MAX;
   assert(bcir_decoder_update(&s,&opt,1,&norm)==BCIR_DT_NUMERIC && s.step==0);

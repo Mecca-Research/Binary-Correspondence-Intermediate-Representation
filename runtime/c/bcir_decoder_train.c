@@ -452,19 +452,48 @@ size_t bcir_decoder_reduce_chunk(size_t n) {
 }
 typedef struct pass_part { double norm; float grmax,wmax,mmax,vmax; int bad; } pass_part;
 typedef struct pass_job {
-  const float *gr,*wt,*m1,*m2; size_t n,chunk; double gs; int reduce; pass_part *parts;
+  const float *gr,*wt,*m1,*m2; size_t n,chunk; double gs; int reduce,variant; pass_part *parts;
 } pass_job;
+/* One chunk's verdict and maxima, without a branch, so the instances below are vector loops: one
+ * flag for every refusal, as the preflight's; the maxima as the largest bit patterns read as
+ * int32 -- a non-negative float orders as its bits, and the one negative value the pass admits,
+ * a -0.0 second moment, reads as INT32_MIN and never wins, as `x > max ? x : max` from +0.0 never
+ * takes it -- so on every chunk the pass admits they are that loop's maxima, bit for bit (a chunk
+ * it refuses has no maxima the update reads). */
+BCIR_DT_INLINE void pass_span(size_t n,const float *gr,const float *wt,const float *m1,
+    const float *m2,double gs,pass_part *p) {
+  size_t i; int bad=0; int32_t bg=0,bw=0,bm=0,bv=0;
+  for (i=0;i<n;i++) {
+    float ag=fabsf(gr[i]),aw=fabsf(wt[i]),am=fabsf(m1[i]),av=m2[i]; int32_t xg,xw,xm,xv;
+    bad|=!(fabs((double)gr[i]*gs)<=DBL_MAX) | !(aw<=FLT_MAX) | !(am<=FLT_MAX) | !(av>=0.0f) |
+        !(av<=FLT_MAX);
+    memcpy(&xg,&ag,4); memcpy(&xw,&aw,4); memcpy(&xm,&am,4); memcpy(&xv,&av,4);
+    bg=xg>bg ? xg : bg; bw=xw>bw ? xw : bw; bm=xm>bm ? xm : bm; bv=xv>bv ? xv : bv;
+  }
+  p->bad=bad; memcpy(&p->grmax,&bg,4); memcpy(&p->wmax,&bw,4); memcpy(&p->mmax,&bm,4);
+  memcpy(&p->vmax,&bv,4);
+}
+static void pass_generic(size_t n,const float *gr,const float *wt,const float *m1,const float *m2,
+    double gs,pass_part *p) { pass_span(n,gr,wt,m1,m2,gs,p); }
+#ifdef BCIR_DT_DISPATCH
+__attribute__((target("avx2"))) static void pass_avx2(size_t n,const float *gr,const float *wt,
+    const float *m1,const float *m2,double gs,pass_part *p) { pass_span(n,gr,wt,m1,m2,gs,p); }
+__attribute__((target("avx512f"))) static void pass_avx512(size_t n,const float *gr,
+    const float *wt,const float *m1,const float *m2,double gs,pass_part *p) {
+  pass_span(n,gr,wt,m1,m2,gs,p);
+}
+#endif
 static void pass_task(void *ctx,size_t task) {
   pass_job *j=(pass_job *)ctx; pass_part p; size_t i;
   size_t i0=task*j->chunk,i1=i0+j->chunk<j->n ? i0+j->chunk : j->n;
-  const float *gr=j->gr,*wt=j->wt,*m1=j->m1,*m2=j->m2; double gs=j->gs;
-  p.norm=0.0; p.grmax=p.wmax=p.mmax=p.vmax=0.0f; p.bad=0;
-  for (i=i0;i<i1;i++) {
-    double g=(double)gr[i]*gs; float ag=fabsf(gr[i]),aw=fabsf(wt[i]),am=fabsf(m1[i]),av=m2[i];
-    p.bad|=!(fabs(g)<=DBL_MAX) | !(aw<=FLT_MAX) | !(am<=FLT_MAX) | !(av>=0 && av<=FLT_MAX);
-    p.grmax=ag>p.grmax ? ag : p.grmax; p.wmax=aw>p.wmax ? aw : p.wmax;
-    p.mmax=am>p.mmax ? am : p.mmax; p.vmax=av>p.vmax ? av : p.vmax;
-  }
+  const float *gr=j->gr; double gs=j->gs;
+#ifdef BCIR_DT_DISPATCH
+  if (j->variant&4) pass_avx512(i1-i0,gr+i0,j->wt+i0,j->m1+i0,j->m2+i0,gs,&p);
+  else if (j->variant&2) pass_avx2(i1-i0,gr+i0,j->wt+i0,j->m1+i0,j->m2+i0,gs,&p);
+  else
+#endif
+  pass_generic(i1-i0,gr+i0,j->wt+i0,j->m1+i0,j->m2+i0,gs,&p);
+  p.norm=0.0;
   if (j->reduce) for (i=i0;i<i1;i++) { double g=(double)gr[i]*gs; p.norm+=g*g; }
   j->parts[task]=p;
 }
@@ -519,6 +548,7 @@ static int first_pass(bcir_decoder_state *s,double gs,pass_part *parts,pass_resu
   pj.gr=s->gradients; pj.wt=s->weights; pj.m1=s->moment1; pj.m2=s->moment2;
   pj.n=s->plan.parameters; pj.chunk=bcir_decoder_reduce_chunk(pj.n); pj.gs=gs;
   pj.reduce=(s->contract&BCIR_DT_CONTRACT_REDUCE)!=0; pj.parts=parts;
+  pj.variant=bcir_tensor_mm_variants();
   out->tasks=(pj.n+pj.chunk-1)/pj.chunk; out->chunk=pj.chunk;
   out->grmax=out->wmax=out->mmax=out->vmax=0.0;
   bcir_tensor_pool_run(s->pool,pass_task,&pj,out->tasks);

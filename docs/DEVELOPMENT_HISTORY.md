@@ -2915,6 +2915,20 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-PASS (2026-10-13): the update's first pass as vector loops.
+  - NDT-SCAN's in-place record put the first pass at about 20 ms of the four-thread step: four
+    39 MB streams read by a loop GCC had compiled to scalar code ("control flow in loop": the
+    refusal flag's short-circuit and the maxima written as floating selects).
+  - One refusal flag without a branch, the maxima as the largest bit patterns read as int32 (a
+    non-negative float orders as its bits; the -0.0 second moment the pass admits reads as
+    INT32_MIN and never wins, as the select from +0.0 never took it), AVX2 and AVX-512 instances
+    dispatched as the preflight's and the commit's are; GCC and Clang vectorize all three. The
+    norm's chunk partial stays the index-order chain.
+  - Evidence: the harness puts a first moment only the preflight refuses (FLT_MAX/4 under a zero
+    gradient) at either end of either chunk and at the instances' block edges -- refused, nothing
+    written; `ndt-pass.json` NV1-NV2; `ndt-perf.json` NP8 re-anchored on the one flag.
+  - Measured ([measurements/2026-10-13/slices/](research/measurements/2026-10-13/slices/), the
+    report's §12): in place at four threads, 23.2 / 20.3 / 24.6 -> 12.0 / 14.6 / 13.2 ms.
   NDT-SCAN (2026-10-13): the step's whole-buffer passes on the pool.
   - Attribution first: in place (`measurements/2026-10-13/scan/attribution.py`: a clock read after every statement of the step), the serial passes were 11% of the four-thread step (the activations' scan 27.3 ms, the gradients' fill 8.5, the attention's fills 8.0 + 4.2, the weights' and the gradients' scans 6.7 + 6.2, of 571.4).
   - The scans and the gradients' fill as one task per chunk (a scan's chunks report into the
