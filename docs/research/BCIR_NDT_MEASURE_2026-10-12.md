@@ -315,7 +315,7 @@ differs is refused and the state keeps BCIR's kernels. Measured in the same sess
 | Exact rows | Result |
 |---|---|
 | `train.mm.kblock.mismatch` (the kernel against its exact rational emulation, 40 cases; the split rule on both rails) | 0 |
-| `train.mm.provider.mismatch` (OpenBLAS's `sgemm` against the kernel over the 15 step shapes at beta 0 and 1) | 0 of 30 |
+| `train.mm.provider.mismatch` (OpenBLAS's `sgemm` against the kernel over the 15 step shapes at beta 0 and 1; the row is `train.mm.provider.differences` since PR817-P0, with `train.mm.provider.unsound` the graded one -- PR #817's AMD host reads 14 of 30 and refuses the provider) | 0 of 30 |
 | the `identity` stage, `kblock` and `kblock+exp`, 1 and 3 threads, the widest build and a repeat ([kblock/identity-kblock.json](measurements/2026-10-12/kblock/identity-kblock.json)) | one state per contract: `5b92ff75…`, `f19b0d7d…`, apart from the other four |
 | the 1,000-step `kblock+exp` run on BCIR's kernel and on OpenBLAS admitted, at 1 and at 4 threads | one state, `d7fc618c9eeb8b6f…`, on all four ([kblock/runs/](measurements/2026-10-12/kblock/runs/)): BCIR's own kernel at one and at four threads, OpenBLAS admitted at one and at four |
 | the small products OpenBLAS computes on its small-matrix path (the threads bench's shapes) | refused by the differential (4 of 30 cases differ): the admission is per shape set |

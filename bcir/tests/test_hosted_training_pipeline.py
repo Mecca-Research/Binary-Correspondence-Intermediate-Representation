@@ -144,6 +144,42 @@ def test_the_rank_ordered_encoder_is_the_pass_encoder():
     assert disagreements > 0, "the differential cannot tell the merge order apart"
 
 
+def test_a_duplicate_merge_pair_keeps_its_first_merge():
+    """PR #817's import finding: the constructor and the JSON importer accept a merge list that
+    names one pair twice (training never writes one, but the schema and digest admit it), and
+    the rank table kept the LAST merge while the pass encoder -- the definition -- applies the
+    first, whose pass consumes every occurrence: `ab` encoded to 261 by rank and 260 by passes.
+    The table keeps the first merge now, on the constructor's tokenizer and on the imported
+    one, also where the duplicate names a pair an earlier merge created; and a table that keeps
+    the last merge disagrees, so the differential can fail."""
+    from bcir.hosted.training import bpe as m
+
+    base = m._BASE_VOCAB
+    a, b, c = (byte + len(m._SPECIALS) for byte in b"abc")
+    artifacts = (
+        ((a, b, base), (a, b, base + 1)),
+        ((a, b, base), (base, c, base + 1), (a, b, base + 2), (base + 1, c, base + 3)),
+    )
+    for merges in artifacts:
+        tokenizers = (BytePairTokenizer(merges), BytePairTokenizer.from_json(
+            BytePairTokenizer(merges).to_json()))  # fmt: skip
+        assert tokenizers[0] == tokenizers[1] and tokenizers[1].merges == merges
+        for tokenizer in tokenizers:
+            ranks = tokenizer._ranks()
+            assert ranks[(a, b)] == (0, base)  # the first merge, never the duplicate's token
+            for text in ("ab", "abc", "abab", "abcabcab", "ba", "aabb"):
+                sequence = [byte + len(m._SPECIALS) for byte in text.encode("utf-8")]
+                by_passes = m._encode_by_passes(list(sequence), merges)
+                assert tokenizer.encode(text) == by_passes, (merges, text)
+                assert base + 1 not in tokenizer.encode("ab") or merges is artifacts[1]
+                assert tokenizer.decode(tokenizer.encode(text)) == text
+        last_wins = {}
+        for index, (left, right, token) in enumerate(merges):
+            last_wins[(left, right)] = (index, token)
+        disagree = m._encode_by_rank([a, b], last_wins) != m._encode_by_passes([a, b], merges)
+        assert disagree, "the differential cannot tell a last-wins table apart"
+
+
 def test_byte_bpe_roundtrips_utf8_and_builds_indexed_token_source():
     corpus = prepare_corpus(
         _documents()[:2], DataPreparationSpec(("CC0-1.0",), validation_permyriad=0)

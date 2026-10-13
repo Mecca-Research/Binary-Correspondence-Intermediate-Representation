@@ -174,13 +174,16 @@ class BytePairTokenizer:
         return cls(tuple(merges))
 
     def _ranks(self) -> dict[tuple[int, int], tuple[int, int]]:
-        """pair -> (merge index, token), computed once per tokenizer (the dataclass is frozen)."""
+        """pair -> (merge index, token), computed once per tokenizer (the dataclass is frozen).
+        A pair the merge list names twice keeps its FIRST merge: the pass encoder applies the
+        merges in order and the first pass over a pair consumes every occurrence, so a later
+        duplicate never fires -- the table must say the same (PR #817's import finding: the
+        last-wins table emitted the later token for `ab`)."""
         ranks = self.__dict__.get("_rank_table")
         if ranks is None:
-            ranks = {
-                (left, right): (index, token)
-                for index, (left, right, token) in enumerate(self.merges)
-            }
+            ranks = {}
+            for index, (left, right, token) in enumerate(self.merges):
+                ranks.setdefault((left, right), (index, token))
             object.__setattr__(self, "_rank_table", ranks)
         return ranks
 

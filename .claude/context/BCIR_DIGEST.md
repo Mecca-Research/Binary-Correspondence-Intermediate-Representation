@@ -231,7 +231,7 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 ### STATUS.md counts (generated source of truth)
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **4562** across 322 files |
+| Static Python `test_*` function inventory | **4563** across 322 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **133** |
 | Static registered-pass inventory | **37** |
 | Static MLIR fixture inventory (`mlir/test/`) | **131** files; 386 `expected-error` markers |
@@ -268,7 +268,7 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 - **docs/BCIR_QUALIFICATION.md** (164L): The model: BCIR-Docs-860K · The pipeline and its checks · Results · Reproduce · What is not claimed
 - **docs/BCIR_Repo_Structure.md** (236L): 1. Top-level ownership · 2. Oracle package (`bcir/`) · 3. Law rail (`mlir/`) · 4. C and C++ runtime classes · 5. Contract ownership · 6. Documentation taxonomy · 7. Build and validation entry points · 8. Change-placement rules
 - **docs/BCIR_TARGET_ACCESS.md** (133L): 1. Privilege is not capability · 2. What the two available hosts actually provide · 3. What each open phase needs · 4. The bare-metal targets that would unblock it · 5. How to record a new host
-- **docs/DEVELOPMENT_HISTORY.md** (5922L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
+- **docs/DEVELOPMENT_HISTORY.md** (5939L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
 - **docs/ONBOARDING_DEEP_DIVE.md** (320L): 1. Read this first · 2. The three implementation rails · 3. From source to execution · 4. Core semantic and optimizer packages · 5. Frontends, lowering, and machine boundary · 6. Runtime memory and ownership · 7. Models, training, and BCIRQ8 · 8. Drivers, kernel, telemetry, and IPC · 9. Current evidence boundary · 10. Validation workflow · 11. Reading and change-placement map
 - **docs/PARITY.md** (512L): Enum value parity (normative) · Concept parity · Python ↔ C artifact and runtime parity · Python ↔ C frontend twin (`runtime/c/`) · Worked-example parity · Generated, adversarial parity (the proof, not the hope) · How parity is enforced today
 - **docs/PERFORMANCE_AUDIT.md** (149L): 1. Gate and evidence contract · 2. Defects and bottlenecks found · 3. Local before/after evidence · 4. What remains hardware- and workload-gated
@@ -304,7 +304,7 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 - **docs/languages/CPP_HANDOFF_BOUNDARY.md** (215L): Honest depth (read this first) · Why a boundary at all · What stays on the C/IR rail (below the boundary) · What crosses to C++ (above the boundary) · The seam · Why C++ (and not C / IR) · What is built · Risks and follow-ups (what remains, deliberately)
 - **docs/languages/C_MEMORY_DISCIPLINE.md** (104L): Runtime classes · Required ownership rules · Direct driver ABI first · IPC boundary · Validation cadence
 - **docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md** (1399L): 0. Stance — why an IR becomes intelligence · 1. The intelligence already in BCIR (the substrate this buil · 2. The ordered build-out · 3. The continuous-development discipline (how every layer ke · 4. Capability-track placement (do we need CT6 / CT7?) · 5. Risk register / honest boundaries (out of the dreamy pote · 6. AI-substrate closure register · 7. Open-weight model ingestion (GLM / Gemma / Qwen) — the LL · 8. Feasibility audit — the deeper-integration program (2026- · Native C decoder training
-- **docs/machine-learning/BCIR_NATIVE_DECODER_TRAINING.md** (220L): Implemented contract · Using the trainer · The train rail (TRAIN-RAIL) · The step as a GEM+ program (NDT-GEM) · Evidence and scope
+- **docs/machine-learning/BCIR_NATIVE_DECODER_TRAINING.md** (226L): Implemented contract · Using the trainer · The train rail (TRAIN-RAIL) · The step as a GEM+ program (NDT-GEM) · Evidence and scope
 - **docs/machine-learning/BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md** (176L): 1. Verdict · 2. Scope and method · 3. Native surface implemented by this audit · 4. Safety, determinism, and portability contract · 5. Bounded local evidence · 6. Complete placement register · 7. Next native milestones
 - **docs/machine-learning/BCIR_WHOLE_MODEL_REFERENCE.md** (311L): 1. The overlap — BCIR already owns the reference numerics · 2. What landed and what remains · 3. What NOT to import · 4. Where each piece lands (anchored homes) · 5. Build-slice status (WMR-1 … WMR-4) · 6. The larger implication — closing the train → export → ser · 7. Coherence with the rest of the system · Native C decoder training
 - **docs/machine-learning/ML_LANGUAGE_PLACEMENT_ANALYSIS.md** (396L): 1. Executive summary — the thesis · 2. The five placement criteria · 3. The four language tiers · 4. The classification table (the heart) · 5. The migration map · 6. Conclusion — the clean hierarchy

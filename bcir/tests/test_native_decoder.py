@@ -213,7 +213,7 @@ def test_the_compiled_plan_and_gemm_are_the_programs():
         assert nf.mm_mismatch(lib) == 0
         assert nf.mm_fused_mismatch(lib) == 0
         assert nf.mm_kblock_mismatch(lib) == 0
-        assert nf.provider_mismatch(lib) in (None, 0)  # None: no OpenBLAS wheel here, a skip
+        assert nf.provider_unsound(lib._name) in (None, 0)  # None: no OpenBLAS wheel, a skip
         swept, mismatch, ulp = nf.exp_sweep(lib)
         assert swept > 8_000_000 and mismatch == 0 and ulp <= 1, (swept, mismatch, ulp)
         assert len(nf.MM_CASES) == 20 and len(nf.MM_KBLOCK_CASES) == 40
@@ -373,9 +373,11 @@ def test_a_provider_is_admitted_under_the_blocked_contract_only_where_it_is_the_
     kernel is refused on every case and the fused kernel on the beta-1 cases (one block, but
     the chain from c), each leaving the state on BCIR's kernels; the differential refuses an
     empty shape set. Where the scipy_openblas32 wheel is importable, OpenBLAS is refused on
-    the threads bench's small products (its small-matrix path keeps the whole chain) and
-    admitted on the comparison decoder's shapes: the admission is per shape set, never a
-    claim about every shape. Under v1 a provider is installed with no admission."""
+    the threads bench's small products (its small-matrix path keeps the whole chain), and on
+    the comparison decoder's shapes the verdict agrees with the differential -- admitted where
+    the wheel's target computes the contract, refused with the count where it does not: the
+    admission is per host and per shape set, never a claim that a wheel is admitted. Under v1
+    a provider is installed with no admission."""
     import ctypes as ct
 
     from bcir.hosted.models.native import _CBLAS, NativeDecoder, provider_mismatch
@@ -440,7 +442,10 @@ def test_a_provider_is_admitted_under_the_blocked_contract_only_where_it_is_the_
             raise AssertionError("OpenBLAS admitted on products its small-matrix path computes")
         finally:
             trainer.close()
-        assert nf.provider_mismatch(lib) == 0  # the comparison decoder's shapes: admitted
+        # the comparison decoder's shapes: admitted where the wheel computes the contract (the
+        # SkylakeX target), refused with the differential's count where it does not (PR #817's
+        # AMD host, 14 of 30): the verdict is sound on both, and that is the claim
+        assert nf.provider_unsound(path) == 0
 
 
 def test_the_threads_row_fires_on_a_partition_that_depends_on_the_thread_count():
@@ -502,12 +507,17 @@ def test_the_harness_rows_are_the_programs_numbers():
                          "train.step.ms", "train.corpus.unselected",
                          "train.state.threads.mismatch", "train.mm.fused.mismatch",
                          "train.exp.mismatch", "train.exp.ulp.max",
-                         "train.mm.kblock.mismatch", "train.mm.provider.mismatch"}  # fmt: skip
-    kblock, provider = rows["train.mm.kblock.mismatch"], rows["train.mm.provider.mismatch"]
+                         "train.mm.kblock.mismatch", "train.mm.provider.unsound",
+                         "train.mm.provider.differences"}  # fmt: skip
+    kblock, unsound = rows["train.mm.kblock.mismatch"], rows["train.mm.provider.unsound"]
+    differences = rows["train.mm.provider.differences"]
     assert kblock.kind == "exact" and kblock.bound == 0 and kblock.baseline == 0
     assert kblock.what.startswith(f"of {len(nf.MM_KBLOCK_CASES)} GEMM cases")
-    assert provider.kind == "exact" and provider.bound == 0 and provider.baseline == 0
-    assert provider.what.startswith("of 30 GEMM cases")
+    # the guard's row is graded on every host; the wheel's count is the host's (PR817-P0)
+    assert unsound.kind == "exact" and unsound.bound == 0 and unsound.baseline == 0
+    assert unsound.what.startswith("whether the admission verdict") and not unsound.host_dependent
+    assert differences.kind == "exact" and differences.bound == 0 and differences.baseline == 0
+    assert differences.what.startswith("of 30 GEMM cases") and differences.host_dependent
     for key, baseline in (("train.exp.mismatch", 0), ("train.exp.ulp.max", 1)):
         assert rows[key].kind == "exact" and rows[key].bound == baseline == rows[key].baseline
     fused = rows["train.mm.fused.mismatch"]

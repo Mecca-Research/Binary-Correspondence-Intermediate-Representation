@@ -885,12 +885,32 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="NDT-KBLOCK",
     ),
     Metric(
-        "train.mm.provider.mismatch",
+        "train.mm.provider.unsound",
+        "train",
+        "whether the admission verdict NativeDecoder.use_cblas gives OpenBLAS (scipy_openblas32) on "
+        "the 2026-10-11 comparison decoder disagrees with the differential it is defined by: 1 where "
+        "the provider is admitted though a case differs, refused though none does, or refused with a "
+        "count other than the differential's; 0 on a host that admits and on one that refuses "
+        "alike; measured only where the wheel is importable",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the admission is the differential's verdict and nothing else: admitted exactly "
+        "when every case over the trainer's shapes at beta 0 and 1 is the contract's bit for bit, "
+        "refused with the count otherwise -- so the row is 0 wherever the guard runs, whatever the "
+        "wheel's target computes (the 2026-10-12 Intel host admits; PR #817's AMD EPYC host refuses "
+        "14 of 30)",
+        slice_owner="NDT-KBLOCK",
+    ),
+    Metric(
+        "train.mm.provider.differences",
         "train",
         "of 30 GEMM cases (the 2026-10-11 comparison decoder's 15 step shapes at beta 0 and 1, alpha "
         "1), those where OpenBLAS's sgemm (scipy_openblas32, one thread) differs in any bit from "
-        "bcir_tensor_mm_kblock -- the admission differential NativeDecoder.use_cblas runs under "
-        "the blocked contract; measured only where the wheel is importable",
+        "bcir_tensor_mm_kblock -- the admission differential's count on this host; a property of "
+        "the wheel's target kernels, not of BCIR, so reported everywhere and graded only on the "
+        "baseline host; measured only where the wheel is importable",
         0,
         "count",
         "exact",
@@ -898,9 +918,10 @@ METRICS: tuple[Metric, ...] = (
         bound_source="OpenBLAS's level-3 driver on its SkylakeX target splits K by the same rule (Q 448, "
         "unroll 16) and its kernel accumulates each panel in registers from zero and adds it to C, "
         "so for the trainer's shapes (above its small-matrix threshold) its output is the contract's "
-        "bit for bit; a host whose OpenBLAS target blocks differently reads a nonzero count and the "
-        "trainer refuses the provider",
+        "bit for bit there (0 of 30); a host whose OpenBLAS target blocks differently reads a nonzero "
+        "count (PR #817's AMD EPYC 9V74: 14 of 30) and the trainer refuses the provider",
         slice_owner="NDT-KBLOCK",
+        host_dependent=True,
     ),
     # --- NDT-EXP: the BCIR exponential --------------------------------------------------------
     Metric(

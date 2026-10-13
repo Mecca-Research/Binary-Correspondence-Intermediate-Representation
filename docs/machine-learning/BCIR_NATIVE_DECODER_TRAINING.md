@@ -110,7 +110,8 @@ the C rail to it:
 | `train.memory.transient` | exact | the bytes the C plan reserves for activations and workspace over G26's concurrent-live bound on the same values | 1.326x: 999,424 bytes held over a 753,664-byte bound at the bench shape |
 | `train.mm.fused.mismatch` | exact | `bcir_tensor_mm_fused` against an exact rational emulation of the fused contract rounded once per term, bit for bit, on the same 20 cases | 0 of 20 (2026-10-12, NDT-FMA) |
 | `train.mm.kblock.mismatch` | exact | `bcir_tensor_mm_kblock` against an exact rational emulation of the blocked fused contract (v3) on 40 cases (the 20 fused cases and 20 deeper ones crossing the split rule's three cases, an inexact alpha, beta 1), plus the depths where the C split rule and the Python one disagree | 0 of 40 (2026-10-12, NDT-KBLOCK) |
-| `train.mm.provider.mismatch` | exact | OpenBLAS's `sgemm` (scipy_openblas32, one thread) against `bcir_tensor_mm_kblock` over the comparison decoder's 15 step shapes at beta 0 and 1 -- the admission differential `use_cblas` runs under v3; measured where the wheel is importable | 0 of 30 (2026-10-12, NDT-KBLOCK, this host's SkylakeX target) |
+| `train.mm.provider.unsound` | exact | whether `NativeDecoder.use_cblas`'s verdict on OpenBLAS (scipy_openblas32) over the comparison decoder disagrees with the differential it is defined by -- admitted though a case differs, refused though none does, or refused with another count; 0 on a host that admits (the 2026-10-12 Intel host) and on one that refuses (PR #817's AMD EPYC host, 14 of 30) alike; measured where the wheel is importable | 0 |
+| `train.mm.provider.differences` | exact, host-dependent | of the comparison decoder's 15 step shapes at beta 0 and 1, the cases where OpenBLAS's `sgemm` (one thread) differs in any bit from `bcir_tensor_mm_kblock`: the wheel's target kernels' arithmetic, not BCIR's -- reported everywhere, graded only on the baseline host (0 of 30 on the Intel host's SkylakeX kernels; 14 of 30 on PR #817's AMD host, where the trainer refuses the provider) | 0 (Intel), 14 (AMD) |
 | `train.exp.mismatch` | exact | inputs among 2^24 where two instruction-set instances of the BCIR exponential differ | 0 (2026-10-12, NDT-EXP) |
 | `train.exp.ulp.max` | exact, stated | the exponential's largest distance from exp in double rounded to binary32 over the same inputs | 1 ulp (2026-10-12, NDT-EXP) |
 | `train.state.threads.mismatch` | exact | the state (weights, both moments, the step, the bias powers) after three steps of the threads bench (vocab 250, width 72, 4 heads over 2 KV heads, 2 layers, batch 2 x 40 tokens) on two, three and four threads of the pool, against the one-thread state of the same library, seeded weights, tokens and rates | 0 of 3 (2026-10-12, NDT-THREADS) |
@@ -183,9 +184,14 @@ contract (v3, NDT-KBLOCK) landed the same day, from that measurement's one surpr
 K-blocked form of it everywhere else. `gemm_kblock_contract` in the C harness holds every instance
 to the K-blocked `fmaf` chains and the split rule on ten depths, `train.mm.kblock.mismatch` holds
 the kernel to its exact emulation, and `use_cblas` admits a CBLAS provider under v3 only by a
-differential over the trainer's own shapes (`train.mm.provider.mismatch`: OpenBLAS's `sgemm`, 0 of
-30 on this host) -- the first provider that is a BCIR contract bit for bit rather than its own
-arithmetic; `tools/testing/faults/ndt-kblock.json` holds the injected faults. A provider whose
+differential over the trainer's own shapes -- the first provider that is a BCIR contract bit for
+bit rather than its own arithmetic; `tools/testing/faults/ndt-kblock.json` holds the injected
+faults. The admission is per host: OpenBLAS's SkylakeX kernels compute the contract (0 of 30
+cases differ on the 2026-10-12 Intel host, admitted), its kernels on PR #817's AMD EPYC host do
+not (14 of 30, refused, the state on BCIR's kernels), and what the rows hold is the guard, not
+the wheel: `train.mm.provider.unsound` is 0 on both (the verdict is the differential's) and
+`train.mm.provider.differences` is the host's count, reported and never graded off the baseline
+host (PR817-P0). A provider whose
 worker threads spin between calls contends with the pool's kernels: OpenBLAS's spin for 2^28
 cycles after each call cost the four-thread step a fifth until `OPENBLAS_THREAD_TIMEOUT` was set
 low before the library loaded (the comparison harness sets it; the report's §7 measures it). What

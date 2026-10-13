@@ -2889,7 +2889,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     under all six contracts, each its own state, each identical at 1..4 threads; the undefined
     bit 8 and the pair fused|kblock refused. `train.mm.kblock.mismatch` 0 of 40 against
     `mm_reference_kblock` (exact rationals per term, two binary32 operations per block) with
-    the C and Python split rules agreeing on every depth; `train.mm.provider.mismatch` 0 of 30
+    the C and Python split rules agreeing on every depth; `train.mm.provider.mismatch` (since PR817-P0 `train.mm.provider.differences`, beside the graded `train.mm.provider.unsound`) 0 of 30
     (OpenBLAS on the comparison decoder's shapes, where the wheel is importable). The admission
     witness: BCIR's blocked kernel behind a CBLAS callback admitted, the v1 kernel refused on
     30 of 30 cases, the fused kernel on the 15 beta-1 cases, an empty differential refused, and
@@ -2915,6 +2915,23 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  PR817-P0 (2026-10-13): the two portability findings of PR #817's same-host rerun.
+  - The provider admission is host-specific and the tests said otherwise. Two assertions held
+    that every importable OpenBLAS wheel is admitted on the comparison decoder's shapes; on
+    PR #817's AMD EPYC host the same wheel (0.3.34, DYNAMIC_ARCH) blocks differently, 14 of 30
+    cases differ, the trainer refuses it -- the guard working -- and the tests failed. The
+    claim is now the guard's: `train.mm.provider.unsound` (`provider_unsound`) is 0 wherever
+    the wheel is importable -- the verdict `use_cblas` gives agrees with the differential it is
+    defined by, admitted exactly when no case differs, refused with the count otherwise -- and
+    `train.mm.provider.differences` is the host's count (0 of 30 here, 14 of 30 there),
+    reported everywhere and graded only on the baseline host (`host_dependent`).
+  - The rank-ordered BPE encoder kept a duplicate pair's LAST merge; the pass encoder, the
+    definition, applies the first, whose pass consumes every occurrence, so an artifact naming
+    one pair twice (training never writes one; the schema and digest admit it) encoded `ab` to
+    the later token by rank. `_ranks` keeps the first merge now; the witness holds the
+    constructor's and the imported tokenizer to the pass encoder on both duplicate shapes
+    (a plain repeat, and a pair an earlier merge created) and a last-wins table disagrees;
+    `tools/testing/faults/bpe.json` (BP1 the last merge kept, BP2 a merge dropped).
   NDT-BLOCK (2026-10-12): the v3 GEMM kernel's register block and packing, under the same contract.
   - The gap NDT-KBLOCK left to the admitted provider (BCIR's own v3 kernel at 61 GFLOP/s
     work-weighted against OpenBLAS's 89 at one thread on the step's shapes) was the schedule,

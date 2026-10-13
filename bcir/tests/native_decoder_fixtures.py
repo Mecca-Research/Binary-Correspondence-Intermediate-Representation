@@ -40,6 +40,7 @@ import math
 import os
 import shutil
 import statistics
+import re
 import struct
 import subprocess
 import sys
@@ -382,9 +383,12 @@ def openblas_library() -> Path | None:
 
 
 def provider_mismatch(lib, shapes=None) -> int | None:
-    """`train.mm.provider.mismatch`: OpenBLAS's sgemm (scipy_openblas32, one thread) against the
-    blocked contract over the comparison decoder's step shapes at beta 0 and 1 -- the admission
-    differential `NativeDecoder.use_cblas` runs; None where the wheel is not importable."""
+    """`train.mm.provider.differences`: OpenBLAS's sgemm (scipy_openblas32, one thread) against
+    the blocked contract over the comparison decoder's step shapes at beta 0 and 1 -- the
+    admission differential `NativeDecoder.use_cblas` runs; None where the wheel is not
+    importable. A host-dependent count: 0 where the wheel's target computes the contract (the
+    SkylakeX kernels of the 2026-10-12 Intel host), 14 of 30 on PR #817's AMD EPYC host, whose
+    OpenBLAS blocks differently -- reported, never graded off the baseline host."""
     from bcir.hosted.models.native import _CBLAS, provider_mismatch as differential
     from bcir.hosted.models.native_program import training_step_program
 
@@ -477,6 +481,46 @@ def step_ms(path, bench=BENCH, steps=4, repeats=9) -> float:
         trainer.run(tokens, targets, steps=steps, optimizer=opt)
         samples.append((time.perf_counter() - start) * 1000 / steps)
     return statistics.median(samples)
+
+
+def provider_unsound(path, shapes=None) -> int | None:
+    """`train.mm.provider.unsound`: the admission verdict `NativeDecoder.use_cblas` gives
+    OpenBLAS on the comparison decoder, against the differential it is defined by -- 1 where
+    the provider is admitted though a case differs, refused though none does, or refused with
+    a count other than the differential's; 0 on a host that admits (the Intel host) and on one
+    that refuses (PR #817's AMD host) alike; None where the wheel is not importable. The exact
+    row every host grades: the guard is sound wherever it runs, whatever the wheel computes."""
+    from bcir.hosted.models.native import NativeDecoder
+
+    blas = openblas_library()
+    if blas is None:
+        return None
+    lib = ct.CDLL(str(path))
+    differences = provider_mismatch(lib, shapes)
+    spec = DecoderSpec(260, 384, 8, 6, 1024, activation="silu_gate", n_kv_heads=4)
+    trainer = NativeDecoder(path, spec, batch_size=8, context_length=128, contract="kblock")
+    try:
+        trainer.use_cblas(blas, symbol="scipy_cblas_sgemm")
+    except ValueError as refusal:
+        counted = re.search(r"(\d+) of (\d+) GEMM cases differ", str(refusal))
+        unsound = (
+            trainer.backend != "portable-c"
+            or trainer.provider_admission is not None
+            or counted is None
+            or int(counted.group(1)) != differences
+            or differences == 0
+        )
+    else:
+        admitted = trainer.provider_admission
+        unsound = (
+            admitted is None
+            or admitted["mismatch"] != 0
+            or differences != 0
+            or not trainer.backend.startswith("cblas:")
+        )
+    finally:
+        trainer.close()
+    return int(unsound)
 
 
 def measure_step(path, bench=BENCH) -> dict[str, float]:
@@ -588,7 +632,8 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         out["train.mm.kblock.mismatch"] = float(mm_kblock_mismatch(lib))
         provider = provider_mismatch(lib)
         if provider is not None:
-            out["train.mm.provider.mismatch"] = float(provider)
+            out["train.mm.provider.differences"] = float(provider)
+            out["train.mm.provider.unsound"] = float(provider_unsound(path))
         swept, mismatch, ulp = exp_sweep(lib)
         assert swept > 8_000_000, swept
         out["train.exp.mismatch"] = float(mismatch)
@@ -618,6 +663,7 @@ __all__ = [
     "kblock_split",
     "mm_reference_kblock",
     "provider_mismatch",
+    "provider_unsound",
     "openblas_library",
     "mm_mismatch",
     "mm_variants",
