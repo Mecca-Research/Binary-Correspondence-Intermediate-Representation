@@ -651,3 +651,42 @@ job against the two calls, alternated minutes apart; [sched0/](measurements/2026
 | step | 684.2 / 679.4 / 659.3 | 645.1 / 681.7 / 668.1 | -39.2 / +2.4 / +8.8 |
 
 Reading: the backward pass (the `loss_backward` stage, the forward recomputed inside it, as the trainer runs it -- the one stage the pair job changes) is below the two-call stage in 3 of 3 pairs, by -30.9 / -47.5 / -27.8 ms (631.9 / 633.8 / 622.4 against 601.0 / 586.3 / 594.6), and the GEMM-backward row timed alone by -54.6 / -31.0 / +16.0; the step's own cell (-39.2 / +2.4 / +8.8) is within this host's run-to-run noise, as NDT-REDUCE's was -- the one barrier fewer per linear and the narrow projections' tasks shared are worth about 5% of the backward at four threads here
+
+## 11. Where the rest of the step went (NDT-SCAN)
+
+The breakdown times each kernel family alone on synthetic operands and reports the rest of the
+step as a difference -- about 150 ms of the four-thread step after NDT-SCHED-0. Timed in place
+instead ([scan/attribution.py](measurements/2026-10-13/scan/attribution.py): a copy of the two C
+units with a clock read after every statement of the forward, the backward and the update, run
+on the comparison's decoder), the rest was mostly six passes over whole buffers on the caller's
+thread while the other three waited:
+
+| four threads, one in-place run before NDT-SCAN | ms |
+|---|---|
+| the activations' finiteness scan (about 170 MB) | 27.3 |
+| the gradients' zero fill | 8.5 |
+| the attention forward's zero fill of the probabilities and the context | 8.0 |
+| the weights' finiteness scan | 6.7 |
+| the gradients' finiteness scan | 6.2 |
+| the attention backward's zero fill of dq, dk, dv | 4.2 |
+| the step | 571.4 |
+
+A scan's verdict is "some element is not finite" and a fill writes zeros, so neither depends on
+the partition: NDT-SCAN runs each as one task per chunk and moves the attention's fills into the
+tasks that own the slices. Measured in alternated pairs ([scan/](measurements/2026-10-13/scan/)):
+
+| four threads, ms | before (the serial passes) | NDT-SCAN | pair difference |
+|---|---|---|---|
+| the six passes, in place | 60.9 / 68.4 / 68.3 | 17.4 / 16.2 / 18.6 | -43.5 / -52.2 / -49.7 |
+| the step, in place | 571.4 / 710.7 / 602.8 | 591.0 / 549.5 / 568.8 | +19.6 / -161.2 / -34.0 |
+| the step, the breakdown harness | 575.4 / 634.9 / 601.2 / 653.9 / 682.9 / 621.1 | 550.9 / 588.2 / 615.7 / 616.6 / 642.6 / 563.4 | -24.4 / -46.6 / +14.6 / -37.2 / -40.3 / -57.7 |
+| the forward stage, the breakdown harness | 213.3 / 223.2 / 219.4 / 233.0 / 263.7 / 201.5 | 199.9 / 201.4 / 194.0 / 213.9 / 230.6 / 199.4 | -13.4 / -21.9 / -25.4 / -19.0 / -33.1 / -2.1 |
+
+The 20-step state is the same on both trees at one and four threads
+(4bf4e057…). The same in-place record caught a regression of the slice's own: the first
+NaN clamp (`x==x ? x : 0`, a third select) cost the SiLU and the SwiGLU VJP their vector code, 22-24
+and 26-30 ms a step more, which the step's cell had hidden behind the scans' gain; the clamp as a
+maximum and then a minimum in the vector instructions' comparison order keeps it (both rows back to
+their old cost). What the rest is now: the GEMMs' in-place time exceeds their synthetic
+time (the backward's 43 pairs most), the update's two pooled passes are memory-bound, and the
+attention is a tenth of the step at this context -- the next slices' attribution.

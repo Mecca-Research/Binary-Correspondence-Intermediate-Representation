@@ -259,6 +259,9 @@ static void attention_reference(void) {
     for (i=0;i<nq;i++) { q[i]=sinf((float)i*0.37f)*1.7f; dy[i]=cosf((float)i*0.11f)*0.5f; }
     for (i=0;i<nkv;i++) { k[i]=cosf((float)i*0.53f)*1.3f; v[i]=sinf((float)i*0.29f)-0.1f; }
     if (pass && t>3) { v[(t-1)*nk*d]=INFINITY; dy[d]=NAN; }
+    /* the outputs start as NaN bytes: every element is the kernel's own write (NDT-SCAN moved the
+     * zero fills into the tasks that own them) */
+    memset(p1,0xff,np*sizeof(float)); memset(y1,0xff,nq*sizeof(float));
     ref_attention(b,t,nh,nk,d,q,k,v,p0,y0,expf); bcir_tensor_attention(b,t,nh,nk,d,q,k,v,p1,y1);
     assert(!memcmp(p0,p1,np*sizeof(float)) && !memcmp(y0,y1,nq*sizeof(float)));
     for (i=0;i<np;i++) if ((i%t)>(i/t)%t) assert(p1[i]==0.0f && !signbit(p1[i]));
@@ -268,6 +271,7 @@ static void attention_reference(void) {
     assert(!memcmp(dq0,dq1,nq*sizeof(float)) && !memcmp(dk0,dk1,nkv*sizeof(float)) &&
         !memcmp(dv0,dv1,nkv*sizeof(float)));
     memset(dq1,0xff,nq*sizeof(float)); memset(dk1,0xff,nkv*sizeof(float));
+    memset(dv1,0xff,nkv*sizeof(float));
     bcir_tensor_attention_backward_inplace(b,t,nh,nk,d,q,k,v,p1,dy,dq1,dk1,dv1);
     assert(!memcmp(dq0,dq1,nq*sizeof(float)) && !memcmp(dk0,dk1,nkv*sizeof(float)) &&
         !memcmp(dv0,dv1,nkv*sizeof(float)));
@@ -593,6 +597,63 @@ static void reduction_references(void) {
   printf("  PASS native pooled reductions: the loss is the rows' chain and the embedding gradient "
       "the row-order scatter, %u runs over two shapes on no pool and a pool of two\n",pools);
 }
+/* NDT-SCAN: the step's whole-buffer passes on the pool. A wider fixture -- width 32, feed-forward
+ * 64, two layers: 19,104 parameters, one 16,384-element scan chunk and a 2,720-element tail -- on
+ * no pool and on pools of two and three: a non-finite weight or accumulated gradient at either end
+ * of either chunk is refused before the forward pass runs (the activations untouched); finite
+ * weights whose final norm overflows are refused by the activations' scan; and a gradient buffer
+ * holding stale values is zeroed whole, its tail included, so the step is the step from zeros, bit
+ * for bit, the same at every pool. */
+static void scan_references(void) {
+  static float bw[19104],bg[19104],bm[19104],bv[19104],bact[65536],bscratch[65536],want[19104];
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  bcir_decoder_spec spec={16,32,2,1,2,64,1,4,1,10000.0,1e-6};
+  uint32_t x[]={1,2,3,4},y[]={2,3,4,5}; size_t i,k,n=0; unsigned p,runs=0; double loss,first=0.0;
+  for (p=0;p<3;p++) {
+    bcir_decoder_state s; bcir_tensor_pool *pool=NULL; double again;
+    if (p) {
+      if (!bcir_tensor_pool_size(p+1)) continue;
+      pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),p+1); assert(pool!=NULL);
+    }
+    memset(&s,0,sizeof(s));
+    assert(bcir_decoder_make_plan(&spec,&s.plan)==0);
+    n=s.plan.parameters;
+    assert(n==19104 && n>16384 && n%16384 && s.plan.activations<=65536 && s.plan.scratch<=65536);
+    s.weights=bw; s.gradients=bg; s.moment1=bm; s.moment2=bv; s.activations=bact; s.scratch=bscratch;
+    s.weight_capacity=s.gradient_capacity=s.moment1_capacity=s.moment2_capacity=n;
+    s.activation_capacity=s.scratch_capacity=65536; s.beta1_power=s.beta2_power=1.0; s.pool=pool;
+    for (i=0;i<n;i++) bw[i]=0.05f*sinf((float)(i+1)*0.37f);
+    memset(bm,0,sizeof(bm)); memset(bv,0,sizeof(bv));
+    /* stale gradients in every element: the zero fill reaches the tail, the step is the one from
+     * zeros, and every pool's step is the serial one */
+    memset(bg,0,sizeof(bg));
+    assert(bcir_decoder_loss_backward(&s,x,y,4,0,&loss)==0);
+    if (!runs) { memcpy(want,bg,sizeof(bg)); first=loss; }
+    assert(!memcmp(want,bg,sizeof(bg)) && !memcmp(&first,&loss,sizeof(double)));
+    for (i=0;i<n;i++) bg[i]=1000.0f;
+    assert(bcir_decoder_loss_backward(&s,x,y,4,0,&again)==0);
+    assert(!memcmp(want,bg,sizeof(bg)) && !memcmp(&first,&again,sizeof(double)));
+    /* either end of either chunk: 0, 16,383 | 16,384, n-1 */
+    for (k=0;k<4;k++) {
+      size_t at=k==0 ? 0 : k==1 ? 16383 : k==2 ? 16384 : n-1; float keep=bw[at];
+      bw[at]=k&1 ? NAN : INFINITY; bact[0]=777.0f;
+      assert(bcir_decoder_forward(&s,x,4)==BCIR_DT_NUMERIC && bact[0]==777.0f);
+      assert(bcir_decoder_loss_backward(&s,x,y,4,0,&loss)==BCIR_DT_NUMERIC && bact[0]==777.0f);
+      bw[at]=keep; memset(bg,0,sizeof(bg)); bg[at]=k&1 ? -INFINITY : NAN;
+      assert(bcir_decoder_loss_backward(&s,x,y,4,1,&loss)==BCIR_DT_NUMERIC && bact[0]==777.0f);
+      bg[at]=0.0f;
+    }
+    /* finite weights, an overflowing final norm (its gamma, the last 32 parameters, at FLT_MAX):
+     * the activations' scan refuses what the weights' scan admitted */
+    for (i=n-32;i<n;i++) bw[i]=FLT_MAX;
+    assert(bcir_decoder_forward(&s,x,4)==BCIR_DT_NUMERIC);
+    assert(bcir_decoder_loss_backward(&s,x,y,4,0,&loss)==BCIR_DT_NUMERIC);
+    bcir_tensor_pool_stop(pool); runs++;
+  }
+  printf("  PASS native whole-buffer passes on the pool: non-finite weights and gradients refused at "
+      "either end of either scan chunk, an overflowing activation refused, stale gradients zeroed "
+      "whole (%zu parameters, %u runs on no pool and pools of two and three)\n",n,runs);
+}
 /* The fused contract (v2, NDT-FMA): beta first, then one fmaf per term for k ascending -- checked
  * bit for bit against that loop over the same shapes, transposes and scalings as v1, on every
  * fused instance this host can run (the portable fmaf one always), serially and on a pool of
@@ -804,6 +865,6 @@ static void exp_contract(void) {
 }
 int main(void) {
   gemm_contract(); attention_reference(); adamw_reference(); finite_differences(); refusals();
-  learning(); pool_identity(); reduction_references(); gemm_fused_contract(); gemm_kblock_contract();
-  exp_contract(); return 0;
+  learning(); pool_identity(); reduction_references(); scan_references(); gemm_fused_contract();
+  gemm_kblock_contract(); exp_contract(); return 0;
 }

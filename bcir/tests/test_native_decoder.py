@@ -158,7 +158,39 @@ def test_native_c_harness_c11_and_c23():
             result = subprocess.run(
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
-            assert result.stdout.count("PASS") == 11  # reduction_references since NDT-REDUCE
+            assert result.stdout.count("PASS") == 12  # scan_references since NDT-SCAN
+        # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
+        # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
+        # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
+        # first compiler whose UBSan runtime builds and runs a probe here; with none, this leg is a
+        # skip, as the C harness itself is without a compiler.
+        sanitize = ["-fsanitize=undefined,float-cast-overflow", "-fno-sanitize-recover=all"]
+        probe = Path(temporary) / "probe.c"
+        probe.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+        for engine in (shutil.which("clang"), shutil.which("gcc")):
+            if not engine:
+                continue
+            probe_exe = Path(temporary) / "probe"
+            built = subprocess.run(
+                [engine, *sanitize, str(probe), "-o", str(probe_exe)],
+                capture_output=True,
+                timeout=120,
+            )
+            if built.returncode or subprocess.run([str(probe_exe)], timeout=60).returncode:
+                continue
+            exe = Path(temporary) / "gate-ubsan"
+            cmd = [engine, "-std=c11", "-O1", "-g", "-ffp-contract=off", *sanitize, "-I", str(c)]
+            cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]
+            cmd += [str(c / "bcir_decoder_train.c"), "-o", str(exe)]
+            subprocess.run(
+                cmd + host_link_args(["-lm"]), check=True, capture_output=True, timeout=300
+            )
+            result = subprocess.run([str(exe)], capture_output=True, text=True, timeout=300)
+            assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
+                -2000:
+            ]
+            assert result.stdout.count("PASS") == 12
+            break
 
 
 def test_native_provider_c_abi_keeps_frameworks_off_execution_path():
@@ -463,7 +495,10 @@ def test_the_threads_row_fires_on_a_partition_that_depends_on_the_thread_count()
     of more than one thread (one thread runs the serial kernels): the GEMM's row tasks that
     stop before the ragged tail, and a runner that drops each thread's last task. Each turns
     the row red (the C harness holds the partitions to the serial kernels at every count,
-    and the TSan section holds their memory discipline). The two copies are the sweep's own
+    and the TSan section holds their memory discipline) -- with a different state, or, since
+    NDT-SCAN put the finiteness scans on the pool, with a refusal the serial trainer does not
+    make (a dropped scan task's report is never written), which the row records as a state of
+    its own rather than a traceback. The two copies are the sweep's own
     faults, `ndt-threads.json` NT1 and NT2, read from the table: one anchor for the sweep and
     for this test, so a kernel that moves (NDT-SCHED-0 moved the partition) cannot leave one
     of them pointing at a line that is no longer there."""
@@ -486,9 +521,21 @@ def test_the_threads_row_fires_on_a_partition_that_depends_on_the_thread_count()
             path = nf.build_library(
                 Path(tmp) / str(i), sources={"bcir_tensor.c": tensor.replace(old, new)}
             )
-            states = nf.thread_states(path)
+            states = nf.thread_states(path, refusals=True)
+            # one thread runs the serial kernels: the state, never a refusal
+            assert not states[1].startswith("refused: "), states[1]
             assert states[1] != states[2], f"train.state.threads.mismatch cannot see {new!r}"
             assert nf.threads_mismatch(path) > 0
+        # a library that refuses at every count leaves no serial state to hold the others to: the
+        # row counts that once per contract, where the four refusals would otherwise agree
+        train = nf.source("bcir_decoder_train.c")
+        scan = "!finite_span(j->x+i0,j->n-i0<j->chunk ? j->n-i0 : j->chunk);\n"
+        assert train.count(scan) == 1, scan
+        refusing = train.replace(scan, "1|" + scan)  # every chunk reports a non-finite element
+        path = nf.build_library(Path(tmp) / "refusing", sources={"bcir_decoder_train.c": refusing})
+        states = nf.thread_states(path, refusals=True)
+        assert all(state.startswith("refused: ") for state in states.values()), states
+        assert nf.threads_mismatch(path) == 2
 
 
 def test_the_clipping_norm_keeps_its_contract():

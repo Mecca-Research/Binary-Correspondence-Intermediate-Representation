@@ -2915,6 +2915,27 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-SCAN (2026-10-13): the step's whole-buffer passes on the pool.
+  - Attribution first: in place (`measurements/2026-10-13/scan/attribution.py`: a clock read after every statement of the step), the serial passes were 11% of the four-thread step (the activations' scan 27.3 ms, the gradients' fill 8.5, the attention's fills 8.0 + 4.2, the weights' and the gradients' scans 6.7 + 6.2, of 571.4).
+  - The scans and the gradients' fill as one task per chunk (a scan's chunks report into the
+    caller's stack, bounded by construction and guarded where the array is), the attention's
+    fills in the tasks that own the slices (a KV head's dk/dv only in the task holding its first
+    query head: zeroed in every task, the runtime gate's injected race -- one query head a task --
+    erased the earlier heads' sums and failed serially before it could race, so the gate caught
+    that first form); every verdict and value the serial pass's. The BCIR
+    exponential's clamp is total over NaN (UBSan found a NaN reaching an integer conversion), as a
+    maximum then a minimum -- the first form, a third select, cost the SiLU and the SwiGLU VJP their
+    vector code (22-30 ms a step in place), which only the in-place rows showed.
+  - Evidence: `scan_references` (19,104 parameters over two chunks with a ragged tail), NaN-filled
+    attention outputs on every entry, the harness under UBSan in its Python test; `ndt-scan.json`
+    NS1-NS9 (9 injected, 9 caught), `ndt-exp.json` NE6.
+  - The thorough tier on Python 3.15 found a blind spot in the GEM+ threads row: the sweep's NT2
+    fault (the runner drops each thread's last task) now drops a scan's task too, whose report is
+    never written, so the mutant refuses on a pool instead of training a different state, and the
+    row's helper raised on the refusal -- a traceback where the row owed a verdict (L1). A refused
+    run is now a state of its own, a refused one-thread run counts once (no baseline is a finding),
+    and the test holds both, with a library that refuses at every count.
+  - Measured ([measurements/2026-10-13/scan/](research/measurements/2026-10-13/scan/)): 3 in-place pairs: the serial passes 60.9 / 68.4 / 68.3 -> 17.4 / 16.2 / 18.6 ms (-43.5 / -52.2 / -49.7); 6 breakdown pairs at four threads under `kblock+exp+reduce`: the step 575.4 / 634.9 / 601.2 / 653.9 / 682.9 / 621.1 -> 550.9 / 588.2 / 615.7 / 616.6 / 642.6 / 563.4 ms (-24.4 / -46.6 / +14.6 / -37.2 / -40.3 / -57.7, below in 5 of 6), the forward stage 213.3 / 223.2 / 219.4 / 233.0 / 263.7 / 201.5 -> 199.9 / 201.4 / 194.0 / 213.9 / 230.6 / 199.4 (-13.4 / -21.9 / -25.4 / -19.0 / -33.1 / -2.1); the 20-step state at one and four threads the same on both trees (4bf4e057…).
   TRAIN-POLICY (2026-10-13): the rail trains under the fast contract at the host's threads.
   - The lab-model recipe's `native` block: `contract` (one the trainer admits; the shipped recipes
     name `kblock+exp+reduce`) and `threads` (`"host"`: the CPUs the process may run on, or

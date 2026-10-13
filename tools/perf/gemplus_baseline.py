@@ -834,7 +834,9 @@ METRICS: tuple[Metric, ...] = (
         "2 KV heads, 2 layers, batch 2 x 40 tokens), or the losses and clipping norms those steps "
         "reported, differ in any bit from the one-thread run's on the same library, seeded "
         "weights, tokens and rates (bcir/tests/native_decoder_fixtures.py), under v1 and under "
-        "the reduce contract (NDT-REDUCE); one thread is the serial trainer",
+        "the reduce contract (NDT-REDUCE); one thread is the serial trainer; a trainer that "
+        "refuses a step is a state that differs, and a refused one-thread run counts once -- no "
+        "serial state to hold the others to is a finding, never an agreement",
         0,
         "count",
         "exact",

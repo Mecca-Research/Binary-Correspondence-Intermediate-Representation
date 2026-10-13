@@ -474,8 +474,12 @@ static int mm_widest_fused(void) {
   return v&4 ? 4 : v&2 ? 2 : 1;
 }
 /* --- the BCIR exponential (NDT-EXP) ------------------------------------------------------------
- * Branch-free: the argument is clamped into the range the reduction handles, every lane runs the
- * same operations, and the three special cases are selected at the end. LN2_HI has 16
+ * Branch-free: the argument is clamped into the range the reduction handles, a maximum and then a
+ * minimum in the comparison order of the vector instructions (`x > lo ? x : lo`), so a NaN clamps to
+ * the low end and no lane converts a NaN to an integer, which C leaves undefined (a UBSan build of the
+ * trainer's harness found the nested selects passing it through); every other argument clamps as
+ * before. Every lane runs the same operations, and the three special cases are selected at the end,
+ * the NaN among them. LN2_HI has 16
  * significant bits, so k*LN2_HI is exact for |k| < 256; 2^k is applied as two exact power-of-two
  * scalings (|k| <= 151, so each half is in range): a normal result is exact under both, a
  * subnormal one is rounded once, by the second. The instances below inline this body under
@@ -485,7 +489,7 @@ static int mm_widest_fused(void) {
 #define BCIR_EXP_LN2_LO 1.428606765330187e-06f
 BCIR_MM_INLINE float exp_bits(uint32_t b) { float f; memcpy(&f,&b,4); return f; }
 BCIR_MM_INLINE float exp1(float x) {
-  float xc=x<-104.0f ? -104.0f : x>89.0f ? 89.0f : x,kf,r,p,s1,s2,y; int32_t k,k1,k2;
+  float lo=x>-104.0f ? x : -104.0f,xc=lo<89.0f ? lo : 89.0f,kf,r,p,s1,s2,y; int32_t k,k1,k2;
   kf=rintf(xc*BCIR_EXP_LOG2E); k=(int32_t)kf;
   r=(xc-kf*BCIR_EXP_LN2_HI)-kf*BCIR_EXP_LN2_LO;
   p=1.0f/5040.0f; p=p*r+1.0f/720.0f; p=p*r+1.0f/120.0f; p=p*r+1.0f/24.0f;
@@ -1076,6 +1080,10 @@ typedef struct att_job {
 static void att_head(const att_job *a, size_t r, size_t h) {
   size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),i,j; float scale=1.0f/sqrtf((float)d);
   float *ph=a->p+(r*nh+h)*t*t; mm_args x;
+  /* the products accumulate into what they write: this head's probabilities and its context
+   * columns start at zero here, in the task that owns them (NDT-SCAN; the caller's fill was serial) */
+  memset(ph,0,t*t*sizeof(float));
+  for (i=0;i<t;i++) memset(a->y+((r*t+i)*nh+h)*d,0,d*sizeof(float));
   x.ta=0; x.tb=1; x.m=t; x.n=t; x.k=d; x.alpha=1.0f; x.a=a->q+(r*t*nh+h)*d; x.lda=nh*d;
   x.b=a->k+(r*t*nk+kh)*d; x.ldb=nk*d; x.c=ph; x.ldc=t; x.mode=MM_LOWER;
   mm_run(a->variant,&x);
@@ -1099,7 +1107,6 @@ static void att_task(void *ctx, size_t task) {
 static void attention_any(bcir_tensor_pool *pool, int exp2, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
   att_job a;
-  memset(y,0,b*t*nh*d*sizeof(float)); memset(p,0,b*nh*t*t*sizeof(float));
   a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.group=1; a.q=q; a.k=k; a.v=v; a.dy=NULL; a.p=p; a.y=y;
   a.dq=NULL; a.dk=NULL; a.dv=NULL; a.variant=mm_widest(); a.exp2=exp2;
   pool_run(pool,att_task,&a,b*nh);
@@ -1194,15 +1201,25 @@ static void att_head_backward(const att_job *a, size_t r, size_t h) {
   }
 }
 static void att_task_backward(void *ctx, size_t task) {
-  att_job *a=(att_job *)ctx; size_t per=a->nh/a->group,r=task/per,first=(task%per)*a->group,h;
+  att_job *a=(att_job *)ctx; size_t per=a->nh/a->group,r=task/per,first=(task%per)*a->group,h,i;
+  size_t t=a->t,d=a->d,nh=a->nh,nk=a->nk,share=nh/nk,kh=first/share;
+  /* the adjoints accumulate, so they start at zero here, in the task that owns them (NDT-SCAN; the
+   * caller's fill was serial): this task's query heads' dq columns, and its KV head's dk and dv
+   * columns where the task holds that KV head's first query head -- the task that runs before the
+   * KV head's every accumulation, which is the whole group when group is the share */
+  for (i=0;i<t;i++) {
+    for (h=first;h<first+a->group;h++) memset(a->dq+((r*t+i)*nh+h)*d,0,d*sizeof(float));
+    if (first%share==0) {
+      memset(a->dk+((r*t+i)*nk+kh)*d,0,d*sizeof(float));
+      memset(a->dv+((r*t+i)*nk+kh)*d,0,d*sizeof(float));
+    }
+  }
   for (h=first;h<first+a->group;h++) att_head_backward(a,r,h);
 }
 void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *pool, size_t b, size_t t,
     size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v, float *p,
     const float *dy, float *dq, float *dk, float *dv) {
   att_job a;
-  memset(dq,0,b*t*nh*d*sizeof(float)); memset(dk,0,b*t*nk*d*sizeof(float));
-  memset(dv,0,b*t*nk*d*sizeof(float));
   a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.q=q; a.k=k; a.v=v; a.dy=dy; a.p=p; a.y=NULL;
   a.dq=dq; a.dk=dk; a.dv=dv; a.variant=mm_widest(); a.exp2=0;
   a.group=nh/nk;

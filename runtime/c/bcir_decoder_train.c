@@ -107,6 +107,44 @@ static int finite_span(const float *x,size_t n) {
   }
   return 1;
 }
+/* The step's whole-buffer passes on the pool (NDT-SCAN): the finiteness scans of the weights, the
+ * activations and the gradients, and the gradients' zero fill, were the caller's alone -- a tenth
+ * of the four-thread step, measured in place, with the other threads waiting. A scan's verdict is
+ * "some element is not finite" and a fill writes zeros, the same whatever the partition, so each
+ * runs as one task per chunk of scan_chunk(n) elements -- BCIR_DT_SCAN_CHUNK, or n over
+ * BCIR_DT_SCAN_TASKS rounded up when that is more, so there are never more than
+ * BCIR_DT_SCAN_TASKS chunks -- and a scan's chunks report into the caller's stack, which the
+ * caller ORs. */
+#define BCIR_DT_SCAN_CHUNK 16384
+#define BCIR_DT_SCAN_TASKS 1024
+static size_t scan_chunk(size_t n) {
+  size_t chunk=n/BCIR_DT_SCAN_TASKS+(n%BCIR_DT_SCAN_TASKS!=0);
+  return chunk<BCIR_DT_SCAN_CHUNK ? BCIR_DT_SCAN_CHUNK : chunk;
+}
+typedef struct span_job { const float *x; float *y; size_t n,chunk; unsigned char *bad; } span_job;
+static void scan_task(void *ctx,size_t task) {
+  const span_job *j=(const span_job *)ctx; size_t i0=task*j->chunk;
+  j->bad[task]=(unsigned char)!finite_span(j->x+i0,j->n-i0<j->chunk ? j->n-i0 : j->chunk);
+}
+static void fill_task(void *ctx,size_t task) {
+  const span_job *j=(const span_job *)ctx; size_t i0=task*j->chunk;
+  memset(j->y+i0,0,(j->n-i0<j->chunk ? j->n-i0 : j->chunk)*sizeof(float));
+}
+/* Whether x[0, n) is finite, on the state's pool; finite_span's verdict exactly. */
+static int finite_pool(bcir_decoder_state *s,const float *x,size_t n) {
+  unsigned char bad[BCIR_DT_SCAN_TASKS]; span_job j; size_t i,tasks; int any=0;
+  j.x=x; j.y=NULL; j.n=n; j.chunk=scan_chunk(n); j.bad=bad;
+  tasks=n/j.chunk+(n%j.chunk!=0);
+  if (tasks>BCIR_DT_SCAN_TASKS) return finite_span(x,n);  /* the reports' bound, held here */
+  bcir_tensor_pool_run(s->pool,scan_task,&j,tasks);
+  for (i=0;i<tasks;i++) any|=bad[i];
+  return !any;
+}
+/* y[0, n) = 0 on the state's pool. */
+static void zero_pool(bcir_decoder_state *s,float *y,size_t n) {
+  span_job j; j.x=NULL; j.y=y; j.n=n; j.chunk=scan_chunk(n); j.bad=NULL;
+  bcir_tensor_pool_run(s->pool,fill_task,&j,n/j.chunk+(n%j.chunk!=0));
+}
 typedef struct geometry { size_t n,d,k,f,v,b,t,h,kh,hd,l,nd,nk,nf,nv,a,lp,la; } geometry;
 static geometry geom(const bcir_decoder_spec *s) {
   geometry g;
@@ -220,9 +258,9 @@ int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t n) 
   if (rc) return rc;
   g=geom(&s->plan.spec);
   if (n!=g.n || !ids(s,tokens,n)) return BCIR_DT_INVALID;
-  if (!finite_span(s->weights,s->plan.parameters)) return BCIR_DT_NUMERIC;
+  if (!finite_pool(s,s->weights,s->plan.parameters)) return BCIR_DT_NUMERIC;
   forward(s,tokens,g);
-  return finite_span(s->activations,s->plan.activations) ? BCIR_DT_OK : BCIR_DT_NUMERIC;
+  return finite_pool(s,s->activations,s->plan.activations) ? BCIR_DT_OK : BCIR_DT_NUMERIC;
 }
 /* The loss's rows in ranges of BCIR_DT_ROW_CHUNK: a row's softmax, its adjoint and its term
  * (log-sum-exp plus the maximum less the target's logit, in double, as the serial loop computed
@@ -271,11 +309,11 @@ int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
   if (n!=g.n || !ids(s,tokens,n) || !ids(s,targets,n) ||
       (accumulate!=0 && accumulate!=1) || !external(s,loss,sizeof(*loss)) ||
       (uintptr_t)loss%_Alignof(double)) return BCIR_DT_INVALID;
-  if (!finite_span(s->weights,s->plan.parameters) ||
-      (accumulate && !finite_span(s->gradients,s->plan.parameters))) return BCIR_DT_NUMERIC;
+  if (!finite_pool(s,s->weights,s->plan.parameters) ||
+      (accumulate && !finite_pool(s,s->gradients,s->plan.parameters))) return BCIR_DT_NUMERIC;
   forward(s,tokens,g);
-  if (!finite_span(s->activations,s->plan.activations)) return BCIR_DT_NUMERIC;
-  if (!accumulate) memset(s->gradients,0,s->plan.parameters*sizeof(float));
+  if (!finite_pool(s,s->activations,s->plan.activations)) return BCIR_DT_NUMERIC;
+  if (!accumulate) zero_pool(s,s->gradients,s->plan.parameters);
   xs=s->activations; cs=xs+(g.l+1)*g.nd; norm=cs+g.l*g.la; logits=norm+g.nd;
   cur=s->scratch; tmp=cur+g.nd; dn=tmp+g.nd; dq=dn+g.nd; dk=dq+g.nd;
   dv=dk+g.nk; dc=dv+g.nk; dg=dc+g.nd; du=dg+g.nf; dh=du+g.nf; dl=dh+g.nf;
@@ -318,7 +356,7 @@ int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
   }
   sj.n=g.n; sj.d=g.d; sj.tokens=tokens; sj.dx=cur; sj.grad=s->gradients;
   bcir_tensor_pool_run(s->pool,scatter_task,&sj,(g.d+BCIR_DT_COL_CHUNK-1)/BCIR_DT_COL_CHUNK);
-  if (!finite_span(s->gradients,s->plan.parameters) || !isfinite(ce)) return BCIR_DT_NUMERIC;
+  if (!finite_pool(s,s->gradients,s->plan.parameters) || !isfinite(ce)) return BCIR_DT_NUMERIC;
   *loss=ce/(double)g.n; return BCIR_DT_OK;
 }
 /* The AdamW candidate for one element, exactly as the update has always computed it: the

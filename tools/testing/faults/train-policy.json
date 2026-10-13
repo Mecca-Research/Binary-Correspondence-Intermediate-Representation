@@ -1,36 +1,36 @@
 {
- "command": [
-  "@python",
-  "tools/testing/check_tests.py",
-  "--require",
-  "bcir.tests.test_qualification:_CC",
-  "--require",
-  "bcir.tests.test_qualification:_THOROUGH",
-  "bcir.tests.test_qualification:test_the_threads_are_the_hosts_choice_and_the_contract_the_models",
-  "bcir.tests.test_qualification:test_the_builder_ties_every_artifact_to_the_card",
-  "bcir.tests.test_qualification:test_host_threads_reads_the_environment_before_the_host"
- ],
- "faults": [
-  {
-   "label": "TP1 the builder trains under v1 whatever contract the recipe names (the fast contract never reaches the model; the v1 build and the recipe's build are one checkpoint)",
-   "path": "tools/models/build_lab_model.py",
-   "old": "        threads=threads,\n        contract=contract,\n    )\n",
-   "new": "        threads=threads,\n        contract=\"v1\",\n    )\n",
-   "expects": "test_the_threads_are_the_hosts_choice_and_the_contract_the_models"
-  },
-  {
-   "label": "TP2 the builder trains on one thread whatever the policy says (the card records the trainer's own count, so an explicit count the trainer never received is seen)",
-   "path": "tools/models/build_lab_model.py",
-   "old": "        threads=threads,\n        contract=contract,\n    )\n",
-   "new": "        threads=1,\n        contract=contract,\n    )\n",
-   "expects": "test_the_threads_are_the_hosts_choice_and_the_contract_the_models"
-  },
-  {
-   "label": "TP3 BCIR_TRAIN_THREADS read through str.isdigit (a zero, a Unicode digit and a padded number read as counts)",
-   "path": "tools/models/build_lab_model.py",
-   "old": "        if not re.fullmatch(r\"[1-9][0-9]*\", env):\n",
-   "new": "        if not env.strip().isdigit():\n",
-   "expects": "test_host_threads_reads_the_environment_before_the_host"
-  }
- ]
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_qualification:_CC",
+    "--require",
+    "bcir.tests.test_qualification:_THOROUGH",
+    "bcir.tests.test_qualification:test_the_threads_are_the_hosts_choice_and_the_contract_the_models",
+    "bcir.tests.test_qualification:test_the_builder_ties_every_artifact_to_the_card",
+    "bcir.tests.test_qualification:test_host_threads_reads_the_environment_before_the_host"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_threads_are_the_hosts_choice_and_the_contract_the_models",
+      "label": "TP1 the builder trains under v1 whatever contract the recipe names (the fast contract never reaches the model; the v1 build and the recipe's build are one checkpoint)",
+      "new": "        threads=threads,\n        contract=\"v1\",\n    )\n",
+      "old": "        threads=threads,\n        contract=contract,\n    )\n",
+      "path": "tools/models/build_lab_model.py"
+    },
+    {
+      "expects": "test_the_threads_are_the_hosts_choice_and_the_contract_the_models",
+      "label": "TP2 the builder trains on one thread whatever the policy says (the card records the trainer's own count, so an explicit count the trainer never received is seen)",
+      "new": "        threads=1,\n        contract=contract,\n    )\n",
+      "old": "        threads=threads,\n        contract=contract,\n    )\n",
+      "path": "tools/models/build_lab_model.py"
+    },
+    {
+      "expects": "test_host_threads_reads_the_environment_before_the_host",
+      "label": "TP3 BCIR_TRAIN_THREADS read through str.isdigit (a zero, a Unicode digit and a padded number read as counts)",
+      "new": "        if not env.strip().isdigit():\n",
+      "old": "        if not re.fullmatch(r\"[1-9][0-9]*\", env):\n",
+      "path": "tools/models/build_lab_model.py"
+    }
+  ]
 }

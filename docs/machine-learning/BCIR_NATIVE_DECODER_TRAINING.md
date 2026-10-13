@@ -276,6 +276,15 @@ threads under `kblock+exp+reduce`: the GEMM-backward row 292.7 / 285.9 / 266.6 -
 ms (-54.6 / -31.0 / +16.0), the step 684.2 / 679.4 / 659.3 -> 645.1 / 681.7 / 668.1 (-39.2 / +2.4 / +8.8);
 the backward pass (the `loss_backward` stage, the forward recomputed inside it, as the trainer runs it -- the one stage the pair job changes) is below the two-call stage in 3 of 3 pairs, by -30.9 / -47.5 / -27.8 ms (631.9 / 633.8 / 622.4 against 601.0 / 586.3 / 594.6), and the GEMM-backward row timed alone by -54.6 / -31.0 / +16.0; the step's own cell (-39.2 / +2.4 / +8.8) is within this host's run-to-run noise, as NDT-REDUCE's was -- the one barrier fewer per linear and the narrow projections' tasks shared are worth about 5% of the backward at four threads here.
 
+The step's whole-buffer passes run on the pool since NDT-SCAN (2026-10-13). Timed in place --
+a clock read after every statement of the step -- the finiteness scans of the weights, the
+activations and the gradients, the gradients' zero fill and the attention's zero fills were
+11% of the four-thread step on the caller's thread alone. A scan's verdict and a
+fill's zeros do not depend on the partition, so each runs as one task per chunk, and the
+attention's fills run in the tasks that own the slices; every verdict and value is the serial
+pass's. Measured: 3 in-place pairs: the serial passes 60.9 / 68.4 / 68.3 -> 17.4 / 16.2 / 18.6 ms (-43.5 / -52.2 / -49.7); 6 breakdown pairs at four threads under `kblock+exp+reduce`: the step 575.4 / 634.9 / 601.2 / 653.9 / 682.9 / 621.1 -> 550.9 / 588.2 / 615.7 / 616.6 / 642.6 / 563.4 ms (-24.4 / -46.6 / +14.6 / -37.2 / -40.3 / -57.7, below in 5 of 6), the forward stage 213.3 / 223.2 / 219.4 / 233.0 / 263.7 / 201.5 -> 199.9 / 201.4 / 194.0 / 213.9 / 230.6 / 199.4 (-13.4 / -21.9 / -25.4 / -19.0 / -33.1 / -2.1); the 20-step state at one and four threads the same on both trees (4bf4e057…). The same run under UBSan found the BCIR exponential's clamp passing a
+NaN to an integer conversion; the clamp is total now, every other input's result unchanged.
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,

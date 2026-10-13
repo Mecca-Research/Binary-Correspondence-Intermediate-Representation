@@ -570,14 +570,17 @@ def state_digest(trainer) -> str:
 
 
 def thread_states(
-    path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS, *, contract="v1"
+    path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS, *, contract="v1", refusals=False
 ) -> dict[int, str]:
     """The state digest after `steps` steps of `bench` -- the same seeded weights, tokens and
     rates -- with the loss and the clipping norm every step reported folded in (the norm is the
     one reduction a partition could reach, NDT-REDUCE, and the float rounding of the update
     absorbs its last bits for a while, so the state alone would not see a chunk that followed the
     thread count), on a trainer of each thread count in `counts` (one thread is the serial
-    trainer); each trainer's pool is released before the next is made."""
+    trainer); each trainer's pool is released before the next is made. With `refusals`, a trainer
+    that refuses a step is a state of its own -- "refused: " and the trainer's report -- where it
+    would otherwise raise: the row's verdict on a library whose pool refuses what the serial
+    trainer admits (a dropped task's finiteness report since NDT-SCAN), never a traceback."""
     from bcir.hosted.models.native import NativeAdamW, NativeDecoder
 
     spec, batch, time_ = bench
@@ -590,8 +593,14 @@ def thread_states(
         trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
                                 threads=threads, contract=contract)  # fmt: skip
         try:
-            events = trainer.run(tokens, targets, steps=steps, optimizer=NativeAdamW(lr=1e-3),
-                                 learning_rates=rates)  # fmt: skip
+            try:
+                events = trainer.run(tokens, targets, steps=steps,
+                                     optimizer=NativeAdamW(lr=1e-3), learning_rates=rates)  # fmt: skip
+            except ValueError as exc:
+                if not (refusals and str(exc).startswith("native run stopped after ")):
+                    raise
+                out[threads] = f"refused: {exc}"
+                continue
             digest = hashlib.sha256(state_digest(trainer).encode())
             for event in events:
                 digest.update(struct.pack("<dd", event["loss"], event["grad_norm"]))
@@ -606,11 +615,14 @@ def threads_mismatch(
 ) -> int:
     """Thread counts after the first whose state differs from the first count's, summed over
     `contracts` (v1, and the reduce contract whose chunked norm is the one reduction the pool
-    could reach, NDT-REDUCE)."""
+    could reach, NDT-REDUCE). A refused run is a state that differs, and a refused first count --
+    no serial state to hold the others to -- counts once itself, so a library that refuses
+    everywhere is a finding, not an agreement."""
     bad = 0
     for contract in contracts:
-        states = thread_states(path, bench, steps, counts, contract=contract)
-        bad += sum(states[t] != states[counts[0]] for t in counts[1:])
+        states = thread_states(path, bench, steps, counts, contract=contract, refusals=True)
+        first = states[counts[0]]
+        bad += sum(states[t] != first for t in counts[1:]) + first.startswith("refused: ")
     return bad
 
 
