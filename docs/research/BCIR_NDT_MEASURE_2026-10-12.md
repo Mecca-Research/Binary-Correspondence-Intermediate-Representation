@@ -814,3 +814,69 @@ RMSNorm rows alike) -- they were mostly the pool's latency. The 20-step state wi
 at one and four threads is `4bf4e057…`, §11's. What the step is now, in place at four threads:
 the GEMMs about three quarters of it (the backward's 43 pairs 210-237 ms, the forward 84-93), the
 attention 38-40, the update's two passes 22-23, the RMSNorm VJP 13-15, everything else under 9 each.
+
+## 13. The state on 2 MB pages (NDT-PAGES)
+
+§12.4 left the GEMMs at about 200-240 GFLOP/s at four threads, 37-41% of the four cores' 580. One
+cost no kernel change could reach was the page size under the operands. The trainer's state -- the
+weights, gradients, both moments, activations and scratch, 335 MiB on the 9.84M decoder -- was six
+ctypes arrays, and glibc serves an allocation that large from an anonymous mapping it never
+advises; under this host's THP mode, `madvise` (most distributions' default), not one of its pages
+was huge (`/proc/self/smaps`: AnonHugePages 0 kB under the state). A GEMM walking a transposed
+operand's rows -- the weight gradients' `X^T dY` -- touches a new 4 KB page every few rows, and the
+second-level TLB's reach is a few megabytes. NDT-PAGES places the six buffers on one private
+anonymous mapping advised `MADV_HUGEPAGE` before any page is touched, the first buffer on a 2 MB
+boundary and each next 64 bytes past the last one's end (`bcir/hosted/models/native.py`,
+`_state_buffers`); where Python has no `MADV_HUGEPAGE` (Windows, macOS), or with `huge_pages=False`,
+the buffers are ctypes arrays as before. No kernel's arithmetic depends on an address, so every
+state is the one it was: the 20-step state at one and four threads is `4bf4e057…`, §11's and
+§12's ([pages/identity-after.json](measurements/2026-10-14/pages/identity-after.json)).
+
+The step, two trainers in one process -- one per placement, the comparison's weights and first
+batch -- stepped in alternation, each step after a 30 ms rest, both states identical after every
+pair ([pages/step-*.json](measurements/2026-10-14/pages/)); 334-336 MiB of huge pages under the
+2 MB arm's state, none under the 4 KB arm's:
+
+| the step, one process, ms | 4 KB pages, median | 2 MB pages, median | paired difference, median | pairs faster on 2 MB |
+|---|---|---|---|---|
+| four threads, 20 pairs | 403.9 | 349.2 | 51.6 | 19 of 20 |
+| four threads, 20 pairs, again | 405.5 | 341.4 | 62.2 | 19 of 20 |
+| two threads, 12 pairs | 668.8 | 627.6 | 66.7 | 11 of 12 |
+| one thread, 8 pairs | 1101.8 | 1009.9 | 102.9 | 7 of 8 |
+
+The step's GEMMs alone, operands on each placement, alternated call by call, nine calls each,
+every result the serial kernel's ([pages/gemm-pages-*.json](measurements/2026-10-14/pages/)): every
+one of the 15 shapes is faster on 2 MB pages, the transposed-A weight gradients most.
+
+| GFLOP/s, median of 9, two runs | 4 KB, one thread | 2 MB, one thread | 4 KB, four threads | 2 MB, four threads |
+|---|---|---|---|---|
+| `X^T dY`, 384 x 384 x 1024 (q and o, 12 calls) | 59.1 / 56.1 | 89.0 / 88.3 | 186.9 / 170.0 | 276.3 / 241.2 |
+| `X^T dY`, 1024 x 384 x 1024 (gate and up, 12) | 63.6 / 62.2 | 72.6 / 76.8 | 178.3 / 183.5 | 215.1 / 242.6 |
+| `X^T dY`, 384 x 1024 x 1024 (down, 6) | 43.6 / 46.1 | 60.6 / 60.1 | 151.5 / 167.8 | 187.6 / 195.8 |
+| `dY W`, 1024 x 384 x 1024 (gate and up, 12) | 82.8 / 79.0 | 97.5 / 95.1 | 236.2 / 255.6 | 292.9 / 301.3 |
+| `X W^T`, 1024 x 1024 x 384 (gate and up, 12) | 84.9 / 87.0 | 96.2 / 95.1 | 223.7 / 262.1 | 254.4 / 292.7 |
+| the step's 129 calls at their medians, ms | 847.8 / 832.4 | 711.7 / 704.5 | 286.3 / 273.4 | 242.3 / 228.7 |
+
+In place at four threads, the tree before (69954e5) and with NDT-PAGES alternated in three rounds
+([pages/attribution-t4-*.json](measurements/2026-10-14/pages/)):
+
+| four threads, in place, ms | before | NDT-PAGES |
+|---|---|---|
+| the step (median of 5 steps) | 407.8 / 381.0 / 388.0 | 348.0 / 340.0 / 330.6 |
+| the GEMMs, backward | 211.7 / 189.4 / 202.4 | 176.7 / 172.3 / 167.4 |
+| the GEMMs, forward | 81.2 / 72.5 / 79.1 | 72.3 / 71.3 / 69.3 |
+| the RMSNorm VJP | 14.7 / 12.6 / 14.9 | 11.0 / 8.9 / 9.4 |
+| the attention, backward and forward | 20.2 / 18.1 / 19.7 and 17.3 / 15.3 / 16.8 | 17.5 / 18.0 / 17.0 and 14.6 / 14.1 / 14.7 |
+| the update's commit | 12.0 / 12.0 / 11.8 | 11.0 / 10.5 / 10.8 |
+
+The GEMMs now run at about 215-300 GFLOP/s on the step's large shapes at four threads -- 37-52% of
+the four cores' peak, from 26-45% -- so the TLB was part of §12.4's gap, not all of it. The step in
+place at four threads is now about 340 ms: the GEMMs about 245 of it, the attention about 32, the
+update's two passes about 19, the RMSNorm VJP 9-11, everything else under 7 each. Reproduce:
+
+```bash
+CC=gcc python3 -c "from bcir.hosted.models.native import NativeDecoder as N; print(N.build('lib'))"
+python3 docs/research/measurements/2026-10-14/pages/pages_ab.py --library lib/bcir_decoder_train.so \
+    --data DATA --threads 4 --pairs 20 --out step-t4.json
+python3 docs/research/measurements/2026-10-14/pages/gemm_pages.py lib/bcir_decoder_train.so gemm.json 9
+```

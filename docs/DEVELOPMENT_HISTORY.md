@@ -2915,6 +2915,27 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-PAGES (2026-10-14): the trainer's state on 2 MB transparent huge pages.
+  - The six state buffers (335 MiB on the 9.84M decoder) were ctypes arrays: glibc serves them from
+    anonymous mappings it never advises, and under the host's `madvise` THP mode not one of their
+    pages was huge; a GEMM walking a transposed operand's rows touched a new 4 KB page every few
+    rows, past the second-level TLB's reach.
+  - Where Python exposes `MADV_HUGEPAGE` (Linux), `NativeDecoder` places them on one private
+    anonymous mapping advised before any page is touched, the first buffer on a 2 MB boundary and
+    each next 64 bytes past the last one's end (`_state_buffers`); elsewhere, or with
+    `huge_pages=False`, ctypes arrays as before, and `resume` takes the placement. Private, because
+    shared anonymous memory is shmem, whose huge pages follow `shmem_enabled` instead.
+  - Evidence: the placement witness (the layout, the private mapping, the advice in its VmFlags,
+    three steps' state equal to the arrays' at one and four threads, `resume`'s placement, the
+    refusals); `ndt-pages.json` NG1-NG8, NG8 a kernel whose arithmetic follows its operand's
+    address; the 20-step state at one and four threads 4bf4e057…, the one it was.
+  - Measured ([measurements/2026-10-14/pages/](research/measurements/2026-10-14/pages/), the
+    report's §13): the step alternated in one process 403.9 / 405.5 -> 349.2 / 341.4 ms at four
+    threads (19 of 20 pairs each), 668.8 -> 627.6 at two, 1101.8 -> 1009.9 at one; the step's GEMM
+    time 16% lower at one and at four threads, the transposed-A weight gradients most (384 x 384 x
+    1024: 59.1 / 56.1 -> 89.0 / 88.3 GFLOP/s at one thread); in place at four threads 407.8 / 381.0
+    / 388.0 -> 348.0 / 340.0 / 330.6 ms. The GEMMs at four threads reach 37-52% of the four cores'
+    peak on the step's large shapes (26-45% before): the TLB was part of the gap, not all of it.
   NDT-POOL (2026-10-13): the pool's tasks claimed from one counter, a hot path without the lock.
   - The four vCPUs are four cores with their own FMA units (twelve FMA chains in registers:
     141-148 GFLOP/s pinned to one, 579-584 to all four), yet the GEMMs gained about 2x from four

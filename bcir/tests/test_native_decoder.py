@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import mmap
 import shutil
 import struct
 import subprocess
@@ -27,6 +28,9 @@ from bcir.hosted.models.native import (
 #: capability their fault tables (tools/testing/faults/ndt-gem.json, ndt-perf.json and
 #: ndt-clang.json) require.
 _CC = __import__("bcir.toolchain", fromlist=["host_c_compiler"]).host_c_compiler()
+#: Whether Python exposes MADV_HUGEPAGE (Linux): where the trainer's state shares one mapping
+#: advised for transparent huge pages (NDT-PAGES), the capability `ndt-pages.json` requires.
+_MADV_HUGEPAGE = hasattr(mmap, "MADV_HUGEPAGE")
 #: The fault tables the sweeps inject (tools/testing/faults); the thorough tests that inject a
 #: fault of their own read it from here, so the two cannot drift apart.
 _FAULTS = Path(__file__).resolve().parents[2] / "tools" / "testing" / "faults"
@@ -407,6 +411,83 @@ def test_the_training_state_is_identical_at_every_thread_count():
         assert nf.state_digest(back) == nf.state_digest(two)
         two.close()
         back.close()
+
+
+def _vma(address):
+    """The /proc/self/smaps entry (Linux) whose range holds `address`: its bounds, its
+    permissions and its VmFlags."""
+    entry = current = None
+    for line in Path("/proc/self/smaps").read_text().splitlines():
+        head = line.split()
+        if not head:
+            continue
+        if head[0].endswith(":"):
+            if current is not None and head[0] == "VmFlags:":
+                current["flags"] = tuple(head[1:])
+            continue
+        lo, hi = (int(x, 16) for x in head[0].split("-"))
+        current = {"lo": lo, "hi": hi, "perms": head[1], "flags": ()}
+        current = current if lo <= address < hi else None
+        entry = current or entry
+    return entry
+
+
+def test_the_state_lives_on_huge_pages_where_the_host_has_them():
+    """NDT-PAGES: where Python exposes MADV_HUGEPAGE (Linux) the trainer's six state buffers
+    share one private anonymous mapping, advised for transparent huge pages -- the advice taken
+    wherever the kernel has them -- with the first buffer on a 2 MB boundary and each next 64
+    bytes past the last one's end, in the plan's order; three steps of the threads bench leave
+    the state the ctypes arrays hold (`huge_pages=False`), bit for bit, at one and at four
+    threads, so placement never reaches a value. A resumed trainer takes the placement it is
+    given; a placement that is not a bool is refused before any pool."""
+    import ctypes as ct
+
+    from bcir.hosted.models.native import NativeAdamW, NativeDecoder
+    from bcir.tests import native_decoder_fixtures as nf
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.build_library(tmp)
+        if path is None:
+            return  # no C compiler: the row is a skip, never a pass
+        mapped = nf.thread_states(path, counts=(1, 4))
+        arrays = nf.thread_states(path, counts=(1, 4), huge_pages=False)
+        assert mapped == arrays and len(set(mapped.values())) == 1, (mapped, arrays)
+        spec, batch, time_ = nf.THREADS_BENCH
+        one = NativeDecoder(path, spec, batch_size=batch, context_length=time_)
+        plain = NativeDecoder(path, spec, batch_size=batch, context_length=time_, huge_pages=False)
+        assert plain.huge_pages is False
+        names = ("weights", "gradients", "moment1", "moment2", "activations", "scratch")
+        assert tuple(one.buffers) == tuple(plain.buffers) == names
+        if _MADV_HUGEPAGE:
+            if Path("/sys/kernel/mm/transparent_hugepage").is_dir():
+                assert one.huge_pages is True  # a kernel with THP takes the advice
+            spans = [(ct.addressof(one.buffers[n]), ct.sizeof(one.buffers[n])) for n in names]
+            assert spans[0][0] % (2 << 20) == 0, hex(spans[0][0])
+            for (start, size), (after, _) in zip(spans, spans[1:]):
+                assert after == (start + size + 63) & ~63, (hex(start), size, hex(after))
+            lo, hi = spans[0][0], spans[-1][0] + spans[-1][1]
+            vma = _vma(lo)
+            assert vma is not None and vma["lo"] <= lo and hi <= vma["hi"], (vma, lo, hi)
+            assert vma["perms"][3] == "p", vma  # private: shared anonymous memory is shmem
+            assert ("hg" in vma["flags"]) is one.huge_pages, vma
+        else:
+            assert one.huge_pages is False
+        x = [(3 * i + 1) % spec.vocab_size for i in range(batch * time_ * 2)]
+        y = [(3 * i + 2) % spec.vocab_size for i in range(batch * time_ * 2)]
+        one.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3))
+        one.save(Path(tmp) / "pages.bcirdt")
+        back = NativeDecoder.resume(path, Path(tmp) / "pages.bcirdt", huge_pages=False)
+        again = NativeDecoder.resume(path, Path(tmp) / "pages.bcirdt")
+        assert back.huge_pages is False and again.huge_pages is one.huge_pages
+        assert nf.state_digest(back) == nf.state_digest(again) == nf.state_digest(one)
+        for trainer in (one, plain, back, again):
+            trainer.close()
+        for bad in (1, 0, None, "yes"):
+            try:
+                NativeDecoder(path, spec, batch_size=batch, context_length=time_, huge_pages=bad)
+            except ValueError:
+                continue
+            raise AssertionError(f"huge_pages={bad!r} admitted")
 
 
 def test_a_provider_is_admitted_under_the_blocked_contract_only_where_it_is_the_contract():

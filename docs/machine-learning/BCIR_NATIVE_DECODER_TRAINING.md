@@ -345,6 +345,25 @@ work a thread); the step's GEMM shapes' median 174-196 -> 200-222 GFLOP/s; the s
 482-554 -> 413-431 ms. With three of four CPUs held by other processes the largest job is 12%
 slower than with sleeping workers; everywhere else the pool is faster.
 
+The trainer's state sits on 2 MB transparent huge pages since NDT-PAGES (2026-10-14). Its six
+buffers -- the weights, gradients, both moments, activations and scratch, 335 MiB on the 9.84M
+decoder -- were ctypes arrays, which glibc serves from anonymous mappings it never advises; under
+the `madvise` THP mode most distributions ship, not one of their pages was huge, and a GEMM
+walking a transposed operand's rows missed the TLB once a 4 KB page. Where Python exposes
+`MADV_HUGEPAGE` (Linux), `NativeDecoder` now places them on one private anonymous mapping advised
+for huge pages before any page is touched, the first buffer on a 2 MB boundary and each next 64
+bytes past the last one's end (`_state_buffers`); elsewhere, or with `huge_pages=False`, they are
+ctypes arrays as before, and the trainer's `huge_pages` says whether the kernel took the advice
+(`resume` takes the placement too). No kernel's arithmetic depends on an address, so every state
+is the one it was (the placement witness holds the layout, the private mapping, the advice in the
+mapping's VmFlags, and three steps' state equal to the arrays' at one and four threads;
+`tools/testing/faults/ndt-pages.json` NG1-NG8, NG8 a kernel whose arithmetic follows its operand's
+address). Measured on this host (the report's §13): the step, alternated in one process, 403.9 /
+405.5 -> 349.2 / 341.4 ms at four threads, 668.8 -> 627.6 at two, 1101.8 -> 1009.9 at one; the
+step's GEMM time 16% lower at one and at four threads, the transposed-A weight gradients most
+(384 x 384 x 1024 at four threads 170-187 -> 241-276 GFLOP/s); in place at four threads 381-408 ->
+331-348 ms.
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,

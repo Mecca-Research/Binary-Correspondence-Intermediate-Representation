@@ -570,7 +570,14 @@ def state_digest(trainer) -> str:
 
 
 def thread_states(
-    path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS, *, contract="v1", refusals=False
+    path,
+    bench=THREADS_BENCH,
+    steps=3,
+    counts=THREAD_COUNTS,
+    *,
+    contract="v1",
+    refusals=False,
+    huge_pages=True,
 ) -> dict[int, str]:
     """The state digest after `steps` steps of `bench` -- the same seeded weights, tokens and
     rates -- with the loss and the clipping norm every step reported folded in (the norm is the
@@ -580,7 +587,8 @@ def thread_states(
     trainer); each trainer's pool is released before the next is made. With `refusals`, a trainer
     that refuses a step is a state of its own -- "refused: " and the trainer's report -- where it
     would otherwise raise: the row's verdict on a library whose pool refuses what the serial
-    trainer admits (a dropped task's finiteness report since NDT-SCAN), never a traceback."""
+    trainer admits (a dropped task's finiteness report since NDT-SCAN), never a traceback.
+    `huge_pages` is the trainers' state placement (NDT-PAGES), which no state may depend on."""
     from bcir.hosted.models.native import NativeAdamW, NativeDecoder
 
     spec, batch, time_ = bench
@@ -591,7 +599,8 @@ def thread_states(
     out = {}
     for threads in counts:
         trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
-                                threads=threads, contract=contract)  # fmt: skip
+                                threads=threads, contract=contract,
+                                huge_pages=huge_pages)  # fmt: skip
         try:
             try:
                 events = trainer.run(tokens, targets, steps=steps,
