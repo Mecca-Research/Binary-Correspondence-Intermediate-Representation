@@ -1110,16 +1110,18 @@ static void rmsb_rows_task(void *ctx, size_t task) {
   }
 }
 /* A column chunk's sums live in the task's registers over the rows and reach dg once at the end:
- * the same rounded terms in the same row order, without a load and a store of dg per row. */
+ * the same rounded terms in the same row order, without a load and a store of dg per row. One
+ * length n bounds the fill, the sums and the store (zero for a task past the width, which the
+ * pool never runs: the analyzer's path in which c1 - c0 wraps). */
 static void rmsb_cols_task(void *ctx, size_t task) {
   rmsb_job *j=(rmsb_job *)ctx; size_t r,c,w=j->width; float acc[BCIR_COL_CHUNK];
-  size_t c0=task*BCIR_COL_CHUNK,c1=c0+BCIR_COL_CHUNK<w ? c0+BCIR_COL_CHUNK : w;
-  for (c=c0;c<c1;c++) acc[c-c0]=j->dg[c];
+  size_t c0=task*BCIR_COL_CHUNK,c1=c0+BCIR_COL_CHUNK<w ? c0+BCIR_COL_CHUNK : w,n=c1>c0 ? c1-c0 : 0;
+  for (c=0;c<n;c++) acc[c]=j->dg[c0+c];
   for (r=0;r<j->rows;r++) {
     const float *xr=j->x+r*w+c0,*dyr=j->dy+r*w+c0; float inv=j->inv[r];
-    for (c=0;c<c1-c0;c++) acc[c]+=dyr[c]*xr[c]*inv;
+    for (c=0;c<n;c++) acc[c]+=dyr[c]*xr[c]*inv;
   }
-  for (c=c0;c<c1;c++) j->dg[c]=acc[c-c0];
+  for (c=0;c<n;c++) j->dg[c0+c]=acc[c];
 }
 void bcir_tensor_rms_backward_pool(bcir_tensor_pool *pool, size_t rows, size_t width, float eps,
     const float *x, const float *g, const float *dy, float *dx, float *dg, float *inv) {
