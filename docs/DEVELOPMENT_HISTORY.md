@@ -2915,6 +2915,14 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  LM-4T (2026-10-16): BCIR against PyTorch at four threads on 78cbd29, again.
+  - The 1,000-step language-model run with NDT-BETA and NDT-SCHED-1, two rounds in one session
+    ([measurements/2026-10-16/lm/](research/measurements/2026-10-16/lm/) r4-*, r5-*, the report's
+    §20): BCIR 241.8 / 236.7 / 256.6 ms a step (3,991-4,327 tokens a second), eager PyTorch 362.6 /
+    369.7 (2,824 / 2,770), `torch.compile` 321.6 / 310.3 (3,184 / 3,300) -- BCIR 44-53% ahead of
+    eager and 21-36% of compiled round by round, the same held-out cross-entropy, 529 MB against
+    1,060-1,142, every BCIR state `5137e013…`. That session's host ran PyTorch a quarter slower than
+    the first session's, so the gap is wider than the slices alone would make it.
   NDT-SCHED-1 (2026-10-16): the linears that read one input as one pool job.
   - Five of a layer's seven linears read one input -- q, k and v the first norm's output, gate and
     up the second's -- and each was its own job behind its own barrier; their input adjoints add

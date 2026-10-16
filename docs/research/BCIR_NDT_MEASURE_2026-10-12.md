@@ -1204,3 +1204,26 @@ prefetch, C's prefetch) against 171.9 -- C's prefetch 7% ahead in one run and 6%
 -- and the layer-by-layer scan's own row 7.16 against 7.22 and 6.79 against 6.56 ms. All of it is
 within what an arm with the tree's own GEMM code moves between runs here (the scan arm's GEMMs read
 177.3 and 169.6 against the tree's 189.8 and 171.9).
+
+## 20. BCIR against PyTorch at four threads on 78cbd29
+
+The 1,000-step language-model run at four threads, BCIR under `kblock+exp+reduce` with NDT-BETA and
+NDT-SCHED-1 (78cbd29) against PyTorch 2.13 eager and `torch.compile` at four intra-op threads, in
+two rounds in one session -- BCIR, eager, compiled, BCIR, then eager, BCIR, compiled
+([lm/r4-\*, r5-\*](measurements/2026-10-16/lm/)):
+
+| four threads, 1,000 steps | median step, ms | tokens a second | validation / test cross-entropy | peak RSS, MB |
+|---|---|---|---|---|
+| BCIR, 78cbd29 (three runs) | 241.8 / 236.7 / 256.6 | 4,236 / 4,327 / 3,991 | 1.5003 / 1.6319 | 529 |
+| PyTorch eager (two runs) | 362.6 / 369.7 | 2,824 / 2,770 | 1.5003 / 1.6319 | 1,134-1,142 |
+| PyTorch compiled (two runs) | 321.6 / 310.3 | 3,184 / 3,300 | 1.4998-1.5003 / 1.6319-1.6320 | 1,060-1,141 |
+
+All three BCIR runs end in `5137e013…`, the state of §17's runs: the two slices moved no bit over
+1,000 steps. Round by round BCIR trains 44-53% more tokens a second than eager PyTorch and 21-36%
+more than compiled, to the same held-out cross-entropy in under half the memory. The gap is wider
+than §17's (21% and 10%) for two reasons this record cannot separate from each other: the two
+slices, which took 10% from the step in place in alternation with the tree before them (§18-§19),
+and this session's host, on which PyTorch's arms ran a quarter slower than in §17's (eager
+276.7-287.1 there, compiled 259.6-274.0) and BCIR's, with the two slices, 1-9% slower than
+742234a's there. On §17's host the alternated pairs' 10% would put BCIR near 4,800 tokens a
+second -- a projection, not a measurement.

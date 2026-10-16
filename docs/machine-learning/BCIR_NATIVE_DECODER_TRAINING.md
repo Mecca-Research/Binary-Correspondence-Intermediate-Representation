@@ -398,7 +398,11 @@ linears that read one input run as one pool job since NDT-SCHED-1 (`bcir_tensor_
 the forward's q, k, v and gate, up as independent calls, the backward's input adjoints as a chain
 into one dx -- a tile's task runs each chained call's task for that tile in turn -- beside the
 weight adjoints, each element the separate calls' bit for bit (`ndt-threads.json` NT13-NT18): the
-GEMMs 179.5 -> 171.3 ms a step in place, the step 254.2 -> 241.2 (the report's §19).
+GEMMs 179.5 -> 171.3 ms a step in place, the step 254.2 -> 241.2 (the report's §19). With the two, the
+1,000-step language-model run at four threads takes 236.7-256.6 ms a step (3,991-4,327 tokens a
+second) against eager PyTorch's 362.6 / 369.7 (2,824 / 2,770) and `torch.compile`'s 321.6 / 310.3
+(3,184 / 3,300) in one later session, the same state `5137e013…` and held-out cross-entropy
+(the report's §20; that session's host ran PyTorch a quarter slower than §17's).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
