@@ -1355,7 +1355,14 @@ typedef struct att_job {
  * The v1 blocks computed the scores' 64-wide column blocks whole above the diagonal and padded the
  * 48 channels to 64 with a mask test per term; these compute a 32-wide block of scores only from
  * its diagonal on and take each term only where the mask admits it. Whole blocks of eight rows
- * only: att_rows runs a ragged tail through the v1 kernel, the same arithmetic. */
+ * only: att_rows runs a ragged tail through the v1 kernel, the same arithmetic. The context's and
+ * the transposed products' diagonal terms -- the ones only some rows of a block take -- run as
+ * loops over all eight rows with a row that does not take the term masked out of its sum
+ * (merge-masked: its accumulator stays the one it held, NaN or not), so every register array is
+ * indexed by a constant (NDT-ATTN-7); a loop bounded by the term made the arrays addressable,
+ * and the block stored 21 of its 24 accumulators to the stack every step of its main loop. A
+ * skipped row's term reads the probability or adjoint past its diagonal inside the block, the
+ * +0.0 the scores stored there, and its product is discarded. */
 #define BCIR_ATT_DC 128
 __attribute__((target("avx512f"))) BCIR_MM_INLINE __mmask16 att512_lanes(size_t count) {
   return (__mmask16)(count>=16 ? 0xffffu : (1u<<count)-1u);
@@ -1425,14 +1432,16 @@ __attribute__((target("avx512f"))) static void att512_context(size_t rows, size_
           a2[r]=_mm512_add_ps(a2[r],_mm512_mul_ps(pv,b2));
         }
       }
-      for (dj=1;dj<8;dj++) {  /* key i0+dj: the rows r >= dj */
+      for (dj=1;dj<8;dj++) {  /* key i0+dj: the rows r >= dj, the others masked out */
         const float *vj=v+(i0+dj)*ldv+c0;
         __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_maskz_loadu_ps(m1,vj+16),
             b2=_mm512_maskz_loadu_ps(m2,vj+32);
-        for (r=dj;r<8;r++) {
+        for (r=0;r<8;r++) {
+          __mmask16 take=(__mmask16)(r>=dj ? 0xffffu : 0u);
           __m512 pv=_mm512_set1_ps(p[(i0+r)*ldp+i0+dj]);
-          a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(pv,b0)); a1[r]=_mm512_add_ps(a1[r],_mm512_mul_ps(pv,b1));
-          a2[r]=_mm512_add_ps(a2[r],_mm512_mul_ps(pv,b2));
+          a0[r]=_mm512_mask_add_ps(a0[r],take,a0[r],_mm512_mul_ps(pv,b0));
+          a1[r]=_mm512_mask_add_ps(a1[r],take,a1[r],_mm512_mul_ps(pv,b1));
+          a2[r]=_mm512_mask_add_ps(a2[r],take,a2[r],_mm512_mul_ps(pv,b2));
         }
       }
       for (r=0;r<8;r++) {
@@ -1463,10 +1472,12 @@ __attribute__((target("avx512f"))) static void att512_transposed(size_t rows, si
         const float *xi=x+(j0+di)*ldx+c0,*mi=m+(j0+di)*ldm+j0;
         __m512 b0=_mm512_maskz_loadu_ps(m0,xi),b1=_mm512_maskz_loadu_ps(m1,xi+16),
             b2=_mm512_maskz_loadu_ps(m2,xi+32);
-        for (r=0;r<=di;r++) {
+        for (r=0;r<8;r++) {  /* the rows r <= di, the others masked out */
+          __mmask16 take=(__mmask16)(r<=di ? 0xffffu : 0u);
           __m512 mv=_mm512_set1_ps(mi[r]);
-          a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(mv,b0)); a1[r]=_mm512_add_ps(a1[r],_mm512_mul_ps(mv,b1));
-          a2[r]=_mm512_add_ps(a2[r],_mm512_mul_ps(mv,b2));
+          a0[r]=_mm512_mask_add_ps(a0[r],take,a0[r],_mm512_mul_ps(mv,b0));
+          a1[r]=_mm512_mask_add_ps(a1[r],take,a1[r],_mm512_mul_ps(mv,b1));
+          a2[r]=_mm512_mask_add_ps(a2[r],take,a2[r],_mm512_mul_ps(mv,b2));
         }
       }
       for (i=j0+7;i<t;i++) {  /* every row of the block takes term i */

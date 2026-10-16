@@ -1334,3 +1334,82 @@ held-out cross-entropy in under half the memory. Against §20's session BCIR is 
 (236.7-241.8 ms there, leaving out its 256.6) and PyTorch 3-8% faster (eager 362.6 / 369.7, compiled
 310.3 / 321.6 there), so this session's host is a little quicker than §20's; the slices' own share
 is §21's alternated in-place reading, the step 3.1% faster.
+
+## 23. The tiles packed once, measured; the attention's diagonal terms in registers (NDT-PREPACK, NDT-ATTN-7)
+
+§18's probe put a one-thread task's tile pack at 5.6-12.6% of its cycles, and a pooled blocked call
+packs each 48-wide column block's tiles once per 128-row task -- eight times over the step's
+1,024-row products. NDT-PREPACK's prototype ([prepack/prototype.py](measurements/2026-10-16/prepack/prototype.py))
+gives the pool a workspace and runs a pack phase before the compute phase: one task per call and
+column block packs every K block of it with the variant's own pack, the calls of one job that read
+one B share one copy, and the compute tasks read their tiles there (a call whose tiles do not fit
+packs per task, as before). The tiles are the same floats either way, so every product is too -- each
+call's C hashes the same from both trees. It is slower. The step's twelve GEMM shapes alone at four
+threads ([beta/gemm_entries.c](measurements/2026-10-16/beta/gemm_entries.c), the two trees in turn over eight rounds,
+[prepack/gemm-entries-t4.jsonl](measurements/2026-10-16/prepack/gemm-entries-t4.jsonl)) take 167.4 -> 184.1 ms of calls
+a step weighted by their counts (+10.0%), eleven of the twelve shapes slower; in place at four
+threads, eight rounds rotated ([prepack/attribution-t4-\*](measurements/2026-10-16/prepack/)), the GEMMs 173.0 -> 178.4
+ms a step and the step 235.4 -> 242.0, the prototype ahead in two rounds of eight. A task's own pack
+reads B's lines, which every core holds shared, into its own L1 and L2; the pack phase's tiles are
+lines one core has just written, which the other cores then read from that core's cache, and the
+phase adds a pool run and its barrier to every call -- so sharing the tiles saves only the copy's
+instructions, the part §18's probe showed the inner loop does not wait on. Not kept.
+
+With the GEMMs at the kernel's own rate, the attention was the step's largest block of arithmetic
+outside them: 19.2 ms a step in §21's last arm for about 1.8 GFLOP, a quarter of the GEMMs' rate.
+Cycle counters around its phases at the language model's shapes on four threads (a scratch build, so
+its shares, not its times) put 62% of its task time in four products: the forward's context (14%),
+the backward's dv (18%), dq (16%) and dk (14%) -- the scores 10%, the dp tiles 9%, the softmax's
+exponentials and sums 6%. The context's kernel (`att512_context`, which dq runs too) and the
+transposed products' (`att512_transposed`: dv and dk) took a block's diagonal terms -- the keys, or
+terms, only some of its eight rows take -- in a loop bounded by the term (`for (r=dj;r<8;r++)`,
+`for (r=0;r<=di;r++)`), and so indexed the block's register arrays by a run-time row. At the
+trainer's -O3 GCC 13.3 kept the arrays in memory: `att512_context` stored 21 of its 24 accumulators
+to the stack on every step of its main loop, and `att512_transposed` moved them through the stack
+around its diagonal terms; Clang 18.1 and 23.1 spilled the context's as well.
+
+NDT-ATTN-7 runs the diagonal terms over all eight rows and masks a row that does not take a term out
+of its sum: `_mm512_mask_add_ps`, merge-masked, so the row's accumulator stays the one it held, NaN or
+not, and the skipped row's product -- of the probability or adjoint past its diagonal inside the
+block, the +0.0 the scores stored there -- is discarded. Every register array is then indexed by a
+constant, and at -O3 neither kernel has a stack store or load under GCC 13.3, Clang 18.1 or Clang
+23.1 (at the harness's -O2 GCC spills neither kernel before or after, and Clang keeps the context's
+main loop rolled before and after -- Clang 18 now the transposed kernel's masked loop too).
+
+Every element is the one it was. The C harness's attention reference, finite and not, holds under
+GCC and Clang, C11 and C2x, -O2 and -O3; the old-against-new differential of every byte the API can
+observe ([fuse/statedump.c](measurements/2026-10-16/fuse/statedump.c)) writes the same 376,368,768 bytes (sha256
+`16b0a686…`) and the same 9.84M digest (`41018dd3e5a5e469`) from 64bfd62's sources and this slice's;
+and a differential over twelve shapes and four input sets ([attn7/nan_payloads.c](measurements/2026-10-16/attn7/nan_payloads.c),
+[attn7/nan-payloads.json](measurements/2026-10-16/attn7/nan-payloads.json)) leaves every finite set's bytes unchanged
+and, with each NaN read as one, every set's values the same under both compilers on both trees. What
+can move is which of two NaN payloads survives a sum that meets both: it differs between the trees
+on the sets that carry two payloads, as it already differed between GCC's and Clang's builds of the
+old kernels and between every build and the scalar reference (whose differences, on all four builds,
+are NaN for NaN). The contract is value for value and NaN for NaN, and no NaN reaches the trainer's
+state: the activation scan and the gradient checks refuse the step first. `ndt-attn.json` NA5 and
+NA8 (a diagonal term reaching every row) are re-anchored onto the masks and NA15-NA16 (a skipped
+row's sum zero-masked where the add must merge) are new -- 16 injected, 16 caught. The 20-step state
+at one and four threads, widest and AVX2-capped builds, is `4bf4e057…`
+([attn7/identity.json](measurements/2026-10-16/attn7/identity.json); the portable build compiles none of the AVX-512
+kernels).
+
+Measured in place at four threads, 64bfd62's sources and this slice's in turn, the order rotated,
+eight rounds ([attn7/attribution-t4-\*](measurements/2026-10-16/attn7/)):
+
+| ms a step, medians of eight rounds | 64bfd62 | NDT-ATTN-7 | rounds faster |
+|---|---|---|---|
+| the attention forward | 7.63 | 6.65 | 8 of 8 |
+| the attention backward | 12.03 | 10.06 | 8 of 8 |
+| everything but the GEMMs | 62.2 | 57.8 | 8 of 8 |
+| the GEMMs (their code unchanged) | 169.1 | 154.4 | -- |
+| the step (median of eight steps) | 232.3 | 213.3 | -- |
+
+The attention is 3.0 ms a step (15%) faster in every round. The GEMMs, whose code did not change,
+moved 142-195 ms between this session's rounds, so the step's own difference is mostly the host's.
+Alone ([attn7/attention-t1-t4.jsonl](measurements/2026-10-16/attn7/attention-t1-t4.jsonl): the kernel at the language
+model's shapes, [attention_time.c](measurements/2026-10-16/attn7/attention_time.c), the two trees in turn over eight
+rounds) the forward takes 4.15 -> 3.84 ms a layer and the backward 5.83 -> 5.27 at one thread, every
+round; at four threads 1.18 -> 1.16 and 1.78 -> 1.72, inside the host's noise (three and four rounds
+of eight) -- in place, among the step's other passes, the stores the loops no longer make are worth
+more than alone.

@@ -2915,6 +2915,34 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-ATTN-7 and NDT-PREPACK (2026-10-16): the attention's diagonal terms in registers, and the
+  GEMM's tiles packed once, measured and not kept.
+  - Cycle counters around the attention's phases put 62% of its task time in four products -- the
+    forward's context and the backward's dv, dq and dk -- whose kernels (`att512_context`,
+    `att512_transposed`) took a block's diagonal terms in a loop bounded by the term, indexing the
+    block's register arrays by a run-time row; at -O3 GCC kept the arrays in memory (21 of the
+    context's 24 accumulators stored to the stack every step of its main loop) and Clang spilled
+    the context's too.
+  - NDT-ATTN-7: the diagonal terms run over all eight rows, a row that does not take a term
+    merge-masked out of its sum (its accumulator the one it held); no stack store or load is left
+    in either kernel at -O3 under GCC 13.3, Clang 18.1 or Clang 23.1.
+  - Evidence: the C harness's attention reference (finite and not) under GCC and Clang, C11 and
+    C2x, -O2 and -O3; `ndt-attn.json` NA5 and NA8 re-anchored onto the masks, NA15-NA16 new (16 of
+    16 caught); the old-against-new differential of every observable byte: the same 376,368,768
+    bytes and 9.84M digest; a differential over twelve shapes with two NaN payloads among its
+    operands, every value the same under both compilers, only which NaN survives where two meet
+    moving -- as it already moved between GCC's and Clang's builds of the old kernels and between
+    every build and the scalar reference; the 20-step state `4bf4e057…`.
+  - Measured in place at four threads, eight rounds rotated with 64bfd62's sources
+    ([measurements/2026-10-16/attn7/](research/measurements/2026-10-16/attn7/), the report's §23):
+    the attention forward 7.63 -> 6.65 ms a step and the backward 12.03 -> 10.06, everything but the
+    GEMMs 62.2 -> 57.8, every round; alone 7-10% at one thread and inside the host's noise at four.
+  - NDT-PREPACK, measured: a pack phase packing each column block's tiles once into a workspace
+    the pool's tasks read, in place of every 128-row task packing its own (5.6-12.6% of a
+    one-thread task, §18) -- the GEMM shapes alone at four threads 10.0% slower, in place the GEMMs
+    173.0 -> 178.4 ms a step: the tiles come from L2 or L3 either way, so sharing them saves only
+    the copy and costs a pass, a barrier and the cross-core reads of lines another core just
+    wrote. Not kept ([measurements/2026-10-16/prepack/](research/measurements/2026-10-16/prepack/)).
   LM-4T (2026-10-16): BCIR against PyTorch at four threads on 64bfd62.
   - The 1,000-step language-model run with NDT-FUSE and NDT-ATTN-6, one round in their session
     ([measurements/2026-10-16/lm/](research/measurements/2026-10-16/lm/) r6-*, the report's §22):
