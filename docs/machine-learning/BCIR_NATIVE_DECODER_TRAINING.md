@@ -416,7 +416,9 @@ the order the separate scans did; and the AVX-512 attention's register blocks st
 registers, the zero fills kept only where no block writes (`tools/testing/faults/ndt-fuse.json`
 NU1-NU14 and NZ1-NZ7; an old-against-new differential of every byte the API can observe). In place
 at four threads everything but the GEMMs fell 68.2 -> 61.3 ms a step and the step 228.9 -> 221.8
-(the report's §21).
+(the report's §21). With them the 1,000-step language-model run at four threads takes 227.3 / 226.0
+ms a step (4,504 / 4,531 tokens a second) against eager PyTorch's 353.2 (2,900) and
+`torch.compile`'s 296.9 (3,449), the same state `5137e013…` and held-out cross-entropy (§22).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over

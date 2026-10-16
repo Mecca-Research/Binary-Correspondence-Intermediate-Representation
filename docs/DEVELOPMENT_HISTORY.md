@@ -2915,6 +2915,14 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  LM-4T (2026-10-16): BCIR against PyTorch at four threads on 64bfd62.
+  - The 1,000-step language-model run with NDT-FUSE and NDT-ATTN-6, one round in their session
+    ([measurements/2026-10-16/lm/](research/measurements/2026-10-16/lm/) r6-*, the report's §22):
+    BCIR 227.3 / 226.0 ms a step (4,504 / 4,531 tokens a second), eager PyTorch 353.2 (2,900),
+    `torch.compile` 296.9 (3,449) -- BCIR 55-56% ahead of eager and 31% of compiled, the same held-out
+    cross-entropy, 529 MB against 1,119-1,123, both BCIR states `5137e013…`. The runs started from
+    8b4f23d with the slices uncommitted; the sources they built are 64bfd62's blobs, hashed beside the
+    records.
   NDT-FUSE and NDT-ATTN-6 (2026-10-16): the step's passes merged, and the attention's fills.
   - After NDT-SCHED-1 a third of the four-thread step was outside the GEMMs (68.2 of 228.9 ms a step
     in place), and five of its passes were there only because a neighbouring pass stopped short: the

@@ -1313,3 +1313,24 @@ for that arm; the GEMMs alone moved 156-175 ms between rounds of the first) -- a
 the step is 7.1 ms, 3.1%, faster. The residual adds left are the forward's two a layer; the RMSNorm
 VJP is slower by the adds it took, and the one-pass product costs a little more than SiLU's pass
 alone did and less than the two together.
+
+## 22. BCIR against PyTorch at four threads on 64bfd62
+
+The 1,000-step language-model run at four threads on NDT-FUSE and NDT-ATTN-6 (64bfd62), BCIR under
+`kblock+exp+reduce` against PyTorch 2.13 eager and `torch.compile` at four intra-op threads, one round
+in §21's session -- BCIR, eager, compiled, BCIR ([lm/r6-\*](measurements/2026-10-16/lm/); the runs
+started from 8b4f23d with the slices' sources in the working tree, whose SHA-256s are the commit's
+blobs, [r6-64bfd62-sources.sha256](measurements/2026-10-16/lm/r6-64bfd62-sources.sha256)):
+
+| four threads, 1,000 steps | median step, ms | tokens a second | validation / test cross-entropy | peak RSS, MB |
+|---|---|---|---|---|
+| BCIR, 64bfd62 (two runs) | 227.3 / 226.0 | 4,504 / 4,531 | 1.5003 / 1.6319 | 529 |
+| PyTorch eager | 353.2 | 2,900 | 1.5003 / 1.6319 | 1,123 |
+| PyTorch compiled | 296.9 | 3,449 | 1.5001 / 1.6320 | 1,119 |
+
+Both BCIR runs end in `5137e013…`, the state of §17's and §20's runs: no bit moved over 1,000 steps.
+BCIR trains 55-56% more tokens a second than eager PyTorch and 31% more than compiled, to the same
+held-out cross-entropy in under half the memory. Against §20's session BCIR is 4.0-6.5% faster
+(236.7-241.8 ms there, leaving out its 256.6) and PyTorch 3-8% faster (eager 362.6 / 369.7, compiled
+310.3 / 321.6 there), so this session's host is a little quicker than §20's; the slices' own share
+is §21's alternated in-place reading, the step 3.1% faster.
