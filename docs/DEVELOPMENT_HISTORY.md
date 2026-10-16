@@ -2915,6 +2915,40 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-FUSE and NDT-ATTN-6 (2026-10-16): the step's passes merged, and the attention's fills.
+  - After NDT-SCHED-1 a third of the four-thread step was outside the GEMMs (68.2 of 228.9 ms a step
+    in place), and five of its passes were there only because a neighbouring pass stopped short: the
+    SwiGLU forward's SiLU and product as two passes over each layer's hidden activations, the
+    residual's adds after the RMSNorm VJPs had stored their dx, the gradients' 9.84M-float zero fill,
+    the backward's closing gradient scan that the update's first pass repeats, and the attention's
+    fills under kernels that then add their first terms to the zeros.
+  - NDT-FUSE: `bcir_tensor_silu_mul_pool` and its v2 twin (the two roundings the passes made);
+    `bcir_tensor_rms_backward_into_pool` with `BCIR_TENSOR_RMSB_ADD` (the VJP's element added to dx in
+    place) and `BCIR_TENSOR_RMSB_FIRST` (the gamma adjoint's sums from +0.0); under a fresh backward on
+    BCIR's GEMM each gradient's first writer starts it -- the weight adjoints at beta 0, which
+    NDT-BETA's first K block adds to +0.0 without reading C, a sum begun at +0.0 never being -0.0 --
+    with only an untied embedding filled for its scatter and a provider's GEMM keeping the fill and
+    beta 1; inside a run the last micro-batch's closing scan is the update's first pass, a
+    non-finite gradient still reported as `BCIR_DT_NUMERIC` ahead of the update's own
+    `BCIR_DT_INVALID`, and later micro-batches skip the opening scans already answered.
+  - NDT-ATTN-6: the AVX-512 attention's scores, context and dq blocks start from +0.0 in registers on
+    a head's first write, dk and dv on a KV head's first query head; the fills cover only the
+    probabilities' future columns past a row's blocks and the v1 kernel's rows; the scores' last
+    channel block stores its future lanes as +0.0; the key panel is packed by 16 x 16 register
+    transposes.
+  - Evidence: the C harness's `fused_passes` (the product over special operands and in place, the
+    VJP's four modes, a NaN-filled gradient under accumulate 0 against the zero-filled one on a tied
+    and an untied fixture under four contracts, the scans' refusals on a crafted state whose
+    activations are finite and whose gradient overflows); `ndt-fuse.json` NU1-NU14 and NZ1-NZ7,
+    `ndt-exp.json` NE5, `ndt-lanes.json` NL4 and `ndt-scan.json` NS6-NS7 (onto the fills that remain)
+    re-anchored; an old-against-new differential of every
+    byte the API can observe (three small specs under the twelve contracts at one, two and four
+    threads, and the 9.84M spec): the same bytes from both trees; the 20-step state at one and four
+    threads, widest, AVX2 and portable builds, `4bf4e057…`.
+  - Measured in place at four threads, eight rounds of the three arms rotated
+    ([measurements/2026-10-16/fuse/](research/measurements/2026-10-16/fuse/), the report's §21):
+    everything but the GEMMs 68.2 -> 64.5 ms a step with NDT-FUSE (lower in seven rounds of eight) and
+    61.3 with both (every round), the step 228.9 -> 221.8 with both.
   LM-4T (2026-10-16): BCIR against PyTorch at four threads on 78cbd29, again.
   - The 1,000-step language-model run with NDT-BETA and NDT-SCHED-1, two rounds in one session
     ([measurements/2026-10-16/lm/](research/measurements/2026-10-16/lm/) r4-*, r5-*, the report's

@@ -31,8 +31,8 @@
   {
    "expects": "test_native_c_harness_c11_and_c23",
    "label": "NL4 the gamma adjoint's register sums start at zero (the value dg holds is dropped)",
-   "new": "  for (c=0;c<n;c++) acc[c]=0.0f;",
-   "old": "  for (c=0;c<n;c++) acc[c]=j->dg[c0+c];",
+   "new": "  else for (c=0;c<n;c++) acc[c]=0.0f;",
+   "old": "  else for (c=0;c<n;c++) acc[c]=j->dg[c0+c];",
    "path": "runtime/c/bcir_tensor.c"
   },
   {

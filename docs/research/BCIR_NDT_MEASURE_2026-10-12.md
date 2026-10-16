@@ -1227,3 +1227,89 @@ and this session's host, on which PyTorch's arms ran a quarter slower than in §
 276.7-287.1 there, compiled 259.6-274.0) and BCIR's, with the two slices, 1-9% slower than
 742234a's there. On §17's host the alternated pairs' 10% would put BCIR near 4,800 tokens a
 second -- a projection, not a measurement.
+
+## 21. The step's passes merged, and the attention's fills (NDT-FUSE, NDT-ATTN-6)
+
+After §19 a third of the four-thread step is outside the GEMMs -- 68.2 of 228.9 ms a step in place,
+in this section's first arm -- and five of its passes were there only because a neighbouring pass
+stopped short: the SwiGLU forward's SiLU and its product with the up projection, two passes over each
+layer's 8 x 128 x 1,024 hidden activations; the residual's two adds a layer after the RMSNorm VJPs
+had stored their dx in scratch; the gradients' zero fill, 9.84M floats written before the backward's
+first writer; the backward's closing finiteness scan of the same 9.84M, which the update's first pass
+reads again; and in the attention, the fills that set the probabilities, the context and the
+backward's adjoints to zero under kernels that then add their first terms to the zeros.
+
+NDT-FUSE merges the first four, each the same operations in the same order:
+
+- `bcir_tensor_silu_mul_pool` (libm's SiLU, the v1 contract) and `bcir_tensor_silu_mul_v2_pool` (the
+  BCIR exponential) compute y = silu(x)·u in one pass -- s = x·σ(x) rounded, then s·u rounded, the
+  two roundings the two passes made. A provider's SiLU keeps the two passes.
+- `bcir_tensor_rms_backward_into_pool` takes `BCIR_TENSOR_RMSB_ADD`, which adds each element of the
+  VJP, rounded as its store rounded it, to dx in place -- the residual's adjoint the separate add
+  read -- and `BCIR_TENSOR_RMSB_FIRST`, which starts the gamma adjoint's column sums from +0.0 instead
+  of reading dg.
+- A fresh backward (accumulate 0) on BCIR's GEMM lets each gradient's first writer start it: the
+  weight adjoints run at beta 0, which since §18 adds their terms to +0.0 without reading C, and the
+  gamma adjoints under `BCIR_TENSOR_RMSB_FIRST`. A sum begun at +0.0 is never -0.0 under
+  round-to-nearest, so the fill's +0.0 added to it had changed nothing. An untied embedding is still
+  filled (its first writer, the scatter, adds to what it holds), and a provider's GEMM keeps the fill
+  and beta 1.
+- Inside one run call the last micro-batch's closing gradient scan is the update's first pass, which
+  reads every gradient anyway; a non-finite gradient is still reported as `BCIR_DT_NUMERIC` ahead of
+  the update's own `BCIR_DT_INVALID`, the order the separate scans gave, and a run's later
+  micro-batches skip the opening scans their predecessor's closing ones answered. The
+  language-model run calls `run` one step at a time, so this is the one fact of a run that reaches it
+  (NDT-FACTS-RUN's cross-step facts do not).
+
+NDT-ATTN-6 takes the fills out of the AVX-512 attention's way: the scores', the context's and dq's
+register blocks start from +0.0 in registers on a head's first write, and dk's and dv's on a KV
+head's first query head (the group's later heads add to what is stored, as the reference does); the
+probabilities' fill covers only the future columns past a row's blocks and the rows the v1 kernel
+takes (`att_v1_rows`: on the AVX-512 instance the rows past the last multiple of eight, elsewhere
+every row), the scores' last channel
+block stores its future lanes as +0.0, as the fill had left them, and the scores' key panel is packed
+by 16 x 16 transposes in registers (`kb512_transpose16`, the GEMM pack's) instead of a scalar gather.
+
+Witnesses: the C harness's `fused_passes` holds the one-pass product on both contracts -- NaN,
+infinities, ±0.0, a subnormal and overflowing operands, in place on either input -- to the two
+passes; the VJP's four modes over 40 x 37 and 48 x 389 (whole 16-row chunks and a part one) to the
+separate VJP and add, a column of -0.0 terms starting at +0.0; a NaN-filled gradient under
+accumulate 0 to the zero-filled one, on a tied and an untied fixture under four contracts; a run's
+first micro-batch refusing a NaN weight before the forward writes the arena; and a crafted state
+whose activations are finite and whose gradient overflows, refused by the backward alone, by a run,
+by a run on an invalid beta power (the backward's verdict first), by a two-micro-batch run at the
+first micro-batch's closing scan (the second never run), while a finite step on that power reports
+the update's refusal. `tools/testing/faults/ndt-fuse.json` NU1-NU14 and NZ1-NZ7 each turn the
+harness red (`ndt-exp.json` NE5, `ndt-lanes.json` NL4 and `ndt-scan.json` NS6-NS7 re-anchored on the
+code they guard, NS6-NS7 on the fills that remain). An
+old-against-new differential ([fuse/statedump.c](measurements/2026-10-16/fuse/statedump.c)) writes
+every byte the API can observe -- return codes, events, losses, norms, and the weights, moments and
+gradients after every call -- over runs, single steps, the public backward over a gradient of NaN,
+-0.0 and stale values, accumulated runs and the refusals, for three small specs under the twelve
+contracts at one, two and four threads, and hashes the same schedule for the 9.84M spec at four:
+8b4f23d and the two slices write the same 376,368,768 bytes and the same digest. The 20-step state at
+one and four threads, widest, AVX2 and portable builds, is `4bf4e057…`
+([fuse/identity.json](measurements/2026-10-16/fuse/identity.json)).
+
+In place at four threads, the three arms in turn -- 8b4f23d, with NDT-FUSE, with both -- their order
+rotated round by round over eight rounds ([fuse/attribution-t4-\*](measurements/2026-10-16/fuse/);
+the attribution's SiLU row counts the one-pass product, and it instruments the backward's and the
+update's bodies, which the public entries now wrap):
+
+| four threads, in place, ms a step (medians of eight rounds) | 8b4f23d | NDT-FUSE | both |
+|---|---|---|---|
+| the gradients' zero fill / closing scan | 1.37 / 1.55 | 0 / 0 | 0 / 0 |
+| SiLU + the gate product | 2.29 + 1.24 | 2.68 | 2.55 |
+| the residual adds / the RMSNorm VJP | 2.64 / 4.72 | 1.32 / 5.58 | 1.17 / 5.26 |
+| the attention, forward / backward | 9.04 / 12.32 | 9.01 / 12.59 | 7.59 / 11.61 |
+| everything but the GEMMs | 68.2 | 64.5 | 61.3 |
+| the GEMMs (their code unchanged) | 163.2 | 163.8 | 163.4 |
+| the step (median of eight steps) | 228.9 | 231.6 | 221.8 |
+
+Everything but the GEMMs is lower in seven of the eight rounds with NDT-FUSE and in all eight with
+both: the merged passes took 3.7 ms a step from it and the attention's fills 3.2 more. The NDT-FUSE
+arm's step reads 2.7 ms slower than 8b4f23d's -- inside the step's spread between rounds (216-246 ms
+for that arm; the GEMMs alone moved 156-175 ms between rounds of the first) -- and with both slices
+the step is 7.1 ms, 3.1%, faster. The residual adds left are the forward's two a layer; the RMSNorm
+VJP is slower by the adds it took, and the one-pass product costs a little more than SiLU's pass
+alone did and less than the two together.

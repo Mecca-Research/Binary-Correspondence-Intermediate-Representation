@@ -77,6 +77,7 @@ CATEGORIES = [
     (r"\blinears?\(", "gemm.forward"),
     (r"\battention\(s", "attention.forward"),
     (r"bcir_tensor_add_pool", "residual.add"),
+    (r"\bsilu_mul\(s", "silu"),  # the SiLU and the gate product in one pass since NDT-FUSE
     (r"\bsilu\(s", "silu"),
     (r"bcir_tensor_mul_pool", "swiglu.mul"),
     (r"first_pass\(", "update.first_pass"),
@@ -88,10 +89,19 @@ DECLARATION = re.compile(
     r"^(geometry|size_t|double|float|int|loss_job|scatter_job|layer|cache|bcir_decoder_adamw|"
     r"pass_part|pass_result|const|adamw_terms|preflight_job|unsigned)\b"
 )
+#: The instrumented bodies, each by the spellings the trees have had: the first one a tree has once
+#: is the body -- since NDT-FUSE the backward and the update are `_with` bodies the public entries
+#: wrap, and a run calls the bodies directly.
 FUNCTIONS = (
-    "static void forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {",
-    "int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,",
-    "int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,",
+    ("static void forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {",),
+    (
+        "static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,",
+        "int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,",
+    ),
+    (
+        "static int update_with(bcir_decoder_state *s,const bcir_decoder_adamw *o,",
+        "int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,",
+    ),
 )
 
 
@@ -163,9 +173,10 @@ def instrumented_copy(src: Path, out: Path) -> None:
     if train.count(anchor) != 1:
         raise SystemExit("attribution: the trainer's includes moved; update the instrument")
     train = train.replace(anchor, anchor + PROF, 1)
-    for header in FUNCTIONS:
-        if train.count(header) != 1:
-            raise SystemExit(f"attribution: {header!r} not found once; update the instrument")
+    for choices in FUNCTIONS:
+        header = next((h for h in choices if train.count(h) == 1), None)
+        if header is None:
+            raise SystemExit(f"attribution: none of {choices!r} found once; update the instrument")
         train = instrument(train, header)
     (out / "bcir_decoder_train.c").write_text(train, encoding="utf-8")
 

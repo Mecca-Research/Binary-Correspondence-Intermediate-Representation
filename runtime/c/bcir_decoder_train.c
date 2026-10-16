@@ -197,15 +197,15 @@ static void linear(bcir_decoder_state *s,size_t r,size_t in,size_t out,const flo
  * product's idle threads on the other's tasks); a provider's GEMM runs them one after the other,
  * threaded as the provider threads it. The results are the two calls', bit for bit. */
 static void linear_backward(bcir_decoder_state *s,size_t r,size_t in,size_t out,
-    const float *x,const float *w,const float *dy,float *dx,float *dw,float beta) {
+    const float *x,const float *w,const float *dy,float *dx,float *dw,float beta,float wbeta) {
   bcir_tensor_mm_call cx,cw;
   if (s->provider.mm) {
     gemm(s,0,0,r,in,out,1.0f,dy,w,beta,dx);
-    gemm(s,1,0,out,in,r,1.0f,dy,x,1.0f,dw);
+    gemm(s,1,0,out,in,r,1.0f,dy,x,wbeta,dw);
     return;
   }
   cx.ta=0; cx.tb=0; cx.m=r; cx.n=in; cx.k=out; cx.alpha=1.0f; cx.a=dy; cx.b=w; cx.beta=beta; cx.c=dx;
-  cw.ta=1; cw.tb=0; cw.m=out; cw.n=in; cw.k=r; cw.alpha=1.0f; cw.a=dy; cw.b=x; cw.beta=1.0f; cw.c=dw;
+  cw.ta=1; cw.tb=0; cw.m=out; cw.n=in; cw.k=r; cw.alpha=1.0f; cw.a=dy; cw.b=x; cw.beta=wbeta; cw.c=dw;
   bcir_tensor_mm_pair_pool(s->pool,gemm_contract(s),&cx,&cw);
 }
 /* The linears that read one input -- the attention's q, k and v, the MLP's gate and up -- as one
@@ -228,24 +228,26 @@ static void linears(bcir_decoder_state *s,size_t r,size_t in,const float *x,size
 }
 static void linears_backward(bcir_decoder_state *s,size_t r,size_t in,const float *x,size_t count,
     const size_t *out,const float *const *w,const float *const *dy,float *dx,float *const *dw,
-    float beta) {
+    float beta,float wbeta) {
   bcir_tensor_mm_call cx[BCIR_TENSOR_MM_GROUP],cw[BCIR_TENSOR_MM_GROUP]; size_t q;
   if (s->provider.mm || count>BCIR_TENSOR_MM_GROUP) {
-    for (q=0;q<count;q++) linear_backward(s,r,in,out[q],x,w[q],dy[q],dx,dw[q],q ? 1.0f : beta);
+    for (q=0;q<count;q++) linear_backward(s,r,in,out[q],x,w[q],dy[q],dx,dw[q],q ? 1.0f : beta,wbeta);
     return;
   }
   for (q=0;q<count;q++) {
     cx[q].ta=0; cx[q].tb=0; cx[q].m=r; cx[q].n=in; cx[q].k=out[q]; cx[q].alpha=1.0f; cx[q].a=dy[q];
     cx[q].b=w[q]; cx[q].beta=q ? 1.0f : beta; cx[q].c=dx;
     cw[q].ta=1; cw[q].tb=0; cw[q].m=out[q]; cw[q].n=in; cw[q].k=r; cw[q].alpha=1.0f; cw[q].a=dy[q];
-    cw[q].b=x; cw[q].beta=1.0f; cw[q].c=dw[q];
+    cw[q].b=x; cw[q].beta=wbeta; cw[q].c=dw[q];
   }
   bcir_tensor_mm_group_pool(s->pool,gemm_contract(s),cx,count,cw,count);
 }
-static void silu(bcir_decoder_state *s,size_t n,const float *x,float *y) {
-  if (s->provider.silu) s->provider.silu(s->provider.ctx,n,x,y);
-  else if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_v2_pool(s->pool,n,x,y);
-  else bcir_tensor_silu_pool(s->pool,n,x,y);
+/* y = silu(x) * u (NDT-SWIGLU-FWD): BCIR's SiLU under the state's contract and the product in one
+ * pass, the two passes' values; a provider's SiLU into y, then the product, as before. */
+static void silu_mul(bcir_decoder_state *s,size_t n,const float *x,const float *u,float *y) {
+  if (s->provider.silu) { s->provider.silu(s->provider.ctx,n,x,y); bcir_tensor_mul_pool(s->pool,n,u,y); }
+  else if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_mul_v2_pool(s->pool,n,x,u,y);
+  else bcir_tensor_silu_mul_pool(s->pool,n,x,u,y);
 }
 static void swiglu_backward(bcir_decoder_state *s,size_t n,const float *g,const float *u,
     const float *dy,float *dg,float *du) {
@@ -284,8 +286,7 @@ static void forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
       out[0]=g.f; out[1]=g.f; w[0]=p.gate; w[1]=p.up; y2[0]=a.gate; y2[1]=a.up;
       linears(s,g.n,g.d,a.n2,2,out,w,y2);
     }
-    silu(s,g.nf,a.gate,a.hidden);
-    bcir_tensor_mul_pool(s->pool,g.nf,a.up,a.hidden);
+    silu_mul(s,g.nf,a.gate,a.up,a.hidden);
     linear(s,g.n,g.f,g.d,a.hidden,p.down,y);
     bcir_tensor_add_pool(s->pool,g.nd,a.x2,y);
   }
@@ -335,24 +336,38 @@ static void scatter_task(void *ctx,size_t task) {
   }
 }
 static void rms_backward(bcir_decoder_state *s,size_t rows,size_t width,const float *x,
-    const float *g,const float *dy,float *dx,float *dg,float *inv) {
-  bcir_tensor_rms_backward_pool(s->pool,rows,width,(float)s->plan.spec.rms_eps,x,g,dy,dx,dg,inv);
+    const float *g,const float *dy,float *dx,float *dg,float *inv,unsigned how) {
+  bcir_tensor_rms_backward_into_pool(s->pool,rows,width,(float)s->plan.spec.rms_eps,x,g,dy,dx,dg,
+      inv,how);
 }
-int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
-    const uint32_t *targets,size_t n,int accumulate,double *loss) {
+/* What a run knows about its step that a lone call does not (NDT-FACTS-CALL; no caller code runs
+ * between a run's micro-batches and its update, and nothing it writes overlaps the state):
+ * DT_KNOWN -- the weights, and the gradient being accumulated, were scanned finite by this step
+ * and are unchanged, so the opening scans would pass; DT_DEFER -- the closing gradient scan is the
+ * update's first pass, which the run calls next with the same verdict on every element. */
+#define DT_KNOWN 1u
+#define DT_DEFER 2u
+static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
+    const uint32_t *targets,size_t n,int accumulate,double *loss,unsigned how) {
   geometry g; size_t i,l; double ce=0.0; loss_job lj; scatter_job sj;
   float *xs,*cs,*norm,*logits,*cur,*tmp,*dn,*dq,*dk,*dv,*dc,*dg,*du,*dh,*dl;
-  float *final,*dfinal,*head,*dhead; int rc=valid(s);
+  float *final,*dfinal,*head,*dhead,wb; unsigned gf; int first,rc=valid(s);
   if (rc) return rc;
   g=geom(&s->plan.spec);
   if (n!=g.n || !ids(s,tokens,n) || !ids(s,targets,n) ||
       (accumulate!=0 && accumulate!=1) || !external(s,loss,sizeof(*loss)) ||
       (uintptr_t)loss%_Alignof(double)) return BCIR_DT_INVALID;
-  if (!finite_pool(s,s->weights,s->plan.parameters) ||
-      (accumulate && !finite_pool(s,s->gradients,s->plan.parameters))) return BCIR_DT_NUMERIC;
+  if (!(how&DT_KNOWN) && (!finite_pool(s,s->weights,s->plan.parameters) ||
+      (accumulate && !finite_pool(s,s->gradients,s->plan.parameters)))) return BCIR_DT_NUMERIC;
   forward(s,tokens,g);
   if (!finite_pool(s,s->activations,s->plan.activations)) return BCIR_DT_NUMERIC;
-  if (!accumulate) zero_pool(s,s->gradients,s->plan.parameters);
+  /* NDT-ZERO: a fresh gradient's first writers write it -- each weight adjoint's GEMM at beta 0,
+   * which adds its terms to +0.0 without reading C (what the fill and beta 1 gave), each gamma
+   * VJP from +0.0 -- so only the region the scatter writes first, an untied embedding, is filled;
+   * a provider's GEMM keeps the fill and beta 1. */
+  first=!accumulate && !s->provider.mm; wb=first ? 0.0f : 1.0f; gf=first ? BCIR_TENSOR_RMSB_FIRST : 0u;
+  if (!accumulate && !first) zero_pool(s,s->gradients,s->plan.parameters);
+  if (!accumulate && first && !s->plan.spec.tied) zero_pool(s,s->gradients,g.v*g.d);
   xs=s->activations; cs=xs+(g.l+1)*g.nd; norm=cs+g.l*g.la; logits=norm+g.nd;
   cur=s->scratch; tmp=cur+g.nd; dn=tmp+g.nd; dq=dn+g.nd; dk=dq+g.nd;
   dv=dk+g.nk; dc=dv+g.nk; dg=dc+g.nd; du=dg+g.nf; dh=du+g.nf; dl=dh+g.nf;
@@ -367,23 +382,23 @@ int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
   for (i=0;i<g.n;i++) {
     double term; memcpy(&term,lj.terms+i*sizeof(double),sizeof(double)); ce+=term;
   }
-  linear_backward(s,g.n,g.d,g.v,norm,head,dl,dn,dhead,0.0f);
+  linear_backward(s,g.n,g.d,g.v,norm,head,dl,dn,dhead,0.0f,wb);
   /* each gamma VJP keeps its rows' 1/rms in dq, free until the layer's query VJP */
-  rms_backward(s,g.n,g.d,xs+g.l*g.nd,final,dn,cur,dfinal,dq);
+  rms_backward(s,g.n,g.d,xs+g.l*g.nd,final,dn,cur,dfinal,dq,gf);
   for (l=g.l;l-->0;) {
     layer p=params(s->weights+g.v*g.d+l*g.lp,g);
     layer grad=params(s->gradients+g.v*g.d+l*g.lp,g);
     cache a=activations(cs+l*g.la,g); float *x=xs+l*g.nd;
-    linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f);
+    linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f,wb);
     swiglu_backward(s,g.nf,a.gate,a.up,dh,dg,du);
     {
       size_t out[2]; const float *w[2],*d2[2]; float *dw[2];
       out[0]=g.f; out[1]=g.f; w[0]=p.gate; w[1]=p.up; d2[0]=dg; d2[1]=du; dw[0]=grad.gate; dw[1]=grad.up;
-      linears_backward(s,g.n,g.d,a.n2,2,out,w,d2,dn,dw,0.0f);
+      linears_backward(s,g.n,g.d,a.n2,2,out,w,d2,dn,dw,0.0f,wb);
     }
-    rms_backward(s,g.n,g.d,a.x2,p.norm2,dn,tmp,grad.norm2,dq);
-    bcir_tensor_add_pool(s->pool,g.nd,tmp,cur);
-    linear_backward(s,g.n,g.d,g.d,a.ctx,p.o,cur,dc,grad.o,0.0f);
+    /* NDT-RMS-ACC: the VJP adds its dx into the residual's adjoint, one rounded sum an element */
+    rms_backward(s,g.n,g.d,a.x2,p.norm2,dn,cur,grad.norm2,dq,BCIR_TENSOR_RMSB_ADD|gf);
+    linear_backward(s,g.n,g.d,g.d,a.ctx,p.o,cur,dc,grad.o,0.0f,wb);
     /* the layer's probabilities are read for the last time here: the in-place backward
      * leaves its score adjoint in their place (same dq/dk/dv as the reference, bit for bit) */
     bcir_tensor_attention_backward_inplace_pool(s->pool,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,
@@ -394,15 +409,19 @@ int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
       size_t out[3]; const float *w[3],*d3[3]; float *dw[3];
       out[0]=g.d; out[1]=g.k; out[2]=g.k; w[0]=p.q; w[1]=p.k; w[2]=p.v;
       d3[0]=dq; d3[1]=dk; d3[2]=dv; dw[0]=grad.q; dw[1]=grad.k; dw[2]=grad.v;
-      linears_backward(s,g.n,g.d,a.n1,3,out,w,d3,dn,dw,0.0f);
+      linears_backward(s,g.n,g.d,a.n1,3,out,w,d3,dn,dw,0.0f,wb);
     }
-    rms_backward(s,g.n,g.d,x,p.norm1,dn,tmp,grad.norm1,dq);
-    bcir_tensor_add_pool(s->pool,g.nd,tmp,cur);
+    rms_backward(s,g.n,g.d,x,p.norm1,dn,cur,grad.norm1,dq,BCIR_TENSOR_RMSB_ADD|gf);
   }
   sj.n=g.n; sj.d=g.d; sj.tokens=tokens; sj.dx=cur; sj.grad=s->gradients;
   bcir_tensor_pool_run(s->pool,scatter_task,&sj,(g.d+BCIR_DT_COL_CHUNK-1)/BCIR_DT_COL_CHUNK);
-  if (!finite_pool(s,s->gradients,s->plan.parameters) || !isfinite(ce)) return BCIR_DT_NUMERIC;
+  if ((!(how&DT_DEFER) && !finite_pool(s,s->gradients,s->plan.parameters)) || !isfinite(ce))
+    return BCIR_DT_NUMERIC;
   *loss=ce/(double)g.n; return BCIR_DT_OK;
+}
+int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
+    const uint32_t *targets,size_t n,int accumulate,double *loss) {
+  return loss_backward_with(s,tokens,targets,n,accumulate,loss,0u);
 }
 /* The AdamW candidate for one element, exactly as the update has always computed it: the
  * moments rounded to float before they are used, the step in double. The preflight and the
@@ -625,19 +644,25 @@ static int optimizer_valid(const bcir_decoder_adamw *o) {
     isfinite(o->beta2) && o->beta2>=0 && o->beta2<1 && isfinite(o->epsilon) && o->epsilon>0 &&
     isfinite(o->weight_decay) && o->weight_decay>=0 && isfinite(o->grad_clip) && o->grad_clip>=0;
 }
-int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,
-    double gs,double *grad_norm) {
+/* The update a run calls with its step's closing gradient scan deferred to it (NDT-FACTS-CALL:
+ * the first pass's verdict on every gradient element is the scan's, gs being 1/accumulation):
+ * a refusal of the update's own arguments is reported only after that scan, so a step whose
+ * gradient is not finite reports the backward's verdict first, as the separate calls do. */
+static int update_with(bcir_decoder_state *s,const bcir_decoder_adamw *o,
+    double gs,double *grad_norm,int deferred) {
   size_t i; double norm,scale,b1,b2; int rc=valid(s);
   bcir_decoder_adamw options; pass_part parts[BCIR_DT_PASS_TASKS]; pass_result pass;
   if (rc) return rc;
-  if (!o) return BCIR_DT_INVALID;
+  if (!o) return deferred && !finite_pool(s,s->gradients,s->plan.parameters) ? BCIR_DT_NUMERIC :
+    BCIR_DT_INVALID;
   options=*o; o=&options;
   if (!optimizer_valid(o) || !isfinite(gs) || gs<=0 || s->step==UINT64_MAX ||
       !isfinite(s->beta1_power) || !isfinite(s->beta2_power) ||
       s->beta1_power<0 || s->beta1_power>1 || s->beta2_power<0 || s->beta2_power>1 ||
       (!s->step && (s->beta1_power!=1 || s->beta2_power!=1)) ||
       !external(s,grad_norm,sizeof(*grad_norm)) || (uintptr_t)grad_norm%_Alignof(double))
-    return BCIR_DT_INVALID;
+    return deferred && !finite_pool(s,s->gradients,s->plan.parameters) ? BCIR_DT_NUMERIC :
+      BCIR_DT_INVALID;
   rc=first_pass(s,gs,parts,&pass);
   if (rc) return rc;
   norm=sqrt(pass.norm2); if (!isfinite(norm)) return BCIR_DT_NUMERIC;
@@ -665,6 +690,10 @@ int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,
   }
   s->step++; s->beta1_power=b1; s->beta2_power=b2; *grad_norm=norm;
   return BCIR_DT_OK;
+}
+int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,
+    double gs,double *grad_norm) {
+  return update_with(s,o,gs,grad_norm,0);
 }
 int bcir_decoder_run(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     const uint32_t *tokens,const uint32_t *targets,size_t count,
@@ -702,12 +731,13 @@ int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     double loss=0.0,norm;
     for (j=0;j<accumulation;j++) {
       double part; size_t off=(i*accumulation+j)*n;
-      rc=bcir_decoder_loss_backward(s,tokens+off,targets+off,n,j!=0,&part);
+      rc=loss_backward_with(s,tokens+off,targets+off,n,j!=0,&part,
+          (j ? DT_KNOWN : 0u)|(j+1==accumulation ? DT_DEFER : 0u));
       if (rc) return rc;
       loss+=part/(double)accumulation;
     }
     if (rates) opt.lr=rates[i];
-    rc=bcir_decoder_update(s,&opt,1.0/(double)accumulation,&norm); if (rc) return rc;
+    rc=update_with(s,&opt,1.0/(double)accumulation,&norm,1); if (rc) return rc;
     events[i].loss=loss; events[i].grad_norm=norm; events[i].step=s->step; *completed=i+1;
   }
   return BCIR_DT_OK;

@@ -45,16 +45,16 @@
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
-      "label": "NS6 the attention forward's task leaves its head's probabilities as it found them (the causal products accumulate into the last step's)",
+      "label": "NS6 the attention forward's task leaves the v1 kernel's rows of its head's probabilities as it found them (their causal products accumulate into the last step's)",
       "new": "",
-      "old": "  memset(ph,0,t*t*sizeof(float));\n",
+      "old": "    memset(ph+v1*t,0,(t-v1)*t*sizeof(float));\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
-      "label": "NS7 the attention forward's task leaves its head's context columns as it found them",
+      "label": "NS7 the attention forward's task leaves the v1 kernel's rows of its head's context columns as it found them",
       "new": "",
-      "old": "  for (i=0;i<t;i++) memset(a->y+((r*t+i)*nh+h)*d,0,d*sizeof(float));\n",
+      "old": "    for (i=v1;i<t;i++) memset(a->y+((r*t+i)*nh+h)*d,0,d*sizeof(float));\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

@@ -65,11 +65,28 @@ BCIR_DT_API void bcir_tensor_rms_pool(bcir_tensor_pool *pool, size_t rows, size_
  * order -- bcir_tensor_rms_backward's result, bit for bit, at every thread count. */
 BCIR_DT_API void bcir_tensor_rms_backward_pool(bcir_tensor_pool *pool, size_t rows, size_t width,
     float eps, const float *x, const float *g, const float *dy, float *dx, float *dg, float *inv);
+/* The same VJP with its two writes chosen (NDT-RMS-ACC, NDT-ZERO), every value the call above's:
+ * BCIR_TENSOR_RMSB_ADD adds each element of dx to the value dx holds -- dx + (the VJP's element),
+ * one rounded sum, which is the call above into a buffer t followed by bcir_tensor_add_pool(t, dx)
+ * -- and BCIR_TENSOR_RMSB_FIRST starts each column's gamma adjoint at +0.0 instead of at the value
+ * dg holds, as a zero fill of dg before the call would (dg is then written, never read). */
+#define BCIR_TENSOR_RMSB_ADD 1u
+#define BCIR_TENSOR_RMSB_FIRST 2u
+BCIR_DT_API void bcir_tensor_rms_backward_into_pool(bcir_tensor_pool *pool, size_t rows,
+    size_t width, float eps, const float *x, const float *g, const float *dy, float *dx, float *dg,
+    float *inv, unsigned how);
 BCIR_DT_API void bcir_tensor_rope_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
     size_t heads, size_t dim, double base, float *x, int inverse);
 /* y[i] += x[i] and y[i] *= x[i] over elements, as the trainer's residual and gate paths do. */
 BCIR_DT_API void bcir_tensor_add_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);
 BCIR_DT_API void bcir_tensor_mul_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);
+/* y[i] = silu(x[i]) * u[i] in one pass (NDT-SWIGLU-FWD): the SiLU rounded to binary32 as
+ * bcir_tensor_silu_pool computes it (libm's expf; the _v2 entry: the v2 SiLU, as
+ * bcir_tensor_silu_v2_pool), then its product with u rounded -- the SiLU into y followed by
+ * bcir_tensor_mul_pool(u, y), bit for bit, with one read of x and u and one write of y. Each
+ * element reads x[i] and u[i] before it writes y[i]; y must not partly overlap x or u. */
+BCIR_DT_API void bcir_tensor_silu_mul_pool(bcir_tensor_pool *pool, size_t n, const float *x,
+    const float *u, float *y);
 BCIR_DT_API void bcir_tensor_attention_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
     size_t heads, size_t kvheads, size_t dim, const float *q, const float *k, const float *v,
     float *p, float *y);
@@ -158,6 +175,8 @@ BCIR_DT_API int bcir_tensor_exp_variant(int variant, size_t n, const float *x, f
  * power of two. */
 BCIR_DT_API size_t bcir_tensor_exp_sweep(unsigned stride, size_t *mismatch, unsigned *ulp);
 BCIR_DT_API void bcir_tensor_silu_v2_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);
+BCIR_DT_API void bcir_tensor_silu_mul_v2_pool(bcir_tensor_pool *pool, size_t n, const float *x,
+    const float *u, float *y);
 BCIR_DT_API void bcir_tensor_swiglu_backward_v2_pool(bcir_tensor_pool *pool, size_t n,
     const float *gate, const float *up, const float *dy, float *dg, float *du);
 BCIR_DT_API void bcir_tensor_attention_v2_pool(bcir_tensor_pool *pool, size_t batch, size_t time,

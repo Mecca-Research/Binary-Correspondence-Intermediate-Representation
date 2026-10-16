@@ -404,6 +404,20 @@ second) against eager PyTorch's 362.6 / 369.7 (2,824 / 2,770) and `torch.compile
 (3,184 / 3,300) in one later session, the same state `5137e013…` and held-out cross-entropy
 (the report's §20; that session's host ran PyTorch a quarter slower than §17's).
 
+The step's passes that stopped short of a neighbour are merged into it since NDT-FUSE and
+NDT-ATTN-6 (2026-10-16), every value the separate passes': the SwiGLU forward's SiLU and its product
+with the up projection run as one pass (`bcir_tensor_silu_mul_pool` and its v2 twin, the same two
+roundings); the RMSNorm VJP adds its dx into the residual's adjoint (`BCIR_TENSOR_RMSB_ADD`) in place
+of a store and an add; a fresh backward on BCIR's GEMM lets each gradient's first writer start it --
+the weight adjoints at beta 0, the gamma adjoints' sums from +0.0 (`BCIR_TENSOR_RMSB_FIRST`) -- in
+place of the 9.84M-float zero fill (an untied embedding is still filled for its scatter, and a
+provider's GEMM keeps the fill); a run's closing gradient scan is the update's first pass, refusing in
+the order the separate scans did; and the AVX-512 attention's register blocks start from +0.0 in
+registers, the zero fills kept only where no block writes (`tools/testing/faults/ndt-fuse.json`
+NU1-NU14 and NZ1-NZ7; an old-against-new differential of every byte the API can observe). In place
+at four threads everything but the GEMMs fell 68.2 -> 61.3 ms a step and the step 228.9 -> 221.8
+(the report's §21).
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,

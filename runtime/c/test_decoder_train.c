@@ -1008,8 +1008,130 @@ static void exp_contract(void) {
   printf("  PASS native exponential (v2): %zu inputs, every instance identical, %u ulp at most; SiLU, "
       "SwiGLU VJP and softmax v2 on a pool as defined, and apart from v1\n",swept,ulp);
 }
+/* NDT-FUSE: the passes the step merged, each held to the passes it replaced, serially and on a
+ * pool of three -- SiLU times up in one pass (v1 and v2, y in place of x or of u too) to the SiLU
+ * then the product (a NaN matching a NaN: its sign is the compiler's operand order); the RMSNorm VJP adding into dx to the VJP into a buffer then the add, and its
+ * gamma adjoint started at +0.0 to a zero fill (dg full of NaN, so a read shows; one column whose
+ * terms are all -0.0, which the fill's +0.0 absorbs); a fresh gradient's first writers (NDT-ZERO)
+ * to the fill, every element of a NaN-filled gradient written, tied and untied, under the v1,
+ * fused and blocked GEMMs; and a run's opening and closing scans (NDT-FACTS-CALL): its first
+ * micro-batch scans the weights before the arena is written, and a step whose gradient overflows
+ * from finite activations reports the backward's refusal -- ahead of an invalid optimizer state,
+ * and with two micro-batches at the first one's closing scan, the second never run. */
+/* Bit for bit, except that a NaN matches a NaN: C leaves a NaN's sign and payload to the operand
+ * order the compiler picks, and the one-pass and two-pass SiLU are compiled apart. */
+static int same_floats(const float *a,const float *b,size_t n) {
+  size_t i;
+  for (i=0;i<n;i++) if (memcmp(a+i,b+i,sizeof(float)) && !(isnan(a[i]) && isnan(b[i]))) return 0;
+  return 1;
+}
+static void overflowing(void) {
+  size_t i,off=128;
+  for (i=0;i<4096;i++) w[i]=0.1f*sinf((float)(i+1)*0.37f);
+  for (i=0;i<8;i++) w[off+i]=1.0f;
+  off+=8+64+32+32+64; for (i=0;i<8;i++) w[off+i]=1.0f;
+  off+=8;  /* layer 0's up projection x1e18 (one sign), its down projection x1e-18 */
+  for (i=0;i<128;i++) w[off+128+i]=fabsf(w[off+128+i])*1e18f;
+  for (i=0;i<128;i++) w[off+256+i]*=1e-18f;
+  off+=3*128; for (i=0;i<8;i++) w[off+i]=1.0f;
+  off+=8+64+32+32+64; for (i=0;i<8;i++) w[off+i]=1.0f; off+=8+3*128;
+  for (i=0;i<8;i++) w[off+i]=1e24f;  /* the final norm's gamma */
+}
+static void fused_passes(void) {
+  static float x[20000],u[20000],dy[20000],e0[20000],e1[20000],t[20000],gam[389],dg0[389],dg1[389];
+  static float inv[48],keepw[4096],keepm[4096],keepv[4096],want[4096];
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  static const uint32_t contracts[]={0,1,4,6};
+  uint32_t ids[80],targets[80]; bcir_decoder_event events[2]; bcir_decoder_adamw opt={0.01,0.9,0.95,1e-8,0.01,1.0};
+  size_t i,p,s,c,done; unsigned pools=0; double loss,again;
+  for (i=0;i<20000;i++) { x[i]=sinf((float)i*0.37f)*3.0f; u[i]=cosf((float)i*0.53f)*1.3f; dy[i]=sinf((float)i*0.29f)-0.1f; }
+  x[0]=0.0f; x[1]=-0.0f; x[2]=INFINITY; x[3]=-INFINITY; x[4]=NAN; x[5]=1e30f; x[6]=-1e30f; x[7]=FLT_MIN/2;
+  x[8]=-88.7f; x[9]=89.5f; u[10]=0.0f; u[11]=-0.0f; u[12]=INFINITY; u[13]=FLT_MAX;
+  for (i=0;i<389;i++) gam[i]=1.0f+0.1f*sinf((float)i);
+  stream(ids,targets,80);
+  for (p=0;p<2;p++) {
+    bcir_tensor_pool *pool=NULL;
+    if (p) {
+      if (!bcir_tensor_pool_size(3)) continue;
+      pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),3); assert(pool!=NULL);
+    }
+    /* SiLU times up: v1 (libm) and v2, against the SiLU then the product */
+    for (s=0;s<2;s++) {
+      if (s) bcir_tensor_silu_v2_pool(NULL,20000,x,e0); else bcir_tensor_silu(NULL,20000,x,e0);
+      bcir_tensor_mul_pool(NULL,20000,u,e0);
+      memset(e1,0xff,sizeof(e1));
+      if (s) bcir_tensor_silu_mul_v2_pool(pool,20000,x,u,e1); else bcir_tensor_silu_mul_pool(pool,20000,x,u,e1);
+      assert(same_floats(e0,e1,20000) && isnan(e1[4]) && !isnan(e1[5]));
+      memcpy(t,u,sizeof(t));
+      if (s) bcir_tensor_silu_mul_v2_pool(pool,20000,x,t,t); else bcir_tensor_silu_mul_pool(pool,20000,x,t,t);
+      assert(same_floats(e0,t,20000));
+      memcpy(t,x,sizeof(t));
+      if (s) bcir_tensor_silu_mul_v2_pool(pool,20000,t,u,t); else bcir_tensor_silu_mul_pool(pool,20000,t,u,t);
+      assert(same_floats(e0,t,20000));
+    }
+    /* the RMSNorm VJP's two writes over 40 x 37 and 48 x 389 (whole 16-row chunks and a part one) */
+    for (s=0;s<2;s++) {
+      size_t rows=s ? 48 : 40,width=s ? 389 : 37; unsigned how;
+      float xs[48*389];
+      memcpy(xs,x+16,rows*width*sizeof(float));
+      for (i=0;i<rows;i++) { xs[i*width+3]=-0.0f; dy[i*width+3]=fabsf(dy[i*width+3])+0.5f; }
+      for (how=0;how<4;how++) {
+        for (i=0;i<width;i++) dg0[i]=how&BCIR_TENSOR_RMSB_FIRST ? 0.0f : 0.5f*cosf((float)i);
+        for (i=0;i<width;i++) dg1[i]=how&BCIR_TENSOR_RMSB_FIRST ? NAN : 0.5f*cosf((float)i);
+        memcpy(e0,u,rows*width*sizeof(float)); memcpy(e1,u,rows*width*sizeof(float));
+        bcir_tensor_rms_backward_pool(NULL,rows,width,1e-5f,xs,gam,dy,t,dg0,inv);
+        if (how&BCIR_TENSOR_RMSB_ADD) bcir_tensor_add_pool(NULL,rows*width,t,e0);
+        else memcpy(e0,t,rows*width*sizeof(float));
+        bcir_tensor_rms_backward_into_pool(pool,rows,width,1e-5f,xs,gam,dy,e1,dg1,inv,how);
+        assert(!memcmp(e0,e1,rows*width*sizeof(float)) && !memcmp(dg0,dg1,width*sizeof(float)));
+        if (how&BCIR_TENSOR_RMSB_FIRST) { uint32_t bits; memcpy(&bits,&dg1[3],4); assert(bits==0u); }
+      }
+    }
+    /* NDT-ZERO: a NaN-filled gradient under accumulate=0 is the zero-filled one, element for element */
+    for (s=0;s<2;s++) for (c=0;c<sizeof(contracts)/sizeof(contracts[0]);c++) {
+      bcir_decoder_state st=fixture_of(5,8,s ? 0u : 1u,2); size_t n=st.plan.parameters;
+      st.contract=contracts[c]; st.pool=pool;
+      assert(bcir_decoder_loss_backward(&st,ids,targets,40,0,&loss)==0);
+      memcpy(want,grad,n*sizeof(float));
+      for (i=0;i<n;i++) grad[i]=NAN;
+      assert(bcir_decoder_loss_backward(&st,ids,targets,40,0,&again)==0);
+      assert(!memcmp(want,grad,n*sizeof(float)) && !memcmp(&loss,&again,sizeof(double)));
+    }
+    /* a run's first micro-batch scans the weights before the forward writes the arena */
+    for (s=1;s<=2;s++) {
+      bcir_decoder_state st=fixture_of(5,8,1,2); st.pool=pool; w[st.plan.parameters-1]=NAN; act[0]=777.0f;
+      assert(bcir_decoder_run_accum(&st,&opt,ids,targets,40*s,NULL,1,s,events,1,&done)==BCIR_DT_NUMERIC);
+      assert(done==0 && st.step==0 && act[0]==777.0f);
+    }
+    /* finite activations, an overflowing gradient: the backward refuses it alone and in a run */
+    {
+      bcir_decoder_state st=fixture_of(5,8,1,2); st.pool=pool; overflowing();
+      assert(bcir_decoder_forward(&st,ids,40)==BCIR_DT_OK);
+      assert(bcir_decoder_loss_backward(&st,ids,targets,40,0,&loss)==BCIR_DT_NUMERIC);
+      memcpy(want,grad,st.plan.parameters*sizeof(float));
+      memcpy(keepw,w,sizeof(w)); memcpy(keepm,m,sizeof(m)); memcpy(keepv,v,sizeof(v));
+      assert(bcir_decoder_run(&st,&opt,ids,targets,40,NULL,1,events,1,&done)==BCIR_DT_NUMERIC && done==0);
+      /* the backward's verdict before the update's own: the run's beta power is no power */
+      st.beta1_power=2.0;
+      assert(bcir_decoder_run(&st,&opt,ids,targets,40,NULL,1,events,1,&done)==BCIR_DT_NUMERIC && done==0);
+      st.beta1_power=1.0;
+      /* two micro-batches: the first one's closing scan refuses, the second never runs */
+      for (i=0;i<st.plan.parameters;i++) grad[i]=0.25f;
+      assert(bcir_decoder_run_accum(&st,&opt,ids,targets,80,NULL,1,2,events,1,&done)==BCIR_DT_NUMERIC);
+      assert(done==0 && !memcmp(want,grad,st.plan.parameters*sizeof(float)));
+      assert(st.step==0 && !memcmp(keepw,w,sizeof(w)) && !memcmp(keepm,m,sizeof(m)) && !memcmp(keepv,v,sizeof(v)));
+      /* and a finite step on that invalid power reports the update's refusal */
+      st=fixture_of(5,8,1,2); st.pool=pool; st.beta1_power=2.0;
+      assert(bcir_decoder_run(&st,&opt,ids,targets,40,NULL,1,events,1,&done)==BCIR_DT_INVALID && done==0);
+    }
+    bcir_tensor_pool_stop(pool); pools++;
+  }
+  printf("  PASS native fused passes: SiLU times up, the RMSNorm VJP's added dx and +0.0 gamma start, a fresh "
+      "gradient's first writers (tied, untied, four contracts) and a run's opening and deferred closing scans "
+      "against the passes they replaced (%u run(s): no pool and a pool of three)\n",pools);
+}
 int main(void) {
   gemm_contract(); attention_reference(); adamw_reference(); finite_differences(); refusals();
   learning(); pool_identity(); pool_claims(); reduction_references(); scan_references();
-  gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); return 0;
+  gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); fused_passes(); return 0;
 }

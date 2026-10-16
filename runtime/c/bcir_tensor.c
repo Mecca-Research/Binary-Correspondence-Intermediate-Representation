@@ -544,6 +544,11 @@ BCIR_MM_INLINE void exp_body(size_t n, const float *x, float *y) { size_t i; for
  * vectorizes without an alias check, and exp1 per element as exp_body applies it. */
 BCIR_MM_INLINE void exp_inplace_body(size_t n, float *x) { size_t i; for (i=0;i<n;i++) x[i]=exp1(x[i]); }
 BCIR_MM_INLINE void silu2_body(size_t n, const float *x, float *y) { size_t i; for (i=0;i<n;i++) y[i]=x[i]*sigmoid2(x[i]); }
+/* The SwiGLU forward's product in the same pass (NDT-SWIGLU-FWD): the SiLU rounded to binary32 as
+ * silu2_body stores it, then its product with u rounded -- the two passes' value bit for bit. */
+BCIR_MM_INLINE void silu2mul_body(size_t n, const float *x, const float *u, float *y) {
+  size_t i; for (i=0;i<n;i++) { float s=x[i]*sigmoid2(x[i]); y[i]=s*u[i]; }
+}
 BCIR_MM_INLINE void swiglu2_body(size_t n, const float *g, const float *u, const float *dy,
     float *dg, float *du) {
   size_t i;
@@ -555,6 +560,7 @@ BCIR_MM_INLINE void swiglu2_body(size_t n, const float *g, const float *u, const
 static void exp_generic(size_t n, const float *x, float *y) { exp_body(n,x,y); }
 static void exp_inplace_generic(size_t n, float *x) { exp_inplace_body(n,x); }
 static void silu2_generic(size_t n, const float *x, float *y) { silu2_body(n,x,y); }
+static void silu2mul_generic(size_t n, const float *x, const float *u, float *y) { silu2mul_body(n,x,u,y); }
 static void swiglu2_generic(size_t n, const float *g, const float *u, const float *dy, float *dg,
     float *du) { swiglu2_body(n,g,u,dy,dg,du); }
 #ifdef BCIR_MM_DISPATCH
@@ -564,6 +570,11 @@ __attribute__((target("avx2"))) static void exp_inplace_avx2(size_t n, float *x)
 __attribute__((target("avx512f"))) static void exp_inplace_avx512(size_t n, float *x) { exp_inplace_body(n,x); }
 __attribute__((target("avx2"))) static void silu2_avx2(size_t n, const float *x, float *y) { silu2_body(n,x,y); }
 __attribute__((target("avx512f"))) static void silu2_avx512(size_t n, const float *x, float *y) { silu2_body(n,x,y); }
+__attribute__((target("avx2"))) static void silu2mul_avx2(size_t n, const float *x, const float *u, float *y) {
+  silu2mul_body(n,x,u,y);
+}
+__attribute__((target("avx512f"))) static void silu2mul_avx512(size_t n, const float *x, const float *u,
+    float *y) { silu2mul_body(n,x,u,y); }
 __attribute__((target("avx2"))) static void swiglu2_avx2(size_t n, const float *g, const float *u,
     const float *dy, float *dg, float *du) { swiglu2_body(n,g,u,dy,dg,du); }
 __attribute__((target("avx512f"))) static void swiglu2_avx512(size_t n, const float *g, const float *u,
@@ -589,6 +600,13 @@ static void silu2_run(int variant, size_t n, const float *x, float *y) {
   if (variant==2) { silu2_avx2(n,x,y); return; }
 #endif
   (void)variant; silu2_generic(n,x,y);
+}
+static void silu2mul_run(int variant, size_t n, const float *x, const float *u, float *y) {
+#ifdef BCIR_MM_DISPATCH
+  if (variant==4) { silu2mul_avx512(n,x,u,y); return; }
+  if (variant==2) { silu2mul_avx2(n,x,u,y); return; }
+#endif
+  (void)variant; silu2mul_generic(n,x,u,y);
 }
 static void swiglu2_run(int variant, size_t n, const float *g, const float *u, const float *dy,
     float *dg, float *du) {
@@ -1062,7 +1080,8 @@ void bcir_tensor_mm_kblock_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m
 /* Elements in ranges of BCIR_EW_CHUNK: y[i] depends on x[i] alone. */
 #define BCIR_EW_CHUNK 8192
 typedef struct ew_job { size_t n; const float *x,*u,*dy; float *y,*du; int op,variant; } ew_job;
-enum { EW_SILU, EW_ADD, EW_MUL, EW_SWIGLU, EW_SILU2, EW_SWIGLU2 };
+enum { EW_SILU, EW_ADD, EW_MUL, EW_SWIGLU, EW_SILU2, EW_SWIGLU2, EW_SILUMUL, EW_SILU2MUL };
+static float sigmoid(float x);
 static void ew_task(void *ctx, size_t task) {
   ew_job *j=(ew_job *)ctx; size_t i0=task*BCIR_EW_CHUNK,i1=i0+BCIR_EW_CHUNK<j->n ? i0+BCIR_EW_CHUNK : j->n;
   switch (j->op) {
@@ -1071,6 +1090,8 @@ static void ew_task(void *ctx, size_t task) {
     case EW_MUL: { size_t i; for (i=i0;i<i1;i++) j->y[i]*=j->x[i]; } break;
     case EW_SILU2: silu2_run(j->variant,i1-i0,j->x+i0,j->y+i0); break;
     case EW_SWIGLU2: swiglu2_run(j->variant,i1-i0,j->x+i0,j->u+i0,j->dy+i0,j->y+i0,j->du+i0); break;
+    case EW_SILUMUL: { size_t i; for (i=i0;i<i1;i++) { float s=j->x[i]*sigmoid(j->x[i]); j->y[i]=s*j->u[i]; } } break;
+    case EW_SILU2MUL: silu2mul_run(j->variant,i1-i0,j->x+i0,j->u+i0,j->y+i0); break;
     default: bcir_tensor_swiglu_backward(i1-i0,j->x+i0,j->u+i0,j->dy+i0,j->y+i0,j->du+i0); break;
   }
 }
@@ -1093,6 +1114,14 @@ void bcir_tensor_swiglu_backward_pool(bcir_tensor_pool *pool, size_t n, const fl
 }
 void bcir_tensor_silu_v2_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y) {
   ew_job j; j.n=n; j.x=x; j.y=y; j.u=NULL; j.dy=NULL; j.du=NULL; j.op=EW_SILU2; ew_run(pool,&j);
+}
+void bcir_tensor_silu_mul_pool(bcir_tensor_pool *pool, size_t n, const float *x, const float *u,
+    float *y) {
+  ew_job j; j.n=n; j.x=x; j.y=y; j.u=u; j.dy=NULL; j.du=NULL; j.op=EW_SILUMUL; ew_run(pool,&j);
+}
+void bcir_tensor_silu_mul_v2_pool(bcir_tensor_pool *pool, size_t n, const float *x, const float *u,
+    float *y) {
+  ew_job j; j.n=n; j.x=x; j.y=y; j.u=u; j.dy=NULL; j.du=NULL; j.op=EW_SILU2MUL; ew_run(pool,&j);
 }
 void bcir_tensor_swiglu_backward_v2_pool(bcir_tensor_pool *pool, size_t n, const float *g,
     const float *u, const float *dy, float *dg, float *du) {
@@ -1154,7 +1183,7 @@ void bcir_tensor_rms_pool(bcir_tensor_pool *pool, size_t rows, size_t width, flo
  * from the value it holds -- the serial kernel's operations, element for element. */
 #define BCIR_COL_CHUNK 16
 typedef struct rmsb_job {
-  size_t rows,width; float eps; const float *x,*g,*dy; float *dx,*dg,*inv; int variant;
+  size_t rows,width; float eps; const float *x,*g,*dy; float *dx,*dg,*inv; int variant; unsigned how;
 } rmsb_job;
 static void rmsb_rows_task(void *ctx, size_t task) {
   rmsb_job *j=(rmsb_job *)ctx; size_t r,c,w=j->width;
@@ -1166,7 +1195,8 @@ static void rmsb_rows_task(void *ctx, size_t task) {
     for (r=0;r<16;r++) {
       const float *xr=j->x+(r0+r)*w,*dyr=j->dy+(r0+r)*w; float *dxr=j->dx+(r0+r)*w;
       float inv=1.0f/sqrtf(sum[r]/(float)w+j->eps),coeff=dot[r]*inv*inv*inv/(float)w;
-      for (c=0;c<w;c++) dxr[c]=dyr[c]*j->g[c]*inv-xr[c]*coeff;
+      if (j->how&BCIR_TENSOR_RMSB_ADD) for (c=0;c<w;c++) dxr[c]=dxr[c]+(dyr[c]*j->g[c]*inv-xr[c]*coeff);
+      else for (c=0;c<w;c++) dxr[c]=dyr[c]*j->g[c]*inv-xr[c]*coeff;
       j->inv[r0+r]=inv;
     }
     return;
@@ -1177,7 +1207,8 @@ static void rmsb_rows_task(void *ctx, size_t task) {
     float sum=0.0f,dot=0.0f,inv,coeff;
     for (c=0;c<w;c++) { sum+=xr[c]*xr[c]; dot+=dyr[c]*j->g[c]*xr[c]; }
     inv=1.0f/sqrtf(sum/(float)w+j->eps); coeff=dot*inv*inv*inv/(float)w;
-    for (c=0;c<w;c++) dxr[c]=dyr[c]*j->g[c]*inv-xr[c]*coeff;
+    if (j->how&BCIR_TENSOR_RMSB_ADD) for (c=0;c<w;c++) dxr[c]=dxr[c]+(dyr[c]*j->g[c]*inv-xr[c]*coeff);
+    else for (c=0;c<w;c++) dxr[c]=dyr[c]*j->g[c]*inv-xr[c]*coeff;
     j->inv[r]=inv;
   }
 }
@@ -1188,19 +1219,25 @@ static void rmsb_rows_task(void *ctx, size_t task) {
 static void rmsb_cols_task(void *ctx, size_t task) {
   rmsb_job *j=(rmsb_job *)ctx; size_t r,c,w=j->width; float acc[BCIR_COL_CHUNK];
   size_t c0=task*BCIR_COL_CHUNK,c1=c0+BCIR_COL_CHUNK<w ? c0+BCIR_COL_CHUNK : w,n=c1>c0 ? c1-c0 : 0;
-  for (c=0;c<n;c++) acc[c]=j->dg[c0+c];
+  if (j->how&BCIR_TENSOR_RMSB_FIRST) for (c=0;c<n;c++) acc[c]=0.0f;
+  else for (c=0;c<n;c++) acc[c]=j->dg[c0+c];
   for (r=0;r<j->rows;r++) {
     const float *xr=j->x+r*w+c0,*dyr=j->dy+r*w+c0; float inv=j->inv[r];
     for (c=0;c<n;c++) acc[c]+=dyr[c]*xr[c]*inv;
   }
   for (c=0;c<n;c++) j->dg[c0+c]=acc[c];
 }
-void bcir_tensor_rms_backward_pool(bcir_tensor_pool *pool, size_t rows, size_t width, float eps,
-    const float *x, const float *g, const float *dy, float *dx, float *dg, float *inv) {
+void bcir_tensor_rms_backward_into_pool(bcir_tensor_pool *pool, size_t rows, size_t width,
+    float eps, const float *x, const float *g, const float *dy, float *dx, float *dg, float *inv,
+    unsigned how) {
   rmsb_job j; j.rows=rows; j.width=width; j.eps=eps; j.x=x; j.g=g; j.dy=dy; j.dx=dx; j.dg=dg; j.inv=inv;
-  j.variant=mm_widest();
+  j.variant=mm_widest(); j.how=how;
   pool_run(pool,rmsb_rows_task,&j,(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);
   pool_run(pool,rmsb_cols_task,&j,(width+BCIR_COL_CHUNK-1)/BCIR_COL_CHUNK);
+}
+void bcir_tensor_rms_backward_pool(bcir_tensor_pool *pool, size_t rows, size_t width, float eps,
+    const float *x, const float *g, const float *dy, float *dx, float *dg, float *inv) {
+  bcir_tensor_rms_backward_into_pool(pool,rows,width,eps,x,g,dy,dx,dg,inv,0u);
 }
 /* Positions in ranges of BCIR_ROW_CHUNK: a position's angles and rotations are its own. Each pair
  * (pos, j) takes angle = pos * base^(-2j/dim) in double and its cosine and sine rounded to float,
@@ -1332,12 +1369,17 @@ __attribute__((target("avx512f"))) static void att512_scores(size_t rows, size_t
     __mmask16 m0=att512_lanes(nj),m1=att512_lanes(nj>16 ? nj-16 : 0);
     for (c0=0;c0<d;c0+=BCIR_ATT_DC) {
       size_t nc=d-c0<BCIR_ATT_DC ? d-c0 : BCIR_ATT_DC;
-      for (c=0;c<nc;c++) for (j=0;j<32;j++) kt[c*32+j]=j<nj ? k[(j0+j)*ldk+c0+c] : 0.0f;
+      {  /* the keys' panel: whole 16 x 16 blocks by register transpose, the rest one by one */
+        size_t jw=nj/16*16,cw=nc/16*16,jb,cb;
+        for (jb=0;jb<jw;jb+=16) for (cb=0;cb<cw;cb+=16) kb512_transpose16(k+(j0+jb)*ldk+c0+cb,ldk,kt+cb*32+jb,32);
+        for (c=0;c<nc;c++) for (j=c<cw ? jw : 0;j<32;j++) kt[c*32+j]=j<nj ? k[(j0+j)*ldk+c0+c] : 0.0f;
+      }
       for (i0=j0;i0<rows;i0+=8) {
         __m512 a0[8],a1[8];
         for (r=0;r<8;r++) {
-          const float *sr=s+(i0+r)*lds+j0;
-          a0[r]=_mm512_maskz_loadu_ps(m0,sr); a1[r]=_mm512_maskz_loadu_ps(m1,sr+16);
+          const float *sr=s+(i0+r)*lds+j0; size_t keep=i0+r-j0+1<nj ? i0+r-j0+1 : nj;
+          a0[r]=_mm512_maskz_loadu_ps(c0 ? att512_lanes(keep) : 0,sr);
+          a1[r]=_mm512_maskz_loadu_ps(c0 ? att512_lanes(keep>16 ? keep-16 : 0) : 0,sr+16);
         }
         for (c=0;c<nc;c++) {
           __m512 b0=_mm512_load_ps(kt+c*32),b1=_mm512_load_ps(kt+c*32+16);
@@ -1349,15 +1391,19 @@ __attribute__((target("avx512f"))) static void att512_scores(size_t rows, size_t
         for (r=0;r<8;r++) {
           size_t i=i0+r,keep=i-j0+1<nj ? i-j0+1 : nj;
           float *sr=s+i*lds+j0;
-          _mm512_mask_storeu_ps(sr,att512_lanes(keep),a0[r]);
-          _mm512_mask_storeu_ps(sr+16,att512_lanes(keep>16 ? keep-16 : 0),a1[r]);
+          __mmask16 k0=att512_lanes(keep),k1=att512_lanes(keep>16 ? keep-16 : 0);
+          if (c0+nc<d) { _mm512_mask_storeu_ps(sr,k0,a0[r]); _mm512_mask_storeu_ps(sr+16,k1,a1[r]); }
+          else {  /* the last channel block: the block's future lanes as +0.0 */
+            _mm512_mask_storeu_ps(sr,m0,_mm512_maskz_mov_ps(k0,a0[r]));
+            _mm512_mask_storeu_ps(sr+16,m1,_mm512_maskz_mov_ps(k1,a1[r]));
+          }
         }
       }
     }
   }
 }
 __attribute__((target("avx512f"))) static void att512_context(size_t rows, size_t d,
-    const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy) {
+    const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy, int first) {
   size_t c0,i0,r,j,dj;
   for (c0=0;c0<d;c0+=48) {
     size_t nc=d-c0<48 ? d-c0 : 48;
@@ -1366,8 +1412,8 @@ __attribute__((target("avx512f"))) static void att512_context(size_t rows, size_
       __m512 a0[8],a1[8],a2[8];
       for (r=0;r<8;r++) {
         const float *yr=y+(i0+r)*ldy+c0;
-        a0[r]=_mm512_maskz_loadu_ps(m0,yr); a1[r]=_mm512_maskz_loadu_ps(m1,yr+16);
-        a2[r]=_mm512_maskz_loadu_ps(m2,yr+32);
+        a0[r]=_mm512_maskz_loadu_ps(first ? 0 : m0,yr); a1[r]=_mm512_maskz_loadu_ps(first ? 0 : m1,yr+16);
+        a2[r]=_mm512_maskz_loadu_ps(first ? 0 : m2,yr+32);
       }
       for (j=0;j<=i0;j++) {  /* every row of the block takes key j */
         const float *vj=v+j*ldv+c0;
@@ -1401,7 +1447,7 @@ __attribute__((target("avx512f"))) static void att512_context(size_t rows, size_
  * and Q): blocks of eight output rows j0..j0+7, the channels 48 at a time; term i reaches the rows
  * j <= i -- the block's diagonal terms some rows, every later term all eight. */
 __attribute__((target("avx512f"))) static void att512_transposed(size_t rows, size_t t, size_t d,
-    const float *m, size_t ldm, const float *x, size_t ldx, float *out, size_t ldo) {
+    const float *m, size_t ldm, const float *x, size_t ldx, float *out, size_t ldo, int first) {
   size_t c0,j0,r,i,di;
   for (c0=0;c0<d;c0+=48) {
     size_t nc=d-c0<48 ? d-c0 : 48;
@@ -1410,8 +1456,8 @@ __attribute__((target("avx512f"))) static void att512_transposed(size_t rows, si
       __m512 a0[8],a1[8],a2[8];
       for (r=0;r<8;r++) {
         const float *o=out+(j0+r)*ldo+c0;
-        a0[r]=_mm512_maskz_loadu_ps(m0,o); a1[r]=_mm512_maskz_loadu_ps(m1,o+16);
-        a2[r]=_mm512_maskz_loadu_ps(m2,o+32);
+        a0[r]=_mm512_maskz_loadu_ps(first ? 0 : m0,o); a1[r]=_mm512_maskz_loadu_ps(first ? 0 : m1,o+16);
+        a2[r]=_mm512_maskz_loadu_ps(first ? 0 : m2,o+32);
       }
       for (di=0;di<7;di++) {  /* term j0+di: the rows r <= di */
         const float *xi=x+(j0+di)*ldx+c0,*mi=m+(j0+di)*ldm+j0;
@@ -1557,18 +1603,24 @@ __attribute__((target("avx512f"))) static void att512_dp(size_t rows, size_t i0,
 #endif
 enum { ATT_SCORES, ATT_CONTEXT, ATT_TRANSPOSED };
 /* One of the attention's masked products over its t rows: the AVX-512 register blocks for the
- * whole blocks of eight, the rest (or every row, on another instance) through the v1 kernel. */
-static void att_rows(int variant, const mm_args *x, size_t t, int which) {
+ * whole blocks of eight, the rest (or every row, on another instance) through the v1 kernel.
+ * With `first` the blocks start from +0.0 instead of what C holds -- the value a zero fill gave
+ * them (NDT-ATTN-ZERO) -- so the caller fills only att_v1_rows' rows; the scores' blocks always
+ * start a row from +0.0 and store their future lanes as +0.0. */
+static size_t att_v1_rows(int variant, size_t t) {  /* the first row the v1 kernel takes */
+  return variant==4 ? t/8*8 : 0;
+}
+static void att_rows(int variant, const mm_args *x, size_t t, int which, int first) {
   mm_range rest; size_t whole=0;
 #ifdef BCIR_MM_DISPATCH
   if (variant==4) {
     whole=t/8*8;
     if (which==ATT_SCORES) att512_scores(whole,x->k,x->a,x->lda,x->b,x->ldb,x->c,x->ldc);
-    else if (which==ATT_CONTEXT) att512_context(whole,x->n,x->a,x->lda,x->b,x->ldb,x->c,x->ldc);
-    else att512_transposed(whole,t,x->n,x->a,x->lda,x->b,x->ldb,x->c,x->ldc);
+    else if (which==ATT_CONTEXT) att512_context(whole,x->n,x->a,x->lda,x->b,x->ldb,x->c,x->ldc,first);
+    else att512_transposed(whole,t,x->n,x->a,x->lda,x->b,x->ldb,x->c,x->ldc,first);
   }
 #endif
-  (void)which;
+  (void)which; (void)first;
   if (whole==t || !x->m || !x->n || !x->k) return;
   rest.jb0=0; rest.jb1=x->n; rest.r0=whole; rest.r1=t;
   mm_run_range(variant,MM_V1,x,&rest);
@@ -1578,12 +1630,18 @@ static void att_head(const att_job *a, size_t r, size_t h) {
   size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),i,j; float scale=1.0f/sqrtf((float)d);
   float *ph=a->p+(r*nh+h)*t*t; mm_args x;
   /* the products accumulate into what they write: this head's probabilities and its context
-   * columns start at zero here, in the task that owns them (NDT-SCAN; the caller's fill was serial) */
-  memset(ph,0,t*t*sizeof(float));
-  for (i=0;i<t;i++) memset(a->y+((r*t+i)*nh+h)*d,0,d*sizeof(float));
+   * columns start at zero here, in the task that owns them (NDT-SCAN; the caller's fill was serial)
+   * -- where the v1 kernel writes them; the AVX-512 blocks start from +0.0 (NDT-ATTN-ZERO), and of
+   * a row's probabilities the fill covers the future columns past the blocks the row reaches */
+  {
+    size_t v1=att_v1_rows(a->variant,t);
+    for (i=0;i<v1;i++) { size_t end=(i/32+1)*32<v1 ? (i/32+1)*32 : v1; memset(ph+i*t+end,0,(t-end)*sizeof(float)); }
+    memset(ph+v1*t,0,(t-v1)*t*sizeof(float));
+    for (i=v1;i<t;i++) memset(a->y+((r*t+i)*nh+h)*d,0,d*sizeof(float));
+  }
   x.ta=0; x.tb=1; x.m=t; x.n=t; x.k=d; x.alpha=1.0f; x.a=a->q+(r*t*nh+h)*d; x.lda=nh*d;
   x.b=a->k+(r*t*nk+kh)*d; x.ldb=nk*d; x.c=ph; x.ldc=t; x.mode=MM_LOWER;
-  att_rows(a->variant,&x,t,ATT_SCORES);
+  att_rows(a->variant,&x,t,ATT_SCORES,1);
   i=0;
 #ifdef BCIR_MM_DISPATCH
   if (a->variant==4) for (;i+16<=t;i+=16) {
@@ -1610,7 +1668,7 @@ static void att_head(const att_job *a, size_t r, size_t h) {
   }
   x.tb=0; x.n=d; x.k=t; x.a=ph; x.lda=t; x.b=a->v+(r*t*nk+kh)*d; x.ldb=nk*d;
   x.c=a->y+(r*t*nh+h)*d; x.ldc=nh*d; x.mode=MM_KLE;
-  att_rows(a->variant,&x,t,ATT_CONTEXT);
+  att_rows(a->variant,&x,t,ATT_CONTEXT,1);
 }
 static void att_task(void *ctx, size_t task) {
   att_job *a=(att_job *)ctx; att_head(a,task/a->nh,task%a->nh);
@@ -1694,7 +1752,7 @@ static void att_head_backward(const att_job *a, size_t r, size_t h, const float 
     mm_args x;
     x.ta=1; x.tb=0; x.m=t; x.n=d; x.k=t; x.alpha=1.0f; x.a=ph; x.lda=t; x.b=dyh; x.ldb=ldh;
     x.c=dv+(r*t*nk+kh)*d; x.ldc=ldk; x.mode=MM_KGE;
-    att_rows(variant,&x,t,ATT_TRANSPOSED);
+    att_rows(variant,&x,t,ATT_TRANSPOSED,h%(nh/nk)==0);
     for (i0=0;i0<t;i0+=BCIR_ATT_ROWS) {
       size_t rows=t-i0<BCIR_ATT_ROWS ? t-i0 : BCIR_ATT_ROWS,pass,jt;
       float dot[BCIR_ATT_ROWS],kept[BCIR_ATT_KEEP/BCIR_ATT_COLS][BCIR_ATT_ROWS*BCIR_ATT_COLS],
@@ -1731,9 +1789,9 @@ static void att_head_backward(const att_job *a, size_t r, size_t h, const float 
     }
     x.ta=0; x.tb=0; x.m=t; x.n=d; x.k=t; x.a=ph; x.lda=t; x.b=kk; x.ldb=ldk;
     x.c=dq+(r*t*nh+h)*d; x.ldc=ldh; x.mode=MM_KLE;
-    att_rows(variant,&x,t,ATT_CONTEXT);
+    att_rows(variant,&x,t,ATT_CONTEXT,1);
     x.ta=1; x.b=qh; x.ldb=ldh; x.c=dk+(r*t*nk+kh)*d; x.ldc=ldk; x.mode=MM_KGE;
-    att_rows(variant,&x,t,ATT_TRANSPOSED);
+    att_rows(variant,&x,t,ATT_TRANSPOSED,h%(nh/nk)==0);
   }
 }
 static void att_task_backward(void *ctx, size_t task) {
@@ -1743,7 +1801,7 @@ static void att_task_backward(void *ctx, size_t task) {
    * caller's fill was serial): this task's query heads' dq columns, and its KV head's dk and dv
    * columns where the task holds that KV head's first query head -- the task that runs before the
    * KV head's every accumulation, which is the whole group when group is the share */
-  for (i=0;i<t;i++) {
+  for (i=att_v1_rows(a->variant,t);i<t;i++) {  /* the v1 kernel's rows (NDT-ATTN-ZERO) */
     for (h=first;h<first+a->group;h++) memset(a->dq+((r*t+i)*nh+h)*d,0,d*sizeof(float));
     if (first%share==0) {
       memset(a->dk+((r*t+i)*nk+kh)*d,0,d*sizeof(float));
