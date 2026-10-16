@@ -381,7 +381,10 @@ at four threads its forward 2.05 -> 0.96 ms a step and backward 2.53 -> 1.13 (th
 The attention backward's probability-adjoint tiles read a KV head's values transposed once per task
 since NDT-ATTN-5 (the GEMM kernel had packed them again for every tile), as AVX-512 register blocks
 with the v1 kernel's arithmetic (`ndt-attn.json` NA10-NA14): the backward 13.64 -> 12.37 ms a step in
-place at four threads (§16).
+place at four threads (§16). With the three, the 1,000-step language-model run at four threads takes
+234.9 / 235.1 ms a step -- 4,359 / 4,356 tokens a second, 247.2 / 249.4 before them, in the same state --
+against eager PyTorch's 283.8 (3,608) and `torch.compile`'s 259.6 (3,945) at four intra-op threads,
+the same held-out cross-entropy in 529 MB against 1,084-1,128 (the report's §17).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over

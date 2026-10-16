@@ -1,0 +1,9 @@
+{
+ "what": "The 9.84M decoder's 1,000-step language-model run at four threads, BCIR (kblock+exp+reduce) against PyTorch 2.13 eager and torch.compile at four intra-op threads (train_comparison.py train --task lm --threads 4 --eval-every 100 --lr-scale 0.25; PyTorch's thread count set by the harness since this record, torch_threads recorded), on one host in one session.",
+ "host": "4-vCPU Intel Xeon @ 2.80GHz container (AVX-512; the instance after the 2026-10-16 restart), GCC 13.3, Python 3.11.15 (the declared floor); indicative wall times, no PMU",
+ "files": {
+  "r1-a0ea747-*.json, r2-a0ea747-*.json": "the tree before NDT-LANES, NDT-ROPE and NDT-ATTN-5 (a0ea747): round 1 BCIR then eager, round 2 compiled, eager, BCIR",
+  "r3-742234a-*.json": "the tree with them (742234a): BCIR, eager, compiled, BCIR, in that order"
+ },
+ "reading": "Median step and tokens a second: a0ea747 BCIR 247.2 / 249.4 ms (4,142 / 4,106 tok/s), eager 276.7 / 287.1 (3,700 / 3,566), compiled 274.0 (3,737); 742234a BCIR 234.9 / 235.1 (4,359 / 4,356), eager 283.8 (3,608), compiled 259.6 (3,945). The BCIR state after 1,000 steps is 5137e013... in all four BCIR runs (two library builds); every run ends at validation cross-entropy 1.500 (BCIR 1.50030, eager 1.50031, compiled 1.49994 / 1.50026) and test 1.632; peak RSS BCIR 529 MB, eager 1,123-1,128, compiled 1,084-1,208."
+}

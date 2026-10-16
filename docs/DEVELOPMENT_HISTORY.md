@@ -2915,6 +2915,19 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-GEMM-4T (2026-10-16): the four-thread GEMMs measured, and BCIR against PyTorch at four threads.
+  - On this instance an FMA probe gives one thread 162-165 GFLOP/s alone and 144-163 each with four
+    running; the step's GEMMs, timed call by call in place, are 162.8 ms of a 235 ms step at 371
+    GFLOP/s, 57-65% of it, with 2% of the pool idle inside the calls -- merging jobs cannot buy
+    more. Cold operands cost 10%; the narrow weight gradients' 16-24 tasks run 50-60% slower at four
+    threads than alone; the transposed-A penalty of the previous instance is gone (NDT-TA: no
+    slice), and L1-sized depth slices gained nothing (NDT-KSUB: dropped).
+  - The 1,000-step language-model run at four threads: BCIR 234.9 / 235.1 ms a step (4,359 / 4,356
+    tokens a second; 247.2 / 249.4 before NDT-LANES, NDT-ROPE and NDT-ATTN-5, the same state
+    `5137e013…`), eager PyTorch 283.8 (3,608), `torch.compile` 259.6 (3,945), the same held-out
+    cross-entropy, 529 MB against 1,084-1,128. `train_comparison.py --threads` now sets PyTorch's
+    intra-op threads too and records them ([measurements/2026-10-16/gemm4t/](research/measurements/2026-10-16/gemm4t/),
+    [lm/](research/measurements/2026-10-16/lm/), the report's §17).
   NDT-ATTN-5 (2026-10-16): the backward's probability-adjoint tiles from a transposed panel.
   - Each row block's 32 x 64 tiles of `dp = dY V^T` went through the general GEMM kernel, which
     packed the transposed values again for every tile -- a third of the backward at one thread. A

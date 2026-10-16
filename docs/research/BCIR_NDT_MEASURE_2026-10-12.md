@@ -988,3 +988,71 @@ harness's attention reference holds dq, dk and dv to the reference loops at its 
 ([dp/attribution-t4-*.json](measurements/2026-10-16/dp/), alternated round by round.) The backward
 is faster in every round; the rounds' unchanged rows moved by up to 15% (the GEMMs 166-195 ms) as
 other work on the host came and went, so this record's step medians say nothing either way.
+
+## 17. The four-thread GEMMs, and BCIR against PyTorch at four threads (NDT-GEMM-4T)
+
+§13 put the step's GEMMs at 37-52% of "the four cores' peak", a peak computed from the nominal
+clock. On this instance it is measured instead: twelve independent AVX-512 FMA chains a thread
+([gemm4t/fma_peak.c](measurements/2026-10-16/gemm4t/fma_peak.c)) read 162-165 GFLOP/s on one thread
+and 144-163 each with four running, 574-653 together, across three runs (the reading moves with
+the host's other work). Every GEMM call of the step at 742234a,
+timed in place with the pool's idle inside it
+([gemm4t/gemm-calls-t4.json](measurements/2026-10-16/gemm4t/gemm-calls-t4.json)):
+
+| four threads, in place | calls a step | ms a step | GFLOP/s | idle, ms a step |
+|---|---|---|---|---|
+| backward gate, up (dY W and dY^T X) | 12 | 50.86 | 380 | 0.77 |
+| backward down (dY W and dY^T X) | 6 | 26.16 | 369 | 0.38 |
+| forward gate, up (x W^T, 1024 x 384) | 12 | 24.18 | 400 | 0.32 |
+| backward q, o (dY W and dY^T X) | 12 | 19.81 | 366 | 0.56 |
+| backward k, v (dY W and dY^T X) | 12 | 13.82 | 262 | 0.42 |
+| forward down (x W^T, 384 x 1024) | 6 | 11.11 | 435 | 0.34 |
+| forward q, o (x W^T, 384 x 384) | 12 | 10.02 | 362 | 0.35 |
+| forward k, v (x W^T, 192 x 384) | 12 | 4.78 | 379 | 0.24 |
+| backward head (dY E and dY^T X) | 1 | 1.38 | 297 | 0.03 |
+| forward head (x E^T, 260 x 384) | 1 | 0.71 | 288 | 0.02 |
+
+The GEMMs are 162.8 ms of the step, 371 GFLOP/s overall -- 57-65% of the four-thread probe -- and
+the pool is idle inside them 3.4 ms (2%), so no reordering of the calls or merging of their jobs
+can buy more than that. Alone, on warm operands, the same shapes reach 290-437 GFLOP/s at four
+threads, the pool busy 86-97% of their wall ([gemm4t/gemm-tasks-t4.json](measurements/2026-10-16/gemm4t/gemm-tasks-t4.json));
+a task on the large shapes takes 4-8% longer at four threads than alone, on the narrow weight
+gradients (16 and 24 tasks of the whole depth) 50-60% longer and on the k and v input adjoints
+(k = 192) 20% -- the step's slowest calls. Cold operands -- each call on the next of six sets, past the L3 -- cost 10%: the
+step's GEMMs 155.8 ms warm against 170.8 cold
+([gemm4t/gemm-cold-t4.json](measurements/2026-10-16/gemm4t/gemm-cold-t4.json)). The transposed-A
+weight gradients, §13's worst shapes on the previous instance (52-84 GFLOP/s at one thread against
+94-114 for the rest), are 2-19% behind the same products with A transposed beforehand at one thread
+here and ahead of them on four of five shapes at four, with the transpose itself costing more than
+the difference ([gemm4t/transposed-a.jsonl](measurements/2026-10-16/gemm4t/transposed-a.jsonl)): a
+packed A panel (NDT-TA) would buy nothing on this host. Scratch probes on the previous instance --
+row tasks of 64 and 256 rows, prefetch distances 16-32, the K block in L1-sized depth slices with
+the accumulators spilled exactly (NDT-KSUB) -- moved nothing beyond noise and were not kept. The
+GEMMs' remaining distance from the probe is the kernel's own: the contract fixes each K block's
+depth (448 at these shapes), so the 8 x 48 block streams its 86 KB tile from L2.
+
+The 1,000-step language-model run at four threads, BCIR under `kblock+exp+reduce` against PyTorch
+2.13 at four intra-op threads, eager and `torch.compile` -- the harness sets PyTorch's thread count
+from `--threads` since this record and stores it -- on one host in one session, before NDT-LANES,
+NDT-ROPE and NDT-ATTN-5 (a0ea747) and with them (742234a) ([lm/](measurements/2026-10-16/lm/)):
+
+| four threads, 1,000 steps | median step, ms | tokens a second | validation / test cross-entropy | peak RSS, MB |
+|---|---|---|---|---|
+| BCIR, a0ea747 (two runs) | 247.2 / 249.4 | 4,142 / 4,106 | 1.5003 / 1.6319 | 528 |
+| BCIR, 742234a (two runs) | 234.9 / 235.1 | 4,359 / 4,356 | 1.5003 / 1.6319 | 529 |
+| PyTorch eager (three runs) | 276.7 / 287.1 / 283.8 | 3,700 / 3,566 / 3,608 | 1.5003 / 1.6319 | 1,123-1,128 |
+| PyTorch compiled (two runs) | 274.0 / 259.6 | 3,737 / 3,945 | 1.4999-1.5003 / 1.6318-1.6321 | 1,084-1,208 |
+
+All four BCIR runs end in the same state, `5137e013…`, under two library builds: the three slices
+moved no bit over 1,000 steps. In the last round, run back to back, BCIR trains 21% more tokens a
+second than eager PyTorch and 10% more than compiled, to the same held-out cross-entropy in under
+half the memory. Reproduce:
+
+```bash
+python3 docs/research/measurements/2026-10-16/gemm4t/gemm_calls.py --src runtime/c --data DATA \
+    --threads 4 --steps 8 --out gemm-calls.json
+python3 docs/research/measurements/2026-10-11/train_comparison.py train --data DATA --task lm \
+    --backend bcir --threads 4 --contract kblock+exp+reduce --eval-every 100 --lr-scale 0.25
+python3 docs/research/measurements/2026-10-11/train_comparison.py train --data DATA --task lm \
+    --backend torch-eager --threads 4 --eval-every 100 --lr-scale 0.25   # and torch-compiled
+```

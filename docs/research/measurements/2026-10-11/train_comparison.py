@@ -542,7 +542,7 @@ def train(
         import torch
         import torch.nn.functional as F
 
-        torch.set_num_threads(1)
+        torch.set_num_threads(threads)  # the 10-11 runs: 1
         torch.set_num_interop_threads(1)
         model = _torch_model(data)
         compiled = backend == "torch-compiled"
@@ -550,7 +550,8 @@ def train(
             model.parameters(), lr=OPT["peak"], betas=(OPT["beta1"], OPT["beta2"]),
             eps=OPT["eps"], weight_decay=OPT["decay"], **({"fused": True} if compiled else {}),
         )  # fmt: skip
-        info.update(torch=torch.__version__, cpu_capability=torch.backends.cpu.get_cpu_capability())
+        info.update(torch=torch.__version__, cpu_capability=torch.backends.cpu.get_cpu_capability(),
+                    torch_threads=torch.get_num_threads())  # fmt: skip
         if compiled:
             from bcir.hosted.models.model import _rope_cache
 
@@ -1717,7 +1718,8 @@ def main():
     t.add_argument("--eval-every", type=int, default=100)
     t.add_argument("--cc", default="gcc")
     t.add_argument("--lr-scale", type=float, default=1.0, help="scale every learning rate")
-    t.add_argument("--threads", type=int, default=1, help="the BCIR pool's size (bcir backends)")
+    t.add_argument("--threads", type=int, default=1,
+                   help="the BCIR pool's size, or PyTorch's intra-op threads (default 1)")  # fmt: skip
     t.add_argument("--contract", default="v1", help="v1, fused, exp or fused+exp (bcir backends)")
     i = sub.add_parser("identity")
     i.add_argument("--data", type=Path, required=True)
