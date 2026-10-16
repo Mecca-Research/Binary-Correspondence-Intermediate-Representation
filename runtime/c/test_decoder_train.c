@@ -533,6 +533,49 @@ static void pool_identity(void) {
           assert(!memcmp(c0,c1,mm*n*sizeof(float)) && !memcmp(f0,f1,m2*n2*sizeof(float)));
           memcpy(c1,init,sizeof(c1)); memcpy(f1,init,sizeof(f1)); bcir_tensor_mm_pair_pool(pool,contract,&y,&x);
           assert(!memcmp(c0,c1,mm*n*sizeof(float)) && !memcmp(f0,f1,m2*n2*sizeof(float)));
+          /* the group job (NDT-SCHED-1): a chain of three into c -- this shape at its beta, then at
+           * half the depth adding, then at a quarter's scale -- and two independent products,
+           * against the pool entries one after another in that order */
+          {
+            bcir_tensor_mm_call ch[3],ind[2]; size_t q;
+            ch[0]=x; ch[1]=x; ch[2]=x; ch[1].k=kk/2 ? kk/2 : 1; ch[1].alpha=0.5f; ch[1].beta=1.0f;
+            ch[2].beta=0.25f; ind[0]=y; ind[1]=y; ind[1].c=e1; ind[1].beta=0.0f; ind[1].alpha=-1.5f;
+            memcpy(c0,init,sizeof(c0)); memcpy(f0,init,sizeof(f0)); memcpy(e0,init,sizeof(e0));
+            for (q=0;q<3;q++)
+              (contract==2 ? bcir_tensor_mm_kblock_pool : contract ? bcir_tensor_mm_fused_pool : bcir_tensor_mm_pool)
+                (pool,ch[q].ta,ch[q].tb,ch[q].m,ch[q].n,ch[q].k,ch[q].alpha,ch[q].a,ch[q].b,ch[q].beta,c0);
+            for (q=0;q<2;q++)
+              (contract==2 ? bcir_tensor_mm_kblock_pool : contract ? bcir_tensor_mm_fused_pool : bcir_tensor_mm_pool)
+                (pool,ind[q].ta,ind[q].tb,ind[q].m,ind[q].n,ind[q].k,ind[q].alpha,ind[q].a,ind[q].b,ind[q].beta,q ? e0 : f0);
+            memcpy(c1,init,sizeof(c1)); memcpy(f1,init,sizeof(f1)); memcpy(e1,init,sizeof(e1));
+            bcir_tensor_mm_group_pool(pool,contract,ch,3,ind,2);
+            assert(!memcmp(c0,c1,mm*n*sizeof(float)) && !memcmp(f0,f1,m2*n2*sizeof(float)) &&
+                !memcmp(e0,e1,m2*n2*sizeof(float)));
+            /* no chain (the forward's linears), and a chain alone */
+            memcpy(f1,init,sizeof(f1)); memcpy(e1,init,sizeof(e1)); bcir_tensor_mm_group_pool(pool,contract,NULL,0,ind,2);
+            assert(!memcmp(f0,f1,m2*n2*sizeof(float)) && !memcmp(e0,e1,m2*n2*sizeof(float)));
+            memcpy(c1,init,sizeof(c1)); bcir_tensor_mm_group_pool(pool,contract,ch,3,NULL,0);
+            assert(!memcmp(c0,c1,mm*n*sizeof(float)));
+            /* the serial fallbacks: a chain whose calls differ in n (the tiles would not line up),
+             * and more calls than BCIR_TENSOR_MM_GROUP, each the calls one after another */
+            {
+              bcir_tensor_mm_call cs[BCIR_TENSOR_MM_GROUP+1];
+              ch[1].n=n/2 ? n/2 : 1;
+              memcpy(c0,init,sizeof(c0));
+              for (q=0;q<3;q++)
+                (contract==2 ? bcir_tensor_mm_kblock_pool : contract ? bcir_tensor_mm_fused_pool : bcir_tensor_mm_pool)
+                  (pool,ch[q].ta,ch[q].tb,ch[q].m,ch[q].n,ch[q].k,ch[q].alpha,ch[q].a,ch[q].b,ch[q].beta,c0);
+              memcpy(c1,init,sizeof(c1)); bcir_tensor_mm_group_pool(pool,contract,ch,3,NULL,0);
+              assert(!memcmp(c0,c1,mm*n*sizeof(float)));
+              for (q=0;q<BCIR_TENSOR_MM_GROUP+1;q++) { cs[q]=x; cs[q].beta=1.0f; cs[q].alpha=(float)(q+1); }
+              cs[0].beta=beta; memcpy(c0,init,sizeof(c0));
+              for (q=0;q<BCIR_TENSOR_MM_GROUP+1;q++)
+                (contract==2 ? bcir_tensor_mm_kblock_pool : contract ? bcir_tensor_mm_fused_pool : bcir_tensor_mm_pool)
+                  (pool,cs[q].ta,cs[q].tb,cs[q].m,cs[q].n,cs[q].k,cs[q].alpha,cs[q].a,cs[q].b,cs[q].beta,c0);
+              memcpy(c1,init,sizeof(c1)); bcir_tensor_mm_group_pool(pool,contract,cs,BCIR_TENSOR_MM_GROUP+1,NULL,0);
+              assert(!memcmp(c0,c1,mm*n*sizeof(float)));
+            }
+          }
         }
       }
     }
@@ -599,7 +642,7 @@ static void pool_identity(void) {
     assert(bcir_tensor_pool_threads(pool)==1);
   }
   bcir_tensor_pool_stop(NULL);
-  printf("  PASS native pool kernels (the GEMM pair job included) and the training step bit-identical to the "
+  printf("  PASS native pool kernels (the GEMM pair and group jobs included) and the training step bit-identical to the "
       "serial kernels and references at %u thread count(s) (rail %d), %u contracts, the reduce norms apart at %u of 18 steps\n",
       ran,rails,(unsigned)nc,apart);
 }

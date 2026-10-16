@@ -1009,6 +1009,44 @@ void bcir_tensor_mm_pair_pool(bcir_tensor_pool *pool, int contract, const bcir_t
   second=mm_job_init(&j.b,fused,y->ta,y->tb,y->m,y->n,y->k,y->alpha,y->a,y->b,y->beta,y->c);
   pool_run(pool,mm_pair_task,&j,j.split+second);
 }
+/* A chain into one C and independent GEMMs as one job (NDT-SCHED-1): tasks [0, split) are the
+ * chain's tiles -- a tile's task runs each chained call's task for that tile in turn, which
+ * scales the tile by the call's beta and adds its terms, the order the calls would run whole --
+ * and the rest the independent calls' tasks, each its own partition. Every chained call has the
+ * first's m, n and contract, so one task index names one tile in all of them. */
+typedef struct mm_group_job {
+  mm_job x[BCIR_TENSOR_MM_GROUP],y[BCIR_TENSOR_MM_GROUP];
+  size_t nx,split,start[BCIR_TENSOR_MM_GROUP+1];
+} mm_group_job;
+static void mm_group_task(void *ctx, size_t task) {
+  mm_group_job *j=(mm_group_job *)ctx; size_t q;
+  if (task<j->split) { for (q=0;q<j->nx;q++) mm_task(&j->x[q],task); return; }
+  task-=j->split;
+  for (q=0;task>=j->start[q+1];q++) {}
+  mm_task(&j->y[q],task-j->start[q]);
+}
+static void mm_call_serial(int fused, const bcir_tensor_mm_call *x) {
+  mm_serial_any(fused,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
+}
+static size_t mm_call_init(mm_job *j, int fused, const bcir_tensor_mm_call *x) {
+  return mm_job_init(j,fused,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
+}
+void bcir_tensor_mm_group_pool(bcir_tensor_pool *pool, int contract, const bcir_tensor_mm_call *x,
+    size_t nx, const bcir_tensor_mm_call *y, size_t ny) {
+  mm_group_job j; size_t q;
+  int fused=contract==2 ? MM_KBLOCK : contract==1 ? MM_FUSED : MM_V1;
+  int serial=!pool || pool->threads==1 || nx>BCIR_TENSOR_MM_GROUP || ny>BCIR_TENSOR_MM_GROUP;
+  for (q=1;q<nx && !serial;q++) serial=x[q].c!=x[0].c || x[q].m!=x[0].m || x[q].n!=x[0].n;
+  if (serial) {
+    for (q=0;q<nx;q++) mm_call_serial(fused,x+q);
+    for (q=0;q<ny;q++) mm_call_serial(fused,y+q);
+    return;
+  }
+  j.nx=nx; j.split=0; j.start[0]=0;
+  for (q=0;q<nx;q++) { size_t tasks=mm_call_init(&j.x[q],fused,x+q); if (!q) j.split=tasks; }
+  for (q=0;q<ny;q++) j.start[q+1]=j.start[q]+mm_call_init(&j.y[q],fused,y+q);
+  pool_run(pool,mm_group_task,&j,j.split+j.start[ny]);
+}
 void bcir_tensor_mm_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m, size_t n, size_t k,
     float alpha, const float *a, const float *b, float beta, float *c) {
   mm_pool_any(pool,MM_V1,ta,tb,m,n,k,alpha,a,b,beta,c);

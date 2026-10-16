@@ -1079,8 +1079,8 @@ slice shapes) 1.6-6.6% slower than the kernel over the step's shapes at one thre
 inside the pack, -1.2 to +5.0% at one thread and -5.9 to -0.1% at four; row tasks of 64 rows +8.1%
 and +5.8%, of 512 -3.4% and +1.0%, of 256 -2.0% and -6.7% -- and 256 rows with the pack's 16-row
 prefetch -1.3% and -1.6%, so a four-thread difference of that size is within what the next variant
-moves. The two candidates, 256-row tasks and the pack's prefetch, are left for alternated A/Bs in
-place.
+moves. The two candidates, 256-row tasks and the pack's prefetch, went to alternated A/Bs in place
+(§19: neither kept).
 
 The pass is the loss with a structural fix. Under the blocked contract each element's K block runs
 from zero and is then added as `c + alpha*P` to C already scaled, and the first K block's epilogue
@@ -1152,3 +1152,55 @@ for r in $(seq 12); do ./before 9 4; ./after 9 4; done   # REPS THREADS; and at 
 python3 docs/research/measurements/2026-10-13/scan/attribution.py --src runtime/c --data DATA \
     --threads 4 --steps 8 --out after.json  # and --src BEFORE/runtime/c, alternated
 ```
+
+## 19. The linears that read one input as one job (NDT-SCHED-1)
+
+After NDT-BETA the step runs its 43 linears as 43 GEMM jobs forward and 43 pair jobs backward, each
+behind its own barrier. Five of a layer's seven read one input -- the attention's q, k and v the
+first norm's output, the MLP's gate and up the second's -- and their input adjoints add into one
+dx, so the backward ran their pair jobs one after another, the narrow k and v (192 columns, 32
+tasks) leaving threads idle at each job's tail. `bcir_tensor_mm_group_pool` (NDT-SCHED-1) runs such
+calls as one job: a chain of up to four calls into one C -- the same c, m and n, so one task index
+names one tile in all of them, and a tile's task runs each chained call's task for that tile in
+turn, which scales the tile by that call's beta and adds its terms, the order the calls would run
+whole -- and up to four independent calls, each with its own partition (the pair job's second GEMM,
+generalized). The forward's q, k, v and gate, up are independent calls; the backward's input
+adjoints are the chain (the first at the call's beta, the rest adding, as the separate calls
+added) and the weight adjoints the independent calls -- six barriers fewer a layer. A provider's
+GEMM, one thread or no pool, more than four calls of a kind, or a chain whose calls do not share c,
+m and n run the calls one after another as before; every element receives the same operations in
+the same order, so the results are the separate calls' bit for bit. The C harness's pool test holds
+-- at each of its shapes, under the three GEMM contracts and at every thread count -- a chain of
+three (the shape at its beta, at half the depth adding, at a quarter's scale) beside two
+independent products, the independent products alone, the chain alone and both serial fallbacks (a
+chain whose calls differ in n, five calls) to the pool entries run one after another;
+`tools/testing/faults/ndt-threads.json` NT13-NT18 each turn it red; the 20-step state at one and
+four threads, widest, AVX2 and portable builds, is `4bf4e057…`
+([sched1/identity.json](measurements/2026-10-16/sched1/identity.json)).
+
+In place at four threads, alternated round by round with NDT-BETA's tree and the tree before it
+(§18's rounds; [sched1/attribution-t4-sched1-*.json](measurements/2026-10-16/sched1/)):
+
+| four threads, in place, ms a step | NDT-BETA | NDT-SCHED-1 |
+|---|---|---|
+| the GEMMs, backward | 117.9 / 118.5 / 118.0 / 125.2 | 113.2 / 115.7 / 110.7 / 108.8 |
+| the GEMMs, forward | 63.1 / 59.5 / 59.7 / 63.6 | 59.3 / 59.4 / 59.4 / 54.1 |
+| the step (median of eight) | 258.2 / 250.3 / 247.5 / 268.5 | 242.0 / 245.2 / 240.4 / 230.3 |
+
+Every row is faster in every round: the GEMMs 179.5 -> 171.3 ms a step (medians of the rounds),
+the step 254.2 -> 241.2 -- with NDT-BETA, 199.6 -> 171.3 and 267.8 -> 241.2 against ad77c84. The
+attribution's categories count the grouped calls (`linears(`, `linears_backward(`) with the GEMMs
+since this slice.
+
+Four more bit-identical candidates on top of this slice were measured in place and not kept: the
+GEMM's row tasks 256 rows high (each B tile packed half as often; §18's one-process probe had read
+it 7% faster at four threads), the pack's rows of B prefetched 16 depths ahead into L2, the first K
+block's rows of C prefetched into L2 before its depth loop (for the shape NDT-BETA slowed), and the
+activations' finiteness scanned layer by layer while each layer's 26 MB are still in the last-level
+cache. In two A/Bs against the tree, the arms' order rotated round by round (five rounds of six
+arms, then eight of four), the GEMMs' medians were 196.1, 179.4 and 176.3 ms a step (256 rows, the
+pack's prefetch, C's prefetch) against the tree's 189.8, and then 169.8 and 182.9 (the pack's
+prefetch, C's prefetch) against 171.9 -- C's prefetch 7% ahead in one run and 6% behind in the next
+-- and the layer-by-layer scan's own row 7.16 against 7.22 and 6.79 against 6.56 ms. All of it is
+within what an arm with the tree's own GEMM code moves between runs here (the scan arm's GEMMs read
+177.3 and 169.6 against the tree's 189.8 and 171.9).

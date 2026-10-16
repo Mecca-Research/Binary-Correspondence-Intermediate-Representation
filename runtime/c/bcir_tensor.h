@@ -127,6 +127,18 @@ typedef struct bcir_tensor_mm_call {
 } bcir_tensor_mm_call;
 BCIR_DT_API void bcir_tensor_mm_pair_pool(bcir_tensor_pool *pool, int contract,
     const bcir_tensor_mm_call *x, const bcir_tensor_mm_call *y);
+/* GEMMs as one pool job (NDT-SCHED-1): `nchain` calls that write one C -- the same c, m and n --
+ * run in order per tile, each tile's task scaling its elements by the next call's beta and adding
+ * that call's terms, as the calls would one after another; then `ny` calls whose writes are
+ * disjoint from the chain's and from each other, each with its own partition (the pair job's
+ * second GEMM, generalized). The results are the calls' run one after another in the order given,
+ * bit for bit: every element receives the same operations in the same order. At most
+ * BCIR_TENSOR_MM_GROUP calls of each kind; a NULL pool or one thread, a count past it, or a chain
+ * whose calls do not share c, m and n runs the calls serially in that order -- the chain, then the
+ * rest. */
+#define BCIR_TENSOR_MM_GROUP 4
+BCIR_DT_API void bcir_tensor_mm_group_pool(bcir_tensor_pool *pool, int contract,
+    const bcir_tensor_mm_call *chain, size_t nchain, const bcir_tensor_mm_call *y, size_t ny);
 BCIR_DT_API int bcir_tensor_mm_kblock_variants(void);
 BCIR_DT_API int bcir_tensor_mm_kblock_variant(int variant, int ta, int tb, size_t m, size_t n,
     size_t k, float alpha, const float *a, const float *b, float beta, float *c);

@@ -208,6 +208,40 @@ static void linear_backward(bcir_decoder_state *s,size_t r,size_t in,size_t out,
   cw.ta=1; cw.tb=0; cw.m=out; cw.n=in; cw.k=r; cw.alpha=1.0f; cw.a=dy; cw.b=x; cw.beta=1.0f; cw.c=dw;
   bcir_tensor_mm_pair_pool(s->pool,gemm_contract(s),&cx,&cw);
 }
+/* The linears that read one input -- the attention's q, k and v, the MLP's gate and up -- as one
+ * pool job (NDT-SCHED-1): their outputs are disjoint, so each is its own entry's bit for bit; and
+ * their VJPs as one job, the input adjoints a chain into one dx (the first at the call's beta, the
+ * rest adding, in the order the separate calls added) and the weight adjoints apart. A provider's
+ * GEMM runs the calls one after another, a linear's two VJPs together, as before. */
+static void linears(bcir_decoder_state *s,size_t r,size_t in,const float *x,size_t count,
+    const size_t *out,const float *const *w,float *const *y) {
+  bcir_tensor_mm_call c[BCIR_TENSOR_MM_GROUP]; size_t q;
+  if (s->provider.mm || count>BCIR_TENSOR_MM_GROUP) {
+    for (q=0;q<count;q++) linear(s,r,in,out[q],x,w[q],y[q]);
+    return;
+  }
+  for (q=0;q<count;q++) {
+    c[q].ta=0; c[q].tb=1; c[q].m=r; c[q].n=out[q]; c[q].k=in; c[q].alpha=1.0f; c[q].a=x;
+    c[q].b=w[q]; c[q].beta=0.0f; c[q].c=y[q];
+  }
+  bcir_tensor_mm_group_pool(s->pool,gemm_contract(s),NULL,0,c,count);
+}
+static void linears_backward(bcir_decoder_state *s,size_t r,size_t in,const float *x,size_t count,
+    const size_t *out,const float *const *w,const float *const *dy,float *dx,float *const *dw,
+    float beta) {
+  bcir_tensor_mm_call cx[BCIR_TENSOR_MM_GROUP],cw[BCIR_TENSOR_MM_GROUP]; size_t q;
+  if (s->provider.mm || count>BCIR_TENSOR_MM_GROUP) {
+    for (q=0;q<count;q++) linear_backward(s,r,in,out[q],x,w[q],dy[q],dx,dw[q],q ? 1.0f : beta);
+    return;
+  }
+  for (q=0;q<count;q++) {
+    cx[q].ta=0; cx[q].tb=0; cx[q].m=r; cx[q].n=in; cx[q].k=out[q]; cx[q].alpha=1.0f; cx[q].a=dy[q];
+    cx[q].b=w[q]; cx[q].beta=q ? 1.0f : beta; cx[q].c=dx;
+    cw[q].ta=1; cw[q].tb=0; cw[q].m=out[q]; cw[q].n=in; cw[q].k=r; cw[q].alpha=1.0f; cw[q].a=dy[q];
+    cw[q].b=x; cw[q].beta=1.0f; cw[q].c=dw[q];
+  }
+  bcir_tensor_mm_group_pool(s->pool,gemm_contract(s),cx,count,cw,count);
+}
 static void silu(bcir_decoder_state *s,size_t n,const float *x,float *y) {
   if (s->provider.silu) s->provider.silu(s->provider.ctx,n,x,y);
   else if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_v2_pool(s->pool,n,x,y);
@@ -234,17 +268,22 @@ static void forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
     layer p=params(s->weights+g.v*g.d+l*g.lp,g);
     cache a=activations(cs+l*g.la,g); float *x=xs+l*g.nd,*y=x+g.nd;
     bcir_tensor_rms_pool(s->pool,g.n,g.d,(float)sp->rms_eps,x,p.norm1,a.n1);
-    linear(s,g.n,g.d,g.d,a.n1,p.q,a.q);
-    linear(s,g.n,g.d,g.k,a.n1,p.k,a.k);
-    linear(s,g.n,g.d,g.k,a.n1,p.v,a.v);
+    {
+      size_t out[3]; const float *w[3]; float *y3[3];
+      out[0]=g.d; out[1]=g.k; out[2]=g.k; w[0]=p.q; w[1]=p.k; w[2]=p.v; y3[0]=a.q; y3[1]=a.k; y3[2]=a.v;
+      linears(s,g.n,g.d,a.n1,3,out,w,y3);
+    }
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,sp->rope_base,a.q,0);
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,sp->rope_base,a.k,0);
     attention(s,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx);
     linear(s,g.n,g.d,g.d,a.ctx,p.o,a.x2);
     bcir_tensor_add_pool(s->pool,g.nd,x,a.x2);
     bcir_tensor_rms_pool(s->pool,g.n,g.d,(float)sp->rms_eps,a.x2,p.norm2,a.n2);
-    linear(s,g.n,g.d,g.f,a.n2,p.gate,a.gate);
-    linear(s,g.n,g.d,g.f,a.n2,p.up,a.up);
+    {
+      size_t out[2]; const float *w[2]; float *y2[2];
+      out[0]=g.f; out[1]=g.f; w[0]=p.gate; w[1]=p.up; y2[0]=a.gate; y2[1]=a.up;
+      linears(s,g.n,g.d,a.n2,2,out,w,y2);
+    }
     silu(s,g.nf,a.gate,a.hidden);
     bcir_tensor_mul_pool(s->pool,g.nf,a.up,a.hidden);
     linear(s,g.n,g.f,g.d,a.hidden,p.down,y);
@@ -337,8 +376,11 @@ int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
     cache a=activations(cs+l*g.la,g); float *x=xs+l*g.nd;
     linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f);
     swiglu_backward(s,g.nf,a.gate,a.up,dh,dg,du);
-    linear_backward(s,g.n,g.d,g.f,a.n2,p.gate,dg,dn,grad.gate,0.0f);
-    linear_backward(s,g.n,g.d,g.f,a.n2,p.up,du,dn,grad.up,1.0f);
+    {
+      size_t out[2]; const float *w[2],*d2[2]; float *dw[2];
+      out[0]=g.f; out[1]=g.f; w[0]=p.gate; w[1]=p.up; d2[0]=dg; d2[1]=du; dw[0]=grad.gate; dw[1]=grad.up;
+      linears_backward(s,g.n,g.d,a.n2,2,out,w,d2,dn,dw,0.0f);
+    }
     rms_backward(s,g.n,g.d,a.x2,p.norm2,dn,tmp,grad.norm2,dq);
     bcir_tensor_add_pool(s->pool,g.nd,tmp,cur);
     linear_backward(s,g.n,g.d,g.d,a.ctx,p.o,cur,dc,grad.o,0.0f);
@@ -348,9 +390,12 @@ int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
         dc,dq,dk,dv);
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,s->plan.spec.rope_base,dq,1);
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,s->plan.spec.rope_base,dk,1);
-    linear_backward(s,g.n,g.d,g.d,a.n1,p.q,dq,dn,grad.q,0.0f);
-    linear_backward(s,g.n,g.d,g.k,a.n1,p.k,dk,dn,grad.k,1.0f);
-    linear_backward(s,g.n,g.d,g.k,a.n1,p.v,dv,dn,grad.v,1.0f);
+    {
+      size_t out[3]; const float *w[3],*d3[3]; float *dw[3];
+      out[0]=g.d; out[1]=g.k; out[2]=g.k; w[0]=p.q; w[1]=p.k; w[2]=p.v;
+      d3[0]=dq; d3[1]=dk; d3[2]=dv; dw[0]=grad.q; dw[1]=grad.k; dw[2]=grad.v;
+      linears_backward(s,g.n,g.d,a.n1,3,out,w,d3,dn,dw,0.0f);
+    }
     rms_backward(s,g.n,g.d,x,p.norm1,dn,tmp,grad.norm1,dq);
     bcir_tensor_add_pool(s->pool,g.nd,tmp,cur);
   }

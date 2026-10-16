@@ -2915,6 +2915,24 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-SCHED-1 (2026-10-16): the linears that read one input as one pool job.
+  - Five of a layer's seven linears read one input -- q, k and v the first norm's output, gate and
+    up the second's -- and each was its own job behind its own barrier; their input adjoints add
+    into one dx, so the backward ran their pair jobs (NDT-SCHED-0) one after another, the narrow k
+    and v leaving threads idle at each job's tail.
+  - `bcir_tensor_mm_group_pool` runs a chain of up to four calls into one C (the same c, m and n:
+    a tile's task runs each chained call's task for that tile in turn, the order the calls would
+    run whole) beside up to four independent calls, each its own partition. The forward's q, k, v
+    and gate, up are independent calls; the backward's input adjoints the chain, the weight
+    adjoints beside it -- six barriers fewer a layer. A provider, one thread, more calls or a
+    chain of other shapes runs the calls one after another; every element receives the same
+    operations in the same order.
+  - Evidence: the C harness's group tests (a chain of three with two independent products, each
+    alone, both serial fallbacks, under the three GEMM contracts at every thread count);
+    `ndt-threads.json` NT13-NT18; the 20-step state at one and four threads `4bf4e057…`.
+  - Measured in place at four threads, four rounds alternated with NDT-BETA's tree
+    ([measurements/2026-10-16/sched1/](research/measurements/2026-10-16/sched1/), the report's
+    §19): the GEMMs 179.5 -> 171.3 ms a step, the step 254.2 -> 241.2, every round.
   NDT-BETA (2026-10-16): the blocked GEMM's beta scaling in its first K block.
   - NDT-GEMM-L1's probe of the AVX-512 kernel over the pool's partition found its inner loop alone
     at the FMA probe's rate, 162-171 GFLOP/s, at every depth from 64 to 448 -- the contract's depth

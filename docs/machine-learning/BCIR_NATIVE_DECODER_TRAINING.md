@@ -393,7 +393,12 @@ blocked kernels now scale C in the first K block's epilogue -- under beta 0 addi
 without reading C, under any other beta scaling the loaded C by the same rounded product -- the same
 operations in the same order (the C harness: a depth of zero at four betas on every path, and a zero
 product at a negative alpha +0.0 under beta 0; `tools/testing/faults/ndt-kblock.json` NK11-NK17). In
-place at four threads the step's GEMMs fell 199.6 -> 179.5 ms a step, every round of four.
+place at four threads the step's GEMMs fell 199.6 -> 179.5 ms a step, every round of four. The
+linears that read one input run as one pool job since NDT-SCHED-1 (`bcir_tensor_mm_group_pool`):
+the forward's q, k, v and gate, up as independent calls, the backward's input adjoints as a chain
+into one dx -- a tile's task runs each chained call's task for that tile in turn -- beside the
+weight adjoints, each element the separate calls' bit for bit (`ndt-threads.json` NT13-NT18): the
+GEMMs 179.5 -> 171.3 ms a step in place, the step 254.2 -> 241.2 (the report's §19).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
