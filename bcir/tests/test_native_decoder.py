@@ -264,8 +264,9 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
     """Wrong copies of the C units, built from copies of their sources (never by editing the
     tree): the packed B^T tile read without its depth offset, the register block accumulated in
     descending order or fused into one rounding, A read untransposed whatever ta says, the
-    blocked kernel's generic and AVX-512 instances each wrong in their own code; the plan's
-    workspace or cache count off by one span. Each turns its row red."""
+    blocked kernel's generic and AVX-512 instances each wrong in their own code (beta's fold
+    into the first K block among them, NDT-BETA); the plan's workspace or cache count off by
+    one span. Each turns its row red."""
     from bcir.tests import native_decoder_fixtures as nf
 
     if nf.compiler() is None:
@@ -293,6 +294,9 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
         ("mm_kblock", "bcir_tensor.c", tensor,
          "    else for (j=0;j<nr;j++) if (j<nj) ci[j]=ci[j]+x->alpha*acc[r][j];\n",
          "    else for (j=0;j<nr;j++) if (j<nj) ci[j]=fmaf(x->alpha,acc[r][j],ci[j]);\n"),
+        # NDT-BETA: the generic instance scales c at every K block, not only the first
+        ("mm_kblock", "bcir_tensor.c", tensor,
+         "  first=x->fold && lb==0;\n", "  first=x->fold;\n"),
         # NDT-BLOCK: the AVX-512 instance is its own code, so its own wrong copies -- the last
         # single row left at its beta-scaled value, a transposed tile's ragged columns stale
         # below the whole blocks, a ragged block's partial added with one fused rounding
@@ -303,8 +307,12 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
          "      for (l=j<jw ? lw : 0;l<nl;l++) bt[l*48+j]=column[l];\n",
          "      for (l=lw;l<nl;l++) bt[l*48+j]=column[l];\n"),
         ("mm_kblock@4", "bcir_tensor.c", tensor,
-         "      _mm512_mask_storeu_ps(ci,m0,_mm512_add_ps(_mm512_maskz_loadu_ps(m0,ci),_mm512_mul_ps(alpha,acc0[r])));\n",
-         "      _mm512_mask_storeu_ps(ci,m0,_mm512_fmadd_ps(alpha,acc0[r],_mm512_maskz_loadu_ps(m0,ci)));\n"),
+         "      _mm512_mask_storeu_ps(ci,m0,_mm512_add_ps(kb512_c(ci,m0&keep,scale,beta),_mm512_mul_ps(alpha,acc0[r])));\n",
+         "      _mm512_mask_storeu_ps(ci,m0,_mm512_fmadd_ps(alpha,acc0[r],kb512_c(ci,m0&keep,scale,beta)));\n"),
+        # NDT-BETA: the AVX-512 instance's first K block reads c under beta 0
+        ("mm_kblock@4", "bcir_tensor.c", tensor,
+         "  keep=(__mmask16)(x->fold && lb==0 && x->beta==0.0f ? 0u : 0xffffu);\n",
+         "  keep=(__mmask16)0xffffu;\n"),
         ("exp_ulp", "bcir_tensor.c", tensor,
          "p=1.0f/5040.0f; p=p*r+1.0f/720.0f; p=p*r+1.0f/120.0f;", "p=1.0f/120.0f;"),
         ("exp_ulp", "bcir_tensor.c", tensor,

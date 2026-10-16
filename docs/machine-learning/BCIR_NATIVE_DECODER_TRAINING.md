@@ -386,6 +386,15 @@ place at four threads (§16). With the three, the 1,000-step language-model run 
 against eager PyTorch's 283.8 (3,608) and `torch.compile`'s 259.6 (3,945) at four intra-op threads,
 the same held-out cross-entropy in 529 MB against 1,084-1,128 (the report's §17).
 
+The blocked GEMM scales C by beta in its first K block since NDT-BETA (2026-10-16). The kernel's
+inner loop runs at the FMA probe's rate at every depth the contract fixes (the report's §18), and the
+rest of a pool task was its tile's pack and a pass scaling its elements of C before the kernel; the
+blocked kernels now scale C in the first K block's epilogue -- under beta 0 adding the terms to +0.0
+without reading C, under any other beta scaling the loaded C by the same rounded product -- the same
+operations in the same order (the C harness: a depth of zero at four betas on every path, and a zero
+product at a negative alpha +0.0 under beta 0; `tools/testing/faults/ndt-kblock.json` NK11-NK17). In
+place at four threads the step's GEMMs fell 199.6 -> 179.5 ms a step, every round of four.
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,

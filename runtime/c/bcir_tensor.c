@@ -49,6 +49,7 @@ enum { MM_FULL, MM_LOWER, MM_KLE, MM_KGE };
 typedef struct mm_args {
   int ta,tb; size_t m,n,k; float alpha;
   const float *a; size_t lda; const float *b; size_t ldb; float *c; size_t ldc; int mode;
+  float beta; int fold;  /* fold: the blocked kernels scale c by beta in their first K block */
 } mm_args;
 /* The contract an instance keeps, a compile-time constant of the instance: v1 adds one rounded
  * product per term, v2 (NDT-FMA) one fmaf. */
@@ -154,14 +155,18 @@ size_t bcir_tensor_kblock_split(size_t k, size_t *lengths, size_t capacity) {
   }
   return count;
 }
+/* c's beta scaling, one element: zero under beta 0, else the rounded product -- the caller's
+ * pass, or a blocked kernel's first K block (NDT-BETA). */
+BCIR_MM_INLINE float mm_scaled(float beta, float c) { return beta==0.0f ? 0.0f : beta*c; }
 /* Rows [i, i+mr) over columns [jb, jb+nj) for one K block: P from zero over the block's nl
- * packed depths (one fmaf per term, l ascending), then c = c + alpha*P (c already beta-scaled by
- * the caller). The block stays in registers across the whole K block, so c is read and written
- * once per block, not once per depth chunk. */
+ * packed depths (one fmaf per term, l ascending), then c = c + alpha*P, c beta-scaled first --
+ * by the caller, or here in the first K block when x->fold says so (NDT-BETA: the same rounded
+ * operations in the same order, without a pass over c of its own). The block stays in registers
+ * across the whole K block, so c is read and written once per block, not once per depth chunk. */
 BCIR_MM_INLINE void mm_block_kb(size_t mr, size_t nr, const mm_args *x, const float *bt,
     size_t i, size_t jb, size_t nj, size_t lb, size_t nl) {
   float acc[BCIR_MM_MRMAX][BCIR_MM_NRMAX];
-  size_t r,j,l;
+  size_t r,j,l; int first;
 #ifdef __clang_analyzer__
   if (nj>nr) nj=nr;
 #endif
@@ -171,9 +176,13 @@ BCIR_MM_INLINE void mm_block_kb(size_t mr, size_t nr, const mm_args *x, const fl
     for (r=0;r<mr;r++) ar[r]=x->ta ? x->a[(lb+l)*x->lda+i+r] : x->a[(i+r)*x->lda+lb+l];
     for (r=0;r<mr;r++) for (j=0;j<nr;j++) acc[r][j]=fmaf(ar[r],tile[j],acc[r][j]);
   }
+  first=x->fold && lb==0;
   for (r=0;r<mr;r++) {
     float *ci=x->c+(i+r)*x->ldc+jb;
-    if (nj==nr) { for (j=0;j<nr;j++) ci[j]=ci[j]+x->alpha*acc[r][j]; }
+    if (first) {
+      if (nj==nr) { for (j=0;j<nr;j++) ci[j]=mm_scaled(x->beta,ci[j])+x->alpha*acc[r][j]; }
+      else for (j=0;j<nr;j++) if (j<nj) ci[j]=mm_scaled(x->beta,ci[j])+x->alpha*acc[r][j];
+    } else if (nj==nr) { for (j=0;j<nr;j++) ci[j]=ci[j]+x->alpha*acc[r][j]; }
     else for (j=0;j<nr;j++) if (j<nj) ci[j]=ci[j]+x->alpha*acc[r][j];
   }
 }
@@ -253,9 +262,18 @@ __attribute__((target("avx512f"))) static void mm_avx512_fused(const mm_args *x,
  * (8 x 8) register transposes with the ragged edges copied scalar. A transposed A is read one
  * cache line per depth, so its next lines are prefetched BCIR_MM_KB_PREFETCH depths ahead. */
 #define BCIR_MM_KB_PREFETCH 8
+/* c before a K block's terms, straight-line (NDT-BETA): the lanes `load` admits as stored, the
+ * rest +0.0, then the lanes `scale` admits times beta -- in the first K block under beta 0 no lane
+ * is loaded (zero, c never read), under any other beta every lane is scaled (the rounded product,
+ * the caller's pass exactly), and in a later block c is as stored. */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE __m512 kb512_c(const float *ci, __mmask16 load,
+    __mmask16 scale, __m512 beta) {
+  __m512 c=_mm512_maskz_loadu_ps(load,ci);
+  return _mm512_mask_mul_ps(c,scale,beta,c);
+}
 __attribute__((target("avx512f"))) BCIR_MM_INLINE void kb512_block(size_t mr, const mm_args *x,
     const float *bt, size_t i, size_t jb, size_t nj, size_t lb, size_t nl) {
-  __m512 acc0[8],acc1[8],acc2[8],alpha; size_t r,l;
+  __m512 acc0[8],acc1[8],acc2[8],alpha,beta; size_t r,l; __mmask16 keep,scale;
   for (r=0;r<mr;r++) { acc0[r]=_mm512_setzero_ps(); acc1[r]=_mm512_setzero_ps(); acc2[r]=_mm512_setzero_ps(); }
   if (x->ta) {
     const float *ap=x->a+lb*x->lda+i; size_t lda=x->lda;
@@ -279,13 +297,17 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void kb512_block(size_t mr, co
       }
     }
   }
-  alpha=_mm512_set1_ps(x->alpha);
+  /* set after the depth loop: the block's 24 accumulators, three tile rows and a broadcast hold
+   * 28 of the 32 vector registers through it, and a value live across it costs a spill a depth */
+  alpha=_mm512_set1_ps(x->alpha); beta=_mm512_set1_ps(x->beta);
+  keep=(__mmask16)(x->fold && lb==0 && x->beta==0.0f ? 0u : 0xffffu);
+  scale=(__mmask16)(x->fold && lb==0 && x->beta!=0.0f ? 0xffffu : 0u);
   if (nj==48) {
     for (r=0;r<mr;r++) {
       float *ci=x->c+(i+r)*x->ldc+jb;
-      _mm512_storeu_ps(ci,_mm512_add_ps(_mm512_loadu_ps(ci),_mm512_mul_ps(alpha,acc0[r])));
-      _mm512_storeu_ps(ci+16,_mm512_add_ps(_mm512_loadu_ps(ci+16),_mm512_mul_ps(alpha,acc1[r])));
-      _mm512_storeu_ps(ci+32,_mm512_add_ps(_mm512_loadu_ps(ci+32),_mm512_mul_ps(alpha,acc2[r])));
+      _mm512_storeu_ps(ci,_mm512_add_ps(kb512_c(ci,keep,scale,beta),_mm512_mul_ps(alpha,acc0[r])));
+      _mm512_storeu_ps(ci+16,_mm512_add_ps(kb512_c(ci+16,keep,scale,beta),_mm512_mul_ps(alpha,acc1[r])));
+      _mm512_storeu_ps(ci+32,_mm512_add_ps(kb512_c(ci+32,keep,scale,beta),_mm512_mul_ps(alpha,acc2[r])));
     }
   } else {
     __mmask16 m0=(__mmask16)(nj>=16 ? 0xffffu : (1u<<nj)-1u);
@@ -293,9 +315,9 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void kb512_block(size_t mr, co
     __mmask16 m2=(__mmask16)(nj>32 ? (1u<<(nj-32))-1u : 0u);
     for (r=0;r<mr;r++) {
       float *ci=x->c+(i+r)*x->ldc+jb;
-      _mm512_mask_storeu_ps(ci,m0,_mm512_add_ps(_mm512_maskz_loadu_ps(m0,ci),_mm512_mul_ps(alpha,acc0[r])));
-      _mm512_mask_storeu_ps(ci+16,m1,_mm512_add_ps(_mm512_maskz_loadu_ps(m1,ci+16),_mm512_mul_ps(alpha,acc1[r])));
-      _mm512_mask_storeu_ps(ci+32,m2,_mm512_add_ps(_mm512_maskz_loadu_ps(m2,ci+32),_mm512_mul_ps(alpha,acc2[r])));
+      _mm512_mask_storeu_ps(ci,m0,_mm512_add_ps(kb512_c(ci,m0&keep,scale,beta),_mm512_mul_ps(alpha,acc0[r])));
+      _mm512_mask_storeu_ps(ci+16,m1,_mm512_add_ps(kb512_c(ci+16,m1&keep,scale,beta),_mm512_mul_ps(alpha,acc1[r])));
+      _mm512_mask_storeu_ps(ci+32,m2,_mm512_add_ps(kb512_c(ci+32,m2&keep,scale,beta),_mm512_mul_ps(alpha,acc2[r])));
     }
   }
 }
@@ -353,9 +375,16 @@ __attribute__((target("avx512f"))) static void mm_avx512_kb(const mm_args *x, co
     }
   }
 }
+/* kb512_c's AVX2 twin: the lanes `load` admits as stored (the rest +0.0), then the product with
+ * beta where `scale` is all ones (a blend, so a later block's c is as stored). */
+__attribute__((target("avx2,fma"))) BCIR_MM_INLINE __m256 kb256_c(const float *ci, __m256i load,
+    __m256 scale, __m256 beta) {
+  __m256 c=_mm256_maskload_ps(ci,load);
+  return _mm256_blendv_ps(c,_mm256_mul_ps(beta,c),scale);
+}
 __attribute__((target("avx2,fma"))) BCIR_MM_INLINE void kb256_block(size_t mr, const mm_args *x,
     const float *bt, size_t i, size_t jb, size_t nj, size_t lb, size_t nl) {
-  __m256 acc0[6],acc1[6],alpha; size_t r,l;
+  __m256 acc0[6],acc1[6],alpha,beta,scale; size_t r,l; __m256i keep;
   for (r=0;r<mr;r++) { acc0[r]=_mm256_setzero_ps(); acc1[r]=_mm256_setzero_ps(); }
   if (x->ta) {
     const float *ap=x->a+lb*x->lda+i; size_t lda=x->lda;
@@ -377,19 +406,22 @@ __attribute__((target("avx2,fma"))) BCIR_MM_INLINE void kb256_block(size_t mr, c
       }
     }
   }
-  alpha=_mm256_set1_ps(x->alpha);
+  /* set after the depth loop, as kb512_block's */
+  alpha=_mm256_set1_ps(x->alpha); beta=_mm256_set1_ps(x->beta);
+  keep=x->fold && lb==0 && x->beta==0.0f ? _mm256_setzero_si256() : _mm256_set1_epi32(-1);
+  scale=_mm256_castsi256_ps(x->fold && lb==0 && x->beta!=0.0f ? _mm256_set1_epi32(-1) : _mm256_setzero_si256());
   if (nj==16) {
     for (r=0;r<mr;r++) {
       float *ci=x->c+(i+r)*x->ldc+jb;
-      _mm256_storeu_ps(ci,_mm256_add_ps(_mm256_loadu_ps(ci),_mm256_mul_ps(alpha,acc0[r])));
-      _mm256_storeu_ps(ci+8,_mm256_add_ps(_mm256_loadu_ps(ci+8),_mm256_mul_ps(alpha,acc1[r])));
+      _mm256_storeu_ps(ci,_mm256_add_ps(kb256_c(ci,keep,scale,beta),_mm256_mul_ps(alpha,acc0[r])));
+      _mm256_storeu_ps(ci+8,_mm256_add_ps(kb256_c(ci+8,keep,scale,beta),_mm256_mul_ps(alpha,acc1[r])));
     }
   } else {
     __m256i m0=kb256_mask(nj>=8 ? 8 : nj),m1=kb256_mask(nj>8 ? nj-8 : 0);
     for (r=0;r<mr;r++) {
       float *ci=x->c+(i+r)*x->ldc+jb;
-      _mm256_maskstore_ps(ci,m0,_mm256_add_ps(_mm256_maskload_ps(ci,m0),_mm256_mul_ps(alpha,acc0[r])));
-      _mm256_maskstore_ps(ci+8,m1,_mm256_add_ps(_mm256_maskload_ps(ci+8,m1),_mm256_mul_ps(alpha,acc1[r])));
+      _mm256_maskstore_ps(ci,m0,_mm256_add_ps(kb256_c(ci,_mm256_and_si256(m0,keep),scale,beta),_mm256_mul_ps(alpha,acc0[r])));
+      _mm256_maskstore_ps(ci+8,m1,_mm256_add_ps(kb256_c(ci+8,_mm256_and_si256(m1,keep),scale,beta),_mm256_mul_ps(alpha,acc1[r])));
     }
   }
 }
@@ -601,13 +633,13 @@ size_t bcir_tensor_exp_sweep(unsigned stride, size_t *mismatch, unsigned *ulp) {
 }
 static int mm_variant_any(int variant, int fused, int ta, int tb, size_t m, size_t n, size_t k,
     float alpha, const float *a, const float *b, float beta, float *c) {
-  mm_args x; mm_range r; size_t i;
+  mm_args x; mm_range r; size_t i; int fold=fused==MM_KBLOCK && m && n && k;
   int have=fused ? bcir_tensor_mm_fused_variants() : bcir_tensor_mm_variants();
   if ((variant!=1 && variant!=2 && variant!=4) || !(have&variant)) return 0;
-  for (i=0;i<m*n;i++) c[i]=beta==0.0f ? 0.0f : beta*c[i];
+  if (!fold) for (i=0;i<m*n;i++) c[i]=mm_scaled(beta,c[i]);
   if (!m || !n || !k) return variant;
   x.ta=ta; x.tb=tb; x.m=m; x.n=n; x.k=k; x.alpha=alpha; x.a=a; x.lda=ta ? m : k;
-  x.b=b; x.ldb=tb ? k : n; x.c=c; x.ldc=n; x.mode=MM_FULL;
+  x.b=b; x.ldb=tb ? k : n; x.c=c; x.ldc=n; x.mode=MM_FULL; x.beta=beta; x.fold=fold;
   r.jb0=0; r.jb1=n; r.r0=0; r.r1=m;
   mm_run_range(variant,fused,&x,&r);
   return variant;
@@ -915,9 +947,10 @@ void bcir_tensor_pool_run(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx
 #define pool_run bcir_tensor_pool_run
 /* --- the partitions: each a function of the shapes alone ----------------------------------- */
 /* GEMM: one task per (column block of the variant's width, row range of BCIR_MM_ROWS rows). The
- * task scales its own elements of C by beta, then runs the serial nest over its block and rows
- * -- every depth chunk, in order -- so each element of C receives its terms in the serial order;
- * the task packs its own tiles. */
+ * task's elements of C are scaled by beta -- by the task under the v1 and fused contracts (and a
+ * blocked call without terms), by the blocked kernel's first K block otherwise (NDT-BETA) -- then
+ * the serial nest runs over its block and rows, every depth chunk in order, so each element of C
+ * receives its terms in the serial order; the task packs its own tiles. */
 #ifndef BCIR_MM_ROWS
 #define BCIR_MM_ROWS 128
 #endif
@@ -926,9 +959,9 @@ static void mm_task(void *ctx, size_t task) {
   mm_job *j=(mm_job *)ctx; mm_range r; size_t col=task%j->cols,row=task/j->cols,i,jj;
   r.jb0=col*j->nr; r.jb1=r.jb0+j->nr<j->x.n ? r.jb0+j->nr : j->x.n;
   r.r0=row*BCIR_MM_ROWS; r.r1=r.r0+BCIR_MM_ROWS<j->x.m ? r.r0+BCIR_MM_ROWS : j->x.m;
-  for (i=r.r0;i<r.r1;i++) {
+  if (!j->x.fold) for (i=r.r0;i<r.r1;i++) {
     float *ci=j->x.c+i*j->x.ldc;
-    for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=j->beta==0.0f ? 0.0f : j->beta*ci[jj];
+    for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=mm_scaled(j->beta,ci[jj]);
   }
   if (j->x.k) mm_run_range(j->variant,j->fused,&j->x,&r);
 }
@@ -939,6 +972,7 @@ static size_t mm_job_init(mm_job *j, int fused, int ta, int tb, size_t m, size_t
   j->beta=beta; j->fused=fused; j->variant=fused ? mm_widest_fused() : mm_widest(); j->nr=mm_nr(j->variant,fused);
   j->x.ta=ta; j->x.tb=tb; j->x.m=m; j->x.n=n; j->x.k=k; j->x.alpha=alpha; j->x.a=a; j->x.lda=ta ? m : k;
   j->x.b=b; j->x.ldb=tb ? k : n; j->x.c=c; j->x.ldc=n; j->x.mode=MM_FULL;
+  j->x.beta=beta; j->x.fold=fused==MM_KBLOCK && k;
   j->cols=(n+j->nr-1)/j->nr; j->rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;
   return j->cols*j->rowsets;
 }

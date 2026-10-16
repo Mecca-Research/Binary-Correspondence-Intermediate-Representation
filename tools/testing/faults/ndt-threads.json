@@ -25,8 +25,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NT3 a GEMM task adds its terms without first scaling its elements by beta",
-      "new": "    for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=j->beta==0.0f ? ci[jj] : j->beta*ci[jj];",
-      "old": "    for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=j->beta==0.0f ? 0.0f : j->beta*ci[jj];",
+      "new": "    for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=j->beta==0.0f ? ci[jj] : mm_scaled(j->beta,ci[jj]);",
+      "old": "    for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=mm_scaled(j->beta,ci[jj]);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

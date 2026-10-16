@@ -856,10 +856,40 @@ static void gemm_kblock_contract(void) {
   }
   assert(differ>0 && equal>0);
   assert(bcir_tensor_mm_kblock_variant(3,0,0,1,1,1,1.0f,a,b,0.0f,c)==0);
+  /* NDT-BETA: the kernels scale c by beta in their first K block. A depth of zero still scales
+   * it (no K block runs), on every path; and under beta 0 a block adds its terms to +0.0, as the
+   * zero fill and the add did, so a zero product at a negative alpha stores +0.0, never -0.0 */
+  {
+    static const float betas[]={0.0f,0.5f,1.0f,-2.0f};
+    size_t q,m=9,n=50,k; int path;
+    for (i=0;i<m*n;i++) init[i]=i%7==3 ? -0.0f : 0.01f*(float)(i%17)-0.05f;
+    for (q=0;q<sizeof(betas)/sizeof(betas[0]);q++) for (path=-2;path<=4;path++) {
+      float beta=betas[q];
+      if (path>0 && (path==3 || !(mask&path))) continue;
+      for (i=0;i<m*n;i++) want[i]=beta==0.0f ? 0.0f : beta*init[i];
+      memcpy(c,init,m*n*sizeof(float));
+      if (path==-2) bcir_tensor_mm_kblock(NULL,0,1,m,n,0,-1.0f,a,b,beta,c);
+      else if (path==-1 || path==0) { if (!pool) continue; bcir_tensor_mm_kblock_pool(pool,path==-1,1,m,n,0,-1.0f,a,b,beta,c); }
+      else assert(bcir_tensor_mm_kblock_variant(path,1,0,m,n,0,-1.0f,a,b,beta,c)==path);
+      assert(!memcmp(c,want,m*n*sizeof(float)));
+    }
+    memset(v2,0,sizeof(v2));  /* an A of zeros: every product is +0.0, at alpha -1 a -0.0 term */
+    n=20;  /* B is k x n: 897 x 20 within the operands */
+    for (k=1;k<=897;k+=448) for (path=-2;path<=4;path++) {
+      if (path>0 && (path==3 || !(mask&path))) continue;
+      for (i=0;i<m*n;i++) want[i]=0.0f;
+      memcpy(c,init,m*n*sizeof(float));
+      if (path==-2) bcir_tensor_mm_kblock(NULL,0,0,m,n,k,-1.0f,v2,b,0.0f,c);
+      else if (path==-1 || path==0) { if (!pool) continue; bcir_tensor_mm_kblock_pool(pool,path==-1,0,m,n,k,-1.0f,v2,b,0.0f,c); }
+      else assert(bcir_tensor_mm_kblock_variant(path,0,0,m,n,k,-1.0f,v2,b,0.0f,c)==path);
+      assert(!memcmp(c,want,m*n*sizeof(float)));
+    }
+  }
   bcir_tensor_pool_stop(pool);
   printf("  PASS native GEMM blocked contract (v3): bit-identical to the K-blocked fmaf chains, every "
       "transpose, %d variant run(s) (mask %d); %zu of 64 cases apart from v2, %zu equal where the "
-      "contract says; the split rule on 10 depths\n",ran,mask,differ,equal);
+      "contract says; the split rule on 10 depths; beta in the first K block (a depth of zero "
+      "scaled, a zero product at a negative alpha +0.0)\n",ran,mask,differ,equal);
 }
 /* The BCIR exponential and the v2 contracts that use it (NDT-EXP): every instance this host runs
  * agrees bit for bit over 2^24 inputs (every binary32 in [-104, 89] at stride 2^8), within 1 ulp

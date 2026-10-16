@@ -1056,3 +1056,99 @@ python3 docs/research/measurements/2026-10-11/train_comparison.py train --data D
 python3 docs/research/measurements/2026-10-11/train_comparison.py train --data DATA --task lm \
     --backend torch-eager --threads 4 --eval-every 100 --lr-scale 0.25   # and torch-compiled
 ```
+
+## 18. The beta scaling in the first K block (NDT-BETA)
+
+§17 closed on a guess: that the kernel's distance from the probe is its tile streaming from L2, the
+depth the contract fixes being 448. A probe of the AVX-512 kernel over the pool's own partition --
+128 rows by 48 columns, its tasks in order on one thread or on a pool of four, every variant's C
+compared with the kernel's bit for bit ([beta/gemm_probe.c](measurements/2026-10-16/beta/gemm_probe.c),
+built against the unit at ad77c84) -- says otherwise. The inner loop alone over one packed tile
+sustains 162-171 GFLOP/s at every depth from 64 (a 12 KB tile, in L1) to 448 (84 KB, in L2), with
+A's rows 448 or 1,024 floats apart
+([probe-ceiling.jsonl](measurements/2026-10-16/beta/probe-ceiling.jsonl)): the FMA probe's rate, so
+neither the depth nor the tile's cache level costs anything. Timed by the cycle counter inside the
+tasks at one thread, the rest of a task is the tile's pack, 5.6-12.6% of its cycles, and the pass
+that scales its elements of C by beta before its K blocks, 1.6-8.9% -- the larger shares where the
+depth is short, 192 or 384 ([probe-split.jsonl](measurements/2026-10-16/beta/probe-split.jsonl)).
+Fourteen variants that keep the arithmetic, interleaved round by round in one process
+([probe-t1.jsonl, probe-t4.jsonl](measurements/2026-10-16/beta/)), found nothing else that holds:
+each K block in L1-sized depth slices with the accumulators spilled exactly (NDT-KSUB's form, five
+slice shapes) 1.6-6.6% slower than the kernel over the step's shapes at one thread and -0.4 to
++4.9% at four; the packed tile prefetched 4 or 8 depths ahead, or its source 8, 16 or 32 rows ahead
+inside the pack, -1.2 to +5.0% at one thread and -5.9 to -0.1% at four; row tasks of 64 rows +8.1%
+and +5.8%, of 512 -3.4% and +1.0%, of 256 -2.0% and -6.7% -- and 256 rows with the pack's 16-row
+prefetch -1.3% and -1.6%, so a four-thread difference of that size is within what the next variant
+moves. The two candidates, 256-row tasks and the pack's prefetch, are left for alternated A/Bs in
+place.
+
+The pass is the loss with a structural fix. Under the blocked contract each element's K block runs
+from zero and is then added as `c + alpha*P` to C already scaled, and the first K block's epilogue
+touches C anyway: NDT-BETA drops the pass (the pool's tasks had scaled their elements of C before
+their K blocks, the serial path the whole of C) and the blocked kernels scale C in their first K
+block. Under beta 0 that block adds its terms to +0.0 without reading C (its lanes masked out of the
+load), under any other beta it scales the loaded C by the rounded product the pass computed, and a
+later block adds to C as stored -- the same rounded operations in the same order, so every element
+is the one it was; the generic instance does the same in plain C. A call of depth zero (no K block
+runs) and the v1 and fused contracts keep the pass. On AVX-512 the block's 24 accumulators, three
+tile rows and a broadcast hold 28 of the 32 vector registers through the depth loop, so beta and
+the two lane masks are formed after it: the first form, with beta live across the loop and the
+epilogue branching per block, spilled accumulators every depth and ran 2-4x slower. The C harness's
+blocked-contract test now holds the serial entry, both pool partitions and every instance the host
+runs to `beta * c` at a depth of zero under beta 0, 0.5, 1 and -2, and to +0.0 for an A of zeros at
+alpha -1 under beta 0 at depths 1, 449 and 897 (a zero product times a negative alpha is -0.0; the
+pass's zero plus that term is +0.0, and so must the fold's be);
+`tools/testing/faults/ndt-kblock.json` NK3b and NK11-NK17 each turn it red, and NK10 and
+`ndt-threads.json` NT3 follow the lines the slice rewrote. The GEM+ row `train.mm.kblock.mismatch`
+had to widen with it: a later K block's epilogue is now its own code, and the row's cases deeper
+than one block all multiplied by an alpha the binary32 product scales exactly (0.5 or 1), so a fused
+rounding there (NK3, `test_the_rows_fire_on_wrong_kernels_and_plans`) went unseen until the
+897-deep case took alpha 1.1 -- the cases' count stays 40, and the row's witness test gained the
+fold's own wrong copies (c read under beta 0, c scaled at every K block). The 20-step state at one and four
+threads, widest, AVX2 and portable builds, is `4bf4e057…`
+([beta/identity.json](measurements/2026-10-16/beta/identity.json)).
+
+The step's twelve GEMM shapes through the public entries, at the betas the trainer passes, the two
+builds alternated in twelve rounds
+([beta/gemm_entries.c](measurements/2026-10-16/beta/gemm_entries.c),
+[entries-t1.jsonl, entries-t4.jsonl](measurements/2026-10-16/beta/); every C's digest equal across
+the builds and the rounds):
+
+| the step's GEMM shapes alone, ms a step | ad77c84 | NDT-BETA |
+|---|---|---|
+| four threads, median of the rounds (10 of 12 rounds faster) | 198.6 | 175.3 |
+| four threads, each shape's minimum | 162.1 | 144.8 |
+| one thread, median of the rounds (7 of 12 faster) | 551.3 | 546.7 |
+| one thread, each shape's minimum | 466.7 | 464.7 |
+
+At four threads the gain is where the pass was large against the products, by the minima: the
+depth-384 forward products 18-22%, the input adjoints of q and o 21% and of k and v (depth 192,
+accumulating) 37%, the weight gradients 9-13%. At one thread the slice is neutral over the step.
+One shape is slower by every estimator at both counts, the gate and up projections' input adjoint
+(depth 1,024, beta 0, B untransposed): 4% at one thread and 3-12% at four -- its first K block now
+meets C's lines where the pass had brought them in, a guess the next probe (C prefetched ahead of
+the block's epilogue) can test. In place at four threads, alternated round by round with the tree
+before ([beta/attribution-t4-*.json](measurements/2026-10-16/beta/)):
+
+| four threads, in place, ms a step | before (ad77c84) | NDT-BETA |
+|---|---|---|
+| the GEMMs, backward | 138.1 / 137.5 / 137.4 / 131.9 | 117.9 / 118.5 / 118.0 / 125.2 |
+| the GEMMs, forward | 64.1 / 62.2 / 62.1 / 64.4 | 63.1 / 59.5 / 59.7 / 63.6 |
+| the step (median of eight) | 268.1 / 266.5 / 277.4 / 267.4 | 258.2 / 250.3 / 247.5 / 268.5 |
+
+The GEMMs are faster in every round, 199.6 -> 179.5 ms a step (medians of the rounds), the step in
+three of four, 267.8 -> 254.2. This session's host is slower than §17's -- the same code's GEMMs
+199.6 ms a step here against 162.8 there -- so the comparison is the alternated pair, never a
+number against §17's. Reproduce:
+
+```bash
+git show ad77c84:runtime/c/bcir_tensor.c > U/bcir_tensor.c && git show ad77c84:runtime/c/bcir_tensor.h > U/bcir_tensor.h
+cc -O3 -ffp-contract=off -fno-math-errno -pthread -I U -DBCIR_TENSOR_C='"U/bcir_tensor.c"' \
+    docs/research/measurements/2026-10-16/beta/gemm_probe.c -o probe -lm
+./probe ceiling; ./probe 9; ./probe pool 9; ./probe split
+cc -O3 -ffp-contract=off -fno-math-errno -pthread -I U docs/research/measurements/2026-10-16/beta/gemm_entries.c \
+    U/bcir_tensor.c -o before -lm   # and -I runtime/c ... runtime/c/bcir_tensor.c -o after
+for r in $(seq 12); do ./before 9 4; ./after 9 4; done   # REPS THREADS; and at THREADS 1
+python3 docs/research/measurements/2026-10-13/scan/attribution.py --src runtime/c --data DATA \
+    --threads 4 --steps 8 --out after.json  # and --src BEFORE/runtime/c, alternated
+```

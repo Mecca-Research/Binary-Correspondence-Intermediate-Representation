@@ -96,7 +96,9 @@ MM_CASES = tuple(
 
 #: The blocked contract's cases (NDT-KBLOCK): the 20 above and twenty deeper ones that cross the
 #: split rule's three cases (one block, half-and-half, whole blocks then halves), an alpha the
-#: binary32 product does not scale exactly, and beta 1 (the trainer's dW accumulations).
+#: binary32 product does not scale exactly -- in one K block and across three, since the first
+#: block's epilogue (which scales c, NDT-BETA) and a later block's are each their own code -- and
+#: beta 1 (the trainer's dW accumulations).
 MM_KBLOCK_CASES = MM_CASES + tuple(
     (ta, tb, m, n, k, alpha, beta)
     for ta in (0, 1)
@@ -105,7 +107,7 @@ MM_KBLOCK_CASES = MM_CASES + tuple(
         ((2, 3, 1000), 1.0, 1.0),
         ((1, 2, 2048), 1.0, 0.0),
         ((3, 2, 449), 1.0, 1.0),
-        ((2, 2, 897), 0.5, 1.0),
+        ((2, 2, 897), 1.1, 1.0),
         ((2, 2, 100), 1.1, 1.0),
     )
 )

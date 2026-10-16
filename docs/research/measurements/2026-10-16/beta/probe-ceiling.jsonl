@@ -1,0 +1,14 @@
+{"probe": "ceiling", "lda": 1024, "depth": 64, "tile_kb": 12.0, "gflops": 167.6}
+{"probe": "ceiling", "lda": 1024, "depth": 96, "tile_kb": 18.0, "gflops": 168.9}
+{"probe": "ceiling", "lda": 1024, "depth": 128, "tile_kb": 24.0, "gflops": 169.7}
+{"probe": "ceiling", "lda": 1024, "depth": 192, "tile_kb": 36.0, "gflops": 169.4}
+{"probe": "ceiling", "lda": 1024, "depth": 288, "tile_kb": 54.0, "gflops": 167.3}
+{"probe": "ceiling", "lda": 1024, "depth": 384, "tile_kb": 72.0, "gflops": 163.1}
+{"probe": "ceiling", "lda": 1024, "depth": 448, "tile_kb": 84.0, "gflops": 166.2}
+{"probe": "ceiling", "lda": 448, "depth": 64, "tile_kb": 12.0, "gflops": 169.2}
+{"probe": "ceiling", "lda": 448, "depth": 96, "tile_kb": 18.0, "gflops": 170.1}
+{"probe": "ceiling", "lda": 448, "depth": 128, "tile_kb": 24.0, "gflops": 169.5}
+{"probe": "ceiling", "lda": 448, "depth": 192, "tile_kb": 36.0, "gflops": 170.9}
+{"probe": "ceiling", "lda": 448, "depth": 288, "tile_kb": 54.0, "gflops": 162.1}
+{"probe": "ceiling", "lda": 448, "depth": 384, "tile_kb": 72.0, "gflops": 165.4}
+{"probe": "ceiling", "lda": 448, "depth": 448, "tile_kb": 84.0, "gflops": 164.3}

@@ -2915,6 +2915,32 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-BETA (2026-10-16): the blocked GEMM's beta scaling in its first K block.
+  - NDT-GEMM-L1's probe of the AVX-512 kernel over the pool's partition found its inner loop alone
+    at the FMA probe's rate, 162-171 GFLOP/s, at every depth from 64 to 448 -- the contract's depth
+    and the tile's L2 residence cost nothing, against NDT-GEMM-4T's guess -- and the rest of a task
+    its tile's pack (5.6-12.6% of its cycles) and the pass scaling its elements of C by beta
+    (1.6-8.9%); fourteen variants that keep the arithmetic (depth slices, prefetch distances,
+    row-task heights) moved nothing beyond one run's noise.
+  - Under the blocked contract the pass is gone: the kernels scale C in their first K block's
+    epilogue, under beta 0 adding the terms to +0.0 without reading C, under any other beta scaling
+    the loaded C by the same rounded product, a later block adding to C as stored -- the same
+    operations in the same order. Beta and the lane masks are formed after the depth loop: with
+    beta live across it the block's 28 of 32 vector registers spilled every depth (2-4x slower). A
+    depth of zero and the v1 and fused contracts keep the pass.
+  - Evidence: the C harness's blocked-contract test (a depth of zero at beta 0, 0.5, 1 and -2, and
+    a zero product at alpha -1 under beta 0 storing +0.0 at depths 1, 449 and 897, on the serial
+    entry, both pool partitions and every instance); `ndt-kblock.json` NK3b and NK11-NK17, NK10 and
+    `ndt-threads.json` NT3 re-anchored; `train.mm.kblock.mismatch`'s 897-deep case at alpha 1.1
+    (was 0.5, a product the binary32 multiply scales exactly), so a fused rounding in a later K
+    block's epilogue -- now its own code -- stays in the row's sight, and the row's witness test
+    given the fold's wrong copies; the 20-step state at one and four threads, widest, AVX2 and
+    portable builds, `4bf4e057…`.
+  - Measured ([measurements/2026-10-16/beta/](research/measurements/2026-10-16/beta/), the report's
+    §18): the step's GEMM shapes alone at four threads 198.6 -> 175.3 ms a step over twelve
+    alternated rounds (10 faster), neutral at one thread (551.3 -> 546.7; the gate and up input
+    adjoint 4% slower there); in place at four threads the GEMMs 199.6 -> 179.5 ms a step in every
+    round of four, the step 267.8 -> 254.2.
   NDT-GEMM-4T (2026-10-16): the four-thread GEMMs measured, and BCIR against PyTorch at four threads.
   - On this instance an FMA probe gives one thread 162-165 GFLOP/s alone and 144-163 each with four
     running; the step's GEMMs, timed call by call in place, are 162.8 ms of a 235 ms step at 371
