@@ -1258,8 +1258,8 @@ NDT-FUSE merges the first four, each the same operations in the same order:
   reads every gradient anyway; a non-finite gradient is still reported as `BCIR_DT_NUMERIC` ahead of
   the update's own `BCIR_DT_INVALID`, the order the separate scans gave, and a run's later
   micro-batches skip the opening scans their predecessor's closing ones answered. The
-  language-model run calls `run` one step at a time, so this is the one fact of a run that reaches it
-  (NDT-FACTS-RUN's cross-step facts do not).
+  language-model run calls `run` one step at a time with one micro-batch, so of the two only the
+  deferred closing scan reaches it; nothing is carried from one call, or one step, to the next.
 
 NDT-ATTN-6 takes the fills out of the AVX-512 attention's way: the scores', the context's and dq's
 register blocks start from +0.0 in registers on a head's first write, and dk's and dv's on a KV
