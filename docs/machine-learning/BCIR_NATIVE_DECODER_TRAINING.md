@@ -374,7 +374,10 @@ the exp contract the softmax's exponentials run in the same transposed blocks wh
 adjoint's column sums stay in the task's registers (the C harness's references, RMSNorm at 40 x 37
 and 48 x 389; `tools/testing/faults/ndt-lanes.json` NL1-NL11). In place at four threads (the
 report's §14) the attention forward fell 11.10 -> 8.56 ms a step, the RMSNorm VJP 6.34 -> 4.48 and
-RMSNorm 2.62 -> 1.45, every round of five.
+RMSNorm 2.62 -> 1.45, every round of five. RoPE computes its frequencies once per range of 64 pairs
+since NDT-ROPE (it took a `pow` per pair and position) and turns a head's pairs contiguously, every
+value the per-pair kernel's (a per-pair reference in the C harness; `ndt-rope.json` NO1-NO5): in place
+at four threads its forward 2.05 -> 0.96 ms a step and backward 2.53 -> 1.13 (the report's §15).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over

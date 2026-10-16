@@ -425,6 +425,18 @@ static void adamw_reference(void) {
  * report). The pool lives in the harness's own block (no memory, too little, or misaligned
  * memory is refused); a host without a thread rail admits one thread only: the kernels still run
  * there, serially, and the wider pools have no size. */
+/* RoPE as the kernel computed it before NDT-ROPE: a pow, a cosine and a sine per pair and position */
+static void ref_rope(size_t b, size_t t, size_t heads, size_t dim, double base, float *x, int inverse) {
+  size_t r,pos,h,j;
+  for (pos=0;pos<t;pos++) for (j=0;j<dim/2;j++) {
+    double angle=(double)pos*pow(base,-2.0*(double)j/(double)dim);
+    float c=(float)cos(angle),s=(float)sin(angle)*(inverse ? -1.0f : 1.0f);
+    for (r=0;r<b;r++) for (h=0;h<heads;h++) {
+      size_t off=((r*t+pos)*heads+h)*dim+j;
+      float a=x[off],z=x[off+dim/2]; x[off]=a*c-z*s; x[off+dim/2]=z*c+a*s;
+    }
+  }
+}
 static void count_task(void *ctx, size_t task) { ((unsigned char *)ctx)[task]++; }
 static void pool_identity(void) {
   static float a[14000],b[14000],c0[20000],c1[20000],init[20000];
@@ -562,11 +574,18 @@ static void pool_identity(void) {
       assert(!memcmp(e0,e1,rows*width*sizeof(float)) && !memcmp(dg0,dg1,width*sizeof(float)) &&
           inv[0]!=0.0f && inv[rows-1]!=0.0f);
     }
-    memcpy(f0,x,sizeof(f0)); bcir_tensor_rope(2,40,3,8,10000.0,f0,0);
-    memcpy(f1,x,sizeof(f1)); bcir_tensor_rope_pool(pool,2,40,3,8,10000.0,f1,0);
-    assert(!memcmp(f0,f1,2*40*3*8*sizeof(float)));
-    bcir_tensor_rope(2,40,3,8,10000.0,f0,1); bcir_tensor_rope_pool(pool,2,40,3,8,10000.0,f1,1);
-    assert(!memcmp(f0,f1,2*40*3*8*sizeof(float)));
+    /* RoPE against the per-pair reference, the serial kernel and the pool, forward and inverse:
+     * 2 x 40 positions of 3 heads of 8, and 1 x 33 of 2 heads of 260 (130 pairs: three ranges of
+     * frequencies) */
+    for (s=0;s<2;s++) {
+      size_t rb=s ? 1 : 2,rt=s ? 33 : 40,rh=s ? 2 : 3,rd=s ? 260 : 8,rn=rb*rt*rh*rd; int inv2;
+      for (inv2=0;inv2<2;inv2++) {
+        memcpy(e0,x,rn*sizeof(float)); ref_rope(rb,rt,rh,rd,10000.0,e0,inv2);
+        memcpy(f0,x,rn*sizeof(float)); bcir_tensor_rope(rb,rt,rh,rd,10000.0,f0,inv2);
+        memcpy(f1,x,rn*sizeof(float)); bcir_tensor_rope_pool(pool,rb,rt,rh,rd,10000.0,f1,inv2);
+        assert(!memcmp(e0,f0,rn*sizeof(float)) && !memcmp(e0,f1,rn*sizeof(float)));
+      }
+    }
     /* the state after three steps on this pool is the serial state, and the losses and norms
      * the steps report the serial ones, under every contract */
     for (ci=0;ci<nc;ci++) {

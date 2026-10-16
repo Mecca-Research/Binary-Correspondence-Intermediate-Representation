@@ -1128,17 +1128,29 @@ void bcir_tensor_rms_backward_pool(bcir_tensor_pool *pool, size_t rows, size_t w
   pool_run(pool,rmsb_rows_task,&j,(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);
   pool_run(pool,rmsb_cols_task,&j,(width+BCIR_COL_CHUNK-1)/BCIR_COL_CHUNK);
 }
-/* Positions in ranges of BCIR_ROW_CHUNK: a position's angles and rotations are its own. */
+/* Positions in ranges of BCIR_ROW_CHUNK: a position's angles and rotations are its own. Each pair
+ * (pos, j) takes angle = pos * base^(-2j/dim) in double and its cosine and sine rounded to float,
+ * and every head's pair at that position the same rotation; the frequencies are computed once per
+ * BCIR_ROPE_J pairs and range (a pow per pair and position before NDT-ROPE), each position's
+ * angles once, and the rotation runs over a head's pairs contiguously -- every value the same. */
+#define BCIR_ROPE_J 64
 typedef struct rope_job { size_t b,t,heads,dim; double base; float *x; int inverse; } rope_job;
 static void rope_rows(size_t b, size_t t, size_t heads, size_t dim, double base, float *x,
     int inverse, size_t p0, size_t p1) {
-  size_t r,pos,h,j;
-  for (pos=p0;pos<p1;pos++) for (j=0;j<dim/2;j++) {
-    double angle=(double)pos*pow(base,-2.0*(double)j/(double)dim);
-    float c=(float)cos(angle),s=(float)sin(angle)*(inverse ? -1.0f : 1.0f);
-    for (r=0;r<b;r++) for (h=0;h<heads;h++) {
-      size_t off=((r*t+pos)*heads+h)*dim+j;
-      float a=x[off],z=x[off+dim/2]; x[off]=a*c-z*s; x[off+dim/2]=z*c+a*s;
+  size_t r,pos,h,j,j0,half=dim/2;
+  for (j0=0;j0<half;j0+=BCIR_ROPE_J) {
+    size_t nj=half-j0<BCIR_ROPE_J ? half-j0 : BCIR_ROPE_J; double f[BCIR_ROPE_J];
+    for (j=0;j<nj;j++) f[j]=pow(base,-2.0*(double)(j0+j)/(double)dim);
+    for (pos=p0;pos<p1;pos++) {
+      float c[BCIR_ROPE_J],s[BCIR_ROPE_J];
+      for (j=0;j<nj;j++) {
+        double angle=(double)pos*f[j];
+        c[j]=(float)cos(angle); s[j]=(float)sin(angle)*(inverse ? -1.0f : 1.0f);
+      }
+      for (r=0;r<b;r++) for (h=0;h<heads;h++) {
+        float *lo=x+((r*t+pos)*heads+h)*dim+j0,*hi=lo+half;
+        for (j=0;j<nj;j++) { float a=lo[j],z=hi[j]; lo[j]=a*c[j]-z*s[j]; hi[j]=z*c[j]+a*s[j]; }
+      }
     }
   }
 }

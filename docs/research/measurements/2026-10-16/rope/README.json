@@ -1,0 +1,9 @@
+{
+ "what": "NDT-ROPE (2026-10-16): RoPE's frequencies base^(-2j/dim) computed once per range of 64 pairs and position range, each position's angles once, the rotation over a head's pairs contiguously; every value the per-pair kernel's (kept in the C harness as the reference).",
+ "host": "4-vCPU Intel Xeon @ 2.80GHz container (AVX-512), GCC 13.3, Python 3.11.15 (the declared floor); indicative wall times, no PMU",
+ "files": {
+  "attribution-t4-before-{1..4}.json, attribution-t4-rope-{1..4}.json": "the step in place at four threads (docs/research/measurements/2026-10-13/scan/attribution.py --src TREE/runtime/c --data DATA --threads 4 --steps 8): before = 28ed912 (NDT-LANES), rope = 28ed912 with this slice's runtime/c/bcir_tensor.c; alternated round by round, four rounds",
+  "identity.json": "the 20-step state at one and four threads under kblock+exp+reduce, widest and AVX2-capped builds and a repeat: every row 4bf4e057..."
+ },
+ "reading": "RoPE forward 2.05 -> 0.96 ms a step and backward 2.53 -> 1.13 (medians; every round faster); the step 237.9 -> 231.2 ms (medians)."
+}

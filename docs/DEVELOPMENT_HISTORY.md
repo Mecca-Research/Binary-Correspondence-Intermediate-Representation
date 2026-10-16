@@ -2915,6 +2915,19 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-ROPE (2026-10-16): RoPE's frequencies once a range of pairs.
+  - The kernel computed `angle = pos * pow(base, -2j/dim)` in double and its float cosine and sine
+    per pair and position -- 3,072 `pow`s a call where 24 differ -- and then turned every head's
+    pair at stride `dim`. Each position-range task now computes the frequencies once per range of
+    64 pairs, each position's angles once, and turns a head's pairs contiguously: the same double
+    angle, the same cosine and sine, the same rotation per element.
+  - Evidence: a per-pair reference (the kernel before it) in the C harness at 2 x 40 x 3 x 8 and
+    1 x 33 x 2 x 260 (three ranges of pairs), forward and inverse, serial and pooled -- the old pool
+    test compared the kernel with itself; `ndt-rope.json` NO1-NO5; the 20-step state at one and four
+    threads `4bf4e057…`.
+  - Measured in place at four threads, four rounds alternated with NDT-LANES's tree
+    ([measurements/2026-10-16/rope/](research/measurements/2026-10-16/rope/), the report's §15):
+    RoPE forward 2.05 -> 0.96 ms a step, backward 2.53 -> 1.13, every round.
   NDT-LANES (2026-10-16): the step's per-row chains as the lanes of a vector.
   - The step's in-place attribution on this host (the container restarted on a faster instance of
     the same CPU model; the four-thread step about 236-254 ms) put RMSNorm's two kernels at 8.9 ms

@@ -938,3 +938,26 @@ python3 docs/research/measurements/2026-10-13/scan/attribution.py --src runtime/
 python3 docs/research/measurements/2026-10-11/train_comparison.py identity --data DATA --steps 20 \
     --threads 1,4 --contract kblock+exp+reduce --variants widest,avx2,portable
 ```
+
+## 15. RoPE's frequencies once a range (NDT-ROPE)
+
+The step in place after NDT-LANES spent 4.6 ms of its four-thread step in RoPE (2.0 forward, 2.5
+backward), more than the RMSNorm VJP. Its kernel computed `angle = pos * pow(base, -2j/dim)` in
+double and the angle's cosine and sine rounded to float for every pair `j` and position -- 3,072
+`pow`s a call on the decoder's 128 x 24 pairs where 24 values differ -- and then turned that pair in
+every head of every sequence at stride `dim`. A position-range task now computes the frequencies
+once per range of 64 pairs, each position's angles once (the same double product, the same `cos` and
+`sin` rounded to float), and turns a head's pairs contiguously: every element takes the same
+rotation. The C harness keeps the kernel as it was as a per-pair reference and holds the serial
+kernel and the pool to it at 2 x 40 x 3 x 8 and 1 x 33 x 2 x 260 (three ranges of pairs), forward
+and inverse -- the pool test before compared the kernel with itself -- and
+`tools/testing/faults/ndt-rope.json` NO1-NO5 each turn it red; the 20-step state at one and four
+threads is `4bf4e057…` ([rope/identity.json](measurements/2026-10-16/rope/identity.json)).
+
+| four threads, in place, ms a step | NDT-LANES (28ed912) | NDT-ROPE |
+|---|---|---|
+| RoPE, forward | 1.98 / 2.05 / 2.05 / 2.55 | 0.82 / 0.95 / 0.96 / 0.97 |
+| RoPE, backward | 2.74 / 2.32 / 2.28 / 2.92 | 0.98 / 1.16 / 1.12 / 1.13 |
+| the step (median of eight) | 234.0 / 236.9 / 238.9 / 265.6 | 219.2 / 231.8 / 230.7 / 238.1 |
+
+([rope/attribution-t4-*.json](measurements/2026-10-16/rope/), the arms alternated round by round.)
