@@ -2915,6 +2915,19 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-ATTN-5 (2026-10-16): the backward's probability-adjoint tiles from a transposed panel.
+  - Each row block's 32 x 64 tiles of `dp = dY V^T` went through the general GEMM kernel, which
+    packed the transposed values again for every tile -- a third of the backward at one thread. A
+    backward task now transposes its KV head's values once into its stack (`d x t` floats, up to
+    64 KB; a longer context takes the GEMM kernel as before), and every query head's tiles are
+    AVX-512 register blocks of eight rows by 32 columns reading that panel, only the blocks that
+    hold some `j <= i` (the others are never read), with the v1 kernel's arithmetic for those
+    operands: from the tile's zero, a rounded product and a rounded sum per channel in order.
+  - Evidence: the C harness's attention reference (its 16 shapes, finite and not); `ndt-attn.json`
+    NA10-NA14; the 20-step state at one and four threads `4bf4e057…`.
+  - Measured in place at four threads, four rounds alternated with NDT-ROPE's tree
+    ([measurements/2026-10-16/dp/](research/measurements/2026-10-16/dp/), the report's §16): the
+    attention backward 13.64 -> 12.37 ms a step, every round.
   NDT-ROPE (2026-10-16): RoPE's frequencies once a range of pairs.
   - The kernel computed `angle = pos * pow(base, -2j/dim)` in double and its float cosine and sine
     per pair and position -- 3,072 `pow`s a call where 24 differ -- and then turned every head's

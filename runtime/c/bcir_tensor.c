@@ -1429,6 +1429,57 @@ __attribute__((target("avx512f"))) static void att512_dot(size_t t, size_t i0, s
     for (j=j0;j<end;j++) dot[ig+r]+=pi[j]*tile[(ig+r)*ldt+j-jt];
   }
 }
+/* A KV head's values transposed once (NDT-ATTN-5): vt[c*t + j] = v[j][c], 16 x 16 blocks through the
+ * pack's register transpose and the ragged edges copied; the backward's probability-adjoint tiles
+ * of every query head of the KV head read their columns from it. */
+__attribute__((target("avx512f"))) static void att512_panel(size_t t, size_t d, const float *v,
+    size_t ldv, float *vt) {
+  size_t j,c,tw=t/16*16,dw=d/16*16;
+  for (j=0;j<tw;j+=16) for (c=0;c<dw;c+=16) kb512_transpose16(v+j*ldv+c,ldv,vt+c*t+j,t);
+  for (j=0;j<t;j++) for (c=j<tw ? dw : 0;c<d;c++) vt[c*t+j]=v[j*ldv+c];
+}
+/* The probability-adjoint tile dp_ij = dy_i . v_j for rows i0..i0+rows-1 and columns jt..jt+cols-1
+ * from the panel: blocks of eight rows by 32 columns, only those holding some j <= i (the others
+ * are never read), each element from the zero the tile holds with one rounded product and one
+ * rounded sum per channel in order -- the v1 kernel's arithmetic for these operands; rows past the
+ * last whole eight one at a time, the same chain. */
+__attribute__((target("avx512f"))) static void att512_dp(size_t rows, size_t i0, size_t jt,
+    size_t cols, size_t d, const float *dy, size_t ldy, const float *vt, size_t t, float *tile,
+    size_t ldt) {
+  size_t jb,ig,r,c;
+  for (jb=0;jb<cols;jb+=32) {
+    size_t nj=cols-jb<32 ? cols-jb : 32;
+    __mmask16 m0=att512_lanes(nj),m1=att512_lanes(nj>16 ? nj-16 : 0);
+    for (ig=0;ig+8<=rows;ig+=8) {
+      __m512 a0[8],a1[8];
+      if (jt+jb>i0+ig+7) continue;
+      for (r=0;r<8;r++) {
+        const float *tr=tile+(ig+r)*ldt+jb;
+        a0[r]=_mm512_maskz_loadu_ps(m0,tr); a1[r]=_mm512_maskz_loadu_ps(m1,tr+16);
+      }
+      for (c=0;c<d;c++) {
+        const float *vc=vt+c*t+jt+jb;
+        __m512 b0=_mm512_maskz_loadu_ps(m0,vc),b1=_mm512_maskz_loadu_ps(m1,vc+16);
+        for (r=0;r<8;r++) {
+          __m512 qv=_mm512_set1_ps(dy[(i0+ig+r)*ldy+c]);
+          a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(qv,b0)); a1[r]=_mm512_add_ps(a1[r],_mm512_mul_ps(qv,b1));
+        }
+      }
+      for (r=0;r<8;r++) {
+        float *tr=tile+(ig+r)*ldt+jb;
+        _mm512_mask_storeu_ps(tr,m0,a0[r]); _mm512_mask_storeu_ps(tr+16,m1,a1[r]);
+      }
+    }
+    for (;ig<rows;ig++) {
+      size_t j;
+      for (j=0;j<nj;j++) {
+        float acc=tile[ig*ldt+jb+j];
+        for (c=0;c<d;c++) acc=acc+dy[(i0+ig)*ldy+c]*vt[c*t+jt+jb+j];
+        tile[ig*ldt+jb+j]=acc;
+      }
+    }
+  }
+}
 #endif
 enum { ATT_SCORES, ATT_CONTEXT, ATT_TRANSPOSED };
 /* One of the attention's masked products over its t rows: the AVX-512 register blocks for the
@@ -1541,7 +1592,9 @@ void bcir_tensor_attention_backward(size_t b, size_t t, size_t nh, size_t nk,
  * sum p_ij dp_ij in j order and ds_ij from a second evaluation of the same dp tiles, as the
  * reference does; then dq_i += ds_ij k_j (j <= i) and dk_j += ds_ij q_i (i >= j). Every
  * accumulator receives the reference's terms in the reference's order -- heads in order for the
- * shared GQA dk/dv, i ascending within a head -- so dq, dk and dv are bit-identical to it. */
+ * shared GQA dk/dv, i ascending within a head -- so dq, dk and dv are bit-identical to it. On
+ * AVX-512 the dp tiles are register blocks over the KV head's values transposed once per task
+ * (NDT-ATTN-5: att512_panel, att512_dp), the GEMM kernel's v1 arithmetic for these operands. */
 #define BCIR_ATT_ROWS 32
 #define BCIR_ATT_COLS 64
 /* The probability adjoint's tiles a row block keeps between its two passes (NDT-ATTN-1): its first
@@ -1549,12 +1602,16 @@ void bcir_tensor_attention_backward(size_t b, size_t t, size_t nh, size_t nk,
  * evaluating the same product again; a longer context evaluates its further tiles twice, as every
  * tile was evaluated before. */
 #define BCIR_ATT_KEEP 256
+/* The largest KV head (d x t floats) whose values the backward transposes once into its task's
+ * stack (NDT-ATTN-5), 64 KB; a longer context's tiles take the GEMM kernel as before. */
+#define BCIR_ATT_PANEL 16384
 /* One (batch, query head) of the backward; the heads of one KV head share dk and dv, so a task
  * is a (batch, KV head) and runs its `group` = heads/kvheads query heads in order -- the order
  * the serial loop adds. A task of fewer heads would put one KV head's query heads on two threads,
  * racing on its dk and dv (the TSan section's injected fault). */
-static void att_head_backward(const att_job *a, size_t r, size_t h) {
+static void att_head_backward(const att_job *a, size_t r, size_t h, const float *vt) {
   size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,i,j,i0; float scale=1.0f/sqrtf((float)d);
+  (void)vt;  /* the AVX-512 instance's panel; NULL elsewhere */
   int variant=a->variant; const float *q=a->q,*k=a->k,*v=a->v,*dy=a->dy; float *p=a->p,*dq=a->dq,*dk=a->dk,*dv=a->dv;
   {
     size_t kh=h/(nh/nk),ldh=nh*d,ldk=nk*d; float *ph=p+(r*nh+h)*t*t;
@@ -1574,9 +1631,15 @@ static void att_head_backward(const att_job *a, size_t r, size_t h) {
         float *tile=jt<BCIR_ATT_KEEP ? kept[jt/BCIR_ATT_COLS] : spare;
         if (!pass || jt>=BCIR_ATT_KEEP) {
           memset(tile,0,rows*BCIR_ATT_COLS*sizeof(float));
-          x.ta=0; x.tb=1; x.m=rows; x.n=cols; x.k=d; x.a=dyh+i0*ldh; x.lda=ldh; x.b=vk+jt*ldk;
-          x.ldb=ldk; x.c=tile; x.ldc=BCIR_ATT_COLS; x.mode=MM_FULL;
-          mm_run(variant,&x);
+#ifdef BCIR_MM_DISPATCH
+          if (vt) att512_dp(rows,i0,jt,cols,d,dyh,ldh,vt,t,tile,BCIR_ATT_COLS);
+          else
+#endif
+          {
+            x.ta=0; x.tb=1; x.m=rows; x.n=cols; x.k=d; x.a=dyh+i0*ldh; x.lda=ldh; x.b=vk+jt*ldk;
+            x.ldb=ldk; x.c=tile; x.ldc=BCIR_ATT_COLS; x.mode=MM_FULL;
+            mm_run(variant,&x);
+          }
         }
         i=0;
 #ifdef BCIR_MM_DISPATCH
@@ -1613,7 +1676,15 @@ static void att_task_backward(void *ctx, size_t task) {
       memset(a->dv+((r*t+i)*nk+kh)*d,0,d*sizeof(float));
     }
   }
-  for (h=first;h<first+a->group;h++) att_head_backward(a,r,h);
+  {
+    const float *vt=NULL;
+#ifdef BCIR_MM_DISPATCH
+    /* the KV head's values transposed once for its query heads' probability-adjoint tiles */
+    _Alignas(64) float panel[BCIR_ATT_PANEL];
+    if (a->variant==4 && d*t<=BCIR_ATT_PANEL) { att512_panel(t,d,a->v+(r*t*nk+kh)*d,nk*d,panel); vt=panel; }
+#endif
+    for (h=first;h<first+a->group;h++) att_head_backward(a,r,h,vt);
+  }
 }
 void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *pool, size_t b, size_t t,
     size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v, float *p,

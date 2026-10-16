@@ -70,6 +70,41 @@
       "new": "      for (i=j0+8;i<t;i++) {  /* every row of the block takes term i */",
       "old": "      for (i=j0+7;i<t;i++) {  /* every row of the block takes term i */",
       "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA10 the probability-adjoint kernel skips each row group's diagonal block (the tiles' j <= i entries left at zero)",
+      "new": "      if (jt+jb+32>i0+ig+7) continue;",
+      "old": "      if (jt+jb>i0+ig+7) continue;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA11 the values' panel drops the ragged channels past the last whole 16",
+      "new": "  for (j=0;j<t;j++) for (c=j<tw ? d : 0;c<d;c++) vt[c*t+j]=v[j*ldv+c];",
+      "old": "  for (j=0;j<t;j++) for (c=j<tw ? dw : 0;c<d;c++) vt[c*t+j]=v[j*ldv+c];",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA12 the values' panel drops the ragged keys' first channels (keys past the last whole 16)",
+      "new": "  for (j=0;j<t;j++) for (c=dw;c<d;c++) vt[c*t+j]=v[j*ldv+c];",
+      "old": "  for (j=0;j<t;j++) for (c=j<tw ? dw : 0;c<d;c++) vt[c*t+j]=v[j*ldv+c];",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA13 the tile's rows past the last whole eight take no channels",
+      "new": "        for (c=0;c<0;c++) acc=acc+dy[(i0+ig)*ldy+c]*vt[c*t+jt+jb+j];",
+      "old": "        for (c=0;c<d;c++) acc=acc+dy[(i0+ig)*ldy+c]*vt[c*t+jt+jb+j];",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA14 the probability-adjoint kernel fuses each channel's product and sum (one FMA: not the v1 arithmetic)",
+      "new": "          __m512 qv=_mm512_set1_ps(dy[(i0+ig+r)*ldy+c]);\n          a0[r]=_mm512_fmadd_ps(qv,b0,a0[r]);",
+      "old": "          __m512 qv=_mm512_set1_ps(dy[(i0+ig+r)*ldy+c]);\n          a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(qv,b0));",
+      "path": "runtime/c/bcir_tensor.c"
     }
   ]
 }

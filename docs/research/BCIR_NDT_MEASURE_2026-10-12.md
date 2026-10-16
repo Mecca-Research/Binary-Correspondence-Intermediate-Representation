@@ -961,3 +961,30 @@ threads is `4bf4e057…` ([rope/identity.json](measurements/2026-10-16/rope/iden
 | the step (median of eight) | 234.0 / 236.9 / 238.9 / 265.6 | 219.2 / 231.8 / 230.7 / 238.1 |
 
 ([rope/attribution-t4-*.json](measurements/2026-10-16/rope/), the arms alternated round by round.)
+
+## 16. The probability adjoint from a transposed panel (NDT-ATTN-5)
+
+The in-place backward (§12.2) evaluates each row block's tiles of `dp = dY V^T`, 32 rows by up to 64
+columns, through the general GEMM kernel (the v1 contract), which packs the transposed values for
+every tile it is given: per head, six tiles each re-packing up to 64 keys' 48 channels, and in a
+scratch cycle-counter profile at one thread the tiles were a third of the backward. A backward task
+already owns one KV head and runs its query heads in order (§12.3's partition), so it now
+transposes that head's values once into its own stack -- `d x t` floats, 6,144 on the decoder, up
+to 16,384 (64 KB); a longer context takes the GEMM kernel as before -- and every tile of its query
+heads is AVX-512 register blocks of eight rows by 32 columns reading the panel, only the blocks that
+hold some `j <= i` (the dot and the score adjoint never read the others). The arithmetic is the v1
+kernel's for these operands -- each element from the zero the tile holds, one rounded product and
+one rounded sum per channel in order -- so every tile, and every adjoint, is the one it was; the C
+harness's attention reference holds dq, dk and dv to the reference loops at its shapes, and
+`tools/testing/faults/ndt-attn.json` NA10-NA14 each turn it red; the 20-step state is `4bf4e057…`
+([dp/identity.json](measurements/2026-10-16/dp/identity.json)).
+
+| four threads, in place, ms a step | NDT-ROPE (c65f291) | NDT-ATTN-5 |
+|---|---|---|
+| the attention, backward | 13.02 / 15.88 / 13.24 / 14.03 | 12.53 / 12.74 / 12.20 / 12.14 |
+| the attention, forward (code unchanged) | 8.14 / 8.77 / 8.37 / 8.71 | 9.22 / 9.58 / 8.65 / 8.78 |
+| the GEMMs (code unchanged) | 170.2 / 181.7 / 165.6 / 177.3 | 189.7 / 194.8 / 175.6 / 170.9 |
+
+([dp/attribution-t4-*.json](measurements/2026-10-16/dp/), alternated round by round.) The backward
+is faster in every round; the rounds' unchanged rows moved by up to 15% (the GEMMs 166-195 ms) as
+other work on the host came and went, so this record's step medians say nothing either way.

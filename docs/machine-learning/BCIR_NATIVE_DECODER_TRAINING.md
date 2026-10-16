@@ -378,6 +378,10 @@ RMSNorm 2.62 -> 1.45, every round of five. RoPE computes its frequencies once pe
 since NDT-ROPE (it took a `pow` per pair and position) and turns a head's pairs contiguously, every
 value the per-pair kernel's (a per-pair reference in the C harness; `ndt-rope.json` NO1-NO5): in place
 at four threads its forward 2.05 -> 0.96 ms a step and backward 2.53 -> 1.13 (the report's §15).
+The attention backward's probability-adjoint tiles read a KV head's values transposed once per task
+since NDT-ATTN-5 (the GEMM kernel had packed them again for every tile), as AVX-512 register blocks
+with the v1 kernel's arithmetic (`ndt-attn.json` NA10-NA14): the backward 13.64 -> 12.37 ms a step in
+place at four threads (§16).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
