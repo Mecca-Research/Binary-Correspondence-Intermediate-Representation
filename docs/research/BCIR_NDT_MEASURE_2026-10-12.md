@@ -1413,3 +1413,23 @@ rounds) the forward takes 4.15 -> 3.84 ms a layer and the backward 5.83 -> 5.27 
 round; at four threads 1.18 -> 1.16 and 1.78 -> 1.72, inside the host's noise (three and four rounds
 of eight) -- in place, among the step's other passes, the stores the loops no longer make are worth
 more than alone.
+
+## 24. BCIR against PyTorch at four threads on 14b5941
+
+The 1,000-step language-model run at four threads on NDT-ATTN-7 (14b5941), BCIR under
+`kblock+exp+reduce` against PyTorch 2.13 eager and `torch.compile` at four intra-op threads, one round
+in §23's session -- BCIR, eager, compiled, BCIR -- every run from the committed tree
+([lm/r7-14b5941-\*](measurements/2026-10-16/lm/)):
+
+| four threads, 1,000 steps | median step, ms | tokens a second | validation / test cross-entropy | peak RSS, MB |
+|---|---|---|---|---|
+| BCIR, 14b5941 (two runs) | 211.0 / 225.6 | 4,853 / 4,538 | 1.5003 / 1.6319 | 529 |
+| PyTorch eager | 304.5 | 3,362 | 1.5003 / 1.6319 | 1,137 |
+| PyTorch compiled | 310.5 | 3,298 | 1.4998 / 1.6320 | 1,137 |
+
+Both BCIR runs end in `5137e013…`, the state of §17's, §20's and §22's runs. BCIR trains 35-44% more
+tokens a second than eager PyTorch and 38-47% more than compiled, to the same held-out cross-entropy
+in under half the memory; its 211.0 ms is the fastest 1,000-step run recorded here. The session moved
+PyTorch more than the slice moved BCIR: against §22's, eager's median step is 14% shorter (353.2 ms
+there) and compiled's 5% longer (296.9), and the two BCIR runs 14.7 ms apart are the host's spread inside one session -- the
+slice's own share is §23's alternated in-place reading, the attention 3.0 ms a step faster.

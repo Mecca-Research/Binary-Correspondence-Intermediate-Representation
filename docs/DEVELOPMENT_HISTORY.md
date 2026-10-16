@@ -2915,6 +2915,13 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  LM-4T (2026-10-16): BCIR against PyTorch at four threads on 14b5941.
+  - The 1,000-step language-model run with NDT-ATTN-7, one round in its session
+    ([measurements/2026-10-16/lm/](research/measurements/2026-10-16/lm/) r7-*, the report's §24): BCIR 211.0 / 225.6 ms a
+    step (4,853 / 4,538 tokens a second), eager PyTorch 304.5 (3,362), `torch.compile` 310.5 (3,298) --
+    BCIR 35-44% ahead of eager and 38-47% of compiled, the same held-out cross-entropy, 529 MB against
+    1,137, both BCIR states `5137e013…`; against §22's session eager's median step was 14% shorter
+    and compiled's 5% longer, the slice's own share being §23's in-place reading.
   NDT-ATTN-7 and NDT-PREPACK (2026-10-16): the attention's diagonal terms in registers, and the
   GEMM's tiles packed once, measured and not kept.
   - Cycle counters around the attention's phases put 62% of its task time in four products -- the

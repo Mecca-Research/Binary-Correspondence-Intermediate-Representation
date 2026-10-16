@@ -423,7 +423,10 @@ Since NDT-ATTN-7 (2026-10-16) the AVX-512 attention's context and transposed pro
 diagonal terms over all eight rows, a row that does not take a term merge-masked out of its sum, so
 their register blocks stay in registers (`ndt-attn.json` NA15-NA16; every value as it was, NaN for
 NaN): in place at four threads the attention 19.7 -> 16.7 ms a step (the report's §23, which also
-records NDT-PREPACK, the GEMM's tiles packed once, measured slower and not kept).
+records NDT-PREPACK, the GEMM's tiles packed once, measured slower and not kept). With it the
+1,000-step language-model run at four threads takes 211.0 / 225.6 ms a step (4,853 / 4,538 tokens a
+second) against eager PyTorch's 304.5 (3,362) and `torch.compile`'s 310.5 (3,298) in one later
+session, the same state `5137e013…` and held-out cross-entropy (§24).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
