@@ -1,0 +1,88 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_native_decoder:_CC",
+  "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+ ],
+ "faults": [
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NL1 the RMSNorm lanes drop each row's last width%16 columns (the 37- and 389-column shapes have a tail)",
+   "new": "  for (r=0;r<16;r++) for (c=w;c<w;c++) {\n    sum[r]+=x[r*w+c]*x[r*w+c];",
+   "old": "  for (r=0;r<16;r++) for (c=w16;c<w;c++) {\n    sum[r]+=x[r*w+c]*x[r*w+c];",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NL2 the RMSNorm VJP's dot lanes take gamma of the block's first column for all sixteen",
+   "new": "_mm512_set1_ps(g[c0])",
+   "old": "_mm512_set1_ps(g[c0+c])",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NL3 the RMSNorm forward's lanes reassociate x*inv*g as x*(inv*g)",
+   "new": "      for (c=0;c<w;c++) yr[c]=xr[c]*(inv*j->g[c]);",
+   "old": "      for (c=0;c<w;c++) yr[c]=xr[c]*inv*j->g[c];",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NL4 the gamma adjoint's register sums start at zero (the value dg holds is dropped)",
+   "new": "  for (c=c0;c<c1;c++) acc[c-c0]=0.0f;",
+   "old": "  for (c=c0;c<c1;c++) acc[c-c0]=j->dg[c];",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NL5 the gamma adjoint's register sums never reach dg",
+   "new": "  (void)acc;",
+   "old": "  for (c=c0;c<c1;c++) j->dg[c]=acc[c-c0];",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NL6 the softmax's lane maximum leaves out each row's diagonal score (row 0 has nothing else)",
+   "new": "      __mmask16 k=(__mmask16)(jb<i0 ? 0xffffu : (0xffffu<<(c+1))&0xffffu);\n      __m512 x=_mm512_load_ps(blk+c*16);",
+   "old": "      __mmask16 k=(__mmask16)(jb<i0 ? 0xffffu : (0xffffu<<c)&0xffffu);\n      __m512 x=_mm512_load_ps(blk+c*16);",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NL7 the transposed exponentials skip the max-subtraction (exp(x) for exp(x - max): the same softmax in exact arithmetic, other bits)",
+   "new": "",
+   "old": "    for (c=0;c<16;c++) _mm512_store_ps(blk+c*16,_mm512_sub_ps(_mm512_load_ps(blk+c*16),mx));\n",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NL8 the transposed exponentials store the diagonal block's upper lanes (future probabilities no longer zero)",
+   "new": "      __m512 x=_mm512_load_ps(blk+c*16);",
+   "old": "      __m512 x=_mm512_maskz_mov_ps(k,_mm512_load_ps(blk+c*16));",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NL9 the backward's dot tail restarts at the tile's first column (the lanes' columns added twice)",
+   "new": "    for (j=jt;j<end;j++) dot[ig+r]+=pi[j]*tile[(ig+r)*ldt+j-jt];",
+   "old": "    for (j=j0;j<end;j++) dot[ig+r]+=pi[j]*tile[(ig+r)*ldt+j-jt];",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NL10 the RMSNorm VJP's dot lanes multiply x where dy belongs",
+   "new": "_mm512_mul_ps(_mm512_mul_ps(xv,_mm512_set1_ps(g[c0+c])),xv)",
+   "old": "_mm512_mul_ps(_mm512_mul_ps(_mm512_load_ps(bd+c*16),_mm512_set1_ps(g[c0+c])),xv)",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NL11 the transposed exponentials take libm's expf (the v2 softmax is the BCIR exponential's, in every row)",
+   "new": "    { int q; for (q=0;q<256;q++) blk[q]=expf(blk[q]); }\n",
+   "old": "    exp_inplace_avx512(256,blk);\n",
+   "path": "runtime/c/bcir_tensor.c"
+  }
+ ]
+}

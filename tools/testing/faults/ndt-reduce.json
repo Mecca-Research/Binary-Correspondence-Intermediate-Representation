@@ -40,8 +40,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NR5 the gamma adjoint's column tasks walk the rows from the last (the serial kernel sums each column in row order)",
-      "new": "  for (r=j->rows;r-->0;) {\n    const float *xr=j->x+r*w,*dyr=j->dy+r*w; float inv=j->inv[r];",
-      "old": "  for (r=0;r<j->rows;r++) {\n    const float *xr=j->x+r*w,*dyr=j->dy+r*w; float inv=j->inv[r];",
+      "new": "  for (r=j->rows;r-->0;) {\n    const float *xr=j->x+r*w+c0,*dyr=j->dy+r*w+c0; float inv=j->inv[r];",
+      "old": "  for (r=0;r<j->rows;r++) {\n    const float *xr=j->x+r*w+c0,*dyr=j->dy+r*w+c0; float inv=j->inv[r];",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

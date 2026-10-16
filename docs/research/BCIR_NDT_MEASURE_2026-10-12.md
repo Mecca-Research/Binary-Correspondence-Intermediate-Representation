@@ -880,3 +880,61 @@ python3 docs/research/measurements/2026-10-14/pages/pages_ab.py --library lib/bc
     --data DATA --threads 4 --pairs 20 --out step-t4.json
 python3 docs/research/measurements/2026-10-14/pages/gemm_pages.py lib/bcir_decoder_train.so gemm.json 9
 ```
+
+## 14. The per-row chains as vector lanes (NDT-LANES)
+
+The container restarted after §13, on a faster instance of the same CPU model (Xeon @ 2.80 GHz,
+AVX-512, four vCPUs, 1 MiB of L2 a core, 33 MiB of L3); §13's absolute times compare only within
+§13. On this host the step in place at four threads (a0ea747) was 236 ms: the GEMMs 166.5 of it
+(backward 114.9, forward 51.6), the attention 23.8 (backward 13.2, forward 10.6), the update's two
+passes 14.7, the RMSNorm VJP 6.1 and RMSNorm 2.6, the activations' finiteness scan 5.4, everything
+else under 3 each.
+
+Each RMSNorm row computes its sum of squares -- and the VJP its dot, the sum of `dy g x` -- as one
+chain of rounded adds over its 384 columns in order, and each softmax row its running maximum and
+its sum over its columns `j <= i`. At four cycles an add a row's chain is about 1,500 cycles
+whatever the vector width, and every kernel ran its rows one at a time. NDT-LANES runs a whole chunk
+of 16 rows as the 16 lanes of one AVX-512 vector: 16 columns of the 16 rows are transposed in
+registers (the GEMM pack's 16 x 16 transpose) and lane r adds row r's next 16 terms in column
+order, the same rounded operations in the same order, so every row's value is the scalar loop's;
+the last `width % 16` columns continue each row's chain one row at a time. The softmax's maximum
+takes VMAXPS, whose operand rule -- `x > m ? x : m`, the second operand on equality or NaN -- is
+the scalar comparison exactly, and a lane takes a column only where its row has it (the diagonal
+block's mask). Under the exp contract the exponentials run in the same transposed blocks whole: a
+row's pass had sent its `i + 1` elements through the vector instance with the remainder one element
+at a time, a quarter of the forward at one thread in a scratch cycle-counter profile; the
+diagonal block's upper lanes are stored as the zeros they were. The attention backward's dot -- the
+sum of `p_ij dp_ij` over a tile -- runs the same way, and the gamma adjoint's column tasks keep their
+16 sums in registers over the 1,024 rows and store them once (they had loaded and stored them every
+row). Every state is the one it was: the 20-step state at one and four threads, widest, AVX2 and
+portable builds, is `4bf4e057…`
+([lanes/identity.json](measurements/2026-10-16/lanes/identity.json));
+the C harness holds RMSNorm at 40 x 37 and 48 x 389 and the attention at its reference's shapes
+to the scalar references, and `tools/testing/faults/ndt-lanes.json` NL1-NL11 each turn it red.
+
+In place at four threads, the tree before and with NDT-LANES alternated in five rounds
+([lanes/attribution-t4-*.json](measurements/2026-10-16/lanes/)):
+
+| four threads, in place, ms a step | before (a0ea747) | NDT-LANES |
+|---|---|---|
+| the attention, forward | 10.59 / 11.18 / 11.09 / 11.51 / 11.10 | 8.70 / 8.48 / 8.49 / 8.70 / 8.56 |
+| the RMSNorm VJP | 5.65 / 7.16 / 6.34 / 6.35 / 6.11 | 4.39 / 4.19 / 4.48 / 4.51 / 4.83 |
+| RMSNorm | 2.54 / 2.57 / 2.62 / 2.65 / 2.87 | 1.57 / 1.39 / 1.41 / 1.45 / 1.47 |
+| the attention, backward | 13.35 / 14.54 / 13.96 / 14.12 / 14.19 | 13.89 / 13.18 / 13.51 / 14.17 / 13.88 |
+| the GEMMs (code unchanged) | 170.0 / 175.7 / 171.8 / 178.6 / 175.9 | 169.0 / 169.3 / 175.7 / 182.2 / 173.4 |
+| the step (median of eight) | 243.6 / 248.2 / 245.1 / 254.4 / 248.1 | 237.3 / 237.6 / 244.5 / 254.1 / 240.6 |
+
+The three kernels are faster in every round, together 20.1 -> 14.5 ms of the step; the GEMMs' own
+spread between rounds (169-182 ms on unchanged code) is this host's, and the step's median moved
+248.1 -> 240.6 ms. The attention backward barely moved: its dot was a small part of it. What remains
+of the attention is its products -- the forward's scores and context, the backward's
+probability-adjoint tiles (through the general GEMM kernel, an operand packed per tile) and its dv,
+dq and dk -- whose v1 arithmetic, a rounded product and a rounded sum per term, runs at half the
+FMA rate by construction. Reproduce:
+
+```bash
+python3 docs/research/measurements/2026-10-13/scan/attribution.py --src runtime/c --data DATA \
+    --threads 4 --steps 8 --out after.json  # and --src BEFORE/runtime/c for the other arm
+python3 docs/research/measurements/2026-10-11/train_comparison.py identity --data DATA --steps 20 \
+    --threads 1,4 --contract kblock+exp+reduce --variants widest,avx2,portable
+```

@@ -431,8 +431,8 @@ static void pool_identity(void) {
   static float aq[2*70*8*48],ak[2*70*4*130],av[2*70*4*130],ady[2*70*8*48],p0[2*8*70*70],
       p1[2*8*70*70],y0[2*70*8*48],y1[2*70*8*48],dq0[2*70*8*48],dq1[2*70*8*48],
       dk0[2*70*4*130],dk1[2*70*4*130],dv0[2*70*4*130],dv1[2*70*4*130];
-  static float x[20000],u[20000],g[20000],e0[20000],e1[20000],f0[20000],f1[20000],gamma[37];
-  static float dg0[37],dg1[37],inv[40];
+  static float x[20000],u[20000],g[20000],e0[20000],e1[20000],f0[20000],f1[20000],gamma[389];
+  static float dg0[389],dg1[389],inv[48];
   static float ref[16][3][4096]; static bcir_decoder_event refev[16][3];
   static unsigned char hits[300]; uint32_t contract,other;
   /* v1; fused; exp; fused+exp; kblock; kblock+exp; each with the reduce bit */
@@ -452,7 +452,7 @@ static void pool_identity(void) {
   assert(bcir_tensor_pool_threads(NULL)==1);
   for (i=0;i<14000;i++) { a[i]=sinf((float)i*0.71f)*(i%3 ? 4.0f : 0.125f); b[i]=cosf((float)i*1.37f)-0.25f; }
   for (i=0;i<20000;i++) { x[i]=sinf((float)i*0.37f)*3.0f; u[i]=cosf((float)i*0.53f)*1.3f; g[i]=sinf((float)i*0.29f)-0.1f; }
-  for (i=0;i<37;i++) gamma[i]=1.0f+0.1f*sinf((float)i);
+  for (i=0;i<389;i++) gamma[i]=1.0f+0.1f*sinf((float)i);
   stream(ids,targets,120);
   for (ci=0;ci<nc;ci++) {
     bcir_decoder_state st=fixture_of(5,8,1,2); contract=contracts[ci]; st.contract=contract;
@@ -548,13 +548,20 @@ static void pool_identity(void) {
     memcpy(e1,u,sizeof(e1)); bcir_tensor_add_pool(pool,20000,x,e1); assert(!memcmp(e0,e1,sizeof(e0)));
     memcpy(e0,u,sizeof(e0)); for (i=0;i<20000;i++) e0[i]*=x[i];
     memcpy(e1,u,sizeof(e1)); bcir_tensor_mul_pool(pool,20000,x,e1); assert(!memcmp(e0,e1,sizeof(e0)));
-    bcir_tensor_rms(40,37,1e-5f,x,gamma,e0); bcir_tensor_rms_pool(pool,40,37,1e-5f,x,gamma,e1);
-    assert(!memcmp(e0,e1,40*37*sizeof(float)));
-    for (i=0;i<37;i++) dg0[i]=dg1[i]=0.5f*cosf((float)i);
-    memset(inv,0,sizeof(inv));
-    bcir_tensor_rms_backward(40,37,1e-5f,x,gamma,g,e0,dg0);
-    bcir_tensor_rms_backward_pool(pool,40,37,1e-5f,x,gamma,g,e1,dg1,inv);
-    assert(!memcmp(e0,e1,40*37*sizeof(float)) && !memcmp(dg0,dg1,sizeof(dg0)) && inv[39]!=0.0f);
+    /* RMSNorm over 40 x 37 (two whole row chunks and a part one) and 48 x 389 (three whole chunks,
+     * 24 blocks of 16 columns and a ragged five): the whole chunks are AVX-512's 16-row lanes
+     * (NDT-RMS), held with the rest to the serial kernels */
+    for (s=0;s<2;s++) {
+      size_t rows=s ? 48 : 40,width=s ? 389 : 37;
+      bcir_tensor_rms(rows,width,1e-5f,x,gamma,e0); bcir_tensor_rms_pool(pool,rows,width,1e-5f,x,gamma,e1);
+      assert(!memcmp(e0,e1,rows*width*sizeof(float)));
+      for (i=0;i<width;i++) dg0[i]=dg1[i]=0.5f*cosf((float)i);
+      memset(inv,0,sizeof(inv));
+      bcir_tensor_rms_backward(rows,width,1e-5f,x,gamma,g,e0,dg0);
+      bcir_tensor_rms_backward_pool(pool,rows,width,1e-5f,x,gamma,g,e1,dg1,inv);
+      assert(!memcmp(e0,e1,rows*width*sizeof(float)) && !memcmp(dg0,dg1,width*sizeof(float)) &&
+          inv[0]!=0.0f && inv[rows-1]!=0.0f);
+    }
     memcpy(f0,x,sizeof(f0)); bcir_tensor_rope(2,40,3,8,10000.0,f0,0);
     memcpy(f1,x,sizeof(f1)); bcir_tensor_rope_pool(pool,2,40,3,8,10000.0,f1,0);
     assert(!memcmp(f0,f1,2*40*3*8*sizeof(float)));

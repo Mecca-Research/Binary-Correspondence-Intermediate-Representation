@@ -1028,14 +1028,53 @@ void bcir_tensor_swiglu_backward_v2_pool(bcir_tensor_pool *pool, size_t n, const
 }
 /* Rows in ranges of BCIR_ROW_CHUNK: each row's statistics are its own. */
 #define BCIR_ROW_CHUNK 16
-typedef struct rms_job { size_t rows,width; float eps; const float *x,*g; float *y; } rms_job;
+#ifdef BCIR_MM_DISPATCH
+/* A chunk of 16 rows' statistics as the 16 lanes of a vector (NDT-RMS): lane r runs row r's chain
+ * -- the columns in order, one rounded product and one rounded sum per column -- so each row's
+ * sum of squares (and, with dy, the VJP's dot) is the scalar loop's value bit for bit. Per 16
+ * columns the rows' block is transposed in registers (the GEMM pack's 16 x 16 transpose); the
+ * last width%16 columns continue each row's chain one row at a time. The scalar loops spent four
+ * cycles per column on one dependent add; the lanes spend them on sixteen rows at once. */
+__attribute__((target("avx512f"))) static void rms16_stats(size_t w, const float *x, const float *dy,
+    const float *g, float *sum, float *dot) {
+  _Alignas(64) float bx[256],bd[256];
+  __m512 s=_mm512_setzero_ps(),d=_mm512_setzero_ps(); size_t c0,c,r,w16=w/16*16;
+  for (c0=0;c0<w16;c0+=16) {
+    kb512_transpose16(x+c0,w,bx,16);
+    if (dy) kb512_transpose16(dy+c0,w,bd,16);
+    for (c=0;c<16;c++) {
+      __m512 xv=_mm512_load_ps(bx+c*16);
+      s=_mm512_add_ps(s,_mm512_mul_ps(xv,xv));
+      if (dy) d=_mm512_add_ps(d,_mm512_mul_ps(_mm512_mul_ps(_mm512_load_ps(bd+c*16),_mm512_set1_ps(g[c0+c])),xv));
+    }
+  }
+  _mm512_storeu_ps(sum,s);
+  if (dy) _mm512_storeu_ps(dot,d);
+  for (r=0;r<16;r++) for (c=w16;c<w;c++) {
+    sum[r]+=x[r*w+c]*x[r*w+c];
+    if (dy) dot[r]+=dy[r*w+c]*g[c]*x[r*w+c];
+  }
+}
+#endif
+typedef struct rms_job { size_t rows,width; float eps; const float *x,*g; float *y; int variant; } rms_job;
 static void rms_task(void *ctx, size_t task) {
   rms_job *j=(rms_job *)ctx; size_t r0=task*BCIR_ROW_CHUNK,r1=r0+BCIR_ROW_CHUNK<j->rows ? r0+BCIR_ROW_CHUNK : j->rows;
+#ifdef BCIR_MM_DISPATCH
+  if (j->variant==4 && r1-r0==16) {
+    float sum[16]; size_t r,c,w=j->width;
+    rms16_stats(w,j->x+r0*w,NULL,NULL,sum,NULL);
+    for (r=0;r<16;r++) {
+      const float *xr=j->x+(r0+r)*w; float *yr=j->y+(r0+r)*w,inv=1.0f/sqrtf(sum[r]/(float)w+j->eps);
+      for (c=0;c<w;c++) yr[c]=xr[c]*inv*j->g[c];
+    }
+    return;
+  }
+#endif
   bcir_tensor_rms(r1-r0,j->width,j->eps,j->x+r0*j->width,j->g,j->y+r0*j->width);
 }
 void bcir_tensor_rms_pool(bcir_tensor_pool *pool, size_t rows, size_t width, float eps,
     const float *x, const float *g, float *y) {
-  rms_job j; j.rows=rows; j.width=width; j.eps=eps; j.x=x; j.g=g; j.y=y;
+  rms_job j; j.rows=rows; j.width=width; j.eps=eps; j.x=x; j.g=g; j.y=y; j.variant=mm_widest();
   pool_run(pool,rms_task,&j,(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);
 }
 /* The RMSNorm VJP: rows in ranges of BCIR_ROW_CHUNK (each row's dx and 1/rms its own), then
@@ -1043,11 +1082,24 @@ void bcir_tensor_rms_pool(bcir_tensor_pool *pool, size_t rows, size_t width, flo
  * from the value it holds -- the serial kernel's operations, element for element. */
 #define BCIR_COL_CHUNK 16
 typedef struct rmsb_job {
-  size_t rows,width; float eps; const float *x,*g,*dy; float *dx,*dg,*inv;
+  size_t rows,width; float eps; const float *x,*g,*dy; float *dx,*dg,*inv; int variant;
 } rmsb_job;
 static void rmsb_rows_task(void *ctx, size_t task) {
   rmsb_job *j=(rmsb_job *)ctx; size_t r,c,w=j->width;
   size_t r0=task*BCIR_ROW_CHUNK,r1=r0+BCIR_ROW_CHUNK<j->rows ? r0+BCIR_ROW_CHUNK : j->rows;
+#ifdef BCIR_MM_DISPATCH
+  if (j->variant==4 && r1-r0==16) {
+    float sum[16],dot[16];
+    rms16_stats(w,j->x+r0*w,j->dy+r0*w,j->g,sum,dot);
+    for (r=0;r<16;r++) {
+      const float *xr=j->x+(r0+r)*w,*dyr=j->dy+(r0+r)*w; float *dxr=j->dx+(r0+r)*w;
+      float inv=1.0f/sqrtf(sum[r]/(float)w+j->eps),coeff=dot[r]*inv*inv*inv/(float)w;
+      for (c=0;c<w;c++) dxr[c]=dyr[c]*j->g[c]*inv-xr[c]*coeff;
+      j->inv[r0+r]=inv;
+    }
+    return;
+  }
+#endif
   for (r=r0;r<r1;r++) {
     const float *xr=j->x+r*w,*dyr=j->dy+r*w; float *dxr=j->dx+r*w;
     float sum=0.0f,dot=0.0f,inv,coeff;
@@ -1057,17 +1109,22 @@ static void rmsb_rows_task(void *ctx, size_t task) {
     j->inv[r]=inv;
   }
 }
+/* A column chunk's sums live in the task's registers over the rows and reach dg once at the end:
+ * the same rounded terms in the same row order, without a load and a store of dg per row. */
 static void rmsb_cols_task(void *ctx, size_t task) {
-  rmsb_job *j=(rmsb_job *)ctx; size_t r,c,w=j->width;
+  rmsb_job *j=(rmsb_job *)ctx; size_t r,c,w=j->width; float acc[BCIR_COL_CHUNK];
   size_t c0=task*BCIR_COL_CHUNK,c1=c0+BCIR_COL_CHUNK<w ? c0+BCIR_COL_CHUNK : w;
+  for (c=c0;c<c1;c++) acc[c-c0]=j->dg[c];
   for (r=0;r<j->rows;r++) {
-    const float *xr=j->x+r*w,*dyr=j->dy+r*w; float inv=j->inv[r];
-    for (c=c0;c<c1;c++) j->dg[c]+=dyr[c]*xr[c]*inv;
+    const float *xr=j->x+r*w+c0,*dyr=j->dy+r*w+c0; float inv=j->inv[r];
+    for (c=0;c<c1-c0;c++) acc[c]+=dyr[c]*xr[c]*inv;
   }
+  for (c=c0;c<c1;c++) j->dg[c]=acc[c-c0];
 }
 void bcir_tensor_rms_backward_pool(bcir_tensor_pool *pool, size_t rows, size_t width, float eps,
     const float *x, const float *g, const float *dy, float *dx, float *dg, float *inv) {
   rmsb_job j; j.rows=rows; j.width=width; j.eps=eps; j.x=x; j.g=g; j.dy=dy; j.dx=dx; j.dg=dg; j.inv=inv;
+  j.variant=mm_widest();
   pool_run(pool,rmsb_rows_task,&j,(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);
   pool_run(pool,rmsb_cols_task,&j,(width+BCIR_COL_CHUNK-1)/BCIR_COL_CHUNK);
 }
@@ -1158,7 +1215,10 @@ void bcir_tensor_rope(size_t b, size_t t, size_t heads, size_t dim,
  * reference loop (test_decoder_train.c keeps it) performs, in its order, so the result is
  * bit-identical; future scores stay exactly zero. Under the exp contract the softmax row goes
  * through the exponential's vector instance after the max-subtraction (the same exp1 per
- * element, the same sum order; the scalar loop cost the forward a quarter more than libm). */
+ * element, the same sum order; the scalar loop cost the forward a quarter more than libm). On
+ * AVX-512 a whole block of 16 rows runs its maxima and sums as the lanes of one vector, and under
+ * the exp contract its exponentials in those transposed blocks (NDT-ATTN-4: att512_rowchain,
+ * att512_expsum) -- each row's chain the loop's, in its column order. */
 typedef struct att_job {
   size_t b,t,nh,nk,d,group; const float *q,*k,*v,*dy; float *p,*y,*dq,*dk,*dv; int variant,exp2;
 } att_job;
@@ -1296,6 +1356,68 @@ __attribute__((target("avx512f"))) static void att512_transposed(size_t rows, si
   }
 }
 #endif
+#ifdef BCIR_MM_DISPATCH
+/* The attention's row chains for 16 rows at once (NDT-ATTN-4): the 16 rows' blocks of 16 columns
+ * transposed in registers so lane r carries row r's chain -- the softmax's running maximum (the
+ * scalar `x > max ? x : max`, which is VMAXPS's operand rule exactly) and its sum, and the
+ * backward's dot -- over the columns in order, a lane taking a column only where the row has it;
+ * every row's value is the scalar loop's, bit for bit. */
+__attribute__((target("avx512f"))) static void att512_rowchain(size_t t, size_t i0, const float *p,
+    float *out, int sum) {
+  _Alignas(64) float blk[256]; __m512 v=sum ? _mm512_setzero_ps() : _mm512_set1_ps(-INFINITY);
+  size_t jb,c;
+  for (jb=0;jb<=i0;jb+=16) {
+    kb512_transpose16(p+i0*t+jb,t,blk,16);
+    for (c=0;c<16;c++) {
+      __mmask16 k=(__mmask16)(jb<i0 ? 0xffffu : (0xffffu<<c)&0xffffu);
+      __m512 x=_mm512_load_ps(blk+c*16);
+      v=sum ? _mm512_mask_add_ps(v,k,v,x) : _mm512_mask_max_ps(v,k,x,v);
+    }
+  }
+  _mm512_storeu_ps(out,v);
+}
+/* The v2 softmax's exponentials and sum for the same 16 rows, in the transposed blocks: each block
+ * less its lanes' maxima, through the exponential's vector instance whole (no row's remainder runs
+ * one element at a time), summed by lane where the row has the column, the rest zeroed, and
+ * transposed back; each element is exp1(x - max) and each sum its row's chain in column order. */
+__attribute__((target("avx512f"))) static void att512_expsum(size_t t, size_t i0, float *p,
+    const float *maxv, float *sum) {
+  _Alignas(64) float blk[256]; __m512 mx=_mm512_loadu_ps(maxv),s=_mm512_setzero_ps(); size_t jb,c;
+  for (jb=0;jb<=i0;jb+=16) {
+    kb512_transpose16(p+i0*t+jb,t,blk,16);
+    for (c=0;c<16;c++) _mm512_store_ps(blk+c*16,_mm512_sub_ps(_mm512_load_ps(blk+c*16),mx));
+    exp_inplace_avx512(256,blk);
+    for (c=0;c<16;c++) {
+      __mmask16 k=(__mmask16)(jb<i0 ? 0xffffu : (0xffffu<<c)&0xffffu);
+      __m512 x=_mm512_maskz_mov_ps(k,_mm512_load_ps(blk+c*16));
+      s=_mm512_mask_add_ps(s,k,s,x);
+      _mm512_store_ps(blk+c*16,x);
+    }
+    kb512_transpose16(blk,16,p+i0*t+jb,t);
+  }
+  _mm512_storeu_ps(sum,s);
+}
+/* The backward's dot over one tile for 16 rows (rows i0+ig.. of the block, columns [jt, lim)):
+ * the whole 16-column blocks as lanes, the rest of each row's columns after them in order. */
+__attribute__((target("avx512f"))) static void att512_dot(size_t t, size_t i0, size_t ig, size_t jt,
+    size_t lim, const float *ph, const float *tile, size_t ldt, float *dot) {
+  _Alignas(64) float bp[256],bd[256]; __m512 v=_mm512_loadu_ps(dot+ig); size_t j0,c,r,j,row=i0+ig;
+  for (j0=jt;j0+16<=lim && j0<row+16;j0+=16) {
+    kb512_transpose16(ph+row*t+j0,t,bp,16);
+    kb512_transpose16(tile+ig*ldt+(j0-jt),ldt,bd,16);
+    for (c=0;c<16;c++) {
+      size_t col=j0+c;
+      __mmask16 k=(__mmask16)(col<=row ? 0xffffu : (0xffffu<<(col-row))&0xffffu);
+      v=_mm512_mask_add_ps(v,k,v,_mm512_mul_ps(_mm512_load_ps(bp+c*16),_mm512_load_ps(bd+c*16)));
+    }
+  }
+  _mm512_storeu_ps(dot+ig,v);
+  for (r=0;r<16;r++) {
+    const float *pi=ph+(row+r)*t; size_t end=row+r+1<lim ? row+r+1 : lim;
+    for (j=j0;j<end;j++) dot[ig+r]+=pi[j]*tile[(ig+r)*ldt+j-jt];
+  }
+}
+#endif
 enum { ATT_SCORES, ATT_CONTEXT, ATT_TRANSPOSED };
 /* One of the attention's masked products over its t rows: the AVX-512 register blocks for the
  * whole blocks of eight, the rest (or every row, on another instance) through the v1 kernel. */
@@ -1325,7 +1447,21 @@ static void att_head(const att_job *a, size_t r, size_t h) {
   x.ta=0; x.tb=1; x.m=t; x.n=t; x.k=d; x.alpha=1.0f; x.a=a->q+(r*t*nh+h)*d; x.lda=nh*d;
   x.b=a->k+(r*t*nk+kh)*d; x.ldb=nk*d; x.c=ph; x.ldc=t; x.mode=MM_LOWER;
   att_rows(a->variant,&x,t,ATT_SCORES);
-  for (i=0;i<t;i++) {
+  i=0;
+#ifdef BCIR_MM_DISPATCH
+  if (a->variant==4) for (;i+16<=t;i+=16) {
+    float maxv[16],sum[16]; size_t u;
+    for (u=0;u<16;u++) { float *pi=ph+(i+u)*t; for (j=0;j<=i+u;j++) pi[j]*=scale; }
+    att512_rowchain(t,i,ph,maxv,0);
+    if (a->exp2) att512_expsum(t,i,ph,maxv,sum);
+    else {
+      for (u=0;u<16;u++) { float *pi=ph+(i+u)*t; for (j=0;j<=i+u;j++) pi[j]=expf(pi[j]-maxv[u]); }
+      att512_rowchain(t,i,ph,sum,1);
+    }
+    for (u=0;u<16;u++) { float *pi=ph+(i+u)*t; for (j=0;j<=i+u;j++) pi[j]/=sum[u]; }
+  }
+#endif
+  for (;i<t;i++) {
     float *pi=ph+i*t,maxv=-INFINITY,sum=0.0f;
     for (j=0;j<=i;j++) { pi[j]*=scale; if (pi[j]>maxv) maxv=pi[j]; }
     if (a->exp2) {  /* v2: the row through the vector instance, then the sum in index order */
@@ -1430,7 +1566,11 @@ static void att_head_backward(const att_job *a, size_t r, size_t h) {
           x.ldb=ldk; x.c=tile; x.ldc=BCIR_ATT_COLS; x.mode=MM_FULL;
           mm_run(variant,&x);
         }
-        for (i=0;i<rows;i++) {
+        i=0;
+#ifdef BCIR_MM_DISPATCH
+        if (!pass && variant==4) for (;i+16<=rows;i+=16) att512_dot(t,i0,i,jt,jt+cols,ph,tile,BCIR_ATT_COLS,dot);
+#endif
+        for (;i<rows;i++) {
           float *pi=ph+(i0+i)*t; size_t end=i0+i+1<jt+cols ? i0+i+1 : jt+cols;
           for (j=jt;j<end;j++) {
             float dp=tile[i*BCIR_ATT_COLS+j-jt];

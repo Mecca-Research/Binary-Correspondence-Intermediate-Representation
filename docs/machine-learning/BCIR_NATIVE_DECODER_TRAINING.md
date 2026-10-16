@@ -364,6 +364,18 @@ step's GEMM time 16% lower at one and at four threads, the transposed-A weight g
 (384 x 384 x 1024 at four threads 170-187 -> 241-276 GFLOP/s); in place at four threads 381-408 ->
 331-348 ms.
 
+The step's per-row chains run as vector lanes since NDT-LANES (2026-10-16). RMSNorm's sum of
+squares and its VJP's dot, the softmax's running maximum and sum, and the attention backward's dot
+are each one dependent chain per row -- the columns in order, one rounded operation each -- and ran
+one row at a time. On AVX-512 a whole chunk of 16 rows now runs as the 16 lanes of one vector, 16
+columns at a time transposed in registers, each lane its own row's chain in the same order, so
+every value is the scalar loop's (the scalar `x > max ? x : max` is VMAXPS's operand rule); under
+the exp contract the softmax's exponentials run in the same transposed blocks whole, and the gamma
+adjoint's column sums stay in the task's registers (the C harness's references, RMSNorm at 40 x 37
+and 48 x 389; `tools/testing/faults/ndt-lanes.json` NL1-NL11). In place at four threads (the
+report's §14) the attention forward fell 11.10 -> 8.56 ms a step, the RMSNorm VJP 6.34 -> 4.48 and
+RMSNorm 2.62 -> 1.45, every round of five.
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,

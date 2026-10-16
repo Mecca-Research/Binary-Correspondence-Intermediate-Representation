@@ -2915,6 +2915,27 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-LANES (2026-10-16): the step's per-row chains as the lanes of a vector.
+  - The step's in-place attribution on this host (the container restarted on a faster instance of
+    the same CPU model; the four-thread step about 236-254 ms) put RMSNorm's two kernels at 8.9 ms
+    and the attention at 25. Each RMSNorm row and each softmax row was one dependent chain -- a
+    rounded add per column, four cycles each -- run one row at a time, the softmax's exponential
+    ran each row's remainder one element at a time, and the gamma adjoint's column tasks loaded
+    and stored their sums once per row.
+  - On AVX-512 a whole chunk of 16 rows now runs as the lanes of one vector: 16 columns of the 16
+    rows transposed in registers (the GEMM pack's transpose), lane r adding row r's terms in column
+    order, so every sum, dot and maximum is its scalar loop's bit for bit (the scalar
+    `x > max ? x : max` is VMAXPS's operand rule). The softmax's exponentials under the exp contract
+    run in those transposed blocks whole, the diagonal block's upper lanes stored as the zeros they
+    were; the gamma adjoint's column sums stay in registers and reach dg once.
+  - Evidence: the C harness's references (RMSNorm at 40 x 37 and 48 x 389 -- whole chunks, a part
+    chunk, a ragged column tail -- and the attention reference's shapes, finite and not, at every
+    variant build); `ndt-lanes.json` NL1-NL11, `ndt-reduce.json` NR5 re-anchored; the 20-step state
+    at one and four threads `4bf4e057…`, the one it was.
+  - Measured in place at four threads, five rounds alternated with the tree before
+    ([measurements/2026-10-16/lanes/](research/measurements/2026-10-16/lanes/), the report's §14):
+    the attention forward 11.10 -> 8.56 ms, the RMSNorm VJP 6.34 -> 4.48, RMSNorm 2.62 -> 1.45,
+    every round; the step 248.1 -> 240.6 ms, its GEMMs unchanged within the host's few percent.
   NDT-PAGES (2026-10-14): the trainer's state on 2 MB transparent huge pages.
   - The six state buffers (335 MiB on the 9.84M decoder) were ctypes arrays: glibc serves them from
     anonymous mappings it never advises, and under the host's `madvise` THP mode not one of their
