@@ -60,8 +60,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NT8 the backward's task runs one query head short of its KV head's group (the serial run too: the reference catches it)",
-      "new": "  for (h=first;h+1<first+a->group;h++) att_head_backward(a,r,h);",
-      "old": "  for (h=first;h<first+a->group;h++) att_head_backward(a,r,h);",
+      "new": "  for (h=first;h+1<first+a->group;h++) att_head_backward(a,r,h,vt);",
+      "old": "  for (h=first;h<first+a->group;h++) att_head_backward(a,r,h,vt);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
