@@ -39,8 +39,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NE5 the trainer's SiLU ignores the exponential contract",
-      "new": "  else if (s->contract&~BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_mul_v2_pool(s->pool,n,x,u,y);",
-      "old": "  else if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_mul_v2_pool(s->pool,n,x,u,y);",
+      "new": "  else if (s->contract&~BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_mul_v2_scan_pool(s->pool,n,x,u,y,bad);",
+      "old": "  else if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_mul_v2_scan_pool(s->pool,n,x,u,y,bad);",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

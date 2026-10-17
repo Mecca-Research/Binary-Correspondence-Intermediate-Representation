@@ -39,8 +39,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NT5 RMSNorm's last row chunk is dropped",
-      "new": "  pool_run(pool,rms_task,&j,rows/BCIR_ROW_CHUNK);",
-      "old": "  pool_run(pool,rms_task,&j,(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);",
+      "new": "  rms_job j; unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=rows/BCIR_ROW_CHUNK;",
+      "old": "  rms_job j; unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK;",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
