@@ -2915,6 +2915,45 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-UPDATE (2026-10-17): the AdamW update's commit and first pass, the same values.
+  - A probe of the trainer's own functions at the 9.84M decoder's size on four threads
+    ([update/update_probe.c](research/measurements/2026-10-17/update/update_probe.c)) found neither
+    pass memory-bound, as §11 of the report had read them. The commit was bound by its divider:
+    8.40 ms a call against 4.17 for its streams with trivial arithmetic, and streaming stores made it
+    slower. The first pass was bound by the reduce contract's norm chain, 16,384 dependent double
+    additions a chunk after the chunk's vector loop: 6.84 ms against 3.72 for its flag and maxima alone.
+  - The commit's two divisions an element by the bias corrections 1 - beta1^t and 1 - beta2^t, which
+    every element of a call shares, go through `div_shared`: y = RN(1/d) once a call, q0 = x*y, and
+    two FMA corrections, the second Markstein's theorem (Handbook of Floating-Point Arithmetic, 2nd
+    ed., Theorem 4.10: RN(x/d) for a faithful q and y within half an ulp of 1/d). `copysign` keeps
+    a zero's sign. It is used in the AVX-512 commit and a new AVX2+FMA commit (variant bit 8, the
+    fused GEMM's AVX2 bit, which implies FMA). The portable commit, the FMA-less AVX2 commit and the
+    preflight keep the true divisions; each element's own division and root stay.
+  - The first pass under the reduce contract on a vector variant takes two chunks a task
+    (`pair_avx512`, `pair_avx2`): both chunks' flag and maxima a vector at a time, and each chunk's
+    squares added to its own chain in index order between the loads. Each chain then runs under
+    the streams' reads and under the other's latency. Short pairs, an odd last chunk, the chain
+    contract and the portable build take the per-chunk loop.
+  - Evidence:
+    - the C harness's `update_pairs`: two decoders of 19,616 and 16,032 parameters, whole and short
+      pairs, NaN past the parameters. The state, verdict and norm match `ref_update` bit for bit
+      under both norm contracts, no pool and three, two scales, clipping on and off. 512 planted
+      refusals at the ends of sixteen chunks leave the state untouched, 64 -0.0 second moments are
+      admitted, and a -0.0 weight's zero sign is kept;
+    - under `BCIR_DT_DIVISION_PROBE` (the harness's builds only), the dispatched shared division
+      against the division over 268,444,464 float dividends for sixteen divisors;
+    - the Python test's new build capped at AVX2;
+    - `ndt-update.json` UP1-UP14, 14 of 14 caught;
+    - [division_check.c](research/measurements/2026-10-17/update/division_check.c): 24,245
+      divisors (14,837 distinct) times 16,782,765 dividends, 0 mismatches;
+    - the statedump differential: the same 376,368,795 bytes and 9.84M digest;
+    - the 20-step state `4bf4e057…`.
+  - Measured in place at four threads, eight rounds rotated with aaa2e6c's sources
+    ([measurements/2026-10-17/update/](research/measurements/2026-10-17/update/), the report's §27):
+    the update dropped from 15.33 to 10.06 ms a step (commit 8.73 -> 6.84, first pass 6.62 -> 3.15)
+    and everything but the GEMMs from 50.78 to 46.22, both in every round. The first pass now sits
+    at its streams' bound. The commit's remaining 2.0 ms over its streams is mostly each element's
+    own division and root.
   LM-4T (2026-10-17): BCIR against PyTorch at four threads on cf435d4.
   - The 1,000-step language-model run with NDT-SCAN-W, one round in its session
     ([measurements/2026-10-17/lm/](research/measurements/2026-10-17/lm/) r8-*, the report's §26): BCIR 204.7 / 207.4 ms
@@ -2941,7 +2980,9 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     verdict kept, the hidden key; through the trainer the key behind RoPE, logits that overflow alone
     and a provider's SiLU that answers 0 for an infinite gate, refused with every other activation
     finite) and its Python test's build with the bytes' bound at two tasks; `ndt-scanw.json` SW1-SW17
-    (17 of 17 caught); an old-against-new differential of the verdict over three specs, the twelve
+    (17 of 17 caught; the edit had left three earlier tables' entries without their anchors --
+    `ndt-exp.json` NE5, `ndt-fuse.json` NU7, `ndt-threads.json` NT5 -- re-anchored on its calls in
+    aaa2e6c); an old-against-new differential of the verdict over three specs, the twelve
     contracts, pools of one, two and four and ten crafted states, every observable byte hashed -- the
     same table and digest; the statedump differential's same 376,368,768 bytes and 9.84M digest; the
     20-step state `4bf4e057…`.

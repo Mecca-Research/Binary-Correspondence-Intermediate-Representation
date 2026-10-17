@@ -475,6 +475,32 @@ BCIR_DT_INLINE void adamw_commit(const adamw_terms *t,size_t n,const float *gr,f
     m1[i]=m; m2[i]=v;
   }
 }
+/* x/d for the divisor every element of a commit shares, rounded as the division rounds it
+ * (NDT-UPDATE), given y = RN(1/d): q0 = x*y is within 1.5 ulp of x/d, one FMA correction brings it
+ * within half an ulp and a vanishing term -- one of the two floating-point neighbours of x/d -- and
+ * a second is Markstein's: for such a q and a y within a relative 2^-53 of 1/d, r = x - q*d is
+ * exact and RN(q + r*y) is RN(x/d) (Handbook of Floating-Point Arithmetic, 2nd ed., Theorem 4.10),
+ * for x a float and d in [2^-53, 1] -- one minus a bias power, so every operand stays far from
+ * under- and overflow. The quotient has x's sign, which the corrections' sums lose for a zero x. */
+BCIR_DT_INLINE double shared_reciprocal(double d) { return 1/d; }
+BCIR_DT_INLINE double div_shared(double x,double d,double y) {
+  double q0=x*y,r0=fma(-q0,d,x),q1=fma(r0,y,q0),r1=fma(-q1,d,x);
+  return copysign(fma(r1,y,q1),x);
+}
+/* The commit with its two divisions by the bias corrections as div_shared: the same candidates,
+ * bit for bit, for the instances whose FMA is an instruction (the divider's two divisions an
+ * element were most of the commit's time); the third division and the root are the element's own. */
+BCIR_DT_INLINE void adamw_commit_fma(const adamw_terms *t,size_t n,const float *gr,float *wt,
+    float *m1,float *m2) {
+  size_t i; double c1=1-t->b1,c2=1-t->b2,y1=shared_reciprocal(c1),y2=shared_reciprocal(c2);
+  for (i=0;i<n;i++) {
+    double g=gr[i]*t->scale,mc=t->d1*m1[i]+(1-t->d1)*g,vc=t->d2*m2[i]+(1-t->d2)*g*g;
+    float m=(float)mc,v=(float)vc;
+    wt[i]=(float)((double)wt[i]*t->decay-t->lr*div_shared((double)m,c1,y1)/
+        (sqrt(div_shared((double)v,c2,y2))+t->eps));
+    m1[i]=m; m2[i]=v;
+  }
+}
 static int preflight_generic(const adamw_terms *t,size_t n,const float *gr,const float *wt,
     const float *m1,const float *m2) { return adamw_preflight(t,n,gr,wt,m1,m2); }
 static void commit_generic(const adamw_terms *t,size_t n,const float *gr,float *wt,
@@ -484,18 +510,47 @@ static void commit_generic(const adamw_terms *t,size_t n,const float *gr,float *
 #if defined(__x86_64__) && defined(__linux__) && (defined(__GNUC__) || defined(__clang__)) && \
     !defined(BCIR_TENSOR_NO_DISPATCH)
 #define BCIR_DT_DISPATCH 1
+#include <immintrin.h>
 __attribute__((target("avx2"))) static int preflight_avx2(const adamw_terms *t,size_t n,
     const float *gr,const float *wt,const float *m1,const float *m2) {
   return adamw_preflight(t,n,gr,wt,m1,m2);
 }
 __attribute__((target("avx2"))) static void commit_avx2(const adamw_terms *t,size_t n,
     const float *gr,float *wt,float *m1,float *m2) { adamw_commit(t,n,gr,wt,m1,m2); }
+__attribute__((target("avx2,fma"))) static void commit_avx2_fma(const adamw_terms *t,size_t n,
+    const float *gr,float *wt,float *m1,float *m2) { adamw_commit_fma(t,n,gr,wt,m1,m2); }
 __attribute__((target("avx512f"))) static int preflight_avx512(const adamw_terms *t,size_t n,
     const float *gr,const float *wt,const float *m1,const float *m2) {
   return adamw_preflight(t,n,gr,wt,m1,m2);
 }
 __attribute__((target("avx512f"))) static void commit_avx512(const adamw_terms *t,size_t n,
-    const float *gr,float *wt,float *m1,float *m2) { adamw_commit(t,n,gr,wt,m1,m2); }
+    const float *gr,float *wt,float *m1,float *m2) { adamw_commit_fma(t,n,gr,wt,m1,m2); }
+#endif
+/* The commit's variant: the GEMM's bits, and bit 8 where the AVX2 instance may take its FMAs (the
+ * fused GEMM's variants carry AVX2 only with FMA). */
+static int commit_variants(void) {
+  return bcir_tensor_mm_variants()|(bcir_tensor_mm_fused_variants()&2 ? 8 : 0);
+}
+#ifdef BCIR_DT_DIVISION_PROBE
+/* The commit's shared division alone, dispatched as the commit dispatches it, for the harness's
+ * check of it against the division over every float dividend: a build defines
+ * BCIR_DT_DIVISION_PROBE to have the symbol (the harness's own builds do; the library does not). */
+#ifdef BCIR_DT_DISPATCH
+__attribute__((target("avx512f"))) static void probe_avx512(size_t n,const float *x,double d,
+    double y,double *q) { size_t i; for (i=0;i<n;i++) q[i]=div_shared((double)x[i],d,y); }
+__attribute__((target("avx2,fma"))) static void probe_avx2_fma(size_t n,const float *x,double d,
+    double y,double *q) { size_t i; for (i=0;i<n;i++) q[i]=div_shared((double)x[i],d,y); }
+#endif
+void bcir_decoder_division_probe(size_t n,const float *x,double d,double *q);
+void bcir_decoder_division_probe(size_t n,const float *x,double d,double *q) {
+  size_t i; int v=commit_variants();
+  (void)v;
+#ifdef BCIR_DT_DISPATCH
+  if (v&4) { probe_avx512(n,x,d,shared_reciprocal(d),q); return; }
+  if ((v&2) && (v&8)) { probe_avx2_fma(n,x,d,shared_reciprocal(d),q); return; }
+#endif
+  for (i=0;i<n;i++) q[i]=(double)x[i]/d;
+}
 #endif
 static int adamw_preflight_variant(int v,const adamw_terms *t,size_t n,const float *gr,
     const float *wt,const float *m1,const float *m2) {
@@ -511,6 +566,7 @@ static void adamw_commit_variant(int v,const adamw_terms *t,size_t n,const float
   (void)v;
 #ifdef BCIR_DT_DISPATCH
   if (v&4) { commit_avx512(t,n,gr,wt,m1,m2); return; }
+  if ((v&2) && (v&8)) { commit_avx2_fma(t,n,gr,wt,m1,m2); return; }
   if (v&2) { commit_avx2(t,n,gr,wt,m1,m2); return; }
 #endif
   commit_generic(t,n,gr,wt,m1,m2);
@@ -531,7 +587,8 @@ size_t bcir_decoder_reduce_chunk(size_t n) {
 }
 typedef struct pass_part { double norm; float grmax,wmax,mmax,vmax; int bad; } pass_part;
 typedef struct pass_job {
-  const float *gr,*wt,*m1,*m2; size_t n,chunk; double gs; int reduce,variant; pass_part *parts;
+  const float *gr,*wt,*m1,*m2; size_t n,chunk,pair; double gs; int reduce,variant;
+  pass_part *parts;
 } pass_job;
 /* One chunk's verdict and maxima, without a branch, so the instances below are vector loops: one
  * flag for every refusal, as the preflight's; the maxima as the largest bit patterns read as
@@ -561,20 +618,120 @@ __attribute__((target("avx512f"))) static void pass_avx512(size_t n,const float 
     const float *wt,const float *m1,const float *m2,double gs,pass_part *p) {
   pass_span(n,gr,wt,m1,m2,gs,p);
 }
+/* Two whole chunks, n elements each and contiguous, under the reduce contract (NDT-UPDATE): both
+ * chunks' flag and maxima a vector at a time, and each chunk's squares added to its own chain in
+ * index order between the vector loads -- (double)g*gs squared and added in double from zero,
+ * pass_task's chain -- so the chains run under the four streams' reads instead of after them, and
+ * each under the other's latency. The vector flag is pass_span's element for element (each
+ * comparison true for NaN where pass_span's is false, negated); the maxima are the int32 maxima of
+ * the same bit patterns, the pair's in its first part. A chunk is 1,024 elements doubled
+ * (bcir_decoder_reduce_chunk), so whole vectors. */
+__attribute__((target("avx512f"))) static void pair_avx512(size_t n,const float *gr,
+    const float *wt,const float *m1,const float *m2,double gs,pass_part *p,double *norms) {
+  const __m512i magnitude=_mm512_set1_epi32(0x7fffffff);
+  const __m512 top=_mm512_set1_ps(FLT_MAX),zero=_mm512_setzero_ps();
+  const __m512d scale=_mm512_set1_pd(gs),dtop=_mm512_set1_pd(DBL_MAX);
+  __m512i bg=_mm512_setzero_si512(),bw=bg,bm=bg,bv=bg; __mmask16 bad=0; __mmask8 gbad=0;
+  double n0=0.0,n1=0.0,sq[32]; int32_t lane[16],mx[4]={0,0,0,0}; size_t i,c,k;
+  for (i=0;i<n;i+=16) {
+    for (c=0;c<2;c++) {
+      size_t at=c*n+i;
+      __m512 g=_mm512_loadu_ps(gr+at),w=_mm512_loadu_ps(wt+at),a=_mm512_loadu_ps(m1+at);
+      __m512 v=_mm512_loadu_ps(m2+at);
+      __m512i ig=_mm512_and_si512(_mm512_castps_si512(g),magnitude);
+      __m512i iw=_mm512_and_si512(_mm512_castps_si512(w),magnitude);
+      __m512i ia=_mm512_and_si512(_mm512_castps_si512(a),magnitude);
+      __m512d lo=_mm512_mul_pd(_mm512_cvtps_pd(_mm512_castps512_ps256(g)),scale);
+      __m512d hi=_mm512_mul_pd(_mm512_cvtps_pd(_mm256_castpd_ps(
+          _mm512_extractf64x4_pd(_mm512_castps_pd(g),1))),scale);
+      gbad|=_mm512_cmp_pd_mask(_mm512_abs_pd(lo),dtop,_CMP_NLE_UQ)|
+          _mm512_cmp_pd_mask(_mm512_abs_pd(hi),dtop,_CMP_NLE_UQ);
+      bad|=_mm512_cmp_ps_mask(_mm512_castsi512_ps(iw),top,_CMP_NLE_UQ)|
+          _mm512_cmp_ps_mask(_mm512_castsi512_ps(ia),top,_CMP_NLE_UQ)|
+          _mm512_cmp_ps_mask(v,zero,_CMP_NGE_UQ)|_mm512_cmp_ps_mask(v,top,_CMP_NLE_UQ);
+      bg=_mm512_max_epi32(bg,ig); bw=_mm512_max_epi32(bw,iw); bm=_mm512_max_epi32(bm,ia);
+      bv=_mm512_max_epi32(bv,_mm512_castps_si512(v));
+      _mm512_storeu_pd(sq+16*c,_mm512_mul_pd(lo,lo)); _mm512_storeu_pd(sq+16*c+8,_mm512_mul_pd(hi,hi));
+    }
+    for (k=0;k<16;k++) { n0+=sq[k]; n1+=sq[16+k]; }
+  }
+  _mm512_storeu_si512(lane,bg); for (k=0;k<16;k++) mx[0]=lane[k]>mx[0] ? lane[k] : mx[0];
+  _mm512_storeu_si512(lane,bw); for (k=0;k<16;k++) mx[1]=lane[k]>mx[1] ? lane[k] : mx[1];
+  _mm512_storeu_si512(lane,bm); for (k=0;k<16;k++) mx[2]=lane[k]>mx[2] ? lane[k] : mx[2];
+  _mm512_storeu_si512(lane,bv); for (k=0;k<16;k++) mx[3]=lane[k]>mx[3] ? lane[k] : mx[3];
+  p->bad=bad!=0 || gbad!=0; memcpy(&p->grmax,&mx[0],4); memcpy(&p->wmax,&mx[1],4);
+  memcpy(&p->mmax,&mx[2],4); memcpy(&p->vmax,&mx[3],4); norms[0]=n0; norms[1]=n1;
+}
+__attribute__((target("avx2"))) static void pair_avx2(size_t n,const float *gr,const float *wt,
+    const float *m1,const float *m2,double gs,pass_part *p,double *norms) {
+  const __m256i magnitude=_mm256_set1_epi32(0x7fffffff);
+  const __m256 top=_mm256_set1_ps(FLT_MAX),zero=_mm256_setzero_ps();
+  const __m256d scale=_mm256_set1_pd(gs),dtop=_mm256_set1_pd(DBL_MAX),sign=_mm256_set1_pd(-0.0);
+  __m256i bg=_mm256_setzero_si256(),bw=bg,bm=bg,bv=bg; __m256 bad=_mm256_setzero_ps();
+  __m256d gbad=_mm256_setzero_pd(); double n0=0.0,n1=0.0,sq[16];
+  int32_t lane[8],mx[4]={0,0,0,0}; size_t i,c,k;
+  for (i=0;i<n;i+=8) {
+    for (c=0;c<2;c++) {
+      size_t at=c*n+i;
+      __m256 g=_mm256_loadu_ps(gr+at),w=_mm256_loadu_ps(wt+at),a=_mm256_loadu_ps(m1+at);
+      __m256 v=_mm256_loadu_ps(m2+at);
+      __m256i ig=_mm256_and_si256(_mm256_castps_si256(g),magnitude);
+      __m256i iw=_mm256_and_si256(_mm256_castps_si256(w),magnitude);
+      __m256i ia=_mm256_and_si256(_mm256_castps_si256(a),magnitude);
+      __m256d lo=_mm256_mul_pd(_mm256_cvtps_pd(_mm256_castps256_ps128(g)),scale);
+      __m256d hi=_mm256_mul_pd(_mm256_cvtps_pd(_mm256_extractf128_ps(g,1)),scale);
+      gbad=_mm256_or_pd(gbad,_mm256_or_pd(_mm256_cmp_pd(_mm256_andnot_pd(sign,lo),dtop,_CMP_NLE_UQ),
+          _mm256_cmp_pd(_mm256_andnot_pd(sign,hi),dtop,_CMP_NLE_UQ)));
+      bad=_mm256_or_ps(bad,_mm256_or_ps(_mm256_or_ps(
+          _mm256_cmp_ps(_mm256_castsi256_ps(iw),top,_CMP_NLE_UQ),
+          _mm256_cmp_ps(_mm256_castsi256_ps(ia),top,_CMP_NLE_UQ)),_mm256_or_ps(
+          _mm256_cmp_ps(v,zero,_CMP_NGE_UQ),_mm256_cmp_ps(v,top,_CMP_NLE_UQ))));
+      bg=_mm256_max_epi32(bg,ig); bw=_mm256_max_epi32(bw,iw); bm=_mm256_max_epi32(bm,ia);
+      bv=_mm256_max_epi32(bv,_mm256_castps_si256(v));
+      _mm256_storeu_pd(sq+8*c,_mm256_mul_pd(lo,lo)); _mm256_storeu_pd(sq+8*c+4,_mm256_mul_pd(hi,hi));
+    }
+    for (k=0;k<8;k++) { n0+=sq[k]; n1+=sq[8+k]; }
+  }
+  _mm256_storeu_si256((__m256i *)lane,bg); for (k=0;k<8;k++) mx[0]=lane[k]>mx[0] ? lane[k] : mx[0];
+  _mm256_storeu_si256((__m256i *)lane,bw); for (k=0;k<8;k++) mx[1]=lane[k]>mx[1] ? lane[k] : mx[1];
+  _mm256_storeu_si256((__m256i *)lane,bm); for (k=0;k<8;k++) mx[2]=lane[k]>mx[2] ? lane[k] : mx[2];
+  _mm256_storeu_si256((__m256i *)lane,bv); for (k=0;k<8;k++) mx[3]=lane[k]>mx[3] ? lane[k] : mx[3];
+  p->bad=_mm256_movemask_ps(bad)!=0 || _mm256_movemask_pd(gbad)!=0;
+  memcpy(&p->grmax,&mx[0],4); memcpy(&p->wmax,&mx[1],4); memcpy(&p->mmax,&mx[2],4);
+  memcpy(&p->vmax,&mx[3],4); norms[0]=n0; norms[1]=n1;
+}
 #endif
+/* A task is a chunk, or j->pair of them where first_pass pairs them (the reduce contract on a
+ * vector variant, from the contract and the variant alone): two whole chunks take pair_*, their
+ * flag and maxima in the first chunk's part and zeros in the second's, which the caller's fold
+ * reads as it read the chunks' own; any other chunk the loop below. Every chunk's partial is its
+ * chain's either way. */
 static void pass_task(void *ctx,size_t task) {
-  pass_job *j=(pass_job *)ctx; pass_part p; size_t i;
-  size_t i0=task*j->chunk,i1=i0+j->chunk<j->n ? i0+j->chunk : j->n;
+  pass_job *j=(pass_job *)ctx; size_t c,i,chunks=(j->n+j->chunk-1)/j->chunk;
+  size_t c0=task*j->pair,c1=c0+j->pair<chunks ? c0+j->pair : chunks;
   const float *gr=j->gr; double gs=j->gs;
 #ifdef BCIR_DT_DISPATCH
-  if (j->variant&4) pass_avx512(i1-i0,gr+i0,j->wt+i0,j->m1+i0,j->m2+i0,gs,&p);
-  else if (j->variant&2) pass_avx2(i1-i0,gr+i0,j->wt+i0,j->m1+i0,j->m2+i0,gs,&p);
-  else
+  if (j->pair==2 && c1-c0==2 && c1*j->chunk<=j->n) {
+    size_t i0=c0*j->chunk; double norms[2]; pass_part p;
+    if (j->variant&4) pair_avx512(j->chunk,gr+i0,j->wt+i0,j->m1+i0,j->m2+i0,gs,&p,norms);
+    else pair_avx2(j->chunk,gr+i0,j->wt+i0,j->m1+i0,j->m2+i0,gs,&p,norms);
+    p.norm=norms[0]; j->parts[c0]=p;
+    p.bad=0; p.grmax=p.wmax=p.mmax=p.vmax=0.0f; p.norm=norms[1]; j->parts[c0+1]=p;
+    return;
+  }
 #endif
-  pass_generic(i1-i0,gr+i0,j->wt+i0,j->m1+i0,j->m2+i0,gs,&p);
-  p.norm=0.0;
-  if (j->reduce) for (i=i0;i<i1;i++) { double g=(double)gr[i]*gs; p.norm+=g*g; }
-  j->parts[task]=p;
+  for (c=c0;c<c1;c++) {
+    pass_part p; size_t i0=c*j->chunk,i1=i0+j->chunk<j->n ? i0+j->chunk : j->n;
+#ifdef BCIR_DT_DISPATCH
+    if (j->variant&4) pass_avx512(i1-i0,gr+i0,j->wt+i0,j->m1+i0,j->m2+i0,gs,&p);
+    else if (j->variant&2) pass_avx2(i1-i0,gr+i0,j->wt+i0,j->m1+i0,j->m2+i0,gs,&p);
+    else
+#endif
+    pass_generic(i1-i0,gr+i0,j->wt+i0,j->m1+i0,j->m2+i0,gs,&p);
+    p.norm=0.0;
+    if (j->reduce) for (i=i0;i<i1;i++) { double g=(double)gr[i]*gs; p.norm+=g*g; }
+    j->parts[c]=p;
+  }
 }
 typedef struct preflight_job {
   const adamw_terms *t; size_t n,chunk; const float *gr,*wt,*m1,*m2; int variant; pass_part *parts;
@@ -599,7 +756,7 @@ static void commit_task(void *ctx,size_t task) {
 static void adamw_commit_pool(bcir_tensor_pool *pool,const adamw_terms *t,size_t n,
     const float *gr,float *wt,float *m1,float *m2) {
   commit_job j;
-  j.t=t; j.n=n; j.gr=gr; j.wt=wt; j.m1=m1; j.m2=m2; j.variant=bcir_tensor_mm_variants();
+  j.t=t; j.n=n; j.gr=gr; j.wt=wt; j.m1=m1; j.m2=m2; j.variant=commit_variants();
   bcir_tensor_pool_run(pool,commit_task,&j,(n+BCIR_DT_CHUNK-1)/BCIR_DT_CHUNK);
 }
 /* Whether the magnitudes the first pass saw prove that no candidate can leave float's range,
@@ -630,7 +787,11 @@ static int first_pass(bcir_decoder_state *s,double gs,pass_part *parts,pass_resu
   pj.variant=bcir_tensor_mm_variants();
   out->tasks=(pj.n+pj.chunk-1)/pj.chunk; out->chunk=pj.chunk;
   out->grmax=out->wmax=out->mmax=out->vmax=0.0;
-  bcir_tensor_pool_run(s->pool,pass_task,&pj,out->tasks);
+  pj.pair=1;
+#ifdef BCIR_DT_DISPATCH
+  if (pj.reduce && (pj.variant&6)) pj.pair=2;
+#endif
+  bcir_tensor_pool_run(s->pool,pass_task,&pj,(out->tasks+pj.pair-1)/pj.pair);
   for (i=0;i<out->tasks;i++) {
     const pass_part *p=parts+i;
     bad|=p->bad;
@@ -685,8 +846,9 @@ static int update_with(bcir_decoder_state *s,const bcir_decoder_adamw *o,
   if (o->grad_clip>0 && norm>o->grad_clip) scale*=o->grad_clip/(norm+1e-6);
   b1=s->beta1_power*o->beta1; b2=s->beta2_power*o->beta2;
   /* Round moments before using them; preflight every candidate before any commit. The commit
-   * recomputes the candidates the preflight admitted, operation for operation; the preflight
-   * is skipped only when adamw_bounded proves it would admit them all. */
+   * recomputes the candidates the preflight admitted, value for value (its shared divisions as
+   * div_shared's corrected products where the FMA is an instruction); the preflight is skipped
+   * only when adamw_bounded proves it would admit them all. */
   {
     adamw_terms t;
     t.scale=scale; t.d1=o->beta1; t.d2=o->beta2; t.decay=1-o->lr*o->weight_decay;

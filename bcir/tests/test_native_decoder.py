@@ -138,13 +138,22 @@ def test_native_c_harness_c11_and_c23():
 
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
         # and C23 once more with the writers' verdict bytes bounded at two tasks, so every scan
-        # entry takes the scan after its job (NDT-SCAN-W)
-        for standard, bound in (("c11", []), ("c2x", []), ("c2x", ["-DBCIR_TENSOR_SCAN_TASKS=2"])):
-            exe = Path(temporary) / f"gate-{standard}{'-bounded' if bound else ''}"
+        # entry takes the scan after its job (NDT-SCAN-W), and once capped at AVX2, so a host whose
+        # widest variant is AVX-512 runs the update's AVX2 pairs and commit too (NDT-UPDATE); every
+        # build with the commit's shared division exposed to the harness's check of it
+        builds = (
+            ("c11", [], ""),
+            ("c2x", [], ""),
+            ("c2x", ["-DBCIR_TENSOR_SCAN_TASKS=2"], "-bounded"),
+            ("c2x", ["-DBCIR_TENSOR_MAX_VARIANT=2"], "-avx2"),
+        )
+        for standard, options, tag in builds:
+            exe = Path(temporary) / f"gate-{standard}{tag}"
             cmd = [
                 cc,
                 f"-std={standard}",
-                *bound,
+                "-DBCIR_DT_DIVISION_PROBE",
+                *options,
                 "-O2",
                 "-Wall",
                 "-Wextra",
@@ -165,7 +174,7 @@ def test_native_c_harness_c11_and_c23():
             result = subprocess.run(
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
-            assert result.stdout.count("PASS") == 15  # writer_verdicts since NDT-SCAN-W
+            assert result.stdout.count("PASS") == 17  # update_pairs, division_probe (NDT-UPDATE)
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -186,7 +195,8 @@ def test_native_c_harness_c11_and_c23():
             if built.returncode or subprocess.run([str(probe_exe)], timeout=60).returncode:
                 continue
             exe = Path(temporary) / "gate-ubsan"
-            cmd = [engine, "-std=c11", "-O1", "-g", "-ffp-contract=off", *sanitize, "-I", str(c)]
+            cmd = [engine, "-std=c11", "-O1", "-g", "-ffp-contract=off", *sanitize]
+            cmd += ["-DBCIR_DT_DIVISION_PROBE", "-I", str(c)]
             cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]
             cmd += [str(c / "bcir_decoder_train.c"), "-o", str(exe)]
             subprocess.run(
@@ -196,7 +206,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 15
+            assert result.stdout.count("PASS") == 17
             break
 
 

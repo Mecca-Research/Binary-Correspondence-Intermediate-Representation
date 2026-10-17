@@ -1,0 +1,109 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP1 the pair's second chain adds the first chunk's squares",
+      "new": "    for (k=0;k<16;k++) { n0+=sq[k]; n1+=sq[k]; }",
+      "old": "    for (k=0;k<16;k++) { n0+=sq[k]; n1+=sq[16+k]; }",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP2 the AVX2 pair's second chain adds the first chunk's squares",
+      "new": "    for (k=0;k<8;k++) { n0+=sq[k]; n1+=sq[k]; }",
+      "old": "    for (k=0;k<8;k++) { n0+=sq[k]; n1+=sq[8+k]; }",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP3 the pair's chains add each vector's squares from its last",
+      "new": "    for (k=16;k-->0;) { n0+=sq[k]; n1+=sq[16+k]; }",
+      "old": "    for (k=0;k<16;k++) { n0+=sq[k]; n1+=sq[16+k]; }",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP4 the pair's flag forgets the gradient",
+      "new": "  p->bad=bad!=0 || (gbad&0)!=0; memcpy(&p->grmax,&mx[0],4); memcpy(&p->wmax,&mx[1],4);",
+      "old": "  p->bad=bad!=0 || gbad!=0; memcpy(&p->grmax,&mx[0],4); memcpy(&p->wmax,&mx[1],4);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP5 the AVX2 pair's flag forgets the gradient",
+      "new": "  p->bad=_mm256_movemask_ps(bad)!=0 || (_mm256_movemask_pd(gbad)&0)!=0;",
+      "old": "  p->bad=_mm256_movemask_ps(bad)!=0 || _mm256_movemask_pd(gbad)!=0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP6 the pair's gradient maximum keeps the sign bit",
+      "new": "      __m512i ig=_mm512_or_si512(_mm512_castps_si512(g),_mm512_setzero_si512());",
+      "old": "      __m512i ig=_mm512_and_si512(_mm512_castps_si512(g),magnitude);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP7 the pair admits a negative second moment",
+      "new": "          _mm512_cmp_ps_mask(v,zero,_CMP_UNORD_Q)|_mm512_cmp_ps_mask(v,top,_CMP_NLE_UQ);",
+      "old": "          _mm512_cmp_ps_mask(v,zero,_CMP_NGE_UQ)|_mm512_cmp_ps_mask(v,top,_CMP_NLE_UQ);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP8 a pair whose second chunk is short takes the paired loop",
+      "new": "  if (j->pair==2 && c1-c0==2) {",
+      "old": "  if (j->pair==2 && c1-c0==2 && c1*j->chunk<=j->n) {",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP9 the pair's second chunk is read a vector early",
+      "new": "      size_t at=c*(n-16)+i;\n      __m512 g=",
+      "old": "      size_t at=c*n+i;\n      __m512 g=",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP10 the AVX2 pair's second chunk is read a vector early",
+      "new": "      size_t at=c*(n-8)+i;\n      __m256 g=",
+      "old": "      size_t at=c*n+i;\n      __m256 g=",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP11 the shared division without its corrections",
+      "new": "  (void)d; return copysign(x*y,x);",
+      "old": "  double q0=x*y,r0=fma(-q0,d,x),q1=fma(r0,y,q0),r1=fma(-q1,d,x);\n  return copysign(fma(r1,y,q1),x);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP12 the shared division loses a zero's sign",
+      "new": "  return fma(r1,y,q1);",
+      "old": "  return copysign(fma(r1,y,q1),x);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP13 the shared reciprocal rounded to float",
+      "new": "BCIR_DT_INLINE double shared_reciprocal(double d) { return (float)(1/d); }",
+      "old": "BCIR_DT_INLINE double shared_reciprocal(double d) { return 1/d; }",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "UP14 the commit divides the first moment by the second's correction",
+      "new": "  size_t i; double c1=1-t->b1,c2=1-t->b2,y1=shared_reciprocal(c2),y2=shared_reciprocal(c2);",
+      "old": "  size_t i; double c1=1-t->b1,c2=1-t->b2,y1=shared_reciprocal(c1),y2=shared_reciprocal(c2);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    }
+  ]
+}

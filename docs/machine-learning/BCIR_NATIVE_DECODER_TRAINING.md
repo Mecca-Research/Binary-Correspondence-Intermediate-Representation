@@ -437,6 +437,14 @@ four threads everything but the GEMMs 56.0 -> 50.3 ms a step (the report's §25)
 language-model run at four threads takes 204.7 / 207.4 ms a step (5,002 / 4,936 tokens a second) against
 eager PyTorch's 293.6 (3,487) and `torch.compile`'s 267.0 (3,835), the same state `5137e013…` and
 held-out cross-entropy (§26).
+Since NDT-UPDATE (2026-10-17) both of the AdamW update's passes run near their bounds with the same values. The commit's
+two divisions an element by the bias corrections every element of a call shares go through `div_shared`:
+the reciprocal is rounded once a call, then a product and two FMA corrections, the second Markstein's
+theorem, which makes the quotient the division's. This runs on the AVX-512 commit and a new AVX2+FMA one;
+the portable instances and the preflight keep the divisions. Under the reduce contract the first pass
+takes two chunks a task, each chunk's norm chain in index order under the streams' reads
+(`ndt-update.json` UP1-UP14; the dispatched division against the division over every float significand).
+In place at four threads the update went from 15.33 to 10.06 ms a step (the report's §27).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over

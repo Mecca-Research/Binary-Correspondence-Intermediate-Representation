@@ -1530,3 +1530,107 @@ tokens a second than eager PyTorch and 29-30% more than compiled, to the same he
 under half the memory; its 204.7 ms is the fastest 1,000-step run recorded and the first past 5,000
 tokens a second. PyTorch moved too: against §24's session eager's median step is 4% shorter (304.5 ms
 there) and compiled's 14% (310.5), so the slice's own share is §25's alternated in-place reading.
+
+## 27. The AdamW update's commit and first pass (NDT-UPDATE)
+
+After NDT-SCAN-W the largest pass outside the GEMMs and the attention was the AdamW update: 15.3 ms of
+the four-thread step in §25's session (the commit 8.7, the first pass 6.6), two passes over the four
+39 MB streams of the 9.84M decoder's gradient, weights and moments. §11 had read the update's passes
+as memory-bound. A probe of the trainer's own functions at the decoder's size on a pool of four
+([update/update_probe.c](measurements/2026-10-17/update/update_probe.c), the trainer's unit compiled in,
+medians of 15 rounds) says neither was:
+
+| ms a call on a pool of four | the commit | the first pass |
+|---|---|---|
+| before the slice | 8.40 | 6.84 (one chunk a task) |
+| NDT-UPDATE | 6.15 | 3.53 (two chunks a task) |
+| bounds, not exact | 5.46 with the two shared divisions as products, 4.79 with no division or root, 4.17 the streams alone | 3.72 the flag and maxima without the chain |
+| measured, not kept | 8.47 with streaming stores | 8.02 eight chains from gathers |
+
+The commit was bound by its divider: three double divisions and a root an element, against 4.17 ms for
+the same streams with trivial arithmetic, and stores that bypass the cache made it slower. Two of the
+three divisions are by the bias corrections 1 - β1^t and 1 - β2^t, which every element of a call shares.
+The first pass was bound by its norm's chain: under the reduce contract each chunk's squares are added
+in index order in double, 16,384 dependent additions a chunk at this size, and the chain ran after the
+chunk's vector loop, so a task took the span's time and the chain's latency in turn.
+
+NDT-UPDATE keeps every value. The commit's two shared divisions go through `div_shared`: y = RN(1/d)
+once a call, q0 = x·y (within 1.5 ulp of x/d), a first FMA correction that leaves one of x/d's two
+floating-point neighbours, and a second that is Markstein's theorem (Handbook of Floating-Point
+Arithmetic, 2nd ed., Theorem 4.10): for a faithful q and a y within half an ulp of 1/d, r = x - q·d is
+exact and RN(q + r·y) is RN(x/d). The quotient keeps x's sign, which the corrections' sums lose for a
+zero x. The dividends are floats and the divisors lie in [2^-53, 1], so every operand stays far from
+under- and overflow. The AVX-512 commit takes it, and so does a new AVX2+FMA commit, the commit's
+variant bit 8, set where the fused GEMM's variants carry AVX2, which they do only with FMA. The portable
+commit, the FMA-less AVX2 commit and the preflight keep the true divisions, and each element's own
+division by √v̂ + ε and its root stay. In the first pass, under the reduce contract on a vector variant,
+a task is two chunks. `pair_avx512` and `pair_avx2` take both chunks' flag and maxima a vector at a
+time (pass_span's flag element for element, and the int32 maxima of the same bit patterns), and add
+each chunk's squares to its own chain in index order between the vector loads. The two chains then run
+under the four streams' reads, each under the other's latency. A pair whose second chunk is short, an
+odd last chunk, the chain contract and the portable build take the per-chunk loop. Every chunk's
+partial is its own chain's, so the norm is the contract's.
+
+Witnesses. The C harness's `update_pairs` runs two decoders (vocabulary 16, width 32, four heads over
+two KV heads, two layers):
+- feed-forward 64 and untied: 19,616 parameters, twenty 1,024-element chunks, nine whole pairs and a
+  pair whose second chunk is short;
+- feed-forward 48 and tied: 16,032 parameters, sixteen chunks, the last pair short.
+
+Every buffer is NaN past the parameters. Against `ref_update` (true divisions, each chunk's chain by
+itself) the harness checks the state, the verdict and the norm bit for bit, under both norm contracts,
+with no pool and a pool of three, at scales 1 and 1/3, with clipping on and off, and the square sum
+through `bcir_decoder_gradient_norm` as well. It then plants a refusal at the first and last element of
+each of the first sixteen chunks: a NaN gradient, both infinities, ±1e20 whose square overflows the
+second moment with clipping off, a NaN weight, an infinite first moment, a negative second moment. All
+512 are refused with the state untouched, and 64 -0.0 second moments are admitted as the reference
+admits them. One last case puts a -0.0 gradient over a -0.0 first moment and weight, which the
+reference makes +0.0: the first division keeps its zero's sign.
+
+Under `BCIR_DT_DIVISION_PROBE`, defined by the harness's own builds and absent from the library, the
+harness also holds the commit's shared division, dispatched as the commit dispatches it, to the
+division over 268,444,464 dividends. There are sixteen divisors: the bias corrections of 0.9, 0.95 and
+0.999 at steps 1, 2, 10 and 1,000, computed as the update computes them, and 1, 2^-53, the largest
+double below 1 and an all-ones significand. The dividends are every float significand with both signs,
+the zeros, the subnormals and the extremes. The harness's Python test now also builds C23 capped at
+AVX2, so it runs the AVX2 pair and the AVX2+FMA commit.
+
+`tools/testing/faults/ndt-update.json` UP1-UP14 injects fourteen defects and the harness catches all
+fourteen: either pair's second chain adding the first chunk's squares, the chains adding each vector's
+squares from its last, either flag forgetting the gradient, the gradient maximum keeping its sign bit,
+a negative second moment admitted, a short pair taking the paired loop, either pair reading its second
+chunk a vector early, the shared division without its corrections, losing a zero's sign or taking a
+float reciprocal, and the first moment divided by the second's correction.
+
+A record checks the trainer's own `div_shared` against the division
+([update/division_check.c](measurements/2026-10-17/update/division_check.c)) over 24,245 divisors (14,837
+distinct): the update's bias corrections as it computes them for ten betas over 2,000 steps, the edges
+of [2^-53, 1] and 4,000 random divisors. Each one takes 16,782,765 dividends: every significand at one
+exponent with both signs, a sweep of 277 exponents, the zeros and the extremes. A float dividend's
+quotient scales by its power of two while nothing under- or overflows, so that covers every float. The
+record found 0 mismatches. The form with one correction alone also missed none of its 2.0·10^11, but
+no theorem covers it, so the trainer keeps the second.
+
+The statedump differential writes the same 376,368,795 bytes and the same 9.84M digest
+(`41018dd3e5a5e469`) from aaa2e6c's sources and this slice's. The 20-step state at one and four threads,
+in the widest and AVX2-capped builds and a repeat, is `4bf4e057…`
+([update/identity.json](measurements/2026-10-17/update/identity.json)).
+
+Measured in place at four threads, aaa2e6c's sources (cf435d4's C) and this slice's in turn, the order
+rotated, eight rounds ([update/attribution-t4-\*](measurements/2026-10-17/update/)):
+
+| ms a step, medians of eight rounds | aaa2e6c | NDT-UPDATE | rounds lower |
+|---|---|---|---|
+| the update's commit | 8.73 | 6.84 | 8 of 8 |
+| the update's first pass | 6.62 | 3.15 | 8 of 8 |
+| the update | 15.33 | 10.06 | 8 of 8 |
+| everything but the GEMMs | 50.78 | 46.22 | 8 of 8 |
+| the GEMMs (their code unchanged) | 153.5 | 155.8 | -- |
+| the step (median of eight steps) | 203.0 | 200.6 | 4 of 8 |
+
+The update is 5.3 ms a step (34%) lower in every round, and everything but the GEMMs 4.6 ms (9%) lower.
+The rows the slice leaves alone moved 0.7 ms the other way. The GEMMs moved 145-211 ms between rounds,
+so the step's own median says little. The first pass is now at its streams' bound: 3.53 ms in pairs,
+against 3.72 for the flag and maxima with no chain at all. The commit's 6.15 ms is 2.0 ms above the
+streams' 4.17. 1.4 ms of that is each element's own division and root, which no other element shares,
+and 0.7 ms is the corrections' FMAs over plain products.

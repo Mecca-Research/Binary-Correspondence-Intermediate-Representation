@@ -4,6 +4,7 @@
 #include <float.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 
 static float w[4096],grad[4096],m[4096],v[4096],act[32768],scratch[32768];
@@ -1302,9 +1303,181 @@ static void writer_verdicts(void) {
       "hides); through the trainer that key, overflowing logits and a hiding provider SiLU refused "
       "with every other activation finite (%u run(s): no pool and a pool of three)\n",cases,pools);
 }
+/* NDT-UPDATE: the first pass's paired chunks and the commit's shared divisions, on two decoders
+ * (vocab 16, width 32, four heads over two KV heads, two layers): feed-forward 64 and untied, 19,616
+ * parameters, twenty of the reduce contract's 1,024-element chunks -- nine whole pairs, which take
+ * the paired loop on a vector variant, and a pair whose second chunk is short, which takes the chunk
+ * loop -- and feed-forward 48 and tied, 16,032 parameters, sixteen chunks, its last pair short too;
+ * every buffer NaN past the parameters, which no pass may read. Against ref_update (true
+ * divisions, each chunk's chain by itself), the state, the verdict and the norm bit for bit, under
+ * the reduce contract and the chain, serially and on a pool of three, at a scale of 1 and of 1/3,
+ * clipping on and off, the square sum through bcir_decoder_gradient_norm too; then at each of the
+ * first sixteen chunks, at its first and last element, a refusal planted -- a NaN gradient, both
+ * infinities, a gradient of 1e20 (or -1e20) whose square overflows the second moment with clipping
+ * off, so the gradient maximum the bound reads must have seen it, a NaN weight, an infinite first
+ * moment, a negative second moment -- each refused with the state untouched, and a -0.0 second
+ * moment admitted as the reference admits it; and a -0.0 gradient over a -0.0 first moment and
+ * weight, whose weight the reference makes +0.0: the first division keeps its zero's sign. */
+#define UPDATE_N 24576
+static float uw[UPDATE_N],ug[UPDATE_N],um1[UPDATE_N],um2[UPDATE_N];
+static float rw[UPDATE_N],rg[UPDATE_N],rm1[UPDATE_N],rm2[UPDATE_N];
+static float uw0[UPDATE_N],ug0[UPDATE_N],um10[UPDATE_N],um20[UPDATE_N];
+static float uact[65536],uscratch[65536];
+static const bcir_decoder_spec update_specs[2]={{16,32,4,2,2,64,2,9,0,10000.0,1e-6},
+    {16,32,4,2,2,48,2,9,1,10000.0,1e-6}};
+static size_t update_spec;
+static bcir_decoder_state update_state(float *wt,float *gr,float *m1,float *m2,uint32_t contract,
+    bcir_tensor_pool *pool) {
+  bcir_decoder_state s; bcir_decoder_spec spec=update_specs[update_spec];
+  memset(&s,0,sizeof(s));
+  assert(bcir_decoder_make_plan(&spec,&s.plan)==0);
+  assert(s.plan.parameters<=UPDATE_N && s.plan.activations<=65536 && s.plan.scratch<=65536);
+  s.weights=wt; s.gradients=gr; s.moment1=m1; s.moment2=m2; s.activations=uact; s.scratch=uscratch;
+  s.weight_capacity=s.gradient_capacity=s.moment1_capacity=s.moment2_capacity=UPDATE_N;
+  s.activation_capacity=s.scratch_capacity=65536; s.beta1_power=s.beta2_power=1.0;
+  s.contract=contract; s.pool=pool;
+  return s;
+}
+static void update_fill(size_t n,unsigned seed) {
+  size_t i;
+  for (i=0;i<n;i++) {
+    /* magnitudes over six decades, so each chunk's chain rounds its own way */
+    float scale=i%13==0 ? 1e3f : i%7==0 ? 1e-3f : i%5==0 ? 30.0f : 1.0f;
+    uw[i]=0.1f*sinf((float)(i+seed)*0.37f); ug[i]=0.05f*cosf((float)(3*i+seed)*0.71f)*scale;
+    um1[i]=0.01f*sinf((float)(i+2*seed)*0.13f); um2[i]=1e-4f*(1.0f+sinf((float)(i+seed)*0.29f));
+  }
+  for (i=n;i<UPDATE_N;i++) uw[i]=ug[i]=um1[i]=um2[i]=NAN;
+  memcpy(rw,uw,n*4); memcpy(rg,ug,n*4); memcpy(rm1,um1,n*4); memcpy(rm2,um2,n*4);
+}
+static int update_untouched(size_t n) {
+  return !memcmp(uw,uw0,n*4) && !memcmp(ug,ug0,n*4) && !memcmp(um1,um10,n*4) && !memcmp(um2,um20,n*4);
+}
+/* One decoder's share: the reference's state, verdict and norm over every contract, pool and scale,
+ * then the refusals at each of the first sixteen chunks. */
+static void update_pairs_on(bcir_tensor_pool *pool,unsigned *refused,unsigned *admitted) {
+  bcir_decoder_state s=update_state(uw,ug,um1,um2,BCIR_DT_CONTRACT_REDUCE,NULL),r;
+  size_t n=s.plan.parameters,i,step,chunk,end; unsigned k;
+  assert(bcir_decoder_reduce_chunk(n)==1024);
+  assert(update_spec ? n==16032 && (n+1023)/1024==16 && n%1024 : n==19616 && (n+1023)/1024==20);
+  for (k=0;k<8;k++) {
+    uint32_t contract=k&1 ? 0u : BCIR_DT_CONTRACT_REDUCE; double gs=k&4 ? 1.0/3.0 : 1.0;
+    update_fill(n,k);
+    s=update_state(uw,ug,um1,um2,contract,k&2 ? pool : NULL); r=update_state(rw,rg,rm1,rm2,contract,NULL);
+    for (step=0;step<4;step++) {
+      bcir_decoder_adamw o={1e-3,0.9,0.95,1e-8,0.01,step%2 ? 0.0 : 1.0};
+      double have=-1.0,want=ref_norm(ug,n,gs,contract!=0),na=-1.0,nb=-2.0;
+      assert(bcir_decoder_gradient_norm(&s,gs,&have)==BCIR_DT_OK && !memcmp(&have,&want,sizeof(double)));
+      assert(bcir_decoder_update(&s,&o,gs,&na)==BCIR_DT_OK && ref_update(&r,&o,gs,&nb)==BCIR_DT_OK);
+      assert(!memcmp(&na,&nb,sizeof(double)) && s.step==r.step);
+      assert(!memcmp(uw,rw,n*4) && !memcmp(um1,rm1,n*4) && !memcmp(um2,rm2,n*4));
+      for (i=0;i<n;i++) ug[i]=rg[i]=0.05f*sinf((float)(i+step+k)*0.97f)*(i%11 ? 1.0f : 40.0f);
+    }
+  }
+  /* each of the first sixteen chunks, at its first and last element (the short chunk's last
+   * element where the chunk ends early) */
+  for (chunk=0;chunk<16;chunk++) for (end=0;end<2;end++) {
+    size_t at=chunk*1024+(end ? 1023 : 0); int c;
+    if (at>=n) at=n-1;
+    for (c=0;c<9;c++) {
+      bcir_decoder_adamw o={1e-3,0.9,0.95,1e-8,0.01,c==3 || c==4 ? 0.0 : 1.0};
+      double norm=-1.0; int want=c==8 ? BCIR_DT_OK : BCIR_DT_NUMERIC;
+      update_fill(n,7); s=update_state(uw,ug,um1,um2,BCIR_DT_CONTRACT_REDUCE,pool);
+      r=update_state(rw,rg,rm1,rm2,BCIR_DT_CONTRACT_REDUCE,NULL);
+      switch (c) {
+        case 0: ug[at]=rg[at]=NAN; break;
+        case 1: ug[at]=rg[at]=INFINITY; break;
+        case 2: ug[at]=rg[at]=-INFINITY; break;
+        case 3: ug[at]=rg[at]=1e20f; break;
+        case 4: ug[at]=rg[at]=-1e20f; break;
+        case 5: uw[at]=rw[at]=NAN; break;
+        case 6: um1[at]=rm1[at]=INFINITY; break;
+        case 7: um2[at]=rm2[at]=-1e-30f; break;
+        default: um2[at]=rm2[at]=-0.0f; break;
+      }
+      memcpy(uw0,uw,n*4); memcpy(ug0,ug,n*4); memcpy(um10,um1,n*4); memcpy(um20,um2,n*4);
+      assert(ref_update(&r,&o,1.0,&norm)==want && bcir_decoder_update(&s,&o,1.0,&norm)==want);
+      if (want==BCIR_DT_OK) {
+        assert(!memcmp(uw,rw,n*4) && !memcmp(um1,rm1,n*4) && !memcmp(um2,rm2,n*4)); (*admitted)++;
+      } else { assert(update_untouched(n) && s.step==0); (*refused)++; }
+      /* the square sum refuses exactly the gradients that are not finite */
+      if (c<3) assert(bcir_decoder_gradient_norm(&s,1.0,&norm)==BCIR_DT_NUMERIC);
+    }
+  }
+}
+static void update_pairs(void) {
+  static _Alignas(max_align_t) unsigned char pool_memory[4096]; bcir_tensor_pool *pool=NULL;
+  bcir_decoder_state s,r; size_t n,at=3*1024+517; unsigned refused=0,admitted=0; uint32_t bits;
+  bcir_decoder_adamw o={1e-3,0.9,0.95,1e-8,0.0,0.0}; double na=-1.0,nb=-2.0;
+  if (bcir_tensor_pool_size(3)) {
+    pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),3); assert(pool!=NULL);
+  }
+  for (update_spec=0;update_spec<2;update_spec++) update_pairs_on(pool,&refused,&admitted);
+  /* the zero's sign: (-0.0)/(1-b1) is -0.0, so the candidate is -0.0 - (-0.0) = +0.0 */
+  update_spec=0;
+  s=update_state(uw,ug,um1,um2,BCIR_DT_CONTRACT_REDUCE,pool); n=s.plan.parameters;
+  r=update_state(rw,rg,rm1,rm2,BCIR_DT_CONTRACT_REDUCE,NULL);
+  update_fill(n,3);
+  uw[at]=rw[at]=-0.0f; ug[at]=rg[at]=-0.0f; um1[at]=rm1[at]=-0.0f;
+  assert(bcir_decoder_update(&s,&o,1.0,&na)==BCIR_DT_OK && ref_update(&r,&o,1.0,&nb)==BCIR_DT_OK);
+  memcpy(&bits,&rw[at],4); assert(bits==0u);
+  assert(!memcmp(uw,rw,n*4) && !memcmp(um1,rm1,n*4) && !memcmp(um2,rm2,n*4));
+  bcir_tensor_pool_stop(pool);
+  printf("  PASS native update pairs: the reference update's state, verdict and norm bit for bit "
+      "on 19,616 and 16,032 parameters (whole pairs of chunks and short ones; both norm contracts, "
+      "no pool and a pool of three, scales 1 and 1/3), %u refusals at each of sixteen chunks with "
+      "the state untouched, %u -0.0 second moments admitted, and the first division's zero sign "
+      "kept\n",refused,admitted);
+}
+#ifdef BCIR_DT_DIVISION_PROBE
+void bcir_decoder_division_probe(size_t n,const float *x,double d,double *q);
+/* NDT-UPDATE: the commit's shared division, as the commit dispatches it, against the division over
+ * every float dividend, for the bias corrections the update takes -- one minus 0.9, 0.95 and 0.999
+ * to the first, second, tenth and thousandth power, computed as the update computes them -- and
+ * divisors at the edges of its range: 1, 2^-53, the largest double below 1, all-ones
+ * significands. Every significand at one exponent with both signs, then the zeros, the subnormal
+ * floats, FLT_MAX and a sweep of exponents: a float dividend's quotient scales by its power of two
+ * while nothing under- or overflows, so a significand checked at one exponent is checked at all. */
+static void division_probe(void) {
+  static float x[65536]; static double q[65536]; double d[16]; size_t nd=0,i,b,k; unsigned long long checked=0;
+  static const double betas[3]={0.9,0.95,0.999}; static const unsigned steps[4]={1,2,10,1000};
+  for (i=0;i<3;i++) {
+    double power=1.0; unsigned t,s=0;
+    for (t=1;t<=1000;t++) { double bias=power*betas[i]; if (t==steps[s]) { d[nd++]=1-bias; s++; } power=bias; }
+  }
+  d[nd++]=1.0; d[nd++]=ldexp(1.0,-53); d[nd++]=nextafter(1.0,0.0); d[nd++]=ldexp(2.0-ldexp(1.0,-52),-2);
+  assert(nd==16);
+  for (k=0;k<nd;k++) {
+    for (b=0;b<(1u<<24)/65536;b++) {
+      for (i=0;i<65536;i++) {
+        uint32_t bits=0x3f800000u|(uint32_t)((b*32768+i/2)&0x7fffffu); float f;
+        memcpy(&f,&bits,4); x[i]=i&1 ? -f : f;
+      }
+      bcir_decoder_division_probe(65536,x,d[k],q);
+      for (i=0;i<65536;i++) { double want=(double)x[i]/d[k]; assert(!memcmp(&q[i],&want,8)); }
+      checked+=65536;
+    }
+    {
+      static const float edges[]={0.0f,-0.0f,FLT_MAX,-FLT_MAX,FLT_MIN,-FLT_MIN,1.4e-45f,-1.4e-45f,1.0f};
+      int e; size_t m=0;
+      for (i=0;i<sizeof(edges)/sizeof(edges[0]);i++) x[m++]=edges[i];
+      for (e=-149;e<=127;e++) { x[m++]=(float)ldexp(1.5,e); x[m++]=(float)ldexp(1.9999999,e); }
+      bcir_decoder_division_probe(m,x,d[k],q);
+      for (i=0;i<m;i++) { double want=(double)x[i]/d[k]; assert(!memcmp(&q[i],&want,8)); }
+      checked+=m;
+    }
+  }
+  printf("  PASS native shared division: the commit's corrected products are the division's quotient "
+      "bit for bit over %llu dividends (every float significand, both signs, the zeros, the "
+      "subnormals and the extremes) for %zu divisors\n",checked,nd);
+}
+#endif
 int main(void) {
   gemm_contract(); attention_reference(); adamw_reference(); finite_differences(); refusals();
   learning(); pool_identity(); pool_claims(); reduction_references(); scan_references();
   gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); fused_passes();
-  writer_verdicts(); return 0;
+  writer_verdicts(); update_pairs();
+#ifdef BCIR_DT_DIVISION_PROBE
+  division_probe();
+#endif
+  return 0;
 }
