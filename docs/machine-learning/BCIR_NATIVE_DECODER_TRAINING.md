@@ -9,7 +9,7 @@ executes in C. PyTorch remains an independent optional reference.
 
 | Component | Native implementation |
 |---|---|
-| Tensor linear algebra | Register-blocked row-major GEMM: a KCxNR tile of B packed once per (column, depth) block into cache-line-aligned storage and reused by every row, an MRxNR block of C kept in registers across the tile's depth; bit-identical to the ascending-k loop on every input. Portable C everywhere, plus AVX2 and AVX-512 variants on x86-64 Linux (GCC or Clang) chosen per call from the CPU, all bit-identical (`bcir_tensor_mm_variant` runs one). Transpose variants, linear forward, input and accumulated weight VJPs; optional explicit LP64 CBLAS adapter. Two contracts (NDT-FMA): v1, one rounded multiply and one rounded add per term, the default of every gate, row and record; and the fused v2, one IEEE `fmaf` per term for k ascending (a portable `fmaf` instance, AVX2+FMA and AVX-512 instances fusing in registers, all bit-identical to the `fmaf` loop), selected by the state's `contract` (ABI 3) and named in the checkpoint. Three GEMM contracts, selected by the state: v1 (a rounded multiply and a rounded add per term), the fused v2 (one `fmaf` per term, NDT-FMA) and the blocked fused v3 (NDT-KBLOCK: the depth split by one rule into blocks of up to 448, each block's fused chain from zero added to c in order -- the arithmetic OpenBLAS's `sgemm` performs on its SkylakeX target, so that provider is admitted under v3 by a differential over the trainer's own shapes, and the state is one state with it or without it) |
+| Tensor linear algebra | Register-blocked row-major GEMM: a KCxNR tile of B packed once per (column, depth) block into cache-line-aligned storage and reused by every row, an MRxNR block of C kept in registers across the tile's depth; bit-identical to the ascending-k loop on every input. Portable C everywhere, plus AVX2 and AVX-512 variants on x86-64 Linux (GCC or Clang) chosen per call from the CPU, all bit-identical (`bcir_tensor_mm_variant` runs one). Transpose variants, linear forward, input and accumulated weight VJPs; optional explicit LP64 CBLAS adapter. Two contracts (NDT-FMA): v1, one rounded multiply and one rounded add per term, the default of every gate, row and record; and the fused v2, one IEEE `fmaf` per term for k ascending (a portable `fmaf` instance, AVX2+FMA and AVX-512 instances fusing in registers, all bit-identical to the `fmaf` loop), selected by the state's `contract` (ABI 3) and named in the checkpoint. Three GEMM contracts, selected by the state: v1 (a rounded multiply and a rounded add per term), the fused v2 (one `fmaf` per term, NDT-FMA) and the blocked fused v3 (NDT-KBLOCK: the depth split by one rule into blocks of up to 448, each block's fused chain from zero added to c in order -- the arithmetic OpenBLAS's `sgemm` performs on its SkylakeX target, so that provider is admitted under v3 by a differential over the trainer's own shapes, and the state is one state with it or without it); and the bf16 contract (NDT-BF16: the operands rounded to bfloat16 and accumulated in binary32 as the AMX unit's `TDPBF16PS` accumulates them -- two lanes a 32-term block, each fused step flushed when tiny, then `c = daz(c) + (E + O)` -- with portable, AVX-512 and AMX instances, bit-identical, over operands packed into workspace the state lends, ABI 4) |
 | Vector math | Stable sigmoid/SiLU, SwiGLU VJP, RMSNorm and gamma VJP, half-split RoPE and its transpose; standard libm without fast-math. Under the `exp` contract (NDT-EXP) SiLU, the SwiGLU VJP and the attention softmax take their exponential from BCIR's own `bcir_tensor_expf` -- one operation sequence on the scalar, AVX2 and AVX-512 instances, no libm, no fma, within 1 ulp of exp in double rounded to binary32 over 2^24 sampled inputs (`train.exp.ulp.max`, stated) |
 | Attention | Causal softmax attention as two masked products per (batch, head) through the GEMM kernel; a backward that rewrites the layer's probabilities in place with their score adjoint and feeds the GEMM kernel (no workspace beyond them); Q/K/V backward, GQA group-gradient accumulation, output projection backward. Both are bit-identical to the scalar reference loops, which `bcir_tensor_attention_backward` keeps |
 | Decoder | Embedding scatter-add backward, both residual paths, both per-layer norms, gate/up/down projections, final norm, tied or untied vocabulary head, mean token cross-entropy; the loss's rows, the gamma VJPs' row sums and the embedding scatter run on the pool in the serial order (NDT-REDUCE: rows whose terms the caller adds in row order, column ranges whose sums run over the rows in row order), so every loss and state is the serial one at every thread count under every contract |
@@ -61,7 +61,9 @@ fields. Checkpoint hashes detect corruption and do not authenticate an artifact.
 
 `NativeDecoder(..., contract="fused")` trains under the fused GEMM contract (v2; `"v1"` by default),
 `contract="exp"` under the BCIR exponential, `"fused+exp"` under both, `"kblock"` under the blocked
-fused GEMM contract (v3), and any of these with `+reduce` (`"reduce"` alone for v1) under the reduce
+fused GEMM contract (v3), `"bf16"` and `"bf16+exp"` under the bf16 GEMM contract (NDT-BF16: the trainer
+lends its GEMMs `trainer.workspace_bytes` of packing workspace, counted in `max_memory_bytes`, and
+admits no CBLAS provider), and any of these with `+reduce` (`"reduce"` alone for v1) under the reduce
 contract, whose clipping norm is the fixed-chunk sum the update's one pooled pass computes
 (NDT-REDUCE);
 the checkpoint names the contract and `resume` restores it, since a state trained under one is not
@@ -135,6 +137,7 @@ the C rail to it:
 | `train.memory.transient` | exact | the bytes the C plan reserves for activations and workspace over G26's concurrent-live bound on the same values | 1.326x: 999,424 bytes held over a 753,664-byte bound at the bench shape |
 | `train.mm.fused.mismatch` | exact | `bcir_tensor_mm_fused` against an exact rational emulation of the fused contract rounded once per term, bit for bit, on the same 20 cases | 0 of 20 (2026-10-12, NDT-FMA) |
 | `train.mm.kblock.mismatch` | exact | `bcir_tensor_mm_kblock` against an exact rational emulation of the blocked fused contract (v3) on 40 cases (the 20 fused cases and 20 deeper ones crossing the split rule's three cases, an inexact alpha, beta 1), plus the depths where the C split rule and the Python one disagree | 0 of 40 (2026-10-12, NDT-KBLOCK) |
+| `train.mm.bf16.mismatch` | exact | `bcir_tensor_mm_bf16_variant` on every instance the host runs (portable, AVX-512, AMX where admitted) against an exact rational emulation of the bf16 contract -- operands rounded to bf16, per 32-term block two lanes from +0.0, each term's fma rounded once and flushed when tiny, then `c = daz(c) + (E + O)` -- on 28 cases (the 20 fused cases and 8 across one, two and five blocks with an inexact alpha and beta 1) | 0 of 28 (2026-10-17, NDT-BF16) |
 | `train.mm.provider.unsound` | exact | whether `NativeDecoder.use_cblas`'s verdict on OpenBLAS (scipy_openblas32) over the comparison decoder disagrees with the differential it is defined by -- admitted though a case differs, refused though none does, or refused with another count; 0 on a host that admits (the 2026-10-12 Intel host) and on one that refuses (PR #817's AMD EPYC host, 14 of 30) alike; measured where the wheel is importable | 0 |
 | `train.mm.provider.differences` | exact, host-dependent | of the comparison decoder's 15 step shapes at beta 0 and 1, the cases where OpenBLAS's `sgemm` (one thread) differs in any bit from `bcir_tensor_mm_kblock`: the wheel's target kernels' arithmetic, not BCIR's -- reported everywhere, graded only on the baseline host (0 of 30 on the Intel host's SkylakeX kernels; 14 of 30 on PR #817's AMD host, where the trainer refuses the provider) | 0 (Intel), 14 (AMD) |
 | `train.exp.mismatch` | exact | inputs among 2^24 where two instruction-set instances of the BCIR exponential differ | 0 (2026-10-12, NDT-EXP) |
@@ -454,6 +457,20 @@ With it the 1,000-step language-model run at four threads takes 203.7 / 203.4 ms
 tokens a second), against eager PyTorch's 321.4 (3,187) and `torch.compile`'s 278.2 (3,681) in one later
 session, with the same state `5137e013…` and held-out cross-entropy (§28).
 
+Since NDT-BF16 (2026-10-17) the GEMMs can run on bfloat16 operands (the report's §31). The contract was
+pinned against the tile unit first: `TDPBF16PS` on the instance with AMX matches one model on every
+output of four distributions and every depth -- two lanes from +0.0 a 32-term block, the even terms'
+fused products in one and the odd terms' in the other, each step flushed by IEEE tininess after
+rounding with the exponent unbounded, then `c = daz(c) + (E + O)` -- and the conversion is
+nearest-even after DAZ on all 2^32 inputs. The portable, AVX-512 and AMX instances compute it bit for
+bit (the AMX one admitted by host checks and a differential once a process), an independent
+`__float128` reference finds no difference under GCC 13, Clang 18 and Clang 23, `train.mm.bf16.mismatch`
+holds it to the oracle's exact rationals, and `tools/testing/faults/ndt-bf16.json` holds 17 injected
+faults. Only the GEMMs change. At four threads the 9.84M decoder's step goes from 188.1 to 79.8 ms
+(12,832 tokens a second), the GEMMs from 150.8 to 41.8 ms of it; without AMX the AVX-512 instance runs
+at about half the FP32 kernel's rate, so there the contract buys a state identical to an AMX host's,
+not speed.
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,
@@ -463,7 +480,8 @@ The plan retains every layer's forward cache and reuses backward scratch; it is 
 a globally optimal liveness solver. The backward consumes the cache it recomputes each step:
 after `bcir_decoder_loss_backward` each layer's probability span holds its score adjoint.
 Attention storage is quadratic in context length.
-Flash/blocked attention, activation recomputation, mixed precision, accelerator
+Flash/blocked attention, activation recomputation, mixed precision beyond the bf16 GEMM contract,
+accelerator
 backward kernels, distributed collectives and device-resident checkpoints remain
 separate work. The direct loop does not issue StreamPack claims for every tensor;
 it does not change D1's planned/streamed logistic training contract or assert new

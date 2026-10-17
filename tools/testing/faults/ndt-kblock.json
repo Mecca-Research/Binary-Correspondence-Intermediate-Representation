@@ -33,8 +33,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NK4 the trainer runs the fused kernel under the blocked contract (the one predicate the forward's linears and the backward's pairs read)",
-      "new": "  return (s->contract&BCIR_DT_CONTRACT_KBLOCK) ? 1 : (s->contract&BCIR_DT_CONTRACT_FUSED) ? 1 : 0;",
-      "old": "  return (s->contract&BCIR_DT_CONTRACT_KBLOCK) ? 2 : (s->contract&BCIR_DT_CONTRACT_FUSED) ? 1 : 0;",
+      "new": "  return (s->contract&BCIR_DT_CONTRACT_BF16) ? 3 : (s->contract&BCIR_DT_CONTRACT_KBLOCK) ? 1 :",
+      "old": "  return (s->contract&BCIR_DT_CONTRACT_BF16) ? 3 : (s->contract&BCIR_DT_CONTRACT_KBLOCK) ? 2 :",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

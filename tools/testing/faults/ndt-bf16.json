@@ -1,0 +1,133 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_the_compiled_plan_and_gemm_are_the_programs",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23",
+    "bcir.tests.test_native_decoder:test_the_bf16_contract_lends_its_workspace_and_admits_no_provider",
+    "bcir.tests.test_native_decoder:test_the_training_state_is_identical_at_every_thread_count"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NB1 the conversion rounds a subnormal binary32 like any value (no DAZ)",
+      "new": "  /* zero or subnormal rounded like any value */",
+      "old": "  if (!(u&0x7f800000u)) return (uint16_t)((u>>16)&0x8000u);  /* zero or subnormal: its zero */",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NB2 a lane's tininess judged on the subnormal grid (2^-126 - 2^-150 kept, not flushed)",
+      "new": "  return fabsf((float)d)<FLT_MIN ? (float)copysign(0.0,d) : (float)d;",
+      "old": "  return fabs(d)<0x1.ffffffp-127 ? (float)copysign(0.0,d) : (float)d;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NB3 the portable block step reads a subnormal c as itself (no DAZ)",
+      "new": "        acc=bf16_ftz(acc+bf16_ftz(e+o));",
+      "old": "        acc=bf16_ftz(bf16_ftz(acc)+bf16_ftz(e+o));",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+      "label": "NB4 the portable odd lane multiplies the even term of A",
+      "new": "          o=bf16_fma(o,bf16_value(at[2*p]),bf16_value(bt[p*32+1]));",
+      "old": "          o=bf16_fma(o,bf16_value(at[2*p+1]),bf16_value(bt[p*32+1]));",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+      "label": "NB5 the portable pack interleaves B's depth pairs odd first",
+      "new": "      t[p*32+2*jj+(1-e)]=j<x->n && d<x->k ?",
+      "old": "      t[p*32+2*jj+e]=j<x->n && d<x->k ?",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+      "label": "NB6 the vector packs interleave B's depth pairs odd first (AVX-512, and AMX withdrawn)",
+      "new": "#define BF16_PAIR_INDEX _mm512_set_epi16(15,31,14,30,13,29,12,28,11,27,10,26,9,25,8,24,7,23,6,22, \\\n    5,21,4,20,3,19,2,18,1,17,0,16)",
+      "old": "#define BF16_PAIR_INDEX _mm512_set_epi16(31,15,30,14,29,13,28,12,27,11,26,10,25,9,24,8,23,7,22,6, \\\n    21,5,20,4,19,3,18,2,17,1,16,0)",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NB7 the AVX-512 instance runs without MXCSR's FTZ and DAZ",
+      "new": "  _mm_setcsr(csr);  /* FTZ (bit 15) and DAZ (bit 6) */",
+      "old": "  _mm_setcsr(csr|0x8040u);  /* FTZ (bit 15) and DAZ (bit 6) */",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NB8 the AMX instance copies an edge block back one row short (an edge the admission never reaches)",
+      "new": "      for (r=0;r+1<rows;r++) for (cc=0;cc<cols;cc++) cp[r*ldc+cc]=edge[r*32+cc];",
+      "old": "      for (r=0;r<rows;r++) for (cc=0;cc<cols;cc++) cp[r*ldc+cc]=edge[r*32+cc];",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NB9 a call in chunks leaves its last column chunk uncomputed",
+      "new": "    for (j0=0;j0+cols<x->n;j0+=cols) {",
+      "old": "    for (j0=0;j0<x->n;j0+=cols) {",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NB10 the trainer admits a bf16 state that lends no workspace",
+      "new": "",
+      "old": "    if (!s->workspace) return BCIR_DT_INVALID;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NB11 the trainer admits bf16 with the fused contract (two GEMM contracts)",
+      "new": "      0>1) return BCIR_DT_INVALID;  /* one GEMM contract */",
+      "old": "      ((s->contract&BCIR_DT_CONTRACT_BF16)!=0)>1) return BCIR_DT_INVALID;  /* one GEMM contract */",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NB12 the plan's workspace forgets the backward's gate/up dW calls (the step's largest group)",
+      "new": "      {{n,d,f},{n,d,f}},                                /* gate, up */",
+      "old": "      {{n,d,f},{n,d,f},{f,d,n},{f,d,n}},                /* gate, up */",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NB13 the trainer runs the blocked kernel under the bf16 contract",
+      "new": "  return (s->contract&BCIR_DT_CONTRACT_BF16) ? 2 : (s->contract&BCIR_DT_CONTRACT_KBLOCK) ? 2 :",
+      "old": "  return (s->contract&BCIR_DT_CONTRACT_BF16) ? 3 : (s->contract&BCIR_DT_CONTRACT_KBLOCK) ? 2 :",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_bf16_contract_lends_its_workspace_and_admits_no_provider",
+      "label": "NB14 the Python trainer leaves the workspace out of its memory budget",
+      "new": "",
+      "old": "        self.memory_bytes += self.workspace_bytes\n",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_bf16_contract_lends_its_workspace_and_admits_no_provider",
+      "label": "NB15 the Python trainer installs a CBLAS provider under bf16",
+      "new": "        if admit and _CONTRACTS[self.contract] & 0:",
+      "old": "        if admit and _CONTRACTS[self.contract] & _BF16:",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NB16 a call with no rows divides its region count by zero (the grouped entries give every call a width)",
+      "new": "  if (tr<BF16_TASKS) {  /* fewer row strips than tasks: `want` regions across, `per` blocks each */",
+      "old": "  if (tr && tr<BF16_TASKS) {  /* fewer row strips than tasks: `want` regions across, `per` blocks each */",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NB17 a call with no columns narrowed to a region width of zero, which its column count divides by",
+      "new": "    if ((nb+width-1)/width<want && per<width) width=per;",
+      "old": "    if ((nb+width-1)/width<want && per && per<width) width=per;",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

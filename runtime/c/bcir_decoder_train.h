@@ -16,8 +16,14 @@
  * the gradient in chunks of bcir_decoder_reduce_chunk elements (a function of the count alone),
  * each chunk's squares summed in index order in double from zero, the chunk sums added in chunk
  * order from zero -- so the update's one pass runs on the pool; without the bit the norm is the one
- * index-order chain, serial. Other bits are refused. A state trained under one contract is not
- * another's: the checkpoint names it. Whatever the contract, the loss's rows, the RMSNorm gamma
+ * index-order chain, serial. BCIR_DT_CONTRACT_BF16 (ABI 4, NDT-BF16) puts BCIR's GEMMs under the
+ * bf16 contract (bcir_tensor.h: operands rounded to bfloat16, accumulated as the AMX unit's
+ * TDPBF16PS accumulates them, every instance bit for bit); the state then lends `workspace`, at
+ * least bcir_decoder_workspace_bytes bytes disjoint from the arenas and the state, for the packed
+ * operands (BCIR_DT_CAPACITY below that, BCIR_DT_INVALID without one or overlapping), and a
+ * provider's GEMM, as under every contract, keeps its own. One GEMM contract at a time: FUSED,
+ * KBLOCK and BF16 exclude one another. Other bits are refused. A state trained under one contract
+ * is not another's: the checkpoint names it. Whatever the contract, the loss's rows, the RMSNorm gamma
  * adjoints and the embedding scatter run on the pool in the serial order (NDT-REDUCE), so every
  * loss and state is the serial one, bit for bit, at every thread count.
  * The plan's three counts are the arena sums of the step program in
@@ -47,6 +53,8 @@ typedef struct bcir_decoder_state {
   bcir_tensor_provider provider;
   bcir_tensor_pool *pool;
   uint32_t contract;
+  void *workspace;          /* ABI 4 (NDT-BF16): the bf16 contract's packs; ignored otherwise */
+  size_t workspace_bytes;
 } bcir_decoder_state;
 typedef struct bcir_decoder_adamw {
   double lr,beta1,beta2,epsilon,weight_decay,grad_clip;
@@ -54,10 +62,17 @@ typedef struct bcir_decoder_adamw {
 typedef struct bcir_decoder_event { double loss,grad_norm; uint64_t step; } bcir_decoder_event;
 enum { BCIR_DT_OK=0, BCIR_DT_INVALID=1, BCIR_DT_CAPACITY=2, BCIR_DT_NUMERIC=3 };
 enum { BCIR_DT_CONTRACT_FUSED=1u, BCIR_DT_CONTRACT_EXP=2u, BCIR_DT_CONTRACT_KBLOCK=4u,
-  BCIR_DT_CONTRACT_REDUCE=8u };
+  BCIR_DT_CONTRACT_REDUCE=8u, BCIR_DT_CONTRACT_BF16=16u };
 /* 1: the state through its provider; 2: the state ends in its pool (NDT-THREADS); 3: and in its
- * contract (NDT-FMA, NDT-EXP, NDT-KBLOCK, NDT-REDUCE: the same field, more bits). */
+ * contract (NDT-FMA, NDT-EXP, NDT-KBLOCK, NDT-REDUCE: the same field, more bits); 4: and in the
+ * bf16 contract's workspace (NDT-BF16). */
 BCIR_DT_API uint32_t bcir_decoder_abi_version(void);
+/* The bytes of workspace a state under `contract` lends its GEMMs: 0 unless the contract names
+ * BF16; else the largest of the step's GEMM groups' packs, each call's packed whole
+ * (bcir_tensor_mm_bf16_workspace summed over the group: an operand the calls share is packed once,
+ * so the group needs no more), so no group of the step runs in chunks. SIZE_MAX for a plan
+ * bcir_decoder_make_plan refuses. */
+BCIR_DT_API size_t bcir_decoder_workspace_bytes(const bcir_decoder_plan *plan, uint32_t contract);
 /* The reduce contract's chunk for `count` elements: 1024 doubled until the chunks number at most
  * 1024 (so 1024 up to 2^20 elements, 16384 for the 9.84M decoder). The update's first pass runs
  * one task per chunk under every contract; only under BCIR_DT_CONTRACT_REDUCE do the chunks reach

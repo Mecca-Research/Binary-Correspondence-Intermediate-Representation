@@ -3,8 +3,9 @@
  * are admitted by bcir_decoder_plan before these hot kernels are called. No heap,
  * global state, fast-math, framework dependency or device discovery; the one host
  * query is the CPU's instruction-set support, which only chooses among bit-identical
- * variants of the same kernels. Providers complete all writes before returning and
- * never throw across the C ABI. */
+ * variants of the same kernels (and, for the bf16 contract's AMX instance, the OS's tile
+ * permission and an admission differential, asked once and kept: see NDT-BF16 below).
+ * Providers complete all writes before returning and never throw across the C ABI. */
 #ifndef BCIR_TENSOR_H
 #define BCIR_TENSOR_H
 #include <stddef.h>
@@ -184,6 +185,53 @@ BCIR_DT_API void bcir_tensor_mm_group_pool(bcir_tensor_pool *pool, int contract,
 BCIR_DT_API int bcir_tensor_mm_kblock_variants(void);
 BCIR_DT_API int bcir_tensor_mm_kblock_variant(int variant, int ta, int tb, size_t m, size_t n,
     size_t k, float alpha, const float *a, const float *b, float beta, float *c);
+/* The bf16 contract (NDT-BF16): a GEMM on bfloat16 operands accumulated in binary32 as the AMX
+ * unit's TDPBF16PS accumulates them (BF16-0's record pins the instruction bit for bit), so the
+ * AMX, AVX-512 and portable instances agree on every input that is not NaN. For each element:
+ *   a(i,l) = bf16(alpha*A(i,l)), the product rounded to binary32 first, and b(l,j) = bf16(B(l,j)),
+ *   where bf16 keeps a binary32's upper 16 bits rounded to nearest, ties to even, takes a
+ *   subnormal to the zero of its sign and a NaN to a quiet NaN (bcir_tensor_bf16_bits;
+ *   VCVTNEPS2BF16's rounding);
+ *   c = beta*C, rounded (+0.0 under beta 0, C never read); the depth in blocks of
+ *   BCIR_MM_BF16_BLOCK terms from l = 0, the last padded with +0.0 terms; for each block
+ *   E = O = +0.0, then over its 16 pairs in order E = fma(a(i,2p), b(2p,j), E) and
+ *   O = fma(a(i,2p+1), b(2p+1,j), O), each one rounding, a result that is tiny (below 2^-126 when
+ *   rounded to 24 bits with the exponent unbounded) flushed to the zero of its sign; then
+ *   c = daz(c) + (E + O), each sum flushed when subnormal, daz(c) the zero of c's sign when c is
+ *   subnormal. A NaN result is a quiet NaN; which one is not part of the contract.
+ * A state trained under it is its own (BCIR_DT_CONTRACT_BF16). The operands are packed first into
+ * workspace the caller lends -- A as 16-row x 32-depth tiles, B as 16-pair x 16-column tiles of its
+ * depth pairs interleaved, rows, columns and depths padded with +0.0 to multiples of 32 -- one
+ * layout on every instance; bcir_tensor_mm_bf16_workspace gives the bytes one GEMM packs whole,
+ * bcir_tensor_mm_bf16_group_workspace a group's (operands the calls share packed once). Less
+ * workspace is not a different result: a group that does not fit runs its calls one at a time and
+ * a call that does not fit runs in chunks of rows and columns, every element the same operations
+ * in the same order; below one 32-row strip of A and one 32-column strip of B, 64 bytes of
+ * alignment besides, an entry writes nothing and returns 0. Instances: bit 1 portable C, bit 4
+ * AVX-512F (the flushes by MXCSR's FTZ and DAZ, set around its kernel only), bit 8 AMX -- offered
+ * where the CPU has AMX-TILE and AMX-BF16, the OS enables their state, Linux grants the process
+ * the tile permission (arch_prctl ARCH_REQ_XCOMP_PERM) and a differential against the portable
+ * kernel on the contract's edges agrees bit for bit; asked once per process, the answer kept in
+ * one atomic word, the unit's only state between calls. The entries return 1 (the _variant entry
+ * the instance it ran) or 0, nothing written: workspace below the minimum, an instance the host
+ * cannot run. */
+#define BCIR_MM_BF16_BLOCK 32
+BCIR_DT_API unsigned bcir_tensor_bf16_bits(float x);
+BCIR_DT_API size_t bcir_tensor_mm_bf16_workspace(size_t m, size_t n, size_t k);
+BCIR_DT_API size_t bcir_tensor_mm_bf16_group_workspace(const bcir_tensor_mm_call *chain,
+    size_t nchain, const bcir_tensor_mm_call *y, size_t ny);
+BCIR_DT_API int bcir_tensor_mm_bf16_variants(void);
+BCIR_DT_API int bcir_tensor_mm_bf16_variant(int variant, int ta, int tb, size_t m, size_t n,
+    size_t k, float alpha, const float *a, const float *b, float beta, float *c, void *workspace,
+    size_t bytes);
+BCIR_DT_API int bcir_tensor_mm_bf16_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m,
+    size_t n, size_t k, float alpha, const float *a, const float *b, float beta, float *c,
+    void *workspace, size_t bytes);
+/* bcir_tensor_mm_group_pool's job under the bf16 contract: the chain's calls into one C in order,
+ * then the rest, each element's operations those of the calls run one after another. */
+BCIR_DT_API int bcir_tensor_mm_bf16_group_pool(bcir_tensor_pool *pool,
+    const bcir_tensor_mm_call *chain, size_t nchain, const bcir_tensor_mm_call *y, size_t ny,
+    void *workspace, size_t bytes);
 /* The BCIR exponential (NDT-EXP): one operation sequence on every instance -- a Cody-Waite
  * reduction x = k ln2 + r, a degree-7 polynomial in r, 2^k as two exact power-of-two scalings
  * (one rounding into the subnormals), the three special cases selected at the end -- so the

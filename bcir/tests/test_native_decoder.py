@@ -153,6 +153,7 @@ def test_native_c_harness_c11_and_c23():
                 cc,
                 f"-std={standard}",
                 "-DBCIR_DT_DIVISION_PROBE",
+                "-DBCIR_DT_WORKSPACE_PROBE",
                 *options,
                 "-O2",
                 "-Wall",
@@ -174,7 +175,9 @@ def test_native_c_harness_c11_and_c23():
             result = subprocess.run(
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
-            assert result.stdout.count("PASS") == 17  # update_pairs, division_probe (NDT-UPDATE)
+            # update_pairs, division_probe (NDT-UPDATE); the bf16 contract, its trainer and the
+            # workspace probe (NDT-BF16)
+            assert result.stdout.count("PASS") == 20
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -196,7 +199,7 @@ def test_native_c_harness_c11_and_c23():
                 continue
             exe = Path(temporary) / "gate-ubsan"
             cmd = [engine, "-std=c11", "-O1", "-g", "-ffp-contract=off", *sanitize]
-            cmd += ["-DBCIR_DT_DIVISION_PROBE", "-I", str(c)]
+            cmd += ["-DBCIR_DT_DIVISION_PROBE", "-DBCIR_DT_WORKSPACE_PROBE", "-I", str(c)]
             cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]
             cmd += [str(c / "bcir_decoder_train.c"), "-o", str(exe)]
             subprocess.run(
@@ -206,7 +209,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 17
+            assert result.stdout.count("PASS") == 20
             break
 
 
@@ -265,10 +268,12 @@ def test_the_compiled_plan_and_gemm_are_the_programs():
         assert nf.mm_mismatch(lib) == 0
         assert nf.mm_fused_mismatch(lib) == 0
         assert nf.mm_kblock_mismatch(lib) == 0
+        assert nf.mm_bf16_mismatch(lib) == 0 and 1 in nf.mm_bf16_variants(lib)
         assert nf.provider_unsound(lib._name) in (None, 0)  # None: no OpenBLAS wheel, a skip
         swept, mismatch, ulp = nf.exp_sweep(lib)
         assert swept > 8_000_000 and mismatch == 0 and ulp <= 1, (swept, mismatch, ulp)
         assert len(nf.MM_CASES) == 20 and len(nf.MM_KBLOCK_CASES) == 40
+        assert len(nf.MM_BF16_CASES) == 28
         assert len(nf.PLAN_CORPUS) == 6
         assert nf.kblock_split(1024) == [448, 288, 288] and nf.kblock_split(0) == []
 
@@ -326,6 +331,20 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
         ("mm_kblock@4", "bcir_tensor.c", tensor,
          "  keep=(__mmask16)(x->fold && lb==0 && x->beta==0.0f ? 0u : 0xffffu);\n",
          "  keep=(__mmask16)0xffffu;\n"),
+        # NDT-BF16: the portable instance's lanes swapped at the block's end, its pack's pairs
+        # interleaved odd first, and the region's columns one block short at a ragged edge
+        ("mm_bf16", "bcir_tensor.c", tensor,
+         "        acc=bf16_ftz(bf16_ftz(acc)+bf16_ftz(e+o));\n",
+         "        acc=bf16_ftz(bf16_ftz(acc)+bf16_ftz(e)+o);\n"),
+        ("mm_bf16", "bcir_tensor.c", tensor,
+         "      t[p*32+2*jj+e]=j<x->n && d<x->k ?", "      t[p*32+2*jj+(1-e)]=j<x->n && d<x->k ?"),
+        ("mm_bf16", "bcir_tensor.c", tensor,
+         "  r1=r0+BF16_ROWS<rend ? r0+BF16_ROWS : rend; c1=c0+c->cols<cend ? c0+c->cols : cend;",
+         "  r1=r0+BF16_ROWS<rend ? r0+BF16_ROWS : rend; c1=c0+c->cols<cend ? c0+c->cols : cend-1;"),
+        # the AMX instance's tiles out of order: the admission withdraws it where the host has it
+        ("bf16_admission", "bcir_tensor.c", tensor,
+         "      _tile_dpbf16ps(0,4,6); _tile_dpbf16ps(1,4,7); _tile_dpbf16ps(2,5,6); _tile_dpbf16ps(3,5,7);",
+         "      _tile_dpbf16ps(0,4,7); _tile_dpbf16ps(1,4,6); _tile_dpbf16ps(2,5,6); _tile_dpbf16ps(3,5,7);"),
         ("exp_ulp", "bcir_tensor.c", tensor,
          "p=1.0f/5040.0f; p=p*r+1.0f/720.0f; p=p*r+1.0f/120.0f;", "p=1.0f/120.0f;"),
         ("exp_ulp", "bcir_tensor.c", tensor,
@@ -352,6 +371,12 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
                         __import__("ctypes").CDLL(str(lib._name)).bcir_tensor_mm_variants() == 1
                     )
                 )  # a host without an AVX2 instance cannot see this one: not a pass, a skip
+            elif row == "bf16_admission":
+                amx = 8 in nf.mm_bf16_variants(
+                    __import__("ctypes").CDLL(str(_ndt_library(Path(tmp) / "clean")._name))
+                )
+                fired = 8 not in nf.mm_bf16_variants(lib) if amx else 1
+                # a host without AMX cannot see this one: not a pass, a skip
             elif row.startswith("mm_kblock@"):
                 need = int(row.partition("@")[2])
                 fired = (
@@ -359,7 +384,8 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
                 )  # a host without that instance cannot see this one: not a pass, a skip
             else:
                 fired = {"mm": nf.mm_mismatch, "mm_fused": nf.mm_fused_mismatch,
-                         "mm_kblock": nf.mm_kblock_mismatch, "plan": nf.plan_mismatch}[row](lib)  # fmt: skip
+                         "mm_kblock": nf.mm_kblock_mismatch, "mm_bf16": nf.mm_bf16_mismatch,
+                         "plan": nf.plan_mismatch}[row](lib)  # fmt: skip
             assert fired > 0, f"train.{row}.mismatch cannot see {new!r}"
 
 
@@ -388,9 +414,12 @@ def test_the_training_state_is_identical_at_every_thread_count():
             under = nf.thread_states(path, contract=name)
             assert len(set(under.values())) == 1 and under[1] not in digests, (name, under)
             digests.add(under[1])
+        # NDT-BF16: the bf16 contract's state is its own, one at every thread count
+        under = nf.thread_states(path, contract="bf16")
+        assert len(set(under.values())) == 1 and under[1] not in digests, under
         # the reduce bit changes the norm's last bits, which the float rounding of every update
         # absorbs over three steps of this bench: one state at every thread count is the claim
-        for name in ("reduce", "kblock+exp+reduce"):
+        for name in ("reduce", "kblock+exp+reduce", "bf16+exp+reduce"):
             under = nf.thread_states(path, contract=name)
             assert set(under) == set(nf.THREAD_COUNTS) and len(set(under.values())) == 1, under
         spec, batch, time_ = nf.THREADS_BENCH
@@ -432,6 +461,57 @@ def test_the_training_state_is_identical_at_every_thread_count():
         assert nf.state_digest(back) == nf.state_digest(two)
         two.close()
         back.close()
+
+
+def test_the_bf16_contract_lends_its_workspace_and_admits_no_provider():
+    """NDT-BF16: a trainer under a bf16 contract lends its GEMMs the workspace the C plan asks
+    (bcir_decoder_workspace_bytes), counted in the memory budget and none under the other
+    contracts; a CBLAS provider is refused under it (an sgemm computes in binary32) unless
+    installed for measurement; its checkpoint resumes it, contract and workspace, as one state."""
+    from bcir.hosted.models.native import CONTRACTS, NativeAdamW, NativeDecoder
+    from bcir.tests import native_decoder_fixtures as nf
+
+    assert {"bf16", "bf16+exp", "bf16+reduce", "bf16+exp+reduce"} <= set(CONTRACTS)
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.build_library(tmp)
+        if path is None:
+            return  # no C compiler: a skip, never a pass
+        spec, batch, time_ = nf.THREADS_BENCH
+        plain = NativeDecoder(path, spec, batch_size=batch, context_length=time_, contract="kblock")
+        bf16 = NativeDecoder(path, spec, batch_size=batch, context_length=time_, threads=2,
+                             contract="bf16+exp")  # fmt: skip
+        assert plain.workspace_bytes == 0 and plain.state.workspace is None
+        assert bf16.workspace_bytes > 0 and bf16.state.workspace_bytes == bf16.workspace_bytes
+        assert bf16.memory_bytes == plain.memory_bytes + bf16.workspace_bytes
+        assert bf16.state.contract == 18
+        try:
+            NativeDecoder(path, spec, batch_size=batch, context_length=time_, contract="bf16",
+                          max_memory_bytes=plain.memory_bytes)  # fmt: skip
+        except ValueError as e:
+            assert "budget" in str(e)
+        else:
+            raise AssertionError("the workspace escaped the budget")
+        try:
+            bf16.use_cblas_function(None)
+        except ValueError as e:
+            assert "not admitted under the bf16+exp contract" in str(e)
+        else:
+            raise AssertionError("a CBLAS provider admitted under bf16")
+        assert bf16.state.provider.mm is None or not bf16.state.provider.ctx
+        x = [(3 * i + 1) % spec.vocab_size for i in range(batch * time_ * 2)]
+        y = [(3 * i + 2) % spec.vocab_size for i in range(batch * time_ * 2)]
+        bf16.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3))
+        bf16.save(Path(tmp) / "bf16.bcirdt")
+        back = NativeDecoder.resume(path, Path(tmp) / "bf16.bcirdt", threads=4)
+        assert (back.contract, back.state.contract) == ("bf16+exp", 18)
+        assert back.workspace_bytes == bf16.workspace_bytes
+        assert nf.state_digest(back) == nf.state_digest(bf16)
+        assert bf16.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)) == back.run(
+            x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)
+        )
+        assert nf.state_digest(back) == nf.state_digest(bf16)
+        for trainer in (plain, bf16, back):
+            trainer.close()
 
 
 def _vma(address):
@@ -729,7 +809,13 @@ def test_the_harness_rows_are_the_programs_numbers():
                          "train.state.threads.mismatch", "train.mm.fused.mismatch",
                          "train.exp.mismatch", "train.exp.ulp.max",
                          "train.mm.kblock.mismatch", "train.mm.provider.unsound",
-                         "train.mm.provider.differences", "train.norm.reduce.mismatch"}  # fmt: skip
+                         "train.mm.provider.differences", "train.norm.reduce.mismatch",
+                         "train.mm.bf16.mismatch"}  # fmt: skip
+    bf16 = rows["train.mm.bf16.mismatch"]
+    assert bf16.kind == "exact" and bf16.bound == 0 and bf16.baseline == 0
+    assert (
+        bf16.what.startswith(f"of {len(nf.MM_BF16_CASES)} GEMM cases") and not bf16.host_dependent
+    )
     kblock, unsound = rows["train.mm.kblock.mismatch"], rows["train.mm.provider.unsound"]
     differences = rows["train.mm.provider.differences"]
     assert kblock.kind == "exact" and kblock.bound == 0 and kblock.baseline == 0

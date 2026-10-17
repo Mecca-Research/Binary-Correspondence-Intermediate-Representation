@@ -102,17 +102,24 @@ def provider_mismatch(lib, slot, shapes) -> int:
 #: OpenBLAS's sgemm performs, so such a provider can be admitted under it by `use_cblas`'s
 #: differential), "kblock+exp" both. Under v1, "fused" and "exp" a provider's GEMM keeps its own
 #: arithmetic; under "kblock" it is admitted only where it is the contract's, bit for bit.
+#: "bf16" (ABI 4, NDT-BF16) puts BCIR's GEMMs under the bf16 contract (bcir_tensor.h): operands
+#: rounded to bfloat16 and accumulated in binary32 as the AMX unit's TDPBF16PS accumulates them --
+#: the AMX, AVX-512 and portable instances one result, bit for bit -- with a workspace for the
+#: packed operands the trainer lends from its own mapping (`workspace_bytes`); "bf16+exp" with the
+#: BCIR exponential. A CBLAS provider computes in binary32, so none is admitted under it.
 #: "reduce" (NDT-REDUCE) puts the clipping norm under a fixed-shape reduction -- the gradient in
 #: chunks of `reduce_chunk` elements, each chunk's squares summed in index order in double from
 #: zero, the chunk sums added in chunk order from zero -- so the update's one pass runs on the pool;
-#: "<contract>+reduce" names it with any of the five above. Whatever the contract, the loss, the
+#: "<contract>+reduce" names it with any of the seven above. Whatever the contract, the loss, the
 #: gamma adjoints and the embedding scatter run on the pool in the serial order: every loss and
 #: state is the serial one, bit for bit, at every thread count.
-_CONTRACTS = {"v1": 0, "fused": 1, "exp": 2, "fused+exp": 3, "kblock": 4, "kblock+exp": 6}
+_CONTRACTS = {"v1": 0, "fused": 1, "exp": 2, "fused+exp": 3, "kblock": 4, "kblock+exp": 6,
+              "bf16": 16, "bf16+exp": 18}  # fmt: skip
 _CONTRACTS.update({("reduce" if name == "v1" else name + "+reduce"): bits | 8
                    for name, bits in list(_CONTRACTS.items())})  # fmt: skip
 _KBLOCK = 4
 _REDUCE = 8
+_BF16 = 16
 #: The contract names `NativeDecoder(contract=...)` admits, sorted; a recipe names one of them.
 CONTRACTS = tuple(sorted(_CONTRACTS))
 #: The contract names `NativeDecoder(contract=...)` admits, sorted; a recipe names one of them.
@@ -152,6 +159,8 @@ class _State(ct.Structure):
             ("provider", _Provider),
             ("pool", ct.c_void_p),  # ABI 2 (NDT-THREADS): the pool the kernels run on
             ("contract", ct.c_uint32),  # ABI 3 (NDT-FMA): the GEMM contract, _CONTRACTS
+            ("workspace", ct.c_void_p),  # ABI 4 (NDT-BF16): the bf16 GEMMs' packed operands
+            ("workspace_bytes", _SZ),
         ]
     )
 
@@ -301,7 +310,10 @@ class NativeDecoder:
     A CBLAS provider threads its own GEMM as it is configured; the pool runs the rest.
     `contract` selects the arithmetic contracts (`"v1"`, the default of every gate and record;
     `"fused"`, one IEEE fmaf per GEMM term; `"exp"`, the BCIR exponential under SiLU, the SwiGLU
-    VJP and the softmax; `"fused+exp"`); the checkpoint names it and `resume` restores it.
+    VJP and the softmax; `"fused+exp"`; `"kblock"`; `"bf16"`, the GEMMs on bfloat16 operands
+    accumulated as AMX accumulates them, with `workspace_bytes` of packing workspace counted in
+    the budget; any of them `+reduce`, `CONTRACTS`); the checkpoint names it and `resume` restores
+    it.
     `huge_pages` (NDT-PAGES) puts the state on one mapping advised for 2 MB transparent huge
     pages where the host has them (`_state_buffers`); `self.huge_pages` says whether the kernel
     took the advice. The state is the same either way, bit for bit; the mapping adds at most one
@@ -442,7 +454,14 @@ class NativeDecoder:
             spec.rms_norm_eps,
         )
         _check(self.lib.bcir_decoder_make_plan(ct.byref(shape), ct.byref(plan)))
+        # NDT-BF16: the bf16 GEMMs' workspace, sized by the C plan for the step's largest group
+        self.workspace_bytes = self.lib.bcir_decoder_workspace_bytes(
+            ct.byref(plan), _CONTRACTS[contract]
+        )
+        if self.workspace_bytes == 2 ** (8 * ct.sizeof(_SZ)) - 1:
+            raise ValueError("native plan's GEMM workspace overflows size_t")
         self.memory_bytes = (4 * plan.parameters + plan.activations + plan.scratch) * 4
+        self.memory_bytes += self.workspace_bytes
         if self.memory_bytes > max_memory_bytes:
             raise ValueError(
                 f"native plan needs {self.memory_bytes} bytes, budget {max_memory_bytes}"
@@ -458,12 +477,15 @@ class NativeDecoder:
                 ("moment2", plan.parameters),
                 ("activations", plan.activations),
                 ("scratch", plan.scratch),
-            ),
+            )
+            + ((("workspace", (self.workspace_bytes + 3) // 4),) if self.workspace_bytes else ()),
             huge_pages,
         )
+        arenas = ("weights", "gradients", "moment1", "moment2", "activations", "scratch")
+        workspace = self.buffers.get("workspace")
         self.state = _State(
             plan,
-            *(self.buffers[n] for n in self.buffers),
+            *(self.buffers[n] for n in arenas),
             plan.parameters,
             plan.parameters,
             plan.parameters,
@@ -476,6 +498,8 @@ class NativeDecoder:
             _Provider(),
             self._pool,
             _CONTRACTS[contract],
+            ct.cast(workspace, ct.c_void_p) if workspace is not None else None,
+            self.workspace_bytes,
         )
         rng = random.Random(seed)
         for name, _, offset, count in self.layout:
@@ -505,8 +529,10 @@ class NativeDecoder:
     def _bind(self):
         self.lib.bcir_decoder_abi_version.argtypes = []
         self.lib.bcir_decoder_abi_version.restype = ct.c_uint32
-        if self.lib.bcir_decoder_abi_version() != 3:
+        if self.lib.bcir_decoder_abi_version() != 4:
             raise ValueError("unsupported native decoder ABI")
+        self.lib.bcir_decoder_workspace_bytes.argtypes = [ct.POINTER(_Plan), ct.c_uint32]
+        self.lib.bcir_decoder_workspace_bytes.restype = _SZ
         for name, args, result in (
             ("rails", [], ct.c_int),
             ("size", [ct.c_uint], _SZ),
@@ -572,6 +598,11 @@ class NativeDecoder:
         keeps BCIR's kernels. `admit=False` installs it without the differential (for measuring
         the differential itself); under the other contracts a provider's GEMM keeps its own
         arithmetic and `provider_admission` is None."""
+        if admit and _CONTRACTS[self.contract] & _BF16:
+            raise ValueError(
+                f"provider {name} not admitted under the {self.contract} contract: a CBLAS sgemm "
+                "computes in binary32, never the bf16 contract's operands"
+            )
         slot = ct.cast(function, _CBLAS)
         fn = ct.cast(self.lib.bcir_tensor_cblas_mm, _MM)
         self.state.provider = _Provider(ct.cast(ct.pointer(slot), ct.c_void_p), fn, _SILU())

@@ -2915,6 +2915,33 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
+  - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
+    `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
+    ([measurements/2026-10-17/bf16/](research/measurements/2026-10-17/bf16/), the report's §31): per
+    instruction two lanes from +0.0, the even terms' fused products in one and the odd terms' in the
+    other, every step flushed when tiny by IEEE tininess after rounding with the exponent unbounded,
+    then `c = daz(c) + (E + O)`; MXCSR ignored, DAZ on both operands and C. The conversion is
+    nearest-even after DAZ on every one of the 2^32 inputs; `VDPBF16PS` chains the odd term first,
+    another arithmetic.
+  - That is the bf16 contract (`bcir_tensor.h`), with portable, AVX-512 (FMA under MXCSR's FTZ and
+    DAZ) and AMX (admitted by host checks and a differential, once a process) instances over
+    operands packed into workspace the caller lends; a shorter workspace runs in chunks to the same
+    bits. An independent `__float128` reference finds 0 differences in 963 cases under GCC 13, Clang
+    18 and Clang 23 (718 capped below AMX, 473 portable); the GEM+ row `train.mm.bf16.mismatch` (0
+    of 28) holds it to the oracle's exact rationals; `tools/testing/faults/ndt-bf16.json` holds 17
+    injected faults. The last two are clang's analyzer's (18 and 23, before the push): the grouped
+    entries give every call they take its partition, and a call with no rows or no columns divided
+    its region count by zero there; the region width is counted in whole 32-column blocks since, the
+    same width on all 126,000,000 non-empty shapes compared (`bf16/cols_check.c`), and the C harness
+    holds every entry to the empty shapes.
+  - The trainer's `BCIR_DT_CONTRACT_BF16` (state ABI 4: a lent workspace of
+    `bcir_decoder_workspace_bytes`, 11.5 MB for the 9.84M decoder; Python `bf16`, `bf16+exp`, and
+    each `+reduce`; the workspace in the budget; no CBLAS provider admitted). Only the GEMMs change.
+  - Measured at four threads: the step's GEMM shapes 16.5 -> 4.4 ms (x3.79), the 9.84M decoder's step
+    188.1 -> 79.8 ms (5,445 -> 12,832 tokens a second, x2.36; x2.43 at one thread). The AVX-512
+    instance alone runs at 0.56 of the FP32 kernel: without AMX the contract buys no speed. Six
+    steps end in one state through the tile, AVX-512 and portable instances at one and four threads.
   LM-PAIRED (2026-10-17): BCIR against `torch.compile` with fused AdamW, five seeds paired.
   - An external review's bar for a public claim (the fastest matched PyTorch configuration, a paired
     interval, at least three seeds, a quality margin fixed beforehand): the comparison harness gained

@@ -6,7 +6,7 @@
 
 _Static_assert(sizeof(float)==4 && FLT_RADIX==2 && FLT_MANT_DIG==24,
     "native decoder ABI requires IEEE binary32");
-uint32_t bcir_decoder_abi_version(void) { return 3; }
+uint32_t bcir_decoder_abi_version(void) { return 4; }
 static int add(size_t *n,size_t a) {
   if (a>SIZE_MAX-*n) return 0;
   *n+=a; return 1;
@@ -60,8 +60,9 @@ static int valid(bcir_decoder_state *s) {
   if (p.parameters!=s->plan.parameters || p.activations!=s->plan.activations ||
       p.scratch!=s->plan.scratch) return BCIR_DT_INVALID;
   if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_KBLOCK|
-      BCIR_DT_CONTRACT_REDUCE)) return BCIR_DT_INVALID;
-  if ((s->contract&BCIR_DT_CONTRACT_FUSED) && (s->contract&BCIR_DT_CONTRACT_KBLOCK)) return BCIR_DT_INVALID;  /* one GEMM contract */
+      BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_BF16)) return BCIR_DT_INVALID;
+  if (((s->contract&BCIR_DT_CONTRACT_FUSED)!=0)+((s->contract&BCIR_DT_CONTRACT_KBLOCK)!=0)+
+      ((s->contract&BCIR_DT_CONTRACT_BF16)!=0)>1) return BCIR_DT_INVALID;  /* one GEMM contract */
   ptr[0]=s->weights; ptr[1]=s->gradients; ptr[2]=s->moment1; ptr[3]=s->moment2;
   ptr[4]=s->activations; ptr[5]=s->scratch;
   len[0]=len[1]=len[2]=len[3]=p.parameters; len[4]=p.activations; len[5]=p.scratch;
@@ -76,6 +77,14 @@ static int valid(bcir_decoder_state *s) {
     for (j=0;j<i;j++) if (overlap(ptr[i],len[i]*sizeof(float),ptr[j],len[j]*sizeof(float)))
       return BCIR_DT_INVALID;
   }
+  if (s->contract&BCIR_DT_CONTRACT_BF16) {  /* the GEMMs' workspace: present, large enough, apart */
+    if (!s->workspace) return BCIR_DT_INVALID;
+    if (s->workspace_bytes<bcir_decoder_workspace_bytes(&p,s->contract) ||
+        s->workspace_bytes>UINTPTR_MAX-(uintptr_t)s->workspace) return BCIR_DT_CAPACITY;
+    if (overlap(s->workspace,s->workspace_bytes,s,sizeof(*s))) return BCIR_DT_INVALID;
+    for (i=0;i<6;i++) if (overlap(s->workspace,s->workspace_bytes,ptr[i],len[i]*sizeof(float)))
+      return BCIR_DT_INVALID;
+  }
   return BCIR_DT_OK;
 }
 static int external(bcir_decoder_state *s,const void *p,size_t bytes) {
@@ -86,7 +95,8 @@ static int external(bcir_decoder_state *s,const void *p,size_t bytes) {
     !overlap(p,bytes,s->moment1,s->plan.parameters*sizeof(float)) &&
     !overlap(p,bytes,s->moment2,s->plan.parameters*sizeof(float)) &&
     !overlap(p,bytes,s->activations,s->plan.activations*sizeof(float)) &&
-    !overlap(p,bytes,s->scratch,s->plan.scratch*sizeof(float));
+    !overlap(p,bytes,s->scratch,s->plan.scratch*sizeof(float)) &&
+    !((s->contract&BCIR_DT_CONTRACT_BF16) && overlap(p,bytes,s->workspace,s->workspace_bytes));
 }
 static int ids(bcir_decoder_state *s,const uint32_t *x,size_t n) {
   size_t i;
@@ -154,6 +164,40 @@ static geometry geom(const bcir_decoder_spec *s) {
   g.a=g.b*g.h*g.t*g.t; g.lp=2*g.d+2*g.d*g.d+2*g.d*g.k+3*g.d*g.f;
   g.la=5*g.nd+2*g.nk+g.a+3*g.nf; return g;
 }
+/* bcir_decoder_workspace_bytes: the step's GEMM groups, as the forward and backward issue them
+ * (linears, linear, linear_backward, linears_backward below), each call (m, n, k), and the largest
+ * group's packs, every call's whole -- an upper bound on what the group packs, which shares an
+ * operand two calls read alike. */
+static size_t ws_sum(size_t a,size_t b) { return a>SIZE_MAX-b ? SIZE_MAX : a+b; }
+size_t bcir_decoder_workspace_bytes(const bcir_decoder_plan *plan,uint32_t contract) {
+  bcir_decoder_plan p; geometry g; size_t q,c,most=0;
+  if (!(contract&BCIR_DT_CONTRACT_BF16)) return 0;
+  if (!plan || bcir_decoder_make_plan(&plan->spec,&p)) return SIZE_MAX;
+  g=geom(&p.spec);
+  {
+    const size_t n=g.n,d=g.d,k=g.k,f=g.f,v=g.v;
+    /* every group: up to six calls (m, n, k); a row of zeros ends a group */
+    const size_t groups[][6][3]={
+      {{n,d,d},{n,k,d},{n,k,d}},                       /* forward: q, k, v */
+      {{n,d,d}},                                        /* o */
+      {{n,f,d},{n,f,d}},                                /* gate, up */
+      {{n,d,f}},                                        /* down */
+      {{n,v,d}},                                        /* the head */
+      {{n,d,v},{v,d,n}},                                /* backward: the head's dx and dW */
+      {{n,f,d},{d,f,n}},                                /* down */
+      {{n,d,f},{n,d,f},{f,d,n},{f,d,n}},                /* gate, up */
+      {{n,d,d},{d,d,n}},                                /* o */
+      {{n,d,d},{n,d,k},{n,d,k},{d,d,n},{k,d,n},{k,d,n}} /* q, k, v */
+    };
+    for (q=0;q<sizeof(groups)/sizeof(groups[0]);q++) {
+      size_t sum=0;
+      for (c=0;c<6 && groups[q][c][0];c++)
+        sum=ws_sum(sum,bcir_tensor_mm_bf16_workspace(groups[q][c][0],groups[q][c][1],groups[q][c][2]));
+      if (sum>most) most=sum;
+    }
+  }
+  return most;
+}
 typedef struct layer { float *norm1,*q,*k,*v,*o,*norm2,*gate,*up,*down; } layer;
 static layer params(float *x,geometry g) {
   layer p;
@@ -179,13 +223,41 @@ static cache activations(float *x,geometry g) {
  * and verdicts are exact, with the clipping norm one index-order chain unless the reduce
  * contract names the chunks. */
 /* The GEMM contract the state names, as the tensor unit's pair entry numbers them (0 v1, 1 the
- * fused v2, 2 the blocked v3): one predicate for the forward's linears and the backward's pairs. */
+ * fused v2, 2 the blocked v3), and 3 for the bf16 contract, whose entries take the state's
+ * workspace: one predicate for the forward's linears and the backward's pairs. */
 static int gemm_contract(const bcir_decoder_state *s) {
-  return (s->contract&BCIR_DT_CONTRACT_KBLOCK) ? 2 : (s->contract&BCIR_DT_CONTRACT_FUSED) ? 1 : 0;
+  return (s->contract&BCIR_DT_CONTRACT_BF16) ? 3 : (s->contract&BCIR_DT_CONTRACT_KBLOCK) ? 2 :
+    (s->contract&BCIR_DT_CONTRACT_FUSED) ? 1 : 0;
+}
+#ifdef BCIR_DT_WORKSPACE_PROBE
+/* The harness's record of the most workspace a bf16 GEMM group of the step packs, against which
+ * it holds bcir_decoder_workspace_bytes: a build defines BCIR_DT_WORKSPACE_PROBE to have it (the
+ * harness's own builds do; the library does not). Read and reset by the probe. */
+static size_t workspace_seen;
+static void workspace_saw(size_t need) { if (need>workspace_seen) workspace_seen=need; }
+size_t bcir_decoder_workspace_probe(void);
+size_t bcir_decoder_workspace_probe(void) { size_t seen=workspace_seen; workspace_seen=0; return seen; }
+#endif
+/* calls under the state's contract as one pool job: the chain into one C, then the rest (the
+ * bf16 entries' workspace is the state's, admitted by valid(); the others need none) */
+static void gemm_group(bcir_decoder_state *s,const bcir_tensor_mm_call *chain,size_t nchain,
+    const bcir_tensor_mm_call *y,size_t ny) {
+#ifdef BCIR_DT_WORKSPACE_PROBE
+  if (gemm_contract(s)==3) workspace_saw(bcir_tensor_mm_bf16_group_workspace(chain,nchain,y,ny));
+#endif
+  if (gemm_contract(s)==3)
+    (void)bcir_tensor_mm_bf16_group_pool(s->pool,chain,nchain,y,ny,s->workspace,s->workspace_bytes);
+  else bcir_tensor_mm_group_pool(s->pool,gemm_contract(s),chain,nchain,y,ny);
 }
 static void gemm(bcir_decoder_state *s,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
     const float *a,const float *b,float beta,float *c) {
   if (s->provider.mm) s->provider.mm(s->provider.ctx,ta,tb,m,n,k,alpha,a,b,beta,c);
+  else if (gemm_contract(s)==3) {
+#ifdef BCIR_DT_WORKSPACE_PROBE
+    workspace_saw(bcir_tensor_mm_bf16_workspace(m,n,k));
+#endif
+    (void)bcir_tensor_mm_bf16_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c,s->workspace,s->workspace_bytes);
+  }
   else if (gemm_contract(s)==2) bcir_tensor_mm_kblock_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
   else if (gemm_contract(s)==1) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
   else bcir_tensor_mm_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
@@ -206,7 +278,8 @@ static void linear_backward(bcir_decoder_state *s,size_t r,size_t in,size_t out,
   }
   cx.ta=0; cx.tb=0; cx.m=r; cx.n=in; cx.k=out; cx.alpha=1.0f; cx.a=dy; cx.b=w; cx.beta=beta; cx.c=dx;
   cw.ta=1; cw.tb=0; cw.m=out; cw.n=in; cw.k=r; cw.alpha=1.0f; cw.a=dy; cw.b=x; cw.beta=wbeta; cw.c=dw;
-  bcir_tensor_mm_pair_pool(s->pool,gemm_contract(s),&cx,&cw);
+  if (gemm_contract(s)==3) gemm_group(s,&cx,1,&cw,1);
+  else bcir_tensor_mm_pair_pool(s->pool,gemm_contract(s),&cx,&cw);
 }
 /* The linears that read one input -- the attention's q, k and v, the MLP's gate and up -- as one
  * pool job (NDT-SCHED-1): their outputs are disjoint, so each is its own entry's bit for bit; and
@@ -224,7 +297,7 @@ static void linears(bcir_decoder_state *s,size_t r,size_t in,const float *x,size
     c[q].ta=0; c[q].tb=1; c[q].m=r; c[q].n=out[q]; c[q].k=in; c[q].alpha=1.0f; c[q].a=x;
     c[q].b=w[q]; c[q].beta=0.0f; c[q].c=y[q];
   }
-  bcir_tensor_mm_group_pool(s->pool,gemm_contract(s),NULL,0,c,count);
+  gemm_group(s,NULL,0,c,count);
 }
 static void linears_backward(bcir_decoder_state *s,size_t r,size_t in,const float *x,size_t count,
     const size_t *out,const float *const *w,const float *const *dy,float *dx,float *const *dw,
@@ -240,7 +313,7 @@ static void linears_backward(bcir_decoder_state *s,size_t r,size_t in,const floa
     cw[q].ta=1; cw[q].tb=0; cw[q].m=out[q]; cw[q].n=in; cw[q].k=r; cw[q].alpha=1.0f; cw[q].a=dy[q];
     cw[q].b=x; cw[q].beta=wbeta; cw[q].c=dw[q];
   }
-  bcir_tensor_mm_group_pool(s->pool,gemm_contract(s),cx,count,cw,count);
+  gemm_group(s,cx,count,cw,count);
 }
 /* y = silu(x) * u (NDT-SWIGLU-FWD): BCIR's SiLU under the state's contract and the product in one
  * pass, the two passes' values; a provider's SiLU into y, then the product, as before. *bad

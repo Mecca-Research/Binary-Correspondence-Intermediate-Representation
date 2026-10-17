@@ -1745,3 +1745,85 @@ session had eager 2% ahead), so a check was added after the runs, and is labelle
 eager PyTorch on seeds 20261011 and 1001 in the same session, 235.5 and 254.6 ms a step -- 0.8% faster
 and 12.6% slower than that seed's compiled run, whose 20261011 arm was the session's first PyTorch run.
 Against the faster arm wherever both ran, BCIR's ratio is 1.260 (95% interval 1.241-1.279).
+
+## 31. The GEMMs on bfloat16 operands (NDT-BF16)
+
+The instance the container ran on from 10:15 (family 6 model 207) has the AMX tile unit and
+AVX512-BF16, which the 2026-10-12 host had not; the roadmap's NDT-BF16 row asked for a BF16 slice with
+an explicit accumulation policy, recorded against its host gate. BCIR's contracts are semantics first
+and instances second, so the slice began by pinning what the tile unit computes, bit for bit
+([bf16/](measurements/2026-10-17/bf16/), [semantics.c](measurements/2026-10-17/bf16/semantics.c)):
+`TDPBF16PS` against twelve candidate models on four operand distributions (51,200 outputs each) and at
+every depth of one to sixteen pair rows (13,056 outputs each). One model matches every output and no
+other matches all of any distribution: per instruction and output, two lanes from +0.0 -- the even
+terms' fused products accumulated in one, the odd terms' in the other, each step rounded once and
+flushed when tiny -- then `c = daz(c) + (E + O)`. MXCSR is ignored (0 of 13,056 outputs move under
+round-toward-zero with FTZ and DAZ), DAZ applies to both operands and to C, and "tiny" is IEEE
+tininess after rounding with the exponent unbounded ([tininess.c](measurements/2026-10-17/bf16/tininess.c)):
+a lane value in [2^-126 - 2^-150, 2^-126 - 2^-151) is flushed although it rounds to 2^-126 on the
+subnormal grid -- on 1,024,000 lanes built at that boundary the model and a replay as one `vfmadd` per
+lane step under MXCSR's FTZ and DAZ equal the tile unit on all, and flushing after rounding to the
+grid is wrong on 511,998. `VDPBF16PS` is another arithmetic (the odd term first, one chain from the
+accumulator: 51,200 of 51,200 on all four distributions, the even-first order 45,175-49,322), so it is
+no instance of the tile unit's contract. `VCVTNEPS2BF16` rounds to nearest-even after DAZ (0 of 2^32
+inputs differ from that rule; 16,711,678 subnormals do without the DAZ), a NaN to a quiet NaN, MXCSR
+ignored; `VCVTNE2PS2BF16`, which packs two vectors at once, is the same function on every input
+([cvt2.c](measurements/2026-10-17/bf16/cvt2.c)).
+
+That model is the contract (`bcir_tensor.h`): `a = bf16(RN(alpha·A))`, `b = bf16(B)`, the depth in
+32-term blocks padded with +0.0 terms, `c0 = beta == 0 ? +0.0 : RN(beta·C)`, and per block and output
+the two lanes and the flushed sums above; which NaN a NaN result is lies outside it. Three instances
+compute it: portable C (the lane in double, the tininess rule written out), AVX-512 (the lanes as
+vector FMAs under MXCSR's FTZ and DAZ, set around its kernel only) and AMX (2 x 2 tiles of 16 x 16
+outputs), the last offered only where the CPU has AMX-TILE, AMX-BF16 and AVX512-BW/BF16, XCR0 enables
+the tile state, Linux grants the process the tile permission, and a differential against the portable
+instance on the contract's conversion and arithmetic edges agrees bit for bit -- asked once a process,
+kept in one atomic word. The operands are packed first into workspace the caller lends (A as 16 x 32
+tiles, B as 16-pair x 16-column tiles of its interleaved depth pairs, one layout for every instance),
+then the pool computes regions of 32 rows by a column chunk whose B panel is at most 1 MB; a shorter
+workspace runs the call in row and column chunks to the same bits, and below one 32-row strip of A and
+one 32-column strip of B the entry writes nothing. A call with no rows or no columns writes nothing too,
+which clang's analyzer (18 and 23, the C analysis gates) found was not so before the push: the grouped
+entries give every call they take its partition, and such a call divided its region count by zero
+there. The region width is counted in whole 32-column blocks now -- the same width as before on all
+126,000,000 non-empty shapes compared ([cols_check.c](measurements/2026-10-17/bf16/cols_check.c)), so no
+call that computes anything is partitioned differently -- and the C harness holds every entry to the
+empty shapes (`tools/testing/faults/ndt-bf16.json` NB16 and NB17 put the two divisions back). An independent reference of the contract
+([check.c](measurements/2026-10-17/bf16/check.c): the binary32 operands read directly, the lanes in
+`__float128`, tininess by an explicit 24-bit rounding) finds 0 differences in 963 cases (every
+instance, entry, chunking, group and crafted edge) under GCC 13, Clang 18 and Clang 23, 718 with the
+unit capped below AMX and 473 in the portable build ([check.txt](measurements/2026-10-17/bf16/check.txt));
+the oracle's emulation in exact rationals is the GEM+ row `train.mm.bf16.mismatch` (0 of 28).
+
+In the trainer it is `BCIR_DT_CONTRACT_BF16` (state ABI 4: the state lends `workspace` and
+`workspace_bytes`, at least `bcir_decoder_workspace_bytes` for its plan -- the step's largest GEMM
+group, 11,534,592 bytes for the 9.84M decoder); one GEMM contract a state (with neither `fused` nor
+`kblock`), and in Python `bf16`, `bf16+exp`, `bf16+reduce` and `bf16+exp+reduce`, the workspace
+counted in the memory budget and no CBLAS provider admitted (an `sgemm` computes in binary32). Only
+the GEMMs change; the attention, the norms, the activations, the gradients, the moments and the
+update stay binary32, so the state is the bf16 contract's own.
+
+| at four threads | FP32 `kblock` | bf16 | ratio |
+|---|---|---|---|
+| the step's 13 GEMM shapes alone, sum of medians | 16.536 ms (320-453 GFLOP/s) | 4.359 ms (943-1,839 GFLOP/s) | 3.79 |
+| the same at one thread | 50.324 ms (107-140) | 10.429 ms (398-780) | 4.83 |
+| the 9.84M decoder's step, median of 24 | 188.1 ms (5,445 tokens/s) | 79.8 ms (12,832 tokens/s) | 2.36 |
+| the same at one thread, median of 8 | 623.7 ms (1,642) | 256.2 ms (3,997) | 2.43 |
+
+([gemm-t4.txt](measurements/2026-10-17/bf16/gemm-t4.txt), [gemm-t1.txt](measurements/2026-10-17/bf16/gemm-t1.txt),
+[step-t4.txt](measurements/2026-10-17/bf16/step-t4.txt), [step-t1.txt](measurements/2026-10-17/bf16/step-t1.txt):
+the contracts alternated round by round, each step timed alone, the same seeded weights and batch.)
+The tile instance is what is fast. The AVX-512 instance alone, at one thread, is 0.56 times the FP32
+kernel ([gemm-v4.txt](measurements/2026-10-17/bf16/gemm-v4.txt): 50-73 GFLOP/s against 92-143) --
+each pair of terms costs it a broadcast, a shift and a mask beside its two FMAs -- so on a host without
+AMX the bf16 contract buys no speed, and its use there is a state identical to an AMX host's. The
+state is the contract's everywhere: six steps of the comparison decoder end in one digest,
+`e91ae701…`, through the tile instance, the AVX-512 instance and the portable one (the unit capped at
+AVX-512, at AVX2 and built portable), at one and at four threads ([identity.json](measurements/2026-10-17/bf16/identity.json)).
+(The portable instance is the reference, not a speed path: 80 s a step at one thread.) Timed in
+place ([attribution-t4-{bf16,kblock}-{1,2,3}.json](measurements/2026-10-17/bf16/), §11's instrument,
+three rounds each, alternated), the four-thread step's GEMMs go from 150.8 to 41.8 ms; the attention
+(15.4 ms against 14.6), the update (9.5 against 9.3) and the rest are FP32's, so the GEMMs are now half
+the step and the attention a fifth -- its products, which no contract has yet fused, are the next
+slice (ATTN-FMA). Whether the model trained under the contract is as good as FP32's, and how it stands
+against PyTorch's own bfloat16, is §32.

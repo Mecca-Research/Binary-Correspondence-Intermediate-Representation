@@ -20,6 +20,11 @@ spec alone. One function per row family grades it against the C rail; the tests,
     train.mm.fused.mismatch    `MM_CASES` whose native `bcir_tensor_mm_fused` output differs in any bit
                                from `mm_reference_fused` -- the fused contract (v2, NDT-FMA) as an
                                exact rational emulation rounded once per term
+    train.mm.bf16.mismatch     `MM_BF16_CASES` whose output through any bf16 instance the host runs
+                               (portable, AVX-512, AMX admitted) differs in any bit from
+                               `mm_reference_bf16` -- the bf16 contract (NDT-BF16) as exact
+                               rationals: operands rounded to bf16, 32-term blocks of two lanes
+                               from +0, the flushes where the AMX unit flushes
     train.exp.mismatch         inputs among the 2^24 `exp_sweep` sweeps (every binary32 in [-104, 89]
                                at stride 2^8) where two instances of the BCIR exponential differ
     train.exp.ulp.max          the largest distance, in ulps, of the BCIR exponential from exp in
@@ -382,6 +387,121 @@ def mm_kblock_mismatch(lib, cases=MM_KBLOCK_CASES) -> int:
         count = split(k, lengths, 64)
         bad += list(lengths[:count]) != kblock_split(k)
     return bad + mm_mismatch(lib, cases, kblock=True)
+
+
+# --- train.mm.bf16.mismatch (NDT-BF16) ----------------------------------------------------------
+
+#: The bf16 contract's cases: the fused cases and depths across one, two and five 32-term blocks,
+#: an inexact alpha (A is scaled before its bf16 rounding) and beta 1.
+MM_BF16_CASES = MM_CASES + tuple(
+    (ta, tb, m, n, k, alpha, beta)
+    for ta in (0, 1)
+    for tb in (0, 1)
+    for (m, n, k), alpha, beta in (
+        ((2, 3, 160), 1.0, 1.0),
+        ((17, 2, 96), 1.1, 0.0),
+    )
+)
+
+
+def _round_bits(x: Fraction, p: int) -> Fraction:
+    """The nonzero rational x rounded to `p` significant bits, ties to even, the exponent unbounded."""
+    a = abs(x)
+    e = a.numerator.bit_length() - a.denominator.bit_length()
+    if a < Fraction(2) ** e:
+        e -= 1  # 2^e <= a < 2^(e+1)
+    quantum = Fraction(2) ** (e - p + 1)
+    scaled = a / quantum
+    whole = scaled.numerator // scaled.denominator
+    rest = scaled - whole
+    if rest > Fraction(1, 2) or (rest == Fraction(1, 2) and whole % 2):
+        whole += 1
+    v = whole * quantum
+    return v if x > 0 else -v
+
+
+def bf16_round(x: float) -> float:
+    """The bf16 contract's operand rounding of a finite binary32: a subnormal or zero to its zero,
+    else eight significant bits to nearest, ties to even, past the largest finite to infinity."""
+    if x == 0.0 or abs(x) < 2.0**-126:
+        return math.copysign(0.0, x)
+    v = _round_bits(Fraction(x), 8)
+    return math.copysign(math.inf, x) if abs(v) >= 2**128 else float(v)
+
+
+_TINY = Fraction(2) ** -126
+
+
+def _lane(e: float, a: float, b: float) -> float:
+    """One step of a bf16 lane: e + a*b exactly, the binary32 nearest it -- or the zero of its sign
+    when its 24-bit rounding with the exponent unbounded is below 2^-126 (tiny after rounding: the
+    flush MXCSR's FTZ and the AMX unit apply)."""
+    x = Fraction(e) + Fraction(a) * Fraction(b)
+    if x == 0:  # an exact zero: -0 only from -0 plus a -0 product
+        product_negative = (math.copysign(1.0, a) < 0) != (math.copysign(1.0, b) < 0)
+        return -0.0 if math.copysign(1.0, e) < 0 and product_negative else 0.0
+    if abs(_round_bits(x, 24)) < _TINY:
+        return -0.0 if x < 0 else 0.0
+    return round_f32(x)
+
+
+def _flush(x: float) -> float:
+    return math.copysign(0.0, x) if x != 0.0 and abs(x) < 2.0**-126 else x
+
+
+def mm_reference_bf16(ta, tb, m, n, k, alpha, a, b, beta, c):
+    """The bf16 contract (NDT-BF16) in exact rationals: beta first (the rounded product, zero under
+    beta 0); every operand rounded to bf16 -- A after its binary32 product with alpha; the depth in
+    blocks of 32 from l = 0, padded with +0 terms; per block an even and an odd lane from +0, each
+    term's fma rounded once and flushed when tiny, then c = daz(c) + (E + O), both sums binary32
+    operations flushed when subnormal."""
+    alpha, beta = _f32(alpha), _f32(beta)
+    out = [0.0 if beta == 0.0 else _f32(beta * x) for x in c]
+    ra = [bf16_round(_f32(alpha * v)) for v in a]
+    rb = [bf16_round(v) for v in b]
+    for i in range(m):
+        for j in range(n):
+            acc = out[i * n + j]
+            for l0 in range(0, k, 32):
+                lanes = [0.0, 0.0]
+                for l in range(l0, l0 + 32):
+                    av = (ra[l * m + i] if ta else ra[i * k + l]) if l < k else 0.0
+                    bv = (rb[j * k + l] if tb else rb[l * n + j]) if l < k else 0.0
+                    lanes[l % 2] = _lane(lanes[l % 2], av, bv)
+                acc = _flush(_f32(_flush(acc) + _flush(_f32(lanes[0] + lanes[1]))))
+            out[i * n + j] = acc
+    return out
+
+
+def mm_bf16_variants(lib) -> list[int]:
+    """The bf16 contract's instances this host runs (1 portable, 4 AVX-512, 8 AMX admitted)."""
+    fn = lib.bcir_tensor_mm_bf16_variants
+    fn.argtypes, fn.restype = [], ct.c_int
+    mask = fn()
+    return [v for v in (1, 4, 8) if mask & v]
+
+
+def mm_bf16_mismatch(lib, cases=MM_BF16_CASES) -> int:
+    """`train.mm.bf16.mismatch`: of `cases`, through every bf16 instance the host runs with the
+    workspace whole, those whose output differs in any bit from `mm_reference_bf16` -- a case once
+    per instance that differs."""
+    fn = lib.bcir_tensor_mm_bf16_variant
+    fn.argtypes = [ct.c_int] + _MM_SIG[1:] + [ct.c_void_p, ct.c_size_t]
+    fn.restype = ct.c_int
+    size = lib.bcir_tensor_mm_bf16_workspace
+    size.argtypes, size.restype = [ct.c_size_t] * 3, ct.c_size_t
+    bad = 0
+    for seed, (ta, tb, m, n, k, alpha, beta) in enumerate(cases, 1):
+        a, b, c = _operands(m, n, k, seed)
+        want = struct.pack(f"<{m * n}f", *mm_reference_bf16(ta, tb, m, n, k, alpha, a, b, beta, c))
+        bytes_ = size(m, n, k)
+        workspace = (ct.c_ubyte * max(bytes_, 1))()
+        for variant in mm_bf16_variants(lib):
+            ca, cb = (ct.c_float * len(a))(*a), (ct.c_float * len(b))(*b)
+            cc = (ct.c_float * len(c))(*c)
+            ran = fn(variant, ta, tb, m, n, k, alpha, ca, cb, beta, cc, workspace, bytes_)
+            bad += ran != variant or want != struct.pack(f"<{m * n}f", *cc)
+    return bad
 
 
 def openblas_library() -> Path | None:
@@ -761,6 +881,7 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         out["train.mm.mismatch"] = float(mm_mismatch(lib))
         out["train.mm.fused.mismatch"] = float(mm_fused_mismatch(lib))
         out["train.mm.kblock.mismatch"] = float(mm_kblock_mismatch(lib))
+        out["train.mm.bf16.mismatch"] = float(mm_bf16_mismatch(lib))
         provider = provider_mismatch(lib)
         if provider is not None:
             out["train.mm.provider.differences"] = float(provider)
@@ -789,8 +910,13 @@ __all__ = [
     "exp_sweep",
     "measure",
     "measure_step",
+    "mm_bf16_mismatch",
+    "mm_bf16_variants",
     "mm_fused_mismatch",
     "mm_kblock_mismatch",
+    "mm_reference_bf16",
+    "bf16_round",
+    "MM_BF16_CASES",
     "MM_KBLOCK_CASES",
     "kblock_split",
     "mm_reference_kblock",

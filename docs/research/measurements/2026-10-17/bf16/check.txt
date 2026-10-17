@@ -1,0 +1,26 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 17cff8d, runtime/c against it 59e12d7ab5a4763f
+== gcc-13 (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 -O3
+variants mask 13
+group workspace: forward 41024 (unshared 73792), backward 139328
+bf16 check: 963 cases, 0 mismatched, 0 refused
+exit 0
+== Ubuntu clang version 18.1.3 (1ubuntu1) -O3
+variants mask 13
+group workspace: forward 41024 (unshared 73792), backward 139328
+bf16 check: 963 cases, 0 mismatched, 0 refused
+exit 0
+== clang version 23.1.3 (https://github.com/conda-forge/clangdev-feedstock 25b3b037ec2a28639e5f42c2012b1e4e80d96bcf) -O3
+variants mask 13
+group workspace: forward 41024 (unshared 73792), backward 139328
+bf16 check: 963 cases, 0 mismatched, 0 refused
+exit 0
+== gcc-13 (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 -O3 -DBCIR_TENSOR_MAX_VARIANT=4
+variants mask 5
+group workspace: forward 41024 (unshared 73792), backward 139328
+bf16 check: 718 cases, 0 mismatched, 0 refused
+exit 0
+== gcc-13 (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 -O3 -DBCIR_TENSOR_NO_DISPATCH
+variants mask 1
+group workspace: forward 41024 (unshared 73792), backward 139328
+bf16 check: 473 cases, 0 mismatched, 0 refused
+exit 0

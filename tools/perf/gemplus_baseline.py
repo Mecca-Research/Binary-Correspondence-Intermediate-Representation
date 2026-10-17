@@ -908,6 +908,27 @@ METRICS: tuple[Metric, ...] = (
         "the C harness holds every instance to the K-blocked fmaf chains",
         slice_owner="NDT-KBLOCK",
     ),
+    # --- NDT-BF16: the bf16 GEMM contract (AMX, AVX-512 and portable instances) ---------------------
+    Metric(
+        "train.mm.bf16.mismatch",
+        "train",
+        "of 28 GEMM cases (the 20 fused cases and 8 across one, two and five 32-term blocks with an "
+        "inexact alpha and beta 1), through every bf16 instance the host runs (portable, AVX-512, AMX "
+        "where admitted), the outputs that differ in any bit from an exact rational emulation of the "
+        "bf16 contract: operands rounded to bf16, per 32-term block two lanes from +0 each term's fma "
+        "rounded once and flushed when tiny, then c = daz(c) + (E + O) "
+        "(bcir/tests/native_decoder_fixtures.py)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the contract is the AMX unit's TDPBF16PS, pinned bit for bit on BF16-0's host "
+        "(docs/research/measurements/2026-10-17/bf16/), and every instance its operations: the AMX "
+        "instance is admitted by a differential, the AVX-512 one runs the lanes under MXCSR's FTZ and "
+        "DAZ, the portable one emulates them -- the C harness holds each to a reference on the "
+        "contract's edges",
+        slice_owner="NDT-BF16",
+    ),
     Metric(
         "train.mm.provider.unsound",
         "train",

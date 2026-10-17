@@ -738,10 +738,13 @@ def identity(
 ):  # fmt: skip
     """The same 20 BCIR steps through every ISA variant, every compiler, every thread count of
     the deterministic pool (NDT-THREADS), every contract (NDT-FMA, NDT-EXP) and a repeat: one
-    state per contract."""
+    state per contract. `avx512` caps the tensor unit below AMX (NDT-BF16: the bf16 contract's
+    AVX-512 instance in place of its tile instance); under it and `avx2` and `portable` the bf16
+    GEMMs run the instance the cap leaves (AVX-512, portable, portable)."""
     builds = []
     for cc in compilers:
-        for label, defines in (("widest", ()), ("avx2", ("-DBCIR_TENSOR_MAX_VARIANT=2",)),
+        for label, defines in (("widest", ()), ("avx512", ("-DBCIR_TENSOR_MAX_VARIANT=4",)),
+                               ("avx2", ("-DBCIR_TENSOR_MAX_VARIANT=2",)),
                                ("portable", ("-DBCIR_TENSOR_NO_DISPATCH",))):  # fmt: skip
             if label not in variants:
                 continue  # the portable fused instance calls libm fmaf per term: correct, hours
@@ -1752,7 +1755,8 @@ def main():
     i.add_argument("--cc", action="append")
     i.add_argument("--threads", default="1", help="comma-separated pool sizes, each a row")
     i.add_argument("--contract", default="v1", help="comma-separated contracts, each a row")
-    i.add_argument("--variants", default="widest,avx2,portable", help="comma-separated builds")
+    i.add_argument("--variants", default="widest,avx2,portable",
+                   help="comma-separated builds: widest, avx512, avx2, portable")  # fmt: skip
     bb = sub.add_parser(
         "bcir-breakdown", help="the BCIR side of breakdown alone: no PyTorch needed"
     )
