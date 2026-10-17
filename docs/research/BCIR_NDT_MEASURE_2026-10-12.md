@@ -1511,3 +1511,22 @@ a first form that read each of its strided 48-float rows through the 16-lane sca
 0.6 ms a step in the attention ([scanw/first-\*](measurements/2026-10-17/scanw/)). The GEMMs moved
 135-164 ms between this session's rounds, so the step's own median says little -- the first form's A/B
 had them 5 ms the other way.
+
+## 26. BCIR against PyTorch at four threads on cf435d4
+
+The 1,000-step language-model run at four threads on NDT-SCAN-W (cf435d4), BCIR under
+`kblock+exp+reduce` against PyTorch 2.13 eager and `torch.compile` at four intra-op threads, one round
+in §25's session -- BCIR, eager, compiled, BCIR -- every run from the committed tree
+([lm/r8-cf435d4-\*](measurements/2026-10-17/lm/)):
+
+| four threads, 1,000 steps | median step, ms | tokens a second | validation / test cross-entropy | peak RSS, MB |
+|---|---|---|---|---|
+| BCIR, cf435d4 (two runs) | 204.7 / 207.4 | 5,002 / 4,936 | 1.5003 / 1.6319 | 529 / 528 |
+| PyTorch eager | 293.6 | 3,487 | 1.5003 / 1.6319 | 1,124 |
+| PyTorch compiled | 267.0 | 3,835 | 1.5001 / 1.6321 | 1,116 |
+
+Both BCIR runs end in `5137e013…`, the state of every BCIR run since §17. BCIR trains 42-43% more
+tokens a second than eager PyTorch and 29-30% more than compiled, to the same held-out cross-entropy in
+under half the memory; its 204.7 ms is the fastest 1,000-step run recorded and the first past 5,000
+tokens a second. PyTorch moved too: against §24's session eager's median step is 4% shorter (304.5 ms
+there) and compiled's 14% (310.5), so the slice's own share is §25's alternated in-place reading.

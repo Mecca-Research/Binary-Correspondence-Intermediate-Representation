@@ -1,0 +1,8 @@
+{
+ "what": "The 9.84M decoder's 1,000-step language-model run at four threads on NDT-SCAN-W (cf435d4), BCIR (kblock+exp+reduce) against PyTorch 2.13 eager and torch.compile at four intra-op threads (train_comparison.py train --task lm --threads 4 --eval-every 100 --lr-scale 0.25), one round in the session of ../scanw/: BCIR, eager, compiled, BCIR, in that order, every run from the committed tree. The series before it is ../../2026-10-16/lm/ (r1-r7).",
+ "host": "4-vCPU Intel Xeon @ 2.80GHz container (AVX-512; the instance of ../../2026-10-16/lm/'s r6 and r7), GCC 13.3, Python 3.11.15 (the declared floor); indicative wall times, no PMU",
+ "files": {
+  "r8-cf435d4-*.json": "the four runs (environment.commit cf435d44d5ef65c1620973086faf8362ab644950; library_sha256 25ed1a60... the library both BCIR runs built): bcir-t4-1 and bcir-t4-4 the first and last of the round"
+ },
+ "reading": "Median step and tokens a second: BCIR 204.7 / 207.4 ms (5,002 / 4,936 tok/s), eager 293.6 (3,487), compiled 267.0 (3,835) -- BCIR 42-43% more tokens a second than eager and 29-30% more than compiled. Both BCIR states 5137e013..., the state of every BCIR run since r1; validation / test cross-entropy BCIR 1.5003 / 1.6319, eager 1.5003 / 1.6319, compiled 1.5001 / 1.6321; peak RSS BCIR 528-529 MB, eager 1,124, compiled 1,116. 204.7 ms is the fastest 1,000-step run recorded and the first past 5,000 tokens a second; against r7's session eager's median step is 4% shorter (304.5 there) and compiled's 14% (310.5), so the session moved PyTorch as well -- the slice's own share is ../scanw/'s alternated in-place reading."
+}

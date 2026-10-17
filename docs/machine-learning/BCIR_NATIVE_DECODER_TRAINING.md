@@ -433,7 +433,10 @@ core's cache, a region answering through another its value reaches and the atten
 keys, the one region the softmax can hide -- in place of one scan of the whole arena after the forward
 (171 MB for the 9.84M decoder). Every element is in one call's regions, so the verdict is the scan's
 (`ndt-scanw.json` SW1-SW17; an old-against-new verdict differential over crafted states): in place at
-four threads everything but the GEMMs 56.0 -> 50.3 ms a step (the report's §25).
+four threads everything but the GEMMs 56.0 -> 50.3 ms a step (the report's §25). With it the 1,000-step
+language-model run at four threads takes 204.7 / 207.4 ms a step (5,002 / 4,936 tokens a second) against
+eager PyTorch's 293.6 (3,487) and `torch.compile`'s 267.0 (3,835), the same state `5137e013…` and
+held-out cross-entropy (§26).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over

@@ -2915,6 +2915,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  LM-4T (2026-10-17): BCIR against PyTorch at four threads on cf435d4.
+  - The 1,000-step language-model run with NDT-SCAN-W, one round in its session
+    ([measurements/2026-10-17/lm/](research/measurements/2026-10-17/lm/) r8-*, the report's §26): BCIR 204.7 / 207.4 ms
+    a step (5,002 / 4,936 tokens a second), eager PyTorch 293.6 (3,487), `torch.compile` 267.0 (3,835) --
+    BCIR 42-43% ahead of eager and 29-30% of compiled, the same held-out cross-entropy, 529 MB against
+    1,116-1,124, both BCIR states `5137e013…`; the first BCIR run past 5,000 tokens a second.
   NDT-SCAN-W (2026-10-17): the activations' finiteness taken by their writers.
   - The forward's verdict on its activations had been one scan of the whole arena after the forward
     -- 171 MB for the 9.84M decoder, read back from memory, 6.0 ms of the four-thread step; scanning
