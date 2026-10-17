@@ -2915,6 +2915,16 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  LM-4T (2026-10-17): BCIR against PyTorch at four threads on 2afa3e3.
+  - The 1,000-step language-model run with NDT-UPDATE, one round in its session
+    ([measurements/2026-10-17/lm/](research/measurements/2026-10-17/lm/) r9-*, the report's §28):
+    - BCIR 203.7 / 203.4 ms a step (5,026 / 5,035 tokens a second);
+    - eager PyTorch 321.4 ms (3,187);
+    - `torch.compile` 278.2 ms (3,681).
+  - BCIR is 58% ahead of eager and 37% ahead of compiled, at the same held-out cross-entropy and
+    529-530 MB against 1,088-1,123. Both BCIR states are `5137e013…`, and these are the fastest BCIR
+    runs recorded.
+  - Most of the wider gap is PyTorch's: against §26's session, eager ran 9% slower and compiled 4%.
   NDT-UPDATE (2026-10-17): the AdamW update's commit and first pass, the same values.
   - A probe of the trainer's own functions at the 9.84M decoder's size on four threads
     ([update/update_probe.c](research/measurements/2026-10-17/update/update_probe.c)) found neither

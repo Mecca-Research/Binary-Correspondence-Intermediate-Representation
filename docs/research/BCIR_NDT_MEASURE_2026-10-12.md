@@ -1634,3 +1634,23 @@ so the step's own median says little. The first pass is now at its streams' boun
 against 3.72 for the flag and maxima with no chain at all. The commit's 6.15 ms is 2.0 ms above the
 streams' 4.17. 1.4 ms of that is each element's own division and root, which no other element shares,
 and 0.7 ms is the corrections' FMAs over plain products.
+
+## 28. BCIR against PyTorch at four threads on 2afa3e3
+
+The 1,000-step language-model run at four threads on NDT-UPDATE (2afa3e3): BCIR under
+`kblock+exp+reduce` against PyTorch 2.13 eager and `torch.compile` at four intra-op threads. It is one
+round in §27's session (BCIR, eager, compiled, BCIR), every run from the committed tree
+([lm/r9-2afa3e3-\*](measurements/2026-10-17/lm/)):
+
+| four threads, 1,000 steps | median step, ms | tokens a second | validation / test cross-entropy | peak RSS, MB |
+|---|---|---|---|---|
+| BCIR, 2afa3e3 (two runs) | 203.7 / 203.4 | 5,026 / 5,035 | 1.5003 / 1.6319 | 529 / 530 |
+| PyTorch eager | 321.4 | 3,187 | 1.5003 / 1.6319 | 1,123 |
+| PyTorch compiled | 278.2 | 3,681 | 1.5001 / 1.6321 | 1,088 |
+
+Both BCIR runs end in `5137e013…`, the state of every BCIR run since §17. BCIR trains 58% more tokens a
+second than eager PyTorch and 37% more than compiled, to the same held-out cross-entropy in under half
+the memory. Its 203.4 and 203.7 ms are the fastest 1,000-step runs recorded. Most of the wider gap is
+PyTorch's: against §26's session, eager's median step is 9% longer (293.6 ms there) and compiled's 4%
+(267.0), while BCIR's is 0.5-2% shorter (204.7 / 207.4). The container restarted between the two
+sessions, so its instance may differ. The slice's own share is §27's alternated in-place reading.

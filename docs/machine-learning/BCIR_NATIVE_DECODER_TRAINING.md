@@ -445,6 +445,9 @@ the portable instances and the preflight keep the divisions. Under the reduce co
 takes two chunks a task, each chunk's norm chain in index order under the streams' reads
 (`ndt-update.json` UP1-UP14; the dispatched division against the division over every float significand).
 In place at four threads the update went from 15.33 to 10.06 ms a step (the report's §27).
+With it the 1,000-step language-model run at four threads takes 203.7 / 203.4 ms a step (5,026 / 5,035
+tokens a second), against eager PyTorch's 321.4 (3,187) and `torch.compile`'s 278.2 (3,681) in one later
+session, with the same state `5137e013…` and held-out cross-entropy (§28).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
