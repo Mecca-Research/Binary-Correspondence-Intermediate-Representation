@@ -1,0 +1,6 @@
+# The trainer's sources the r6 runs built (run.sh's first lines): HEAD was 8b4f23d with NDT-FUSE and NDT-ATTN-6
+# uncommitted; each SHA-256 below is the blob's in 64bfd62 (git show 64bfd62:runtime/c/FILE | sha256sum).
+b2647c00ed75c7c34177445286ce0013a69e239da88b34355eb9856d0f1192e4  runtime/c/bcir_tensor.c
+46c3f162379700bfb43a05478fab28c8728b05a179e3adbe8ffa317fe9a8e3c6  runtime/c/bcir_tensor.h
+99793bdc59f09fb5c9775aafda60b7b756bc9c2ba7032b3f0262711b31c7d243  runtime/c/bcir_decoder_train.c
+be9e37762c29207f467461ff0eeb500dd07d9d3c8f1cb53b74357918d6d20add  runtime/c/bcir_decoder_train.h

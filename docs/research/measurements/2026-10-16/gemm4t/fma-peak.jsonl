@@ -1,0 +1,12 @@
+{"threads": 1, "gflops_per_thread": 165.4, "gflops": 165.4}
+{"threads": 2, "gflops_per_thread": 159.1, "gflops": 318.3}
+{"threads": 3, "gflops_per_thread": 154.4, "gflops": 463.3}
+{"threads": 4, "gflops_per_thread": 160.5, "gflops": 641.9}
+{"threads": 1, "gflops_per_thread": 164.0, "gflops": 164.0}
+{"threads": 2, "gflops_per_thread": 154.2, "gflops": 308.4}
+{"threads": 3, "gflops_per_thread": 162.4, "gflops": 487.3}
+{"threads": 4, "gflops_per_thread": 163.1, "gflops": 652.5}
+{"threads": 1, "gflops_per_thread": 162.2, "gflops": 162.2}
+{"threads": 2, "gflops_per_thread": 153.8, "gflops": 307.6}
+{"threads": 3, "gflops_per_thread": 152.1, "gflops": 456.4}
+{"threads": 4, "gflops_per_thread": 143.5, "gflops": 574.0}

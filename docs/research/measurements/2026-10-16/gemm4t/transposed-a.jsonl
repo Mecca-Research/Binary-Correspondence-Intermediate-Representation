@@ -1,0 +1,10 @@
+{"shape": "gate/up", "threads": 1, "m": 1024, "n": 384, "k": 1024, "ta1_ms": 8.343, "ta1_gflops": 96.5, "pretransposed_ms": 6.751, "pretransposed_gflops": 119.3, "transpose_ms": 3.912, "identical": true}
+{"shape": "down", "threads": 1, "m": 384, "n": 1024, "k": 1024, "ta1_ms": 7.243, "ta1_gflops": 111.2, "pretransposed_ms": 6.992, "pretransposed_gflops": 115.2, "transpose_ms": 0.589, "identical": true}
+{"shape": "q/o", "threads": 1, "m": 384, "n": 384, "k": 1024, "ta1_ms": 2.281, "ta1_gflops": 132.4, "pretransposed_ms": 2.239, "pretransposed_gflops": 134.9, "transpose_ms": 0.548, "identical": true}
+{"shape": "k/v", "threads": 1, "m": 192, "n": 384, "k": 1024, "ta1_ms": 1.137, "ta1_gflops": 132.8, "pretransposed_ms": 1.093, "pretransposed_gflops": 138.1, "transpose_ms": 0.243, "identical": true}
+{"shape": "head", "threads": 1, "m": 260, "n": 384, "k": 1024, "ta1_ms": 1.798, "ta1_gflops": 113.7, "pretransposed_ms": 1.695, "pretransposed_gflops": 120.6, "transpose_ms": 0.262, "identical": true}
+{"shape": "gate/up", "threads": 4, "m": 1024, "n": 384, "k": 1024, "ta1_ms": 3.027, "ta1_gflops": 266.0, "pretransposed_ms": 2.755, "pretransposed_gflops": 292.3, "transpose_ms": 2.573, "identical": true}
+{"shape": "down", "threads": 4, "m": 384, "n": 1024, "k": 1024, "ta1_ms": 3.076, "ta1_gflops": 261.8, "pretransposed_ms": 3.267, "pretransposed_gflops": 246.5, "transpose_ms": 0.587, "identical": true}
+{"shape": "q/o", "threads": 4, "m": 384, "n": 384, "k": 1024, "ta1_ms": 0.997, "ta1_gflops": 303.0, "pretransposed_ms": 1.442, "pretransposed_gflops": 209.5, "transpose_ms": 0.511, "identical": true}
+{"shape": "k/v", "threads": 4, "m": 192, "n": 384, "k": 1024, "ta1_ms": 0.401, "ta1_gflops": 376.4, "pretransposed_ms": 0.482, "pretransposed_gflops": 313.2, "transpose_ms": 0.240, "identical": true}
+{"shape": "head", "threads": 4, "m": 260, "n": 384, "k": 1024, "ta1_ms": 0.599, "ta1_gflops": 341.5, "pretransposed_ms": 0.625, "pretransposed_gflops": 327.0, "transpose_ms": 0.203, "identical": true}

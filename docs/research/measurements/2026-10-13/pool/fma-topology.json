@@ -1,0 +1,137 @@
+{
+ "schema": "bcir.fma_topology.v1",
+ "probe": "fma_topology.c: twelve independent AVX-512 FMA chains held in registers (one loop of 12 vfmadd132ps, no spill), 200M iterations, pinned to one CPU, to each pair and to all four, then to one again; gcc -O2 -pthread",
+ "runs": [
+  [
+   {
+    "cpus": [
+     0
+    ],
+    "gflops": 147.7
+   },
+   {
+    "cpus": [
+     0,
+     1
+    ],
+    "gflops": 291.3
+   },
+   {
+    "cpus": [
+     0,
+     2
+    ],
+    "gflops": 288.2
+   },
+   {
+    "cpus": [
+     0,
+     3
+    ],
+    "gflops": 293.6
+   },
+   {
+    "cpus": [
+     1,
+     2
+    ],
+    "gflops": 298.6
+   },
+   {
+    "cpus": [
+     1,
+     3
+    ],
+    "gflops": 284.2
+   },
+   {
+    "cpus": [
+     2,
+     3
+    ],
+    "gflops": 289.9
+   },
+   {
+    "cpus": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "gflops": 578.6
+   },
+   {
+    "cpus": [
+     0
+    ],
+    "gflops": 147.2
+   }
+  ],
+  [
+   {
+    "cpus": [
+     0
+    ],
+    "gflops": 144.7
+   },
+   {
+    "cpus": [
+     0,
+     1
+    ],
+    "gflops": 299.9
+   },
+   {
+    "cpus": [
+     0,
+     2
+    ],
+    "gflops": 287.5
+   },
+   {
+    "cpus": [
+     0,
+     3
+    ],
+    "gflops": 292.7
+   },
+   {
+    "cpus": [
+     1,
+     2
+    ],
+    "gflops": 293.8
+   },
+   {
+    "cpus": [
+     1,
+     3
+    ],
+    "gflops": 297.0
+   },
+   {
+    "cpus": [
+     2,
+     3
+    ],
+    "gflops": 298.9
+   },
+   {
+    "cpus": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "gflops": 583.9
+   },
+   {
+    "cpus": [
+     0
+    ],
+    "gflops": 140.9
+   }
+  ]
+ ],
+ "note": "an earlier form of the probe kept its chains in an array and measured their round trips through memory (about 33 GFLOP/s a CPU, still four times one at four), not the FMA units; this form replaced it"
+}

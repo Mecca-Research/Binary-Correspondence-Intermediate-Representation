@@ -1,0 +1,197 @@
+{
+ "schema": "bcir.ndt_gemm_cold.v1",
+ "threads": 4,
+ "sets": 6,
+ "reps": 9,
+ "builds": [
+  "/tmp/claude-0/-home-user-Binary-Correspondence-Intermediate-Representation/4865d9ed-555e-57a2-bf84-b7cf72659f54/scratchpad/widen/plain/lib.so"
+ ],
+ "transposed_a_only": false,
+ "mismatch": 0,
+ "step_gemm_ms": {
+  "warm": 155.8,
+  "cold": 170.8
+ },
+ "rows": [
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 384,
+   "k": 384,
+   "calls": 12,
+   "warm.ms": 1.0658,
+   "cold.ms": 1.1392,
+   "warm.gflops": 283.4,
+   "cold.gflops": 265.1
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 192,
+   "k": 384,
+   "calls": 12,
+   "warm.ms": 0.5176,
+   "cold.ms": 0.5363,
+   "warm.gflops": 291.7,
+   "cold.gflops": 281.6
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 1024,
+   "k": 384,
+   "calls": 12,
+   "warm.ms": 2.0632,
+   "cold.ms": 2.165,
+   "warm.gflops": 390.3,
+   "cold.gflops": 372.0
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "calls": 6,
+   "warm.ms": 1.9268,
+   "cold.ms": 2.1521,
+   "warm.gflops": 418.0,
+   "cold.gflops": 374.2
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 260,
+   "k": 384,
+   "calls": 1,
+   "warm.ms": 0.6999,
+   "cold.ms": 0.7374,
+   "warm.gflops": 292.2,
+   "cold.gflops": 277.3
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 260,
+   "calls": 1,
+   "warm.ms": 0.6741,
+   "cold.ms": 0.6976,
+   "warm.gflops": 303.3,
+   "cold.gflops": 293.1
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 260,
+   "n": 384,
+   "k": 1024,
+   "calls": 1,
+   "warm.ms": 0.5697,
+   "cold.ms": 0.6545,
+   "warm.gflops": 358.9,
+   "cold.gflops": 312.4
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 1024,
+   "k": 384,
+   "calls": 6,
+   "warm.ms": 2.3552,
+   "cold.ms": 2.4763,
+   "warm.gflops": 341.9,
+   "cold.gflops": 325.2
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 384,
+   "n": 1024,
+   "k": 1024,
+   "calls": 6,
+   "warm.ms": 2.0836,
+   "cold.ms": 2.3389,
+   "warm.gflops": 386.5,
+   "cold.gflops": 344.3
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "calls": 12,
+   "warm.ms": 1.8835,
+   "cold.ms": 2.0029,
+   "warm.gflops": 427.6,
+   "cold.gflops": 402.1
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "calls": 12,
+   "warm.ms": 1.8824,
+   "cold.ms": 2.1626,
+   "warm.gflops": 427.8,
+   "cold.gflops": 372.4
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 384,
+   "calls": 12,
+   "warm.ms": 0.6985,
+   "cold.ms": 0.769,
+   "warm.gflops": 432.3,
+   "cold.gflops": 392.7
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 384,
+   "n": 384,
+   "k": 1024,
+   "calls": 12,
+   "warm.ms": 0.7551,
+   "cold.ms": 0.8739,
+   "warm.gflops": 400.0,
+   "cold.gflops": 345.6
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 192,
+   "calls": 12,
+   "warm.ms": 0.4267,
+   "cold.ms": 0.4532,
+   "warm.gflops": 353.8,
+   "cold.gflops": 333.2
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 192,
+   "n": 384,
+   "k": 1024,
+   "calls": 12,
+   "warm.ms": 0.3455,
+   "cold.ms": 0.4694,
+   "warm.gflops": 437.0,
+   "cold.gflops": 321.7
+  }
+ ]
+}

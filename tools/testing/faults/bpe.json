@@ -1,0 +1,24 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_hosted_training_pipeline:test_a_duplicate_merge_pair_keeps_its_first_merge",
+    "bcir.tests.test_hosted_training_pipeline:test_the_rank_ordered_encoder_is_the_pass_encoder"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_duplicate_merge_pair_keeps_its_first_merge",
+      "label": "BP1 the rank table keeps a duplicate pair's LAST merge (the pass encoder applies the first)",
+      "old": "                ranks.setdefault((left, right), (index, token))\n",
+      "new": "                ranks[(left, right)] = (index, token)\n",
+      "path": "bcir/hosted/training/bpe.py"
+    },
+    {
+      "expects": "test_the_rank_ordered_encoder_is_the_pass_encoder",
+      "label": "BP2 a merge's token is dropped from the table (the pair is never merged by rank)",
+      "old": "                ranks.setdefault((left, right), (index, token))\n",
+      "new": "                ranks.setdefault((left, right), (index, token)) if index else None\n",
+      "path": "bcir/hosted/training/bpe.py"
+    }
+  ]
+}

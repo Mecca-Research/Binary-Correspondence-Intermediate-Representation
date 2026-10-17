@@ -2889,7 +2889,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     under all six contracts, each its own state, each identical at 1..4 threads; the undefined
     bit 8 and the pair fused|kblock refused. `train.mm.kblock.mismatch` 0 of 40 against
     `mm_reference_kblock` (exact rationals per term, two binary32 operations per block) with
-    the C and Python split rules agreeing on every depth; `train.mm.provider.mismatch` 0 of 30
+    the C and Python split rules agreeing on every depth; `train.mm.provider.mismatch` (since PR817-P0 `train.mm.provider.differences`, beside the graded `train.mm.provider.unsound`) 0 of 30
     (OpenBLAS on the comparison decoder's shapes, where the wheel is importable). The admission
     witness: BCIR's blocked kernel behind a CBLAS callback admitted, the v1 kernel refused on
     30 of 30 cases, the fused kernel on the 15 beta-1 cases, an empty differential refused, and
@@ -2915,6 +2915,521 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  LM-PAIRED (2026-10-17): BCIR against `torch.compile` with fused AdamW, five seeds paired.
+  - An external review's bar for a public claim (the fastest matched PyTorch configuration, a paired
+    interval, at least three seeds, a quality margin fixed beforehand): the comparison harness gained
+    `prepare --seed` and a memory split (aeb7d15), and five seeds ran one pair each in one session,
+    the order alternating ([measurements/2026-10-17/paired/](research/measurements/2026-10-17/paired/),
+    the report's §30).
+  - BCIR trains 1.262 times PyTorch's tokens a second (95% interval 1.240-1.284; 176.5-185.2 against
+    218.4-237.4 ms a step), faster on all five seeds; the test cross-entropy difference -0.00001 nats
+    (interval -0.00006 to +0.00003, inside the +-0.01 margin); 528-529 MB of peak RSS against
+    1,055-1,121, the same 157,390,848 bytes of persistent state on both.
+  - A check added after the runs: eager PyTorch on two seeds, 0.8% faster and 12.6% slower than their
+    compiled runs; against the faster arm wherever both ran the ratio is 1.260 (1.241-1.279).
+  - On the instance the container moved to at 10:15 (a 2.10 GHz Xeon, a 260 MB L3), where both sides
+    ran faster than in r9's session; the margin there was 1.37 in one round.
+  NDT-PACK (2026-10-17): the packed tiles kept between a thread's tasks, measured and not kept.
+  - An external review's second item (the 2026-10-13 training-architecture blueprint: reuse packed
+    panels where legal, from a workspace the caller lends, keyed by the value's version), as three
+    arms over d68e3d3's tensor unit that keep the partition, so every product is the same floats
+    ([measurements/2026-10-17/pack/](research/measurements/2026-10-17/pack/), the report's §29):
+    a job's tasks numbered column block by column block; that order with a thread's copy of one
+    column block's tiles, keyed by a per-job sequence number and never B's address; and groups of
+    four column blocks row set by row set.
+  - The GEMM shapes alone at four threads, warm: the column order 151.55 -> 141.34 ms a step in one
+    run (10 rounds of 12) and 134.59 -> 131.56 in the next (6 of 12), the cache 138.66. Cold in L2:
+    the column order 0.6% and the cache 2.2% faster, the groups 3.4% slower. In place the GEMMs
+    143.7 -> 142.2 (column order, 4 rounds of 8) and 141.5 (cache, 6 of 8), inside base's own
+    rounds (132.9-165.4). On the instance the container moved to at 10:15 (a 2.10 GHz Xeon, 2 MB
+    of L2 a core, a 260 MB L3, AVX512-BF16 and AMX).
+  - The order changes only how often a pack finds its panel in the packer's own L2, and the cache
+    saves only the pack's copy, which the inner loop did not wait on in §18's probe. Not kept.
+  LM-4T (2026-10-17): BCIR against PyTorch at four threads on 2afa3e3.
+  - The 1,000-step language-model run with NDT-UPDATE, one round in its session
+    ([measurements/2026-10-17/lm/](research/measurements/2026-10-17/lm/) r9-*, the report's §28):
+    - BCIR 203.7 / 203.4 ms a step (5,026 / 5,035 tokens a second);
+    - eager PyTorch 321.4 ms (3,187);
+    - `torch.compile` 278.2 ms (3,681).
+  - BCIR is 58% ahead of eager and 37% ahead of compiled, at the same held-out cross-entropy and
+    529-530 MB against 1,088-1,123. Both BCIR states are `5137e013…`, and these are the fastest BCIR
+    runs recorded.
+  - Most of the wider gap is PyTorch's: against §26's session, eager ran 9% slower and compiled 4%.
+  NDT-UPDATE (2026-10-17): the AdamW update's commit and first pass, the same values.
+  - A probe of the trainer's own functions at the 9.84M decoder's size on four threads
+    ([update/update_probe.c](research/measurements/2026-10-17/update/update_probe.c)) found neither
+    pass memory-bound, as §11 of the report had read them. The commit was bound by its divider:
+    8.40 ms a call against 4.17 for its streams with trivial arithmetic, and streaming stores made it
+    slower. The first pass was bound by the reduce contract's norm chain, 16,384 dependent double
+    additions a chunk after the chunk's vector loop: 6.84 ms against 3.72 for its flag and maxima alone.
+  - The commit's two divisions an element by the bias corrections 1 - beta1^t and 1 - beta2^t, which
+    every element of a call shares, go through `div_shared`: y = RN(1/d) once a call, q0 = x*y, and
+    two FMA corrections, the second Markstein's theorem (Handbook of Floating-Point Arithmetic, 2nd
+    ed., Theorem 4.10: RN(x/d) for a faithful q and y within half an ulp of 1/d). `copysign` keeps
+    a zero's sign. It is used in the AVX-512 commit and a new AVX2+FMA commit (variant bit 8, the
+    fused GEMM's AVX2 bit, which implies FMA). The portable commit, the FMA-less AVX2 commit and the
+    preflight keep the true divisions; each element's own division and root stay.
+  - The first pass under the reduce contract on a vector variant takes two chunks a task
+    (`pair_avx512`, `pair_avx2`): both chunks' flag and maxima a vector at a time, and each chunk's
+    squares added to its own chain in index order between the loads. Each chain then runs under
+    the streams' reads and under the other's latency. Short pairs, an odd last chunk, the chain
+    contract and the portable build take the per-chunk loop.
+  - Evidence:
+    - the C harness's `update_pairs`: two decoders of 19,616 and 16,032 parameters, whole and short
+      pairs, NaN past the parameters. The state, verdict and norm match `ref_update` bit for bit
+      under both norm contracts, no pool and three, two scales, clipping on and off. 512 planted
+      refusals at the ends of sixteen chunks leave the state untouched, 64 -0.0 second moments are
+      admitted, and a -0.0 weight's zero sign is kept;
+    - under `BCIR_DT_DIVISION_PROBE` (the harness's builds only), the dispatched shared division
+      against the division over 268,444,464 float dividends for sixteen divisors;
+    - the Python test's new build capped at AVX2;
+    - the clipping-norm test's new one-chunk bench (728 parameters). The chain found `ndt-reduce.json`
+      NR11 escaping its own check once the threads bench's whole pairs took the paired loop;
+    - `ndt-update.json` UP1-UP14, 14 of 14 caught;
+    - [division_check.c](research/measurements/2026-10-17/update/division_check.c): 24,245
+      divisors (14,837 distinct) times 16,782,765 dividends, 0 mismatches;
+    - the statedump differential: the same 376,368,795 bytes and 9.84M digest;
+    - the 20-step state `4bf4e057…`.
+  - Measured in place at four threads, eight rounds rotated with aaa2e6c's sources
+    ([measurements/2026-10-17/update/](research/measurements/2026-10-17/update/), the report's §27):
+    the update dropped from 15.33 to 10.06 ms a step (commit 8.73 -> 6.84, first pass 6.62 -> 3.15)
+    and everything but the GEMMs from 50.78 to 46.22, both in every round. The first pass now sits
+    at its streams' bound. The commit's remaining 2.0 ms over its streams is mostly each element's
+    own division and root.
+  - The pre-push chain's runtime gate found the portable build (`BCIR_TENSOR_NO_DISPATCH`) refusing
+    `adamw_commit_fma` as an unused function under Clang's `-Werror`: GCC does not warn on an unused
+    static inline, and none of the slice's harness builds was portable. Every no-dispatch target
+    (aarch64, Windows, the portable build) would have failed the same way. The three helpers are now
+    defined among their only callers, inside the dispatch block, with the same text: `ndt-update` is
+    14/14 and the 20-step state is `4bf4e057…`.
+  LM-4T (2026-10-17): BCIR against PyTorch at four threads on cf435d4.
+  - The 1,000-step language-model run with NDT-SCAN-W, one round in its session
+    ([measurements/2026-10-17/lm/](research/measurements/2026-10-17/lm/) r8-*, the report's §26): BCIR 204.7 / 207.4 ms
+    a step (5,002 / 4,936 tokens a second), eager PyTorch 293.6 (3,487), `torch.compile` 267.0 (3,835) --
+    BCIR 42-43% ahead of eager and 29-30% of compiled, the same held-out cross-entropy, 529 MB against
+    1,116-1,124, both BCIR states `5137e013…`; the first BCIR run past 5,000 tokens a second.
+  NDT-SCAN-W (2026-10-17): the activations' finiteness taken by their writers.
+  - The forward's verdict on its activations had been one scan of the whole arena after the forward
+    -- 171 MB for the 9.84M decoder, read back from memory, 6.0 ms of the four-thread step; scanning
+    each layer when it was done (NDT-GEMM-CAND) found the same 6.6 ms: the shared L3 does not keep a
+    layer's 26 MB between their writes and the scan.
+  - `bcir_tensor_rms_scan_pool`, `bcir_tensor_silu_mul_scan_pool` (and `_v2`) and
+    `bcir_tensor_attention_scan_pool` (and `_v2`) compute their plain entries' values, bit for bit,
+    and set a verdict when one of their regions holds an element that is not finite, read back by the
+    tasks that wrote them into one byte each of the caller's stack (a job past the bytes' bound
+    scanned after it on the pool). A region answers through another its value reaches -- the
+    RMSNorm's input rows through its output, the SwiGLU product's gate and up through the product,
+    the attention's queries, values and probabilities through its context -- and the attention reads
+    its keys itself, the one region the softmax can hide (a key whose scores are all -inf weighs 0).
+    The trainer's forward calls them for every region of the arena and scans only the logits after
+    the head; a provider's SiLU has its three regions scanned after it.
+  - Evidence: the C harness's `writer_verdicts` (each entry its plain entry's values and its regions'
+    verdict over 560 cases: every task chunk's ends in every input region, overflowing outputs, a set
+    verdict kept, the hidden key; through the trainer the key behind RoPE, logits that overflow alone
+    and a provider's SiLU that answers 0 for an infinite gate, refused with every other activation
+    finite) and its Python test's build with the bytes' bound at two tasks; `ndt-scanw.json` SW1-SW17
+    (17 of 17 caught; the edit had left three earlier tables' entries without their anchors --
+    `ndt-exp.json` NE5, `ndt-fuse.json` NU7, `ndt-threads.json` NT5 -- re-anchored on its calls in
+    aaa2e6c); an old-against-new differential of the verdict over three specs, the twelve
+    contracts, pools of one, two and four and ten crafted states, every observable byte hashed -- the
+    same table and digest; the statedump differential's same 376,368,768 bytes and 9.84M digest; the
+    20-step state `4bf4e057…`.
+  - Measured in place at four threads, eight rounds rotated with 4fcaa5e's sources
+    ([measurements/2026-10-17/scanw/](research/measurements/2026-10-17/scanw/), the report's §25):
+    the activations' scan 5.95 -> 0.05 ms a step and everything but the GEMMs 56.0 -> 50.3, every
+    round; the writers' reads 0.5 ms among them once the attention reads each region in one call (a
+    first form, one call a strided row, spent 0.6 ms in the attention alone).
+  LM-4T (2026-10-16): BCIR against PyTorch at four threads on 14b5941.
+  - The 1,000-step language-model run with NDT-ATTN-7, one round in its session
+    ([measurements/2026-10-16/lm/](research/measurements/2026-10-16/lm/) r7-*, the report's §24): BCIR 211.0 / 225.6 ms a
+    step (4,853 / 4,538 tokens a second), eager PyTorch 304.5 (3,362), `torch.compile` 310.5 (3,298) --
+    BCIR 35-44% ahead of eager and 38-47% of compiled, the same held-out cross-entropy, 529 MB against
+    1,137, both BCIR states `5137e013…`; against §22's session eager's median step was 14% shorter
+    and compiled's 5% longer, the slice's own share being §23's in-place reading.
+  NDT-ATTN-7 and NDT-PREPACK (2026-10-16): the attention's diagonal terms in registers, and the
+  GEMM's tiles packed once, measured and not kept.
+  - Cycle counters around the attention's phases put 62% of its task time in four products -- the
+    forward's context and the backward's dv, dq and dk -- whose kernels (`att512_context`,
+    `att512_transposed`) took a block's diagonal terms in a loop bounded by the term, indexing the
+    block's register arrays by a run-time row; at -O3 GCC kept the arrays in memory (21 of the
+    context's 24 accumulators stored to the stack every step of its main loop) and Clang spilled
+    the context's too.
+  - NDT-ATTN-7: the diagonal terms run over all eight rows, a row that does not take a term
+    merge-masked out of its sum (its accumulator the one it held); no stack store or load is left
+    in either kernel at -O3 under GCC 13.3, Clang 18.1 or Clang 23.1.
+  - Evidence: the C harness's attention reference (finite and not) under GCC and Clang, C11 and
+    C2x, -O2 and -O3; `ndt-attn.json` NA5 and NA8 re-anchored onto the masks, NA15-NA16 new (16 of
+    16 caught); the old-against-new differential of every observable byte: the same 376,368,768
+    bytes and 9.84M digest; a differential over twelve shapes with two NaN payloads among its
+    operands, every value the same under both compilers, only which NaN survives where two meet
+    moving -- as it already moved between GCC's and Clang's builds of the old kernels and between
+    every build and the scalar reference; the 20-step state `4bf4e057…`.
+  - Measured in place at four threads, eight rounds rotated with 64bfd62's sources
+    ([measurements/2026-10-16/attn7/](research/measurements/2026-10-16/attn7/), the report's §23):
+    the attention forward 7.63 -> 6.65 ms a step and the backward 12.03 -> 10.06, everything but the
+    GEMMs 62.2 -> 57.8, every round; alone 7-10% at one thread and inside the host's noise at four.
+  - NDT-PREPACK, measured: a pack phase packing each column block's tiles once into a workspace
+    the pool's tasks read, in place of every 128-row task packing its own (5.6-12.6% of a
+    one-thread task, §18) -- the GEMM shapes alone at four threads 10.0% slower, in place the GEMMs
+    173.0 -> 178.4 ms a step: the tiles come from L2 or L3 either way, so sharing them saves only
+    the copy and costs a pass, a barrier and the cross-core reads of lines another core just
+    wrote. Not kept ([measurements/2026-10-16/prepack/](research/measurements/2026-10-16/prepack/)).
+  LM-4T (2026-10-16): BCIR against PyTorch at four threads on 64bfd62.
+  - The 1,000-step language-model run with NDT-FUSE and NDT-ATTN-6, one round in their session
+    ([measurements/2026-10-16/lm/](research/measurements/2026-10-16/lm/) r6-*, the report's §22):
+    BCIR 227.3 / 226.0 ms a step (4,504 / 4,531 tokens a second), eager PyTorch 353.2 (2,900),
+    `torch.compile` 296.9 (3,449) -- BCIR 55-56% ahead of eager and 31% of compiled, the same held-out
+    cross-entropy, 529 MB against 1,119-1,123, both BCIR states `5137e013…`. The runs started from
+    8b4f23d with the slices uncommitted; the sources they built are 64bfd62's blobs, hashed beside the
+    records.
+  NDT-FUSE and NDT-ATTN-6 (2026-10-16): the step's passes merged, and the attention's fills.
+  - After NDT-SCHED-1 a third of the four-thread step was outside the GEMMs (68.2 of 228.9 ms a step
+    in place), and five of its passes were there only because a neighbouring pass stopped short: the
+    SwiGLU forward's SiLU and product as two passes over each layer's hidden activations, the
+    residual's adds after the RMSNorm VJPs had stored their dx, the gradients' 9.84M-float zero fill,
+    the backward's closing gradient scan that the update's first pass repeats, and the attention's
+    fills under kernels that then add their first terms to the zeros.
+  - NDT-FUSE: `bcir_tensor_silu_mul_pool` and its v2 twin (the two roundings the passes made);
+    `bcir_tensor_rms_backward_into_pool` with `BCIR_TENSOR_RMSB_ADD` (the VJP's element added to dx in
+    place) and `BCIR_TENSOR_RMSB_FIRST` (the gamma adjoint's sums from +0.0); under a fresh backward on
+    BCIR's GEMM each gradient's first writer starts it -- the weight adjoints at beta 0, which
+    NDT-BETA's first K block adds to +0.0 without reading C, a sum begun at +0.0 never being -0.0 --
+    with only an untied embedding filled for its scatter and a provider's GEMM keeping the fill and
+    beta 1; inside a run the last micro-batch's closing scan is the update's first pass, a
+    non-finite gradient still reported as `BCIR_DT_NUMERIC` ahead of the update's own
+    `BCIR_DT_INVALID`, and later micro-batches skip the opening scans already answered.
+  - NDT-ATTN-6: the AVX-512 attention's scores, context and dq blocks start from +0.0 in registers on
+    a head's first write, dk and dv on a KV head's first query head; the fills cover only the
+    probabilities' future columns past a row's blocks and the v1 kernel's rows; the scores' last
+    channel block stores its future lanes as +0.0; the key panel is packed by 16 x 16 register
+    transposes.
+  - Evidence: the C harness's `fused_passes` (the product over special operands and in place, the
+    VJP's four modes, a NaN-filled gradient under accumulate 0 against the zero-filled one on a tied
+    and an untied fixture under four contracts, the scans' refusals on a crafted state whose
+    activations are finite and whose gradient overflows); `ndt-fuse.json` NU1-NU14 and NZ1-NZ7,
+    `ndt-exp.json` NE5, `ndt-lanes.json` NL4 and `ndt-scan.json` NS6-NS7 (onto the fills that remain)
+    re-anchored; an old-against-new differential of every
+    byte the API can observe (three small specs under the twelve contracts at one, two and four
+    threads, and the 9.84M spec): the same bytes from both trees; the 20-step state at one and four
+    threads, widest, AVX2 and portable builds, `4bf4e057…`.
+  - Measured in place at four threads, eight rounds of the three arms rotated
+    ([measurements/2026-10-16/fuse/](research/measurements/2026-10-16/fuse/), the report's §21):
+    everything but the GEMMs 68.2 -> 64.5 ms a step with NDT-FUSE (lower in seven rounds of eight) and
+    61.3 with both (every round), the step 228.9 -> 221.8 with both.
+  LM-4T (2026-10-16): BCIR against PyTorch at four threads on 78cbd29, again.
+  - The 1,000-step language-model run with NDT-BETA and NDT-SCHED-1, two rounds in one session
+    ([measurements/2026-10-16/lm/](research/measurements/2026-10-16/lm/) r4-*, r5-*, the report's
+    §20): BCIR 241.8 / 236.7 / 256.6 ms a step (3,991-4,327 tokens a second), eager PyTorch 362.6 /
+    369.7 (2,824 / 2,770), `torch.compile` 321.6 / 310.3 (3,184 / 3,300) -- BCIR 44-53% ahead of
+    eager and 21-36% of compiled round by round, the same held-out cross-entropy, 529 MB against
+    1,060-1,142, every BCIR state `5137e013…`. That session's host ran PyTorch a quarter slower than
+    the first session's, so the gap is wider than the slices alone would make it.
+  NDT-SCHED-1 (2026-10-16): the linears that read one input as one pool job.
+  - Five of a layer's seven linears read one input -- q, k and v the first norm's output, gate and
+    up the second's -- and each was its own job behind its own barrier; their input adjoints add
+    into one dx, so the backward ran their pair jobs (NDT-SCHED-0) one after another, the narrow k
+    and v leaving threads idle at each job's tail.
+  - `bcir_tensor_mm_group_pool` runs a chain of up to four calls into one C (the same c, m and n:
+    a tile's task runs each chained call's task for that tile in turn, the order the calls would
+    run whole) beside up to four independent calls, each its own partition. The forward's q, k, v
+    and gate, up are independent calls; the backward's input adjoints the chain, the weight
+    adjoints beside it -- six barriers fewer a layer. A provider, one thread, more calls or a
+    chain of other shapes runs the calls one after another; every element receives the same
+    operations in the same order.
+  - Evidence: the C harness's group tests (a chain of three with two independent products, each
+    alone, both serial fallbacks, under the three GEMM contracts at every thread count);
+    `ndt-threads.json` NT13-NT18; the 20-step state at one and four threads `4bf4e057…`.
+  - Measured in place at four threads, four rounds alternated with NDT-BETA's tree
+    ([measurements/2026-10-16/sched1/](research/measurements/2026-10-16/sched1/), the report's
+    §19): the GEMMs 179.5 -> 171.3 ms a step, the step 254.2 -> 241.2, every round.
+  NDT-BETA (2026-10-16): the blocked GEMM's beta scaling in its first K block.
+  - NDT-GEMM-L1's probe of the AVX-512 kernel over the pool's partition found its inner loop alone
+    at the FMA probe's rate, 162-171 GFLOP/s, at every depth from 64 to 448 -- the contract's depth
+    and the tile's L2 residence cost nothing, against NDT-GEMM-4T's guess -- and the rest of a task
+    its tile's pack (5.6-12.6% of its cycles) and the pass scaling its elements of C by beta
+    (1.6-8.9%); fourteen variants that keep the arithmetic (depth slices, prefetch distances,
+    row-task heights) moved nothing beyond one run's noise.
+  - Under the blocked contract the pass is gone: the kernels scale C in their first K block's
+    epilogue, under beta 0 adding the terms to +0.0 without reading C, under any other beta scaling
+    the loaded C by the same rounded product, a later block adding to C as stored -- the same
+    operations in the same order. Beta and the lane masks are formed after the depth loop: with
+    beta live across it the block's 28 of 32 vector registers spilled every depth (2-4x slower). A
+    depth of zero and the v1 and fused contracts keep the pass.
+  - Evidence: the C harness's blocked-contract test (a depth of zero at beta 0, 0.5, 1 and -2, and
+    a zero product at alpha -1 under beta 0 storing +0.0 at depths 1, 449 and 897, on the serial
+    entry, both pool partitions and every instance); `ndt-kblock.json` NK3b and NK11-NK17, NK10 and
+    `ndt-threads.json` NT3 re-anchored; `train.mm.kblock.mismatch`'s 897-deep case at alpha 1.1
+    (was 0.5, a product the binary32 multiply scales exactly), so a fused rounding in a later K
+    block's epilogue -- now its own code -- stays in the row's sight, and the row's witness test
+    given the fold's wrong copies; the 20-step state at one and four threads, widest, AVX2 and
+    portable builds, `4bf4e057…`.
+  - Measured ([measurements/2026-10-16/beta/](research/measurements/2026-10-16/beta/), the report's
+    §18): the step's GEMM shapes alone at four threads 198.6 -> 175.3 ms a step over twelve
+    alternated rounds (10 faster), neutral at one thread (551.3 -> 546.7; the gate and up input
+    adjoint 4% slower there); in place at four threads the GEMMs 199.6 -> 179.5 ms a step in every
+    round of four, the step 267.8 -> 254.2.
+  NDT-GEMM-4T (2026-10-16): the four-thread GEMMs measured, and BCIR against PyTorch at four threads.
+  - On this instance an FMA probe gives one thread 162-165 GFLOP/s alone and 144-163 each with four
+    running; the step's GEMMs, timed call by call in place, are 162.8 ms of a 235 ms step at 371
+    GFLOP/s, 57-65% of it, with 2% of the pool idle inside the calls -- merging jobs cannot buy
+    more. Cold operands cost 10%; the narrow weight gradients' 16-24 tasks run 50-60% slower at four
+    threads than alone; the transposed-A penalty of the previous instance is gone (NDT-TA: no
+    slice), and L1-sized depth slices gained nothing (NDT-KSUB: dropped).
+  - The 1,000-step language-model run at four threads: BCIR 234.9 / 235.1 ms a step (4,359 / 4,356
+    tokens a second; 247.2 / 249.4 before NDT-LANES, NDT-ROPE and NDT-ATTN-5, the same state
+    `5137e013…`), eager PyTorch 283.8 (3,608), `torch.compile` 259.6 (3,945), the same held-out
+    cross-entropy, 529 MB against 1,084-1,128. `train_comparison.py --threads` now sets PyTorch's
+    intra-op threads too and records them ([measurements/2026-10-16/gemm4t/](research/measurements/2026-10-16/gemm4t/),
+    [lm/](research/measurements/2026-10-16/lm/), the report's §17).
+  NDT-ATTN-5 (2026-10-16): the backward's probability-adjoint tiles from a transposed panel.
+  - Each row block's 32 x 64 tiles of `dp = dY V^T` went through the general GEMM kernel, which
+    packed the transposed values again for every tile -- a third of the backward at one thread. A
+    backward task now transposes its KV head's values once into its stack (`d x t` floats, up to
+    64 KB; a longer context takes the GEMM kernel as before), and every query head's tiles are
+    AVX-512 register blocks of eight rows by 32 columns reading that panel, only the blocks that
+    hold some `j <= i` (the others are never read), with the v1 kernel's arithmetic for those
+    operands: from the tile's zero, a rounded product and a rounded sum per channel in order.
+  - Evidence: the C harness's attention reference (its 16 shapes, finite and not); `ndt-attn.json`
+    NA10-NA14; the 20-step state at one and four threads `4bf4e057…`.
+  - Measured in place at four threads, four rounds alternated with NDT-ROPE's tree
+    ([measurements/2026-10-16/dp/](research/measurements/2026-10-16/dp/), the report's §16): the
+    attention backward 13.64 -> 12.37 ms a step, every round.
+  NDT-ROPE (2026-10-16): RoPE's frequencies once a range of pairs.
+  - The kernel computed `angle = pos * pow(base, -2j/dim)` in double and its float cosine and sine
+    per pair and position -- 3,072 `pow`s a call where 24 differ -- and then turned every head's
+    pair at stride `dim`. Each position-range task now computes the frequencies once per range of
+    64 pairs, each position's angles once, and turns a head's pairs contiguously: the same double
+    angle, the same cosine and sine, the same rotation per element.
+  - Evidence: a per-pair reference (the kernel before it) in the C harness at 2 x 40 x 3 x 8 and
+    1 x 33 x 2 x 260 (three ranges of pairs), forward and inverse, serial and pooled -- the old pool
+    test compared the kernel with itself; `ndt-rope.json` NO1-NO5; the 20-step state at one and four
+    threads `4bf4e057…`.
+  - Measured in place at four threads, four rounds alternated with NDT-LANES's tree
+    ([measurements/2026-10-16/rope/](research/measurements/2026-10-16/rope/), the report's §15):
+    RoPE forward 2.05 -> 0.96 ms a step, backward 2.53 -> 1.13, every round.
+  NDT-LANES (2026-10-16): the step's per-row chains as the lanes of a vector.
+  - The step's in-place attribution on this host (the container restarted on a faster instance of
+    the same CPU model; the four-thread step about 236-254 ms) put RMSNorm's two kernels at 8.9 ms
+    and the attention at 25. Each RMSNorm row and each softmax row was one dependent chain -- a
+    rounded add per column, four cycles each -- run one row at a time, the softmax's exponential
+    ran each row's remainder one element at a time, and the gamma adjoint's column tasks loaded
+    and stored their sums once per row.
+  - On AVX-512 a whole chunk of 16 rows now runs as the lanes of one vector: 16 columns of the 16
+    rows transposed in registers (the GEMM pack's transpose), lane r adding row r's terms in column
+    order, so every sum, dot and maximum is its scalar loop's bit for bit (the scalar
+    `x > max ? x : max` is VMAXPS's operand rule). The softmax's exponentials under the exp contract
+    run in those transposed blocks whole, the diagonal block's upper lanes stored as the zeros they
+    were; the gamma adjoint's column sums stay in registers and reach dg once.
+  - Evidence: the C harness's references (RMSNorm at 40 x 37 and 48 x 389 -- whole chunks, a part
+    chunk, a ragged column tail -- and the attention reference's shapes, finite and not, at every
+    variant build); `ndt-lanes.json` NL1-NL11, `ndt-reduce.json` NR5 re-anchored; the 20-step state
+    at one and four threads `4bf4e057…`, the one it was.
+  - Measured in place at four threads, five rounds alternated with the tree before
+    ([measurements/2026-10-16/lanes/](research/measurements/2026-10-16/lanes/), the report's §14):
+    the attention forward 11.10 -> 8.56 ms, the RMSNorm VJP 6.34 -> 4.48, RMSNorm 2.62 -> 1.45,
+    every round; the step 248.1 -> 240.6 ms, its GEMMs unchanged within the host's few percent.
+  NDT-PAGES (2026-10-14): the trainer's state on 2 MB transparent huge pages.
+  - The six state buffers (335 MiB on the 9.84M decoder) were ctypes arrays: glibc serves them from
+    anonymous mappings it never advises, and under the host's `madvise` THP mode not one of their
+    pages was huge; a GEMM walking a transposed operand's rows touched a new 4 KB page every few
+    rows, past the second-level TLB's reach.
+  - Where Python exposes `MADV_HUGEPAGE` (Linux), `NativeDecoder` places them on one private
+    anonymous mapping advised before any page is touched, the first buffer on a 2 MB boundary and
+    each next 64 bytes past the last one's end (`_state_buffers`); elsewhere, or with
+    `huge_pages=False`, ctypes arrays as before, and `resume` takes the placement. Private, because
+    shared anonymous memory is shmem, whose huge pages follow `shmem_enabled` instead.
+  - Evidence: the placement witness (the layout, the private mapping, the advice in its VmFlags,
+    three steps' state equal to the arrays' at one and four threads, `resume`'s placement, the
+    refusals); `ndt-pages.json` NG1-NG8, NG8 a kernel whose arithmetic follows its operand's
+    address; the 20-step state at one and four threads 4bf4e057…, the one it was.
+  - Measured ([measurements/2026-10-14/pages/](research/measurements/2026-10-14/pages/), the
+    report's §13): the step alternated in one process 403.9 / 405.5 -> 349.2 / 341.4 ms at four
+    threads (19 of 20 pairs each), 668.8 -> 627.6 at two, 1101.8 -> 1009.9 at one; the step's GEMM
+    time 16% lower at one and at four threads, the transposed-A weight gradients most (384 x 384 x
+    1024: 59.1 / 56.1 -> 89.0 / 88.3 GFLOP/s at one thread); in place at four threads 407.8 / 381.0
+    / 388.0 -> 348.0 / 340.0 / 330.6 ms. The GEMMs at four threads reach 37-52% of the four cores'
+    peak on the step's large shapes (26-45% before): the TLB was part of the gap, not all of it.
+  NDT-POOL (2026-10-13): the pool's tasks claimed from one counter, a hot path without the lock.
+  - The four vCPUs are four cores with their own FMA units (twelve FMA chains in registers:
+    141-148 GFLOP/s pinned to one, 579-584 to all four), yet the GEMMs gained about 2x from four
+    threads; the pool's latency was the first suspect and was part of it:
+    an empty four-task job cost about 80 us (a futex wake costs tens of microseconds on this VM),
+    sixteen 25 us tasks 191-195 us for 100 us of work a thread.
+  - Claims from one counter (GCC's and Clang's atomics; MSVC keeps task t on thread t mod threads),
+    the job published by the generation's release store, a report as one atomic decrement (the
+    last reporter alone takes the lock, to signal the caller), a wait of 64 pauses, 512 yields,
+    then sleep. The budget came from three measured stages: a long pure spin wins on a quiet host
+    and loses badly on a busy one (8,192 pauses: 281-298 us an empty job with two CPUs busy).
+  - Evidence: the harness's `pool_claims` (600 jobs of 1 to 1,024 tasks at two to four threads,
+    every task exactly once: back to back, after the workers sleep, at the stop); the runtime
+    gate's ThreadSanitizer section race-free, its injected partition fault still reported (the
+    split of a conflicting pair is now the run's timing; the first multi-threaded backward reports
+    it); `ndt-threads.json` NT2 re-anchored on the claim, NT11-NT12.
+  - Measured ([measurements/2026-10-13/pool/](research/measurements/2026-10-13/pool/), the
+    report's §12.4): an empty job 77.4 / 85.3 -> 3.6 / 3.3 us; the GEMM shapes' work-weighted
+    median 179.6 / 174.2 / 196.1 -> 199.7 / 210.1 / 222.0 GFLOP/s; the step in place 535.8 / 482.1 /
+    554.4 -> 431.3 / 422.1 / 412.6 ms (486.6 / 545.6 / 556.8 before NDT-PASS); with three of four
+    CPUs busy the largest job 12% slower than the sleeping pool. The 20-step state with all four
+    slices at one and four threads is the one it was (4bf4e057…).
+  NDT-ATTN-2/3 (2026-10-13): the attention's masked products as AVX-512 register blocks.
+  - The five masked products (the forward's scores and context, the backward's dv, dq and dk) ran
+    through the GEMM kernel's v1 blocks: 64-wide column blocks computed whole above the causal
+    diagonal, 48 channels padded to 64, a mask test per term where the diagonal crosses a block.
+  - On the AVX-512 instance: blocks of eight rows with mm_block's v1 arithmetic exactly (an element
+    from the value it holds, one rounded product and one rounded sum per term in the term order),
+    the scores 32 keys at a time from their diagonal on, the channels 48 at a time; a ragged tail
+    of rows through the kernel; the AVX2 and generic instances keep it.
+  - Evidence: the attention reference gains the blocks' edges (t = 7, 8, 9, 31, 32, 33, 40; d = 1,
+    3, 15, 16, 17, 47, 49), bit for bit, finite and not; `ndt-attn.json` NA4-NA9 (9 of 9 caught
+    with NA1-NA3).
+  - Measured ([measurements/2026-10-13/slices/](research/measurements/2026-10-13/slices/)): at one
+    thread, best of 21, the forward kernel 11.12 / 11.22 / 11.31 -> 9.09 / 9.28 / 9.42 ms and the
+    backward 14.71 / 14.55 / 15.36 -> 8.36 / 8.95 / 8.96 (with NDT-ATTN-1; 11.01 / 10.88 / 11.11 the
+    blocks alone); in place at four threads the attention backward 46.8 / 39.8 / 44.5 -> 23.1 /
+    26.3 / 27.2 and the forward 26.6 / 32.1 / 27.6 -> 24.1 / 21.6 / 22.8.
+  NDT-ATTN-1 (2026-10-13): the attention backward's probability adjoint evaluated once.
+  - The in-place backward evaluated each row block's `dp = dY V^T` tiles in both of its passes, as
+    the reference does (the row sums first, the score adjoints second) -- the same product over
+    operands neither pass writes (0.98M multiply-adds a head at T=128, half of them repeated).
+  - A row block keeps its first 256 columns' tiles between the passes (32 KB on the task's
+    stack); a longer context evaluates its further tiles in each pass through one spare slot.
+  - Evidence: the attention reference gains a 330-token context (the tiles at 256 and 320 through
+    the spare slot), bit for bit, finite and not; `ndt-attn.json` NA1-NA3.
+  - Measured ([measurements/2026-10-13/slices/](research/measurements/2026-10-13/slices/)): the
+    backward kernel at one thread 14.71 / 14.55 / 15.36 -> 12.07 / 12.28 / 12.48 ms (best of 21).
+  NDT-PASS (2026-10-13): the update's first pass as vector loops.
+  - NDT-SCAN's in-place record put the first pass at about 20 ms of the four-thread step: four
+    39 MB streams read by a loop GCC had compiled to scalar code ("control flow in loop": the
+    refusal flag's short-circuit and the maxima written as floating selects).
+  - One refusal flag without a branch, the maxima as the largest bit patterns read as int32 (a
+    non-negative float orders as its bits; the -0.0 second moment the pass admits reads as
+    INT32_MIN and never wins, as the select from +0.0 never took it), AVX2 and AVX-512 instances
+    dispatched as the preflight's and the commit's are; GCC and Clang vectorize all three. The
+    norm's chunk partial stays the index-order chain.
+  - Evidence: the harness puts a first moment only the preflight refuses (FLT_MAX/4 under a zero
+    gradient) at either end of either chunk and at the instances' block edges -- refused, nothing
+    written; `ndt-pass.json` NV1-NV2; `ndt-perf.json` NP8 re-anchored on the one flag.
+  - Measured ([measurements/2026-10-13/slices/](research/measurements/2026-10-13/slices/), the
+    report's §12): in place at four threads, 23.2 / 20.3 / 24.6 -> 12.0 / 14.6 / 13.2 ms.
+  NDT-SCAN (2026-10-13): the step's whole-buffer passes on the pool.
+  - Attribution first: in place (`measurements/2026-10-13/scan/attribution.py`: a clock read after every statement of the step), the serial passes were 11% of the four-thread step (the activations' scan 27.3 ms, the gradients' fill 8.5, the attention's fills 8.0 + 4.2, the weights' and the gradients' scans 6.7 + 6.2, of 571.4).
+  - The scans and the gradients' fill as one task per chunk (a scan's chunks report into the
+    caller's stack, bounded by construction and guarded where the array is), the attention's
+    fills in the tasks that own the slices (a KV head's dk/dv only in the task holding its first
+    query head: zeroed in every task, the runtime gate's injected race -- one query head a task --
+    erased the earlier heads' sums and failed serially before it could race, so the gate caught
+    that first form); every verdict and value the serial pass's. The BCIR
+    exponential's clamp is total over NaN (UBSan found a NaN reaching an integer conversion), as a
+    maximum then a minimum -- the first form, a third select, cost the SiLU and the SwiGLU VJP their
+    vector code (22-30 ms a step in place), which only the in-place rows showed.
+  - Evidence: `scan_references` (19,104 parameters over two chunks with a ragged tail), NaN-filled
+    attention outputs on every entry, the harness under UBSan in its Python test; `ndt-scan.json`
+    NS1-NS9 (9 injected, 9 caught), `ndt-exp.json` NE6.
+  - The thorough tier on Python 3.15 found a blind spot in the GEM+ threads row: the sweep's NT2
+    fault (the runner drops each thread's last task) now drops a scan's task too, whose report is
+    never written, so the mutant refuses on a pool instead of training a different state, and the
+    row's helper raised on the refusal -- a traceback where the row owed a verdict (L1). A refused
+    run is now a state of its own, a refused one-thread run counts once (no baseline is a finding),
+    and the test holds both, with a library that refuses at every count.
+  - Measured ([measurements/2026-10-13/scan/](research/measurements/2026-10-13/scan/)): 3 in-place pairs: the serial passes 60.9 / 68.4 / 68.3 -> 17.4 / 16.2 / 18.6 ms (-43.5 / -52.2 / -49.7); 6 breakdown pairs at four threads under `kblock+exp+reduce`: the step 575.4 / 634.9 / 601.2 / 653.9 / 682.9 / 621.1 -> 550.9 / 588.2 / 615.7 / 616.6 / 642.6 / 563.4 ms (-24.4 / -46.6 / +14.6 / -37.2 / -40.3 / -57.7, below in 5 of 6), the forward stage 213.3 / 223.2 / 219.4 / 233.0 / 263.7 / 201.5 -> 199.9 / 201.4 / 194.0 / 213.9 / 230.6 / 199.4 (-13.4 / -21.9 / -25.4 / -19.0 / -33.1 / -2.1); the 20-step state at one and four threads the same on both trees (4bf4e057…).
+  TRAIN-POLICY (2026-10-13): the rail trains under the fast contract at the host's threads.
+  - The lab-model recipe's `native` block: `contract` (one the trainer admits; the shipped recipes
+    name `kblock+exp+reduce`) and `threads` (`"host"`: the CPUs the process may run on, or
+    `BCIR_TRAIN_THREADS`; else an integer). The contract is the model's -- it changes the bits, so
+    the recipe names it -- and the threads the host's, because the state is the serial one at
+    every count. `build_lab_model.py` checks the block before any work and the card records the
+    contract, the threads, the policy and the widest kernel instance the host ran. A CTest entry's
+    trainer takes the processors the entry declares (`train-corpus` two, the BCIR Make gate's
+    train task one).
+  - Evidence: the refusals (a contract the trainer does not admit, a count neither `"host"` nor
+    positive, a missing field); the tiny model the same checkpoint at another thread count and
+    another one under `v1`; `BCIR_TRAIN_THREADS` read only as a positive integer; the rail's
+    claim table names the policy. The 40-step smoke on this host: 2706 -> 6690
+    tokens/s (30.3 -> 12.2 s of training on 4 threads, avx512f;
+    3705 under the fast contract on one thread), the checkpoint at one thread and at
+    4 the same; the rail's run 314 -> 286 s, the
+    rest the corpus, the tokenizer, the validation and the export
+    ([measurements/2026-10-13/policy/](research/measurements/2026-10-13/policy/)).
+  NDT-SCHED-0 (2026-10-13): the two VJPs of a linear as one pool job.
+  - NDT-SCHED's first item. `dx = dy W` and `dW += dy^T x` read one adjoint and write apart, so
+    `bcir_tensor_mm_pair_pool` runs the first GEMM's tasks and then the second's in one pool run,
+    each with the partition its own entry would have used, so every output element keeps its depth
+    order and the results are the two entries' bit for bit; one barrier in place of two for each of
+    the step's 43 linears, the narrow K/V projections' idle threads on the other product's tasks.
+    The trainer dispatches the pair under each GEMM contract; a provider's GEMM keeps its two calls;
+    the breakdown harness times the VJPs as the trainer runs them.
+  - Evidence: the C harness holds every shape pair of its GEMM section under the three contracts,
+    in both orders, to the two entries, and the twelve contracts' states at one to four threads to
+    the serial run through the trainer's pairs; `ndt-threads.json` NT9 (a pair split at the first
+    GEMM's column count) and NT10 (the pair's serial path skips the first GEMM); NT1, NF3, NK4 and
+    NK5 re-anchored to the partition's, the one routing predicate's (`gemm_contract`, read by the
+    forward's linears and the pair alike) and the serial branch's new homes.
+  - Measured ([measurements/2026-10-13/sched0/](research/measurements/2026-10-13/sched0/), the
+    report's §10) in 3 same-session pairs at four threads under `kblock+exp+reduce`: the
+    backward pass 631.9 / 633.8 / 622.4 -> 601.0 / 586.3 / 594.6 ms (-30.9 / -47.5 / -27.8), the
+    GEMM-backward row timed alone 292.7 / 285.9 / 266.6 -> 238.0 / 254.8 / 282.6 (-54.6 / -31.0 / +16.0),
+    the step 684.2 / 679.4 / 659.3 -> 645.1 / 681.7 / 668.1 (-39.2 / +2.4 / +8.8); the backward pass (the `loss_backward` stage, the forward recomputed inside it, as the trainer runs it -- the one stage the pair job changes) is below the two-call stage in 3 of 3 pairs, by -30.9 / -47.5 / -27.8 ms (631.9 / 633.8 / 622.4 against 601.0 / 586.3 / 594.6), and the GEMM-backward row timed alone by -54.6 / -31.0 / +16.0; the step's own cell (-39.2 / +2.4 / +8.8) is within this host's run-to-run noise, as NDT-REDUCE's was -- the one barrier fewer per linear and the narrow projections' tasks shared are worth about 5% of the backward at four threads here.
+  NDT-REDUCE (2026-10-13): the reductions the pool left serial, on the pool; the clipping norm's
+  declared contract.
+  - NDT-THREADS admitted only partitions in which each output element, and each reduction, is
+    produced by one task in the serial order, and left four index-order reductions serial: the
+    loss's rows, the gamma VJP's row sum, the embedding scatter and the update's first pass
+    (41 of the four-thread update's 53 ms, measured for NDT-NORM). Three of them admit such a
+    partition: the loss's rows are tasks whose terms (in double, as the serial loop computed
+    them) the caller adds in row order; the gamma VJP runs rows for `dx` and each row's `1/rms`
+    (a row of scratch the trainer lends) and then column ranges, each column's sum over the rows
+    in row order (`bcir_tensor_rms_backward_pool`); the scatter is column ranges, every row's
+    columns added to its token's row in row order. Every loss and state is the serial one at
+    every thread count under every contract, bit for bit.
+  - The update's first pass and preflight are one task per chunk of `bcir_decoder_reduce_chunk`
+    elements (1,024 doubled until at most 1,024 chunks; the results on the caller's stack), the
+    verdicts and maxima exact whatever the partition. The norm is the contract's: the one
+    index-order chain in double where the contract was, or under the new `reduce` bit
+    (`BCIR_DT_CONTRACT_REDUCE`, `NativeDecoder(contract="<any>+reduce")`) each chunk's squares
+    summed in index order from zero and the chunk sums added in chunk order from zero -- a
+    declared reduction whose shape is a function of the parameter count alone, emulated by the
+    oracle operation for operation (`grad_norm_squared_reference`, `reduce_chunk`), with
+    `bcir_decoder_gradient_norm` reporting the square the update takes its root of. The bit
+    changes the norm's last bits and nothing else; the float rounding of every update absorbs
+    that for a while (the harness's reduce states coincide with their chain's after three steps
+    while the norms are apart at 15 of 18), and on the 9.84M decoder a rounding boundary is
+    crossed within twenty steps, after which the state is the contract's own.
+  - Evidence: `reduction_references` in the C harness holds the pooled loss and scatter to
+    serial references written apart from the pool (untied fixtures of 32 and 40 rows, tokens the
+    batch repeats without repeating a row, no pool and a pool of two); `pool_identity` holds
+    twelve contracts' states and the losses and norms the steps report at one to four threads to
+    the serial run, and the gamma VJP to the serial kernel over three row and three column
+    chunks; `adamw_reference` holds the update under both norm contracts to a reference of each
+    on a three-chunk fixture, serially and on a pool of three, the square against the
+    reference's sum, with the chunk rule on both rails; `refusals` holds a non-finite element in
+    the first pass's last chunk refused under both; `train.norm.reduce.mismatch` (0 of 6 norms
+    and 8 counts) and `train.state.threads.mismatch` (now under v1 and `reduce`) are the rows;
+    `ndt-reduce.json` NR1-NR11, 11 of 11 caught. Two faults were first reported uncaught and
+    both were the witnesses' findings: a periodic token stream made every repeat of a token the
+    same row, so a reversed accumulation summed the same values, and the norm's root hides a
+    one-ulp change of the chunked sum half the time -- hence the streams, the three-chunk
+    fixture and the square's entry.
+  - Measured ([measurements/2026-10-13/reduce/](research/measurements/2026-10-13/reduce/), the
+    report's §9): in three same-session pairs at four threads (each contract's breakdown alternated with the other's, minutes apart, so both see one host) the update reads 40.7 / 49.7 / 47.5 ms under `kblock+exp` -- the first pass pooled, the chain serial, NDT-NORM's content -- against 31.8 / 47.2 / 39.6 under `kblock+exp+reduce`, below it in every pair (-9.0 / -2.6 / -7.9), with §8's 53.1 the day before on a faster host; the gamma VJP row 11.0 / 14.3 / 12.4 against 6.7 / 8.8 / 11.8 (-4.3 / -5.5 / -0.6; 9.2 in §8); the step itself is not resolved on this day's host, whose unchanged GEMM rows drifted 20% within the session, more than the slice's effect on the step; the 1,000-step `kblock+exp+reduce` run at 625.8 ms a step on
+    four threads (1419.6 on one), ending in `5137e013…`, its own, not §7's `d7fc618c…` (the norm's last bits crossed a float rounding boundary within the first steps, as the 20-step identity rows already show, and the state is the reduce contract's from there), and the one-thread run ends in the same state, the held-out
+    model 1.5003 / 1.6319. NDT-NORM landed with it.
+  PR817-P0 (2026-10-13): the two portability findings of PR #817's same-host rerun.
+  - The provider admission is host-specific and the tests said otherwise. Two assertions held
+    that every importable OpenBLAS wheel is admitted on the comparison decoder's shapes; on
+    PR #817's AMD EPYC host the same wheel (0.3.34, DYNAMIC_ARCH) blocks differently, 14 of 30
+    cases differ, the trainer refuses it -- the guard working -- and the tests failed. The
+    claim is now the guard's: `train.mm.provider.unsound` (`provider_unsound`) is 0 wherever
+    the wheel is importable -- the verdict `use_cblas` gives agrees with the differential it is
+    defined by, admitted exactly when no case differs, refused with the count otherwise -- and
+    `train.mm.provider.differences` is the host's count (0 of 30 here, 14 of 30 there),
+    reported everywhere and graded only on the baseline host (`host_dependent`).
+  - The rank-ordered BPE encoder kept a duplicate pair's LAST merge; the pass encoder, the
+    definition, applies the first, whose pass consumes every occurrence, so an artifact naming
+    one pair twice (training never writes one; the schema and digest admit it) encoded `ab` to
+    the later token by rank. `_ranks` keeps the first merge now; the witness holds the
+    constructor's and the imported tokenizer to the pass encoder on both duplicate shapes
+    (a plain repeat, and a pair an earlier merge created) and a last-wins table disagrees;
+    `tools/testing/faults/bpe.json` (BP1 the last merge kept, BP2 a merge dropped).
   NDT-BLOCK (2026-10-12): the v3 GEMM kernel's register block and packing, under the same contract.
   - The gap NDT-KBLOCK left to the admitted provider (BCIR's own v3 kernel at 61 GFLOP/s
     work-weighted against OpenBLAS's 89 at one thread on the step's shapes) was the schedule,

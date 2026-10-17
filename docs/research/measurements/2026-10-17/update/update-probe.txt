@@ -1,0 +1,13 @@
+commit state after three steps: divisions 25166f1ce050dc74, div_shared 25166f1ce050dc74 -- the same
+first pass over 601 chunks of 16384: norm 0x1.3ab53f5f78951p+3 and 0x1.3ab53f5f78951p+3, flags 0 0, maxima the same -- the same
+medians of 15 rounds on a pool of four, ms a call (min, max):
+  commit, the divisions (before)             8.40  ( 8.08, 10.03)
+  commit, div_shared (the slice)             6.15  ( 5.77,  6.76)
+  bound: shared divisions as products        5.46  ( 5.33,  6.08)
+  bound: no division, no root                4.79  ( 4.30,  5.39)
+  bound: the streams alone                   4.17  ( 3.87,  4.77)
+  not kept: streaming stores                 8.47  ( 8.19,  9.39)
+  first pass, one chunk a task (before)      6.84  ( 6.47, 10.16)
+  first pass, pairs (the slice)              3.53  ( 3.33,  6.47)
+  bound: the span without the chain          3.72  ( 3.50,  5.20)
+  not kept: eight chains from gathers        8.02  ( 7.70,  9.63)

@@ -1,0 +1,10 @@
+{
+ "what": "NDT-PASS, NDT-ATTN-1 and NDT-ATTN-2/3 (2026-10-13), measured as drafts before they landed, in one session: A = the tree at 7584d7a (NDT-SCAN), P = A + NDT-PASS, T1 = A + NDT-ATTN-1, T2 = T1 + NDT-ATTN-2 (the forward's products), T3 = T2 + NDT-ATTN-3 (the backward's products); each landed as measured.",
+ "host": "4-vCPU Intel Xeon container (AVX-512), GCC 13.3 (the trainer builds), Python 3.11.15 (the declared floor); indicative wall times, no PMU",
+ "files": {
+  "attribution-t4-{A,P,T1,T2,T3}-{1,2,3}.json": "the in-place instrument of measurements/2026-10-13/scan/attribution.py (python3 attribution.py --src <build> --data DATA --threads 4 --steps 5), the five builds alternated in each of three rounds",
+  "bench_attn.c": "the attention kernels alone on the 9.84M decoder's shape (batch 8, T 128, 8 heads over 4 KV heads, 48 channels): the forward and the in-place backward (p restored from a copy before each call, the copy timed apart and subtracted), best and median of 21 calls; gcc -std=c11 -O3 -ffp-contract=off -fno-math-errno -pthread bench_attn.c bcir_tensor.c -lm",
+  "attention-kernels.json": "bench_attn.c over four builds (A, T1, X = the register blocks without NDT-ATTN-1, T3) at one and four threads, three rounds; one checksum on every build"
+ },
+ "reading": "the update's first pass in place 23.2 / 20.3 / 24.6 -> 12.0 / 14.6 / 13.2 ms (P); the attention kernels at one thread, best of 21: the forward 11.1-11.3 -> 9.1-9.4 ms (T2, T3), the backward 14.6-15.4 -> 12.1-12.5 (T1), 10.9-11.1 (X) and 8.4-9.0 (T3); in place at four threads the attention backward 46.8 / 39.8 / 44.5 -> 23.1 / 26.3 / 27.2 (T3) and the forward 26.6 / 32.1 / 27.6 -> 20.1 / 24.8 / 21.0 (T2). The step rows of this session drifted with the host (its GEMM rows 20% apart between rounds); the step's pairs are the pool's records (../pool/)."
+}

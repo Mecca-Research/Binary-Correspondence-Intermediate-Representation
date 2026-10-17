@@ -1,0 +1,58 @@
+{
+ "schema": "bcir.ndt_pages_ab.v1",
+ "threads": 2,
+ "contract": "kblock+exp+reduce",
+ "pairs": 12,
+ "python": "3.11.15",
+ "thp_enabled": "always [madvise] never",
+ "advice_taken": {
+  "4k": false,
+  "2m": true
+ },
+ "anon_huge_kb": {
+  "4k": 0,
+  "2m": 344064
+ },
+ "identical_after_every_pair": true,
+ "state_sha256": "0c8aa61833df143dd39a6e9cdc4ce1b74c6824ea4f6bacd9c70e94af5d0323c9",
+ "step_ms_median": {
+  "4k": 668.8,
+  "2m": 627.6
+ },
+ "step_ms_min": {
+  "4k": 625.4,
+  "2m": 522.4
+ },
+ "paired_diff_ms_median": 66.7,
+ "pairs_2m_faster": 11,
+ "step_ms": {
+  "4k": [
+   677.2,
+   655.0,
+   666.2,
+   625.4,
+   730.7,
+   671.5,
+   753.3,
+   724.8,
+   641.9,
+   639.6,
+   658.0,
+   735.5
+  ],
+  "2m": [
+   657.3,
+   597.8,
+   670.6,
+   523.7,
+   645.9,
+   634.7,
+   620.5,
+   665.2,
+   522.4,
+   565.8,
+   638.9,
+   574.4
+  ]
+ }
+}

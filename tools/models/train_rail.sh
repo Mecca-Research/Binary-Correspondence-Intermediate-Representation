@@ -10,6 +10,8 @@
 #   env:   CC      the trainer's compiler (NativeDecoder.build reads it; default: clang, then cc)
 #          PYTHON  the interpreter (default python3)
 #          BCIR_TRAIN_RECIPE  another recipe (default tools/models/configs/bcir-corpus-860k.json)
+#          BCIR_TRAIN_THREADS the trainer's threads under the recipe's "host" policy (default: the
+#                  CPUs this process may run on; the state is the same at every count)
 #
 # CTest runs this file as `train-corpus` (label train, BCIR_TRAIN_STEPS steps), BCIR Make as the task
 # `train.corpus` through tools/build/run_section.sh (the same number of steps, tools/build/bcirfile.py),

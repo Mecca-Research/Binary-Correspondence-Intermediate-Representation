@@ -15,6 +15,10 @@
     "validation_batches": 16
   },
   "name": "BCIR-Docs-860K",
+  "native": {
+    "contract": "kblock+exp+reduce",
+    "threads": "host"
+  },
   "schema": "bcir.lab_model.v1",
   "tokenizer": {
     "kind": "bpe",

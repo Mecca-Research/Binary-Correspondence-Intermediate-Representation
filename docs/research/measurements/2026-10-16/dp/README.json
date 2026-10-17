@@ -1,0 +1,9 @@
+{
+ "what": "NDT-ATTN-5 (2026-10-16): the attention backward's probability-adjoint tiles from a KV head's values transposed once per task (d x t floats on the task's stack, up to 64 KB), as AVX-512 register blocks of eight rows by 32 columns with the v1 kernel's arithmetic; only the blocks holding some j <= i.",
+ "host": "4-vCPU Intel Xeon @ 2.80GHz container (AVX-512), GCC 13.3, Python 3.11.15 (the declared floor); indicative wall times, no PMU",
+ "files": {
+  "attribution-t4-before-{1..4}.json, attribution-t4-dp-{1..4}.json": "the step in place at four threads (docs/research/measurements/2026-10-13/scan/attribution.py --src TREE/runtime/c --data DATA --threads 4 --steps 8): before = c65f291 (NDT-ROPE), dp = c65f291 with this slice's runtime/c/bcir_tensor.c; alternated round by round, four rounds",
+  "identity.json": "the 20-step state at one and four threads under kblock+exp+reduce, widest and AVX2-capped builds and a repeat: every row 4bf4e057..."
+ },
+ "reading": "The attention backward 13.64 -> 12.37 ms a step (medians; every round faster). The unchanged rows moved by up to 15% between rounds (other work on the host), so the step medians of this record are not a reading."
+}

@@ -1,0 +1,75 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23",
+    "bcir.tests.test_native_decoder:test_the_training_state_is_identical_at_every_thread_count"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NS1 the scan's task count drops the ragged tail (a non-finite element past the last whole chunk is never seen; a span shorter than one chunk is not scanned at all)",
+      "new": "  tasks=n/j.chunk;\n",
+      "old": "  tasks=n/j.chunk+(n%j.chunk!=0);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NS2 the caller reads only the first chunk's report (every other chunk's verdict is lost)",
+      "new": "  for (i=0;i<tasks && i<1;i++) any|=bad[i];\n",
+      "old": "  for (i=0;i<tasks;i++) any|=bad[i];\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NS3 the last chunk's scan stops one element short (the span's last element is never checked)",
+      "new": "  j->bad[task]=(unsigned char)!finite_span(j->x+i0,j->n-i0<j->chunk ? j->n-i0-1 : j->chunk);\n",
+      "old": "  j->bad[task]=(unsigned char)!finite_span(j->x+i0,j->n-i0<j->chunk ? j->n-i0 : j->chunk);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NS4 the gradients' fill drops the ragged tail (stale gradients survive past the last whole chunk; a buffer shorter than one chunk is not zeroed at all)",
+      "new": "  bcir_tensor_pool_run(s->pool,fill_task,&j,n/j.chunk);\n",
+      "old": "  bcir_tensor_pool_run(s->pool,fill_task,&j,n/j.chunk+(n%j.chunk!=0));\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NS5 the fill's last chunk stops one element short (the last gradient keeps its stale value)",
+      "new": "  memset(j->y+i0,0,(j->n-i0<j->chunk ? j->n-i0-1 : j->chunk)*sizeof(float));\n",
+      "old": "  memset(j->y+i0,0,(j->n-i0<j->chunk ? j->n-i0 : j->chunk)*sizeof(float));\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NS6 the attention forward's task leaves the v1 kernel's rows of its head's probabilities as it found them (their causal products accumulate into the last step's)",
+      "new": "",
+      "old": "    memset(ph+v1*t,0,(t-v1)*t*sizeof(float));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NS7 the attention forward's task leaves the v1 kernel's rows of its head's context columns as it found them",
+      "new": "",
+      "old": "    for (i=v1;i<t;i++) memset(a->y+((r*t+i)*nh+h)*d,0,d*sizeof(float));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NS8 the attention backward's task zeroes dq for its group's first query head only",
+      "new": "    for (h=first;h<first+1;h++) memset(a->dq+((r*t+i)*nh+h)*d,0,d*sizeof(float));\n",
+      "old": "    for (h=first;h<first+a->group;h++) memset(a->dq+((r*t+i)*nh+h)*d,0,d*sizeof(float));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NS9 the attention backward's task leaves its KV head's dv as it found them",
+      "new": "",
+      "old": "      memset(a->dv+((r*t+i)*nk+kh)*d,0,d*sizeof(float));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

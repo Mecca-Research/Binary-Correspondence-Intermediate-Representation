@@ -1,0 +1,90 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_the_training_state_is_identical_at_every_thread_count",
+    "bcir.tests.test_native_decoder:test_the_clipping_norm_keeps_its_contract",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_training_state_is_identical_at_every_thread_count",
+      "label": "NR1 the first pass's chunk is the pool's thread count times the rule's (under the reduce contract the norm follows the thread count)",
+      "new": "  pj.n=s->plan.parameters; pj.chunk=bcir_decoder_reduce_chunk(pj.n)*bcir_tensor_pool_threads(s->pool); pj.gs=gs;",
+      "old": "  pj.n=s->plan.parameters; pj.chunk=bcir_decoder_reduce_chunk(pj.n); pj.gs=gs;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_clipping_norm_keeps_its_contract",
+      "label": "NR2 the chunk sums are added from the last chunk (the oracle's emulation adds them in chunk order; the root the update reports rounds the difference away half the time, the square never)",
+      "new": "  if (pj.reduce) { for (i=out->tasks;i-->0;) norm+=parts[i].norm; }",
+      "old": "  if (pj.reduce) { for (i=0;i<out->tasks;i++) norm+=parts[i].norm; }",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NR3 the update ignores the reduce bit (the chain under the reduce contract's name)",
+      "new": "  pj.reduce=0; pj.parts=parts;",
+      "old": "  pj.reduce=(s->contract&BCIR_DT_CONTRACT_REDUCE)!=0; pj.parts=parts;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NR4 the loss's row terms are added from the last row (the mean is not the rows' chain; the same at every thread count, so only the reference sees it)",
+      "new": "  for (i=g.n;i-->0;) {\n    double term; memcpy(&term,lj.terms+i*sizeof(double),sizeof(double)); ce+=term;\n  }",
+      "old": "  for (i=0;i<g.n;i++) {\n    double term; memcpy(&term,lj.terms+i*sizeof(double),sizeof(double)); ce+=term;\n  }",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NR5 the gamma adjoint's column tasks walk the rows from the last (the serial kernel sums each column in row order)",
+      "new": "  for (r=j->rows;r-->0;) {\n    const float *xr=j->x+r*w+c0,*dyr=j->dy+r*w+c0; float inv=j->inv[r];",
+      "old": "  for (r=0;r<j->rows;r++) {\n    const float *xr=j->x+r*w+c0,*dyr=j->dy+r*w+c0; float inv=j->inv[r];",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NR6 the gamma adjoint's last column chunk is dropped (37 columns are three chunks)",
+      "new": "  pool_run(pool,rmsb_cols_task,&j,width/BCIR_COL_CHUNK);",
+      "old": "  pool_run(pool,rmsb_cols_task,&j,(width+BCIR_COL_CHUNK-1)/BCIR_COL_CHUNK);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NR7 only the first chunk's verdict reaches the caller (a non-finite element in the last chunk is admitted)",
+      "new": "    bad=parts[0].bad;\n    out->grmax=p->grmax>out->grmax ? p->grmax : out->grmax;",
+      "old": "    bad|=p->bad;\n    out->grmax=p->grmax>out->grmax ? p->grmax : out->grmax;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NR8 the embedding scatter's column tasks walk the rows from the last (a token the batch repeats accumulates out of order)",
+      "new": "  for (i=jb->n;i-->0;) {\n    float *row=jb->grad+(size_t)jb->tokens[i]*d; const float *src=jb->dx+i*d;",
+      "old": "  for (i=0;i<jb->n;i++) {\n    float *row=jb->grad+(size_t)jb->tokens[i]*d; const float *src=jb->dx+i*d;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NR9 the loss's row tasks stop before the ragged tail (the wide fixture's last eight rows keep stale adjoints and no term)",
+      "new": "  bcir_tensor_pool_run(s->pool,loss_task,&lj,g.n/BCIR_DT_ROW_CHUNK);",
+      "old": "  bcir_tensor_pool_run(s->pool,loss_task,&lj,(g.n+BCIR_DT_ROW_CHUNK-1)/BCIR_DT_ROW_CHUNK);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_clipping_norm_keeps_its_contract",
+      "label": "NR10 the chunk rule never doubles (the 9.84M decoder's norm would be 9,606 chunks, not the contract's 601)",
+      "new": "  (void)n;\n  return chunk;",
+      "old": "  while ((n+chunk-1)/chunk>BCIR_DT_PASS_TASKS) chunk*=2;\n  return chunk;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_clipping_norm_keeps_its_contract",
+      "label": "NR11 the chunk's squares are summed from the chunk's last element (the oracle's chain is index order)",
+      "new": "  if (j->reduce) for (i=i1;i-->i0;) { double g=(double)gr[i]*gs; p.norm+=g*g; }",
+      "old": "  if (j->reduce) for (i=i0;i<i1;i++) { double g=(double)gr[i]*gs; p.norm+=g*g; }",
+      "path": "runtime/c/bcir_decoder_train.c"
+    }
+  ]
+}

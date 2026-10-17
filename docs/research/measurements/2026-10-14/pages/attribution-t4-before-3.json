@@ -1,0 +1,42 @@
+{
+ "schema": "bcir.ndt_attribution.v1",
+ "contract": "kblock+exp+reduce",
+ "threads": 4,
+ "steps": 5,
+ "compiler": "gcc",
+ "step_wall_ms_median": 387.9612879973138,
+ "step_wall_ms": [
+  392.0445620024111,
+  387.9612879973138,
+  380.4898810049053,
+  379.0212559979409,
+  413.8397310016444
+ ],
+ "timed_ms": 389.91805239999985,
+ "rows_ms": {
+  "gemm.backward": 202.3694551999999,
+  "gemm.forward": 79.09096260000001,
+  "attention.backward": 19.710209399999997,
+  "attention.forward": 16.8097026,
+  "rms.backward": 14.908920799999999,
+  "update.commit": 11.8046628,
+  "update.first_pass": 8.9080614,
+  "finite.activations": 7.1280006,
+  "swiglu.backward": 5.049158,
+  "silu": 3.2627841999999996,
+  "rms.forward": 3.1705931999999994,
+  "rope.backward": 2.7971899999999996,
+  "residual.add": 2.7781316,
+  "rope.forward": 2.5215175999999997,
+  "zero.gradients": 2.334141,
+  "finite.weights": 1.6860572,
+  "swiglu.mul": 1.6709937999999998,
+  "finite.gradients": 1.6418155999999997,
+  "loss.rows": 1.3426068,
+  "embed.scatter": 0.49857379999999996,
+  "embed.gather": 0.3085648,
+  "loss.sum": 0.10472140000000044,
+  "other": 0.0205346,
+  "forward.call": 0.0006934
+ }
+}

@@ -11,6 +11,7 @@ import ctypes as ct
 import hashlib
 import json
 import math
+import mmap
 import os
 import random
 import shutil
@@ -101,8 +102,21 @@ def provider_mismatch(lib, slot, shapes) -> int:
 #: OpenBLAS's sgemm performs, so such a provider can be admitted under it by `use_cblas`'s
 #: differential), "kblock+exp" both. Under v1, "fused" and "exp" a provider's GEMM keeps its own
 #: arithmetic; under "kblock" it is admitted only where it is the contract's, bit for bit.
+#: "reduce" (NDT-REDUCE) puts the clipping norm under a fixed-shape reduction -- the gradient in
+#: chunks of `reduce_chunk` elements, each chunk's squares summed in index order in double from
+#: zero, the chunk sums added in chunk order from zero -- so the update's one pass runs on the pool;
+#: "<contract>+reduce" names it with any of the five above. Whatever the contract, the loss, the
+#: gamma adjoints and the embedding scatter run on the pool in the serial order: every loss and
+#: state is the serial one, bit for bit, at every thread count.
 _CONTRACTS = {"v1": 0, "fused": 1, "exp": 2, "fused+exp": 3, "kblock": 4, "kblock+exp": 6}
+_CONTRACTS.update({("reduce" if name == "v1" else name + "+reduce"): bits | 8
+                   for name, bits in list(_CONTRACTS.items())})  # fmt: skip
 _KBLOCK = 4
+_REDUCE = 8
+#: The contract names `NativeDecoder(contract=...)` admits, sorted; a recipe names one of them.
+CONTRACTS = tuple(sorted(_CONTRACTS))
+#: The contract names `NativeDecoder(contract=...)` admits, sorted; a recipe names one of them.
+CONTRACTS = tuple(sorted(_CONTRACTS))
 
 
 class _Spec(ct.Structure):
@@ -237,6 +251,44 @@ def _checkpoint_digest(meta, payload):
     return digest.hexdigest()
 
 
+#: NDT-PAGES: the transparent huge page the state's mapping is aligned to (the PMD size of
+#: x86-64 and of a 4 KB arm64 kernel; under a larger one fewer of the mapping's pages are huge).
+_HUGE_PAGE = 2 << 20
+
+
+def _state_buffers(rows, huge_pages):
+    """The trainer's state buffers, zeroed, one per `rows` entry (name, floats), in its order.
+
+    NDT-PAGES: where Python exposes MADV_HUGEPAGE (Linux) they share one private anonymous
+    mapping advised for transparent huge pages before any page is touched -- the first buffer
+    on a 2 MB boundary, each next 64 bytes past the last one's end -- so the GEMMs' operand
+    walks miss the TLB once a 2 MB page rather than once a 4 KB one. Private, because a shared
+    anonymous mapping is shmem, whose huge pages follow another switch. Elsewhere, or with
+    `huge_pages` false, each buffer is a ctypes array. No kernel's arithmetic depends on an
+    address, so the placement never reaches a value. Returns the buffers and whether the kernel
+    took the advice: one without THP refuses it (EINVAL) and the mapping holds 4 KB pages."""
+    if not huge_pages or not hasattr(mmap, "MADV_HUGEPAGE"):
+        return {name: (ct.c_float * n)() for name, n in rows}, False
+    offsets, end = [], 0
+    for _name, n in rows:
+        end = (end + 63) & ~63
+        offsets.append(end)
+        end += 4 * n
+    mapping = mmap.mmap(-1, end + _HUGE_PAGE, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS)
+    try:
+        mapping.madvise(mmap.MADV_HUGEPAGE)
+        advised = True
+    except OSError:
+        advised = False
+    lead = -ct.addressof(ct.c_char.from_buffer(mapping)) % _HUGE_PAGE
+    # each array holds the mapping (from_buffer keeps its source), so it lives as long as they do
+    buffers = {
+        name: (ct.c_float * n).from_buffer(mapping, lead + offset)
+        for (name, n), offset in zip(rows, offsets)
+    }
+    return buffers, advised
+
+
 class NativeDecoder:
     """Caller-owned arenas planned once; native forward/backward/AdamW/run ABI.
 
@@ -250,6 +302,10 @@ class NativeDecoder:
     `contract` selects the arithmetic contracts (`"v1"`, the default of every gate and record;
     `"fused"`, one IEEE fmaf per GEMM term; `"exp"`, the BCIR exponential under SiLU, the SwiGLU
     VJP and the softmax; `"fused+exp"`); the checkpoint names it and `resume` restores it.
+    `huge_pages` (NDT-PAGES) puts the state on one mapping advised for 2 MB transparent huge
+    pages where the host has them (`_state_buffers`); `self.huge_pages` says whether the kernel
+    took the advice. The state is the same either way, bit for bit; the mapping adds at most one
+    huge page to what the budget bounds.
     """
 
     @staticmethod
@@ -319,6 +375,7 @@ class NativeDecoder:
         max_memory_bytes=512 * 1024 * 1024,
         threads=1,
         contract="v1",
+        huge_pages=True,
     ):
         if not isinstance(spec, DecoderSpec) or spec.activation != "silu_gate":
             raise ValueError("native decoder requires Llama/SwiGLU DecoderSpec")
@@ -345,6 +402,8 @@ class NativeDecoder:
             raise ValueError("threads must be an integer in [1, 4096]")
         if contract not in _CONTRACTS:
             raise ValueError(f"contract must be one of {sorted(_CONTRACTS)}")
+        if type(huge_pages) is not bool:
+            raise ValueError("huge_pages must be bool")
         self.contract = contract
         self.spec, self.batch_size, self.context_length = spec, batch_size, context_length
         self.library = Path(library).resolve()
@@ -391,17 +450,17 @@ class NativeDecoder:
         self.layout = parameter_layout(spec)
         if sum(row[3] for row in self.layout) != plan.parameters:
             raise RuntimeError("native/Python parameter layout mismatch")
-        self.buffers = {
-            name: (ct.c_float * n)()
-            for name, n in (
+        self.buffers, self.huge_pages = _state_buffers(
+            (
                 ("weights", plan.parameters),
                 ("gradients", plan.parameters),
                 ("moment1", plan.parameters),
                 ("moment2", plan.parameters),
                 ("activations", plan.activations),
                 ("scratch", plan.scratch),
-            )
-        }
+            ),
+            huge_pages,
+        )
         self.state = _State(
             plan,
             *(self.buffers[n] for n in self.buffers),
@@ -701,7 +760,9 @@ class NativeDecoder:
             Path(tmp).unlink(missing_ok=True)
 
     @classmethod
-    def resume(cls, library, path, *, max_memory_bytes=512 * 1024 * 1024, threads=1):
+    def resume(
+        cls, library, path, *, max_memory_bytes=512 * 1024 * 1024, threads=1, huge_pages=True
+    ):
         with Path(path).open("rb") as stream:
             prefix = stream.read(12)
             if len(prefix) != 12 or prefix[:8] != _MAGIC:
@@ -746,6 +807,7 @@ class NativeDecoder:
                 max_memory_bytes=max_memory_bytes,
                 threads=threads,
                 contract=meta["contract"],
+                huge_pages=huge_pages,
             )
             expected = obj.state.plan.parameters * 12
             payload = stream.read(expected + 1)

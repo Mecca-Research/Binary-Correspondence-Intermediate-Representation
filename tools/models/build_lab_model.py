@@ -11,7 +11,11 @@ own and nothing is downloaded:
 * the tokenizer is `bcir.hosted.training.bpe.BytePairTokenizer`, trained on a fixed prefix of
   the train split;
 * the decoder trains in C (`bcir.hosted.models.native`, forward/backward/AdamW), from a seed,
-  under a warmup-then-cosine learning rate;
+  under a warmup-then-cosine learning rate, under the recipe's kernel contract (`native.contract`:
+  the fast one, `kblock+exp+reduce`, in the shipped recipes -- the contract changes the model's
+  bits, so the recipe the model is reproducible from names it) at the host's thread count
+  (`native.threads` "host": the CPUs this process may run on, or `BCIR_TRAIN_THREADS`; the state
+  is the serial one at every count under every contract, so the threads are the host's choice);
 * the weights leave as a checkpoint (`.bcirdt`) and as BCIRQ8 (`write_q8_decoder`), the artifact
   every BCIR inference rail reads.
 
@@ -43,7 +47,12 @@ if str(ROOT) not in sys.path:
 
 from bcir.frontends.models.decode import decode_with_kv_cache  # noqa: E402
 from bcir.frontends.models.weights_io import read_q8_decoder, write_q8_decoder  # noqa: E402
-from bcir.hosted.models.native import NativeAdamW, NativeDecoder, parameter_layout  # noqa: E402
+from bcir.hosted.models.native import (  # noqa: E402
+    CONTRACTS,
+    NativeAdamW,
+    NativeDecoder,
+    parameter_layout,
+)
 from bcir.hosted.models.spec import HostedTrainSpec  # noqa: E402
 from bcir.hosted.training.bpe import BytePairTokenizer, token_source_from_corpus  # noqa: E402
 from bcir.hosted.training.data import (  # noqa: E402
@@ -53,10 +62,16 @@ from bcir.hosted.training.data import (  # noqa: E402
 )
 
 RECIPE_SCHEMA = "bcir.lab_model.v1"
-_RECIPE_FIELDS = {"schema", "name", "corpus", "tokenizer", "train", "evaluation"}
+_RECIPE_FIELDS = {"schema", "name", "corpus", "tokenizer", "train", "evaluation", "native"}
 _CORPUS_FIELDS = {"include", "license", "section_marker", "split_salt", "validation_permyriad"}
 _TOKENIZER_FIELDS = {"kind", "vocab_size", "min_frequency", "sample_bytes"}
 _EVALUATION_FIELDS = {"prompt", "max_new_tokens", "validation_batches"}
+_NATIVE_FIELDS = {"contract", "threads"}
+#: The kernel instances of the blocked GEMM contract (bcir_tensor_mm_kblock_variants), widest first.
+_INSTANCES = ((4, "avx512f"), (2, "avx2-fma"), (1, "portable"))
+_NATIVE_FIELDS = {"contract", "threads"}
+#: The kernel instances of the blocked GEMM contract (bcir_tensor_mm_kblock_variants), widest first.
+_INSTANCES = ((4, "avx512f"), (2, "avx2-fma"), (1, "portable"))
 #: Steps per native `run` call: one progress line and one learning-rate slice each.
 _CHUNK = 50
 
@@ -120,10 +135,45 @@ def load_recipe(path) -> tuple[dict, HostedTrainSpec, str]:
         raise ValueError("evaluation.prompt must be a nonempty string")
     _int(evaluation["max_new_tokens"], "evaluation.max_new_tokens", 1)
     _int(evaluation["validation_batches"], "evaluation.validation_batches", 1)
+    native = _exact(recipe["native"], _NATIVE_FIELDS, "native")
+    if native["contract"] not in CONTRACTS:
+        raise ValueError(f"native.contract must be one of {list(CONTRACTS)}")
+    if native["threads"] != "host" and (
+        type(native["threads"]) is not int or native["threads"] < 1
+    ):
+        raise ValueError('native.threads must be "host" or a positive integer')
     spec = HostedTrainSpec.from_json(json.dumps(recipe["train"]))
     if spec.decoder.vocab_size != tokenizer["vocab_size"]:
         raise ValueError("the decoder's vocabulary must be the tokenizer's")
     return recipe, spec, hashlib.sha256(raw).hexdigest()
+
+
+def host_threads() -> int:
+    """The trainer's threads under `native.threads` "host": `BCIR_TRAIN_THREADS` when set (a
+    positive integer; anything else is refused, never read as one), else the CPUs this process
+    may run on (its affinity mask where the host has one, the CPU count otherwise), at least 1."""
+    env = os.environ.get("BCIR_TRAIN_THREADS")
+    if env is not None:
+        if not re.fullmatch(r"[1-9][0-9]*", env):
+            raise ValueError("BCIR_TRAIN_THREADS must be a positive integer")
+        return int(env)
+    if hasattr(os, "sched_getaffinity"):
+        return max(1, len(os.sched_getaffinity(0)))
+    return max(1, os.cpu_count() or 1)
+
+
+def trainer_threads(native: dict) -> int:
+    """The recipe's `native.threads`: its own integer, or the host's under "host"."""
+    return host_threads() if native["threads"] == "host" else native["threads"]
+
+
+def kernel_instance(trainer: NativeDecoder) -> str:
+    """The widest instance of the blocked GEMM contract this host runs (NDT-BLOCK); the
+    contract's result is the same on every instance, so this is provenance, not a parameter.
+    Total: a mask naming no instance (the portable one is always built, so never on a real host)
+    is recorded as its bits rather than ending the build without a verdict (L1)."""
+    bits = int(trainer.lib.bcir_tensor_mm_kblock_variants())
+    return next((name for bit, name in _INSTANCES if bits & bit), f"bits {bits}")
 
 
 def sections(text: str, marker: str) -> list[str]:
@@ -267,12 +317,20 @@ def build(recipe_path, output_dir, *, steps: int | None = None, log=print) -> di
     )
 
     library = NativeDecoder.build(out / "native")
+    contract, threads = recipe["native"]["contract"], trainer_threads(recipe["native"])
     trainer = NativeDecoder(
         library,
         spec.decoder,
         batch_size=spec.batch_size,
         context_length=spec.context_length,
         seed=spec.seed,
+        threads=threads,
+        contract=contract,
+    )
+    instance = kernel_instance(trainer)
+    log(
+        f"trainer: contract {contract}, {trainer.threads} thread(s) (native.threads "
+        f"{recipe['native']['threads']!r}), kernel instance {instance}"
     )
     optimizer = NativeAdamW(
         lr=spec.learning_rate,
@@ -356,6 +414,12 @@ def build(recipe_path, output_dir, *, steps: int | None = None, log=print) -> di
             "sha256": tokenizer_sha,
             "vocab_size": tokenizer.vocab_size,
             "sample_bytes": size,
+        },
+        "native": {
+            "contract": contract,
+            "threads": trainer.threads,
+            "threads_policy": recipe["native"]["threads"],
+            "instance": instance,
         },
         "training": {
             "steps": steps,

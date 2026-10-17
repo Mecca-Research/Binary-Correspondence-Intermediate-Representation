@@ -43,10 +43,12 @@ BCIR_DT_API size_t bcir_tensor_pool_size(unsigned threads); /* 0: a count this h
 BCIR_DT_API bcir_tensor_pool *bcir_tensor_pool_init(void *memory, size_t bytes, unsigned threads);
 BCIR_DT_API void bcir_tensor_pool_stop(bcir_tensor_pool *pool); /* joins; NULL or stopped: no-op */
 BCIR_DT_API unsigned bcir_tensor_pool_threads(const bcir_tensor_pool *pool); /* NULL: 1 */
-/* Run `tasks` tasks of `fn` over the pool's threads -- task t on thread t mod threads, each
- * thread its tasks in ascending order -- and return when every one has finished; a NULL pool,
- * one thread or one task runs them in order on the caller. A caller's partition keeps every
- * output element, and every reduction, with one task, as the kernels below do. */
+/* Run `tasks` tasks of `fn` over the pool's threads -- each thread claiming the next unclaimed
+ * task, in ascending order, where the compiler has GCC's or Clang's atomics, task t on thread
+ * t mod threads elsewhere -- and return when every one has finished; a NULL pool, one thread or
+ * one task runs them in order on the caller. Which thread runs a task is not part of the
+ * contract: a caller's partition keeps every output element, and every reduction, with one task,
+ * as the kernels below do. */
 typedef void (*bcir_tensor_task_fn)(void *ctx, size_t task);
 BCIR_DT_API void bcir_tensor_pool_run(bcir_tensor_pool *pool, bcir_tensor_task_fn fn, void *ctx,
     size_t tasks);
@@ -57,14 +59,62 @@ BCIR_DT_API void bcir_tensor_swiglu_backward_pool(bcir_tensor_pool *pool, size_t
     const float *gate, const float *up, const float *dy, float *dg, float *du);
 BCIR_DT_API void bcir_tensor_rms_pool(bcir_tensor_pool *pool, size_t rows, size_t width,
     float eps, const float *x, const float *g, float *y);
+/* The RMSNorm VJP on the pool (NDT-REDUCE): rows in ranges of BCIR_ROW_CHUNK for dx and each row's
+ * 1/rms, kept in `inv` (rows floats the caller owns for the call, disjoint from the others), then
+ * columns in ranges of BCIR_COL_CHUNK for the gamma adjoint, each column's sum over the rows in row
+ * order -- bcir_tensor_rms_backward's result, bit for bit, at every thread count. */
+BCIR_DT_API void bcir_tensor_rms_backward_pool(bcir_tensor_pool *pool, size_t rows, size_t width,
+    float eps, const float *x, const float *g, const float *dy, float *dx, float *dg, float *inv);
+/* The same VJP with its two writes chosen (NDT-RMS-ACC, NDT-ZERO), every value the call above's:
+ * BCIR_TENSOR_RMSB_ADD adds each element of dx to the value dx holds -- dx + (the VJP's element),
+ * one rounded sum, which is the call above into a buffer t followed by bcir_tensor_add_pool(t, dx)
+ * -- and BCIR_TENSOR_RMSB_FIRST starts each column's gamma adjoint at +0.0 instead of at the value
+ * dg holds, as a zero fill of dg before the call would (dg is then written, never read). */
+#define BCIR_TENSOR_RMSB_ADD 1u
+#define BCIR_TENSOR_RMSB_FIRST 2u
+BCIR_DT_API void bcir_tensor_rms_backward_into_pool(bcir_tensor_pool *pool, size_t rows,
+    size_t width, float eps, const float *x, const float *g, const float *dy, float *dx, float *dg,
+    float *inv, unsigned how);
 BCIR_DT_API void bcir_tensor_rope_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
     size_t heads, size_t dim, double base, float *x, int inverse);
 /* y[i] += x[i] and y[i] *= x[i] over elements, as the trainer's residual and gate paths do. */
 BCIR_DT_API void bcir_tensor_add_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);
 BCIR_DT_API void bcir_tensor_mul_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);
+/* y[i] = silu(x[i]) * u[i] in one pass (NDT-SWIGLU-FWD): the SiLU rounded to binary32 as
+ * bcir_tensor_silu_pool computes it (libm's expf; the _v2 entry: the v2 SiLU, as
+ * bcir_tensor_silu_v2_pool), then its product with u rounded -- the SiLU into y followed by
+ * bcir_tensor_mul_pool(u, y), bit for bit, with one read of x and u and one write of y. Each
+ * element reads x[i] and u[i] before it writes y[i]; y must not partly overlap x or u. */
+BCIR_DT_API void bcir_tensor_silu_mul_pool(bcir_tensor_pool *pool, size_t n, const float *x,
+    const float *u, float *y);
 BCIR_DT_API void bcir_tensor_attention_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
     size_t heads, size_t kvheads, size_t dim, const float *q, const float *k, const float *v,
     float *p, float *y);
+/* The forward's writers with their verdict (NDT-SCAN-W): each computes what the entry it names
+ * computes, bit for bit, and sets *bad to 1 when some element of the regions below is not finite
+ * after the call, leaving *bad as it was otherwise -- so a caller ORs its calls' verdicts into one.
+ * The tasks that wrote a region read it back while it is in their core's cache. A region's verdict
+ * may come from another region its value reaches: the RMSNorm's regions are x and y, and it reads
+ * y, since an infinite or NaN element of a row makes the row's 1/rms 0 or NaN and that element of
+ * y NaN; the SwiGLU product's are x, u and y, and it reads y, since a non-finite gate makes the
+ * SiLU infinite or NaN (-inf times the sigmoid's 0 is NaN) and a non-finite factor makes the
+ * product so; the attention's are q, k and v (batch x time x heads or kvheads x dim), p and y, and
+ * it reads k and y -- a query that is not finite makes every score of its row infinite or NaN and
+ * so the row's probabilities NaN, and a NaN probability or a value that is not finite enters a
+ * context sum, every key's own row taking its term; a key is the region the softmax can hide (a
+ * key whose scores are all -inf weighs 0 in every row), so the keys are read themselves. */
+BCIR_DT_API void bcir_tensor_rms_scan_pool(bcir_tensor_pool *pool, size_t rows, size_t width,
+    float eps, const float *x, const float *g, float *y, int *bad);
+BCIR_DT_API void bcir_tensor_silu_mul_scan_pool(bcir_tensor_pool *pool, size_t n, const float *x,
+    const float *u, float *y, int *bad);
+BCIR_DT_API void bcir_tensor_silu_mul_v2_scan_pool(bcir_tensor_pool *pool, size_t n,
+    const float *x, const float *u, float *y, int *bad);
+BCIR_DT_API void bcir_tensor_attention_scan_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
+    size_t heads, size_t kvheads, size_t dim, const float *q, const float *k, const float *v,
+    float *p, float *y, int *bad);
+BCIR_DT_API void bcir_tensor_attention_v2_scan_pool(bcir_tensor_pool *pool, size_t batch,
+    size_t time, size_t heads, size_t kvheads, size_t dim, const float *q, const float *k,
+    const float *v, float *p, float *y, int *bad);
 BCIR_DT_API void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *pool,
     size_t batch, size_t time, size_t heads, size_t kvheads, size_t dim, const float *q,
     const float *k, const float *v, float *p, const float *dy, float *dq, float *dk, float *dv);
@@ -107,6 +157,30 @@ BCIR_DT_API void bcir_tensor_mm_kblock(void *ctx, int ta, int tb, size_t m, size
     float alpha, const float *a, const float *b, float beta, float *c);
 BCIR_DT_API void bcir_tensor_mm_kblock_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m,
     size_t n, size_t k, float alpha, const float *a, const float *b, float beta, float *c);
+/* Two GEMMs as one pool job (NDT-SCHED-0): the first's tasks then the second's, each GEMM's
+ * partition exactly its own pool entry's, so every output element keeps its depth order and the
+ * results are the two entries' bit for bit; one barrier in place of two, and a narrow product's
+ * idle threads take the other's tasks. For two products whose writes are disjoint -- a linear's
+ * two VJPs, dx and dW, which read one adjoint. `contract` is 0 for v1, 1 for the fused v2, 2 for
+ * the blocked v3 (the three entries above, in that order); a NULL pool or one thread runs the
+ * first then the second serially. */
+typedef struct bcir_tensor_mm_call {
+  int ta, tb; size_t m, n, k; float alpha; const float *a, *b; float beta; float *c;
+} bcir_tensor_mm_call;
+BCIR_DT_API void bcir_tensor_mm_pair_pool(bcir_tensor_pool *pool, int contract,
+    const bcir_tensor_mm_call *x, const bcir_tensor_mm_call *y);
+/* GEMMs as one pool job (NDT-SCHED-1): `nchain` calls that write one C -- the same c, m and n --
+ * run in order per tile, each tile's task scaling its elements by the next call's beta and adding
+ * that call's terms, as the calls would one after another; then `ny` calls whose writes are
+ * disjoint from the chain's and from each other, each with its own partition (the pair job's
+ * second GEMM, generalized). The results are the calls' run one after another in the order given,
+ * bit for bit: every element receives the same operations in the same order. At most
+ * BCIR_TENSOR_MM_GROUP calls of each kind; a NULL pool or one thread, a count past it, or a chain
+ * whose calls do not share c, m and n runs the calls serially in that order -- the chain, then the
+ * rest. */
+#define BCIR_TENSOR_MM_GROUP 4
+BCIR_DT_API void bcir_tensor_mm_group_pool(bcir_tensor_pool *pool, int contract,
+    const bcir_tensor_mm_call *chain, size_t nchain, const bcir_tensor_mm_call *y, size_t ny);
 BCIR_DT_API int bcir_tensor_mm_kblock_variants(void);
 BCIR_DT_API int bcir_tensor_mm_kblock_variant(int variant, int ta, int tb, size_t m, size_t n,
     size_t k, float alpha, const float *a, const float *b, float beta, float *c);
@@ -126,6 +200,8 @@ BCIR_DT_API int bcir_tensor_exp_variant(int variant, size_t n, const float *x, f
  * power of two. */
 BCIR_DT_API size_t bcir_tensor_exp_sweep(unsigned stride, size_t *mismatch, unsigned *ulp);
 BCIR_DT_API void bcir_tensor_silu_v2_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);
+BCIR_DT_API void bcir_tensor_silu_mul_v2_pool(bcir_tensor_pool *pool, size_t n, const float *x,
+    const float *u, float *y);
 BCIR_DT_API void bcir_tensor_swiglu_backward_v2_pool(bcir_tensor_pool *pool, size_t n,
     const float *gate, const float *up, const float *dy, float *dg, float *du);
 BCIR_DT_API void bcir_tensor_attention_v2_pool(bcir_tensor_pool *pool, size_t batch, size_t time,

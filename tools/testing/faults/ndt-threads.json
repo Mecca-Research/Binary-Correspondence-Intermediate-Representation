@@ -11,22 +11,22 @@
     {
       "expects": "test_the_training_state_is_identical_at_every_thread_count",
       "label": "NT1 the GEMM's row tasks stop before the ragged tail (rows past the last whole 64-row task are never computed on a pool)",
-      "new": "j.cols=(n+j.nr-1)/j.nr; j.rowsets=m/BCIR_MM_ROWS;",
-      "old": "j.cols=(n+j.nr-1)/j.nr; j.rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;",
+      "new": "  j->cols=(n+j->nr-1)/j->nr; j->rowsets=m/BCIR_MM_ROWS;",
+      "old": "  j->cols=(n+j->nr-1)/j->nr; j->rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_the_training_state_is_identical_at_every_thread_count",
-      "label": "NT2 the runner drops each thread's last task",
-      "new": "  for (t=id;t+p->threads<p->tasks;t+=p->threads) p->fn(p->ctx,t);",
-      "old": "  for (t=id;t<p->tasks;t+=p->threads) p->fn(p->ctx,t);",
+      "label": "NT2 the runner's claim stops one task short (the last task of every job never runs on a pool)",
+      "new": "  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))+1<tasks) fn(ctx,t);",
+      "old": "  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<tasks) fn(ctx,t);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NT3 a GEMM task adds its terms without first scaling its elements by beta",
-      "new": "    for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=j->beta==0.0f ? ci[jj] : j->beta*ci[jj];",
-      "old": "    for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=j->beta==0.0f ? 0.0f : j->beta*ci[jj];",
+      "new": "    for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=j->beta==0.0f ? ci[jj] : mm_scaled(j->beta,ci[jj]);",
+      "old": "    for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=mm_scaled(j->beta,ci[jj]);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -39,8 +39,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NT5 RMSNorm's last row chunk is dropped",
-      "new": "  pool_run(pool,rms_task,&j,rows/BCIR_ROW_CHUNK);",
-      "old": "  pool_run(pool,rms_task,&j,(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);",
+      "new": "  rms_job j; unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=rows/BCIR_ROW_CHUNK;",
+      "old": "  rms_job j; unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK;",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -60,9 +60,79 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NT8 the backward's task runs one query head short of its KV head's group (the serial run too: the reference catches it)",
-      "new": "  for (h=first;h+1<first+a->group;h++) att_head_backward(a,r,h);",
-      "old": "  for (h=first;h<first+a->group;h++) att_head_backward(a,r,h);",
+      "new": "  for (h=first;h+1<first+a->group;h++) att_head_backward(a,r,h,vt);",
+      "old": "  for (h=first;h<first+a->group;h++) att_head_backward(a,r,h,vt);",
       "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT9 the pair job's second GEMM starts at the first's column count, not its task count (NDT-SCHED-0: the first's last row sets never run, the second's first tasks run twice)",
+      "new": "  j.split=mm_job_init(&j.a,fused,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c); j.split=j.a.cols;",
+      "old": "  j.split=mm_job_init(&j.a,fused,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT10 the pair job's serial path (no pool, one thread) skips the first GEMM (the one-thread pool's state is not the serial state, and the pair is not the two entries)",
+      "new": "    (void)x;\n",
+      "old": "    mm_serial_any(fused,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT11 a claim takes two tasks (every other task of a job never runs on a pool)",
+      "new": "__atomic_fetch_add(&p->next,(size_t)2,__ATOMIC_RELAXED)",
+      "old": "__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED)",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT12 the caller does not reset the claim counter (a job after the first starts where the last one's claims ended, so its first tasks never run)",
+      "new": "",
+      "old": "  __atomic_store_n(&p->next,(size_t)0,__ATOMIC_RELAXED);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT13 the group job's chain tasks start at its second call (the first chained product never reaches its C on a pool)",
+      "new": "  if (task<j->split) { for (q=1;q<j->nx;q++) mm_task(&j->x[q],task); return; }",
+      "old": "  if (task<j->split) { for (q=0;q<j->nx;q++) mm_task(&j->x[q],task); return; }",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT14 the group job's independent calls start at their own task counts, not the running sum (a later call's tasks are never claimed, an earlier call's only in part)",
+      "new": "  for (q=0;q<ny;q++) j.start[q+1]=mm_call_init(&j.y[q],fused,y+q);",
+      "old": "  for (q=0;q<ny;q++) j.start[q+1]=j.start[q]+mm_call_init(&j.y[q],fused,y+q);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT15 a chain whose calls differ in n runs as one chain (task t is a different tile in each call, so the tiles' terms land apart)",
+      "new": "serial=x[q].c!=x[0].c || x[q].m!=x[0].m;",
+      "old": "serial=x[q].c!=x[0].c || x[q].m!=x[0].m || x[q].n!=x[0].n;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT16 the group's serial path drops its first independent call (one thread, or no pool)",
+      "new": "    for (q=1;q<ny;q++) mm_call_serial(fused,y+q);",
+      "old": "    for (q=0;q<ny;q++) mm_call_serial(fused,y+q);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT17 the grouped backward starts its input-adjoint chain adding (q's and gate's dx onto the arena's stale values; the reference catches it at every thread count)",
+      "new": "cx[q].beta=1.0f;",
+      "old": "cx[q].beta=q ? 1.0f : beta;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NT18 the grouped forward drops its last linear (v and up never computed, at every thread count: the reference catches it)",
+      "new": "  bcir_tensor_mm_group_pool(s->pool,gemm_contract(s),NULL,0,c,count-1);",
+      "old": "  bcir_tensor_mm_group_pool(s->pool,gemm_contract(s),NULL,0,c,count);",
+      "path": "runtime/c/bcir_decoder_train.c"
     }
   ]
 }

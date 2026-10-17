@@ -1,0 +1,9 @@
+{
+ "what": "NDT-LANES (2026-10-16): the step's per-row dependent chains as the 16 lanes of one AVX-512 vector -- RMSNorm's sum of squares and its VJP's dot, the softmax's running maximum and sum (and, under the exp contract, its exponentials in the transposed blocks), the attention backward's dot -- each lane its own row's chain in column order over 16 x 16 blocks transposed in registers; the gamma adjoint's column sums in the task's registers, stored once. Every value the scalar loops'.",
+ "host": "4-vCPU Intel Xeon @ 2.80GHz container (AVX-512; the instance after the 2026-10-16 restart, faster than \u00a713's), GCC 13.3 (the trainer builds), Python 3.11.15 (the declared floor); indicative wall times, no PMU",
+ "files": {
+  "attribution-t4-before-{1..5}.json, attribution-t4-lanes-{1..5}.json": "the step in place at four threads (docs/research/measurements/2026-10-13/scan/attribution.py --src TREE/runtime/c --data DATA --threads 4 --steps 8): before = a0ea747, lanes = a0ea747 with this slice's runtime/c/bcir_tensor.c; the two arms alternated round by round (before, lanes, before, ...), five rounds; rows_ms is each category's milliseconds per step over the eight steps, step_wall_ms_median the step's median",
+  "identity.json": "the 20-step state at one and four threads under kblock+exp+reduce for the widest, AVX2-capped and portable builds (train_comparison.py identity --steps 20 --threads 1,4 --contract kblock+exp+reduce --variants widest,avx2,portable): every row 4bf4e057..., the state before the slice"
+ },
+ "reading": "In place at four threads, medians of the five rounds: the attention forward 11.10 -> 8.56 ms a step, the RMSNorm VJP 6.34 -> 4.48, RMSNorm 2.62 -> 1.45 (every round faster); the attention backward 14.12 -> 13.88 (its dot a small part); the GEMMs, code unchanged, 169-182 ms across rounds in both arms; the step 248.1 -> 240.6 ms."
+}

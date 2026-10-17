@@ -1,0 +1,17 @@
+{
+ "what": "NDT-REDUCE (2026-10-13): the reductions the pool left serial, on the pool, and the clipping norm's declared contract (the reduce bit), measured on the 9.84M decoder of the 10-11 comparison (batch 8 x 128) on this 4-vCPU container, GCC 13.3, the tree at the NDT-REDUCE commit. breakdown-bcir-<contract>-t<threads>-<i>.json: the bcir-breakdown stage (medians of 5 paired rounds) run three times for each four-thread contract, the two contracts alternated minutes apart so each pair sees one host (sample i of one contract pairs with sample i of the other), and once (kblock+exp) or twice (kblock+exp+reduce) at one thread; identity-reduce.json: the identity stage, 20 steps, reduce and kblock+exp+reduce at 1 and 3 threads on the widest build and a repeat; runs/: the 1,000-step language-model runs under kblock+exp+reduce on four threads and on one (the same data, optimizer and schedule as the 10-11 comparison's lm task, --lr-scale 0.25, --eval-every 100).",
+ "host": "the same container as the 2026-10-12 records; on this day its unchanged kernels (the GEMMs, the attention, SiLU) ran 25-45% slower than the day before and the GEMM rows drifted 20% within the session's hour, so the same-session pairs are the comparison and the step's own time is not resolved here (the report's section 9)",
+ "pairs_4_threads": {
+  "kblock+exp": [
+   1,
+   2,
+   3
+  ],
+  "kblock+exp+reduce": [
+   1,
+   2,
+   3
+  ]
+ },
+ "indicative": "every time is a wall time on a shared virtual host without a PMU; the exact rows (train.norm.reduce.mismatch, train.state.threads.mismatch, the C harness) are the slice's gate"
+}
