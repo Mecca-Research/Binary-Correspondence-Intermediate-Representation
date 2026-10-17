@@ -2915,6 +2915,35 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  NDT-SCAN-W (2026-10-17): the activations' finiteness taken by their writers.
+  - The forward's verdict on its activations had been one scan of the whole arena after the forward
+    -- 171 MB for the 9.84M decoder, read back from memory, 6.0 ms of the four-thread step; scanning
+    each layer when it was done (NDT-GEMM-CAND) found the same 6.6 ms: the shared L3 does not keep a
+    layer's 26 MB between their writes and the scan.
+  - `bcir_tensor_rms_scan_pool`, `bcir_tensor_silu_mul_scan_pool` (and `_v2`) and
+    `bcir_tensor_attention_scan_pool` (and `_v2`) compute their plain entries' values, bit for bit,
+    and set a verdict when one of their regions holds an element that is not finite, read back by the
+    tasks that wrote them into one byte each of the caller's stack (a job past the bytes' bound
+    scanned after it on the pool). A region answers through another its value reaches -- the
+    RMSNorm's input rows through its output, the SwiGLU product's gate and up through the product,
+    the attention's queries, values and probabilities through its context -- and the attention reads
+    its keys itself, the one region the softmax can hide (a key whose scores are all -inf weighs 0).
+    The trainer's forward calls them for every region of the arena and scans only the logits after
+    the head; a provider's SiLU has its three regions scanned after it.
+  - Evidence: the C harness's `writer_verdicts` (each entry its plain entry's values and its regions'
+    verdict over 560 cases: every task chunk's ends in every input region, overflowing outputs, a set
+    verdict kept, the hidden key; through the trainer the key behind RoPE, logits that overflow alone
+    and a provider's SiLU that answers 0 for an infinite gate, refused with every other activation
+    finite) and its Python test's build with the bytes' bound at two tasks; `ndt-scanw.json` SW1-SW17
+    (17 of 17 caught); an old-against-new differential of the verdict over three specs, the twelve
+    contracts, pools of one, two and four and ten crafted states, every observable byte hashed -- the
+    same table and digest; the statedump differential's same 376,368,768 bytes and 9.84M digest; the
+    20-step state `4bf4e057…`.
+  - Measured in place at four threads, eight rounds rotated with 4fcaa5e's sources
+    ([measurements/2026-10-17/scanw/](research/measurements/2026-10-17/scanw/), the report's §25):
+    the activations' scan 5.95 -> 0.05 ms a step and everything but the GEMMs 56.0 -> 50.3, every
+    round; the writers' reads 0.5 ms among them once the attention reads each region in one call (a
+    first form, one call a strided row, spent 0.6 ms in the attention alone).
   LM-4T (2026-10-16): BCIR against PyTorch at four threads on 14b5941.
   - The 1,000-step language-model run with NDT-ATTN-7, one round in its session
     ([measurements/2026-10-16/lm/](research/measurements/2026-10-16/lm/) r7-*, the report's §24): BCIR 211.0 / 225.6 ms a

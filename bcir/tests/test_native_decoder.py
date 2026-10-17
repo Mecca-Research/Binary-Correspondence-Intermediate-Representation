@@ -137,11 +137,14 @@ def test_native_c_harness_c11_and_c23():
     from bcir.toolchain import host_link_args
 
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
-        for standard in ("c11", "c2x"):
-            exe = Path(temporary) / f"gate-{standard}"
+        # and C23 once more with the writers' verdict bytes bounded at two tasks, so every scan
+        # entry takes the scan after its job (NDT-SCAN-W)
+        for standard, bound in (("c11", []), ("c2x", []), ("c2x", ["-DBCIR_TENSOR_SCAN_TASKS=2"])):
+            exe = Path(temporary) / f"gate-{standard}{'-bounded' if bound else ''}"
             cmd = [
                 cc,
                 f"-std={standard}",
+                *bound,
                 "-O2",
                 "-Wall",
                 "-Wextra",
@@ -162,7 +165,7 @@ def test_native_c_harness_c11_and_c23():
             result = subprocess.run(
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
-            assert result.stdout.count("PASS") == 14  # fused_passes since NDT-FUSE
+            assert result.stdout.count("PASS") == 15  # writer_verdicts since NDT-SCAN-W
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -193,7 +196,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 14
+            assert result.stdout.count("PASS") == 15
             break
 
 

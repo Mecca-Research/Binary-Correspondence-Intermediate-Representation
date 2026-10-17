@@ -243,11 +243,17 @@ static void linears_backward(bcir_decoder_state *s,size_t r,size_t in,const floa
   bcir_tensor_mm_group_pool(s->pool,gemm_contract(s),cx,count,cw,count);
 }
 /* y = silu(x) * u (NDT-SWIGLU-FWD): BCIR's SiLU under the state's contract and the product in one
- * pass, the two passes' values; a provider's SiLU into y, then the product, as before. */
-static void silu_mul(bcir_decoder_state *s,size_t n,const float *x,const float *u,float *y) {
-  if (s->provider.silu) { s->provider.silu(s->provider.ctx,n,x,y); bcir_tensor_mul_pool(s->pool,n,u,y); }
-  else if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_mul_v2_pool(s->pool,n,x,u,y);
-  else bcir_tensor_silu_mul_pool(s->pool,n,x,u,y);
+ * pass, the two passes' values; a provider's SiLU into y, then the product, as before. *bad
+ * answers for x, u and y (NDT-SCAN-W): BCIR's product from its tasks, a provider's by scanning the
+ * three after it. */
+static void silu_mul(bcir_decoder_state *s,size_t n,const float *x,const float *u,float *y,
+    int *bad) {
+  if (s->provider.silu) {
+    s->provider.silu(s->provider.ctx,n,x,y); bcir_tensor_mul_pool(s->pool,n,u,y);
+    if (!finite_pool(s,x,n) || !finite_pool(s,u,n) || !finite_pool(s,y,n)) *bad=1;
+  }
+  else if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_mul_v2_scan_pool(s->pool,n,x,u,y,bad);
+  else bcir_tensor_silu_mul_scan_pool(s->pool,n,x,u,y,bad);
 }
 static void swiglu_backward(bcir_decoder_state *s,size_t n,const float *g,const float *u,
     const float *dy,float *dg,float *du) {
@@ -255,21 +261,30 @@ static void swiglu_backward(bcir_decoder_state *s,size_t n,const float *g,const 
   else bcir_tensor_swiglu_backward_pool(s->pool,n,g,u,dy,dg,du);
 }
 static void attention(bcir_decoder_state *s,size_t b,size_t t,size_t h,size_t kh,size_t d,
-    const float *q,const float *k,const float *v,float *p,float *y) {
-  if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_attention_v2_pool(s->pool,b,t,h,kh,d,q,k,v,p,y);
-  else bcir_tensor_attention_pool(s->pool,b,t,h,kh,d,q,k,v,p,y);
+    const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
+  if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_attention_v2_scan_pool(s->pool,b,t,h,kh,d,q,k,v,p,y,bad);
+  else bcir_tensor_attention_scan_pool(s->pool,b,t,h,kh,d,q,k,v,p,y,bad);
 }
-static void forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
+/* The forward, and whether every activation it wrote is finite (NDT-SCAN-W). One scan of the
+ * whole arena after it read the arena back from memory, 171 MB for the 9.84M decoder; now the
+ * writers answer for it from their tasks (bcir_tensor_rms_scan_pool): each layer's two RMSNorms
+ * for their input rows -- the residual stream, and the attention's sum -- and their outputs, the
+ * attention for q, k, v, the probabilities and the context, the SwiGLU product for the gate, up
+ * and hidden activations, the final norm for the last layer's output and its own; the logits are
+ * scanned after the head. Every element of the arena is in exactly one call's regions, each
+ * called after the region's last write, so the verdict is the one scan's, and every layer runs
+ * whatever an earlier one held. */
+static int forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
   const bcir_decoder_spec *sp=&s->plan.spec;
   size_t i,l; float *xs=s->activations,*cs=xs+(g.l+1)*g.nd;
   float *norm=cs+g.l*g.la,*logits=norm+g.nd;
   float *final=s->weights+g.v*g.d+g.l*g.lp;
-  const float *head=sp->tied ? s->weights : final+g.d;
+  const float *head=sp->tied ? s->weights : final+g.d; int bad=0;
   for (i=0;i<g.n;i++) memcpy(xs+i*g.d,s->weights+(size_t)tokens[i]*g.d,g.d*sizeof(float));
   for (l=0;l<g.l;l++) {
     layer p=params(s->weights+g.v*g.d+l*g.lp,g);
     cache a=activations(cs+l*g.la,g); float *x=xs+l*g.nd,*y=x+g.nd;
-    bcir_tensor_rms_pool(s->pool,g.n,g.d,(float)sp->rms_eps,x,p.norm1,a.n1);
+    bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,x,p.norm1,a.n1,&bad);
     {
       size_t out[3]; const float *w[3]; float *y3[3];
       out[0]=g.d; out[1]=g.k; out[2]=g.k; w[0]=p.q; w[1]=p.k; w[2]=p.v; y3[0]=a.q; y3[1]=a.k; y3[2]=a.v;
@@ -277,21 +292,23 @@ static void forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
     }
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,sp->rope_base,a.q,0);
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,sp->rope_base,a.k,0);
-    attention(s,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx);
+    attention(s,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx,&bad);
     linear(s,g.n,g.d,g.d,a.ctx,p.o,a.x2);
     bcir_tensor_add_pool(s->pool,g.nd,x,a.x2);
-    bcir_tensor_rms_pool(s->pool,g.n,g.d,(float)sp->rms_eps,a.x2,p.norm2,a.n2);
+    bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,a.x2,p.norm2,a.n2,&bad);
     {
       size_t out[2]; const float *w[2]; float *y2[2];
       out[0]=g.f; out[1]=g.f; w[0]=p.gate; w[1]=p.up; y2[0]=a.gate; y2[1]=a.up;
       linears(s,g.n,g.d,a.n2,2,out,w,y2);
     }
-    silu_mul(s,g.nf,a.gate,a.up,a.hidden);
+    silu_mul(s,g.nf,a.gate,a.up,a.hidden,&bad);
     linear(s,g.n,g.f,g.d,a.hidden,p.down,y);
     bcir_tensor_add_pool(s->pool,g.nd,a.x2,y);
   }
-  bcir_tensor_rms_pool(s->pool,g.n,g.d,(float)sp->rms_eps,xs+g.l*g.nd,final,norm);
+  bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,xs+g.l*g.nd,final,norm,&bad);
   linear(s,g.n,g.d,g.v,norm,head,logits);
+  if (!finite_pool(s,logits,g.nv)) bad=1;
+  return !bad;
 }
 int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t n) {
   geometry g; int rc=valid(s);
@@ -299,8 +316,7 @@ int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t n) 
   g=geom(&s->plan.spec);
   if (n!=g.n || !ids(s,tokens,n)) return BCIR_DT_INVALID;
   if (!finite_pool(s,s->weights,s->plan.parameters)) return BCIR_DT_NUMERIC;
-  forward(s,tokens,g);
-  return finite_pool(s,s->activations,s->plan.activations) ? BCIR_DT_OK : BCIR_DT_NUMERIC;
+  return forward(s,tokens,g) ? BCIR_DT_OK : BCIR_DT_NUMERIC;
 }
 /* The loss's rows in ranges of BCIR_DT_ROW_CHUNK: a row's softmax, its adjoint and its term
  * (log-sum-exp plus the maximum less the target's logit, in double, as the serial loop computed
@@ -359,8 +375,7 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
       (uintptr_t)loss%_Alignof(double)) return BCIR_DT_INVALID;
   if (!(how&DT_KNOWN) && (!finite_pool(s,s->weights,s->plan.parameters) ||
       (accumulate && !finite_pool(s,s->gradients,s->plan.parameters)))) return BCIR_DT_NUMERIC;
-  forward(s,tokens,g);
-  if (!finite_pool(s,s->activations,s->plan.activations)) return BCIR_DT_NUMERIC;
+  if (!forward(s,tokens,g)) return BCIR_DT_NUMERIC;
   /* NDT-ZERO: a fresh gradient's first writers write it -- each weight adjoint's GEMM at beta 0,
    * which adds its terms to +0.0 without reading C (what the fill and beta 1 gave), each gamma
    * VJP from +0.0 -- so only the region the scatter writes first, an untied embedding, is filled;

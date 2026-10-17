@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <limits.h>
+#include <float.h>
 #if defined(_WIN32)
 #define BCIR_POOL_WIN32 1
 #define WIN32_LEAN_AND_MEAN
@@ -1077,9 +1078,117 @@ void bcir_tensor_mm_kblock_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m
     size_t k, float alpha, const float *a, const float *b, float beta, float *c) {
   mm_pool_any(pool,MM_KBLOCK,ta,tb,m,n,k,alpha,a,b,beta,c);
 }
+/* --- the writers' verdicts (NDT-SCAN-W) --------------------------------------------------------
+ * A task that wrote a region reports whether it is finite into its own byte of the caller's
+ * BCIR_TENSOR_SCAN_TASKS bytes (on the caller's stack; the caller ORs them), reading it while it is
+ * in the core's cache. A job of more tasks than that runs without the bytes, and the regions it
+ * reads are scanned after it on the pool, in at most BCIR_TENSOR_SCAN_TASKS chunks -- the same
+ * verdict. !(|x| <= FLT_MAX) is exactly !isfinite(x); a block with no exit vectorizes. */
+#ifndef BCIR_TENSOR_SCAN_TASKS
+#define BCIR_TENSOR_SCAN_TASKS 4096
+#endif
+#define BCIR_TENSOR_SCAN_CHUNK 16384
+static int span_finite(const float *x, size_t n) {
+  size_t i=0,j,end;
+  while (i<n) {
+    int bad=0;
+    end=n-i<1024 ? n : i+1024;
+    for (j=i;j<end;j++) bad|=!(fabsf(x[j])<=FLT_MAX);
+    if (bad) return 0;
+    i=end;
+  }
+  return 1;
+}
+#ifdef BCIR_MM_DISPATCH
+/* The same verdict 16 and 8 lanes at a time: NLE_UQ is "not <=, or unordered" */
+__attribute__((target("avx512f"))) static int span_finite_avx512(const float *x, size_t n) {
+  const __m512 lim=_mm512_set1_ps(FLT_MAX); size_t i=0;
+  for (;i+64<=n;i+=64) {
+    __mmask16 m=_mm512_cmp_ps_mask(_mm512_abs_ps(_mm512_loadu_ps(x+i)),lim,_CMP_NLE_UQ);
+    m|=_mm512_cmp_ps_mask(_mm512_abs_ps(_mm512_loadu_ps(x+i+16)),lim,_CMP_NLE_UQ);
+    m|=_mm512_cmp_ps_mask(_mm512_abs_ps(_mm512_loadu_ps(x+i+32)),lim,_CMP_NLE_UQ);
+    m|=_mm512_cmp_ps_mask(_mm512_abs_ps(_mm512_loadu_ps(x+i+48)),lim,_CMP_NLE_UQ);
+    if (m) return 0;
+  }
+  for (;i<n;i+=16) {
+    __mmask16 lanes=(__mmask16)(n-i>=16 ? 0xffffu : (1u<<(n-i))-1u);
+    if (_mm512_mask_cmp_ps_mask(lanes,_mm512_abs_ps(_mm512_maskz_loadu_ps(lanes,x+i)),lim,_CMP_NLE_UQ))
+      return 0;
+  }
+  return 1;
+}
+__attribute__((target("avx2"))) static int span_finite_avx2(const float *x, size_t n) {
+  const __m256 lim=_mm256_set1_ps(FLT_MAX),abs=_mm256_castsi256_ps(_mm256_set1_epi32(0x7fffffff));
+  size_t i=0;
+  for (;i+32<=n;i+=32) {
+    __m256 m=_mm256_cmp_ps(_mm256_and_ps(_mm256_loadu_ps(x+i),abs),lim,_CMP_NLE_UQ);
+    m=_mm256_or_ps(m,_mm256_cmp_ps(_mm256_and_ps(_mm256_loadu_ps(x+i+8),abs),lim,_CMP_NLE_UQ));
+    m=_mm256_or_ps(m,_mm256_cmp_ps(_mm256_and_ps(_mm256_loadu_ps(x+i+16),abs),lim,_CMP_NLE_UQ));
+    m=_mm256_or_ps(m,_mm256_cmp_ps(_mm256_and_ps(_mm256_loadu_ps(x+i+24),abs),lim,_CMP_NLE_UQ));
+    if (_mm256_movemask_ps(m)) return 0;
+  }
+  return span_finite(x+i,n-i);
+}
+#endif
+static int span_finite_run(int variant, const float *x, size_t n) {
+#ifdef BCIR_MM_DISPATCH
+  if (variant==4) return span_finite_avx512(x,n);
+  if (variant==2) return span_finite_avx2(x,n);
+#endif
+  (void)variant; return span_finite(x,n);
+}
+#ifdef BCIR_MM_DISPATCH
+/* rows of `width` floats `ld` apart, one verdict for them all: the attention's heads, d at a time */
+__attribute__((target("avx512f"))) static int rows_finite_avx512(const float *x, size_t rows,
+    size_t width, size_t ld) {
+  const __m512 lim=_mm512_set1_ps(FLT_MAX); size_t r,c,w16=width/16*16;
+  __mmask16 tail=(__mmask16)((1u<<(width%16))-1u),m=0;
+  for (r=0;r<rows;r++) {
+    const float *row=x+r*ld;
+    for (c=0;c<w16;c+=16) m|=_mm512_cmp_ps_mask(_mm512_abs_ps(_mm512_loadu_ps(row+c)),lim,_CMP_NLE_UQ);
+    if (tail) m|=_mm512_mask_cmp_ps_mask(tail,_mm512_abs_ps(_mm512_maskz_loadu_ps(tail,row+w16)),lim,_CMP_NLE_UQ);
+  }
+  return !m;
+}
+#endif
+static int rows_finite(int variant, const float *x, size_t rows, size_t width, size_t ld) {
+  size_t r;
+#ifdef BCIR_MM_DISPATCH
+  if (variant==4) return rows_finite_avx512(x,rows,width,ld);
+#endif
+  for (r=0;r<rows;r++) if (!span_finite_run(variant,x+r*ld,width)) return 0;
+  return 1;
+}
+typedef struct scan_job { const float *x; size_t n,chunk; unsigned char *bad; int variant; } scan_job;
+static void scan_task(void *ctx, size_t task) {
+  const scan_job *j=(const scan_job *)ctx; size_t i0=task*j->chunk;
+  j->bad[task]=(unsigned char)!span_finite_run(j->variant,j->x+i0,j->n-i0<j->chunk ? j->n-i0 : j->chunk);
+}
+static int scan_pool(bcir_tensor_pool *pool, const float *x, size_t n) {
+  unsigned char bad[BCIR_TENSOR_SCAN_TASKS]; scan_job j; size_t i,tasks; int any=0;
+  if (!n) return 1;
+  j.x=x; j.n=n; j.chunk=n/BCIR_TENSOR_SCAN_TASKS+(n%BCIR_TENSOR_SCAN_TASKS!=0); j.bad=bad;
+  j.variant=mm_widest();
+  if (j.chunk<BCIR_TENSOR_SCAN_CHUNK) j.chunk=BCIR_TENSOR_SCAN_CHUNK;
+  tasks=n/j.chunk+(n%j.chunk!=0);
+  pool_run(pool,scan_task,&j,tasks);
+  for (i=0;i<tasks;i++) any|=bad[i];
+  return !any;
+}
+/* The bytes a job of `tasks` tasks reports into: none without a verdict to give, or past the bound */
+static unsigned char *scan_bytes(const int *bad, unsigned char *bytes, size_t tasks) {
+  return bad && tasks<=BCIR_TENSOR_SCAN_TASKS ? bytes : NULL;
+}
+static void scan_fold(int *bad, const unsigned char *bytes, size_t tasks) {
+  size_t i; unsigned char any=0;
+  for (i=0;i<tasks;i++) any|=bytes[i];
+  if (any) *bad=1;
+}
 /* Elements in ranges of BCIR_EW_CHUNK: y[i] depends on x[i] alone. */
 #define BCIR_EW_CHUNK 8192
-typedef struct ew_job { size_t n; const float *x,*u,*dy; float *y,*du; int op,variant; } ew_job;
+typedef struct ew_job {
+  size_t n; const float *x,*u,*dy; float *y,*du; int op,variant; unsigned char *bad;
+} ew_job;
 enum { EW_SILU, EW_ADD, EW_MUL, EW_SWIGLU, EW_SILU2, EW_SWIGLU2, EW_SILUMUL, EW_SILU2MUL };
 static float sigmoid(float x);
 static void ew_task(void *ctx, size_t task) {
@@ -1094,10 +1203,20 @@ static void ew_task(void *ctx, size_t task) {
     case EW_SILU2MUL: silu2mul_run(j->variant,i1-i0,j->x+i0,j->u+i0,j->y+i0); break;
     default: bcir_tensor_swiglu_backward(i1-i0,j->x+i0,j->u+i0,j->dy+i0,j->y+i0,j->du+i0); break;
   }
+  if (j->bad) j->bad[task]=(unsigned char)!span_finite_run(j->variant,j->y+i0,i1-i0);
 }
 static void ew_run(bcir_tensor_pool *pool, ew_job *j) {
-  j->variant=mm_widest();
+  j->variant=mm_widest(); j->bad=NULL;
   pool_run(pool,ew_task,j,(j->n+BCIR_EW_CHUNK-1)/BCIR_EW_CHUNK);
+}
+/* The same job with its verdict on y (NDT-SCAN-W). */
+static void ew_scan_run(bcir_tensor_pool *pool, ew_job *j, int *bad) {
+  unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=(j->n+BCIR_EW_CHUNK-1)/BCIR_EW_CHUNK;
+  j->variant=mm_widest(); j->bad=scan_bytes(bad,bytes,tasks);
+  pool_run(pool,ew_task,j,tasks);
+  if (!bad) return;
+  if (j->bad) scan_fold(bad,bytes,tasks);
+  else if (!scan_pool(pool,j->y,j->n)) *bad=1;
 }
 void bcir_tensor_silu_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y) {
   ew_job j; j.n=n; j.x=x; j.y=y; j.u=NULL; j.dy=NULL; j.du=NULL; j.op=EW_SILU; ew_run(pool,&j);
@@ -1122,6 +1241,14 @@ void bcir_tensor_silu_mul_pool(bcir_tensor_pool *pool, size_t n, const float *x,
 void bcir_tensor_silu_mul_v2_pool(bcir_tensor_pool *pool, size_t n, const float *x, const float *u,
     float *y) {
   ew_job j; j.n=n; j.x=x; j.y=y; j.u=u; j.dy=NULL; j.du=NULL; j.op=EW_SILU2MUL; ew_run(pool,&j);
+}
+void bcir_tensor_silu_mul_scan_pool(bcir_tensor_pool *pool, size_t n, const float *x,
+    const float *u, float *y, int *bad) {
+  ew_job j; j.n=n; j.x=x; j.y=y; j.u=u; j.dy=NULL; j.du=NULL; j.op=EW_SILUMUL; ew_scan_run(pool,&j,bad);
+}
+void bcir_tensor_silu_mul_v2_scan_pool(bcir_tensor_pool *pool, size_t n, const float *x,
+    const float *u, float *y, int *bad) {
+  ew_job j; j.n=n; j.x=x; j.y=y; j.u=u; j.dy=NULL; j.du=NULL; j.op=EW_SILU2MUL; ew_scan_run(pool,&j,bad);
 }
 void bcir_tensor_swiglu_backward_v2_pool(bcir_tensor_pool *pool, size_t n, const float *g,
     const float *u, const float *dy, float *dg, float *du) {
@@ -1157,7 +1284,9 @@ __attribute__((target("avx512f"))) static void rms16_stats(size_t w, const float
   }
 }
 #endif
-typedef struct rms_job { size_t rows,width; float eps; const float *x,*g; float *y; int variant; } rms_job;
+typedef struct rms_job {
+  size_t rows,width; float eps; const float *x,*g; float *y; int variant; unsigned char *bad;
+} rms_job;
 static void rms_task(void *ctx, size_t task) {
   rms_job *j=(rms_job *)ctx; size_t r0=task*BCIR_ROW_CHUNK,r1=r0+BCIR_ROW_CHUNK<j->rows ? r0+BCIR_ROW_CHUNK : j->rows;
 #ifdef BCIR_MM_DISPATCH
@@ -1168,15 +1297,28 @@ static void rms_task(void *ctx, size_t task) {
       const float *xr=j->x+(r0+r)*w; float *yr=j->y+(r0+r)*w,inv=1.0f/sqrtf(sum[r]/(float)w+j->eps);
       for (c=0;c<w;c++) yr[c]=xr[c]*inv*j->g[c];
     }
-    return;
-  }
+  } else
 #endif
   bcir_tensor_rms(r1-r0,j->width,j->eps,j->x+r0*j->width,j->g,j->y+r0*j->width);
+  if (j->bad) j->bad[task]=(unsigned char)!span_finite_run(j->variant,j->y+r0*j->width,(r1-r0)*j->width);
+}
+static void rms_any(bcir_tensor_pool *pool, size_t rows, size_t width, float eps,
+    const float *x, const float *g, float *y, int *bad) {
+  rms_job j; unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK;
+  j.rows=rows; j.width=width; j.eps=eps; j.x=x; j.g=g; j.y=y; j.variant=mm_widest();
+  j.bad=scan_bytes(bad,bytes,tasks);
+  pool_run(pool,rms_task,&j,tasks);
+  if (!bad) return;
+  if (j.bad) scan_fold(bad,bytes,tasks);
+  else if (!scan_pool(pool,y,rows*width)) *bad=1;
 }
 void bcir_tensor_rms_pool(bcir_tensor_pool *pool, size_t rows, size_t width, float eps,
     const float *x, const float *g, float *y) {
-  rms_job j; j.rows=rows; j.width=width; j.eps=eps; j.x=x; j.g=g; j.y=y; j.variant=mm_widest();
-  pool_run(pool,rms_task,&j,(rows+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);
+  rms_any(pool,rows,width,eps,x,g,y,NULL);
+}
+void bcir_tensor_rms_scan_pool(bcir_tensor_pool *pool, size_t rows, size_t width, float eps,
+    const float *x, const float *g, float *y, int *bad) {
+  rms_any(pool,rows,width,eps,x,g,y,bad);
 }
 /* The RMSNorm VJP: rows in ranges of BCIR_ROW_CHUNK (each row's dx and 1/rms its own), then
  * columns in ranges of BCIR_COL_CHUNK, a column's gamma adjoint summed over the rows in row order
@@ -1344,6 +1486,7 @@ void bcir_tensor_rope(size_t b, size_t t, size_t heads, size_t dim,
  * att512_expsum) -- each row's chain the loop's, in its column order. */
 typedef struct att_job {
   size_t b,t,nh,nk,d,group; const float *q,*k,*v,*dy; float *p,*y,*dq,*dk,*dv; int variant,exp2;
+  unsigned char *bad;  /* the forward's verdict bytes, one a task (NDT-SCAN-W), or NULL */
 } att_job;
 #ifdef BCIR_MM_DISPATCH
 /* The attention's masked products on AVX-512 (NDT-ATTN-2: the forward's scores and context;
@@ -1680,24 +1823,43 @@ static void att_head(const att_job *a, size_t r, size_t h) {
   x.tb=0; x.n=d; x.k=t; x.a=ph; x.lda=t; x.b=a->v+(r*t*nk+kh)*d; x.ldb=nk*d;
   x.c=a->y+(r*t*nh+h)*d; x.ldc=nh*d; x.mode=MM_KLE;
   att_rows(a->variant,&x,t,ATT_CONTEXT,1);
+  if (a->bad) {  /* the head's context rows, and its KV head's keys from the group's first */
+    int ok=rows_finite(a->variant,a->y+(r*t*nh+h)*d,t,d,nh*d);
+    if (ok && h%(nh/nk)==0) ok=rows_finite(a->variant,a->k+(r*t*nk+kh)*d,t,d,nk*d);
+    a->bad[r*nh+h]=(unsigned char)!ok;
+  }
 }
 static void att_task(void *ctx, size_t task) {
   att_job *a=(att_job *)ctx; att_head(a,task/a->nh,task%a->nh);
 }
 static void attention_any(bcir_tensor_pool *pool, int exp2, size_t b, size_t t, size_t nh, size_t nk,
-    size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  att_job a;
+    size_t d, const float *q, const float *k, const float *v, float *p, float *y, int *bad) {
+  att_job a; unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=b*nh;
   a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.group=1; a.q=q; a.k=k; a.v=v; a.dy=NULL; a.p=p; a.y=y;
   a.dq=NULL; a.dk=NULL; a.dv=NULL; a.variant=mm_widest(); a.exp2=exp2;
-  pool_run(pool,att_task,&a,b*nh);
+  a.bad=scan_bytes(bad,bytes,tasks);
+  pool_run(pool,att_task,&a,tasks);
+  if (!bad) return;
+  if (a.bad) scan_fold(bad,bytes,tasks);
+  else if (!scan_pool(pool,y,b*t*nh*d) || !scan_pool(pool,k,b*t*nk*d)) *bad=1;
 }
 void bcir_tensor_attention_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,0,b,t,nh,nk,d,q,k,v,p,y);
+  attention_any(pool,0,b,t,nh,nk,d,q,k,v,p,y,NULL);
 }
 void bcir_tensor_attention_v2_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,1,b,t,nh,nk,d,q,k,v,p,y);
+  attention_any(pool,1,b,t,nh,nk,d,q,k,v,p,y,NULL);
+}
+void bcir_tensor_attention_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
+    size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
+    int *bad) {
+  attention_any(pool,0,b,t,nh,nk,d,q,k,v,p,y,bad);
+}
+void bcir_tensor_attention_v2_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
+    size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
+    int *bad) {
+  attention_any(pool,1,b,t,nh,nk,d,q,k,v,p,y,bad);
 }
 void bcir_tensor_attention(size_t b, size_t t, size_t nh, size_t nk, size_t d,
     const float *q, const float *k, const float *v, float *p, float *y) {
@@ -1834,7 +1996,7 @@ void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *pool, size_t 
     const float *dy, float *dq, float *dk, float *dv) {
   att_job a;
   a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.q=q; a.k=k; a.v=v; a.dy=dy; a.p=p; a.y=NULL;
-  a.dq=dq; a.dk=dk; a.dv=dv; a.variant=mm_widest(); a.exp2=0;
+  a.dq=dq; a.dk=dk; a.dv=dv; a.variant=mm_widest(); a.exp2=0; a.bad=NULL;
   a.group=nh/nk;
   pool_run(pool,att_task_backward,&a,b*nh/a.group);
 }

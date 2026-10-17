@@ -90,6 +90,31 @@ BCIR_DT_API void bcir_tensor_silu_mul_pool(bcir_tensor_pool *pool, size_t n, con
 BCIR_DT_API void bcir_tensor_attention_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
     size_t heads, size_t kvheads, size_t dim, const float *q, const float *k, const float *v,
     float *p, float *y);
+/* The forward's writers with their verdict (NDT-SCAN-W): each computes what the entry it names
+ * computes, bit for bit, and sets *bad to 1 when some element of the regions below is not finite
+ * after the call, leaving *bad as it was otherwise -- so a caller ORs its calls' verdicts into one.
+ * The tasks that wrote a region read it back while it is in their core's cache. A region's verdict
+ * may come from another region its value reaches: the RMSNorm's regions are x and y, and it reads
+ * y, since an infinite or NaN element of a row makes the row's 1/rms 0 or NaN and that element of
+ * y NaN; the SwiGLU product's are x, u and y, and it reads y, since a non-finite gate makes the
+ * SiLU infinite or NaN (-inf times the sigmoid's 0 is NaN) and a non-finite factor makes the
+ * product so; the attention's are q, k and v (batch x time x heads or kvheads x dim), p and y, and
+ * it reads k and y -- a query that is not finite makes every score of its row infinite or NaN and
+ * so the row's probabilities NaN, and a NaN probability or a value that is not finite enters a
+ * context sum, every key's own row taking its term; a key is the region the softmax can hide (a
+ * key whose scores are all -inf weighs 0 in every row), so the keys are read themselves. */
+BCIR_DT_API void bcir_tensor_rms_scan_pool(bcir_tensor_pool *pool, size_t rows, size_t width,
+    float eps, const float *x, const float *g, float *y, int *bad);
+BCIR_DT_API void bcir_tensor_silu_mul_scan_pool(bcir_tensor_pool *pool, size_t n, const float *x,
+    const float *u, float *y, int *bad);
+BCIR_DT_API void bcir_tensor_silu_mul_v2_scan_pool(bcir_tensor_pool *pool, size_t n,
+    const float *x, const float *u, float *y, int *bad);
+BCIR_DT_API void bcir_tensor_attention_scan_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
+    size_t heads, size_t kvheads, size_t dim, const float *q, const float *k, const float *v,
+    float *p, float *y, int *bad);
+BCIR_DT_API void bcir_tensor_attention_v2_scan_pool(bcir_tensor_pool *pool, size_t batch,
+    size_t time, size_t heads, size_t kvheads, size_t dim, const float *q, const float *k,
+    const float *v, float *p, float *y, int *bad);
 BCIR_DT_API void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *pool,
     size_t batch, size_t time, size_t heads, size_t kvheads, size_t dim, const float *q,
     const float *k, const float *v, float *p, const float *dy, float *dq, float *dk, float *dv);

@@ -1130,8 +1130,181 @@ static void fused_passes(void) {
       "gradient's first writers (tied, untied, four contracts) and a run's opening and deferred closing scans "
       "against the passes they replaced (%u run(s): no pool and a pool of three)\n",pools);
 }
+/* NDT-SCAN-W: the forward's writers answer for the activations' finiteness. Each scan entry
+ * computes its plain entry's values bit for bit and sets *bad exactly when one of its regions holds
+ * an element that is not finite after the call -- held to a scan of every region as the call left
+ * it, and a verdict already set left set -- with NaN and both infinities at the ends of the entries'
+ * task chunks in every region a caller writes, outputs that overflow from finite inputs, and the
+ * key whose scores are all -inf, which only the keys' own scan sees. Through the trainer, with every
+ * other activation finite: that key behind RoPE, refused; logits that overflow alone, refused; a
+ * provider's SiLU that maps an infinite gate to 0, refused by the scans after it -- and each state
+ * without its overflow admitted. */
+static int all_finite(const float *x,size_t n) {
+  size_t i;
+  for (i=0;i<n;i++) if (!isfinite(x[i])) return 0;
+  return 1;
+}
+static void rms_case(bcir_tensor_pool *pool,size_t rows,size_t width,const float *x,
+    const float *g,float *y0,float *y1,int preset) {
+  int bad=preset;
+  bcir_tensor_rms_pool(pool,rows,width,1e-5f,x,g,y0);
+  memset(y1,0xff,rows*width*sizeof(float));
+  bcir_tensor_rms_scan_pool(pool,rows,width,1e-5f,x,g,y1,&bad);
+  assert(!memcmp(y0,y1,rows*width*sizeof(float)));
+  assert(bad==(preset || !all_finite(x,rows*width) || !all_finite(y1,rows*width)));
+}
+static void silu_mul_case(bcir_tensor_pool *pool,int v2,size_t n,const float *x,const float *u,
+    float *y0,float *y1,int preset) {
+  int bad=preset;
+  if (v2) bcir_tensor_silu_mul_v2_pool(pool,n,x,u,y0); else bcir_tensor_silu_mul_pool(pool,n,x,u,y0);
+  memset(y1,0xff,n*sizeof(float));
+  if (v2) bcir_tensor_silu_mul_v2_scan_pool(pool,n,x,u,y1,&bad);
+  else bcir_tensor_silu_mul_scan_pool(pool,n,x,u,y1,&bad);
+  assert(!memcmp(y0,y1,n*sizeof(float)));
+  assert(bad==(preset || !all_finite(x,n) || !all_finite(u,n) || !all_finite(y1,n)));
+}
+static void attention_case(bcir_tensor_pool *pool,int v2,const size_t *sh,const float *q,
+    const float *k,const float *v,float *p0,float *p1,float *c0,float *c1,int preset,int hidden) {
+  size_t b=sh[0],t=sh[1],nh=sh[2],nk=sh[3],d=sh[4],nq=b*t*nh*d,nkv=b*t*nk*d,np=b*nh*t*t;
+  int bad=preset;
+  if (v2) bcir_tensor_attention_v2_pool(pool,b,t,nh,nk,d,q,k,v,p0,c0);
+  else bcir_tensor_attention_pool(pool,b,t,nh,nk,d,q,k,v,p0,c0);
+  memset(p1,0xff,np*sizeof(float)); memset(c1,0xff,nq*sizeof(float));
+  if (v2) bcir_tensor_attention_v2_scan_pool(pool,b,t,nh,nk,d,q,k,v,p1,c1,&bad);
+  else bcir_tensor_attention_scan_pool(pool,b,t,nh,nk,d,q,k,v,p1,c1,&bad);
+  assert(!memcmp(p0,p1,np*sizeof(float)) && !memcmp(c0,c1,nq*sizeof(float)));
+  assert(bad==(preset || !all_finite(q,nq) || !all_finite(k,nkv) || !all_finite(v,nkv) ||
+      !all_finite(p1,np) || !all_finite(c1,nq)));
+  if (hidden) assert(all_finite(p1,np) && all_finite(c1,nq) && !all_finite(k,nkv) && bad);
+}
+/* The fixture with every weight zero but the norms, two embeddings, layer 0's queries' channel 1
+ * (-1 on dimension 6, both heads) and its key's channel 1 (`key` on dimension 2): token 3 is
+ * e2 + 0.1 e6 and token 5 is e6, so at position 1 (token 3) the key's channel 1 is 2.8 `key` and
+ * every other key is zero there, every query's channel 1 negative. RoPE turns the pair of channels
+ * 1 and 3 by 0.01 a position: at FLT_MAX both of the key's are +inf, both of every later query's
+ * negative, so every score of key 1 is -inf, its probability 0, and every other activation is
+ * finite (values zero, the residual stream the embeddings). */
+static void hidden_key(float key) {
+  size_t i,l;
+  memset(w,0,sizeof(w));
+  w[3*8+2]=1.0f; w[3*8+6]=0.1f; w[5*8+6]=1.0f;
+  for (l=0;l<2;l++) for (i=0;i<8;i++) { w[128+l*592+i]=1.0f; w[128+l*592+200+i]=1.0f; }
+  for (i=0;i<8;i++) w[1312+i]=1.0f;
+  w[128+8+1*8+6]=-1.0f; w[128+8+5*8+6]=-1.0f;
+  w[128+72+1*8+2]=key;
+}
+/* A provider's SiLU that answers 0 for an infinite or NaN gate: one that hides what it reads. */
+static void hiding_silu(void *ctx,size_t n,const float *x,float *y) {
+  size_t i; (void)ctx;
+  for (i=0;i<n;i++) y[i]=isfinite(x[i]) ? x[i]/(1.0f+expf(-x[i])) : 0.0f;
+}
+static void writer_verdicts(void) {
+  static float x[20000],u[20000],y0[20000],y1[20000],g[37],keepw[4096],keepg[4096];
+  static float q[2*24*4*16],k[2*24*2*16],v[2*24*2*16],p0[2*4*24*24],p1[2*4*24*24],
+      c0[2*24*4*16],c1[2*24*4*16];
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  static const float bads[3]={NAN,INFINITY,-INFINITY};
+  static const size_t rms_at[]={0,15*37+36,16*37,32*37,39*37+36},ew_at[]={0,8191,8192,16384,19999};
+  static const size_t shapes[][5]={{2,24,4,2,16},{1,9,2,1,5},{1,1,1,1,2}};
+  static const uint32_t contracts[]={0,6};
+  uint32_t ids[4]={5,3,5,5},targets[4]={3,5,5,3};
+  size_t i,j,p,s,e,a,r,c,cases=0; unsigned pools=0; double loss;
+  for (p=0;p<2;p++) {
+    bcir_tensor_pool *pool=NULL;
+    if (p) {
+      if (!bcir_tensor_pool_size(3)) continue;
+      pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),3); assert(pool!=NULL);
+    }
+    /* the RMSNorm over 40 x 37: two whole 16-row chunks and part of one */
+    for (i=0;i<37;i++) g[i]=1.0f+0.1f*sinf((float)i);
+    for (i=0;i<40*37;i++) x[i]=sinf((float)i*0.37f)*2.0f;
+    rms_case(pool,40,37,x,g,y0,y1,0); rms_case(pool,40,37,x,g,y0,y1,1); cases+=2;
+    for (a=0;a<sizeof(rms_at)/sizeof(rms_at[0]);a++) for (e=0;e<3;e++) {
+      float keep=x[rms_at[a]]; x[rms_at[a]]=bads[e];
+      rms_case(pool,40,37,x,g,y0,y1,0); x[rms_at[a]]=keep; cases++;
+    }
+    g[36]=FLT_MAX; rms_case(pool,40,37,x,g,y0,y1,0); assert(!all_finite(y1,40*37)); g[36]=1.0f; cases++;
+    /* the SwiGLU product over 20,000: two whole 8,192-element chunks and part of one */
+    for (s=0;s<2;s++) {
+      for (i=0;i<20000;i++) { x[i]=sinf((float)i*0.37f)*3.0f; u[i]=cosf((float)i*0.53f)*1.3f; }
+      silu_mul_case(pool,(int)s,20000,x,u,y0,y1,0); silu_mul_case(pool,(int)s,20000,x,u,y0,y1,1); cases+=2;
+      for (a=0;a<sizeof(ew_at)/sizeof(ew_at[0]);a++) for (e=0;e<3;e++) {
+        float keep=x[ew_at[a]]; x[ew_at[a]]=bads[e];
+        silu_mul_case(pool,(int)s,20000,x,u,y0,y1,0); x[ew_at[a]]=keep;
+        keep=u[ew_at[a]]; u[ew_at[a]]=bads[e];
+        silu_mul_case(pool,(int)s,20000,x,u,y0,y1,0); u[ew_at[a]]=keep; cases+=2;
+      }
+      x[19999]=10.0f; u[19999]=FLT_MAX;
+      silu_mul_case(pool,(int)s,20000,x,u,y0,y1,0); assert(!all_finite(y1,20000)); cases++;
+    }
+    /* the attention: two batches past a 16-row block with a group of two, ragged rows, one row */
+    for (s=0;s<2;s++) for (j=0;j<sizeof(shapes)/sizeof(shapes[0]);j++) {
+      const size_t *sh=shapes[j]; size_t b=sh[0],t=sh[1],nh=sh[2],nk=sh[3],d=sh[4];
+      size_t nq=b*t*nh*d,nkv=b*t*nk*d,h;
+      for (i=0;i<nq;i++) q[i]=sinf((float)i*0.37f)*1.7f;
+      for (i=0;i<nkv;i++) { k[i]=cosf((float)i*0.53f)*1.3f; v[i]=sinf((float)i*0.29f)-0.1f; }
+      attention_case(pool,(int)s,sh,q,k,v,p0,p1,c0,c1,0,0);
+      attention_case(pool,(int)s,sh,q,k,v,p0,p1,c0,c1,1,0); cases+=2;
+      for (r=0;r<3;r++) for (e=0;e<3;e++) for (a=0;a<3;a++) {
+        float *in=r==0 ? q : r==1 ? k : v; size_t len=r==0 ? nq : nkv;
+        size_t at=a==0 ? 0 : a==1 ? len-1 : len/b*(b-1),keep_at=at; float keep=in[keep_at];
+        in[at]=bads[e]; attention_case(pool,(int)s,sh,q,k,v,p0,p1,c0,c1,0,0); in[keep_at]=keep; cases++;
+      }
+      if (t>1) {  /* the last batch's key 1 infinite in channel 0, every query of its group negative there */
+        size_t rb=b-1; float keep=k[((rb*t+1)*nk+0)*d];
+        for (i=0;i<t;i++) for (h=0;h<nh/nk;h++) q[((rb*t+i)*nh+h)*d]=-fabsf(q[((rb*t+i)*nh+h)*d])-0.5f;
+        k[((rb*t+1)*nk+0)*d]=INFINITY;
+        attention_case(pool,(int)s,sh,q,k,v,p0,p1,c0,c1,0,1); k[((rb*t+1)*nk+0)*d]=keep; cases++;
+      }
+      /* finite operands, a score past FLT_MAX: a row of NaN probabilities */
+      for (c=0;c<d;c++) { q[c]=1e30f; k[c]=1e30f; }
+      attention_case(pool,(int)s,sh,q,k,v,p0,p1,c0,c1,0,0); assert(!all_finite(p1,b*nh*t*t)); cases++;
+    }
+    /* through the trainer: v1 and the exp + kblock contracts */
+    for (c=0;c<sizeof(contracts)/sizeof(contracts[0]);c++) {
+      bcir_decoder_state st=fixture(); st.pool=pool; st.contract=contracts[c];
+      assert(st.plan.activations==1024);
+      hidden_key(1.0f);
+      assert(bcir_decoder_forward(&st,ids,4)==BCIR_DT_OK);
+      hidden_key(FLT_MAX);
+      assert(bcir_decoder_forward(&st,ids,4)==BCIR_DT_NUMERIC);
+      /* layer 0's keys (16 floats at 160) the only activations that are not finite */
+      assert(all_finite(act,160) && !all_finite(act+160,16) && all_finite(act+176,1024-176));
+      memcpy(keepg,grad,sizeof(grad));
+      assert(bcir_decoder_loss_backward(&st,ids,targets,4,0,&loss)==BCIR_DT_NUMERIC);
+      assert(!memcmp(keepg,grad,sizeof(grad)));
+      /* an untied head at FLT_MAX: the logits (the last 64 floats) alone overflow */
+      st=fixture_of(1,4,0,2); st.pool=pool; st.contract=contracts[c];
+      assert(bcir_decoder_forward(&st,ids,4)==BCIR_DT_OK);
+      for (i=0;i<128;i++) w[1320+i]=FLT_MAX;
+      assert(bcir_decoder_forward(&st,ids,4)==BCIR_DT_NUMERIC);
+      assert(all_finite(act,st.plan.activations-64) && !all_finite(act+st.plan.activations-64,64));
+      /* a provider's SiLU that hides an infinite gate: layer 0's MLP zero but its gate's row 0 on
+       * dimension 0, which the second norm scales by 1e10 -- at 1 the gate is finite, at FLT_MAX
+       * row 0 is infinite at every position and the provider's 0 times up's 0 hides it */
+      st=fixture(); st.pool=pool; st.contract=contracts[c]; st.provider.silu=hiding_silu;
+      memcpy(keepw,w,sizeof(w));
+      for (i=128+208;i<128+592;i++) w[i]=0.0f;
+      w[128+200]=1e10f; w[128+208]=1.0f;
+      assert(bcir_decoder_forward(&st,ids,4)==BCIR_DT_OK);
+      w[128+208]=FLT_MAX;
+      assert(bcir_decoder_forward(&st,ids,4)==BCIR_DT_NUMERIC);
+      /* the gate (64 floats at 320) the only activations that are not finite */
+      assert(all_finite(act,320) && !all_finite(act+320,64) && all_finite(act+384,1024-384));
+      memcpy(w,keepw,sizeof(w));
+      cases+=6;
+    }
+    bcir_tensor_pool_stop(pool); pools++;
+  }
+  printf("  PASS native writers' verdicts: the RMSNorm, the SwiGLU product (v1, v2) and the attention "
+      "(v1, v2) as their plain entries, bit for bit, each verdict its regions' scan (%zu cases: "
+      "non-finite elements at every task chunk's ends, overflowing outputs, the key the softmax "
+      "hides); through the trainer that key, overflowing logits and a hiding provider SiLU refused "
+      "with every other activation finite (%u run(s): no pool and a pool of three)\n",cases,pools);
+}
 int main(void) {
   gemm_contract(); attention_reference(); adamw_reference(); finite_differences(); refusals();
   learning(); pool_identity(); pool_claims(); reduction_references(); scan_references();
-  gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); fused_passes(); return 0;
+  gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); fused_passes();
+  writer_verdicts(); return 0;
 }

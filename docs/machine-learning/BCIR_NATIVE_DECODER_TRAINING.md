@@ -427,6 +427,13 @@ records NDT-PREPACK, the GEMM's tiles packed once, measured slower and not kept)
 1,000-step language-model run at four threads takes 211.0 / 225.6 ms a step (4,853 / 4,538 tokens a
 second) against eager PyTorch's 304.5 (3,362) and `torch.compile`'s 310.5 (3,298) in one later
 session, the same state `5137e013…` and held-out cross-entropy (§24).
+Since NDT-SCAN-W (2026-10-17) the forward's verdict on its activations is taken by their writers: the
+RMSNorm, the SwiGLU product and the attention read back what their tasks wrote while it is in the
+core's cache, a region answering through another its value reaches and the attention reading its
+keys, the one region the softmax can hide -- in place of one scan of the whole arena after the forward
+(171 MB for the 9.84M decoder). Every element is in one call's regions, so the verdict is the scan's
+(`ndt-scanw.json` SW1-SW17; an old-against-new verdict differential over crafted states): in place at
+four threads everything but the GEMMs 56.0 -> 50.3 ms a step (the report's §25).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over

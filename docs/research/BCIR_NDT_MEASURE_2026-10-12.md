@@ -1433,3 +1433,81 @@ in under half the memory; its 211.0 ms is the fastest 1,000-step run recorded he
 PyTorch more than the slice moved BCIR: against §22's, eager's median step is 14% shorter (353.2 ms
 there) and compiled's 5% longer (296.9), and the two BCIR runs 14.7 ms apart are the host's spread inside one session -- the
 slice's own share is §23's alternated in-place reading, the attention 3.0 ms a step faster.
+
+## 25. The activations' finiteness from their writers (NDT-SCAN-W)
+
+After NDT-ATTN-7 the largest pass outside the GEMMs and the attention was the forward's verdict on
+its activations: every element of the arena scanned for a value that is not finite after the forward
+had written them all, 171 MB for the 9.84M decoder read back from memory -- 6.0 ms of the four-thread
+step, at the host's memory bandwidth (the attribution below). NDT-GEMM-CAND had scanned each layer's
+26 MB when the layer was done, hoping to find them in the last-level cache, and found 6.6-6.8 ms: the
+shared L3 does not keep a layer's activations between their writes and the scan.
+
+NDT-SCAN-W takes the verdict where the values are still in the core's cache: in the tasks that wrote
+them. `bcir_tensor_rms_scan_pool`, `bcir_tensor_silu_mul_scan_pool` (and its `_v2`) and
+`bcir_tensor_attention_scan_pool` (and its `_v2`) compute their plain entries' values, bit for bit,
+and set a verdict when one of their regions holds an element that is not finite after the call; each
+task reads back the part it wrote into its own byte of the caller's stack, and the caller ORs them (a
+job of more tasks than the bytes' bound is scanned after it on the pool -- the same verdict). A
+region's verdict may come from a region its value reaches, and each is a property of the kernel
+alone: an RMSNorm answers for its input rows by its output (an infinite or NaN element makes its
+row's 1/rms 0 or NaN and that element of the output NaN), the SwiGLU product for its gate and up
+projections by its product (a non-finite gate makes the SiLU infinite or NaN -- `-inf` times the
+sigmoid's 0 is NaN -- and a non-finite factor makes the product so), and the attention for its
+queries, values and probabilities by its context (a query that is not finite makes every score of its
+row infinite or NaN, so the row's probabilities NaN, and a NaN probability or a value that is not
+finite enters a context sum -- every key's own row takes its term). The keys it reads itself, from the
+first query head of each group: a key whose scores are all `-inf` weighs 0 in every row, so the
+softmax can hide it, and no later activation would show it. The trainer's forward calls the three for
+every region of the arena -- each layer's two norms (the residual stream, and the attention's sum), the
+attention, the SwiGLU product, the final norm -- and scans only the logits after the head; a
+provider's SiLU, which answers for nothing, has its three regions scanned after it. Every element is
+in exactly one call's regions, each call after its regions' last write, so the verdict is the whole
+scan's, and the forward runs to the end whatever an earlier layer held, as before.
+
+Witnesses. The C harness's `writer_verdicts` holds each scan entry to its plain entry bit for bit and
+its verdict to a scan of every region as the call left it -- NaN and both infinities at the ends of the
+entries' task chunks in every input region (560 cases on no pool and a pool of three), outputs that
+overflow from finite inputs, a verdict already set left set, and the key the softmax hides (`+inf` in
+one channel, every query of its group negative there: probabilities and context finite, the verdict
+the keys'). Through the trainer, with every other activation finite: that key behind RoPE (layer 0's
+queries and one key on the slowest rotation pair, so both of its channels are `+inf` and every score
+of it `-inf`), refused by the forward and the backward with the gradient untouched; logits that
+overflow alone (an untied head at `FLT_MAX`), refused; a provider's SiLU that answers 0 for an
+infinite gate, refused by the scans after it -- and each state without its overflow admitted. The
+harness's Python test builds C23 once more with the bytes' bound at two tasks, so every entry takes
+its after-the-job scan. `tools/testing/faults/ndt-scanw.json` SW1-SW17 -- each scan one element or
+row short, the wrong region read, the keys never read or read for the first batch only, the context
+one row short, the bytes folded from the first, a set verdict cleared, each fallback dropped, the
+vector scans' tails skipped, the forward dropping the attention's verdict, the logits unscanned, the
+provider's SiLU trusted -- 17 injected, 17 caught. An old-against-new differential of the verdict
+([scanw/verdicts.c](measurements/2026-10-17/scanw/verdicts.c)): three specs (the harness's tied and
+untied fixtures and a wider one, four query heads over two KV heads, two sequences of nine), the
+twelve contracts and pools of one, two and four threads, ten crafted states each -- the finite
+control, the hidden key, an overflowing head, final gamma, up, o and v projection, scores past
+`FLT_MAX`, and the hiding provider SiLU, finite and over an overflowing gate -- through the forward,
+the backward and a one-step run, every observable byte hashed: the same verdict table and digest
+(`f18e42c9d62a47de`) from 4fcaa5e's sources (14b5941's C) and this slice's, the hidden key and the
+hiding provider refused on every contract and pool. The differential of every byte the API can observe ([fuse/statedump.c](measurements/2026-10-16/fuse/statedump.c)) writes the same 376,368,768 bytes and the same 9.84M digest (`41018dd3e5a5e469`) from both trees -- the values it has written since 8b4f23d -- though its schedule never reaches an activation the scan refuses, which is why the verdict differential above exists. The 20-step state at one and four threads, widest and AVX2-capped builds and a repeat, is `4bf4e057…` ([scanw/identity.json](measurements/2026-10-17/scanw/identity.json)); the portable build's scans are the C harness's (its portable build runs `writer_verdicts` with the rest).
+
+Measured in place at four threads, 4fcaa5e's sources and this slice's in turn, the order rotated,
+eight rounds ([scanw/attribution-t4-\*](measurements/2026-10-17/scanw/)):
+
+| ms a step, medians of eight rounds | 4fcaa5e | NDT-SCAN-W | rounds lower |
+|---|---|---|---|
+| the activations' scan | 5.95 | 0.05 (the logits) | 8 of 8 |
+| the attention forward / SiLU / the RMSNorm forward | 6.36 / 2.39 / 1.47 | 6.54 / 2.51 / 1.64 | -- |
+| everything but the GEMMs | 56.0 | 50.3 | 8 of 8 |
+| the GEMMs (their code unchanged) | 153.8 | 151.5 | -- |
+| the step (median of eight steps) | 206.6 | 204.5 | 6 of 8 |
+
+Everything but the GEMMs is 5.7 ms a step (10%) lower in every round: the scan's 5.9 ms less the
+writers' reads, 0.5 ms among the three kernels. The writers' reads cost what a pass over L1 and L2
+costs ([scanw/scan_overhead.c](measurements/2026-10-17/scanw/scan_overhead.c), each entry against its
+plain entry at the language model's shapes on four threads, three runs: the SwiGLU product +0.08 to
++0.31 ms a step, the RMSNorm +0.002 to +0.024, the attention within the noise) once the attention's
+reads are one call a region:
+a first form that read each of its strided 48-float rows through the 16-lane scan's own call spent
+0.6 ms a step in the attention ([scanw/first-\*](measurements/2026-10-17/scanw/)). The GEMMs moved
+135-164 ms between this session's rounds, so the step's own median says little -- the first form's A/B
+had them 5 ms the other way.

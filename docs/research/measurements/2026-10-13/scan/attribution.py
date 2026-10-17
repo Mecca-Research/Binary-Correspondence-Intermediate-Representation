@@ -60,7 +60,10 @@ BCIR_DT_API void bcir_prof_reset(void) { unsigned k; for (k=0;k<BCIR_PROF_MAX;k+
 #: forward's, which shares its call).
 CATEGORIES = [
     (r"finite_(span|pool)\(s,?\s*s->weights|finite_span\(s->weights", "finite.weights"),
-    (r"finite_(span|pool)\(s,?\s*s->activations|finite_span\(s->activations", "finite.activations"),
+    (
+        r"finite_(span|pool)\(s,?\s*s->activations|finite_span\(s->activations|finite_pool\(s,logits",
+        "finite.activations",
+    ),  # since NDT-SCAN-W the writers answer and only the logits are scanned
     (r"finite_(span|pool)\(s,?\s*s->gradients|finite_span\(s->gradients", "finite.gradients"),
     (r"memset\(s->gradients|zero_pool\(s,s->gradients", "zero.gradients"),
     (r"memcpy\(xs\+i\*g\.d", "embed.gather"),
@@ -73,7 +76,7 @@ CATEGORIES = [
     (r"bcir_tensor_rope_pool\(s->pool,g\.b,g\.t,g\.k?h,g\.hd,s->plan", "rope.backward"),
     (r"bcir_tensor_rope_pool", "rope.forward"),
     (r"scatter_task", "embed.scatter"),
-    (r"bcir_tensor_rms_pool", "rms.forward"),
+    (r"bcir_tensor_rms_(scan_)?pool", "rms.forward"),
     (r"\blinears?\(", "gemm.forward"),
     (r"\battention\(s", "attention.forward"),
     (r"bcir_tensor_add_pool", "residual.add"),
@@ -93,7 +96,10 @@ DECLARATION = re.compile(
 #: is the body -- since NDT-FUSE the backward and the update are `_with` bodies the public entries
 #: wrap, and a run calls the bodies directly.
 FUNCTIONS = (
-    ("static void forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {",),
+    (
+        "static int forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {",
+        "static void forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {",
+    ),
     (
         "static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,",
         "int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,",
