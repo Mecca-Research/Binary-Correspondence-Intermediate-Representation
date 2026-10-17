@@ -1661,3 +1661,87 @@ the memory. Its 203.4 and 203.7 ms are the fastest 1,000-step runs recorded. Mos
 PyTorch's: against §26's session, eager's median step is 9% longer (293.6 ms there) and compiled's 4%
 (267.0), while BCIR's is 0.5-2% shorter (204.7 / 207.4). The container restarted between the two
 sessions, so its instance may differ. The slice's own share is §27's alternated in-place reading.
+
+## 29. The packed tiles kept between a thread's tasks, measured (NDT-PACK)
+
+An external review of the trainer -- the 2026-10-13 training-architecture blueprint, written against
+#818's head b47f860 -- asks second in its program to reuse packed panels where it is legal, from a
+workspace the caller lends, keyed by the source value's version rather than its address. In the
+pooled blocked GEMM the reuse is a thread's: a task packs its column block's tiles of B and runs its
+128 rows, and a thread whose next task is the same column block's next row set could keep them. Three arms
+([pack/variants.py](measurements/2026-10-17/pack/variants.py), exact-match edits to d68e3d3's
+`bcir_tensor.c`) keep the partition -- the same tiles of C, each one task's, its K blocks in order --
+so every product is the same floats, and only which tasks run together and what a thread keeps
+change: `colmajor` numbers a job's tasks column block by column block (the kept order is row-major),
+`cache` adds a thread-local copy of one column block's tiles, every K block up to K = 1,024, keyed by
+a per-job sequence number -- a weight updated between steps is never served from an earlier pack --
+and `grp` numbers groups of four column blocks row set by row set, so the tasks that start together
+read distinct columns and a thread's next task is most often its last one's.
+
+| GEMM ms a step at four threads | base | colmajor | cache | grp |
+|---|---|---|---|---|
+| shapes alone, warm, run 1 (12 rounds) | 151.55 | 141.34 (10 of 12) | 138.66 (11 of 12) | -- |
+| shapes alone, warm, run 2 (12 rounds) | 134.59 | 131.56 (6 of 12) | -- | 132.20 (5 of 12) |
+| shapes alone, cold, against base | -- | 168.3 -> 167.3 | 168.9 -> 165.1 | 174.2 -> 180.1 |
+| in place, medians of 8 rounds | 143.7 | 142.2 (4 of 8) | 141.5 (6 of 8) | -- |
+
+The parentheses count the rounds an arm was below base; every C hashes as base's
+([pack/](measurements/2026-10-17/pack/): [gemm_ab.py](measurements/2026-10-17/pack/gemm_ab.py) over
+[beta/gemm_entries.c](measurements/2026-10-16/beta/gemm_entries.c), the cold pairs through
+[gemm4t/gemm_cold.py](measurements/2026-10-16/gemm4t/gemm_cold.py) on six operand sets that no core's L2
+holds, the in-place rounds through the attribution instrument, rotated). These ran on the instance the
+container moved to at 10:15: a 2.10 GHz Xeon with 2 MB of L2 a core and a 260 MB L3 (and AVX512-BF16 and
+AMX), not §27's 2.80 GHz one with 1 MB and 33 MB -- so the cold pairs' operands, up to 72 MB, are cold in
+L2 and not in the L3. The first warm run's 6.7% did not repeat: base itself was 17 ms faster in the
+second, and colmajor 2.3% ahead of it in half the rounds. Cold in L2, colmajor gains 0.6% and the cache
+2.2%, and grouping the columns costs 3.4%; in place both kept arms are inside base's own rounds
+(132.9-165.4 ms). Whichever order, a column panel of B is packed from outside the packer's L2 the first
+time a core needs it in a job; the order changes only how often a later pack finds it in the packer's
+own L2, and the cache saves only the pack's copy instructions, which the inner loop did not wait on in
+§18's probe. Not kept: a workspace lent to the pool and a job key in every GEMM call for about 2%,
+inside every reading's spread. Nor does the row-set height a task covers, which the larger L2 might have
+moved: in place, 128, 256 and 512 rows a task give 143.0, 147.0 and 141.9 ms of GEMMs a step (the larger
+two below 128 in 4 and 5 rounds of 8; 128's own rounds 136.2-183.1).
+
+## 30. BCIR against PyTorch, five seeds paired (LM-PAIRED)
+
+The same external review (§29) names the comparison it would accept as a public claim: against the
+fastest valid matched PyTorch configuration, with a paired confidence interval, at least three seeds
+and held-out quality inside a margin fixed beforehand. The comparison harness gained `prepare --seed`
+(aeb7d15: another replicate's initial weights and batch schedules, the corpus, its splits and the
+held-out problems unchanged; the default seed's files are the 10-11 record's byte for byte) and a
+memory split in its train records. Five seeds -- the record's 20261011 and 1001, 2002, 3003, 4004 --
+each ran the 1,000-step language-model run at four threads on BCIR (`kblock+exp+reduce`) and on
+`torch.compile` with fused AdamW (PyTorch 2.13, four intra-op threads), one pair a seed in one
+session, the pair's order alternating seed by seed ([paired/](measurements/2026-10-17/paired/),
+[run.sh](measurements/2026-10-17/paired/run.sh)). The analysis was fixed before the runs
+([paired.py](measurements/2026-10-17/paired/paired.py)): the ratio of the two median warm steps per
+seed, their geometric mean with a 95% Student-t interval over the seeds' log ratios, and the margin --
+the 95% interval of BCIR's test cross-entropy minus PyTorch's inside ±0.01 nats.
+
+| seed | median step, BCIR / PyTorch, ms | tokens a second | ratio | test cross-entropy, BCIR / PyTorch | peak RSS, MB |
+|---|---|---|---|---|---|
+| 20261011 | 185.2 / 237.4 | 5,529 / 4,313 | 1.282 | 1.6319 / 1.6320 | 528 / 1,055 |
+| 1001 | 177.1 / 226.1 | 5,781 / 4,529 | 1.277 | 1.6350 / 1.6350 | 528 / 1,119 |
+| 2002 | 177.1 / 222.9 | 5,781 / 4,595 | 1.258 | 1.6401 / 1.6401 | 529 / 1,121 |
+| 3003 | 176.5 / 218.4 | 5,801 / 4,689 | 1.237 | 1.6429 / 1.6429 | 529 / 1,056 |
+| 4004 | 177.8 / 223.5 | 5,759 / 4,581 | 1.257 | 1.6324 / 1.6324 | 529 / 1,061 |
+
+BCIR trains 1.262 times PyTorch's tokens a second (95% interval 1.240-1.284) and is faster on all five
+seeds: its median step is 20.8% below PyTorch's, and at the interval's bound 19.4%, so the review's bar
+-- at least 5% below the fastest matched configuration measured, the paired interval supporting it -- is
+met on this instance. The held-out model is the same: BCIR's test cross-entropy minus PyTorch's is
+-0.00001 nats on average (95% interval -0.00006 to +0.00003, inside the margin), validation +0.00011.
+Both sides hold the same 157,390,848 bytes of persistent state (weights, gradients and both moments);
+BCIR's planned transient arena is 194,019,328 bytes and its peak RSS 528-529 MB, against PyTorch's
+1,055-1,121 MB, whose transient activations have no peak counter on CPU. The default seed's BCIR run
+ends in `5137e013…`, the state of every BCIR 1,000-step run since §17; `torch.compile`'s compile and
+first two steps (5.7-31.6 s) are outside its median. Every run is FP32.
+
+The session ran on the instance of §29, where both sides are faster than in §28's: BCIR's median step
+9-13% shorter and PyTorch's 15-22%, so the margin is narrower than §28's single round (1.37), and this
+table, not that round, is the comparison of record. Compiled was not always PyTorch's faster arm (§24's
+session had eager 2% ahead), so a check was added after the runs, and is labelled so in `paired.py`:
+eager PyTorch on seeds 20261011 and 1001 in the same session, 235.5 and 254.6 ms a step -- 0.8% faster
+and 12.6% slower than that seed's compiled run, whose 20261011 arm was the session's first PyTorch run.
+Against the faster arm wherever both ran, BCIR's ratio is 1.260 (95% interval 1.241-1.279).

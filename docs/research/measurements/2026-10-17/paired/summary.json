@@ -1,0 +1,227 @@
+{
+ "check_fastest_arm": {
+  "ci95": [
+   1.2410949387719095,
+   1.2791911658166581
+  ],
+  "eager_seeds": [
+   1001,
+   20261011
+  ],
+  "geometric_mean_ratio": 1.2599990800063279
+ },
+ "pairs": [
+  {
+   "bcir_ms": 177.13460750110244,
+   "bcir_tokens_per_second": 5780.914381700521,
+   "commit": "aeb7d156facbfe7da8637db8612972bd8f92cc9c",
+   "eager_ms": 254.59418050013483,
+   "eager_test": 1.6350135507843166,
+   "fastest_ratio": 1.2765401701550154,
+   "memory": [
+    {
+     "arena_bytes": 351410176,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 194019328
+    },
+    {
+     "arena_bytes": null,
+     "persistent_bytes": 157390848,
+     "transient_bytes": null
+    }
+   ],
+   "peak_rss_mb": [
+    528.4921875,
+    1119.171875
+   ],
+   "ratio": 1.2765401701550154,
+   "seed": 1001,
+   "test": [
+    1.6350122301299592,
+    1.6350134945464307
+   ],
+   "torch_compile_s": 6.113546216000032,
+   "torch_ms": 226.11944199979916,
+   "torch_tokens_per_second": 4528.580076722945,
+   "validation": [
+    1.4933349877031894,
+    1.4933335469528846
+   ]
+  },
+  {
+   "bcir_ms": 177.14562350101914,
+   "bcir_tokens_per_second": 5780.554889035172,
+   "commit": "aeb7d156facbfe7da8637db8612972bd8f92cc9c",
+   "eager_ms": null,
+   "eager_test": null,
+   "fastest_ratio": 1.2581349208369572,
+   "memory": [
+    {
+     "arena_bytes": 351410176,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 194019328
+    },
+    {
+     "arena_bytes": null,
+     "persistent_bytes": 157390848,
+     "transient_bytes": null
+    }
+   ],
+   "peak_rss_mb": [
+    528.69921875,
+    1121.265625
+   ],
+   "ratio": 1.2581349208369572,
+   "seed": 2002,
+   "test": [
+    1.6400603142346046,
+    1.640058960492374
+   ],
+   "torch_compile_s": 5.696392747000573,
+   "torch_ms": 222.87309500006813,
+   "torch_tokens_per_second": 4594.542916899354,
+   "validation": [
+    1.5051512320502467,
+    1.505149536560653
+   ]
+  },
+  {
+   "bcir_ms": 176.5121314992939,
+   "bcir_tokens_per_second": 5801.300971792391,
+   "commit": "aeb7d156facbfe7da8637db8612972bd8f92cc9c",
+   "eager_ms": null,
+   "eager_test": null,
+   "fastest_ratio": 1.237230898215853,
+   "memory": [
+    {
+     "arena_bytes": 351410176,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 194019328
+    },
+    {
+     "arena_bytes": null,
+     "persistent_bytes": 157390848,
+     "transient_bytes": null
+    }
+   ],
+   "peak_rss_mb": [
+    529.48046875,
+    1056.1796875
+   ],
+   "ratio": 1.237230898215853,
+   "seed": 3003,
+   "test": [
+    1.6429082020464127,
+    1.6429080334183384
+   ],
+   "torch_compile_s": 5.762316136000663,
+   "torch_ms": 218.38626300086617,
+   "torch_tokens_per_second": 4688.939615198868,
+   "validation": [
+    1.4997764421101811,
+    1.4997763707168863
+   ]
+  },
+  {
+   "bcir_ms": 177.81791149900528,
+   "bcir_tokens_per_second": 5758.699960918888,
+   "commit": "aeb7d156facbfe7da8637db8612972bd8f92cc9c",
+   "eager_ms": null,
+   "eager_test": null,
+   "fastest_ratio": 1.2569687081392054,
+   "memory": [
+    {
+     "arena_bytes": 351410176,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 194019328
+    },
+    {
+     "arena_bytes": null,
+     "persistent_bytes": 157390848,
+     "transient_bytes": null
+    }
+   ],
+   "peak_rss_mb": [
+    528.59765625,
+    1060.83203125
+   ],
+   "ratio": 1.2569687081392054,
+   "seed": 4004,
+   "test": [
+    1.632434989974938,
+    1.63243493805795
+   ],
+   "torch_compile_s": 5.99535063499934,
+   "torch_ms": 223.5115505009162,
+   "torch_tokens_per_second": 4581.418712836509,
+   "validation": [
+    1.5056986522567264,
+    1.5056992293658804
+   ]
+  },
+  {
+   "bcir_ms": 185.22113149992947,
+   "bcir_tokens_per_second": 5528.526857101021,
+   "commit": "aeb7d156facbfe7da8637db8612972bd8f92cc9c",
+   "eager_ms": 235.50750249978591,
+   "eager_test": 1.6318564001398372,
+   "fastest_ratio": 1.271493703729348,
+   "memory": [
+    {
+     "arena_bytes": 351410176,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 194019328
+    },
+    {
+     "arena_bytes": null,
+     "persistent_bytes": 157390848,
+     "transient_bytes": null
+    }
+   ],
+   "peak_rss_mb": [
+    528.44140625,
+    1054.82421875
+   ],
+   "ratio": 1.2817954791517505,
+   "seed": 20261011,
+   "test": [
+    1.6318896182814997,
+    1.6319646686024842
+   ],
+   "torch_compile_s": 31.61637481999969,
+   "torch_ms": 237.4156089999815,
+   "torch_tokens_per_second": 4313.111527557903,
+   "validation": [
+    1.5003009362037087,
+    1.4997479248824799
+   ]
+  }
+ ],
+ "quality": {
+  "margin_nats": 0.01,
+  "test_minus_torch": {
+   "ci95": [
+    -5.6674916991149266e-05,
+    2.6778736925912847e-05
+   ],
+   "mean": -1.4948090032618212e-05
+  },
+  "validation_minus_torch": {
+   "ci95": [
+    -0.00019554063538678254,
+    0.00041779737349403407
+   ],
+   "mean": 0.00011112836905362578
+  },
+  "within_margin": true
+ },
+ "speed": {
+  "bcir_faster_seeds": 5,
+  "ci95": [
+   1.2401826997302954,
+   1.284270763459596
+  ],
+  "geometric_mean_ratio": 1.262034224025644,
+  "seeds": 5
+ }
+}

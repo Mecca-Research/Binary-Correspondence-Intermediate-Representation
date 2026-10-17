@@ -2915,6 +2915,36 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  LM-PAIRED (2026-10-17): BCIR against `torch.compile` with fused AdamW, five seeds paired.
+  - An external review's bar for a public claim (the fastest matched PyTorch configuration, a paired
+    interval, at least three seeds, a quality margin fixed beforehand): the comparison harness gained
+    `prepare --seed` and a memory split (aeb7d15), and five seeds ran one pair each in one session,
+    the order alternating ([measurements/2026-10-17/paired/](research/measurements/2026-10-17/paired/),
+    the report's §30).
+  - BCIR trains 1.262 times PyTorch's tokens a second (95% interval 1.240-1.284; 176.5-185.2 against
+    218.4-237.4 ms a step), faster on all five seeds; the test cross-entropy difference -0.00001 nats
+    (interval -0.00006 to +0.00003, inside the +-0.01 margin); 528-529 MB of peak RSS against
+    1,055-1,121, the same 157,390,848 bytes of persistent state on both.
+  - A check added after the runs: eager PyTorch on two seeds, 0.8% faster and 12.6% slower than their
+    compiled runs; against the faster arm wherever both ran the ratio is 1.260 (1.241-1.279).
+  - On the instance the container moved to at 10:15 (a 2.10 GHz Xeon, a 260 MB L3), where both sides
+    ran faster than in r9's session; the margin there was 1.37 in one round.
+  NDT-PACK (2026-10-17): the packed tiles kept between a thread's tasks, measured and not kept.
+  - An external review's second item (the 2026-10-13 training-architecture blueprint: reuse packed
+    panels where legal, from a workspace the caller lends, keyed by the value's version), as three
+    arms over d68e3d3's tensor unit that keep the partition, so every product is the same floats
+    ([measurements/2026-10-17/pack/](research/measurements/2026-10-17/pack/), the report's §29):
+    a job's tasks numbered column block by column block; that order with a thread's copy of one
+    column block's tiles, keyed by a per-job sequence number and never B's address; and groups of
+    four column blocks row set by row set.
+  - The GEMM shapes alone at four threads, warm: the column order 151.55 -> 141.34 ms a step in one
+    run (10 rounds of 12) and 134.59 -> 131.56 in the next (6 of 12), the cache 138.66. Cold in L2:
+    the column order 0.6% and the cache 2.2% faster, the groups 3.4% slower. In place the GEMMs
+    143.7 -> 142.2 (column order, 4 rounds of 8) and 141.5 (cache, 6 of 8), inside base's own
+    rounds (132.9-165.4). On the instance the container moved to at 10:15 (a 2.10 GHz Xeon, 2 MB
+    of L2 a core, a 260 MB L3, AVX512-BF16 and AMX).
+  - The order changes only how often a pack finds its panel in the packer's own L2, and the cache
+    saves only the pack's copy, which the inner loop did not wait on in §18's probe. Not kept.
   LM-4T (2026-10-17): BCIR against PyTorch at four threads on 2afa3e3.
   - The 1,000-step language-model run with NDT-UPDATE, one round in its session
     ([measurements/2026-10-17/lm/](research/measurements/2026-10-17/lm/) r9-*, the report's §28):
