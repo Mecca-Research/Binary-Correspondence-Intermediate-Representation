@@ -6,7 +6,10 @@ process so its peak resident memory is its own:
 
   prepare   the corpus (the repository's tracked Markdown at a pinned commit, bytes), the
             copy, associative-recall and addition tasks with held-out problems, identical
-            initial weights and one batch schedule per task, as long as its step budget -> DIR
+            initial weights and one batch schedule per task, as long as its step budget -> DIR;
+            --seed draws another replicate's initial weights and schedules (the corpus, its
+            splits and the held-out problems stay), recorded in prepare.json when it is not
+            the default
   train     one backend on one task -> DIR/runs/<task>-<backend>.json
   identity  BCIR's training state, bit for bit, across ISA variants, compilers, a repeat,
             thread counts (--threads) and contracts (--contract, --variants)
@@ -214,11 +217,11 @@ def _windows(stream, count, rng):
     return [rng.randrange(len(stream) - CONTEXT - 1) for _ in range(count)]
 
 
-def _initial_weights(spec):
+def _initial_weights(spec, seed=SEED):
     """The native trainer's own initialization: norms one, every matrix N(0, 0.02)."""
     from bcir.hosted.models.native import parameter_layout
 
-    rng = random.Random(SEED)
+    rng = random.Random(seed)
     flat = array("f")
     for name, _shape, _offset, count in parameter_layout(spec):
         if "layernorm" in name or name == "model.norm.weight":
@@ -228,14 +231,14 @@ def _initial_weights(spec):
     return flat
 
 
-def prepare(out: Path, budgets: dict):
+def prepare(out: Path, budgets: dict, seed: int = SEED):
     out.mkdir(parents=True, exist_ok=True)
     spec = _spec()
     corpus, documents = _corpus()
     structured = {"add": _addition(), "recall": _recall(), "copy": _copy()}
-    weights = _initial_weights(spec)
+    weights = _initial_weights(spec, seed)
     (out / "weights.f32").write_bytes(weights.tobytes())
-    rng = random.Random(SEED + 2)
+    rng = random.Random(seed + 2)
     record = {
         "corpus_commit": CORPUS_COMMIT,
         "spec": SPEC,
@@ -247,6 +250,8 @@ def prepare(out: Path, budgets: dict):
         "documents": documents,
         "tasks": {},
     }
+    if seed != SEED:  # the default seed's prepare.json stays the 10-11 record's
+        record["seed"] = seed
     for name, (stream, docs) in corpus.items():
         (out / f"lm-{name}.u16").write_bytes(stream.tobytes())
         record["tasks"].setdefault("lm", {})[name] = {
@@ -511,7 +516,8 @@ def train(
     started = time.perf_counter()
     rss_start = _rss_mb()
     info: dict = {"backend": backend, "task": task, "steps": steps, "threads": threads,
-                  "contract": contract, "lr_scale": lr_scale}  # fmt: skip
+                  "contract": contract, "lr_scale": lr_scale,
+                  "seed": record.get("seed", SEED)}  # fmt: skip
     compile_s = None
     if backend.startswith("bcir"):
         from bcir.hosted.models.native import NativeAdamW
@@ -538,6 +544,13 @@ def train(
             return np.concatenate(out)
 
         digest_fn = lambda: _state_digest_native(nd)  # noqa: E731
+        plan = nd.state.plan
+        # the trainer's arenas, planned before the first step: weights, gradients and both
+        # moments persist; activations and scratch are the step's transient arena
+        memory = {"persistent_bytes": 16 * plan.parameters,
+                  "transient_bytes": 4 * (plan.activations + plan.scratch),
+                  "arena_bytes": nd.memory_bytes}  # fmt: skip
+        memory_fn = lambda: memory  # noqa: E731
     else:
         import torch
         import torch.nn.functional as F
@@ -599,6 +612,17 @@ def train(
 
         digest_fn = lambda: _state_digest_torch(model, opt)  # noqa: E731
 
+        def memory_fn():
+            # the persistent tensors after training, exactly: parameters, their gradients and
+            # AdamW's moments; the transient activations have no peak counter on CPU here
+            tensors = [*model.parameters(), *(p.grad for p in model.parameters())]
+            tensors += [
+                v for s in opt.state.values() for v in s.values() if torch.is_tensor(v) and v.dim()
+            ]
+            persistent = sum(v.numel() * v.element_size() for v in tensors if v is not None)
+            return {"persistent_bytes": persistent, "transient_bytes": None,
+                    "arena_bytes": None}  # fmt: skip
+
     rss_ready = _rss_mb()
 
     def evaluate(split):
@@ -634,7 +658,7 @@ def train(
         median_step_ms=1000 * statistics.median(warm),
         tokens_per_second=BATCH * CONTEXT / statistics.median(warm),
         train_seconds=trained, wall_seconds=time.perf_counter() - started,
-        compile_and_first_steps_seconds=compile_s, state_sha256=digest_fn(),
+        compile_and_first_steps_seconds=compile_s, state_sha256=digest_fn(), memory=memory_fn(),
         rss_mb={"start": rss_start, "ready": rss_ready, "end": _rss_mb(),
                 "peak": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024},
         environment=_environment(),
@@ -1710,6 +1734,7 @@ def main():
     p.add_argument("--copy-steps", type=int, default=1000)
     p.add_argument("--recall-steps", type=int, default=1000)
     p.add_argument("--add-steps", type=int, default=3000)
+    p.add_argument("--seed", type=int, default=SEED, help="another replicate's weights/schedules")
     t = sub.add_parser("train")
     t.add_argument("--data", type=Path, required=True)
     t.add_argument("--task", choices=("lm", *TASKS), required=True)
@@ -1776,7 +1801,7 @@ def main():
     if a.stage == "prepare":
         budgets = {"lm": a.lm_steps, "copy": a.copy_steps, "recall": a.recall_steps,
                    "add": a.add_steps}  # fmt: skip
-        prepare(a.output, budgets)
+        prepare(a.output, budgets, a.seed)
     elif a.stage == "train":
         train(a.data, a.task, a.backend, a.steps, a.eval_every, a.cc, a.lr_scale, a.threads,
               a.contract)  # fmt: skip
