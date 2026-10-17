@@ -2966,6 +2966,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     and everything but the GEMMs from 50.78 to 46.22, both in every round. The first pass now sits
     at its streams' bound. The commit's remaining 2.0 ms over its streams is mostly each element's
     own division and root.
+  - The pre-push chain's runtime gate found the portable build (`BCIR_TENSOR_NO_DISPATCH`) refusing
+    `adamw_commit_fma` as an unused function under Clang's `-Werror`: GCC does not warn on an unused
+    static inline, and none of the slice's harness builds was portable. Every no-dispatch target
+    (aarch64, Windows, the portable build) would have failed the same way. The three helpers are now
+    defined among their only callers, inside the dispatch block, with the same text: `ndt-update` is
+    14/14 and the 20-step state is `4bf4e057…`.
   LM-4T (2026-10-17): BCIR against PyTorch at four threads on cf435d4.
   - The 1,000-step language-model run with NDT-SCAN-W, one round in its session
     ([measurements/2026-10-17/lm/](research/measurements/2026-10-17/lm/) r8-*, the report's §26): BCIR 204.7 / 207.4 ms

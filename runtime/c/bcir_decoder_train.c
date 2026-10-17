@@ -475,13 +475,24 @@ BCIR_DT_INLINE void adamw_commit(const adamw_terms *t,size_t n,const float *gr,f
     m1[i]=m; m2[i]=v;
   }
 }
+static int preflight_generic(const adamw_terms *t,size_t n,const float *gr,const float *wt,
+    const float *m1,const float *m2) { return adamw_preflight(t,n,gr,wt,m1,m2); }
+static void commit_generic(const adamw_terms *t,size_t n,const float *gr,float *wt,
+    float *m1,float *m2) { adamw_commit(t,n,gr,wt,m1,m2); }
+/* The same AVX2/AVX-512 variants bcir_tensor_mm carries; they need the build's
+ * -fno-math-errno to vectorize sqrt, and are bit-identical with or without it. */
+#if defined(__x86_64__) && defined(__linux__) && (defined(__GNUC__) || defined(__clang__)) && \
+    !defined(BCIR_TENSOR_NO_DISPATCH)
+#define BCIR_DT_DISPATCH 1
+#include <immintrin.h>
 /* x/d for the divisor every element of a commit shares, rounded as the division rounds it
  * (NDT-UPDATE), given y = RN(1/d): q0 = x*y is within 1.5 ulp of x/d, one FMA correction brings it
  * within half an ulp and a vanishing term -- one of the two floating-point neighbours of x/d -- and
  * a second is Markstein's: for such a q and a y within a relative 2^-53 of 1/d, r = x - q*d is
  * exact and RN(q + r*y) is RN(x/d) (Handbook of Floating-Point Arithmetic, 2nd ed., Theorem 4.10),
  * for x a float and d in [2^-53, 1] -- one minus a bias power, so every operand stays far from
- * under- and overflow. The quotient has x's sign, which the corrections' sums lose for a zero x. */
+ * under- and overflow. The quotient has x's sign, which the corrections' sums lose for a zero x.
+ * Only the instances below, whose FMA is an instruction, take it, so it is defined among them. */
 BCIR_DT_INLINE double shared_reciprocal(double d) { return 1/d; }
 BCIR_DT_INLINE double div_shared(double x,double d,double y) {
   double q0=x*y,r0=fma(-q0,d,x),q1=fma(r0,y,q0),r1=fma(-q1,d,x);
@@ -501,16 +512,6 @@ BCIR_DT_INLINE void adamw_commit_fma(const adamw_terms *t,size_t n,const float *
     m1[i]=m; m2[i]=v;
   }
 }
-static int preflight_generic(const adamw_terms *t,size_t n,const float *gr,const float *wt,
-    const float *m1,const float *m2) { return adamw_preflight(t,n,gr,wt,m1,m2); }
-static void commit_generic(const adamw_terms *t,size_t n,const float *gr,float *wt,
-    float *m1,float *m2) { adamw_commit(t,n,gr,wt,m1,m2); }
-/* The same AVX2/AVX-512 variants bcir_tensor_mm carries; they need the build's
- * -fno-math-errno to vectorize sqrt, and are bit-identical with or without it. */
-#if defined(__x86_64__) && defined(__linux__) && (defined(__GNUC__) || defined(__clang__)) && \
-    !defined(BCIR_TENSOR_NO_DISPATCH)
-#define BCIR_DT_DISPATCH 1
-#include <immintrin.h>
 __attribute__((target("avx2"))) static int preflight_avx2(const adamw_terms *t,size_t n,
     const float *gr,const float *wt,const float *m1,const float *m2) {
   return adamw_preflight(t,n,gr,wt,m1,m2);
