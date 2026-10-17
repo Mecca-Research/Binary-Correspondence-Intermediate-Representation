@@ -647,7 +647,10 @@ def test_the_clipping_norm_keeps_its_contract():
     reduce contract's chunk chains added in chunk order (the row at zero); the C chunk rule and
     the Python one agree on the counts around the first doubling and on the record's decoder; the
     two contracts' norms are one value to a part in 10^12 and not one double at every step (the
-    threads bench's 135,864 parameters are 133 chunks)."""
+    threads bench's 135,864 parameters are 133 chunks). The same differential over one chunk of
+    728 parameters: on a vector host the update's first pass takes the threads bench's whole pairs
+    of chunks together (NDT-UPDATE), and its chunk loop then sums only the short last chunk, whose
+    order rounds away in the total; one chunk's norm is that loop's chain alone."""
     from bcir.hosted.models.native import NativeAdamW, NativeDecoder
     from bcir.tests import native_decoder_fixtures as nf
 
@@ -656,6 +659,15 @@ def test_the_clipping_norm_keeps_its_contract():
         if path is None:
             return  # no C compiler: the row is a skip, never a pass
         assert nf.norm_mismatch(path) == 0
+        spec, batch, time_ = nf.ONE_CHUNK_BENCH
+        trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
+                                contract="reduce")  # fmt: skip
+        try:  # one reduce chunk: the norm is the first pass's chunk loop alone
+            assert trainer.state.plan.parameters == 728
+            assert nf.reduce_chunk(trainer.state.plan.parameters) >= 728
+        finally:
+            trainer.close()
+        assert nf.norm_mismatch(path, bench=nf.ONE_CHUNK_BENCH) == 0
         assert [nf.reduce_chunk(c) for c in nf.REDUCE_CHUNK_COUNTS] == [
             1024,
             1024,

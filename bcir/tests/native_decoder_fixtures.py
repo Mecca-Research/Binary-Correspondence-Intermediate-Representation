@@ -116,6 +116,10 @@ MM_KBLOCK_CASES = MM_CASES + tuple(
 #: tail), T=40 (past the attention backward's 32-row chunks), GQA groups of two, a width, a KV
 #: width, an FF width and a vocabulary off every 32- and 64-wide block edge; three steps.
 THREADS_BENCH = (DecoderSpec(250, 72, 4, 2, 200, activation="silu_gate", n_kv_heads=2), 2, 40)
+#: One reduce chunk (728 parameters, tied): the clipping norm under the reduce contract is the
+#: chunk loop's chain alone -- on a vector host the update pairs whole chunks (NDT-UPDATE), and the
+#: threads bench's 133 chunks reach that loop only in their short last one.
+ONE_CHUNK_BENCH = (DecoderSpec(16, 8, 2, 1, 16, activation="silu_gate", n_kv_heads=1), 2, 8)
 THREAD_COUNTS = (1, 2, 3, 4)
 
 

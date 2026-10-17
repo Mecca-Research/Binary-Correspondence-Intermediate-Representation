@@ -2953,6 +2953,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     - under `BCIR_DT_DIVISION_PROBE` (the harness's builds only), the dispatched shared division
       against the division over 268,444,464 float dividends for sixteen divisors;
     - the Python test's new build capped at AVX2;
+    - the clipping-norm test's new one-chunk bench (728 parameters). The chain found `ndt-reduce.json`
+      NR11 escaping its own check once the threads bench's whole pairs took the paired loop;
     - `ndt-update.json` UP1-UP14, 14 of 14 caught;
     - [division_check.c](research/measurements/2026-10-17/update/division_check.c): 24,245
       divisors (14,837 distinct) times 16,782,765 dividends, 0 mismatches;

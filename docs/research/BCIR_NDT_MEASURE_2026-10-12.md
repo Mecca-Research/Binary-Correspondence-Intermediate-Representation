@@ -1595,6 +1595,13 @@ double below 1 and an all-ones significand. The dividends are every float signif
 the zeros, the subnormals and the extremes. The harness's Python test now also builds C23 capped at
 AVX2, so it runs the AVX2 pair and the AVX2+FMA commit.
 
+The pre-push chain found one witness the slice had weakened. On a vector host the clipping-norm test's
+threads bench (133 chunks) now reaches the per-chunk loop only in its short last chunk, and a reordered
+sum there rounds away in the total. So `ndt-reduce.json` NR11 (that loop's chain summed from the
+chunk's last element) was caught by the C harness but not by its own check. The test now also runs the
+differential over one chunk of 728 parameters, whose norm is that loop's chain alone, and NR11 is caught
+by its own check again (11 of 11).
+
 `tools/testing/faults/ndt-update.json` UP1-UP14 injects fourteen defects and the harness catches all
 fourteen: either pair's second chain adding the first chunk's squares, the chains adding each vector's
 squares from its last, either flag forgetting the gradient, the gradient maximum keeping its sign bit,
