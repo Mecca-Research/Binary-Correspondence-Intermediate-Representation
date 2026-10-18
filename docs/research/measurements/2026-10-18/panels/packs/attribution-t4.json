@@ -1,0 +1,36 @@
+{
+ "threads": 4,
+ "rounds": 40,
+ "probe": {
+  "step_ms": 69.49,
+  "pack_wall_ms": 8.146,
+  "compute_wall_ms": 23.605,
+  "pack_task_ms": {
+   "fwd A": 2.86,
+   "fwd B (weights)": 4.853,
+   "dx A": 3.209,
+   "dx B (weights)": 6.976,
+   "dW A": 5.235,
+   "dW B (activations)": 5.112
+  }
+ },
+ "swap": {
+  "step_ms": 68.84,
+  "pack_wall_ms": 7.721,
+  "compute_wall_ms": 22.836,
+  "pack_task_ms": {
+   "fwd A": 2.812,
+   "fwd B (weights)": 4.8,
+   "dx A": 3.249,
+   "dx B (weights)": 6.355,
+   "dW A": 5.335,
+   "dW B (activations)": 4.635
+  }
+ },
+ "probe/swap": 1.0194,
+ "ci95": [
+  0.997,
+  1.0363
+ ],
+ "swap_faster_rounds": 26
+}

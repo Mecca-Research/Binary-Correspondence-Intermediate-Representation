@@ -1,0 +1,22 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 992e333
+threads 1 reps 21, median ms (strip: columns a strip; nt: 2 the second panel streamed, 3 both)
+  silu*u fp32               1.075
+  silu*u shipped            1.351
+  silu*u shipped nt2        1.371  x0.985 vs shipped  identical: yes
+  silu*u shipped nt3        1.463  x0.923 vs shipped  identical: yes
+  silu*u v4 64              2.236  x0.604 vs shipped  identical: yes
+  silu*u v4 128             1.726  x0.783 vs shipped  identical: yes
+  silu*u v4 256             1.754  x0.770 vs shipped  identical: yes
+  silu*u v4 128 nt2         1.604  x0.842 vs shipped  identical: yes
+  silu*u v4 256 nt2         1.612  x0.838 vs shipped  identical: yes
+  silu*u v4 128 nt3         1.365  x0.990 vs shipped  identical: yes
+  VJP fp32                  1.316
+  VJP shipped               1.821
+  VJP shipped nt2           1.844  x0.987 vs shipped  identical: yes
+  VJP shipped nt3           2.167  x0.840 vs shipped  identical: yes
+  VJP v4 64                 3.337  x0.546 vs shipped  identical: yes
+  VJP v4 128                2.878  x0.633 vs shipped  identical: yes
+  VJP v4 256                2.629  x0.693 vs shipped  identical: yes
+  VJP v4 128 nt2            2.381  x0.765 vs shipped  identical: yes
+  VJP v4 256 nt2            2.392  x0.761 vs shipped  identical: yes
+  VJP v4 128 nt3            2.037  x0.894 vs shipped  identical: yes

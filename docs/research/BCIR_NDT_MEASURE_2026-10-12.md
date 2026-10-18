@@ -2129,3 +2129,35 @@ The session ran slower than §34's: the arm before the panels, §34's fastest co
 1.078. Peak RSS is 534 MB with the panels -- they sit in the binary32 slots, so the arena (362,944,768
 bytes) and the workspace (11,534,592) are unchanged -- against 1,141-1,146 MB for PyTorch; the
 persistent state is the same 157,390,848 bytes on every arm.
+
+## 37. The writers' second panel and the step's packs, measured and not kept (PANELS-WRITER, PACK-ATTR, GEMM-OVERLAP)
+
+§35 named the writers' second panel as their next lever, so PANELS-WRITER tried a strip writer that never
+reads the A panel back: 32 rows by a strip of columns of binary32 values held in L1, the A panel written
+a tile at a time, the second panel converted from the same values by the same conversion -- the same
+bits -- at strips of 64, 128 and 256 columns, with and without streamed stores, all arms rotated in one
+process at the decoder's shape, every candidate's panels compared with the shipped writer's each round
+([writer/](measurements/2026-10-18/panels/writer/)). It is slower at every strip and store kind: x0.751-0.977
+for the SiLU product and x0.674-0.970 for the VJP at four threads, x0.546-0.990 at one
+([screen-t4.txt](measurements/2026-10-18/panels/writer/screen-t4.txt), [screen-t1.txt](measurements/2026-10-18/panels/writer/screen-t1.txt)).
+Streaming the shipped writer's second panel reads x0.978 and x1.061 at four threads and below 1 at one,
+and the GEMMs that read the panels follow it within the step, where streamed stores would send them
+past the caches. The shipped writer's time, split ([split-t4.txt](measurements/2026-10-18/panels/writer/split-t4.txt)),
+says why: at four threads its row segments' values alone are 82% (SiLU) and 62% (VJP) of it and its A
+panels alone 83% and 69%, so the second panels are 17% and 31% (12% and 22% at one thread) -- their
+interleave and transpose, bit moves on the shuffle port, not the read of the A panel the strip writer
+avoids, which costs less from L1 than a second conversion in short strips. Nothing here is kept.
+
+The packs left are larger, and a probe build measured them inside the step (PACK-ATTR,
+[packs/](measurements/2026-10-18/panels/packs/), [attribution-t4.json](measurements/2026-10-18/panels/packs/attribution-t4.json)):
+every pack task timed by role and operand, and each group's pack and compute walls. At four threads the
+packs take 8.15 ms of wall a step against 23.6 ms of tile compute, a quarter of the GEMMs' time, and the
+weights' B packs (the forward's and the input adjoints') are 42% of their thread time, about 3.4 ms.
+Swapping the untransposed B pack's loops, so each tile is written contiguously, cuts those packs' task
+time by about 9%, but the step reads x1.019 (95% interval 0.997-1.036): not resolved, not kept. Nor does
+hiding the packs pay: one job a group with the compute waiting for its call's packs reads x1.002
+([fused-t4.json](measurements/2026-10-18/panels/packs/fused-t4.json)), waiting for the strips each region
+reads x1.008 ([fine-t4.json](measurements/2026-10-18/panels/packs/fine-t4.json)), both within the noise
+(GEMM-OVERLAP): on this host the tile unit's compute and the packs do not overlap. A pack has to be
+removed rather than hidden, and the weights' B panels -- written when the update writes a weight -- are
+the largest left.

@@ -1,0 +1,16 @@
+{
+ "threads": 4,
+ "rounds": 60,
+ "base": {
+  "step_ms": 73.46
+ },
+ "fused": {
+  "step_ms": 72.52
+ },
+ "base/fused": 1.002,
+ "ci95": [
+  0.9814,
+  1.0466
+ ],
+ "fused_faster_rounds": 31
+}

@@ -1,0 +1,10 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 992e333
+threads 1 reps 21, median ms: the binary32 entry, the shipped writer's values alone (no panel), its A panels alone (no second panel), the shipped writer
+  silu*u fp32               1.049
+  silu*u values only        1.047  79% of the shipped writer's time (a part of it: no panels to compare)
+  silu*u A panel only       1.178  88% of the shipped writer's time (a part of it: no panels to compare)
+  silu*u shipped            1.331
+  VJP fp32                  1.220
+  VJP values only           1.233  67% of the shipped writer's time (a part of it: no panels to compare)
+  VJP A panels only         1.432  78% of the shipped writer's time (a part of it: no panels to compare)
+  VJP shipped               1.839

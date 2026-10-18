@@ -3000,6 +3000,21 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     (1.054-1.102, 5 of 5), the two BCIR arms ending in one state, LM-ATTN's, on every seed. The session
     ran slower than LM-ATTN's (the same code x1.051, PyTorch x1.105), so LM-ATTN's pair read 2.117
     here against 2.015 there. Peak RSS 534 MB against 1,141-1,146.
+  PANELS-WRITER, PACK-ATTR, GEMM-OVERLAP (2026-10-18): the writers' second panel and the step's packs,
+    measured and not kept.
+  - A strip writer that never reads the A panel back -- 32 rows by a strip of binary32 values in L1,
+    the second panel converted from them by the same conversion -- is slower than the shipped writer at
+    every strip and store kind (x0.546-0.990), its panels identical; streamed stores for the second
+    panel read x0.978-1.061 at four threads and below 1 at one, and the panels' GEMMs follow within the
+    step ([measurements/2026-10-18/panels/writer/](research/measurements/2026-10-18/panels/writer/), the
+    report's §37).
+  - The shipped writer's time split: the second panels are 17% (SiLU) and 31% (VJP) of it at four
+    threads, their interleave and transpose rather than the read of the A panel.
+  - PACK-ATTR and GEMM-OVERLAP: a probe build timed the packs inside the four-thread step -- 8.15 ms of
+    wall against 23.6 ms of tile compute, the weights' B packs 42% of the packs' thread time (about
+    3.4 ms) -- and the B pack's loops swapped (its tasks 9% faster, the step x1.019, 0.997-1.036) and the
+    packs overlapped with the compute per call (x1.002) and per strip (x1.008) were within the noise:
+    not kept ([measurements/2026-10-18/panels/packs/](research/measurements/2026-10-18/panels/packs/)).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
