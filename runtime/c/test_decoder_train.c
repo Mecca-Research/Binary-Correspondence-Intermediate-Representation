@@ -1985,6 +1985,23 @@ static void ref_panels(size_t r,size_t c,const float *x,unsigned short *a,unsign
 static int same_shorts(const unsigned short *a,const unsigned short *b,size_t n) {
   return !memcmp(a,b,n*sizeof(*a));
 }
+/* a writer's panel against the reference's, element by element: the same bits, and a quiet NaN
+ * wherever the reference holds one. Which NaN an operation on two NaNs propagates is the compiled
+ * code's (the operand order its instructions take), so a binary32 kernel's NaN -- the writers'
+ * copy of it and the entries' -- is a quiet NaN, not a pattern: what the bf16 contract says of its
+ * results, and what same_bits_or_nan holds the GEMMs to. The first difference is reported, with
+ * its case. A quiet NaN: the exponent's ones and the significand's top bit (bf16_bits' 0x0040). */
+static int bf16_quiet_nan(unsigned short h) { return (h&0x7fc0u)==0x7fc0u; }
+static int same_panel(const char *what,size_t r,size_t c,int v2,unsigned threads,
+    const unsigned short *got,const unsigned short *want) {
+  size_t i,n=r*c;
+  for (i=0;i<n;i++) if (bf16_quiet_nan(want[i]) ? !bf16_quiet_nan(got[i]) : got[i]!=want[i]) {
+    fprintf(stderr,"panels: %s, %zu x %zu, v%d, %u thread(s): element %zu is 0x%04x, the reference 0x%04x\n",
+        what,r,c,v2 ? 2 : 1,threads,i,(unsigned)got[i],(unsigned)want[i]);
+    return 0;
+  }
+  return 1;
+}
 static void panels_contract(void) {
   enum { N=64*1056 };
   static float x[N],u[N],dy[N],y[N],dg[N],du[N],c0[N],want[N],got[N];
@@ -2014,14 +2031,19 @@ static void panels_contract(void) {
       ref_panels(r,c,y,ra,rb,0);
       bad=0; memset(pa,0xab,sizeof pa); memset(pb,0xab,sizeof pb);
       assert(bcir_tensor_silu_mul_panels_pool(pool,v2,r,c,x,u,pa,pb,&bad)==1);
-      assert(bad==want_bad && same_shorts(pa,ra,n) && same_shorts(pb,rb,n));
-      assert(bcir_tensor_silu_mul_panels_pool(pool,v2,r,c,x,u,pa,pb,NULL)==1 && same_shorts(pa,ra,n));
+      assert(bad==want_bad && same_panel("SiLU product as A",r,c,v2,threads,pa,ra) &&
+          same_panel("SiLU product as B",r,c,v2,threads,pb,rb));
+      assert(bcir_tensor_silu_mul_panels_pool(pool,v2,r,c,x,u,pa,pb,NULL)==1 &&
+          same_panel("SiLU product as A, no verdict",r,c,v2,threads,pa,ra));
       if (v2) bcir_tensor_swiglu_backward_v2_pool(pool,n,x,u,dy,dg,du);
       else bcir_tensor_swiglu_backward_pool(pool,n,x,u,dy,dg,du);
       ref_panels(r,c,dg,ra,rb,1); ref_panels(r,c,du,rc,rd,1);
       memset(pa,0xab,sizeof pa); memset(pb,0xab,sizeof pb); memset(pc,0xab,sizeof pc); memset(pd,0xab,sizeof pd);
       assert(bcir_tensor_swiglu_backward_panels_pool(pool,v2,r,c,x,u,dy,pa,pb,pc,pd)==1);
-      assert(same_shorts(pa,ra,n) && same_shorts(pb,rb,n) && same_shorts(pc,rc,n) && same_shorts(pd,rd,n));
+      assert(same_panel("gate adjoint as A",r,c,v2,threads,pa,ra) &&
+          same_panel("gate adjoint as A^T",r,c,v2,threads,pb,rb) &&
+          same_panel("up adjoint as A",r,c,v2,threads,pc,rc) &&
+          same_panel("up adjoint as A^T",r,c,v2,threads,pd,rd));
       cases++;
     }
     /* values at the conversion's edge: every binary32 value built within an ulp or two of a

@@ -255,7 +255,10 @@ BCIR_DT_API int bcir_tensor_mm_bf16_group_pool(bcir_tensor_pool *pool,
 /* The bf16 contract's operands written by their producers (BF16-PANELS). A tensor only bf16 GEMMs
  * read can be stored as the packed panel such a GEMM reads -- each element the conversion of its
  * binary32 value (bcir_tensor_bf16_bits), in the tiles the entries' packs write for a whole call --
- * so the GEMM skips that pack and computes the packed call's product bit for bit. An r x c row-major tensor (r and c multiples of 32: no padding) has three panels,
+ * so the GEMM skips that pack and computes the packed call's product bit for bit. A NaN value's
+ * element is a quiet NaN, which one not part of the contract: which NaN an operation on two NaNs
+ * propagates is the compiled code's, so the writers' copy of a kernel and the entries' can hold
+ * different ones. An r x c row-major tensor (r and c multiples of 32: no padding) has three panels,
  * each of r*c elements:
  *   as A    rows r, depth c, in 16-row x 32-depth tiles (a linear's input in x W^T, an adjoint in
  *           its input adjoint dy W);

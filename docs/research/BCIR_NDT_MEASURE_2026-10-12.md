@@ -2081,3 +2081,51 @@ trainer's predicate checked the rows and the hidden width but not the model's wi
 width was off the 32 grid would have written panels for GEMMs the grouped entry then refuses, their
 outputs unwritten (a second model of width 48 in the trainer's witness now writes none); and the A pack
 converts alpha times A while a panel is A alone, so an A panel is admitted at alpha 1 only.
+
+A NaN is held to be a NaN, not a pattern. The native AArch64 C runtime job failed the harness's first
+version at its writer comparison -- the SwiGLU VJP's four panels against the binary32 entry's values
+converted, over cases that include NaN inputs -- which held NaN elements bit for bit. Which NaN an
+operation on two NaNs propagates is the compiled code's (the operand order its instructions take), and
+for a NaN gate the sigmoid's NaN has the opposite sign (it is computed from -x), so two compiled copies
+of one kernel can hold different NaNs -- the writers call the entries' kernels a 1,024-column segment at
+a time, and an element one call computes in a vector body another can compute in a remainder loop or
+an inlined copy; the bf16 contract already leaves which one to the code. The comparison now holds every element bit for bit and a quiet NaN where the reference holds one
+(`same_panel`, the rule `same_bits_or_nan` holds the GEMMs to), and reports the first difference with
+its case. The trainer's finite values agreed there: on the same commit the AArch64 oracle job's Python
+witness held the states with the panels and without them equal, its probe showing all three panel
+paths taken. On this host, on the writers' generic path ([nan/](measurements/2026-10-18/panels/nan/)), a
+writer whose NaN elements differ from the reference's only in their sign fails the first version's
+comparison and passes this one; and PN34, the writer storing a NaN element as a signaling NaN, passes a
+comparison that takes any NaN and fails this one, which names it: the SiLU product as A, 64 x 96, v1,
+one thread, element 318 `0xff81` where the reference holds `0xffc0`. With PN34 the table holds 35
+faults.
+
+## 36. The panels over a whole run, against PyTorch's bfloat16 (LM-PANELS)
+
+§35's two changes keep every state, so a whole run measures only what they buy. LM-PAIRED's five seeds
+each ran the 1,000-step language model at four threads under three arms in one session, their order
+rotated seed by seed -- BCIR `bf16+exp+reduce+attn` on 5804ad5 (BF16-KERN and BF16-PANELS-1) and on
+d5bc457 (§34's fastest arm, before them), and compiled PyTorch under autocast -- with §32's analysis
+fixed before the runs, the margin graded on every pair ([panels/lm/](measurements/2026-10-18/panels/lm/),
+[paired_panels.py](measurements/2026-10-18/panels/lm/paired_panels.py)).
+
+| seed | BCIR with the panels, ms (tokens/s) | PyTorch bf16 | BCIR before them |
+|---|---|---|---|
+| 20261011 | 68.6 (14,925) | 170.5 (6,007) | 72.2 (14,180) |
+| 1001 | 69.9 (14,654) | 175.0 (5,853) | 75.5 (13,559) |
+| 2002 | 69.1 (14,826) | 147.1 (6,963) | 75.8 (13,500) |
+| 3003 | 69.4 (14,751) | 148.2 (6,907) | 73.9 (13,864) |
+| 4004 | 69.0 (14,843) | 150.9 (6,787) | 75.4 (13,578) |
+
+([summary.json](measurements/2026-10-18/panels/lm/summary.json).) With the panels BCIR trains at
+**2.282 times** the tokens a second of compiled PyTorch under autocast (95% interval 2.061-2.526),
+faster on five of five seeds, its test cross-entropy 0.00054 nats above PyTorch's on average (interval
+-0.00073 to +0.00181): inside the margin. Against the same contract before §35 it is 1.078 times
+(1.054-1.102, faster on five of five), where §35's step pairs read x1.063 (1.049-1.076) at four threads;
+and the two BCIR arms end in one state on every seed, §34's, so their test losses agree to the last bit.
+The session ran slower than §34's: the arm before the panels, §34's fastest code, took 74.6 ms a step
+(geometric mean) against 70.9 there, PyTorch 157.9 against 142.9, so §34's pair reads 2.117 here against
+2.015 there. A session moves the ratio to PyTorch by about 5% by itself; what §35 buys is the in-session
+1.078. Peak RSS is 534 MB with the panels -- they sit in the binary32 slots, so the arena (362,944,768
+bytes) and the workspace (11,534,592) are unchanged -- against 1,141-1,146 MB for PyTorch; the
+persistent state is the same 157,390,848 bytes on every arm.

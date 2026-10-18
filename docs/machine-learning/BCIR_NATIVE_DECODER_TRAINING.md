@@ -492,7 +492,12 @@ writing, and the SwiGLU block's outputs are written by their producers as the GE
 hidden activation as A and B, the gate and up adjoints as A and A^T, in their binary32 slots -- so
 those GEMMs skip their packs. Every state is as it was; three libraries in one process, a step each
 in turn, put the 9.84M decoder's four-thread step 1.063 times faster than before (95% interval
-1.049-1.076) and its one-thread step 1.085 times.
+1.049-1.076) and its one-thread step 1.085 times. Over five paired seeds of the 1,000-step language
+model (LM-PANELS, §36) the two changes train 1.078 times faster than the same contract before them
+(95% interval 1.054-1.102), ending in the same states, and BCIR trains at 2.282 times the tokens a
+second of compiled PyTorch under autocast (2.061-2.526), the test cross-entropy inside the ±0.01-nat
+margin; that session ran PyTorch slower than LM-ATTN's, which moved the ratio about 5% by itself, so
+the changes' own share is the 1.078.
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over

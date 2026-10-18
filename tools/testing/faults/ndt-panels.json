@@ -241,6 +241,13 @@
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN34 the portable writer storing a NaN element as a signaling NaN",
+      "new": "  for (q=0;q<w;q++) { uint16_t h=bf16_of(v[q]); j->pa[k][panel_a_at(j->c,i,c0+q)]=(uint16_t)((h&0x7fc0u)==0x7fc0u ? ((h&0xffbfu)|1u) : h); }",
+      "old": "  for (q=0;q<w;q++) j->pa[k][panel_a_at(j->c,i,c0+q)]=bf16_of(v[q]);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
       "label": "PK1 the AMX kernel streaming the first B tile of a depth tile into both B tiles",
       "new": "      _tile_stream_loadd(6,b0+q*BF16_TILE,64); _tile_stream_loadd(7,b0+q*BF16_TILE,64);",
       "old": "      _tile_stream_loadd(6,b0+q*BF16_TILE,64); _tile_stream_loadd(7,b1+q*BF16_TILE,64);",

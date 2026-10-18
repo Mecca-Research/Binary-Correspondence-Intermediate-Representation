@@ -2968,14 +2968,38 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     slots are 64-byte aligned.
   - Measured with three libraries in one process, a step each in turn: the step 99.57 -> 96.36 ->
     92.73 ms at four threads (x1.063, 95% interval 1.049-1.076) and 329.9 -> 300.3 at one (x1.085),
-    every round's losses equal; the comparison decoder's states unchanged through four builds
-    (`08da09e8…`, `e91ae701…`, `4bf4e057…`).
+    every round's losses equal; the comparison decoder's states unchanged: `08da09e8…`
+    (`bf16+exp+reduce+attn`) through the tile, AVX-512, AVX2 and portable builds, `e91ae701…`
+    (`bf16+exp+reduce`) through the tile and AVX-512 builds, `4bf4e057…` (`kblock+exp+reduce`, a
+    path the panels do not take) on the default build, each at one thread and four.
   - `ndt-panels.json` holds 34 faults. Its first sweep caught 31: an ulp's slip in a writer hides
     behind the bfloat16 conversion, so the harness gained values built at a conversion midpoint and a
     tensor-unit probe of the values each writer's job computed. Review found two defects before the
     first green run: the trainer's predicate left out the model's width (a model off the 32 grid there
     would have left the down projection unwritten), and an A panel at alpha other than 1 would have
     dropped alpha; both are refused now, each with its case and its fault.
+  - The native AArch64 C runtime job then failed the harness's first version, which held the NaN
+    elements of the SwiGLU VJP's panels bit for bit against the binary32 entry's values converted:
+    which NaN an operation on two NaNs propagates is the compiled code's operand order, and for a NaN
+    gate the sigmoid's NaN has the opposite sign, so the writers' copy of a kernel and the entries' can
+    hold different NaNs. The harness holds every element bit for bit and a quiet NaN where the
+    reference holds one (`same_panel`, as `same_bits_or_nan` holds the GEMMs), naming the first
+    difference with its case; `bcir_tensor.h` says the same of the panels (the report's §35). PN34,
+    the portable writer storing a NaN as a signaling NaN, is the rule's witness: a comparison that took
+    any NaN passes it, and a writer whose NaNs differ only in sign fails the first version and passes
+    this one ([measurements/2026-10-18/panels/nan/](research/measurements/2026-10-18/panels/nan/)).
+  LM-PANELS (2026-10-18): the bf16 GEMMs' kernel and panels over 1,000 steps, five seeds paired.
+  - LM-PAIRED's five seeds ran three arms each at four threads in one session, the order rotated: BCIR
+    under `bf16+exp+reduce+attn` on 5804ad5 and on d5bc457 (before BF16-KERN and BF16-PANELS-1), and
+    compiled PyTorch under autocast, with LM-BF16's analysis fixed before the runs
+    ([measurements/2026-10-18/panels/lm/](research/measurements/2026-10-18/panels/lm/), the report's
+    §36).
+  - BCIR trains at 2.282 times compiled PyTorch bf16's tokens a second (95% interval 2.061-2.526,
+    faster on 5 of 5: 14,654-14,925 tokens a second against 5,853-6,963), its test cross-entropy
+    0.00054 nats above PyTorch's (inside the ±0.01 margin). The two changes buy 1.078 times
+    (1.054-1.102, 5 of 5), the two BCIR arms ending in one state, LM-ATTN's, on every seed. The session
+    ran slower than LM-ATTN's (the same code x1.051, PyTorch x1.105), so LM-ATTN's pair read 2.117
+    here against 2.015 there. Peak RSS 534 MB against 1,141-1,146.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
