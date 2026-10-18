@@ -1,0 +1,47 @@
+--- a/runtime/c/bcir_tensor.c
++++ b/runtime/c/bcir_tensor.c
+@@ -1361,13 +1361,18 @@
+ /* The AMX instance: four 16 x 16 accumulator tiles (0-3) over a 32 x 32 block of C, two A tiles
+  * (4, 5) and two B tiles (6, 7) a depth tile; TDPBF16PS is the contract's block step exactly. A
+  * block that the region's edge cuts goes through a zero-padded copy. The tiles are configured at
+- * the start and released at the end of every region, so no thread keeps tile state between tasks. */
++ * the start and released at the end of every region, so no thread keeps tile state between tasks.
++ * Where the operands sit is not part of the arithmetic (BF16-KERN): the region's blocks share one A
++ * strip and read each B block once, so the B tiles are loaded as streamed (TILELOADDT1), leaving L1
++ * to the strip; and the next block's lines of C are prefetched for writing during the depth loop,
++ * a few a depth tile, so the stores that end a block find them owned (PREFETCHW, a hint: where a
++ * CPU lacks it, a no-op). Every tile operation is the one before, in the same order. */
+ typedef struct bf16_tilecfg {
+   unsigned char palette,start,reserved[14]; unsigned short colsb[16]; unsigned char rows[16];
+ } bf16_tilecfg;
+-__attribute__((target("amx-tile,amx-bf16"))) static void bf16_amx(const bf16_call *c, size_t r0,
++__attribute__((target("amx-tile,amx-bf16,prfchw"))) static void bf16_amx(const bf16_call *c, size_t r0,
+     size_t r1, size_t c0, size_t c1, int zero) {
+-  const mm_args *x=&c->x; const size_t kt=c->kt,ldc=x->ldc; size_t i,j,q,r,cc;
++  const mm_args *x=&c->x; const size_t kt=c->kt,ldc=x->ldc,per=(64+kt-1)/(kt ? kt : 1); size_t i,j,q,r,cc;
+   _Alignas(64) float edge[32*32]; bf16_tilecfg cfg;
+   memset(&cfg,0,sizeof cfg); cfg.palette=1;
+   for (q=0;q<8;q++) { cfg.rows[q]=16; cfg.colsb[q]=64; }
+@@ -1377,6 +1382,9 @@
+     const uint16_t *b0=c->bp+((j-c->j0)/16)*kt*BF16_TILE,*b1=b0+kt*BF16_TILE;
+     size_t rows=r1-i<32 ? r1-i : 32,cols=c1-j<32 ? c1-j : 32; float *cp=x->c+i*ldc+j;
+     int whole=rows==32 && cols==32;
++    /* the next block in this order, and its lines of C: row l/2's half l%2 of 32 x 32, where in C */
++    size_t ni=j+32<c1 ? i : i+32,nj=j+32<c1 ? j+32 : c0,nrows=ni<r1 ? (r1-ni<32 ? r1-ni : 32) : 0;
++    size_t ncols=nj<c1 ? (c1-nj<32 ? c1-nj : 32) : 0; const float *np=nrows && ncols ? x->c+ni*ldc+nj : cp;
+     if (zero) { _tile_zero(0); _tile_zero(1); _tile_zero(2); _tile_zero(3); }
+     else if (whole) {
+       _tile_loadd(0,cp,ldc*4); _tile_loadd(1,cp+16,ldc*4);
+@@ -1388,8 +1396,11 @@
+       _tile_loadd(2,edge+16*32,128); _tile_loadd(3,edge+16*32+16,128);
+     }
+     for (q=0;q<kt;q++) {
++      size_t l;
++      for (l=q*per;l<q*per+per && l<64;l++)
++        if ((l>>1)<nrows && (l&1)*16<ncols) __builtin_prefetch(np+(l>>1)*ldc+(l&1)*16,1,3);
+       _tile_loadd(4,a0+q*BF16_TILE,64); _tile_loadd(5,a1+q*BF16_TILE,64);
+-      _tile_loadd(6,b0+q*BF16_TILE,64); _tile_loadd(7,b1+q*BF16_TILE,64);
++      _tile_stream_loadd(6,b0+q*BF16_TILE,64); _tile_stream_loadd(7,b1+q*BF16_TILE,64);
+       _tile_dpbf16ps(0,4,6); _tile_dpbf16ps(1,4,7); _tile_dpbf16ps(2,5,6); _tile_dpbf16ps(3,5,7);
+     }
+     if (whole) {

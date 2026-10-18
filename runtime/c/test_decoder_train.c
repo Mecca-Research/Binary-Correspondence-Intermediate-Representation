@@ -1954,12 +1954,283 @@ static void trainer_attn(void) {
     printf("  PASS fused attention trainer (ATTN-FMA): the bit with each GEMM contract and none%s\n",probed);
   }
 }
+#ifdef BCIR_DT_PANELS_PROBE
+unsigned bcir_decoder_panels_probe(void);
+unsigned bcir_tensor_panels_probe(void);
+#endif
+/* the float whose top 16 bits are v's and whose low 16 are 0x8000: the midpoint between two
+ * bfloat16 values, where the conversion turns on the last bits of what is converted */
+static float bf16_midpoint(float v) {
+  uint32_t b; memcpy(&b,&v,4); b=(b&0xffff0000u)|0x8000u; memcpy(&v,&b,4); return v;
+}
+/* BF16-PANELS: the layouts as the harness reads bcir_tensor.h -- A (rows x depth): tile
+ * (i/16, l/32), row i%16, lane l%32; B (depth x columns): tile (j/16, l/32), pair (l%32)/2, lane
+ * 2*(j%16)+l%2; A^T: A's place of the transpose's element -- each tile 512 elements, tiles of one
+ * row (column) block in depth order */
+static size_t ref_panel_a(size_t depth,size_t i,size_t l) {
+  return (((i/16)*(depth/32))+l/32)*512+(i%16)*32+(l%32);
+}
+static size_t ref_panel_b(size_t depth,size_t l,size_t j) {
+  return (((j/16)*(depth/32))+l/32)*512+((l%32)/2)*32+2*(j%16)+(l%2);
+}
+/* an r x c tensor's panel as A (into a) and as B (b) or A^T (b, at), by the conversion alone */
+static void ref_panels(size_t r,size_t c,const float *x,unsigned short *a,unsigned short *b,int at) {
+  size_t i,l;
+  for (i=0;i<r;i++) for (l=0;l<c;l++) {
+    unsigned short h=(unsigned short)bcir_tensor_bf16_bits(x[i*c+l]);
+    a[ref_panel_a(c,i,l)]=h;
+    if (at) b[ref_panel_a(r,l,i)]=h; else b[ref_panel_b(r,i,l)]=h;
+  }
+}
+static int same_shorts(const unsigned short *a,const unsigned short *b,size_t n) {
+  return !memcmp(a,b,n*sizeof(*a));
+}
+static void panels_contract(void) {
+  enum { N=64*1056 };
+  static float x[N],u[N],dy[N],y[N],dg[N],du[N],c0[N],want[N],got[N];
+  static unsigned short pa[N],pb[N],pc[N],pd[N],ra[N],rb[N],rc[N],rd[N];
+  static _Alignas(64) unsigned char ws[1<<19];
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  /* the last two rows longer than a writer's segment of 1024 columns: a row in two calls */
+  static const size_t shapes[][2]={{32,32},{64,96},{96,160},{32,128},{64,32},{32,1056},{64,1056}};
+  static const size_t calls[][3]={{32,32,32},{64,96,32},{96,64,160},{32,128,64}};
+  size_t s,i,cases=0,gemms=0,verdicts[2]={0,0}; unsigned threads,most=bcir_tensor_pool_rails() ? 4 : 1; int v2;
+  for (threads=1;threads<=most;threads+=3) {
+    bcir_tensor_pool *pool=threads>1 ? bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads) : NULL;
+    if (threads>1) assert(pool);
+    for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) for (v2=0;v2<2;v2++) {
+      size_t r=shapes[s][0],c=shapes[s][1],n=r*c; int bad,want_bad;
+      /* odd shapes with the edges (zeros, subnormals, the odd infinity), even ones finite */
+      for (i=0;i<n;i++) { x[i]=bf16_operand((unsigned)i,(int)(s%2)); u[i]=bf16_operand((unsigned)i+7u,(int)(s%2)); dy[i]=bf16_operand((unsigned)i+11u,0); }
+      if (s==2) { x[n-1]=NAN; }                  /* a NaN input: a value not finite */
+      if (s==4) { x[5]=1e30f; u[5]=1e30f; }       /* finite operands, an infinite value */
+      if (s==6) { x[1056+1040]=NAN; }             /* a NaN in a row's second segment */
+      want_bad=0;
+      if (v2) bcir_tensor_silu_mul_v2_scan_pool(pool,n,x,u,y,&want_bad);
+      else bcir_tensor_silu_mul_scan_pool(pool,n,x,u,y,&want_bad);
+      if (s==0) assert(!want_bad);
+      if (s==2 || s==4 || s==6) assert(want_bad);
+      verdicts[want_bad!=0]++;
+      ref_panels(r,c,y,ra,rb,0);
+      bad=0; memset(pa,0xab,sizeof pa); memset(pb,0xab,sizeof pb);
+      assert(bcir_tensor_silu_mul_panels_pool(pool,v2,r,c,x,u,pa,pb,&bad)==1);
+      assert(bad==want_bad && same_shorts(pa,ra,n) && same_shorts(pb,rb,n));
+      assert(bcir_tensor_silu_mul_panels_pool(pool,v2,r,c,x,u,pa,pb,NULL)==1 && same_shorts(pa,ra,n));
+      if (v2) bcir_tensor_swiglu_backward_v2_pool(pool,n,x,u,dy,dg,du);
+      else bcir_tensor_swiglu_backward_pool(pool,n,x,u,dy,dg,du);
+      ref_panels(r,c,dg,ra,rb,1); ref_panels(r,c,du,rc,rd,1);
+      memset(pa,0xab,sizeof pa); memset(pb,0xab,sizeof pb); memset(pc,0xab,sizeof pc); memset(pd,0xab,sizeof pd);
+      assert(bcir_tensor_swiglu_backward_panels_pool(pool,v2,r,c,x,u,dy,pa,pb,pc,pd)==1);
+      assert(same_shorts(pa,ra,n) && same_shorts(pb,rb,n) && same_shorts(pc,rc,n) && same_shorts(pd,rd,n));
+      cases++;
+    }
+    /* values at the conversion's edge: every binary32 value built within an ulp or two of a
+     * bfloat16 midpoint, so a writer whose value slips by one ulp converts differently (elsewhere the
+     * conversion hides most such slips). The SiLU product is s*u with s the entry's own SiLU, which
+     * it returns at u = 1, so u = M/s puts the product next to M; the SwiGLU VJP's two adjoints are
+     * dy*(u*...) and (dy*g)*s, read back at dy = u = 1, and dy = M/(that) puts the even elements'
+     * dg and the odd elements' du next to theirs */
+    for (v2=0;v2<2;v2++) {
+      enum { R=64, C=96, NB=R*C };
+      int bad=0;
+      for (i=0;i<NB;i++) { x[i]=-4.0f+8.0f*(float)((i*37u)%NB)/(float)NB+1e-3f; u[i]=1.0f; dy[i]=1.0f; }
+      if (v2) bcir_tensor_silu_mul_v2_scan_pool(pool,NB,x,u,y,&bad);
+      else bcir_tensor_silu_mul_scan_pool(pool,NB,x,u,y,&bad);
+      for (i=0;i<NB;i++) u[i]=bf16_midpoint(y[i])/y[i];
+      if (v2) bcir_tensor_silu_mul_v2_scan_pool(pool,NB,x,u,y,&bad);
+      else bcir_tensor_silu_mul_scan_pool(pool,NB,x,u,y,&bad);
+      ref_panels(R,C,y,ra,rb,0);
+      assert(bcir_tensor_silu_mul_panels_pool(pool,v2,R,C,x,u,pa,pb,NULL)==1 && same_shorts(pa,ra,NB) && same_shorts(pb,rb,NB));
+      for (i=0;i<NB;i++) u[i]=1.0f;
+      if (v2) bcir_tensor_swiglu_backward_v2_pool(pool,NB,x,u,dy,dg,du);
+      else bcir_tensor_swiglu_backward_pool(pool,NB,x,u,dy,dg,du);
+      for (i=0;i<NB;i++) dy[i]=i%2 ? bf16_midpoint(du[i])/du[i] : bf16_midpoint(dg[i])/dg[i];
+      if (v2) bcir_tensor_swiglu_backward_v2_pool(pool,NB,x,u,dy,dg,du);
+      else bcir_tensor_swiglu_backward_pool(pool,NB,x,u,dy,dg,du);
+      ref_panels(R,C,dg,ra,rb,1); ref_panels(R,C,du,rc,rd,1);
+      assert(bcir_tensor_swiglu_backward_panels_pool(pool,v2,R,C,x,u,dy,pa,pb,pc,pd)==1);
+      assert(same_shorts(pa,ra,NB) && same_shorts(pb,rb,NB) && same_shorts(pc,rc,NB) && same_shorts(pd,rd,NB));
+      cases++;
+    }
+#ifdef BCIR_DT_PANELS_PROBE
+    {  /* the tensor unit's record: the values each job computed, from its own fields */
+      (void)bcir_tensor_panels_probe();
+      assert(bcir_tensor_panels_probe()==0u);
+      assert(bcir_tensor_silu_mul_panels_pool(pool,0,32,32,x,u,pa,pb,NULL)==1 && bcir_tensor_panels_probe()==1u);
+      assert(bcir_tensor_silu_mul_panels_pool(pool,1,32,32,x,u,pa,pb,NULL)==1);
+      assert(bcir_tensor_swiglu_backward_panels_pool(pool,0,32,32,x,u,dy,pa,pb,pc,pd)==1 && bcir_tensor_panels_probe()==6u);
+      assert(bcir_tensor_swiglu_backward_panels_pool(pool,1,32,32,x,u,dy,pa,pb,pc,pd)==1 && bcir_tensor_panels_probe()==8u);
+      assert(bcir_tensor_silu_mul_panels_pool(pool,1,33,32,x,u,pa,pb,NULL)==0 && bcir_tensor_panels_probe()==0u);
+    }
+#endif
+    /* refused: shapes off the 32 grid write nothing; empty writes nothing and succeeds */
+    {
+      int bad=0; memset(pa,0xab,sizeof pa); memset(ra,0xab,sizeof ra);
+      assert(bcir_tensor_silu_mul_panels_pool(pool,1,33,32,x,u,pa,pb,&bad)==0 && !bad && same_shorts(pa,ra,N));
+      assert(bcir_tensor_silu_mul_panels_pool(pool,0,32,48,x,u,pa,pb,&bad)==0 && same_shorts(pa,ra,N));
+      assert(bcir_tensor_swiglu_backward_panels_pool(pool,1,40,32,x,u,dy,pa,pb,pc,pd)==0 && same_shorts(pa,ra,N));
+      assert(bcir_tensor_silu_mul_panels_pool(pool,1,0,32,x,u,pa,pb,&bad)==1 && !bad && same_shorts(pa,ra,N));
+    }
+    /* the grouped entry reading panels: each call kind the trainer makes -- an input's A (x W^T), an
+     * adjoint's A (dy W), an activation's B and an adjoint's A^T (dy^T x) -- and a chain of two
+     * adjoints into one dx beside their weight adjoints, against the same calls packed */
+    for (s=0;s<sizeof(calls)/sizeof(calls[0]);s++) {
+      size_t m=calls[s][0],nn=calls[s][1],k=calls[s][2],kind;
+      for (i=0;i<m*k || i<k*nn || i<m*nn;i++) {
+        if (i<N) { x[i]=bf16_operand((unsigned)i*3u,1); u[i]=bf16_operand((unsigned)i*5u+1u,0); c0[i]=bf16_operand((unsigned)i+3u,0); }
+      }
+      for (kind=0;kind<4;kind++) {
+        bcir_tensor_mm_call cl; bcir_tensor_bf16_panels pre; size_t q;
+        /* kind 1 reads only B as a panel, so its A pack may scale by any alpha */
+        memset(&cl,0,sizeof cl); cl.m=m; cl.n=nn; cl.k=k; cl.alpha=kind==1 ? 1.5f : 1.0f;
+        cl.beta=kind==3 ? 1.0f : 0.0f; cl.ta=kind==2; cl.tb=kind==0; cl.a=x; cl.b=u; cl.c=want;
+        memcpy(want,c0,m*nn*sizeof(float)); memcpy(got,c0,m*nn*sizeof(float));
+        assert(bcir_tensor_mm_bf16_group_pool(pool,NULL,0,&cl,1,ws,sizeof ws)==1);
+        /* the panels of the call's own operands: A (m x k, or k x m read transposed) and B */
+        for (q=0;q<m*k;q++) { size_t i0=q/k,l=q%k; y[i0*k+l]=cl.ta ? x[l*m+i0] : x[i0*k+l]; }
+        for (q=0;q<k*nn;q++) { size_t l=q/nn,j=q%nn; dg[l*nn+j]=cl.tb ? u[j*k+l] : u[l*nn+j]; }
+        ref_panels(m,k,y,ra,rb,0); ref_panels(k,nn,dg,rc,rd,0);
+        pre.a=kind==1 ? NULL : ra; pre.b=kind==0 ? NULL : rd;
+        cl.a=pre.a ? NULL : x; cl.b=pre.b ? NULL : u; cl.c=got;
+        assert(bcir_tensor_mm_bf16_group_panels_pool(pool,NULL,0,&cl,1,&pre,ws,sizeof ws)==1);
+        assert(same_bits_or_nan(want,got,m*nn)); gemms++;
+      }
+      {  /* the backward's gate/up group: two adjoints chained into one dx, their weight adjoints apart */
+        bcir_tensor_mm_call cx[2],cw[2]; bcir_tensor_bf16_panels pre[4]; size_t q;
+        static float dx0[96*160],dx1[96*160],w0[96*160],w1[96*160],w2[96*160],w3[96*160];
+        for (q=0;q<2;q++) {
+          memset(&cx[q],0,sizeof cx[q]); memset(&cw[q],0,sizeof cw[q]);
+          cx[q].m=m; cx[q].n=nn; cx[q].k=k; cx[q].alpha=1.0f; cx[q].beta=q ? 1.0f : 0.0f;
+          cx[q].a=q ? dy : x; cx[q].b=u; cx[q].c=dx0;
+          cw[q].ta=1; cw[q].m=k; cw[q].n=nn; cw[q].k=m; cw[q].alpha=1.0f; cw[q].beta=0.5f;
+          cw[q].a=q ? dy : x; cw[q].b=c0; cw[q].c=q ? w1 : w0;
+        }
+        for (q=0;q<k*nn;q++) { w0[q]=w1[q]=w2[q]=w3[q]=c0[q]; }
+        assert(bcir_tensor_mm_bf16_group_pool(pool,cx,2,cw,2,ws,sizeof ws)==1);
+        ref_panels(m,k,x,ra,rb,1); ref_panels(m,k,dy,rc,rd,1);
+        for (q=0;q<2;q++) { cx[q].a=NULL; cx[q].c=dx1; cw[q].a=NULL; cw[q].c=q ? w3 : w2; }
+        pre[0].a=ra; pre[0].b=NULL; pre[1].a=rc; pre[1].b=NULL;
+        pre[2].a=rb; pre[2].b=NULL; pre[3].a=rd; pre[3].b=NULL;
+        assert(bcir_tensor_mm_bf16_group_panels_pool(pool,cx,2,cw,2,pre,ws,sizeof ws)==1);
+        assert(same_bits_or_nan(dx0,dx1,m*nn) && same_bits_or_nan(w0,w2,k*nn) && same_bits_or_nan(w1,w3,k*nn));
+        gemms++;
+      }
+    }
+    {  /* a panel is its own call's: a later call reading the same operands packs them, and the
+        * workspace the group needs counts those packs (a byte short of it is refused) */
+      bcir_tensor_mm_call two[2]; bcir_tensor_bf16_panels pre[2]; size_t q,need;
+      memset(two,0,sizeof two);
+      for (q=0;q<2;q++) { two[q].m=64; two[q].n=32; two[q].k=32; two[q].alpha=1.0f; two[q].a=x; two[q].b=u; }
+      two[0].c=dg;
+      assert(bcir_tensor_mm_bf16_group_pool(pool,NULL,0,two,1,ws,sizeof ws)==1);  /* the call packed */
+      two[0].c=got; two[1].c=y;
+      pre[0].a=rc; pre[0].b=rd; pre[1].a=NULL; pre[1].b=NULL;  /* call 0's panels: another product's */
+      need=bcir_tensor_mm_bf16_group_workspace(NULL,0,two,2);
+      assert(need>1 && bcir_tensor_mm_bf16_group_panels_pool(pool,NULL,0,two,2,pre,ws,need-1)==0);
+      assert(bcir_tensor_mm_bf16_group_panels_pool(pool,NULL,0,two,2,pre,ws,need)==1);
+      assert(same_bits_or_nan(y,dg,64*32));
+      gemms++;
+    }
+    {  /* refused, nothing written: a panel's call off the 32 grid (its rows, its columns, its
+        * depth), an A panel's at alpha 2, a workspace short of the operand it packs, and no
+        * workspace for it */
+      bcir_tensor_mm_call cl; bcir_tensor_bf16_panels pre;
+      memset(&cl,0,sizeof cl); cl.m=33; cl.n=32; cl.k=32; cl.alpha=1.0f; cl.b=u; cl.c=got;
+      for (i=0;i<64*64;i++) got[i]=c0[i];
+      pre.a=ra; pre.b=NULL;
+      assert(bcir_tensor_mm_bf16_group_panels_pool(pool,NULL,0,&cl,1,&pre,ws,sizeof ws)==0);
+      cl.m=32; cl.n=48;
+      assert(bcir_tensor_mm_bf16_group_panels_pool(pool,NULL,0,&cl,1,&pre,ws,sizeof ws)==0);
+      cl.n=32; cl.k=40;
+      assert(bcir_tensor_mm_bf16_group_panels_pool(pool,NULL,0,&cl,1,&pre,ws,sizeof ws)==0);
+      cl.m=64; cl.n=64; cl.k=32; cl.alpha=2.0f;  /* an A panel is A alone: alpha 1 only */
+      assert(bcir_tensor_mm_bf16_group_panels_pool(pool,NULL,0,&cl,1,&pre,ws,sizeof ws)==0);
+      cl.alpha=1.0f;
+      assert(bcir_tensor_mm_bf16_group_panels_pool(pool,NULL,0,&cl,1,&pre,ws,64)==0);
+      assert(bcir_tensor_mm_bf16_group_panels_pool(pool,NULL,0,&cl,1,&pre,NULL,0)==0);
+      assert(bcir_tensor_mm_bf16_group_panels_pool(pool,NULL,0,&cl,1,&pre,NULL,sizeof ws)==0);
+      assert(same_bits_or_nan(got,c0,64*64));
+      pre.b=rd; cl.b=NULL;  /* both operands panels: no workspace at all */
+      assert(bcir_tensor_mm_bf16_group_panels_pool(pool,NULL,0,&cl,1,&pre,NULL,0)==1);
+    }
+    bcir_tensor_pool_stop(pool);
+  }
+  assert(verdicts[0]>0 && verdicts[1]>0);  /* both verdicts given, each the scan entry's */
+  printf("  PASS bf16 panels (BF16-PANELS): %zu writer cases (SiLU*u as A and B, the SwiGLU VJP as A and A^T, both SiLUs) equal to the binary32 entries' values converted in place, verdicts, refusals; %zu grouped GEMMs reading panels equal to the packed calls, refusals\n",
+      cases,gemms);
+}
+/* BF16-PANELS: a decoder whose shapes are multiples of 32 under each bf16 contract ends in one
+ * state whether the SwiGLU block's tensors are panels (64-byte aligned slots), binary32 (the
+ * activation arena a float off that alignment: the hidden activation binary32, the adjoints
+ * panels) or the other way (the scratch arena off: the hidden activation a panel, the adjoints
+ * binary32), at one thread and at four. A second model's width (48) is off the 32 grid while its
+ * rows and hidden width are on it: every GEMM a panel would feed has the width as a dimension, so
+ * it writes no panel at all. */
+static void trainer_panels(void) {
+  enum { P=40000, A=48000, S=24000 };
+  static _Alignas(64) float pw[P],pg[P],pm[P],pv[P],pa[A+16],ps[S+16],ref[3][P];
+  static _Alignas(64) unsigned char pws[1<<18];
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  static const uint32_t contracts[]={BCIR_DT_CONTRACT_BF16,BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP,
+      BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_ATTN};
+  static const bcir_decoder_spec specs[2]={{16,32,2,1,2,64,2,16,1,10000.0,1e-6},
+      {16,48,2,1,2,64,2,16,1,10000.0,1e-6}};
+  bcir_decoder_adamw opt={0.01,0.9,0.95,1e-8,0.01,0.05};
+  uint32_t ids[96],targets[96]; bcir_decoder_event events[3]; size_t done,i,cs,sp; unsigned layout,threads;
+  stream(ids,targets,96);
+  for (sp=0;sp<2;sp++)
+  for (cs=0;cs<sizeof(contracts)/sizeof(contracts[0]);cs++)
+  for (threads=1;threads<=(bcir_tensor_pool_rails() ? 4u : 1u);threads+=3)
+  for (layout=0;layout<3;layout++) {
+    bcir_decoder_state st; bcir_tensor_pool *pool=NULL; bcir_decoder_spec spec=specs[sp];
+    memset(&st,0,sizeof st);
+    assert(bcir_decoder_make_plan(&spec,&st.plan)==0);
+    assert(st.plan.parameters<=P && st.plan.activations<=A && st.plan.scratch<=S);
+    st.weights=pw; st.gradients=pg; st.moment1=pm; st.moment2=pv;
+    st.activations=pa+(layout==1); st.scratch=ps+(layout==2);  /* one float off 64-byte alignment */
+    st.weight_capacity=st.gradient_capacity=st.moment1_capacity=st.moment2_capacity=P;
+    st.activation_capacity=A; st.scratch_capacity=S; st.beta1_power=st.beta2_power=1.0;
+    memset(pm,0,sizeof pm); memset(pv,0,sizeof pv); memset(pg,0,sizeof pg);
+    for (i=0;i<P;i++) pw[i]=0.1f*sinf((float)(i+1)*0.37f);
+    if (threads>1) { pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads); assert(pool); }
+    st.pool=pool; st.contract=contracts[cs];
+    st.workspace=pws; st.workspace_bytes=bcir_decoder_workspace_bytes(&st.plan,st.contract);
+    assert(st.workspace_bytes>0 && st.workspace_bytes<=sizeof pws);
+#ifdef BCIR_DT_PANELS_PROBE
+    (void)bcir_decoder_panels_probe(); (void)bcir_tensor_panels_probe();
+#endif
+    assert(bcir_decoder_run(&st,&opt,ids,targets,96,NULL,3,events,3,&done)==0 && done==3);
+#if defined(BCIR_DT_PANELS_PROBE) && defined(BCIR_DT_NO_PANELS)
+    assert(bcir_decoder_panels_probe()==0u && bcir_tensor_panels_probe()==0u);
+#elif defined(BCIR_DT_PANELS_PROBE)
+    {  /* the trainer's paths, and the values the tensor unit's writers computed on them: v1's
+        * SiLU and VJP without the exponential bit, v2's with it */
+      unsigned v2=(contracts[cs]&BCIR_DT_CONTRACT_EXP)!=0,silu=v2 ? 2u : 1u,vjp=v2 ? 8u : 4u;
+      unsigned paths=sp ? 0u : layout==0 ? 7u : layout==1 ? 4u : 3u;
+      assert(bcir_decoder_panels_probe()==paths);
+      assert(bcir_tensor_panels_probe()==((paths&1u ? silu : 0u)|(paths&4u ? vjp : 0u)));
+    }
+#endif
+    if (threads==1 && layout==0) { memcpy(ref[0],pw,sizeof pw); memcpy(ref[1],pm,sizeof pm); memcpy(ref[2],pv,sizeof pv); }
+    else assert(!memcmp(ref[0],pw,sizeof pw) && !memcmp(ref[1],pm,sizeof pm) && !memcmp(ref[2],pv,sizeof pv));
+    bcir_tensor_pool_stop(pool);
+  }
+  {
+#ifdef BCIR_DT_PANELS_PROBE
+    static const char probed[]=", each run's panel paths the probe's";
+#else
+    static const char probed[]="";
+#endif
+    printf("  PASS bf16 panels trainer (BF16-PANELS): three bf16 contracts, one state with the SwiGLU block's panels, without them and mixed, at one thread and four; none where the width is off the grid%s\n",probed);
+  }
+}
 int main(void) {
   gemm_contract(); attention_reference(); attention_fused_reference(); adamw_reference();
   finite_differences(); refusals();
   learning(); pool_identity(); pool_claims(); reduction_references(); scan_references();
   gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); fused_passes();
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
+  panels_contract(); trainer_panels();
 #ifdef BCIR_DT_DIVISION_PROBE
   division_probe();
 #endif

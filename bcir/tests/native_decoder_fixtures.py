@@ -125,6 +125,12 @@ THREADS_BENCH = (DecoderSpec(250, 72, 4, 2, 200, activation="silu_gate", n_kv_he
 #: chunk loop's chain alone -- on a vector host the update pairs whole chunks (NDT-UPDATE), and the
 #: threads bench's 133 chunks reach that loop only in their short last one.
 ONE_CHUNK_BENCH = (DecoderSpec(16, 8, 2, 1, 16, activation="silu_gate", n_kv_heads=1), 2, 8)
+#: A step whose SwiGLU block admits the bf16 panels (BF16-PANELS): 32 rows (two sequences of 16), a
+#: 64-wide model over a 128-wide hidden activation -- every GEMM the block's outputs feed whole
+#: 32-tiles -- so under a bf16 contract the trainer writes the hidden activation and the gate and up
+#: adjoints as the GEMMs' panels wherever their slots are 64-byte aligned (the huge-page
+#: placement's are; a ctypes array's alignment is the allocator's).
+PANELS_BENCH = (DecoderSpec(64, 64, 2, 2, 128, activation="silu_gate", n_kv_heads=1), 2, 16)
 THREAD_COUNTS = (1, 2, 3, 4)
 
 
@@ -902,6 +908,7 @@ def measure(*, timed: bool = True) -> dict[str, float]:
 __all__ = [
     "BENCH",
     "MM_CASES",
+    "PANELS_BENCH",
     "PLAN_CORPUS",
     "THREAD_COUNTS",
     "THREADS_BENCH",

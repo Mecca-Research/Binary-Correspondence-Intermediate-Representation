@@ -1,0 +1,2 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head d5bc457, runtime/c against it 99db0e76382685d7
+{"threads": 4, "rounds": 150, "contract": "bf16+exp+reduce+attn", "median_ms": {"base": 99.57, "kern": 96.36, "panels": 92.73}, "pairs": {"base/kern": {"median_ratio": 1.033, "interval_95": [1.0224, 1.0527], "faster_rounds": 100}, "kern/panels": {"median_ratio": 1.0245, "interval_95": [1.0132, 1.0417], "faster_rounds": 96}, "base/panels": {"median_ratio": 1.0633, "interval_95": [1.0491, 1.0756], "faster_rounds": 116}}}

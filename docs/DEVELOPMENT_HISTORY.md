@@ -2953,6 +2953,29 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     times under bf16 (0.993-1.073) and 1.026 in FP32 (0.999-1.053) at -0.00036 and +0.00000 nats. The
     arms without the bit end in LM-BF16's states on all five seeds. Peak RSS 540 MB against
     1,132-1,148.
+  BF16-KERN + BF16-PANELS-1 (2026-10-18): the bf16 GEMMs' kernel and packs, every state kept.
+  - BF16-ATTR took the bf16 entry apart at the 9.84M decoder's 13 shapes: the packs a quarter of its
+    time at four threads, the compute a quarter of the tile unit's peak; oneDNN's bf16 matmul through
+    PyTorch takes 7.38 ms from binary32 operands where BCIR's entry takes 3.58 with this commit
+    ([measurements/2026-10-18/panels/](research/measurements/2026-10-18/panels/), the report's §35).
+  - BF16-KERN: the AMX kernel loads its B tiles as streamed (`TILELOADDT1`) and prefetches the next
+    block's C for writing (`PREFETCHW`), the best of seven candidates held bit for bit to the kernel
+    before it (the 13 shapes' compute x1.110 at four threads, x1.118 at one).
+  - BF16-PANELS-1: the SwiGLU block's outputs -- the hidden activation, the gate and up adjoints -- are
+    written by their producers as the bf16 GEMMs' panels (A and B, A and A^T, in the binary32 slot)
+    and read pre-packed (`bcir_tensor_mm_bf16_group_panels_pool`, `bcir_tensor_silu_mul_panels_pool`,
+    `bcir_tensor_swiglu_backward_panels_pool`), when every GEMM they feed is whole 32-tiles and the
+    slots are 64-byte aligned.
+  - Measured with three libraries in one process, a step each in turn: the step 99.57 -> 96.36 ->
+    92.73 ms at four threads (x1.063, 95% interval 1.049-1.076) and 329.9 -> 300.3 at one (x1.085),
+    every round's losses equal; the comparison decoder's states unchanged through four builds
+    (`08da09e8…`, `e91ae701…`, `4bf4e057…`).
+  - `ndt-panels.json` holds 34 faults. Its first sweep caught 31: an ulp's slip in a writer hides
+    behind the bfloat16 conversion, so the harness gained values built at a conversion midpoint and a
+    tensor-unit probe of the values each writer's job computed. Review found two defects before the
+    first green run: the trainer's predicate left out the model's width (a model off the 32 grid there
+    would have left the down projection unwritten), and an A panel at alpha other than 1 would have
+    dropped alpha; both are refused now, each with its case and its fault.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

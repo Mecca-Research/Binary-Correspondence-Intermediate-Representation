@@ -1,0 +1,2 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head d5bc457, runtime/c against it 99db0e76382685d7
+{"threads": 1, "reps": 11, "old": {"forward_ms": 3.235, "backward_ms": 12.189}, "panels": {"forward_ms": 2.982, "backward_ms": 9.590}, "forward_ratio": 1.085, "backward_ratio": 1.271, "block_ratio": 1.227, "outputs_identical": true}

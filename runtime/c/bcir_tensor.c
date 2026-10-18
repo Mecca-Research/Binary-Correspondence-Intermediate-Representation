@@ -1361,13 +1361,18 @@ BF16_PACK_BODIES(bfne, BF16_AMXHOST, bfne_cvt, BF512_PAIRS_BW)
 /* The AMX instance: four 16 x 16 accumulator tiles (0-3) over a 32 x 32 block of C, two A tiles
  * (4, 5) and two B tiles (6, 7) a depth tile; TDPBF16PS is the contract's block step exactly. A
  * block that the region's edge cuts goes through a zero-padded copy. The tiles are configured at
- * the start and released at the end of every region, so no thread keeps tile state between tasks. */
+ * the start and released at the end of every region, so no thread keeps tile state between tasks.
+ * Where the operands sit is not part of the arithmetic (BF16-KERN): the region's blocks share one A
+ * strip and read each B block once, so the B tiles are loaded as streamed (TILELOADDT1), leaving L1
+ * to the strip; and the next block's lines of C are prefetched for writing during the depth loop,
+ * a few a depth tile, so the stores that end a block find them owned (PREFETCHW, a hint: where a
+ * CPU lacks it, a no-op). Every tile operation is the one before, in the same order. */
 typedef struct bf16_tilecfg {
   unsigned char palette,start,reserved[14]; unsigned short colsb[16]; unsigned char rows[16];
 } bf16_tilecfg;
-__attribute__((target("amx-tile,amx-bf16"))) static void bf16_amx(const bf16_call *c, size_t r0,
+__attribute__((target("amx-tile,amx-bf16,prfchw"))) static void bf16_amx(const bf16_call *c, size_t r0,
     size_t r1, size_t c0, size_t c1, int zero) {
-  const mm_args *x=&c->x; const size_t kt=c->kt,ldc=x->ldc; size_t i,j,q,r,cc;
+  const mm_args *x=&c->x; const size_t kt=c->kt,ldc=x->ldc,per=(64+kt-1)/(kt ? kt : 1); size_t i,j,q,r,cc;
   _Alignas(64) float edge[32*32]; bf16_tilecfg cfg;
   memset(&cfg,0,sizeof cfg); cfg.palette=1;
   for (q=0;q<8;q++) { cfg.rows[q]=16; cfg.colsb[q]=64; }
@@ -1377,6 +1382,9 @@ __attribute__((target("amx-tile,amx-bf16"))) static void bf16_amx(const bf16_cal
     const uint16_t *b0=c->bp+((j-c->j0)/16)*kt*BF16_TILE,*b1=b0+kt*BF16_TILE;
     size_t rows=r1-i<32 ? r1-i : 32,cols=c1-j<32 ? c1-j : 32; float *cp=x->c+i*ldc+j;
     int whole=rows==32 && cols==32;
+    /* the next block in this order, and its lines of C: row l/2's half l%2 of 32 x 32, where in C */
+    size_t ni=j+32<c1 ? i : i+32,nj=j+32<c1 ? j+32 : c0,nrows=ni<r1 ? (r1-ni<32 ? r1-ni : 32) : 0;
+    size_t ncols=nj<c1 ? (c1-nj<32 ? c1-nj : 32) : 0; const float *np=nrows && ncols ? x->c+ni*ldc+nj : cp;
     if (zero) { _tile_zero(0); _tile_zero(1); _tile_zero(2); _tile_zero(3); }
     else if (whole) {
       _tile_loadd(0,cp,ldc*4); _tile_loadd(1,cp+16,ldc*4);
@@ -1388,8 +1396,11 @@ __attribute__((target("amx-tile,amx-bf16"))) static void bf16_amx(const bf16_cal
       _tile_loadd(2,edge+16*32,128); _tile_loadd(3,edge+16*32+16,128);
     }
     for (q=0;q<kt;q++) {
+      size_t l;
+      for (l=q*per;l<q*per+per && l<64;l++)
+        if ((l>>1)<nrows && (l&1)*16<ncols) __builtin_prefetch(np+(l>>1)*ldc+(l&1)*16,1,3);
       _tile_loadd(4,a0+q*BF16_TILE,64); _tile_loadd(5,a1+q*BF16_TILE,64);
-      _tile_loadd(6,b0+q*BF16_TILE,64); _tile_loadd(7,b1+q*BF16_TILE,64);
+      _tile_stream_loadd(6,b0+q*BF16_TILE,64); _tile_stream_loadd(7,b1+q*BF16_TILE,64);
       _tile_dpbf16ps(0,4,6); _tile_dpbf16ps(1,4,7); _tile_dpbf16ps(2,5,6); _tile_dpbf16ps(3,5,7);
     }
     if (whole) {
@@ -1588,20 +1599,29 @@ size_t bcir_tensor_mm_bf16_workspace(size_t m, size_t n, size_t k) {
   if (!m || !n || !k) return 0;
   return bf16_sum(bf16_sum(bf16_strip(m,k),bf16_strip(n,k)),BF16_ALIGN);
 }
-size_t bcir_tensor_mm_bf16_group_workspace(const bcir_tensor_mm_call *chain, size_t nchain,
-    const bcir_tensor_mm_call *y, size_t ny) {
+/* the bytes a group packs: an operand an earlier call packs is shared, an operand pre names (a
+ * panel, BF16-PANELS) neither packed nor shared */
+static size_t bf16_need(const bcir_tensor_mm_call *chain, size_t nchain,
+    const bcir_tensor_mm_call *y, size_t ny, const bcir_tensor_bf16_panels *pre) {
   size_t q,r,total=0,calls=nchain+ny;
   for (q=0;q<calls;q++) {
-    const bcir_tensor_mm_call *x=bf16_nth(chain,nchain,y,q); int sa=0,sb=0;
+    const bcir_tensor_mm_call *x=bf16_nth(chain,nchain,y,q);
+    int sa=pre && pre[q].a,sb=pre && pre[q].b;
     if (!bf16_packs(x)) continue;
     for (r=0;r<q;r++) {
       const bcir_tensor_mm_call *w=bf16_nth(chain,nchain,y,r);
-      if (bf16_packs(w)) { sa|=bf16_same_a(w,x); sb|=bf16_same_b(w,x); }
+      if (bf16_packs(w)) {
+        sa|=!(pre && pre[r].a) && bf16_same_a(w,x); sb|=!(pre && pre[r].b) && bf16_same_b(w,x);
+      }
     }
     if (!sa) total=bf16_sum(total,bf16_strip(x->m,x->k));
     if (!sb) total=bf16_sum(total,bf16_strip(x->n,x->k));
   }
   return total ? bf16_sum(total,BF16_ALIGN) : 0;
+}
+size_t bcir_tensor_mm_bf16_group_workspace(const bcir_tensor_mm_call *chain, size_t nchain,
+    const bcir_tensor_mm_call *y, size_t ny) {
+  return bf16_need(chain,nchain,y,ny,NULL);
 }
 /* the workspace's first 64-byte boundary and the bytes from it */
 static uint16_t *bf16_base(void *workspace, size_t *bytes) {
@@ -1641,17 +1661,27 @@ static void bf16_call_run(bcir_tensor_pool *pool, int variant, const bcir_tensor
 static size_t bf16_least(const bcir_tensor_mm_call *x) {
   return bf16_packs(x) ? bf16_sum(bf16_strip(64,x->k),BF16_ALIGN) : 0;
 }
+/* a call a panel feeds: whole tiles every way (BF16-PANELS) */
+static int bf16_whole(const bcir_tensor_mm_call *x) {
+  return x->m && x->n && x->k && !(x->m%32) && !(x->n%32) && !(x->k%32);
+}
 static int bf16_group_any(bcir_tensor_pool *pool, int variant, const bcir_tensor_mm_call *chain,
-    size_t nchain, const bcir_tensor_mm_call *y, size_t ny, void *workspace, size_t bytes) {
-  size_t q,r,calls=nchain+ny,need,usable=bytes; int grouped; bf16_job j; uint16_t *base;
+    size_t nchain, const bcir_tensor_mm_call *y, size_t ny, const bcir_tensor_bf16_panels *pre,
+    void *workspace, size_t bytes) {
+  size_t q,r,calls=nchain+ny,need,usable=bytes; int grouped,panels=0; bf16_job j; uint16_t *base;
   for (q=0;q<calls;q++) {  /* refused before anything is written */
     const bcir_tensor_mm_call *x=bf16_nth(chain,nchain,y,q);
-    if (bf16_packs(x) && (!workspace || bf16_least(x)>bytes)) return 0;
+    if (pre && (pre[q].a || pre[q].b)) {  /* the A pack converts alpha A, an A panel A alone */
+      if (!bf16_whole(x) || (pre[q].a && x->alpha!=1.0f)) return 0;
+      panels=1;
+    }
+    else if (bf16_packs(x) && (!workspace || bf16_least(x)>bytes)) return 0;
   }
-  need=bcir_tensor_mm_bf16_group_workspace(chain,nchain,y,ny);
-  grouped=nchain<=BCIR_TENSOR_MM_GROUP && ny<=BCIR_TENSOR_MM_GROUP && need<=bytes;
+  need=bf16_need(chain,nchain,y,ny,pre);
+  grouped=nchain<=BCIR_TENSOR_MM_GROUP && ny<=BCIR_TENSOR_MM_GROUP && need<=bytes && (workspace || !need);
   for (q=1;q<nchain && grouped;q++) grouped=chain[q].c==chain[0].c && chain[q].m==chain[0].m && chain[q].n==chain[0].n;
   if (!grouped) {
+    if (panels) return 0;  /* a call a panel feeds runs whole, in the one job */
     for (q=0;q<calls;q++) bf16_call_run(pool,variant,bf16_nth(chain,nchain,y,q),workspace,bytes);
     return 1;
   }
@@ -1661,11 +1691,15 @@ static int bf16_group_any(bcir_tensor_pool *pool, int variant, const bcir_tensor
     const bcir_tensor_mm_call *x=bf16_nth(chain,nchain,y,q); bf16_call *c=&j.call[q];
     bf16_args(c,x);
     if (!bf16_packs(x)) continue;
+    if (pre && pre[q].a) c->ap=pre[q].a;
     for (r=0;r<q && !c->ap;r++)
-      if (bf16_packs(bf16_nth(chain,nchain,y,r)) && bf16_same_a(bf16_nth(chain,nchain,y,r),x)) c->ap=j.call[r].ap;
+      if (!(pre && pre[r].a) && bf16_packs(bf16_nth(chain,nchain,y,r)) &&
+          bf16_same_a(bf16_nth(chain,nchain,y,r),x)) c->ap=j.call[r].ap;
     if (!c->ap) { c->wa=base; c->ap=base; base+=c->mp*c->kt*32; c->pa=x->ta ? c->kt : c->mp/32; }
+    if (pre && pre[q].b) c->bp=pre[q].b;
     for (r=0;r<q && !c->bp;r++)
-      if (bf16_packs(bf16_nth(chain,nchain,y,r)) && bf16_same_b(bf16_nth(chain,nchain,y,r),x)) c->bp=j.call[r].bp;
+      if (!(pre && pre[r].b) && bf16_packs(bf16_nth(chain,nchain,y,r)) &&
+          bf16_same_b(bf16_nth(chain,nchain,y,r),x)) c->bp=j.call[r].bp;
     if (!c->bp) { c->wb=base; c->bp=base; base+=c->np*c->kt*32; c->pb=x->tb ? c->np/32 : c->kt; }
   }
   bf16_prefix(&j);
@@ -1679,14 +1713,19 @@ static int bf16_widest(void) {
 }
 int bcir_tensor_mm_bf16_group_pool(bcir_tensor_pool *pool, const bcir_tensor_mm_call *chain,
     size_t nchain, const bcir_tensor_mm_call *y, size_t ny, void *workspace, size_t bytes) {
-  return bf16_group_any(pool,bf16_widest(),chain,nchain,y,ny,workspace,bytes);
+  return bf16_group_any(pool,bf16_widest(),chain,nchain,y,ny,NULL,workspace,bytes);
+}
+int bcir_tensor_mm_bf16_group_panels_pool(bcir_tensor_pool *pool,
+    const bcir_tensor_mm_call *chain, size_t nchain, const bcir_tensor_mm_call *y, size_t ny,
+    const bcir_tensor_bf16_panels *pre, void *workspace, size_t bytes) {
+  return bf16_group_any(pool,bf16_widest(),chain,nchain,y,ny,pre,workspace,bytes);
 }
 int bcir_tensor_mm_bf16_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m, size_t n,
     size_t k, float alpha, const float *a, const float *b, float beta, float *c, void *workspace,
     size_t bytes) {
   bcir_tensor_mm_call x;
   x.ta=ta; x.tb=tb; x.m=m; x.n=n; x.k=k; x.alpha=alpha; x.a=a; x.b=b; x.beta=beta; x.c=c;
-  return bf16_group_any(pool,bf16_widest(),NULL,0,&x,1,workspace,bytes);
+  return bf16_group_any(pool,bf16_widest(),NULL,0,&x,1,NULL,workspace,bytes);
 }
 int bcir_tensor_mm_bf16_variant(int variant, int ta, int tb, size_t m, size_t n, size_t k,
     float alpha, const float *a, const float *b, float beta, float *c, void *workspace,
@@ -1694,7 +1733,7 @@ int bcir_tensor_mm_bf16_variant(int variant, int ta, int tb, size_t m, size_t n,
   bcir_tensor_mm_call x;
   if ((variant!=1 && variant!=4 && variant!=8) || !(bcir_tensor_mm_bf16_variants()&variant)) return 0;
   x.ta=ta; x.tb=tb; x.m=m; x.n=n; x.k=k; x.alpha=alpha; x.a=a; x.b=b; x.beta=beta; x.c=c;
-  return bf16_group_any(NULL,variant,NULL,0,&x,1,workspace,bytes) ? variant : 0;
+  return bf16_group_any(NULL,variant,NULL,0,&x,1,NULL,workspace,bytes) ? variant : 0;
 }
 /* --- the writers' verdicts (NDT-SCAN-W) --------------------------------------------------------
  * A task that wrote a region reports whether it is finite into its own byte of the caller's
@@ -1871,6 +1910,153 @@ void bcir_tensor_silu_mul_v2_scan_pool(bcir_tensor_pool *pool, size_t n, const f
 void bcir_tensor_swiglu_backward_v2_pool(bcir_tensor_pool *pool, size_t n, const float *g,
     const float *u, const float *dy, float *dg, float *du) {
   ew_job j; j.n=n; j.x=g; j.u=u; j.dy=dy; j.y=dg; j.du=du; j.op=EW_SWIGLU2; ew_run(pool,&j);
+}
+/* --- the bf16 contract's operands written by their producers (BF16-PANELS) ---------------------
+ * A writer computes an r x c tensor's binary32 values a row at a time (PANEL_COLS columns a call),
+ * by the functions the binary32 entries call -- each element its value bit for bit, they being
+ * elementwise -- and stores each value's conversion where the bf16 entries' pack puts it for a whole
+ * call (bf16_pack_*_generic): as A, row i's depth l at tile (i/16, l/32), row i%16, lane l%32. A
+ * 32-row block done, its second panel comes from that A panel, bf16 to bf16: as B, depth l's column
+ * j at tile (j/16, l/32), pair (l%32)/2, lane 2*(j%16)+l%2 -- a pair of rows' 16 columns as one tile
+ * row of 16 words -- or as A^T, A's place of (j, l): those 16 x 16 words transposed. A task is a range
+ * of 32-row blocks, at most BCIR_TENSOR_SCAN_TASKS of them, so the verdict is always its tasks' bytes,
+ * and every element of every panel is written by the one task that owns its rows. */
+#define PANEL_COLS 1024
+static size_t panel_a_at(size_t depth, size_t i, size_t l) {
+  return ((i/16)*(depth/32)+l/32)*BF16_TILE+(i%16)*32+l%32;
+}
+static size_t panel_b_at(size_t depth, size_t l, size_t j) {
+  return ((j/16)*(depth/32)+l/32)*BF16_TILE+((l%32)/2)*32+2*(j%16)+l%2;
+}
+enum { PANEL_SILU1, PANEL_SILU2, PANEL_SWIGLU1, PANEL_SWIGLU2 };
+typedef struct panel_job {
+  size_t r,c,per;          /* rows, columns, 32-row blocks a task */
+  int op,variant,conv,at;  /* the values; their kernels' variant; the conversion's; second panel A^T */
+  const float *x,*u,*dy;
+  uint16_t *pa[2],*pb[2];  /* each value's panel as A and its second panel (as B, or as A^T) */
+  unsigned char *bad;
+} panel_job;
+/* row i's columns [c0, c0+w): value 0 into v0, value 1 into v1 */
+static void panel_values(const panel_job *j, size_t i, size_t c0, size_t w, float *v0, float *v1) {
+  size_t o=i*j->c+c0,q;
+  switch (j->op) {
+    case PANEL_SILU1: for (q=0;q<w;q++) { float s=j->x[o+q]*sigmoid(j->x[o+q]); v0[q]=s*j->u[o+q]; } break;
+    case PANEL_SILU2: silu2mul_run(j->variant,w,j->x+o,j->u+o,v0); break;
+    case PANEL_SWIGLU1: bcir_tensor_swiglu_backward(w,j->x+o,j->u+o,j->dy+o,v0,v1); break;
+    default: swiglu2_run(j->variant,w,j->x+o,j->u+o,j->dy+o,v0,v1); break;
+  }
+}
+static void panel_a_generic(const panel_job *j, int k, size_t i, size_t c0, size_t w, const float *v) {
+  size_t q;
+  for (q=0;q<w;q++) j->pa[k][panel_a_at(j->c,i,c0+q)]=bf16_of(v[q]);
+}
+/* the second panel of rows [r0, r0+32), element by element from the A panel */
+static void panel_second_generic(const panel_job *j, int k, size_t r0) {
+  size_t rr,l;
+  for (rr=0;rr<32;rr++) for (l=0;l<j->c;l++) {
+    uint16_t h=j->pa[k][panel_a_at(j->c,r0+rr,l)];
+    if (j->at) j->pb[k][panel_a_at(j->r,l,r0+rr)]=h; else j->pb[k][panel_b_at(j->r,r0+rr,l)]=h;
+  }
+}
+#ifdef BCIR_MM_DISPATCH
+/* By vector: 32 columns of a row as one A tile row (the packs' conversion, BF16_PACK_BODIES); a pair
+ * of rows' 16 columns read back from the A panel and interleaved as 16 words (the B pack's pairs, the
+ * even row first) -- B's tile row, or, 16 of them transposed (kb512_transpose16 moves bit patterns
+ * only), A^T's tile. */
+#define PANEL_A_BODY(NAME, TARGET, CVT) \
+TARGET static void NAME##_panel_a(const panel_job *j, int k, size_t i, size_t c0, size_t w, \
+    const float *v) { \
+  size_t q; \
+  for (q=0;q<w;q+=32) \
+    _mm512_storeu_si512(j->pa[k]+panel_a_at(j->c,i,c0+q),CVT(_mm512_loadu_ps(v+q),_mm512_loadu_ps(v+q+16))); \
+}
+PANEL_A_BODY(bf512, BF16_AVX512BW, bf512_cvt)
+#ifdef BCIR_BF16_AMX
+PANEL_A_BODY(bfne, BF16_AMXHOST, bfne_cvt)
+#endif
+BF16_AVX512BW static void bf512_panel_second(const panel_job *j, int k, size_t r0) {
+  size_t jb,p; _Alignas(64) float wd[256];
+  for (jb=0;jb<j->c/16;jb++) {
+    for (p=0;p<16;p++) {
+      const uint16_t *e=j->pa[k]+panel_a_at(j->c,r0+2*p,16*jb),*o=j->pa[k]+panel_a_at(j->c,r0+2*p+1,16*jb);
+      __m512i pr=BF512_PAIRS_BW(_mm512_inserti64x4(_mm512_castsi256_si512(
+          _mm256_loadu_si256((const __m256i *)(const void *)e)),_mm256_loadu_si256((const __m256i *)(const void *)o),1));
+      if (j->at) _mm512_store_si512(wd+16*p,pr);
+      else _mm512_storeu_si512(j->pb[k]+panel_b_at(j->r,r0+2*p,16*jb),pr);
+    }
+    if (j->at) kb512_transpose16(wd,16,(float *)(void *)(j->pb[k]+panel_a_at(j->r,16*jb,r0)),16);
+  }
+}
+#endif
+static void panel_a(const panel_job *j, int k, size_t i, size_t c0, size_t w, const float *v) {
+#ifdef BCIR_MM_DISPATCH
+#ifdef BCIR_BF16_AMX
+  if (j->conv==8) { bfne_panel_a(j,k,i,c0,w,v); return; }
+#endif
+  if (j->conv>=4) { bf512_panel_a(j,k,i,c0,w,v); return; }
+#endif
+  panel_a_generic(j,k,i,c0,w,v);
+}
+static void panel_second(const panel_job *j, int k, size_t r0) {
+#ifdef BCIR_MM_DISPATCH
+  if (j->conv>=4) { bf512_panel_second(j,k,r0); return; }  /* bit moves: one body for both hosts */
+#endif
+  panel_second_generic(j,k,r0);
+}
+static void panel_task(void *ctx, size_t t) {
+  const panel_job *j=(const panel_job *)ctx; size_t b0=t*j->per,nb=j->r/32,b,rr,c0;
+  size_t b1=b0+j->per<nb ? b0+j->per : nb; int two=j->op>=PANEL_SWIGLU1,bad=0;
+  _Alignas(64) float v0[PANEL_COLS],v1[PANEL_COLS];
+  for (b=b0;b<b1;b++) {
+    for (rr=0;rr<32;rr++) for (c0=0;c0<j->c;c0+=PANEL_COLS) {
+      size_t w=j->c-c0<PANEL_COLS ? j->c-c0 : PANEL_COLS,i=b*32+rr;
+      panel_values(j,i,c0,w,v0,v1);
+      if (j->bad) bad|=!span_finite_run(j->variant,v0,w);
+      panel_a(j,0,i,c0,w,v0);
+      if (two) panel_a(j,1,i,c0,w,v1);
+    }
+    panel_second(j,0,b*32);
+    if (two) panel_second(j,1,b*32);
+  }
+  if (j->bad) j->bad[t]=(unsigned char)bad;
+}
+#ifdef BCIR_DT_PANELS_PROBE
+/* The trainer harness's record of the values the panel writers' jobs computed -- from each job's own
+ * fields, not what a caller meant to pass: bit 1 << op for every job that ran since the last read
+ * (1 v1's SiLU product, 2 v2's, 4 v1's SwiGLU VJP, 8 v2's); a read starts the record again. A build
+ * defines BCIR_DT_PANELS_PROBE to have it (the harness's own builds do; the library does not). */
+static unsigned panel_ops_seen;
+unsigned bcir_tensor_panels_probe(void);
+unsigned bcir_tensor_panels_probe(void) { unsigned u=panel_ops_seen; panel_ops_seen=0; return u; }
+#endif
+static int panel_run(bcir_tensor_pool *pool, panel_job *j, int *bad) {
+  unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t blocks,tasks;
+  if (j->r%32 || j->c%32) return 0;
+  if (!j->r || !j->c) return 1;
+  blocks=j->r/32; tasks=blocks<BCIR_TENSOR_SCAN_TASKS ? blocks : BCIR_TENSOR_SCAN_TASKS;
+  j->per=(blocks+tasks-1)/tasks; tasks=(blocks+j->per-1)/j->per;
+  j->variant=mm_widest(); j->conv=bf16_widest(); j->bad=bad ? bytes : NULL;
+#ifdef BCIR_DT_PANELS_PROBE
+  panel_ops_seen|=1u<<j->op;
+#endif
+  pool_run(pool,panel_task,j,tasks);
+  if (bad) scan_fold(bad,bytes,tasks);
+  return 1;
+}
+int bcir_tensor_silu_mul_panels_pool(bcir_tensor_pool *pool, int v2, size_t r, size_t c,
+    const float *x, const float *u, unsigned short *a, unsigned short *b, int *bad) {
+  panel_job j;
+  memset(&j,0,sizeof j); j.r=r; j.c=c; j.op=v2 ? PANEL_SILU2 : PANEL_SILU1; j.x=x; j.u=u;
+  j.pa[0]=a; j.pb[0]=b; j.at=0;
+  return panel_run(pool,&j,bad);
+}
+int bcir_tensor_swiglu_backward_panels_pool(bcir_tensor_pool *pool, int v2, size_t r, size_t c,
+    const float *g, const float *u, const float *dy, unsigned short *dga, unsigned short *dgt,
+    unsigned short *dua, unsigned short *dut) {
+  panel_job j;
+  memset(&j,0,sizeof j); j.r=r; j.c=c; j.op=v2 ? PANEL_SWIGLU2 : PANEL_SWIGLU1; j.x=g; j.u=u;
+  j.dy=dy; j.pa[0]=dga; j.pb[0]=dgt; j.pa[1]=dua; j.pb[1]=dut; j.at=1;
+  return panel_run(pool,&j,NULL);
 }
 /* Rows in ranges of BCIR_ROW_CHUNK: each row's statistics are its own. */
 #define BCIR_ROW_CHUNK 16

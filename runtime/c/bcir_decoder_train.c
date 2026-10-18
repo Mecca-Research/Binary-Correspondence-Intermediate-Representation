@@ -239,16 +239,53 @@ size_t bcir_decoder_workspace_probe(void);
 size_t bcir_decoder_workspace_probe(void) { size_t seen=workspace_seen; workspace_seen=0; return seen; }
 #endif
 /* calls under the state's contract as one pool job: the chain into one C, then the rest (the
- * bf16 entries' workspace is the state's, admitted by valid(); the others need none) */
-static void gemm_group(bcir_decoder_state *s,const bcir_tensor_mm_call *chain,size_t nchain,
-    const bcir_tensor_mm_call *y,size_t ny) {
+ * bf16 entries' workspace is the state's, admitted by valid(); the others need none); pre names
+ * the operands already packed (BF16-PANELS, the bf16 contract only), NULL none. The probe records
+ * what the group would pack without them, the most the plan must hold either way. */
+static void gemm_group_with(bcir_decoder_state *s,const bcir_tensor_mm_call *chain,size_t nchain,
+    const bcir_tensor_mm_call *y,size_t ny,const bcir_tensor_bf16_panels *pre) {
 #ifdef BCIR_DT_WORKSPACE_PROBE
   if (gemm_contract(s)==3) workspace_saw(bcir_tensor_mm_bf16_group_workspace(chain,nchain,y,ny));
 #endif
   if (gemm_contract(s)==3)
-    (void)bcir_tensor_mm_bf16_group_pool(s->pool,chain,nchain,y,ny,s->workspace,s->workspace_bytes);
+    (void)bcir_tensor_mm_bf16_group_panels_pool(s->pool,chain,nchain,y,ny,pre,s->workspace,
+        s->workspace_bytes);
   else bcir_tensor_mm_group_pool(s->pool,gemm_contract(s),chain,nchain,y,ny);
 }
+static void gemm_group(bcir_decoder_state *s,const bcir_tensor_mm_call *chain,size_t nchain,
+    const bcir_tensor_mm_call *y,size_t ny) { gemm_group_with(s,chain,nchain,y,ny,NULL); }
+/* BF16-PANELS: under the bf16 contract the SwiGLU block's outputs -- the hidden activation and the
+ * gate and up adjoints -- are read by bf16 GEMMs alone, so their writers store them as the GEMMs'
+ * panels (each element the conversion of its binary32 value, the pack's): in the binary32 tensor's
+ * slot, the panel as A in its first half and the other (the hidden activation as its weight
+ * adjoint's B, an adjoint as its weight adjoint's A^T) in its second -- when the rows and the hidden
+ * width are multiples of 32, so the two panels fill the slot exactly, the model's width is too, so
+ * every GEMM they feed is whole 32-tiles every way (the grouped entry refuses any other call a panel
+ * feeds, and the GEMM's output would then go unwritten), and the slot is 64-byte aligned;
+ * otherwise binary32 and the GEMMs' packs, as before. The products are the packed ones bit for bit,
+ * so the state is the same either way (a build defining BCIR_DT_NO_PANELS has no panels: the
+ * harness's witness). */
+static int panels(const bcir_decoder_state *s,geometry g,const float *a,const float *b) {
+#ifdef BCIR_DT_NO_PANELS
+  (void)s; (void)g; (void)a; (void)b; return 0;
+#else
+  return gemm_contract(s)==3 && !s->provider.mm && !s->provider.silu && g.n && g.d && g.f &&
+    !(g.n%32) && !(g.d%32) && !(g.f%32) && !((uintptr_t)a%64) && !((uintptr_t)b%64);
+#endif
+}
+static unsigned short *panel_of(float *slot) { return (unsigned short *)(void *)slot; }
+#ifdef BCIR_DT_PANELS_PROBE
+/* The harness's record of the panel paths a run took since the last read (a build defines
+ * BCIR_DT_PANELS_PROBE to have it): 1 the forward's hidden activation written as panels, 2 the
+ * down projection's weight adjoint reading its B panel, 4 the gate and up adjoints as panels.
+ * Exported from a shared build, so the Python witness reads it too. */
+static unsigned panels_seen;
+BCIR_DT_API unsigned bcir_decoder_panels_probe(void);
+BCIR_DT_API unsigned bcir_decoder_panels_probe(void) { unsigned u=panels_seen; panels_seen=0; return u; }
+#define PANELS_SAW(bit) (panels_seen|=(bit))
+#else
+#define PANELS_SAW(bit) ((void)0)
+#endif
 static void gemm(bcir_decoder_state *s,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
     const float *a,const float *b,float beta,float *c) {
   if (s->provider.mm) s->provider.mm(s->provider.ctx,ta,tb,m,n,k,alpha,a,b,beta,c);
@@ -328,6 +365,7 @@ static void silu_mul(bcir_decoder_state *s,size_t n,const float *x,const float *
   else if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_silu_mul_v2_scan_pool(s->pool,n,x,u,y,bad);
   else bcir_tensor_silu_mul_scan_pool(s->pool,n,x,u,y,bad);
 }
+static int swiglu_v2(const bcir_decoder_state *s) { return (s->contract&BCIR_DT_CONTRACT_EXP)!=0; }
 static void swiglu_backward(bcir_decoder_state *s,size_t n,const float *g,const float *u,
     const float *dy,float *dg,float *du) {
   if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_swiglu_backward_v2_pool(s->pool,n,g,u,dy,dg,du);
@@ -379,8 +417,19 @@ static int forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
       out[0]=g.f; out[1]=g.f; w[0]=p.gate; w[1]=p.up; y2[0]=a.gate; y2[1]=a.up;
       linears(s,g.n,g.d,a.n2,2,out,w,y2);
     }
-    silu_mul(s,g.nf,a.gate,a.up,a.hidden,&bad);
-    linear(s,g.n,g.f,g.d,a.hidden,p.down,y);
+    if (panels(s,g,a.hidden,a.hidden)) {
+      bcir_tensor_mm_call c; bcir_tensor_bf16_panels pre;
+      (void)bcir_tensor_silu_mul_panels_pool(s->pool,swiglu_v2(s),g.n,g.f,a.gate,a.up,
+          panel_of(a.hidden),panel_of(a.hidden)+g.nf,&bad);
+      c.ta=0; c.tb=1; c.m=g.n; c.n=g.d; c.k=g.f; c.alpha=1.0f; c.a=NULL; c.b=p.down; c.beta=0.0f; c.c=y;
+      pre.a=panel_of(a.hidden); pre.b=NULL;
+      gemm_group_with(s,NULL,0,&c,1,&pre);
+      PANELS_SAW(1u);
+    }
+    else {
+      silu_mul(s,g.nf,a.gate,a.up,a.hidden,&bad);
+      linear(s,g.n,g.f,g.d,a.hidden,p.down,y);
+    }
     bcir_tensor_add_pool(s->pool,g.nd,a.x2,y);
   }
   bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,xs+g.l*g.nd,final,norm,&bad);
@@ -482,12 +531,42 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
     layer p=params(s->weights+g.v*g.d+l*g.lp,g);
     layer grad=params(s->gradients+g.v*g.d+l*g.lp,g);
     cache a=activations(cs+l*g.la,g); float *x=xs+l*g.nd;
-    linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f,wb);
-    swiglu_backward(s,g.nf,a.gate,a.up,dh,dg,du);
-    {
-      size_t out[2]; const float *w[2],*d2[2]; float *dw[2];
-      out[0]=g.f; out[1]=g.f; w[0]=p.gate; w[1]=p.up; d2[0]=dg; d2[1]=du; dw[0]=grad.gate; dw[1]=grad.up;
-      linears_backward(s,g.n,g.d,a.n2,2,out,w,d2,dn,dw,0.0f,wb);
+    /* the hidden activation is a panel exactly when the forward wrote it as one (one predicate on
+     * the same slot); the adjoints are panels when their own slots admit them, whichever the hidden
+     * activation is (their GEMMs read the gate, the up projection and dh, never the hidden slot) */
+    if (panels(s,g,a.hidden,a.hidden)) {
+      bcir_tensor_mm_call cx,cw; bcir_tensor_bf16_panels pre[2];
+      cx.ta=0; cx.tb=0; cx.m=g.n; cx.n=g.f; cx.k=g.d; cx.alpha=1.0f; cx.a=cur; cx.b=p.down;
+      cx.beta=0.0f; cx.c=dh;
+      cw.ta=1; cw.tb=0; cw.m=g.d; cw.n=g.f; cw.k=g.n; cw.alpha=1.0f; cw.a=cur; cw.b=NULL;
+      cw.beta=wb; cw.c=grad.down;
+      pre[0].a=NULL; pre[0].b=NULL; pre[1].a=NULL; pre[1].b=panel_of(a.hidden)+g.nf;
+      gemm_group_with(s,&cx,1,&cw,1,pre);
+      PANELS_SAW(2u);
+    }
+    else linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f,wb);
+    if (panels(s,g,dg,du)) {
+      bcir_tensor_mm_call cx[2],cw[2]; bcir_tensor_bf16_panels pre[4]; size_t q;
+      (void)bcir_tensor_swiglu_backward_panels_pool(s->pool,swiglu_v2(s),g.n,g.f,a.gate,a.up,dh,
+          panel_of(dg),panel_of(dg)+g.nf,panel_of(du),panel_of(du)+g.nf);
+      for (q=0;q<2;q++) {
+        float *slot=q ? du : dg;
+        cx[q].ta=0; cx[q].tb=0; cx[q].m=g.n; cx[q].n=g.d; cx[q].k=g.f; cx[q].alpha=1.0f; cx[q].a=NULL;
+        cx[q].b=q ? p.up : p.gate; cx[q].beta=q ? 1.0f : 0.0f; cx[q].c=dn;
+        cw[q].ta=1; cw[q].tb=0; cw[q].m=g.f; cw[q].n=g.d; cw[q].k=g.n; cw[q].alpha=1.0f; cw[q].a=NULL;
+        cw[q].b=a.n2; cw[q].beta=wb; cw[q].c=q ? grad.up : grad.gate;
+        pre[q].a=panel_of(slot); pre[q].b=NULL; pre[2+q].a=panel_of(slot)+g.nf; pre[2+q].b=NULL;
+      }
+      gemm_group_with(s,cx,2,cw,2,pre);
+      PANELS_SAW(4u);
+    }
+    else {
+      swiglu_backward(s,g.nf,a.gate,a.up,dh,dg,du);
+      {
+        size_t out[2]; const float *w[2],*d2[2]; float *dw[2];
+        out[0]=g.f; out[1]=g.f; w[0]=p.gate; w[1]=p.up; d2[0]=dg; d2[1]=du; dw[0]=grad.gate; dw[1]=grad.up;
+        linears_backward(s,g.n,g.d,a.n2,2,out,w,d2,dn,dw,0.0f,wb);
+      }
     }
     /* NDT-RMS-ACC: the VJP adds its dx into the residual's adjoint, one rounded sum an element */
     rms_backward(s,g.n,g.d,a.x2,p.norm2,dn,cur,grad.norm2,dq,BCIR_TENSOR_RMSB_ADD|gf);

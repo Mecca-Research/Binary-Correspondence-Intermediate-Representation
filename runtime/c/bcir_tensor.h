@@ -252,6 +252,35 @@ BCIR_DT_API int bcir_tensor_mm_bf16_pool(bcir_tensor_pool *pool, int ta, int tb,
 BCIR_DT_API int bcir_tensor_mm_bf16_group_pool(bcir_tensor_pool *pool,
     const bcir_tensor_mm_call *chain, size_t nchain, const bcir_tensor_mm_call *y, size_t ny,
     void *workspace, size_t bytes);
+/* The bf16 contract's operands written by their producers (BF16-PANELS). A tensor only bf16 GEMMs
+ * read can be stored as the packed panel such a GEMM reads -- each element the conversion of its
+ * binary32 value (bcir_tensor_bf16_bits), in the tiles the entries' packs write for a whole call --
+ * so the GEMM skips that pack and computes the packed call's product bit for bit. An r x c row-major tensor (r and c multiples of 32: no padding) has three panels,
+ * each of r*c elements:
+ *   as A    rows r, depth c, in 16-row x 32-depth tiles (a linear's input in x W^T, an adjoint in
+ *           its input adjoint dy W);
+ *   as B    depth r, columns c, in 16-pair x 16-column tiles of its depth pairs (an activation in
+ *           its weight adjoint dy^T x);
+ *   as A^T  rows c, depth r, as A's tiles (an adjoint in its weight adjoint, the transposed A).
+ * bcir_tensor_mm_bf16_group_panels_pool is bcir_tensor_mm_bf16_group_pool with pre[q] (q over the
+ * chain, then the rest) naming call q's A panel and B panel, each NULL where the entry packs that
+ * operand as before (pre NULL: none); a panel is never shared between calls. A call with a panel
+ * runs whole in the one job: m, n and k multiples of 32, alpha 1 where A is a panel (the A pack
+ * converts alpha times A; a panel is the operand alone), and the workspace holding the group's other
+ * packs whole, or the entry returns 0, nothing written. The writers: SiLU(x) * u (v2 non-zero: the
+ * BCIR exponential's, bcir_tensor_silu_mul_v2_scan_pool's values; else v1's libm SiLU) as A and as B,
+ * *bad set when a binary32 value is not finite (the scan entries' verdict); the SwiGLU VJP's two
+ * adjoints (bcir_tensor_swiglu_backward_v2_pool's or v1's values) each as A and as A^T. They return
+ * 1, or 0 with nothing written when r or c is not a multiple of 32. */
+typedef struct bcir_tensor_bf16_panels { const unsigned short *a, *b; } bcir_tensor_bf16_panels;
+BCIR_DT_API int bcir_tensor_mm_bf16_group_panels_pool(bcir_tensor_pool *pool,
+    const bcir_tensor_mm_call *chain, size_t nchain, const bcir_tensor_mm_call *y, size_t ny,
+    const bcir_tensor_bf16_panels *pre, void *workspace, size_t bytes);
+BCIR_DT_API int bcir_tensor_silu_mul_panels_pool(bcir_tensor_pool *pool, int v2, size_t r,
+    size_t c, const float *x, const float *u, unsigned short *a, unsigned short *b, int *bad);
+BCIR_DT_API int bcir_tensor_swiglu_backward_panels_pool(bcir_tensor_pool *pool, int v2, size_t r,
+    size_t c, const float *g, const float *u, const float *dy, unsigned short *dga,
+    unsigned short *dgt, unsigned short *dua, unsigned short *dut);
 /* The BCIR exponential (NDT-EXP): one operation sequence on every instance -- a Cody-Waite
  * reduction x = k ln2 + r, a degree-7 polynomial in r, 2^k as two exact power-of-two scalings
  * (one rounding into the subnormals), the three special cases selected at the end -- so the

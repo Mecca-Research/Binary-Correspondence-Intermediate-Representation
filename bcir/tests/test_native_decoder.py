@@ -155,6 +155,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_DIVISION_PROBE",
                 "-DBCIR_DT_WORKSPACE_PROBE",
                 "-DBCIR_DT_ATTENTION_PROBE",
+                "-DBCIR_DT_PANELS_PROBE",
                 *options,
                 "-O2",
                 "-Wall",
@@ -177,8 +178,9 @@ def test_native_c_harness_c11_and_c23():
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
             # update_pairs, division_probe (NDT-UPDATE); the bf16 contract, its trainer and the
-            # workspace probe (NDT-BF16); the fused attention contract and its trainer (ATTN-FMA)
-            assert result.stdout.count("PASS") == 22
+            # workspace probe (NDT-BF16); the fused attention contract and its trainer (ATTN-FMA);
+            # the bf16 panels' writers and grouped GEMMs, and their trainer (BF16-PANELS)
+            assert result.stdout.count("PASS") == 24
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -204,6 +206,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_DIVISION_PROBE",
                 "-DBCIR_DT_WORKSPACE_PROBE",
                 "-DBCIR_DT_ATTENTION_PROBE",
+                "-DBCIR_DT_PANELS_PROBE",
             ]
             cmd += ["-I", str(c)]
             cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]
@@ -215,7 +218,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 22
+            assert result.stdout.count("PASS") == 24
             break
 
 
@@ -523,6 +526,59 @@ def test_the_bf16_contract_lends_its_workspace_and_admits_no_provider():
         assert nf.state_digest(back) == nf.state_digest(bf16)
         for trainer in (plain, bf16, back):
             trainer.close()
+
+
+def test_the_bf16_panels_keep_every_state():
+    """BF16-PANELS: under a bf16 contract the trainer writes the SwiGLU block's outputs -- the
+    hidden activation, the gate and up adjoints -- as the bf16 GEMMs' panels where their GEMMs
+    are whole 32-tiles and their slots 64-byte aligned, and the GEMMs read them pre-packed. Three
+    steps of a bench that admits them leave the state a build without panels
+    (BCIR_DT_NO_PANELS) leaves, bit for bit, under each bf16 contract, at one thread and at four,
+    on the huge-page placement and on ctypes arrays. The probe says which panel paths ran, so the
+    agreement is not vacuous: all three on the huge-page mapping (Linux), none in the build
+    without them, none under a binary32 GEMM contract."""
+    import ctypes as ct
+    import mmap
+
+    from bcir.tests import native_decoder_fixtures as nf
+
+    unit = nf.source("bcir_decoder_train.c")
+    probe = "#define BCIR_DT_PANELS_PROBE 1\n"
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        built = {
+            "panels": nf.build_library(
+                Path(tmp) / "panels", sources={"bcir_decoder_train.c": probe + unit}
+            )
+        }
+        if built["panels"] is None:
+            return  # no C compiler: a skip, never a pass
+        built["none"] = nf.build_library(
+            Path(tmp) / "none",
+            sources={"bcir_decoder_train.c": probe + "#define BCIR_DT_NO_PANELS 1\n" + unit},
+        )
+        # the path NativeDecoder loads (resolved), so the probe is the trainers' own library's
+        libs = {name: ct.CDLL(str(Path(path).resolve())) for name, path in built.items()}
+        for lib in libs.values():
+            lib.bcir_decoder_panels_probe.restype = ct.c_uint
+            lib.bcir_decoder_panels_probe.argtypes = []
+        for contract in ("bf16", "bf16+exp", "bf16+exp+reduce+attn"):
+            for placement in (True, False):
+                states, seen = {}, {}
+                for name, path in built.items():
+                    libs[name].bcir_decoder_panels_probe()
+                    states[name] = nf.thread_states(path, nf.PANELS_BENCH, counts=(1, 4),
+                                                    contract=contract, huge_pages=placement)  # fmt: skip
+                    seen[name] = libs[name].bcir_decoder_panels_probe()
+                assert states["panels"] == states["none"], (contract, placement, states)
+                assert len(set(states["none"].values())) == 1, (contract, placement, states)
+                assert seen["none"] == 0, (contract, placement, seen)
+                # the forward's path and the down projection's go together (one slot, one predicate)
+                assert seen["panels"] in (0, 3, 4, 7), (contract, placement, seen)
+                if placement and hasattr(mmap, "MADV_HUGEPAGE"):
+                    assert seen["panels"] == 7, (contract, seen)
+        libs["panels"].bcir_decoder_panels_probe()
+        nf.thread_states(built["panels"], nf.PANELS_BENCH, counts=(1,), contract="kblock+exp")
+        assert libs["panels"].bcir_decoder_panels_probe() == 0
 
 
 def _vma(address):

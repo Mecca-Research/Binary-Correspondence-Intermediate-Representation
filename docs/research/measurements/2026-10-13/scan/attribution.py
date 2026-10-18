@@ -59,6 +59,12 @@ BCIR_DT_API void bcir_prof_reset(void) { unsigned k; for (k=0;k<BCIR_PROF_MAX;k+
 #: A statement's category: the first pattern its text matches (the backward's rope before the
 #: forward's, which shares its call).
 CATEGORIES = [
+    # BF16-PANELS: the SwiGLU block's panel writers and the grouped GEMMs that read their panels
+    # (spellings no earlier tree has, so every earlier tree is attributed as before)
+    (r"silu_mul_panels_pool", "silu"),
+    (r"swiglu_backward_panels_pool", "swiglu.backward"),
+    (r"gemm_group_with\(s,NULL,0", "gemm.forward"),
+    (r"gemm_group_with\(s,", "gemm.backward"),
     (r"finite_(span|pool)\(s,?\s*s->weights|finite_span\(s->weights", "finite.weights"),
     (
         r"finite_(span|pool)\(s,?\s*s->activations|finite_span\(s->activations|finite_pool\(s,logits",

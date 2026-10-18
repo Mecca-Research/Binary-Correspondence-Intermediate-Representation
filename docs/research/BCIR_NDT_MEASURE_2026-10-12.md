@@ -1982,3 +1982,102 @@ against 70-76; and both of BCIR's arms without the bit end in §32's states on a
 is the one arithmetic this session changed. Peak RSS is 540 MB for BCIR's bf16 arms and 529-530 for its
 FP32 arms against 1,132-1,148 MB for PyTorch's; the persistent state is the same 157,390,848 bytes on
 every arm.
+
+## 35. The bf16 GEMMs' packs and kernel (BF16-ATTR, BF16-KERN, BF16-PANELS-1)
+
+After §34 the GEMMs are the larger half of the bf16 step again, so BF16-ATTR took the bf16 entry
+apart at the 9.84M decoder's 13 shapes ([phases.c](measurements/2026-10-18/panels/phases.c)): each call's A pack, B pack and
+compute as pool jobs of their own, alternated with the whole entry, then the tile unit's rate on
+resident tiles. Before this commit, at four threads, the packs take 1.10 ms of the 13 shapes (A 0.60,
+B 0.50) beside 3.35 ms of compute, which runs at 1,909 GF/s against the run's own peak probe of 7,644
+summed over the four threads -- a quarter; at one thread 2.97 ms of packs beside 7.82 of compute, 818
+GF/s against a peak of 1,898 ([phases-base-t4.txt](measurements/2026-10-18/panels/phases-base-t4.txt), [-t1](measurements/2026-10-18/panels/phases-base-t1.txt)).
+Against oneDNN's bf16 matmul through PyTorch on the same shapes, BCIR's entry already led: oneDNN takes
+7.38 ms at four threads from binary32 operands (the conversions per call, which BCIR's entry includes)
+and 5.22 from operands already bfloat16, against BCIR's 3.58 ms with this commit
+([onednn-t4.txt](measurements/2026-10-18/panels/onednn-t4.txt), [phases-t4.txt](measurements/2026-10-18/panels/phases-t4.txt)); at one thread 13.55 / 7.89
+against 8.99. The tile unit's rate on this shared host moved during the session -- the peak probe
+read 2,005 GF/s on one thread in the morning and 960-2,093 in these records, each record carrying its
+own -- so only measurements within one process compare trees here.
+
+The kernel was the first lever. [kern.c](measurements/2026-10-18/panels/kern.c) times candidates for the AMX block on the base's
+packs against the base's kernel, rotated in one process, each held to it bit for bit or the run fails
+([kern-t4.txt](measurements/2026-10-18/panels/kern-t4.txt), [kern-t1.txt](measurements/2026-10-18/panels/kern-t1.txt)):
+
+| candidate (the 13 shapes' compute, ms) | four threads | one thread |
+|---|---|---|
+| the kernel before this commit | 4.067 | 8.090 |
+| the next block's C prefetched for writing (`PREFETCHW`) | 3.858 (x1.054) | 7.919 (x1.022) |
+| that, and the B tiles loaded as streamed (`TILELOADDT1`) -- **taken** | **3.663 (x1.110)** | **7.236 (x1.118)** |
+| the prefetch, and the A tiles streamed instead | 3.769 (x1.079) | 8.027 (x1.008) |
+| streamed B and the prefetch, the loads software-pipelined | 3.856 (x1.055) | 7.941 (x1.019) |
+| streamed B, the depth in chunks of 16 tiles kept over the columns | 3.743 (x1.087) | 7.119 (x1.136) |
+| columns outer over 256-row regions, the B block kept | 5.404 (x0.753) | 8.241 (x0.982) |
+
+A region's blocks share one A strip and read each B block once, so B streamed leaves L1 to the strip,
+and the stores that end a block find their lines owned. The chunked depth leads at one thread by 1.6%
+and trails at four by 2.2%; the kernel takes streamed B and the prefetch (BF16-KERN). Every tile
+operation is the one before, in the same order: where a tile loads from and what is prefetched are
+not part of the arithmetic.
+
+The packs were the second. Under the bf16 contract the SwiGLU block's three tensors -- the hidden
+activation and the gate's and the up projection's adjoints -- are read by bf16 GEMMs alone, so their
+producers now write them as those GEMMs' panels: each element the conversion of its binary32 value,
+which is all a pack computes for it, stored where the pack puts it for a whole call. The hidden
+activation is written as A (the down projection's input) and as B (its weight adjoint's), each adjoint
+as A (its input adjoint's) and as A^T (its weight adjoint's), the two panels filling the binary32 slot
+exactly. A writer computes a row segment's values by the binary32 kernels' own functions and stores
+their conversions as the A panel; a 32-row block done, it derives the second panel from the first --
+pairs of rows interleaved as B's tile rows, or 16 x 16 words transposed as A^T's -- so the values are
+the binary32 entries' bit for bit and the conversion is the pack's. The grouped entry
+(`bcir_tensor_mm_bf16_group_panels_pool`) reads them in place of its packs; a call with a panel runs
+whole in the one job, its rows, columns and depth multiples of 32 and, where A is a panel, alpha 1.
+The trainer takes the panels under the bf16 contract with no provider when every GEMM they feed is
+whole 32-tiles -- the rows, the model's width and the hidden width multiples of 32 -- and the slots are
+64-byte aligned; otherwise binary32 and the packs, as before (BF16-PANELS-1). One layer's block at the
+decoder's shapes, the two arms alternated, the outputs identical, goes from 4.641 to 4.415 ms at four
+threads (x1.051) and from 15.42 to 12.57 at one (x1.227) ([block-t4.txt](measurements/2026-10-18/panels/block-t4.txt),
+[block-t1.txt](measurements/2026-10-18/panels/block-t1.txt)).
+
+The step was measured with the three trees in one process -- the base (d5bc457), this commit built
+without its panels (`BCIR_DT_NO_PANELS`) and this commit -- one step each in turn, the order rotated
+every round, so the arms run a step apart and the host's drift reaches them alike; the three compute
+one state, and every round's three losses are equal ([steppair.py](measurements/2026-10-18/panels/steppair.py)):
+
+| the 9.84M decoder's step, `bf16+exp+reduce+attn` | four threads, 150 rounds | one thread, 40 rounds |
+|---|---|---|
+| the base | 99.57 ms | 329.9 ms |
+| the new kernel | 96.36 (x1.033, 95% 1.022-1.053; faster in 100 rounds) | 320.4 (x1.035, 1.012-1.060; 29) |
+| the kernel and the panels | 92.73 (x1.025 over the kernel, 1.013-1.042; 96) | 300.3 (x1.058, 1.014-1.130; 29) |
+| the two together | x1.063 (1.049-1.076; 116) | x1.085 (1.032-1.117; 32) |
+
+([steppair-t4.txt](measurements/2026-10-18/panels/steppair-t4.txt), [steppair-t1.txt](measurements/2026-10-18/panels/steppair-t1.txt).) In place, statement by
+statement over ten rotated rounds ([ab/](measurements/2026-10-18/panels/ab/)), the kernel takes the GEMMs from 45.9 to 41.0 ms of the
+four-thread step (the forward x1.17) and the panels the backward's GEMMs x1.088 further, while the
+writers take 3.3 ms more than the binary32 ones (the SiLU product 2.81 -> 3.99 ms, the VJP 3.41 -> 5.51):
+deriving the second panel, a third of the VJP writer's time, is the writers' next lever. Those runs,
+each arm 17 s from the next, carry the host's drift: the forward's GEMMs, which the panels change
+only by skipping the down projection's A pack, read x0.920 against the kernel alone (the block's
+alternated pairs x1.003), and the step's medians x0.979, faster in 3 of 10 rounds; the step pairs, a
+step apart, are the step's measurement.
+
+The state is the same either way. The C harness holds the writers to the binary32 entries' values
+converted in place -- shapes with and without the edge values, a row longer than a writer's
+1,024-column segment, a NaN in a row's second segment, an overflowing product, values built within an
+ulp or two of a bfloat16 midpoint so that a slip of one ulp converts differently, both SiLUs, one thread
+and four -- and the grouped entry reading panels to the same calls packed (each kind of call the trainer
+makes, a chained group, a panel that belongs to its own call alone, every refusal); the trainer to one
+state with the block's panels, without them and mixed, under three bf16 contracts at one thread and
+four, with the tensor unit's probe recording the values each writer's job computed; the Python witness
+holds a library without panels to the same state; and six steps of the comparison decoder, every SwiGLU
+block of it on the panels, end in `08da09e8…` under `bf16+exp+reduce+attn` through the tile, AVX-512,
+AVX2 and portable builds at one and four threads, `e91ae701…` under `bf16+exp+reduce`, and `4bf4e057…`
+under `kblock+exp+reduce` at 20 steps -- the states before this commit. `tools/testing/faults/ndt-panels.json`
+holds 34 faults. Its first complete sweep caught 31: a reassociated product and a v1 flag passed under the
+exponential bit move binary32 values by an ulp, which the conversion hides unless the value sits near a
+midpoint, so the midpoint cases and the tensor unit's probe joined, and all 34 fire. Two defects were found
+in review before the first green run, each now a case of the harness and an entry of the table: the
+trainer's predicate checked the rows and the hidden width but not the model's width, so a model whose
+width was off the 32 grid would have written panels for GEMMs the grouped entry then refuses, their
+outputs unwritten (a second model of width 48 in the trainer's witness now writes none); and the A pack
+converts alpha times A while a panel is A alone, so an A panel is admitted at alpha 1 only.
