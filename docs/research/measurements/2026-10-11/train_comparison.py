@@ -41,14 +41,18 @@ of the loss through their targets.
 Backends: bcir (BCIR's own C kernels: the widest bit-identical ISA variant the CPU runs, no
 FMA), bcir-openblas (the same trainer with OpenBLAS sgemm behind its CBLAS seam), torch-eager
 (HostedLlama, torch.optim.AdamW defaults), torch-compiled (the same modules through
-torch.compile, fused AdamW). All run one compute thread on CPU in FP32 from the same weights,
-batches and learning rates. This is a measurement harness, not a production runtime or a CI
-timing gate.
+torch.compile, fused AdamW), and torch-eager-bf16 and torch-compiled-bf16 (the same two under
+PyTorch's CPU mixed precision, torch.autocast to bfloat16 around the forward and the loss, the
+weights, gradients and moments in FP32: the matched baseline of BCIR's bf16 contract, NDT-BF16).
+All run on CPU from the same weights, batches and learning rates, in FP32 unless named bf16 (or
+under a BCIR contract that says otherwise). This is a measurement harness, not a production
+runtime or a CI timing gate.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ctypes
 import hashlib
 import json
@@ -86,7 +90,8 @@ SPEC = dict(vocab=VOCAB, width=384, heads=8, kvheads=4, layers=6, ff=1024)
 BATCH, CONTEXT = 8, 128
 OPT = dict(peak=2e-3, floor=2e-4, warmup=50, beta1=0.9, beta2=0.95, eps=1e-8, decay=0.1, clip=1.0)
 SEED = 20261011
-BACKENDS = ("bcir", "bcir-openblas", "torch-eager", "torch-compiled")
+BACKENDS = ("bcir", "bcir-openblas", "torch-eager", "torch-compiled", "torch-eager-bf16",
+            "torch-compiled-bf16")  # fmt: skip
 
 
 def _spec():
@@ -546,9 +551,11 @@ def train(
         digest_fn = lambda: _state_digest_native(nd)  # noqa: E731
         plan = nd.state.plan
         # the trainer's arenas, planned before the first step: weights, gradients and both
-        # moments persist; activations and scratch are the step's transient arena
+        # moments persist; activations, scratch and the bf16 GEMMs' packing workspace (NDT-BF16,
+        # 0 under the other contracts) are the step's transient arena
         memory = {"persistent_bytes": 16 * plan.parameters,
-                  "transient_bytes": 4 * (plan.activations + plan.scratch),
+                  "transient_bytes": 4 * (plan.activations + plan.scratch) + nd.workspace_bytes,
+                  "workspace_bytes": nd.workspace_bytes,
                   "arena_bytes": nd.memory_bytes}  # fmt: skip
         memory_fn = lambda: memory  # noqa: E731
     else:
@@ -558,13 +565,23 @@ def train(
         torch.set_num_threads(threads)  # the 10-11 runs: 1
         torch.set_num_interop_threads(1)
         model = _torch_model(data)
-        compiled = backend == "torch-compiled"
+        compiled = backend.startswith("torch-compiled")
+        bf16 = backend.endswith("-bf16")
+
+        def amp():
+            # PyTorch's CPU mixed precision: autocast runs the linears and the attention in
+            # bfloat16 (its lower-precision op list), the products of two of them stay bfloat16
+            # (the SwiGLU), and the residual stream, the norms, the loss and the optimizer stay
+            # FP32 by type promotion and its FP32 list
+            return torch.autocast("cpu", dtype=torch.bfloat16) if bf16 else contextlib.nullcontext()
+
         opt = torch.optim.AdamW(
             model.parameters(), lr=OPT["peak"], betas=(OPT["beta1"], OPT["beta2"]),
             eps=OPT["eps"], weight_decay=OPT["decay"], **({"fused": True} if compiled else {}),
         )  # fmt: skip
         info.update(torch=torch.__version__, cpu_capability=torch.backends.cpu.get_cpu_capability(),
-                    torch_threads=torch.get_num_threads())  # fmt: skip
+                    torch_threads=torch.get_num_threads(),
+                    autocast="bfloat16" if bf16 else None)  # fmt: skip
         if compiled:
             from bcir.hosted.models.model import _rope_cache
 
@@ -580,9 +597,20 @@ def train(
                 logits = F.linear(model.model.norm(values), model.lm_head.weight)
                 return F.cross_entropy(logits.reshape(-1, VOCAB), y.reshape(-1))
 
+            if bf16:
+                fp32_loss = loss_of
+
+                def loss_of(x, y):
+                    with torch.autocast("cpu", dtype=torch.bfloat16):
+                        return fp32_loss(x, y)
+
             loss_of = torch.compile(loss_of, fullgraph=True)
         else:
-            loss_of = lambda x, y: model(x, y)[1]  # noqa: E731
+
+            def loss_of(x, y):
+                with amp():
+                    return model(x, y)[1]
+
         optimizer_step = opt.step
 
         def step_fn(s):
@@ -603,10 +631,10 @@ def train(
             # activations do not set the peak memory the training is measured by
             model.eval()
             out = []
-            with torch.no_grad():
+            with torch.no_grad(), amp():  # a bf16 run's model is evaluated as it trained
                 for i in range(0, len(x), BATCH):
                     batch = torch.from_numpy(np.ascontiguousarray(x[i : i + BATCH]))
-                    out.append(model(batch)[0].numpy())
+                    out.append(model(batch)[0].float().numpy())
             model.train()
             return np.concatenate(out)
 
@@ -640,7 +668,7 @@ def train(
         t0 = time.perf_counter()
         loss, norm = step_fn(s)
         dt = time.perf_counter() - t0
-        if s < 2 and backend == "torch-compiled":
+        if s < 2 and backend.startswith("torch-compiled"):
             compile_s = (compile_s or 0.0) + dt
         trained += dt
         losses.append(loss)
@@ -1748,7 +1776,8 @@ def main():
     t.add_argument("--lr-scale", type=float, default=1.0, help="scale every learning rate")
     t.add_argument("--threads", type=int, default=1,
                    help="the BCIR pool's size, or PyTorch's intra-op threads (default 1)")  # fmt: skip
-    t.add_argument("--contract", default="v1", help="v1, fused, exp or fused+exp (bcir backends)")
+    t.add_argument("--contract", default="v1",
+                   help="a NativeDecoder contract (bcir backends): v1, kblock+exp+reduce, bf16, ...")  # fmt: skip
     i = sub.add_parser("identity")
     i.add_argument("--data", type=Path, required=True)
     i.add_argument("--steps", type=int, default=20)

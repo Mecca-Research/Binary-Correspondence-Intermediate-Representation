@@ -2942,6 +2942,22 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     188.1 -> 79.8 ms (5,445 -> 12,832 tokens a second, x2.36; x2.43 at one thread). The AVX-512
     instance alone runs at 0.56 of the FP32 kernel: without AMX the contract buys no speed. Six
     steps end in one state through the tile, AVX-512 and portable instances at one and four threads.
+  LM-BF16 (2026-10-18): BCIR's bf16 against PyTorch's, five seeds paired.
+  - The comparison harness gained `torch-eager-bf16` and `torch-compiled-bf16` -- PyTorch's CPU mixed
+    precision, `torch.autocast` to bfloat16 around the forward and the loss, the weights, gradients,
+    moments and fused AdamW in FP32 -- and BCIR's packing workspace in its memory split. LM-PAIRED's
+    five seeds ran four arms each at four threads in one session, the arms' order rotated, with the
+    analysis fixed before the runs ([bf16/lm/](research/measurements/2026-10-17/bf16/lm/), the
+    report's §32).
+  - BCIR under `bf16+exp+reduce` trains at 2.08 times the tokens a second of compiled PyTorch under
+    autocast (95% interval 1.98-2.19, faster on five of five: 13,445-14,666 tokens a second against
+    6,607-7,235) and 2.91 times compiled PyTorch's FP32. Its test cross-entropy is 0.0009 nats above
+    PyTorch bf16's and 0.0012 above its own FP32 run's, both intervals inside the ±0.01-nat margin
+    fixed beforehand: the quality parity the roadmap's NDT-BF16 row asked for. Autocast buys PyTorch
+    1.40 times its FP32; BCIR FP32 against compiled FP32 is 1.23 times again (1.20-1.27). Eager
+    PyTorch under autocast ran slower than compiled on the two seeds of the check. Peak RSS 540 MB
+    against 1,141-1,153.
+  - The two roadmap rows that still counted `ndt-bf16.json` as NB1-NB15 read NB1-NB17.
   LM-PAIRED (2026-10-17): BCIR against `torch.compile` with fused AdamW, five seeds paired.
   - An external review's bar for a public claim (the fastest matched PyTorch configuration, a paired
     interval, at least three seeds, a quality margin fixed beforehand): the comparison harness gained

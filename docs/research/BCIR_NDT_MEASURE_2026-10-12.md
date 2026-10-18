@@ -1827,3 +1827,48 @@ three rounds each, alternated), the four-thread step's GEMMs go from 150.8 to 41
 the step and the attention a fifth -- its products, which no contract has yet fused, are the next
 slice (ATTN-FMA). Whether the model trained under the contract is as good as FP32's, and how it stands
 against PyTorch's own bfloat16, is §32.
+
+## 32. BCIR's bfloat16 against PyTorch's (LM-BF16)
+
+§31's contract changes only the GEMMs, so the question it leaves is the model: whether a decoder
+trained under it is as good as FP32's, and how BCIR's bf16 stands against PyTorch's own. The
+comparison harness gained `torch-eager-bf16` and `torch-compiled-bf16`: PyTorch's CPU mixed
+precision, `torch.autocast("cpu", torch.bfloat16)` around the forward and the loss, the weights,
+gradients, moments and fused AdamW in FP32. What each side puts in bfloat16 differs, and is stated
+rather than equalised: BCIR's contract rounds only the GEMMs' operands, and the attention, the norms,
+the activations, the gradients, the moments and the update stay binary32; autocast runs the linears
+and the attention (SDPA) in bfloat16 and keeps the residual stream, the norms, the loss and the
+optimizer in FP32 ([bf16/lm/](measurements/2026-10-17/bf16/lm/)). LM-PAIRED's five seeds each ran
+the 1,000-step language model at four threads under four arms in one session, the arms' order rotated
+seed by seed -- BCIR `bf16+exp+reduce`, compiled PyTorch under autocast, BCIR `kblock+exp+reduce`,
+compiled PyTorch in FP32 -- with the analysis fixed before the runs ([paired_bf16.py](measurements/2026-10-17/bf16/lm/paired_bf16.py)):
+per pair of arms the ratio of the median warm steps per seed and a 95% Student-t interval on the log
+ratios, and a ±0.01-nat margin on the test cross-entropy difference for the claim and for each
+framework's bf16 against its FP32.
+
+| seed | BCIR bf16, ms (tokens/s) | PyTorch bf16 | BCIR FP32 | PyTorch FP32 | test cross-entropy, BCIR bf16 / PyTorch bf16 / FP32 (both) |
+|---|---|---|---|---|---|
+| 20261011 | 71.4 (14,339) | 152.3 (6,722) | 167.6 (6,110) | 208.3 (4,915) | 1.6369 / 1.6314 / 1.6319 |
+| 1001 | 70.0 (14,626) | 155.0 (6,607) | 172.7 (5,930) | 218.9 (4,678) | 1.6348 / 1.6348 / 1.6350 |
+| 2002 | 69.8 (14,666) | 141.5 (7,235) | 169.2 (6,052) | 202.3 (5,061) | 1.6404 / 1.6405 / 1.6401 |
+| 3003 | 75.0 (13,660) | 152.5 (6,715) | 172.4 (5,940) | 216.2 (4,737) | 1.6435 / 1.6451 / 1.6429 |
+| 4004 | 76.2 (13,445) | 153.3 (6,681) | 170.6 (6,001) | 206.6 (4,955) | 1.6326 / 1.6318 / 1.6324 |
+
+([summary.json](measurements/2026-10-17/bf16/lm/summary.json); the two FP32 arms' test cross-entropies
+agree to the fourth decimal on every seed, as in LM-PAIRED.) BCIR under the bf16 contract trains at
+**2.083 times** the tokens a second of compiled PyTorch under autocast (95% interval 1.979-2.192),
+faster on five of five seeds, and its test cross-entropy is 0.0009 nats above PyTorch's (interval
+-0.0025 to +0.0043): inside the margin. Against its own FP32 run the contract buys 2.354 times
+(2.243-2.470) at +0.0012 nats (-0.0015 to +0.0039), inside the margin too, so the quality parity the
+roadmap's NDT-BF16 row asked for holds over these seeds; autocast buys PyTorch 1.395 times
+(1.352-1.439) at +0.0003. Against compiled PyTorch in FP32 BCIR's bf16 runs 2.905 times (2.729-3.092),
+and BCIR's FP32 against it 1.234 times (1.197-1.272), LM-PAIRED's comparison again in this session.
+The check fixed beside the analysis, eager PyTorch under autocast on two seeds, ran slower than
+compiled (183.3 and 182.3 ms against 155.0 and 152.3), so the claim's PyTorch arm is its faster bf16
+arm. Peak RSS is 540 MB for BCIR's bf16 runs against 1,141-1,153 MB for PyTorch's; the persistent
+state is the same 157,390,848 bytes on every arm, and BCIR's transient arena under bf16 is
+205,553,920 bytes (FP32's 194,019,328 and the 11,534,592-byte packing workspace). BCIR FP32's
+seed-20261011 run ends in `5137e013…`, the state of every 1,000-step BCIR run since §17. The bf16
+step's medians here (69.8-76.2 ms) are those of 1,000 consecutive steps under one contract; §31's
+79.8 ms is the median of 24 steps alternated with the FP32 contract's in one process. Of that step
+the attention is a fifth, ATTN-FMA's slice.

@@ -469,7 +469,10 @@ holds it to the oracle's exact rationals, and `tools/testing/faults/ndt-bf16.jso
 faults. Only the GEMMs change. At four threads the 9.84M decoder's step goes from 188.1 to 79.8 ms
 (12,832 tokens a second), the GEMMs from 150.8 to 41.8 ms of it; without AMX the AVX-512 instance runs
 at about half the FP32 kernel's rate, so there the contract buys a state identical to an AMX host's,
-not speed.
+not speed. Over five paired seeds of the 1,000-step language model at four threads (LM-BF16), the
+contract trains at 2.08 times the tokens a second of compiled PyTorch under its CPU autocast to
+bfloat16 (95% interval 1.98-2.19), with the test cross-entropy inside a ±0.01-nat margin of
+PyTorch's and of BCIR's own FP32 run's.
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
