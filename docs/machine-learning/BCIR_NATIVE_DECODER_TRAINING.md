@@ -46,7 +46,9 @@ resumed = NativeDecoder.resume(library, "build/native-decoder/trained.bcirdt")
 ```
 
 Flat inputs and targets have `steps * gradient_accumulation * batch * context`
-IDs. Micro-batches are consecutive within each update. `backward(accumulate=True)`
+IDs. Micro-batches are consecutive within each update. One call of several steps costs less than
+several calls of one: a call scans the weights before its first step only, the later steps' weights
+being its own commits (FACTS-RUN). `backward(accumulate=True)`
 and `update(gradient_scale=...)` also expose individual stages. The existing
 `SequenceTokenSource.batch()` supplies input/shifted-target rows; corpus provenance,
 tokenization, validation splits and sampling remain caller responsibilities.
@@ -498,6 +500,15 @@ model (LM-PANELS, §36) the two changes train 1.078 times faster than the same c
 second of compiled PyTorch under autocast (2.061-2.526), the test cross-entropy inside the ±0.01-nat
 margin; that session ran PyTorch slower than LM-ATTN's, which moved the ratio about 5% by itself, so
 the changes' own share is the 1.078.
+
+Since FACTS-RUN (2026-10-18) a run call's steps after its first skip the opening scan of the
+weights: they are the call's own last commit, every candidate admitted finite, with no caller code
+run since; a call's first step, and every lone call, still scans, since its caller may have written
+them. No value changes. Four arms rotated in one process at four threads (the report's §38) put
+the scan's removal alone at x1.035 (95% interval 1.014-1.057) and a ten-step call against ten
+one-step calls at x1.048, the calls themselves costing nothing measurable (x0.998). The comparison
+harness's `train --steps-per-call N` trains that way, N steps a call between evaluations, in the
+states of one step a call.
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over

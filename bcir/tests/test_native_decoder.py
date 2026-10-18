@@ -156,6 +156,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_WORKSPACE_PROBE",
                 "-DBCIR_DT_ATTENTION_PROBE",
                 "-DBCIR_DT_PANELS_PROBE",
+                "-DBCIR_DT_SCAN_PROBE",
                 *options,
                 "-O2",
                 "-Wall",
@@ -179,8 +180,9 @@ def test_native_c_harness_c11_and_c23():
             )
             # update_pairs, division_probe (NDT-UPDATE); the bf16 contract, its trainer and the
             # workspace probe (NDT-BF16); the fused attention contract and its trainer (ATTN-FMA);
-            # the bf16 panels' writers and grouped GEMMs, and their trainer (BF16-PANELS)
-            assert result.stdout.count("PASS") == 24
+            # the bf16 panels' writers and grouped GEMMs, and their trainer (BF16-PANELS); a run's
+            # steps against one-step calls, the weight scans counted (FACTS-RUN)
+            assert result.stdout.count("PASS") == 25
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -207,6 +209,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_WORKSPACE_PROBE",
                 "-DBCIR_DT_ATTENTION_PROBE",
                 "-DBCIR_DT_PANELS_PROBE",
+                "-DBCIR_DT_SCAN_PROBE",
             ]
             cmd += ["-I", str(c)]
             cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]
@@ -218,7 +221,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 24
+            assert result.stdout.count("PASS") == 25
             break
 
 
@@ -579,6 +582,70 @@ def test_the_bf16_panels_keep_every_state():
         libs["panels"].bcir_decoder_panels_probe()
         nf.thread_states(built["panels"], nf.PANELS_BENCH, counts=(1,), contract="kblock+exp")
         assert libs["panels"].bcir_decoder_panels_probe() == 0
+
+
+def test_a_run_scans_its_weights_once():
+    """FACTS-RUN: inside one run call no caller code runs between a step's commit and the next
+    step, and a commit stores only admitted candidates -- finite, by the preflight or by
+    adamw_bounded's proof -- so the run's later steps skip the opening weight scan, while a
+    call's first step always runs it: its caller may have written the weights since. The scan
+    probe (BCIR_DT_SCAN_PROBE) counts the scans through the Python binding -- one for a run of
+    three steps, three for the same steps as three one-step calls, which leave the same state
+    and the same events, bit for bit, under the v1 and a bf16 contract, at one thread and at
+    four. A NaN written into the weights between two calls is the next call's refusal before
+    any step, found by the one scan it counts."""
+    import ctypes as ct
+
+    from bcir.hosted.models.native import NativeAdamW, NativeDecoder
+    from bcir.tests import native_decoder_fixtures as nf
+
+    probe = "#define BCIR_DT_SCAN_PROBE 1\n"
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.build_library(
+            tmp, sources={"bcir_decoder_train.c": probe + nf.source("bcir_decoder_train.c")}
+        )
+        if path is None:
+            return  # no C compiler: a skip, never a pass
+        # the path NativeDecoder loads (resolved), so the probe is the trainers' own library's
+        lib = ct.CDLL(str(Path(path).resolve()))
+        lib.bcir_decoder_scan_probe.restype = ct.c_ulong
+        lib.bcir_decoder_scan_probe.argtypes = []
+        spec, batch, time_ = nf.THREADS_BENCH
+        n, steps = batch * time_, 3
+        tokens = [(7 * i + 3) % spec.vocab_size for i in range(n * steps)]
+        targets = [(7 * i + 4) % spec.vocab_size for i in range(n * steps)]
+        rates = [1e-3 * (1 - 0.1 * s) for s in range(steps)]
+        opt = NativeAdamW(lr=1e-3)
+        for contract in ("v1", "bf16+exp+reduce+attn"):
+            for threads in (1, 4):
+                case = (contract, threads)
+                kw = {"batch_size": batch, "context_length": time_, "threads": threads,
+                      "contract": contract}  # fmt: skip
+                run, calls = NativeDecoder(path, spec, **kw), NativeDecoder(path, spec, **kw)
+                try:
+                    lib.bcir_decoder_scan_probe()
+                    events = run.run(tokens, targets, steps=steps, optimizer=opt,
+                                     learning_rates=rates)  # fmt: skip
+                    assert lib.bcir_decoder_scan_probe() == 1, case
+                    each = ()
+                    for s in range(steps):
+                        part = slice(s * n, (s + 1) * n)
+                        each += calls.run(tokens[part], targets[part], steps=1, optimizer=opt,
+                                          learning_rates=rates[s : s + 1])  # fmt: skip
+                    assert lib.bcir_decoder_scan_probe() == steps, case
+                    assert each == events and len(events) == steps, (case, events, each)
+                    assert nf.state_digest(run) == nf.state_digest(calls), case
+                    run.buffers["weights"][0] = float("nan")
+                    try:
+                        run.run(tokens, targets, steps=steps, optimizer=opt, learning_rates=rates)
+                    except ValueError as exc:
+                        assert str(exc) == "native run stopped after 0 complete steps (status 3)"
+                    else:
+                        raise AssertionError(f"a caller's NaN weight ran a step: {case}")
+                    assert lib.bcir_decoder_scan_probe() == 1, case
+                finally:
+                    run.close()
+                    calls.close()
 
 
 def _vma(address):

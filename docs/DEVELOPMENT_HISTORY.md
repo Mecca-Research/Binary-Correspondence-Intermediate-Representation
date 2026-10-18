@@ -3015,6 +3015,25 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     3.4 ms) -- and the B pack's loops swapped (its tasks 9% faster, the step x1.019, 0.997-1.036) and the
     packs overlapped with the compute per call (x1.002) and per strip (x1.008) were within the noise:
     not kept ([measurements/2026-10-18/panels/packs/](research/measurements/2026-10-18/panels/packs/)).
+  FACTS-RUN + MULTI-STEP (2026-10-18): a run call's later steps trust the call's own commits.
+  - A step scanned all 39 MB of weights before its forward, because a caller may have written them.
+    Inside one `bcir_decoder_run` call no caller code runs between a step's commit and the next step,
+    and a commit stores only admitted candidates (no larger than FLT_MAX, NaN excluded, by the
+    preflight or by `adamw_bounded`'s proof), so the steps after a call's first now skip that scan
+    (`DT_COMMITTED`); a call's first step, and every lone call, still scans.
+  - Witnesses: the C harness's `facts_run` (a run of three steps against three calls of one, state
+    and events, four contracts, one and two micro-batches, serial and pooled) with a scan probe
+    (`BCIR_DT_SCAN_PROBE`) counting one scan a run and one a call, and
+    `test_a_run_scans_its_weights_once` through the Python binding, where a NaN written between two
+    calls is the next call's refusal before any step. `ndt-facts.json` FR1-FR3, 3 of 3 caught.
+  - Measured at four threads, four arms rotated in one process
+    ([measurements/2026-10-18/facts/](research/measurements/2026-10-18/facts/)): the scan's removal
+    alone x1.035 (95% interval 1.014-1.057), a ten-step call against ten one-step calls x1.048, the
+    calls themselves nothing (x0.998); all four trainers end in one state. A 16-round first screen
+    resolved none of the three; the 48-round run is the record.
+  - The comparison harness's `train --steps-per-call N` runs a bcir backend N steps a call, never
+    across an evaluation, its record and name carrying N (`-kN`): the same states, losses and
+    evaluations as one step a call, its own arm.
   RING-RACE (2026-10-18): the ring harness's late kill made to happen, and its killed peer parked.
   - CI failed `test_ring.c --procs kill-producer bp` once with `killed_at=20000 ... violations=2`,
     every record delivered: the supervisor, descheduled between seeing the producer pass half the

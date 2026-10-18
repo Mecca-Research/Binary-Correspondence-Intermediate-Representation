@@ -87,15 +87,15 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NU12 every micro-batch defers its closing gradient scan (a refused first micro-batch runs the second)",
-      "new": "          (j ? DT_KNOWN : 0u)|DT_DEFER);\n",
-      "old": "          (j ? DT_KNOWN : 0u)|(j+1==accumulation ? DT_DEFER : 0u));\n",
+      "new": "          (j ? DT_KNOWN : i ? DT_COMMITTED : 0u)|DT_DEFER);\n",
+      "old": "          (j ? DT_KNOWN : i ? DT_COMMITTED : 0u)|(j+1==accumulation ? DT_DEFER : 0u));\n",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NU13 a run's first micro-batch skips the weights' scan (a NaN weight reaches the forward and its arena)",
       "new": "          DT_KNOWN|(j+1==accumulation ? DT_DEFER : 0u));\n",
-      "old": "          (j ? DT_KNOWN : 0u)|(j+1==accumulation ? DT_DEFER : 0u));\n",
+      "old": "          (j ? DT_KNOWN : i ? DT_COMMITTED : 0u)|(j+1==accumulation ? DT_DEFER : 0u));\n",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

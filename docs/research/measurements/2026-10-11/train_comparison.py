@@ -10,7 +10,10 @@ process so its peak resident memory is its own:
             --seed draws another replicate's initial weights and schedules (the corpus, its
             splits and the held-out problems stay), recorded in prepare.json when it is not
             the default
-  train     one backend on one task -> DIR/runs/<task>-<backend>.json
+  train     one backend on one task -> DIR/runs/<task>-<backend>.json; --steps-per-call N runs
+            a bcir backend N steps a native run call (never across an evaluation), which the
+            record and its name carry (-kN): the steps a call can trust its own commits
+            (FACTS-RUN), so the arm is its own row, in the one-step arm's states
   identity  BCIR's training state, bit for bit, across ISA variants, compilers, a repeat,
             thread counts (--threads) and contracts (--contract, --variants)
   baseline  the pre-update kernels against these, same steps: identical state, time per step
@@ -506,9 +509,14 @@ def _state_digest_torch(model, optimizer) -> str:
 # --- train -----------------------------------------------------------------------------------
 def train(
     data: Path, task: str, backend: str, steps: int | None, eval_every: int, cc: str,
-    lr_scale: float = 1.0, threads: int = 1, contract: str = "v1",
+    lr_scale: float = 1.0, threads: int = 1, contract: str = "v1", steps_per_call: int = 1,
 ):  # fmt: skip
     import numpy as np
+
+    if type(steps_per_call) is not int or steps_per_call < 1:
+        raise ValueError("steps_per_call must be a positive integer")
+    if steps_per_call > 1 and not backend.startswith("bcir"):
+        raise ValueError("several steps a call is a native trainer's run: a bcir backend")
 
     os.environ.update(OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
     record = json.loads((data / "prepare.json").read_text())
@@ -521,7 +529,7 @@ def train(
     started = time.perf_counter()
     rss_start = _rss_mb()
     info: dict = {"backend": backend, "task": task, "steps": steps, "threads": threads,
-                  "contract": contract, "lr_scale": lr_scale,
+                  "contract": contract, "lr_scale": lr_scale, "steps_per_call": steps_per_call,
                   "seed": record.get("seed", SEED)}  # fmt: skip
     compile_s = None
     if backend.startswith("bcir"):
@@ -536,10 +544,15 @@ def train(
             weight_decay=OPT["decay"], grad_clip=OPT["clip"],
         )  # fmt: skip
 
-        def step_fn(s):
-            x, y = _batch(stream, offsets, s, task)
-            event = nd.run(x, y, steps=1, optimizer=opt, learning_rates=[rates[s]])[0]
-            return event["loss"], event["grad_norm"]
+        def run_fn(s, count):
+            # steps s .. s+count-1 as one native run call: each step's batch, in step order
+            xs, ys = [], []
+            for t in range(s, s + count):
+                x, y = _batch(stream, offsets, t, task)
+                xs += x
+                ys += y
+            events = nd.run(xs, ys, steps=count, optimizer=opt, learning_rates=rates[s : s + count])
+            return [(event["loss"], event["grad_norm"]) for event in events]
 
         def logits_fn(x):
             out = []
@@ -626,6 +639,9 @@ def train(
             optimizer_step()
             return float(loss.detach()), float(norm)
 
+        def run_fn(s, count):
+            return [step_fn(s)]  # one step a call (steps_per_call is 1 here)
+
         def logits_fn(x):
             # in training-sized batches, as the native trainer evaluates, so an evaluation's
             # activations do not set the peak memory the training is measured by
@@ -664,20 +680,27 @@ def train(
     losses, norms, step_s, evals = [], [], [], []
     trained = 0.0
     evals.append({"step": 0, "train_seconds": 0.0, **evaluate(eval_split)})
-    for s in range(steps):
+    s = 0
+    while s < steps:
+        # a call ends at the run's end or an evaluation, whichever comes first; each of its
+        # steps is timed as the call's share
+        count = min(steps_per_call, steps - s, eval_every - s % eval_every)
         t0 = time.perf_counter()
-        loss, norm = step_fn(s)
-        dt = time.perf_counter() - t0
-        if s < 2 and backend.startswith("torch-compiled"):
-            compile_s = (compile_s or 0.0) + dt
-        trained += dt
-        losses.append(loss)
-        norms.append(norm)
-        step_s.append(dt)
-        if not math.isfinite(loss):
-            raise RuntimeError(f"{backend}: non-finite loss at step {s}")
-        if (s + 1) % eval_every == 0 or s + 1 == steps:
-            evals.append({"step": s + 1, "train_seconds": trained, **evaluate(eval_split)})
+        results = run_fn(s, count)
+        dt = (time.perf_counter() - t0) / count
+        assert len(results) == count, (len(results), count)
+        for loss, norm in results:
+            if s < 2 and backend.startswith("torch-compiled"):
+                compile_s = (compile_s or 0.0) + dt
+            trained += dt
+            losses.append(loss)
+            norms.append(norm)
+            step_s.append(dt)
+            if not math.isfinite(loss):
+                raise RuntimeError(f"{backend}: non-finite loss at step {s}")
+            s += 1
+        if s % eval_every == 0 or s == steps:
+            evals.append({"step": s, "train_seconds": trained, **evaluate(eval_split)})
             print(json.dumps({"backend": backend, "task": task, **evals[-1]}), flush=True)
     final = {split: evaluate(split) for split in sets}
     warm = step_s[2:] if len(step_s) > 4 else step_s
@@ -697,6 +720,7 @@ def train(
         f"{task}-{backend}"
         + ("" if contract == "v1" else f"-{contract}")
         + ("" if threads == 1 else f"-t{threads}")
+        + ("" if steps_per_call == 1 else f"-k{steps_per_call}")
     )
     (out / f"{name}.json").write_text(json.dumps(info, indent=1, sort_keys=True) + "\n")
     print(json.dumps({"saved": name, "median_step_ms": info["median_step_ms"],
@@ -1778,6 +1802,8 @@ def main():
                    help="the BCIR pool's size, or PyTorch's intra-op threads (default 1)")  # fmt: skip
     t.add_argument("--contract", default="v1",
                    help="a NativeDecoder contract (bcir backends): v1, kblock+exp+reduce, bf16, ...")  # fmt: skip
+    t.add_argument("--steps-per-call", type=int, default=1,
+                   help="native run calls of this many steps (bcir backends; default 1)")  # fmt: skip
     i = sub.add_parser("identity")
     i.add_argument("--data", type=Path, required=True)
     i.add_argument("--steps", type=int, default=20)
@@ -1837,7 +1863,7 @@ def main():
         prepare(a.output, budgets, a.seed)
     elif a.stage == "train":
         train(a.data, a.task, a.backend, a.steps, a.eval_every, a.cc, a.lr_scale, a.threads,
-              a.contract)  # fmt: skip
+              a.contract, a.steps_per_call)  # fmt: skip
     elif a.stage == "identity":
         identity(a.data, a.steps, a.cc or ["gcc"], tuple(int(n) for n in a.threads.split(",")),
                  tuple(a.contract.split(",")), tuple(a.variants.split(",")))  # fmt: skip

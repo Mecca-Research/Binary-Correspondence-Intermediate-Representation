@@ -2246,13 +2246,75 @@ static void trainer_panels(void) {
     printf("  PASS bf16 panels trainer (BF16-PANELS): three bf16 contracts, one state with the SwiGLU block's panels, without them and mixed, at one thread and four; none where the width is off the grid%s\n",probed);
   }
 }
+#ifdef BCIR_DT_SCAN_PROBE
+unsigned long bcir_decoder_scan_probe(void);
+#endif
+/* FACTS-RUN: inside one run call the weights after a step's update are that commit's, every one
+ * finite, so the steps after the first skip the weights' opening scan. The state and the events
+ * are those of the same steps run one call at a time -- serially and on a pool, micro-batches of
+ * one and two, under four contracts -- and the scan probe (BCIR_DT_SCAN_PROBE) counts one scan for
+ * the run against one a call for the calls. */
+static void facts_run(void) {
+  static float keepw[4096],keepm[4096],keepv[4096];
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  static const uint32_t contracts[]={0,BCIR_DT_CONTRACT_FUSED,
+      BCIR_DT_CONTRACT_KBLOCK|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE,
+      BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_ATTN};
+  uint32_t ids[24],targets[24]; bcir_decoder_event one[3],each[3];
+  bcir_decoder_adamw opt={0.01,0.9,0.95,1e-8,0.01,1.0};
+  size_t c,a,k,p,done,n=4,cases=0;
+  stream(ids,targets,24);
+  for (p=0;p<2;p++) {
+    bcir_tensor_pool *pool=NULL;
+    if (p) {
+      if (!bcir_tensor_pool_size(3)) continue;
+      pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),3); assert(pool!=NULL);
+    }
+    for (c=0;c<sizeof(contracts)/sizeof(contracts[0]);c++) for (a=1;a<=2;a++) {
+      bcir_decoder_state st=fixture(); size_t params=st.plan.parameters;
+      st.contract=contracts[c]; st.pool=pool; lend(&st);
+#ifdef BCIR_DT_SCAN_PROBE
+      (void)bcir_decoder_scan_probe();
+#endif
+      assert(bcir_decoder_run_accum(&st,&opt,ids,targets,3*a*n,NULL,3,a,one,3,&done)==0 && done==3);
+#ifdef BCIR_DT_SCAN_PROBE
+      assert(bcir_decoder_scan_probe()==1u);
+#endif
+      memcpy(keepw,w,params*sizeof(float)); memcpy(keepm,m,params*sizeof(float));
+      memcpy(keepv,v,params*sizeof(float));
+      st=fixture(); st.contract=contracts[c]; st.pool=pool; lend(&st);
+      for (k=0;k<3;k++)
+        assert(bcir_decoder_run_accum(&st,&opt,ids+k*a*n,targets+k*a*n,a*n,NULL,1,a,each+k,1,&done)==0 &&
+            done==1);
+#ifdef BCIR_DT_SCAN_PROBE
+      assert(bcir_decoder_scan_probe()==3u);
+#endif
+      assert(!memcmp(keepw,w,params*sizeof(float)) && !memcmp(keepm,m,params*sizeof(float)) &&
+          !memcmp(keepv,v,params*sizeof(float)));
+      for (k=0;k<3;k++)
+        assert(!memcmp(&one[k].loss,&each[k].loss,sizeof(double)) &&
+            !memcmp(&one[k].grad_norm,&each[k].grad_norm,sizeof(double)) && one[k].step==each[k].step);
+      cases++;
+    }
+    bcir_tensor_pool_stop(pool);
+  }
+  assert(cases>=8);
+  {
+#ifdef BCIR_DT_SCAN_PROBE
+    static const char probed[]=", one weight scan a run and one a call";
+#else
+    static const char probed[]="";
+#endif
+    printf("  PASS native run facts (FACTS-RUN): a run of three steps is three calls of one, state and events, under four contracts and two accumulations, serially and pooled%s\n",probed);
+  }
+}
 int main(void) {
   gemm_contract(); attention_reference(); attention_fused_reference(); adamw_reference();
   finite_differences(); refusals();
   learning(); pool_identity(); pool_claims(); reduction_references(); scan_references();
   gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); fused_passes();
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
-  panels_contract(); trainer_panels();
+  panels_contract(); trainer_panels(); facts_run();
 #ifdef BCIR_DT_DIVISION_PROBE
   division_probe();
 #endif

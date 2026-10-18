@@ -2161,3 +2161,37 @@ reads x1.008 ([fine-t4.json](measurements/2026-10-18/panels/packs/fine-t4.json))
 (GEMM-OVERLAP): on this host the tile unit's compute and the packs do not overlap. A pack has to be
 removed rather than hidden, and the weights' B panels -- written when the update writes a weight -- are
 the largest left.
+
+## 38. A run's later steps trusting its own commits (FACTS-RUN, MULTI-STEP)
+
+Every step opened with a scan of the 39 MB of weights for a non-finite value, because the caller may
+have written them since the last step. Inside one `bcir_decoder_run` call it cannot have: no caller
+code runs between a step's commit and the next step, and a commit stores only candidates the update
+admitted -- no larger than FLT_MAX, NaN excluded, by the preflight or by `adamw_bounded`'s proof --
+so the steps after a call's first now skip the scan (`DT_COMMITTED`), and a call's first step, like
+every lone call, still takes it. No value changes. The C harness holds a run of three steps to the
+same steps called one at a time (state and events, four contracts, one and two micro-batches, serial
+and on a pool), a scan probe counting one scan a run and one a call; the Python witness counts the
+same through the binding and has a NaN written between two calls refused before any step;
+`tools/testing/faults/ndt-facts.json` holds three faults, all caught.
+
+Four arms rotated in one process at four threads under `bf16+exp+reduce+attn`, ten steps an arm a
+round on the comparison decoder ([facts/](measurements/2026-10-18/facts/)): this tree and the tree
+before it (`d76f326`), each as one ten-step call and as ten calls of one step. Over 48 rounds
+([calls-t4-48.json](measurements/2026-10-18/facts/calls-t4-48.json)):
+
+| ratio | geometric mean | 95% interval |
+|---|---|---|
+| the scan's removal alone (before / this, one call each) | 1.035 | 1.014-1.057 |
+| a ten-step call against ten calls (this tree) | 1.048 | 1.028-1.068 |
+| the calls alone (before: ten calls / one, every step scanning) | 0.998 | 0.977-1.019 |
+
+All four trainers end in one state. The binding's own cost per call -- the call and its token
+conversion -- is nothing measurable, so what a longer call buys is the facts it can trust. A first
+screen of 16 rounds ([calls-t4-16.json](measurements/2026-10-18/facts/calls-t4-16.json)) put every
+interval near +-5% and resolved none of the three; that is this host's noise for a 2-3% effect.
+
+The comparison harness measured one step a call, so it never saw this: `train --steps-per-call N`
+(MULTI-STEP) runs a bcir backend N steps a native call, never across an evaluation, each step timed
+as its call's share, the record and its name carrying N. A 30-step run of seven steps a call ended in
+the state, losses, clipping norms and evaluations of one step a call.

@@ -490,6 +490,30 @@ static void rms_backward(bcir_decoder_state *s,size_t rows,size_t width,const fl
  * update's first pass, which the run calls next with the same verdict on every element. */
 #define DT_KNOWN 1u
 #define DT_DEFER 2u
+/* DT_COMMITTED (FACTS-RUN) -- the weights are the run's own last commit's, unchanged since, so the
+ * opening weight scan would pass: an update commits only once every candidate is admitted -- no
+ * larger than FLT_MAX, NaN excluded, by the preflight or by adamw_bounded's proof -- and the commit
+ * stores those candidates, value for value; between that commit and the next step's first
+ * micro-batch the run writes only its events, outside the state. A lone call never knows it: its
+ * caller may have written the weights since. */
+#define DT_COMMITTED 4u
+#ifdef BCIR_DT_SCAN_PROBE
+/* The harness's count of the opening weight scans since the last read (a build defines
+ * BCIR_DT_SCAN_PROBE to have it; the library does not): FACTS-RUN's witness, a run of several
+ * steps scanning once. Exported from a shared build, so the Python witness reads it too. */
+static unsigned long weight_scans;
+BCIR_DT_API unsigned long bcir_decoder_scan_probe(void);
+BCIR_DT_API unsigned long bcir_decoder_scan_probe(void) {
+  unsigned long n=weight_scans; weight_scans=0; return n;
+}
+#endif
+/* the opening scan of the weights (counted where the probe is built in) */
+static int weights_finite(bcir_decoder_state *s) {
+#ifdef BCIR_DT_SCAN_PROBE
+  weight_scans++;
+#endif
+  return finite_pool(s,s->weights,s->plan.parameters);
+}
 static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
     const uint32_t *targets,size_t n,int accumulate,double *loss,unsigned how) {
   geometry g; size_t i,l; double ce=0.0; loss_job lj; scatter_job sj;
@@ -500,8 +524,9 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
   if (n!=g.n || !ids(s,tokens,n) || !ids(s,targets,n) ||
       (accumulate!=0 && accumulate!=1) || !external(s,loss,sizeof(*loss)) ||
       (uintptr_t)loss%_Alignof(double)) return BCIR_DT_INVALID;
-  if (!(how&DT_KNOWN) && (!finite_pool(s,s->weights,s->plan.parameters) ||
-      (accumulate && !finite_pool(s,s->gradients,s->plan.parameters)))) return BCIR_DT_NUMERIC;
+  if ((!(how&(DT_KNOWN|DT_COMMITTED)) && !weights_finite(s)) ||
+      (!(how&DT_KNOWN) && accumulate && !finite_pool(s,s->gradients,s->plan.parameters)))
+    return BCIR_DT_NUMERIC;
   if (!forward(s,tokens,g)) return BCIR_DT_NUMERIC;
   /* NDT-ZERO: a fresh gradient's first writers write it -- each weight adjoint's GEMM at beta 0,
    * which adds its terms to +0.0 without reading C (what the fill and beta 1 gave), each gamma
@@ -1067,7 +1092,7 @@ int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     for (j=0;j<accumulation;j++) {
       double part; size_t off=(i*accumulation+j)*n;
       rc=loss_backward_with(s,tokens+off,targets+off,n,j!=0,&part,
-          (j ? DT_KNOWN : 0u)|(j+1==accumulation ? DT_DEFER : 0u));
+          (j ? DT_KNOWN : i ? DT_COMMITTED : 0u)|(j+1==accumulation ? DT_DEFER : 0u));
       if (rc) return rc;
       loss+=part/(double)accumulation;
     }

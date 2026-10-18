@@ -107,7 +107,10 @@ BCIR_DT_API int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t 
 BCIR_DT_API int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *opt,
     double gradient_scale,double *grad_norm);
 /* Native loop, optional per-update rates; validate all IDs/outputs before any update.
- * A later numeric failure preserves completed steps and reports completed count. */
+ * A later numeric failure preserves completed steps and reports completed count.
+ * A call's first step scans the weights before its forward; the steps after it skip that scan,
+ * the weights being the call's own last commit -- every candidate admitted, finite -- with no
+ * caller code run since (FACTS-RUN): one call of several steps scans once. */
 BCIR_DT_API int bcir_decoder_run(bcir_decoder_state *s,const bcir_decoder_adamw *opt,
     const uint32_t *tokens,const uint32_t *targets,size_t token_count,
     const double *rates,size_t steps,bcir_decoder_event *events,
