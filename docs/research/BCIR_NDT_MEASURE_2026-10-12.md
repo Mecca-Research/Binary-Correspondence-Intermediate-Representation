@@ -1949,3 +1949,36 @@ the bf16 step in place (11.3 of 73.5 ms; 14.5 of 80.6, 18%, without the bit); it
 dominate it, so the
 next attention slice is its schedule (the tiled online-softmax attention of the roadmap's NDT-ATTN row),
 not its arithmetic.
+
+## 34. The attention fused, against PyTorch's bfloat16 (LM-ATTN)
+
+§33's bit changes the attention's roundings, so it leaves the question §32 answered for the bf16
+contract: whether the model trained under it is as good, and what it buys over a whole run. LM-PAIRED's
+five seeds each ran the 1,000-step language model at four threads under five arms in one session, their
+order rotated seed by seed -- BCIR `bf16+exp+reduce+attn` and `bf16+exp+reduce`, BCIR
+`kblock+exp+reduce+attn` and `kblock+exp+reduce`, and compiled PyTorch under autocast (§32's faster
+PyTorch bf16 arm) -- with §32's analysis fixed before the runs, the margin graded on every pair
+([attnfma/lm/](measurements/2026-10-18/attnfma/lm/), [paired_attn.py](measurements/2026-10-18/attnfma/lm/paired_attn.py)).
+
+| seed | BCIR bf16+attn, ms (tokens/s) | PyTorch bf16 | BCIR bf16 | BCIR FP32+attn | BCIR FP32 |
+|---|---|---|---|---|---|
+| 20261011 | 77.8 (13,157) | 155.3 (6,592) | 82.0 (12,490) | 177.6 (5,766) | 175.7 (5,830) |
+| 1001 | 68.5 (14,951) | 131.2 (7,802) | 71.8 (14,258) | 165.3 (6,194) | 170.3 (6,012) |
+| 2002 | 70.8 (14,460) | 147.3 (6,952) | 72.7 (14,078) | 165.7 (6,181) | 170.6 (6,004) |
+| 3003 | 68.3 (14,999) | 142.9 (7,164) | 72.0 (14,214) | 163.6 (6,259) | 169.2 (6,052) |
+| 4004 | 69.7 (14,698) | 138.9 (7,374) | 68.2 (15,009) | 162.2 (6,314) | 169.7 (6,035) |
+
+([summary.json](measurements/2026-10-18/attnfma/lm/summary.json).) BCIR's fastest contract trains at
+**2.015 times** the tokens a second of compiled PyTorch under autocast (95% interval 1.926-2.107),
+faster on five of five seeds, its test cross-entropy 0.00016 nats below PyTorch's on average (interval
+-0.00161 to +0.00129): inside the margin; against BCIR's own FP32 run it is 2.412 times (2.297-2.532) at
++0.00081 nats (-0.00141 to +0.00303), inside it too. The attention bit buys 1.032 times under bf16
+(0.993-1.073, faster on four of five) and 1.026 times in FP32 (0.999-1.053, four of five) -- §33's 3% of
+the step, which five seeds of 1,000 steps on a shared host do not resolve at 95% -- at -0.00036 nats
+(-0.00104 to +0.00032) under bf16 and +0.00000 in FP32, where the fused products move the final test loss
+by less than 10^-5 nats. Without the bit BCIR's bf16 runs 1.952 times PyTorch's in this session
+(1.842-2.067; 2.083 in §32's), PyTorch at 131-155 ms a step here against 141-155 there and BCIR at 68-82
+against 70-76; and both of BCIR's arms without the bit end in §32's states on all five seeds, so the bit
+is the one arithmetic this session changed. Peak RSS is 540 MB for BCIR's bf16 arms and 529-530 for its
+FP32 arms against 1,132-1,148 MB for PyTorch's; the persistent state is the same 157,390,848 bytes on
+every arm.

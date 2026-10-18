@@ -2941,6 +2941,18 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `bf16+exp+reduce` (13,199 tokens a second) and 176.8 -> 169.4 under `kblock+exp+reduce`. One
     state per contract through the tile, AVX-512, AVX2 and portable builds at one and four threads;
     the contracts without the bit keep their states (`4bf4e057…`, `e91ae701…`).
+  LM-ATTN (2026-10-18): the fused attention over 1,000 steps, five seeds paired.
+  - LM-PAIRED's five seeds ran five arms each at four threads in one session, the order rotated: BCIR
+    under `bf16+exp+reduce+attn` and `bf16+exp+reduce`, under `kblock+exp+reduce+attn` and
+    `kblock+exp+reduce`, and compiled PyTorch under autocast, with LM-BF16's analysis fixed before the
+    runs ([measurements/2026-10-18/attnfma/lm/](research/measurements/2026-10-18/attnfma/lm/), the
+    report's §34).
+  - BCIR's fastest contract trains at 2.015 times compiled PyTorch bf16's tokens a second (95% interval
+    1.926-2.107, faster on 5 of 5: 13,157-14,999 tokens a second against 6,592-7,802), its test
+    cross-entropy 0.00016 nats below PyTorch's (inside the ±0.01 margin). The attention bit buys 1.032
+    times under bf16 (0.993-1.073) and 1.026 in FP32 (0.999-1.053) at -0.00036 and +0.00000 nats. The
+    arms without the bit end in LM-BF16's states on all five seeds. Peak RSS 540 MB against
+    1,132-1,148.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

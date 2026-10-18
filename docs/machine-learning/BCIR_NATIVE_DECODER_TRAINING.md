@@ -481,7 +481,10 @@ the same terms in the same order, held to `fmaf` reference loops on every instan
 `tools/testing/faults/ndt-attnfma.json`'s 17 faults; one layer's attention at four threads goes
 from 1.88 to 1.37 ms, the four-thread step under `bf16+exp+reduce` from 80.0 to 77.6 ms (13,199
 tokens a second). The state is the contract's on every instance and thread count; without the bit
-every state is as it was.
+every state is as it was. Over five paired seeds of the 1,000-step language model (LM-ATTN),
+`bf16+exp+reduce+attn` trains at 2.015 times the tokens a second of compiled PyTorch under its CPU
+autocast to bfloat16 (95% interval 1.926-2.107), the test cross-entropy inside a ±0.01-nat margin of
+PyTorch's and of the run without the bit, in half the memory.
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
