@@ -129,8 +129,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NZ4 every query head of a KV head starts dk and dv from +0.0 (the group's earlier heads' terms are dropped)",
-      "new": "    att_rows(variant,&x,t,ATT_TRANSPOSED,1);\n  }\n",
-      "old": "    att_rows(variant,&x,t,ATT_TRANSPOSED,h%(nh/nk)==0);\n  }\n",
+      "new": "    att_rows(variant,a->fused,&x,t,ATT_TRANSPOSED,1);\n  }\n",
+      "old": "    att_rows(variant,a->fused,&x,t,ATT_TRANSPOSED,h%(nh/nk)==0);\n  }\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

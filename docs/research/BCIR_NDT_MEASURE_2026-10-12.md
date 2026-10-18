@@ -1872,3 +1872,80 @@ seed-20261011 run ends in `5137e013…`, the state of every 1,000-step BCIR run 
 step's medians here (69.8-76.2 ms) are those of 1,000 consecutive steps under one contract; §31's
 79.8 ms is the median of 24 steps alternated with the FP32 contract's in one process. Of that step
 the attention is a fifth, ATTN-FMA's slice.
+
+## 33. The attention's products fused (ATTN-FMA)
+
+§31 left the attention a fifth of the bf16 step and its products v1's arithmetic: the scores q_i . k_j,
+the context's sums of p_ij v_j, and the backward's probability adjoints dy_i . v_j, its dot sum of
+p_ij dp_ij and the dq, dk and dv sums each took a rounded product and a rounded sum a term -- in the
+AVX-512 register blocks a multiply and an add, two instructions for the FMA units where one does both.
+The fused attention contract (`bcir_tensor.h`'s `BCIR_TENSOR_ATTENTION_FUSED`, through
+`bcir_tensor_attention_contract_scan_pool` and `bcir_tensor_attention_backward_contract_pool`, whose
+`BCIR_TENSOR_ATTENTION_EXP` is the v2 softmax's exponential) makes every one of those multiply-adds one
+IEEE fusedMultiplyAdd (C99 `fmaf`: the product unrounded, one rounding) over the same terms in the same
+order from the same start; the scaling, the softmax and the score adjoint p_ij (dp_ij - dot_i) times
+the scale stay v1's, and without the bit each entry is its v1 entry bit for bit. Three instances
+compute it, chosen as the fused GEMM's are: portable `fmaf` (the GEMM kernel's fused rows, under the
+causal masks), AVX2+FMA (the fused GEMM's AVX2 kernel for every row) and AVX-512 -- the v1 register
+blocks written once as always-inline bodies and instantiated twice, the multiply-add a constant of each
+copy (`_mm512_fmadd_ps`, and for a block's diagonal terms `_mm512_mask3_fmadd_ps`, which leaves a lane
+its mask excludes exactly as it was, NaN or not), the rows past the last whole eight and the scalar
+tails through the fused kernel and `fmaf`. In the trainer it is `BCIR_DT_CONTRACT_ATTN` (bit 32 of the
+state's contract, with any GEMM contract or none: no ABI change), and in Python `attn` and
+`<contract>+attn`. FP32 throughout: only the products' roundings change.
+
+The C harness holds the entries to `fmaf` reference loops written beside the v1 ones: 192 cases (the
+attention reference's sixteen shapes, finite and with an infinite value and a NaN adjoint, under libm's
+exponential and BCIR's, serially and on pools of two and four), every probability, context element and
+adjoint bit-identical to the loops, 180 of them apart from v1's; the runtime gate's builds of the same
+harness, portable and capped at AVX2, hold those instances to the same loops. Under the bit the
+trainer's state is its own and one at every thread count (`attn`, `kblock+exp+attn` and
+`bf16+exp+reduce+attn` in the thread-state test), and a probe in the tensor unit (the harness's builds
+only) records the contract every attention job of a run computed with. That probe is the RED sweep's:
+its first version recorded what the trainer meant to pass, a statement beside each call, and a wrong
+contract at the backward's call (AF14) passed it, so the record moved into the jobs themselves.
+`tools/testing/faults/ndt-attnfma.json` holds 17 injected faults (each block instantiating v1's
+arithmetic, the remainders and tails taking v1's terms, the entries ignoring the bit, the trainer
+refusing it, ignoring it or passing the wrong contract at either call, the Python names leaving it out),
+and eight entries of five older tables anchored in the restructured blocks fire again re-anchored.
+
+The attention alone at the language model's shapes (batch 8, eight query heads over four KV heads, 48
+channels, BCIR's exponential), the two contracts alternated round by round in one process, as the
+trainer calls them -- back to back on a busy pool, the operands on huge pages
+([attnfma/](measurements/2026-10-18/attnfma/), [attention.c](measurements/2026-10-18/attnfma/attention.c)):
+
+| one layer, median | v1 products | fused | ratio |
+|---|---|---|---|
+| forward, 128 tokens, four threads | 0.776 ms | 0.604 ms | 1.29 |
+| backward | 1.104 | 0.763 | 1.45 |
+| forward, 128 tokens, one thread | 2.797 | 2.148 | 1.30 |
+| backward | 3.792 | 2.492 | 1.52 |
+| forward, 512 tokens, four threads | 12.057 | 9.857 | 1.22 |
+| backward | 23.395 | 17.093 | 1.37 |
+
+The backward gains most: its products are most of its work, where the forward's softmax is unchanged.
+(A first version of the instrument hashed each call's outputs on the calling thread between the
+forward and the backward; the pool's threads slept through it and the backward measured 3.6 ms a layer
+at four threads, against the 1.1-1.4 ms it costs in place, so the records are the second version's.)
+In the step, in place at four threads (§11's instrument, five rounds each, alternated), the attention
+forward goes from 6.18 to 5.18 ms a step and the backward from 8.35 to 6.09, every fused round's
+attention below every v1 round's, the GEMMs the same 41.2 / 41.3 ms. The step alone, alternated round
+by round ([step.py](measurements/2026-10-18/attnfma/step.py)):
+
+| the 9.84M decoder's step, median of 24 | without the bit | with it | ratio |
+|---|---|---|---|
+| `bf16+exp+reduce`, four threads | 80.0 ms (12,805 tokens/s) | 77.6 ms (13,199) | 1.031 |
+| `kblock+exp+reduce`, four threads | 176.8 ms (5,792) | 169.4 ms (6,046) | 1.044 |
+| `bf16+exp+reduce`, one thread, median of 8 | 246.2 ms (4,160) | 235.8 ms (4,343) | 1.044 |
+
+The state is the contract's on every instance: six steps of the comparison decoder end in one digest
+per contract through the tile, AVX-512, AVX2 and portable builds at one and four threads --
+`08da09e8…` under `bf16+exp+reduce+attn`, `562b9bd8…` under `kblock+exp+reduce+attn`
+([identity-bf16.json](measurements/2026-10-18/attnfma/identity-bf16.json),
+[identity-kblock.json](measurements/2026-10-18/attnfma/identity-kblock.json)) -- and the contracts
+without the bit are unchanged on this commit's sources: `kblock+exp+reduce`'s 20-step state is still
+`4bf4e057…`, `bf16+exp+reduce`'s six-step state still `e91ae701…`. The attention is now about 15% of
+the bf16 step in place (11.3 of 73.5 ms; 14.5 of 80.6, 18%, without the bit); its products no longer
+dominate it, so the
+next attention slice is its schedule (the tiled online-softmax attention of the roadmap's NDT-ATTN row),
+not its arithmetic.

@@ -66,8 +66,8 @@
   {
    "expects": "test_native_c_harness_c11_and_c23",
    "label": "NL9 the backward's dot tail restarts at the tile's first column (the lanes' columns added twice)",
-   "new": "    for (j=jt;j<end;j++) dot[ig+r]+=pi[j]*tile[(ig+r)*ldt+j-jt];",
-   "old": "    for (j=j0;j<end;j++) dot[ig+r]+=pi[j]*tile[(ig+r)*ldt+j-jt];",
+   "new": "    for (j=jt;j<end;j++) dot[ig+r]=ATT_MADD1(f,dot[ig+r],pi[j],tile[(ig+r)*ldt+j-jt]);",
+   "old": "    for (j=j0;j<end;j++) dot[ig+r]=ATT_MADD1(f,dot[ig+r],pi[j],tile[(ig+r)*ldt+j-jt]);",
    "path": "runtime/c/bcir_tensor.c"
   },
   {

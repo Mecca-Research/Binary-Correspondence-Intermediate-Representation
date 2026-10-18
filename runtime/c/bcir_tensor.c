@@ -494,12 +494,6 @@ static void mm_run_range(int variant, int fused, const mm_args *x, const mm_rang
   (void)variant;
   if (fused==MM_KBLOCK) mm_generic_kb(x,r); else if (fused) mm_generic_fused(x,r); else mm_generic(x,r);
 }
-static void mm_run(int variant, const mm_args *x) {
-  mm_range r;
-  if (!x->m || !x->n || !x->k) return;
-  r.jb0=0; r.jb1=x->n; r.r0=0; r.r1=x->m;
-  mm_run_range(variant,MM_V1,x,&r);
-}
 static int mm_widest(void) {
   int v=bcir_tensor_mm_variants();
   return v&4 ? 4 : v&2 ? 2 : 1;
@@ -2110,6 +2104,7 @@ void bcir_tensor_rope(size_t b, size_t t, size_t heads, size_t dim,
  * att512_expsum) -- each row's chain the loop's, in its column order. */
 typedef struct att_job {
   size_t b,t,nh,nk,d,group; const float *q,*k,*v,*dy; float *p,*y,*dq,*dk,*dv; int variant,exp2;
+  int fused;  /* ATTN-FMA: the products' every multiply-add one fmaf */
   unsigned char *bad;  /* the forward's verdict bytes, one a task (NDT-SCAN-W), or NULL */
 } att_job;
 #ifdef BCIR_MM_DISPATCH
@@ -2134,7 +2129,16 @@ typedef struct att_job {
 __attribute__((target("avx512f"))) BCIR_MM_INLINE __mmask16 att512_lanes(size_t count) {
   return (__mmask16)(count>=16 ? 0xffffu : (1u<<count)-1u);
 }
-__attribute__((target("avx512f"))) static void att512_scores(size_t rows, size_t d,
+/* One term of a product: v1's rounded product and rounded sum, or under the fused attention
+ * contract (ATTN-FMA) one fused multiply-add -- the product unrounded, one rounding. `f` is a
+ * constant of each instantiation (the blocks are written once and inlined into a v1 and a fused
+ * copy), so neither copy tests it. The masked form leaves a lane the mask excludes exactly as it
+ * was, NaN or not, under both. */
+#define ATT_MADD(f,acc,a,b) ((f) ? _mm512_fmadd_ps((a),(b),(acc)) : _mm512_add_ps((acc),_mm512_mul_ps((a),(b))))
+#define ATT_MADD_MASK(f,acc,take,a,b) ((f) ? _mm512_mask3_fmadd_ps((a),(b),(acc),(take)) : \
+    _mm512_mask_add_ps((acc),(take),(acc),_mm512_mul_ps((a),(b))))
+#define ATT_MADD1(f,acc,a,b) ((f) ? fmaf((a),(b),(acc)) : (acc)+(a)*(b))
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_scores_any(int f, size_t rows, size_t d,
     const float *q, size_t ldq, const float *k, size_t ldk, float *s, size_t lds) {
   _Alignas(64) float kt[BCIR_ATT_DC*32];
   size_t j0,c0,i0,r,c,j;
@@ -2159,7 +2163,7 @@ __attribute__((target("avx512f"))) static void att512_scores(size_t rows, size_t
           __m512 b0=_mm512_load_ps(kt+c*32),b1=_mm512_load_ps(kt+c*32+16);
           for (r=0;r<8;r++) {
             __m512 qv=_mm512_set1_ps(q[(i0+r)*ldq+c0+c]);
-            a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(qv,b0)); a1[r]=_mm512_add_ps(a1[r],_mm512_mul_ps(qv,b1));
+            a0[r]=ATT_MADD(f,a0[r],qv,b0); a1[r]=ATT_MADD(f,a1[r],qv,b1);
           }
         }
         for (r=0;r<8;r++) {
@@ -2176,7 +2180,15 @@ __attribute__((target("avx512f"))) static void att512_scores(size_t rows, size_t
     }
   }
 }
-__attribute__((target("avx512f"))) static void att512_context(size_t rows, size_t d,
+__attribute__((target("avx512f"))) static void att512_scores(size_t rows, size_t d,
+    const float *q, size_t ldq, const float *k, size_t ldk, float *s, size_t lds) {
+  att512_scores_any(0,rows,d,q,ldq,k,ldk,s,lds);
+}
+__attribute__((target("avx512f"))) static void att512_scores_fma(size_t rows, size_t d,
+    const float *q, size_t ldq, const float *k, size_t ldk, float *s, size_t lds) {
+  att512_scores_any(1,rows,d,q,ldq,k,ldk,s,lds);
+}
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_context_any(int f, size_t rows, size_t d,
     const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy, int first) {
   size_t c0,i0,r,j,dj;
   for (c0=0;c0<d;c0+=48) {
@@ -2195,8 +2207,8 @@ __attribute__((target("avx512f"))) static void att512_context(size_t rows, size_
             b2=_mm512_maskz_loadu_ps(m2,vj+32);
         for (r=0;r<8;r++) {
           __m512 pv=_mm512_set1_ps(p[(i0+r)*ldp+j]);
-          a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(pv,b0)); a1[r]=_mm512_add_ps(a1[r],_mm512_mul_ps(pv,b1));
-          a2[r]=_mm512_add_ps(a2[r],_mm512_mul_ps(pv,b2));
+          a0[r]=ATT_MADD(f,a0[r],pv,b0); a1[r]=ATT_MADD(f,a1[r],pv,b1);
+          a2[r]=ATT_MADD(f,a2[r],pv,b2);
         }
       }
       for (dj=1;dj<8;dj++) {  /* key i0+dj: the rows r >= dj, the others masked out */
@@ -2206,9 +2218,9 @@ __attribute__((target("avx512f"))) static void att512_context(size_t rows, size_
         for (r=0;r<8;r++) {
           __mmask16 take=(__mmask16)(r>=dj ? 0xffffu : 0u);
           __m512 pv=_mm512_set1_ps(p[(i0+r)*ldp+i0+dj]);
-          a0[r]=_mm512_mask_add_ps(a0[r],take,a0[r],_mm512_mul_ps(pv,b0));
-          a1[r]=_mm512_mask_add_ps(a1[r],take,a1[r],_mm512_mul_ps(pv,b1));
-          a2[r]=_mm512_mask_add_ps(a2[r],take,a2[r],_mm512_mul_ps(pv,b2));
+          a0[r]=ATT_MADD_MASK(f,a0[r],take,pv,b0);
+          a1[r]=ATT_MADD_MASK(f,a1[r],take,pv,b1);
+          a2[r]=ATT_MADD_MASK(f,a2[r],take,pv,b2);
         }
       }
       for (r=0;r<8;r++) {
@@ -2219,11 +2231,20 @@ __attribute__((target("avx512f"))) static void att512_context(size_t rows, size_
     }
   }
 }
+__attribute__((target("avx512f"))) static void att512_context(size_t rows, size_t d,
+    const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy, int first) {
+  att512_context_any(0,rows,d,p,ldp,v,ldv,y,ldy,first);
+}
+__attribute__((target("avx512f"))) static void att512_context_fma(size_t rows, size_t d,
+    const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy, int first) {
+  att512_context_any(1,rows,d,p,ldp,v,ldv,y,ldy,first);
+}
 /* out_j += sum over i >= j, ascending, of m_ij x_i (the KGE products: dv from P and dY, dk from dS
  * and Q): blocks of eight output rows j0..j0+7, the channels 48 at a time; term i reaches the rows
  * j <= i -- the block's diagonal terms some rows, every later term all eight. */
-__attribute__((target("avx512f"))) static void att512_transposed(size_t rows, size_t t, size_t d,
-    const float *m, size_t ldm, const float *x, size_t ldx, float *out, size_t ldo, int first) {
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_transposed_any(int f, size_t rows,
+    size_t t, size_t d, const float *m, size_t ldm, const float *x, size_t ldx, float *out,
+    size_t ldo, int first) {
   size_t c0,j0,r,i,di;
   for (c0=0;c0<d;c0+=48) {
     size_t nc=d-c0<48 ? d-c0 : 48;
@@ -2242,9 +2263,9 @@ __attribute__((target("avx512f"))) static void att512_transposed(size_t rows, si
         for (r=0;r<8;r++) {  /* the rows r <= di, the others masked out */
           __mmask16 take=(__mmask16)(r<=di ? 0xffffu : 0u);
           __m512 mv=_mm512_set1_ps(mi[r]);
-          a0[r]=_mm512_mask_add_ps(a0[r],take,a0[r],_mm512_mul_ps(mv,b0));
-          a1[r]=_mm512_mask_add_ps(a1[r],take,a1[r],_mm512_mul_ps(mv,b1));
-          a2[r]=_mm512_mask_add_ps(a2[r],take,a2[r],_mm512_mul_ps(mv,b2));
+          a0[r]=ATT_MADD_MASK(f,a0[r],take,mv,b0);
+          a1[r]=ATT_MADD_MASK(f,a1[r],take,mv,b1);
+          a2[r]=ATT_MADD_MASK(f,a2[r],take,mv,b2);
         }
       }
       for (i=j0+7;i<t;i++) {  /* every row of the block takes term i */
@@ -2253,8 +2274,8 @@ __attribute__((target("avx512f"))) static void att512_transposed(size_t rows, si
             b2=_mm512_maskz_loadu_ps(m2,xi+32);
         for (r=0;r<8;r++) {
           __m512 mv=_mm512_set1_ps(mi[r]);
-          a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(mv,b0)); a1[r]=_mm512_add_ps(a1[r],_mm512_mul_ps(mv,b1));
-          a2[r]=_mm512_add_ps(a2[r],_mm512_mul_ps(mv,b2));
+          a0[r]=ATT_MADD(f,a0[r],mv,b0); a1[r]=ATT_MADD(f,a1[r],mv,b1);
+          a2[r]=ATT_MADD(f,a2[r],mv,b2);
         }
       }
       for (r=0;r<8;r++) {
@@ -2264,6 +2285,15 @@ __attribute__((target("avx512f"))) static void att512_transposed(size_t rows, si
       }
     }
   }
+}
+__attribute__((target("avx512f"))) static void att512_transposed(size_t rows, size_t t, size_t d,
+    const float *m, size_t ldm, const float *x, size_t ldx, float *out, size_t ldo, int first) {
+  att512_transposed_any(0,rows,t,d,m,ldm,x,ldx,out,ldo,first);
+}
+__attribute__((target("avx512f"))) static void att512_transposed_fma(size_t rows, size_t t,
+    size_t d, const float *m, size_t ldm, const float *x, size_t ldx, float *out, size_t ldo,
+    int first) {
+  att512_transposed_any(1,rows,t,d,m,ldm,x,ldx,out,ldo,first);
 }
 #endif
 #ifdef BCIR_MM_DISPATCH
@@ -2309,8 +2339,8 @@ __attribute__((target("avx512f"))) static void att512_expsum(size_t t, size_t i0
 }
 /* The backward's dot over one tile for 16 rows (rows i0+ig.. of the block, columns [jt, lim)):
  * the whole 16-column blocks as lanes, the rest of each row's columns after them in order. */
-__attribute__((target("avx512f"))) static void att512_dot(size_t t, size_t i0, size_t ig, size_t jt,
-    size_t lim, const float *ph, const float *tile, size_t ldt, float *dot) {
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_dot_any(int f, size_t t, size_t i0,
+    size_t ig, size_t jt, size_t lim, const float *ph, const float *tile, size_t ldt, float *dot) {
   _Alignas(64) float bp[256],bd[256]; __m512 v=_mm512_loadu_ps(dot+ig); size_t j0,c,r,j,row=i0+ig;
   for (j0=jt;j0+16<=lim && j0<row+16;j0+=16) {
     kb512_transpose16(ph+row*t+j0,t,bp,16);
@@ -2318,14 +2348,22 @@ __attribute__((target("avx512f"))) static void att512_dot(size_t t, size_t i0, s
     for (c=0;c<16;c++) {
       size_t col=j0+c;
       __mmask16 k=(__mmask16)(col<=row ? 0xffffu : (0xffffu<<(col-row))&0xffffu);
-      v=_mm512_mask_add_ps(v,k,v,_mm512_mul_ps(_mm512_load_ps(bp+c*16),_mm512_load_ps(bd+c*16)));
+      v=ATT_MADD_MASK(f,v,k,_mm512_load_ps(bp+c*16),_mm512_load_ps(bd+c*16));
     }
   }
   _mm512_storeu_ps(dot+ig,v);
   for (r=0;r<16;r++) {
     const float *pi=ph+(row+r)*t; size_t end=row+r+1<lim ? row+r+1 : lim;
-    for (j=j0;j<end;j++) dot[ig+r]+=pi[j]*tile[(ig+r)*ldt+j-jt];
+    for (j=j0;j<end;j++) dot[ig+r]=ATT_MADD1(f,dot[ig+r],pi[j],tile[(ig+r)*ldt+j-jt]);
   }
+}
+__attribute__((target("avx512f"))) static void att512_dot(size_t t, size_t i0, size_t ig, size_t jt,
+    size_t lim, const float *ph, const float *tile, size_t ldt, float *dot) {
+  att512_dot_any(0,t,i0,ig,jt,lim,ph,tile,ldt,dot);
+}
+__attribute__((target("avx512f"))) static void att512_dot_fma(size_t t, size_t i0, size_t ig,
+    size_t jt, size_t lim, const float *ph, const float *tile, size_t ldt, float *dot) {
+  att512_dot_any(1,t,i0,ig,jt,lim,ph,tile,ldt,dot);
 }
 /* A KV head's values transposed once (NDT-ATTN-5): vt[c*t + j] = v[j][c], 16 x 16 blocks through the
  * pack's register transpose and the ragged edges copied; the backward's probability-adjoint tiles
@@ -2341,9 +2379,9 @@ __attribute__((target("avx512f"))) static void att512_panel(size_t t, size_t d, 
  * are never read), each element from the zero the tile holds with one rounded product and one
  * rounded sum per channel in order -- the v1 kernel's arithmetic for these operands; rows past the
  * last whole eight one at a time, the same chain. */
-__attribute__((target("avx512f"))) static void att512_dp(size_t rows, size_t i0, size_t jt,
-    size_t cols, size_t d, const float *dy, size_t ldy, const float *vt, size_t t, float *tile,
-    size_t ldt) {
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_dp_any(int f, size_t rows, size_t i0,
+    size_t jt, size_t cols, size_t d, const float *dy, size_t ldy, const float *vt, size_t t,
+    float *tile, size_t ldt) {
   size_t jb,ig,r,c;
   for (jb=0;jb<cols;jb+=32) {
     size_t nj=cols-jb<32 ? cols-jb : 32;
@@ -2360,7 +2398,7 @@ __attribute__((target("avx512f"))) static void att512_dp(size_t rows, size_t i0,
         __m512 b0=_mm512_maskz_loadu_ps(m0,vc),b1=_mm512_maskz_loadu_ps(m1,vc+16);
         for (r=0;r<8;r++) {
           __m512 qv=_mm512_set1_ps(dy[(i0+ig+r)*ldy+c]);
-          a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(qv,b0)); a1[r]=_mm512_add_ps(a1[r],_mm512_mul_ps(qv,b1));
+          a0[r]=ATT_MADD(f,a0[r],qv,b0); a1[r]=ATT_MADD(f,a1[r],qv,b1);
         }
       }
       for (r=0;r<8;r++) {
@@ -2372,11 +2410,21 @@ __attribute__((target("avx512f"))) static void att512_dp(size_t rows, size_t i0,
       size_t j;
       for (j=0;j<nj;j++) {
         float acc=tile[ig*ldt+jb+j];
-        for (c=0;c<d;c++) acc=acc+dy[(i0+ig)*ldy+c]*vt[c*t+jt+jb+j];
+        for (c=0;c<d;c++) acc=ATT_MADD1(f,acc,dy[(i0+ig)*ldy+c],vt[c*t+jt+jb+j]);
         tile[ig*ldt+jb+j]=acc;
       }
     }
   }
+}
+__attribute__((target("avx512f"))) static void att512_dp(size_t rows, size_t i0, size_t jt,
+    size_t cols, size_t d, const float *dy, size_t ldy, const float *vt, size_t t, float *tile,
+    size_t ldt) {
+  att512_dp_any(0,rows,i0,jt,cols,d,dy,ldy,vt,t,tile,ldt);
+}
+__attribute__((target("avx512f"))) static void att512_dp_fma(size_t rows, size_t i0, size_t jt,
+    size_t cols, size_t d, const float *dy, size_t ldy, const float *vt, size_t t, float *tile,
+    size_t ldt) {
+  att512_dp_any(1,rows,i0,jt,cols,d,dy,ldy,vt,t,tile,ldt);
 }
 #endif
 enum { ATT_SCORES, ATT_CONTEXT, ATT_TRANSPOSED };
@@ -2388,20 +2436,21 @@ enum { ATT_SCORES, ATT_CONTEXT, ATT_TRANSPOSED };
 static size_t att_v1_rows(int variant, size_t t) {  /* the first row the v1 kernel takes */
   return variant==4 ? t/8*8 : 0;
 }
-static void att_rows(int variant, const mm_args *x, size_t t, int which, int first) {
+static void att_rows(int variant, int fused, const mm_args *x, size_t t, int which, int first) {
   mm_range rest; size_t whole=0;
 #ifdef BCIR_MM_DISPATCH
   if (variant==4) {
     whole=t/8*8;
-    if (which==ATT_SCORES) att512_scores(whole,x->k,x->a,x->lda,x->b,x->ldb,x->c,x->ldc);
-    else if (which==ATT_CONTEXT) att512_context(whole,x->n,x->a,x->lda,x->b,x->ldb,x->c,x->ldc,first);
-    else att512_transposed(whole,t,x->n,x->a,x->lda,x->b,x->ldb,x->c,x->ldc,first);
+    if (which==ATT_SCORES) (fused ? att512_scores_fma : att512_scores)(whole,x->k,x->a,x->lda,x->b,x->ldb,x->c,x->ldc);
+    else if (which==ATT_CONTEXT)
+      (fused ? att512_context_fma : att512_context)(whole,x->n,x->a,x->lda,x->b,x->ldb,x->c,x->ldc,first);
+    else (fused ? att512_transposed_fma : att512_transposed)(whole,t,x->n,x->a,x->lda,x->b,x->ldb,x->c,x->ldc,first);
   }
 #endif
   (void)which; (void)first;
   if (whole==t || !x->m || !x->n || !x->k) return;
   rest.jb0=0; rest.jb1=x->n; rest.r0=whole; rest.r1=t;
-  mm_run_range(variant,MM_V1,x,&rest);
+  mm_run_range(variant,fused ? MM_FUSED : MM_V1,x,&rest);
 }
 /* One (batch, query head): its scores, softmax rows and context; nothing shared with another. */
 static void att_head(const att_job *a, size_t r, size_t h) {
@@ -2419,7 +2468,7 @@ static void att_head(const att_job *a, size_t r, size_t h) {
   }
   x.ta=0; x.tb=1; x.m=t; x.n=t; x.k=d; x.alpha=1.0f; x.a=a->q+(r*t*nh+h)*d; x.lda=nh*d;
   x.b=a->k+(r*t*nk+kh)*d; x.ldb=nk*d; x.c=ph; x.ldc=t; x.mode=MM_LOWER;
-  att_rows(a->variant,&x,t,ATT_SCORES,1);
+  att_rows(a->variant,a->fused,&x,t,ATT_SCORES,1);
   i=0;
 #ifdef BCIR_MM_DISPATCH
   if (a->variant==4) for (;i+16<=t;i+=16) {
@@ -2446,7 +2495,7 @@ static void att_head(const att_job *a, size_t r, size_t h) {
   }
   x.tb=0; x.n=d; x.k=t; x.a=ph; x.lda=t; x.b=a->v+(r*t*nk+kh)*d; x.ldb=nk*d;
   x.c=a->y+(r*t*nh+h)*d; x.ldc=nh*d; x.mode=MM_KLE;
-  att_rows(a->variant,&x,t,ATT_CONTEXT,1);
+  att_rows(a->variant,a->fused,&x,t,ATT_CONTEXT,1);
   if (a->bad) {  /* the head's context rows, and its KV head's keys from the group's first */
     int ok=rows_finite(a->variant,a->y+(r*t*nh+h)*d,t,d,nh*d);
     if (ok && h%(nh/nk)==0) ok=rows_finite(a->variant,a->k+(r*t*nk+kh)*d,t,d,nk*d);
@@ -2456,11 +2505,33 @@ static void att_head(const att_job *a, size_t r, size_t h) {
 static void att_task(void *ctx, size_t task) {
   att_job *a=(att_job *)ctx; att_head(a,task/a->nh,task%a->nh);
 }
-static void attention_any(bcir_tensor_pool *pool, int exp2, size_t b, size_t t, size_t nh, size_t nk,
-    size_t d, const float *q, const float *k, const float *v, float *p, float *y, int *bad) {
+#ifdef BCIR_DT_ATTENTION_PROBE
+/* The trainer harness's record of the contract the attention's jobs ran (ATTN-FMA) -- what each
+ * job computed with, from its own fields, not what a caller meant to pass: [0] the forwards', [1]
+ * the backwards' (EXP is the forward's alone). Every job since the last read must have run one
+ * contract, or the read is ~0u, as it is when no job ran; a read starts the record again. A build
+ * defines BCIR_DT_ATTENTION_PROBE to have it (the harness's own builds do; the library does not). */
+static unsigned attention_any_seen[2],attention_all_seen[2]={~0u,~0u};
+static void attention_saw(int backward, unsigned contract) {
+  attention_any_seen[backward]|=contract; attention_all_seen[backward]&=contract;
+}
+unsigned bcir_tensor_attention_probe(int backward);
+unsigned bcir_tensor_attention_probe(int backward) {
+  int d=backward ? 1 : 0;
+  unsigned c=attention_any_seen[d]==attention_all_seen[d] ? attention_any_seen[d] : ~0u;
+  attention_any_seen[d]=0u; attention_all_seen[d]=~0u;
+  return c;
+}
+#endif
+static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, size_t b, size_t t, size_t nh,
+    size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y, int *bad) {
   att_job a; unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=b*nh;
   a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.group=1; a.q=q; a.k=k; a.v=v; a.dy=NULL; a.p=p; a.y=y;
-  a.dq=NULL; a.dk=NULL; a.dv=NULL; a.variant=mm_widest(); a.exp2=exp2;
+  a.dq=NULL; a.dk=NULL; a.dv=NULL; a.exp2=exp2; a.fused=fused;
+  a.variant=fused ? mm_widest_fused() : mm_widest();
+#ifdef BCIR_DT_ATTENTION_PROBE
+  attention_saw(0,(a.exp2 ? BCIR_TENSOR_ATTENTION_EXP : 0u)|(a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u));
+#endif
   a.bad=scan_bytes(bad,bytes,tasks);
   pool_run(pool,att_task,&a,tasks);
   if (!bad) return;
@@ -2469,21 +2540,27 @@ static void attention_any(bcir_tensor_pool *pool, int exp2, size_t b, size_t t, 
 }
 void bcir_tensor_attention_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,0,b,t,nh,nk,d,q,k,v,p,y,NULL);
+  attention_any(pool,0,0,b,t,nh,nk,d,q,k,v,p,y,NULL);
 }
 void bcir_tensor_attention_v2_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,1,b,t,nh,nk,d,q,k,v,p,y,NULL);
+  attention_any(pool,1,0,b,t,nh,nk,d,q,k,v,p,y,NULL);
 }
 void bcir_tensor_attention_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
     size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
     int *bad) {
-  attention_any(pool,0,b,t,nh,nk,d,q,k,v,p,y,bad);
+  attention_any(pool,0,0,b,t,nh,nk,d,q,k,v,p,y,bad);
 }
 void bcir_tensor_attention_v2_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
     size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
     int *bad) {
-  attention_any(pool,1,b,t,nh,nk,d,q,k,v,p,y,bad);
+  attention_any(pool,1,0,b,t,nh,nk,d,q,k,v,p,y,bad);
+}
+void bcir_tensor_attention_contract_scan_pool(bcir_tensor_pool *pool, unsigned contract, size_t b,
+    size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v,
+    float *p, float *y, int *bad) {
+  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0,
+      b,t,nh,nk,d,q,k,v,p,y,bad);
 }
 void bcir_tensor_attention(size_t b, size_t t, size_t nh, size_t nk, size_t d,
     const float *q, const float *k, const float *v, float *p, float *y) {
@@ -2549,7 +2626,7 @@ static void att_head_backward(const att_job *a, size_t r, size_t h, const float 
     mm_args x;
     x.ta=1; x.tb=0; x.m=t; x.n=d; x.k=t; x.alpha=1.0f; x.a=ph; x.lda=t; x.b=dyh; x.ldb=ldh;
     x.c=dv+(r*t*nk+kh)*d; x.ldc=ldk; x.mode=MM_KGE;
-    att_rows(variant,&x,t,ATT_TRANSPOSED,h%(nh/nk)==0);
+    att_rows(variant,a->fused,&x,t,ATT_TRANSPOSED,h%(nh/nk)==0);
     for (i0=0;i0<t;i0+=BCIR_ATT_ROWS) {
       size_t rows=t-i0<BCIR_ATT_ROWS ? t-i0 : BCIR_ATT_ROWS,pass,jt;
       float dot[BCIR_ATT_ROWS],kept[BCIR_ATT_KEEP/BCIR_ATT_COLS][BCIR_ATT_ROWS*BCIR_ATT_COLS],
@@ -2561,24 +2638,27 @@ static void att_head_backward(const att_job *a, size_t r, size_t h, const float 
         if (!pass || jt>=BCIR_ATT_KEEP) {
           memset(tile,0,rows*BCIR_ATT_COLS*sizeof(float));
 #ifdef BCIR_MM_DISPATCH
-          if (vt) att512_dp(rows,i0,jt,cols,d,dyh,ldh,vt,t,tile,BCIR_ATT_COLS);
+          if (vt) (a->fused ? att512_dp_fma : att512_dp)(rows,i0,jt,cols,d,dyh,ldh,vt,t,tile,BCIR_ATT_COLS);
           else
 #endif
           {
+            mm_range all;
             x.ta=0; x.tb=1; x.m=rows; x.n=cols; x.k=d; x.a=dyh+i0*ldh; x.lda=ldh; x.b=vk+jt*ldk;
             x.ldb=ldk; x.c=tile; x.ldc=BCIR_ATT_COLS; x.mode=MM_FULL;
-            mm_run(variant,&x);
+            all.jb0=0; all.jb1=cols; all.r0=0; all.r1=rows;
+            mm_run_range(variant,a->fused ? MM_FUSED : MM_V1,&x,&all);
           }
         }
         i=0;
 #ifdef BCIR_MM_DISPATCH
-        if (!pass && variant==4) for (;i+16<=rows;i+=16) att512_dot(t,i0,i,jt,jt+cols,ph,tile,BCIR_ATT_COLS,dot);
+        if (!pass && variant==4) for (;i+16<=rows;i+=16)
+          (a->fused ? att512_dot_fma : att512_dot)(t,i0,i,jt,jt+cols,ph,tile,BCIR_ATT_COLS,dot);
 #endif
         for (;i<rows;i++) {
           float *pi=ph+(i0+i)*t; size_t end=i0+i+1<jt+cols ? i0+i+1 : jt+cols;
           for (j=jt;j<end;j++) {
             float dp=tile[i*BCIR_ATT_COLS+j-jt];
-            if (!pass) dot[i]+=pi[j]*dp;
+            if (!pass) dot[i]=a->fused ? fmaf(pi[j],dp,dot[i]) : dot[i]+pi[j]*dp;
             else pi[j]=pi[j]*(dp-dot[i])*scale;
           }
         }
@@ -2586,9 +2666,9 @@ static void att_head_backward(const att_job *a, size_t r, size_t h, const float 
     }
     x.ta=0; x.tb=0; x.m=t; x.n=d; x.k=t; x.a=ph; x.lda=t; x.b=kk; x.ldb=ldk;
     x.c=dq+(r*t*nh+h)*d; x.ldc=ldh; x.mode=MM_KLE;
-    att_rows(variant,&x,t,ATT_CONTEXT,1);
+    att_rows(variant,a->fused,&x,t,ATT_CONTEXT,1);
     x.ta=1; x.b=qh; x.ldb=ldh; x.c=dk+(r*t*nk+kh)*d; x.ldc=ldk; x.mode=MM_KGE;
-    att_rows(variant,&x,t,ATT_TRANSPOSED,h%(nh/nk)==0);
+    att_rows(variant,a->fused,&x,t,ATT_TRANSPOSED,h%(nh/nk)==0);
   }
 }
 static void att_task_backward(void *ctx, size_t task) {
@@ -2615,14 +2695,23 @@ static void att_task_backward(void *ctx, size_t task) {
     for (h=first;h<first+a->group;h++) att_head_backward(a,r,h,vt);
   }
 }
+void bcir_tensor_attention_backward_contract_pool(bcir_tensor_pool *pool, unsigned contract,
+    size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k,
+    const float *v, float *p, const float *dy, float *dq, float *dk, float *dv) {
+  att_job a;
+  a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.q=q; a.k=k; a.v=v; a.dy=dy; a.p=p; a.y=NULL;
+  a.dq=dq; a.dk=dk; a.dv=dv; a.exp2=0; a.bad=NULL;
+  a.fused=(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0; a.variant=a.fused ? mm_widest_fused() : mm_widest();
+  a.group=nh/nk;
+#ifdef BCIR_DT_ATTENTION_PROBE
+  attention_saw(1,a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
+#endif
+  pool_run(pool,att_task_backward,&a,b*nh/a.group);
+}
 void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *pool, size_t b, size_t t,
     size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v, float *p,
     const float *dy, float *dq, float *dk, float *dv) {
-  att_job a;
-  a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.q=q; a.k=k; a.v=v; a.dy=dy; a.p=p; a.y=NULL;
-  a.dq=dq; a.dk=dk; a.dv=dv; a.variant=mm_widest(); a.exp2=0; a.bad=NULL;
-  a.group=nh/nk;
-  pool_run(pool,att_task_backward,&a,b*nh/a.group);
+  bcir_tensor_attention_backward_contract_pool(pool,0,b,t,nh,nk,d,q,k,v,p,dy,dq,dk,dv);
 }
 void bcir_tensor_attention_backward_inplace(size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, const float *dy,

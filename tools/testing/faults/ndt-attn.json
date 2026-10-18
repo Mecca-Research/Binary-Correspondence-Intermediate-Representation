@@ -95,29 +95,29 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NA13 the tile's rows past the last whole eight take no channels",
-      "new": "        for (c=0;c<0;c++) acc=acc+dy[(i0+ig)*ldy+c]*vt[c*t+jt+jb+j];",
-      "old": "        for (c=0;c<d;c++) acc=acc+dy[(i0+ig)*ldy+c]*vt[c*t+jt+jb+j];",
+      "new": "        for (c=0;c<0;c++) acc=ATT_MADD1(f,acc,dy[(i0+ig)*ldy+c],vt[c*t+jt+jb+j]);",
+      "old": "        for (c=0;c<d;c++) acc=ATT_MADD1(f,acc,dy[(i0+ig)*ldy+c],vt[c*t+jt+jb+j]);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NA14 the probability-adjoint kernel fuses each channel's product and sum (one FMA: not the v1 arithmetic)",
-      "new": "          __m512 qv=_mm512_set1_ps(dy[(i0+ig+r)*ldy+c]);\n          a0[r]=_mm512_fmadd_ps(qv,b0,a0[r]);",
-      "old": "          __m512 qv=_mm512_set1_ps(dy[(i0+ig+r)*ldy+c]);\n          a0[r]=_mm512_add_ps(a0[r],_mm512_mul_ps(qv,b0));",
+      "new": "          __m512 qv=_mm512_set1_ps(dy[(i0+ig+r)*ldy+c]);\n          a0[r]=ATT_MADD(1,a0[r],qv,b0);",
+      "old": "          __m512 qv=_mm512_set1_ps(dy[(i0+ig+r)*ldy+c]);\n          a0[r]=ATT_MADD(f,a0[r],qv,b0);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NA15 a row the context's diagonal key skips loses its sum (zero-masked where the add must merge)",
       "new": "          a0[r]=_mm512_maskz_add_ps(take,a0[r],_mm512_mul_ps(pv,b0));",
-      "old": "          a0[r]=_mm512_mask_add_ps(a0[r],take,a0[r],_mm512_mul_ps(pv,b0));",
+      "old": "          a0[r]=ATT_MADD_MASK(f,a0[r],take,pv,b0);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NA16 a row the transposed products' diagonal term skips loses its sum (zero-masked where the add must merge)",
       "new": "          a0[r]=_mm512_maskz_add_ps(take,a0[r],_mm512_mul_ps(mv,b0));",
-      "old": "          a0[r]=_mm512_mask_add_ps(a0[r],take,a0[r],_mm512_mul_ps(mv,b0));",
+      "old": "          a0[r]=ATT_MADD_MASK(f,a0[r],take,mv,b0);",
       "path": "runtime/c/bcir_tensor.c"
     }
   ]

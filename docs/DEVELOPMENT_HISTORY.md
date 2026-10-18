@@ -2915,6 +2915,32 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     weight and moment streams' maxima and finiteness), 12 the pooled commit (33 serial) --
     NDT-NORM's row in the roadmap now carries that expectation (about 34 ms with the three
     streams on the pool, the chain kept) instead of a guess.
+  ATTN-FMA (2026-10-18): the attention's products under a fused contract, one `fmaf` a term.
+  - The scores, the context and the backward's products (the probability adjoints, their dot sum,
+    dq, dk, dv) were v1's arithmetic, a rounded product and a rounded sum a term. `bcir_tensor.h`'s
+    `BCIR_TENSOR_ATTENTION_FUSED` (through `bcir_tensor_attention_contract_scan_pool` and
+    `bcir_tensor_attention_backward_contract_pool`) makes each multiply-add one IEEE fusedMultiplyAdd
+    over the same terms in the same order; the softmax and the score adjoint stay v1's. Portable
+    `fmaf`, AVX2+FMA and AVX-512 instances (the v1 register blocks written once as always-inline bodies
+    and instantiated twice, the multiply-add a constant of each copy); the trainer's
+    `BCIR_DT_CONTRACT_ATTN` (bit 32, any GEMM contract or none, no ABI change), Python `attn` and
+    `<contract>+attn` ([measurements/2026-10-18/attnfma/](research/measurements/2026-10-18/attnfma/),
+    the report's §33).
+  - The C harness holds the entries to `fmaf` reference loops (192 cases, 180 apart from v1), the
+    runtime gate's portable and AVX2-capped builds hold those instances to the same loops, the
+    thread-state test holds three `+attn` contracts to one state at every thread count, and
+    `tools/testing/faults/ndt-attnfma.json` holds 17 faults. Its first sweep caught 14 of 15: a wrong
+    contract at the trainer's backward call passed the trainer's probe, which recorded the contract
+    the trainer meant to pass, so the probe moved into the tensor unit's jobs (every job since the
+    last read must have run one contract) and two faults at the calls joined the table. Eight entries
+    of `ndt-fma`, `ndt-attn`, `ndt-fuse`, `ndt-lanes` and `ndt-perf` anchored in the restructured
+    blocks were re-anchored and fire again; the GEMM unit's `mm_run`, which only the attention's
+    no-panel tiles called, went with the change, and a duplicated `CONTRACTS` line in `native.py`.
+  - Measured: one layer at four threads 1.88 -> 1.37 ms (the backward x1.45), at one thread x1.42; in
+    place the attention 14.5 -> 11.3 ms of the four-thread step; the step 80.0 -> 77.6 ms under
+    `bf16+exp+reduce` (13,199 tokens a second) and 176.8 -> 169.4 under `kblock+exp+reduce`. One
+    state per contract through the tile, AVX-512, AVX2 and portable builds at one and four threads;
+    the contracts without the bit keep their states (`4bf4e057…`, `e91ae701…`).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

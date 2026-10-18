@@ -60,7 +60,7 @@ static int valid(bcir_decoder_state *s) {
   if (p.parameters!=s->plan.parameters || p.activations!=s->plan.activations ||
       p.scratch!=s->plan.scratch) return BCIR_DT_INVALID;
   if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_KBLOCK|
-      BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_BF16)) return BCIR_DT_INVALID;
+      BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTN)) return BCIR_DT_INVALID;
   if (((s->contract&BCIR_DT_CONTRACT_FUSED)!=0)+((s->contract&BCIR_DT_CONTRACT_KBLOCK)!=0)+
       ((s->contract&BCIR_DT_CONTRACT_BF16)!=0)>1) return BCIR_DT_INVALID;  /* one GEMM contract */
   ptr[0]=s->weights; ptr[1]=s->gradients; ptr[2]=s->moment1; ptr[3]=s->moment2;
@@ -333,10 +333,15 @@ static void swiglu_backward(bcir_decoder_state *s,size_t n,const float *g,const 
   if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_swiglu_backward_v2_pool(s->pool,n,g,u,dy,dg,du);
   else bcir_tensor_swiglu_backward_pool(s->pool,n,g,u,dy,dg,du);
 }
+/* The attention's contract as the tensor unit names it: the softmax's exponential (EXP) and the
+ * products' multiply-adds (ATTN-FMA) -- one predicate for the forward and the backward. */
+static unsigned attention_contract(const bcir_decoder_state *s) {
+  return ((s->contract&BCIR_DT_CONTRACT_EXP) ? BCIR_TENSOR_ATTENTION_EXP : 0u)|
+    ((s->contract&BCIR_DT_CONTRACT_ATTN) ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
+}
 static void attention(bcir_decoder_state *s,size_t b,size_t t,size_t h,size_t kh,size_t d,
     const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
-  if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_attention_v2_scan_pool(s->pool,b,t,h,kh,d,q,k,v,p,y,bad);
-  else bcir_tensor_attention_scan_pool(s->pool,b,t,h,kh,d,q,k,v,p,y,bad);
+  bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s),b,t,h,kh,d,q,k,v,p,y,bad);
 }
 /* The forward, and whether every activation it wrote is finite (NDT-SCAN-W). One scan of the
  * whole arena after it read the arena back from memory, 171 MB for the 9.84M decoder; now the
@@ -489,8 +494,8 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
     linear_backward(s,g.n,g.d,g.d,a.ctx,p.o,cur,dc,grad.o,0.0f,wb);
     /* the layer's probabilities are read for the last time here: the in-place backward
      * leaves its score adjoint in their place (same dq/dk/dv as the reference, bit for bit) */
-    bcir_tensor_attention_backward_inplace_pool(s->pool,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,
-        dc,dq,dk,dv);
+    bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,
+        g.hd,a.q,a.k,a.v,a.p,dc,dq,dk,dv);
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,s->plan.spec.rope_base,dq,1);
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,s->plan.spec.rope_base,dk,1);
     {

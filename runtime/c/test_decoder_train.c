@@ -100,7 +100,7 @@ static void refusals(void) {
   assert(bcir_decoder_make_plan(&shape,&p)==BCIR_DT_CAPACITY && p.parameters==oldplan.parameters);
   bad=s; bad.plan.scratch++;
   assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
-  bad=s; bad.contract=32;  /* a contract bit the ABI does not define */
+  bad=s; bad.contract=64;  /* a contract bit the ABI does not define */
   assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
   bad=s; bad.contract=BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_KBLOCK;  /* two GEMM contracts at once */
   assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
@@ -262,6 +262,53 @@ static void ref_attention_backward(size_t b, size_t t, size_t nh, size_t nk, siz
     }
   }
 }
+/* The same loops under the fused attention contract (ATTN-FMA): every multiply-add one fmaf over
+ * the same terms in the same order from the same start -- each score's channels, each context
+ * element's keys, each probability adjoint's channels, the dot's keys, the dq, dk and dv sums --
+ * and the scaling, the softmax and the score adjoint as above. Written apart from the kernels. */
+static void ref_attention_fused(size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q,
+    const float *k, const float *v, float *p, float *y, float (*ex)(float)) {
+  size_t r,h,i,j,c; float scale=1.0f/sqrtf((float)d);
+  memset(y,0,b*t*nh*d*sizeof(float)); memset(p,0,b*nh*t*t*sizeof(float));
+  for (r=0;r<b;r++) for (h=0;h<nh;h++) for (i=0;i<t;i++) {
+    size_t kh=h/(nh/nk),qi=((r*t+i)*nh+h)*d,pi=((r*nh+h)*t+i)*t;
+    float maxv=-INFINITY,sum=0.0f;
+    for (j=0;j<=i;j++) {
+      size_t kj=((r*t+j)*nk+kh)*d; float z=0.0f;
+      for (c=0;c<d;c++) z=fmaf(q[qi+c],k[kj+c],z);
+      p[pi+j]=z*scale; if (p[pi+j]>maxv) maxv=p[pi+j];
+    }
+    for (j=0;j<=i;j++) { p[pi+j]=ex(p[pi+j]-maxv); sum+=p[pi+j]; }
+    for (j=0;j<=i;j++) {
+      size_t vj=((r*t+j)*nk+kh)*d; p[pi+j]/=sum;
+      for (c=0;c<d;c++) y[qi+c]=fmaf(p[pi+j],v[vj+c],y[qi+c]);
+    }
+  }
+}
+static void ref_attention_backward_fused(size_t b, size_t t, size_t nh, size_t nk, size_t d,
+    const float *q, const float *k, const float *v, const float *p, const float *dy, float *dq,
+    float *dk, float *dv) {
+  size_t r,h,i,j,c; float scale=1.0f/sqrtf((float)d);
+  memset(dq,0,b*t*nh*d*sizeof(float)); memset(dk,0,b*t*nk*d*sizeof(float));
+  memset(dv,0,b*t*nk*d*sizeof(float));
+  for (r=0;r<b;r++) for (h=0;h<nh;h++) for (i=0;i<t;i++) {
+    size_t kh=h/(nh/nk),qi=((r*t+i)*nh+h)*d,pi=((r*nh+h)*t+i)*t; float dot=0.0f;
+    for (j=0;j<=i;j++) {
+      size_t kj=((r*t+j)*nk+kh)*d; float dp=0.0f;
+      for (c=0;c<d;c++) dp=fmaf(dy[qi+c],v[kj+c],dp);
+      dot=fmaf(p[pi+j],dp,dot);
+    }
+    for (j=0;j<=i;j++) {
+      size_t kj=((r*t+j)*nk+kh)*d; float dp=0.0f,ds;
+      for (c=0;c<d;c++) dp=fmaf(dy[qi+c],v[kj+c],dp);
+      ds=p[pi+j]*(dp-dot)*scale;
+      for (c=0;c<d;c++) {
+        dq[qi+c]=fmaf(ds,k[kj+c],dq[qi+c]); dk[kj+c]=fmaf(ds,q[qi+c],dk[kj+c]);
+        dv[kj+c]=fmaf(p[pi+j],dy[qi+c],dv[kj+c]);
+      }
+    }
+  }
+}
 /* Causal GQA attention through the GEMM kernel against the reference loops above, bit for bit:
  * single rows and channels, head groups of one to four, widths past the 64-deep tile, contexts
  * past the backward's 32-row chunks and 64-column tiles, the forward's register blocks' edges (rows
@@ -305,6 +352,72 @@ static void attention_reference(void) {
   }
   puts("  PASS native causal GQA attention: forward and in-place backward bit-identical to the "
       "scalar reference, finite and not");
+}
+/* The attention under its contracts (ATTN-FMA), through bcir_tensor_attention_contract_scan_pool
+ * and bcir_tensor_attention_backward_contract_pool: with FUSED, the forward (under libm's
+ * exponential and under BCIR's) and the in-place backward against the fused reference loops on
+ * attention_reference's shapes, finite and not, serially and on pools of two and four; without
+ * it, each entry the v1 or v2 entry bit for bit; and the two contracts apart on some shape -- the
+ * fused path ran (a FUSED bit the unit ignored would match the v1 loops, never these). */
+static int all_finite(const float *x,size_t n);
+static void attention_fused_reference(void) {
+  static float q[2*70*8*48],k[2*70*4*130],v[2*70*4*130],dy[2*70*8*48],p0[2*330*330],
+      p1[2*330*330],y0[2*70*8*48],y1[2*70*8*48],dq0[2*70*8*48],dq1[2*70*8*48],
+      dk0[2*70*4*130],dk1[2*70*4*130],dv0[2*70*4*130],dv1[2*70*4*130],y2[2*70*8*48],dq2[2*70*8*48];
+  static const size_t shapes[][5]={{1,1,1,1,2},{1,2,1,1,1},{2,5,4,2,6},{1,37,2,1,48},
+      {2,70,8,4,48},{1,33,3,1,65},{1,40,2,2,130},{2,64,4,1,24},{1,330,2,1,8},
+      {1,7,1,1,3},{1,8,1,1,16},{1,9,2,1,17},{1,31,1,1,15},{1,32,2,2,47},{1,33,2,1,49},
+      {1,40,1,1,1}};
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  size_t s,i,pass,cases=0,apart=0; unsigned ex,threads; int bad;
+  for (threads=1;threads<=4;threads+=threads==1 ? 1 : 2) {
+    bcir_tensor_pool *pool=NULL;
+    if (threads>1) {
+      size_t need=bcir_tensor_pool_size(threads);
+      if (!need) continue;
+      assert(need<=sizeof(pool_memory));
+      pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads); assert(pool);
+    }
+    for (pass=0;pass<2;pass++) for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) for (ex=0;ex<2;ex++) {
+      size_t b=shapes[s][0],t=shapes[s][1],nh=shapes[s][2],nk=shapes[s][3],d=shapes[s][4];
+      size_t nq=b*t*nh*d,nkv=b*t*nk*d,np=b*nh*t*t;
+      unsigned plain=ex ? BCIR_TENSOR_ATTENTION_EXP : 0u;
+      assert(nq<=sizeof(q)/sizeof(q[0]) && nkv<=sizeof(k)/sizeof(k[0]) && np<=sizeof(p0)/sizeof(p0[0]));
+      for (i=0;i<nq;i++) { q[i]=sinf((float)i*0.37f)*1.7f; dy[i]=cosf((float)i*0.11f)*0.5f; }
+      for (i=0;i<nkv;i++) { k[i]=cosf((float)i*0.53f)*1.3f; v[i]=sinf((float)i*0.29f)-0.1f; }
+      if (pass && t>3) { v[(t-1)*nk*d]=INFINITY; dy[d]=NAN; }
+      ref_attention_fused(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
+      memset(p1,0xff,np*sizeof(float)); memset(y1,0xff,nq*sizeof(float)); bad=0;
+      bcir_tensor_attention_contract_scan_pool(pool,plain|BCIR_TENSOR_ATTENTION_FUSED,b,t,nh,nk,d,q,k,v,p1,y1,&bad);
+      assert(!memcmp(p0,p1,np*sizeof(float)) && !memcmp(y0,y1,nq*sizeof(float)));
+      assert(bad==!(all_finite(y1,nq) && all_finite(k,nkv)));
+      ref_attention_backward_fused(b,t,nh,nk,d,q,k,v,p0,dy,dq0,dk0,dv0);
+      memset(dq1,0xff,nq*sizeof(float)); memset(dk1,0xff,nkv*sizeof(float)); memset(dv1,0xff,nkv*sizeof(float));
+      bcir_tensor_attention_backward_contract_pool(pool,plain|BCIR_TENSOR_ATTENTION_FUSED,b,t,nh,nk,d,q,k,v,p1,dy,
+          dq1,dk1,dv1);
+      assert(!memcmp(dq0,dq1,nq*sizeof(float)) && !memcmp(dk0,dk1,nkv*sizeof(float)) &&
+          !memcmp(dv0,dv1,nkv*sizeof(float)));
+      /* without FUSED the contract entries are the v1 (and v2) entries, bit for bit */
+      if (ex) bcir_tensor_attention_v2_pool(pool,b,t,nh,nk,d,q,k,v,p0,y0);
+      else bcir_tensor_attention_pool(pool,b,t,nh,nk,d,q,k,v,p0,y0);
+      memset(p1,0xff,np*sizeof(float)); memset(y2,0xff,nq*sizeof(float));
+      bcir_tensor_attention_contract_scan_pool(pool,plain,b,t,nh,nk,d,q,k,v,p1,y2,NULL);
+      assert(!memcmp(p0,p1,np*sizeof(float)) && !memcmp(y0,y2,nq*sizeof(float)));
+      memcpy(p1,p0,np*sizeof(float));
+      bcir_tensor_attention_backward_inplace_pool(pool,b,t,nh,nk,d,q,k,v,p0,dy,dq0,dk0,dv0);
+      memset(dq2,0xff,nq*sizeof(float));
+      bcir_tensor_attention_backward_contract_pool(pool,plain,b,t,nh,nk,d,q,k,v,p1,dy,dq2,dk1,dv1);
+      assert(!memcmp(dq0,dq2,nq*sizeof(float)) && !memcmp(dk0,dk1,nkv*sizeof(float)) &&
+          !memcmp(dv0,dv1,nkv*sizeof(float)));
+      apart+=memcmp(y1,y2,nq*sizeof(float))!=0 || memcmp(dq1,dq2,nq*sizeof(float))!=0;
+      cases++;
+    }
+    if (pool) bcir_tensor_pool_stop(pool);
+  }
+  assert(apart>0);
+  printf("  PASS fused attention contract (ATTN-FMA): %zu cases against the fmaf reference loops "
+      "(forward under both exponentials, the in-place backward, finite and not, serial and pooled), "
+      "%zu of them apart from v1\n",cases,apart);
 }
 /* The AdamW update as it was written before its passes were restructured -- the reference the
  * update must match bit for bit, state and verdict, on the fast path (the magnitudes prove the
@@ -454,10 +567,13 @@ static void pool_identity(void) {
       dk0[2*70*4*130],dk1[2*70*4*130],dv0[2*70*4*130],dv1[2*70*4*130];
   static float x[20000],u[20000],g[20000],e0[20000],e1[20000],f0[20000],f1[20000],gamma[389];
   static float dg0[389],dg1[389],inv[48];
-  static float ref[32][3][4096]; static bcir_decoder_event refev[32][3];
+  static float ref[64][3][4096]; static bcir_decoder_event refev[64][3];
   static unsigned char hits[300]; uint32_t contract,other;
-  /* v1; fused; exp; fused+exp; kblock; kblock+exp; bf16; bf16+exp; each with the reduce bit */
-  static const uint32_t contracts[]={0,1,2,3,4,6,8,9,10,11,12,14,16,18,24,26};
+  /* v1; fused; exp; fused+exp; kblock; kblock+exp; bf16; bf16+exp; each with the reduce bit;
+   * and the fused attention (ATTN-FMA) alone, with fused, with exp, and with kblock+exp and
+   * bf16+exp, the contracts the trainer runs fastest under, each of the last two with and without
+   * the reduce bit (the reduce comparison below pairs a contract with its reduce-free one) */
+  static const uint32_t contracts[]={0,1,2,3,4,6,8,9,10,11,12,14,16,18,24,26,32,33,34,38,46,50,58};
   size_t ci,cj,nc=sizeof(contracts)/sizeof(contracts[0]);
   static _Alignas(max_align_t) unsigned char pool_memory[4096];
   static const size_t gemm_shapes[][3]={{200,100,70},{1,1,1},{65,33,64},{129,65,3},{64,130,1},{3,200,2}};
@@ -496,6 +612,9 @@ static void pool_identity(void) {
     if ((contract^other)==BCIR_DT_CONTRACT_REDUCE) continue;
     if ((contract&other&BCIR_DT_CONTRACT_BF16) &&
         ((contract^other)&~(uint32_t)BCIR_DT_CONTRACT_REDUCE)==BCIR_DT_CONTRACT_EXP) continue;
+    /* and so may the fused attention's (attention_fused_reference holds the bit to the products) */
+    if ((contract&other&BCIR_DT_CONTRACT_BF16) &&
+        ((contract^other)&~(uint32_t)(BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_EXP))==BCIR_DT_CONTRACT_ATTN) continue;
     assert(memcmp(ref[contract][0],ref[other][0],sizeof(w))!=0);
   }
   for (ci=0;ci<nc;ci++) if (contracts[ci]&BCIR_DT_CONTRACT_REDUCE) {
@@ -606,6 +725,17 @@ static void pool_identity(void) {
       ref_attention_backward(bb,t,nh,nk,d,aq,ak,av,p0,ady,dq0,dk0,dv0);
       memset(dq1,0xff,nq*sizeof(float)); memset(dk1,0xff,nkv*sizeof(float)); memset(dv1,0xff,nkv*sizeof(float));
       bcir_tensor_attention_backward_inplace_pool(pool,bb,t,nh,nk,d,aq,ak,av,p1,ady,dq1,dk1,dv1);
+      assert(!memcmp(dq0,dq1,nq*sizeof(float)) && !memcmp(dk0,dk1,nkv*sizeof(float)) &&
+          !memcmp(dv0,dv1,nkv*sizeof(float)));
+      /* ATTN-FMA: the fused products on this pool, the fused loops' bits */
+      ref_attention_fused(bb,t,nh,nk,d,aq,ak,av,p0,y0,expf);
+      memset(p1,0xff,np*sizeof(float)); memset(y1,0xff,nq*sizeof(float));
+      bcir_tensor_attention_contract_scan_pool(pool,BCIR_TENSOR_ATTENTION_FUSED,bb,t,nh,nk,d,aq,ak,av,p1,y1,NULL);
+      assert(!memcmp(p0,p1,np*sizeof(float)) && !memcmp(y0,y1,nq*sizeof(float)));
+      ref_attention_backward_fused(bb,t,nh,nk,d,aq,ak,av,p0,ady,dq0,dk0,dv0);
+      memset(dq1,0xff,nq*sizeof(float)); memset(dk1,0xff,nkv*sizeof(float)); memset(dv1,0xff,nkv*sizeof(float));
+      bcir_tensor_attention_backward_contract_pool(pool,BCIR_TENSOR_ATTENTION_FUSED,bb,t,nh,nk,d,aq,ak,av,p1,ady,
+          dq1,dk1,dv1);
       assert(!memcmp(dq0,dq1,nq*sizeof(float)) && !memcmp(dk0,dk1,nkv*sizeof(float)) &&
           !memcmp(dv0,dv1,nkv*sizeof(float)));
     }
@@ -1775,11 +1905,61 @@ static void trainer_bf16(void) {
 #endif
   printf("  PASS bf16 trainer (NDT-BF16): refusals, %zu bytes of workspace, the state at every thread count, learning\n",need);
 }
+/* The trainer under the fused attention contract (ATTN-FMA): the bit admitted with each GEMM
+ * contract and with none, its state its own and one at every thread count (pool_identity), and --
+ * where the build has the tensor unit's probe -- every attention job of a run, forward and
+ * backward, running the fused products under the bit and v1's without it: the contract each job
+ * computed with, so a wrong argument at any of the trainer's calls is seen. */
+#ifdef BCIR_DT_ATTENTION_PROBE
+unsigned bcir_tensor_attention_probe(int backward);
+#endif
+static void trainer_attn(void) {
+  static const uint32_t gemm[]={0,BCIR_DT_CONTRACT_FUSED,BCIR_DT_CONTRACT_KBLOCK,BCIR_DT_CONTRACT_BF16};
+  bcir_decoder_adamw opt={0.01,0.9,0.95,1e-8,0.01,0.05};
+  uint32_t ids[40],targets[40]; bcir_decoder_event events[1]; size_t done,i; unsigned with;
+#ifdef BCIR_DT_ATTENTION_PROBE
+  {  /* the probe itself: no job reads as no contract, two contracts as none */
+    float q[4]={0.5f,-0.25f,1.0f,0.75f},p[4],y[4];
+    (void)bcir_tensor_attention_probe(0); (void)bcir_tensor_attention_probe(1);
+    assert(bcir_tensor_attention_probe(0)==~0u && bcir_tensor_attention_probe(1)==~0u);
+    bcir_tensor_attention_contract_scan_pool(NULL,BCIR_TENSOR_ATTENTION_FUSED,1,2,1,1,2,q,q,q,p,y,NULL);
+    assert(bcir_tensor_attention_probe(0)==BCIR_TENSOR_ATTENTION_FUSED);
+    bcir_tensor_attention_contract_scan_pool(NULL,BCIR_TENSOR_ATTENTION_FUSED,1,2,1,1,2,q,q,q,p,y,NULL);
+    bcir_tensor_attention_contract_scan_pool(NULL,0,1,2,1,1,2,q,q,q,p,y,NULL);
+    assert(bcir_tensor_attention_probe(0)==~0u);
+  }
+#endif
+  stream(ids,targets,40);
+  for (i=0;i<sizeof(gemm)/sizeof(gemm[0]);i++) for (with=0;with<2;with++) {
+    bcir_decoder_state st=fixture_of(5,8,1,2);
+    st.contract=gemm[i]|BCIR_DT_CONTRACT_EXP|(with ? BCIR_DT_CONTRACT_ATTN : 0u); lend(&st);
+#ifdef BCIR_DT_ATTENTION_PROBE
+    (void)bcir_tensor_attention_probe(0); (void)bcir_tensor_attention_probe(1);
+#endif
+    assert(bcir_decoder_run(&st,&opt,ids,targets,40,NULL,1,events,1,&done)==0 && done==1);
+#ifdef BCIR_DT_ATTENTION_PROBE
+    {
+      unsigned fused=with ? BCIR_TENSOR_ATTENTION_FUSED : 0u;
+      assert(bcir_tensor_attention_probe(0)==(BCIR_TENSOR_ATTENTION_EXP|fused));
+      assert(bcir_tensor_attention_probe(1)==fused);
+    }
+#endif
+  }
+  {
+#ifdef BCIR_DT_ATTENTION_PROBE
+    static const char probed[]=", every attention job of a run, forward and backward, on its contract";
+#else
+    static const char probed[]="";
+#endif
+    printf("  PASS fused attention trainer (ATTN-FMA): the bit with each GEMM contract and none%s\n",probed);
+  }
+}
 int main(void) {
-  gemm_contract(); attention_reference(); adamw_reference(); finite_differences(); refusals();
+  gemm_contract(); attention_reference(); attention_fused_reference(); adamw_reference();
+  finite_differences(); refusals();
   learning(); pool_identity(); pool_claims(); reduction_references(); scan_references();
   gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); fused_passes();
-  writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16();
+  writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
 #ifdef BCIR_DT_DIVISION_PROBE
   division_probe();
 #endif

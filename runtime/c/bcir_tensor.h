@@ -119,6 +119,26 @@ BCIR_DT_API void bcir_tensor_attention_v2_scan_pool(bcir_tensor_pool *pool, size
 BCIR_DT_API void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *pool,
     size_t batch, size_t time, size_t heads, size_t kvheads, size_t dim, const float *q,
     const float *k, const float *v, float *p, const float *dy, float *dq, float *dk, float *dv);
+/* The attention under a contract the caller names (ATTN-FMA): BCIR_TENSOR_ATTENTION_EXP puts the
+ * forward's softmax under the BCIR exponential (bcir_tensor_attention_v2_scan_pool's), and
+ * BCIR_TENSOR_ATTENTION_FUSED every multiply-add of the products -- the scores q_i . k_j, the
+ * context's p_ij v_j, the backward's probability adjoints dy_i . v_j, its dot sum p_ij dp_ij and
+ * the dq, dk and dv sums -- one IEEE fusedMultiplyAdd (C99 fmaf: the product unrounded, one
+ * rounding) in place of v1's rounded product and rounded sum, over the same terms in the same
+ * order from the same start; the scaling, the softmax and the score adjoint p_ij (dp_ij - dot_i)
+ * times the scale 1/sqrtf(dim) are v1's. Without FUSED each entry is its v1 entry above, bit for
+ * bit; with it every instance (portable fmaf, AVX2+FMA and AVX-512 FMA, chosen as the fused GEMM's
+ * are) is bit-identical to the fmaf loops at every thread count. Other bits are ignored, and the
+ * backward ignores EXP. bad is the forward's verdict as above, or NULL for none. */
+#define BCIR_TENSOR_ATTENTION_EXP 1u
+#define BCIR_TENSOR_ATTENTION_FUSED 2u
+BCIR_DT_API void bcir_tensor_attention_contract_scan_pool(bcir_tensor_pool *pool,
+    unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads, size_t dim,
+    const float *q, const float *k, const float *v, float *p, float *y, int *bad);
+BCIR_DT_API void bcir_tensor_attention_backward_contract_pool(bcir_tensor_pool *pool,
+    unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads, size_t dim,
+    const float *q, const float *k, const float *v, float *p, const float *dy, float *dq,
+    float *dk, float *dv);
 /* The fused contract, v2 (NDT-FMA): c[i][j] starts at its beta-scaled value and then, for l
  * ascending, c = fma(alpha*A(i,l), B(l,j), c) -- the product alpha*A rounded as in v1, the term's
  * product and its addition rounded once together (C99 fmaf, an IEEE fusedMultiplyAdd). The same

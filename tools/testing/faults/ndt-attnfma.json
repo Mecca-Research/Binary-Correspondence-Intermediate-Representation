@@ -1,0 +1,131 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23",
+    "bcir.tests.test_native_decoder:test_the_training_state_is_identical_at_every_thread_count"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF1 the scores' fused block instantiates v1's arithmetic",
+      "new": "  att512_scores_any(0,rows,d,q,ldq,k,ldk,s,lds);",
+      "old": "  att512_scores_any(1,rows,d,q,ldq,k,ldk,s,lds);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF2 the context's fused block instantiates v1's arithmetic",
+      "new": "  att512_context_any(0,rows,d,p,ldp,v,ldv,y,ldy,first);",
+      "old": "  att512_context_any(1,rows,d,p,ldp,v,ldv,y,ldy,first);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF3 the transposed products' fused block (dv, dk) instantiates v1's arithmetic",
+      "new": "  att512_transposed_any(0,rows,t,d,m,ldm,x,ldx,out,ldo,first);",
+      "old": "  att512_transposed_any(1,rows,t,d,m,ldm,x,ldx,out,ldo,first);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF4 the probability adjoint's fused tiles instantiate v1's arithmetic",
+      "new": "  att512_dp_any(0,rows,i0,jt,cols,d,dy,ldy,vt,t,tile,ldt);",
+      "old": "  att512_dp_any(1,rows,i0,jt,cols,d,dy,ldy,vt,t,tile,ldt);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF5 the backward's fused dot instantiates v1's arithmetic",
+      "new": "  att512_dot_any(0,t,i0,ig,jt,lim,ph,tile,ldt,dot);",
+      "old": "  att512_dot_any(1,t,i0,ig,jt,lim,ph,tile,ldt,dot);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF6 the rows past the blocks (and every row off AVX-512) take the v1 kernel under the fused contract",
+      "new": "  mm_run_range(variant,MM_V1,x,&rest);",
+      "old": "  mm_run_range(variant,fused ? MM_FUSED : MM_V1,x,&rest);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF7 the scalar dot's terms are v1's under the fused contract",
+      "new": "            if (!pass) dot[i]=dot[i]+pi[j]*dp;",
+      "old": "            if (!pass) dot[i]=a->fused ? fmaf(pi[j],dp,dot[i]) : dot[i]+pi[j]*dp;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF8 the probability adjoint's tiles through the GEMM kernel (no panel) are v1's under the fused contract",
+      "new": "            mm_run_range(variant,MM_V1,&x,&all);",
+      "old": "            mm_run_range(variant,a->fused ? MM_FUSED : MM_V1,&x,&all);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF9 the fused blocks' scalar remainders take v1's product and sum",
+      "new": "#define ATT_MADD1(f,acc,a,b) ((acc)+(a)*(b))",
+      "old": "#define ATT_MADD1(f,acc,a,b) ((f) ? fmaf((a),(b),(acc)) : (acc)+(a)*(b))",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF10 the forward's contract entry ignores the fused bit",
+      "new": "  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,0,",
+      "old": "  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0,",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF11 the backward's contract entry ignores the fused bit",
+      "new": "  a.fused=0; a.variant=a.fused ? mm_widest_fused() : mm_widest();",
+      "old": "  a.fused=(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0; a.variant=a.fused ? mm_widest_fused() : mm_widest();",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF12 the trainer refuses the attention bit",
+      "new": "      BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_BF16)) return BCIR_DT_INVALID;",
+      "old": "      BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTN)) return BCIR_DT_INVALID;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_training_state_is_identical_at_every_thread_count",
+      "label": "AF13 the trainer's attention ignores the state's attention bit",
+      "new": "    0u;",
+      "old": "    ((s->contract&BCIR_DT_CONTRACT_ATTN) ? BCIR_TENSOR_ATTENTION_FUSED : 0u);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF14 the trainer's backward runs the v1 products under the attention bit",
+      "new": "    bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s)&~BCIR_TENSOR_ATTENTION_FUSED,g.b,g.t,g.h,g.kh,",
+      "old": "    bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_training_state_is_identical_at_every_thread_count",
+      "label": "AF15 the Python trainer's attn names leave the attention bit out",
+      "new": "_CONTRACTS.update({(\"attn\" if name == \"v1\" else name + \"+attn\"): bits | 0",
+      "old": "_CONTRACTS.update({(\"attn\" if name == \"v1\" else name + \"+attn\"): bits | 32",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF16 the trainer's forward runs the v1 products under the attention bit",
+      "new": "  bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s)&~BCIR_TENSOR_ATTENTION_FUSED,b,t,h,kh,d,q,k,v,p,y,bad);",
+      "old": "  bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s),b,t,h,kh,d,q,k,v,p,y,bad);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AF17 the trainer's backward runs the fused products without the attention bit",
+      "new": "    bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s)|BCIR_TENSOR_ATTENTION_FUSED,g.b,g.t,g.h,g.kh,",
+      "old": "    bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,",
+      "path": "runtime/c/bcir_decoder_train.c"
+    }
+  ]
+}

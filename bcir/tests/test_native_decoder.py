@@ -154,6 +154,7 @@ def test_native_c_harness_c11_and_c23():
                 f"-std={standard}",
                 "-DBCIR_DT_DIVISION_PROBE",
                 "-DBCIR_DT_WORKSPACE_PROBE",
+                "-DBCIR_DT_ATTENTION_PROBE",
                 *options,
                 "-O2",
                 "-Wall",
@@ -176,8 +177,8 @@ def test_native_c_harness_c11_and_c23():
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
             # update_pairs, division_probe (NDT-UPDATE); the bf16 contract, its trainer and the
-            # workspace probe (NDT-BF16)
-            assert result.stdout.count("PASS") == 20
+            # workspace probe (NDT-BF16); the fused attention contract and its trainer (ATTN-FMA)
+            assert result.stdout.count("PASS") == 22
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -199,7 +200,12 @@ def test_native_c_harness_c11_and_c23():
                 continue
             exe = Path(temporary) / "gate-ubsan"
             cmd = [engine, "-std=c11", "-O1", "-g", "-ffp-contract=off", *sanitize]
-            cmd += ["-DBCIR_DT_DIVISION_PROBE", "-DBCIR_DT_WORKSPACE_PROBE", "-I", str(c)]
+            cmd += [
+                "-DBCIR_DT_DIVISION_PROBE",
+                "-DBCIR_DT_WORKSPACE_PROBE",
+                "-DBCIR_DT_ATTENTION_PROBE",
+            ]
+            cmd += ["-I", str(c)]
             cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]
             cmd += [str(c / "bcir_decoder_train.c"), "-o", str(exe)]
             subprocess.run(
@@ -209,7 +215,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 20
+            assert result.stdout.count("PASS") == 22
             break
 
 
@@ -417,9 +423,14 @@ def test_the_training_state_is_identical_at_every_thread_count():
         # NDT-BF16: the bf16 contract's state is its own, one at every thread count
         under = nf.thread_states(path, contract="bf16")
         assert len(set(under.values())) == 1 and under[1] not in digests, under
+        # ATTN-FMA: the fused attention's state is its own, one at every thread count
+        for name in ("attn", "kblock+exp+attn"):
+            under = nf.thread_states(path, contract=name)
+            assert len(set(under.values())) == 1 and under[1] not in digests, (name, under)
+            digests.add(under[1])
         # the reduce bit changes the norm's last bits, which the float rounding of every update
         # absorbs over three steps of this bench: one state at every thread count is the claim
-        for name in ("reduce", "kblock+exp+reduce", "bf16+exp+reduce"):
+        for name in ("reduce", "kblock+exp+reduce", "bf16+exp+reduce", "bf16+exp+reduce+attn"):
             under = nf.thread_states(path, contract=name)
             assert set(under) == set(nf.THREAD_COUNTS) and len(set(under.values())) == 1, under
         spec, batch, time_ = nf.THREADS_BENCH

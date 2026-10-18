@@ -22,7 +22,10 @@
  * least bcir_decoder_workspace_bytes bytes disjoint from the arenas and the state, for the packed
  * operands (BCIR_DT_CAPACITY below that, BCIR_DT_INVALID without one or overlapping), and a
  * provider's GEMM, as under every contract, keeps its own. One GEMM contract at a time: FUSED,
- * KBLOCK and BF16 exclude one another. Other bits are refused. A state trained under one contract
+ * KBLOCK and BF16 exclude one another. BCIR_DT_CONTRACT_ATTN (ATTN-FMA) puts the attention's
+ * products under the fused contract (bcir_tensor.h's BCIR_TENSOR_ATTENTION_FUSED: every
+ * multiply-add of the scores, the context and the backward's products one fmaf, the same terms in
+ * the same order), with any GEMM contract or none. Other bits are refused. A state trained under one contract
  * is not another's: the checkpoint names it. Whatever the contract, the loss's rows, the RMSNorm gamma
  * adjoints and the embedding scatter run on the pool in the serial order (NDT-REDUCE), so every
  * loss and state is the serial one, bit for bit, at every thread count.
@@ -62,9 +65,9 @@ typedef struct bcir_decoder_adamw {
 typedef struct bcir_decoder_event { double loss,grad_norm; uint64_t step; } bcir_decoder_event;
 enum { BCIR_DT_OK=0, BCIR_DT_INVALID=1, BCIR_DT_CAPACITY=2, BCIR_DT_NUMERIC=3 };
 enum { BCIR_DT_CONTRACT_FUSED=1u, BCIR_DT_CONTRACT_EXP=2u, BCIR_DT_CONTRACT_KBLOCK=4u,
-  BCIR_DT_CONTRACT_REDUCE=8u, BCIR_DT_CONTRACT_BF16=16u };
+  BCIR_DT_CONTRACT_REDUCE=8u, BCIR_DT_CONTRACT_BF16=16u, BCIR_DT_CONTRACT_ATTN=32u };
 /* 1: the state through its provider; 2: the state ends in its pool (NDT-THREADS); 3: and in its
- * contract (NDT-FMA, NDT-EXP, NDT-KBLOCK, NDT-REDUCE: the same field, more bits); 4: and in the
+ * contract (NDT-FMA, NDT-EXP, NDT-KBLOCK, NDT-REDUCE, ATTN-FMA: the same field, more bits); 4: and in the
  * bf16 contract's workspace (NDT-BF16). */
 BCIR_DT_API uint32_t bcir_decoder_abi_version(void);
 /* The bytes of workspace a state under `contract` lends its GEMMs: 0 unless the contract names
