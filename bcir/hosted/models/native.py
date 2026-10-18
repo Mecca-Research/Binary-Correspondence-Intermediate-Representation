@@ -11,6 +11,7 @@ import ctypes as ct
 import hashlib
 import json
 import math
+import mmap
 import os
 import random
 import shutil
@@ -101,8 +102,32 @@ def provider_mismatch(lib, slot, shapes) -> int:
 #: OpenBLAS's sgemm performs, so such a provider can be admitted under it by `use_cblas`'s
 #: differential), "kblock+exp" both. Under v1, "fused" and "exp" a provider's GEMM keeps its own
 #: arithmetic; under "kblock" it is admitted only where it is the contract's, bit for bit.
-_CONTRACTS = {"v1": 0, "fused": 1, "exp": 2, "fused+exp": 3, "kblock": 4, "kblock+exp": 6}
+#: "bf16" (ABI 4, NDT-BF16) puts BCIR's GEMMs under the bf16 contract (bcir_tensor.h): operands
+#: rounded to bfloat16 and accumulated in binary32 as the AMX unit's TDPBF16PS accumulates them --
+#: the AMX, AVX-512 and portable instances one result, bit for bit -- with a workspace for the
+#: packed operands the trainer lends from its own mapping (`workspace_bytes`); "bf16+exp" with the
+#: BCIR exponential. A CBLAS provider computes in binary32, so none is admitted under it.
+#: "reduce" (NDT-REDUCE) puts the clipping norm under a fixed-shape reduction -- the gradient in
+#: chunks of `reduce_chunk` elements, each chunk's squares summed in index order in double from
+#: zero, the chunk sums added in chunk order from zero -- so the update's one pass runs on the pool;
+#: "<contract>+reduce" names it with any of the seven above. "attn" (ATTN-FMA) puts the attention's
+#: products under the fused contract -- every multiply-add of the scores, the context and the
+#: backward's products one fmaf, the same terms in the same order -- and "<contract>+attn" names it
+#: with any of the above ("reduce+attn", "kblock+exp+reduce+attn", ...). Whatever the contract, the
+#: loss, the gamma adjoints and the embedding scatter run on the pool in the serial order: every loss
+#: and state is the serial one, bit for bit, at every thread count.
+_CONTRACTS = {"v1": 0, "fused": 1, "exp": 2, "fused+exp": 3, "kblock": 4, "kblock+exp": 6,
+              "bf16": 16, "bf16+exp": 18}  # fmt: skip
+_CONTRACTS.update({("reduce" if name == "v1" else name + "+reduce"): bits | 8
+                   for name, bits in list(_CONTRACTS.items())})  # fmt: skip
+_CONTRACTS.update({("attn" if name == "v1" else name + "+attn"): bits | 32
+                   for name, bits in list(_CONTRACTS.items())})  # fmt: skip
 _KBLOCK = 4
+_REDUCE = 8
+_BF16 = 16
+_ATTN = 32
+#: The contract names `NativeDecoder(contract=...)` admits, sorted; a recipe names one of them.
+CONTRACTS = tuple(sorted(_CONTRACTS))
 
 
 class _Spec(ct.Structure):
@@ -138,6 +163,8 @@ class _State(ct.Structure):
             ("provider", _Provider),
             ("pool", ct.c_void_p),  # ABI 2 (NDT-THREADS): the pool the kernels run on
             ("contract", ct.c_uint32),  # ABI 3 (NDT-FMA): the GEMM contract, _CONTRACTS
+            ("workspace", ct.c_void_p),  # ABI 4 (NDT-BF16): the bf16 GEMMs' packed operands
+            ("workspace_bytes", _SZ),
         ]
     )
 
@@ -237,6 +264,44 @@ def _checkpoint_digest(meta, payload):
     return digest.hexdigest()
 
 
+#: NDT-PAGES: the transparent huge page the state's mapping is aligned to (the PMD size of
+#: x86-64 and of a 4 KB arm64 kernel; under a larger one fewer of the mapping's pages are huge).
+_HUGE_PAGE = 2 << 20
+
+
+def _state_buffers(rows, huge_pages):
+    """The trainer's state buffers, zeroed, one per `rows` entry (name, floats), in its order.
+
+    NDT-PAGES: where Python exposes MADV_HUGEPAGE (Linux) they share one private anonymous
+    mapping advised for transparent huge pages before any page is touched -- the first buffer
+    on a 2 MB boundary, each next 64 bytes past the last one's end -- so the GEMMs' operand
+    walks miss the TLB once a 2 MB page rather than once a 4 KB one. Private, because a shared
+    anonymous mapping is shmem, whose huge pages follow another switch. Elsewhere, or with
+    `huge_pages` false, each buffer is a ctypes array. No kernel's arithmetic depends on an
+    address, so the placement never reaches a value. Returns the buffers and whether the kernel
+    took the advice: one without THP refuses it (EINVAL) and the mapping holds 4 KB pages."""
+    if not huge_pages or not hasattr(mmap, "MADV_HUGEPAGE"):
+        return {name: (ct.c_float * n)() for name, n in rows}, False
+    offsets, end = [], 0
+    for _name, n in rows:
+        end = (end + 63) & ~63
+        offsets.append(end)
+        end += 4 * n
+    mapping = mmap.mmap(-1, end + _HUGE_PAGE, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS)
+    try:
+        mapping.madvise(mmap.MADV_HUGEPAGE)
+        advised = True
+    except OSError:
+        advised = False
+    lead = -ct.addressof(ct.c_char.from_buffer(mapping)) % _HUGE_PAGE
+    # each array holds the mapping (from_buffer keeps its source), so it lives as long as they do
+    buffers = {
+        name: (ct.c_float * n).from_buffer(mapping, lead + offset)
+        for (name, n), offset in zip(rows, offsets)
+    }
+    return buffers, advised
+
+
 class NativeDecoder:
     """Caller-owned arenas planned once; native forward/backward/AdamW/run ABI.
 
@@ -249,7 +314,14 @@ class NativeDecoder:
     A CBLAS provider threads its own GEMM as it is configured; the pool runs the rest.
     `contract` selects the arithmetic contracts (`"v1"`, the default of every gate and record;
     `"fused"`, one IEEE fmaf per GEMM term; `"exp"`, the BCIR exponential under SiLU, the SwiGLU
-    VJP and the softmax; `"fused+exp"`); the checkpoint names it and `resume` restores it.
+    VJP and the softmax; `"fused+exp"`; `"kblock"`; `"bf16"`, the GEMMs on bfloat16 operands
+    accumulated as AMX accumulates them, with `workspace_bytes` of packing workspace counted in
+    the budget; any of them `+reduce`, and any of those `+attn`, the attention's products fused,
+    `CONTRACTS`); the checkpoint names it and `resume` restores it.
+    `huge_pages` (NDT-PAGES) puts the state on one mapping advised for 2 MB transparent huge
+    pages where the host has them (`_state_buffers`); `self.huge_pages` says whether the kernel
+    took the advice. The state is the same either way, bit for bit; the mapping adds at most one
+    huge page to what the budget bounds.
     """
 
     @staticmethod
@@ -319,6 +391,7 @@ class NativeDecoder:
         max_memory_bytes=512 * 1024 * 1024,
         threads=1,
         contract="v1",
+        huge_pages=True,
     ):
         if not isinstance(spec, DecoderSpec) or spec.activation != "silu_gate":
             raise ValueError("native decoder requires Llama/SwiGLU DecoderSpec")
@@ -345,6 +418,8 @@ class NativeDecoder:
             raise ValueError("threads must be an integer in [1, 4096]")
         if contract not in _CONTRACTS:
             raise ValueError(f"contract must be one of {sorted(_CONTRACTS)}")
+        if type(huge_pages) is not bool:
+            raise ValueError("huge_pages must be bool")
         self.contract = contract
         self.spec, self.batch_size, self.context_length = spec, batch_size, context_length
         self.library = Path(library).resolve()
@@ -383,7 +458,14 @@ class NativeDecoder:
             spec.rms_norm_eps,
         )
         _check(self.lib.bcir_decoder_make_plan(ct.byref(shape), ct.byref(plan)))
+        # NDT-BF16: the bf16 GEMMs' workspace, sized by the C plan for the step's largest group
+        self.workspace_bytes = self.lib.bcir_decoder_workspace_bytes(
+            ct.byref(plan), _CONTRACTS[contract]
+        )
+        if self.workspace_bytes == 2 ** (8 * ct.sizeof(_SZ)) - 1:
+            raise ValueError("native plan's GEMM workspace overflows size_t")
         self.memory_bytes = (4 * plan.parameters + plan.activations + plan.scratch) * 4
+        self.memory_bytes += self.workspace_bytes
         if self.memory_bytes > max_memory_bytes:
             raise ValueError(
                 f"native plan needs {self.memory_bytes} bytes, budget {max_memory_bytes}"
@@ -391,9 +473,8 @@ class NativeDecoder:
         self.layout = parameter_layout(spec)
         if sum(row[3] for row in self.layout) != plan.parameters:
             raise RuntimeError("native/Python parameter layout mismatch")
-        self.buffers = {
-            name: (ct.c_float * n)()
-            for name, n in (
+        self.buffers, self.huge_pages = _state_buffers(
+            (
                 ("weights", plan.parameters),
                 ("gradients", plan.parameters),
                 ("moment1", plan.parameters),
@@ -401,10 +482,14 @@ class NativeDecoder:
                 ("activations", plan.activations),
                 ("scratch", plan.scratch),
             )
-        }
+            + ((("workspace", (self.workspace_bytes + 3) // 4),) if self.workspace_bytes else ()),
+            huge_pages,
+        )
+        arenas = ("weights", "gradients", "moment1", "moment2", "activations", "scratch")
+        workspace = self.buffers.get("workspace")
         self.state = _State(
             plan,
-            *(self.buffers[n] for n in self.buffers),
+            *(self.buffers[n] for n in arenas),
             plan.parameters,
             plan.parameters,
             plan.parameters,
@@ -417,6 +502,8 @@ class NativeDecoder:
             _Provider(),
             self._pool,
             _CONTRACTS[contract],
+            ct.cast(workspace, ct.c_void_p) if workspace is not None else None,
+            self.workspace_bytes,
         )
         rng = random.Random(seed)
         for name, _, offset, count in self.layout:
@@ -446,8 +533,10 @@ class NativeDecoder:
     def _bind(self):
         self.lib.bcir_decoder_abi_version.argtypes = []
         self.lib.bcir_decoder_abi_version.restype = ct.c_uint32
-        if self.lib.bcir_decoder_abi_version() != 3:
+        if self.lib.bcir_decoder_abi_version() != 4:
             raise ValueError("unsupported native decoder ABI")
+        self.lib.bcir_decoder_workspace_bytes.argtypes = [ct.POINTER(_Plan), ct.c_uint32]
+        self.lib.bcir_decoder_workspace_bytes.restype = _SZ
         for name, args, result in (
             ("rails", [], ct.c_int),
             ("size", [ct.c_uint], _SZ),
@@ -513,6 +602,11 @@ class NativeDecoder:
         keeps BCIR's kernels. `admit=False` installs it without the differential (for measuring
         the differential itself); under the other contracts a provider's GEMM keeps its own
         arithmetic and `provider_admission` is None."""
+        if admit and _CONTRACTS[self.contract] & _BF16:
+            raise ValueError(
+                f"provider {name} not admitted under the {self.contract} contract: a CBLAS sgemm "
+                "computes in binary32, never the bf16 contract's operands"
+            )
         slot = ct.cast(function, _CBLAS)
         fn = ct.cast(self.lib.bcir_tensor_cblas_mm, _MM)
         self.state.provider = _Provider(ct.cast(ct.pointer(slot), ct.c_void_p), fn, _SILU())
@@ -701,7 +795,9 @@ class NativeDecoder:
             Path(tmp).unlink(missing_ok=True)
 
     @classmethod
-    def resume(cls, library, path, *, max_memory_bytes=512 * 1024 * 1024, threads=1):
+    def resume(
+        cls, library, path, *, max_memory_bytes=512 * 1024 * 1024, threads=1, huge_pages=True
+    ):
         with Path(path).open("rb") as stream:
             prefix = stream.read(12)
             if len(prefix) != 12 or prefix[:8] != _MAGIC:
@@ -746,6 +842,7 @@ class NativeDecoder:
                 max_memory_bytes=max_memory_bytes,
                 threads=threads,
                 contract=meta["contract"],
+                huge_pages=huge_pages,
             )
             expected = obj.state.plan.parameters * 12
             payload = stream.read(expected + 1)

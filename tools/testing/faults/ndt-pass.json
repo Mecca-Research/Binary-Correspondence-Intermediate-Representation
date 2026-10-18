@@ -1,0 +1,26 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23",
+    "bcir.tests.test_native_decoder:test_the_training_state_is_identical_at_every_thread_count"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NV1 the first pass's vector loop stops one element short of its chunk (the chunk's last element's moments never reach the maxima, nor its refusals the verdict)",
+      "new": "  for (i=0;i+1<n;i++) {\n    float ag=fabsf(gr[i]),aw=fabsf(wt[i]),am=fabsf(m1[i]),av=m2[i]; int32_t xg,xw,xm,xv;\n",
+      "old": "  for (i=0;i<n;i++) {\n    float ag=fabsf(gr[i]),aw=fabsf(wt[i]),am=fabsf(m1[i]),av=m2[i]; int32_t xg,xw,xm,xv;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NV2 the first moment's maximum keeps the smallest bit pattern (the bound admits every first moment, so the preflight never runs on one only it would refuse)",
+      "new": " bm=xm<bm ? xm : bm;",
+      "old": " bm=xm>bm ? xm : bm;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    }
+  ]
+}

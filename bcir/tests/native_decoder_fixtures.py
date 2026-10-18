@@ -20,13 +20,27 @@ spec alone. One function per row family grades it against the C rail; the tests,
     train.mm.fused.mismatch    `MM_CASES` whose native `bcir_tensor_mm_fused` output differs in any bit
                                from `mm_reference_fused` -- the fused contract (v2, NDT-FMA) as an
                                exact rational emulation rounded once per term
+    train.mm.bf16.mismatch     `MM_BF16_CASES` whose output through any bf16 instance the host runs
+                               (portable, AVX-512, AMX admitted) differs in any bit from
+                               `mm_reference_bf16` -- the bf16 contract (NDT-BF16) as exact
+                               rationals: operands rounded to bf16, 32-term blocks of two lanes
+                               from +0, the flushes where the AMX unit flushes
     train.exp.mismatch         inputs among the 2^24 `exp_sweep` sweeps (every binary32 in [-104, 89]
                                at stride 2^8) where two instances of the BCIR exponential differ
     train.exp.ulp.max          the largest distance, in ulps, of the BCIR exponential from exp in
                                double rounded to binary32 over the same inputs (stated: 1)
     train.state.threads.mismatch  thread counts among `THREAD_COUNTS[1:]` whose state after three
-                               steps of `THREADS_BENCH` differs in any bit from the one-thread
-                               state of the same library, weights, tokens and rates (NDT-THREADS)
+                               steps of `THREADS_BENCH`, or the losses and norms those steps
+                               reported, differ in any bit from the one-thread run's on the same
+                               library, weights, tokens and rates (NDT-THREADS), under v1 and
+                               under the reduce contract
+    train.norm.reduce.mismatch  of the clipping norms' squares and roots three steps of
+                               `THREADS_BENCH` compute under v1 and under the reduce contract,
+                               those that differ in any bit from `grad_norm_squared_reference`
+                               and `grad_norm_reference` -- the oracle's emulation of each
+                               contract from the gradients the backward left -- plus the counts
+                               of `REDUCE_CHUNK_COUNTS` where the C chunk rule and `reduce_chunk`
+                               disagree (NDT-REDUCE)
 
 Without a C compiler the native rows are not measured -- a skip, never a pass.
 """
@@ -40,6 +54,7 @@ import math
 import os
 import shutil
 import statistics
+import re
 import struct
 import subprocess
 import sys
@@ -86,7 +101,9 @@ MM_CASES = tuple(
 
 #: The blocked contract's cases (NDT-KBLOCK): the 20 above and twenty deeper ones that cross the
 #: split rule's three cases (one block, half-and-half, whole blocks then halves), an alpha the
-#: binary32 product does not scale exactly, and beta 1 (the trainer's dW accumulations).
+#: binary32 product does not scale exactly -- in one K block and across three, since the first
+#: block's epilogue (which scales c, NDT-BETA) and a later block's are each their own code -- and
+#: beta 1 (the trainer's dW accumulations).
 MM_KBLOCK_CASES = MM_CASES + tuple(
     (ta, tb, m, n, k, alpha, beta)
     for ta in (0, 1)
@@ -95,7 +112,7 @@ MM_KBLOCK_CASES = MM_CASES + tuple(
         ((2, 3, 1000), 1.0, 1.0),
         ((1, 2, 2048), 1.0, 0.0),
         ((3, 2, 449), 1.0, 1.0),
-        ((2, 2, 897), 0.5, 1.0),
+        ((2, 2, 897), 1.1, 1.0),
         ((2, 2, 100), 1.1, 1.0),
     )
 )
@@ -104,6 +121,16 @@ MM_KBLOCK_CASES = MM_CASES + tuple(
 #: tail), T=40 (past the attention backward's 32-row chunks), GQA groups of two, a width, a KV
 #: width, an FF width and a vocabulary off every 32- and 64-wide block edge; three steps.
 THREADS_BENCH = (DecoderSpec(250, 72, 4, 2, 200, activation="silu_gate", n_kv_heads=2), 2, 40)
+#: One reduce chunk (728 parameters, tied): the clipping norm under the reduce contract is the
+#: chunk loop's chain alone -- on a vector host the update pairs whole chunks (NDT-UPDATE), and the
+#: threads bench's 133 chunks reach that loop only in their short last one.
+ONE_CHUNK_BENCH = (DecoderSpec(16, 8, 2, 1, 16, activation="silu_gate", n_kv_heads=1), 2, 8)
+#: A step whose SwiGLU block admits the bf16 panels (BF16-PANELS): 32 rows (two sequences of 16), a
+#: 64-wide model over a 128-wide hidden activation -- every GEMM the block's outputs feed whole
+#: 32-tiles -- so under a bf16 contract the trainer writes the hidden activation and the gate and up
+#: adjoints as the GEMMs' panels wherever their slots are 64-byte aligned (the huge-page
+#: placement's are; a ctypes array's alignment is the allocator's).
+PANELS_BENCH = (DecoderSpec(64, 64, 2, 2, 128, activation="silu_gate", n_kv_heads=1), 2, 16)
 THREAD_COUNTS = (1, 2, 3, 4)
 
 
@@ -368,6 +395,121 @@ def mm_kblock_mismatch(lib, cases=MM_KBLOCK_CASES) -> int:
     return bad + mm_mismatch(lib, cases, kblock=True)
 
 
+# --- train.mm.bf16.mismatch (NDT-BF16) ----------------------------------------------------------
+
+#: The bf16 contract's cases: the fused cases and depths across one, two and five 32-term blocks,
+#: an inexact alpha (A is scaled before its bf16 rounding) and beta 1.
+MM_BF16_CASES = MM_CASES + tuple(
+    (ta, tb, m, n, k, alpha, beta)
+    for ta in (0, 1)
+    for tb in (0, 1)
+    for (m, n, k), alpha, beta in (
+        ((2, 3, 160), 1.0, 1.0),
+        ((17, 2, 96), 1.1, 0.0),
+    )
+)
+
+
+def _round_bits(x: Fraction, p: int) -> Fraction:
+    """The nonzero rational x rounded to `p` significant bits, ties to even, the exponent unbounded."""
+    a = abs(x)
+    e = a.numerator.bit_length() - a.denominator.bit_length()
+    if a < Fraction(2) ** e:
+        e -= 1  # 2^e <= a < 2^(e+1)
+    quantum = Fraction(2) ** (e - p + 1)
+    scaled = a / quantum
+    whole = scaled.numerator // scaled.denominator
+    rest = scaled - whole
+    if rest > Fraction(1, 2) or (rest == Fraction(1, 2) and whole % 2):
+        whole += 1
+    v = whole * quantum
+    return v if x > 0 else -v
+
+
+def bf16_round(x: float) -> float:
+    """The bf16 contract's operand rounding of a finite binary32: a subnormal or zero to its zero,
+    else eight significant bits to nearest, ties to even, past the largest finite to infinity."""
+    if x == 0.0 or abs(x) < 2.0**-126:
+        return math.copysign(0.0, x)
+    v = _round_bits(Fraction(x), 8)
+    return math.copysign(math.inf, x) if abs(v) >= 2**128 else float(v)
+
+
+_TINY = Fraction(2) ** -126
+
+
+def _lane(e: float, a: float, b: float) -> float:
+    """One step of a bf16 lane: e + a*b exactly, the binary32 nearest it -- or the zero of its sign
+    when its 24-bit rounding with the exponent unbounded is below 2^-126 (tiny after rounding: the
+    flush MXCSR's FTZ and the AMX unit apply)."""
+    x = Fraction(e) + Fraction(a) * Fraction(b)
+    if x == 0:  # an exact zero: -0 only from -0 plus a -0 product
+        product_negative = (math.copysign(1.0, a) < 0) != (math.copysign(1.0, b) < 0)
+        return -0.0 if math.copysign(1.0, e) < 0 and product_negative else 0.0
+    if abs(_round_bits(x, 24)) < _TINY:
+        return -0.0 if x < 0 else 0.0
+    return round_f32(x)
+
+
+def _flush(x: float) -> float:
+    return math.copysign(0.0, x) if x != 0.0 and abs(x) < 2.0**-126 else x
+
+
+def mm_reference_bf16(ta, tb, m, n, k, alpha, a, b, beta, c):
+    """The bf16 contract (NDT-BF16) in exact rationals: beta first (the rounded product, zero under
+    beta 0); every operand rounded to bf16 -- A after its binary32 product with alpha; the depth in
+    blocks of 32 from l = 0, padded with +0 terms; per block an even and an odd lane from +0, each
+    term's fma rounded once and flushed when tiny, then c = daz(c) + (E + O), both sums binary32
+    operations flushed when subnormal."""
+    alpha, beta = _f32(alpha), _f32(beta)
+    out = [0.0 if beta == 0.0 else _f32(beta * x) for x in c]
+    ra = [bf16_round(_f32(alpha * v)) for v in a]
+    rb = [bf16_round(v) for v in b]
+    for i in range(m):
+        for j in range(n):
+            acc = out[i * n + j]
+            for l0 in range(0, k, 32):
+                lanes = [0.0, 0.0]
+                for l in range(l0, l0 + 32):
+                    av = (ra[l * m + i] if ta else ra[i * k + l]) if l < k else 0.0
+                    bv = (rb[j * k + l] if tb else rb[l * n + j]) if l < k else 0.0
+                    lanes[l % 2] = _lane(lanes[l % 2], av, bv)
+                acc = _flush(_f32(_flush(acc) + _flush(_f32(lanes[0] + lanes[1]))))
+            out[i * n + j] = acc
+    return out
+
+
+def mm_bf16_variants(lib) -> list[int]:
+    """The bf16 contract's instances this host runs (1 portable, 4 AVX-512, 8 AMX admitted)."""
+    fn = lib.bcir_tensor_mm_bf16_variants
+    fn.argtypes, fn.restype = [], ct.c_int
+    mask = fn()
+    return [v for v in (1, 4, 8) if mask & v]
+
+
+def mm_bf16_mismatch(lib, cases=MM_BF16_CASES) -> int:
+    """`train.mm.bf16.mismatch`: of `cases`, through every bf16 instance the host runs with the
+    workspace whole, those whose output differs in any bit from `mm_reference_bf16` -- a case once
+    per instance that differs."""
+    fn = lib.bcir_tensor_mm_bf16_variant
+    fn.argtypes = [ct.c_int] + _MM_SIG[1:] + [ct.c_void_p, ct.c_size_t]
+    fn.restype = ct.c_int
+    size = lib.bcir_tensor_mm_bf16_workspace
+    size.argtypes, size.restype = [ct.c_size_t] * 3, ct.c_size_t
+    bad = 0
+    for seed, (ta, tb, m, n, k, alpha, beta) in enumerate(cases, 1):
+        a, b, c = _operands(m, n, k, seed)
+        want = struct.pack(f"<{m * n}f", *mm_reference_bf16(ta, tb, m, n, k, alpha, a, b, beta, c))
+        bytes_ = size(m, n, k)
+        workspace = (ct.c_ubyte * max(bytes_, 1))()
+        for variant in mm_bf16_variants(lib):
+            ca, cb = (ct.c_float * len(a))(*a), (ct.c_float * len(b))(*b)
+            cc = (ct.c_float * len(c))(*c)
+            ran = fn(variant, ta, tb, m, n, k, alpha, ca, cb, beta, cc, workspace, bytes_)
+            bad += ran != variant or want != struct.pack(f"<{m * n}f", *cc)
+    return bad
+
+
 def openblas_library() -> Path | None:
     """The scipy_openblas32 wheel's shared library, when the wheel is importable here."""
     spec = importlib.util.find_spec("scipy_openblas32")
@@ -382,9 +524,12 @@ def openblas_library() -> Path | None:
 
 
 def provider_mismatch(lib, shapes=None) -> int | None:
-    """`train.mm.provider.mismatch`: OpenBLAS's sgemm (scipy_openblas32, one thread) against the
-    blocked contract over the comparison decoder's step shapes at beta 0 and 1 -- the admission
-    differential `NativeDecoder.use_cblas` runs; None where the wheel is not importable."""
+    """`train.mm.provider.differences`: OpenBLAS's sgemm (scipy_openblas32, one thread) against
+    the blocked contract over the comparison decoder's step shapes at beta 0 and 1 -- the
+    admission differential `NativeDecoder.use_cblas` runs; None where the wheel is not
+    importable. A host-dependent count: 0 where the wheel's target computes the contract (the
+    SkylakeX kernels of the 2026-10-12 Intel host), 14 of 30 on PR #817's AMD EPYC host, whose
+    OpenBLAS blocks differently -- reported, never graded off the baseline host."""
     from bcir.hosted.models.native import _CBLAS, provider_mismatch as differential
     from bcir.hosted.models.native_program import training_step_program
 
@@ -479,6 +624,46 @@ def step_ms(path, bench=BENCH, steps=4, repeats=9) -> float:
     return statistics.median(samples)
 
 
+def provider_unsound(path, shapes=None) -> int | None:
+    """`train.mm.provider.unsound`: the admission verdict `NativeDecoder.use_cblas` gives
+    OpenBLAS on the comparison decoder, against the differential it is defined by -- 1 where
+    the provider is admitted though a case differs, refused though none does, or refused with
+    a count other than the differential's; 0 on a host that admits (the Intel host) and on one
+    that refuses (PR #817's AMD host) alike; None where the wheel is not importable. The exact
+    row every host grades: the guard is sound wherever it runs, whatever the wheel computes."""
+    from bcir.hosted.models.native import NativeDecoder
+
+    blas = openblas_library()
+    if blas is None:
+        return None
+    lib = ct.CDLL(str(path))
+    differences = provider_mismatch(lib, shapes)
+    spec = DecoderSpec(260, 384, 8, 6, 1024, activation="silu_gate", n_kv_heads=4)
+    trainer = NativeDecoder(path, spec, batch_size=8, context_length=128, contract="kblock")
+    try:
+        trainer.use_cblas(blas, symbol="scipy_cblas_sgemm")
+    except ValueError as refusal:
+        counted = re.search(r"(\d+) of (\d+) GEMM cases differ", str(refusal))
+        unsound = (
+            trainer.backend != "portable-c"
+            or trainer.provider_admission is not None
+            or counted is None
+            or int(counted.group(1)) != differences
+            or differences == 0
+        )
+    else:
+        admitted = trainer.provider_admission
+        unsound = (
+            admitted is None
+            or admitted["mismatch"] != 0
+            or differences != 0
+            or not trainer.backend.startswith("cblas:")
+        )
+    finally:
+        trainer.close()
+    return int(unsound)
+
+
 def measure_step(path, bench=BENCH) -> dict[str, float]:
     """`train.step.ms` and its floor, measured in the same run on the same library (`path`:
     the shared library `build_library` wrote)."""
@@ -517,11 +702,25 @@ def state_digest(trainer) -> str:
 
 
 def thread_states(
-    path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS, *, contract="v1"
+    path,
+    bench=THREADS_BENCH,
+    steps=3,
+    counts=THREAD_COUNTS,
+    *,
+    contract="v1",
+    refusals=False,
+    huge_pages=True,
 ) -> dict[int, str]:
     """The state digest after `steps` steps of `bench` -- the same seeded weights, tokens and
-    rates -- on a trainer of each thread count in `counts` (one thread is the serial trainer);
-    each trainer's pool is released before the next is made."""
+    rates -- with the loss and the clipping norm every step reported folded in (the norm is the
+    one reduction a partition could reach, NDT-REDUCE, and the float rounding of the update
+    absorbs its last bits for a while, so the state alone would not see a chunk that followed the
+    thread count), on a trainer of each thread count in `counts` (one thread is the serial
+    trainer); each trainer's pool is released before the next is made. With `refusals`, a trainer
+    that refuses a step is a state of its own -- "refused: " and the trainer's report -- where it
+    would otherwise raise: the row's verdict on a library whose pool refuses what the serial
+    trainer admits (a dropped task's finiteness report since NDT-SCAN), never a traceback.
+    `huge_pages` is the trainers' state placement (NDT-PAGES), which no state may depend on."""
     from bcir.hosted.models.native import NativeAdamW, NativeDecoder
 
     spec, batch, time_ = bench
@@ -532,20 +731,122 @@ def thread_states(
     out = {}
     for threads in counts:
         trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
-                                threads=threads, contract=contract)  # fmt: skip
+                                threads=threads, contract=contract,
+                                huge_pages=huge_pages)  # fmt: skip
         try:
-            trainer.run(tokens, targets, steps=steps, optimizer=NativeAdamW(lr=1e-3),
-                        learning_rates=rates)  # fmt: skip
-            out[threads] = state_digest(trainer)
+            try:
+                events = trainer.run(tokens, targets, steps=steps,
+                                     optimizer=NativeAdamW(lr=1e-3), learning_rates=rates)  # fmt: skip
+            except ValueError as exc:
+                if not (refusals and str(exc).startswith("native run stopped after ")):
+                    raise
+                out[threads] = f"refused: {exc}"
+                continue
+            digest = hashlib.sha256(state_digest(trainer).encode())
+            for event in events:
+                digest.update(struct.pack("<dd", event["loss"], event["grad_norm"]))
+            out[threads] = digest.hexdigest()
         finally:
             trainer.close()
     return out
 
 
-def threads_mismatch(path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS) -> int:
-    """Thread counts after the first whose state differs from the first count's."""
-    states = thread_states(path, bench, steps, counts)
-    return sum(states[t] != states[counts[0]] for t in counts[1:])
+def threads_mismatch(
+    path, bench=THREADS_BENCH, steps=3, counts=THREAD_COUNTS, contracts=("v1", "reduce")
+) -> int:
+    """Thread counts after the first whose state differs from the first count's, summed over
+    `contracts` (v1, and the reduce contract whose chunked norm is the one reduction the pool
+    could reach, NDT-REDUCE). A refused run is a state that differs, and a refused first count --
+    no serial state to hold the others to -- counts once itself, so a library that refuses
+    everywhere is a finding, not an agreement."""
+    bad = 0
+    for contract in contracts:
+        states = thread_states(path, bench, steps, counts, contract=contract, refusals=True)
+        first = states[counts[0]]
+        bad += sum(states[t] != first for t in counts[1:]) + first.startswith("refused: ")
+    return bad
+
+
+# --- train.norm.reduce.mismatch (NDT-REDUCE) --------------------------------------------------
+
+
+def reduce_chunk(count: int) -> int:
+    """The reduce contract's chunk rule (bcir_decoder_reduce_chunk): 1,024 doubled until the
+    chunks number at most 1,024 -- 1,024 up to 2^20 elements, 16,384 for the 9.84M decoder."""
+    chunk = 1024
+    while -(-count // chunk) > 1024:
+        chunk *= 2
+    return chunk
+
+
+def grad_norm_squared_reference(gradients, scale=1.0, *, reduce=False) -> float:
+    """The clipping norm's square under its two contracts, every operation an IEEE double one as
+    the C update performs it: v1's index-order chain over every element, or the reduce contract's
+    chunk chains from zero added in chunk order from zero (the chunks of `reduce_chunk`). The
+    update reports the square root; `bcir_decoder_gradient_norm` reports this sum, which the row
+    compares before the root rounds a difference of the chunks' order away."""
+    if not reduce:
+        norm = 0.0
+        for x in gradients:
+            g = x * scale
+            norm += g * g
+        return norm
+    chunk, norm = reduce_chunk(len(gradients)), 0.0
+    for start in range(0, len(gradients), chunk):
+        part = 0.0
+        for x in gradients[start : start + chunk]:
+            g = x * scale
+            part += g * g
+        norm += part
+    return norm
+
+
+def grad_norm_reference(gradients, scale=1.0, *, reduce=False) -> float:
+    """The clipping norm the update reports under either contract: the square's root."""
+    return math.sqrt(grad_norm_squared_reference(gradients, scale, reduce=reduce))
+
+
+#: The counts the chunk rule is held on, both rails: the first doubling, the record's decoder.
+REDUCE_CHUNK_COUNTS = (1, 1023, 1024, 1025, 1 << 20, (1 << 20) + 1, 9_836_928, 1 << 31)
+
+
+def norm_mismatch(path, bench=THREADS_BENCH, steps=3) -> int:
+    """NDT-REDUCE's row: the clipping norm's square the trainer computes under v1 and under the
+    reduce contract (`bcir_decoder_gradient_norm`, the update's own first pass) and the norm each
+    update then reports, against the oracle's emulation of that contract from the gradients the
+    backward left, bit for bit (2 * steps cases of the threads bench, each its square and its
+    root), plus the counts of `REDUCE_CHUNK_COUNTS` on which the C chunk rule and the Python one
+    disagree."""
+    from bcir.hosted.models.native import NativeAdamW, NativeDecoder
+
+    spec, batch, time_ = bench
+    n = batch * time_
+    tokens = [(7 * i + 3) % spec.vocab_size for i in range(n * steps)]
+    targets = [(7 * i + 4) % spec.vocab_size for i in range(n * steps)]
+    lib = ct.CDLL(str(path))
+    lib.bcir_decoder_reduce_chunk.argtypes = [ct.c_size_t]
+    lib.bcir_decoder_reduce_chunk.restype = ct.c_size_t
+    lib.bcir_decoder_gradient_norm.argtypes = [ct.c_void_p, ct.c_double, ct.POINTER(ct.c_double)]
+    lib.bcir_decoder_gradient_norm.restype = ct.c_int
+    bad = sum(lib.bcir_decoder_reduce_chunk(c) != reduce_chunk(c) for c in REDUCE_CHUNK_COUNTS)
+    for contract in ("v1", "reduce"):
+        trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
+                                contract=contract)  # fmt: skip
+        try:
+            count = trainer.state.plan.parameters
+            for step in range(steps):
+                at = slice(step * n, (step + 1) * n)
+                trainer.backward(tokens[at], targets[at])
+                want = grad_norm_squared_reference(trainer.buffers["gradients"][:count],
+                                                   reduce=contract == "reduce")  # fmt: skip
+                squared = ct.c_double(-1.0)
+                rc = lib.bcir_decoder_gradient_norm(ct.byref(trainer.state), 1.0,
+                                                    ct.byref(squared))  # fmt: skip
+                bad += rc != 0 or squared.value != want
+                bad += trainer.update(NativeAdamW(lr=1e-3)) != math.sqrt(want)
+        finally:
+            trainer.close()
+    return bad
 
 
 # --- every row --------------------------------------------------------------------------------
@@ -586,14 +887,17 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         out["train.mm.mismatch"] = float(mm_mismatch(lib))
         out["train.mm.fused.mismatch"] = float(mm_fused_mismatch(lib))
         out["train.mm.kblock.mismatch"] = float(mm_kblock_mismatch(lib))
+        out["train.mm.bf16.mismatch"] = float(mm_bf16_mismatch(lib))
         provider = provider_mismatch(lib)
         if provider is not None:
-            out["train.mm.provider.mismatch"] = float(provider)
+            out["train.mm.provider.differences"] = float(provider)
+            out["train.mm.provider.unsound"] = float(provider_unsound(path))
         swept, mismatch, ulp = exp_sweep(lib)
         assert swept > 8_000_000, swept
         out["train.exp.mismatch"] = float(mismatch)
         out["train.exp.ulp.max"] = float(ulp)
         out["train.state.threads.mismatch"] = float(threads_mismatch(path))
+        out["train.norm.reduce.mismatch"] = float(norm_mismatch(path))
         if timed:
             out.update(measure_step(path))
         return out
@@ -604,6 +908,7 @@ def measure(*, timed: bool = True) -> dict[str, float]:
 __all__ = [
     "BENCH",
     "MM_CASES",
+    "PANELS_BENCH",
     "PLAN_CORPUS",
     "THREAD_COUNTS",
     "THREADS_BENCH",
@@ -612,12 +917,18 @@ __all__ = [
     "exp_sweep",
     "measure",
     "measure_step",
+    "mm_bf16_mismatch",
+    "mm_bf16_variants",
     "mm_fused_mismatch",
     "mm_kblock_mismatch",
+    "mm_reference_bf16",
+    "bf16_round",
+    "MM_BF16_CASES",
     "MM_KBLOCK_CASES",
     "kblock_split",
     "mm_reference_kblock",
     "provider_mismatch",
+    "provider_unsound",
     "openblas_library",
     "mm_mismatch",
     "mm_variants",
@@ -629,6 +940,11 @@ __all__ = [
     "state_digest",
     "thread_states",
     "threads_mismatch",
+    "reduce_chunk",
+    "grad_norm_reference",
+    "grad_norm_squared_reference",
+    "REDUCE_CHUNK_COUNTS",
+    "norm_mismatch",
     "transient_ratio",
 ]
 

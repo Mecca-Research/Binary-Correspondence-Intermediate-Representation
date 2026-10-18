@@ -41,8 +41,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NP5 the probability adjoint's row sum keeps accumulating in the second pass",
-      "new": "            dot[i]+=pi[j]*dp;\n            if (pass) pi[j]=pi[j]*(dp-dot[i])*scale;",
-      "old": "            if (!pass) dot[i]+=pi[j]*dp;\n            else pi[j]=pi[j]*(dp-dot[i])*scale;",
+      "new": "            dot[i]=a->fused ? fmaf(pi[j],dp,dot[i]) : dot[i]+pi[j]*dp;\n            if (pass) pi[j]=pi[j]*(dp-dot[i])*scale;",
+      "old": "            if (!pass) dot[i]=a->fused ? fmaf(pi[j],dp,dot[i]) : dot[i]+pi[j]*dp;\n            else pi[j]=pi[j]*(dp-dot[i])*scale;",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -62,8 +62,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NP8 the first pass admits a negative second moment",
-      "new": "!(av<=FLT_MAX)",
-      "old": "!(av>=0 && av<=FLT_MAX)",
+      "new": " |",
+      "old": " | !(av>=0.0f) |",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

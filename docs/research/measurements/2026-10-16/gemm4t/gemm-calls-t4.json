@@ -1,0 +1,130 @@
+{
+ "schema": "bcir.ndt_gemm_calls.v1",
+ "threads": 4,
+ "steps": 8,
+ "compiler": "gcc",
+ "contract": "kblock+exp+reduce",
+ "rows": [
+  {
+   "call": "backward gate, up (dY W and dY^T X)",
+   "count": 12,
+   "m_n_k": [
+    1024,
+    384,
+    1024
+   ],
+   "ms_per_step": 50.86,
+   "gflops": 380.0,
+   "idle_ms_per_step": 0.768
+  },
+  {
+   "call": "backward down (dY W and dY^T X)",
+   "count": 6,
+   "m_n_k": [
+    1024,
+    1024,
+    384
+   ],
+   "ms_per_step": 26.16,
+   "gflops": 369.4,
+   "idle_ms_per_step": 0.375
+  },
+  {
+   "call": "forward gate, up (x W^T, 1024 x 384)",
+   "count": 12,
+   "m_n_k": [
+    1024,
+    1024,
+    384
+   ],
+   "ms_per_step": 24.183,
+   "gflops": 399.6,
+   "idle_ms_per_step": 0.318
+  },
+  {
+   "call": "backward q, o (dY W and dY^T X)",
+   "count": 12,
+   "m_n_k": [
+    1024,
+    384,
+    384
+   ],
+   "ms_per_step": 19.807,
+   "gflops": 365.9,
+   "idle_ms_per_step": 0.56
+  },
+  {
+   "call": "backward k, v (dY W and dY^T X)",
+   "count": 12,
+   "m_n_k": [
+    1024,
+    384,
+    192
+   ],
+   "ms_per_step": 13.825,
+   "gflops": 262.1,
+   "idle_ms_per_step": 0.416
+  },
+  {
+   "call": "forward down (x W^T, 384 x 1024)",
+   "count": 6,
+   "m_n_k": [
+    1024,
+    384,
+    1024
+   ],
+   "ms_per_step": 11.108,
+   "gflops": 435.0,
+   "idle_ms_per_step": 0.341
+  },
+  {
+   "call": "forward q, o (x W^T, 384 x 384)",
+   "count": 12,
+   "m_n_k": [
+    1024,
+    384,
+    384
+   ],
+   "ms_per_step": 10.021,
+   "gflops": 361.6,
+   "idle_ms_per_step": 0.355
+  },
+  {
+   "call": "forward k, v (x W^T, 192 x 384)",
+   "count": 12,
+   "m_n_k": [
+    1024,
+    192,
+    384
+   ],
+   "ms_per_step": 4.778,
+   "gflops": 379.2,
+   "idle_ms_per_step": 0.236
+  },
+  {
+   "call": "backward head (dY E and dY^T X)",
+   "count": 1,
+   "m_n_k": [
+    1024,
+    384,
+    260
+   ],
+   "ms_per_step": 1.378,
+   "gflops": 296.7,
+   "idle_ms_per_step": 0.03
+  },
+  {
+   "call": "forward head (x E^T, 260 x 384)",
+   "count": 1,
+   "m_n_k": [
+    1024,
+    260,
+    384
+   ],
+   "ms_per_step": 0.71,
+   "gflops": 288.1,
+   "idle_ms_per_step": 0.018
+  }
+ ],
+ "gemm_ms_per_step": 162.83
+}

@@ -1,0 +1,124 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23",
+    "bcir.tests.test_native_decoder:test_the_training_state_is_identical_at_every_thread_count"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA1 the second pass reads every kept probability-adjoint tile from the first slot (a row block past 64 columns takes the first tile's values)",
+      "new": "float *tile=jt<BCIR_ATT_KEEP ? kept[0] : spare;",
+      "old": "float *tile=jt<BCIR_ATT_KEEP ? kept[jt/BCIR_ATT_COLS] : spare;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA2 the tile at the kept bound is not evaluated again (the second pass reads the spare slot, which holds the last tile the first pass evaluated)",
+      "new": "if (!pass || jt>BCIR_ATT_KEEP) {",
+      "old": "if (!pass || jt>=BCIR_ATT_KEEP) {",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA3 no tile is evaluated again in the second pass (past the kept columns, every tile reads the spare slot's last values)",
+      "new": "if (!pass) {",
+      "old": "if (!pass || jt>=BCIR_ATT_KEEP) {",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA4 the scores' block stores one key past the diagonal (a score above it is written into the probabilities' zeros)",
+      "new": "size_t i=i0+r,keep=i-j0+2<nj ? i-j0+2 : nj;",
+      "old": "size_t i=i0+r,keep=i-j0+1<nj ? i-j0+1 : nj;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA5 the context's diagonal keys reach every row of the block (a row takes keys past itself)",
+      "new": "          __mmask16 take=(__mmask16)0xffffu;",
+      "old": "          __mmask16 take=(__mmask16)(r>=dj ? 0xffffu : 0u);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA6 the rows past the last whole block of eight are never computed (a context the register blocks do not cover keeps its zeros)",
+      "new": "  rest.jb0=0; rest.jb1=x->n; rest.r0=t; rest.r1=t;",
+      "old": "  rest.jb0=0; rest.jb1=x->n; rest.r0=whole; rest.r1=t;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA7 the scores stop after their first chunk of channels (a head wider than 128 channels loses the rest of every dot product)",
+      "new": "    for (c0=0;c0<d && c0<BCIR_ATT_DC;c0+=BCIR_ATT_DC) {",
+      "old": "    for (c0=0;c0<d;c0+=BCIR_ATT_DC) {",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA8 the transposed products' diagonal terms reach every row of the block (dv and dk take terms before their own row)",
+      "new": "          __mmask16 take=(__mmask16)0xffffu;",
+      "old": "          __mmask16 take=(__mmask16)(r<=di ? 0xffffu : 0u);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA9 the transposed products' full terms start one term late (each block loses term j0+7 for every row)",
+      "new": "      for (i=j0+8;i<t;i++) {  /* every row of the block takes term i */",
+      "old": "      for (i=j0+7;i<t;i++) {  /* every row of the block takes term i */",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA10 the probability-adjoint kernel skips each row group's diagonal block (the tiles' j <= i entries left at zero)",
+      "new": "      if (jt+jb+32>i0+ig+7) continue;",
+      "old": "      if (jt+jb>i0+ig+7) continue;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA11 the values' panel drops the ragged channels past the last whole 16",
+      "new": "  for (j=0;j<t;j++) for (c=j<tw ? d : 0;c<d;c++) vt[c*t+j]=v[j*ldv+c];",
+      "old": "  for (j=0;j<t;j++) for (c=j<tw ? dw : 0;c<d;c++) vt[c*t+j]=v[j*ldv+c];",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA12 the values' panel drops the ragged keys' first channels (keys past the last whole 16)",
+      "new": "  for (j=0;j<t;j++) for (c=dw;c<d;c++) vt[c*t+j]=v[j*ldv+c];",
+      "old": "  for (j=0;j<t;j++) for (c=j<tw ? dw : 0;c<d;c++) vt[c*t+j]=v[j*ldv+c];",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA13 the tile's rows past the last whole eight take no channels",
+      "new": "        for (c=0;c<0;c++) acc=ATT_MADD1(f,acc,dy[(i0+ig)*ldy+c],vt[c*t+jt+jb+j]);",
+      "old": "        for (c=0;c<d;c++) acc=ATT_MADD1(f,acc,dy[(i0+ig)*ldy+c],vt[c*t+jt+jb+j]);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA14 the probability-adjoint kernel fuses each channel's product and sum (one FMA: not the v1 arithmetic)",
+      "new": "          __m512 qv=_mm512_set1_ps(dy[(i0+ig+r)*ldy+c]);\n          a0[r]=ATT_MADD(1,a0[r],qv,b0);",
+      "old": "          __m512 qv=_mm512_set1_ps(dy[(i0+ig+r)*ldy+c]);\n          a0[r]=ATT_MADD(f,a0[r],qv,b0);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA15 a row the context's diagonal key skips loses its sum (zero-masked where the add must merge)",
+      "new": "          a0[r]=_mm512_maskz_add_ps(take,a0[r],_mm512_mul_ps(pv,b0));",
+      "old": "          a0[r]=ATT_MADD_MASK(f,a0[r],take,pv,b0);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NA16 a row the transposed products' diagonal term skips loses its sum (zero-masked where the add must merge)",
+      "new": "          a0[r]=_mm512_maskz_add_ps(take,a0[r],_mm512_mul_ps(mv,b0));",
+      "old": "          a0[r]=ATT_MADD_MASK(f,a0[r],take,mv,b0);",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

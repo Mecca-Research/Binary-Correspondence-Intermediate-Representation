@@ -1,0 +1,2 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 17cff8d, runtime/c against it 9aac2c5875c2c9f1
+VCVTNE2PS2BF16 vs bf16_of over all 2^32 inputs: 0 mismatches; under MXCSR RZ+FTZ+DAZ 0 of 1048576 samples differ

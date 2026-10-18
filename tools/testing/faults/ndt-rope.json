@@ -1,0 +1,46 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_native_decoder:_CC",
+  "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+ ],
+ "faults": [
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NO1 every range of pairs takes the first range's frequencies (the 260-wide heads' pairs 64.. turn at the wrong rate)",
+   "new": "f[j]=pow(base,-2.0*(double)j/(double)dim);",
+   "old": "f[j]=pow(base,-2.0*(double)(j0+j)/(double)dim);",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NO2 the inverse rotation keeps the forward sine's sign",
+   "new": "c[j]=(float)cos(angle); s[j]=(float)sin(angle);",
+   "old": "c[j]=(float)cos(angle); s[j]=(float)sin(angle)*(inverse ? -1.0f : 1.0f);",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NO3 the angle rounded to float before its cosine and sine (the per-pair kernel takes them in double)",
+   "new": "        double angle=(float)((double)pos*f[j]);",
+   "old": "        double angle=(double)pos*f[j];",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NO4 the low half's rotation adds the high half's term",
+   "new": "lo[j]=a*c[j]+z*s[j];",
+   "old": "lo[j]=a*c[j]-z*s[j];",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NO5 a head shorter than a whole range of pairs is never turned (the ranges stop at the last whole one)",
+   "new": "  for (j0=0;j0+BCIR_ROPE_J<=half;j0+=BCIR_ROPE_J) {",
+   "old": "  for (j0=0;j0<half;j0+=BCIR_ROPE_J) {",
+   "path": "runtime/c/bcir_tensor.c"
+  }
+ ]
+}

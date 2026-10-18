@@ -1,0 +1,158 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU1 the v2 SwiGLU forward rounds the gate product once (silu(g)*u taken as g*(sigmoid(g)*u))",
+      "new": "  size_t i; for (i=0;i<n;i++) { y[i]=x[i]*(sigmoid2(x[i])*u[i]); }\n",
+      "old": "  size_t i; for (i=0;i<n;i++) { float s=x[i]*sigmoid2(x[i]); y[i]=s*u[i]; }\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU2 the v1 SwiGLU forward rounds the gate product once (libm's SiLU, the same reassociation)",
+      "new": "    case EW_SILUMUL: { size_t i; for (i=i0;i<i1;i++) { j->y[i]=j->x[i]*(sigmoid(j->x[i])*j->u[i]); } } break;\n",
+      "old": "    case EW_SILUMUL: { size_t i; for (i=i0;i<i1;i++) { float s=j->x[i]*sigmoid(j->x[i]); j->y[i]=s*j->u[i]; } } break;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU3 the RMSNorm VJP's 16-row lanes store dx over the residual's adjoint instead of adding to it (AVX-512)",
+      "new": "      if (j->how&BCIR_TENSOR_RMSB_ADD) for (c=0;c<w;c++) dxr[c]=dyr[c]*j->g[c]*inv-xr[c]*coeff;\n",
+      "old": "      if (j->how&BCIR_TENSOR_RMSB_ADD) for (c=0;c<w;c++) dxr[c]=dxr[c]+(dyr[c]*j->g[c]*inv-xr[c]*coeff);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU4 the RMSNorm VJP's row loop stores dx over the residual's adjoint instead of adding to it (the ragged row chunk)",
+      "new": "(float)w;\n    if (j->how&BCIR_TENSOR_RMSB_ADD) for (c=0;c<w;c++) dxr[c]=dyr[c]*j->g[c]*inv-xr[c]*coeff;\n",
+      "old": "(float)w;\n    if (j->how&BCIR_TENSOR_RMSB_ADD) for (c=0;c<w;c++) dxr[c]=dxr[c]+(dyr[c]*j->g[c]*inv-xr[c]*coeff);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU5 the gamma adjoint's first write reads what dg holds (a NaN-filled gradient reaches the sum)",
+      "new": "  if (j->how&BCIR_TENSOR_RMSB_FIRST) for (c=0;c<n;c++) acc[c]=j->dg[c0+c];\n",
+      "old": "  if (j->how&BCIR_TENSOR_RMSB_FIRST) for (c=0;c<n;c++) acc[c]=0.0f;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU6 the gamma adjoint's first write starts at -0.0 (a column of -0.0 terms keeps its sign where the fill's +0.0 absorbed it)",
+      "new": "  if (j->how&BCIR_TENSOR_RMSB_FIRST) for (c=0;c<n;c++) acc[c]=-0.0f;\n",
+      "old": "  if (j->how&BCIR_TENSOR_RMSB_FIRST) for (c=0;c<n;c++) acc[c]=0.0f;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU7 the forward's gate product takes the gate for the up projection",
+      "new": "    silu_mul(s,g.nf,a.gate,a.gate,a.hidden,&bad);\n",
+      "old": "    silu_mul(s,g.nf,a.gate,a.up,a.hidden,&bad);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU8 an untied embedding's gradient is never filled (the scatter, its first writer, adds to what it holds)",
+      "new": "  if (0) zero_pool(s,s->gradients,g.v*g.d);\n",
+      "old": "  if (!accumulate && first && !s->plan.spec.tied) zero_pool(s,s->gradients,g.v*g.d);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU9 the down projection's weight adjoint keeps beta 1 when it is the gradient's first writer",
+      "new": "    else linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f,1.0f);\n",
+      "old": "    else linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f,wb);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU10 the final norm's gamma adjoint adds to what the gradient holds when it is its first writer",
+      "new": "  rms_backward(s,g.n,g.d,xs+g.l*g.nd,final,dn,cur,dfinal,dq,0u);\n",
+      "old": "  rms_backward(s,g.n,g.d,xs+g.l*g.nd,final,dn,cur,dfinal,dq,gf);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU11 the second norm's VJP stores its dx over the residual's adjoint (the add the slice folded in is lost)",
+      "new": "    rms_backward(s,g.n,g.d,a.x2,p.norm2,dn,cur,grad.norm2,dq,gf);\n",
+      "old": "    rms_backward(s,g.n,g.d,a.x2,p.norm2,dn,cur,grad.norm2,dq,BCIR_TENSOR_RMSB_ADD|gf);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU12 every micro-batch defers its closing gradient scan (a refused first micro-batch runs the second)",
+      "new": "          (j ? DT_KNOWN : 0u)|DT_DEFER);\n",
+      "old": "          (j ? DT_KNOWN : 0u)|(j+1==accumulation ? DT_DEFER : 0u));\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU13 a run's first micro-batch skips the weights' scan (a NaN weight reaches the forward and its arena)",
+      "new": "          DT_KNOWN|(j+1==accumulation ? DT_DEFER : 0u));\n",
+      "old": "          (j ? DT_KNOWN : 0u)|(j+1==accumulation ? DT_DEFER : 0u));\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NU14 the deferred scan's refusal comes after the update's own (an invalid power reported over a non-finite gradient)",
+      "new": "    return BCIR_DT_INVALID;\n  rc=first_pass(s,gs,parts,&pass);\n",
+      "old": "    return deferred && !finite_pool(s,s->gradients,s->plan.parameters) ? BCIR_DT_NUMERIC :\n      BCIR_DT_INVALID;\n  rc=first_pass(s,gs,parts,&pass);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NZ1 the scores' last channel block leaves its future lanes unwritten (the probabilities' upper triangle keeps what p held)",
+      "new": "            _mm512_mask_storeu_ps(sr,k0,a0[r]);\n",
+      "old": "            _mm512_mask_storeu_ps(sr,m0,_mm512_maskz_mov_ps(k0,a0[r]));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NZ2 the probabilities' future columns past a row's blocks are never filled",
+      "new": "    for (i=0;i<0;i++) { size_t end=(i/32+1)*32<v1 ? (i/32+1)*32 : v1; memset(ph+i*t+end,0,(t-end)*sizeof(float)); }\n",
+      "old": "    for (i=0;i<v1;i++) { size_t end=(i/32+1)*32<v1 ? (i/32+1)*32 : v1; memset(ph+i*t+end,0,(t-end)*sizeof(float)); }\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NZ3 the context's blocks start from what y holds (no fill precedes them any more)",
+      "new": "        a0[r]=_mm512_maskz_loadu_ps(m0,yr); a1[r]=_mm512_maskz_loadu_ps(first ? 0 : m1,yr+16);\n",
+      "old": "        a0[r]=_mm512_maskz_loadu_ps(first ? 0 : m0,yr); a1[r]=_mm512_maskz_loadu_ps(first ? 0 : m1,yr+16);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NZ4 every query head of a KV head starts dk and dv from +0.0 (the group's earlier heads' terms are dropped)",
+      "new": "    att_rows(variant,a->fused,&x,t,ATT_TRANSPOSED,1);\n  }\n",
+      "old": "    att_rows(variant,a->fused,&x,t,ATT_TRANSPOSED,h%(nh/nk)==0);\n  }\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NZ5 the transposed products start from what dv holds on the KV head's first query head (no fill precedes them)",
+      "new": "        a0[r]=_mm512_maskz_loadu_ps(m0,o); a1[r]=_mm512_maskz_loadu_ps(first ? 0 : m1,o+16);\n",
+      "old": "        a0[r]=_mm512_maskz_loadu_ps(first ? 0 : m0,o); a1[r]=_mm512_maskz_loadu_ps(first ? 0 : m1,o+16);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NZ6 the v1 kernel's rows are taken for the AVX-512 blocks' (their fills skipped where t is not a multiple of eight)",
+      "new": "  return variant==4 ? t : 0;\n",
+      "old": "  return variant==4 ? t/8*8 : 0;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NZ7 the scores' key panel puts each 16 x 16 block at the panel's first sixteen keys",
+      "new": "        for (jb=0;jb<jw;jb+=16) for (cb=0;cb<cw;cb+=16) kb512_transpose16(k+(j0+jb)*ldk+c0+cb,ldk,kt+cb*32,32);\n",
+      "old": "        for (jb=0;jb<jw;jb+=16) for (cb=0;cb<cw;cb+=16) kb512_transpose16(k+(j0+jb)*ldk+c0+cb,ldk,kt+cb*32+jb,32);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+sign-5804ad5: FAIL(134) | sign-5804ad5: harness_5804ad5.c:2017: panels_contract: Assertion `bad==want_bad && same_shorts(pa,ra,n) && same_shorts(pb,rb,n)' failed.
+sign-quiet: PASS | 
+pn34-anynan: PASS | 
+pn34-quiet: FAIL(134) | panels: SiLU product as A, 64 x 96, v1, 1 thread(s): element 318 is 0xff81, the reference 0xffc0

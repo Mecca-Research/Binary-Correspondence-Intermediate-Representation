@@ -1,0 +1,63 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 17cff8d, runtime/c against it 9aac2c5875c2c9f1
+TDPBF16PS random wide             51200 outputs: [0]16141 [1]16141 [2]16241 [3]16975 [4]16441 [5]51200 [6]27762 [7]24106 [8]26707 [9]23533 [10]22641 [11]23296
+TDPBF16PS random narrow           51200 outputs: [0]38838 [1]38838 [2]38832 [3]40174 [4]40174 [5]51200 [6]41431 [7]51200 [8]51200 [9]51200 [10]51200 [11]51200
+TDPBF16PS random big-accumulator  51200 outputs: [0]12905 [1]12905 [2]12855 [3]17233 [4]17221 [5]51200 [6]17312 [7]50743 [8]50868 [9]50821 [10]50792 [11]50762
+TDPBF16PS random trainer-like     51200 outputs: [0]32571 [1]32571 [2]32650 [3]33194 [4]33244 [5]51200 [6]36643 [7]41340 [8]46526 [9]46542 [10]46036 [11]45832
+  model [0] chain (c, t=0..31, fused)
+  model [1] chain, product rounded
+  model [2] chain, odd term first
+  model [3] chain of exact pair sums
+  model [4] chain of RN pair sums
+  model [5] even/odd lanes from +0, c+(E+O)
+  model [6] even lane from c, odd +0, E+O
+  model [7] exact total, one rounding
+  model [8] c + RN(exact block)
+  model [9] pairwise tree, c + tree
+  model [10] pair sums chained from +0, c+S
+  model [11] terms chained from +0, c+S
+TDPBF16PS K rows  1 ( 2 terms) 13056 outputs: [0]11654 [1]11654 [2]11613 [3]12261 [4]13056 [5]13056 [6]11654 [7]12261 [8]13056 [9]13056 [10]13056 [11]13056
+TDPBF16PS K rows  2 ( 4 terms) 13056 outputs: [0]9300 [1]9300 [2]9390 [3]9701 [4]9924 [5]13056 [6]10083 [7]10647 [8]12069 [9]11777 [10]11777 [11]11968
+TDPBF16PS K rows  4 ( 8 terms) 13056 outputs: [0]7064 [1]7064 [2]7071 [3]7411 [4]7339 [5]13056 [6]8713 [7]8906 [8]10069 [9]9512 [10]9603 [11]9846
+TDPBF16PS K rows  8 (16 terms) 13056 outputs: [0]5391 [1]5391 [2]5373 [3]5661 [4]5503 [5]13056 [6]7737 [7]7633 [8]8472 [9]7636 [10]7621 [11]7862
+TDPBF16PS K rows 16 (32 terms) 13056 outputs: [0]4075 [1]4075 [2]4205 [3]4226 [4]4151 [5]13056 [6]7172 [7]6182 [8]6769 [9]6026 [10]5689 [11]5932
+TDPBF16PS under MXCSR RZ+FTZ+DAZ: 0 of 13056 outputs differ
+TDPBF16PS edges (a model column is d<DAZ>f<FTZ>):
+  c=-0, every product -0                       AMX 00000000 | d0f0 chain 80000000 lanes 00000000 mul 80000000; d0f1 chain 80000000 lanes 00000000 mul 80000000; d1f0 chain 80000000 lanes 00000000 mul 80000000; d1f1 chain 80000000 lanes 00000000 mul 80000000;
+  c=-0, every product +0                       AMX 00000000 | d0f0 chain 00000000 lanes 00000000 mul 00000000; d0f1 chain 00000000 lanes 00000000 mul 00000000; d1f0 chain 00000000 lanes 00000000 mul 00000000; d1f1 chain 00000000 lanes 00000000 mul 00000000;
+  c=0, a subnormal x 2^97                      AMX 00000000 | d0f0 chain 2d800000 lanes 2d800000 mul 2d800000; d0f1 chain 2d800000 lanes 2d800000 mul 2d800000; d1f0 chain 00000000 lanes 00000000 mul 00000000; d1f1 chain 00000000 lanes 00000000 mul 00000000;
+  c=0, 2^97 x b subnormal                      AMX 00000000 | d0f0 chain 30800000 lanes 30800000 mul 30800000; d0f1 chain 30800000 lanes 30800000 mul 30800000; d1f0 chain 00000000 lanes 00000000 mul 00000000; d1f1 chain 00000000 lanes 00000000 mul 00000000;
+  c=0, product 2^-140                          AMX 00000000 | d0f0 chain 00000200 lanes 00000200 mul 00000200; d0f1 chain 00000000 lanes 00000000 mul 00000000; d1f0 chain 00000200 lanes 00000200 mul 00000200; d1f1 chain 00000000 lanes 00000000 mul 00000000;
+  c=2^-126, product 2^-140                     AMX 00800000 | d0f0 chain 00800200 lanes 00800200 mul 00800200; d0f1 chain 00800200 lanes 00800000 mul 00800000; d1f0 chain 00800200 lanes 00800200 mul 00800200; d1f1 chain 00800200 lanes 00800000 mul 00800000;
+  c=0, 2^-140 then 2^-126                      AMX 00800000 | d0f0 chain 00800200 lanes 00800200 mul 00800200; d0f1 chain 00800000 lanes 00800000 mul 00800000; d1f0 chain 00800200 lanes 00800200 mul 00800200; d1f1 chain 00800000 lanes 00800000 mul 00800000;
+  c=0, 2^-126 then 2^-140                      AMX 00800000 | d0f0 chain 00800200 lanes 00800200 mul 00800200; d0f1 chain 00800200 lanes 00800000 mul 00800000; d1f0 chain 00800200 lanes 00800200 mul 00800200; d1f1 chain 00800200 lanes 00800000 mul 00800000;
+  c=fp32 subnormal 1, no terms                 AMX 00000000 | d0f0 chain 00000001 lanes 00000001 mul 00000001; d0f1 chain 00000000 lanes 00000000 mul 00000000; d1f0 chain 00000000 lanes 00000000 mul 00000000; d1f1 chain 00000000 lanes 00000000 mul 00000000;
+  c=fp32 subnormal 1, + 2^-126                 AMX 00800000 | d0f0 chain 00800001 lanes 00800001 mul 00800001; d0f1 chain 00800001 lanes 00800001 mul 00800001; d1f0 chain 00800000 lanes 00800000 mul 00800000; d1f1 chain 00800000 lanes 00800000 mul 00800000;
+  c=2^-126+2^-149, - 2^-126                    AMX 00000000 | d0f0 chain 00000001 lanes 00000001 mul 00000001; d0f1 chain 00000000 lanes 00000000 mul 00000000; d1f0 chain 00000001 lanes 00000001 mul 00000001; d1f1 chain 00000000 lanes 00000000 mul 00000000;
+  c=0, product 2^128 (overflow)                AMX 7f800000 | d0f0 chain 7f800000 lanes 7f800000 mul 7f800000; d0f1 chain 7f800000 lanes 7f800000 mul 7f800000; d1f0 chain 7f800000 lanes 7f800000 mul 7f800000; d1f1 chain 7f800000 lanes 7f800000 mul 7f800000;
+  c=0, 2^127 + 2^127                           AMX 7f800000 | d0f0 chain 7f800000 lanes 7f800000 mul 7f800000; d0f1 chain 7f800000 lanes 7f800000 mul 7f800000; d1f0 chain 7f800000 lanes 7f800000 mul 7f800000; d1f1 chain 7f800000 lanes 7f800000 mul 7f800000;
+  c=0, +inf + -inf                             AMX ffc00000 | d0f0 chain ffc00000 lanes ffc00000 mul ffc00000; d0f1 chain ffc00000 lanes ffc00000 mul ffc00000; d1f0 chain ffc00000 lanes ffc00000 mul ffc00000; d1f1 chain ffc00000 lanes ffc00000 mul ffc00000;
+  c=0, qNaN(payload 1) x 1                     AMX 7fc10000 | d0f0 chain 7fc10000 lanes 7fc10000 mul 7fc10000; d0f1 chain 7fc10000 lanes 7fc10000 mul 7fc10000; d1f0 chain 7fc10000 lanes 7fc10000 mul 7fc10000; d1f1 chain 7fc10000 lanes 7fc10000 mul 7fc10000;
+  c=0, sNaN(payload 1) x 1                     AMX 7fc10000 | d0f0 chain 7fc10000 lanes 7fc10000 mul 7fc10000; d0f1 chain 7fc10000 lanes 7fc10000 mul 7fc10000; d1f0 chain 7fc10000 lanes 7fc10000 mul 7fc10000; d1f1 chain 7fc10000 lanes 7fc10000 mul 7fc10000;
+  c=qNaN 0x7fc00123, + 1                       AMX 7fc00123 | d0f0 chain 7fc00123 lanes 7fc00123 mul 7fc00123; d0f1 chain 7fc00123 lanes 7fc00123 mul 7fc00123; d1f0 chain 7fc00123 lanes 7fc00123 mul 7fc00123; d1f1 chain 7fc00123 lanes 7fc00123 mul 7fc00123;
+  c=qNaN 0x7fc00123, + qNaN(1)                 AMX 7fc00123 | d0f0 chain 7fc10000 lanes 7fc10000 mul 7fc00123; d0f1 chain 7fc10000 lanes 7fc10000 mul 7fc00123; d1f0 chain 7fc10000 lanes 7fc10000 mul 7fc00123; d1f1 chain 7fc10000 lanes 7fc10000 mul 7fc00123;
+  c=0, qNaN(1) then qNaN(2)                    AMX 7fc10000 | d0f0 chain 7fc20000 lanes 7fc20000 mul 7fc10000; d0f1 chain 7fc20000 lanes 7fc20000 mul 7fc10000; d1f0 chain 7fc20000 lanes 7fc20000 mul 7fc10000; d1f1 chain 7fc20000 lanes 7fc20000 mul 7fc10000;
+  c=0, inf x 0                                 AMX ffc00000 | d0f0 chain ffc00000 lanes ffc00000 mul ffc00000; d0f1 chain ffc00000 lanes ffc00000 mul ffc00000; d1f0 chain ffc00000 lanes ffc00000 mul ffc00000; d1f1 chain ffc00000 lanes ffc00000 mul ffc00000;
+  c=0, even lane 2^-126 then 2^-140            AMX 00800200 | d0f0 chain 00800200 lanes 00800200 mul 00800200; d0f1 chain 00800200 lanes 00800200 mul 00800000; d1f0 chain 00800200 lanes 00800200 mul 00800200; d1f1 chain 00800200 lanes 00800200 mul 00800000;
+  c=0, E=2^-126, O=2^-140                      AMX 00800000 | d0f0 chain 00800200 lanes 00800200 mul 00800200; d0f1 chain 00800200 lanes 00800000 mul 00800000; d1f0 chain 00800200 lanes 00800200 mul 00800200; d1f1 chain 00800200 lanes 00800000 mul 00800000;
+  c=-0, one -0 product, rest none              AMX 00000000 | d0f0 chain 00000000 lanes 00000000 mul 00000000; d0f1 chain 00000000 lanes 00000000 mul 00000000; d1f0 chain 00000000 lanes 00000000 mul 00000000; d1f1 chain 00000000 lanes 00000000 mul 00000000;
+VDPBF16PS random dist 0 51200 lanes: odd first 51200; even first 46295; exact pair + acc 46247; acc + RN(pair) 45616;
+VDPBF16PS random dist 1 51200 lanes: odd first 51200; even first 45175; exact pair + acc 48115; acc + RN(pair) 48115;
+VDPBF16PS random dist 2 51200 lanes: odd first 51200; even first 49187; exact pair + acc 40785; acc + RN(pair) 40774;
+VDPBF16PS random dist 3 51200 lanes: odd first 51200; even first 49322; exact pair + acc 50047; acc + RN(pair) 50013;
+  VDPBF16PS c=-0, -0 products                80000000 | d0f0 odd 80000000 even 80000000 | d1f1 odd 80000000 even 80000000
+  VDPBF16PS c=0, a subnormal x 2^97          00000000 | d0f0 odd 2d800000 even 2d800000 | d1f1 odd 00000000 even 00000000
+  VDPBF16PS c=0, product 2^-140              00000000 | d0f0 odd 00000200 even 00000200 | d1f1 odd 00000000 even 00000000
+  VDPBF16PS c=2^-126, product 2^-140         00800200 | d0f0 odd 00800200 even 00800200 | d1f1 odd 00800200 even 00800200
+  VDPBF16PS c=subnormal 1, + 2^-126          00800000 | d0f0 odd 00800001 even 00800001 | d1f1 odd 00800000 even 00800000
+  VDPBF16PS c=0, qNaN(1) x 1                 7fc10000 | d0f0 odd 7fc10000 even 7fc10000 | d1f1 odd 7fc10000 even 7fc10000
+  VDPBF16PS c=0, +inf + -inf                 ffc00000 | d0f0 odd ffc00000 even ffc00000 | d1f1 odd ffc00000 even ffc00000
+  VDPBF16PS c=0, qNaN(1) even, qNaN(2) odd   7fc10000 | d0f0 odd 7fc20000 even 7fc10000 | d1f1 odd 7fc10000 even 7fc20000
+VCVTNEPS2BF16 vs RNE daz=0 ftz=0: mismatches nan 0 subnormal 16711678 other 0 (first 00008001)
+VCVTNEPS2BF16 vs RNE daz=1 ftz=0: mismatches nan 0 subnormal 0 other 0 (first 00000000)
+VCVTNEPS2BF16 vs RNE daz=0 ftz=1: mismatches nan 0 subnormal 65536 other 0 (first 007f8000)
+VCVTNEPS2BF16 under MXCSR RZ+FTZ+DAZ: 0 of 1048576 samples differ

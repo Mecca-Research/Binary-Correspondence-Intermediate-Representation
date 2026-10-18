@@ -6,7 +6,10 @@ process so its peak resident memory is its own:
 
   prepare   the corpus (the repository's tracked Markdown at a pinned commit, bytes), the
             copy, associative-recall and addition tasks with held-out problems, identical
-            initial weights and one batch schedule per task, as long as its step budget -> DIR
+            initial weights and one batch schedule per task, as long as its step budget -> DIR;
+            --seed draws another replicate's initial weights and schedules (the corpus, its
+            splits and the held-out problems stay), recorded in prepare.json when it is not
+            the default
   train     one backend on one task -> DIR/runs/<task>-<backend>.json
   identity  BCIR's training state, bit for bit, across ISA variants, compilers, a repeat,
             thread counts (--threads) and contracts (--contract, --variants)
@@ -38,14 +41,18 @@ of the loss through their targets.
 Backends: bcir (BCIR's own C kernels: the widest bit-identical ISA variant the CPU runs, no
 FMA), bcir-openblas (the same trainer with OpenBLAS sgemm behind its CBLAS seam), torch-eager
 (HostedLlama, torch.optim.AdamW defaults), torch-compiled (the same modules through
-torch.compile, fused AdamW). All run one compute thread on CPU in FP32 from the same weights,
-batches and learning rates. This is a measurement harness, not a production runtime or a CI
-timing gate.
+torch.compile, fused AdamW), and torch-eager-bf16 and torch-compiled-bf16 (the same two under
+PyTorch's CPU mixed precision, torch.autocast to bfloat16 around the forward and the loss, the
+weights, gradients and moments in FP32: the matched baseline of BCIR's bf16 contract, NDT-BF16).
+All run on CPU from the same weights, batches and learning rates, in FP32 unless named bf16 (or
+under a BCIR contract that says otherwise). This is a measurement harness, not a production
+runtime or a CI timing gate.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ctypes
 import hashlib
 import json
@@ -83,7 +90,8 @@ SPEC = dict(vocab=VOCAB, width=384, heads=8, kvheads=4, layers=6, ff=1024)
 BATCH, CONTEXT = 8, 128
 OPT = dict(peak=2e-3, floor=2e-4, warmup=50, beta1=0.9, beta2=0.95, eps=1e-8, decay=0.1, clip=1.0)
 SEED = 20261011
-BACKENDS = ("bcir", "bcir-openblas", "torch-eager", "torch-compiled")
+BACKENDS = ("bcir", "bcir-openblas", "torch-eager", "torch-compiled", "torch-eager-bf16",
+            "torch-compiled-bf16")  # fmt: skip
 
 
 def _spec():
@@ -214,11 +222,11 @@ def _windows(stream, count, rng):
     return [rng.randrange(len(stream) - CONTEXT - 1) for _ in range(count)]
 
 
-def _initial_weights(spec):
+def _initial_weights(spec, seed=SEED):
     """The native trainer's own initialization: norms one, every matrix N(0, 0.02)."""
     from bcir.hosted.models.native import parameter_layout
 
-    rng = random.Random(SEED)
+    rng = random.Random(seed)
     flat = array("f")
     for name, _shape, _offset, count in parameter_layout(spec):
         if "layernorm" in name or name == "model.norm.weight":
@@ -228,14 +236,14 @@ def _initial_weights(spec):
     return flat
 
 
-def prepare(out: Path, budgets: dict):
+def prepare(out: Path, budgets: dict, seed: int = SEED):
     out.mkdir(parents=True, exist_ok=True)
     spec = _spec()
     corpus, documents = _corpus()
     structured = {"add": _addition(), "recall": _recall(), "copy": _copy()}
-    weights = _initial_weights(spec)
+    weights = _initial_weights(spec, seed)
     (out / "weights.f32").write_bytes(weights.tobytes())
-    rng = random.Random(SEED + 2)
+    rng = random.Random(seed + 2)
     record = {
         "corpus_commit": CORPUS_COMMIT,
         "spec": SPEC,
@@ -247,6 +255,8 @@ def prepare(out: Path, budgets: dict):
         "documents": documents,
         "tasks": {},
     }
+    if seed != SEED:  # the default seed's prepare.json stays the 10-11 record's
+        record["seed"] = seed
     for name, (stream, docs) in corpus.items():
         (out / f"lm-{name}.u16").write_bytes(stream.tobytes())
         record["tasks"].setdefault("lm", {})[name] = {
@@ -511,7 +521,8 @@ def train(
     started = time.perf_counter()
     rss_start = _rss_mb()
     info: dict = {"backend": backend, "task": task, "steps": steps, "threads": threads,
-                  "contract": contract, "lr_scale": lr_scale}  # fmt: skip
+                  "contract": contract, "lr_scale": lr_scale,
+                  "seed": record.get("seed", SEED)}  # fmt: skip
     compile_s = None
     if backend.startswith("bcir"):
         from bcir.hosted.models.native import NativeAdamW
@@ -538,19 +549,39 @@ def train(
             return np.concatenate(out)
 
         digest_fn = lambda: _state_digest_native(nd)  # noqa: E731
+        plan = nd.state.plan
+        # the trainer's arenas, planned before the first step: weights, gradients and both
+        # moments persist; activations, scratch and the bf16 GEMMs' packing workspace (NDT-BF16,
+        # 0 under the other contracts) are the step's transient arena
+        memory = {"persistent_bytes": 16 * plan.parameters,
+                  "transient_bytes": 4 * (plan.activations + plan.scratch) + nd.workspace_bytes,
+                  "workspace_bytes": nd.workspace_bytes,
+                  "arena_bytes": nd.memory_bytes}  # fmt: skip
+        memory_fn = lambda: memory  # noqa: E731
     else:
         import torch
         import torch.nn.functional as F
 
-        torch.set_num_threads(1)
+        torch.set_num_threads(threads)  # the 10-11 runs: 1
         torch.set_num_interop_threads(1)
         model = _torch_model(data)
-        compiled = backend == "torch-compiled"
+        compiled = backend.startswith("torch-compiled")
+        bf16 = backend.endswith("-bf16")
+
+        def amp():
+            # PyTorch's CPU mixed precision: autocast runs the linears and the attention in
+            # bfloat16 (its lower-precision op list), the products of two of them stay bfloat16
+            # (the SwiGLU), and the residual stream, the norms, the loss and the optimizer stay
+            # FP32 by type promotion and its FP32 list
+            return torch.autocast("cpu", dtype=torch.bfloat16) if bf16 else contextlib.nullcontext()
+
         opt = torch.optim.AdamW(
             model.parameters(), lr=OPT["peak"], betas=(OPT["beta1"], OPT["beta2"]),
             eps=OPT["eps"], weight_decay=OPT["decay"], **({"fused": True} if compiled else {}),
         )  # fmt: skip
-        info.update(torch=torch.__version__, cpu_capability=torch.backends.cpu.get_cpu_capability())
+        info.update(torch=torch.__version__, cpu_capability=torch.backends.cpu.get_cpu_capability(),
+                    torch_threads=torch.get_num_threads(),
+                    autocast="bfloat16" if bf16 else None)  # fmt: skip
         if compiled:
             from bcir.hosted.models.model import _rope_cache
 
@@ -566,9 +597,20 @@ def train(
                 logits = F.linear(model.model.norm(values), model.lm_head.weight)
                 return F.cross_entropy(logits.reshape(-1, VOCAB), y.reshape(-1))
 
+            if bf16:
+                fp32_loss = loss_of
+
+                def loss_of(x, y):
+                    with torch.autocast("cpu", dtype=torch.bfloat16):
+                        return fp32_loss(x, y)
+
             loss_of = torch.compile(loss_of, fullgraph=True)
         else:
-            loss_of = lambda x, y: model(x, y)[1]  # noqa: E731
+
+            def loss_of(x, y):
+                with amp():
+                    return model(x, y)[1]
+
         optimizer_step = opt.step
 
         def step_fn(s):
@@ -589,14 +631,25 @@ def train(
             # activations do not set the peak memory the training is measured by
             model.eval()
             out = []
-            with torch.no_grad():
+            with torch.no_grad(), amp():  # a bf16 run's model is evaluated as it trained
                 for i in range(0, len(x), BATCH):
                     batch = torch.from_numpy(np.ascontiguousarray(x[i : i + BATCH]))
-                    out.append(model(batch)[0].numpy())
+                    out.append(model(batch)[0].float().numpy())
             model.train()
             return np.concatenate(out)
 
         digest_fn = lambda: _state_digest_torch(model, opt)  # noqa: E731
+
+        def memory_fn():
+            # the persistent tensors after training, exactly: parameters, their gradients and
+            # AdamW's moments; the transient activations have no peak counter on CPU here
+            tensors = [*model.parameters(), *(p.grad for p in model.parameters())]
+            tensors += [
+                v for s in opt.state.values() for v in s.values() if torch.is_tensor(v) and v.dim()
+            ]
+            persistent = sum(v.numel() * v.element_size() for v in tensors if v is not None)
+            return {"persistent_bytes": persistent, "transient_bytes": None,
+                    "arena_bytes": None}  # fmt: skip
 
     rss_ready = _rss_mb()
 
@@ -615,7 +668,7 @@ def train(
         t0 = time.perf_counter()
         loss, norm = step_fn(s)
         dt = time.perf_counter() - t0
-        if s < 2 and backend == "torch-compiled":
+        if s < 2 and backend.startswith("torch-compiled"):
             compile_s = (compile_s or 0.0) + dt
         trained += dt
         losses.append(loss)
@@ -633,7 +686,7 @@ def train(
         median_step_ms=1000 * statistics.median(warm),
         tokens_per_second=BATCH * CONTEXT / statistics.median(warm),
         train_seconds=trained, wall_seconds=time.perf_counter() - started,
-        compile_and_first_steps_seconds=compile_s, state_sha256=digest_fn(),
+        compile_and_first_steps_seconds=compile_s, state_sha256=digest_fn(), memory=memory_fn(),
         rss_mb={"start": rss_start, "ready": rss_ready, "end": _rss_mb(),
                 "peak": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024},
         environment=_environment(),
@@ -713,10 +766,13 @@ def identity(
 ):  # fmt: skip
     """The same 20 BCIR steps through every ISA variant, every compiler, every thread count of
     the deterministic pool (NDT-THREADS), every contract (NDT-FMA, NDT-EXP) and a repeat: one
-    state per contract."""
+    state per contract. `avx512` caps the tensor unit below AMX (NDT-BF16: the bf16 contract's
+    AVX-512 instance in place of its tile instance); under it and `avx2` and `portable` the bf16
+    GEMMs run the instance the cap leaves (AVX-512, portable, portable)."""
     builds = []
     for cc in compilers:
-        for label, defines in (("widest", ()), ("avx2", ("-DBCIR_TENSOR_MAX_VARIANT=2",)),
+        for label, defines in (("widest", ()), ("avx512", ("-DBCIR_TENSOR_MAX_VARIANT=4",)),
+                               ("avx2", ("-DBCIR_TENSOR_MAX_VARIANT=2",)),
                                ("portable", ("-DBCIR_TENSOR_NO_DISPATCH",))):  # fmt: skip
             if label not in variants:
                 continue  # the portable fused instance calls libm fmaf per term: correct, hours
@@ -1077,7 +1133,7 @@ def _bcir_breakdown(
     MM = [P, ctypes.c_int, ctypes.c_int, Z, Z, Z, F32, P, P, F32, P]
     signatures = {
         "rms_pool": [P, Z, Z, F32, P, P, P],
-        "rms_backward": [Z, Z, F32, P, P, P, P, P],  # the trainer's gamma VJP stays serial
+        "rms_backward_pool": [P, Z, Z, F32, P, P, P, P, P, P],  # pooled since NDT-REDUCE
         "rope_pool": [P, Z, Z, Z, Z, ctypes.c_double, P, ctypes.c_int],
         "silu_pool": [P, Z, P, P],
         "silu_v2_pool": [P, Z, P, P],
@@ -1089,6 +1145,7 @@ def _bcir_breakdown(
         "mm_pool": MM,
         "mm_fused_pool": MM,
         "mm_kblock_pool": MM,
+        "mm_pair_pool": [P, ctypes.c_int, P, P],  # a linear's two VJPs as one job (NDT-SCHED-0)
         "linear": [P, Z, Z, Z, P, P, P],
         "linear_backward": [P, Z, Z, Z, P, P, P, P, P, F32],
     }
@@ -1121,6 +1178,7 @@ def _bcir_breakdown(
     prov = ctypes.addressof(nd.state.provider)
     eps, base = float(spec.rms_norm_eps), float(spec.rope_base)
     x, g, y, dy, dx, dg = buf(n, d), buf(d), zero(n, d), buf(n, d), zero(n, d), zero(d)
+    inv = zero(n)  # the gamma VJP's per-row 1/rms between its two pooled phases
     q, k, val, ctx, dq, dk, dv = buf(n, d), buf(n, kv), buf(n, kv), zero(n, d), zero(n, d), \
         zero(n, kv), zero(n, kv)  # fmt: skip
     probs = zero(BATCH, h, CONTEXT, CONTEXT)
@@ -1149,14 +1207,21 @@ def _bcir_breakdown(
         else:
             mm(pool, 0, 1, n, o, i, 1.0, p(ins[name]), p(w[name]), 0.0, p(outs[name]))
 
+    class Call(ctypes.Structure):  # bcir_tensor_mm_call
+        _fields_ = [("ta", ctypes.c_int), ("tb", ctypes.c_int), ("m", Z), ("n", Z), ("k", Z),
+                    ("alpha", F32), ("a", P), ("b", P), ("beta", F32), ("c", P)]  # fmt: skip
+
+    pair_contract = 2 if "kblock" in parts_of else 1 if "fused" in parts_of else 0
+
     def linear_backward(name):
         i, o = weights[name][1], weights[name][0]
         if openblas:
             fn["linear_backward"](prov, n, i, o, p(ins[name]), p(w[name]), p(dys[name]),
                                   p(dxs[name]), p(dw[name]), beta[name])  # fmt: skip
-        else:
-            mm(pool, 0, 0, n, i, o, 1.0, p(dys[name]), p(w[name]), beta[name], p(dxs[name]))
-            mm(pool, 1, 0, o, i, n, 1.0, p(dys[name]), p(ins[name]), 1.0, p(dw[name]))
+        else:  # the trainer's own dispatch: the two VJPs as one pool job
+            cx = Call(0, 0, n, i, o, 1.0, p(dys[name]), p(w[name]), beta[name], p(dxs[name]))
+            cw = Call(1, 0, o, i, n, 1.0, p(dys[name]), p(ins[name]), 1.0, p(dw[name]))
+            fn["mm_pair_pool"](pool, pair_contract, ctypes.byref(cx), ctypes.byref(cw))
 
     def gemm_forward():
         for _ in range(layers):
@@ -1192,7 +1257,7 @@ def _bcir_breakdown(
 
     def norms_backward():
         for _ in range(2 * layers + 1):
-            fn["rms_backward"](n, d, eps, p(x), p(g), p(dy), p(dx), p(dg))
+            fn["rms_backward_pool"](pool, n, d, eps, p(x), p(g), p(dy), p(dx), p(dg), p(inv))
 
     def rope(inverse):
         for _ in range(layers):
@@ -1700,6 +1765,7 @@ def main():
     p.add_argument("--copy-steps", type=int, default=1000)
     p.add_argument("--recall-steps", type=int, default=1000)
     p.add_argument("--add-steps", type=int, default=3000)
+    p.add_argument("--seed", type=int, default=SEED, help="another replicate's weights/schedules")
     t = sub.add_parser("train")
     t.add_argument("--data", type=Path, required=True)
     t.add_argument("--task", choices=("lm", *TASKS), required=True)
@@ -1708,15 +1774,18 @@ def main():
     t.add_argument("--eval-every", type=int, default=100)
     t.add_argument("--cc", default="gcc")
     t.add_argument("--lr-scale", type=float, default=1.0, help="scale every learning rate")
-    t.add_argument("--threads", type=int, default=1, help="the BCIR pool's size (bcir backends)")
-    t.add_argument("--contract", default="v1", help="v1, fused, exp or fused+exp (bcir backends)")
+    t.add_argument("--threads", type=int, default=1,
+                   help="the BCIR pool's size, or PyTorch's intra-op threads (default 1)")  # fmt: skip
+    t.add_argument("--contract", default="v1",
+                   help="a NativeDecoder contract (bcir backends): v1, kblock+exp+reduce, bf16, ...")  # fmt: skip
     i = sub.add_parser("identity")
     i.add_argument("--data", type=Path, required=True)
     i.add_argument("--steps", type=int, default=20)
     i.add_argument("--cc", action="append")
     i.add_argument("--threads", default="1", help="comma-separated pool sizes, each a row")
     i.add_argument("--contract", default="v1", help="comma-separated contracts, each a row")
-    i.add_argument("--variants", default="widest,avx2,portable", help="comma-separated builds")
+    i.add_argument("--variants", default="widest,avx2,portable",
+                   help="comma-separated builds: widest, avx512, avx2, portable")  # fmt: skip
     bb = sub.add_parser(
         "bcir-breakdown", help="the BCIR side of breakdown alone: no PyTorch needed"
     )
@@ -1765,7 +1834,7 @@ def main():
     if a.stage == "prepare":
         budgets = {"lm": a.lm_steps, "copy": a.copy_steps, "recall": a.recall_steps,
                    "add": a.add_steps}  # fmt: skip
-        prepare(a.output, budgets)
+        prepare(a.output, budgets, a.seed)
     elif a.stage == "train":
         train(a.data, a.task, a.backend, a.steps, a.eval_every, a.cc, a.lr_scale, a.threads,
               a.contract)  # fmt: skip

@@ -1,0 +1,9 @@
+{
+ "what": "NDT-SCHED-1 (2026-10-16): the linears that read one input as one pool job -- bcir_tensor_mm_group_pool runs a chain of up to four calls into one C (a tile's task running each chained call's task for that tile in turn) beside up to four independent calls, each its own partition; the forward's q, k, v and gate, up as independent calls, the backward's input adjoints as a chain into one dx beside the weight adjoints. Every element the separate calls' bit for bit.",
+ "host": "4-vCPU Intel Xeon @ 2.80GHz container (AVX-512; the instance after the 2026-10-16 restart, the session of ../beta/), GCC 13.3 (the trainer builds), Python 3.11.15 (the declared floor); indicative wall times, no PMU",
+ "files": {
+  "attribution-t4-sched1-{1..4}.json": "the step in place at four threads (docs/research/measurements/2026-10-13/scan/attribution.py --src TREE/runtime/c --data DATA --threads 4 --steps 8, its categories counting linears( and linears_backward( with the GEMMs): NDT-BETA's tree with this slice's runtime/c sources; the third arm of ../beta/'s four rounds, alternated round by round with ad77c84 (attribution-t4-before-*) and NDT-BETA (attribution-t4-beta-*)",
+  "identity.json": "the 20-step state at one and four threads under kblock+exp+reduce for the widest, AVX2-capped and portable builds (train_comparison.py identity --steps 20 --threads 1,4 --contract kblock+exp+reduce --variants widest,avx2,portable): every row 4bf4e057..., the state before the slice"
+ },
+ "reading": "In place at four threads, against NDT-BETA's arm of the same rounds: the GEMMs 179.5 -> 171.3 ms a step (medians of the rounds; backward 118.3 -> 112.0, forward 61.4 -> 59.3), the step 254.2 -> 241.2, every row faster in every round; with NDT-BETA against ad77c84, the GEMMs 199.6 -> 171.3 and the step 267.8 -> 241.2."
+}

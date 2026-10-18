@@ -1,0 +1,12 @@
+{
+ "what": "NDT-GEMM-4T (2026-10-16): where the four-thread GEMMs' time goes on this host -- the FMA rate one thread gets with one to four running, every GEMM call of the real step timed in place with the pool's idle inside it, the step's GEMM shapes alone at one and four threads (busy fraction, task inflation), warm against cold operands, and the transposed-A weight gradients against the same products with A transposed beforehand.",
+ "host": "4-vCPU Intel Xeon @ 2.80GHz container (AVX-512; the instance after the 2026-10-16 restart), GCC 13.3, Python 3.11.15 (the declared floor); indicative wall times, no PMU",
+ "files": {
+  "fma_peak.c, fma-peak.jsonl": "twelve independent AVX-512 FMA chains per thread at one to four threads at once, three runs (cc -O2 -pthread fma_peak.c && ./fma_peak)",
+  "gemm_calls.py, gemm-calls-t4.json": "every GEMM call of the step in place on 742234a, at four threads, eight steps: per shape the wall time a step, the rate, and the pool's idle inside the calls (threads x wall less the tasks' time); its task timers are tasks_instrument.py's",
+  "tasks_instrument.py, gemm_tasks.py, gemm-tasks-t4.json": "the step's GEMM shapes on the timed build at one and four threads, warm operands on 2 MB pages: wall, busy fraction, task inflation (python3 tasks_instrument.py runtime/c OUT && build OUT with the trainer's flags without -Werror; python3 gemm_tasks.py LIB 4 9 OUT.json)",
+  "gemm_cold.py, gemm-cold-t4.json": "the same shapes at four threads, warm (one operand set) and cold (six sets, past the 33 MiB L3), alternated call by call, every result the serial kernel's (python3 gemm_cold.py LIB 4 6 9 OUT.json)",
+  "transposed_a.c, transposed-a.jsonl": "the weight-gradient GEMMs (ta=1) against the same products with A transposed beforehand (ta=0), at one and four threads, the results identical"
+ },
+ "reading": "The step's GEMMs, 162.8 ms of a 235 ms four-thread step, run at 262-435 GFLOP/s by shape with 2% of the pool idle inside the calls; the probe gives one thread 162-165 GFLOP/s alone and 144-163 each with four running (574-653 together), so the step's GEMMs are at 57-65% of the four-thread probe -- the shapes alone reach 290-428 (busy 0.86-0.97; tasks 4-8% slower at four threads on the large shapes, 20-60% on the three with 16-24 tasks); cold operands cost 10% (155.8 -> 170.8 ms); the transposed-A penalty \u00a713 measured on the previous instance is 2-19% at one thread here and absent at four, less than a transpose costs."
+}

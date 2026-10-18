@@ -1,0 +1,58 @@
+{
+ "steps": 6,
+ "rows": [
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "bf16+exp+reduce",
+   "threads": 1,
+   "state_sha256": "e91ae701f5a18d95379ff85e6c3cbebe8bc117225272574cb725fc07b87c2870",
+   "last_loss": 4.352376172200247,
+   "median_step_ms": 225.4545194991806
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "bf16+exp+reduce",
+   "threads": 4,
+   "state_sha256": "e91ae701f5a18d95379ff85e6c3cbebe8bc117225272574cb725fc07b87c2870",
+   "last_loss": 4.352376172200247,
+   "median_step_ms": 93.06059049777105
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / avx512",
+   "contract": "bf16+exp+reduce",
+   "threads": 1,
+   "state_sha256": "e91ae701f5a18d95379ff85e6c3cbebe8bc117225272574cb725fc07b87c2870",
+   "last_loss": 4.352376172200247,
+   "median_step_ms": 1047.0766020007432
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / avx512",
+   "contract": "bf16+exp+reduce",
+   "threads": 4,
+   "state_sha256": "e91ae701f5a18d95379ff85e6c3cbebe8bc117225272574cb725fc07b87c2870",
+   "last_loss": 4.352376172200247,
+   "median_step_ms": 274.85404850085615
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "bf16+exp+reduce",
+   "threads": 1,
+   "state_sha256": "e91ae701f5a18d95379ff85e6c3cbebe8bc117225272574cb725fc07b87c2870",
+   "last_loss": 4.352376172200247,
+   "median_step_ms": 234.21383849927224
+  },
+  {
+   "build": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0 / widest",
+   "contract": "bf16+exp+reduce",
+   "threads": 4,
+   "state_sha256": "e91ae701f5a18d95379ff85e6c3cbebe8bc117225272574cb725fc07b87c2870",
+   "last_loss": 4.352376172200247,
+   "median_step_ms": 71.3445755027351
+  }
+ ],
+ "identical_by_contract": {
+  "bf16+exp+reduce": true
+ },
+ "identical": true,
+ "contracts_distinct": true
+}

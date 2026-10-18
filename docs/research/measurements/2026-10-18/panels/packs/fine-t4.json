@@ -1,0 +1,16 @@
+{
+ "threads": 4,
+ "rounds": 60,
+ "base": {
+  "step_ms": 70.46
+ },
+ "fine": {
+  "step_ms": 69.43
+ },
+ "base/fine": 1.0083,
+ "ci95": [
+  0.9912,
+  1.0309
+ ],
+ "fine_faster_rounds": 35
+}

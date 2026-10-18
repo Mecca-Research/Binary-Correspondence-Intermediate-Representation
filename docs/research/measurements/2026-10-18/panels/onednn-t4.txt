@@ -1,0 +1,16 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head d5bc457, runtime/c against it 99db0e76382685d7
+torch 2.13.0+cu130 threads 4 mkldnn bf16 True
+fwd q      1024   384   384  bf16 operands   0.287 ms   1052 GF/s | from fp32   0.536 ms    564 GF/s
+fwd k      1024   192   384  bf16 operands   0.115 ms   1308 GF/s | from fp32   0.192 ms    788 GF/s
+fwd gate   1024  1024   384  bf16 operands   0.473 ms   1701 GF/s | from fp32   0.609 ms   1323 GF/s
+fwd down   1024   384  1024  bf16 operands   0.664 ms   1212 GF/s | from fp32   0.850 ms    947 GF/s
+fwd head   1024   260   384  bf16 operands   0.190 ms   1075 GF/s | from fp32   0.287 ms    713 GF/s
+dx q       1024   384   384  bf16 operands   0.213 ms   1415 GF/s | from fp32   0.335 ms    902 GF/s
+dx k       1024   384   192  bf16 operands   0.119 ms   1272 GF/s | from fp32   0.174 ms    870 GF/s
+dx gate    1024   384  1024  bf16 operands   0.570 ms   1413 GF/s | from fp32   0.817 ms    986 GF/s
+dx down    1024  1024   384  bf16 operands   0.484 ms   1666 GF/s | from fp32   0.622 ms   1295 GF/s
+dW q        384   384  1024  bf16 operands   0.385 ms    785 GF/s | from fp32   0.557 ms    542 GF/s
+dW k        192   384  1024  bf16 operands   0.262 ms    575 GF/s | from fp32   0.399 ms    379 GF/s
+dW gate    1024   384  1024  bf16 operands   0.700 ms   1151 GF/s | from fp32   0.944 ms    853 GF/s
+dW down     384  1024  1024  bf16 operands   0.755 ms   1067 GF/s | from fp32   1.064 ms    757 GF/s
+sum: bf16 operands 5.217 ms, from fp32 7.384 ms

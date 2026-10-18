@@ -7,7 +7,9 @@ GEM against the monolithic runner on both rails, latency and memory traffic. The
 both on a tiny recipe -- a corpus of four tracked documents, a 280-token BPE, a one-layer decoder,
 two training steps -- so every stage runs in seconds, and assert the failures as well as the
 pass: a recipe the builder must refuse before any work, a model card that names another
-artifact, a tokenizer that is not the one the weights were trained with.
+artifact, a tokenizer that is not the one the weights were trained with. The recipe's `native`
+block is the rail's policy (TRAIN-POLICY): the contract is the model's (another contract is
+another checkpoint) and the threads are the host's (another count is the same checkpoint).
 
 The simulated memory traffic is read from callgrind's own profile parts, one per rail, which
 bcir-qualify's callgrind build dumps around one run of each rail; the reader is held to that
@@ -30,6 +32,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 _RECIPE = ROOT / "tools" / "models" / "configs" / "bcir-docs-860k.json"
@@ -100,6 +103,10 @@ def test_a_recipe_is_checked_whole_before_any_work():
             "relative pathspecs": lambda r: r["corpus"].update(include=["/etc/passwd"]),
             "tokenizer.vocab_size": lambda r: r["tokenizer"].update(vocab_size=260),
             "the tokenizer's": lambda r: r["train"]["decoder"].update(vocab_size=2048),
+            "native must have exactly the fields": lambda r: r["native"].pop("threads"),
+            "native.contract must be one of": lambda r: r["native"].update(contract="kblock+fused"),
+            'native.threads must be "host"': lambda r: r["native"].update(threads="all"),
+            "or a positive integer": lambda r: r["native"].update(threads=0),
         }
         for message, edit in cases.items():
             bad = copy.deepcopy(json.loads(text))
@@ -143,9 +150,71 @@ def test_the_builder_ties_every_artifact_to_the_card():
     assert card["artifacts"]["checkpoint_sha256"] == sha(model_dir / "model.bcirdt")
     assert meta.source_model_sha256 == card["artifacts"]["checkpoint_sha256"]
     assert card["parameters"] > 0 and card["training"]["steps"] == 2
+    assert card["native"] == {
+        "contract": "kblock+exp+reduce",
+        "threads": builder.host_threads(),
+        "threads_policy": "host",
+        "instance": card["native"]["instance"],
+    } and card["native"]["instance"] in {"avx512f", "avx2-fma", "portable"}
     sample = card["sample"]
     assert sample["prompt_ids"] == tokenizer.encode(sample["prompt"], add_bos=True)
     assert sample["generated_ids"] == decode_with_kv_cache(sample["prompt_ids"], spec, weights, 4)
+
+
+def test_the_threads_are_the_hosts_choice_and_the_contract_the_models():
+    """TRAIN-POLICY's law on the built model: the tiny recipe at another thread count is the
+    same checkpoint byte for byte (the state is the serial one at every count, so the rail may
+    take the host's), and under another contract it is another checkpoint (so the recipe, the
+    thing the model is reproducible from, names it)."""
+    built = _tiny_model()
+    if built is None:
+        return  # a C compiler and the thorough tier: the native trainer is compiled
+    _model_dir, card = built
+    builder = _tool("build_lab_model")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        recipe = _tiny_recipe()
+        explicit = 2 if builder.host_threads() != 2 else 3  # neither one nor the host's count
+        recipe["native"]["threads"] = explicit
+        other = builder.build(
+            _write(root / "threads.json", recipe), root / "threads", log=lambda *_: None
+        )
+        assert other["native"]["threads"] == explicit != card["native"]["threads"]
+        assert other["native"]["threads_policy"] == explicit
+        assert other["artifacts"]["checkpoint_sha256"] == card["artifacts"]["checkpoint_sha256"]
+        assert other["training"]["last_loss"] == card["training"]["last_loss"]
+        recipe = _tiny_recipe()
+        recipe["native"]["contract"] = "v1"
+        v1 = builder.build(_write(root / "v1.json", recipe), root / "v1", log=lambda *_: None)
+        assert v1["native"]["contract"] == "v1"
+        assert v1["artifacts"]["checkpoint_sha256"] != card["artifacts"]["checkpoint_sha256"]
+
+
+def test_host_threads_reads_the_environment_before_the_host():
+    """`BCIR_TRAIN_THREADS` is the count when it is a positive integer and a refusal otherwise
+    (never read as one: a sign, a space, a zero, a word); unset, the count is the CPUs the process
+    may run on, at least one -- read from the same mask the function reads (L12)."""
+    builder = _tool("build_lab_model")
+    with mock.patch.dict(os.environ, {"BCIR_TRAIN_THREADS": "3"}):
+        assert builder.host_threads() == 3
+        assert builder.trainer_threads({"threads": "host"}) == 3
+        assert builder.trainer_threads({"threads": 7}) == 7
+    for bad in ("0", "-1", "+2", " 2", "2 ", "two", "", "0x2", "1_0"):
+        with mock.patch.dict(os.environ, {"BCIR_TRAIN_THREADS": bad}):
+            try:
+                builder.host_threads()
+            except ValueError as error:
+                assert "BCIR_TRAIN_THREADS" in str(error)
+            else:
+                raise AssertionError(f"BCIR_TRAIN_THREADS={bad!r} was read as a count")
+    with mock.patch.dict(os.environ):
+        os.environ.pop("BCIR_TRAIN_THREADS", None)
+        count = builder.host_threads()
+        assert count >= 1
+        if hasattr(os, "sched_getaffinity"):
+            assert count == len(os.sched_getaffinity(0))
+        else:
+            assert count == (os.cpu_count() or 1)
 
 
 def _qualify(model_dir: Path):

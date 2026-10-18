@@ -831,9 +831,12 @@ METRICS: tuple[Metric, ...] = (
         "train",
         "thread counts among (2, 3, 4) whose training state (weights, both moments, the step and "
         "the bias powers) after three steps of the threads bench (vocab 250, width 72, 4 heads over "
-        "2 KV heads, 2 layers, batch 2 x 40 tokens) differs in any bit from the one-thread state "
-        "of the same library, seeded weights, tokens and rates (bcir/tests/"
-        "native_decoder_fixtures.py); one thread is the serial trainer",
+        "2 KV heads, 2 layers, batch 2 x 40 tokens), or the losses and clipping norms those steps "
+        "reported, differ in any bit from the one-thread run's on the same library, seeded "
+        "weights, tokens and rates (bcir/tests/native_decoder_fixtures.py), under v1 and under "
+        "the reduce contract (NDT-REDUCE); one thread is the serial trainer; a trainer that "
+        "refuses a step is a state that differs, and a refused one-thread run counts once -- no "
+        "serial state to hold the others to is a finding, never an agreement",
         0,
         "count",
         "exact",
@@ -844,6 +847,27 @@ METRICS: tuple[Metric, ...] = (
         "kernel to the serial kernels and the scalar references at one to four threads, the TSan "
         "section holds the partitions race-free and fires on an injected one",
         slice_owner="NDT-THREADS",
+    ),
+    # --- NDT-REDUCE: the clipping norm's contracts ---------------------------------------------
+    Metric(
+        "train.norm.reduce.mismatch",
+        "train",
+        "of 6 clipping norms and 8 chunk counts, those that differ from the oracle: the norm's "
+        "square the trainer's first pass computes (bcir_decoder_gradient_norm) and the root each "
+        "update reports, under v1 (one index-order chain in double) and under the reduce "
+        "contract (the gradient in chunks of bcir_decoder_reduce_chunk elements, each chunk's "
+        "chain from zero, the chunk sums added in chunk order from zero) over three steps of the "
+        "threads bench against the oracle's emulation from the gradients the backward left, bit "
+        "for bit; the chunk rule on both rails at the counts around its first doubling and the "
+        "9.84M decoder's (bcir/tests/native_decoder_fixtures.py)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the contracts are definitions the oracle emulates in IEEE double operation "
+        "for operation (bcir_decoder_train.h); the C harness holds the update to a reference of "
+        "each, serially and pooled, and the first pass's verdicts to every chunk",
+        slice_owner="NDT-REDUCE",
     ),
     # --- NDT-FMA: the fused GEMM contract ---------------------------------------------------
     Metric(
@@ -884,13 +908,54 @@ METRICS: tuple[Metric, ...] = (
         "the C harness holds every instance to the K-blocked fmaf chains",
         slice_owner="NDT-KBLOCK",
     ),
+    # --- NDT-BF16: the bf16 GEMM contract (AMX, AVX-512 and portable instances) ---------------------
     Metric(
-        "train.mm.provider.mismatch",
+        "train.mm.bf16.mismatch",
+        "train",
+        "of 28 GEMM cases (the 20 fused cases and 8 across one, two and five 32-term blocks with an "
+        "inexact alpha and beta 1), through every bf16 instance the host runs (portable, AVX-512, AMX "
+        "where admitted), the outputs that differ in any bit from an exact rational emulation of the "
+        "bf16 contract: operands rounded to bf16, per 32-term block two lanes from +0 each term's fma "
+        "rounded once and flushed when tiny, then c = daz(c) + (E + O) "
+        "(bcir/tests/native_decoder_fixtures.py)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the contract is the AMX unit's TDPBF16PS, pinned bit for bit on BF16-0's host "
+        "(docs/research/measurements/2026-10-17/bf16/), and every instance its operations: the AMX "
+        "instance is admitted by a differential, the AVX-512 one runs the lanes under MXCSR's FTZ and "
+        "DAZ, the portable one emulates them -- the C harness holds each to a reference on the "
+        "contract's edges",
+        slice_owner="NDT-BF16",
+    ),
+    Metric(
+        "train.mm.provider.unsound",
+        "train",
+        "whether the admission verdict NativeDecoder.use_cblas gives OpenBLAS (scipy_openblas32) on "
+        "the 2026-10-11 comparison decoder disagrees with the differential it is defined by: 1 where "
+        "the provider is admitted though a case differs, refused though none does, or refused with a "
+        "count other than the differential's; 0 on a host that admits and on one that refuses "
+        "alike; measured only where the wheel is importable",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the admission is the differential's verdict and nothing else: admitted exactly "
+        "when every case over the trainer's shapes at beta 0 and 1 is the contract's bit for bit, "
+        "refused with the count otherwise -- so the row is 0 wherever the guard runs, whatever the "
+        "wheel's target computes (the 2026-10-12 Intel host admits; PR #817's AMD EPYC host refuses "
+        "14 of 30)",
+        slice_owner="NDT-KBLOCK",
+    ),
+    Metric(
+        "train.mm.provider.differences",
         "train",
         "of 30 GEMM cases (the 2026-10-11 comparison decoder's 15 step shapes at beta 0 and 1, alpha "
         "1), those where OpenBLAS's sgemm (scipy_openblas32, one thread) differs in any bit from "
-        "bcir_tensor_mm_kblock -- the admission differential NativeDecoder.use_cblas runs under "
-        "the blocked contract; measured only where the wheel is importable",
+        "bcir_tensor_mm_kblock -- the admission differential's count on this host; a property of "
+        "the wheel's target kernels, not of BCIR, so reported everywhere and graded only on the "
+        "baseline host; measured only where the wheel is importable",
         0,
         "count",
         "exact",
@@ -898,9 +963,10 @@ METRICS: tuple[Metric, ...] = (
         bound_source="OpenBLAS's level-3 driver on its SkylakeX target splits K by the same rule (Q 448, "
         "unroll 16) and its kernel accumulates each panel in registers from zero and adds it to C, "
         "so for the trainer's shapes (above its small-matrix threshold) its output is the contract's "
-        "bit for bit; a host whose OpenBLAS target blocks differently reads a nonzero count and the "
-        "trainer refuses the provider",
+        "bit for bit there (0 of 30); a host whose OpenBLAS target blocks differently reads a nonzero "
+        "count (PR #817's AMD EPYC 9V74: 14 of 30) and the trainer refuses the provider",
         slice_owner="NDT-KBLOCK",
+        host_dependent=True,
     ),
     # --- NDT-EXP: the BCIR exponential --------------------------------------------------------
     Metric(

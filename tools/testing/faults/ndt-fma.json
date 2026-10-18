@@ -25,9 +25,9 @@
     },
     {
       "expects": "test_the_training_state_is_identical_at_every_thread_count",
-      "label": "NF3 the trainer's GEMM ignores the state's contract",
-      "new": "  else if (s->contract&~BCIR_DT_CONTRACT_FUSED) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);",
-      "old": "  else if (s->contract&BCIR_DT_CONTRACT_FUSED) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);",
+      "label": "NF3 the trainer's GEMM ignores the fused bit (v1 under the fused name: the forward's linears and the backward's pairs read one predicate)",
+      "new": "    0;",
+      "old": "    (s->contract&BCIR_DT_CONTRACT_FUSED) ? 1 : 0;",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
@@ -39,9 +39,9 @@
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
-      "label": "NF5 a contract bit the ABI does not define is admitted",
-      "new": "  if (s->contract&~(uint32_t)15u) return BCIR_DT_INVALID;",
-      "old": "  if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_KBLOCK)) return BCIR_DT_INVALID;",
+      "label": "NF5 a contract bit the ABI does not define (64, past the attention bit) is admitted",
+      "new": "  if (s->contract&~(uint32_t)127u) return BCIR_DT_INVALID;",
+      "old": "  if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_KBLOCK|\n      BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTN)) return BCIR_DT_INVALID;",
       "path": "runtime/c/bcir_decoder_train.c"
     }
   ]

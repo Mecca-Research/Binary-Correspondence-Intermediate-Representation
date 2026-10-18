@@ -1,0 +1,1582 @@
+{
+ "schema": "bcir.ndt_pool_latency.v1",
+ "bench": "bench_pool.c: four threads; each case's mean microseconds per job over 4,000 jobs (1,000 with CPUs busy; an eighth after a 200 us gap), best of 5 rounds; ideal = one thread's share of the work",
+ "stages": {
+  "stage1": {
+   "builds": {
+    "base": "the pool before (task t on thread t % threads, every report under the mutex)",
+    "patched": "a first draft: claims from a counter, workers spinning 2,048 pauses, reports still under the mutex",
+    "hybrid": "the first draft with 64 yields after the spin"
+   },
+   "runs": [
+    {
+     "run": "bench quiet base #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 79.09,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 76.69,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 132.8,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 204.12,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 195.53,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 549.4,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 170.31,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet patched #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 20.01,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 34.1,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 88.94,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 125.9,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 125.77,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 446.16,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 109.22,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet hybrid #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 20.42,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 22.92,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 76.15,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 126.72,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 121.47,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 445.24,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 109.07,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet base #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 78.41,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 87.35,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 102.65,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 202.74,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 195.73,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 537.35,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 155.97,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet patched #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 9.3,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 18.61,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 76.8,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 111.98,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 139.09,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 445.49,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 112.5,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet hybrid #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 19.8,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 9.96,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 63.69,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 122.75,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 123.71,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 435.41,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 110.08,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench two CPUs busy: base",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 44.63,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 51.37,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 80.73,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 248.75,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 254.31,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 936.28,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 239.87,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench two CPUs busy: patched",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 114.17,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 106.95,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 104.25,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 342.27,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 299.6,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 945.48,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 273.15,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench two CPUs busy: hybrid",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 63.8,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 69.18,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 87.37,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 304.51,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 292.24,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 917.64,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 263.09,
+       "ideal_us": 100.0
+      }
+     }
+    }
+   ]
+  },
+  "stage2": {
+   "builds": {
+    "base": "the pool before",
+    "v2 sSyYcC": "the landed protocol (no lock on the hot path) with S pauses, Y yields, C = 1 claims from the counter, C = 0 task t on thread t % threads"
+   },
+   "runs": [
+    {
+     "run": "bench quiet base #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 82.87,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 83.37,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 107.46,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 200.04,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 194.68,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 546.62,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 162.12,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s2048y64c1 #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 4.97,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 3.84,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 67.01,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 111.59,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 118.5,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 435.44,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 108.14,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s2048y0c1 #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 1.26,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 16.87,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 78.79,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 114.59,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 125.22,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 437.3,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 110.38,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s256y256c1 #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 1.24,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 1.79,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 55.17,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 112.33,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 116.09,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 435.83,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 107.31,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s8192y64c1 #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 1.32,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 1.27,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 68.66,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 112.96,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 112.05,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 436.72,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 108.55,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s2048y64c0 #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 0.88,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 4.2,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 79.59,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 114.23,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 115.23,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 453.14,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 107.59,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet base #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 84.62,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 83.96,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 116.84,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 198.44,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 202.72,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 538.45,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 166.14,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s2048y64c1 #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 1.34,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 3.65,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 66.63,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 113.17,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 116.66,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 436.05,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 110.08,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s2048y0c1 #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 1.34,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 16.34,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 66.03,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 108.66,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 124.93,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 442.61,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 112.73,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s256y256c1 #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 6.84,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 2.25,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 57.31,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 114.59,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 114.26,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 451.07,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 107.81,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s8192y64c1 #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 1.3,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 4.27,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 66.54,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 114.24,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 112.14,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 440.85,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 110.02,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s2048y64c0 #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 1.1,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 1.07,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 62.62,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 112.04,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 119.51,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 468.11,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 111.94,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench two CPUs busy: base",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 52.82,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 42.75,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 72.44,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 268.46,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 275.91,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 917.09,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 234.81,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench two CPUs busy: v2 s2048y64c1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 62.9,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 63.55,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 83.37,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 300.54,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 308.21,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 951.63,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 245.32,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench two CPUs busy: v2 s2048y0c1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 65.68,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 60.99,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 79.51,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 291.44,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 300.69,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 941.12,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 228.81,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench two CPUs busy: v2 s256y256c1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 15.45,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 10.92,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 13.8,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 224.97,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 227.24,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 865.74,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 192.31,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench two CPUs busy: v2 s8192y64c1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 280.63,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 298.35,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 274.02,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 514.0,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 498.78,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 1109.61,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 467.81,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench two CPUs busy: v2 s2048y64c0",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 64.72,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 66.26,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 101.83,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 308.76,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 295.4,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 955.24,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 257.62,
+       "ideal_us": 100.0
+      }
+     }
+    }
+   ]
+  },
+  "stage3": {
+   "builds": {
+    "base": "the pool before",
+    "v2 sSyY": "the landed protocol with S pauses and Y yields (s64y512 is the landed budget)"
+   },
+   "runs": [
+    {
+     "run": "bench quiet base #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 77.37,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 83.34,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 121.01,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 194.95,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 203.33,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 528.27,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 165.94,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s256y256 #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 3.58,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 6.99,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 57.76,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 115.71,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 113.61,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 437.36,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 106.41,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s256y1024 #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 1.09,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 2.07,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 2.34,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 110.85,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 115.94,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 443.08,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 105.69,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s64y512 #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 3.61,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 1.37,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 22.22,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 113.53,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 117.65,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 430.69,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 107.22,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s1024y256 #1",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 1.44,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 2.06,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 71.9,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 110.54,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 113.98,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 442.49,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 105.62,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet base #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 85.25,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 82.72,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 93.36,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 190.83,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 195.86,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 513.12,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 161.44,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s256y256 #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 1.34,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 1.58,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 65.5,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 117.88,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 112.08,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 440.31,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 105.58,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s256y1024 #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 4.27,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 2.21,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 2.35,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 117.52,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 113.26,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 440.39,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 107.55,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s64y512 #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 3.27,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 2.55,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 27.11,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 117.18,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 113.62,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 441.89,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 111.46,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench quiet v2 s1024y256 #2",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 1.29,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 2.85,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 61.59,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 109.7,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 113.89,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 440.48,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 109.53,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench 2 CPUs busy: base",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 16.5,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 24.69,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 68.79,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 253.15,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 262.47,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 934.83,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 209.03,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench 2 CPUs busy: v2 s256y256",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 15.65,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 12.31,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 14.49,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 236.8,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 235.55,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 876.4,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 196.25,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench 2 CPUs busy: v2 s256y1024",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 15.9,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 11.43,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 20.53,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 229.46,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 231.7,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 906.69,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 198.87,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench 2 CPUs busy: v2 s64y512",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 5.78,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 5.36,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 6.93,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 224.7,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 224.29,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 873.91,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 191.62,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench 2 CPUs busy: v2 s1024y256",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 32.83,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 36.67,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 50.52,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 245.94,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 261.44,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 911.48,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 203.39,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench 3 CPUs busy: base",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 15.14,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 14.75,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 16.15,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 414.88,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 373.16,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 1513.53,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 347.16,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench 3 CPUs busy: v2 s256y256",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 18.9,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 19.03,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 21.84,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 235.99,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 438.77,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 1662.94,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 322.39,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench 3 CPUs busy: v2 s256y1024",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 19.04,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 18.75,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 20.45,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 471.17,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 454.02,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 2221.35,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 367.39,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench 3 CPUs busy: v2 s64y512",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 7.35,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 7.52,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 7.94,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 433.83,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 432.18,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 1696.9,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 349.99,
+       "ideal_us": 100.0
+      }
+     }
+    },
+    {
+     "run": "bench 3 CPUs busy: v2 s1024y256",
+     "cases": {
+      "empty x4, back to back": {
+       "us_per_job": 65.09,
+       "ideal_us": 0.0
+      },
+      "empty x4, 20us gap": {
+       "us_per_job": 64.15,
+       "ideal_us": 0.0
+      },
+      "empty x4, 200us gap": {
+       "us_per_job": 65.13,
+       "ideal_us": 0.0
+      },
+      "16 x 25us, back to back": {
+       "us_per_job": 459.15,
+       "ideal_us": 100.0
+      },
+      "16 x 25us, 20us gap": {
+       "us_per_job": 482.88,
+       "ideal_us": 100.0
+      },
+      "64 x 25us, back to back": {
+       "us_per_job": 1749.71,
+       "ideal_us": 400.0
+      },
+      "13 x 25us (ragged), back to back": {
+       "us_per_job": 400.56,
+       "ideal_us": 100.0
+      }
+     }
+    }
+   ]
+  }
+ }
+}

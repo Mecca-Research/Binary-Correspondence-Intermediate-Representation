@@ -1,0 +1,198 @@
+{
+ "schema": "bcir.ndt_gemm_cold.v1",
+ "threads": 4,
+ "sets": 6,
+ "reps": 9,
+ "builds": [
+  "/tmp/claude-0/-home-user-Binary-Correspondence-Intermediate-Representation/4865d9ed-555e-57a2-bf84-b7cf72659f54/scratchpad/pack/lib-base.so",
+  "/tmp/claude-0/-home-user-Binary-Correspondence-Intermediate-Representation/4865d9ed-555e-57a2-bf84-b7cf72659f54/scratchpad/pack/lib-colmajor.so"
+ ],
+ "transposed_a_only": false,
+ "mismatch": 0,
+ "step_gemm_ms": {
+  "A": 168.3,
+  "B": 167.3
+ },
+ "rows": [
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 384,
+   "k": 384,
+   "calls": 12,
+   "A.ms": 0.8894,
+   "B.ms": 0.8606,
+   "A.gflops": 339.6,
+   "B.gflops": 350.9
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 192,
+   "k": 384,
+   "calls": 12,
+   "A.ms": 0.4599,
+   "B.ms": 0.4958,
+   "A.gflops": 328.3,
+   "B.gflops": 304.5
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 1024,
+   "k": 384,
+   "calls": 12,
+   "A.ms": 1.9914,
+   "B.ms": 1.9835,
+   "A.gflops": 404.4,
+   "B.gflops": 406.0
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "calls": 6,
+   "A.ms": 1.874,
+   "B.ms": 2.252,
+   "A.gflops": 429.7,
+   "B.gflops": 357.6
+  },
+  {
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 260,
+   "k": 384,
+   "calls": 1,
+   "A.ms": 0.5931,
+   "B.ms": 0.5652,
+   "A.gflops": 344.7,
+   "B.gflops": 361.8
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 260,
+   "calls": 1,
+   "A.ms": 0.582,
+   "B.ms": 0.5704,
+   "A.gflops": 351.3,
+   "B.gflops": 358.4
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 260,
+   "n": 384,
+   "k": 1024,
+   "calls": 1,
+   "A.ms": 0.8073,
+   "B.ms": 0.8081,
+   "A.gflops": 253.3,
+   "B.gflops": 253.0
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 1024,
+   "k": 384,
+   "calls": 6,
+   "A.ms": 2.1068,
+   "B.ms": 2.0512,
+   "A.gflops": 382.2,
+   "B.gflops": 392.6
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 384,
+   "n": 1024,
+   "k": 1024,
+   "calls": 6,
+   "A.ms": 2.1544,
+   "B.ms": 2.0936,
+   "A.gflops": 373.8,
+   "B.gflops": 384.6
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "calls": 12,
+   "A.ms": 2.0915,
+   "B.ms": 2.1356,
+   "A.gflops": 385.0,
+   "B.gflops": 377.1
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 1024,
+   "calls": 12,
+   "A.ms": 2.663,
+   "B.ms": 2.5883,
+   "A.gflops": 302.4,
+   "B.gflops": 311.1
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 384,
+   "calls": 12,
+   "A.ms": 0.7137,
+   "B.ms": 0.7249,
+   "A.gflops": 423.2,
+   "B.gflops": 416.6
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 384,
+   "n": 384,
+   "k": 1024,
+   "calls": 12,
+   "A.ms": 0.9492,
+   "B.ms": 0.8076,
+   "A.gflops": 318.1,
+   "B.gflops": 373.9
+  },
+  {
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 384,
+   "k": 192,
+   "calls": 12,
+   "A.ms": 0.5626,
+   "B.ms": 0.5292,
+   "A.gflops": 268.4,
+   "B.gflops": 285.3
+  },
+  {
+   "ta": 1,
+   "tb": 0,
+   "m": 192,
+   "n": 384,
+   "k": 1024,
+   "calls": 12,
+   "A.ms": 0.4752,
+   "B.ms": 0.4593,
+   "A.gflops": 317.8,
+   "B.gflops": 328.8
+  }
+ ]
+}

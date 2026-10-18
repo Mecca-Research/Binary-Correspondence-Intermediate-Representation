@@ -1,0 +1,4 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 97d89a1, runtime/c against it 7a779f86aae08f47
+bf16+exp+reduce            median   246.2 ms  min   234.7  (8 steps)     4160 tokens/s  last loss 2.8042
+bf16+exp+reduce+attn       median   235.8 ms  min   224.2  (8 steps)     4343 tokens/s  last loss 2.8067
+ratio 1.044

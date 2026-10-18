@@ -1,0 +1,2 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 17cff8d, runtime/c against it 59e12d7ab5a4763f
+checked 126000000 non-empty shapes: 0 differ; 240100 empty shapes: 0 widths not a positive multiple of 32

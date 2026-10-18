@@ -1,0 +1,69 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_native_decoder:_CC",
+  "--require",
+  "bcir.tests.test_native_decoder:_MADV_HUGEPAGE",
+  "bcir.tests.test_native_decoder:test_the_state_lives_on_huge_pages_where_the_host_has_them"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_state_lives_on_huge_pages_where_the_host_has_them",
+   "label": "NG1 the advice never given (the mapping holds 4 KB pages while the trainer reports the advice taken)",
+   "new": "        advised = True\n",
+   "old": "        mapping.madvise(mmap.MADV_HUGEPAGE)\n        advised = True\n",
+   "path": "bcir/hosted/models/native.py"
+  },
+  {
+   "expects": "test_the_state_lives_on_huge_pages_where_the_host_has_them",
+   "label": "NG2 the first buffer off its 2 MB boundary (a cache line in, so no buffer starts on a huge page)",
+   "new": "    lead = 64\n",
+   "old": "    lead = -ct.addressof(ct.c_char.from_buffer(mapping)) % _HUGE_PAGE\n",
+   "path": "bcir/hosted/models/native.py"
+  },
+  {
+   "expects": "test_the_state_lives_on_huge_pages_where_the_host_has_them",
+   "label": "NG3 each buffer laid out at half its length (every buffer overlaps the next one)",
+   "new": "        end += 2 * n\n",
+   "old": "        end += 4 * n\n",
+   "path": "bcir/hosted/models/native.py"
+  },
+  {
+   "expects": "test_the_state_lives_on_huge_pages_where_the_host_has_them",
+   "label": "NG4 a shared anonymous mapping (shmem, whose huge pages follow shmem_enabled, not the advice)",
+   "new": "flags=mmap.MAP_SHARED | mmap.MAP_ANONYMOUS)",
+   "old": "flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS)",
+   "path": "bcir/hosted/models/native.py"
+  },
+  {
+   "expects": "test_the_state_lives_on_huge_pages_where_the_host_has_them",
+   "label": "NG5 huge_pages=False ignored (the arrays' placement is never taken where the host has the advice)",
+   "new": "    if not hasattr(mmap, \"MADV_HUGEPAGE\"):\n",
+   "old": "    if not huge_pages or not hasattr(mmap, \"MADV_HUGEPAGE\"):\n",
+   "path": "bcir/hosted/models/native.py"
+  },
+  {
+   "expects": "test_the_state_lives_on_huge_pages_where_the_host_has_them",
+   "label": "NG6 a placement that is not a bool admitted (1 and \"yes\" place the state on the mapping, 0 and None on the arrays)",
+   "new": "",
+   "old": "        if type(huge_pages) is not bool:\n            raise ValueError(\"huge_pages must be bool\")\n",
+   "path": "bcir/hosted/models/native.py"
+  },
+  {
+   "expects": "test_the_state_lives_on_huge_pages_where_the_host_has_them",
+   "label": "NG7 resume drops the placement it is given (a resumed trainer always on the mapping)",
+   "new": "            )",
+   "old": "                huge_pages=huge_pages,\n            )",
+   "path": "bcir/hosted/models/native.py"
+  },
+  {
+   "expects": "test_the_state_lives_on_huge_pages_where_the_host_has_them",
+   "label": "NG8 a kernel whose arithmetic follows its operand's address (the update moves the first weight one ulp when the weights start on a 2 MB boundary)",
+   "new": "  if (!((uintptr_t)s->weights%((uintptr_t)2<<20))) s->weights[0]=nextafterf(s->weights[0],INFINITY);\n  s->step++; s->beta1_power=b1; s->beta2_power=b2; *grad_norm=norm;",
+   "old": "  s->step++; s->beta1_power=b1; s->beta2_power=b2; *grad_norm=norm;",
+   "path": "runtime/c/bcir_decoder_train.c"
+  }
+ ]
+}

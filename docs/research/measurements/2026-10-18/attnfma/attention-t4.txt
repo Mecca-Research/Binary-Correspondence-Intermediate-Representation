@@ -1,0 +1,2 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 97d89a1, runtime/c against it 7a779f86aae08f47
+{"time": 128, "threads": 4, "reps": 31, "v1": {"forward_ms": 0.7764, "backward_ms": 1.1044}, "fused": {"forward_ms": 0.6039, "backward_ms": 0.7627}, "forward_ratio": 1.2855, "backward_ratio": 1.4481, "layer_ratio": 1.3762, "each_contract_one_result": true, "contracts_apart": true}

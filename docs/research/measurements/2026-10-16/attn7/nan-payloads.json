@@ -1,0 +1,3931 @@
+{
+ "threads": 4,
+ "shapes": [
+  [
+   2,
+   128,
+   8,
+   4,
+   48
+  ],
+  [
+   1,
+   100,
+   4,
+   2,
+   48
+  ],
+  [
+   1,
+   37,
+   2,
+   1,
+   48
+  ],
+  [
+   2,
+   64,
+   4,
+   4,
+   32
+  ],
+  [
+   1,
+   129,
+   2,
+   2,
+   64
+  ],
+  [
+   1,
+   8,
+   1,
+   1,
+   48
+  ],
+  [
+   1,
+   7,
+   1,
+   1,
+   16
+  ],
+  [
+   1,
+   200,
+   2,
+   1,
+   40
+  ],
+  [
+   1,
+   300,
+   2,
+   1,
+   48
+  ],
+  [
+   1,
+   16,
+   4,
+   2,
+   96
+  ],
+  [
+   3,
+   24,
+   2,
+   2,
+   48
+  ],
+  [
+   1,
+   250,
+   1,
+   1,
+   64
+  ]
+ ],
+ "rows": [
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "ea3cac5c65b1c365",
+   "values_fnv1a": "ea3cac5c65b1c365",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "037b6329d09964c1",
+   "values_fnv1a": "037b6329d09964c1"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "cd27f6d0aa277f14",
+   "values_fnv1a": "cd27f6d0aa277f14",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "02d87c0c31703e40",
+   "values_fnv1a": "02d87c0c31703e40"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "118e4db6b9d62566",
+   "values_fnv1a": "6c99196d3578403a",
+   "differing_from_reference": 46683,
+   "of_which_nan_pairs": 46683
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "3c46ca75209e6657",
+   "values_fnv1a": "0c5063b67eae7e33"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "d6ce88cf82cd075b",
+   "values_fnv1a": "23484d09b4388f7b",
+   "differing_from_reference": 25874,
+   "of_which_nan_pairs": 25874
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "ff7bb62618bdd643",
+   "values_fnv1a": "d9807a6df6ca61fb"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "47ae861b4fac8b57",
+   "values_fnv1a": "47ae861b4fac8b57",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "e9652c73defb0ed2",
+   "values_fnv1a": "e9652c73defb0ed2"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "cf16371b02c03c8d",
+   "values_fnv1a": "cf16371b02c03c8d",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "c66f2920cd5fdcc3",
+   "values_fnv1a": "c66f2920cd5fdcc3"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "8a513f01f8e52639",
+   "values_fnv1a": "a52e999f0e086388",
+   "differing_from_reference": 3846,
+   "of_which_nan_pairs": 3846
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "46d82dca724d878f",
+   "values_fnv1a": "824dcb29503acf86"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "2bfebf8afda7af6f",
+   "values_fnv1a": "35230d0f300e131b",
+   "differing_from_reference": 14672,
+   "of_which_nan_pairs": 14672
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "03440a2791323f35",
+   "values_fnv1a": "632bdb4f51615df9"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "8a827dce410cf399",
+   "values_fnv1a": "8a827dce410cf399",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "2835405027fe7c76",
+   "values_fnv1a": "2835405027fe7c76"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "e36318490fe227aa",
+   "values_fnv1a": "e36318490fe227aa",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "603580fa1384135f",
+   "values_fnv1a": "603580fa1384135f"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "d6943baa5001ebb5",
+   "values_fnv1a": "52e2788ee75313e0",
+   "differing_from_reference": 1825,
+   "of_which_nan_pairs": 1825
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "d6943baa5001ebb5",
+   "values_fnv1a": "52e2788ee75313e0"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "49488f14ca2c4e45",
+   "values_fnv1a": "ada3dea67f96f5e5",
+   "differing_from_reference": 766,
+   "of_which_nan_pairs": 766
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "49488f14ca2c4e45",
+   "values_fnv1a": "ada3dea67f96f5e5"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "9553f7fbadeed4b5",
+   "values_fnv1a": "9553f7fbadeed4b5",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "6c561b700093b4c3",
+   "values_fnv1a": "6c561b700093b4c3"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "3e833ad310b3bca5",
+   "values_fnv1a": "3e833ad310b3bca5",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "20a159a8496cdd39",
+   "values_fnv1a": "20a159a8496cdd39"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "49dfce9c5575a140",
+   "values_fnv1a": "608dd72d5b4eb998",
+   "differing_from_reference": 13419,
+   "of_which_nan_pairs": 13419
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "2d466f840f0cd8a2",
+   "values_fnv1a": "a716664f298262ea"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "a2e2742624410114",
+   "values_fnv1a": "4a7baf18de6fb918",
+   "differing_from_reference": 12035,
+   "of_which_nan_pairs": 12035
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "9f3aa77031477192",
+   "values_fnv1a": "a5ec0b273c8f4e2e"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "64a468eecf1fd541",
+   "values_fnv1a": "64a468eecf1fd541",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "7a7269b350f85cab",
+   "values_fnv1a": "7a7269b350f85cab"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "1985c4d53f206525",
+   "values_fnv1a": "1985c4d53f206525",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "9e0b36b37daeac8d",
+   "values_fnv1a": "9e0b36b37daeac8d"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "a64d74ac94398240",
+   "values_fnv1a": "a136ba935baa13d1",
+   "differing_from_reference": 6635,
+   "of_which_nan_pairs": 6635
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "a64d74ac94398240",
+   "values_fnv1a": "a136ba935baa13d1"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "1ff997153cadbd9c",
+   "values_fnv1a": "89667faac649f8d5",
+   "differing_from_reference": 17359,
+   "of_which_nan_pairs": 17359
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "81b2a8204774bdfd",
+   "values_fnv1a": "a6ccea30cf17f2ac"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "13f07131e498702d",
+   "values_fnv1a": "13f07131e498702d",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "13f07131e498702d",
+   "values_fnv1a": "13f07131e498702d"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "9f14da5c4f86d2e8",
+   "values_fnv1a": "9f14da5c4f86d2e8",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "2f6f3ff8486e674a",
+   "values_fnv1a": "2f6f3ff8486e674a"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "3e2d5ecbb081136f",
+   "values_fnv1a": "b6ccf2bf4a83d28e",
+   "differing_from_reference": 48,
+   "of_which_nan_pairs": 48
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "3e2d5ecbb081136f",
+   "values_fnv1a": "b6ccf2bf4a83d28e"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "b2439e3e391b309f",
+   "values_fnv1a": "03a9f42fb33da04f",
+   "differing_from_reference": 288,
+   "of_which_nan_pairs": 288
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "b2439e3e391b309f",
+   "values_fnv1a": "03a9f42fb33da04f"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "2a898a89c36c3b95",
+   "values_fnv1a": "2a898a89c36c3b95",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "2a898a89c36c3b95",
+   "values_fnv1a": "2a898a89c36c3b95"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "ab3b277b60a5940c",
+   "values_fnv1a": "ab3b277b60a5940c",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "e917b119e644cd5a",
+   "values_fnv1a": "e917b119e644cd5a"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "cfed31f6cca051cf",
+   "values_fnv1a": "ba21669af6d998cf",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "552414858736d6cd",
+   "values_fnv1a": "9b3230c3771037cd"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "cf325a5b99b2852d",
+   "values_fnv1a": "826030c3913fc7ad",
+   "differing_from_reference": 48,
+   "of_which_nan_pairs": 48
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "f903b04a895842c4",
+   "values_fnv1a": "dc2209dca74f5344"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "51b5c649102426dc",
+   "values_fnv1a": "51b5c649102426dc",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "a2779891c75db0e3",
+   "values_fnv1a": "a2779891c75db0e3"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "0ffa9705c5422bf4",
+   "values_fnv1a": "0ffa9705c5422bf4",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "2da2c231493eced2",
+   "values_fnv1a": "2da2c231493eced2"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "d20173efcb179817",
+   "values_fnv1a": "3d23163aca3c073e",
+   "differing_from_reference": 4042,
+   "of_which_nan_pairs": 4042
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "40e858bcbe199bbd",
+   "values_fnv1a": "343b07da3bdacf50"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "bee58439cf8c81e3",
+   "values_fnv1a": "2dc1f8e5fabd8283",
+   "differing_from_reference": 14149,
+   "of_which_nan_pairs": 14149
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "bee58439cf8c81e3",
+   "values_fnv1a": "2dc1f8e5fabd8283"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "56d8995f50be737a",
+   "values_fnv1a": "56d8995f50be737a",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "52d94ee842673074",
+   "values_fnv1a": "52d94ee842673074"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "8742ce015b1bfa23",
+   "values_fnv1a": "8742ce015b1bfa23",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "c71ed691af173414",
+   "values_fnv1a": "c71ed691af173414"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "f5fc16be21380807",
+   "values_fnv1a": "1f71053374c2eda7",
+   "differing_from_reference": 4509,
+   "of_which_nan_pairs": 4509
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "b078d4ab53e2a21b",
+   "values_fnv1a": "4b93eb08f2770833"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "1099e52a9417abf1",
+   "values_fnv1a": "97235aaa4b905644",
+   "differing_from_reference": 3952,
+   "of_which_nan_pairs": 3952
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "1099e52a9417abf1",
+   "values_fnv1a": "97235aaa4b905644"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "973bd49000fcf5f2",
+   "values_fnv1a": "973bd49000fcf5f2",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "33b8057d5484f7c4",
+   "values_fnv1a": "33b8057d5484f7c4"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "198003198f51937f",
+   "values_fnv1a": "198003198f51937f",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "edd65fb90c0f035b",
+   "values_fnv1a": "edd65fb90c0f035b"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "26b9220ed2e028ba",
+   "values_fnv1a": "a480a386ccf45f83",
+   "differing_from_reference": 2784,
+   "of_which_nan_pairs": 2784
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "26b9220ed2e028ba",
+   "values_fnv1a": "a480a386ccf45f83"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "db1e409d35e6ed39",
+   "values_fnv1a": "14f19f060c6422c8",
+   "differing_from_reference": 1932,
+   "of_which_nan_pairs": 1932
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "4753588849c59498",
+   "values_fnv1a": "df11226c879cb7b9"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "5dd65ab5c0346965",
+   "values_fnv1a": "5dd65ab5c0346965",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "ad3c7ab0392953f0",
+   "values_fnv1a": "ad3c7ab0392953f0"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "4c744e3710d4e4d3",
+   "values_fnv1a": "4c744e3710d4e4d3",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "945fb5740c046e6d",
+   "values_fnv1a": "945fb5740c046e6d"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "9e5a76ed84a5cb29",
+   "values_fnv1a": "b42ec8274ff874f0",
+   "differing_from_reference": 5830,
+   "of_which_nan_pairs": 5830
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "6be8c5d2e8793e6b",
+   "values_fnv1a": "97f7448ce71b8cee"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "a13074ed8ccfe43c",
+   "values_fnv1a": "08556bebcc8f84d9",
+   "differing_from_reference": 3862,
+   "of_which_nan_pairs": 3862
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "c4cb6a3a8275501c",
+   "values_fnv1a": "e0112059dfbc12a9"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "3c24381e0aef33a0",
+   "values_fnv1a": "3c24381e0aef33a0",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "20d62ab816dbd1b2",
+   "values_fnv1a": "20d62ab816dbd1b2"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "408bfc976255e4a8",
+   "values_fnv1a": "408bfc976255e4a8",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "d2a4a6bc3922656e",
+   "values_fnv1a": "d2a4a6bc3922656e"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "65c80ab263124127",
+   "values_fnv1a": "511ec3a03f26ce87",
+   "differing_from_reference": 13870,
+   "of_which_nan_pairs": 13870
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "65c80ab263124127",
+   "values_fnv1a": "511ec3a03f26ce87"
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "e43b6226802282d6",
+   "values_fnv1a": "481c76bf330f1a06",
+   "differing_from_reference": 19102,
+   "of_which_nan_pairs": 19102
+  },
+  {
+   "tree": "base",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "e43b6226802282d6",
+   "values_fnv1a": "481c76bf330f1a06"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "ea3cac5c65b1c365",
+   "values_fnv1a": "ea3cac5c65b1c365",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "037b6329d09964c1",
+   "values_fnv1a": "037b6329d09964c1"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "cd27f6d0aa277f14",
+   "values_fnv1a": "cd27f6d0aa277f14",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "02d87c0c31703e40",
+   "values_fnv1a": "02d87c0c31703e40"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "2b200a26b55d9866",
+   "values_fnv1a": "6c99196d3578403a",
+   "differing_from_reference": 42363,
+   "of_which_nan_pairs": 42363
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "ebfa05321944e847",
+   "values_fnv1a": "0c5063b67eae7e33"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "5fa3560e66afd09e",
+   "values_fnv1a": "23484d09b4388f7b",
+   "differing_from_reference": 27932,
+   "of_which_nan_pairs": 27932
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "6f6d1a610d6057de",
+   "values_fnv1a": "d9807a6df6ca61fb"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "47ae861b4fac8b57",
+   "values_fnv1a": "47ae861b4fac8b57",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "e9652c73defb0ed2",
+   "values_fnv1a": "e9652c73defb0ed2"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "cf16371b02c03c8d",
+   "values_fnv1a": "cf16371b02c03c8d",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "c66f2920cd5fdcc3",
+   "values_fnv1a": "c66f2920cd5fdcc3"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "544625583446f565",
+   "values_fnv1a": "a52e999f0e086388",
+   "differing_from_reference": 4381,
+   "of_which_nan_pairs": 4381
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "aa55d28dad49d0c3",
+   "values_fnv1a": "824dcb29503acf86"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "68d74eb08856ee5e",
+   "values_fnv1a": "35230d0f300e131b",
+   "differing_from_reference": 11578,
+   "of_which_nan_pairs": 11578
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "508feae66b088d28",
+   "values_fnv1a": "632bdb4f51615df9"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "8a827dce410cf399",
+   "values_fnv1a": "8a827dce410cf399",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "2835405027fe7c76",
+   "values_fnv1a": "2835405027fe7c76"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "e36318490fe227aa",
+   "values_fnv1a": "e36318490fe227aa",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "603580fa1384135f",
+   "values_fnv1a": "603580fa1384135f"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "39490ff922705a44",
+   "values_fnv1a": "52e2788ee75313e0",
+   "differing_from_reference": 1587,
+   "of_which_nan_pairs": 1587
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "39490ff922705a44",
+   "values_fnv1a": "52e2788ee75313e0"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "48af6bda324d7ebd",
+   "values_fnv1a": "ada3dea67f96f5e5",
+   "differing_from_reference": 869,
+   "of_which_nan_pairs": 869
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "48af6bda324d7ebd",
+   "values_fnv1a": "ada3dea67f96f5e5"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "9553f7fbadeed4b5",
+   "values_fnv1a": "9553f7fbadeed4b5",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "6c561b700093b4c3",
+   "values_fnv1a": "6c561b700093b4c3"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "3e833ad310b3bca5",
+   "values_fnv1a": "3e833ad310b3bca5",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "20a159a8496cdd39",
+   "values_fnv1a": "20a159a8496cdd39"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "1e2207792c8c3774",
+   "values_fnv1a": "608dd72d5b4eb998",
+   "differing_from_reference": 15015,
+   "of_which_nan_pairs": 15015
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "0a7cc71228d8ce46",
+   "values_fnv1a": "a716664f298262ea"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "49100bec364d799d",
+   "values_fnv1a": "4a7baf18de6fb918",
+   "differing_from_reference": 11507,
+   "of_which_nan_pairs": 11507
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "cb4eba51bddfc923",
+   "values_fnv1a": "a5ec0b273c8f4e2e"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "64a468eecf1fd541",
+   "values_fnv1a": "64a468eecf1fd541",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "7a7269b350f85cab",
+   "values_fnv1a": "7a7269b350f85cab"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "1985c4d53f206525",
+   "values_fnv1a": "1985c4d53f206525",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "9e0b36b37daeac8d",
+   "values_fnv1a": "9e0b36b37daeac8d"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "c32f7af39356f64d",
+   "values_fnv1a": "a136ba935baa13d1",
+   "differing_from_reference": 14680,
+   "of_which_nan_pairs": 14680
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "c32f7af39356f64d",
+   "values_fnv1a": "a136ba935baa13d1"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "4c549d27c0a058a9",
+   "values_fnv1a": "89667faac649f8d5",
+   "differing_from_reference": 18769,
+   "of_which_nan_pairs": 18769
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "caecf76292f4aa48",
+   "values_fnv1a": "a6ccea30cf17f2ac"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "13f07131e498702d",
+   "values_fnv1a": "13f07131e498702d",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "13f07131e498702d",
+   "values_fnv1a": "13f07131e498702d"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "9f14da5c4f86d2e8",
+   "values_fnv1a": "9f14da5c4f86d2e8",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "2f6f3ff8486e674a",
+   "values_fnv1a": "2f6f3ff8486e674a"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "d6785958851561ef",
+   "values_fnv1a": "b6ccf2bf4a83d28e",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "d6785958851561ef",
+   "values_fnv1a": "b6ccf2bf4a83d28e"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "0c5cac0c8554c5ef",
+   "values_fnv1a": "03a9f42fb33da04f",
+   "differing_from_reference": 304,
+   "of_which_nan_pairs": 304
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "0c5cac0c8554c5ef",
+   "values_fnv1a": "03a9f42fb33da04f"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "2a898a89c36c3b95",
+   "values_fnv1a": "2a898a89c36c3b95",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "2a898a89c36c3b95",
+   "values_fnv1a": "2a898a89c36c3b95"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "ab3b277b60a5940c",
+   "values_fnv1a": "ab3b277b60a5940c",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "e917b119e644cd5a",
+   "values_fnv1a": "e917b119e644cd5a"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "cfed31f6cca051cf",
+   "values_fnv1a": "ba21669af6d998cf",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "552414858736d6cd",
+   "values_fnv1a": "9b3230c3771037cd"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "cf325a5b99b2852d",
+   "values_fnv1a": "826030c3913fc7ad",
+   "differing_from_reference": 48,
+   "of_which_nan_pairs": 48
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "f903b04a895842c4",
+   "values_fnv1a": "dc2209dca74f5344"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "51b5c649102426dc",
+   "values_fnv1a": "51b5c649102426dc",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "a2779891c75db0e3",
+   "values_fnv1a": "a2779891c75db0e3"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "0ffa9705c5422bf4",
+   "values_fnv1a": "0ffa9705c5422bf4",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "2da2c231493eced2",
+   "values_fnv1a": "2da2c231493eced2"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "55012b3d711a28fe",
+   "values_fnv1a": "3d23163aca3c073e",
+   "differing_from_reference": 5097,
+   "of_which_nan_pairs": 5097
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "eb3fdc5a355a99d0",
+   "values_fnv1a": "343b07da3bdacf50"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "9a264f094d0ac3cb",
+   "values_fnv1a": "2dc1f8e5fabd8283",
+   "differing_from_reference": 13258,
+   "of_which_nan_pairs": 13258
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "9a264f094d0ac3cb",
+   "values_fnv1a": "2dc1f8e5fabd8283"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "56d8995f50be737a",
+   "values_fnv1a": "56d8995f50be737a",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "52d94ee842673074",
+   "values_fnv1a": "52d94ee842673074"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "8742ce015b1bfa23",
+   "values_fnv1a": "8742ce015b1bfa23",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "c71ed691af173414",
+   "values_fnv1a": "c71ed691af173414"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "812f987d4537c2ab",
+   "values_fnv1a": "1f71053374c2eda7",
+   "differing_from_reference": 12264,
+   "of_which_nan_pairs": 12264
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "9717c24d3bf3dd97",
+   "values_fnv1a": "4b93eb08f2770833"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "995d5d4949e21c10",
+   "values_fnv1a": "97235aaa4b905644",
+   "differing_from_reference": 5189,
+   "of_which_nan_pairs": 5189
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "995d5d4949e21c10",
+   "values_fnv1a": "97235aaa4b905644"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "973bd49000fcf5f2",
+   "values_fnv1a": "973bd49000fcf5f2",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "33b8057d5484f7c4",
+   "values_fnv1a": "33b8057d5484f7c4"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "198003198f51937f",
+   "values_fnv1a": "198003198f51937f",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "edd65fb90c0f035b",
+   "values_fnv1a": "edd65fb90c0f035b"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "acea770f1792198a",
+   "values_fnv1a": "a480a386ccf45f83",
+   "differing_from_reference": 2631,
+   "of_which_nan_pairs": 2631
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "acea770f1792198a",
+   "values_fnv1a": "a480a386ccf45f83"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "582523a78e9e3254",
+   "values_fnv1a": "14f19f060c6422c8",
+   "differing_from_reference": 3450,
+   "of_which_nan_pairs": 3450
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "0d9d0d0f2acc7b15",
+   "values_fnv1a": "df11226c879cb7b9"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "5dd65ab5c0346965",
+   "values_fnv1a": "5dd65ab5c0346965",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "ad3c7ab0392953f0",
+   "values_fnv1a": "ad3c7ab0392953f0"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "4c744e3710d4e4d3",
+   "values_fnv1a": "4c744e3710d4e4d3",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "945fb5740c046e6d",
+   "values_fnv1a": "945fb5740c046e6d"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "84165733476a56f4",
+   "values_fnv1a": "b42ec8274ff874f0",
+   "differing_from_reference": 5703,
+   "of_which_nan_pairs": 5703
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "ec4fde0bb867669a",
+   "values_fnv1a": "97f7448ce71b8cee"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "3508f444365954dd",
+   "values_fnv1a": "08556bebcc8f84d9",
+   "differing_from_reference": 2905,
+   "of_which_nan_pairs": 2905
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "c5a0fa37422dfc71",
+   "values_fnv1a": "e0112059dfbc12a9"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "3c24381e0aef33a0",
+   "values_fnv1a": "3c24381e0aef33a0",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "20d62ab816dbd1b2",
+   "values_fnv1a": "20d62ab816dbd1b2"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "408bfc976255e4a8",
+   "values_fnv1a": "408bfc976255e4a8",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "d2a4a6bc3922656e",
+   "values_fnv1a": "d2a4a6bc3922656e"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "3773ff246ca3707e",
+   "values_fnv1a": "511ec3a03f26ce87",
+   "differing_from_reference": 9868,
+   "of_which_nan_pairs": 9868
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "3773ff246ca3707e",
+   "values_fnv1a": "511ec3a03f26ce87"
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "bc82b9869b22b97e",
+   "values_fnv1a": "481c76bf330f1a06",
+   "differing_from_reference": 18373,
+   "of_which_nan_pairs": 18373
+  },
+  {
+   "tree": "base",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "bc82b9869b22b97e",
+   "values_fnv1a": "481c76bf330f1a06"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "ea3cac5c65b1c365",
+   "values_fnv1a": "ea3cac5c65b1c365",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "037b6329d09964c1",
+   "values_fnv1a": "037b6329d09964c1"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "cd27f6d0aa277f14",
+   "values_fnv1a": "cd27f6d0aa277f14",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "02d87c0c31703e40",
+   "values_fnv1a": "02d87c0c31703e40"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "343a3c154bbae5cf",
+   "values_fnv1a": "6c99196d3578403a",
+   "differing_from_reference": 65879,
+   "of_which_nan_pairs": 65879
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "ba44d1db319dde4e",
+   "values_fnv1a": "0c5063b67eae7e33"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "97446d3fa6a2a426",
+   "values_fnv1a": "23484d09b4388f7b",
+   "differing_from_reference": 40076,
+   "of_which_nan_pairs": 40076
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 0,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "7d6d694060b6200e",
+   "values_fnv1a": "d9807a6df6ca61fb"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "47ae861b4fac8b57",
+   "values_fnv1a": "47ae861b4fac8b57",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "e9652c73defb0ed2",
+   "values_fnv1a": "e9652c73defb0ed2"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "cf16371b02c03c8d",
+   "values_fnv1a": "cf16371b02c03c8d",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "c66f2920cd5fdcc3",
+   "values_fnv1a": "c66f2920cd5fdcc3"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "c3cc9f1875dbca90",
+   "values_fnv1a": "a52e999f0e086388",
+   "differing_from_reference": 6257,
+   "of_which_nan_pairs": 6257
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "9dda07a1b12cac06",
+   "values_fnv1a": "824dcb29503acf86"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "bfa65499c37fcfbe",
+   "values_fnv1a": "35230d0f300e131b",
+   "differing_from_reference": 15513,
+   "of_which_nan_pairs": 15513
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 1,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "4e4b37e6381b65e8",
+   "values_fnv1a": "632bdb4f51615df9"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "8a827dce410cf399",
+   "values_fnv1a": "8a827dce410cf399",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "2835405027fe7c76",
+   "values_fnv1a": "2835405027fe7c76"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "e36318490fe227aa",
+   "values_fnv1a": "e36318490fe227aa",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "603580fa1384135f",
+   "values_fnv1a": "603580fa1384135f"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "c80587a7764884a8",
+   "values_fnv1a": "52e2788ee75313e0",
+   "differing_from_reference": 2356,
+   "of_which_nan_pairs": 2356
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "c80587a7764884a8",
+   "values_fnv1a": "52e2788ee75313e0"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "99d0dc4c4a819dc0",
+   "values_fnv1a": "ada3dea67f96f5e5",
+   "differing_from_reference": 1157,
+   "of_which_nan_pairs": 1157
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 2,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "99d0dc4c4a819dc0",
+   "values_fnv1a": "ada3dea67f96f5e5"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "9553f7fbadeed4b5",
+   "values_fnv1a": "9553f7fbadeed4b5",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "6c561b700093b4c3",
+   "values_fnv1a": "6c561b700093b4c3"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "3e833ad310b3bca5",
+   "values_fnv1a": "3e833ad310b3bca5",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "20a159a8496cdd39",
+   "values_fnv1a": "20a159a8496cdd39"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "74712230124425bc",
+   "values_fnv1a": "608dd72d5b4eb998",
+   "differing_from_reference": 13482,
+   "of_which_nan_pairs": 13482
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "7d3fb8268b2bcb2a",
+   "values_fnv1a": "a716664f298262ea"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "30c9c8bff042e71d",
+   "values_fnv1a": "4a7baf18de6fb918",
+   "differing_from_reference": 11507,
+   "of_which_nan_pairs": 11507
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 3,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "875562357de3f5a3",
+   "values_fnv1a": "a5ec0b273c8f4e2e"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "64a468eecf1fd541",
+   "values_fnv1a": "64a468eecf1fd541",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "7a7269b350f85cab",
+   "values_fnv1a": "7a7269b350f85cab"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "1985c4d53f206525",
+   "values_fnv1a": "1985c4d53f206525",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "9e0b36b37daeac8d",
+   "values_fnv1a": "9e0b36b37daeac8d"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "ecfa24a637037d11",
+   "values_fnv1a": "a136ba935baa13d1",
+   "differing_from_reference": 9440,
+   "of_which_nan_pairs": 9440
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "ecfa24a637037d11",
+   "values_fnv1a": "a136ba935baa13d1"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "573d661c20316808",
+   "values_fnv1a": "89667faac649f8d5",
+   "differing_from_reference": 22506,
+   "of_which_nan_pairs": 22506
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 4,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "2528bdd24e7952e1",
+   "values_fnv1a": "a6ccea30cf17f2ac"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "13f07131e498702d",
+   "values_fnv1a": "13f07131e498702d",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "13f07131e498702d",
+   "values_fnv1a": "13f07131e498702d"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "9f14da5c4f86d2e8",
+   "values_fnv1a": "9f14da5c4f86d2e8",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "2f6f3ff8486e674a",
+   "values_fnv1a": "2f6f3ff8486e674a"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "d6785958851561ef",
+   "values_fnv1a": "b6ccf2bf4a83d28e",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "d6785958851561ef",
+   "values_fnv1a": "b6ccf2bf4a83d28e"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "58c3e4d5012d602a",
+   "values_fnv1a": "03a9f42fb33da04f",
+   "differing_from_reference": 243,
+   "of_which_nan_pairs": 243
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 5,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "58c3e4d5012d602a",
+   "values_fnv1a": "03a9f42fb33da04f"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "2a898a89c36c3b95",
+   "values_fnv1a": "2a898a89c36c3b95",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "2a898a89c36c3b95",
+   "values_fnv1a": "2a898a89c36c3b95"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "ab3b277b60a5940c",
+   "values_fnv1a": "ab3b277b60a5940c",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "e917b119e644cd5a",
+   "values_fnv1a": "e917b119e644cd5a"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "cfed31f6cca051cf",
+   "values_fnv1a": "ba21669af6d998cf",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "552414858736d6cd",
+   "values_fnv1a": "9b3230c3771037cd"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "cf325a5b99b2852d",
+   "values_fnv1a": "826030c3913fc7ad",
+   "differing_from_reference": 48,
+   "of_which_nan_pairs": 48
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 6,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "f903b04a895842c4",
+   "values_fnv1a": "dc2209dca74f5344"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "51b5c649102426dc",
+   "values_fnv1a": "51b5c649102426dc",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "a2779891c75db0e3",
+   "values_fnv1a": "a2779891c75db0e3"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "0ffa9705c5422bf4",
+   "values_fnv1a": "0ffa9705c5422bf4",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "2da2c231493eced2",
+   "values_fnv1a": "2da2c231493eced2"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "39f23bd0d0f9460b",
+   "values_fnv1a": "3d23163aca3c073e",
+   "differing_from_reference": 6129,
+   "of_which_nan_pairs": 6129
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "f8f15d391f6ebe01",
+   "values_fnv1a": "343b07da3bdacf50"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "947e832cd350b7a3",
+   "values_fnv1a": "2dc1f8e5fabd8283",
+   "differing_from_reference": 16617,
+   "of_which_nan_pairs": 16617
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 7,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "947e832cd350b7a3",
+   "values_fnv1a": "2dc1f8e5fabd8283"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "56d8995f50be737a",
+   "values_fnv1a": "56d8995f50be737a",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "52d94ee842673074",
+   "values_fnv1a": "52d94ee842673074"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "8742ce015b1bfa23",
+   "values_fnv1a": "8742ce015b1bfa23",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "c71ed691af173414",
+   "values_fnv1a": "c71ed691af173414"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "ac38946d868f0c0e",
+   "values_fnv1a": "1f71053374c2eda7",
+   "differing_from_reference": 8358,
+   "of_which_nan_pairs": 8358
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "3e2e150be50bc14e",
+   "values_fnv1a": "4b93eb08f2770833"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "e81bfe373c4439e0",
+   "values_fnv1a": "97235aaa4b905644",
+   "differing_from_reference": 7885,
+   "of_which_nan_pairs": 7885
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 8,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "e81bfe373c4439e0",
+   "values_fnv1a": "97235aaa4b905644"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "973bd49000fcf5f2",
+   "values_fnv1a": "973bd49000fcf5f2",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "33b8057d5484f7c4",
+   "values_fnv1a": "33b8057d5484f7c4"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "198003198f51937f",
+   "values_fnv1a": "198003198f51937f",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "edd65fb90c0f035b",
+   "values_fnv1a": "edd65fb90c0f035b"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "b8ffefc3ece7c68b",
+   "values_fnv1a": "a480a386ccf45f83",
+   "differing_from_reference": 3950,
+   "of_which_nan_pairs": 3950
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "b8ffefc3ece7c68b",
+   "values_fnv1a": "a480a386ccf45f83"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "599bb906882f4255",
+   "values_fnv1a": "14f19f060c6422c8",
+   "differing_from_reference": 2924,
+   "of_which_nan_pairs": 2924
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 9,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "db29890f321ad950",
+   "values_fnv1a": "df11226c879cb7b9"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "5dd65ab5c0346965",
+   "values_fnv1a": "5dd65ab5c0346965",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "ad3c7ab0392953f0",
+   "values_fnv1a": "ad3c7ab0392953f0"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "4c744e3710d4e4d3",
+   "values_fnv1a": "4c744e3710d4e4d3",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "945fb5740c046e6d",
+   "values_fnv1a": "945fb5740c046e6d"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "c75c111bfdb18b65",
+   "values_fnv1a": "b42ec8274ff874f0",
+   "differing_from_reference": 6950,
+   "of_which_nan_pairs": 6950
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "768fb06aedb3a19f",
+   "values_fnv1a": "97f7448ce71b8cee"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "9f6ab912cf7f4045",
+   "values_fnv1a": "08556bebcc8f84d9",
+   "differing_from_reference": 4224,
+   "of_which_nan_pairs": 4224
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 10,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "4f5b2e2211c23af9",
+   "values_fnv1a": "e0112059dfbc12a9"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "3c24381e0aef33a0",
+   "values_fnv1a": "3c24381e0aef33a0",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "20d62ab816dbd1b2",
+   "values_fnv1a": "20d62ab816dbd1b2"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "408bfc976255e4a8",
+   "values_fnv1a": "408bfc976255e4a8",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "d2a4a6bc3922656e",
+   "values_fnv1a": "d2a4a6bc3922656e"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "516722cc57d2f4fe",
+   "values_fnv1a": "511ec3a03f26ce87",
+   "differing_from_reference": 13201,
+   "of_which_nan_pairs": 13201
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "516722cc57d2f4fe",
+   "values_fnv1a": "511ec3a03f26ce87"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "dc266b62fe356507",
+   "values_fnv1a": "481c76bf330f1a06",
+   "differing_from_reference": 24700,
+   "of_which_nan_pairs": 24700
+  },
+  {
+   "tree": "attn7",
+   "compiler": "gcc",
+   "shape": 11,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "dc266b62fe356507",
+   "values_fnv1a": "481c76bf330f1a06"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "ea3cac5c65b1c365",
+   "values_fnv1a": "ea3cac5c65b1c365",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "037b6329d09964c1",
+   "values_fnv1a": "037b6329d09964c1"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "cd27f6d0aa277f14",
+   "values_fnv1a": "cd27f6d0aa277f14",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "02d87c0c31703e40",
+   "values_fnv1a": "02d87c0c31703e40"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "57c9b1ecf12274d7",
+   "values_fnv1a": "6c99196d3578403a",
+   "differing_from_reference": 51835,
+   "of_which_nan_pairs": 51835
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "1172b91b5ebf6aee",
+   "values_fnv1a": "0c5063b67eae7e33"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "6940726f5389e493",
+   "values_fnv1a": "23484d09b4388f7b",
+   "differing_from_reference": 35345,
+   "of_which_nan_pairs": 35345
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 0,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "3c37e41f7252233b",
+   "values_fnv1a": "d9807a6df6ca61fb"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "47ae861b4fac8b57",
+   "values_fnv1a": "47ae861b4fac8b57",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "e9652c73defb0ed2",
+   "values_fnv1a": "e9652c73defb0ed2"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "cf16371b02c03c8d",
+   "values_fnv1a": "cf16371b02c03c8d",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "c66f2920cd5fdcc3",
+   "values_fnv1a": "c66f2920cd5fdcc3"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "9a47b05e2614de20",
+   "values_fnv1a": "a52e999f0e086388",
+   "differing_from_reference": 5619,
+   "of_which_nan_pairs": 5619
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "51c99ffd60bcc5f2",
+   "values_fnv1a": "824dcb29503acf86"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "794651beacf48247",
+   "values_fnv1a": "35230d0f300e131b",
+   "differing_from_reference": 12542,
+   "of_which_nan_pairs": 12542
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 1,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "cbf5f9e4151565b5",
+   "values_fnv1a": "632bdb4f51615df9"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "8a827dce410cf399",
+   "values_fnv1a": "8a827dce410cf399",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "2835405027fe7c76",
+   "values_fnv1a": "2835405027fe7c76"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "e36318490fe227aa",
+   "values_fnv1a": "e36318490fe227aa",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "603580fa1384135f",
+   "values_fnv1a": "603580fa1384135f"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "878f3147e9106544",
+   "values_fnv1a": "52e2788ee75313e0",
+   "differing_from_reference": 1876,
+   "of_which_nan_pairs": 1876
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "878f3147e9106544",
+   "values_fnv1a": "52e2788ee75313e0"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "fe75997460ecf33d",
+   "values_fnv1a": "ada3dea67f96f5e5",
+   "differing_from_reference": 1109,
+   "of_which_nan_pairs": 1109
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 2,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "fe75997460ecf33d",
+   "values_fnv1a": "ada3dea67f96f5e5"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "9553f7fbadeed4b5",
+   "values_fnv1a": "9553f7fbadeed4b5",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "6c561b700093b4c3",
+   "values_fnv1a": "6c561b700093b4c3"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "3e833ad310b3bca5",
+   "values_fnv1a": "3e833ad310b3bca5",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "20a159a8496cdd39",
+   "values_fnv1a": "20a159a8496cdd39"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "1e2207792c8c3774",
+   "values_fnv1a": "608dd72d5b4eb998",
+   "differing_from_reference": 15015,
+   "of_which_nan_pairs": 15015
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "0a7cc71228d8ce46",
+   "values_fnv1a": "a716664f298262ea"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "49100bec364d799d",
+   "values_fnv1a": "4a7baf18de6fb918",
+   "differing_from_reference": 11507,
+   "of_which_nan_pairs": 11507
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 3,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "cb4eba51bddfc923",
+   "values_fnv1a": "a5ec0b273c8f4e2e"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "64a468eecf1fd541",
+   "values_fnv1a": "64a468eecf1fd541",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "7a7269b350f85cab",
+   "values_fnv1a": "7a7269b350f85cab"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "1985c4d53f206525",
+   "values_fnv1a": "1985c4d53f206525",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "9e0b36b37daeac8d",
+   "values_fnv1a": "9e0b36b37daeac8d"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "a9ff24372a900851",
+   "values_fnv1a": "a136ba935baa13d1",
+   "differing_from_reference": 15190,
+   "of_which_nan_pairs": 15190
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "a9ff24372a900851",
+   "values_fnv1a": "a136ba935baa13d1"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "85333a28d752e5ec",
+   "values_fnv1a": "89667faac649f8d5",
+   "differing_from_reference": 19691,
+   "of_which_nan_pairs": 19691
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 4,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "de9d9bf921e2c9c5",
+   "values_fnv1a": "a6ccea30cf17f2ac"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "13f07131e498702d",
+   "values_fnv1a": "13f07131e498702d",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "13f07131e498702d",
+   "values_fnv1a": "13f07131e498702d"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "9f14da5c4f86d2e8",
+   "values_fnv1a": "9f14da5c4f86d2e8",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "2f6f3ff8486e674a",
+   "values_fnv1a": "2f6f3ff8486e674a"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "d6785958851561ef",
+   "values_fnv1a": "b6ccf2bf4a83d28e",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "d6785958851561ef",
+   "values_fnv1a": "b6ccf2bf4a83d28e"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "a65598c6aa7bf1c3",
+   "values_fnv1a": "03a9f42fb33da04f",
+   "differing_from_reference": 322,
+   "of_which_nan_pairs": 322
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 5,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "a65598c6aa7bf1c3",
+   "values_fnv1a": "03a9f42fb33da04f"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "2a898a89c36c3b95",
+   "values_fnv1a": "2a898a89c36c3b95",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "2a898a89c36c3b95",
+   "values_fnv1a": "2a898a89c36c3b95"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "ab3b277b60a5940c",
+   "values_fnv1a": "ab3b277b60a5940c",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "e917b119e644cd5a",
+   "values_fnv1a": "e917b119e644cd5a"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "cfed31f6cca051cf",
+   "values_fnv1a": "ba21669af6d998cf",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "552414858736d6cd",
+   "values_fnv1a": "9b3230c3771037cd"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "cf325a5b99b2852d",
+   "values_fnv1a": "826030c3913fc7ad",
+   "differing_from_reference": 48,
+   "of_which_nan_pairs": 48
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 6,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "f903b04a895842c4",
+   "values_fnv1a": "dc2209dca74f5344"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "51b5c649102426dc",
+   "values_fnv1a": "51b5c649102426dc",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "a2779891c75db0e3",
+   "values_fnv1a": "a2779891c75db0e3"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "0ffa9705c5422bf4",
+   "values_fnv1a": "0ffa9705c5422bf4",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "2da2c231493eced2",
+   "values_fnv1a": "2da2c231493eced2"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "55cdaba1a0c3d9a2",
+   "values_fnv1a": "3d23163aca3c073e",
+   "differing_from_reference": 5404,
+   "of_which_nan_pairs": 5404
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "101e4899a61bb61c",
+   "values_fnv1a": "343b07da3bdacf50"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "122c9a4010584ceb",
+   "values_fnv1a": "2dc1f8e5fabd8283",
+   "differing_from_reference": 13876,
+   "of_which_nan_pairs": 13876
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 7,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "122c9a4010584ceb",
+   "values_fnv1a": "2dc1f8e5fabd8283"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "56d8995f50be737a",
+   "values_fnv1a": "56d8995f50be737a",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "52d94ee842673074",
+   "values_fnv1a": "52d94ee842673074"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "8742ce015b1bfa23",
+   "values_fnv1a": "8742ce015b1bfa23",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "c71ed691af173414",
+   "values_fnv1a": "c71ed691af173414"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "8fd61514a34aa07a",
+   "values_fnv1a": "1f71053374c2eda7",
+   "differing_from_reference": 14341,
+   "of_which_nan_pairs": 14341
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "980e49cc1178afba",
+   "values_fnv1a": "4b93eb08f2770833"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "b92a0f51086782bc",
+   "values_fnv1a": "97235aaa4b905644",
+   "differing_from_reference": 7042,
+   "of_which_nan_pairs": 7042
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 8,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "b92a0f51086782bc",
+   "values_fnv1a": "97235aaa4b905644"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "973bd49000fcf5f2",
+   "values_fnv1a": "973bd49000fcf5f2",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "33b8057d5484f7c4",
+   "values_fnv1a": "33b8057d5484f7c4"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "198003198f51937f",
+   "values_fnv1a": "198003198f51937f",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "edd65fb90c0f035b",
+   "values_fnv1a": "edd65fb90c0f035b"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "5174de84b2473f33",
+   "values_fnv1a": "a480a386ccf45f83",
+   "differing_from_reference": 3085,
+   "of_which_nan_pairs": 3085
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "5174de84b2473f33",
+   "values_fnv1a": "a480a386ccf45f83"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "8615c0df2ea4aa68",
+   "values_fnv1a": "14f19f060c6422c8",
+   "differing_from_reference": 3555,
+   "of_which_nan_pairs": 3555
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 9,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "cc41b376a67292dd",
+   "values_fnv1a": "df11226c879cb7b9"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "5dd65ab5c0346965",
+   "values_fnv1a": "5dd65ab5c0346965",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "ad3c7ab0392953f0",
+   "values_fnv1a": "ad3c7ab0392953f0"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "4c744e3710d4e4d3",
+   "values_fnv1a": "4c744e3710d4e4d3",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "945fb5740c046e6d",
+   "values_fnv1a": "945fb5740c046e6d"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "8e1fbe414acbd6bd",
+   "values_fnv1a": "b42ec8274ff874f0",
+   "differing_from_reference": 5881,
+   "of_which_nan_pairs": 5881
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "9c309f2b783f8833",
+   "values_fnv1a": "97f7448ce71b8cee"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "a3e0df12318d9248",
+   "values_fnv1a": "08556bebcc8f84d9",
+   "differing_from_reference": 3292,
+   "of_which_nan_pairs": 3292
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 10,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "2a23709a53c34db4",
+   "values_fnv1a": "e0112059dfbc12a9"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 0,
+   "softmax": "v1",
+   "raw_fnv1a": "3c24381e0aef33a0",
+   "values_fnv1a": "3c24381e0aef33a0",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 0,
+   "softmax": "v2",
+   "raw_fnv1a": "20d62ab816dbd1b2",
+   "values_fnv1a": "20d62ab816dbd1b2"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 1,
+   "softmax": "v1",
+   "raw_fnv1a": "408bfc976255e4a8",
+   "values_fnv1a": "408bfc976255e4a8",
+   "differing_from_reference": 0,
+   "of_which_nan_pairs": 0
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 1,
+   "softmax": "v2",
+   "raw_fnv1a": "d2a4a6bc3922656e",
+   "values_fnv1a": "d2a4a6bc3922656e"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 2,
+   "softmax": "v1",
+   "raw_fnv1a": "c91d9bd73fa3c73e",
+   "values_fnv1a": "511ec3a03f26ce87",
+   "differing_from_reference": 10828,
+   "of_which_nan_pairs": 10828
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 2,
+   "softmax": "v2",
+   "raw_fnv1a": "c91d9bd73fa3c73e",
+   "values_fnv1a": "511ec3a03f26ce87"
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 3,
+   "softmax": "v1",
+   "raw_fnv1a": "20b8d0fe30b3689e",
+   "values_fnv1a": "481c76bf330f1a06",
+   "differing_from_reference": 19424,
+   "of_which_nan_pairs": 19424
+  },
+  {
+   "tree": "attn7",
+   "compiler": "clang",
+   "shape": 11,
+   "set": 3,
+   "softmax": "v2",
+   "raw_fnv1a": "20b8d0fe30b3689e",
+   "values_fnv1a": "481c76bf330f1a06"
+  }
+ ]
+}

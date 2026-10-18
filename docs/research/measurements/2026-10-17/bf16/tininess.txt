@@ -1,0 +1,2 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 17cff8d, runtime/c against it 9aac2c5875c2c9f1
+underflow-boundary lanes: 1024000 outputs; new model 1024000, old model 512002, vfmadd FTZ|DAZ replay 1024000 match AMX; new!=old on 511998

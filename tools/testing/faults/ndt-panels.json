@@ -1,0 +1,257 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23",
+    "bcir.tests.test_native_decoder:test_the_bf16_panels_keep_every_state"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN1 the A panel's tile rows 16 lanes apart",
+      "new": "  return ((i/16)*(depth/32)+l/32)*BF16_TILE+(i%16)*16+l%32;",
+      "old": "  return ((i/16)*(depth/32)+l/32)*BF16_TILE+(i%16)*32+l%32;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN2 the portable second panel interleaving each pair odd row first",
+      "new": "    if (j->at) j->pb[k][panel_a_at(j->r,l,r0+rr)]=h; else j->pb[k][panel_b_at(j->r,r0+(rr^1),l)]=h;",
+      "old": "    if (j->at) j->pb[k][panel_a_at(j->r,l,r0+rr)]=h; else j->pb[k][panel_b_at(j->r,r0+rr,l)]=h;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN3 the portable A^T placed as B",
+      "new": "    if (j->at) j->pb[k][panel_b_at(j->r,r0+rr,l)]=h; else j->pb[k][panel_b_at(j->r,r0+rr,l)]=h;",
+      "old": "    if (j->at) j->pb[k][panel_a_at(j->r,l,r0+rr)]=h; else j->pb[k][panel_b_at(j->r,r0+rr,l)]=h;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN4 the vector second panel taking the odd row of each pair first",
+      "new": "      const uint16_t *o=j->pa[k]+panel_a_at(j->c,r0+2*p,16*jb),*e=j->pa[k]+panel_a_at(j->c,r0+2*p+1,16*jb);",
+      "old": "      const uint16_t *e=j->pa[k]+panel_a_at(j->c,r0+2*p,16*jb),*o=j->pa[k]+panel_a_at(j->c,r0+2*p+1,16*jb);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN5 the vector A^T's tile rows eight words apart",
+      "new": "    if (j->at) kb512_transpose16(wd,16,(float *)(void *)(j->pb[k]+panel_a_at(j->r,16*jb,r0)),8);",
+      "old": "    if (j->at) kb512_transpose16(wd,16,(float *)(void *)(j->pb[k]+panel_a_at(j->r,16*jb,r0)),16);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN6 the vector A panel storing a segment's two halves swapped",
+      "new": "    _mm512_storeu_si512(j->pa[k]+panel_a_at(j->c,i,c0+q),CVT(_mm512_loadu_ps(v+q+16),_mm512_loadu_ps(v+q))); \\",
+      "old": "    _mm512_storeu_si512(j->pa[k]+panel_a_at(j->c,i,c0+q),CVT(_mm512_loadu_ps(v+q),_mm512_loadu_ps(v+q+16))); \\",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN7 the writers' verdict keeping the last row's alone",
+      "new": "      if (j->bad) bad=!span_finite_run(j->variant,v0,w);",
+      "old": "      if (j->bad) bad|=!span_finite_run(j->variant,v0,w);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN8 the writers' verdict reading a row's first segment only",
+      "new": "      if (j->bad && !c0) bad|=!span_finite_run(j->variant,v0,w);",
+      "old": "      if (j->bad) bad|=!span_finite_run(j->variant,v0,w);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN9 the last task's last 32-row block never written",
+      "new": "  size_t b1=b0+j->per<nb ? b0+j->per : nb-1; int two=j->op>=PANEL_SWIGLU1,bad=0;",
+      "old": "  size_t b1=b0+j->per<nb ? b0+j->per : nb; int two=j->op>=PANEL_SWIGLU1,bad=0;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN10 a row's columns cut at the first segment of 1024",
+      "new": "    for (rr=0;rr<32;rr++) for (c0=0;c0<j->c && c0<PANEL_COLS;c0+=PANEL_COLS) {",
+      "old": "    for (rr=0;rr<32;rr++) for (c0=0;c0<j->c;c0+=PANEL_COLS) {",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN11 the v1 SiLU product reassociated",
+      "new": "    case PANEL_SILU1: for (q=0;q<w;q++) { float s=sigmoid(j->x[o+q])*j->u[o+q]; v0[q]=s*j->x[o+q]; } break;",
+      "old": "    case PANEL_SILU1: for (q=0;q<w;q++) { float s=j->x[o+q]*sigmoid(j->x[o+q]); v0[q]=s*j->u[o+q]; } break;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN12 the forward's writer taking v1's SiLU under v2",
+      "new": "  memset(&j,0,sizeof j); j.r=r; j.c=c; j.op=PANEL_SILU1; j.x=x; j.u=u;",
+      "old": "  memset(&j,0,sizeof j); j.r=r; j.c=c; j.op=v2 ? PANEL_SILU2 : PANEL_SILU1; j.x=x; j.u=u;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN13 the VJP's writer taking v1's VJP under v2",
+      "new": "  memset(&j,0,sizeof j); j.r=r; j.c=c; j.op=PANEL_SWIGLU1; j.x=g; j.u=u;",
+      "old": "  memset(&j,0,sizeof j); j.r=r; j.c=c; j.op=v2 ? PANEL_SWIGLU2 : PANEL_SWIGLU1; j.x=g; j.u=u;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN14 the VJP's second panels written as B",
+      "new": "  j.dy=dy; j.pa[0]=dga; j.pb[0]=dgt; j.pa[1]=dua; j.pb[1]=dut; j.at=0;",
+      "old": "  j.dy=dy; j.pa[0]=dga; j.pb[0]=dgt; j.pa[1]=dua; j.pb[1]=dut; j.at=1;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN15 a writer admitting columns off the 32 grid",
+      "new": "  if (j->r%32) return 0;",
+      "old": "  if (j->r%32 || j->c%32) return 0;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN16 a panel's GEMM admitting columns off the 32 grid",
+      "new": "  return x->m && x->n && x->k && !(x->m%32) && !(x->k%32);",
+      "old": "  return x->m && x->n && x->k && !(x->m%32) && !(x->n%32) && !(x->k%32);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN17 a panel's GEMM admitting a depth off the 32 grid",
+      "new": "  return x->m && x->n && x->k && !(x->m%32) && !(x->n%32);",
+      "old": "  return x->m && x->n && x->k && !(x->m%32) && !(x->n%32) && !(x->k%32);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN18 a panel's group packing its other operand into no workspace",
+      "new": "  grouped=nchain<=BCIR_TENSOR_MM_GROUP && ny<=BCIR_TENSOR_MM_GROUP && need<=bytes;",
+      "old": "  grouped=nchain<=BCIR_TENSOR_MM_GROUP && ny<=BCIR_TENSOR_MM_GROUP && need<=bytes && (workspace || !need);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN19 a panel's group run call by call when it does not fit",
+      "new": "    if (0) return 0;  /* a call a panel feeds runs whole, in the one job */",
+      "old": "    if (panels) return 0;  /* a call a panel feeds runs whole, in the one job */",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN20 a later call sharing an earlier call's A panel",
+      "new": "      if (bf16_packs(bf16_nth(chain,nchain,y,r)) &&",
+      "old": "      if (!(pre && pre[r].a) && bf16_packs(bf16_nth(chain,nchain,y,r)) &&",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN21 a later call sharing an earlier call's B panel",
+      "new": "      if (bf16_packs(bf16_nth(chain,nchain,y,r)) &&",
+      "old": "      if (!(pre && pre[r].b) && bf16_packs(bf16_nth(chain,nchain,y,r)) &&",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN22 the group's workspace leaving out a pack an earlier panel cannot share",
+      "new": "        sa|=bf16_same_a(w,x); sb|=!(pre && pre[r].b) && bf16_same_b(w,x);",
+      "old": "        sa|=!(pre && pre[r].a) && bf16_same_a(w,x); sb|=!(pre && pre[r].b) && bf16_same_b(w,x);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN23 the trainer's predicate forgetting the model's width",
+      "new": "    !(g.n%32) && !(g.f%32) && !((uintptr_t)a%64) && !((uintptr_t)b%64);",
+      "old": "    !(g.n%32) && !(g.d%32) && !(g.f%32) && !((uintptr_t)a%64) && !((uintptr_t)b%64);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN24 the trainer's predicate forgetting the slot's alignment",
+      "new": "    !(g.n%32) && !(g.d%32) && !(g.f%32);",
+      "old": "    !(g.n%32) && !(g.d%32) && !(g.f%32) && !((uintptr_t)a%64) && !((uintptr_t)b%64);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN25 the forward's down projection reading the hidden activation's B panel as A",
+      "new": "      pre.a=panel_of(a.hidden)+g.nf; pre.b=NULL;",
+      "old": "      pre.a=panel_of(a.hidden); pre.b=NULL;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_bf16_panels_keep_every_state",
+      "label": "PN26 the down projection's weight adjoint reading the hidden activation's A panel as B",
+      "new": "      pre[0].a=NULL; pre[0].b=NULL; pre[1].a=NULL; pre[1].b=panel_of(a.hidden);",
+      "old": "      pre[0].a=NULL; pre[0].b=NULL; pre[1].a=NULL; pre[1].b=panel_of(a.hidden)+g.nf;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN27 the gate and up weight adjoints reading their adjoints' A panels as A^T",
+      "new": "        pre[q].a=panel_of(slot); pre[q].b=NULL; pre[2+q].a=panel_of(slot); pre[2+q].b=NULL;",
+      "old": "        pre[q].a=panel_of(slot); pre[q].b=NULL; pre[2+q].a=panel_of(slot)+g.nf; pre[2+q].b=NULL;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN28 the gate's adjoint left out of the residual's (the chain starting twice)",
+      "new": "        cx[q].b=q ? p.up : p.gate; cx[q].beta=0.0f; cx[q].c=dn;",
+      "old": "        cx[q].b=q ? p.up : p.gate; cx[q].beta=q ? 1.0f : 0.0f; cx[q].c=dn;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN29 the panels' VJP writer always taking v1's VJP in the trainer",
+      "new": "      (void)bcir_tensor_swiglu_backward_panels_pool(s->pool,0,g.n,g.f,a.gate,a.up,dh,",
+      "old": "      (void)bcir_tensor_swiglu_backward_panels_pool(s->pool,swiglu_v2(s),g.n,g.f,a.gate,a.up,dh,",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN30 the panels' forward writer always taking v1's SiLU in the trainer",
+      "new": "      (void)bcir_tensor_silu_mul_panels_pool(s->pool,0,g.n,g.f,a.gate,a.up,",
+      "old": "      (void)bcir_tensor_silu_mul_panels_pool(s->pool,swiglu_v2(s),g.n,g.f,a.gate,a.up,",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN31 the panels' down projection weight adjoint adding into the gradient it first writes",
+      "new": "      cw.beta=1.0f; cw.c=grad.down;",
+      "old": "      cw.beta=wb; cw.c=grad.down;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN32 the panels' gate and up weight adjoints adding into the gradients they first write",
+      "new": "        cw[q].b=a.n2; cw[q].beta=1.0f; cw[q].c=q ? grad.up : grad.gate;",
+      "old": "        cw[q].b=a.n2; cw[q].beta=wb; cw[q].c=q ? grad.up : grad.gate;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN33 an A panel's call admitted at an alpha other than 1",
+      "new": "      if (!bf16_whole(x)) return 0;",
+      "old": "      if (!bf16_whole(x) || (pre[q].a && x->alpha!=1.0f)) return 0;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PN34 the portable writer storing a NaN element as a signaling NaN",
+      "new": "  for (q=0;q<w;q++) { uint16_t h=bf16_of(v[q]); j->pa[k][panel_a_at(j->c,i,c0+q)]=(uint16_t)((h&0x7fc0u)==0x7fc0u ? ((h&0xffbfu)|1u) : h); }",
+      "old": "  for (q=0;q<w;q++) j->pa[k][panel_a_at(j->c,i,c0+q)]=bf16_of(v[q]);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PK1 the AMX kernel streaming the first B tile of a depth tile into both B tiles",
+      "new": "      _tile_stream_loadd(6,b0+q*BF16_TILE,64); _tile_stream_loadd(7,b0+q*BF16_TILE,64);",
+      "old": "      _tile_stream_loadd(6,b0+q*BF16_TILE,64); _tile_stream_loadd(7,b1+q*BF16_TILE,64);",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}
