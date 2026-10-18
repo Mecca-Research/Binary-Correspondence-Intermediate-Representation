@@ -178,6 +178,34 @@
       "new": "      if (!napped && sh->window_us && 0) {\n",
       "old": "      if (!napped && sh->window_us && __atomic_load_n(&sh->window_open, __ATOMIC_ACQUIRE)) {\n",
       "path": "runtime/c/test_ring.c"
+    },
+    {
+      "expects": "ring.concurrent.violations",
+      "label": "C ring harness: the first producer never parks, so a late kill finds it done and detached and the successor's takeover is refused",
+      "new": "    procs_producer(region, size, sh, 0, 1, records, seed, !kill_producer, records);\n",
+      "old": "    procs_producer(region, size, sh, 0, 1, records, seed, !kill_producer, kill_producer ? park_at : records);\n",
+      "path": "runtime/c/test_ring.c"
+    },
+    {
+      "expects": "ring.concurrent.violations",
+      "label": "C ring harness: the first consumer never parks, so a late kill finds the stream drained and its successor nothing to take over",
+      "new": "  if (consumer == 0) procs_consumer(region, size, sh, 0, seed, records, UINT64_MAX);\n",
+      "old": "  if (consumer == 0) procs_consumer(region, size, sh, 0, seed, records, kill_producer ? UINT64_MAX : park_at);\n",
+      "path": "runtime/c/test_ring.c"
+    },
+    {
+      "expects": "ring.concurrent.violations",
+      "label": "C ring harness: the supervisor ignores the declared kill delay, so a late run kills before its peer parks",
+      "new": "    kill(producer, SIGKILL);\n",
+      "old": "    if (late_us) sleep_us(late_us);\n    kill(producer, SIGKILL);\n",
+      "path": "runtime/c/test_ring.c"
+    },
+    {
+      "expects": "ring.concurrent.violations",
+      "label": "the late kill is never passed to the harness, so the late-kill interleaving is left to preemption",
+      "new": "        delay = []\n",
+      "old": "        delay = list(late)\n",
+      "path": "bcir/tests/ring_fixtures.py"
     }
   ]
 }

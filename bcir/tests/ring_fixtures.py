@@ -1433,6 +1433,14 @@ def parse_c_envelope(line: str) -> tuple[TelemetryEnvelope | None, bytes, str]:
 # run, not only when a busy host preempts it there (the race AArch64 CI hit once).
 DRAIN_WINDOW_US = 150000
 
+# The late kill (runtime/c/test_ring.c, `run_procs` and `park`): the supervisor holds this long
+# between seeing the peer pass its mark and killing it, so the kill finds the peer parked three
+# quarters of the way through the stream. Without the park, a producer that finished first had
+# detached, and the successor's takeover was refused -- two violations with every record
+# delivered (the race a loaded CI runner hit once, `killed_at` equal to the records); a consumer
+# that drained the stream left its successor nothing to take over. Made to happen every run.
+LATE_KILL_US = 100000
+
 STRESS_RUNS = (
     ("--stress", "bp"),
     ("--stress", "ow"),
@@ -1442,6 +1450,8 @@ STRESS_RUNS = (
     ("--procs", "kill-consumer", "ow"),
     ("--procs", "kill-producer", "ow", f"window={DRAIN_WINDOW_US}"),
     ("--procs", "kill-consumer", "ow", f"window={DRAIN_WINDOW_US}"),
+    ("--procs", "kill-producer", "bp", f"late={LATE_KILL_US}"),
+    ("--procs", "kill-consumer", "bp", f"late={LATE_KILL_US}"),
 )
 
 
@@ -1453,10 +1463,13 @@ def c_concurrent(
     the host has no POSIX threads/processes (exit 3: UNAVAILABLE, measured by CI's Linux jobs)."""
     out = []
     for run_args in STRESS_RUNS:
-        lead = [arg for arg in run_args if not arg.startswith("window=")]
+        lead = [arg for arg in run_args if "=" not in arg]
         declared = [arg.split("=", 1)[1] for arg in run_args if arg.startswith("window=")]
+        late = [arg.split("=", 1)[1] for arg in run_args if arg.startswith("late=")]
         window = list(declared)
-        argv = [exe, *lead, str(records), str(seed), *window]
+        delay = list(late)
+        # the harness takes the delay after the window: a late run without one passes window 0
+        argv = [exe, *lead, str(records), str(seed), *(window or (["0"] if delay else [])), *delay]
         try:
             run = _run(argv, timeout=300)
         except RuntimeError as exc:
@@ -1470,6 +1483,9 @@ def c_concurrent(
             violations = int(fields["violations"])
             # A window run must have run with the window it declares, and slept in it (L2).
             if declared and (fields["window_us"] != declared[0] or int(fields["window_naps"]) < 1):
+                violations = max(violations, 1)
+            # A late run must have run with the delay it declares, and killed its peer parked (L2).
+            if late and (fields["late_us"] != late[0] or fields["parked"] != "1"):
                 violations = max(violations, 1)
         except (KeyError, ValueError):
             violations = 1

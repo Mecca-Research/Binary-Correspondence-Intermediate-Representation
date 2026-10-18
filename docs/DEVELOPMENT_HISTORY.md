@@ -3015,6 +3015,21 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     3.4 ms) -- and the B pack's loops swapped (its tasks 9% faster, the step x1.019, 0.997-1.036) and the
     packs overlapped with the compute per call (x1.002) and per strip (x1.008) were within the noise:
     not kept ([measurements/2026-10-18/panels/packs/](research/measurements/2026-10-18/panels/packs/)).
+  RING-RACE (2026-10-18): the ring harness's late kill made to happen, and its killed peer parked.
+  - CI failed `test_ring.c --procs kill-producer bp` once with `killed_at=20000 ... violations=2`,
+    every record delivered: the supervisor, descheduled between seeing the producer pass half the
+    stream and killing it, killed it only after it had published the rest and detached, and the
+    successor's takeover of a detached producer is refused (`BCIR_ERR_STALE`: a takeover needs the
+    dead epoch still attached) -- two refusals, the successor's and its exit status. A `kill()` held
+    100 ms reproduced it on every run, `bp` and `ow` (the drain-window run 3: its window never opened).
+  - The killed peer now parks, alive and attached, three quarters of the way through the stream until
+    the SIGKILL lands (`park`): a producer that could finish would detach, and a consumer that drained
+    the stream left its successor nothing to take over. A run may declare a kill delay (`late_us`,
+    after the window); `STRESS_RUNS` adds a late kill of each peer, which must report its delay and
+    its peer parked or it is a violation (L2), so the interleaving happens on every run. Every late run
+    kills at 15,000 of 20,000 with no violation; the runs without a delay still kill mid-stream.
+  - `ring.json` gains four faults -- a producer and a consumer that never park, a supervisor that
+    ignores its delay, a fixture that never passes it -- 29 of 29 caught.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

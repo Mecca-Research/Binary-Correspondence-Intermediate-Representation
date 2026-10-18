@@ -435,6 +435,14 @@ two of the three new faults. The third, a harness that never opens its window, p
 check compared the report against the argv it built, which the fault had also emptied. The check now
 compares against the window the run declared. Faults: the late `stop` read, a consumer that never
 naps, a run that drops its window (`ring.json`, 25 of 25).
+Ring late-kill instance (2026-10-18): the same law, a second interleaving. A supervisor descheduled
+between seeing the producer pass half the stream and killing it let the producer finish and detach
+first, and the successor's takeover of a detached producer was rightly refused: CI hit it once, two
+violations with every record delivered. It too needed a preemption, so the killed peer now parks
+three quarters of the way through the stream, and a `--procs` run may declare a kill delay that puts
+the kill after the park on every run. A late run must report its delay and its peer parked, or the
+run is a violation. Faults: a producer and a consumer that never park, a supervisor that ignores its
+delay, a fixture that never passes it (`ring.json`, 29 of 29).
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
