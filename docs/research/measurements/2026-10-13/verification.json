@@ -1,0 +1,193 @@
+[
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "bcir/tests/test_native_decoder.py",
+      "bcir/tests/test_hosted_training_pipeline.py",
+      "bcir/tests/test_train_c_kernels.py"
+    ],
+    "exit_code": 1,
+    "name": "focused",
+    "seconds": 142.98470948500017,
+    "tail": "cts[\"bcir_tensor_mm_kblock\"] == (0, \"cblas:bcir_tensor_mm_kblock\")\n            assert verdicts[\"bcir_tensor_mm\"][1] == \"portable-c\"\n            assert f\"{cases} of {cases} GEMM cases differ\" in verdicts[\"bcir_tensor_mm\"][0]\n            assert f\"{cases // 2} of {cases} GEMM cases differ\" in verdicts[\"bcir_tensor_mm_fused\"][0]\n            try:\n                provider_mismatch(lib, None, ())\n            except ValueError:\n                pass\n            else:\n                raise AssertionError(\"an empty differential admitted a provider\")\n            trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_)\n            trainer.use_cblas_function(callback(\"bcir_tensor_mm\"), name=\"v1\")\n            assert trainer.backend == \"cblas:v1\" and trainer.provider_admission is None\n            trainer.close()\n            openblas = nf.openblas_library()\n            if openblas is None:\n                return  # the wheel is an experiment dependency, never BCIR's: a skip\n            trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,\n                                    contract=\"kblock\")  # fmt: skip\n            try:\n                trainer.use_cblas(openblas, symbol=\"scipy_cblas_sgemm\")\n            except ValueError as refusal:\n                assert \"not admitted\" in str(refusal) and trainer.backend == \"portable-c\"\n            else:\n                raise AssertionError(\"OpenBLAS admitted on products its small-matrix path computes\")\n            finally:\n                trainer.close()\n>           assert nf.provider_mismatch(lib) == 0  # the comparison decoder's shapes: admitted\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE           AssertionError: assert 14 == 0\nE            +  where 14 = <function provider_mismatch at 0x7f599ae7ede0>(<CDLL '/tmp/tmpduvihsds/bcir_decoder_train.so', handle 2bddee80 at 0x7f599ae87800>)\nE            +    where <function provider_mismatch at 0x7f599ae7ede0> = <module 'bcir.tests.native_decoder_fixtures' from '/workspace/scratch/d4904b8a62c3/BCIR/bcir/tests/native_decoder_fixtures.py'>.provider_mismatch\n\nbcir/tests/test_native_decoder.py:443: AssertionError\n=========================== short test summary info ============================\nFAILED bcir/tests/test_native_decoder.py::test_the_compiled_plan_and_gemm_are_the_programs\nFAILED bcir/tests/test_native_decoder.py::test_a_provider_is_admitted_under_the_blocked_contract_only_where_it_is_the_contract\n2 failed, 26 passed in 142.79s (0:02:22)\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "-m",
+      "bcir.tests.run_all",
+      "--tier",
+      "quick",
+      "-j",
+      "2"
+    ],
+    "exit_code": 0,
+    "name": "quick",
+    "seconds": 135.21636830199986,
+    "tail": "ls, 4 targets\nlaws: PASS (MK0-MK5)\nrun: 0 ran, 0 from the cache, 4 up to date, 0 failed, 0 skipped; 2 worker(s), 0.0 s\nusage: python -m bcir.tests.run_all [--tier TIER] [-j N] [--shard I/N]\n       python -m bcir.tests.run_all --list-tiers\nsafe default: at most 2 workers; -j0 or --jobs=auto opts into all cores\naudit_dependencies: FAIL mode=installed installed=0 excluded=0 missing_expected=[] advisory=UNAVAILABLE/SKIPPED\n\nPASS bcir.tests.test_red_sweep.test_every_committed_table_loads_and_anchors_exactly_once\nPASS bcir.tests.test_red_sweep.test_the_test_gate_is_unavailable_rather_than_vacuous\nPASS bcir.tests.test_red_sweep.test_the_test_gate_names_each_failing_test_as_a_finding\nPASS bcir.tests.test_red_sweep.test_the_wrong_check_firing_is_not_a_catch\nPASS bcir.tests.test_ubsan_witnesses.test_a_build_that_is_no_witness_passes_through_the_shim_untouched\nPASS bcir.tests.test_ubsan_witnesses.test_a_c23_witness_is_sanitized_by_an_engine_that_spells_c23_by_its_draft_name\nPASS bcir.tests.test_ubsan_witnesses.test_a_run_that_sanitizes_nothing_or_fails_a_test_is_no_pass\nPASS bcir.tests.test_ubsan_witnesses.test_a_shimmed_witness_fails_on_undefined_behaviour_and_runs_a_defined_one_unchanged\nPASS bcir.tests.test_ubsan_witnesses.test_a_witness_link_is_an_executable_built_from_sources_outside_the_repository\nPASS bcir.tests.test_ubsan_witnesses.test_a_witness_no_engine_can_build_is_recorded_unsanitized\nPASS bcir.tests.test_ubsan_witnesses.test_a_witness_whose_original_and_emit_overflow_alike_is_reported_by_every_engine\nPASS bcir.tests.test_ubsan_witnesses.test_a_witness_whose_original_discards_an_overflow_is_reported_by_the_gates_engines\nPASS bcir.tests.test_ubsan_witnesses.test_an_engine_that_builds_but_never_reports_is_no_engine\nPASS bcir.tests.test_ubsan_witnesses.test_no_ubsan_runtime_is_a_skip_unless_one_was_required\nPASS bcir.tests.test_ubsan_witnesses.test_shards_partition_the_witnesses_and_an_empty_or_malformed_shard_is_refused\nPASS bcir.tests.test_ubsan_witnesses.test_the_ci_job_that_installs_the_runtime_requires_it\nPASS bcir.tests.test_ubsan_witnesses.test_the_gate_fires_on_a_witness_whose_original_runs_undefined_behaviour\nPASS bcir.tests.test_ubsan_witnesses.test_the_sanitized_build_keeps_the_program_and_drops_only_optimisation_and_warnings\nPASS bcir.tests.test_registry_complete.test_every_registered_module_actually_yields_tests_to_the_runner\nPASS bcir.tests.test_registry_complete.test_every_test_file_on_disk_is_registered_and_vice_versa\n\n4562 passed, 0 failed\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/local/latest_toolchain.py",
+      "status"
+    ],
+    "exit_code": 1,
+    "name": "latest-status",
+    "seconds": 20.292386078000163,
+    "tail": "latest-toolchain: clang 23    installed -         (not found)  newest 23.1.3    (llvmorg-23.1.3)  MISSING\nlatest-toolchain: llvm 23     installed -         (not found)  newest 23.1.3    (llvmorg-23.1.3)  MISSING\nlatest-toolchain: mlir 23     installed -         (not found)  newest 23.1.3    (llvmorg-23.1.3)  MISSING\nlatest-toolchain: node 24     installed 24.19.0   (/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin)  newest 24.21.0   (v24.21.0 in https://nodejs.org/dist/index.json)  OUTDATED\nlatest-toolchain: python 3.15 installed -         (not found)  newest 3.15.0    (v3.15.0 in https://github.com/python/cpython.git)  MISSING\nlatest-toolchain: BEHIND\n  LLVM 23: BCIR_LOCAL_FULL=1 bash tools/local/setup_mlir.sh  (or apt.llvm.org's llvm-toolchain-*-23)\n  Node 24: python3 tools/local/latest_toolchain.py install-node\n  Python 3.15: uv python install 3.15  (or conda-forge: micromamba create -n py315 -c conda-forge python=3.15; then BCIR_PYTHON_LATEST=<its python3.15> if it is not on PATH)\n"
+  },
+  {
+    "command": [
+      "bash",
+      "tools/local/check_latest.sh",
+      "--legs",
+      "status,confirm",
+      "--out",
+      "/workspace/scratch/d4904b8a62c3/pr816-rerun/verification/latest"
+    ],
+    "exit_code": 1,
+    "name": "latest-confirm",
+    "seconds": 0.06750266400013061,
+    "tail": "latest-toolchain: env needs all three (LLVM 23: missing, Node 24: /opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin, Python 3.15: missing); run `status` for the install commands\ncheck_latest: FAIL: LLVM 23, Node 24 or Python 3.15 is not installed here; see: python3 tools/local/latest_toolchain.py status\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/docs/gen_status.py",
+      "--check"
+    ],
+    "exit_code": 0,
+    "name": "status",
+    "seconds": 0.12098925899954338,
+    "tail": "docs/STATUS.md is current.\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/docs/check_links.py"
+    ],
+    "exit_code": 0,
+    "name": "links",
+    "seconds": 0.0791924459999791,
+    "tail": "[check_links] no broken relative links.\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/docs/check_retired_paths.py"
+    ],
+    "exit_code": 0,
+    "name": "retired-paths",
+    "seconds": 0.07847000099991419,
+    "tail": "[check_retired_paths] no active-doc references to retired trees.\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/docs/check_claims.py"
+    ],
+    "exit_code": 0,
+    "name": "claims",
+    "seconds": 0.23217232000024524,
+    "tail": "[check_claims] 6 summary claim(s) still match the code they summarise.\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/docs/check_law_range.py"
+    ],
+    "exit_code": 0,
+    "name": "law-range",
+    "seconds": 0.16782148699985555,
+    "tail": "[check_law_range] no stale verifier-law ranges (last law R25, 427 files).\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/perf/import_graph.py",
+      "--check"
+    ],
+    "exit_code": 0,
+    "name": "imports",
+    "seconds": 0.23201121199963382,
+    "tail": "[import_graph] hot/cold quarantine holds across 4 entry points (80 cold organs, none eager).\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "tools/perf/oracle_inventory.py",
+      "--check"
+    ],
+    "exit_code": 0,
+    "name": "inventory",
+    "seconds": 0.7845016040000701,
+    "tail": "docs/BCIR_ORACLE_INVENTORY.md is current.\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--check",
+      "--force-exclude",
+      "."
+    ],
+    "exit_code": 0,
+    "name": "format",
+    "seconds": 0.14210239200019714,
+    "tail": "806 files already formatted\n"
+  },
+  {
+    "command": [
+      "/workspace/scratch/d4904b8a62c3/benchmark-env/bin/python",
+      "-m",
+      "ruff",
+      "check",
+      "--force-exclude",
+      "."
+    ],
+    "exit_code": 0,
+    "name": "lint",
+    "seconds": 0.11540546200012614,
+    "tail": "All checks passed!\n"
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "name": "diff",
+    "seconds": 0.004310876000090502,
+    "tail": ""
+  },
+  {
+    "command": [
+      "python",
+      "tools/security/scan_secrets.py"
+    ],
+    "exit_code": 0,
+    "name": "tracked-artifact-scan",
+    "tail": "scan_secrets: PASS tracked=2632 text=2631 binary=1 archive=0 findings=0"
+  },
+  {
+    "command": [
+      "python",
+      "-m",
+      "bcir.tests.run_all",
+      "--tier",
+      "quick",
+      "-j",
+      "2"
+    ],
+    "exit_code": 0,
+    "name": "quick-tracked",
+    "tail": "4562 passed, 0 failed; all report files present in the git index"
+  }
+]
