@@ -289,6 +289,14 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-10-19 — TRITON-CPU-1:** refreshed the
+  [Triton comparison](research/BCIR_TRITON_COMPARATIVE_ANALYSIS.md) against pinned Triton 3.8
+  and current BCIR main. Added an optional compiled CPU-kernel reproducer and two sessions of
+  raw evidence for residual add, SwiGLU, RMSNorm and GEMM. The comparison distinguishes native
+  C execution from graph planning, corrects the old layout/verification/cache claims, and
+  proposes a resident-backend interface. GPU execution is unavailable on the study host;
+  full comparative model training remains deferred until PR #820 completes and merges.
+
 The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-06-25,
 ~90 entries) lived in `REPO_CURRENT_STATE_AUDIT.md` and remain in its git history
 (`git log -p -- docs/REPO_CURRENT_STATE_AUDIT.md`). The condensed arc:

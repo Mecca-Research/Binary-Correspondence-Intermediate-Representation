@@ -1,271 +1,478 @@
-# BCIR vs Triton — comparative analysis + the fork / interop / migrate decision (2026-07-04)
+# BCIR and Triton: architecture, integration, and a compiled CPU pilot
 
-**The question** (verbatim intent): BCIR and Triton share a philosophy — write better, more
-efficient AI code — but BCIR's scope is much larger and Triton is missing several things BCIR
-does. Should BCIR **fork** Triton, **incorporate** it some other way, or is Triton (and its
-MLIR approach) **superseded** by what BCIR attempts? Is anything in Triton advanced and unique
-enough to **migrate**, and if so, all of it or a subset?
+**Updated 2026-10-19. Research, not a capability or performance guarantee.**
 
-**Method**: the 2019 MAPL paper (Tillet/Kung/Cox — the LLVM-IR origin) read in full, then a
-14-agent research pass on the *modern* system (Triton 3.7.x, MLIR TritonGPU dialect, Linear
-Layouts, TMA/WGMMA/warp-specialization, Gluon, Triton-CPU, the ecosystem) with six load-bearing
-claims put through **adversarial verification** (each skeptic tried to *refute* it with
-independent research). Every BCIR-side statement is `file:line`-anchored; Triton-side claims are
-anchored to the paper, the public repo, or published follow-on papers (ASPLOS'26 Linear Layouts,
-the Tawa warp-spec paper, IBM's "Anatomy of a Triton Attention Kernel"). This doc sits in the
-comparison family with [`CLANG_COMPARISON.md`](CLANG_COMPARISON.md) and
-[`OPENAI_BCIR_INTEGRATION_RESEARCH.md`](../machine-learning/OPENAI_BCIR_INTEGRATION_RESEARCH.md).
+BCIR's strongest opportunity is to couple program-level legality, placement, memory and
+execution choices with high-quality kernel implementations. Triton's strongest delivered
+capability is turning tile programs into efficient GPU kernels. These are different levels of
+optimization. BCIR's native C training kernels have also advanced substantially since the
+2026-07-04 version of this document; calling all of BCIR's ML execution a Python reference is
+now inaccurate.
 
-> **Two corrections the verification forced — they shape everything below.** (1) **Triton does
-> NOT hand-roll instruction selection.** It emits LLVM IR and delegates isel + register
-> allocation to LLVM's NVPTX/AMDGPU backends and ptxas; its value-add is the tile DSL + the
-> *TritonGPU middle-end* (layout, coalescing, shared-memory, pipelining). That is the **same
-> "emit IR, never hand-roll isel" philosophy as BCIR's resident-compiler gate** — so Triton is
-> *architecturally aligned* with the gate and slots in cleanly as one resident GPU backend, not
-> a rival hiding behind it. (2) **"BCIR proves, Triton merely searches" overclaims.** BCIR's
-> `guided == exhaustive` certificate proves the learned prior reproduces BCIR's *own* exhaustive
-> optimum under BCIR's *own* analytical cost model — optimality-**relative-to-a-model**, not
-> proof of hardware-optimality. Triton's `@triton.autotune` measures *real latency* (hardware
-> ground truth). The two are **complementary**, not a strict-dominance win. Market BCIR as
-> "analytical + certificate-gated + cost-quarantined-from-legality," not "we prove, they guess."
+**Recommendation:** retain BCIR's C execution core and make Triton an optional resident compiler
+and accelerator backend above that boundary. Establish a measured interface before considering
+an upstream extension, a portable layout-algebra module, or an out-of-tree backend. A wholesale
+fork is unnecessary at this stage. Neither system has been shown to subsume the other.
 
----
+**Scope requested for this update:** architecture and a few initial kernel comparisons. Full
+comparative model training remains **deferred until PR #820 is completed and merged**. No
+PyTorch comparison or full-model training experiment was performed for this study.
 
-## 0. Executive verdict
+## 1. Evidence boundary and version pins
 
-**Do NOT fork Triton. Interop with it, and selectively migrate a short list of portable *ideas*
-re-derived against BCIR's own rails.**
+| Item | Examined version / status |
+|---|---|
+| BCIR measured source | `12aa6dc5ba422418742f49e4bfc00aafdc17e07f` on `main`; no runtime modifications |
+| Production Triton | Latest published upstream release checked: **3.8.0**, 2026-08-28; source `c01b6774b1865984607d89d89d3a10833de92037` [T1] |
+| Executed Triton backend | Official **experimental Triton-CPU 3.8.0+cpu** snapshot, published 2026-09-22; source `5a4885bf9b0b349a525b490a1df25f449f12d4e9` [T2] |
+| CPU release LLVM pin | `62b7cf9623fc310525f39ed69aaecc318a909731`, build 2; distinct from BCIR's newest-toolchain validation requirement |
+| PR #820 | Open, draft, unmerged at inspection; head `af1d935be77854c0d0fee2b8846714281864cd7c`; base is the measured BCIR pin [B8] |
+| Execution host | AMD EPYC 9V74 VM, LLVM identifies `znver4`; GCC 13.3.0, Python 3.12.14, NumPy 2.3.5; logical CPUs 0–1 used |
+| Available hardware | CPU only. No CUDA, ROCm, SYCL device execution, GPU, AMX measurements or PMU evidence |
 
-- **Fork? No.** A wholesale fork imports a large C++/MLIR codebase (≈38% MLIR, ≈27% C++, ≈34%
-  Python) transitively pinned to a multi-million-LOC LLVM stack, on a fast ~2–4-month
-  PyTorch-coupled cadence with periodic LLVM bumps — a perpetual-rebase liability whose *entire
-  content* is GPU-microarchitecture-specific middle-end + numerics BCIR deliberately reaches via
-  the resident compiler. MIT-licensed, so a fork is *legal*; the economics are prohibitive and
-  the scope is wrong. The case against forking rests on **scale, cadence, LLVM-pin coupling,
-  GPU-specificity, and scope mismatch** — *not* on an isel-philosophy collision (that premise is
-  false, per correction 1).
-- **Superseded? No — and this is the honest part.** Triton runs **SOTA multi-vendor GPU code
-  today**: it is the default TorchInductor GPU backend and the default vLLM AMD attention
-  backend, reaching ~106% of FlashAttention-3 from one source, ~64M PyPI downloads/month. BCIR's
-  GPU compute path is **early/deferred**: `gem.matmul` lowers only to a scalar `scf.for` nest
-  (`BCIRLowerGemMatmulBufferPass.cpp:137-174`) with plain `arith.mulf/addf` — **no tensor cores,
-  no shared memory** — and the only PTX BCIR emits is an elementwise kernel via `llc` that is
-  asm-marker-checked and **never executed on a device** (`codegen/targets.py:39`). Until BCIR's
-  PTX actually runs and self-checks on hardware, any claim of GPU parity is unfounded.
-- **The correct positioning is dimensional, not containment.** BCIR is **broader** (kernels +
-  compilers + drivers + systems, plus verification, provenance, analytical + certified-learned
-  cost, two-truth quarantine, a portable ABI); Triton is **deeper on GPU codegen that ships at
-  scale**. They overlap at the AI-kernel / tile-planning slice and diverge in depth. Drop
-  "BCIR strictly contains Triton" — it is refutable. Use **"broader in breadth, shallower on GPU
-  depth."** Triton's *design goals* are narrower than BCIR's; Triton's *GPU realization* is far
-  ahead of BCIR's.
-- **Migrate? A short list of ideas, yes — code, no.** The standout is the **Linear Layout F₂
-  algebra** (below). A handful of tile-level passes and the MXFP numerics are portable. The
-  GPU-bound machinery (WGMMA/TMA/tcgen05, warp-shuffle swizzle, the autotuner) is not.
+The CPU wheel was downloaded from the official release and its bytes verified against the
+release asset's SHA-256:
+`693f657501e6d791e889d5fd880d3b84a9bf4d8f3087dbb685534bb8533361fa`.
+The two Triton repositories/releases must not be conflated: the CPU snapshot is useful for
+this overlap experiment, but it does **not** represent the performance of Triton's production
+NVIDIA/AMD backends. A normal `pip install triton` is not this CPU snapshot.
 
----
+Evidence is separated throughout:
 
-## 1. The comparison matrix
+- **Implemented:** inspected at the pinned source, with existing tests where named.
+- **Measured here:** the reproducible CPU pilot in §6, with raw samples and numerical checks.
+- **Pending:** PR #820's design and reported measurements, not re-measured or treated as merged.
+- **Proposed:** integration and optimization work in §§8–9; not new runtime functionality.
 
-| Axis | Triton | BCIR | Edge |
+## 2. Where optimization happens
+
+Triton's main authoring model is a Python-embedded, explicitly tiled SPMD kernel DSL. A program
+instance operates on blocks of values, using pointers, masks, reductions and dot operations.
+The compiler maps those logical blocks to the target's execution and memory resources. Gluon
+provides a lower-level authoring route with explicit layouts, shared memory, warp specialization
+and target-specific operations [T3]. Python authoring does not mean the device computes those
+operations in Python.
+
+For the inspected NVIDIA backend, the important pipeline is:
+
+`Triton DSL → TTIR → TritonGPU IR → LLVM IR → PTX → ptxas → cubin`.
+
+AMD has its own target lowering and device-image pipeline. Triton owns substantial
+layout assignment, tensor-core selection, shared-memory handling, pipelining and synchronization
+logic **before** the final target compiler/assembler handoff. Delegating instruction selection
+does not make this work redundant. Triton-CPU instead lowers through its CPU dialects to
+LLVM and a native shared object, with a C++/OpenMP launcher [T4].
+
+BCIR has several cooperating execution paths, rather than one already unified compiler for
+all tensor computation:
+
+| Layer | BCIR today | Triton today | Architectural implication |
 |---|---|---|---|
-| **Schedule selection / cost model** | No shipped analytical/learned cost model; default `@triton.autotune` is empirical min-of-measured-timings (`do_bench`, L2-flushed) over a hand-written `Config` list, re-paid per new shape key. Exposes a `prune_configs_by`/`perf_model` *hook* it never fills. | Analytical K_BCIR tropical 12-d costvec (`cost.py:43`) + Q8-frozen learned tile/channel priors certificate-gated so `guided == exhaustive`, 0 mismatches (`tile_prior.py:168`); cost/learning quarantined from legality (two-truth). | **BCIR on design** (a-priori, certified-relative-to-model, cost-quarantined) — but the certificate is proof-relative-to-BCIR's-model; Triton's search measures real hardware. **Complementary.** |
-| **Formal verification / legality** | None. Correctness rests on MLIR op verifiers + fixed-shape `allclose` tests + (now) Linear-Layout algebraic closure. Documented silent-miscompile history (`tl.dot` wrong results, default-TF32 truncation, masked `other=None` undefined). External Z3 verifiers exist *because* Triton lacks one. | First-class `-bcir-verify` R1–R25 laws + op verifiers + cross-op seam laws (R22/R23), C twins, Python oracle, value-invariance proofs (`matmul_tiled` bit-identical to reference). | **BCIR (decisive).** |
-| **Tensor layout algebra** | **Linear Layouts**: every layout as an F₂/GF(2) linear map over register/lane/warp/block bits; conversion = B⁻¹∘A; proven closed under shape ops; fixed ~12% of Triton bugs, up to 1.40×. Genuinely novel, published (ASPLOS'26). | Coarse SoA↔AoS pivot priced through stride/memory terms + `LayoutCertificate` (`layout.py:206`); affine per-resource addressing (`offset`/`stride_k`/`stride_class`). No register/shared/bank layout algebra. | **Triton (real gap for BCIR; the standout migrate-idea).** |
-| **GPU compute codegen, today** | Production multi-vendor: TTIR→TTGIR→LLVM→PTX/AMDGCN, WGMMA/tcgen05/TMA/warp-spec; default TorchInductor + vLLM-AMD backends. | Early/deferred: matmul → scalar `scf.for`, no tensor cores, no shared memory; only elementwise PTX via `llc`, asm-marker-checked, never run on device. | **Triton (decisive, real-today vs deferred).** |
-| **Codegen philosophy (isel handoff)** | Emits LLVM IR; delegates isel + regalloc to LLVM NVPTX/AMDGPU + ptxas; owns only the GPU middle-end. | Resident-compiler gate emits C23/LLVM IR, hands to clang/llc; never hand-rolls isel. | **Aligned (same principle)** — refutes the "Triton is the isel surface BCIR defers" premise; makes Triton a natural resident GPU backend. |
-| **Scope / breadth** | GPU tensor kernels only (NVIDIA CC8.0+, AMD ROCm6.2+; CPU experimental). Single-kernel scope (cross-kernel fusion lives in TorchInductor *above* it). | Registry-first, phase-ordered across ML kernels + compilers + drivers + systems; whole-program planner + heterogeneous channel orchestrator (`channels.py:59`); eBPF/CBLAS/FFTW/LAPACK FFI, CXL tiers. | **BCIR on breadth** (not on maturity/adoption). |
-| **Provenance / reproducibility** | Opaque JIT compile cache; documented nondeterminism (autotune re-selection, atomic-add order, warp scheduling). | Frozen, versioned, CRC'd StreamPack ABI (`streampack_abi.py:34`) + registry provenance (R11 stale-pack, R13 manifest, replay); determinism-by-construction C23 subset. | **BCIR.** |
-| **Ecosystem / adoption** | De-facto GPU-kernel IR of the PyTorch era: TorchInductor/vLLM/SGLang/Liger/FlagGems, MIT, large kernel-gen research ecosystem (TritonBench). | Research IR with reference oracles and *modeled* (driverless) GPU/FPGA/NVMe channels. | **Triton (decisive).** |
-| **Numerics / mixed precision** | fp16/bf16/fp8 tensor-core accumulation, `dot_scaled` with OCP MXFP4/6/8 microscaling mapped to hardware; but a dangerous silent-TF32 default. | Q8 integer + libm-quarantined f32 reference (`precision.py`/`quantize.py`); no device half/fp8 matmul today. | **Triton on device numerics; the MXFP *format* is a portable migrate-idea.** |
+| Program representation | Registry/resources, typed claims and phases; Python conformance oracle plus compiled MLIR law rail | Tile kernels in TTIR and target-oriented IR; host integrations compose kernels | Compare a graph planner with a graph planner, and a kernel with a kernel |
+| Legality | R-law checks, explicit contracts, cross-rail and negative witnesses | Operation verifiers, analyses, compiler tests and specialized checking tools | Different assurance scopes; neither is a proof that every generated machine instruction is correct |
+| Candidate selection | Deterministic integer cost vectors, budgets, bounded/exact searches and learned ordering | Compiler heuristics; explicit launch/tile configurations; optional measured autotuning and pruning | Analytical screening and hardware measurement can cooperate |
+| Scheduling and memory | ExecutionPlan placements, generations, lifetimes and moves; exact small-scope options and fallbacks | Intra-kernel layout, shared-memory allocation, synchronization and pipelining; caller controls graph execution | Whole-program arenas and per-kernel shared memory solve different problems |
+| Native ML execution | C tensor kernels, deterministic pool, decoder forward/backward, optimizer and caller-owned arenas | User-written kernels; kernel libraries and host/framework integrations | The native C runtime is now a meaningful implemented comparison surface |
+| GPU execution depth | Elementwise PTX emission checks; SYCL dispatch seam with portable fallback and optional device path | Executable NVIDIA/AMD backends, tensor operations, asynchronous movement and profiling | Producing PTX text or running a C++ fallback is insufficient GPU qualification |
+| Integration boundary | C core; selective C++ framework/accelerator boundary; optional Python tooling | Python frontend/runtime plus C++/MLIR compiler and vendor/runtime interfaces | Triton can be optional tooling without becoming a core Python dependency |
 
----
+Relevant BCIR anchors: [oracle/law parity](../PARITY.md),
+[cost vectors](../../bcir/kbcir/cost.py),
+[ExecutionPlan](../../bcir/gem/execution_plan.py),
+[native tensor contracts](../../runtime/c/bcir_tensor.h), and
+[native decoder](../machine-learning/BCIR_NATIVE_DECODER_TRAINING.md).
 
-## 2. Where the two systems actually touch (BCIR surfaces, anchored)
+**An important integration gap:** the native decoder's direct C loop does not issue a
+StreamPack claim for every tensor operation. Its program description and arena counts do not
+establish that every K_BCIR transformation already selects or rewrites each native kernel.
+This pilot directly calls existing C kernels; it does not measure GEM+ scheduling, StreamPack,
+ASN.1, or BCIR-generated MLIR code. Those require separate interventions and measurements.
 
-The overlap is exactly the **AI-kernel / tile-planning slice** — and BCIR already has an
-analytical, proof-carrying analog for most of Triton's *planning* concerns, while Triton has the
-*execution* BCIR lacks:
+## 3. The differences that matter beyond vendor support
 
-| BCIR component | Anchor | Triton analog | Maturity |
-|---|---|---|---|
-| `plan_matmul` tile/loop-order search + `cost_of` roofline (dual-semiring min,+/max,+; value-invariant vs `matmul_reference`) | `kbcir/matmul.py:160,123,43` | `@triton.autotune` over BLOCK_M/N/K + the compiler's `tl.dot` block-tiling | Mature analytic oracle — *picks* from a CPU-shaped roofline; never benchmarks a real GPU kernel |
-| K_BCIR 12-d cost algebra + `TargetProfile` (incl. an `nvidia_ptx` warp profile) + `MemoryHierarchy` (L1..CXL/SSD) | `kbcir/cost.py:43,181,153` | *None direct* — Triton has no analytic cost model | Analytic where Triton is empirical |
-| Learned tile prior (Q8 logistic, admissible early-exit + `TilePriorCertificate`, guided==exhaustive); `channel_prior` one level up | `kbcir/tile_prior.py:147,168`; `channel_prior.py:137` | ML-autotuner cost models (a research direction; stock Triton ships none) | **Novel & differentiating: learned-AND-proven, ordering-only, stale-refusing** |
-| `gem.matmul` law-rail op + R22 native-tile law + R22/R23 gem seams | `BCIRGEMOps.td:53`; `BCIRVerifyPass.cpp:1638,1491` | `tt.dot` + its shape/type verification | Mature law rail (a 15×15-vs-16-native tile is refused at compile time) — records the *plan*, not executable |
-| `gem.matmul_buffer` → tiled `scf.for` (memref load/store + `arith.mulf/addf`) | `BCIRLowerGemMatmulBufferPass.cpp:137-174` | TritonGPU lowering of `tt.dot` to tensor-core MMA | **Early** — scalar accumulation, no GPU, structural-test-only |
-| LLM decode/serving rail (rmsnorm/rope/gqa/kv-cache/paged-kv) + law ops + decode-chain R22/R23 seam | `frontends/models/{decode,serve,paged_kv}.py`; `BCIRGEMOps.td:480,498` | FlashAttention / paged-attention Triton kernels | Correctness **reference** + legality seam, *not* a fused high-perf kernel |
-| Resident-compiler codegen gate (emit C23/LLVM IR → clang/llc; real ELF for x86-64/aarch64/riscv64/bpf; PTX text via `llc`) | `lower/llvm.py:46`, `c_kernel.py:56`; `codegen/codegen.py:36,155` | Triton's TritonGPU→LLVM→PTX→ptxas→cubin | End-to-end **only for elementwise** kernels; nvptx64 PTX is asm-marker-checked, never run; matmul never reaches PTX |
-| StreamPack binary ABI (magic/version/gens/CRC32; per-segment channel dispatch) | `gem/streampack.py:34,56`; `abi/streampack_abi.py:34` | Compiled-cubin + launch-metadata cache | Production-frozen versioned ABI — carries lane segments + generation tags, not cubins |
-| Duration-aware scheduler (EFT waves, token-DAG pipelining) + `gem.prefetch`/`gem.schedule` pipeline_depth | `gem/schedule.py:63,70`; `BCIRGEMOps.td:24,34` | `num_stages` K-loop software-pipelining + `cp.async` + mbarrier | Analytic placement/makespan model + double-buffer ABI — *not* async-copy GPU codegen |
-| Heterogeneous channel orchestration (per-backend `HardwareChannel`; one plan → one StreamPack across a tower) | `channels.py:59,47,92` | *None* — Triton is one GPU kernel per invocation | Architecture in place, but GPU/FPGA/NVMe channels are **modeled** (no resident driver) |
+### 3.1 Layout is executable mathematics
 
-**BCIR has that Triton lacks**: separable proof-carrying legality (R1–R25); an analytic cost
-algebra; learned-*and-proven* priors; two-truth quarantine (cost/layout/learning provably never
-touch the legality verdict); provenance + generation validity (R11/R13, replay); value-invariance
-proofs per realization; systems/driver + FFI breadth; a deterministic C23 subset; a frozen
-StreamPack ABI; a cross-device transfer cost model; cost governance (RCSP budgets); and the
-registry-first scope spanning kernels + compilers + drivers + systems.
+Triton's LinearLayout machinery represents maps between bit-indexed execution/storage
+coordinates and logical tensor coordinates over **GF(2)**. This enables reasoning about
+layout conversion, broadcasts and replication as well as distributed register/shared-memory
+layouts [T5]. Gluon exposes part of this control to the author.
 
-**Triton has that BCIR lacks**: real GPU codegen to PTX/cubin; tensor-core/WGMMA/MMA lowering;
-TMA/`cp.async` async copy; shared-memory allocation + swizzle + bank-conflict staging; the full
-register/shared **layout algebra**; a hardware-executed pipelined K-loop; the block/warp/lane
-programming model as *executed* code; a benchmark-driven autotuner that runs candidates on
-silicon; mixed-precision GPU numerics (fp16/bf16/fp8 tensor-core accumulation); ptxas/driver/
-launch integration + occupancy modeling; executed fused attention; and production adoption.
+BCIR's [SoA/AoS planner](../../bcir/kbcir/layout.py) and integer-affine access maps address useful
+but different layout questions. An integer-affine address `a*i+b` does not automatically
+represent a bitwise XOR bank swizzle. Neither representation is generally a superset of the
+other. Also, `B^-1 A` is valid only when the required inverse exists: real layouts can be
+non-injective because of replication. Triton's implementation explicitly handles preimages
+and `invertAndCompose`; a BCIR port must preserve that distinction.
 
----
+A portable BCIR extension should distinguish integer-affine maps, GF(2) maps, masks/tails,
+replication and physical address spaces. It then needs executable conversions, legality
+witnesses and a conversion-cost model. Merely storing a layout descriptor does not remove a
+shuffle, shared-memory round trip, transpose, or redundant operand pack.
 
-## 3. The migration ledger
+### 3.2 Kernel fusion and whole-program fusion are different
 
-### 3a. Migrate the IDEA (re-derive against BCIR's rails — not a code port)
+Triton makes custom fused tensor programs relatively direct to express. The actual cost includes
+register pressure, shared-memory footprint, occupancy, spills, instruction dependencies and
+padded work. A larger fused kernel can be slower than two smaller ones.
 
-Ranked by value × fit. "Re-derive" is load-bearing: several Triton passes are **not cleanly
-separable** from the GPU layout machinery (in Triton, *coalesce IS layout assignment*), so
-migration means re-implementing the algorithm against K_BCIR + the R-laws, not lifting code.
+BCIR can make fusion, placement, lifetime reuse and movement decisions at a broader level.
+However, this advantage reaches hardware only when the selected graph has executable kernels
+and the implementation exposes resource feedback. Eliminating graph nodes without generating
+a correspondingly fused implementation does not eliminate launches or memory traffic.
 
-1. **Linear Layout F₂/GF(2) algebra** *(medium-high)* — the single most novel, portable Triton
-   contribution: all layouts as linear maps over bit-vectors, conversion as B⁻¹∘A, proven closed
-   under shape ops. It fits BCIR's proof-carrying/two-truth model *better than it fits Triton's
-   otherwise-heuristic stack*. BCIR's affine `Ax+b` addressing is already a **superset** of the
-   linear map the paper itself wishes it had (it wants the `+b` flip/slice offset). Migrate the
-   *algebra* as an R-law-verified, cost-governed addressing module extending `kbcir/layout.py`;
-   leave the warp-shuffle/bank-conflict *instantiation* on the GPU. Inherit its power-of-two-shape
-   limitation (note the "Hexcute" critique for non-power-of-two / mixed-precision).
-2. **OCP microscaling numerics** *(medium)* — MXFP4/6/8 block-scaled formats + a `dot_scaled`-style
-   scaled-matmul op. Pure hardware-agnostic data format + dequant algorithm; lands in
-   `precision.py`/`quantize.py` and extends `gem.matmul` under an R22-style law with block-scale
-   operands, keeping scaling in the IR/cost model.
-3. **Tile-peephole / Combine rewrite algebra** *(low-medium)* — the cleanest port: pure IR pattern
-   rewrites, no layout dependence (dot+add fusion, nested `addptr` merge, `select+load`→masked-load,
-   broadcast-constant fold). Re-derive as BCIR rewrites gated by the cost algebra. **First migrate
-   to attempt.**
-4. **Modulo-scheduling software-pipeliner formalism** *(medium)* — initiation-interval +
-   resource-reservation tables to make StreamPack `pipeline_depth` *analytical*, parameterized by
-   K_BCIR instead of Triton's acknowledged-brittle latency heuristics.
-5. **Layout-propagation anchor-and-rematerialize** *(medium)* — the forward/backward
-   remove-layout-conversions + reduce-data-duplication algorithm, ideal for K_BCIR + two-truth
-   (a cost-reducing rewrite system). Caveat: not cleanly separable from coalesce in Triton.
-6. **Shared-memory liveness allocation + barrier insertion** *(medium)* — a general staging/liveness
-   algorithm useful if BCIR ever grows a staged-buffer target.
-7. **Explicit precision/accumulator/determinism as a checkable law** *(low-medium)* — Triton
-   exposes `input_precision` but with a silent-TF32 default and no enforcement; encode as a BCIR
-   law so precision/determinism is *verified*, not hoped.
-8. **KPerfIR/Proton-style profiling-as-an-MLIR-pass** *(medium)* — attribute measured cost back onto
-   IR regions/costvec dimensions, letting a BCIR law assert *analytical ≈ measured* agreement —
-   turns Proton/`do_bench` into **calibration for K_BCIR**, not a reimplementation target.
-9. **Backend-plugin discovery pattern** *(low-medium)* — Triton's `triton.backends` entry-point
-   registry (one `BaseBackend`+`DriverBase` pair per backend) is congenial to BCIR's registry-first
-   design for its own codegen backends.
-10. Lower-priority, GPU-cost-profile-only: a **wave-quantization / tail-occupancy** cost term and
-    **`num_stages`/`num_ctas` as first-class planned axes** in `plan_matmul` — add analytically to
-    the search space *if* BCIR grows a real GPU cost profile, rather than benchmarking them.
-11. **Architectural patterns** (idea, not code): the **Gluon two-tier** design (an automatic tier +
-    an explicit expert escape-hatch sharing one IR/cost model) reinforces BCIR's registry/two-truth
-    separation; and the **`@triton.jit` block/pointer/mask authoring ergonomics** are worth
-    borrowing as a kernel-authoring *frontend surface* in `bcir/frontends/` (crushes CUDA) — borrow
-    the surface, not the GPU-bound lowering.
+The useful coupling is: BCIR proposes a legal partition; Triton compiles each candidate;
+compiled resource use and measured latency feed back into selection. Reject infeasible resource
+budgets before execution. Keep a measured cost ranking separate from the legality verdict.
 
-### 3b. Interop — reach Triton's ecosystem WITHOUT owning it
+### 3.3 Cost models, search and the meaning of optimal
 
-- **Consume Triton via `microsoft/triton-shared`** (`triton-to-linalg`): lower a real Triton kernel
-  into standard MLIR (linalg/tensor/memref) that BCIR's law dialect, K_BCIR cost algebra, and
-  planner can reason over — no core fork. *Lowest-risk first prototype.*
-- **Register BCIR as an out-of-tree Triton backend** (the intel-xpu plugin pattern), or **emit
-  Triton**, so BCIR rides existing NVIDIA/AMD/Intel vendor backends without maintaining them.
-- **Treat Triton as one GPU codegen backend *below* the resident-compiler gate** — natural
-  precisely because both emit LLVM IR and defer isel to LLVM/ptxas.
-- **Be a TorchInductor source/sink**: consume Inductor-generated Triton kernels to put BCIR on the
-  de-facto PyTorch GPU codegen path (~64M downloads/mo of reach) without inheriting the compiler.
-- **Use Proton / `do_bench` / TritonBench** (183 GitHub + 166 PyTorch-aligned kernels) as
-  empirical ground-truth harnesses to **calibrate and validate** the analytical K_BCIR costvec and
-  to check `guided == exhaustive` selections against *measured* optima.
-- **Use Triton kernel libraries** (FlashAttention-in-Triton, Liger-Kernel, FlagGems, vLLM
-  paged-attention) as correctness oracles and performance baselines for BCIR's LLM decode/serving
-  rail.
+BCIR's [tile prior](../../bcir/kbcir/tile_prior.py) orders a declared search and can stop under an
+admissible bound. Its certificate concerns the modeled candidate set and cost function. The
+[execution scope](../../bcir/kbcir/scope.py) identifies what such a claim is about. Current
+[exact_plan](../../bcir/gem/execution_plan.py) can carry a solver's improved placement into the
+plan that runs, subject to placement and memory-binding checks; the July document predates
+this work.
 
-### 3c. Do NOT migrate (GPU-bound or paradigm-mismatched)
+That does not prove that the model's chosen tile is fastest on a GPU, or that separate schedule
+and memory optima form a joint optimum. BCIR still needs calibrated target profiles and evidence
+that selected decisions reach the executed implementation.
 
-- **A wholesale fork** — perpetual LLVM-pinned rebase liability, wrong scope (see §0).
-- **The TritonGPU middle-end** (hand-written layout assignment, coalescing, shared-mem alloc,
-  software pipelining) and **PTX/AMDGCN emission** — GPU-microarchitecture-specific; reach via
-  interop. (Nuance: this is the *middle-end*, not isel — LLVM/ptxas does isel.)
-- **WGMMA / tcgen05 / TMEM / TMA / mbarrier / warp-spec knobs** — Hopper/Blackwell/AMD-bound
-  lowering; belongs behind the resident-compiler boundary. Only the *async-DMA-with-completion-token*
-  and *producer/consumer-overlap* **concepts** are already in BCIR (`gem/async_tokens.py`,
-  `overlap.py`, `kbcir/dma.py`).
-- **`@triton.autotune` empirical config search** — the anti-pattern BCIR's analytical cost +
-  certificate-gated priors are designed to *supersede*. (But do not overclaim the replacement —
-  it proves optimality-relative-to-BCIR's-model, not hardware-optimality.)
-- **The SPMD "one program per block" imperative model + grid-lambda launch** — paradigm mismatch;
-  BCIR is a declarative correspondence/registry IR; the launch grid is a backend concern.
-- **Gluon's concrete GPU primitives** (`tcgen05_mma`, `allocate_tensor_memory`,
-  `shared_memory_descriptor`, `warp_specialize`) — bound to Blackwell TMEM/warp/mbarrier hardware.
-  Migrate the two-tier *pattern*, not these primitives.
-- **Provably-optimal swizzle / warp-shuffle generation** — algorithm portable in principle, but its
-  objective (bank conflicts, warp-shuffle exchange) is SIMT-lane-hardware-specific with no BCIR
-  analog.
-- **Persistent kernels + static launch grid + CUDA/HIP-graph capture** — tied to the GPU SPMD
-  launch model; no clean BCIR analog.
-- **LLM/RL-guided kernel-gen agents** (TritonForge, AutoTriton, GEAK, KernelBand) — non-deterministic
-  trial-and-error with no correctness or optimality guarantee — incompatible with BCIR's
-  certificate-gated, proof-first philosophy. Their *benchmark suites* are interop targets; the
-  *agents* are not.
-- **The experimental Triton-CPU backend** — WIP/unreleased and redundant with BCIR's freestanding C
-  twins + resident-compiler C23/LLVM path, which already covers CPU as a first-class target.
+Triton's autotuner benchmarks configured candidates, caches choices in process, can persist
+results with `cache_results`, and provides pruning/performance-model hooks. The 3.8 release adds
+selection/timing/cache-status listener support [T1, T6]. It is inaccurate to say it always pays
+for tuning again, or that Triton contains no performance modeling. Conversely, a best measured
+configuration is not a proof over every possible kernel.
 
----
+A sensible BCIR policy is to use analytical bounds to reduce the candidate set, then spend a
+bounded measurement budget where uncertainty can change the decision. Record calibration
+uncertainty and amortize compilation/tuning over the expected workload horizon.
 
-## 4. Direct answers to the three questions
+### 3.4 Numerical contracts are part of the architecture
 
-1. **Fork Triton into BCIR?** **No.** The economics (LLVM-pinned, PyTorch-cadence rebase treadmill),
-   the scope (its entire content is GPU middle-end + numerics BCIR reaches through the resident
-   compiler), and the philosophy (Triton *already* delegates isel to LLVM — forking gains BCIR
-   nothing on its actual codegen gate) all argue against it. A fork is legal (MIT) and pointless.
-2. **Incorporate it another way?** **Yes — interop, not fork.** In priority order: a `triton-shared`
-   → linalg ingestion prototype (consume one real kernel through BCIR's law/cost/planner rails);
-   BCIR-as-an-out-of-tree-Triton-backend / Triton-as-a-resident-GPU-backend; TorchInductor
-   source/sink; and TritonBench/Proton as **calibration harnesses** for K_BCIR.
-3. **Superseded, or migrate?** **Not superseded** — Triton ships real multi-vendor GPU code at scale
-   that BCIR cannot yet emit. Triton's MLIR *approach* is, if anything, a **model to interoperate
-   with**, and its layout work is *ahead* of BCIR on GPU depth. **Migrate a subset, not all**: the
-   Linear Layout F₂ algebra (re-derived as a proof-carrying addressing module — the one genuinely
-   unique, portable idea), MXFP microscaling numerics, the tile-peephole rewrites, and the
-   modulo-scheduling formalism. Everything hardware-bound stays on the far side of the
-   resident-compiler gate.
+BCIR's native C library now has separate rounded-product FP32, fused FP32, blocked fused FP32,
+and BF16 contracts, plus vector exponential and attention variants. Its deterministic pool
+keeps each contract's operation order independent of the worker count [B1]. These are
+implemented capabilities, not a promise of all-purpose bit parity with external kernels.
 
----
+Triton supports explicit dot input precision and mixed-precision device operations. Its dot
+API documents TF32 behavior and possible truncation; comparisons must name `input_precision`,
+accumulator type, fusion settings and backend [T7]. FP32 storage alone is insufficient to
+establish matched arithmetic.
 
-## 5. Recommended next steps (ranked)
+The pilot admits a **tolerance-based FP32 comparison**: no fast math, no quantization or TF32;
+FMA is allowed for GEMM. RMS reductions and exponentials can differ, and GEMM accumulation
+order is not asserted identical. A backend replacing a BCIR contract needs either exact
+contract conformance or an explicitly admitted approximation contract. Passing this study's
+finite test inputs does not qualify it as an exact provider.
 
-1. **Lowest-risk reach play first**: stand up a `triton-shared` ingestion prototype — lower one real
-   Triton kernel to linalg and run it through BCIR's law/cost/planner rails for cross-validation;
-   and/or register BCIR as an out-of-tree Triton backend.
-2. **Prototype the Linear Layout F₂ algebra** as an R-law-verified addressing module extending
-   `kbcir/layout.py`, unified with BCIR's affine `Ax+b` per-resource addressing (BCIR is already
-   ahead on the offset term the paper wants); document the power-of-two / Hexcute limits.
-3. **Add MXFP4/6/8 block-scaled numerics** to `precision.py`/`quantize.py` + a scaled `gem.matmul`
-   variant under an extended R22 law, validated bit-exact against a C-twin reference.
-4. **Stand up TritonBench + Proton/`do_bench` as an empirical calibration harness for K_BCIR** —
-   quantify the analytical-vs-measured gap on real GPU kernels; use it to *sharpen, not oversell*
-   the certificate story (target a KPerfIR-style law asserting analytical ≈ measured).
-5. **Decide the GPU-rail posture explicitly**: commit to interop (emit Triton / ride vendor
-   backends) **or** fund a real tensor-core lowering — and until PTX actually executes and
-   self-checks on a device, stop asserting GPU parity in any external framing.
-6. **Port the Combine tile-peephole rewrites** as the first, cleanest migrate (pure IR patterns, no
-   layout dependence), gated by the cost algebra.
+### 3.5 Verification and reproducibility need narrower claims
 
----
+Triton 3.8 includes FpSan, broader ConSan support and experimental GSan [T1]. FpSan compares
+symbolic computation using instrumented payload algebra; it is **not** an IEEE rounding,
+NaN, exception or subnormal oracle [T8]. Its existence corrects the old document's blanket
+“no verification” claim without turning it into a proof of general compiler correctness.
 
-## 6. Messaging discipline (the corrections, restated so they don't drift back)
+Similarly, BCIR law checks and dual-rail witnesses establish specific invariants under their
+stated domains. They do not imply every optimized native/device binary has a general semantic
+proof. Both need negative witnesses, numerical stress cases and real backend execution.
 
-- **"BCIR is broader; Triton is deeper on GPU."** Not "BCIR contains Triton." Migrating Linear
-  Layouts narrows but does not close the GPU-depth gap (BCIR still lacks real tensor-core lowering).
-- **"Analytical + certificate-gated, cost-quarantined-from-legality."** Not "BCIR proves; Triton
-  searches." The certificate is optimality-relative-to-BCIR's-model; Triton's `do_bench` is hardware
-  ground truth. Complementary.
-- **"Triton is architecturally aligned with the resident-compiler gate, not behind it."** It
-  delegates isel to LLVM/ptxas — the same philosophy. Any fork-avoidance argument built on an "isel
-  collision" is factually wrong; base it on scale / cadence / GPU-specificity / scope.
-- **BCIR's GPU codegen is not real today.** Matmul is scalar `scf.for`; PTX is elementwise-only and
-  never executed. No GPU-parity claim is defensible until it runs and self-checks on silicon.
+Triton's compilation cache has source, compiler/backend, option and environment identities;
+it is not an unversioned opaque cache [T9]. BCIR offers a broader plan/generation/artifact
+record. Its [BCAB envelope](../kernel/BCIR_ARTIFACT_BUNDLE_ABI.md) can carry unchanged standard
+images and exact-byte hashes. CRCs and hashes must not be described as authenticity signatures.
+A cached compiled kernel and an auditable application-level execution plan remain different
+artifacts.
+
+## 4. What has changed on the BCIR side
+
+The pinned tree has native SIMD/FMA/blocked GEMM implementations, BF16 packing and AMX admission
+on supported hosts, vector nonlinearities, pooled forward/backward kernels and complete native
+decoder training. The [training roadmap](BCIR_TRAINING_ACCELERATION_ROADMAP.md) and the
+[native runtime contracts](../../runtime/c/bcir_tensor.h) describe these surfaces; their prior
+model-performance results are not reproduced as Triton comparisons here.
+
+The GEM+ representation has also broadened: [regions](../../bcir/kbcir/regions.py) now recognize
+affine, synchronous/cyclo-static dataflow, timed, 2-D nest and opaque cases. Exact scheduling
+and [schedule-bound static memory](../../bcir/kbcir/static_memory.py) are implemented within
+bounded scopes. These facts supersede old gap lists, while preserving the distinction between
+recognized mathematical structure and target-specific kernel generation.
+
+GPU depth remains the main execution gap, not merely a sponsorship gap:
+
+- [`gem.matmul_buffer` lowering](../../mlir/lib/passes/BCIRLowerGemMatmulBufferPass.cpp) builds
+  tiled scalar `scf.for` loops with loads/stores and multiply/add; it does not implement a
+  tensor-core/shared-memory GPU pipeline.
+- The [`nvptx64` target](../../bcir/codegen/targets.py) describes PTX text validation, including
+  an assembly marker. That is not a device-resident training backend.
+- The [SYCL seam](../kernel/SYCL_INTEROP.md) has real host dispatch and differential coverage,
+  with explicit `sycl-device` / `fallback` / `unavailable` modes. Device submission still needs
+  its toolchain and hardware; a successful fallback must retain its label.
+- BCAB's ability to hold device images does not supply their compiler, driver, loader or
+  synchronization implementation.
+
+### PR #820: relevant, pending, and excluded from this benchmark
+
+The inspected draft adds per-layer activation recomputation, a shared recompute-cache slot,
+exact BF16 group-workspace accounting, and a budgeted choice of recomputation/workspace tiers
+(state ABI 5). It distinguishes workspace **floor**, **panel threshold**, and **full need**.
+This is directly relevant to cross-kernel memory planning and to keeping operands in useful
+packed forms [B8].
+
+Its reported memory/performance frontier is evidence from that PR's own host and protocol.
+It was not checked out, run, or blended into the CPU measurements below. A future Triton
+adapter should expose its own scratch/persistent-pack needs to this planner rather than hiding
+allocations behind an opaque kernel call. Full-model conclusions wait for the merged source.
+
+## 5. Comparison dimensions that remain unmeasured
+
+| Question | Present evidence | Required comparison |
+|---|---|---|
+| GPU tensor-core throughput | Triton implementation/source; no local GPU | Same GPU, precision, resident inputs and permitted math; executed BCIR GPU path |
+| GPU fusion/occupancy tradeoff | Architecture analysis | Fusion partitions, registers/spills, shared memory, occupancy and total latency |
+| Whole-model training | Intentionally deferred | Merged #820, identical recipe/initialization, forward/backward/update and held-out quality |
+| Cross-kernel arenas / recomputation | BCIR implementation; #820 pending | Match memory cap, recompute policy and live allocations across complete executions |
+| Transfers and asynchronous overlap | BCIR model/seams and Triton mechanisms | Real transfer events, fences, ownership and makespan on the same device |
+| ASN.1 / StreamPack contribution | Not exercised by the pilot | Isolated plan-load/dispatch/replay intervention, including amortization |
+| ARM / Snapdragon / distributed scale | No such hardware used | Separate native target/driver and communication qualification |
+
+ASN.1 and StreamPack can reduce control-plane parsing, improve validated transfer/dispatch, or
+carry a compact plan. They do not automatically reduce the cost of a floating-point multiply.
+Tensors still need layouts and residency that the selected kernel actually consumes. Likewise,
+UEFI independence and C23 adoption do not establish GPU throughput without an execution path.
+
+## 6. Executed pilot: native C vs experimental Triton-CPU
+
+The reproducer is [`tools/perf/triton_cpu_compare.py`](../../tools/perf/triton_cpu_compare.py).
+Raw evidence: [session A](measurements/2026-10-19/triton-cpu/session-a.json),
+[session B](measurements/2026-10-19/triton-cpu/session-b.json), and
+[provenance / reproduction](measurements/2026-10-19/triton-cpu/README.md).
+
+The protocol uses ten shapes at one and two workers, including non-power-of-two tails. Each
+Triton configuration is compiled and checked before timing; vectors try blocks 256/1024/4096,
+GEMM tries three tile configurations, and RMS uses the next-power-of-two row width. Five tuning
+batches select the Triton configuration; **21 separate randomized paired measurement rounds**
+then compare it with the existing BCIR implementations. No new optimized C kernel was written.
+
+GCC builds the existing tensor unit with `-O3 -fno-fast-math -ffp-contract=off -pthread`; explicit
+BCIR FMA kernels still execute FMA. Triton uses the CPU backend, `ukernels=None`, no external
+BLAS, `enable_fast_math=False`, and fusion only for GEMM. Its default SLEEF vector-library
+option is retained. Both sides use preallocated NumPy-backed FP32 buffers and cached integer
+addresses. Timing includes synchronous host launch and the called kernel; it excludes buffer
+allocation, reference calculation, reset, compilation and tuning. Triton's bound compiled
+launcher is used rather than re-running Python JIT specialization on every sample.
+
+These are repeated-buffer warm timings, not streaming DRAM bandwidth or kernel-only device
+timings. The CPU affinity is shared by the two implementations. `OMP_WAIT_POLICY=PASSIVE`,
+`GOMP_SPINCOUNT=0`, and a 2 ms pause outside each timed batch allow inactive pools to park.
+Two-worker results therefore describe this coexistence profile; they do not claim optimal
+standalone OpenMP settings. A preliminary smoke run exposed severe pool interference with
+spinning defaults; those exploratory timings are excluded. Pointer preparation was also moved
+outside both timed boundaries before freezing **protocol v2**, used by both published sessions.
+
+The C rows use vector exponential **v2** for SwiGLU and **kblock** for GEMM. The libm SwiGLU and
+sequential fused GEMM alternatives remain in the raw files. These are explicit arithmetic
+choices, not silent substitutions. The study does not include XSMM/oneDNN tuning, expert
+hand-optimized Triton CPU kernels, production GPU kernels, autograd or model training.
+
+### 1 worker
+
+| Workload | BCIR µs, A / B | Triton-CPU µs, A / B | BCIR/Triton ratio [95% interval], A / B |
+|---|---:|---:|---|
+| Residual add 4,096 | 1.23 / 1.17 | 2.83 / 2.41 | 0.433 [0.396, 0.472] / 0.486 [0.453, 0.509] |
+| Residual add 1,048,579 | 195.68 / 181.76 | 194.12 / 185.94 | 1.008 [0.933, 1.085] / 0.978 [0.909, 1.037] |
+| SwiGLU 4,096 | 3.96 / 3.79 | 5.00 / 4.31 | 0.791 [0.750, 0.902] / 0.879 [0.848, 0.926] |
+| SwiGLU 1,048,579 | 942.14 / 863.30 | 1213.06 / 901.70 | 0.777 [0.713, 0.901] / 0.957 [0.873, 1.048] |
+| RMSNorm 64 × 128 | 3.95 / 3.13 | 9.61 / 8.25 | 0.411 [0.294, 0.569] / 0.380 [0.343, 0.418] |
+| RMSNorm 256 × 257 | 18.09 / 20.58 | 122.97 / 141.42 | 0.147 [0.139, 0.152] / 0.146 [0.140, 0.169] |
+| RMSNorm 128 × 1,024 | 43.69 / 54.70 | 143.14 / 159.80 | 0.305 [0.297, 0.312] / 0.342 [0.324, 0.361] |
+| GEMM (M,N,K) 128 × 128 × 128 | 53.34 / 52.11 | 76.30 / 74.19 | 0.699 [0.635, 0.752] / 0.702 [0.673, 0.731] |
+| GEMM (M,N,K) 256 × 256 × 256 | 420.65 / 391.79 | 644.91 / 515.26 | 0.652 [0.601, 0.830] / 0.760 [0.713, 0.798] |
+| GEMM (M,N,K) 129 × 257 × 255 | 205.17 / 189.17 | 371.79 / 343.09 | 0.552 [0.494, 0.617] / 0.551 [0.521, 0.581] |
+
+### 2 workers
+
+| Workload | BCIR µs, A / B | Triton-CPU µs, A / B | BCIR/Triton ratio [95% interval], A / B |
+|---|---:|---:|---|
+| Residual add 4,096 | 1.09 / 1.13 | 4.45 / 4.63 | 0.245 [0.238, 0.255] / 0.245 [0.234, 0.257] |
+| Residual add 1,048,579 | 115.05 / 153.19 | 146.87 / 156.43 | 0.783 [0.653, 1.067] / 0.979 [0.772, 1.007] |
+| SwiGLU 4,096 | 3.98 / 3.86 | 6.47 / 6.09 | 0.615 [0.582, 0.649] / 0.633 [0.594, 0.682] |
+| SwiGLU 1,048,579 | 541.74 / 519.46 | 641.92 / 506.78 | 0.844 [0.719, 1.058] / 1.025 [0.874, 1.164] |
+| RMSNorm 64 × 128 | 3.05 / 2.99 | 23.66 / 22.48 | 0.129 [0.126, 0.130] / 0.133 [0.114, 0.133] |
+| RMSNorm 256 × 257 | 13.28 / 15.84 | 91.81 / 84.44 | 0.145 [0.125, 0.168] / 0.188 [0.142, 0.191] |
+| RMSNorm 128 × 1,024 | 40.73 / 27.89 | 101.96 / 97.05 | 0.399 [0.298, 0.544] / 0.287 [0.272, 0.302] |
+| GEMM (M,N,K) 128 × 128 × 128 | 42.93 / 41.09 | 71.61 / 70.97 | 0.600 [0.518, 0.687] / 0.579 [0.481, 0.716] |
+| GEMM (M,N,K) 256 × 256 × 256 | 209.89 / 233.12 | 313.03 / 368.94 | 0.671 [0.502, 0.909] / 0.632 [0.529, 0.730] |
+| GEMM (M,N,K) 129 × 257 × 255 | 112.23 / 182.01 | 309.12 / 334.87 | 0.363 [0.334, 0.540] / 0.544 [0.541, 0.551] |
+
+
+A ratio below one means the named BCIR C kernel had lower measured latency in that row.
+Intervals are paired bootstrap intervals over rounds, descriptive for this shared VM. They do
+not capture all cross-session variation, and no wall-time threshold is proposed as a CI gate.
+There is no geometric-mean “BCIR beats Triton” headline across unrelated shapes/backends.
+
+Across two sessions: **40 workload/worker cases**, 96 candidate compilations/launches,
+and all numerical checks passed. The maximum absolute errors against float64 across both
+implementations and sessions were: residual add 2.38e-07, SwiGLU 5.01e-07,
+RMSNorm 1.67e-06, and GEMM 1.35e-05. These are observed errors, not universal bounds.
+
+The measured BCIR C library build took 6.55 / 6.29 s (A / B).
+Triton's summed first-call times across the declared candidate set were
+26.04 / 25.03 s. These include specialization/compilation/loading/first execution and
+are **not** an equal-work compiler-speed comparison. Tuning and repeated-measurement costs are
+separate from those first calls. All selected GEMM configurations were 16 × 32 × 32; this
+small candidate set is not a globally best Triton CPU implementation.
+
+All published candidate and final-output checks passed against float64 references under the
+recorded per-element tolerances. Residual add is checked more tightly than the transcendental
+and reduction paths. The raw files retain maximum absolute errors, scale-normalized errors,
+BCIR–Triton differences, the inputs' seeds, chosen configurations, every timing observation,
+compiler metadata and selected IR hashes. They do not establish bit parity, gradient accuracy,
+recall, language-model quality or behavior over all non-finite inputs.
+
+Memory reporting is deliberately limited to known input/output spans and BCIR pool storage.
+It excludes compiler caches, stack/register spills, launcher allocations, allocator arenas and
+process RSS. **No measured peak-memory superiority is claimed from these kernel tests.**
+
+## 7. What the pilot suggests, and what to improve
+
+1. **Keep the native C path.** Its fixed-call overhead and specialized reductions are useful
+   CPU assets. The Triton-CPU launcher source allocates a grid-coordinate array for multi-program
+   launches and uses OpenMP; BCIR's caller-owned pool has a different overhead profile [B1, T4].
+   This is a plausible contributor to the small-call gap, not an isolated causal measurement.
+2. **Use the library's optimized contracts deliberately.** The existing vector exponential is
+   much faster than the libm SwiGLU route on these inputs. Retain both numerical contracts and
+   their accuracy tests; select explicitly rather than globally enabling fast math. The blocked
+   GEMM deserves comparison with the sequential fused variant, not just the original rounded-
+   product implementation.
+3. **Treat large elementwise work as a bandwidth/launch problem.** The largest residual-add
+   case is much closer than small-call RMS. Test cache-size crossings, alignment, NUMA placement,
+   independent buffers and matched idle policy before changing the kernel algorithm.
+4. **Improve Triton CPU authoring before generalizing a gap.** Row grouping, explicit tiling,
+   masks and vectorization choices can matter greatly. Three GEMM tiles and a row-wise RMS kernel
+   are an initial search, not a survey of the best possible CPU implementations. Compile and
+   launch overhead need separate attribution.
+5. **Make the graph/native connection measurable.** Publish which selected layouts, packs,
+   fused groups and arena decisions actually reach C calls. Reuse packed operands across legal
+   consumers, price transposes and tails, and account for pool barriers. PR #820's shared-panel
+   and workspace accounting are relevant groundwork, not a measured gain in this study.
+6. **Use a fresh target-specific GPU study for Triton's core strength.** The CPU pilot provides
+   no quantitative estimate of the gap on tensor-core GEMM, Flash-style attention, low-precision
+   arithmetic, persistent kernels or device-side asynchronous transfers.
+
+## 8. Integration blueprint: make the two optimization levels cooperate
+
+A proposed Triton backend should consume a bounded kernel contract and return a compiled
+artifact plus enough metadata for BCIR to price and execute it safely. The current synchronous
+C provider ABI is not a complete asynchronous device ABI: host pointers cannot be silently
+reinterpreted as device addresses, and completion/ownership cannot disappear at the boundary.
+Keep allocation/driver/framework integration above the C core, using C++ where the vendor API
+requires it.
+
+| Contract area | Required fields / behavior | Why it matters |
+|---|---|---|
+| Semantics | Operation, shapes/strides, input/output alias rules, masks, side effects, precision/accumulation/reduction contract, admitted tolerance | A faster variant must implement the admitted operation |
+| Target | Architecture/features, address spaces, driver/runtime/compiler versions and compatibility | One artifact is not a universal GPU binary |
+| Resources | Alignment, input/output residency, shared/global scratch, persistent packs, register/spill metadata where available | The graph planner must see hidden memory and occupancy costs |
+| Execution | Grid, launch parameters, stream/event dependencies, completion and error semantics | Supports actual overlap without changing ordering or lifetime laws |
+| Identity | Source/configuration/backend/compiler hashes, output artifact digest, plan/scope/generation binding | Separates repeatable compilation from auditable application execution |
+| Calibration | Cold compilation/tuning, warm latency, transfers, uncertainty, workload horizon | Supports honest amortization and bounded empirical refinement |
+
+Use [BCAB](../kernel/BCIR_ARTIFACT_BUNDLE_ABI.md) to carry compatible standard images unchanged;
+do not invent a replacement device object format. An artifact hash is byte identity, while a
+law witness is semantic evidence: the adapter must carry both without claiming they are the
+same thing.
+
+The optimization target is a coupled decision over **partition, backend, precision, layout,
+packing, schedule, workspace and recomputation**, subject to legality and resource budgets.
+A useful objective is measured makespan at an admitted memory/quality envelope, with compile
+cost amortized over repeated use. Optimizing each variable independently can miss a jointly
+better program. This is a development direction, not a claim that the present implementation
+already solves the full joint search.
+
+## 9. Prioritized work, with acceptance evidence
+
+| Priority | Work | Acceptance evidence |
+|---|---|---|
+| 1 | Freeze this source-backed comparison and CPU pilot | Reproducer, pins, raw samples, numerical contracts and explicit hardware skips |
+| 2 | Minimal optional Triton resident-backend prototype | One real kernel, typed contract, deterministic artifact identity, refusal of incompatible shape/precision/target, and correct execution on actual hardware |
+| 3 | Measure composition overhead separately | Standalone Triton vs BCIR dispatching the **same** Triton artifact; distinguish launch/transfer/plan cost from kernel code quality |
+| 4 | Connect graph decisions to executed native/device kernels | Trace selected fusion/layout/pack/arena into launches; demonstrate one intervention improves total latency at the same memory and quality contract |
+| 5 | Add portable GF(2) layout reasoning alongside integer-affine maps | Broadcast/non-injective cases, inverse preconditions, masked tails, executable conversions and cross-rail witnesses |
+| 6 | Couple analytical selection with bounded hardware calibration | Held-out shapes, prediction/regret/error record, compilation horizon and a legal fallback on stale/missing measurements |
+| 7 | Expand target-specific kernel portfolio | GEMM/transposes/reductions/nonlinearities, then attention forward/backward, low precision and long-context memory under explicit contracts |
+| 8 | Full training comparison after #820 merges | Protocol in §10; no reuse of old training ratios as Triton evidence |
+
+`triton-shared`/standard-MLIR ingestion can be a later, explicitly subsetted experiment. Lowering
+a Triton program to generic linalg does not preserve every GPU layout, asynchronous instruction
+or hardware-specific semantic. An out-of-tree backend is a larger compiler-maintenance
+commitment than calling a resident backend; it should follow a demonstrated missing requirement.
+A fork is justified only by a concrete blocked capability with a funded maintenance plan.
+
+## 10. Deferred full-training protocol
+
+After PR #820 is complete and merged, freeze the merged BCIR SHA and the Triton target/toolchain
+before any model comparison. Triton is a kernel compiler, not a complete training framework;
+there must be an explicitly described host/autodiff/optimizer harness around the comparator.
+Keep PyTorch comparisons shelved unless separately requested.
+
+Use two experiments, because they answer different questions:
+
+- **Matched recipe:** identical model, initialization, batches, optimizer, update count,
+  precision/approximation contract and memory cap. Check forward outputs, backward gradients,
+  optimizer/state evolution and held-out quality before timing. This tests execution machinery.
+- **Best admitted recipe per system:** equal hardware, memory, tuning budget and quality target,
+  allowing documented architecture/layout/recompute differences. Report quality versus time
+  and memory frontiers. This tests what each ecosystem can build, without attributing a model
+  change to a faster compiler.
+
+First isolate kernel forward/backward and update components. Then measure complete steps,
+including synchronization and real movement, with precompiled warm throughput **and** cold
+start/compilation. Record live arena/scratch/packing memory separately from process RSS and
+external-library caches. Use multiple paired seeds for learning/quality and repeated randomized
+timing rounds. Include irregular and variable lengths, finite/non-finite numerical stress,
+checkpoint/resume, and memory-constrained recomputation. Never compare CPU latency with GPU
+latency as evidence of compiler superiority.
+
+On a GPU, BCIR orchestrating Triton kernels may beat another graph plan while using the same
+compiler. Attribute that result to partitioning, scheduling, memory or movement as demonstrated;
+it does not mean Triton's own generated machine code was outperformed by an unrelated backend.
+
+## Sources and implementation anchors
+
+All source references were inspected for this update. BCIR relative links refer to the measured
+base unless explicitly labeled pending. Upstream source links are release-pinned; live docs
+are supplemental and may move.
+
+- **[T1]** [Triton 3.8 release notes](https://github.com/triton-lang/triton/releases/tag/v3.8.0),
+  [pinned NVIDIA compiler pipeline](https://github.com/triton-lang/triton/blob/c01b6774b1865984607d89d89d3a10833de92037/third_party/nvidia/backend/compiler.py),
+  [AMD pipeline](https://github.com/triton-lang/triton/blob/c01b6774b1865984607d89d89d3a10833de92037/third_party/amd/backend/compiler.py).
+- **[T2]** [Experimental Triton-CPU release](https://github.com/triton-lang/triton-cpu/releases/tag/v3.8.0),
+  [CPU source pin](https://github.com/triton-lang/triton-cpu/tree/5a4885bf9b0b349a525b490a1df25f449f12d4e9),
+  [LLVM pin](https://github.com/triton-lang/triton-cpu/blob/5a4885bf9b0b349a525b490a1df25f449f12d4e9/cmake/llvm-info.json).
+- **[T3]** [Gluon overview](https://triton-lang.org/main/gluon/index.html),
+  [layout tutorial](https://triton-lang.org/main/getting-started/tutorials/gluon/layouts.html).
+- **[T4]** Triton-CPU [compiler/options](https://github.com/triton-lang/triton-cpu/blob/5a4885bf9b0b349a525b490a1df25f449f12d4e9/third_party/cpu/backend/compiler.py)
+  and [driver/launcher](https://github.com/triton-lang/triton-cpu/blob/5a4885bf9b0b349a525b490a1df25f449f12d4e9/third_party/cpu/backend/driver.py).
+- **[T5]** [LinearLayout definition and GF(2) mathematics](https://github.com/triton-lang/triton/blob/c01b6774b1865984607d89d89d3a10833de92037/include/triton/Tools/LinearLayout.h).
+- **[T6]** [Autotuner implementation](https://github.com/triton-lang/triton/blob/c01b6774b1865984607d89d89d3a10833de92037/python/triton/runtime/autotuner.py),
+  [autotune API](https://triton-lang.org/main/python-api/generated/triton.autotune.html).
+- **[T7]** [dot precision API](https://triton-lang.org/main/python-api/generated/triton.language.dot.html).
+- **[T8]** [FpSan semantics and limitations](https://triton-lang.org/main/programming-guide/chapter-3/fpsan.html),
+  [debugging and sanitizers](https://triton-lang.org/main/programming-guide/chapter-3/debugging.html).
+- **[T9]** [Compilation pipeline/cache lookup](https://github.com/triton-lang/triton/blob/c01b6774b1865984607d89d89d3a10833de92037/python/triton/compiler/compiler.py),
+  [cache keys](https://github.com/triton-lang/triton/blob/c01b6774b1865984607d89d89d3a10833de92037/python/triton/runtime/cache.py).
+- **[B1]** [C tensor implementation](../../runtime/c/bcir_tensor.c) and [contracts](../../runtime/c/bcir_tensor.h).
+- **[B2]** [Scope](../../bcir/kbcir/scope.py), [cost](../../bcir/kbcir/cost.py),
+  [tile prior](../../bcir/kbcir/tile_prior.py), [region carrier](../../bcir/kbcir/regions.py).
+- **[B3]** [ExecutionPlan](../../bcir/gem/execution_plan.py),
+  [plan ABI](../../bcir/abi/execution_plan_abi.py), [static memory](../../bcir/kbcir/static_memory.py).
+- **[B4]** [MLIR matmul lowering](../../mlir/lib/passes/BCIRLowerGemMatmulBufferPass.cpp),
+  [codegen targets](../../bcir/codegen/targets.py).
+- **[B5]** [SYCL interop](../kernel/SYCL_INTEROP.md),
+  [resident dispatcher](../../bcir/lower/sycl_dispatch.py).
+- **[B6]** [BCAB](../kernel/BCIR_ARTIFACT_BUNDLE_ABI.md),
+  [C++ handoff boundary](../languages/CPP_HANDOFF_BOUNDARY.md).
+- **[B7]** [Native training](../machine-learning/BCIR_NATIVE_DECODER_TRAINING.md),
+  [training program description](../../bcir/hosted/models/native_program.py).
+- **[B8]** **Pending:** [PR #820](https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation/pull/820),
+  inspected at `af1d935be77854c0d0fee2b8846714281864cd7c`. Its findings are not CPU-pilot results.
