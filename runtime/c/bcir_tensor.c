@@ -722,9 +722,13 @@ void bcir_tensor_mm_kblock(void *ctx, int ta, int tb, size_t m, size_t n, size_t
 #endif
 #endif
 typedef struct pool_worker { bcir_tensor_pool *pool; unsigned id; } pool_worker;
+/* A task that is told its worker (BF16-ATTN): 0 the caller's thread, 1 .. threads-1 the pool's. A
+ * worker runs one task at a time, so scratch indexed by the worker is the task's own while it runs;
+ * no value may depend on which worker ran a task. */
+typedef void (*pool_task_w)(void *ctx, size_t task, unsigned worker);
 struct bcir_tensor_pool {
   unsigned threads,pending; unsigned long generation; int stop;
-  bcir_tensor_task_fn fn; void *ctx; size_t tasks,next;
+  bcir_tensor_task_fn fn; pool_task_w fnw; void *ctx; size_t tasks,next;
 #if defined(BCIR_POOL_PTHREADS)
   pthread_mutex_t mutex; pthread_cond_t wake,done; pthread_t *workers;
 #elif defined(BCIR_POOL_WIN32)
@@ -767,11 +771,12 @@ unsigned bcir_tensor_pool_threads(const bcir_tensor_pool *pool) { return pool ? 
 static void pool_tasks(bcir_tensor_pool *p, unsigned id) {
   size_t t;
 #if defined(BCIR_POOL_ATOMIC)
-  bcir_tensor_task_fn fn=p->fn; void *ctx=p->ctx; size_t tasks=p->tasks;
-  (void)id;
-  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<tasks) fn(ctx,t);
+  bcir_tensor_task_fn fn=p->fn; pool_task_w fnw=p->fnw; void *ctx=p->ctx; size_t tasks=p->tasks;
+  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<tasks) {
+    if (fnw) fnw(ctx,t,id); else fn(ctx,t);
+  }
 #else
-  for (t=id;t<p->tasks;t+=p->threads) p->fn(p->ctx,t);
+  for (t=id;t<p->tasks;t+=p->threads) { if (p->fnw) p->fnw(p->ctx,t,id); else p->fn(p->ctx,t); }
 #endif
 }
 #if defined(BCIR_POOL_PTHREADS) || defined(BCIR_POOL_WIN32)
@@ -920,13 +925,18 @@ void bcir_tensor_pool_stop(bcir_tensor_pool *p) {
 #endif
   p->threads=1;
 }
-void bcir_tensor_pool_run(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx, size_t tasks) {
+/* One job: fn(ctx, task) for every task, or with fnw fnw(ctx, task, worker). */
+static void pool_dispatch(bcir_tensor_pool *p, bcir_tensor_task_fn fn, pool_task_w fnw, void *ctx,
+    size_t tasks) {
   size_t t;
   if (!tasks) return;
-  if (!p || p->threads==1 || tasks==1) { for (t=0;t<tasks;t++) fn(ctx,t); return; }
+  if (!p || p->threads==1 || tasks==1) {
+    for (t=0;t<tasks;t++) { if (fnw) fnw(ctx,t,0u); else fn(ctx,t); }
+    return;
+  }
 #if defined(BCIR_POOL_PTHREADS) || defined(BCIR_POOL_WIN32)
   POOL_LOCK(p);
-  p->fn=fn; p->ctx=ctx; p->tasks=tasks;
+  p->fn=fn; p->fnw=fnw; p->ctx=ctx; p->tasks=tasks;
 #if defined(BCIR_POOL_ATOMIC)
   __atomic_store_n(&p->pending,p->threads-1,__ATOMIC_RELAXED);
   __atomic_store_n(&p->next,(size_t)0,__ATOMIC_RELAXED);
@@ -955,8 +965,11 @@ void bcir_tensor_pool_run(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx
   POOL_UNLOCK(p);
 #endif
 #else
-  for (t=0;t<tasks;t++) fn(ctx,t);
+  for (t=0;t<tasks;t++) { if (fnw) fnw(ctx,t,0u); else fn(ctx,t); }
 #endif
+}
+void bcir_tensor_pool_run(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx, size_t tasks) {
+  pool_dispatch(p,fn,NULL,ctx,tasks);
 }
 #define pool_run bcir_tensor_pool_run
 /* --- the partitions: each a function of the shapes alone ----------------------------------- */
@@ -1120,6 +1133,9 @@ typedef struct bf16_call {
   uint16_t *wa,*wb;         /* where this call's pack tasks write them; NULL: packed by another */
   size_t kt,i0,mp,j0,np;    /* depth tiles; the chunk: rows [i0, i0+mp), columns [j0, j0+np) */
   size_t pa,pb,tr,tc,cols;  /* pack tasks; regions, rows x columns of them; a region's width */
+  size_t q0,q1;             /* the depth tiles the kernels run, [q0, q1): all kt but in the
+                               attention's causal products (BF16-ATTN) */
+  int prefetch;             /* the AMX kernel prefetches the next block's C (a GEMM's call) */
 } bf16_call;
 typedef struct bf16_job {
   bf16_call call[BF16_CALLS]; size_t ncall,nchain,split; int variant;
@@ -1148,15 +1164,18 @@ static void bf16_args(bf16_call *c, const bcir_tensor_mm_call *x) {
   c->x.a=x->a; c->x.lda=x->ta ? x->m : x->k; c->x.b=x->b; c->x.ldb=x->tb ? x->k : x->n;
   c->x.c=x->c; c->x.ldc=x->n; c->x.mode=MM_FULL; c->x.beta=x->beta;
   c->kt=bf16_pad(x->k)/32; c->mp=bf16_pad(x->m); c->np=bf16_pad(x->n);
+  c->q0=0; c->q1=c->kt; c->prefetch=1;
   c->cols=bf16_cols(c->kt,x->m,x->n);
   c->tr=(x->m+BF16_ROWS-1)/BF16_ROWS; c->tc=(x->n+c->cols-1)/c->cols;
 }
 /* A pack task s: the chunk's 32-row strip s over every depth tile, or (A transposed, its rows read
  * along the depth) depth tile s over every row block; a B pack task: the 32-column strip s (B
- * transposed) or depth tile s over every column block. One partition for every instance. */
+ * transposed) or depth tile s over every column block. One partition for every instance. A
+ * GEMM's call packs every tile; the attention's (BF16-ATTN) bound a strip of A to its depth tiles
+ * [q0, q1) and a depth tile of B to its first np columns, the ones its products read. */
 static void bf16_pack_a_generic(const bf16_call *c, size_t s) {
   const mm_args *x=&c->x; size_t lb,q,r,l,kt=c->kt,lb0=x->ta ? 0 : 2*s,lb1=x->ta ? c->mp/16 : 2*s+2;
-  size_t q0=x->ta ? s : 0,q1=x->ta ? s+1 : kt;
+  size_t q0=x->ta ? s : c->q0,q1=x->ta ? s+1 : c->q1;
   for (lb=lb0;lb<lb1;lb++) for (q=q0;q<q1;q++) {
     uint16_t *t=c->wa+(lb*kt+q)*BF16_TILE;
     for (r=0;r<16;r++) {
@@ -1181,7 +1200,8 @@ static void bf16_pack_b_generic(const bf16_call *c, size_t s) {
   }
 }
 /* Rows [r0, r1) x columns [c0, c1) of C over the chunk's panels: c from +0.0 (zero: beta 0, C not
- * read) or as C holds it (already beta-scaled), then every depth tile in order. */
+ * read) or as C holds it (already beta-scaled), then every depth tile in order -- tiles [q0, q1),
+ * which a GEMM's call sets to all kt (the panels' stride stays kt). */
 static void bf16_generic(const bf16_call *c, size_t r0, size_t r1, size_t c0, size_t c1, int zero) {
   const mm_args *x=&c->x; size_t i,j,q,p,kt=c->kt;
   for (i=r0;i<r1;i++) {
@@ -1189,7 +1209,7 @@ static void bf16_generic(const bf16_call *c, size_t r0, size_t r1, size_t c0, si
     for (j=c0;j<c1;j++) {
       const uint16_t *bcol=c->bp+((j-c->j0)/16)*kt*BF16_TILE+2*((j-c->j0)%16);
       float acc=zero ? 0.0f : x->c[i*x->ldc+j];
-      for (q=0;q<kt;q++) {
+      for (q=c->q0;q<c->q1;q++) {
         const uint16_t *at=arow+q*BF16_TILE,*bt=bcol+q*BF16_TILE; float e=0.0f,o=0.0f;
         for (p=0;p<16;p++) {
           e=bf16_fma(e,bf16_value(at[2*p]),bf16_value(bt[p*32]));
@@ -1238,7 +1258,7 @@ TARGET static void NAME##_pack_a(const bf16_call *c, size_t s) { \
   if (!x->ta) { \
     for (lb=2*s;lb<2*s+2;lb++) for (r=0;r<16;r++) { \
       size_t i=c->i0+lb*16+r; \
-      for (q=0;q<kt;q++) { \
+      for (q=c->q0;q<c->q1;q++) { \
         uint16_t *t=c->wa+(lb*kt+q)*BF16_TILE+r*32; size_t d=q*32; __m512 v0,v1; \
         __mmask16 m0=bf512_mask(x->k-d),m1=bf512_mask(x->k>d+16 ? x->k-d-16 : 0); \
         if (i>=x->m) { _mm512_storeu_si512(t,_mm512_setzero_si512()); continue; } \
@@ -1317,7 +1337,7 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void bf512_rows(size_t mr, con
   const __m512i hi=_mm512_set1_epi32((int)0xffff0000u);
   __m512 acc[8],e[8],o[8];
   for (r=0;r<mr;r++) acc[r]=zero ? _mm512_setzero_ps() : _mm512_maskz_loadu_ps(keep,x->c+(i+r)*x->ldc+j);
-  for (q=0;q<kt;q++) {
+  for (q=c->q0;q<c->q1;q++) {
     const uint16_t *at=arow+q*BF16_TILE,*bt=bcol+q*BF16_TILE;
     for (r=0;r<mr;r++) { e[r]=_mm512_setzero_ps(); o[r]=_mm512_setzero_ps(); }
     for (p=0;p<16;p++) {
@@ -1370,13 +1390,21 @@ BF16_PACK_BODIES(bfne, BF16_AMXHOST, bfne_cvt, BF512_PAIRS_BW)
 typedef struct bf16_tilecfg {
   unsigned char palette,start,reserved[14]; unsigned short colsb[16]; unsigned char rows[16];
 } bf16_tilecfg;
-__attribute__((target("amx-tile,amx-bf16,prfchw"))) static void bf16_amx(const bf16_call *c, size_t r0,
-    size_t r1, size_t c0, size_t c1, int zero) {
-  const mm_args *x=&c->x; const size_t kt=c->kt,ldc=x->ldc,per=(64+kt-1)/(kt ? kt : 1); size_t i,j,q,r,cc;
-  _Alignas(64) float edge[32*32]; bf16_tilecfg cfg;
+/* The tile unit's configuration, one for every region: eight tiles of 16 rows by 64 bytes. A region
+ * runs between bf16_amx_begin and bf16_amx_end; the attention's tasks (BF16-ATTN) run many regions
+ * between one pair, a GEMM's task one. */
+__attribute__((target("amx-tile"))) static void bf16_amx_begin(void) {
+  bf16_tilecfg cfg; size_t q;
   memset(&cfg,0,sizeof cfg); cfg.palette=1;
   for (q=0;q<8;q++) { cfg.rows[q]=16; cfg.colsb[q]=64; }
   _tile_loadconfig(&cfg);
+}
+__attribute__((target("amx-tile"))) static void bf16_amx_end(void) { _tile_release(); }
+__attribute__((target("amx-tile,amx-bf16,prfchw"))) static void bf16_amx_blocks(const bf16_call *c,
+    size_t r0, size_t r1, size_t c0, size_t c1, int zero) {
+  const mm_args *x=&c->x; const size_t kt=c->kt,ldc=x->ldc,nq=c->q1-c->q0;
+  const size_t per=c->prefetch ? (64+nq-1)/(nq ? nq : 1) : 0;
+  size_t i,j,q,r,cc; _Alignas(64) float edge[32*32];
   for (i=r0;i<r1;i+=32) for (j=c0;j<c1;j+=32) {
     const uint16_t *a0=c->ap+((i-c->i0)/16)*kt*BF16_TILE,*a1=a0+kt*BF16_TILE;
     const uint16_t *b0=c->bp+((j-c->j0)/16)*kt*BF16_TILE,*b1=b0+kt*BF16_TILE;
@@ -1395,9 +1423,9 @@ __attribute__((target("amx-tile,amx-bf16,prfchw"))) static void bf16_amx(const b
       _tile_loadd(0,edge,128); _tile_loadd(1,edge+16,128);
       _tile_loadd(2,edge+16*32,128); _tile_loadd(3,edge+16*32+16,128);
     }
-    for (q=0;q<kt;q++) {
-      size_t l;
-      for (l=q*per;l<q*per+per && l<64;l++)
+    for (q=c->q0;q<c->q1;q++) {
+      size_t l,first=(q-c->q0)*per;
+      for (l=first;l<first+per && l<64;l++)
         if ((l>>1)<nrows && (l&1)*16<ncols) __builtin_prefetch(np+(l>>1)*ldc+(l&1)*16,1,3);
       _tile_loadd(4,a0+q*BF16_TILE,64); _tile_loadd(5,a1+q*BF16_TILE,64);
       _tile_stream_loadd(6,b0+q*BF16_TILE,64); _tile_stream_loadd(7,b1+q*BF16_TILE,64);
@@ -1412,7 +1440,10 @@ __attribute__((target("amx-tile,amx-bf16,prfchw"))) static void bf16_amx(const b
       for (r=0;r<rows;r++) for (cc=0;cc<cols;cc++) cp[r*ldc+cc]=edge[r*32+cc];
     }
   }
-  _tile_release();
+}
+__attribute__((target("amx-tile,amx-bf16,prfchw"))) static void bf16_amx(const bf16_call *c, size_t r0,
+    size_t r1, size_t c0, size_t c1, int zero) {
+  bf16_amx_begin(); bf16_amx_blocks(c,r0,r1,c0,c1,zero); bf16_amx_end();
 }
 /* The host's AMX: CPUID's AMX-TILE and AMX-BF16 (and the AVX512-BW and -BF16 its packs use),
  * XCR0's tile configuration and data (the OS saves them), and Linux's grant of the tile data to this process (arch_prctl(ARCH_REQ_XCOMP_PERM,
@@ -1528,6 +1559,22 @@ int bcir_tensor_mm_bf16_variants(void) {
 #endif
   return v;
 }
+#ifdef BCIR_DT_PANELS_PROBE
+/* The trainer harness's question of the AMX instance's admission (BF16-KERN): whether this build and
+ * this host offer the instance -- the vector instance's gate and the host's AMX, everything the
+ * admission asks but its differential -- so the harness can hold the differential to passing
+ * wherever the instance is offered. A wrong AMX kernel is withdrawn by its admission, never run, so
+ * no value shows it: here it is an offered instance not admitted. A build defines
+ * BCIR_DT_PANELS_PROBE to have it (the harness's own builds do; the library does not). */
+int bcir_tensor_bf16_amx_offered(void);
+int bcir_tensor_bf16_amx_offered(void) {
+#if defined(BCIR_MM_DISPATCH) && defined(BCIR_BF16_AMX)
+  return (bcir_tensor_mm_bf16_variants()&4) && bf16_amx_host();
+#else
+  return 0;
+#endif
+}
+#endif
 static void bf16_pack_task(void *ctx, size_t task) {
   bf16_job *j=(bf16_job *)ctx; size_t q=0; const bf16_call *c;
   while (task>=j->packs[q+1]) q++;
@@ -2285,9 +2332,10 @@ void bcir_tensor_rope(size_t b, size_t t, size_t heads, size_t dim,
  * bit-identical; future scores stay exactly zero. Under the exp contract the softmax row goes
  * through the exponential's vector instance after the max-subtraction (the same exp1 per
  * element, the same sum order; the scalar loop cost the forward a quarter more than libm). On
- * AVX-512 a whole block of 16 rows runs its maxima and sums as the lanes of one vector, and under
- * the exp contract its exponentials in those transposed blocks (NDT-ATTN-4: att512_rowchain,
- * att512_expsum) -- each row's chain the loop's, in its column order. */
+ * AVX-512 a whole block of 16 rows runs its maxima and sums as the lanes of one vector
+ * (NDT-ATTN-4: att512_rowchain, att512_expsum) -- each row's chain the loop's, in its column order;
+ * the maxima are taken over the raw scores and scaled, the scale folded into each exponential's
+ * argument (ATTN-SOFT: the same values, one pass over the scores fewer). */
 typedef struct att_job {
   size_t b,t,nh,nk,d,group; const float *q,*k,*v,*dy; float *p,*y,*dq,*dk,*dv; int variant,exp2;
   int fused;  /* ATTN-FMA: the products' every multiply-add one fmaf */
@@ -2483,17 +2531,18 @@ __attribute__((target("avx512f"))) static void att512_transposed_fma(size_t rows
 }
 #endif
 #ifdef BCIR_MM_DISPATCH
-/* The attention's row chains for 16 rows at once (NDT-ATTN-4): the 16 rows' blocks of 16 columns
- * transposed in registers so lane r carries row r's chain -- the softmax's running maximum (the
+/* The attention's row chains for 16 rows at once (NDT-ATTN-4): rows i0 .. i0+15, the first at `rows`,
+ * the next ld floats on (the scores' t, or a scratch block's stride, BF16-ATTN); the 16 rows' blocks
+ * of 16 columns transposed in registers so lane r carries row r's chain -- the softmax's running maximum (the
  * scalar `x > max ? x : max`, which is VMAXPS's operand rule exactly) and its sum, and the
  * backward's dot -- over the columns in order, a lane taking a column only where the row has it;
  * every row's value is the scalar loop's, bit for bit. */
-__attribute__((target("avx512f"))) static void att512_rowchain(size_t t, size_t i0, const float *p,
+__attribute__((target("avx512f"))) static void att512_rowchain(size_t ld, size_t i0, const float *rows,
     float *out, int sum) {
   _Alignas(64) float blk[256]; __m512 v=sum ? _mm512_setzero_ps() : _mm512_set1_ps(-INFINITY);
   size_t jb,c;
   for (jb=0;jb<=i0;jb+=16) {
-    kb512_transpose16(p+i0*t+jb,t,blk,16);
+    kb512_transpose16(rows+jb,ld,blk,16);
     for (c=0;c<16;c++) {
       __mmask16 k=(__mmask16)(jb<i0 ? 0xffffu : (0xffffu<<c)&0xffffu);
       __m512 x=_mm512_load_ps(blk+c*16);
@@ -2502,16 +2551,19 @@ __attribute__((target("avx512f"))) static void att512_rowchain(size_t t, size_t 
   }
   _mm512_storeu_ps(out,v);
 }
-/* The v2 softmax's exponentials and sum for the same 16 rows, in the transposed blocks: each block
- * less its lanes' maxima, through the exponential's vector instance whole (no row's remainder runs
- * one element at a time), summed by lane where the row has the column, the rest zeroed, and
- * transposed back; each element is exp1(x - max) and each sum its row's chain in column order. */
-__attribute__((target("avx512f"))) static void att512_expsum(size_t t, size_t i0, float *p,
-    const float *maxv, float *sum) {
-  _Alignas(64) float blk[256]; __m512 mx=_mm512_loadu_ps(maxv),s=_mm512_setzero_ps(); size_t jb,c;
+/* The v2 softmax's exponentials and sum for the same 16 rows, in the transposed blocks: each block's
+ * scores scaled and less their lanes' scaled maxima -- the scaled score's rounding, then the
+ * difference's, as when the scores were scaled in place first -- through the exponential's vector
+ * instance whole (no row's remainder runs one element at a time), summed by lane where the row has
+ * the column, the rest zeroed, and transposed back; each element is exp1(x*scale - max) and each
+ * sum its row's chain in column order. */
+__attribute__((target("avx512f"))) static void att512_expsum(size_t ld, size_t i0, float *rows,
+    float scale, const float *maxv, float *sum) {
+  _Alignas(64) float blk[256]; __m512 mx=_mm512_loadu_ps(maxv),sc=_mm512_set1_ps(scale),s=_mm512_setzero_ps();
+  size_t jb,c;
   for (jb=0;jb<=i0;jb+=16) {
-    kb512_transpose16(p+i0*t+jb,t,blk,16);
-    for (c=0;c<16;c++) _mm512_store_ps(blk+c*16,_mm512_sub_ps(_mm512_load_ps(blk+c*16),mx));
+    kb512_transpose16(rows+jb,ld,blk,16);
+    for (c=0;c<16;c++) _mm512_store_ps(blk+c*16,_mm512_sub_ps(_mm512_mul_ps(_mm512_load_ps(blk+c*16),sc),mx));
     exp_inplace_avx512(256,blk);
     for (c=0;c<16;c++) {
       __mmask16 k=(__mmask16)(jb<i0 ? 0xffffu : (0xffffu<<c)&0xffffu);
@@ -2519,7 +2571,7 @@ __attribute__((target("avx512f"))) static void att512_expsum(size_t t, size_t i0
       s=_mm512_mask_add_ps(s,k,s,x);
       _mm512_store_ps(blk+c*16,x);
     }
-    kb512_transpose16(blk,16,p+i0*t+jb,t);
+    kb512_transpose16(blk,16,rows+jb,ld);
   }
   _mm512_storeu_ps(sum,s);
 }
@@ -2638,9 +2690,53 @@ static void att_rows(int variant, int fused, const mm_args *x, size_t t, int whi
   rest.jb0=0; rest.jb1=x->n; rest.r0=whole; rest.r1=t;
   mm_run_range(variant,fused ? MM_FUSED : MM_V1,x,&rest);
 }
+/* A head's softmax rows over its scores ph (t x t): each row's scores j <= i scaled by 1/sqrtf(d),
+ * less their running maximum, through the exponential (libm's, or the BCIR exponential's vector
+ * instance under the exp contract), summed in index order and divided by the sum -- 16 rows at once
+ * on AVX-512 (NDT-ATTN-4), each row's chain the scalar loop's; the future columns are not read. A
+ * row's values depend on that row alone, so a block of n rows runs alone wherever it sits
+ * (BF16-ATTN): its row u is the attention's row i0+u, at s + u*ld, i0 a multiple of 16. */
+static void att_softmax_block(const att_job *a, float *s, size_t ld, size_t i0, size_t n) {
+  size_t u0=0,j; float scale=1.0f/sqrtf((float)a->d);
+#ifdef BCIR_MM_DISPATCH
+  if (a->variant==4) for (;u0+16<=n;u0+=16) {
+    float maxv[16],sum[16],*rows=s+u0*ld; size_t u,i=i0+u0;
+    /* the raw scores' maxima, then scaled: rounding is monotonic and the scale positive, so a
+     * row's scaled maximum is its scaled scores' (the scalar loop's), NaN skipped alike; each
+     * exponential's argument is the scaled score less it, the same two roundings */
+    att512_rowchain(ld,i,rows,maxv,0);
+    for (u=0;u<16;u++) maxv[u]*=scale;
+    if (a->exp2) att512_expsum(ld,i,rows,scale,maxv,sum);
+    else {
+      for (u=0;u<16;u++) { float *pi=rows+u*ld; for (j=0;j<=i+u;j++) pi[j]=expf(pi[j]*scale-maxv[u]); }
+      att512_rowchain(ld,i,rows,sum,1);
+    }
+    for (u=0;u<16;u++) { float *pi=rows+u*ld; for (j=0;j<=i+u;j++) pi[j]/=sum[u]; }
+  }
+#endif
+  for (;u0<n;u0++) {
+    float *pi=s+u0*ld,maxv=-INFINITY,sum=0.0f; size_t i=i0+u0;
+    for (j=0;j<=i;j++) { pi[j]*=scale; if (pi[j]>maxv) maxv=pi[j]; }
+    if (a->exp2) {  /* v2: the row through the vector instance, then the sum in index order */
+      for (j=0;j<=i;j++) pi[j]-=maxv;
+      exp_inplace_run(a->variant,i+1,pi);
+      for (j=0;j<=i;j++) sum+=pi[j];
+    } else for (j=0;j<=i;j++) { pi[j]=expf(pi[j]-maxv); sum+=pi[j]; }
+    for (j=0;j<=i;j++) pi[j]/=sum;
+  }
+}
+static void att_softmax(const att_job *a, float *ph) { att_softmax_block(a,ph,a->t,0,a->t); }
+/* A forward task's verdict (NDT-SCAN-W): the head's context rows, and its KV head's keys from the
+ * group's first query head. */
+static void att_verdict(const att_job *a, size_t r, size_t h) {
+  size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk);
+  int ok=rows_finite(a->variant,a->y+(r*t*nh+h)*d,t,d,nh*d);
+  if (ok && h%(nh/nk)==0) ok=rows_finite(a->variant,a->k+(r*t*nk+kh)*d,t,d,nk*d);
+  a->bad[r*nh+h]=(unsigned char)!ok;
+}
 /* One (batch, query head): its scores, softmax rows and context; nothing shared with another. */
 static void att_head(const att_job *a, size_t r, size_t h) {
-  size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),i,j; float scale=1.0f/sqrtf((float)d);
+  size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),i;
   float *ph=a->p+(r*nh+h)*t*t; mm_args x;
   /* the products accumulate into what they write: this head's probabilities and its context
    * columns start at zero here, in the task that owns them (NDT-SCAN; the caller's fill was serial)
@@ -2655,38 +2751,11 @@ static void att_head(const att_job *a, size_t r, size_t h) {
   x.ta=0; x.tb=1; x.m=t; x.n=t; x.k=d; x.alpha=1.0f; x.a=a->q+(r*t*nh+h)*d; x.lda=nh*d;
   x.b=a->k+(r*t*nk+kh)*d; x.ldb=nk*d; x.c=ph; x.ldc=t; x.mode=MM_LOWER;
   att_rows(a->variant,a->fused,&x,t,ATT_SCORES,1);
-  i=0;
-#ifdef BCIR_MM_DISPATCH
-  if (a->variant==4) for (;i+16<=t;i+=16) {
-    float maxv[16],sum[16]; size_t u;
-    for (u=0;u<16;u++) { float *pi=ph+(i+u)*t; for (j=0;j<=i+u;j++) pi[j]*=scale; }
-    att512_rowchain(t,i,ph,maxv,0);
-    if (a->exp2) att512_expsum(t,i,ph,maxv,sum);
-    else {
-      for (u=0;u<16;u++) { float *pi=ph+(i+u)*t; for (j=0;j<=i+u;j++) pi[j]=expf(pi[j]-maxv[u]); }
-      att512_rowchain(t,i,ph,sum,1);
-    }
-    for (u=0;u<16;u++) { float *pi=ph+(i+u)*t; for (j=0;j<=i+u;j++) pi[j]/=sum[u]; }
-  }
-#endif
-  for (;i<t;i++) {
-    float *pi=ph+i*t,maxv=-INFINITY,sum=0.0f;
-    for (j=0;j<=i;j++) { pi[j]*=scale; if (pi[j]>maxv) maxv=pi[j]; }
-    if (a->exp2) {  /* v2: the row through the vector instance, then the sum in index order */
-      for (j=0;j<=i;j++) pi[j]-=maxv;
-      exp_inplace_run(a->variant,i+1,pi);
-      for (j=0;j<=i;j++) sum+=pi[j];
-    } else for (j=0;j<=i;j++) { pi[j]=expf(pi[j]-maxv); sum+=pi[j]; }
-    for (j=0;j<=i;j++) pi[j]/=sum;
-  }
+  att_softmax(a,ph);
   x.tb=0; x.n=d; x.k=t; x.a=ph; x.lda=t; x.b=a->v+(r*t*nk+kh)*d; x.ldb=nk*d;
   x.c=a->y+(r*t*nh+h)*d; x.ldc=nh*d; x.mode=MM_KLE;
   att_rows(a->variant,a->fused,&x,t,ATT_CONTEXT,1);
-  if (a->bad) {  /* the head's context rows, and its KV head's keys from the group's first */
-    int ok=rows_finite(a->variant,a->y+(r*t*nh+h)*d,t,d,nh*d);
-    if (ok && h%(nh/nk)==0) ok=rows_finite(a->variant,a->k+(r*t*nk+kh)*d,t,d,nk*d);
-    a->bad[r*nh+h]=(unsigned char)!ok;
-  }
+  if (a->bad) att_verdict(a,r,h);
 }
 static void att_task(void *ctx, size_t task) {
   att_job *a=(att_job *)ctx; att_head(a,task/a->nh,task%a->nh);
@@ -2903,4 +2972,392 @@ void bcir_tensor_attention_backward_inplace(size_t b, size_t t, size_t nh, size_
     size_t d, const float *q, const float *k, const float *v, float *p, const float *dy,
     float *dq, float *dk, float *dv) {
   bcir_tensor_attention_backward_inplace_pool(NULL,b,t,nh,nk,d,q,k,v,p,dy,dq,dk,dv);
+}
+/* --- the attention on bfloat16 operands (BF16-ATTN) ---------------------------------------------
+ * The attention's six products -- the forward's scores S = Q K^T and context Y = P V, the backward's
+ * dV = P^T dY, dP = dY V^T, dQ = dS K and dK = dS^T Q -- under the bf16 contract: each element is the
+ * bf16 GEMM's (the operands rounded to bfloat16; the depth in 32-term tiles, each tile's two lanes
+ * from +0.0 and their sum added to c, flushed as the AMX unit flushes), over the depth tiles the
+ * causal mask reaches from the element's 32-row block: a query block's key tiles 0 .. its own (Y,
+ * dQ), a key block's query tiles from its own on (dV, dK), every channel tile for S and dP, whose
+ * blocks past the diagonal are never computed. A tile's terms past the mask are the +0.0
+ * probabilities and score adjoints the arena holds there. The scaling, the softmax (v1, or the
+ * BCIR exponential under EXP), the dot and the score adjoint are the v1 attention's, in its order;
+ * the future scores and adjoints are +0.0. A KV head's dk and dv take its query heads in order, the
+ * first from +0.0. Every instance -- portable, AVX-512 under MXCSR's FTZ and DAZ, AMX -- is the same
+ * bits at every thread count.
+ * A task is a (batch, KV head) in both directions: its keys and values are packed once for its
+ * query heads, and each query block runs its scores, softmax, probabilities' strip and context (its
+ * dP, dot, score adjoint, dS's strips and dQ) while its rows are in the core's cache, packing only
+ * the depth tiles the mask reaches. dV and dK are computed transposed -- dV^T = dY^T P, dK^T = Q^T dS,
+ * the same terms in the same lanes, a product of two bfloat16 being exact either way round -- so the
+ * transposed packs are of dY and Q (dim x time) instead of P and dS (time x time); they accumulate
+ * in the task's region over its query heads and are transposed into dv and dk at the end, values
+ * moved, none computed. Every product runs whole 32 x 32 tiles where the shapes allow, its context
+ * and dq rows through a scratch block whose padded columns are never copied. A task's region is a
+ * worker's (or a task's, where a pool has more workers than tasks): no value depends on which. */
+typedef struct att16_job {
+  att_job a;            /* shapes, operands, the exponential bit, the verdict bytes */
+  int bv;               /* the products' instance: 1 portable, 4 AVX-512, 8 AMX */
+  unsigned char *ws;    /* the regions, from the workspace's first 64-byte boundary */
+  size_t per;           /* bytes of one region */
+  int by_worker;        /* a region a worker (threads <= tasks), else a region a task */
+} att16_job;
+static size_t att16_mul(size_t a, size_t b) { return a && b>SIZE_MAX/a ? SIZE_MAX : a*b; }
+/* bytes of rows x cols binary32 scratch, a multiple of 64 */
+static size_t att16_floats(size_t rows, size_t cols) {
+  size_t n=att16_mul(att16_mul(rows,cols),4);
+  return n>SIZE_MAX-63 ? SIZE_MAX : (n+63)/64*64;
+}
+/* a forward region: K^T's panel (B) and V's (B), a query head's Q (A) and P (A), a context block */
+static size_t att16_forward_bytes(size_t t, size_t d) {
+  size_t kv=bf16_sum(bf16_strip(t,d),bf16_strip(d,t));
+  size_t head=bf16_sum(bf16_strip(t,d),bf16_strip(t,t));
+  return bf16_sum(bf16_sum(kv,head),att16_floats(32,bf16_pad(d)));
+}
+/* a backward region: the KV head's V^T (B, for dP) and K (B, for dQ), dV^T and dK^T, a block of dP
+ * and one of dQ, and a query head's dY (A), dY^T (A), P (B), dS (A), dS (B) and Q^T (A) */
+static size_t att16_backward_bytes(size_t t, size_t d) {
+  size_t tp=bf16_pad(t),dp=bf16_pad(d);
+  size_t kv=bf16_sum(bf16_sum(bf16_strip(t,d),bf16_strip(d,t)),bf16_sum(att16_floats(dp,tp),att16_floats(dp,tp)));
+  size_t blocks=bf16_sum(att16_floats(32,tp),att16_floats(32,dp));
+  size_t head=bf16_sum(bf16_sum(bf16_strip(t,d),bf16_strip(d,t)),bf16_sum(bf16_strip(t,t),bf16_strip(t,t)));
+  head=bf16_sum(head,bf16_sum(bf16_strip(t,t),bf16_strip(d,t)));
+  return bf16_sum(bf16_sum(kv,blocks),head);
+}
+size_t bcir_tensor_attention_bf16_workspace(size_t b, size_t t, size_t nh, size_t nk, size_t d) {
+  size_t f,w;
+  if (!b || !t || !nh || !nk || !d) return 0;
+  f=att16_mul(att16_mul(b,nk),att16_forward_bytes(t,d));
+  w=att16_mul(att16_mul(b,nk),att16_backward_bytes(t,d));
+  return bf16_sum(f>w ? f : w,BF16_ALIGN);
+}
+/* one product as the bf16 GEMM's call (alpha 1) over the attention's strides, its panels pa, pb */
+static void att16_call(bf16_call *c, int ta, int tb, size_t m, size_t n, size_t k, const float *a,
+    size_t lda, const float *b, size_t ldb, float *cc, size_t ldc, uint16_t *pa, uint16_t *pb) {
+  bcir_tensor_mm_call x;
+  x.ta=ta; x.tb=tb; x.m=m; x.n=n; x.k=k; x.alpha=1.0f; x.a=a; x.b=b; x.beta=0.0f; x.c=cc;
+  bf16_args(c,&x);
+  c->x.lda=lda; c->x.ldb=ldb; c->x.ldc=ldc;
+  c->wa=pa; c->ap=pa; c->wb=pb; c->bp=pb;
+  c->prefetch=0;  /* its blocks are few and small: the prefetch cost the scores a quarter */
+}
+/* pack task s of a call's A or B panel by the instance's packs */
+static void att16_pack_a(int bv, const bf16_call *c, size_t s) {
+  (void)bv;
+#ifdef BCIR_MM_DISPATCH
+#ifdef BCIR_BF16_AMX
+  if (bv==8) { bfne_pack_a(c,s); return; }
+#endif
+  if (bv>=4) { bf512_pack_a(c,s); return; }
+#endif
+  bf16_pack_a_generic(c,s);
+}
+static void att16_pack_b(int bv, const bf16_call *c, size_t s) {
+  (void)bv;
+#ifdef BCIR_MM_DISPATCH
+#ifdef BCIR_BF16_AMX
+  if (bv==8) { bfne_pack_b(c,s); return; }
+#endif
+  if (bv>=4) { bf512_pack_b(c,s); return; }
+#endif
+  bf16_pack_b_generic(c,s);
+}
+/* a call's whole panels, serially in the task: A where pack_a, B where pack_b */
+static void att16_pack(int bv, const bf16_call *c, int pack_a, int pack_b) {
+  size_t s,na=c->x.ta ? c->kt : c->mp/32,nb=c->x.tb ? c->np/32 : c->kt;
+  for (s=0;pack_a && s<na;s++) att16_pack_a(bv,c,s);
+  for (s=0;pack_b && s<nb;s++) att16_pack_b(bv,c,s);
+}
+/* depth tile s of a call's B panel (B not transposed) over the first np columns its products read */
+static void att16_pack_depth(int bv, const bf16_call *c, size_t s, size_t np) {
+  bf16_call x=*c;
+  x.np=np<c->np ? np : c->np; att16_pack_b(bv,&x,s);
+}
+/* strip ib of a call's A panel (A not transposed) from a block of `rows` rows at src (lds) -- the
+ * strip's rows from 0 -- over the depth tiles [0, q1) its products read */
+static void att16_pack_rows(int bv, const bf16_call *c, size_t ib, const float *src, size_t lds,
+    size_t rows, size_t q1) {
+  bf16_call x=*c;
+  x.x.a=src; x.x.lda=lds; x.x.m=rows; x.i0=0; x.wa=c->wa+2*ib*c->kt*BF16_TILE; x.q0=0; x.q1=q1;
+  att16_pack_a(bv,&x,0);
+}
+/* depth tile ib of a call's B panel (B not transposed) from a block of `rows` depth rows at src
+ * (lds), over its first np columns */
+static void att16_pack_rows_b(int bv, const bf16_call *c, size_t ib, const float *src, size_t lds,
+    size_t rows, size_t np) {
+  bf16_call x=*c;
+  x.x.b=src; x.x.ldb=lds; x.x.k=rows; x.wb=c->wb+ib*BF16_TILE; x.np=np<c->np ? np : c->np;
+  att16_pack_b(bv,&x,0);
+}
+/* row block ib of a call as its own call: A's strip ib from row 0, C from out (ldo) */
+static void att16_block(bf16_call *blk, const bf16_call *c, size_t ib, float *out, size_t ldo) {
+  *blk=*c; blk->ap=c->ap+2*ib*c->kt*BF16_TILE; blk->i0=0; blk->x.c=out; blk->x.ldc=ldo;
+}
+/* rows [r0, r1) x columns [c0, c1) of a product over its depth tiles [q0, q1), from +0.0 (zero) or
+ * from what C holds; the AMX instance runs between its task's bf16_amx_begin and bf16_amx_end */
+static void att16_region(int bv, bf16_call *c, size_t r0, size_t r1, size_t c0, size_t c1,
+    size_t q0, size_t q1, int zero) {
+  c->q0=q0; c->q1=q1;
+#ifdef BCIR_MM_DISPATCH
+#ifdef BCIR_BF16_AMX
+  if (bv==8) { bf16_amx_blocks(c,r0,r1,c0,c1,zero); return; }
+#endif
+  if (bv>=4) { bf16_avx512(c,r0,r1,c0,c1,zero); return; }
+#endif
+  (void)bv;
+  bf16_generic(c,r0,r1,c0,c1,zero);
+}
+#ifdef BCIR_MM_DISPATCH
+/* rows [i0, i0+n) of a head's scores (t x t): each row's columns past its diagonal +0.0 */
+__attribute__((target("avx512f"))) static void att16_future512(size_t t, size_t i0, size_t n, float *ph) {
+  size_t u,j;
+  for (u=0;u<n;u++) {
+    size_t i=i0+u,j0=(i+1)/16*16; float *row=ph+i*t;
+    if (j0<t) _mm512_mask_storeu_ps(row+j0,(__mmask16)(att512_lanes(t-j0)&~att512_lanes(i+1-j0)),
+        _mm512_setzero_ps());
+    for (j=j0+16;j<t;j+=16) _mm512_mask_storeu_ps(row+j,att512_lanes(t-j),_mm512_setzero_ps());
+  }
+}
+/* rows [0, n) of a dP block (row u the attention's row i0+u, at dpb + u*ld) become its score
+ * adjoints in place -- p_ij (dp_ij - dot_u) scale, the scalar loop's three roundings, for j <= i --
+ * and +0.0 past the diagonal to `edge` (a multiple of 16) */
+__attribute__((target("avx512f"))) static void att16_ds512(size_t t, size_t i0, size_t n, const float *ph,
+    float *dpb, size_t ld, const float *dot, float scale, size_t edge) {
+  size_t u,j; const __m512 sc=_mm512_set1_ps(scale);
+  for (u=0;u<n;u++) {
+    size_t i=i0+u; const float *pi=ph+i*t; float *ds=dpb+u*ld; __m512 dv=_mm512_set1_ps(dot[u]);
+    for (j=0;j<edge;j+=16) {
+      __mmask16 take=j>i ? 0 : att512_lanes(i-j+1);
+      __m512 pv=_mm512_maskz_loadu_ps(take,pi+j),dpv=_mm512_maskz_loadu_ps(take,ds+j);
+      _mm512_storeu_ps(ds+j,_mm512_maskz_mul_ps(take,_mm512_mul_ps(pv,_mm512_sub_ps(dpv,dv)),sc));
+    }
+  }
+}
+/* n rows of `cols` floats from src (lds) to dst (ldd) */
+__attribute__((target("avx512f"))) static void att16_copy512(size_t n, size_t cols, const float *src,
+    size_t lds, float *dst, size_t ldd) {
+  size_t u,j;
+  for (u=0;u<n;u++) for (j=0;j<cols;j+=16) {
+    __mmask16 m=att512_lanes(cols-j);
+    _mm512_mask_storeu_ps(dst+u*ldd+j,m,_mm512_maskz_loadu_ps(m,src+u*lds+j));
+  }
+}
+__attribute__((target("avx512f"))) static void att16_transpose512(size_t rw, size_t cw, const float *in,
+    size_t ldi, float *out, size_t ldo) {
+  size_t i,c;
+  for (i=0;i<rw;i+=16) for (c=0;c<cw;c+=16) kb512_transpose16(in+c*ldi+i,ldi,out+i*ldo+c,ldo);
+}
+#endif
+/* rows [i0, i0+n) of a head's scores: each row's columns past its diagonal +0.0 */
+static void att16_future(int variant, size_t t, size_t i0, size_t n, float *ph) {
+  size_t u;
+  (void)variant;
+#ifdef BCIR_MM_DISPATCH
+  if (variant==4) { att16_future512(t,i0,n,ph); return; }
+#endif
+  for (u=0;u<n;u++) if (i0+u+1<t) memset(ph+(i0+u)*t+i0+u+1,0,(t-i0-u-1)*sizeof(float));
+}
+/* n rows of `cols` floats from src (lds) to dst (ldd) */
+static void att16_copy(int variant, size_t n, size_t cols, const float *src, size_t lds, float *dst,
+    size_t ldd) {
+  size_t u;
+  (void)variant;
+#ifdef BCIR_MM_DISPATCH
+  if (variant==4) { att16_copy512(n,cols,src,lds,dst,ldd); return; }
+#endif
+  for (u=0;u<n;u++) memcpy(dst+u*ldd,src+u*lds,cols*sizeof(float));
+}
+/* out (rows x cols, ldo) as the transpose of in (cols x rows, ldi): values moved, none computed */
+static void att16_transpose(int variant, size_t rows, size_t cols, const float *in, size_t ldi,
+    float *out, size_t ldo) {
+  size_t i,c,rw=0,cw=0;
+  (void)variant;
+#ifdef BCIR_MM_DISPATCH
+  if (variant==4) { rw=rows/16*16; cw=cols/16*16; att16_transpose512(rw,cw,in,ldi,out,ldo); }
+#endif
+  for (i=0;i<rows;i++) for (c=i<rw ? cw : 0;c<cols;c++) out[i*ldo+c]=in[c*ldi+i];
+}
+/* One query head of a forward task: kb and vb are its KV head's K^T and V panels. A query block's
+ * scores land in p, its future +0.0, its softmax in place, its strip of P packed from those rows. */
+static void att16_forward_head(const att16_job *j, size_t r, size_t h, uint16_t *kb, uint16_t *vb,
+    uint16_t *qa, uint16_t *pa, float *ys) {
+  const att_job *a=&j->a; size_t t=a->t,nh=a->nh,d=a->d,dp=bf16_pad(d),nb=(t+31)/32,ib;
+  float *ph=a->p+(r*nh+h)*t*t,*yh=a->y+(r*t*nh+h)*d; bf16_call cs,cy,blk;
+  att16_call(&cs,0,1,t,t,d,a->q+(r*t*nh+h)*d,nh*d,NULL,0,NULL,t,qa,kb);
+  att16_pack(j->bv,&cs,1,0);
+  att16_call(&cy,0,0,t,d,t,NULL,0,NULL,0,NULL,dp,pa,vb);
+  for (ib=0;ib<nb;ib++) {
+    size_t r0=ib*32,rows=t-r0<32 ? t-r0 : 32,cols=r0+rows;
+    att16_block(&blk,&cs,ib,ph+r0*t,t);
+    att16_region(j->bv,&blk,0,rows,0,cols,0,cs.kt,1);  /* the block's scores to its diagonal */
+    att16_future(a->variant,t,r0,rows,ph);
+    att_softmax_block(a,ph+r0*t,t,r0,rows);
+    att16_pack_rows(j->bv,&cy,ib,ph+r0*t,t,rows,ib+1);  /* the block's strip of P, key tiles 0 .. ib */
+    att16_block(&blk,&cy,ib,ys,dp);
+    att16_region(j->bv,&blk,0,rows,0,dp,0,ib+1,1);  /* its context, through ys */
+    att16_copy(a->variant,rows,d,ys,dp,yh+r0*nh*d,nh*d);
+  }
+  if (a->bad) att_verdict(a,r,h);
+}
+static void att16_task(void *ctx, size_t task, unsigned worker) {
+  const att16_job *j=(const att16_job *)ctx; const att_job *a=&j->a;
+  size_t t=a->t,d=a->d,nh=a->nh,nk=a->nk,share=nh/nk,r=task/nk,kh=task%nk,h;
+  unsigned char *region=j->ws+(j->by_worker ? (size_t)worker : task)*j->per;
+  uint16_t *kb=(uint16_t *)(void *)region,*vb=kb+bf16_strip(t,d)/2,*qa=vb+bf16_strip(d,t)/2;
+  uint16_t *pa=qa+bf16_strip(t,d)/2; float *ys=(float *)(void *)(pa+bf16_strip(t,t)/2);
+  bf16_call c;
+#ifdef BCIR_BF16_AMX
+  if (j->bv==8) bf16_amx_begin();
+#endif
+  /* the KV head's keys (the scores' B, transposed) and values (the context's B), once */
+  att16_call(&c,0,1,t,t,d,NULL,0,a->k+(r*t*nk+kh)*d,nk*d,NULL,t,NULL,kb);
+  att16_pack(j->bv,&c,0,1);
+  att16_call(&c,0,0,t,d,t,NULL,0,a->v+(r*t*nk+kh)*d,nk*d,NULL,d,NULL,vb);
+  att16_pack(j->bv,&c,0,1);
+  for (h=kh*share;h<(kh+1)*share;h++) att16_forward_head(j,r,h,kb,vb,qa,pa,ys);
+#ifdef BCIR_BF16_AMX
+  if (j->bv==8) bf16_amx_end();
+#endif
+}
+/* The backward region's parts, in order. */
+typedef struct att16_back {
+  uint16_t *vt,*kb0; float *dvt,*dkt,*dpb,*dqs; uint16_t *dya,*dyta,*pb,*dsa,*dsb,*qta;
+} att16_back;
+static att16_back att16_parts(unsigned char *region, size_t t, size_t d) {
+  att16_back w; size_t tp=bf16_pad(t),dp=bf16_pad(d); unsigned char *x=region;
+  w.vt=(uint16_t *)(void *)x; x+=bf16_strip(t,d);
+  w.kb0=(uint16_t *)(void *)x; x+=bf16_strip(d,t);
+  w.dvt=(float *)(void *)x; x+=att16_floats(dp,tp);
+  w.dkt=(float *)(void *)x; x+=att16_floats(dp,tp);
+  w.dpb=(float *)(void *)x; x+=att16_floats(32,tp);
+  w.dqs=(float *)(void *)x; x+=att16_floats(32,dp);
+  w.dya=(uint16_t *)(void *)x; x+=bf16_strip(t,d);
+  w.dyta=(uint16_t *)(void *)x; x+=bf16_strip(d,t);
+  w.pb=(uint16_t *)(void *)x; x+=bf16_strip(t,t);
+  w.dsa=(uint16_t *)(void *)x; x+=bf16_strip(t,t);
+  w.dsb=(uint16_t *)(void *)x; x+=bf16_strip(t,t);
+  w.qta=(uint16_t *)(void *)x;
+  return w;
+}
+/* One query head of a backward task; `first` is its KV head's first query head. p is read, never
+ * written: a query block's dP becomes its dS in dpb, whose strips the products read. */
+static void att16_backward_head(const att16_job *j, size_t r, size_t h, int first,
+    const att16_back *w) {
+  const att_job *a=&j->a; size_t t=a->t,nh=a->nh,d=a->d,dp=bf16_pad(d),tp=bf16_pad(t),ldh=nh*d;
+  size_t nb=(t+31)/32,ib,i,s; float scale=1.0f/sqrtf((float)d);
+  const float *ph=a->p+(r*nh+h)*t*t,*qh=a->q+(r*t*nh+h)*d,*dyh=a->dy+(r*t*nh+h)*d;
+  float *dqh=a->dq+(r*t*nh+h)*d; bf16_call cv,cp,cq,ck,blk;
+  /* dV^T += dY^T P: a key block's query tiles from its own on */
+  att16_call(&cv,1,0,d,t,t,dyh,ldh,ph,t,w->dvt,tp,w->dyta,w->pb);
+  att16_pack(j->bv,&cv,1,0);
+  for (s=0;s<nb;s++) att16_pack_depth(j->bv,&cv,s,32*(s+1));
+  for (ib=0;ib<nb;ib++) att16_region(j->bv,&cv,0,dp,32*ib,32*ib+32,ib,nb,first);
+  /* a query block at a time: its dP, dot and dS (in dpb), dS's strip (A, for dQ) and depth tile
+   * (B, for dK^T), and its dQ */
+  att16_call(&cp,0,1,t,t,d,dyh,ldh,NULL,0,NULL,tp,w->dya,w->vt);
+  att16_pack(j->bv,&cp,1,0);
+  att16_call(&cq,0,0,t,d,t,NULL,0,NULL,0,NULL,dp,w->dsa,w->kb0);
+  att16_call(&ck,1,0,d,t,t,qh,ldh,NULL,0,w->dkt,tp,w->qta,w->dsb);
+  for (ib=0;ib<nb;ib++) {
+    size_t r0=ib*32,rows=t-r0<32 ? t-r0 : 32,cols=r0+rows,edge=r0+32; float dot[32];
+    att16_block(&blk,&cp,ib,w->dpb,tp);
+    att16_region(j->bv,&blk,0,rows,0,cols,0,cp.kt,1);
+    for (i=0;i<rows;i++) dot[i]=0.0f;
+    i=0;
+#ifdef BCIR_MM_DISPATCH
+    if (a->variant==4) for (;i+16<=rows;i+=16) att512_dot(t,r0,i,0,cols,ph,w->dpb,tp,dot);
+#endif
+    for (;i<rows;i++) {
+      const float *pi=ph+(r0+i)*t,*dpi=w->dpb+i*tp; size_t jj;
+      for (jj=0;jj<=r0+i;jj++) dot[i]=dot[i]+pi[jj]*dpi[jj];
+    }
+#ifdef BCIR_MM_DISPATCH
+    if (a->variant==4) att16_ds512(t,r0,rows,ph,w->dpb,tp,dot,scale,edge); else
+#endif
+    for (i=0;i<rows;i++) {  /* dS over dP, the future +0.0 to the tile's edge */
+      const float *pi=ph+(r0+i)*t; float *dsi=w->dpb+i*tp; size_t jj;
+      for (jj=0;jj<=r0+i;jj++) dsi[jj]=pi[jj]*(dsi[jj]-dot[i])*scale;
+      memset(dsi+r0+i+1,0,(edge-r0-i-1)*sizeof(float));
+    }
+    att16_pack_rows(j->bv,&cq,ib,w->dpb,tp,rows,ib+1);
+    att16_pack_rows_b(j->bv,&ck,ib,w->dpb,tp,rows,edge);
+    att16_block(&blk,&cq,ib,w->dqs,dp);
+    att16_region(j->bv,&blk,0,rows,0,dp,0,ib+1,1);
+    att16_copy(a->variant,rows,d,w->dqs,dp,dqh+r0*ldh,ldh);
+  }
+  /* dK^T += Q^T dS: a key block's query tiles from its own on */
+  att16_pack(j->bv,&ck,1,0);
+  for (ib=0;ib<nb;ib++) att16_region(j->bv,&ck,0,dp,32*ib,32*ib+32,ib,nb,first);
+}
+/* A backward task is a (batch, KV head), its query heads in order: they share dk and dv. */
+static void att16_task_backward(void *ctx, size_t task, unsigned worker) {
+  const att16_job *j=(const att16_job *)ctx; const att_job *a=&j->a;
+  size_t t=a->t,d=a->d,nh=a->nh,nk=a->nk,share=nh/nk,r=task/nk,kh=task%nk,tp=bf16_pad(t),h;
+  att16_back w=att16_parts(j->ws+(j->by_worker ? (size_t)worker : task)*j->per,t,d);
+  bf16_call c;
+#ifdef BCIR_BF16_AMX
+  if (j->bv==8) bf16_amx_begin();
+#endif
+  /* the KV head's values transposed (dP's B) and keys (dQ's B), once for its query heads */
+  att16_call(&c,0,1,t,t,d,NULL,0,a->v+(r*t*nk+kh)*d,nk*d,NULL,t,NULL,w.vt);
+  att16_pack(j->bv,&c,0,1);
+  att16_call(&c,0,0,t,d,t,NULL,0,a->k+(r*t*nk+kh)*d,nk*d,NULL,d,NULL,w.kb0);
+  att16_pack(j->bv,&c,0,1);
+  for (h=kh*share;h<(kh+1)*share;h++) att16_backward_head(j,r,h,h==kh*share,&w);
+#ifdef BCIR_BF16_AMX
+  if (j->bv==8) bf16_amx_end();
+#endif
+  att16_transpose(a->variant,t,d,w.dvt,tp,a->dv+(r*t*nk+kh)*d,nk*d);
+  att16_transpose(a->variant,t,d,w.dkt,tp,a->dk+(r*t*nk+kh)*d,nk*d);
+}
+/* the instance a call names (0: the widest admitted), or 0 where it is not admitted */
+static int att16_instance(int variant) {
+  int bv=variant ? variant : bf16_widest();
+  return (bv==1 || bv==4 || bv==8) && (bcir_tensor_mm_bf16_variants()&bv) ? bv : 0;
+}
+static void att16_fill(att_job *a, size_t b, size_t t, size_t nh, size_t nk, size_t d) {
+  memset(a,0,sizeof *a);
+  a->b=b; a->t=t; a->nh=nh; a->nk=nk; a->d=d; a->variant=mm_widest(); a->group=nh/nk;
+}
+int bcir_tensor_attention_bf16_scan_pool(bcir_tensor_pool *pool, int variant, unsigned contract,
+    size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v,
+    float *p, float *y, int *bad, void *workspace, size_t bytes) {
+  att16_job j; unsigned char verdicts[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=b*nk,heads=b*nh,usable=bytes;
+  int bv=att16_instance(variant);
+  if (!bv || !nk || nh%nk) return 0;
+  if (!b || !t || !nh || !d) return bv;
+  if (!workspace || bytes<bcir_tensor_attention_bf16_workspace(b,t,nh,nk,d)) return 0;
+  att16_fill(&j.a,b,t,nh,nk,d);
+  j.a.q=q; j.a.k=k; j.a.v=v; j.a.p=p; j.a.y=y;
+  j.a.exp2=(contract&BCIR_TENSOR_ATTENTION_EXP)!=0;
+  j.bv=bv; j.ws=(unsigned char *)(void *)bf16_base(workspace,&usable);
+  j.per=att16_forward_bytes(t,d); j.by_worker=bcir_tensor_pool_threads(pool)<=tasks;
+#ifdef BCIR_DT_ATTENTION_PROBE
+  attention_saw(0,(j.a.exp2 ? BCIR_TENSOR_ATTENTION_EXP : 0u)|BCIR_TENSOR_ATTENTION_BF16);
+#endif
+  j.a.bad=scan_bytes(bad,verdicts,heads);
+  pool_dispatch(pool,NULL,att16_task,&j,tasks);
+  if (bad) {
+    if (j.a.bad) scan_fold(bad,verdicts,heads);
+    else if (!scan_pool(pool,y,b*t*nh*d) || !scan_pool(pool,k,b*t*nk*d)) *bad=1;
+  }
+  return bv;
+}
+int bcir_tensor_attention_bf16_backward_pool(bcir_tensor_pool *pool, int variant, size_t b,
+    size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v,
+    const float *p, const float *dy, float *dq, float *dk, float *dv, void *workspace, size_t bytes) {
+  att16_job j; size_t tasks=b*nk,usable=bytes; int bv=att16_instance(variant);
+  if (!bv || !nk || nh%nk) return 0;
+  if (!b || !t || !nh || !d) return bv;
+  if (!workspace || bytes<bcir_tensor_attention_bf16_workspace(b,t,nh,nk,d)) return 0;
+  att16_fill(&j.a,b,t,nh,nk,d);
+  j.a.q=q; j.a.k=k; j.a.v=v; j.a.p=(float *)(uintptr_t)p; j.a.dy=dy; j.a.dq=dq; j.a.dk=dk; j.a.dv=dv;
+  j.bv=bv; j.ws=(unsigned char *)(void *)bf16_base(workspace,&usable);
+  j.per=att16_backward_bytes(t,d); j.by_worker=bcir_tensor_pool_threads(pool)<=tasks;
+#ifdef BCIR_DT_ATTENTION_PROBE
+  attention_saw(1,BCIR_TENSOR_ATTENTION_BF16);
+#endif
+  pool_dispatch(pool,NULL,att16_task_backward,&j,tasks);
+  return bv;
 }

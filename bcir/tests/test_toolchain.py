@@ -295,6 +295,48 @@ def test_the_compiler_pick_honours_cc_and_never_substitutes():
         assert toolchain.optional_library("SLEEF", env={}, run=_no_probe) is None
 
 
+def test_a_build_that_fails_names_itself_and_its_first_error():
+    """RED-VACUITY: a test's own build that the compiler refuses is `BuildFailed` -- still a
+    RuntimeError, as `NativeDecoder.build`'s failure always was -- whose first line names what was
+    built and the first error (an include chain's preamble, a link's undefined reference), so
+    check_tests.py's one-line `build` finding says why; the whole diagnostic stays on it."""
+    included = "In file included from u.c:1:\nu.h:2:7: error: expected ';'\n1 error generated.\n"
+    exc = toolchain.BuildFailed("the harness build", included)
+    assert isinstance(exc, RuntimeError) and exc.what == "the harness build"
+    assert str(exc).splitlines()[0] == "the harness build failed: u.h:2:7: error: expected ';'"
+    assert exc.stderr == included and str(exc).endswith(included)
+    import pickle  # a copy across a process boundary is the same build and diagnostic
+
+    copy = pickle.loads(pickle.dumps(exc))
+    assert (type(copy), str(copy), copy.what, copy.stderr) == (
+        type(exc),
+        str(exc),
+        exc.what,
+        included,
+    )
+    link = "/usr/bin/ld: u.o: in function `main':\nu.c:(.text+0x5): undefined reference to `f'\n"
+    assert str(toolchain.BuildFailed("the link", link)).splitlines()[0] == (
+        "the link failed: u.c:(.text+0x5): undefined reference to `f'"
+    )
+    assert str(toolchain.BuildFailed("a quiet build")) == "a quiet build failed: no diagnostic"
+    # build_units: a command that exits non-zero raises it, one that exits 0 returns
+    fails = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stderr.write('v.c:1:1: error: boom\\n'); sys.exit(1)",
+    ]
+    try:
+        toolchain.build_units(fails, "the stand-in build", timeout=60)
+    except toolchain.BuildFailed as raised:
+        assert str(raised).splitlines()[0] == "the stand-in build failed: v.c:1:1: error: boom"
+    else:
+        raise AssertionError("a build that exited 1 was taken as built")
+    assert (
+        toolchain.build_units([sys.executable, "-c", "pass"], "the stand-in build", timeout=60)
+        is None
+    )
+
+
 def test_the_probe_links_a_real_library_and_resolves_its_symbol():
     """Without an index the predicate probes, and the probe CALLS a function, so a library file that
     lacks the symbol is no library: a fabricated libcerf with erfcxf links, one without it does not.

@@ -100,8 +100,13 @@ static void refusals(void) {
   assert(bcir_decoder_make_plan(&shape,&p)==BCIR_DT_CAPACITY && p.parameters==oldplan.parameters);
   bad=s; bad.plan.scratch++;
   assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
-  bad=s; bad.contract=64;  /* a contract bit the ABI does not define */
+  bad=s; bad.contract=128;  /* a contract bit the ABI does not define */
   assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
+  /* the bf16 attention (BF16-ATTN) without the bf16 contract's workspace, and beside the fused one */
+  bad=s; bad.contract=BCIR_DT_CONTRACT_ATTNBF16; lend(&bad); act[0]=123;
+  assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID && act[0]==123);
+  bad=s; bad.contract=BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTN|BCIR_DT_CONTRACT_ATTNBF16; lend(&bad);
+  assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID && act[0]==123);
   bad=s; bad.contract=BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_KBLOCK;  /* two GEMM contracts at once */
   assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
   bad=s; bad.activation_capacity=bad.plan.activations-1; act[0]=123;
@@ -1352,7 +1357,7 @@ static void writer_verdicts(void) {
   static const float bads[3]={NAN,INFINITY,-INFINITY};
   static const size_t rms_at[]={0,15*37+36,16*37,32*37,39*37+36},ew_at[]={0,8191,8192,16384,19999};
   static const size_t shapes[][5]={{2,24,4,2,16},{1,9,2,1,5},{1,1,1,1,2}};
-  static const uint32_t contracts[]={0,6};
+  static const uint32_t contracts[]={0,6,BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_ATTNBF16};
   uint32_t ids[4]={5,3,5,5},targets[4]={3,5,5,3};
   size_t i,j,p,s,e,a,r,c,cases=0; unsigned pools=0; double loss;
   for (p=0;p<2;p++) {
@@ -1408,11 +1413,14 @@ static void writer_verdicts(void) {
     }
     /* through the trainer: v1 and the exp + kblock contracts */
     for (c=0;c<sizeof(contracts)/sizeof(contracts[0]);c++) {
-      bcir_decoder_state st=fixture(); st.pool=pool; st.contract=contracts[c];
+      bcir_decoder_state st=fixture(); st.pool=pool; st.contract=contracts[c]; lend(&st);
       assert(st.plan.activations==1024);
       hidden_key(1.0f);
       assert(bcir_decoder_forward(&st,ids,4)==BCIR_DT_OK);
-      hidden_key(FLT_MAX);
+      /* FLT_MAX is +inf as a bfloat16 operand, and its products with the other tokens' zeros NaN:
+       * under the bf16 contract the key's weight is bfloat16's largest finite value, 2.8 times
+       * which overflows as FLT_MAX's does */
+      hidden_key((contracts[c]&BCIR_DT_CONTRACT_BF16) ? 0x1.fep127f : FLT_MAX);
       assert(bcir_decoder_forward(&st,ids,4)==BCIR_DT_NUMERIC);
       /* layer 0's keys (16 floats at 160) the only activations that are not finite */
       assert(all_finite(act,160) && !all_finite(act+160,16) && all_finite(act+176,1024-176));
@@ -1420,7 +1428,7 @@ static void writer_verdicts(void) {
       assert(bcir_decoder_loss_backward(&st,ids,targets,4,0,&loss)==BCIR_DT_NUMERIC);
       assert(!memcmp(keepg,grad,sizeof(grad)));
       /* an untied head at FLT_MAX: the logits (the last 64 floats) alone overflow */
-      st=fixture_of(1,4,0,2); st.pool=pool; st.contract=contracts[c];
+      st=fixture_of(1,4,0,2); st.pool=pool; st.contract=contracts[c]; lend(&st);
       assert(bcir_decoder_forward(&st,ids,4)==BCIR_DT_OK);
       for (i=0;i<128;i++) w[1320+i]=FLT_MAX;
       assert(bcir_decoder_forward(&st,ids,4)==BCIR_DT_NUMERIC);
@@ -1428,7 +1436,7 @@ static void writer_verdicts(void) {
       /* a provider's SiLU that hides an infinite gate: layer 0's MLP zero but its gate's row 0 on
        * dimension 0, which the second norm scales by 1e10 -- at 1 the gate is finite, at FLT_MAX
        * row 0 is infinite at every position and the provider's 0 times up's 0 hides it */
-      st=fixture(); st.pool=pool; st.contract=contracts[c]; st.provider.silu=hiding_silu;
+      st=fixture(); st.pool=pool; st.contract=contracts[c]; lend(&st); st.provider.silu=hiding_silu;
       memcpy(keepw,w,sizeof(w));
       for (i=128+208;i<128+592;i++) w[i]=0.0f;
       w[128+200]=1e10f; w[128+208]=1.0f;
@@ -1446,7 +1454,8 @@ static void writer_verdicts(void) {
       "(v1, v2) as their plain entries, bit for bit, each verdict its regions' scan (%zu cases: "
       "non-finite elements at every task chunk's ends, overflowing outputs, the key the softmax "
       "hides); through the trainer that key, overflowing logits and a hiding provider SiLU refused "
-      "with every other activation finite (%u run(s): no pool and a pool of three)\n",cases,pools);
+      "with every other activation finite, the bf16 attention's among them (%u run(s): no pool and a "
+      "pool of three)\n",cases,pools);
 }
 /* NDT-UPDATE: the first pass's paired chunks and the commit's shared divisions, on two decoders
  * (vocab 16, width 32, four heads over two KV heads, two layers): feed-forward 64 and untied, 19,616
@@ -1681,6 +1690,158 @@ static float bf16_operand(unsigned i,int edges) {
   }
   return ldexpf(1.0f+(float)((h>>9)&0xffff)/65536.0f,(int)(h%17)-8)*(h&1 ? -1.0f : 1.0f);
 }
+/* --- the attention on bfloat16 operands (BF16-ATTN) ---------------------------------------------
+ * The reference, written apart from the unit's: each product's element the bf16 GEMM's (ref_bfv,
+ * ref_lane and ref_flush above) over the depth tiles the causal mask reaches from its 32-row block --
+ * a query row i's key tiles 0 .. i/32 for the context and dq, a key row j's query tiles from j/32
+ * on for dv and dk, every channel tile for the scores and dp -- a tile's terms past the mask the
+ * +0.0 the probabilities and the adjoints hold there; the scaling, the softmax, the dot and the
+ * score adjoint the v1 loops'. The score adjoints live here; p is the probabilities throughout. */
+static float ref16(const float *a,size_t sa,const float *b,size_t sb,size_t depth,size_t q0,size_t q1,
+    float acc) {
+  size_t q,pp,h;
+  for (q=q0;q<q1;q++) {
+    float e=0.0f,o=0.0f;
+    for (pp=0;pp<16;pp++) for (h=0;h<2;h++) {
+      size_t l=q*32+2*pp+h; float av=l<depth ? ref_bfv(a[l*sa]) : 0.0f,bv=l<depth ? ref_bfv(b[l*sb]) : 0.0f;
+      if (h) o=ref_lane(o,av,bv); else e=ref_lane(e,av,bv);
+    }
+    acc=ref_flush(ref_flush(acc)+ref_flush(e+o));
+  }
+  return acc;
+}
+static void ref_attention_bf16(size_t b,size_t t,size_t nh,size_t nk,size_t d,const float *q,
+    const float *k,const float *v,float *p,float *y,float (*ex)(float)) {
+  size_t r,h,i,j,c,dt=(d+31)/32; float scale=1.0f/sqrtf((float)d);
+  for (r=0;r<b;r++) for (h=0;h<nh;h++) {
+    size_t kh=h/(nh/nk); float *ph=p+(r*nh+h)*t*t;
+    for (i=0;i<t;i++) {
+      float maxv=-INFINITY,sum=0.0f;
+      for (j=0;j<t;j++) ph[i*t+j]=0.0f;
+      for (j=0;j<=i;j++) {
+        ph[i*t+j]=ref16(q+(r*t+i)*nh*d+h*d,1,k+(r*t+j)*nk*d+kh*d,1,d,0,dt,0.0f)*scale;
+        if (ph[i*t+j]>maxv) maxv=ph[i*t+j];
+      }
+      for (j=0;j<=i;j++) { ph[i*t+j]=ex(ph[i*t+j]-maxv); sum+=ph[i*t+j]; }
+      for (j=0;j<=i;j++) ph[i*t+j]/=sum;
+    }
+    for (i=0;i<t;i++) for (c=0;c<d;c++)
+      y[(r*t+i)*nh*d+h*d+c]=ref16(ph+i*t,1,v+r*t*nk*d+kh*d+c,nk*d,t,0,i/32+1,0.0f);
+  }
+}
+static void ref_attention_backward_bf16(size_t b,size_t t,size_t nh,size_t nk,size_t d,
+    const float *q,const float *k,const float *v,const float *p,const float *dy,float *dq,float *dk,
+    float *dv,float *ds) {
+  size_t r,h,i,j,c,dt=(d+31)/32,nt=(t+31)/32,share=nh/nk; float scale=1.0f/sqrtf((float)d);
+  for (r=0;r<b;r++) for (h=0;h<nh;h++) {
+    size_t kh=h/share; int first=h%share==0; const float *ph=p+(r*nh+h)*t*t;
+    const float *dyh=dy+r*t*nh*d+h*d,*qh=q+r*t*nh*d+h*d,*kk=k+r*t*nk*d+kh*d,*vk=v+r*t*nk*d+kh*d;
+    float *dvk=dv+r*t*nk*d+kh*d,*dkk=dk+r*t*nk*d+kh*d,*dqh=dq+r*t*nh*d+h*d;
+    for (j=0;j<t;j++) for (c=0;c<d;c++)
+      dvk[j*nk*d+c]=ref16(ph+j,t,dyh+c,nh*d,t,j/32,nt,first ? 0.0f : dvk[j*nk*d+c]);
+    for (i=0;i<t;i++) {
+      float dot=0.0f;
+      for (j=0;j<t;j++) ds[i*t+j]=0.0f;
+      for (j=0;j<=i;j++) {
+        float dp=ref16(dyh+i*nh*d,1,vk+j*nk*d,1,d,0,dt,0.0f);
+        volatile float prod=ph[i*t+j]*dp;
+        ds[i*t+j]=dp; dot+=prod;
+      }
+      for (j=0;j<=i;j++) ds[i*t+j]=ph[i*t+j]*(ds[i*t+j]-dot)*scale;
+    }
+    for (i=0;i<t;i++) for (c=0;c<d;c++) dqh[i*nh*d+c]=ref16(ds+i*t,1,kk+c,nk*d,t,0,i/32+1,0.0f);
+    for (j=0;j<t;j++) for (c=0;c<d;c++)
+      dkk[j*nk*d+c]=ref16(ds+j,t,qh+c,nh*d,t,j/32,nt,first ? 0.0f : dkk[j*nk*d+c]);
+  }
+}
+static int all_finite(const float *x,size_t n);
+/* The bf16 attention (BF16-ATTN) through its entries against the reference above: shapes of one row
+ * and channel to past the 32-row blocks and tiles (ragged contexts and widths, head groups of one to
+ * four, the backward's 330-token context), finite and with an infinite value and a NaN adjoint,
+ * under both exponentials, and with the key the softmax hides (each score of a key -inf, its
+ * probabilities 0, every output finite: the verdict sees the key itself); every instance the host
+ * admits (portable, AVX-512, AMX), serial, on pools of two and four and on one with more workers than
+ * tasks (a region a task); the backward leaving p as it was; the refusals writing nothing; and the
+ * contract apart from the binary32 attention. */
+static void attention_bf16_reference(void) {
+  static float q[53760],k[26880],v[26880],dy[53760],p0[217800],p1[217800],y0[53760],y1[53760],
+      dq0[53760],dq1[53760],dk0[26880],dk1[26880],dv0[26880],dv1[26880],ds[108900],keep[217800];
+  static _Alignas(64) unsigned char ws[4<<20];
+  static _Alignas(max_align_t) unsigned char pool_memory[3][16384];
+  static const size_t shapes[][5]={{1,1,1,1,1},{1,2,1,1,2},{2,5,4,2,6},{1,37,2,1,48},{2,70,8,4,48},
+      {1,33,3,1,65},{1,40,2,2,130},{2,64,4,1,24},{1,96,4,2,40},{1,31,1,1,15},{1,32,2,2,47},
+      {1,128,2,1,48},{1,330,2,1,8}};
+  static const unsigned counts[]={1,2,4,64}; static const int variants[]={1,4,8};
+  bcir_tensor_pool *pools[4]={NULL,NULL,NULL,NULL};
+  int mask=bcir_tensor_mm_bf16_variants(),pass,ex,vi,bad; size_t s,i,pi,cases=0,apart=0,refusals=0,hidden=0;
+  for (pi=1;pi<4;pi++) {
+    size_t need=bcir_tensor_pool_size(counts[pi]);
+    if (need && need<=sizeof(pool_memory[0])) pools[pi]=bcir_tensor_pool_init(pool_memory[pi-1],sizeof(pool_memory[0]),counts[pi]);
+  }
+  for (pass=0;pass<3;pass++) for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) {
+    size_t b=shapes[s][0],t=shapes[s][1],nh=shapes[s][2],nk=shapes[s][3],d=shapes[s][4];
+    size_t nq=b*t*nh*d,nkv=b*t*nk*d,np=b*nh*t*t,need=bcir_tensor_attention_bf16_workspace(b,t,nh,nk,d);
+    assert(nq<=sizeof(q)/sizeof(q[0]) && nkv<=sizeof(k)/sizeof(k[0]) && np<=sizeof(p0)/sizeof(p0[0]));
+    assert(t*t<=sizeof(ds)/sizeof(ds[0]) && need>0 && need<=sizeof(ws));
+    if (pass==2 && t<2) continue;
+    for (i=0;i<nq;i++) { q[i]=sinf((float)i*0.37f)*1.7f; dy[i]=cosf((float)i*0.11f)*0.5f; }
+    for (i=0;i<nkv;i++) { k[i]=cosf((float)i*0.53f)*1.3f; v[i]=sinf((float)i*0.29f)-0.1f; }
+    if (pass==1 && t>3) { v[(t-1)*nk*d]=INFINITY; dy[d]=NAN; }
+    if (pass==2) {  /* the last batch's key 1 infinite in channel 0, its KV head's queries negative there */
+      size_t rb=b-1,h;
+      for (i=0;i<t;i++) for (h=0;h<nh/nk;h++) q[((rb*t+i)*nh+h)*d]=-fabsf(q[((rb*t+i)*nh+h)*d])-0.5f;
+      k[((rb*t+1)*nk+0)*d]=INFINITY;
+    }
+    for (ex=0;ex<2;ex++) {
+      unsigned contract=ex ? BCIR_TENSOR_ATTENTION_EXP : 0u;
+      ref_attention_bf16(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
+      memset(dq0,0xff,nq*sizeof(float)); memset(dk0,0xff,nkv*sizeof(float)); memset(dv0,0xff,nkv*sizeof(float));
+      ref_attention_backward_bf16(b,t,nh,nk,d,q,k,v,p0,dy,dq0,dk0,dv0,ds);
+      for (vi=0;vi<3;vi++) for (pi=0;pi<4;pi++) {
+        if (!(mask&variants[vi]) || (pi && !pools[pi])) continue;
+        memset(p1,0xff,np*sizeof(float)); memset(y1,0xff,nq*sizeof(float)); bad=0;
+        assert(bcir_tensor_attention_bf16_scan_pool(pools[pi],variants[vi],contract,b,t,nh,nk,d,q,k,v,p1,
+            y1,&bad,ws,need)==variants[vi]);
+        assert(same_bits_or_nan(p0,p1,np) && same_bits_or_nan(y0,y1,nq));
+        for (i=0;i<np;i++) if ((i%t)>(i/t)%t) assert(p1[i]==0.0f && !signbit(p1[i]));
+        assert(bad==!(all_finite(y1,nq) && all_finite(k,nkv)));
+        if (pass==2) { assert(all_finite(p1,np) && all_finite(y1,nq) && bad); hidden++; }
+        memcpy(keep,p1,np*sizeof(float));
+        memset(dq1,0xff,nq*sizeof(float)); memset(dk1,0xff,nkv*sizeof(float)); memset(dv1,0xff,nkv*sizeof(float));
+        assert(bcir_tensor_attention_bf16_backward_pool(pools[pi],variants[vi],b,t,nh,nk,d,q,k,v,p1,dy,dq1,
+            dk1,dv1,ws,need)==variants[vi]);
+        assert(same_bits_or_nan(dq0,dq1,nq) && same_bits_or_nan(dk0,dk1,nkv) && same_bits_or_nan(dv0,dv1,nkv));
+        assert(!memcmp(keep,p1,np*sizeof(float)));  /* p read, never written */
+        cases++;
+      }
+      /* the binary32 attention under v1's products: another result somewhere */
+      if (!pass) {
+        bcir_tensor_attention_contract_scan_pool(NULL,contract,b,t,nh,nk,d,q,k,v,p1,y1,NULL);
+        apart+=memcmp(y0,y1,nq*sizeof(float))!=0;
+      }
+    }
+    /* refused, nothing written: a workspace one byte short or none, an instance the unit does not
+     * have, kvheads not dividing heads */
+    memset(y1,0x5a,nq*sizeof(float)); memcpy(keep,y1,nq*sizeof(float)); memset(dq1,0x5a,nq*sizeof(float));
+    assert(bcir_tensor_attention_bf16_scan_pool(NULL,0,0u,b,t,nh,nk,d,q,k,v,p1,y1,NULL,ws,need-1)==0);
+    assert(bcir_tensor_attention_bf16_scan_pool(NULL,0,0u,b,t,nh,nk,d,q,k,v,p1,y1,NULL,NULL,need)==0);
+    assert(bcir_tensor_attention_bf16_scan_pool(NULL,2,0u,b,t,nh,nk,d,q,k,v,p1,y1,NULL,ws,need)==0);
+    assert(bcir_tensor_attention_bf16_backward_pool(NULL,0,b,t,nh,nk,d,q,k,v,p1,dy,dq1,dk1,dv1,ws,need-1)==0);
+    if (nh>1) assert(bcir_tensor_attention_bf16_scan_pool(NULL,0,0u,b,t,nh,nh+1,d,q,k,v,p1,y1,NULL,ws,sizeof(ws))==0);
+    assert(!memcmp(keep,y1,nq*sizeof(float)) && !memcmp(keep,dq1,nq*sizeof(float)));
+    refusals++;
+  }
+  for (pi=1;pi<4;pi++) bcir_tensor_pool_stop(pools[pi]);
+  assert(apart>0 && cases>=13*2*2*2 && hidden>=12*2);
+  printf("  PASS bf16 attention (BF16-ATTN): %zu cases against the reference (%s; forward under both "
+      "exponentials, the backward leaving p, finite and not, serial and pooled), %zu with the key the "
+      "softmax hides refused, apart from v1 on %zu, every refusal writing nothing on %zu shapes\n",cases,
+      mask&8 ? "portable, AVX-512 and AMX" : mask&4 ? "portable and AVX-512" : "portable",hidden,apart,
+      refusals);
+}
+#ifdef BCIR_DT_PANELS_PROBE
+int bcir_tensor_bf16_amx_offered(void);
+#endif
 static void gemm_bf16_contract(void) {
   static float a[150*200],b[200*150],c0[150*150],want[150*150],got[150*150];
   static _Alignas(64) unsigned char ws[1<<20];
@@ -1819,6 +1980,11 @@ static void gemm_bf16_contract(void) {
     for (q=0;q<3;q++) assert(same_bits_or_nan(dw[q],dwr[q],outs[q]*D));
   }
   bcir_tensor_pool_stop(pool);
+#ifdef BCIR_DT_PANELS_PROBE
+  /* the AMX instance admitted wherever this build and the host offer it: its admission differential
+     passes here -- a wrong AMX kernel is withdrawn and never run, so no value above could show it */
+  assert(!bcir_tensor_bf16_amx_offered() || (mask&8));
+#endif
   printf("  PASS bf16 contract (NDT-BF16): instances %d, %zu GEMMs (%zu chunked) and the groups against the "
       "reference, the conversion on %zu inputs, the edges' bits, the empty shapes\n",mask,cases,chunked,swept);
 }
@@ -1953,6 +2119,79 @@ static void trainer_attn(void) {
 #endif
     printf("  PASS fused attention trainer (ATTN-FMA): the bit with each GEMM contract and none%s\n",probed);
   }
+}
+/* The trainer under the bf16 attention (BF16-ATTN): one state at every thread count, under each of the
+ * bf16 contract's companions; another state than the bf16 contract's without the bit; every attention
+ * job of a run on the bf16 contract (the probe); the backward leaving the probabilities in the arena;
+ * the workspace sized for the attention too. */
+static void trainer_attnbf16(void) {
+  static float ref[3][4096],probs[32768]; static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  static const uint32_t contracts[]={BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTNBF16,
+      BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_ATTNBF16,
+      BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_ATTNBF16};
+  bcir_decoder_adamw opt={0.01,0.9,0.95,1e-8,0.01,0.05};
+  uint32_t ids[120],targets[120]; bcir_decoder_event events[3]; size_t done,c; unsigned threads;
+  stream(ids,targets,120);
+  {  /* the workspace: at least the GEMMs' and the attention's, for the 9.84M decoder and the fixture */
+    bcir_decoder_spec big={260,384,8,4,6,1024,8,128,1,10000.0,1e-6}; bcir_decoder_plan bp;
+    bcir_decoder_state st=fixture_of(5,8,1,2); size_t att;
+    assert(bcir_decoder_make_plan(&big,&bp)==0);
+    att=bcir_tensor_attention_bf16_workspace(8,128,8,4,48);
+    assert(bcir_decoder_workspace_bytes(&bp,BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTNBF16)==
+        (att>4*bcir_tensor_mm_bf16_workspace(1024,384,1024) ? att : 4*bcir_tensor_mm_bf16_workspace(1024,384,1024)));
+    assert(bcir_decoder_workspace_bytes(&st.plan,contracts[0])>=bcir_tensor_attention_bf16_workspace(5,8,1,1,2) &&
+        bcir_decoder_workspace_bytes(&st.plan,contracts[0])>=bcir_decoder_workspace_bytes(&st.plan,BCIR_DT_CONTRACT_BF16));
+  }
+  for (c=0;c<sizeof(contracts)/sizeof(contracts[0]);c++) {
+    for (threads=1;threads<=4;threads++) {
+      bcir_tensor_pool *pool=NULL; bcir_decoder_state st=fixture_of(5,8,1,2);
+      if (threads>1) {
+        if (!bcir_tensor_pool_size(threads) || bcir_tensor_pool_size(threads)>sizeof(pool_memory)) continue;
+        pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads);
+      }
+      st.pool=pool; st.contract=contracts[c]; lend(&st);
+#ifdef BCIR_DT_ATTENTION_PROBE
+      (void)bcir_tensor_attention_probe(0); (void)bcir_tensor_attention_probe(1);
+#endif
+      assert(bcir_decoder_run(&st,&opt,ids,targets,120,NULL,3,events,3,&done)==0 && done==3);
+#ifdef BCIR_DT_ATTENTION_PROBE
+      assert(bcir_tensor_attention_probe(0)==(((contracts[c]&BCIR_DT_CONTRACT_EXP) ? BCIR_TENSOR_ATTENTION_EXP : 0u)|
+          BCIR_TENSOR_ATTENTION_BF16));
+      assert(bcir_tensor_attention_probe(1)==BCIR_TENSOR_ATTENTION_BF16);
+#endif
+      if (threads==1) { memcpy(ref[0],w,sizeof w); memcpy(ref[1],m,sizeof m); memcpy(ref[2],v,sizeof v); }
+      else assert(!memcmp(ref[0],w,sizeof w) && !memcmp(ref[1],m,sizeof m) && !memcmp(ref[2],v,sizeof v));
+      bcir_tensor_pool_stop(pool);
+    }
+    {  /* the bit changes the state: the same steps without it */
+      bcir_decoder_state st=fixture_of(5,8,1,2);
+      st.contract=contracts[c]&~(uint32_t)BCIR_DT_CONTRACT_ATTNBF16; lend(&st);
+      assert(bcir_decoder_run(&st,&opt,ids,targets,120,NULL,3,events,3,&done)==0 && done==3);
+      assert(memcmp(ref[0],w,sizeof w)!=0);
+    }
+  }
+  {  /* the backward leaves each layer's probabilities as the forward wrote them; the binary32
+      * attention's rewrites them with its score adjoints, so the regions are the probabilities */
+    static const uint32_t pair[2]={BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_ATTNBF16,
+        BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP};
+    size_t k2;
+    for (k2=0;k2<2;k2++) {
+      bcir_decoder_state st=fixture_of(5,8,1,2); double loss; const bcir_decoder_spec *sp=&st.plan.spec;
+      size_t n=(size_t)sp->batch*sp->time,d=sp->width,hd=d/sp->heads,nd=n*d,nk=n*sp->kvheads*hd;
+      size_t a=(size_t)sp->batch*sp->heads*sp->time*sp->time,nf=n*sp->ff,la=5*nd+2*nk+a+3*nf,l,kept=0;
+      st.contract=pair[k2]; lend(&st);
+      assert(a*sp->layers<=sizeof(probs)/sizeof(probs[0]));
+      assert(bcir_decoder_forward(&st,ids,40)==0);
+      for (l=0;l<sp->layers;l++) memcpy(probs+l*a,act+(sp->layers+1)*nd+l*la+2*nd+2*nk,a*sizeof(float));
+      assert(bcir_decoder_loss_backward(&st,ids,targets,40,0,&loss)==0);
+      for (l=0;l<sp->layers;l++)
+        kept+=!memcmp(probs+l*a,act+(sp->layers+1)*nd+l*la+2*nd+2*nk,a*sizeof(float));
+      assert(kept==(k2 ? 0 : sp->layers));
+    }
+  }
+  printf("  PASS bf16 attention trainer (BF16-ATTN): three bf16 contracts with the bit, one state at one to "
+      "four threads and another without it, every attention job of a run on its contract, the arena's "
+      "probabilities left as the forward wrote them\n");
 }
 #ifdef BCIR_DT_PANELS_PROBE
 unsigned bcir_decoder_panels_probe(void);
@@ -2314,7 +2553,7 @@ int main(void) {
   learning(); pool_identity(); pool_claims(); reduction_references(); scan_references();
   gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); fused_passes();
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
-  panels_contract(); trainer_panels(); facts_run();
+  panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();
 #ifdef BCIR_DT_DIVISION_PROBE
   division_probe();
 #endif

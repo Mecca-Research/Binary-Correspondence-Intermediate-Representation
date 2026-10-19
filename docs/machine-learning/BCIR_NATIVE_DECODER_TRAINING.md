@@ -11,7 +11,7 @@ executes in C. PyTorch remains an independent optional reference.
 |---|---|
 | Tensor linear algebra | Register-blocked row-major GEMM: a KCxNR tile of B packed once per (column, depth) block into cache-line-aligned storage and reused by every row, an MRxNR block of C kept in registers across the tile's depth; bit-identical to the ascending-k loop on every input. Portable C everywhere, plus AVX2 and AVX-512 variants on x86-64 Linux (GCC or Clang) chosen per call from the CPU, all bit-identical (`bcir_tensor_mm_variant` runs one). Transpose variants, linear forward, input and accumulated weight VJPs; optional explicit LP64 CBLAS adapter. Two contracts (NDT-FMA): v1, one rounded multiply and one rounded add per term, the default of every gate, row and record; and the fused v2, one IEEE `fmaf` per term for k ascending (a portable `fmaf` instance, AVX2+FMA and AVX-512 instances fusing in registers, all bit-identical to the `fmaf` loop), selected by the state's `contract` (ABI 3) and named in the checkpoint. Three GEMM contracts, selected by the state: v1 (a rounded multiply and a rounded add per term), the fused v2 (one `fmaf` per term, NDT-FMA) and the blocked fused v3 (NDT-KBLOCK: the depth split by one rule into blocks of up to 448, each block's fused chain from zero added to c in order -- the arithmetic OpenBLAS's `sgemm` performs on its SkylakeX target, so that provider is admitted under v3 by a differential over the trainer's own shapes, and the state is one state with it or without it); and the bf16 contract (NDT-BF16: the operands rounded to bfloat16 and accumulated in binary32 as the AMX unit's `TDPBF16PS` accumulates them -- two lanes a 32-term block, each fused step flushed when tiny, then `c = daz(c) + (E + O)` -- with portable, AVX-512 and AMX instances, bit-identical, over operands packed into workspace the state lends, ABI 4; the SwiGLU block's outputs -- the hidden activation, the gate and up adjoints -- written by their producers as those GEMMs' packed panels where every GEMM they feed is whole 32-tiles and their slots 64-byte aligned, BF16-PANELS-1, the products the packed ones bit for bit) |
 | Vector math | Stable sigmoid/SiLU, SwiGLU VJP, RMSNorm and gamma VJP, half-split RoPE and its transpose; standard libm without fast-math. Under the `exp` contract (NDT-EXP) SiLU, the SwiGLU VJP and the attention softmax take their exponential from BCIR's own `bcir_tensor_expf` -- one operation sequence on the scalar, AVX2 and AVX-512 instances, no libm, no fma, within 1 ulp of exp in double rounded to binary32 over 2^24 sampled inputs (`train.exp.ulp.max`, stated) |
-| Attention | Causal softmax attention as two masked products per (batch, head) through the GEMM kernel; a backward that rewrites the layer's probabilities in place with their score adjoint and feeds the GEMM kernel (no workspace beyond them); Q/K/V backward, GQA group-gradient accumulation, output projection backward. Both are bit-identical to the scalar reference loops, which `bcir_tensor_attention_backward` keeps. Under the `attn` contract (ATTN-FMA) every multiply-add of the scores, the context and the backward's products is one `fmaf` over the same terms in the same order -- portable `fmaf`, AVX2+FMA and AVX-512 instances, bit-identical to the `fmaf` reference loops -- and the softmax and the score adjoint stay v1's |
+| Attention | Causal softmax attention as two masked products per (batch, head) through the GEMM kernel; a backward that rewrites the layer's probabilities in place with their score adjoint and feeds the GEMM kernel (no workspace beyond them); Q/K/V backward, GQA group-gradient accumulation, output projection backward. Both are bit-identical to the scalar reference loops, which `bcir_tensor_attention_backward` keeps. Under the `attn` contract (ATTN-FMA) every multiply-add of the scores, the context and the backward's products is one `fmaf` over the same terms in the same order -- portable `fmaf`, AVX2+FMA and AVX-512 instances, bit-identical to the `fmaf` reference loops -- and the softmax and the score adjoint stay v1's. Under the `attnbf16` contract (BF16-ATTN, with a bf16 GEMM contract) the six products take bfloat16 operands instead, each the bf16 GEMM contract's over the depth tiles the causal mask reaches -- portable, AVX-512 and AMX instances, bit-identical to a reference written apart from the unit -- in tasks of one (batch, KV head) that pack their keys and values once; the backward leaves the probabilities as the forward wrote them |
 | Decoder | Embedding scatter-add backward, both residual paths, both per-layer norms, gate/up/down projections, final norm, tied or untied vocabulary head, mean token cross-entropy; the loss's rows, the gamma VJPs' row sums and the embedding scatter run on the pool in the serial order (NDT-REDUCE: rows whose terms the caller adds in row order, column ranges whose sums run over the rows in row order), so every loss and state is the serial one at every thread count under every contract |
 | Optimizer | AdamW moments, constant-time bias powers, decoupled decay, global L2 clipping, mean micro-batch accumulation, per-update learning rates. The atomic preflight is skipped only when the magnitudes the first pass records prove it would admit every element; the passes carry the same AVX2/AVX-512 variants and stay bit-identical The first pass and the preflight run on the pool one task per chunk of `bcir_decoder_reduce_chunk` elements (1,024 doubled until at most 1,024 chunks), their verdicts and maxima exact whatever the partition; the clipping norm is the contract's -- the one index-order chain in double, or under the `reduce` contract (NDT-REDUCE) the chunks' sums added in chunk order from zero, a declared reduction whose shape is a function of the parameter count alone; `bcir_decoder_gradient_norm` reports the square the update takes its root of |
 | Threads | A deterministic pool in memory the caller provides (`bcir_tensor_pool`: `size`/`init`/`stop`, no allocation in the unit; pthreads on POSIX, Win32 threads on Windows, one thread elsewhere; ABI 2 names it in the state, NDT-THREADS). The GEMM is partitioned over (column block, 64-row range) so every output element keeps its depth order; attention over (batch, query head) forward and (batch, KV head) backward with the query heads of one KV head in order, so the shared `dk`/`dv` accumulate as the reference does; SiLU, the SwiGLU VJP, the residual add and gate multiply, RMSNorm, RoPE and the AdamW commit over fixed chunks of elements, rows and positions. The loss, the embedding scatter, the gamma VJP's row sum and the update's norm pass stay serial (index-order reductions). The state after any number of steps is bit-identical at every thread count and to the one-thread trainer; a provider's GEMM or SiLU is threaded as the provider is, the pool runs the rest |
@@ -68,8 +68,10 @@ lends its GEMMs `trainer.workspace_bytes` of packing workspace, counted in `max_
 admits no CBLAS provider), and any of these with `+reduce` (`"reduce"` alone for v1) under the reduce
 contract, whose clipping norm is the fixed-chunk sum the update's one pooled pass computes
 (NDT-REDUCE), and any of those with `+attn` (`"attn"` alone for v1) under the fused attention
-contract, every multiply-add of the attention's products one `fmaf` (ATTN-FMA);
-the checkpoint names the contract and `resume` restores it, since a state trained under one is not
+contract, every multiply-add of the attention's products one `fmaf` (ATTN-FMA), or, under a bf16
+GEMM contract, with `+attnbf16` (`"bf16+attnbf16"` .. `"bf16+exp+reduce+attnbf16"`) under the bf16
+attention contract, the attention's products on bfloat16 operands in the same workspace, which
+`workspace_bytes` then sizes for them too (BF16-ATTN); the checkpoint names the contract and `resume` restores it, since a state trained under one is not
 the other's. `NativeDecoder(..., threads=n)` runs BCIR's kernels on a pool of `n` threads (one by default;
 `close()` releases them, and `resume(..., threads=n)` continues a checkpoint on any count, since the
 state does not depend on it). An explicit provider is selected with
@@ -510,6 +512,19 @@ one-step calls at x1.048, the calls themselves costing nothing measurable (x0.99
 harness's `train --steps-per-call N` trains that way, N steps a call between evaluations, in the
 states of one step a call.
 
+Since BF16-ATTN (2026-10-19) the attention's products can run on bfloat16 operands too (the
+report's §39): under a bf16 GEMM contract, `+attnbf16` makes each element of the scores, the
+context and the backward's four products the bf16 GEMM contract's over the depth tiles the causal
+mask reaches, the scaling, the softmax, the dot and the score adjoint staying v1's binary32, on
+portable, AVX-512 and AMX instances that compute one result -- held to a reference written apart
+from the unit and by `tools/testing/faults/ndt-attnbf16.json`'s 36 faults. One layer's attention
+runs x1.280 (95% interval 1.245-1.299) faster at four threads and x1.230 at one, its backward
+x1.378, and the 9.84M decoder's four-thread step x1.029 (1.018-1.042), about the six layers'
+2.5 ms the attention saves timed alone; one state through the AMX, AVX-512, AVX2 and portable
+builds. Without the bit every state is as it was: ATTN-SOFT, which folds the binary32 softmax's
+scale into its exponential, changes no value, and costs nothing that two copies of one library
+do not also read apart on this host.
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,
@@ -517,9 +532,10 @@ accelerators or distributed training.
 
 The plan retains every layer's forward cache and reuses backward scratch; it is not
 a globally optimal liveness solver. The backward consumes the cache it recomputes each step:
-after `bcir_decoder_loss_backward` each layer's probability span holds its score adjoint.
+after `bcir_decoder_loss_backward` each layer's probability span holds its score adjoint (under the
+bf16 attention, the probabilities as the forward wrote them: its score adjoints live in its workspace).
 Attention storage is quadratic in context length.
-Flash/blocked attention, activation recomputation, mixed precision beyond the bf16 GEMM contract,
+Flash/blocked attention, activation recomputation, mixed precision beyond the bf16 GEMM and attention contracts,
 accelerator
 backward kernels, distributed collectives and device-resident checkpoints remain
 separate work. The direct loop does not issue StreamPack claims for every tensor;

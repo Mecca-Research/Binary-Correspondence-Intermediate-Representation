@@ -134,7 +134,7 @@
       "expects": "test_a_c_run_reads_what_it_wrote_or_zeros",
       "path": "runtime/c/bcir_decoder_gem.c",
       "old": "  clear_activations(g);\n  st = bcir_sp_execute(",
-      "new": "  st = bcir_sp_execute("
+      "new": "  (void)clear_activations;\n  st = bcir_sp_execute("
     },
     {
       "label": "QG2 FINAL is kept in the workspace's h, where the attention norm writes",

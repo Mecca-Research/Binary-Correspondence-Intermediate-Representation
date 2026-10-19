@@ -32,6 +32,11 @@ defect), and it refuses to produce a verdict it cannot stand behind:
   means nothing if it was already red; that is the control, and it is mandatory.
 * **Every exit is a verdict** (L1). A gate that times out, dies on a signal, or
   cannot be launched is reported as such, never as a caught or uncaught fault.
+* **A fault that stops the build is not a catch** (RED-VACUITY). A gate whose
+  build refused the mutant -- it reports the finding `build`: the C gates for a
+  harness that did not build, `check_tests.py` for a test whose own build raised
+  `bcir.toolchain.BuildFailed` -- never ran the check the fault names, however
+  red the run. Unless that check fired too, the verdict is DOES NOT BUILD.
 
 Use it as a library from a sweep script, or run a fault table straight from JSON:
 
@@ -44,6 +49,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -60,6 +66,11 @@ EXIT_USAGE = 2
 #: How a gate in this tree prints a finding: two spaces, a dash, the check's name,
 #: then a colon. The name is what a fault declares it expects to fire.
 FINDING = re.compile(r"^\s*-\s+([A-Za-z0-9_. -]+?):")
+
+#: The finding a gate reports when the code it examines did not build (`tools/c/check_ring.py`
+#: and its siblings for a harness, `tools/testing/check_tests.py` for a test whose own build
+#: raised `BuildFailed`): the defect stopped the compiler, so no check examined it.
+BUILD_FINDING = "build"
 
 #: A gate may take a while; a sweep runs it once per fault plus once for the
 #: control. Per-gate rather than per-sweep so the bound scales with the campaign
@@ -245,6 +256,19 @@ class Sweep:
                 elif code == 0:
                     result.verdict = "NOT CAUGHT"
                     result.detail = "the gate passed with the defect in place"
+                elif BUILD_FINDING in fired and not any(
+                    name.startswith(fault.expects) for name in fired
+                ):
+                    # red, and for a reason that is not a check: the mutant did not build, so the
+                    # check the fault names never examined it (RED-VACUITY) -- a miss, like any
+                    result.verdict = "DOES NOT BUILD"
+                    builds = [line.strip().replace(f"{self.cwd}{os.sep}", "")  # the tree's own paths
+                              for line in output.splitlines()
+                              if (m := FINDING.match(line)) and m.group(1).strip() == BUILD_FINDING]  # fmt: skip
+                    result.detail = (
+                        f"the defect stopped the build before {fault.expects!r} could run; "
+                        + "; ".join(builds)
+                    )
                 elif not any(name.startswith(fault.expects) for name in fired):
                     result.verdict = "WRONG CHECK"
                     result.detail = (

@@ -115,6 +115,11 @@ class QualificationError(Exception):
     """The qualification could not run what it was asked to (not a failed check)."""
 
 
+#: How the reason for a bcir-qualify the compiler refused begins: a test that needs the build reads
+#: it as its setup failing, `BuildFailed`, never as its own finding (RED-VACUITY).
+BUILD_FAILED = "bcir-qualify build failed"
+
+
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -178,7 +183,7 @@ def build_qualify(directory: Path, *, callgrind: bool = False) -> Path:
     command += ["-o", str(exe), *host_link_args(["-lm"])]
     result = subprocess.run(command, capture_output=True, text=True, timeout=600)
     if result.returncode:
-        raise QualificationError(f"bcir-qualify build failed:\n{result.stderr[-4000:]}")
+        raise QualificationError(f"{BUILD_FAILED}:\n{result.stderr[-4000:]}")
     return exe
 
 

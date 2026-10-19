@@ -139,6 +139,34 @@ BCIR_DT_API void bcir_tensor_attention_backward_contract_pool(bcir_tensor_pool *
     unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads, size_t dim,
     const float *q, const float *k, const float *v, float *p, const float *dy, float *dq,
     float *dk, float *dv);
+/* The attention on bfloat16 operands (BF16-ATTN, BCIR_TENSOR_ATTENTION_BF16): its six products --
+ * the scores S = Q K^T and the context Y = P V, the backward's dV = P^T dY, dP = dY V^T, dQ = dS K and
+ * dK = dS^T Q -- under the bf16 GEMM contract below (the operands rounded to bfloat16, each 32-term
+ * depth tile's two lanes from +0.0 added to c, flushed as the AMX unit flushes), each element over
+ * the depth tiles the causal mask reaches from its 32-row block: a query block's key tiles 0 .. its
+ * own (Y, dQ), a key block's query tiles from its own on (dV, dK), every channel tile (S, dP; their
+ * blocks past the diagonal are not computed). A tile's terms past the mask are the +0.0
+ * probabilities and score adjoints p holds there. The scaling, the softmax (BCIR_TENSOR_ATTENTION_EXP
+ * as above; other bits ignored), the dot and the score adjoint p_ij (dp_ij - dot_i) scale are v1's
+ * in v1's order; the future probabilities and adjoints are +0.0; a KV head's dk and dv take its
+ * query heads in order, the first from +0.0; the forward's verdict is as above. `variant` names the
+ * products' instance -- 1 portable, 4 AVX-512, 8 AMX, 0 the widest bcir_tensor_mm_bf16_variants
+ * admits -- every instance the same bits at every thread count. The entries pack each task's
+ * operands into the workspace, at least bcir_tensor_attention_bf16_workspace bytes (one region a
+ * task, the most any pool uses; a function of the shapes alone), and return the instance they ran,
+ * or 0 -- writing nothing -- for an instance not admitted, kvheads not dividing heads, or a
+ * smaller workspace. */
+#define BCIR_TENSOR_ATTENTION_BF16 4u
+BCIR_DT_API size_t bcir_tensor_attention_bf16_workspace(size_t batch, size_t time, size_t heads,
+    size_t kvheads, size_t dim);
+BCIR_DT_API int bcir_tensor_attention_bf16_scan_pool(bcir_tensor_pool *pool, int variant,
+    unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads, size_t dim,
+    const float *q, const float *k, const float *v, float *p, float *y, int *bad, void *workspace,
+    size_t bytes);
+BCIR_DT_API int bcir_tensor_attention_bf16_backward_pool(bcir_tensor_pool *pool, int variant,
+    size_t batch, size_t time, size_t heads, size_t kvheads, size_t dim, const float *q,
+    const float *k, const float *v, const float *p, const float *dy, float *dq, float *dk,
+    float *dv, void *workspace, size_t bytes);
 /* The fused contract, v2 (NDT-FMA): c[i][j] starts at its beta-scaled value and then, for l
  * ascending, c = fma(alpha*A(i,l), B(l,j), c) -- the product alpha*A rounded as in v1, the term's
  * product and its addition rounded once together (C99 fmaf, an IEEE fusedMultiplyAdd). The same

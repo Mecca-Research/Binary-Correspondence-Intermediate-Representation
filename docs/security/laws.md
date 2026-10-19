@@ -1116,6 +1116,15 @@ value nothing reads; Clang's is a call no optimizer deletes. So Clang's UBSan
 is the gate's instrument, at `-O2` (`UW19`, `UW20`, `UW22`), and GCC's builds
 unoptimized only what Clang cannot (`UW17`, `UW21`) -- an instrument an
 optimizer can fold away is no instrument (L9).
+MAKE-GATE-TREES instance (2026-10-19): one gate's two paths are its run and its copy. The make
+gate's change step copies the tracked tree, and a target that reads a tree whole is tagged from
+every file on disk under it, so an untracked file there made the copy disagree with the run it
+copies: over a working tree whose new records were not yet added, the train task re-ran in the
+copy, where its corpus law could not ask git for an index, and the gate failed eleven minutes in.
+It already refused an untracked read by name before any run; it now refuses an untracked file
+under a read tree the same way (`untracked_tree_files`, over the walk the tags hash). Witness:
+`test_the_gate_names_an_untracked_file_under_a_tree_a_target_reads`; faults `make-gate.json`
+MG1-MG5.
 **Port note:** substitute endianness, ABI, and libc variance for the same
 discipline.
 
@@ -2118,6 +2127,23 @@ Witnesses: `test_null_pointer_constants_run_as_the_original_on_both_rails`,
 `test_tables_of_function_pointers_and_calls_through_them_run_as_the_original`,
 `test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails`. Faults: `cfront-values.json`
 `T45`, `cfront-calls.json` `CL15`, `cfront-globals.json` `GB8`, `cfront-fptab.json` `FT19`.
+RED-VACUITY instance (2026-10-19): a fault the compiler rejects never reached the test that names it. The native
+trainer's C harness, its library and bcir-qualify build under `-Werror`, so a mutant that leaves a name unused fails
+the build; the test gate named the failing test, and the sweep scored RED for a defect no assertion examined -- the
+treatment stopped the apparatus, and the run read as the subject's response. `NL7` (`ndt-lanes.json`) was found
+re-anchoring it; a scan of every committed C-path fault, each built as its check builds it, found fourteen on the
+head, in nine tables (twelve under clang, two under GCC alone). The property is held by the instrument now, not remembered: the builds a test runs before it tests anything
+raise `bcir.toolchain.BuildFailed`, `check_tests.py` reports that as the finding `build` -- the C gates' finding for a
+harness that did not build -- and `red_sweep.py` scores a fault whose check did not fire beside it DOES NOT BUILD,
+never RED. Re-crafted to compile, `PK1` came back NOT CAUGHT: the AMX kernel it breaks is withdrawn by its own
+admission differential and never runs, so the harness now holds the differential to passing wherever the instance is
+offered. A NOT CAUGHT is a question about the witness; a RED is one about the apparatus first.
+Witnesses: `test_a_fault_that_stops_the_build_is_not_a_catch`, `test_the_check_firing_beside_a_build_finding_is_still_red`,
+`test_every_gate_that_builds_a_harness_reports_the_finding_the_sweep_reads`,
+`test_a_test_whose_own_build_failed_is_the_build_finding` (`test_red_sweep.py`),
+`test_a_build_that_fails_names_itself_and_its_first_error` (`test_toolchain.py`),
+`test_a_trainer_that_does_not_build_raises_build_failed`, `test_a_twin_build_the_compiler_refuses_is_build_failed`.
+Faults: `red-vacuity.json` `RV1`-`RV9`, and the re-crafted entries.
 **Port note:** the C/C++ shape is a stale object file or a `ccache` hit after a
 same-size source edit, and any build system whose staleness test is coarser than
 content — timestamps, sizes, or a hash of the command line rather than of the

@@ -33,6 +33,7 @@ import zlib
 from dataclasses import dataclass, replace
 
 from bcir.abi import planner_abi as pa
+from bcir.toolchain import BuildFailed
 
 ROWS = ("planner.parity", "planner.malformed.accepted", "planner.r9.misjudged")
 
@@ -85,7 +86,8 @@ def build_harness(tmp: str, extra_flags=(), name: str = "test_kplan") -> str | N
         timeout=180,
     )
     if build.returncode != 0:
-        raise RuntimeError(f"planner harness build failed: {build.stderr[-2000:]}")
+        # a RuntimeError to the C gates, the finding `build` to check_tests.py (RED-VACUITY)
+        raise BuildFailed("planner harness build", build.stderr)
     return exe
 
 

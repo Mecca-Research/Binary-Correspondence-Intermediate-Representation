@@ -58,6 +58,7 @@ from ..gem.ring import (
 )
 from ..signal_table import builtin_definitions, emit_c_header, encode_row
 from ..telemetry_intake import TelemetryIntake
+from ..toolchain import BuildFailed
 
 M32 = 0xFFFFFFFF
 M64 = 0xFFFFFFFFFFFFFFFF
@@ -1328,7 +1329,8 @@ def build_harness(tmp: str, *, extra_flags=()) -> str | None:
         timeout=180,
     )
     if build.returncode != 0:
-        raise RuntimeError(f"ring harness build failed: {build.stderr[-2000:]}")
+        # a RuntimeError to the C gates, the finding `build` to check_tests.py (RED-VACUITY)
+        raise BuildFailed("ring harness build", build.stderr)
     return exe
 
 

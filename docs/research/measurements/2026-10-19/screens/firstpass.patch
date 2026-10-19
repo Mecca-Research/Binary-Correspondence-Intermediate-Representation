@@ -1,0 +1,19 @@
+--- a/runtime/c/bcir_decoder_train.c
++++ b/runtime/c/bcir_decoder_train.c
+@@ -1,3 +1,5 @@
++#define _GNU_SOURCE 1
++#include <sys/mman.h>
+ #include "bcir_decoder_train.h"
+ #include <math.h>
+ #include <stdint.h>
+@@ -987,7 +989,9 @@
+ typedef struct pass_result { double norm2,grmax,wmax,mmax,vmax; size_t chunk,tasks; } pass_result;
+ static int first_pass(bcir_decoder_state *s,double gs,pass_part *parts,pass_result *out) {
+   pass_job pj; size_t i; int bad=0; double norm=0.0;
+-  pj.gr=s->gradients; pj.wt=s->weights; pj.m1=s->moment1; pj.m2=s->moment2;
++  static float *zero; static size_t zn;
++  if (zn!=s->plan.parameters) { zero=mmap(NULL,s->plan.parameters*4,PROT_READ,MAP_PRIVATE|MAP_ANONYMOUS,-1,0); zn=s->plan.parameters; }
++  pj.gr=s->gradients; pj.wt=zero; pj.m1=zero; pj.m2=zero;  /* CEILING EXPERIMENT: w/m1/m2 not read */
+   pj.n=s->plan.parameters; pj.chunk=bcir_decoder_reduce_chunk(pj.n); pj.gs=gs;
+   pj.reduce=(s->contract&BCIR_DT_CONTRACT_REDUCE)!=0; pj.parts=parts;
+   pj.variant=bcir_tensor_mm_variants();

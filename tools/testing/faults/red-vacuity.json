@@ -1,0 +1,78 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_red_sweep:test_a_fault_that_stops_the_build_is_not_a_catch",
+    "bcir.tests.test_red_sweep:test_the_check_firing_beside_a_build_finding_is_still_red",
+    "bcir.tests.test_red_sweep:test_every_gate_that_builds_a_harness_reports_the_finding_the_sweep_reads",
+    "bcir.tests.test_red_sweep:test_a_test_whose_own_build_failed_is_the_build_finding",
+    "bcir.tests.test_toolchain:test_a_build_that_fails_names_itself_and_its_first_error",
+    "bcir.tests.test_native_decoder:test_a_trainer_that_does_not_build_raises_build_failed",
+    "bcir.tests.test_c_cfront:test_a_twin_build_the_compiler_refuses_is_build_failed"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_fault_that_stops_the_build_is_not_a_catch",
+      "label": "RV1 a run red only for its build finding scored on as WRONG CHECK (the DOES NOT BUILD verdict gone)",
+      "old": "                elif BUILD_FINDING in fired and not any(",
+      "new": "                elif False and BUILD_FINDING in fired and not any(",
+      "path": "tools/testing/red_sweep.py"
+    },
+    {
+      "expects": "test_the_check_firing_beside_a_build_finding_is_still_red",
+      "label": "RV2 a build finding beside the expected check scored DOES NOT BUILD (a check that fired, discarded)",
+      "old": "                elif BUILD_FINDING in fired and not any(\n                    name.startswith(fault.expects) for name in fired\n                ):",
+      "new": "                elif BUILD_FINDING in fired and not any(\n                    name.startswith(fault.expects) for name in ()\n                ):",
+      "path": "tools/testing/red_sweep.py"
+    },
+    {
+      "expects": "test_a_test_whose_own_build_failed_is_the_build_finding",
+      "label": "RV3 the test gate reports a test its build stopped under the test's own name (the vacuous RED again)",
+      "old": "            print(f\"  - {BUILD_FINDING}: {name}: {_first_line(exc)}\", flush=True)",
+      "new": "            print(f\"  - {name}: {type(exc).__name__}: {_first_line(exc)}\", flush=True)",
+      "path": "tools/testing/check_tests.py"
+    },
+    {
+      "expects": "test_a_build_that_fails_names_itself_and_its_first_error",
+      "label": "RV4 the build's report takes the diagnostic's first line, an include chain's preamble, for its first error",
+      "old": "            (line for line in lines if \"error\" in line or \"undefined reference\" in line),",
+      "new": "            (line for line in lines),",
+      "path": "bcir/toolchain.py"
+    },
+    {
+      "expects": "test_a_build_that_fails_names_itself_and_its_first_error",
+      "label": "RV5 a build that exited non-zero taken as built",
+      "old": "    if done.returncode:\n        raise BuildFailed(what, done.stderr)",
+      "new": "    if done.returncode < 0:\n        raise BuildFailed(what, done.stderr)",
+      "path": "bcir/toolchain.py"
+    },
+    {
+      "expects": "test_a_trainer_that_does_not_build_raises_build_failed",
+      "label": "RV6 the native library's failed build raised as a plain RuntimeError (the test gate cannot tell it from a test's)",
+      "old": "                raise BuildFailed(\"native decoder build\", result.stderr)",
+      "new": "                raise RuntimeError(f\"native decoder build failed:\\n{result.stderr}\")",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_a_trainer_that_does_not_build_raises_build_failed",
+      "label": "RV7 a copy of the trainer the compiler refuses asserted instead of raised as BuildFailed",
+      "old": "    build_units(cmd + host_link_args([\"-lm\"]), \"native decoder build of a copy\", timeout=180)",
+      "new": "    run = subprocess.run(cmd + host_link_args([\"-lm\"]), capture_output=True, text=True, timeout=180)\n    assert run.returncode == 0, run.stderr[-2000:]",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    },
+    {
+      "expects": "test_a_twin_build_the_compiler_refuses_is_build_failed",
+      "label": "RV8 the C frontend's cached twin build asserting instead of raising BuildFailed",
+      "old": "    raise BuildFailed(f\"{label} build\", b.stderr)",
+      "new": "    raise AssertionError(f\"{label} build failed:\\n{b.stderr}\")",
+      "path": "bcir/tests/test_c_cfront.py"
+    },
+    {
+      "expects": "test_every_gate_that_builds_a_harness_reports_the_finding_the_sweep_reads",
+      "label": "RV9 the ring gate naming a harness that did not build otherwise than the sweep reads (`harness build`)",
+      "old": "                print(f\"  - build: {exc}\")",
+      "new": "                print(f\"  - harness build: {exc}\")",
+      "path": "tools/c/check_ring.py"
+    }
+  ]
+}

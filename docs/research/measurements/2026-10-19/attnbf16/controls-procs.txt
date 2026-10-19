@@ -1,0 +1,9 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 9a702a4, runtime/c against it df21dda56e866915
+# procs.py gemm base.so this.so 1 201 8
+{"threads": 1, "rounds": 201, "processes": 8, "same_bits": true, "base_over_this_per_process": [0.9976, 0.9995, 0.9962, 0.9904, 0.9977, 0.992, 1.0069, 0.9947], "mean": 0.9969, "ci95": [0.9926, 1.0011]}
+# procs.py gemm base.so base-copy.so 1 201 8 (A/A)
+{"threads": 1, "rounds": 201, "processes": 8, "same_bits": true, "base_over_this_per_process": [0.9876, 0.9982, 1.0028, 0.9924, 0.9957, 0.9923, 0.9922, 1.0033], "mean": 0.9956, "ci95": [0.9909, 1.0002]}
+# procs.py gemm base.so this.so 4 401 8
+{"threads": 4, "rounds": 401, "processes": 8, "same_bits": true, "base_over_this_per_process": [1.0075, 1.0003, 1.0055, 0.9891, 0.9957, 1.0086, 0.9965, 1.0112], "mean": 1.0018, "ci95": [0.9954, 1.0082]}
+# procs.py gemm base.so base-copy.so 4 401 8 (A/A)
+{"threads": 4, "rounds": 401, "processes": 8, "same_bits": true, "base_over_this_per_process": [1.0063, 1.0046, 0.9879, 1.0121, 1.0056, 1.0081, 1.0027, 1.0006], "mean": 1.0035, "ci95": [0.9975, 1.0095]}

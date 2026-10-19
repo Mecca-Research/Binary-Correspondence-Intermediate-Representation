@@ -51,9 +51,9 @@
   },
   {
    "expects": "test_native_c_harness_c11_and_c23",
-   "label": "NL7 the transposed exponentials skip the max-subtraction (exp(x) for exp(x - max): the same softmax in exact arithmetic, other bits)",
-   "new": "",
-   "old": "    for (c=0;c<16;c++) _mm512_store_ps(blk+c*16,_mm512_sub_ps(_mm512_load_ps(blk+c*16),mx));\n",
+   "label": "NL7 the transposed exponentials skip the max-subtraction (each row's maximum taken as zero: exp(x scale) for exp(x scale - max), the same softmax in exact arithmetic, other bits)",
+   "new": "__m512 mx=_mm512_mul_ps(_mm512_loadu_ps(maxv),_mm512_setzero_ps()),sc=",
+   "old": "__m512 mx=_mm512_loadu_ps(maxv),sc=",
    "path": "runtime/c/bcir_tensor.c"
   },
   {

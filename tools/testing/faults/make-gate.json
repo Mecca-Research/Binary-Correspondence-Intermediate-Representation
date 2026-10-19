@@ -1,0 +1,45 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_make_rails:test_the_gate_names_an_untracked_file_under_a_tree_a_target_reads",
+    "bcir.tests.test_make_rails:test_the_gate_names_a_read_git_does_not_track_before_it_runs"
+  ],
+  "faults": [
+    {
+      "label": "MG1 the tree predicate names nothing (an untracked file under a read tree reaches the change step)",
+      "path": "tools/build/make_gate.py",
+      "old": "    trees = sorted({d for t in bf.targets for d in t.reads_tree})\n",
+      "new": "    trees = []\n",
+      "expects": "test_the_gate_names_an_untracked_file_under_a_tree_a_target_reads"
+    },
+    {
+      "label": "MG2 the tree predicate names tracked files too (every reader's tree refused)",
+      "path": "tools/build/make_gate.py",
+      "old": "            if rel not in tracked and rel not in written\n",
+      "new": "            if rel not in written\n",
+      "expects": "test_the_gate_names_an_untracked_file_under_a_tree_a_target_reads"
+    },
+    {
+      "label": "MG3 the tree predicate names a file a target writes (the build's own output refused)",
+      "path": "tools/build/make_gate.py",
+      "old": "            if rel not in tracked and rel not in written\n",
+      "new": "            if rel not in tracked\n",
+      "expects": "test_the_gate_names_an_untracked_file_under_a_tree_a_target_reads"
+    },
+    {
+      "label": "MG4 the tree predicate walks a tree no target reads",
+      "path": "tools/build/make_gate.py",
+      "old": "    trees = sorted({d for t in bf.targets for d in t.reads_tree})\n",
+      "new": "    trees = sorted({d for t in bf.targets for d in t.reads_tree} | {\"lib\"})\n",
+      "expects": "test_the_gate_names_an_untracked_file_under_a_tree_a_target_reads"
+    },
+    {
+      "label": "MG5 the read predicate names nothing (an untracked read by name reaches the change step)",
+      "path": "tools/build/make_gate.py",
+      "old": "    return sorted({r for t in bf.targets for r in t.reads if r not in tracked and r not in written})\n",
+      "new": "    return []\n",
+      "expects": "test_the_gate_names_a_read_git_does_not_track_before_it_runs"
+    }
+  ]
+}

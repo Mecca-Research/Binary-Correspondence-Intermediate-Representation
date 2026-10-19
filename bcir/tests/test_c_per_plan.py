@@ -38,6 +38,7 @@ from bcir.asn1.constraints import Size, ValueRange
 from bcir.asn1.per import PerVariant, encode_per
 from bcir.asn1.schema import Component, Primitive, Sequence
 from bcir.asn1.tags import Universal
+from bcir.toolchain import BuildFailed
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
@@ -74,9 +75,7 @@ def _build(tmp: str) -> str | None:
         )
         if proc.returncode == 0:
             return out
-    raise AssertionError(
-        f"the plan-driven PER twin must build warning-clean:\n{proc.stderr[:3000]}"
-    )
+    raise BuildFailed("the plan-driven PER twin's warning-clean build", proc.stderr)  # RED-VACUITY
 
 
 def _run(binary: str, lines: list[str]) -> list[str]:

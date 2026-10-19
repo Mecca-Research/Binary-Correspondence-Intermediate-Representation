@@ -2195,3 +2195,148 @@ The comparison harness measured one step a call, so it never saw this: `train --
 (MULTI-STEP) runs a bcir backend N steps a native call, never across an evaluation, each step timed
 as its call's share, the record and its name carrying N. A 30-step run of seven steps a call ended in
 the state, losses, clipping norms and evaluations of one step a call.
+
+## 39. The attention's products on bfloat16 operands (BF16-ATTN, ATTN-SOFT)
+
+§33 fused the attention's products and left them binary32: under `bf16+exp+reduce+attn` every GEMM of
+the step runs on the tile unit, the attention's six products on the FMA units. The bf16 attention
+contract (`bcir_tensor.h`'s bf16 attention, `BCIR_DT_CONTRACT_ATTNBF16` in the trainer, `+attnbf16`
+in Python, with a bf16 GEMM contract alone) puts them on bfloat16 operands: each element of the
+scores S = Q K^T, the context Y = P V and the backward's dP = dY V^T, dQ = dS K, dV and dK is the bf16
+GEMM contract's -- the operands rounded to bfloat16, the depth in 32-term tiles, each tile's two lanes
+from +0.0 and their sum added to the element, flushed as the AMX unit flushes (§31) -- over the depth
+tiles the causal mask reaches from the element's 32-row block. S and dP take every channel tile and
+skip the blocks past the diagonal; Y and dQ take a query block's key tiles 0 .. its own; dV and dK a
+key block's query tiles from its own on, and they are computed transposed (dV^T = dY^T P,
+dK^T = Q^T dS): a product of two bfloat16 values is exact in binary32 either way round, so the same
+terms reach the same lanes and the transposed packs are of dY and Q (channels by tokens) instead of
+P and dS (tokens by tokens). A tile's terms past the mask are the +0.0 probabilities and adjoints the
+arena holds there. The scaling, the softmax (v1, or the BCIR exponential), the dot and the score
+adjoint stay v1's binary32; the future scores and adjoints are +0.0; a KV head's dk and dv take its
+query heads in order, the first from +0.0.
+
+A task is a (batch, KV head) in both directions: its keys and values are packed once for its query
+heads, and a query block's scores, softmax and probability strip -- in the backward its dP, dot, score
+adjoint and dS strips, and its dq -- are done while the block's rows are in the core's cache. Its
+packs and scratch live in a region of the trainer's workspace (one a worker where the pool has no more
+workers than tasks, else one a task; `bcir_tensor_attention_bf16_workspace` counts them, independent
+of the pool), which `bcir_decoder_workspace_bytes` now sizes for the attention as well as the GEMM
+groups. The backward reads p and never writes it: its dS lives in the workspace, so the arena keeps
+the probabilities the forward wrote, where the binary32 backward rewrites them with their adjoints.
+The AMX kernel is split into begin, blocks and end so that a task configures its tiles once and runs
+every product's blocks under that configuration, and its blocks run over a depth range, so a strip
+packs and multiplies only the tiles the mask reaches. Portable, AVX-512 (MXCSR FTZ and DAZ for the
+tile unit's flushes) and AMX instances compute one result.
+
+ATTN-SOFT, under both attentions: the softmax takes its rows' maxima over the raw scores and scales
+the maximum once -- rounding is monotonic and the scale positive, so the largest scaled score is the
+scaled largest score, the same float -- and the transposed exponential takes `blk*scale - max` as
+its argument, the same two roundings the separate scaling pass and the subtraction made. The pass
+that scaled every score is gone; every value is as it was (the binary32 attention's states are their
+records': `08da09e8…` under `bf16+exp+reduce+attn`,
+[identity-attn.json](measurements/2026-10-19/attnbf16/identity-attn.json)).
+
+The C harness holds the entries to a reference written apart from the unit (each product element
+from the bf16 GEMM's lane model, `ref_bfv`, `ref_lane` and `ref_flush`): 912 cases on 13 shapes,
+from one row and one channel to past the 32-row blocks and tiles -- ragged contexts and channel
+counts, head groups of one to four, a 330-token backward -- finite, with an infinite value and a NaN
+adjoint, and with a key the softmax hides (each of its scores -inf, its probabilities 0, every output
+finite, the verdict refusing it from the key itself: 288 cases), under libm's exponential and
+BCIR's, on every instance the host admits, serially and on pools of two, four and 64 (more workers
+than tasks: a region a task); the backward leaves p as it was, and every refusal -- a workspace a
+byte short or none, an instance the unit lacks, KV heads not dividing the heads -- writes nothing.
+Through the trainer one state at one to four threads under three bf16 contracts with the bit,
+another without it, every attention job of a run on the bf16 entries (the tensor unit's probe), the
+probabilities left in the arena, and the hidden key, overflowing logits and a hiding SiLU refused
+under the bf16 attention as under the others (its key weight bfloat16's largest finite value:
+FLT_MAX is +inf as a bfloat16 operand, and its products with the other tokens' zeros NaN). Every
+manifest build of the harness passes under GCC 13, clang 18 and clang 23 -- C11, C23, portable,
+AVX2-capped and ThreadSanitizer (no race; the race mutant still reported) -- and the Python witness
+holds the names, the probe, the states, the workspace (the larger of the GEMM groups' packs and the
+attention's, at 40 and 96 tokens) and a resume. `tools/testing/faults/ndt-attnbf16.json` holds 36
+faults, all caught by their own check, and twelve entries of five older tables anchored in the
+restructured code fire again re-anchored (one of them, NL7, showed that a mutant the compiler rejects
+had been scored as caught: RED-VACUITY, `tools/testing/faults/README.md`).
+
+The attention alone at the language model's shapes (batch 8, 128 tokens, eight query heads over four KV
+heads of 48 channels, BCIR's exponential), the fused binary32 contract and the bf16 one alternated round
+by round in one program on one pool ([attnbf16/](measurements/2026-10-19/attnbf16/),
+[attention.c](measurements/2026-10-19/attnbf16/attention.c)):
+
+| one layer, median | fused binary32 | bf16 | ratio (95% interval) |
+|---|---|---|---|
+| forward, four threads | 0.845 ms | 0.735 ms | 1.163 (1.133-1.190) |
+| backward | 1.135 | 0.824 | 1.378 (1.358-1.394) |
+| forward, one thread | 2.133 | 1.856 | 1.140 (1.127-1.168) |
+| backward | 2.570 | 1.936 | 1.327 (1.296-1.356) |
+
+Forward and backward together the bf16 layer is faster in every round, 61 of 61 at four threads (x1.280,
+1.245-1.299) and 31 of 31 at one (x1.230, 1.197-1.243); the backward gains more, four of the six products
+being its. In the step ([steppair.py](measurements/2026-10-19/attnbf16/steppair.py): the parent's library
+under `bf16+exp+reduce+attn`, this tree's under it and under `bf16+exp+reduce+attnbf16`, a step each in
+turn in one process, the order rotated) the bf16 attention against the binary32 one on the same library
+reads x1.029 (1.018-1.042, 96 of 150 rounds) at four threads, 80.5 ms a step to 77.7, and x1.004
+(0.989-1.024) at one, where a step is 267 ms. The six layers' attention, timed alone, saves 2.5 ms at
+four threads, 3.1% of the 80.5 ms step, about what the step gains; alone, the six layers now take about
+9.4 ms of it.
+
+ATTN-SOFT is measured against the parent commit's library, and such a ratio needs a control. Two
+libraries loaded into one process sit at addresses, and work on buffers, of that process's choosing, and
+two copies of one library -- the same code -- read apart: the bf16 GEMM alone x0.981 (0.974-0.989) and
+x0.974 (0.960-0.982) between copies at one thread, x0.991 and x1.008 at four, and the step pair with this
+tree as its own base x0.991 (0.977-1.010) at four threads
+([controls-gemm.txt](measurements/2026-10-19/attnbf16/controls-gemm.txt),
+[controls-steppair-t4.txt](measurements/2026-10-19/attnbf16/controls-steppair-t4.txt)). A process's
+placement moves a library-against-library ratio by up to about 3%, either way, and one process's
+bootstrap interval, which resamples that process's rounds, cannot see it. Read against that, ATTN-SOFT
+costs nothing measurable: its attention alone reads x1.018 (1.008-1.036) at four threads and x1.017
+(1.004-1.027) at one ([soft.c](measurements/2026-10-19/attnbf16/soft.c)), its outputs the parent's bit
+for bit every round, and the step pair's base/soft, x0.990 (0.976-0.998) at four threads, is the A/A's
+own x0.991. Nor does splitting the AMX kernel into begin, blocks and end cost the bf16 GEMMs anything:
+over eight processes, the slots swapped every other one
+([procs.py](measurements/2026-10-19/attnbf16/procs.py),
+[controls-procs.txt](measurements/2026-10-19/attnbf16/controls-procs.txt)), the parent's GEMM over this
+tree's is x0.997 (0.993-1.001) at one thread and x1.002 (0.995-1.008) at four, beside the A/A's x0.996
+and x1.004.
+
+The state is the contract's on every instance: six steps of the comparison decoder end in `fcd6b43b…`
+under `bf16+exp+reduce+attnbf16` through the widest (AMX), AVX-512, AVX2 and portable builds at one and
+four threads and a repeat
+([identity-attnbf16.json](measurements/2026-10-19/attnbf16/identity-attnbf16.json)), and under
+`bf16+exp+reduce+attn` still in `08da09e8…`. Below AVX-512 the bf16 products run as the portable loops,
+about 80 s a step at one thread: the reference, not a rail. The C harness built without the x86
+instances, as the aarch64 CI job builds it, passes all 27 of its tests in 25.7 s (clang 18) and 27.9 s
+(GCC 13) of the test's 60 s cap, and in 33.2 s and 44.9 s of 300 under UBSan with no runtime error
+([aarch64-timing.txt](measurements/2026-10-19/attnbf16/aarch64-timing.txt)), so the caps stay.
+
+## 40. A run call's first pass and the weights' panels, measured and not kept (FACTS-PASS, WEIGHT-PANELS)
+
+FACTS-RUN left two reads a run call's later steps could trust as well. The update's first pass reads w,
+m1 and m2 for their maxima and finiteness, which the call's own last commit wrote (FACTS-PASS); and every
+bf16 GEMM over a weight packs it into a B panel the weight's last write could have produced
+(WEIGHT-PANELS). Neither was built before its ceiling was measured
+([screens/](measurements/2026-10-19/screens/)).
+
+FACTS-PASS's ceiling: [firstpass.patch](measurements/2026-10-19/screens/firstpass.patch) points the first
+pass's w, m1 and m2 at one untouched read-only page of zeros, so the pass reads only the gradient from
+memory, and every step of the bench still skips the preflight by `adamw_bounded`'s proof, so the patched
+trainer computes the tree's state ([pair.py](measurements/2026-10-19/screens/pair.py) holds the two arms'
+losses equal every round). The tree over the patched tree reads x1.024 (95% interval 0.996-1.041, 46 of
+80 rounds) at four threads and x1.037 (1.010-1.063, 19 of 24) at one
+([firstpass-t4.txt](measurements/2026-10-19/screens/firstpass-t4.txt),
+[firstpass-t1.txt](measurements/2026-10-19/screens/firstpass-t1.txt)), and two builds of the tree x0.994
+(0.978-1.009) and x1.009 (0.979-1.034) ([aa-t4.txt](measurements/2026-10-19/screens/aa-t4.txt),
+[aa-t1.txt](measurements/2026-10-19/screens/aa-t1.txt)). The ceiling is the pass's three state streams --
+§27 left the first pass at its four streams' bound, 3.15 ms of the four-thread step -- and a build would
+add to the commit's three instances the maxima of what they store, the inputs of the overflow proof. At
+four threads the ceiling is not resolved; at one it is resolved against 1 but not apart from the A/A's
+band. Not kept: it reopens when those streams are a share of the step this host can resolve, a step a few
+times shorter, or a host whose A/A pair resolves 1%.
+
+WEIGHT-PANELS is bounded by §37's measurement. The weights' B packs, the forward's and the input
+adjoints', are 42% of the packs' thread time in the four-thread step, about 3.4 ms of its 8.15 ms of
+packs ([attribution-t4.json](measurements/2026-10-18/panels/packs/attribution-t4.json)), 4.3% of the 79
+ms step: the most the update writing the weights' panels could remove, before it pays for writing them --
+two layouts a weight, W as B for its input adjoint and W^T as B for the forward (a layout no writer has),
+39 MB more written a step and 39 MB more state. Its ceiling is the packs' 3.4 ms less those writes, for a
+new panel layout and the state to hold it. Not built, not kept.

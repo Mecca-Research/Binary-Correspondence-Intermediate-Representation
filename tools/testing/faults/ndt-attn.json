@@ -95,7 +95,7 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NA13 the tile's rows past the last whole eight take no channels",
-      "new": "        for (c=0;c<0;c++) acc=ATT_MADD1(f,acc,dy[(i0+ig)*ldy+c],vt[c*t+jt+jb+j]);",
+      "new": "        for (c=d;c<d;c++) acc=ATT_MADD1(f,acc,dy[(i0+ig)*ldy+c],vt[c*t+jt+jb+j]);",
       "old": "        for (c=0;c<d;c++) acc=ATT_MADD1(f,acc,dy[(i0+ig)*ldy+c],vt[c*t+jt+jb+j]);",
       "path": "runtime/c/bcir_tensor.c"
     },

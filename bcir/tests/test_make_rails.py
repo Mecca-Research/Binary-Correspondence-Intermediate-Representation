@@ -110,6 +110,35 @@ def test_the_gate_names_a_read_git_does_not_track_before_it_runs():
     ), "an output of the build is never an untracked read"
 
 
+def test_the_gate_names_an_untracked_file_under_a_tree_a_target_reads():
+    """A target that reads a tree whole is tagged from every file `walk_tree` yields under it,
+    tracked or not, and the make gate's change step copies only the tracked tree: an untracked
+    file there makes the copy disagree with the run it copies, and every reader of the tree
+    re-executes in it (2026-10-19: untracked records under docs/ re-ran the train task in the copy,
+    whose corpus law asks git for an index the copy has not). `untracked_tree_files` is the
+    verdict's predicate: it names that file, and nothing the walk skips, git tracks, a target
+    writes or a tree no target reads holds."""
+    if not _posix():
+        return
+    gate = _load("make_gate")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for rel in ("docs/a.md", "docs/sub/new.md", "docs/__pycache__/x.pyc", "docs/.notes",
+                    "docs/made.md", "lib/c.c", "lib/loose.c"):  # fmt: skip
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text("x\n", encoding="utf-8")
+        text = (
+            f"bcirfile 1\ntool cc {root}/cc sha256:{'0' * 64}\n"
+            "target t\n  reads lib/c.c\n  reads-tree docs\n  writes out/t\n  run cc -c lib/c.c\n"
+            "target g\n  reads lib/c.c\n  writes docs/made.md\n  run cc -E lib/c.c\n"
+        )
+        bf = parse(text.encode("ascii"))
+        tracked = {"docs/a.md", "lib/c.c"}
+        assert gate.untracked_tree_files(bf, tracked, root) == ["docs/sub/new.md"]
+        assert gate.untracked_tree_files(bf, tracked | {"docs/sub/new.md"}, root) == []
+        assert gate.untracked_reads(bf, tracked) == [], "the tree's files are not reads by name"
+
+
 def test_every_section_is_a_task_of_the_rails_build():
     """BUILD-8: tools/c/check_runtime.sh shows the verdicts BCIR Make records, so the BCIRfile it
     runs must plan every manifest section as a task -- a compiler-only one too -- where the host

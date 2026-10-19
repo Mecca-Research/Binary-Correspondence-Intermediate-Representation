@@ -34,6 +34,8 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
+from bcir.toolchain import BuildFailed
+
 ROOT = Path(__file__).resolve().parents[2]
 _RECIPE = ROOT / "tools" / "models" / "configs" / "bcir-docs-860k.json"
 _CC = __import__("bcir.toolchain", fromlist=["host_c_compiler"]).host_c_compiler()
@@ -461,6 +463,8 @@ def test_the_callgrind_build_measures_one_run_of_each_rail():
         native = work / "pack.bin"
         native.write_bytes(harness.encode(pack))
         sim, reason = harness.callgrind_traffic(q8, native, ids, work)
+        if sim is None and reason.startswith(harness.BUILD_FAILED):  # the setup, not the subject
+            raise BuildFailed("bcir-qualify's callgrind build", reason.partition("\n")[2])
         assert sim is not None, reason
         exe = work / "callgrind-build" / "bcir-qualify"
         twice = harness.profile_rails(exe, q8, native, ids, work / "twice", reps=2)

@@ -43,6 +43,48 @@ def host_link_args(logical_flags: Iterable[str], platform: str | None = None) ->
     return [flag for flag in logical_flags if not (_is_windows(host) and flag == "-lm")]
 
 
+class BuildFailed(RuntimeError):
+    """A build of the tree's own C units that the compiler or the linker refused.
+
+    The builds a test runs before it can test anything -- the native trainer's library
+    (`NativeDecoder.build`), its C harness, the C frontend's twin -- raise this rather than an
+    assertion, so a gate can tell a test that failed from a tree that did not build:
+    `tools/testing/check_tests.py` reports a test that raised it as the finding ``build``, the one
+    the C gates report for a harness that did not build, and `tools/testing/red_sweep.py` scores a
+    fault whose mutant stopped the build DOES NOT BUILD -- no check examined it -- never RED
+    (RED-VACUITY, docs/security/laws.md L25). A build that is itself a test's subject (a
+    warning-clean build, a refusal a compiler must give) does not raise it.
+
+    ``str()`` begins with what was built and the compiler's first error; ``stderr`` keeps the rest.
+    """
+
+    def __init__(self, what: str, stderr: str = "") -> None:
+        self.what = what
+        self.stderr = stderr
+        lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+        first = next(
+            (line for line in lines if "error" in line or "undefined reference" in line),
+            lines[0] if lines else "",
+        )
+        super().__init__(
+            f"{what} failed: {first or 'no diagnostic'}" + (f"\n{stderr}" if lines else "")
+        )
+
+    def __reduce__(self):  # a copy, pickled across a process, is the same build and diagnostic
+        return (type(self), (self.what, self.stderr))
+
+
+def build_units(command: Sequence[str], what: str, *, timeout: float) -> None:
+    """Run ``command``, a build of the tree's own C units, and raise `BuildFailed` -- naming
+    ``what`` and the compiler's first error -- when it does not exit 0."""
+
+    done = subprocess.run(
+        list(command), capture_output=True, text=True, errors="replace", timeout=timeout
+    )
+    if done.returncode:
+        raise BuildFailed(what, done.stderr)
+
+
 def host_bash(
     platform: str | None = None,
     *,

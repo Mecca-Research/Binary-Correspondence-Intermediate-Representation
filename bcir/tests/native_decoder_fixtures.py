@@ -162,15 +162,14 @@ def build_library(directory, *, sources: dict[str, str] | None = None) -> Path |
             units.append(str(_C / name))
     suffix = ".dll" if sys.platform == "win32" else ".dylib" if sys.platform == "darwin" else ".so"
     out = target / ("bcir_decoder_train_mutant" + suffix)
-    from bcir.toolchain import host_link_args
+    from bcir.toolchain import build_units, host_link_args
 
     cmd = [cc, "-std=c11", "-O3", "-ffp-contract=off", "-DBCIR_DT_BUILD_SHARED", "-shared"]
     if sys.platform != "win32":
         cmd += ["-fPIC", "-pthread"]
     cmd += ["-I", str(_C), *units, "-o", str(out)]
-    run = subprocess.run(cmd + host_link_args(["-lm"]), capture_output=True, text=True,
-                         timeout=180)  # fmt: skip
-    assert run.returncode == 0, run.stderr[-2000:]
+    # a copy the compiler refuses is BuildFailed (check_tests.py's `build` finding), never a test's
+    build_units(cmd + host_link_args(["-lm"]), "native decoder build of a copy", timeout=180)
     return out
 
 

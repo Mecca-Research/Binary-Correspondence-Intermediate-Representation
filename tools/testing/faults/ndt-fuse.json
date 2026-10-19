@@ -108,14 +108,14 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NZ1 the scores' last channel block leaves its future lanes unwritten (the probabilities' upper triangle keeps what p held)",
-      "new": "            _mm512_mask_storeu_ps(sr,k0,a0[r]);\n",
+      "new": "            (void)m0; _mm512_mask_storeu_ps(sr,k0,a0[r]);\n",
       "old": "            _mm512_mask_storeu_ps(sr,m0,_mm512_maskz_mov_ps(k0,a0[r]));\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NZ2 the probabilities' future columns past a row's blocks are never filled",
-      "new": "    for (i=0;i<0;i++) { size_t end=(i/32+1)*32<v1 ? (i/32+1)*32 : v1; memset(ph+i*t+end,0,(t-end)*sizeof(float)); }\n",
+      "new": "    for (i=v1;i<v1;i++) { size_t end=(i/32+1)*32<v1 ? (i/32+1)*32 : v1; memset(ph+i*t+end,0,(t-end)*sizeof(float)); }\n",
       "old": "    for (i=0;i<v1;i++) { size_t end=(i/32+1)*32<v1 ? (i/32+1)*32 : v1; memset(ph+i*t+end,0,(t-end)*sizeof(float)); }\n",
       "path": "runtime/c/bcir_tensor.c"
     },

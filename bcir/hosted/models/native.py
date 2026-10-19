@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 from ...frontends.models.decode import DecoderSpec
-from ...toolchain import host_link_args
+from ...toolchain import BuildFailed, host_link_args
 
 _ROOT = Path(__file__).resolve().parents[3]
 _C = _ROOT / "runtime" / "c"
@@ -113,19 +113,26 @@ def provider_mismatch(lib, slot, shapes) -> int:
 #: "<contract>+reduce" names it with any of the seven above. "attn" (ATTN-FMA) puts the attention's
 #: products under the fused contract -- every multiply-add of the scores, the context and the
 #: backward's products one fmaf, the same terms in the same order -- and "<contract>+attn" names it
-#: with any of the above ("reduce+attn", "kblock+exp+reduce+attn", ...). Whatever the contract, the
-#: loss, the gamma adjoints and the embedding scatter run on the pool in the serial order: every loss
-#: and state is the serial one, bit for bit, at every thread count.
+#: with any of the above ("reduce+attn", "kblock+exp+reduce+attn", ...). "attnbf16" (BF16-ATTN)
+#: puts them on bfloat16 operands instead -- each product the bf16 GEMM contract's over the depth
+#: tiles the causal mask reaches, the softmax and the score adjoint v1's -- and is named only with a
+#: bf16 GEMM contract ("bf16+attnbf16", ..., "bf16+exp+reduce+attnbf16"): it packs into the same
+#: workspace, which `workspace_bytes` then sizes for it too, and excludes "+attn". Whatever the
+#: contract, the loss, the gamma adjoints and the embedding scatter run on the pool in the serial
+#: order: every loss and state is the serial one, bit for bit, at every thread count.
 _CONTRACTS = {"v1": 0, "fused": 1, "exp": 2, "fused+exp": 3, "kblock": 4, "kblock+exp": 6,
               "bf16": 16, "bf16+exp": 18}  # fmt: skip
 _CONTRACTS.update({("reduce" if name == "v1" else name + "+reduce"): bits | 8
                    for name, bits in list(_CONTRACTS.items())})  # fmt: skip
 _CONTRACTS.update({("attn" if name == "v1" else name + "+attn"): bits | 32
                    for name, bits in list(_CONTRACTS.items())})  # fmt: skip
+_CONTRACTS.update({name + "+attnbf16": bits | 64 for name, bits in list(_CONTRACTS.items())
+                   if bits & 16 and not bits & 32})  # fmt: skip
 _KBLOCK = 4
 _REDUCE = 8
 _BF16 = 16
 _ATTN = 32
+_ATTNBF16 = 64
 #: The contract names `NativeDecoder(contract=...)` admits, sorted; a recipe names one of them.
 CONTRACTS = tuple(sorted(_CONTRACTS))
 
@@ -317,6 +324,7 @@ class NativeDecoder:
     VJP and the softmax; `"fused+exp"`; `"kblock"`; `"bf16"`, the GEMMs on bfloat16 operands
     accumulated as AMX accumulates them, with `workspace_bytes` of packing workspace counted in
     the budget; any of them `+reduce`, and any of those `+attn`, the attention's products fused,
+    or, with a bf16 GEMM contract, `+attnbf16`, the attention's products on bfloat16 operands,
     `CONTRACTS`); the checkpoint names it and `resume` restores it.
     `huge_pages` (NDT-PAGES) puts the state on one mapping advised for 2 MB transparent huge
     pages where the host has them (`_state_buffers`); `self.huge_pages` says whether the kernel
@@ -373,8 +381,8 @@ class NativeDecoder:
             result = subprocess.run(
                 command + host_link_args(["-lm"]), capture_output=True, text=True, timeout=120
             )
-            if result.returncode:
-                raise RuntimeError(f"native decoder build failed:\n{result.stderr}")
+            if result.returncode:  # a RuntimeError, as it always was
+                raise BuildFailed("native decoder build", result.stderr)
             os.replace(temporary, target)
         finally:
             temporary.unlink(missing_ok=True)

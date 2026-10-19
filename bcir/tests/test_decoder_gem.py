@@ -38,6 +38,7 @@ from bcir.frontends.models.decoder_program import (
     program_traffic,
 )
 from bcir.tests import decoder_fixtures as fx
+from bcir.toolchain import build_units
 
 _ROOT = Path(__file__).resolve().parents[2]
 _RUNTIME = _ROOT / "runtime" / "c"
@@ -74,8 +75,7 @@ def _build(directory: Path) -> Path:
     command = [_CC, "-std=c11", "-O2", "-ffp-contract=off", "-Wall", "-Wextra", "-Werror"]
     command += ["-I", str(_RUNTIME), *(str(_RUNTIME / s) for s in sources)]
     command += ["-o", str(executable), *_link_args()]
-    result = subprocess.run(command, capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
+    build_units(command, "bcir-qualify's build", timeout=600)  # BuildFailed: RED-VACUITY
     return executable
 
 
@@ -252,8 +252,7 @@ def _build_harness(directory: Path) -> Path:
     command = [_CC, "-std=c11", "-O1", "-ffp-contract=off", "-Wall", "-Wextra", "-Werror"]
     command += ["-I", str(_RUNTIME), *(str(_RUNTIME / s) for s in sources)]
     command += ["-o", str(executable), *_link_args()]
-    result = subprocess.run(command, capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
+    build_units(command, "the decoder-GEM harness build", timeout=600)  # BuildFailed: RED-VACUITY
     return executable
 
 

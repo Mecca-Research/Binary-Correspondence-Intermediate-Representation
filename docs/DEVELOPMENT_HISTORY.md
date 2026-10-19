@@ -3034,6 +3034,111 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - The comparison harness's `train --steps-per-call N` runs a bcir backend N steps a call, never
     across an evaluation, its record and name carrying N (`-kN`): the same states, losses and
     evaluations as one step a call, its own arm.
+  BF16-ATTN + ATTN-SOFT (2026-10-19): the attention's products on bfloat16 operands, and the binary32
+    softmax's scale folded into its exponential.
+  - `BCIR_DT_CONTRACT_ATTNBF16` (bit 64, with a bf16 GEMM contract alone: refused without one and with
+    the fused attention) puts the attention's six products -- the scores S = Q K^T, the context Y = P V,
+    the backward's dP = dY V^T, dQ = dS K, dV and dK -- on bfloat16 operands, each element the bf16 GEMM
+    contract's over the depth tiles the causal mask reaches from its 32-row block: every channel tile for
+    S and dP (their blocks past the diagonal never computed), a query block's key tiles 0 .. its own for
+    Y and dQ, a key block's query tiles from its own on for dV and dK, computed transposed (dV^T = dY^T P,
+    dK^T = Q^T dS: a product of two bfloat16 values is exact either way round, so the same terms reach the
+    same lanes). The scaling, the softmax (v1, or the BCIR exponential under EXP), the dot and the score
+    adjoint stay v1's binary32; the future scores and adjoints are +0.0; a KV head's dk and dv take its
+    query heads in order, the first from +0.0. The entries `bcir_tensor_attention_bf16_scan_pool` and
+    `..._backward_pool` run one task per (batch, KV head) -- its keys and values packed once for its
+    query heads, a query block's scores, softmax and probability strip (its dP, dot, score adjoint and
+    dS strips) done while its rows are in the core's cache -- in regions of the trainer's workspace,
+    one a worker where the pool has no more workers than tasks, else one a task
+    (`bcir_tensor_attention_bf16_workspace`, pool-independent); the backward reads p and never writes
+    it, its dS in the workspace. Portable, AVX-512 (MXCSR FTZ/DAZ) and AMX instances, one result;
+    the AMX kernel split into begin/blocks/end so a task configures its tiles once. Python names it
+    `<bf16 contract>+attnbf16`; `bcir_decoder_workspace_bytes` sizes the workspace for the attention
+    too.
+  - ATTN-SOFT: the softmax's row maxima are taken over the raw scores and scaled once (rounding is
+    monotonic and the scale positive, so the maximum's element is the same and its scaled value the
+    same float), and the scale is folded into the transposed exponential's argument (`blk*scale - max`,
+    the same two roundings): the separate pass that scaled every score is gone, under both the binary32
+    and the bf16 attention, every value as it was.
+  - Witnesses: the C harness's `attention_bf16_reference` against a reference written apart from the
+    unit (each product from `ref_bfv`/`ref_lane`/`ref_flush`, the bf16 GEMM model) -- 912 cases on 13
+    shapes (one row and channel to the 330-token backward, head groups of one to four), finite, with an
+    infinite value and a NaN adjoint, and with the key the softmax hides (each score of a key -inf, its
+    probabilities 0, every output finite: 288 cases, the verdict refusing it from the key itself), under
+    both exponentials, every instance the host admits, serial and on pools of two, four and 64 (a region
+    a task); the backward leaving p; every refusal writing nothing. `trainer_attnbf16`: one state at one
+    to four threads under three bf16 contracts with the bit, another without it, the attention probe
+    recording the bf16 entries for every job, the arena's probabilities as the forward wrote them, the
+    workspace at least the GEMMs' and the attention's. The writers' verdict test runs the trainer's
+    hidden key, overflowing logits and a hiding SiLU under the bf16 attention too (its key weight
+    bfloat16's largest finite value: FLT_MAX is +inf as a bfloat16 operand, and its products with the
+    other tokens' zeros NaN). `test_the_bf16_attention_is_a_contract_of_its_own` through the binding (the
+    names, the probe, one state per thread count and contract, the workspace the larger of the GEMM
+    groups' and the attention's at 40 and 96 tokens, the budget, a resume). Every manifest build of the
+    harness passes under GCC 13, clang 18 and clang 23. `ndt-attnbf16.json` AB1-AB36, 36 of 36 caught.
+  - Re-anchors: twelve entries of five tables anchored in the restructured code fire again -- AF12,
+    AF14, AF16, AF17 (the trainer's attention calls, now `attention()`/`attention_backward()`), NF5 (the
+    undefined bit is 128 now), NL7 (the max subtraction is in the exponential's argument), SW5-SW7 (the
+    verdict in `att_verdict`, shared), SW12 (two fallbacks now), NT2 and NT11 (one claim loop for both
+    task kinds).
+  - Measured ([measurements/2026-10-19/attnbf16/](research/measurements/2026-10-19/attnbf16/)): one
+    layer's attention x1.280 (1.245-1.299) at four threads and x1.230 (1.197-1.243) at one, every
+    round, its backward x1.378; the four-thread step x1.029 (1.018-1.042) against the binary32
+    attention on one library and x1.004 (0.989-1.024) at one thread, about the six layers' 2.5 ms
+    timed alone, of an 80.5 ms step. ATTN-SOFT (its attention alone x1.018 and x1.017 against the parent's library) and
+    the AMX kernel's split read inside what two copies of one library read apart: up to about 3% in
+    one process (A/A controls), and over eight processes, the slots swapped every other one, the
+    parent's bf16 GEMM over this tree's x0.997 and x1.002 beside the A/A's x0.996 and x1.004. One
+    state, `fcd6b43b…`, through the AMX, AVX-512, AVX2 and portable builds at one and four
+    threads. The harness built without the x86 instances, as the aarch64 job builds it, passes in
+    25.7 s (clang 18) and 27.9 s (GCC 13) of its 60 s cap, 33.2 s and 44.9 s of 300 under UBSan.
+  - Screens, measured and not kept ([measurements/2026-10-19/screens/](research/measurements/2026-10-19/screens/)):
+    FACTS-PASS -- the first pass reading only the gradient inside a run call, the commit handing the
+    next step the weights' and moments' maxima -- has a ceiling of x1.024 (95% interval 0.996-1.041)
+    at four threads and x1.037 (1.010-1.063) at one, an A/A pair of two builds of the tree reading
+    x0.994 and x1.009: the first pass's w, m1 and m2 pointed at the zero page, every value as it
+    was, the first pass already at its streams' bound (NDT-UPDATE); WEIGHT-PANELS -- the update
+    writing the weights' bf16 panels -- is bounded by the weights' B packs, about 3.4 ms of the
+    step's 8.15 ms of packs (PACK-ATTR), before the update writes two panel layouts (39 MB more a
+    step), one of them (W^T as B, the forward's) a layout no writer has.
+  MAKE-GATE-TREES (2026-10-19): the make gate refuses an untracked file under a tree it reads.
+  - `check_latest.sh`'s cmake leg failed `build-make` over this commit's working tree: the change
+    step copies the tracked tree, a target that reads a tree whole is tagged from every file on
+    disk under it, and the new records under `docs/` were not yet added, so the train task's tag
+    differed in the copy and it re-ran there -- where its corpus law could not ask git for an
+    index -- and the step executed 2 targets instead of `bcir_diag.c`'s 119 dependents.
+  - `tools/build/make_gate.py`'s `untracked_tree_files` names every file `walk_tree` yields under
+    the trees the BCIRfile reads that git does not track and no target writes, and the gate stops
+    UNUSABLE before any run when there is one, as it did for an untracked read by name. Witness
+    `test_the_gate_names_an_untracked_file_under_a_tree_a_target_reads`; `make-gate.json`
+    MG1-MG5 (the read predicate's entry new too), laws.md L12's instance.
+  RED-VACUITY (2026-10-19): a fault the compiler rejects is not a fault the test caught.
+  - The native trainer's C harness, its library and bcir-qualify build under `-Werror`, so a mutant that
+    left a parameter, a variable or a static function unused stopped the build before any test ran;
+    `check_tests.py` named the failing test and `red_sweep.py` scored RED. NL7's old mutant was the first
+    seen (re-anchoring it after ATTN-SOFT); a scan of all 913 committed faults whose path is a C
+    source -- each mutant compiled as its check compiles it, against a baseline of the clean unit under
+    the same flags: clang's diagnostics and the object's symbols, then GCC compiling for real (its
+    `-fsyntax-only` skips an unused static function) over the 304 whose checks build with `-Werror` --
+    found fourteen in nine tables on the committed head: twelve under clang, the checks' first compiler
+    (`AF11`, `NE4`, `NZ1`, `PN12`, `PN13`, `PN19`, `PN24`, `PK1`, `NO2`, `NL7`, `NK1`, `QG1`), two under GCC alone (`NA13`, `NZ2`);
+    none in the C frontend's tables (the twin builds without warning flags) or behind the C gates (whose
+    harness failures are their own `build` finding). Each is re-crafted to compile (the expression
+    replaced, a dropped use consumed: `(void)u;`) and swept again: all fourteen are caught by their tests.
+  - PK1, compiling, came back NOT CAUGHT: the AMX kernel streaming one B tile into both is withdrawn by
+    the instance's admission differential and never runs, so no value could show it. The C harness now
+    holds the differential to passing wherever the build and the host offer the instance
+    (`bcir_tensor_bf16_amx_offered`, under `BCIR_DT_PANELS_PROBE`), and PK1 is caught there.
+  - The instrument: the builds a test runs before it tests anything -- the trainer's library, harness and
+    copies, the C frontend's twin, bcir-qualify (`BUILD_FAILED`), the executor's and the ASN.1 codec
+    drivers, the planner's and the ring's harnesses -- raise `bcir.toolchain.BuildFailed` (a RuntimeError,
+    as `NativeDecoder.build`'s failure always was, its first line the build and the compiler's first
+    error; `build_units` runs one); `check_tests.py` reports a test that raised it as the finding `build`,
+    the C gates' finding for a harness that did not build; `red_sweep.py` scores a fault whose check did
+    not fire beside a `build` finding DOES NOT BUILD, a miss. The committed head's vacuous PK1, NK1 and
+    QG1, swept through it, come back DOES NOT BUILD. Witnesses in `test_red_sweep.py`,
+    `test_toolchain.py`, `test_native_decoder.py` and `test_c_cfront.py`; `red-vacuity.json` RV1-RV9,
+    9 of 9 caught; laws.md L25's RED-VACUITY instance.
   RING-RACE (2026-10-18): the ring harness's late kill made to happen, and its killed peer parked.
   - CI failed `test_ring.c --procs kill-producer bp` once with `killed_at=20000 ... violations=2`,
     every record delivered: the supervisor, descheduled between seeing the producer pass half the

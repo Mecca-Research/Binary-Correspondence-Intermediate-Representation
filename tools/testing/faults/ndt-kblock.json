@@ -12,7 +12,7 @@
     {
       "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
       "label": "NK1 the split rule takes whole blocks to the end (no halving of the last two)",
-      "new": "  return rem>q ? q : rem;",
+      "new": "  (void)u; return rem>q ? q : rem;",
       "old": "  return rem>=2*q ? q : rem>q ? (rem/2+u-1)/u*u : rem;",
       "path": "runtime/c/bcir_tensor.c"
     },

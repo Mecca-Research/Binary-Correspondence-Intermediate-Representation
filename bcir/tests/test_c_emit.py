@@ -29,6 +29,7 @@ from bcir.asn1.emit import EmitRules, emit, flatten
 from bcir.asn1.encode_plan import PLAN_VERSION, compile_encode_plan
 from bcir.asn1.schema import Choice, Component, Primitive, Sequence, SequenceOf
 from bcir.asn1.tags import Universal
+from bcir.toolchain import BuildFailed
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
@@ -230,7 +231,7 @@ def _build(tmp: str, optimization: str = "-O2") -> str | None:
         )
         if proc.returncode == 0:
             return out
-    raise AssertionError(f"the emit driver must build warning-clean:\n{proc.stderr[:2000]}")
+    raise BuildFailed("the emit driver's warning-clean build", proc.stderr)  # RED-VACUITY
 
 
 def _drive(binary: str, lines: list[str]) -> list[str]:
