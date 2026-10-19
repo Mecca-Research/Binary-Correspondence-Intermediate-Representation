@@ -385,12 +385,12 @@ def test_the_analyzer_leg_fails_on_any_diagnostic():
     with any diagnostic fails the script, as does one whose analysis exits nonzero or never ran; a
     clean run passes, and a missing clang or a worker count that is no count is UNUSABLE (2),
     never a pass (L1, L2). The clang here is a stand-in, so nothing is analysed for real."""
-    bash = shutil.which("bash")
-    if (
-        bash is None
-        or subprocess.run([bash, "-c", "echo ok"], capture_output=True).stdout != b"ok\n"
-    ):
-        return  # no POSIX shell here (a Windows runner's bash is the WSL launcher)
+    from bcir.tests.run_all import _child_timeout_seconds, posix_bash
+
+    bash = posix_bash()
+    if bash is None:
+        return  # no POSIX shell here (a Windows runner's bash can be the WSL launcher)
+    bound = _child_timeout_seconds()  # the harness's child bound, not a timing (run_all.posix_bash)
     script = _ROOT / "tools" / "c" / "analyze_hosted.sh"
     workflow = (_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert workflow.count("bash tools/c/analyze_hosted.sh") == 2, "both CI analyzer steps run it"
@@ -411,7 +411,7 @@ def test_the_analyzer_leg_fails_on_any_diagnostic():
                 [bash, str(script)],
                 env={"PATH": "/usr/bin:/bin", "CLANG": str(clang), **env},
                 capture_output=True,
-                timeout=120,
+                timeout=bound,
             )
 
         clean = run("exit 0\n")
@@ -427,22 +427,23 @@ def test_the_analyzer_leg_fails_on_any_diagnostic():
             [bash, str(script)],
             env={"PATH": "/usr/bin:/bin", "CLANG": str(Path(tmp) / "absent")},
             capture_output=True,
-            timeout=60,
+            timeout=bound,
         )
         assert absent.returncode == 2 and b"UNUSABLE" in absent.stderr, absent
 
 
 def test_the_check_refuses_what_it_cannot_run():
     """A usage error is exit 2 before any leg runs: an unknown leg is not silently dropped (the
-    run would otherwise pass while judging less than asked)."""
-    bash = shutil.which("bash")
-    if (
-        bash is None
-        or subprocess.run([bash, "-c", "echo ok"], capture_output=True).stdout != b"ok\n"
-    ):
-        return  # no POSIX shell here (a Windows runner's bash is the WSL launcher)
+    run would otherwise pass while judging less than asked). Each launch is bounded by the harness's
+    child bound, not a minute: refusing `--bogus` took Git Bash over 60 s on a loaded Windows runner."""
+    from bcir.tests.run_all import _child_timeout_seconds, posix_bash
+
+    bash = posix_bash()
+    if bash is None:
+        return  # no POSIX shell here (a Windows runner's bash can be the WSL launcher)
+    bound = _child_timeout_seconds()
     for args in (["--legs", "cmake,nope"], ["--bogus"], ["--legs", ","]):
-        run = subprocess.run([bash, str(_SCRIPT), *args], capture_output=True, timeout=60)
+        run = subprocess.run([bash, str(_SCRIPT), *args], capture_output=True, timeout=bound)
         assert run.returncode == 2, (args, run.returncode, run.stdout, run.stderr)
-    shown = subprocess.run([bash, str(_SCRIPT), "--help"], capture_output=True, timeout=60)
+    shown = subprocess.run([bash, str(_SCRIPT), "--help"], capture_output=True, timeout=bound)
     assert shown.returncode == 0 and b"Legs" in shown.stdout and b"set -uo" not in shown.stdout

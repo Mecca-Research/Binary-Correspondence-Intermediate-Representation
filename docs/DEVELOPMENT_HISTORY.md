@@ -3282,6 +3282,33 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `ndt-fuse`, `ndt-pages`, `ndt-panels`, `ndt-scanw`, `ndt-threads`) whose anchors GEO-3's edits
     moved were re-anchored to the new code and caught again; the 79 older entries whose injections
     land in the files GEO-3 changed were re-swept on the final tree with `geo3-py.json`: 88 of 88 caught.
+  JVM-STDOUT (2026-10-19): the stackify test's JVM runner keeps the VM's own output off the program's stdout.
+  - The runner reads stdout whole, and in the quick tier a JDK 21 VM that found its perf-data file
+    (`/tmp/hsperfdata_<user>/<pid>`) locked by another process logged `[warning][perf,memops] Cannot use
+    file ... because it is locked by another process` to stdout, ahead of the program's `20.0`. The
+    runner's VM now keeps no perf-data file (`-XX:-UsePerfData`, taken by every HotSpot) and, where the
+    VM has unified logging, logs to stderr (`-Xlog:disable -Xlog:all=warning:stderr`). JDK 8 will not
+    start with `-Xlog` (and already writes its VM warnings to stderr), so the runner asks the VM once.
+  - Reproduced on purpose -- a shell that holds the file for its own PID, then execs the VM, which keeps
+    the PID -- the bare launch's stdout failed the parse, and each flag alone kept it clean. Witnesses:
+    VM logging set to stdout ahead of the runner's flags (`JAVA_TOOL_OPTIONS`) and a VM asked to save its
+    perf data, each against a bare launch that shows the provocation fires; the probe against stand-in VMs
+    that refuse and take `-Xlog`. Checked on JDK 21 and on JDK 8 (Zulu 1.8.0_472). `jvm-stdout.json`
+    JS1-JS3, 3 of 3 caught. The first sweep caught the logging witness asking the code it tests whether
+    to run at all (JS2 made it skip itself); its own bare launch decides now (laws.md L11).
+  BASH-BOUND (2026-10-19): the script-running tests bound bash by the harness's child bound, not a minute.
+  - `test_latest_toolchain`'s refusal test failed once on windows-latest with Python 3.15: `check_latest.sh
+    --bogus`, refused before any leg runs, hit its 60 s bound -- Git Bash's start-up on a loaded runner.
+    The tests that run a tool's shell script (that one, the analyzer leg's, the train rail's refusal
+    test) now bound each launch by the harness's child bound (`BCIR_TEST_CHILD_TIMEOUT`, 300 s by
+    default) and ask one probe for their shell, `run_all.posix_bash()`, in place of three copies of an
+    unbounded `echo ok`. The probe has the same bound, and a probe that runs out raises rather than
+    turning into a skip (laws.md L21).
+  - Reproduced with a stand-in bash 61 s slow to refuse `--bogus`: the old test failed at 60 s with the
+    CI run's `TimeoutExpired`, the new one passes in 61 s. A wedged shell hung the old probe until it was
+    killed; it fails the new one in `BCIR_TEST_CHILD_TIMEOUT` seconds. Witness
+    `test_posix_bash_is_a_shell_probed_within_the_child_bound` (a WSL launcher's notice, a shell, a wedged
+    one); `posix-bash.json` PB1-PB3, 3 of 3 caught.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

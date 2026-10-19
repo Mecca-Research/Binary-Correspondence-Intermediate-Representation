@@ -105,6 +105,23 @@ def _bounded_subprocess_run(*args, **kwargs):
     return _REAL_SUBPROCESS_RUN(*args, **kwargs)
 
 
+def posix_bash() -> str | None:
+    """The `bash` on PATH if it is a shell, else None: a Windows runner's `bash` can be the WSL
+    launcher, which is named bash and runs nothing. For the tests that run a tool's shell script.
+
+    The probe has the child bound (`_child_timeout_seconds`), and so should those tests' launches: a
+    bound on a wedged process, never a timing of one. A Git Bash launch that refused its arguments at
+    once has taken over 60 s on a loaded Windows runner. A probe that runs out raises, failing the
+    test that asked; it never turns into a skip (docs/security/laws.md L21)."""
+    bash = shutil.which("bash")
+    if bash is None:
+        return None
+    probe = subprocess.run(
+        [bash, "-c", "echo ok"], capture_output=True, timeout=_child_timeout_seconds()
+    )
+    return bash if probe.stdout == b"ok\n" else None
+
+
 def resolve_tier(argv: list[str] | None = None) -> str:
     """Pick the tier: ``--tier X`` > ``$BCIR_TIER`` > (``$BCIR_THOROUGH`` -> thorough) > quick.
 

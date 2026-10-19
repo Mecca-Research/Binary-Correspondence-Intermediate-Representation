@@ -35,13 +35,9 @@ _WITNESS = _ROOT / "tools" / "models" / "train_rail.py"
 
 
 def _posix_bash() -> str | None:
-    bash = shutil.which("bash")
-    if (
-        bash is None
-        or subprocess.run([bash, "-c", "echo ok"], capture_output=True).stdout != b"ok\n"
-    ):
-        return None  # a Windows runner's bash is the WSL launcher
-    return bash
+    from bcir.tests.run_all import posix_bash  # one probe, bounded, for every script-running test
+
+    return posix_bash()
 
 
 def test_the_corpus_recipe_selects_every_tracked_markdown_file_of_both_trees():
@@ -126,9 +122,12 @@ def test_the_witness_fires_on_a_narrower_recipe_and_refuses_what_it_cannot_read(
 def test_the_rail_script_refuses_what_it_cannot_run():
     """Exit 2 before any work: no output directory, a step count that is no count, an interpreter
     that is not there, a recipe that is not there -- each a verdict, none a training run."""
+    from bcir.tests.run_all import _child_timeout_seconds
+
     bash = _posix_bash()
     if bash is None:
         return
+    bound = _child_timeout_seconds()  # the harness's child bound, not a timing (run_all.posix_bash)
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
     with tempfile.TemporaryDirectory(prefix="bcir-train-rail-") as tmp:
         for args, extra in (
@@ -143,7 +142,7 @@ def test_the_rail_script_refuses_what_it_cannot_run():
                 capture_output=True,
                 cwd=_ROOT,
                 env={**env, **extra},
-                timeout=60,
+                timeout=bound,
             )
             assert run.returncode == 2, (args, extra, run.stdout, run.stderr)
             assert not (Path(tmp) / "corpus.json").exists(), "it trained before refusing"

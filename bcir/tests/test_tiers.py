@@ -11,6 +11,7 @@ import os
 from bcir.tests import run_all as R
 
 _LADDER = ["quick", "c-runtime", "silicon-degrade", "thorough"]
+_POSIX = os.name == "posix"  # the stand-in shells below are shell scripts
 
 
 def test_the_four_named_tiers_exist():
@@ -144,6 +145,48 @@ def test_test_runner_bounds_every_child_process_by_default():
     finally:
         R._REAL_SUBPROCESS_RUN = saved
         os.environ.pop("BCIR_TEST_CHILD_TIMEOUT", None)
+
+
+def test_posix_bash_is_a_shell_probed_within_the_child_bound():
+    """`posix_bash()` names the bash on PATH only if it runs `echo ok`: one that prints a notice and
+    exits 1, as the Windows WSL launcher does, is no shell. The probe has the child bound, and one
+    that runs out raises: a wedged shell fails the test that asked for it, never turning into a skip
+    (laws.md L21)."""
+    import subprocess
+    import tempfile
+
+    if not _POSIX:
+        return  # the stand-in shells are shell scripts
+    saved = os.environ.get("PATH", "")
+    saved_bound = os.environ.get("BCIR_TEST_CHILD_TIMEOUT")  # a run's own bound outlives the test
+    with tempfile.TemporaryDirectory() as tmp:
+        bash = os.path.join(tmp, "bash")
+
+        def stand_in(body):
+            with open(bash, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("#!/bin/sh\n" + body)
+            os.chmod(bash, 0o755)
+
+        try:
+            os.environ["PATH"] = tmp + os.pathsep + saved
+            stand_in('echo "Windows Subsystem for Linux has no installed distributions."\nexit 1\n')
+            assert R.posix_bash() is None
+            stand_in("echo ok\n")
+            assert R.posix_bash() == bash
+            stand_in("exec sleep 10\n")
+            os.environ["BCIR_TEST_CHILD_TIMEOUT"] = "1"
+            try:
+                R.posix_bash()
+            except subprocess.TimeoutExpired:
+                pass
+            else:
+                raise AssertionError("a wedged shell was not bounded by the child bound")
+        finally:
+            os.environ["PATH"] = saved
+            if saved_bound is None:
+                os.environ.pop("BCIR_TEST_CHILD_TIMEOUT", None)
+            else:
+                os.environ["BCIR_TEST_CHILD_TIMEOUT"] = saved_bound
 
 
 def test_test_runner_defaults_to_two_workers_and_requires_explicit_all_core_opt_in():

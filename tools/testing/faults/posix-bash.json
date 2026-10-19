@@ -1,0 +1,32 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_tiers:_POSIX",
+    "bcir.tests.test_tiers:test_posix_bash_is_a_shell_probed_within_the_child_bound"
+  ],
+  "faults": [
+    {
+      "expects": "test_posix_bash_is_a_shell_probed_within_the_child_bound",
+      "label": "PB1 the shell probe has no bound: a wedged shell hangs the test that asked",
+      "new": "        [bash, \"-c\", \"echo ok\"], capture_output=True\n",
+      "old": "        [bash, \"-c\", \"echo ok\"], capture_output=True, timeout=_child_timeout_seconds()\n",
+      "path": "bcir/tests/run_all.py"
+    },
+    {
+      "expects": "test_posix_bash_is_a_shell_probed_within_the_child_bound",
+      "label": "PB2 a probe that runs out becomes a skip (no shell) instead of a failure",
+      "new": "    try:\n        probe = subprocess.run(\n            [bash, \"-c\", \"echo ok\"], capture_output=True, timeout=_child_timeout_seconds()\n        )\n    except subprocess.TimeoutExpired:\n        return None\n",
+      "old": "    probe = subprocess.run(\n        [bash, \"-c\", \"echo ok\"], capture_output=True, timeout=_child_timeout_seconds()\n    )\n",
+      "path": "bcir/tests/run_all.py"
+    },
+    {
+      "expects": "test_posix_bash_is_a_shell_probed_within_the_child_bound",
+      "label": "PB3 a bash that prints a notice and exits 1 (the Windows WSL launcher) is taken for a shell",
+      "new": "    return bash\n",
+      "old": "    return bash if probe.stdout == b\"ok\\n\" else None\n",
+      "path": "bcir/tests/run_all.py"
+    }
+  ]
+}
