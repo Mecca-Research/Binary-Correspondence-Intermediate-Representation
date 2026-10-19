@@ -551,7 +551,9 @@ def main():
                     820 + case_index,
                 )
                 result["cases"].append(row)
-                (out / "results.json").write_text(json.dumps(result, indent=2, default=str) + "\n")
+                (out / "results.json").write_text(
+                    json.dumps(result, indent=2, default=str) + "\n", encoding="utf-8", newline="\n"
+                )
                 print(
                     "PASS",
                     label,
@@ -565,7 +567,9 @@ def main():
     finally:
         if was_enabled:
             gc.enable()
-        (out / "results.json").write_text(json.dumps(result, indent=2, default=str) + "\n")
+        (out / "results.json").write_text(
+            json.dumps(result, indent=2, default=str) + "\n", encoding="utf-8", newline="\n"
+        )
     print(
         f"PASS: {len(result['cases'])} compiled CPU cases; GPU skipped; training deferred",
         flush=True,

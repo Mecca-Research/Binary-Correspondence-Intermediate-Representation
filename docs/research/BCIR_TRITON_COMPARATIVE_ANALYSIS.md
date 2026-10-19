@@ -246,6 +246,9 @@ The reproducer is [`tools/perf/triton_cpu_compare.py`](../../tools/perf/triton_c
 Raw evidence: [session A](measurements/2026-10-19/triton-cpu/session-a.json),
 [session B](measurements/2026-10-19/triton-cpu/session-b.json), and
 [provenance / reproduction](measurements/2026-10-19/triton-cpu/README.md).
+The [archived harness](measurements/2026-10-19/triton-cpu/measured-harness.py.txt) matches the
+hash in both sessions. The current reproducer adds explicit UTF-8/LF output settings to the
+two JSON writes; its kernel and timing code are unchanged.
 
 The protocol uses ten shapes at one and two workers, including non-power-of-two tails. Each
 Triton configuration is compiled and checked before timing; vectors try blocks 256/1024/4096,

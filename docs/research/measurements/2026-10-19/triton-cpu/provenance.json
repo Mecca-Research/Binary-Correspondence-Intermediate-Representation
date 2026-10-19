@@ -76,12 +76,18 @@
   "gpu": "UNAVAILABLE-SKIPPED: no GPU device",
   "training": "DEFERRED: PR #820 remains outside measured source",
   "files": {
-    "tools/perf/triton_cpu_compare.py": "015bb6aea5a1246a29d173403eb96c5752eda29e35353a010b26423308896c3b",
+    "tools/perf/triton_cpu_compare.py": "87efb75c1d3a972f9f680db048796f6a5f0a093ac70267796fdbb9b8efee4211",
     "runtime/c/bcir_tensor.c": "b9c3e0cefa88f15db8688e1639ce1e3010af689d5040942eb60193a3ba42852a",
     "runtime/c/bcir_tensor.h": "161e4509d360e5418bbcd9cebf684cfdb6458331ec5c4427c674acf35205ebae"
   },
   "sessions": {
     "session-a.json": "231b879ecb5248d03e17ed9c90d9f74ae3c82eea0051039a50f012f9796d6077",
     "session-b.json": "fb6cc8a88f5a9e0f8b2e1c67bddfbad5a4093bed8360f10b608c3071570683de"
+  },
+  "measured_harness": {
+    "path": "docs/research/measurements/2026-10-19/triton-cpu/measured-harness.py.txt",
+    "original_path": "tools/perf/triton_cpu_compare.py",
+    "sha256": "015bb6aea5a1246a29d173403eb96c5752eda29e35353a010b26423308896c3b",
+    "reproducer_delta": "Explicit UTF-8/LF on two JSON writes only; AST identical after removing those output keywords."
   }
 }

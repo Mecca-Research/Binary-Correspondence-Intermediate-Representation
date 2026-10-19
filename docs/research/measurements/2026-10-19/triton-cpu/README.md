@@ -8,6 +8,11 @@ It contains two sessions of **protocol v2**, with no changes between sessions:
   candidate-tuning samples, numerical checks, configuration/IR identities and environment.
 - [provenance.json](provenance.json): source pins, verified wheel identity, CPU features,
   resource limits and SHA-256 hashes of the harness, native sources and result files.
+- [measured-harness.py.txt](measured-harness.py.txt): exact source bytes used for sessions A/B,
+  matching their recorded `harness_sha256`. The current reproducer differs only by explicit
+  UTF-8/LF settings on its two JSON writes, added after CI's portability check. The kernel and
+  timing code are unchanged. This archive is source evidence; restore it to its original
+  `tools/perf/triton_cpu_compare.py` path to execute that exact historical source.
 - [reproducer](../../../../../tools/perf/triton_cpu_compare.py): optional experiment tooling;
   NumPy/Triton are not added to BCIR's dependency-free core.
 
@@ -19,7 +24,9 @@ observations, not CI thresholds or physical-hardware optimality certificates.
 ## Reproduce
 
 Use this report's commit: its native C sources are unchanged from the BCIR pin recorded in
-provenance.json. Verify their hashes before reproducing the historical comparison. Use Linux
+provenance.json. Verify their hashes before reproducing the historical comparison; the
+`measured_harness` entry identifies the historical harness separately from the current tool.
+Use Linux
 x86-64 with at least two available CPUs, GCC/G++, Python 3.12, and the official
 **experimental CPU snapshot**, not the standard Triton PyPI GPU wheel.
 Install dependencies in an isolated environment; keep the core package unchanged.
