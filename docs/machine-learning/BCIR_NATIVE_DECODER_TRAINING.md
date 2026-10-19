@@ -523,7 +523,10 @@ x1.378, and the 9.84M decoder's four-thread step x1.029 (1.018-1.042), about the
 2.5 ms the attention saves timed alone; one state through the AMX, AVX-512, AVX2 and portable
 builds. Without the bit every state is as it was: ATTN-SOFT, which folds the binary32 softmax's
 scale into its exponential, changes no value, and costs nothing that two copies of one library
-do not also read apart on this host.
+do not also read apart on this host. Over the 1,000-step run on five paired seeds (the report's §41)
+the bf16 attention's held-out model is PyTorch bf16's -- test cross-entropy +0.00006 nats from it
+(95% interval -0.00157 to +0.00169), inside the ±0.01 margin fixed before the runs -- at 2.315 times
+its tokens a second (2.194-2.444), in under half its memory (496-534 MB against 1,128-1,151).
 
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over

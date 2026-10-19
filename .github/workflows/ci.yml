@@ -1300,7 +1300,10 @@ jobs:
   cmake-build:
     name: BCIR CMake build (${{ matrix.compiler }}; manifest + build parity)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # A hang guard, not a budget: on main the cells ran 9.3 (clang23), 15.3 (clang) and 20.7 (gcc)
+    # minutes, and one commit's identical steps ran 1.3 times slower on one hosted runner than on
+    # another (2026-10-19, BF16-ATTN-COST), so 25 left the gcc cell no headroom.
+    timeout-minutes: 40
     # BUILD-1 (docs/BCIR_BUILD_ROADMAP.md): the top-level CMake project over runtime/manifest.json.
     # Building is the proof for the libraries, the tools, the harnesses, the C++ seam and the
     # freestanding object checks (C11 + C23); `ctest -L build` runs the manifest reconciliation and

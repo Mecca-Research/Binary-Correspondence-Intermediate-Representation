@@ -26,6 +26,6 @@
   "controls-procs.txt": "procs.py over eight processes: the parent's GEMM over this tree's and the A/A, at one and four threads",
   "controls-steppair-t4.txt": "steppair.py with this tree as its own base, so its base/soft is an A/A, four threads 150 rounds",
   "aarch64-timing.sh, aarch64-timing.txt": "the C harness built with BCIR_TENSOR_NO_DISPATCH as the harness test builds it (probes, -Wall -Wextra -Wpedantic -Werror; and UBSan), under clang and GCC, timed against the test's caps",
-  "lm/": "LM-MULTI: the 1,000-step run, five paired seeds, four arms (run.sh, paired_multi.py, the analysis fixed before the runs); its records land with the next commit"
+  "lm/": "LM-MULTI: the 1,000-step run, five paired seeds, four arms -- BCIR with the bf16 attention a hundred steps a call, the binary32 attention a hundred steps a call and one, compiled PyTorch bf16 -- run.sh, paired_multi.py (the analysis fixed before the runs), summary.json, the twenty records and lm/README.json: the bf16 attention's test cross-entropy +0.00006 nats from PyTorch bf16's (95% interval -0.00157 to +0.00169), inside the +-0.01 margin, at 2.315 times its tokens a second (2.194-2.444)"
  }
 }

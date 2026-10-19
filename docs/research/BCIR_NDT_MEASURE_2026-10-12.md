@@ -2308,6 +2308,10 @@ about 80 s a step at one thread: the reference, not a rail. The C harness built 
 instances, as the aarch64 CI job builds it, passes all 27 of its tests in 25.7 s (clang 18) and 27.9 s
 (GCC 13) of the test's 60 s cap, and in 33.2 s and 44.9 s of 300 under UBSan with no runtime error
 ([aarch64-timing.txt](measurements/2026-10-19/attnbf16/aarch64-timing.txt)), so the caps stay.
+BF16-ATTN-COST (2026-10-19) then takes that build to 17.0 s under GCC, against 12.3 for the harness
+before BF16-ATTN: the bf16 attention's reference rounds each operand once, and its runs on the pools
+of two and four keep to the finite pass, the partition being all a pool changes; every verdict is as
+it was (the history's entry).
 
 ## 40. A run call's first pass and the weights' panels, measured and not kept (FACTS-PASS, WEIGHT-PANELS)
 
@@ -2340,3 +2344,39 @@ ms step: the most the update writing the weights' panels could remove, before it
 two layouts a weight, W as B for its input adjoint and W^T as B for the forward (a layout no writer has),
 39 MB more written a step and 39 MB more state. Its ceiling is the packs' 3.4 ms less those writes, for a
 new panel layout and the state to hold it. Not built, not kept.
+
+## 41. The bf16 attention over a whole run, against PyTorch's bfloat16 (LM-MULTI)
+
+§39's attention changes the state, so its claim is the model's quality, not only its speed. LM-PAIRED's
+five seeds each ran the 1,000-step language model at four threads under four arms in one session, their
+order rotated seed by seed: BCIR `bf16+exp+reduce+attnbf16` a hundred steps a run call, BCIR
+`bf16+exp+reduce+attn` a hundred steps a call and one step a call (§36's bcir-panels arm), and compiled
+PyTorch under autocast, with the analysis fixed before the runs and the ±0.01-nat margin graded on every
+pair but the one that is one state ([attnbf16/lm/](measurements/2026-10-19/attnbf16/lm/),
+[paired_multi.py](measurements/2026-10-19/attnbf16/lm/paired_multi.py)).
+
+| seed | BCIR, bf16 attention, 100 a call, ms (tokens/s) | PyTorch bf16 | BCIR, binary32 attention, 100 a call | the same, one a call |
+|---|---|---|---|---|
+| 20261011 | 65.8 (15,553) | 153.6 (6,667) | 68.5 (14,959) | 65.4 (15,660) |
+| 1001 | 68.9 (14,870) | 154.1 (6,647) | 69.4 (14,750) | 67.4 (15,186) |
+| 2002 | 66.4 (15,431) | 146.1 (7,011) | 65.8 (15,557) | 67.0 (15,289) |
+| 3003 | 63.9 (16,029) | 150.9 (6,786) | 65.0 (15,759) | 66.1 (15,491) |
+| 4004 | 64.1 (15,964) | 157.3 (6,508) | 67.9 (15,076) | 68.9 (14,872) |
+
+([summary.json](measurements/2026-10-19/attnbf16/lm/summary.json).) The quality first: the bf16
+attention's test cross-entropy is **0.00006 nats** above compiled PyTorch bf16's on average (95% interval
+-0.00157 to +0.00169; validation -0.00071, -0.00354 to +0.00211) and 0.00117 below the binary32
+attention's (-0.00298 to +0.00064; validation +0.00108, +0.00002 to +0.00214): inside the margin both
+ways. With it BCIR trains at **2.315 times** PyTorch bf16's tokens a second (2.194-2.444, faster on five
+of five); the binary32 attention one step a call, §36's pair again, reads 2.276 (2.201-2.353; 2.282
+there). The run does not resolve the two smaller gains measured inside one process: the bf16 attention
+over the binary32 one reads 1.023 (0.991-1.056, faster on four of five), beside §39's step pairs' 1.029
+(1.018-1.042), and a hundred steps a call over one 0.995 (0.958-1.032, three of five), beside §38's
+1.048 for ten-step calls. Here every arm is its own process, and §39's A/A controls show a process's
+placement moving a library's time by up to about 3%, so five seeds cannot separate a gain of about 3%
+from that; the in-process measurements are the record for both. The states hold: a call of a hundred
+steps ends in the state of a hundred calls of one on every seed, and the one-step arm in §36's
+bcir-panels states on every seed, so FACTS-RUN, ATTN-SOFT and this commit's binary32 path change no bit
+over 1,000 steps. Peak RSS is 496-534 MB on every BCIR arm -- the arena (362,944,768 bytes) and the
+workspace (11,534,592) the same with the bit as without it, the GEMM groups' packs exceeding the bf16
+attention's regions at this shape -- against 1,128-1,151 MB for PyTorch.

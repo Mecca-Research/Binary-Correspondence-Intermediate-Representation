@@ -15,14 +15,16 @@
  *                       every delivered record is decoded and checked against the payload its
  *                       position was written with, the accounting is reconciled exactly and the
  *                       continuity reported by the intake is checked against the ring's count.
- *   --procs <kill-producer|kill-consumer> <bp|ow> <records> <seed> [window_us [late_us]]
+ *   --procs <kill-producer|kill-consumer> <bp|ow> <records> <seed> [window_us [late [stall_us]]]
  *                       the same across two PROCESSES over a MAP_SHARED mapping; the supervisor
  *                       SIGKILLs the named peer mid-stream, reaps it (death proved) and starts a
  *                       successor that takes the end over; nothing torn, nothing unaccounted.
  *                       A window_us > 0 holds the consumer asleep across the end of the stream
  *                       (the drain window, at procs_shared) so its drain is tested every run; a
- *                       late_us > 0 holds the supervisor that long between seeing the peer pass
- *                       its mark and the kill, so the kill lands where the peer parks (run_procs).
+ *                       late != 0 holds the supervisor until the peer has parked, so the kill
+ *                       lands where the peer parks (run_procs, await_park); a stall_us > 0 stops
+ *                       that peer once at the supervisor's mark (stall), so a hold that were a
+ *                       time rather than the park would kill it short of the park every run.
  *   --bench <records> <slot_size> <slots> <repeats>
  *                       records per second through a backpressure ring (two threads) against a
  *                       memcpy floor of the same bytes (one thread) -- the G15 ratio row.
@@ -667,6 +669,9 @@ typedef struct procs_shared {
   volatile uint64_t window_open;
   volatile uint64_t window_naps; /* the consumer slept in it: a window run that never did tested nothing */
   volatile uint64_t parked;      /* the peer the supervisor kills reached its park point (below) */
+  volatile uint64_t stall_us;    /* a stall run: that peer stops this long once, at stall_at (stall) */
+  volatile uint64_t stall_at;    /* the supervisor's mark: a producer's record, a consumer's positions */
+  volatile uint64_t stalled_us;  /* how long it stopped: a stall run that never stalled tested nothing */
   uint8_t log[];                /* per position (relative to origin): how many times logged */
 } procs_shared;
 
@@ -691,6 +696,16 @@ static void park(procs_shared *sh, uint64_t deadline) {
   }
 }
 
+/* A stall run's killed peer stops once, for stall_us, at the supervisor's mark -- slower, on every
+ * run, than any hold that is a time rather than the park itself (await_park, below) -- and records
+ * how long it stopped. RING-PARK (2026-10-19): the late kill's hold was 100 ms, and on a loaded
+ * aarch64 runner the peers, 32 slots apart, took longer than that to reach the park. */
+static void stall(procs_shared *sh) {
+  uint64_t t0 = now_ns();
+  sleep_us(sh->stall_us);
+  sh->stalled_us = (now_ns() - t0) / 1000u;
+}
+
 /* `park_at`: the positions this consumer accounts for (delivered, lost or stale) before it parks
  * (above); UINT64_MAX for none. */
 static void procs_consumer(uint8_t *region, size_t size, procs_shared *sh, uint32_t takeover,
@@ -706,7 +721,7 @@ static void procs_consumer(uint8_t *region, size_t size, procs_shared *sh, uint3
   uint8_t buf[256];
   uint64_t deadline = now_ns() + UINT64_C(20) * 1000000000u;
   uint64_t seen = 0;
-  int napped = 0;
+  int napped = 0, stalled = 0;
   for (;;) {
     /* Read `stop` BEFORE the ring. The supervisor stores it (release) only after the last
      * producer has exited, so an EMPTY seen after this load saw it set is the end of the stream:
@@ -740,6 +755,11 @@ static void procs_consumer(uint8_t *region, size_t size, procs_shared *sh, uint3
       if (draining) break;
       if (now_ns() > deadline) { sh->refusals++; break; }
     }
+    /* the consumer the supervisor kills stalls once at its mark (stall, above) */
+    if (park_at != UINT64_MAX && sh->stall_us && !stalled && seen >= sh->stall_at) {
+      stalled = 1;
+      stall(sh);
+    }
     if ((rng_next(&rng) & 127u) == 0u) spin(rng_next(&rng) & 16383u);
   }
   _exit(0);
@@ -763,6 +783,8 @@ static void procs_producer(uint8_t *region, size_t size, procs_shared *sh, uint3
   uint64_t deadline = now_ns() + UINT64_C(20) * 1000000000u;
   for (uint64_t i = 0; i < count; i++) {
     if (i == park_at) park(sh, deadline);
+    /* the producer the supervisor kills (the one that parks) stalls once at its mark (stall) */
+    if (park_at < count && sh->stall_us && i == sh->stall_at) stall(sh);
     if (opens_window && sh->window_us && i == count / 2u) {
       while (!__atomic_load_n(&sh->window_armed, __ATOMIC_ACQUIRE)) {
         if (now_ns() > deadline) { sh->refusals++; _exit(4); }
@@ -803,11 +825,29 @@ static int wait_until(uint8_t *region, size_t size, uint64_t origin, uint64_t ta
   }
 }
 
+/* A late run's hold (RING-PARK): wait until the peer the supervisor kills has parked -- the latest a
+ * kill can come, the peer as far through the stream as it will go -- however long the peer takes
+ * to get there. A hold that is a time instead assumes the peer's speed: RING-RACE's 100 ms was
+ * outrun on a loaded aarch64 runner, where the peers, 32 slots apart, shared four cores with the
+ * suite, and the kill found two of them short of the park. Bounded: a peer that ends without
+ * parking, or has not parked by the deadline, is a refusal. Returns 1 when the peer has ended
+ * (reaped here, so the caller does not signal it), else 0. */
+static int await_park(procs_shared *sh, pid_t peer, int *status) {
+  uint64_t deadline = now_ns() + UINT64_C(30) * 1000000000u;
+  for (;;) {
+    if (__atomic_load_n(&sh->parked, __ATOMIC_ACQUIRE)) return 0;
+    if (waitpid(peer, status, WNOHANG) == peer) { sh->refusals++; return 1; }
+    if (now_ns() > deadline) { sh->refusals++; return 0; }
+    sleep_us(100);
+  }
+}
+
 /* The killed peer parks three quarters of the way through the stream (park, above); the
- * supervisor kills it once it is past half (a producer) or a third (a consumer), `late_us` after
- * seeing it there (0: at once), so the kill lands between that mark and the park point. */
+ * supervisor kills it once it is past half (a producer) or a third (a consumer) -- at once, or in
+ * a late run once it has parked (await_park) -- so the kill lands between that mark and the park
+ * point, or at the park. */
 static int run_procs(const char *which, const char *mode, uint64_t records, uint64_t seed,
-                     uint64_t window_us, uint64_t late_us) {
+                     uint64_t window_us, uint64_t late, uint64_t stall_us) {
   int kill_producer = strcmp(which, "kill-producer") == 0;
   if (!kill_producer && strcmp(which, "kill-consumer") != 0) return 2;
   int overwrite = strcmp(mode, "ow") == 0;
@@ -829,6 +869,8 @@ static int run_procs(const char *which, const char *mode, uint64_t records, uint
   if (bcir_ring_format(region, size, &g) != BCIR_OK) return 2;
   sh->published_target = records;
   sh->window_us = window_us;
+  sh->stall_us = stall_us;
+  sh->stall_at = kill_producer ? records / 2u : records / 3u; /* the supervisor's mark, below */
   uint64_t killed_at = 0;
   pid_t consumer = -1, producer = -1;
   uint64_t park_at = records / 2u + records / 4u;
@@ -840,9 +882,10 @@ static int run_procs(const char *which, const char *mode, uint64_t records, uint
   int status = 0;
   if (kill_producer) {
     if (!wait_until(region, size, g.origin, records / 2u, 0)) sh->refusals++;
-    if (late_us) sleep_us(late_us);
-    kill(producer, SIGKILL);
-    waitpid(producer, &status, 0); /* death proved: reaped */
+    if (!(late && await_park(sh, producer, &status))) {
+      kill(producer, SIGKILL);
+      waitpid(producer, &status, 0); /* death proved: reaped */
+    }
     uint64_t owner = le64(region + BCIR_RING_OFF_P_OWNER);
     killed_at = le64(region + BCIR_RING_OFF_HEAD) - g.origin;
     uint64_t remaining = killed_at < records ? records - killed_at : 0u;
@@ -857,9 +900,10 @@ static int run_procs(const char *which, const char *mode, uint64_t records, uint
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) sh->refusals++;
   } else {
     if (!wait_until(region, size, g.origin, records / 3u, 1)) sh->refusals++;
-    if (late_us) sleep_us(late_us);
-    kill(consumer, SIGKILL);
-    waitpid(consumer, &status, 0);
+    if (!(late && await_park(sh, consumer, &status))) {
+      kill(consumer, SIGKILL);
+      waitpid(consumer, &status, 0);
+    }
     uint64_t owner = le64(region + BCIR_RING_OFF_C_OWNER);
     bcir_ring_accounting before;
     (void)bcir_ring_accounting_of(region, size, &before);
@@ -896,10 +940,11 @@ static int run_procs(const char *which, const char *mode, uint64_t records, uint
   printf("procs %s %s records=%" PRIu64 " published=%" PRIu64 " killed_at=%" PRIu64
          " delivered=%" PRIu64 " lost=%" PRIu64 " stale=%" PRIu64 " logged=%" PRIu64
          " torn=%" PRIu64 " unaccounted=%" PRIu64 " window_us=%" PRIu64 " window_naps=%" PRIu64
-         " late_us=%" PRIu64 " parked=%" PRIu64 " violations=%" PRIu64 "\n",
+         " late=%" PRIu64 " parked=%" PRIu64 " stall_us=%" PRIu64 " stalled_us=%" PRIu64
+         " violations=%" PRIu64 "\n",
          which, mode, records, published, killed_at, a.delivered, a.lost, a.stale, logged,
-         (uint64_t)sh->torn, unaccounted, window_us, (uint64_t)sh->window_naps, late_us,
-         (uint64_t)sh->parked, violations);
+         (uint64_t)sh->torn, unaccounted, window_us, (uint64_t)sh->window_naps, (uint64_t)(late != 0),
+         (uint64_t)sh->parked, stall_us, (uint64_t)sh->stalled_us, violations);
   munmap(region, size);
   munmap(sh, shared_size);
   return violations ? 1 : 0;
@@ -1008,10 +1053,11 @@ int main(int argc, char **argv) {
 #if RING_HAS_POSIX
   if (argc == 5 && strcmp(argv[1], "--stress") == 0)
     return run_stress(argv[2], strtoull(argv[3], NULL, 10), strtoull(argv[4], NULL, 10));
-  if (argc >= 6 && argc <= 8 && strcmp(argv[1], "--procs") == 0)
+  if (argc >= 6 && argc <= 9 && strcmp(argv[1], "--procs") == 0)
     return run_procs(argv[2], argv[3], strtoull(argv[4], NULL, 10), strtoull(argv[5], NULL, 10),
                      argc >= 7 ? strtoull(argv[6], NULL, 10) : 0u,
-                     argc == 8 ? strtoull(argv[7], NULL, 10) : 0u);
+                     argc >= 8 ? strtoull(argv[7], NULL, 10) : 0u,
+                     argc == 9 ? strtoull(argv[8], NULL, 10) : 0u);
   if (argc == 6 && strcmp(argv[1], "--bench") == 0)
     return run_bench(strtoull(argv[2], NULL, 10), (uint32_t)strtoul(argv[3], NULL, 10),
                      (uint32_t)strtoul(argv[4], NULL, 10), (unsigned)strtoul(argv[5], NULL, 10));
@@ -1024,7 +1070,7 @@ int main(int argc, char **argv) {
 #endif
   fprintf(stderr,
           "usage: test_ring --script <script> | --signals | --envelopes <records> | --api | --stress <bp|ow> <records> <seed>"
-          " | --procs <kill-producer|kill-consumer> <bp|ow> <records> <seed> [window_us [late_us]]"
+          " | --procs <kill-producer|kill-consumer> <bp|ow> <records> <seed> [window_us [late [stall_us]]]"
           " | --bench <records> <slot_size> <slots> <repeats>\n");
   return 2;
 }

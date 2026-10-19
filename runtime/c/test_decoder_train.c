@@ -1647,6 +1647,9 @@ static float ref_flush(float x) { return fpclassify(x)==FP_SUBNORMAL ? (signbit(
 static float ref_lane(float e,float a,float b) {
   double d=(double)e+(double)a*(double)b,f,r; int ex=0;
   if (d!=d || d==0.0 || isinf(d)) return (float)d;
+  /* no less than 2^-126, its 24-bit rounding is no less either (2^-126 is one bit): a normal
+   * result, binary32's own rounding -- the tininess test below decides only what lies under it */
+  if (fabs(d)>=0x1p-126) return (float)d;
   f=frexp(fabs(d),&ex);  /* apart: an argument list's order of evaluation is unspecified */
   r=ldexp(rint(ldexp(f,24)),ex-24);  /* |d| on 24 bits, the exponent unbounded */
   if (r<0x1p-126) return d<0 ? -0.0f : 0.0f;
@@ -1696,14 +1699,23 @@ static float bf16_operand(unsigned i,int edges) {
  * a query row i's key tiles 0 .. i/32 for the context and dq, a key row j's query tiles from j/32
  * on for dv and dk, every channel tile for the scores and dp -- a tile's terms past the mask the
  * +0.0 the probabilities and the adjoints hold there; the scaling, the softmax, the dot and the
- * score adjoint the v1 loops'. The score adjoints live here; p is the probabilities throughout. */
+ * score adjoint the v1 loops'. The score adjoints live here; p is the probabilities throughout.
+ * Each operand is rounded to bfloat16 once, before the products read it (ref_round): the rounding is
+ * a function of the operand alone, so it is the rounding at every term the operand reaches, and the
+ * reference spends its time in its lanes rather than re-rounding one value at each of the t or d
+ * terms it enters (BF16-ATTN-COST: the reference was two thirds of the harness's run without the
+ * x86 instances). ref16 takes the rounded operands. */
+static void ref_round(const float *x,size_t n,float *out) {
+  size_t i;
+  for (i=0;i<n;i++) out[i]=ref_bfv(x[i]);
+}
 static float ref16(const float *a,size_t sa,const float *b,size_t sb,size_t depth,size_t q0,size_t q1,
     float acc) {
   size_t q,pp,h;
   for (q=q0;q<q1;q++) {
     float e=0.0f,o=0.0f;
     for (pp=0;pp<16;pp++) for (h=0;h<2;h++) {
-      size_t l=q*32+2*pp+h; float av=l<depth ? ref_bfv(a[l*sa]) : 0.0f,bv=l<depth ? ref_bfv(b[l*sb]) : 0.0f;
+      size_t l=q*32+2*pp+h; float av=l<depth ? a[l*sa] : 0.0f,bv=l<depth ? b[l*sb] : 0.0f;
       if (h) o=ref_lane(o,av,bv); else e=ref_lane(e,av,bv);
     }
     acc=ref_flush(ref_flush(acc)+ref_flush(e+o));
@@ -1712,33 +1724,44 @@ static float ref16(const float *a,size_t sa,const float *b,size_t sb,size_t dept
 }
 static void ref_attention_bf16(size_t b,size_t t,size_t nh,size_t nk,size_t d,const float *q,
     const float *k,const float *v,float *p,float *y,float (*ex)(float)) {
+  static float qr[53760],kr[26880],vr[26880],pr[330];
   size_t r,h,i,j,c,dt=(d+31)/32; float scale=1.0f/sqrtf((float)d);
+  assert(b*t*nh*d<=sizeof(qr)/sizeof(qr[0]) && b*t*nk*d<=sizeof(kr)/sizeof(kr[0]) && t<=sizeof(pr)/sizeof(pr[0]));
+  ref_round(q,b*t*nh*d,qr); ref_round(k,b*t*nk*d,kr); ref_round(v,b*t*nk*d,vr);
   for (r=0;r<b;r++) for (h=0;h<nh;h++) {
     size_t kh=h/(nh/nk); float *ph=p+(r*nh+h)*t*t;
     for (i=0;i<t;i++) {
       float maxv=-INFINITY,sum=0.0f;
       for (j=0;j<t;j++) ph[i*t+j]=0.0f;
       for (j=0;j<=i;j++) {
-        ph[i*t+j]=ref16(q+(r*t+i)*nh*d+h*d,1,k+(r*t+j)*nk*d+kh*d,1,d,0,dt,0.0f)*scale;
+        ph[i*t+j]=ref16(qr+(r*t+i)*nh*d+h*d,1,kr+(r*t+j)*nk*d+kh*d,1,d,0,dt,0.0f)*scale;
         if (ph[i*t+j]>maxv) maxv=ph[i*t+j];
       }
       for (j=0;j<=i;j++) { ph[i*t+j]=ex(ph[i*t+j]-maxv); sum+=ph[i*t+j]; }
       for (j=0;j<=i;j++) ph[i*t+j]/=sum;
     }
-    for (i=0;i<t;i++) for (c=0;c<d;c++)
-      y[(r*t+i)*nh*d+h*d+c]=ref16(ph+i*t,1,v+r*t*nk*d+kh*d+c,nk*d,t,0,i/32+1,0.0f);
+    for (i=0;i<t;i++) {
+      ref_round(ph+i*t,t,pr);  /* the row's probabilities, rounded */
+      for (c=0;c<d;c++) y[(r*t+i)*nh*d+h*d+c]=ref16(pr,1,vr+r*t*nk*d+kh*d+c,nk*d,t,0,i/32+1,0.0f);
+    }
   }
 }
 static void ref_attention_backward_bf16(size_t b,size_t t,size_t nh,size_t nk,size_t d,
     const float *q,const float *k,const float *v,const float *p,const float *dy,float *dq,float *dk,
     float *dv,float *ds) {
+  static float qr[53760],kr[26880],vr[26880],dyr[53760],pr[108900],dsr[108900];
   size_t r,h,i,j,c,dt=(d+31)/32,nt=(t+31)/32,share=nh/nk; float scale=1.0f/sqrtf((float)d);
+  assert(b*t*nh*d<=sizeof(qr)/sizeof(qr[0]) && b*t*nk*d<=sizeof(kr)/sizeof(kr[0]) &&
+      t*t<=sizeof(pr)/sizeof(pr[0]));
+  ref_round(q,b*t*nh*d,qr); ref_round(k,b*t*nk*d,kr); ref_round(v,b*t*nk*d,vr);
+  ref_round(dy,b*t*nh*d,dyr);
   for (r=0;r<b;r++) for (h=0;h<nh;h++) {
     size_t kh=h/share; int first=h%share==0; const float *ph=p+(r*nh+h)*t*t;
-    const float *dyh=dy+r*t*nh*d+h*d,*qh=q+r*t*nh*d+h*d,*kk=k+r*t*nk*d+kh*d,*vk=v+r*t*nk*d+kh*d;
+    const float *dyh=dyr+r*t*nh*d+h*d,*qh=qr+r*t*nh*d+h*d,*kk=kr+r*t*nk*d+kh*d,*vk=vr+r*t*nk*d+kh*d;
     float *dvk=dv+r*t*nk*d+kh*d,*dkk=dk+r*t*nk*d+kh*d,*dqh=dq+r*t*nh*d+h*d;
+    ref_round(ph,t*t,pr);  /* the head's probabilities, rounded */
     for (j=0;j<t;j++) for (c=0;c<d;c++)
-      dvk[j*nk*d+c]=ref16(ph+j,t,dyh+c,nh*d,t,j/32,nt,first ? 0.0f : dvk[j*nk*d+c]);
+      dvk[j*nk*d+c]=ref16(pr+j,t,dyh+c,nh*d,t,j/32,nt,first ? 0.0f : dvk[j*nk*d+c]);
     for (i=0;i<t;i++) {
       float dot=0.0f;
       for (j=0;j<t;j++) ds[i*t+j]=0.0f;
@@ -1749,9 +1772,10 @@ static void ref_attention_backward_bf16(size_t b,size_t t,size_t nh,size_t nk,si
       }
       for (j=0;j<=i;j++) ds[i*t+j]=ph[i*t+j]*(ds[i*t+j]-dot)*scale;
     }
-    for (i=0;i<t;i++) for (c=0;c<d;c++) dqh[i*nh*d+c]=ref16(ds+i*t,1,kk+c,nk*d,t,0,i/32+1,0.0f);
+    ref_round(ds,t*t,dsr);  /* the head's score adjoints, rounded */
+    for (i=0;i<t;i++) for (c=0;c<d;c++) dqh[i*nh*d+c]=ref16(dsr+i*t,1,kk+c,nk*d,t,0,i/32+1,0.0f);
     for (j=0;j<t;j++) for (c=0;c<d;c++)
-      dkk[j*nk*d+c]=ref16(ds+j,t,qh+c,nh*d,t,j/32,nt,first ? 0.0f : dkk[j*nk*d+c]);
+      dkk[j*nk*d+c]=ref16(dsr+j,t,qh+c,nh*d,t,j/32,nt,first ? 0.0f : dkk[j*nk*d+c]);
   }
 }
 static int all_finite(const float *x,size_t n);
@@ -1762,7 +1786,23 @@ static int all_finite(const float *x,size_t n);
  * probabilities 0, every output finite: the verdict sees the key itself); every instance the host
  * admits (portable, AVX-512, AMX), serial, on pools of two and four and on one with more workers than
  * tasks (a region a task); the backward leaving p as it was; the refusals writing nothing; and the
- * contract apart from the binary32 attention. */
+ * contract apart from the binary32 attention. A task is a (batch, KV head) and its region the pool's
+ * choice, functions of the shapes and the pool alone, so the pools of two and four run on the finite
+ * pass under libm's exponential, and the other passes and the BCIR exponential serially and on the
+ * pool with more workers than tasks (BF16-ATTN-COST: every pool on every pass was most of the
+ * harness's run where the instances are the portable loops, the aarch64 job's and the CI runners').
+ * Under ThreadSanitizer, whose question is the races, the finite pass under libm's exponential on
+ * every pool and instance; the numbers are the plain builds'. */
+#if defined(__SANITIZE_THREAD__)
+#define DT_TSAN 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define DT_TSAN 1
+#endif
+#endif
+#ifndef DT_TSAN
+#define DT_TSAN 0
+#endif
 static void attention_bf16_reference(void) {
   static float q[53760],k[26880],v[26880],dy[53760],p0[217800],p1[217800],y0[53760],y1[53760],
       dq0[53760],dq1[53760],dk0[26880],dk1[26880],dv0[26880],dv1[26880],ds[108900],keep[217800];
@@ -1778,7 +1818,7 @@ static void attention_bf16_reference(void) {
     size_t need=bcir_tensor_pool_size(counts[pi]);
     if (need && need<=sizeof(pool_memory[0])) pools[pi]=bcir_tensor_pool_init(pool_memory[pi-1],sizeof(pool_memory[0]),counts[pi]);
   }
-  for (pass=0;pass<3;pass++) for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) {
+  for (pass=0;pass<(DT_TSAN ? 1 : 3);pass++) for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) {
     size_t b=shapes[s][0],t=shapes[s][1],nh=shapes[s][2],nk=shapes[s][3],d=shapes[s][4];
     size_t nq=b*t*nh*d,nkv=b*t*nk*d,np=b*nh*t*t,need=bcir_tensor_attention_bf16_workspace(b,t,nh,nk,d);
     assert(nq<=sizeof(q)/sizeof(q[0]) && nkv<=sizeof(k)/sizeof(k[0]) && np<=sizeof(p0)/sizeof(p0[0]));
@@ -1792,13 +1832,14 @@ static void attention_bf16_reference(void) {
       for (i=0;i<t;i++) for (h=0;h<nh/nk;h++) q[((rb*t+i)*nh+h)*d]=-fabsf(q[((rb*t+i)*nh+h)*d])-0.5f;
       k[((rb*t+1)*nk+0)*d]=INFINITY;
     }
-    for (ex=0;ex<2;ex++) {
+    for (ex=0;ex<(DT_TSAN ? 1 : 2);ex++) {
       unsigned contract=ex ? BCIR_TENSOR_ATTENTION_EXP : 0u;
       ref_attention_bf16(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
       memset(dq0,0xff,nq*sizeof(float)); memset(dk0,0xff,nkv*sizeof(float)); memset(dv0,0xff,nkv*sizeof(float));
       ref_attention_backward_bf16(b,t,nh,nk,d,q,k,v,p0,dy,dq0,dk0,dv0,ds);
       for (vi=0;vi<3;vi++) for (pi=0;pi<4;pi++) {
         if (!(mask&variants[vi]) || (pi && !pools[pi])) continue;
+        if ((pass || ex) && (pi==1 || pi==2)) continue;  /* two and four: the finite pass, libm's exp */
         memset(p1,0xff,np*sizeof(float)); memset(y1,0xff,nq*sizeof(float)); bad=0;
         assert(bcir_tensor_attention_bf16_scan_pool(pools[pi],variants[vi],contract,b,t,nh,nk,d,q,k,v,p1,
             y1,&bad,ws,need)==variants[vi]);
@@ -1832,12 +1873,13 @@ static void attention_bf16_reference(void) {
     refusals++;
   }
   for (pi=1;pi<4;pi++) bcir_tensor_pool_stop(pools[pi]);
-  assert(apart>0 && cases>=13*2*2*2 && hidden>=12*2);
-  printf("  PASS bf16 attention (BF16-ATTN): %zu cases against the reference (%s; forward under both "
-      "exponentials, the backward leaving p, finite and not, serial and pooled), %zu with the key the "
-      "softmax hides refused, apart from v1 on %zu, every refusal writing nothing on %zu shapes\n",cases,
-      mask&8 ? "portable, AVX-512 and AMX" : mask&4 ? "portable and AVX-512" : "portable",hidden,apart,
-      refusals);
+  assert(apart>0 && cases>=(DT_TSAN ? 13*2u : 13*2*2*2u) && (DT_TSAN || hidden>=12*2));
+  printf("  PASS bf16 attention (BF16-ATTN): %zu cases against the reference (%s; %s, the backward "
+      "leaving p, serial and pooled), %zu with the key the softmax hides refused, apart from v1 on %zu, "
+      "every refusal writing nothing on %zu shapes\n",cases,
+      mask&8 ? "portable, AVX-512 and AMX" : mask&4 ? "portable and AVX-512" : "portable",
+      DT_TSAN ? "ThreadSanitizer: the finite pass under libm's exponential" :
+      "forward under both exponentials, finite and not",hidden,apart,refusals);
 }
 #ifdef BCIR_DT_PANELS_PROBE
 int bcir_tensor_bf16_amx_offered(void);

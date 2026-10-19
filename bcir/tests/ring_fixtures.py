@@ -1435,13 +1435,19 @@ def parse_c_envelope(line: str) -> tuple[TelemetryEnvelope | None, bytes, str]:
 # run, not only when a busy host preempts it there (the race AArch64 CI hit once).
 DRAIN_WINDOW_US = 150000
 
-# The late kill (runtime/c/test_ring.c, `run_procs` and `park`): the supervisor holds this long
-# between seeing the peer pass its mark and killing it, so the kill finds the peer parked three
-# quarters of the way through the stream. Without the park, a producer that finished first had
-# detached, and the successor's takeover was refused -- two violations with every record
-# delivered (the race a loaded CI runner hit once, `killed_at` equal to the records); a consumer
-# that drained the stream left its successor nothing to take over. Made to happen every run.
-LATE_KILL_US = 100000
+# The late kill (runtime/c/test_ring.c, `run_procs`, `park` and `await_park`): the supervisor
+# holds, after seeing the peer pass its mark, until the peer has parked three quarters of the way
+# through the stream, and kills it there -- the latest a kill can come. Without the park, a
+# producer that finished first had detached, and the successor's takeover was refused -- two
+# violations with every record delivered (the race a loaded CI runner hit once, `killed_at` equal
+# to the records); a consumer that drained the stream left its successor nothing to take over.
+# Made to happen every run. The hold was 100 ms until RING-PARK: on a loaded aarch64 runner the
+# peers took longer than that to reach the park, and both late runs killed short of it.
+#
+# The stall (`stall`): the killed peer stops this long once at the supervisor's mark, three times
+# that 100 ms, so a hold that is a time rather than the park kills it short of its park on every
+# run, as the loaded runner did by chance.
+STALL_US = 300000
 
 STRESS_RUNS = (
     ("--stress", "bp"),
@@ -1452,8 +1458,10 @@ STRESS_RUNS = (
     ("--procs", "kill-consumer", "ow"),
     ("--procs", "kill-producer", "ow", f"window={DRAIN_WINDOW_US}"),
     ("--procs", "kill-consumer", "ow", f"window={DRAIN_WINDOW_US}"),
-    ("--procs", "kill-producer", "bp", f"late={LATE_KILL_US}"),
-    ("--procs", "kill-consumer", "bp", f"late={LATE_KILL_US}"),
+    ("--procs", "kill-producer", "bp", "late=1"),
+    ("--procs", "kill-consumer", "bp", "late=1"),
+    ("--procs", "kill-producer", "bp", "late=1", f"stall={STALL_US}"),
+    ("--procs", "kill-consumer", "bp", "late=1", f"stall={STALL_US}"),
 )
 
 
@@ -1468,10 +1476,18 @@ def c_concurrent(
         lead = [arg for arg in run_args if "=" not in arg]
         declared = [arg.split("=", 1)[1] for arg in run_args if arg.startswith("window=")]
         late = [arg.split("=", 1)[1] for arg in run_args if arg.startswith("late=")]
+        stalls = [arg.split("=", 1)[1] for arg in run_args if arg.startswith("stall=")]
         window = list(declared)
         delay = list(late)
-        # the harness takes the delay after the window: a late run without one passes window 0
-        argv = [exe, *lead, str(records), str(seed), *(window or (["0"] if delay else [])), *delay]
+        stall = list(stalls)
+        # the harness takes its options in order -- the window, the late kill, the stall -- so one
+        # absent before one present is passed as 0
+        options = [window, delay, stall]
+        given = [i for i, option in enumerate(options) if option]
+        tail = (
+            [option[0] if option else "0" for option in options[: given[-1] + 1]] if given else []
+        )
+        argv = [exe, *lead, str(records), str(seed), *tail]
         try:
             run = _run(argv, timeout=300)
         except RuntimeError as exc:
@@ -1486,8 +1502,13 @@ def c_concurrent(
             # A window run must have run with the window it declares, and slept in it (L2).
             if declared and (fields["window_us"] != declared[0] or int(fields["window_naps"]) < 1):
                 violations = max(violations, 1)
-            # A late run must have run with the delay it declares, and killed its peer parked (L2).
-            if late and (fields["late_us"] != late[0] or fields["parked"] != "1"):
+            # A late run must have run late, and killed its peer parked (L2).
+            if late and (fields["late"] != late[0] or fields["parked"] != "1"):
+                violations = max(violations, 1)
+            # A stall run must have run with the stall it declares, and stopped for all of it (L2).
+            if stalls and (
+                fields["stall_us"] != stalls[0] or int(fields["stalled_us"]) < int(stalls[0])
+            ):
                 violations = max(violations, 1)
         except (KeyError, ValueError):
             violations = 1

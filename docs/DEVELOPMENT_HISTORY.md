@@ -3101,6 +3101,41 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     writing the weights' bf16 panels -- is bounded by the weights' B packs, about 3.4 ms of the
     step's 8.15 ms of packs (PACK-ATTR), before the update writes two panel layouts (39 MB more a
     step), one of them (W^T as B, the forward's) a layout no writer has.
+  LM-MULTI (2026-10-19): the bf16 attention over 1,000 steps, five seeds paired, against PyTorch's bf16.
+  - LM-PAIRED's five seeds, four arms a seed in one session, the order rotated: BCIR
+    `bf16+exp+reduce+attnbf16` and `bf16+exp+reduce+attn` a hundred steps a run call, the latter one
+    step a call too, and compiled PyTorch under autocast; the analysis fixed before the runs
+    (`paired_multi.py`), the ±0.01-nat margin on every pair but the one that is one state
+    ([measurements/2026-10-19/attnbf16/lm/](research/measurements/2026-10-19/attnbf16/lm/), the
+    report's §41).
+  - Quality: the bf16 attention's test cross-entropy +0.00006 nats from PyTorch bf16's (95% interval
+    -0.00157 to +0.00169) and -0.00117 from the binary32 attention's (-0.00298 to +0.00064), inside
+    the margin. Speed: 2.315 times PyTorch bf16's tokens a second (2.194-2.444, five of five); the
+    binary32 attention one step a call 2.276 (LM-PANELS's 2.282). The in-process gains are not
+    resolved across processes -- the bf16 attention x1.023 (0.991-1.056), a hundred steps a call
+    x0.995 (0.958-1.032) -- inside the A/A controls' 3% placement band. A hundred steps a call end in
+    one-step calls' states, and those in LM-PANELS's, on every seed; peak RSS 496-534 MB against
+    PyTorch's 1,128-1,151.
+  BF16-ATTN-COST (2026-10-19): the bf16 attention's witness at a third of its cost, every verdict kept.
+  - This PR's three CMake cells reached the job's 25-minute timeout (gcc cancelled at 25.3 min, clang
+    23.9 and clang 23 22.9 against main's 20.7, 15.3 and 9.3): the `decoder_train` section ran 76 s
+    against main's 17 and its ThreadSanitizer leg 50 against 15, and `build-make` and
+    `build-section-parity` run them again. Where the bf16 instances are the portable loops (the
+    CI runners, the aarch64 job), `attention_bf16_reference` was 15.0 s of the harness's 21.9.
+  - The reference rounds each operand to bfloat16 once, before the products read it, instead of
+    at each of the t or d terms it enters, and its lane step returns binary32's rounding for a
+    result no less than 2^-126, where the 24-bit rounding with the exponent unbounded is no less
+    either: the same function, 10.9 -> 1.4 s. The pools of two and four run on the finite pass
+    under libm's exponential, the other passes and the BCIR exponential serially and on the pool
+    with more workers than tasks (a task and its region are the shapes' and the pool's, whatever
+    the values), and a ThreadSanitizer build runs the finite pass under libm's exponential on every
+    pool and instance: the test 15.0 -> 4.1-4.7 s. The AVX2-capped harness 21.9 -> 10.7 s (main
+    6.8), the build without x86 dispatch (the aarch64 job's) 17.0 s (27.9 before, main 12.3), the
+    four builds of the section 48.1 s here (main 30.6), the clang ThreadSanitizer leg 23.8 (19.6),
+    GCC's 158.9 (149.5); every fault-table anchor in the harness unchanged.
+  - `cmake-build`'s timeout 25 -> 40 minutes: the job ran 9.3-20.7 minutes on main, and the same
+    commit's identical steps ran 1.3 times slower on one runner than another (the compile 75.7
+    against 57.2 s), so the gcc cell had no headroom before this PR added a minute.
   MAKE-GATE-TREES (2026-10-19): the make gate refuses an untracked file under a tree it reads.
   - `check_latest.sh`'s cmake leg failed `build-make` over this commit's working tree: the change
     step copies the tracked tree, a target that reads a tree whole is tagged from every file on
@@ -3154,6 +3189,23 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     kills at 15,000 of 20,000 with no violation; the runs without a delay still kill mid-stream.
   - `ring.json` gains four faults -- a producer and a consumer that never park, a supervisor that
     ignores its delay, a fixture that never passes it -- 29 of 29 caught.
+  RING-PARK (2026-10-19): a late kill holds until its peer has parked, not for a fixed time.
+  - This PR's aarch64 oracle job (thorough tier, four workers on four cores) failed
+    `test_every_g15_row_is_zero_on_both_rails` with `ring.concurrent.violations: 2`, while the same
+    commit's push run passed: RING-RACE's late runs held the supervisor 100 ms after the mark and took
+    the peer to have parked by then, but a peer reaching the park from the mark moves 15,000 (a
+    producer) or 25,000 (a consumer) of the G15 run's 60,000 records through a 32-slot ring, and on a
+    loaded host that took longer, so both late kills found their peers short of the park and the L2
+    check scored both runs. A peer stopped 300 ms at the mark reproduces it on every run.
+  - The supervisor of a late run now waits until the peer reports it has parked (`await_park`,
+    bounded: a peer that ends unparked, or has not parked in 30 s, is a refusal), whatever the host's
+    speed; `--procs` takes `late` as a flag and an optional `stall_us` after it, and `STRESS_RUNS`
+    adds a stall run for each peer -- the killed peer stopped 300 ms at the supervisor's mark, three
+    times the old hold -- which must report the whole stall (`stalled_us`) and its peer parked, or it
+    is a violation (L2).
+  - `ring.json`: the delay fault, whose code is gone, becomes five -- a fixed hold for each peer
+    (RING-RACE's 100 ms), a supervisor that never waits, a peer that never stalls, a fixture that
+    never passes the stall -- 33 of 33 caught; laws.md L2's RING-PARK instance.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

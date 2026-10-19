@@ -1,0 +1,499 @@
+{
+ "arms": {
+  "bcir-attn-k1": {
+   "commit": [
+    "418c5c238e59ab8dbbec8dfc179a5327c2aedffe"
+   ],
+   "compile_and_first_steps_seconds": [
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "median_step_ms": [
+    67.42982500145445,
+    66.97507850003603,
+    66.10076549804944,
+    68.85400849751022,
+    65.39111900019634
+   ],
+   "memory": [
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    },
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    },
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    },
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    },
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    }
+   ],
+   "peak_rss_mb": [
+    533.78515625,
+    533.7890625,
+    533.56640625,
+    533.64453125,
+    495.921875
+   ],
+   "state_sha256": [
+    "60a1f11d06748a4996a491920804ad1878a24bbbe745d4582766bd269ad6a60f",
+    "75a124d0b58343478d9f5df332591404c77da590427d750fffe9c177225aaa39",
+    "aa4dc58e89cbbe627b325974d76db51df8254168f656d4f6cd0012a27650a625",
+    "4784fd5788b6f651dd244761596a82aaeea9dc33325363323bd66b8e9a4a6766",
+    "d5bf945e4df70db1a4f10b9821edff4f5ca0ad1c081b4d10dc45e580469e5a75"
+   ],
+   "test": [
+    1.634307097937666,
+    1.6407060130809716,
+    1.6434646385477256,
+    1.6321457275977487,
+    1.6357324090175167
+   ],
+   "tokens_per_second": [
+    15186.15835022429,
+    15289.269127164205,
+    15491.499868185598,
+    14872.046266369925,
+    15659.618854311477
+   ],
+   "validation": [
+    1.4927136316633156,
+    1.5044083472122194,
+    1.4991225842097151,
+    1.5063266508468314,
+    1.498516017891855
+   ]
+  },
+  "bcir-attn-k100": {
+   "commit": [
+    "418c5c238e59ab8dbbec8dfc179a5327c2aedffe"
+   ],
+   "compile_and_first_steps_seconds": [
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "median_step_ms": [
+    69.4240717700086,
+    65.82287091998296,
+    64.97775258998445,
+    67.9220458099735,
+    68.45223994998378
+   ],
+   "memory": [
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    },
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    },
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    },
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    },
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    }
+   ],
+   "peak_rss_mb": [
+    496.68359375,
+    496.81640625,
+    496.75,
+    496.7734375,
+    533.74609375
+   ],
+   "state_sha256": [
+    "60a1f11d06748a4996a491920804ad1878a24bbbe745d4582766bd269ad6a60f",
+    "75a124d0b58343478d9f5df332591404c77da590427d750fffe9c177225aaa39",
+    "aa4dc58e89cbbe627b325974d76db51df8254168f656d4f6cd0012a27650a625",
+    "4784fd5788b6f651dd244761596a82aaeea9dc33325363323bd66b8e9a4a6766",
+    "d5bf945e4df70db1a4f10b9821edff4f5ca0ad1c081b4d10dc45e580469e5a75"
+   ],
+   "test": [
+    1.634307097937666,
+    1.6407060130809716,
+    1.6434646385477256,
+    1.6321457275977487,
+    1.6357324090175167
+   ],
+   "tokens_per_second": [
+    14749.92713467393,
+    15556.902725267291,
+    15759.240034993723,
+    15076.106554046677,
+    14959.335161978766
+   ],
+   "validation": [
+    1.4927136316633156,
+    1.5044083472122194,
+    1.4991225842097151,
+    1.5063266508468314,
+    1.498516017891855
+   ]
+  },
+  "bcir-attnbf16-k100": {
+   "commit": [
+    "418c5c238e59ab8dbbec8dfc179a5327c2aedffe"
+   ],
+   "compile_and_first_steps_seconds": [
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "median_step_ms": [
+    68.86211373999686,
+    66.36201820001588,
+    63.88354268998228,
+    64.14274301998375,
+    65.83817474998796
+   ],
+   "memory": [
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    },
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    },
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    },
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    },
+    {
+     "arena_bytes": 362944768,
+     "persistent_bytes": 157390848,
+     "transient_bytes": 205553920,
+     "workspace_bytes": 11534592
+    }
+   ],
+   "peak_rss_mb": [
+    495.53515625,
+    495.55078125,
+    495.6484375,
+    495.51171875,
+    533.59765625
+   ],
+   "state_sha256": [
+    "51cbd790d0fb314ff107dc37fb1c5830f4328ac23237a9311ea69ad24b43569b",
+    "5d5cfff7827877772868d39987f2b647cce88d244478a86a4c6a74c02461e1e0",
+    "5dd3c5c92f474e39295b32f6719c03175797688daf55087ef3838784a208d67d",
+    "c487429a9e8996da09ac2dcd5af50b89009d1a539193bdc63811f501e5171a4f",
+    "2bd8e11d8c53700ffacba1c373eae4a94c3879a86c88711183f137180050d187"
+   ],
+   "test": [
+    1.6340156655187483,
+    1.640413492762981,
+    1.6427292938315414,
+    1.631363588962997,
+    1.631994091558191
+   ],
+   "tokens_per_second": [
+    14870.295789442705,
+    15430.51323294075,
+    16029.167401835022,
+    15964.393659949521,
+    15553.286583179271
+   ],
+   "validation": [
+    1.4930246770806868,
+    1.505854461791042,
+    1.4991724848057308,
+    1.507901708933787,
+    1.5005435250311436
+   ]
+  },
+  "torch-compiled-bf16": {
+   "commit": [
+    "418c5c238e59ab8dbbec8dfc179a5327c2aedffe"
+   ],
+   "compile_and_first_steps_seconds": [
+    11.766854984998645,
+    11.58915060399886,
+    10.181401080000796,
+    11.2465144960006,
+    44.410446755999146
+   ],
+   "median_step_ms": [
+    154.05194149934687,
+    146.05696900071052,
+    150.89098399948853,
+    157.33651299888152,
+    153.59479200014903
+   ],
+   "memory": [
+    {
+     "arena_bytes": null,
+     "persistent_bytes": 157390848,
+     "transient_bytes": null
+    },
+    {
+     "arena_bytes": null,
+     "persistent_bytes": 157390848,
+     "transient_bytes": null
+    },
+    {
+     "arena_bytes": null,
+     "persistent_bytes": 157390848,
+     "transient_bytes": null
+    },
+    {
+     "arena_bytes": null,
+     "persistent_bytes": 157390848,
+     "transient_bytes": null
+    },
+    {
+     "arena_bytes": null,
+     "persistent_bytes": 157390848,
+     "transient_bytes": null
+    }
+   ],
+   "peak_rss_mb": [
+    1139.6484375,
+    1142.91015625,
+    1151.01171875,
+    1138.62890625,
+    1127.671875
+   ],
+   "state_sha256": [
+    "cccb8118cf3d1772674600cf732238ffe433b707cd2b2af31f0534d057a96266",
+    "9703e149ed99ee43c6fe50c6bb551060948dd2a4b0938b23e31676d16ad7a40b",
+    "d1724c50614dd171c4d179e7cb7634c4c0baf42fd60c97db76fdd0084305f0bd",
+    "d7a09e5a65655daaf20136250b9cceb2c602389e0be07923dd867f84da18b407",
+    "7b2ab7cad6e132ee51efda2c2bbdf7ce9e7c79725806c177615c32e58d8384b7"
+   ],
+   "test": [
+    1.6353259418852044,
+    1.6395639832116922,
+    1.6441719225858242,
+    1.630276636663567,
+    1.6308757463750836
+   ],
+   "tokens_per_second": [
+    6647.108696155845,
+    7010.962961959169,
+    6786.356433353705,
+    6508.3430443591915,
+    6666.89271599135
+   ],
+   "validation": [
+    1.494690186786079,
+    1.504940970011774,
+    1.5033005689009808,
+    1.5062966797431412,
+    1.5008386232505717
+   ]
+  }
+ },
+ "margin_nats": 0.01,
+ "pairs": [
+  {
+   "ci95": [
+    2.193943658390066,
+    2.443612506444412
+   ],
+   "first": "bcir-attnbf16-k100",
+   "first_faster_seeds": 5,
+   "geometric_mean_ratio": 2.315415332521656,
+   "ratios": [
+    2.237107360383996,
+    2.200912102469415,
+    2.3619695722220815,
+    2.452912139255771,
+    2.3329138844356727
+   ],
+   "same_state": false,
+   "second": "torch-compiled-bf16",
+   "test_difference": {
+    "ci95": [
+     -0.0015741156704691492,
+     0.0016948764357040335
+    ],
+    "mean": 6.038038261744205e-05
+   },
+   "validation_difference": {
+    "ci95": [
+     -0.003542521132540228,
+     0.002114452712477694
+    ],
+    "mean": -0.0007140342100312669
+   },
+   "within_margin": true
+  },
+  {
+   "ci95": [
+    0.9906901636345797,
+    1.0561277607607735
+   ],
+   "first": "bcir-attnbf16-k100",
+   "first_faster_seeds": 4,
+   "geometric_mean_ratio": 1.0228858118710578,
+   "ratios": [
+    1.008160627077663,
+    0.9918756648056133,
+    1.0171281969334764,
+    1.0589201928706462,
+    1.0397043996119637
+   ],
+   "same_state": false,
+   "second": "bcir-attn-k100",
+   "test_difference": {
+    "ci95": [
+     -0.0029752788089842026,
+     0.0006393773901162332
+    ],
+    "mean": -0.0011679507094339847
+   },
+   "validation_difference": {
+    "ci95": [
+     1.9534771918502513e-05,
+     0.0021443155554629867
+    ],
+    "mean": 0.0010819251636907446
+   },
+   "within_margin": true
+  },
+  {
+   "ci95": [
+    0.9583960607853219,
+    1.0322927471921075
+   ],
+   "first": "bcir-attn-k100",
+   "first_faster_seeds": 3,
+   "geometric_mean_ratio": 0.9946583848167038,
+   "ratios": [
+    0.9712744194094408,
+    1.0175046691818372,
+    1.0172830370904224,
+    1.0137210632633782,
+    0.9552809235749755
+   ],
+   "same_state": true,
+   "second": "bcir-attn-k1",
+   "test_difference": {
+    "ci95": [
+     0.0,
+     0.0
+    ],
+    "mean": 0.0
+   },
+   "validation_difference": {
+    "ci95": [
+     0.0,
+     0.0
+    ],
+    "mean": 0.0
+   },
+   "within_margin": true
+  },
+  {
+   "ci95": [
+    2.201475417425421,
+    2.3525657170573946
+   ],
+   "first": "bcir-attn-k1",
+   "first_faster_seeds": 5,
+   "geometric_mean_ratio": 2.2757670342061957,
+   "ratios": [
+    2.2846261501646192,
+    2.180765924755608,
+    2.2827418542367885,
+    2.2850741217858195,
+    2.3488631843062335
+   ],
+   "same_state": false,
+   "second": "torch-compiled-bf16",
+   "test_difference": {
+    "ci95": [
+     -0.0017081476692896755,
+     0.004164809853392529
+    ],
+    "mean": 0.0012283310920514269
+   },
+   "validation_difference": {
+    "ci95": [
+     -0.0038466378331469576,
+     0.0002547190857029348
+    ],
+    "mean": -0.0017959593737220114
+   },
+   "within_margin": true
+  }
+ ],
+ "seeds": [
+  1001,
+  2002,
+  3003,
+  4004,
+  20261011
+ ],
+ "states_as_lm_panels": {
+  "1001": true,
+  "2002": true,
+  "20261011": true,
+  "3003": true,
+  "4004": true
+ },
+ "states_k100_as_k1": {
+  "1001": true,
+  "2002": true,
+  "20261011": true,
+  "3003": true,
+  "4004": true
+ }
+}

@@ -443,6 +443,16 @@ three quarters of the way through the stream, and a `--procs` run may declare a 
 the kill after the park on every run. A late run must report its delay and its peer parked, or the
 run is a violation. Faults: a producer and a consumer that never park, a supervisor that ignores its
 delay, a fixture that never passes it (`ring.json`, 29 of 29).
+RING-PARK instance (2026-10-19): the forcing was itself a timing assumption. The late run held the
+supervisor 100 ms after the mark and took the peer to have parked by then; on a loaded aarch64 runner
+(four cores, the suite's other workers, a 32-slot ring) the peers took longer, both late kills found
+them short of the park, and the L2 check scored the two runs: right to refuse them, wrong to depend on
+the host. An interleaving forced by a sleep is forced only on a host as fast as the sleep assumes. The
+supervisor now holds until the peer reports it has parked (`await_park`, bounded: a peer that ends
+unparked is a refusal), and a stall run stops the killed peer 300 ms at the supervisor's mark -- slower
+than the old hold on every host -- and must report the whole stall, or it is a violation. Faults: a
+fixed hold for each peer, a supervisor that never waits, a peer that never stalls, a fixture that never
+passes the stall (`ring.json`, 33 of 33).
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 

@@ -195,9 +195,30 @@
     },
     {
       "expects": "ring.concurrent.violations",
-      "label": "C ring harness: the supervisor ignores the declared kill delay, so a late run kills before its peer parks",
-      "new": "    kill(producer, SIGKILL);\n",
-      "old": "    if (late_us) sleep_us(late_us);\n    kill(producer, SIGKILL);\n",
+      "label": "C ring harness: a late run's supervisor holds a fixed time instead of until its producer parks (RING-RACE's 100 ms), so a producer slower than the hold is killed short of its park (RING-PARK)",
+      "new": "    if (late) sleep_us(100000);\n    {\n      kill(producer, SIGKILL);\n",
+      "old": "    if (!(late && await_park(sh, producer, &status))) {\n      kill(producer, SIGKILL);\n",
+      "path": "runtime/c/test_ring.c"
+    },
+    {
+      "expects": "ring.concurrent.violations",
+      "label": "C ring harness: a late run's supervisor holds a fixed time instead of until its consumer parks, so a consumer slower than the hold is killed short of its park (RING-PARK)",
+      "new": "    if (late) sleep_us(100000);\n    {\n      kill(consumer, SIGKILL);\n",
+      "old": "    if (!(late && await_park(sh, consumer, &status))) {\n      kill(consumer, SIGKILL);\n",
+      "path": "runtime/c/test_ring.c"
+    },
+    {
+      "expects": "ring.concurrent.violations",
+      "label": "C ring harness: a late run's supervisor never waits for the park, so a late run kills at its mark",
+      "new": "    return 0;\n",
+      "old": "    if (__atomic_load_n(&sh->parked, __ATOMIC_ACQUIRE)) return 0;\n",
+      "path": "runtime/c/test_ring.c"
+    },
+    {
+      "expects": "ring.concurrent.violations",
+      "label": "C ring harness: the killed peer never stops in its stall, so a stall run tests nothing",
+      "new": "  (void)0;\n  sh->stalled_us",
+      "old": "  sleep_us(sh->stall_us);\n  sh->stalled_us",
       "path": "runtime/c/test_ring.c"
     },
     {
@@ -205,6 +226,13 @@
       "label": "the late kill is never passed to the harness, so the late-kill interleaving is left to preemption",
       "new": "        delay = []\n",
       "old": "        delay = list(late)\n",
+      "path": "bcir/tests/ring_fixtures.py"
+    },
+    {
+      "expects": "ring.concurrent.violations",
+      "label": "the stall is never passed to the harness, so a hold that is a time is left to a loaded host to expose",
+      "new": "        stall = []\n",
+      "old": "        stall = list(stalls)\n",
       "path": "bcir/tests/ring_fixtures.py"
     }
   ]
