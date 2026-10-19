@@ -45,6 +45,10 @@ spec alone. One function per row family grades it against the C rail; the tests,
                                contract from the gradients the backward left -- plus the counts
                                of `REDUCE_CHUNK_COUNTS` where the C chunk rule and `reduce_chunk`
                                disagree (NDT-REDUCE)
+    train.plan.executed.mismatch  cases of `trace_corpus()` whose launch trace (a build defining
+                               BCIR_DT_TRACE_PROBE) differs from the launches the step program
+                               states under the case's decisions (`native_launch.run_launches`),
+                               or dropped a record (PX-1)
 
 Without a C compiler the native rows are not measured -- a skip, never a pass.
 """
@@ -64,7 +68,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from fractions import Fraction
+from typing import NamedTuple
 from pathlib import Path
 
 from bcir.frontends.models.decode import DecoderSpec
@@ -910,6 +916,175 @@ def corpus_unselected() -> int | None:
     return len(module.unselected(root, selected))
 
 
+# --- train.plan.executed.mismatch (PX-1) ----------------------------------------------------------
+
+#: The trace corpus's contracts: every GEMM entry BCIR has (v1, fused, blocked, bf16), the
+#: exponential, the reduce pass, and the fused and bf16 attention.
+TRACE_CONTRACTS = (
+    "v1", "fused+exp", "kblock+exp+reduce", "bf16", "bf16+exp+attnbf16", "kblock+attn",
+)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class TraceCase:
+    """One `bcir_decoder_run_accum` call to trace: a trainer and the call's shape."""
+
+    spec: DecoderSpec
+    batch: int
+    time: int
+    contract: str
+    recompute: int = 0
+    workspace: str = "need"  # the bf16 workspace's tier: "need", "panels" or "floor"
+    threads: int = 1
+    steps: int = 1
+    accumulation: int = 1
+    provider: str = ""  # "", "mm" (a CBLAS sgemm) or "mm+silu" (and a SiLU)
+    preflight: bool = False  # an update whose bound fails (epsilon 1e-45), so the preflight runs
+
+
+def trace_corpus() -> tuple[TraceCase, ...]:
+    """Every spec of the plan corpus under the six contracts, three recompute sets (none, every
+    layer, the lowest) and two call shapes (one step; two steps of two micro-batches -- FACTS-RUN's
+    skipped scan and the accumulation's scans); the panels' bench under both bf16 contracts at the
+    workspace's three tiers, at one thread and four; a provider's GEMM, and its GEMM and SiLU,
+    under v1 and the blocked contract; and an update whose bound fails."""
+    cases = []
+    for spec, batch, time_ in PLAN_CORPUS:
+        for contract in TRACE_CONTRACTS:
+            for recompute in dict.fromkeys((0, (1 << spec.n_layers) - 1, 1)):
+                for steps, accumulation in ((1, 1), (2, 2)):
+                    cases.append(TraceCase(spec, batch, time_, contract, recompute,
+                                           steps=steps, accumulation=accumulation))  # fmt: skip
+    spec, batch, time_ = PANELS_BENCH
+    for contract in ("bf16", "bf16+exp+attnbf16"):
+        for workspace in ("need", "panels", "floor"):
+            for threads in (1, 4):
+                cases.append(TraceCase(spec, batch, time_, contract, 0b10, workspace, threads))
+    spec, batch, time_ = PLAN_CORPUS[1]  # untied: the provider's zero fill and the head's own VJP
+    for contract in ("v1", "kblock+exp"):
+        for provider in ("mm", "mm+silu"):
+            cases.append(TraceCase(spec, batch, time_, contract, provider=provider, steps=2,
+                                   accumulation=2))  # fmt: skip
+    cases.append(TraceCase(spec, batch, time_, "v1", preflight=True))
+    return tuple(cases)
+
+
+def trace_library(directory) -> Path | None:
+    """The trainer built with its launch trace (BCIR_DT_TRACE_PROBE), from the tree's unit as it
+    stands -- a fault the sweep injected included. None without a compiler, or outside a source
+    checkout (an installed package ships no C units: the one absence that is expected there)."""
+    if not (_C / "bcir_decoder_train.c").is_file():
+        return None
+    unit = "#define BCIR_DT_TRACE_PROBE 1\n" + source("bcir_decoder_train.c")
+    return build_library(directory, sources={"bcir_decoder_train.c": unit})
+
+
+class TraceRun(NamedTuple):
+    """One traced call: the launches its plan states, the records the probe held (launch, record),
+    the records it had no room for, and the state the call left (`state_digest`)."""
+
+    planned: list
+    traced: list
+    dropped: int
+    state: str
+
+
+def trace_case(path, case: TraceCase, capacity: int | None = None, *, trace: bool = True):
+    """Run `case` on the trace build at `path` (a `TraceRun`). `capacity` lends the probe that
+    many records instead of room for twice the plan's; `trace=False` runs `path` as a build
+    without the probe -- the library itself -- and holds no records."""
+    from bcir.hosted.models import native as nat
+    from bcir.hosted.models.native import NativeAdamW, NativeDecoder
+    from bcir.hosted.models.native_launch import RECORD_WORDS, SPACES, read_trace, run_launches
+
+    common = dict(batch_size=case.batch, context_length=case.time, contract=case.contract,
+                  recompute=case.recompute, threads=case.threads)  # fmt: skip
+    workspace = None
+    if case.workspace != "need":
+        probe = NativeDecoder(path, case.spec, **common)
+        memory = probe.plan_memory
+        probe.close()
+        # the panels' tier where it lies at or above the floor (memory_plan's tiers): under the
+        # bf16 attention the floor holds its regions, which can exceed what the panel groups pack
+        workspace = memory.workspace_floor
+        if case.workspace == "panels":
+            workspace = max(memory.workspace_panels, workspace)
+    trainer = NativeDecoder(path, case.spec, workspace_bytes=workspace, **common)
+    try:
+        lib = trainer.lib
+        if case.provider:
+            gemm = lib.bcir_tensor_mm
+            gemm.argtypes = [ct.c_void_p, ct.c_int, ct.c_int, ct.c_size_t, ct.c_size_t, ct.c_size_t,
+                             ct.c_float, _FP, _FP, ct.c_float, _FP]  # fmt: skip
+            gemm.restype = None
+            callback = nat._CBLAS(
+                lambda order, ta, tb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc: gemm(
+                    None, ta == 112, tb == 112, m, n, k, alpha, a, b, beta, c
+                )
+            )
+            trainer.use_cblas_function(callback, name="trace", admit=False)
+            if case.provider == "mm+silu":
+                silu = ct.cast(lib.bcir_tensor_silu, nat._SILU)
+                provider = trainer.state.provider
+                trainer.state.provider = nat._Provider(provider.ctx, provider.mm, silu)
+                trainer._provider_refs += (silu,)
+        if trace:
+            lib.bcir_decoder_trace_probe_begin.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_size_t]
+            lib.bcir_decoder_trace_probe_begin.restype = None
+            lib.bcir_decoder_trace_probe_end.argtypes = [ct.POINTER(ct.c_size_t)]
+            lib.bcir_decoder_trace_probe_end.restype = ct.c_size_t
+            lib.bcir_decoder_trace_probe_words.argtypes = []
+            lib.bcir_decoder_trace_probe_words.restype = ct.c_size_t
+            assert lib.bcir_decoder_trace_probe_words() == RECORD_WORDS
+        planned = run_launches(
+            case.spec, case.batch, case.time, contract=nat._CONTRACTS[case.contract],
+            recompute=trainer.recompute, workspace_bytes=trainer.workspace_bytes,
+            panels_need=trainer.plan_memory.workspace_panels,
+            alignment={SPACES[name]: ct.addressof(buf) % 64 for name, buf in trainer.buffers.items()},
+            provider_mm=bool(case.provider), provider_silu=case.provider == "mm+silu",
+            steps=case.steps, accumulation=case.accumulation,
+        )  # fmt: skip
+        if capacity is None:
+            capacity = 2 * sum(len(launch.records) for launch in planned) + 64
+        words = (ct.c_uint64 * (capacity * RECORD_WORDS))()
+        n = case.batch * case.time * case.steps * case.accumulation
+        tokens = [(7 * i + 3) % case.spec.vocab_size for i in range(n)]
+        targets = [(5 * i + 1) % case.spec.vocab_size for i in range(n)]
+        optimizer = NativeAdamW(epsilon=1e-45) if case.preflight else NativeAdamW()
+        if not trace:
+            trainer.run(tokens, targets, steps=case.steps, optimizer=optimizer,
+                        gradient_accumulation=case.accumulation)  # fmt: skip
+            return TraceRun(planned, [], 0, state_digest(trainer))
+        lib.bcir_decoder_trace_probe_begin(ct.addressof(trainer.state), ct.addressof(words),
+                                           capacity)  # fmt: skip
+        try:
+            trainer.run(tokens, targets, steps=case.steps, optimizer=optimizer,
+                        gradient_accumulation=case.accumulation)  # fmt: skip
+        finally:
+            dropped = ct.c_size_t()
+            count = lib.bcir_decoder_trace_probe_end(ct.byref(dropped))
+        return TraceRun(planned, read_trace(words, count), dropped.value, state_digest(trainer))
+    finally:
+        trainer.close()
+
+
+def executed_mismatch(path, cases=None) -> tuple[int, list[str]]:
+    """`train.plan.executed.mismatch`: the cases of `cases` (the trace corpus) whose trace differs
+    from their planned launches, or dropped a record; and what differed, case by case."""
+    from bcir.hosted.models.native_launch import launch_mismatches
+
+    bad, notes = 0, []
+    for case in trace_corpus() if cases is None else cases:
+        planned, traced, dropped, _ = trace_case(path, case)
+        problems = launch_mismatches(planned, traced)
+        if dropped:
+            problems.append(f"{dropped} records dropped")
+        if problems:
+            bad += 1
+            notes.append(f"{case}: {problems[0]}")
+    return bad, notes
+
+
 def measure(*, timed: bool = True) -> dict[str, float]:
     """Every NDT-GEM row this host can measure: the memory row always, the corpus row in a source
     checkout, the native rows with a compiler (and the timed one only when `timed`)."""
@@ -940,6 +1115,9 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         out["train.exp.ulp.max"] = float(ulp)
         out["train.state.threads.mismatch"] = float(threads_mismatch(path))
         out["train.norm.reduce.mismatch"] = float(norm_mismatch(path))
+        traced = trace_library(Path(tmp) / "trace")
+        if traced is not None:  # no C units to trace (an installed package): not measured
+            out["train.plan.executed.mismatch"] = float(executed_mismatch(traced)[0])
         if timed:
             out.update(measure_step(path))
         return out
@@ -992,6 +1170,13 @@ __all__ = [
     "REDUCE_CHUNK_COUNTS",
     "norm_mismatch",
     "transient_ratio",
+    "TRACE_CONTRACTS",
+    "TraceCase",
+    "TraceRun",
+    "executed_mismatch",
+    "trace_case",
+    "trace_corpus",
+    "trace_library",
 ]
 
 

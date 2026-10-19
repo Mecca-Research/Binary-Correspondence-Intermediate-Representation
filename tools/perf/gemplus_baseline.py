@@ -777,6 +777,27 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="GEO-3",
     ),
     Metric(
+        "train.plan.executed.mismatch",
+        "train",
+        "of the 221 calls of the trace corpus (bcir/tests/native_decoder_fixtures.py: the plan "
+        "corpus under six contracts, three recompute sets and two call shapes; the panels' bench "
+        "at the workspace's three tiers and two thread counts; a provider's GEMM, and its GEMM and "
+        "SiLU; an update whose bound fails), those whose launch trace differs from the launches "
+        "the step program states under the call's decisions (`native_launch.run_launches`), or "
+        "dropped a record: a build defining BCIR_DT_TRACE_PROBE records every call the step issues "
+        "to the tensor unit, a provider or the pool -- its job, entry, shapes, scalars and operand "
+        "places. The parent held no call's launches to a plan, so all 221 were unheld (PX-1)",
+        221,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one step, two derivations: the program's buffers and the trainer's "
+        "decisions state the launches, the C issues them, so any difference is a defect -- of the "
+        "C (a job split or merged, an operand moved, a pass run or skipped: none of which changes "
+        "the state's bits) or of the model",
+        slice_owner="PX-1",
+    ),
+    Metric(
         "train.mm.mismatch",
         "train",
         "of 20 GEMM cases (every transpose pair, the 32-wide tiles' edges, alpha and beta forms), "

@@ -1,0 +1,485 @@
+"""PX-1 (TRACE): the native training step's launches, as the step program states them.
+
+`training_step_program` (native_program.py) states the step as values and kernel calls -- the
+vocabulary GEM+'s bounds read. What reaches the kernels is that program under the decisions a
+trainer takes, and nothing else checked it until now: which calls share one pool job (a linear's
+two VJPs, NDT-SCHED-0; the linears reading one input, NDT-SCHED-1), the entry each GEMM takes
+under the state's contract (v1, fused, blocked, bf16, a provider's), the panels the SwiGLU block
+writes and reads instead of packs (BF16-PANELS), the slot a recomputed layer's cache lives in and
+the forward the backward re-runs (REMAT), the scans and fills a step's facts leave out (NDT-SCAN,
+NDT-ZERO, FACTS-RUN), and where in its arena every operand sits. `run_launches` states all of it
+for one `bcir_decoder_run_accum` call -- `steps` updates of `accumulation` micro-batches each --
+from the program's buffers and the trainer's decisions alone: its contract, recompute set and
+workspace, the panels' threshold (`bcir_decoder_workspace_panels`, the C's own figure, as
+`memory_plan` reads it), its arenas' alignment and whether a provider replaces the GEMM or SiLU.
+
+The C rail is held to it, call for call. A build defining BCIR_DT_TRACE_PROBE records each launch
+the step issues -- every call that reaches the tensor unit, a provider or the pool, in order -- as
+`RECORD_WORDS` words (the layout below, the probe's): `read_trace` decodes them, and
+`launch_mismatches(planned, traced)` lists every difference -- a launch extra or missing, calls
+grouped otherwise, another entry, shape, scalar or operand place. The one launch the plan cannot
+state ahead is the update's preflight, which runs only when the first pass's maxima fail to prove
+every candidate in range (`adamw_bounded`, a fact of the values): it is planned `optional`, and a
+trace may hold it there or not. `train.plan.executed.mismatch` counts the configurations whose
+trace differs from their plan (`bcir/tests/native_decoder_fixtures.py`).
+
+A record: kind, launch (the calls of one job share it), flags, eight dimensions, then ten operands
+as (space, byte offset, bytes) -- spaces 1-4 the parameter arenas (weights, gradients, first and
+second moments), 5 activations, 6 scratch, 7 the bf16 workspace, 8 outside the state (the
+caller's tokens and targets, offset 0); an absent operand is (0, 0, 0). A GEMM call's flags are its
+entry (0 v1, 1 fused, 2 blocked, 3 bf16 -- each a call alone; 4 a pair's call, 5 a group's, 6 a
+bf16 group's; 7 a provider's) | role << 4 (0 alone, 1 a pair's first or a chain's, 2 the pair's
+second or an independent call) | index << 8 | contract << 16 (15 none) | A a panel << 24 | B a
+panel << 25.
+"""
+
+from __future__ import annotations
+
+import struct
+from dataclasses import dataclass
+
+from ...frontends.models.decode import DecoderSpec
+from .native_program import ARENAS, recompute_layers, training_step_program
+
+#: Record kinds, as the probe numbers them.
+SCAN, ZERO, EMBED, RMS, GEMM, ROPE, ATTN, ATTN_VJP, ADD, SILU_MUL = range(1, 11)
+SILU_MUL_PANELS, SWIGLU_VJP, SWIGLU_VJP_PANELS, RMS_VJP, LOSS, SCATTER = range(11, 17)
+PASS, PREFLIGHT, COMMIT, MUL, PROVIDER_SILU = range(17, 22)
+KIND_NAMES = {
+    SCAN: "scan", ZERO: "zero", EMBED: "embed", RMS: "rms", GEMM: "gemm", ROPE: "rope",
+    ATTN: "attention", ATTN_VJP: "attention.vjp", ADD: "add", SILU_MUL: "silu_mul",
+    SILU_MUL_PANELS: "silu_mul.panels", SWIGLU_VJP: "swiglu.vjp",
+    SWIGLU_VJP_PANELS: "swiglu.vjp.panels", RMS_VJP: "rms.vjp", LOSS: "loss", SCATTER: "scatter",
+    PASS: "update.pass", PREFLIGHT: "update.preflight", COMMIT: "update.commit", MUL: "mul",
+    PROVIDER_SILU: "provider.silu",
+}  # fmt: skip
+#: Operand spaces: the six arenas in the state's order, then the workspace and the outside.
+SPACES = {name: i + 1 for i, name in enumerate(ARENAS)} | {"workspace": 7, "external": 8}
+#: A record's words: kind, launch, flags, 8 dimensions, 10 operands of 3 words, 7 spare.
+RECORD_WORDS = 48
+DIMS, REFS = 8, 10
+#: GEMM entries (the flags' low nibble).
+E_V1, E_FUSED, E_KBLOCK, E_BF16, E_PAIR, E_GROUP, E_BF16_GROUP, E_PROVIDER = range(8)
+
+# the state's contract bits (bcir_decoder_train.h) and the tensor unit's flags (bcir_tensor.h)
+_FUSED, _EXP, _KBLOCK, _REDUCE, _BF16, _ATTN, _ATTNBF16 = 1, 2, 4, 8, 16, 32, 64
+_ATTENTION_EXP, _ATTENTION_FUSED = 1, 2
+_RMSB_ADD, _RMSB_FIRST = 1, 2
+# loss_backward_with's facts (KNOWN, DEFER, COMMITTED) and the update's chunk rule
+_KNOWN, _DEFER, _COMMITTED = 1, 2, 4
+_PASS_CHUNK = _PASS_TASKS = 1024
+_GROUP = 4  # BCIR_TENSOR_MM_GROUP
+
+_NONE = (0, 0, 0)
+
+
+def _bits(value: float) -> int:
+    """A float's binary32 bits (the probe records alpha, beta and eps as the C holds them)."""
+    return struct.unpack("<I", struct.pack("<f", value))[0]
+
+
+_ONE = _bits(1.0)
+
+
+@dataclass(frozen=True)
+class Record:
+    """One call the step issues: its kind, flags, dimensions and operands (space, offset, bytes)."""
+
+    kind: int
+    flags: int
+    dims: tuple[int, ...]
+    refs: tuple[tuple[int, int, int], ...]
+
+    def describe(self) -> str:
+        operands = " ".join(
+            f"{_SPACE_NAMES.get(s, s)}+{o}/{b}" for s, o, b in self.refs if (s, o, b) != _NONE
+        )
+        return f"{KIND_NAMES.get(self.kind, self.kind)} flags={self.flags:#x} dims={list(self.dims)} {operands}"
+
+
+_SPACE_NAMES = {v: k for k, v in SPACES.items()}
+
+
+@dataclass(frozen=True)
+class Launch:
+    """One job the step issues: its calls (a GEMM job may hold several), and whether the plan
+    allows its absence (the update's preflight: a fact of the values, not of the plan)."""
+
+    records: tuple[Record, ...]
+    optional: bool = False
+
+
+def _record(kind: int, flags: int = 0, dims=(), refs=()) -> Record:
+    dims = tuple(int(x) for x in dims) + (0,) * (DIMS - len(dims))
+    refs = tuple(refs) + (_NONE,) * (REFS - len(refs))
+    return Record(kind, flags, dims, refs)
+
+
+def reduce_chunk(count: int) -> int:
+    """bcir_decoder_reduce_chunk: 1024 doubled until the chunks number at most 1024."""
+    chunk = _PASS_CHUNK
+    while -(-count // chunk) > _PASS_TASKS:
+        chunk *= 2
+    return chunk
+
+
+def _layout(program) -> dict[str, tuple[int, int, int]]:
+    """Every buffer of the program: (space, byte offset, bytes), its arena's spans in order."""
+    at = dict.fromkeys(ARENAS, 0)
+    out = {}
+    for buf in program.buffers:
+        size = 4 * buf.elements
+        out[buf.name] = (SPACES[buf.arena], at[buf.arena], size)
+        at[buf.arena] += size
+    return out
+
+
+def run_launches(
+    spec: DecoderSpec,
+    batch: int,
+    time: int,
+    *,
+    contract: int,
+    recompute: int = 0,
+    workspace_bytes: int = 0,
+    panels_need: int = 0,
+    alignment: dict | None = None,
+    provider_mm: bool = False,
+    provider_silu: bool = False,
+    steps: int = 1,
+    accumulation: int = 1,
+) -> list[Launch]:
+    """The launches one `bcir_decoder_run_accum(state, ..., steps, accumulation, ...)` call issues
+    under the given decisions (module docstring). `contract` is the state's bits, `alignment`
+    each space's base address modulo 64 (the panels need 64-byte slots; absent: aligned)."""
+    if type(steps) is not int or steps < 1 or type(accumulation) is not int or accumulation < 1:
+        raise ValueError("steps and accumulation must be positive integers")
+    program = training_step_program(spec, batch, time, recompute)
+    lay = _layout(program)
+    redone = set(recompute_layers(spec, recompute))
+    top = max(redone, default=None)
+    align = {SPACES[name]: 0 for name in (*ARENAS, "workspace")} | dict(alignment or {})
+    n, d, L = batch * time, spec.d_model, spec.n_layers
+    h, kh = spec.n_heads, spec.kv_heads
+    hd = d // h
+    k, f, v = kh * hd, spec.d_ff, spec.vocab_size
+    nd, nf = n * d, n * f
+    params = sum(buf.elements for buf in program.buffers if buf.arena == "weights")
+    eps = _bits(spec.rms_norm_eps)
+    gemm_contract = (
+        3 if contract & _BF16 else 2 if contract & _KBLOCK else 1 if contract & _FUSED else 0
+    )
+    v2 = 1 if contract & _EXP else 0
+    attention_contract = (_ATTENTION_EXP if contract & _EXP else 0) | (
+        _ATTENTION_FUSED if contract & _ATTN else 0
+    )
+    ws = (SPACES["workspace"], 0, workspace_bytes) if gemm_contract == 3 else _NONE
+    out: list[Launch] = []
+
+    def ref(name: str, offset: int = 0, size: int | None = None):
+        space, at, whole = lay[name]
+        return (space, at + offset, whole - offset if size is None else size)
+
+    def ext(size: int):
+        return (SPACES["external"], 0, size)
+
+    def emit(*records: Record, optional: bool = False) -> None:
+        out.append(Launch(tuple(records), optional))
+
+    def aligned(r) -> bool:
+        return (align[r[0]] + r[1]) % 64 == 0
+
+    def gemm_flags(entry, role, index, contract_field, panel_a=False, panel_b=False) -> int:
+        return (entry | role << 4 | index << 8 | contract_field << 16 | int(panel_a) << 24
+                | int(panel_b) << 25)  # fmt: skip
+
+    def call(entry, role, index, contract_field, c, pre=(None, None), workspace=_NONE) -> Record:
+        """`c` = (ta, tb, m, n, k, beta, a, b, out) with operand refs; `pre` the panels' refs."""
+        ta, tb, m, nn, kk, beta, a, b, y = c
+        pa, pb = pre
+        refs = (
+            (pa[0], pa[1], m * kk * 2) if pa else (a[0], a[1], m * kk * 4) if a else _NONE,
+            (pb[0], pb[1], kk * nn * 2) if pb else (b[0], b[1], kk * nn * 4) if b else _NONE,
+            (y[0], y[1], m * nn * 4),
+            workspace,
+        )
+        flags = gemm_flags(entry, role, index, contract_field, pa is not None, pb is not None)
+        return _record(GEMM, flags, (ta, tb, m, nn, kk, _ONE, _bits(beta)), refs)
+
+    def gemm(c) -> None:
+        if provider_mm:
+            emit(call(E_PROVIDER, 0, 0, 15, c))
+        elif gemm_contract == 3:
+            emit(call(E_BF16, 0, 0, 3, c, workspace=ws))
+        else:
+            emit(call(gemm_contract, 0, 0, gemm_contract, c))
+
+    def group(chain, rest, pre=None) -> None:
+        """gemm_group_with: one job, the chain then the rest (`pre` per call, bf16 only)."""
+        calls = list(chain) + list(rest)
+        pre = pre or [(None, None)] * len(calls)
+        if gemm_contract == 3:
+            emit(*(call(E_BF16_GROUP, 1 if q < len(chain) else 2, q, 3, c, pre[q], ws)
+                   for q, c in enumerate(calls)))  # fmt: skip
+        else:
+            emit(*(call(E_GROUP, 1 if q < len(chain) else 2, q, gemm_contract, c)
+                   for q, c in enumerate(calls)))  # fmt: skip
+
+    def linear(rows, inp, outp, x, w, y) -> None:
+        gemm((0, 1, rows, outp, inp, 0.0, x, w, y))
+
+    def linear_backward(rows, inp, outp, x, w, dy, dx, dw, beta, wbeta) -> None:
+        cx = (0, 0, rows, inp, outp, beta, dy, w, dx)
+        cw = (1, 0, outp, inp, rows, wbeta, dy, x, dw)
+        if provider_mm:
+            gemm(cx)
+            gemm(cw)
+        elif gemm_contract == 3:
+            group([cx], [cw])
+        else:
+            emit(call(E_PAIR, 1, 0, gemm_contract, cx), call(E_PAIR, 2, 1, gemm_contract, cw))
+
+    def linears(rows, inp, x, outs, ws_, ys) -> None:
+        if provider_mm or len(outs) > _GROUP:
+            for o, w, y in zip(outs, ws_, ys):
+                linear(rows, inp, o, x, w, y)
+            return
+        group([], [(0, 1, rows, o, inp, 0.0, x, w, y) for o, w, y in zip(outs, ws_, ys)])
+
+    def linears_backward(rows, inp, x, outs, ws_, dys, dx, dws, beta, wbeta) -> None:
+        if provider_mm or len(outs) > _GROUP:
+            for q, (o, w, dy, dw) in enumerate(zip(outs, ws_, dys, dws)):
+                linear_backward(rows, inp, o, x, w, dy, dx, dw, 1.0 if q else beta, wbeta)
+            return
+        cx = [(0, 0, rows, inp, o, 1.0 if q else beta, dy, w, dx)
+              for q, (o, w, dy) in enumerate(zip(outs, ws_, dys))]  # fmt: skip
+        cw = [(1, 0, o, inp, rows, wbeta, dy, x, dw) for o, dy, dw in zip(outs, dys, dws)]
+        group(cx, cw)
+
+    def scan(r) -> None:
+        emit(_record(SCAN, 0, (r[2] // 4,), (r,)))
+
+    def rms(x, g, y) -> None:
+        emit(_record(RMS, 0, (n, d, eps), (x, g, y)))
+
+    def rope(x, heads, inverse) -> None:
+        emit(_record(ROPE, 0, (batch, time, heads, hd, inverse), (x,)))
+
+    def add(x, y) -> None:
+        emit(_record(ADD, 0, (nd,), (x, y)))
+
+    def silu_mul(x, u, y) -> None:
+        if provider_silu:
+            emit(_record(PROVIDER_SILU, 0, (nf,), (x, y)))
+            emit(_record(MUL, 0, (nf,), (u, y)))
+            for r in (x, u, y):
+                scan(r)
+        else:
+            emit(_record(SILU_MUL, v2, (nf,), (x, u, y)))
+
+    def panels(a, b) -> bool:
+        """panels(): the bf16 contract, BCIR's GEMM and SiLU, whole 32-tiles, 64-byte slots, and
+        the workspace at the panel groups' need."""
+        return (gemm_contract == 3 and not provider_mm and not provider_silu and n % 32 == 0
+                and d % 32 == 0 and f % 32 == 0 and aligned(a) and aligned(b)
+                and workspace_bytes >= panels_need)  # fmt: skip
+
+    def attention(q, kk, vv, p, y) -> None:
+        dims = (batch, time, h, kh, hd)
+        if contract & _ATTNBF16:
+            emit(_record(ATTN, attention_contract | 1 << 8, dims, (q, kk, vv, p, y, _NONE, _NONE,
+                                                                   _NONE, ws)))  # fmt: skip
+        else:
+            emit(_record(ATTN, attention_contract, dims, (q, kk, vv, p, y)))
+
+    def attention_backward(q, kk, vv, p, dy, dq, dk, dv) -> None:
+        dims = (batch, time, h, kh, hd)
+        if contract & _ATTNBF16:
+            emit(_record(ATTN_VJP, 1 << 8, dims, (q, kk, vv, p, dy, dq, dk, dv, ws)))
+        else:
+            emit(_record(ATTN_VJP, attention_contract, dims, (q, kk, vv, p, dy, dq, dk, dv)))
+
+    def rms_backward(x, g, dy, dx, dg, inv, how) -> None:
+        emit(_record(RMS_VJP, how, (n, d, eps), (x, g, dy, dx, dg, inv)))
+
+    def slot(layer: int) -> str:
+        return "R" if layer in redone else f"L{layer}"
+
+    def layer_forward(layer: int, full: bool) -> None:
+        c = lambda name: ref(f"{slot(layer)}.{name}")  # noqa: E731
+        p = lambda name: ref(f"weights:L{layer}.{name}")  # noqa: E731
+        x, y = ref(f"x{layer}"), ref(f"x{layer + 1}")
+        rms(x, p("norm1"), c("n1"))
+        linears(n, d, c("n1"), (d, k, k), (p("q"), p("k"), p("v")), (c("q"), c("k"), c("v")))
+        rope(c("q"), h, 0)
+        rope(c("k"), kh, 0)
+        attention(c("q"), c("k"), c("v"), c("p"), c("ctx"))
+        linear(n, d, d, c("ctx"), p("o"), c("x2"))
+        add(x, c("x2"))
+        rms(c("x2"), p("norm2"), c("n2"))
+        linears(n, d, c("n2"), (f, f), (p("gate"), p("up")), (c("gate"), c("up")))
+        hidden = c("hidden")
+        if panels(hidden, hidden):
+            a, b = (
+                ref(f"{slot(layer)}.hidden", 0, nf * 2),
+                ref(f"{slot(layer)}.hidden", nf * 2, nf * 2),
+            )
+            emit(_record(SILU_MUL_PANELS, v2, (n, f), (c("gate"), c("up"), a, b)))
+            if full:
+                group([], [(0, 1, n, d, f, 0.0, None, p("down"), y)], [(a, None)])
+        else:
+            silu_mul(c("gate"), c("up"), hidden)
+            if full:
+                linear(n, f, d, hidden, p("down"), y)
+        if full:
+            add(c("x2"), y)
+
+    head = "embed" if spec.tied_embeddings else "head"
+
+    def forward() -> None:
+        emit(_record(EMBED, 0, (n, d), (ext(4 * n), ref("weights:embed"), ref("x0"))))
+        for layer in range(L):
+            layer_forward(layer, True)
+        rms(ref(f"x{L}"), ref("weights:final_norm"), ref("norm"))
+        linear(n, d, v, ref("norm"), ref(f"weights:{head}"), ref("logits"))
+        scan(ref("logits"))
+
+    def loss_backward(accumulate: bool, how: int) -> None:
+        if not how & (_KNOWN | _COMMITTED):
+            scan(ref("weights:embed", 0, 4 * params))
+        if not how & _KNOWN and accumulate:
+            scan(ref("gradients:embed", 0, 4 * params))
+        forward()
+        first = not accumulate and not provider_mm
+        wb, gf = (0.0, _RMSB_FIRST) if first else (1.0, 0)
+        if not accumulate and not first:
+            emit(_record(ZERO, 0, (params,), (ref("gradients:embed", 0, 4 * params),)))
+        if not accumulate and first and not spec.tied_embeddings:
+            emit(_record(ZERO, 0, (v * d,), (ref("gradients:embed"),)))
+        sc = lambda name, off=0, size=None: ref(name, off, size)  # noqa: E731
+        cur, dn, dq, dk, dv = sc("cur"), sc("dn"), sc("dq"), sc("dk"), sc("dv")
+        dc, dg, du, dh, dl = sc("dc"), sc("dg"), sc("du"), sc("dh"), sc("dl")
+        emit(_record(LOSS, 0, (n, v), (ref("logits"), ext(4 * n), dl, sc("cur", 0, 8 * n))))
+        linear_backward(n, d, v, ref("norm"), ref(f"weights:{head}"), dl, dn,
+                        ref(f"gradients:{head}"), 0.0, wb)  # fmt: skip
+        inv = sc("dq", 0, 4 * n)
+        rms_backward(ref(f"x{L}"), ref("weights:final_norm"), dn, cur,
+                     ref("gradients:final_norm"), inv, gf)  # fmt: skip
+        for layer in reversed(range(L)):
+            c = lambda name, layer=layer: ref(f"{slot(layer)}.{name}")  # noqa: E731
+            p = lambda name, layer=layer: ref(f"weights:L{layer}.{name}")  # noqa: E731
+            q = lambda name, layer=layer: ref(f"gradients:L{layer}.{name}")  # noqa: E731
+            if layer in redone and layer != top:
+                layer_forward(layer, False)
+            hidden = c("hidden")
+            if panels(hidden, hidden):
+                cx = (0, 0, n, f, d, 0.0, cur, p("down"), dh)
+                cw = (1, 0, d, f, n, wb, cur, None, q("down"))
+                group(
+                    [cx], [cw], [(None, None), (None, ref(f"{slot(layer)}.hidden", nf * 2, nf * 2))]
+                )
+            else:
+                linear_backward(n, f, d, hidden, p("down"), cur, dh, q("down"), 0.0, wb)
+            if panels(dg, du):
+                pg = (ref("dg", 0, nf * 2), ref("dg", nf * 2, nf * 2))
+                pu = (ref("du", 0, nf * 2), ref("du", nf * 2, nf * 2))
+                emit(_record(SWIGLU_VJP_PANELS, v2, (n, f),
+                             (c("gate"), c("up"), dh, pg[0], pg[1], pu[0], pu[1])))  # fmt: skip
+                cx = [(0, 0, n, d, f, 0.0, None, p("gate"), dn),
+                      (0, 0, n, d, f, 1.0, None, p("up"), dn)]  # fmt: skip
+                cw = [(1, 0, f, d, n, wb, None, c("n2"), q("gate")),
+                      (1, 0, f, d, n, wb, None, c("n2"), q("up"))]  # fmt: skip
+                pre = [(pg[0], None), (pu[0], None), (pg[1], None), (pu[1], None)]
+                group(cx, cw, pre)
+            else:
+                emit(_record(SWIGLU_VJP, v2, (nf,), (c("gate"), c("up"), dh, dg, du)))
+                linears_backward(n, d, c("n2"), (f, f), (p("gate"), p("up")), (dg, du), dn,
+                                 (q("gate"), q("up")), 0.0, wb)  # fmt: skip
+            rms_backward(c("x2"), p("norm2"), dn, cur, q("norm2"), inv, _RMSB_ADD | gf)
+            linear_backward(n, d, d, c("ctx"), p("o"), cur, dc, q("o"), 0.0, wb)
+            attention_backward(c("q"), c("k"), c("v"), c("p"), dc, dq, dk, dv)
+            rope(dq, h, 1)
+            rope(dk, kh, 1)
+            linears_backward(n, d, c("n1"), (d, k, k), (p("q"), p("k"), p("v")), (dq, dk, dv), dn,
+                             (q("q"), q("k"), q("v")), 0.0, wb)  # fmt: skip
+            rms_backward(ref(f"x{layer}"), p("norm1"), dn, cur, q("norm1"), inv, _RMSB_ADD | gf)
+        emit(_record(SCATTER, 0, (n, d), (ext(4 * n), cur, ref("gradients:embed"))))
+        if not how & _DEFER:
+            scan(ref("gradients:embed", 0, 4 * params))
+
+    def update() -> None:
+        # the first pass, the preflight and the commit read the gradients, then the weights and
+        # the two moments, each whole
+        quad = tuple(ref(f"{arena}:embed", 0, 4 * params)
+                     for arena in ("gradients", "weights", "moment1", "moment2"))  # fmt: skip
+        chunk = reduce_chunk(params)
+        emit(_record(PASS, 1 if contract & _REDUCE else 0, (params, chunk), quad))
+        emit(_record(PREFLIGHT, 0, (params, chunk), quad), optional=True)
+        emit(_record(COMMIT, 0, (params,), quad))
+
+    for step in range(steps):
+        for micro in range(accumulation):
+            how = (_KNOWN if micro else _COMMITTED if step else 0) | (
+                _DEFER if micro + 1 == accumulation else 0
+            )
+            loss_backward(micro != 0, how)
+        update()
+    return out
+
+
+def read_trace(words, count: int) -> list[tuple[int, Record]]:
+    """The probe's `count` records from `words` (a flat sequence of 64-bit words) as (launch,
+    record) pairs, in issue order."""
+    out = []
+    for i in range(count):
+        w = words[i * RECORD_WORDS : (i + 1) * RECORD_WORDS]
+        refs = tuple(tuple(w[11 + 3 * s : 14 + 3 * s]) for s in range(REFS))
+        out.append((w[1], Record(w[0], w[2], tuple(w[3 : 3 + DIMS]), refs)))
+    return out
+
+
+def launch_mismatches(planned: list[Launch], traced: list[tuple[int, Record]]) -> list[str]:
+    """Every difference between the launches a plan states and the records a trace holds: a launch
+    the trace lacks or adds, calls grouped otherwise, a record that differs. An optional launch
+    may be absent; present, it must match. Empty when the C issued exactly the plan."""
+    jobs: list[tuple[Record, ...]] = []
+    previous = None
+    for launch, record in traced:
+        if jobs and launch == previous:
+            jobs[-1] = jobs[-1] + (record,)
+        else:
+            jobs.append((record,))
+        previous = launch
+    problems: list[str] = []
+    i = 0
+    for index, launch in enumerate(planned):
+        if i < len(jobs) and jobs[i] == launch.records:
+            i += 1
+            continue
+        if launch.optional:
+            continue
+        got = jobs[i] if i < len(jobs) else ()
+        problems.append(
+            f"launch {index} ({KIND_NAMES.get(launch.records[0].kind)}): planned "
+            f"[{'; '.join(r.describe() for r in launch.records)}], traced "
+            f"[{'; '.join(r.describe() for r in got) or 'nothing'}]"
+        )
+        if not got:
+            continue
+        i += 1
+    for extra in jobs[i:]:
+        problems.append(f"traced beyond the plan: [{'; '.join(r.describe() for r in extra)}]")
+    return problems
+
+
+__all__ = [
+    "KIND_NAMES",
+    "Launch",
+    "RECORD_WORDS",
+    "Record",
+    "SPACES",
+    "launch_mismatches",
+    "read_trace",
+    "reduce_chunk",
+    "run_launches",
+]

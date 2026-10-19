@@ -6,6 +6,109 @@
 
 _Static_assert(sizeof(float)==4 && FLT_RADIX==2 && FLT_MANT_DIG==24,
     "native decoder ABI requires IEEE binary32");
+#ifdef BCIR_DT_TRACE_PROBE
+/* PX-1 (TRACE): the harness's record of every launch the step issues -- each call that reaches the
+ * tensor unit, a provider or the pool, in issue order, its operands as (space, byte offset, bytes)
+ * in the state the trace was begun on -- so a witness holds the C step to the launches its step
+ * program states (bcir/hosted/models/native_launch.py; train.plan.executed.mismatch). A build
+ * defines BCIR_DT_TRACE_PROBE to have it (the witness's builds do; the library does not): every
+ * dispatch is then the same call after its record, so the state is the library's bit for bit.
+ * A record is BCIR_DT_TRACE_WORDS words -- kind, launch (the calls of one job share it), flags,
+ * eight dimensions, ten operands -- and records past the lent capacity are counted, never dropped
+ * silently. The spaces: 1-4 the parameter arenas, 5 activations, 6 scratch, 7 the bf16 workspace,
+ * 8 outside the state (the caller's tokens and targets). */
+#define BCIR_DT_TRACE_WORDS 48
+static const bcir_decoder_state *trace_state;
+static uint64_t *trace_words,trace_launch;
+static size_t trace_capacity,trace_count,trace_dropped;
+BCIR_DT_API void bcir_decoder_trace_probe_begin(const bcir_decoder_state *s,uint64_t *words,
+    size_t capacity);
+BCIR_DT_API size_t bcir_decoder_trace_probe_end(size_t *dropped);
+BCIR_DT_API size_t bcir_decoder_trace_probe_words(void);
+static void tr_rope(size_t b,size_t t,size_t h,size_t d,const float *x,int inverse);
+static void tr_rms(size_t rows,size_t width,float eps,const float *x,const float *g,const float *y);
+static void tr_add(size_t n,const float *x,const float *y);
+static void tr_mul(size_t n,const float *x,const float *y);
+static void tr_swiglu_vjp(int v2,size_t n,const float *g,const float *u,const float *dy,
+    const float *dg,const float *du);
+static void tr_swiglu_vjp_panels(int v2,size_t r,size_t c,const float *g,const float *u,
+    const float *dy,const void *dga,const void *dgt,const void *dua,const void *dut);
+static void tr_silu_mul(int v2,size_t n,const float *x,const float *u,const float *y);
+static void tr_silu_mul_panels(int v2,size_t r,size_t c,const float *x,const float *u,
+    const void *a,const void *b);
+static void tr_rms_vjp(size_t rows,size_t width,float eps,const float *x,const float *g,
+    const float *dy,const float *dx,const float *dg,const float *inv,unsigned how);
+static void tr_mm(unsigned entry,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
+    const float *a,const float *b,float beta,const float *c,const void *ws,size_t bytes);
+static void tr_mm_group(unsigned entry,int contract,const bcir_tensor_mm_call *chain,size_t nchain,
+    const bcir_tensor_mm_call *y,size_t ny,const bcir_tensor_bf16_panels *pre,const void *ws,
+    size_t bytes);
+static void tr_attention(unsigned kind,unsigned contract,int bf16,int variant,size_t b,size_t t,
+    size_t h,size_t kh,size_t d,const float *q,const float *k,const float *v,const float *p,
+    const float *y,const float *dq,const float *dk,const float *dv,const void *ws,size_t bytes);
+static void tr_run(bcir_tensor_task_fn fn,const void *ctx);
+static void tr_provider_silu(size_t n,const float *x,const float *y);
+static void tr_embed(size_t n,size_t d,const uint32_t *tokens,const float *table,const float *x);
+#define bcir_tensor_rope_pool(pool,b,t,h,d,base,x,inv) \
+  (tr_rope(b,t,h,d,x,inv),bcir_tensor_rope_pool(pool,b,t,h,d,base,x,inv))
+#define bcir_tensor_rms_scan_pool(pool,r,w,eps,x,g,y,bad) \
+  (tr_rms(r,w,eps,x,g,y),bcir_tensor_rms_scan_pool(pool,r,w,eps,x,g,y,bad))
+#define bcir_tensor_add_pool(pool,n,x,y) (tr_add(n,x,y),bcir_tensor_add_pool(pool,n,x,y))
+#define bcir_tensor_mul_pool(pool,n,x,y) (tr_mul(n,x,y),bcir_tensor_mul_pool(pool,n,x,y))
+#define bcir_tensor_swiglu_backward_v2_pool(pool,n,g,u,dy,dg,du) \
+  (tr_swiglu_vjp(1,n,g,u,dy,dg,du),bcir_tensor_swiglu_backward_v2_pool(pool,n,g,u,dy,dg,du))
+#define bcir_tensor_swiglu_backward_pool(pool,n,g,u,dy,dg,du) \
+  (tr_swiglu_vjp(0,n,g,u,dy,dg,du),bcir_tensor_swiglu_backward_pool(pool,n,g,u,dy,dg,du))
+#define bcir_tensor_swiglu_backward_panels_pool(pool,v2,r,c,g,u,dy,dga,dgt,dua,dut) \
+  (tr_swiglu_vjp_panels(v2,r,c,g,u,dy,dga,dgt,dua,dut), \
+   bcir_tensor_swiglu_backward_panels_pool(pool,v2,r,c,g,u,dy,dga,dgt,dua,dut))
+#define bcir_tensor_silu_mul_v2_scan_pool(pool,n,x,u,y,bad) \
+  (tr_silu_mul(1,n,x,u,y),bcir_tensor_silu_mul_v2_scan_pool(pool,n,x,u,y,bad))
+#define bcir_tensor_silu_mul_scan_pool(pool,n,x,u,y,bad) \
+  (tr_silu_mul(0,n,x,u,y),bcir_tensor_silu_mul_scan_pool(pool,n,x,u,y,bad))
+#define bcir_tensor_silu_mul_panels_pool(pool,v2,r,c,x,u,a,b,bad) \
+  (tr_silu_mul_panels(v2,r,c,x,u,a,b),bcir_tensor_silu_mul_panels_pool(pool,v2,r,c,x,u,a,b,bad))
+#define bcir_tensor_rms_backward_into_pool(pool,r,w,eps,x,g,dy,dx,dg,inv,how) \
+  (tr_rms_vjp(r,w,eps,x,g,dy,dx,dg,inv,how), \
+   bcir_tensor_rms_backward_into_pool(pool,r,w,eps,x,g,dy,dx,dg,inv,how))
+#define bcir_tensor_mm_pool(pool,ta,tb,m,n,k,al,a,b,be,c) \
+  (tr_mm(0,ta,tb,m,n,k,al,a,b,be,c,NULL,0),bcir_tensor_mm_pool(pool,ta,tb,m,n,k,al,a,b,be,c))
+#define bcir_tensor_mm_fused_pool(pool,ta,tb,m,n,k,al,a,b,be,c) \
+  (tr_mm(1,ta,tb,m,n,k,al,a,b,be,c,NULL,0),bcir_tensor_mm_fused_pool(pool,ta,tb,m,n,k,al,a,b,be,c))
+#define bcir_tensor_mm_kblock_pool(pool,ta,tb,m,n,k,al,a,b,be,c) \
+  (tr_mm(2,ta,tb,m,n,k,al,a,b,be,c,NULL,0),bcir_tensor_mm_kblock_pool(pool,ta,tb,m,n,k,al,a,b,be,c))
+#define bcir_tensor_mm_bf16_pool(pool,ta,tb,m,n,k,al,a,b,be,c,ws,bytes) \
+  (tr_mm(3,ta,tb,m,n,k,al,a,b,be,c,ws,bytes), \
+   bcir_tensor_mm_bf16_pool(pool,ta,tb,m,n,k,al,a,b,be,c,ws,bytes))
+#define bcir_tensor_mm_pair_pool(pool,contract,x,y) \
+  (tr_mm_group(4,contract,x,1,y,1,NULL,NULL,0),bcir_tensor_mm_pair_pool(pool,contract,x,y))
+#define bcir_tensor_mm_group_pool(pool,contract,chain,nchain,y,ny) \
+  (tr_mm_group(5,contract,chain,nchain,y,ny,NULL,NULL,0), \
+   bcir_tensor_mm_group_pool(pool,contract,chain,nchain,y,ny))
+#define bcir_tensor_mm_bf16_group_panels_pool(pool,chain,nchain,y,ny,pre,ws,bytes) \
+  (tr_mm_group(6,3,chain,nchain,y,ny,pre,ws,bytes), \
+   bcir_tensor_mm_bf16_group_panels_pool(pool,chain,nchain,y,ny,pre,ws,bytes))
+#define bcir_tensor_attention_contract_scan_pool(pool,ct,b,t,h,kh,d,q,k,v,p,y,bad) \
+  (tr_attention(7,ct,0,0,b,t,h,kh,d,q,k,v,p,y,NULL,NULL,NULL,NULL,0), \
+   bcir_tensor_attention_contract_scan_pool(pool,ct,b,t,h,kh,d,q,k,v,p,y,bad))
+#define bcir_tensor_attention_bf16_scan_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,y,bad,ws,bytes) \
+  (tr_attention(7,ct,1,va,b,t,h,kh,d,q,k,v,p,y,NULL,NULL,NULL,ws,bytes), \
+   bcir_tensor_attention_bf16_scan_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,y,bad,ws,bytes))
+#define bcir_tensor_attention_backward_contract_pool(pool,ct,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv) \
+  (tr_attention(8,ct,0,0,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,NULL,0), \
+   bcir_tensor_attention_backward_contract_pool(pool,ct,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv))
+#define bcir_tensor_attention_bf16_backward_pool(pool,va,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws,bytes) \
+  (tr_attention(8,0,1,va,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws,bytes), \
+   bcir_tensor_attention_bf16_backward_pool(pool,va,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws,bytes))
+#define bcir_tensor_pool_run(pool,fn,ctx,tasks) (tr_run(fn,ctx),bcir_tensor_pool_run(pool,fn,ctx,tasks))
+#define DT_TRACE_PROVIDER_SILU(n,x,y) tr_provider_silu(n,x,y)
+#define DT_TRACE_PROVIDER_MM(ta,tb,m,n,k,al,a,b,be,c) tr_mm(7,ta,tb,m,n,k,al,a,b,be,c,NULL,0)
+#define DT_TRACE_EMBED(n,d,tokens,table,x) tr_embed(n,d,tokens,table,x)
+#else
+#define DT_TRACE_PROVIDER_SILU(n,x,y) ((void)0)
+#define DT_TRACE_PROVIDER_MM(ta,tb,m,n,k,al,a,b,be,c) ((void)0)
+#define DT_TRACE_EMBED(n,d,tokens,table,x) ((void)0)
+#endif
 uint32_t bcir_decoder_abi_version(void) { return 5; }
 static int add(size_t *n,size_t a) {
   if (a>SIZE_MAX-*n) return 0;
@@ -418,7 +521,10 @@ BCIR_DT_API unsigned bcir_decoder_panels_probe(void) { unsigned u=panels_seen; p
 #endif
 static int gemm(bcir_decoder_state *s,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
     const float *a,const float *b,float beta,float *c) {
-  if (s->provider.mm) s->provider.mm(s->provider.ctx,ta,tb,m,n,k,alpha,a,b,beta,c);
+  if (s->provider.mm) {
+    DT_TRACE_PROVIDER_MM(ta,tb,m,n,k,alpha,a,b,beta,c);
+    s->provider.mm(s->provider.ctx,ta,tb,m,n,k,alpha,a,b,beta,c);
+  }
   else if (gemm_contract(s)==3) {
 #ifdef BCIR_DT_WORKSPACE_PROBE
     workspace_saw(bcir_tensor_mm_bf16_workspace(m,n,k));
@@ -492,6 +598,7 @@ static int linears_backward(bcir_decoder_state *s,size_t r,size_t in,const float
 static void silu_mul(bcir_decoder_state *s,size_t n,const float *x,const float *u,float *y,
     int *bad) {
   if (s->provider.silu) {
+    DT_TRACE_PROVIDER_SILU(n,x,y);
     s->provider.silu(s->provider.ctx,n,x,y); bcir_tensor_mul_pool(s->pool,n,u,y);
     if (!finite_pool(s,x,n) || !finite_pool(s,u,n) || !finite_pool(s,y,n)) *bad=1;
   }
@@ -590,6 +697,7 @@ static int forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
   float *norm=cs+cache_slots(g,s->recompute)*g.la,*logits=norm+g.nd;
   float *final=s->weights+g.v*g.d+g.l*g.lp;
   const float *head=sp->tied ? s->weights : final+g.d; int bad=0,ran=1;
+  DT_TRACE_EMBED(g.n,g.d,tokens,s->weights,xs);
   for (i=0;i<g.n;i++) memcpy(xs+i*g.d,s->weights+(size_t)tokens[i]*g.d,g.d*sizeof(float));
   for (l=0;l<g.l;l++)
     ran&=layer_forward(s,g,l,cs+slot_of(g,s->recompute,l)*g.la,xs+l*g.nd,1,&bad);
@@ -1273,3 +1381,206 @@ int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_adamw *o,
   }
   return BCIR_DT_OK;
 }
+#ifdef BCIR_DT_TRACE_PROBE
+/* PX-1's records (the declarations at the top say what they are). */
+enum { DT_TR_SCAN=1, DT_TR_ZERO, DT_TR_EMBED, DT_TR_RMS, DT_TR_GEMM, DT_TR_ROPE, DT_TR_ATTN,
+  DT_TR_ATTN_VJP, DT_TR_ADD, DT_TR_SILU_MUL, DT_TR_SILU_MUL_PANELS, DT_TR_SWIGLU_VJP,
+  DT_TR_SWIGLU_VJP_PANELS, DT_TR_RMS_VJP, DT_TR_LOSS, DT_TR_SCATTER, DT_TR_PASS, DT_TR_PREFLIGHT,
+  DT_TR_COMMIT, DT_TR_MUL, DT_TR_PROVIDER_SILU };
+void bcir_decoder_trace_probe_begin(const bcir_decoder_state *s,uint64_t *words,size_t capacity) {
+  trace_state=s; trace_words=words; trace_capacity=words ? capacity : 0;
+  trace_count=trace_dropped=0; trace_launch=0;
+}
+size_t bcir_decoder_trace_probe_end(size_t *dropped) {
+  size_t n=trace_count;
+  if (dropped) *dropped=trace_dropped;
+  trace_state=NULL; trace_words=NULL; trace_capacity=trace_count=trace_dropped=0; trace_launch=0;
+  return n;
+}
+size_t bcir_decoder_trace_probe_words(void) { return BCIR_DT_TRACE_WORDS; }
+static uint64_t tr_bits(float f) { uint32_t u; memcpy(&u,&f,sizeof u); return u; }
+/* A record of `kind`: a new launch's, or (fresh 0) the next call of the launch before; NULL when no
+ * trace is begun or the lent words are full (counted as dropped). */
+static uint64_t *tr_record(unsigned kind,int fresh) {
+  uint64_t *w;
+  if (!trace_state) return NULL;
+  if (fresh) trace_launch++;
+  if (trace_count>=trace_capacity) { trace_dropped++; return NULL; }
+  w=trace_words+trace_count*BCIR_DT_TRACE_WORDS; trace_count++;
+  memset(w,0,BCIR_DT_TRACE_WORDS*sizeof *w);
+  w[0]=kind; w[1]=trace_launch; return w;
+}
+/* Operand `slot` of record w: its space, its byte offset in it and its bytes. A NULL operand -- a
+ * panel call's A or B, whose panel is recorded in its place -- records nothing. */
+static void tr_ref(uint64_t *w,unsigned slot,const void *p,size_t bytes) {
+  const bcir_decoder_state *s=trace_state; const void *base[7]; size_t len[7],i;
+  uintptr_t x=(uintptr_t)p; uint64_t *r;
+  if (!w || !p || slot>=10) return;
+  r=w+11+3*slot;
+  base[0]=s->weights; base[1]=s->gradients; base[2]=s->moment1; base[3]=s->moment2;
+  base[4]=s->activations; base[5]=s->scratch; base[6]=s->workspace;
+  len[0]=len[1]=len[2]=len[3]=s->plan.parameters*sizeof(float);
+  len[4]=arena_floats(s)*sizeof(float); len[5]=s->plan.scratch*sizeof(float);
+  len[6]=(s->contract&BCIR_DT_CONTRACT_BF16) ? s->workspace_bytes : 0;
+  r[0]=8; r[1]=0; r[2]=bytes;
+  for (i=0;i<7;i++)
+    if (base[i] && len[i] && x>=(uintptr_t)base[i] && x-(uintptr_t)base[i]<len[i]) {
+      r[0]=i+1; r[1]=x-(uintptr_t)base[i]; return;
+    }
+}
+static void tr_two(unsigned kind,size_t n,const float *x,const float *y) {
+  uint64_t *w=tr_record(kind,1);
+  if (!w) return;
+  w[3]=n; tr_ref(w,0,x,n*sizeof(float)); tr_ref(w,1,y,n*sizeof(float));
+}
+static void tr_add(size_t n,const float *x,const float *y) { tr_two(DT_TR_ADD,n,x,y); }
+static void tr_mul(size_t n,const float *x,const float *y) { tr_two(DT_TR_MUL,n,x,y); }
+static void tr_provider_silu(size_t n,const float *x,const float *y) {
+  tr_two(DT_TR_PROVIDER_SILU,n,x,y);
+}
+static void tr_rope(size_t b,size_t t,size_t h,size_t d,const float *x,int inverse) {
+  uint64_t *w=tr_record(DT_TR_ROPE,1);
+  if (!w) return;
+  w[3]=b; w[4]=t; w[5]=h; w[6]=d; w[7]=(uint64_t)(inverse!=0);
+  tr_ref(w,0,x,b*t*h*d*sizeof(float));
+}
+static void tr_rms(size_t rows,size_t width,float eps,const float *x,const float *g,const float *y) {
+  uint64_t *w=tr_record(DT_TR_RMS,1); size_t b=rows*width*sizeof(float);
+  if (!w) return;
+  w[3]=rows; w[4]=width; w[5]=tr_bits(eps);
+  tr_ref(w,0,x,b); tr_ref(w,1,g,width*sizeof(float)); tr_ref(w,2,y,b);
+}
+static void tr_swiglu_vjp(int v2,size_t n,const float *g,const float *u,const float *dy,
+    const float *dg,const float *du) {
+  uint64_t *w=tr_record(DT_TR_SWIGLU_VJP,1); size_t b=n*sizeof(float);
+  if (!w) return;
+  w[2]=(uint64_t)(v2!=0); w[3]=n;
+  tr_ref(w,0,g,b); tr_ref(w,1,u,b); tr_ref(w,2,dy,b); tr_ref(w,3,dg,b); tr_ref(w,4,du,b);
+}
+static void tr_swiglu_vjp_panels(int v2,size_t r,size_t c,const float *g,const float *u,
+    const float *dy,const void *dga,const void *dgt,const void *dua,const void *dut) {
+  uint64_t *w=tr_record(DT_TR_SWIGLU_VJP_PANELS,1); size_t b=r*c*sizeof(float),h=r*c*2;
+  if (!w) return;
+  w[2]=(uint64_t)(v2!=0); w[3]=r; w[4]=c;
+  tr_ref(w,0,g,b); tr_ref(w,1,u,b); tr_ref(w,2,dy,b);
+  tr_ref(w,3,dga,h); tr_ref(w,4,dgt,h); tr_ref(w,5,dua,h); tr_ref(w,6,dut,h);
+}
+static void tr_silu_mul(int v2,size_t n,const float *x,const float *u,const float *y) {
+  uint64_t *w=tr_record(DT_TR_SILU_MUL,1); size_t b=n*sizeof(float);
+  if (!w) return;
+  w[2]=(uint64_t)(v2!=0); w[3]=n;
+  tr_ref(w,0,x,b); tr_ref(w,1,u,b); tr_ref(w,2,y,b);
+}
+static void tr_silu_mul_panels(int v2,size_t r,size_t c,const float *x,const float *u,
+    const void *a,const void *b) {
+  uint64_t *w=tr_record(DT_TR_SILU_MUL_PANELS,1); size_t f=r*c*sizeof(float),h=r*c*2;
+  if (!w) return;
+  w[2]=(uint64_t)(v2!=0); w[3]=r; w[4]=c;
+  tr_ref(w,0,x,f); tr_ref(w,1,u,f); tr_ref(w,2,a,h); tr_ref(w,3,b,h);
+}
+static void tr_rms_vjp(size_t rows,size_t width,float eps,const float *x,const float *g,
+    const float *dy,const float *dx,const float *dg,const float *inv,unsigned how) {
+  uint64_t *w=tr_record(DT_TR_RMS_VJP,1); size_t b=rows*width*sizeof(float);
+  if (!w) return;
+  w[2]=how; w[3]=rows; w[4]=width; w[5]=tr_bits(eps);
+  tr_ref(w,0,x,b); tr_ref(w,1,g,width*sizeof(float)); tr_ref(w,2,dy,b); tr_ref(w,3,dx,b);
+  tr_ref(w,4,dg,width*sizeof(float)); tr_ref(w,5,inv,rows*sizeof(float));
+}
+/* One GEMM call: its entry (0 v1, 1 fused, 2 kblock, 3 bf16 -- each alone; 4 a pair's, 5 a group's,
+ * 6 a bf16 group's; 7 a provider's), its role (0 alone, 1 the pair's first or a chain's, 2 the
+ * pair's second or an independent call), its index in the job, the job's contract (15 none), which
+ * operands are panels, and the workspace it was lent. */
+static void tr_call(uint64_t *w,unsigned entry,unsigned role,size_t index,unsigned contract,
+    const bcir_tensor_mm_call *c,const unsigned short *pa,const unsigned short *pb,const void *ws,
+    size_t bytes) {
+  if (!w) return;
+  w[2]=entry|(uint64_t)role<<4|(uint64_t)index<<8|(uint64_t)contract<<16|
+      (uint64_t)(pa!=NULL)<<24|(uint64_t)(pb!=NULL)<<25;
+  w[3]=(uint64_t)c->ta; w[4]=(uint64_t)c->tb; w[5]=c->m; w[6]=c->n; w[7]=c->k;
+  w[8]=tr_bits(c->alpha); w[9]=tr_bits(c->beta);
+  if (pa) tr_ref(w,0,pa,c->m*c->k*2); else tr_ref(w,0,c->a,c->m*c->k*sizeof(float));
+  if (pb) tr_ref(w,1,pb,c->k*c->n*2); else tr_ref(w,1,c->b,c->k*c->n*sizeof(float));
+  tr_ref(w,2,c->c,c->m*c->n*sizeof(float)); tr_ref(w,3,ws,bytes);
+}
+static void tr_mm(unsigned entry,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
+    const float *a,const float *b,float beta,const float *c,const void *ws,size_t bytes) {
+  bcir_tensor_mm_call x;
+  x.ta=ta; x.tb=tb; x.m=m; x.n=n; x.k=k; x.alpha=alpha; x.a=a; x.b=b; x.beta=beta; x.c=(float *)c;
+  tr_call(tr_record(DT_TR_GEMM,1),entry,0,0,entry<4 ? entry : 15u,&x,NULL,NULL,ws,bytes);
+}
+static void tr_mm_group(unsigned entry,int contract,const bcir_tensor_mm_call *chain,size_t nchain,
+    const bcir_tensor_mm_call *y,size_t ny,const bcir_tensor_bf16_panels *pre,const void *ws,
+    size_t bytes) {
+  size_t q; int fresh=1;
+  for (q=0;q<nchain+ny;q++) {
+    const bcir_tensor_mm_call *c=q<nchain ? chain+q : y+(q-nchain);
+    tr_call(tr_record(DT_TR_GEMM,fresh),entry,q<nchain ? 1u : 2u,q,(unsigned)contract,c,
+        pre ? pre[q].a : NULL,pre ? pre[q].b : NULL,ws,bytes);
+    fresh=0;
+  }
+}
+static void tr_attention(unsigned kind,unsigned contract,int bf16,int variant,size_t b,size_t t,
+    size_t h,size_t kh,size_t d,const float *q,const float *k,const float *v,const float *p,
+    const float *y,const float *dq,const float *dk,const float *dv,const void *ws,size_t bytes) {
+  uint64_t *w=tr_record(kind,1);
+  size_t qb=b*t*h*d*sizeof(float),kb=b*t*kh*d*sizeof(float);
+  if (!w) return;
+  w[2]=contract|(uint64_t)(bf16!=0)<<8|(uint64_t)(unsigned)variant<<9;
+  w[3]=b; w[4]=t; w[5]=h; w[6]=kh; w[7]=d;
+  tr_ref(w,0,q,qb); tr_ref(w,1,k,kb); tr_ref(w,2,v,kb); tr_ref(w,3,p,b*h*t*t*sizeof(float));
+  tr_ref(w,4,y,qb); tr_ref(w,5,dq,qb); tr_ref(w,6,dk,kb); tr_ref(w,7,dv,kb); tr_ref(w,8,ws,bytes);
+}
+static void tr_quad(uint64_t *w,const float *gr,const float *wt,const float *m1,const float *m2,
+    size_t n) {
+  size_t b=n*sizeof(float);
+  tr_ref(w,0,gr,b); tr_ref(w,1,wt,b); tr_ref(w,2,m1,b); tr_ref(w,3,m2,b);
+}
+/* The pool's jobs the trainer writes itself, told apart by their task; a job nothing here names is
+ * recorded as kind 0, a finding. */
+static void tr_run(bcir_tensor_task_fn fn,const void *ctx) {
+  uint64_t *w;
+  if (fn==scan_task || fn==fill_task) {
+    const span_job *j=(const span_job *)ctx;
+    if (!(w=tr_record(fn==scan_task ? DT_TR_SCAN : DT_TR_ZERO,1))) return;
+    w[3]=j->n; tr_ref(w,0,fn==scan_task ? (const void *)j->x : (const void *)j->y,j->n*sizeof(float));
+  }
+  else if (fn==loss_task) {
+    const loss_job *j=(const loss_job *)ctx;
+    if (!(w=tr_record(DT_TR_LOSS,1))) return;
+    w[3]=j->n; w[4]=j->v;
+    tr_ref(w,0,j->logits,j->n*j->v*sizeof(float)); tr_ref(w,1,j->targets,j->n*sizeof(uint32_t));
+    tr_ref(w,2,j->dl,j->n*j->v*sizeof(float)); tr_ref(w,3,j->terms,j->n*sizeof(double));
+  }
+  else if (fn==scatter_task) {
+    const scatter_job *j=(const scatter_job *)ctx;
+    if (!(w=tr_record(DT_TR_SCATTER,1))) return;
+    w[3]=j->n; w[4]=j->d;
+    tr_ref(w,0,j->tokens,j->n*sizeof(uint32_t)); tr_ref(w,1,j->dx,j->n*j->d*sizeof(float));
+    tr_ref(w,2,j->grad,(size_t)trace_state->plan.spec.vocab*j->d*sizeof(float));
+  }
+  else if (fn==pass_task) {
+    const pass_job *j=(const pass_job *)ctx;
+    if (!(w=tr_record(DT_TR_PASS,1))) return;
+    w[2]=(uint64_t)(j->reduce!=0); w[3]=j->n; w[4]=j->chunk; tr_quad(w,j->gr,j->wt,j->m1,j->m2,j->n);
+  }
+  else if (fn==preflight_task) {
+    const preflight_job *j=(const preflight_job *)ctx;
+    if (!(w=tr_record(DT_TR_PREFLIGHT,1))) return;
+    w[3]=j->n; w[4]=j->chunk; tr_quad(w,j->gr,j->wt,j->m1,j->m2,j->n);
+  }
+  else if (fn==commit_task) {
+    const commit_job *j=(const commit_job *)ctx;
+    if (!(w=tr_record(DT_TR_COMMIT,1))) return;
+    w[3]=j->n; tr_quad(w,j->gr,j->wt,j->m1,j->m2,j->n);
+  }
+  else (void)tr_record(0,1);
+}
+static void tr_embed(size_t n,size_t d,const uint32_t *tokens,const float *table,const float *x) {
+  uint64_t *w=tr_record(DT_TR_EMBED,1);
+  if (!w) return;
+  w[3]=n; w[4]=d;
+  tr_ref(w,0,tokens,n*sizeof(uint32_t));
+  tr_ref(w,1,table,(size_t)trace_state->plan.spec.vocab*d*sizeof(float));
+  tr_ref(w,2,x,n*d*sizeof(float));
+}
+#endif

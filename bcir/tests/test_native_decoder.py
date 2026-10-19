@@ -142,7 +142,9 @@ def test_native_c_harness_c11_and_c23():
         # and C23 once more with the writers' verdict bytes bounded at two tasks, so every scan
         # entry takes the scan after its job (NDT-SCAN-W), and once capped at AVX2, so a host whose
         # widest variant is AVX-512 runs the update's AVX2 pairs and commit too (NDT-UPDATE); every
-        # build with the commit's shared division exposed to the harness's check of it
+        # build with the commit's shared division exposed to the harness's check of it, and with
+        # PX-1's launch trace compiled in but never begun -- so the probe builds warning-free on
+        # every compiler and standard, and the harness's every check holds with it in (inert)
         builds = (
             ("c11", [], ""),
             ("c2x", [], ""),
@@ -159,6 +161,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_ATTENTION_PROBE",
                 "-DBCIR_DT_PANELS_PROBE",
                 "-DBCIR_DT_SCAN_PROBE",
+                "-DBCIR_DT_TRACE_PROBE",
                 *options,
                 "-O2",
                 "-Wall",
@@ -214,6 +217,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_ATTENTION_PROBE",
                 "-DBCIR_DT_PANELS_PROBE",
                 "-DBCIR_DT_SCAN_PROBE",
+                "-DBCIR_DT_TRACE_PROBE",
             ]
             cmd += ["-I", str(c)]
             cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]
@@ -1304,10 +1308,14 @@ def test_the_harness_rows_are_the_programs_numbers():
                          "train.exp.mismatch", "train.exp.ulp.max",
                          "train.mm.kblock.mismatch", "train.mm.provider.unsound",
                          "train.mm.provider.differences", "train.norm.reduce.mismatch",
-                         "train.mm.bf16.mismatch", "train.plan.remat.mismatch"}  # fmt: skip
+                         "train.mm.bf16.mismatch", "train.plan.remat.mismatch",
+                         "train.plan.executed.mismatch"}  # fmt: skip
     remat = rows["train.plan.remat.mismatch"]
     assert remat.kind == "exact" and remat.bound == 0 and remat.baseline == 0
     assert remat.what.startswith("(spec, recompute set) pairs") and remat.slice_owner == "GEO-3"
+    executed, calls = rows["train.plan.executed.mismatch"], len(nf.trace_corpus())
+    assert executed.kind == "exact" and executed.bound == 0 and executed.baseline == calls
+    assert executed.what.startswith(f"of the {calls} calls") and executed.slice_owner == "PX-1"
     bf16 = rows["train.mm.bf16.mismatch"]
     assert bf16.kind == "exact" and bf16.bound == 0 and bf16.baseline == 0
     assert (

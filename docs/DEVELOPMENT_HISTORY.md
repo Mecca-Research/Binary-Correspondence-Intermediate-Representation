@@ -3309,6 +3309,46 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     killed; it fails the new one in `BCIR_TEST_CHILD_TIMEOUT` seconds. Witness
     `test_posix_bash_is_a_shell_probed_within_the_child_bound` (a WSL launcher's notice, a shell, a wedged
     one); `posix-bash.json` PB1-PB3, 3 of 3 caught.
+  PX-1 (2026-10-19): the native step's launches held to the launches its step program states.
+  - The gap Codex's Triton comparison names (its 2026-10-19 update, draft PR #821): the native trainer's
+    direct C loop issues no StreamPack claim per tensor operation, and nothing showed which decisions reach
+    a call. Every decision the trainer's slices made -- a linear's two VJPs as one pool job and the linears
+    reading one input as one (NDT-SCHED), the SwiGLU block writing the GEMMs' bf16 panels (BF16-PANELS), the
+    recompute set's shared slot and re-run forwards (REMAT), the scans a step's facts leave out (NDT-SCAN,
+    FACTS-RUN), the gradients' first writers (NDT-ZERO) -- landed bit-identical, so the state cannot show
+    whether the C runs it.
+  - `native_launch.run_launches` states every launch one `bcir_decoder_run_accum` call issues -- each call
+    to the tensor unit, a provider or the pool, the job it shares, its entry (v1, fused, blocked, bf16 alone;
+    a pair's, a group's or a bf16 group's; a provider's), its shapes and scalars, and the (arena, offset,
+    bytes) of every operand -- from `training_step_program`'s buffers and the trainer's decisions alone:
+    contract, recompute set, workspace and the panels' threshold, the arenas' alignment, a provider,
+    steps and micro-batches. The update's preflight runs only when the first pass's maxima fail to bound
+    the update, a fact of the values, so it is planned optional. A build defining `BCIR_DT_TRACE_PROBE`
+    interposes every dispatch in `bcir_decoder_train.c` and records it, 48 words a record, in words the
+    caller lends; a record past them is counted. The library is untouched: without the define the probe
+    is three empty macros.
+  - `train.plan.executed.mismatch` 221 -> 0: the 221 calls of the trace corpus (the plan corpus under six
+    contracts, three recompute sets, one step and two steps of two micro-batches; the panels' bench at the
+    workspace's three tiers at one thread and four; a provider's GEMM, and its GEMM and SiLU; an update
+    whose bound fails) issue exactly their planned launches, every record kind, every GEMM entry and both
+    panel operands reached. The trace build trains the library's state on 27 decision sets (12 distinct
+    states), and a trace lent half its words holds the first half and counts the rest.
+  - What the trace sees that the state does not: each of `px-trace.json`'s eight C faults -- the linears
+    ungrouped (217 of 221 calls leave the plan), a linear's VJPs unpaired (217), the panels never written
+    (21), the final norm's 1/rms moved to `dk` (221), the loss rows' terms moved to `tmp` (221), the top
+    recomputed layer re-run (144), the deferred gradient scan run anyway (221), an untied model's first
+    fill widened to every gradient (73) -- trains the clean library's bits on all 27 decision sets.
+    `px-trace.json` PX1-PX8, PT1-PT4 (the probe: drops uncounted, every call its own launch, a recorded add
+    run twice, the workspace placed outside the state) and PM1-PM7 (the launch model and the
+    comparison): 19 of 19 caught, each by its own check (PT1
+    only by the capacity check, PT3 only by the state check). The C harness's C11, C2x and UBSan builds
+    compile the probe in, never begun: warning-free under -Wpedantic -Werror on GCC 13, clang 18 and
+    clang 23, and the harness's 29 checks hold with it.
+  - The ladder: NDT-SCHED's remaining item -- the step reading its plan -- is the training roadmap's PX
+    rows: the step as a StreamPack a C interpreter executes (PX-2), the per-call choices carried by the
+    plan and one intervention measured (PX-3), the transients placed by lifetime (PX-4, NDT-MEM's row),
+    GF(2) layout maps held to the bf16 packers (PX-5), and GPU lowering and synchronization, gated on
+    hardware this host lacks (PX-6).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

@@ -140,13 +140,14 @@ multiply-add of the contractions every implementation performs: each linear's pr
 VJPs, and the causal attention's six contractions. Normalization, softmax, RoPE, SwiGLU, the loss
 and the optimizer are not counted, so the count bounds the step's work from below.
 
-Four rows of the frozen GEM+ harness (`python tools/perf/gemplus_baseline.py --compare --group
+The `train` rows of the frozen GEM+ harness (`python tools/perf/gemplus_baseline.py --compare --group
 train`, graded by [`native_decoder_fixtures`](../../bcir/tests/native_decoder_fixtures.py)) hold
 the C rail to it:
 
 | Row | Kind | What it holds | Reading |
 |---|---|---|---|
 | `train.plan.mismatch` | exact | the program's arena sums against `bcir_decoder_make_plan` over a six-spec corpus (tied and untied, MHA and GQA, context one, tile-crossing widths) | 0 of 36 (spec, arena) pairs; the parent checked the 24 parameter pairs only |
+| `train.plan.executed.mismatch` | exact | the launches one `bcir_decoder_run_accum` call issues -- recorded by a build defining `BCIR_DT_TRACE_PROBE` -- against the launches [`native_launch.run_launches`](../../bcir/hosted/models/native_launch.py) states from the program's buffers and the call's decisions: every call to the tensor unit, a provider or the pool, the job it shares, its entry, shapes, scalars and the arena span of each operand, over 221 calls (six contracts, three recompute sets, one and two steps of one and two micro-batches, the panels at three workspace tiers and two thread counts, a provider's GEMM and SiLU, an update whose bound fails) | 0 of 221 (2026-10-19, PX-1); the parent held no call's launches to a plan |
 | `train.mm.mismatch` | exact | `bcir_tensor_mm` against an independent binary32 emulation of its contract, bit for bit, on 20 cases (every transpose pair, the tiles' edges) | 0 of 20, and 0 on the parent kernel: the contract both keep |
 | `train.memory.transient` | exact | the bytes the C plan reserves for activations and workspace over G26's concurrent-live bound on the same values | 1.326x: 999,424 bytes held over a 753,664-byte bound at the bench shape |
 | `train.mm.fused.mismatch` | exact | `bcir_tensor_mm_fused` against an exact rational emulation of the fused contract rounded once per term, bit for bit, on the same 20 cases | 0 of 20 (2026-10-12, NDT-FMA) |
@@ -169,7 +170,20 @@ cache-resident from one step to the next and first-touch traffic is not the loop
 The memory row records headroom, not a change: GEM+'s incumbent layout portfolio lays the same
 values out at the bound, so a plan that places the transient values by lifetime instead of one
 span per buffer would hold 245,760 bytes (25%) less at the bench shape. That changes the C ABI's fixed
-spans, so it is its own slice (NDT-MEM, open).
+spans, so it is its own slice (NDT-MEM, open: the training roadmap's PX-4).
+
+The executed row closes the other half of the program's claim. The decisions a trainer takes --
+which linears share a pool job, the entry each GEMM takes under the contract, the panels the SwiGLU
+block writes instead of the GEMMs packing them, the recompute set's shared slot and re-run
+forwards, the scans a step's facts leave out -- each landed bit-identical, so the state cannot show
+whether the C runs them. The trace shows it: each of the eight C faults of
+[`px-trace.json`](../../tools/testing/faults/px-trace.json) trains the clean library's bits while
+its trace leaves the plan. The probe costs nothing in the library: it exists only in a build that
+defines `BCIR_DT_TRACE_PROBE` (`native_decoder_fixtures.trace_library`), whose every dispatch is
+the library's call after its record -- the witness holds that build's state to the library's on
+27 decision sets -- and a record past the words the caller lent is counted, never lost silently.
+`native_decoder_fixtures.trace_case` runs one call and returns the planned launches, the trace,
+the dropped count and the state's digest; `launch_mismatches` names each difference.
 
 ## Evidence and scope
 

@@ -1,0 +1,147 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_launch:_CC",
+    "bcir.tests.test_native_launch:test_the_c_step_issues_the_planned_launches",
+    "bcir.tests.test_native_launch:test_the_comparison_names_every_divergence",
+    "bcir.tests.test_native_launch:test_the_launches_issue_the_programs_gemms",
+    "bcir.tests.test_native_launch:test_the_launch_model_refuses_what_it_cannot_state"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PX1 the linears reading one input run as separate calls (NDT-SCHED-1's group undone)",
+      "new": "  if (1) {\n    for (q=0;q<count;q++) ran&=linear(s,r,in,out[q],x,w[q],y[q]);",
+      "old": "  if (s->provider.mm || count>BCIR_TENSOR_MM_GROUP) {\n    for (q=0;q<count;q++) ran&=linear(s,r,in,out[q],x,w[q],y[q]);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PX2 a linear's two VJPs run as two calls (NDT-SCHED-0's pair undone)",
+      "new": "  bcir_tensor_mm_call cx,cw;\n  if (1) {",
+      "old": "  bcir_tensor_mm_call cx,cw;\n  if (s->provider.mm) {",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PX3 the SwiGLU block never writes its panels (the GEMMs pack instead)",
+      "new": "  return 0 && gemm_contract(s)==3 && !s->provider.mm && !s->provider.silu && g.n && g.d && g.f &&",
+      "old": "  return gemm_contract(s)==3 && !s->provider.mm && !s->provider.silu && g.n && g.d && g.f &&",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PX4 the final norm's VJP keeps its rows' 1/rms in dk, not dq",
+      "new": "  rms_backward(s,g.n,g.d,xs+g.l*g.nd,final,dn,cur,dfinal,dk,gf);",
+      "old": "  rms_backward(s,g.n,g.d,xs+g.l*g.nd,final,dn,cur,dfinal,dq,gf);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PX5 the loss rows' terms written to tmp, not the arena's start",
+      "new": "  lj.terms=(unsigned char *)tmp;",
+      "old": "  lj.terms=(unsigned char *)s->scratch;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PX6 the backward re-runs the top recomputed layer (its cache already in the slot)",
+      "new": "    if (recomputes(s->recompute,l)) {",
+      "old": "    if (recomputes(s->recompute,l) && l!=top) {",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PX7 the deferred gradient scan runs anyway (the first pass would have judged it)",
+      "new": "  if (!finite_pool(s,s->gradients,s->plan.parameters) || !isfinite(ce))",
+      "old": "  if ((!(how&DT_DEFER) && !finite_pool(s,s->gradients,s->plan.parameters)) || !isfinite(ce))",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PX8 an untied model's first step fills every gradient, not the embedding the scatter adds into",
+      "new": "  if (!accumulate && first && !s->plan.spec.tied) zero_pool(s,s->gradients,s->plan.parameters);",
+      "old": "  if (!accumulate && first && !s->plan.spec.tied) zero_pool(s,s->gradients,g.v*g.d);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PT1 the probe drops records past its words without counting them",
+      "new": "  if (trace_count>=trace_capacity) return NULL;",
+      "old": "  if (trace_count>=trace_capacity) { trace_dropped++; return NULL; }",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PT2 the probe numbers every call its own launch (a group reads as its calls)",
+      "new": "  trace_launch++;",
+      "old": "  if (fresh) trace_launch++;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PT3 the probe's record of an add runs the add twice (the trace still matches; the bits do not)",
+      "new": "#define bcir_tensor_add_pool(pool,n,x,y) (tr_add(n,x,y),bcir_tensor_add_pool(pool,n,x,y),bcir_tensor_add_pool(pool,n,x,y))",
+      "old": "#define bcir_tensor_add_pool(pool,n,x,y) (tr_add(n,x,y),bcir_tensor_add_pool(pool,n,x,y))",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PT4 the probe places the bf16 workspace's operands outside the state",
+      "new": "  len[6]=0;",
+      "old": "  len[6]=(s->contract&BCIR_DT_CONTRACT_BF16) ? s->workspace_bytes : 0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PM1 the plan groups at most two linears (q, k, v planned as three launches)",
+      "new": "        if provider_mm or len(outs) > 2:\n            for o, w, y in zip(outs, ws_, ys):",
+      "old": "        if provider_mm or len(outs) > _GROUP:\n            for o, w, y in zip(outs, ws_, ys):",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PM2 the plan keeps the norms' 1/rms in dk",
+      "new": "        inv = sc(\"dk\", 0, 4 * n)",
+      "old": "        inv = sc(\"dq\", 0, 4 * n)",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PM3 the plan states the update's preflight as always run",
+      "new": "        emit(_record(PREFLIGHT, 0, (params, chunk), quad), optional=False)",
+      "old": "        emit(_record(PREFLIGHT, 0, (params, chunk), quad), optional=True)",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PM4 the plan refuses the panels at the workspace's exact need",
+      "new": "                and workspace_bytes > panels_need)  # fmt: skip",
+      "old": "                and workspace_bytes >= panels_need)  # fmt: skip",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_the_comparison_names_every_divergence",
+      "label": "PM5 the comparison reads only each job's record kinds (a moved operand passes)",
+      "new": "        if i < len(jobs) and [r.kind for r in jobs[i]] == [r.kind for r in launch.records]:",
+      "old": "        if i < len(jobs) and jobs[i] == launch.records:",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_the_launches_issue_the_programs_gemms",
+      "label": "PM6 a recomputed layer's re-run forward issues its down projection too",
+      "new": "            silu_mul(c(\"gate\"), c(\"up\"), hidden)\n            if True:\n                linear(n, f, d, hidden, p(\"down\"), y)",
+      "old": "            silu_mul(c(\"gate\"), c(\"up\"), hidden)\n            if full:\n                linear(n, f, d, hidden, p(\"down\"), y)",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_the_launch_model_refuses_what_it_cannot_state",
+      "label": "PM7 the launch model takes a bool for a step count",
+      "new": "    if steps < 1 or accumulation < 1:",
+      "old": "    if type(steps) is not int or steps < 1 or type(accumulation) is not int or accumulation < 1:",
+      "path": "bcir/hosted/models/native_launch.py"
+    }
+  ]
+}
