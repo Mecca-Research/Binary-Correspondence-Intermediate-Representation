@@ -1,0 +1,15 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 7feb5fc, runtime/c against it e3b0c44298fc1c14
+# this tree's runtime/c
+# Ubuntu clang version 18.1.3 (1ubuntu1)
+this, clang portable: run 17.9 s (cap 60), exit 0, PASS 29
+this, clang portable UBSan: run 24.7 s (cap 300), exit 0, PASS 29, runtime errors 0
+# gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+this, gcc portable: run 18.3 s (cap 60), exit 0, PASS 29
+this, gcc portable UBSan: run 36.8 s (cap 300), exit 0, PASS 29, runtime errors 0
+# the parent 12aa6dc's runtime/c
+# Ubuntu clang version 18.1.3 (1ubuntu1)
+parent, clang portable: run 15.3 s (cap 60), exit 0, PASS 27
+parent, clang portable UBSan: run 21.3 s (cap 300), exit 0, PASS 27, runtime errors 0
+# gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+parent, gcc portable: run 16.6 s (cap 60), exit 0, PASS 27
+parent, gcc portable UBSan: run 32.7 s (cap 300), exit 0, PASS 27, runtime errors 0

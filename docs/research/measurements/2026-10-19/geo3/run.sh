@@ -14,7 +14,8 @@
 # all-kept state at the need against each candidate; scenario the memory planner's choice inside a
 # budget against the full micro-batch kept and two accumulated half micro-batches; harness the C
 # harness built as the aarch64 CI job builds it (no x86 dispatch: every bf16 product the portable
-# loops), timed against the caps test_native_decoder.py gives it, 60 s a run and 300 s under UBSan.
+# loops), timed against the caps test_native_decoder.py gives it, 60 s a run and 300 s under UBSan, and the
+# parent's harness built and timed alike after it.
 # inventory-*.txt, parent.txt and identity-*.txt are exact; frontier-*.txt, scenario-*.txt and
 # harness.txt are indicative wall times on one host, one process at a time.
 set -u
@@ -72,30 +73,35 @@ if want scenario; then
   # Codex's attention model in its 32 MiB envelope under each contract; the 9.84M decoder in 256 MiB
   build
   for c in kblock+exp+reduce+attn bf16+exp+reduce+attn bf16+exp+reduce+attnbf16; do
-    { host; "$T/geo3" scenario codex-attn $c 4 24 3 33554432; } > $R/scenario-codex-$c-t4.txt 2>&1
+    { host; "$T/geo3" scenario codex-attn $c 4 64 6 33554432; } > $R/scenario-codex-$c-t4.txt 2>&1
     echo "scenario codex $c exit $?"
   done
-  { host; "$T/geo3" scenario 9.84M bf16+exp+reduce+attnbf16 4 12 2 268435456; } \
+  { host; "$T/geo3" scenario 9.84M bf16+exp+reduce+attnbf16 4 64 3 268435456; } \
     > $R/scenario-9.84M-256MiB-t4.txt 2>&1
   echo "scenario 9.84M exit $?"
 fi
 if want harness; then
+  # this tree's harness and then the parent's, built and timed alike, back to back
   P="-DBCIR_DT_DIVISION_PROBE -DBCIR_DT_WORKSPACE_PROBE -DBCIR_DT_ATTENTION_PROBE -DBCIR_DT_PANELS_PROBE -DBCIR_DT_SCAN_PROBE"
-  U="$C/test_decoder_train.c $C/bcir_tensor.c $C/bcir_decoder_train.c"
   now() { date +%s.%N; }
   span() { python3 -c "import sys; print(f'{float(sys.argv[2]) - float(sys.argv[1]):.1f}')" "$1" "$2"; }
+  [ -d "$T/parent/$C" ] || { mkdir -p "$T/parent"; git archive $PARENT $C | tar -x -C "$T/parent"; }
   {
     host
-    for cc in clang gcc; do
-      echo "# $($cc --version | head -1)"
-      $cc -std=c2x $P -DBCIR_TENSOR_NO_DISPATCH -O2 -Wall -Wextra -Wpedantic -Werror -ffp-contract=off -I $C $U \
-        -o "$T/portable-$cc" -lm -pthread || exit 1
-      t1=$(now); "$T/portable-$cc" > "$T/portable-$cc.out" 2>&1; rc=$?; t2=$(now)
-      echo "$cc portable: run $(span $t1 $t2) s (cap 60), exit $rc, PASS $(grep -c PASS "$T/portable-$cc.out")"
-      $cc -std=c11 -O1 -g -ffp-contract=off -fsanitize=undefined,float-cast-overflow -fno-sanitize-recover=all $P \
-        -DBCIR_TENSOR_NO_DISPATCH -I $C $U -o "$T/ubsan-$cc" -lm -pthread || exit 1
-      t1=$(now); "$T/ubsan-$cc" > "$T/ubsan-$cc.out" 2>&1; rc=$?; t2=$(now)
-      echo "$cc portable UBSan: run $(span $t1 $t2) s (cap 300), exit $rc, PASS $(grep -c PASS "$T/ubsan-$cc.out"), runtime errors $(grep -c 'runtime error' "$T/ubsan-$cc.out")"
+    for tree in this parent; do
+      if [ $tree = this ]; then D=$C; echo "# this tree's runtime/c"; else D=$T/parent/$C; echo "# the parent $PARENT's runtime/c"; fi
+      U="$D/test_decoder_train.c $D/bcir_tensor.c $D/bcir_decoder_train.c"
+      for cc in clang gcc; do
+        echo "# $($cc --version | head -1)"
+        $cc -std=c2x $P -DBCIR_TENSOR_NO_DISPATCH -O2 -Wall -Wextra -Wpedantic -Werror -ffp-contract=off -I $D $U \
+          -o "$T/portable-$tree-$cc" -lm -pthread || exit 1
+        t1=$(now); "$T/portable-$tree-$cc" > "$T/portable-$tree-$cc.out" 2>&1; rc=$?; t2=$(now)
+        echo "$tree, $cc portable: run $(span $t1 $t2) s (cap 60), exit $rc, PASS $(grep -c PASS "$T/portable-$tree-$cc.out")"
+        $cc -std=c11 -O1 -g -ffp-contract=off -fsanitize=undefined,float-cast-overflow -fno-sanitize-recover=all $P \
+          -DBCIR_TENSOR_NO_DISPATCH -I $D $U -o "$T/ubsan-$tree-$cc" -lm -pthread || exit 1
+        t1=$(now); "$T/ubsan-$tree-$cc" > "$T/ubsan-$tree-$cc.out" 2>&1; rc=$?; t2=$(now)
+        echo "$tree, $cc portable UBSan: run $(span $t1 $t2) s (cap 300), exit $rc, PASS $(grep -c PASS "$T/ubsan-$tree-$cc.out"), runtime errors $(grep -c 'runtime error' "$T/ubsan-$tree-$cc.out")"
+      done
     done
   } > $R/harness.txt 2>&1
   echo "harness exit $?"

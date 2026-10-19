@@ -92,9 +92,14 @@ needs **30,988,288 bytes (29.55 MiB) in binary32 -- 0.27 MiB more than attention
 the attention64 state bit for bit**; under the bf16 GEMMs with the fused attention it needs
 32,921,664 bytes (31.40 MiB) at the exact workspace and would need 33,741,056 (32.18 MiB, over the
 envelope) at the parent's plan figure, so the fit is the coupling of the two slices, not either
-alone ([inventory.txt](measurements/2026-10-19/geo3/inventory.txt)). The measure note's §42 times
-the three -- attention64 kept, the planner's attention64 inside the envelope, attention32 -- update
-for update on the same data.
+alone ([inventory.txt](measurements/2026-10-19/geo3/inventory.txt)). The measure note's §42 times the
+three -- attention64 kept, the planner's attention64 inside the envelope, attention32 -- update for
+update on the same data, in binary32 at four threads: the planner's attention64 costs x1.158
+(1.131-1.188) of an update of attention64 kept, which does not fit, and trains its state bit for
+bit; attention32 costs x1.011 (0.977-1.045) and trains another
+([scenario-codex-kblock+exp+reduce+attn-t4.txt](measurements/2026-10-19/geo3/scenario-codex-kblock+exp+reduce+attn-t4.txt)).
+Holding the trajectory fixed costs about 15% of an update at this shape -- a price a comparison of
+heads across the envelope can now choose to pay.
 
 ### 2.3 What transfers from the AMD hosts and what does not
 
@@ -154,8 +159,9 @@ nothing, the bf16 attention's regions one a worker of the pool the state names; 
 recompute set (`bcir_decoder_state.recompute`, bit l for layer l) whose layers share one cache slot
 after the kept ones, the highest recomputed layer free, the re-run stopping at the hidden
 activation, every set the all-kept state bit for bit; **MEM-PLAN** -- `memory_plan` and
-`NativeDecoder(recompute="auto", max_memory_bytes=...)`, which choose a workspace tier and a
-recompute set inside a budget in a declared order; and the GEM+ step program's parity with the C
+`NativeDecoder(recompute="auto", max_memory_bytes=...)`, which choose a recompute set and a
+workspace tier inside a budget in the order the measured frontier prices (each set at the need
+and then at the panels' need, the floor after every set); and the GEM+ step program's parity with the C
 count under every set (the new exact row `train.plan.remat.mismatch`, 0).
 
 Open, in order:

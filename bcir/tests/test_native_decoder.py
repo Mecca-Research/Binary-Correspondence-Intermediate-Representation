@@ -684,14 +684,15 @@ def test_recompute_and_the_workspace_keep_every_state():
 
 
 def test_the_memory_plan_fits_its_budget_and_keeps_the_state():
-    """GEO-3 (MEM-PLAN): `memory_plan` chooses, within a budget, the workspace at the step's need,
-    then at the SwiGLU panels' need, then at the floor, and within each the fewest recomputed
-    layers; every choice is the C's to admit (the arena its count, the workspace at least its
-    floor), fits the budget, and the trainer it makes (recompute="auto") trains the unconstrained
+    """GEO-3 (MEM-PLAN): `memory_plan` chooses, within a budget, the fewest recomputed layers,
+    each with the workspace at the step's need and then at the SwiGLU panels' need, and the floor
+    only after every set (the frontier's prices: the panels' tier about free, the floor dearest);
+    every choice is the C's to admit (the arena its count, the workspace at least its floor),
+    fits the budget, and the trainer it makes (recompute="auto") trains the unconstrained
     trainer's state, bit for bit. Below the least plan the budget is refused, naming the least.
-    Under the fused attention the three tiers are distinct, so the order is seen; under the bf16
-    attention at four workers its regions are both the need and the floor, and the panels' tier,
-    below the floor, is never chosen."""
+    Under the fused attention the three tiers are distinct, so the whole order is seen; under the
+    bf16 attention at four workers its regions are both the need and the floor, and the panels'
+    tier, below the floor, is never chosen."""
     import ctypes as ct
 
     from bcir.hosted.models.native import NativeAdamW, NativeDecoder, memory_plan
@@ -728,28 +729,30 @@ def test_the_memory_plan_fits_its_budget_and_keeps_the_state():
                     )
                     seen.append((chosen.workspace_bytes, chosen.recompute))
                     budget = chosen.total_bytes - 1
-                sizes = [w for w, _ in seen]
-                assert sizes == sorted(sizes, reverse=True), seen  # the workspace shrinks last
-                at_need = [r for w, r in seen if w == tiers.workspace_need]
-                assert at_need == [0] + [(1 << r) - 1 for r in range(2, spec.n_layers + 1)], seen
-                assert seen[-1][0] == tiers.workspace_floor, seen
-                if tiers.workspace_need > tiers.workspace_panels > tiers.workspace_floor:
+                need, panels = tiers.workspace_need, tiers.workspace_panels
+                floor = tiers.workspace_floor
+                sets = [0] + [(1 << r) - 1 for r in range(2, spec.n_layers + 1)]
+                # the budget a recomputed pair fills at the need; a layer's cache outweighs the
+                # whole workspace, so the walk meets every (set, tier) pair the order names
+                fill = memory_plan(lib, plan, contract, 4, None, recompute=0b11).total_bytes
+                assert top - fill > need, (top, fill, need)
+                if need > panels > floor:
                     orders += 1  # three tiers: the order between them is the test's to see
-                    every = (1 << spec.n_layers) - 1
-                    assert seen[-2:] == [(tiers.workspace_panels, every),
-                                         (tiers.workspace_floor, every)], seen  # fmt: skip
+                    # each set at the need and then at the panels' need, the floor after them all
+                    expect = [(w, r) for r in sets for w in (need, panels)] + [(floor, sets[-1])]
                 else:  # the bf16 attention's regions at four workers: the need, and the floor
-                    assert tiers.workspace_need == tiers.workspace_floor > tiers.workspace_panels
-                    assert set(sizes) == {tiers.workspace_need}, seen
-                # the auto trainer at a budget a recomputed pair of layers meets: the full state
-                pair = memory_plan(lib, plan, contract, 4, top - 1)
+                    assert need == floor > panels
+                    expect = [(need, r) for r in sets]
+                assert seen == expect, seen
+                # the auto trainer at the budget a recomputed pair fills: the full state
+                pair = memory_plan(lib, plan, contract, 4, fill)
                 auto = NativeDecoder(path, spec, contract=contract, recompute="auto",
-                                     max_memory_bytes=top - 1, **kw)  # fmt: skip
+                                     max_memory_bytes=fill, **kw)  # fmt: skip
                 try:
                     assert (auto.recompute, auto.workspace_bytes) == (
                         pair.recompute, pair.workspace_bytes)  # fmt: skip
-                    assert (auto.recompute, auto.workspace_bytes) == (0b11, tiers.workspace_need)
-                    assert auto.memory_bytes <= top - 1
+                    assert (auto.recompute, auto.workspace_bytes) == (0b11, need)
+                    assert auto.memory_bytes <= fill
                     assert auto.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)) == full.run(
                         x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)
                     )

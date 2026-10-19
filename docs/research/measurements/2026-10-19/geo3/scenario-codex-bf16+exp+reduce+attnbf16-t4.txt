@@ -1,0 +1,6 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 7feb5fc, runtime/c against it e3b0c44298fc1c14
+GEO-3 scenario: codex-attn bf16+exp+reduce+attnbf16, 4 threads, 64 rounds of 6 updates, budget 33554432 bytes (32.00 MiB)
+  B=4, every layer kept                            memory   55318592 ( 52.76 MiB, over): update   10.02 ms, x1.0000 (1.0000-1.0000); last loss 5.285426, state 5e46c57db947cb08
+  B=4, planned (recompute 0x7, ws 2310208)         memory   33298496 ( 31.76 MiB, fits): update   12.13 ms, x1.2084 (1.1830-1.2390); last loss 5.285426, state 5e46c57db947cb08 = the first arm's, bit for bit
+  B=2 x2 accumulated, every layer kept             memory   33019968 ( 31.49 MiB, fits): update   11.58 ms, x1.1553 (1.1193-1.1956); last loss 5.285426, state 134975b204beff23 (another state: the sum's order)
+scenario: PASS

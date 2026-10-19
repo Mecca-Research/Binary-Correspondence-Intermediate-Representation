@@ -1,4 +1,4 @@
-# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 12aa6dc, runtime/c against it cbe58694db3ed158
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 7feb5fc, runtime/c against it e3b0c44298fc1c14
 GEO-3 inventory: bytes; memory = 16 x parameters + 4 x (activation count + scratch) + workspace
 
 codex-attn (vocab 260, width 128, heads 4/4, layers 3, ff 256, batch 4 x 256), kblock+exp+reduce+attn

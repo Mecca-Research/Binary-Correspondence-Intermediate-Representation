@@ -353,13 +353,15 @@ def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspa
     planning). With `recompute` given: that set and `workspace_bytes` (None: the exact need),
     refused (ValueError) where the C refuses them -- a bit past the last layer, a workspace below
     the floor or lent without a bf16 contract. With `recompute` None: the plan this module
-    chooses within `budget` bytes, among the choices that keep every value: the workspace at the
-    step's need, then at the SwiGLU panels' need, then at the floor, and within each the fewest
-    recomputed layers (the lowest ones; which layers is no matter of cost) -- the order the
-    measured frontier gives (docs/research/measurements/2026-10-19/geo3: a recomputed layer of
-    the 9.84M decoder frees 26 MB for about 2% of a step, the workspace below its need frees at
-    most 3.4 MB for 12-22%). A declared policy, no optimality claim (TMSAO-4); micro-batch
-    accumulation, which frees memory for less time but is not the same state, is the caller's."""
+    chooses within `budget` bytes, among the choices that keep every value, in the order the
+    measured frontier prices them (docs/research/measurements/2026-10-19/geo3): the fewest
+    recomputed layers (the lowest ones; which layers is no matter of cost), each with the
+    workspace at the step's need and then at the SwiGLU panels' need, and the floor only after
+    every set. On both measured shapes the panels' tier cost no step time the rounds resolved
+    (1.3-2.1 MiB freed), a re-run layer 1-11% of a step (10.5-25 MiB) and the floor 32-75%
+    (1.7-4.1 MiB). A declared policy, no optimality claim (TMSAO-4); micro-batch accumulation --
+    cheaper than recomputation at one measured shape, dearer at the other, and never the same
+    state -- is the caller's."""
     _bind_plan(lib)
     if contract not in _CONTRACTS:
         raise ValueError(f"contract must be one of {sorted(_CONTRACTS)}")
@@ -404,16 +406,17 @@ def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspa
     tiers = [need]
     if floor <= panels < need:
         tiers.append(panels)
-    if floor < tiers[-1]:
-        tiers.append(floor)
     sets = [0] + [(1 << r) - 1 for r in range(2, min(layers, 64) + 1)]
+    # the frontier's prices: the panels' tier about free, then a re-run layer, the floor dearest
+    order = [(mask, workspace) for mask in sets for workspace in tiers]
+    if floor < tiers[-1]:
+        order += [(mask, floor) for mask in sets]
     least = None
-    for workspace in tiers:
-        for mask in sets:
-            chosen = arenas(mask, workspace)
-            if chosen.total_bytes <= budget:
-                return chosen
-            least = chosen
+    for mask, workspace in order:
+        chosen = arenas(mask, workspace)
+        if chosen.total_bytes <= budget:
+            return chosen
+        least = chosen
     raise ValueError(
         f"no recompute set and workspace fit {budget} bytes: the least is {least.total_bytes}"
     )

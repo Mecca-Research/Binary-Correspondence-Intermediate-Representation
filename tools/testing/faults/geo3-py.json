@@ -24,9 +24,9 @@
     },
     {
       "expects": "test_the_memory_plan_fits_its_budget_and_keeps_the_state",
-      "label": "GP3 the planner shrinks the workspace before it recomputes a layer",
-      "new": "    for mask in sets:\n        for workspace in tiers:\n            chosen = arenas(mask, workspace)",
-      "old": "    for workspace in tiers:\n        for mask in sets:\n            chosen = arenas(mask, workspace)",
+      "label": "GP3 the planner recomputes every layer before it takes the panels' tier",
+      "new": "    order = [(mask, workspace) for workspace in tiers for mask in sets]",
+      "old": "    order = [(mask, workspace) for mask in sets for workspace in tiers]",
       "path": "bcir/hosted/models/native.py"
     },
     {
@@ -46,8 +46,8 @@
     {
       "expects": "test_the_memory_plan_fits_its_budget_and_keeps_the_state",
       "label": "GP6 the auto plan takes the last fitting choice, not the first",
-      "new": "            least = chosen",
-      "old": "            if chosen.total_bytes <= budget:\n                return chosen\n            least = chosen",
+      "new": "    for mask, workspace in reversed(order):",
+      "old": "    for mask, workspace in order:",
       "path": "bcir/hosted/models/native.py"
     },
     {
@@ -62,6 +62,13 @@
       "label": "GP8 the planner admits a workspace past SIZE_MAX (wrapped by the C's size_t)",
       "new": "        type(workspace_bytes) is not int or workspace_bytes < 0",
       "old": "        type(workspace_bytes) is not int or not 0 <= workspace_bytes < _SIZE_MAX",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_memory_plan_fits_its_budget_and_keeps_the_state",
+      "label": "GP9 the planner takes the floor before it recomputes a layer",
+      "new": "        order = [(m, w) for m in sets for w in (*tiers, floor)]",
+      "old": "        order += [(mask, floor) for mask in sets]",
       "path": "bcir/hosted/models/native.py"
     }
   ]

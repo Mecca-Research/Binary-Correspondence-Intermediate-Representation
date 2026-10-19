@@ -3206,6 +3206,82 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - `ring.json`: the delay fault, whose code is gone, becomes five -- a fixed hold for each peer
     (RING-RACE's 100 ms), a supervisor that never waits, a peer that never stalls, a fixture that
     never passes the stall -- 33 of 33 caught; laws.md L2's RING-PARK instance.
+  GEO-3 (2026-10-19): per-layer caching coupled with packing-aware buffer planning -- the slice Codex's
+    PR818 geometric-head report names as its next opportunity -- in three parts, every state the
+    all-kept trainer's at the exact need, bit for bit ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md),
+    the measure note's §42, [measurements/2026-10-19/geo3/](research/measurements/2026-10-19/geo3/)).
+  - WS-PLAN: `bcir_decoder_workspace_need` counts what the step's bf16 GEMM groups pack by the
+    tensor unit's own rule (`bcir_tensor_mm_bf16_group_panels_workspace`, new), the groups as the
+    step issues them -- operands two calls read alike packed once, a SwiGLU panel operand not at
+    all -- where the parent summed every call packed whole: 4,522,048 bytes for the 9.84M decoder
+    against 11,534,592, 1,933,376 for Codex's attention model at B4/T256 against 2,752,768.
+    `bcir_decoder_workspace_panels` is the least at which the SwiGLU block keeps its panels (a call a
+    panel feeds runs whole, so `panels()` now asks it), `bcir_decoder_workspace_floor` one 32-row
+    strip of A and one 32-column strip of B at the step's deepest call; `valid()` admits any
+    workspace from the floor up (below: `BCIR_DT_CAPACITY`), every product returns whether it ran,
+    and a refusal fails the step with `BCIR_DT_CAPACITY`, nothing committed -- where the parent
+    ignored the GEMMs' returns, safe only while admission demanded the whole conservative sum. The
+    bf16 attention's regions are counted for the state's pool (`bcir_tensor_attention_bf16_pool_workspace`:
+    one a worker where the pool has no more workers than tasks, else one a task), its entries
+    admitting the pool's own. The harness probe now records the need with the panels named: the
+    parent's recorded a group without them, so two panel operands -- NULL addresses -- read as one
+    shared operand, a figure neither path packs (the 9.84M decoder: 6,553,664 against 4,522,048
+    with the panels and 10,747,968 without them).
+  - REMAT (state ABI 5): `bcir_decoder_state.recompute`, bit l for layer l (a bit past the last
+    layer refused). The kept layers' cache slots come first in layer order and the recomputed ones
+    share one slot after them (`bcir_decoder_activation_count`, the arena the state must lend, the
+    logits its last floats); the backward re-runs a recomputed layer's forward from its residual
+    input up to the hidden activation, the last value its backward reads -- the highest such layer
+    free, its cache still in the shared slot -- and every partition being the shapes', the values
+    are the forward's: one state under every set, thread count, contract and micro-batch count.
+    The 9.84M decoder's arenas go from 351.4 MB (binary32, every layer kept) to 220.3 MB with every
+    layer recomputed, five layer forwards a step re-run.
+  - MEM-PLAN: `memory_plan` and `NativeDecoder(recompute="auto", max_memory_bytes=...)` return the
+    first plan that fits in a declared order, TMSAO-4: the fewest recomputed layers, each with the
+    workspace at the need and then at the panels' need, the floor after every set; a set or a size
+    outside its C type is refused before ctypes can wrap it (2^64 would reach the C as the empty
+    set). Accumulation, which changes the state, stays the caller's. The GEM+ program models the
+    sets (`training_step_program(..., recompute)`: the shared slot and the re-run work) and the new
+    exact row `train.plan.remat.mismatch` holds its arenas to the C count (0).
+  - MEM-PLAN-2: the planner's first order walked every set at the need before the panels' tier, so a
+    budget a byte short of the kept plan recomputed two layers where the panels' tier would have
+    done. The frontier priced the panels' tier below one re-run on every measured shape, and the
+    order follows it; the planner's test now holds the whole walk, the scenario driver's
+    `plan_within` the same order.
+  - The frontier (ABBA rounds of whole steps; every run the reference's state): a re-run layer frees
+    25 MiB of the 9.84M decoder for x1.012 (0.965-1.059) of a step under bf16 with the bf16
+    attention at four threads and x1.057 (1.031-1.084) under binary32, and 10.5 MiB of Codex's model
+    for x1.090 and x1.087; every layer recomputed frees 125 MiB for x1.090 and x1.188, and 21 MiB for
+    x1.214 and x1.221. The workspace at the panels' need frees 1.3-2.1 MiB for no cost the rounds
+    resolve (x1.006, x1.032 at one thread, x1.044); at the floor 1.7-4.1 MiB for x1.32-1.75.
+  - Codex's attention model at its 32 MiB envelope: inside 32 MiB the planner recomputes every layer and
+    trains the B4 state bit for bit -- 29.55, 31.40 and 31.76 MiB under binary32, bf16+attn and
+    +attnbf16, for x1.158, x1.180 and x1.208 of an update kept -- where two accumulated B2
+    micro-batches (Codex's attention32) cost x1.011, x1.135 and x1.155 and train another state. The
+    9.84M decoder in 256 MiB recomputes five layers for x1.131 against accumulation's x1.095. At the
+    parent's workspace figure the bf16 plan would need 32.18 MiB: the fit is the two slices'
+    coupling.
+  - Witnesses: the C harness's `trainer_workspace_plan` (every workspace from the floor up one state
+    on two shapes, two contracts, one thread and four, the panels exactly from their groups' need,
+    the probe's need the plan's, a byte below the floor refused with nothing written, a refused
+    product the step's CAPACITY -- in the forward, and in the backward alone where the whole forward
+    runs) and `trainer_recompute` (nine sets, five contracts, one and four threads, one and two
+    micro-batches, the floats past the count untouched, the logits last, a bit past the last layer
+    and an arena a float short refused); `test_recompute_and_the_workspace_keep_every_state`
+    and `test_the_memory_plan_fits_its_budget_and_keeps_the_state`. `geo3.json` GW1-GW12 and RM1-RM6,
+    18 of 18 caught; `geo3-py.json` GP1-GP9, 9 of 9 -- the planner's
+    first test missed its order fault until it walked a contract with three distinct tiers (under
+    the bf16 attention at four workers its regions are both the need and the floor), and GP3, GP6
+    and GP9 now hold the frontier's order; GW6, GW8 and GW12 went uncaught until the harness reached
+    them (a refusal in the backward alone, a shape whose panel groups are the step's largest), and
+    GW5 and GW7 were respelled where the compiler rather than the test refused them (RED-VACUITY: an
+    unused variable under -Werror is no catch). The C harness built as the aarch64 CI job builds it
+    passes in 17.9-18.3 s against its 60 s cap and 24.7-36.8 s under UBSan against 300 s, 1.7-4.1 s
+    more than the parent's built and timed alike.
+  - Re-anchors: eighteen entries of eight older tables (`ndt-attnbf16`, `ndt-attnfma`, `ndt-bf16`,
+    `ndt-fuse`, `ndt-pages`, `ndt-panels`, `ndt-scanw`, `ndt-threads`) whose anchors GEO-3's edits
+    moved were re-anchored to the new code and caught again; the 79 older entries whose injections
+    land in the files GEO-3 changed were re-swept on the final tree with `geo3-py.json`: 88 of 88 caught.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

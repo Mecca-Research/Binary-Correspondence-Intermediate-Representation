@@ -482,20 +482,24 @@ static int frontier(int argc, char **argv) {
 
 /* the memory planner's order (bcir/hosted/models/native.py memory_plan), the first fit */
 static int plan_within(const bench *b, size_t budget, uint64_t *set, size_t *ws, size_t *least) {
-  size_t tiers[3], nt = 1, t;
+  /* memory_plan's order: each set at the need and then at the panels' need, the floor after them */
+  size_t tiers[2], nt = 1, t, pass;
   unsigned r;
   tiers[0] = b->need;
   if (b->floor <= b->panels && b->panels < b->need) tiers[nt++] = b->panels;
-  if (b->floor < tiers[nt - 1]) tiers[nt++] = b->floor;
   *least = SIZE_MAX;
-  for (t = 0; t < nt; t++) for (r = 0; r <= b->sp.layers && r <= 64; r++) {
-    uint64_t s;
-    size_t m;
-    if (r == 1) continue;  /* one recomputed layer is free: the sets are 0, then 2..L */
-    s = r == 0 ? 0 : r == 64 ? ~0ull : (1ull << r) - 1;
-    m = memory_of(b, s, tiers[t]);
-    if (m <= budget) { *set = s; *ws = tiers[t]; return 1; }
-    *least = m;
+  for (pass = 0; pass < 2; pass++) {
+    if (pass == 1 && !(b->floor < tiers[nt - 1])) break;
+    for (r = 0; r <= b->sp.layers && r <= 64; r++) {
+      uint64_t s;
+      if (r == 1) continue;  /* one recomputed layer is free: the sets are 0, then 2..L */
+      s = r == 0 ? 0 : r == 64 ? ~0ull : (1ull << r) - 1;
+      for (t = 0; t < (pass ? 1 : nt); t++) {
+        size_t w = pass ? b->floor : tiers[t], m = memory_of(b, s, w);
+        if (m <= budget) { *set = s; *ws = w; return 1; }
+        *least = m;
+      }
+    }
   }
   return 0;
 }

@@ -537,6 +537,24 @@ the bf16 attention's held-out model is PyTorch bf16's -- test cross-entropy +0.0
 (95% interval -0.00157 to +0.00169), inside the ±0.01 margin fixed before the runs -- at 2.315 times
 its tokens a second (2.194-2.444), in under half its memory (496-534 MB against 1,128-1,151).
 
+Since GEO-3 (2026-10-19) the trainer decides, inside a memory budget, which layers keep their
+forward caches and how much packing workspace the bf16 GEMMs are lent (the report's §42; the
+opportunity Codex's geometric-head research ends on, read in
+[BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md](../research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md)).
+The bf16 workspace's need is exact -- the step's GEMM groups counted by the tensor unit's own
+packing rule, operands two calls read alike packed once and the SwiGLU panels not at all: 4,522,048
+bytes for the 9.84M decoder, where the parent admitted 11,534,592 -- and any size from the floor up
+trains the same state, a product that cannot run failing its step with `BCIR_DT_CAPACITY` before
+anything is committed. A recompute set (state ABI 5) has the backward re-run the named layers'
+forwards instead of keeping their caches, the recomputed layers sharing one cache slot: every layer
+recomputed takes the 9.84M decoder's arenas from 351.4 MB to 220.3 MB under binary32.
+`recompute="auto"` walks the plans in the order the measured frontier prices them: each set with the
+workspace at the need and then at the panels' need (a tier whose cost the rounds did not resolve),
+and the floor, 32-75% of a step, only after every set. Every plan trains the all-kept state at the
+need, bit for bit. Codex's attention model so fits its 32 MiB envelope at its full micro-batch under every
+contract, for 16-21% of an update; two accumulated half micro-batches fit in about as much memory
+for 1-16%, and train another state.
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,
