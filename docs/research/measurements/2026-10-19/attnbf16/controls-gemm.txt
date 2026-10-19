@@ -1,0 +1,13 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 9a702a4, runtime/c against it df21dda56e866915
+# gemm base.so base-copy.so 1 201
+{"threads": 1, "rounds": 201, "same_bits": true, "base_ms": 5.8079, "this_ms": 5.9086, "base_over_this": {"median": 0.9806, "ci95": [0.9736, 0.9885], "this_won": 76}}
+# gemm this.so this-copy.so 1 201
+{"threads": 1, "rounds": 201, "same_bits": true, "base_ms": 5.9250, "this_ms": 6.0936, "base_over_this": {"median": 0.9735, "ci95": [0.9601, 0.9819], "this_won": 70}}
+# gemm this.so base.so 1 201
+{"threads": 1, "rounds": 201, "same_bits": true, "base_ms": 5.7370, "this_ms": 5.6334, "base_over_this": {"median": 1.0139, "ci95": [1.0038, 1.0296], "this_won": 119}}
+# gemm base.so this.so 1 201
+{"threads": 1, "rounds": 201, "same_bits": true, "base_ms": 5.6400, "this_ms": 5.6741, "base_over_this": {"median": 0.9873, "ci95": [0.9755, 1.0004], "this_won": 86}}
+# gemm base.so base-copy.so 4 401
+{"threads": 4, "rounds": 401, "same_bits": true, "base_ms": 2.0361, "this_ms": 2.0881, "base_over_this": {"median": 0.9906, "ci95": [0.9773, 1.0011], "this_won": 181}}
+# gemm this.so this-copy.so 4 401
+{"threads": 4, "rounds": 401, "same_bits": true, "base_ms": 2.0270, "this_ms": 2.0068, "base_over_this": {"median": 1.0075, "ci95": [0.9988, 1.0159], "this_won": 218}}

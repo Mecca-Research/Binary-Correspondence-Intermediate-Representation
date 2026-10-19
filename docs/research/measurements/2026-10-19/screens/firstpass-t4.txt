@@ -1,0 +1,2 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 9a702a4, runtime/c against it df21dda56e866915
+{"threads": 4, "rounds": 80, "contract": "bf16+exp+reduce+attn", "median_ms": [91.75, 89.88], "a_over_b": 1.0243, "ci95": [0.996, 1.0412], "b_faster_rounds": 46}

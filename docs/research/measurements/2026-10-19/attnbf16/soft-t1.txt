@@ -1,0 +1,2 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 9a702a4, runtime/c against it df21dda56e866915
+{"threads": 1, "rounds": 31, "shape": [8, 128, 8, 4, 48], "same_bits": true, "base_ms": {"forward": 2.2404, "backward": 2.6444}, "soft_ms": {"forward": 2.2015, "backward": 2.6271}, "base_over_soft": {"forward": {"median": 1.0150, "ci95": [0.9943, 1.0316], "soft_won": 19}, "backward": {"median": 1.0028, "ci95": [0.9924, 1.0181], "soft_won": 17}, "layer": {"median": 1.0173, "ci95": [1.0042, 1.0267], "soft_won": 24}}}

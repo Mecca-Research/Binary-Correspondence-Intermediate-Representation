@@ -14,7 +14,9 @@ runs the runtime gate's sections, and holds to what the roadmap promised of it.
 4. **A one-unit change executes exactly its dependents:** in a scratch copy of the tree carrying the
    first run's outputs, state and cache, one runtime unit is edited and bcir-make re-run. What it
    executes must be exactly the targets whose generation tag the edit changed, and those must be
-   exactly the edited file's readers and their readers in the lowered graph, computed apart.
+   exactly the edited file's readers and their readers in the lowered graph, computed apart. The
+   copy holds the tracked tree, so the gate refuses to run (UNUSABLE) over a file a target reads,
+   by name or under a tree it reads whole, that git does not track.
 
 Exit 0 when every step holds, 1 with a finding, 2 when the gate cannot run: every exit is a verdict
 (docs/security/laws.md L1).
@@ -38,6 +40,7 @@ if str(ROOT) not in sys.path:
 
 from bcir.make import check, generation_tags, lower, parse  # noqa: E402
 from bcir.make.grammar import is_repo_path  # noqa: E402
+from bcir.make.laws import walk_tree  # noqa: E402
 from bcir.make.run import execute  # noqa: E402
 
 # The unit the change step edits: a library unit with readers on every side of it (the library,
@@ -88,6 +91,25 @@ def untracked_reads(bf, tracked: set[str]) -> list[str]:
     scratch minutes in. Reads that are other targets' outputs are the build's own."""
     written = {w for t in bf.targets for w in t.writes}
     return sorted({r for t in bf.targets for r in t.reads if r not in tracked and r not in written})
+
+
+def untracked_tree_files(bf, tracked: set[str], root: Path) -> list[str]:
+    """The files under the trees the BCIRfile's targets read whole that git does not track and no
+    target writes: each one `walk_tree` yields, the walk the generation tags hash, tracked or not.
+    The change step copies the tracked tree, so such a file is absent from the copy and every
+    target reading its tree is tagged apart from the run it copies and re-executes there -- and a
+    target that asks git for the index there cannot run (the train rail's corpus law; 2026-10-19,
+    untracked records under docs/). The same verdict before any run as an untracked read's."""
+    written = {w for t in bf.targets for w in t.writes}
+    trees = sorted({d for t in bf.targets for d in t.reads_tree})
+    return sorted(
+        {
+            rel
+            for d in trees
+            for rel in walk_tree(root, d).files
+            if rel not in tracked and rel not in written
+        }
+    )
 
 
 def _run(bf, root: Path, meta: Path, workers: int):
@@ -151,12 +173,21 @@ def main(argv: list[str] | None = None) -> int:
     if listed.returncode != 0:
         print("make-gate: UNUSABLE: git ls-files did not run")
         return 2
-    missing = untracked_reads(bf, set(filter(None, listed.stdout.decode("utf-8").split("\0"))))
+    tracked = set(filter(None, listed.stdout.decode("utf-8").split("\0")))
+    missing = untracked_reads(bf, tracked)
     if missing:
         print(
             f"make-gate: UNUSABLE: {len(missing)} file(s) the BCIRfile reads are not tracked, and "
             f"the change step's copy of the tree would lack them: {', '.join(missing[:8])}"
             + (" ..." if len(missing) > 8 else "")
+        )
+        return 2
+    loose = untracked_tree_files(bf, tracked, ROOT)
+    if loose:
+        print(
+            f"make-gate: UNUSABLE: {len(loose)} file(s) under the trees the BCIRfile reads are not "
+            f"tracked, and the change step's copy of the tree would lack them: {', '.join(loose[:8])}"
+            + (" ..." if len(loose) > 8 else "")
         )
         return 2
     meta = ROOT / args.out_dir / ".bcir-make"

@@ -1,0 +1,264 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23",
+    "bcir.tests.test_native_decoder:test_the_bf16_attention_is_a_contract_of_its_own"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB1 the trainer refuses the bf16 attention bit",
+      "new": "BCIR_DT_CONTRACT_ATTN))\n    return BCIR_DT_INVALID;",
+      "old": "BCIR_DT_CONTRACT_ATTN|BCIR_DT_CONTRACT_ATTNBF16))\n    return BCIR_DT_INVALID;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB2 the bf16 attention admitted without the bf16 GEMM contract",
+      "new": "(s->contract&BCIR_DT_CONTRACT_ATTNBF16) && (0 ||",
+      "old": "(s->contract&BCIR_DT_CONTRACT_ATTNBF16) && (!(s->contract&BCIR_DT_CONTRACT_BF16) ||",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB3 the bf16 attention admitted with the fused attention",
+      "new": "      0)) return BCIR_DT_INVALID;",
+      "old": "      (s->contract&BCIR_DT_CONTRACT_ATTN))) return BCIR_DT_INVALID;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB4 the workspace sized for the GEMM groups alone (the attention's packs refused at the first step)",
+      "new": "    if (0) {\n      size_t att=",
+      "old": "    if (contract&BCIR_DT_CONTRACT_ATTNBF16) {\n      size_t att=",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB5 the trainer's forward runs the binary32 attention under the bit",
+      "new": "  if (0)\n    (void)bcir_tensor_attention_bf16_scan_pool(",
+      "old": "  if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)\n    (void)bcir_tensor_attention_bf16_scan_pool(",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB6 the trainer's backward runs the binary32 backward under the bit (it rewrites the probabilities)",
+      "new": "  if (0)\n    (void)bcir_tensor_attention_bf16_backward_pool(",
+      "old": "  if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)\n    (void)bcir_tensor_attention_bf16_backward_pool(",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_bf16_attention_is_a_contract_of_its_own",
+      "label": "AB7 the Python name puts the fused attention's bit on +attnbf16",
+      "new": "_CONTRACTS.update({name + \"+attnbf16\": bits | 32 for name",
+      "old": "_CONTRACTS.update({name + \"+attnbf16\": bits | 64 for name",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB8 an instance the unit does not have (2) is admitted",
+      "new": "  return (bv==1 || bv==2 || bv==4 || bv==8) && (bv==2 || (bcir_tensor_mm_bf16_variants()&bv)) ? bv : 0;",
+      "old": "  return (bv==1 || bv==4 || bv==8) && (bcir_tensor_mm_bf16_variants()&bv) ? bv : 0;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB9 the forward never writes its heads' verdicts (the bytes folded are stale)",
+      "new": "}\nstatic void att16_task(",
+      "old": "  if (a->bad) att_verdict(a,r,h);\n}\nstatic void att16_task(",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB10 past the verdict bytes' bound the forward scans its context but not its keys (the key the softmax hides passes)",
+      "new": "    else if (!scan_pool(pool,y,b*t*nh*d)) *bad=1;\n  }\n  return bv;",
+      "old": "    else if (!scan_pool(pool,y,b*t*nh*d) || !scan_pool(pool,k,b*t*nk*d)) *bad=1;\n  }\n  return bv;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB11 the softmax under the exp bit takes libm's exponential (the bit read as the fused one)",
+      "new": "  j.a.exp2=(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0;",
+      "old": "  j.a.exp2=(contract&BCIR_TENSOR_ATTENTION_EXP)!=0;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB12 the scores stop before the block's diagonal tile",
+      "new": "    att16_region(j->bv,&blk,0,rows,0,cols-rows,0,cs.kt,1);  /* the block's scores to its diagonal */",
+      "old": "    att16_region(j->bv,&blk,0,rows,0,cols,0,cs.kt,1);  /* the block's scores to its diagonal */",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB13 the scores' depth stops a channel tile short",
+      "new": "    att16_region(j->bv,&blk,0,rows,0,cols,0,cs.kt-1,1);  /* the block's scores to its diagonal */",
+      "old": "    att16_region(j->bv,&blk,0,rows,0,cols,0,cs.kt,1);  /* the block's scores to its diagonal */",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB14 the future scores are not zeroed (no row's)",
+      "new": "    att16_future(a->variant,t,r0,0,ph);",
+      "old": "    att16_future(a->variant,t,r0,rows,ph);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB15 the vector future fill keeps each row's first future column",
+      "new": "(__mmask16)(att512_lanes(t-j0)&~att512_lanes(i+2-j0)),",
+      "old": "(__mmask16)(att512_lanes(t-j0)&~att512_lanes(i+1-j0)),",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB16 the scalar future fill keeps each row's first future column",
+      "new": "  for (u=0;u<n;u++) if (i0+u+2<t) memset(ph+(i0+u)*t+i0+u+2,0,(t-i0-u-2)*sizeof(float));",
+      "old": "  for (u=0;u<n;u++) if (i0+u+1<t) memset(ph+(i0+u)*t+i0+u+1,0,(t-i0-u-1)*sizeof(float));",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB17 the probabilities' strip packs the key tiles before the diagonal only",
+      "new": "    att16_pack_rows(j->bv,&cy,ib,ph+r0*t,t,rows,ib);  /* the block's strip of P, key tiles 0 .. ib */",
+      "old": "    att16_pack_rows(j->bv,&cy,ib,ph+r0*t,t,rows,ib+1);  /* the block's strip of P, key tiles 0 .. ib */",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB18 the context reads the key tiles before the diagonal only",
+      "new": "    att16_region(j->bv,&blk,0,rows,0,dp,0,ib,1);  /* its context, through ys */",
+      "old": "    att16_region(j->bv,&blk,0,rows,0,dp,0,ib+1,1);  /* its context, through ys */",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB19 the context's copy drops each row's last channel",
+      "new": "    att16_copy(a->variant,rows,d-1,ys,dp,yh+r0*nh*d,nh*d);",
+      "old": "    att16_copy(a->variant,rows,d,ys,dp,yh+r0*nh*d,nh*d);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB20 the vector copy's last chunk drops a lane",
+      "new": "    __mmask16 m=att512_lanes(cols-j-(cols-j<=16));\n    _mm512_mask_storeu_ps(dst+u*ldd+j,m,",
+      "old": "    __mmask16 m=att512_lanes(cols-j);\n    _mm512_mask_storeu_ps(dst+u*ldd+j,m,",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB21 the scores' keys are the first batch's for every batch",
+      "new": "  att16_call(&c,0,1,t,t,d,NULL,0,a->k+kh*d,nk*d,NULL,t,NULL,kb);",
+      "old": "  att16_call(&c,0,1,t,t,d,NULL,0,a->k+(r*t*nk+kh)*d,nk*d,NULL,t,NULL,kb);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB22 dV^T's key blocks skip their diagonal query tile",
+      "new": "  for (ib=0;ib<nb;ib++) att16_region(j->bv,&cv,0,dp,32*ib,32*ib+32,ib+1,nb,first);",
+      "old": "  for (ib=0;ib<nb;ib++) att16_region(j->bv,&cv,0,dp,32*ib,32*ib+32,ib,nb,first);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB23 dV^T's probability depth tiles packed over the first key block's columns only",
+      "new": "  for (s=0;s<nb;s++) att16_pack_depth(j->bv,&cv,s,32);",
+      "old": "  for (s=0;s<nb;s++) att16_pack_depth(j->bv,&cv,s,32*(s+1));",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB24 dP's values are the keys",
+      "new": "a->k+(r*t*nk+kh)*d,nk*d,NULL,t,NULL,w.vt);",
+      "old": "a->v+(r*t*nk+kh)*d,nk*d,NULL,t,NULL,w.vt);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB25 the scalar dot drops each row's diagonal term",
+      "new": "      for (jj=0;jj<r0+i;jj++) dot[i]=dot[i]+pi[jj]*dpi[jj];",
+      "old": "      for (jj=0;jj<=r0+i;jj++) dot[i]=dot[i]+pi[jj]*dpi[jj];",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB26 the scalar score adjoint reassociates p (dp - dot) scale as p ((dp - dot) scale)",
+      "new": "      for (jj=0;jj<=r0+i;jj++) dsi[jj]=pi[jj]*((dsi[jj]-dot[i])*scale);",
+      "old": "      for (jj=0;jj<=r0+i;jj++) dsi[jj]=pi[jj]*(dsi[jj]-dot[i])*scale;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB27 the scalar score adjoint zeroes half its future to the tile's edge",
+      "new": "      memset(dsi+r0+i+1,0,(edge-r0-i-1)/2*sizeof(float));",
+      "old": "      memset(dsi+r0+i+1,0,(edge-r0-i-1)*sizeof(float));",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB28 the vector score adjoint reassociates p (dp - dot) scale as p ((dp - dot) scale)",
+      "new": "      _mm512_storeu_ps(ds+j,_mm512_maskz_mul_ps(take,pv,_mm512_mul_ps(_mm512_sub_ps(dpv,dv),sc)));",
+      "old": "      _mm512_storeu_ps(ds+j,_mm512_maskz_mul_ps(take,_mm512_mul_ps(pv,_mm512_sub_ps(dpv,dv)),sc));",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB29 the vector score adjoint leaves its future lanes dP",
+      "new": "      _mm512_mask_storeu_ps(ds+j,take,_mm512_maskz_mul_ps(take,",
+      "old": "      _mm512_storeu_ps(ds+j,_mm512_maskz_mul_ps(take,",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB30 dQ reads the key tiles before the diagonal only",
+      "new": "    att16_region(j->bv,&blk,0,rows,0,dp,0,ib,1);\n    att16_copy(a->variant,rows,d,w->dqs,dp,dqh+r0*ldh,ldh);",
+      "old": "    att16_region(j->bv,&blk,0,rows,0,dp,0,ib+1,1);\n    att16_copy(a->variant,rows,d,w->dqs,dp,dqh+r0*ldh,ldh);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB31 dS's strip for dQ packs the key tiles before the diagonal only",
+      "new": "    att16_pack_rows(j->bv,&cq,ib,w->dpb,tp,rows,ib);",
+      "old": "    att16_pack_rows(j->bv,&cq,ib,w->dpb,tp,rows,ib+1);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB32 dS's depth tile for dK^T packs one key block short of its edge",
+      "new": "    att16_pack_rows_b(j->bv,&ck,ib,w->dpb,tp,rows,edge-32);",
+      "old": "    att16_pack_rows_b(j->bv,&ck,ib,w->dpb,tp,rows,edge);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB33 dK^T's key blocks skip their diagonal query tile",
+      "new": "  for (ib=0;ib<nb;ib++) att16_region(j->bv,&ck,0,dp,32*ib,32*ib+32,ib+1,nb,first);",
+      "old": "  for (ib=0;ib<nb;ib++) att16_region(j->bv,&ck,0,dp,32*ib,32*ib+32,ib,nb,first);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB34 every query head's dk and dv start from +0.0 (a KV head keeps its last query head's alone)",
+      "new": "  for (h=kh*share;h<(kh+1)*share;h++) att16_backward_head(j,r,h,1,&w);",
+      "old": "  for (h=kh*share;h<(kh+1)*share;h++) att16_backward_head(j,r,h,h==kh*share,&w);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB35 dk and dv transposed into each other's place",
+      "new": "  att16_transpose(a->variant,t,d,w.dkt,tp,a->dv+(r*t*nk+kh)*d,nk*d);\n  att16_transpose(a->variant,t,d,w.dvt,tp,a->dk+(r*t*nk+kh)*d,nk*d);",
+      "old": "  att16_transpose(a->variant,t,d,w.dvt,tp,a->dv+(r*t*nk+kh)*d,nk*d);\n  att16_transpose(a->variant,t,d,w.dkt,tp,a->dk+(r*t*nk+kh)*d,nk*d);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AB36 the transpose's scalar tail skips a column past the vector blocks",
+      "new": "  for (i=0;i<rows;i++) for (c=i<rw ? cw+1 : 0;c<cols;c++) out[i*ldo+c]=in[c*ldi+i];",
+      "old": "  for (i=0;i<rows;i++) for (c=i<rw ? cw : 0;c<cols;c++) out[i*ldo+c]=in[c*ldi+i];",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

@@ -88,14 +88,14 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "PN12 the forward's writer taking v1's SiLU under v2",
-      "new": "  memset(&j,0,sizeof j); j.r=r; j.c=c; j.op=PANEL_SILU1; j.x=x; j.u=u;",
+      "new": "  memset(&j,0,sizeof j); j.r=r; j.c=c; (void)v2; j.op=PANEL_SILU1; j.x=x; j.u=u;",
       "old": "  memset(&j,0,sizeof j); j.r=r; j.c=c; j.op=v2 ? PANEL_SILU2 : PANEL_SILU1; j.x=x; j.u=u;",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "PN13 the VJP's writer taking v1's VJP under v2",
-      "new": "  memset(&j,0,sizeof j); j.r=r; j.c=c; j.op=PANEL_SWIGLU1; j.x=g; j.u=u;",
+      "new": "  memset(&j,0,sizeof j); j.r=r; j.c=c; (void)v2; j.op=PANEL_SWIGLU1; j.x=g; j.u=u;",
       "old": "  memset(&j,0,sizeof j); j.r=r; j.c=c; j.op=v2 ? PANEL_SWIGLU2 : PANEL_SWIGLU1; j.x=g; j.u=u;",
       "path": "runtime/c/bcir_tensor.c"
     },
@@ -137,7 +137,7 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "PN19 a panel's group run call by call when it does not fit",
-      "new": "    if (0) return 0;  /* a call a panel feeds runs whole, in the one job */",
+      "new": "    (void)panels; if (0) return 0;  /* a call a panel feeds runs whole, in the one job */",
       "old": "    if (panels) return 0;  /* a call a panel feeds runs whole, in the one job */",
       "path": "runtime/c/bcir_tensor.c"
     },
@@ -172,7 +172,7 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "PN24 the trainer's predicate forgetting the slot's alignment",
-      "new": "    !(g.n%32) && !(g.d%32) && !(g.f%32);",
+      "new": "    !(g.n%32) && !(g.d%32) && !(g.f%32) && !((uintptr_t)a%1) && !((uintptr_t)b%1);",
       "old": "    !(g.n%32) && !(g.d%32) && !(g.f%32) && !((uintptr_t)a%64) && !((uintptr_t)b%64);",
       "path": "runtime/c/bcir_decoder_train.c"
     },
@@ -249,7 +249,7 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "PK1 the AMX kernel streaming the first B tile of a depth tile into both B tiles",
-      "new": "      _tile_stream_loadd(6,b0+q*BF16_TILE,64); _tile_stream_loadd(7,b0+q*BF16_TILE,64);",
+      "new": "      _tile_stream_loadd(6,b0+q*BF16_TILE,64); (void)b1; _tile_stream_loadd(7,b0+q*BF16_TILE,64);",
       "old": "      _tile_stream_loadd(6,b0+q*BF16_TILE,64); _tile_stream_loadd(7,b1+q*BF16_TILE,64);",
       "path": "runtime/c/bcir_tensor.c"
     }

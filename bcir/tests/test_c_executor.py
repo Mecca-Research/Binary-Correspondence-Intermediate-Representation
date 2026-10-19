@@ -31,6 +31,7 @@ from bcir.gem.streampack import (
 from bcir.kbcir import optimize
 from bcir.kbcir.cost import TargetProfile, Theta
 from bcir.model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
+from bcir.toolchain import BuildFailed
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _RUNTIME_C = os.path.join(_ROOT, "runtime", "c")
@@ -93,7 +94,8 @@ def _build_harness(tmp):
         capture_output=True,
         text=True,
     )
-    assert r.returncode == 0, r.stderr
+    if r.returncode:  # the tests' setup, not their subject: the finding `build` (RED-VACUITY)
+        raise BuildFailed("the executor harness build", r.stderr)
     return exe
 
 

@@ -60,9 +60,14 @@ static int valid(bcir_decoder_state *s) {
   if (p.parameters!=s->plan.parameters || p.activations!=s->plan.activations ||
       p.scratch!=s->plan.scratch) return BCIR_DT_INVALID;
   if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_KBLOCK|
-      BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTN)) return BCIR_DT_INVALID;
+      BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTN|BCIR_DT_CONTRACT_ATTNBF16))
+    return BCIR_DT_INVALID;
   if (((s->contract&BCIR_DT_CONTRACT_FUSED)!=0)+((s->contract&BCIR_DT_CONTRACT_KBLOCK)!=0)+
       ((s->contract&BCIR_DT_CONTRACT_BF16)!=0)>1) return BCIR_DT_INVALID;  /* one GEMM contract */
+  /* the bf16 attention (BF16-ATTN) packs into the bf16 contract's workspace, and its products are
+   * the attention's one contract: never the fused attention's too */
+  if ((s->contract&BCIR_DT_CONTRACT_ATTNBF16) && (!(s->contract&BCIR_DT_CONTRACT_BF16) ||
+      (s->contract&BCIR_DT_CONTRACT_ATTN))) return BCIR_DT_INVALID;
   ptr[0]=s->weights; ptr[1]=s->gradients; ptr[2]=s->moment1; ptr[3]=s->moment2;
   ptr[4]=s->activations; ptr[5]=s->scratch;
   len[0]=len[1]=len[2]=len[3]=p.parameters; len[4]=p.activations; len[5]=p.scratch;
@@ -167,7 +172,8 @@ static geometry geom(const bcir_decoder_spec *s) {
 /* bcir_decoder_workspace_bytes: the step's GEMM groups, as the forward and backward issue them
  * (linears, linear, linear_backward, linears_backward below), each call (m, n, k), and the largest
  * group's packs, every call's whole -- an upper bound on what the group packs, which shares an
- * operand two calls read alike. */
+ * operand two calls read alike; under the bf16 attention (BF16-ATTN) at least the attention's
+ * regions, which use the workspace between the GEMMs. */
 static size_t ws_sum(size_t a,size_t b) { return a>SIZE_MAX-b ? SIZE_MAX : a+b; }
 size_t bcir_decoder_workspace_bytes(const bcir_decoder_plan *plan,uint32_t contract) {
   bcir_decoder_plan p; geometry g; size_t q,c,most=0;
@@ -194,6 +200,10 @@ size_t bcir_decoder_workspace_bytes(const bcir_decoder_plan *plan,uint32_t contr
       for (c=0;c<6 && groups[q][c][0];c++)
         sum=ws_sum(sum,bcir_tensor_mm_bf16_workspace(groups[q][c][0],groups[q][c][1],groups[q][c][2]));
       if (sum>most) most=sum;
+    }
+    if (contract&BCIR_DT_CONTRACT_ATTNBF16) {
+      size_t att=bcir_tensor_attention_bf16_workspace(g.b,g.t,g.h,g.kh,g.hd);
+      if (att>most) most=att;
     }
   }
   return most;
@@ -377,9 +387,22 @@ static unsigned attention_contract(const bcir_decoder_state *s) {
   return ((s->contract&BCIR_DT_CONTRACT_EXP) ? BCIR_TENSOR_ATTENTION_EXP : 0u)|
     ((s->contract&BCIR_DT_CONTRACT_ATTN) ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
 }
+/* Under the bf16 attention (BF16-ATTN) its widest instance, packing into the state's workspace,
+ * which valid() admitted for it; otherwise the binary32 attention under its contract. */
 static void attention(bcir_decoder_state *s,size_t b,size_t t,size_t h,size_t kh,size_t d,
     const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
-  bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s),b,t,h,kh,d,q,k,v,p,y,bad);
+  if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)
+    (void)bcir_tensor_attention_bf16_scan_pool(s->pool,0,attention_contract(s),b,t,h,kh,d,q,k,v,p,
+        y,bad,s->workspace,s->workspace_bytes);
+  else bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s),b,t,h,kh,d,q,k,v,p,y,bad);
+}
+static void attention_backward(bcir_decoder_state *s,geometry g,const float *q,const float *k,
+    const float *v,float *p,const float *dy,float *dq,float *dk,float *dv) {
+  if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)
+    (void)bcir_tensor_attention_bf16_backward_pool(s->pool,0,g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,
+        dv,s->workspace,s->workspace_bytes);
+  else bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,
+      g.hd,q,k,v,p,dy,dq,dk,dv);
 }
 /* The forward, and whether every activation it wrote is finite (NDT-SCAN-W). One scan of the
  * whole arena after it read the arena back from memory, 171 MB for the 9.84M decoder; now the
@@ -490,6 +513,30 @@ static void rms_backward(bcir_decoder_state *s,size_t rows,size_t width,const fl
  * update's first pass, which the run calls next with the same verdict on every element. */
 #define DT_KNOWN 1u
 #define DT_DEFER 2u
+/* DT_COMMITTED (FACTS-RUN) -- the weights are the run's own last commit's, unchanged since, so the
+ * opening weight scan would pass: an update commits only once every candidate is admitted -- no
+ * larger than FLT_MAX, NaN excluded, by the preflight or by adamw_bounded's proof -- and the commit
+ * stores those candidates, value for value; between that commit and the next step's first
+ * micro-batch the run writes only its events, outside the state. A lone call never knows it: its
+ * caller may have written the weights since. */
+#define DT_COMMITTED 4u
+#ifdef BCIR_DT_SCAN_PROBE
+/* The harness's count of the opening weight scans since the last read (a build defines
+ * BCIR_DT_SCAN_PROBE to have it; the library does not): FACTS-RUN's witness, a run of several
+ * steps scanning once. Exported from a shared build, so the Python witness reads it too. */
+static unsigned long weight_scans;
+BCIR_DT_API unsigned long bcir_decoder_scan_probe(void);
+BCIR_DT_API unsigned long bcir_decoder_scan_probe(void) {
+  unsigned long n=weight_scans; weight_scans=0; return n;
+}
+#endif
+/* the opening scan of the weights (counted where the probe is built in) */
+static int weights_finite(bcir_decoder_state *s) {
+#ifdef BCIR_DT_SCAN_PROBE
+  weight_scans++;
+#endif
+  return finite_pool(s,s->weights,s->plan.parameters);
+}
 static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
     const uint32_t *targets,size_t n,int accumulate,double *loss,unsigned how) {
   geometry g; size_t i,l; double ce=0.0; loss_job lj; scatter_job sj;
@@ -500,8 +547,9 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
   if (n!=g.n || !ids(s,tokens,n) || !ids(s,targets,n) ||
       (accumulate!=0 && accumulate!=1) || !external(s,loss,sizeof(*loss)) ||
       (uintptr_t)loss%_Alignof(double)) return BCIR_DT_INVALID;
-  if (!(how&DT_KNOWN) && (!finite_pool(s,s->weights,s->plan.parameters) ||
-      (accumulate && !finite_pool(s,s->gradients,s->plan.parameters)))) return BCIR_DT_NUMERIC;
+  if ((!(how&(DT_KNOWN|DT_COMMITTED)) && !weights_finite(s)) ||
+      (!(how&DT_KNOWN) && accumulate && !finite_pool(s,s->gradients,s->plan.parameters)))
+    return BCIR_DT_NUMERIC;
   if (!forward(s,tokens,g)) return BCIR_DT_NUMERIC;
   /* NDT-ZERO: a fresh gradient's first writers write it -- each weight adjoint's GEMM at beta 0,
    * which adds its terms to +0.0 without reading C (what the fill and beta 1 gave), each gamma
@@ -572,9 +620,9 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
     rms_backward(s,g.n,g.d,a.x2,p.norm2,dn,cur,grad.norm2,dq,BCIR_TENSOR_RMSB_ADD|gf);
     linear_backward(s,g.n,g.d,g.d,a.ctx,p.o,cur,dc,grad.o,0.0f,wb);
     /* the layer's probabilities are read for the last time here: the in-place backward
-     * leaves its score adjoint in their place (same dq/dk/dv as the reference, bit for bit) */
-    bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,
-        g.hd,a.q,a.k,a.v,a.p,dc,dq,dk,dv);
+     * leaves its score adjoint in their place (same dq/dk/dv as the reference, bit for bit), the
+     * bf16 attention's leaves them as they were */
+    attention_backward(s,g,a.q,a.k,a.v,a.p,dc,dq,dk,dv);
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,s->plan.spec.rope_base,dq,1);
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,s->plan.spec.rope_base,dk,1);
     {
@@ -1067,7 +1115,7 @@ int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     for (j=0;j<accumulation;j++) {
       double part; size_t off=(i*accumulation+j)*n;
       rc=loss_backward_with(s,tokens+off,targets+off,n,j!=0,&part,
-          (j ? DT_KNOWN : 0u)|(j+1==accumulation ? DT_DEFER : 0u));
+          (j ? DT_KNOWN : i ? DT_COMMITTED : 0u)|(j+1==accumulation ? DT_DEFER : 0u));
       if (rc) return rc;
       loss+=part/(double)accumulation;
     }

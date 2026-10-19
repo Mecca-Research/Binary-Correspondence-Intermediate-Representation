@@ -38,22 +38,22 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "SW5 the attention never scans its keys (the key the softmax hides, unseen)",
-      "new": "",
-      "old": "    if (ok && h%(nh/nk)==0) ok=rows_finite(a->variant,a->k+(r*t*nk+kh)*d,t,d,nk*d);\n",
+      "new": "  if (ok && h%(nh/nk)==nh) ok=rows_finite(a->variant,a->k+(r*t*nk+kh)*d,t,d,nk*d);",
+      "old": "  if (ok && h%(nh/nk)==0) ok=rows_finite(a->variant,a->k+(r*t*nk+kh)*d,t,d,nk*d);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "SW6 the attention scans the first batch's keys only",
-      "new": "    if (ok && h%(nh/nk)==0 && r==0) ok=rows_finite(",
-      "old": "    if (ok && h%(nh/nk)==0) ok=rows_finite(",
+      "new": "  if (ok && h%(nh/nk)==0 && r==0) ok=rows_finite(",
+      "old": "  if (ok && h%(nh/nk)==0) ok=rows_finite(",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "SW7 the attention scans its context one row short",
-      "new": "    int ok=rows_finite(a->variant,a->y+(r*t*nh+h)*d,t-1,d,nh*d);\n",
-      "old": "    int ok=rows_finite(a->variant,a->y+(r*t*nh+h)*d,t,d,nh*d);\n",
+      "new": "  int ok=rows_finite(a->variant,a->y+(r*t*nh+h)*d,t-1,d,nh*d);",
+      "old": "  int ok=rows_finite(a->variant,a->y+(r*t*nh+h)*d,t,d,nh*d);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -87,8 +87,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "SW12 an attention past the bytes' bound scans its context but not its keys after its job",
-      "new": "  else if (!scan_pool(pool,y,b*t*nh*d)) *bad=1;\n",
-      "old": "  else if (!scan_pool(pool,y,b*t*nh*d) || !scan_pool(pool,k,b*t*nk*d)) *bad=1;\n",
+      "new": "  if (a.bad) scan_fold(bad,bytes,tasks);\n  else if (!scan_pool(pool,y,b*t*nh*d)) *bad=1;",
+      "old": "  if (a.bad) scan_fold(bad,bytes,tasks);\n  else if (!scan_pool(pool,y,b*t*nh*d) || !scan_pool(pool,k,b*t*nk*d)) *bad=1;",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

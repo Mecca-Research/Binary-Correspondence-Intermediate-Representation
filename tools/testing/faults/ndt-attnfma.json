@@ -81,15 +81,15 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AF11 the backward's contract entry ignores the fused bit",
-      "new": "  a.fused=0; a.variant=a.fused ? mm_widest_fused() : mm_widest();",
+      "new": "  a.fused=0; (void)contract; a.variant=a.fused ? mm_widest_fused() : mm_widest();",
       "old": "  a.fused=(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0; a.variant=a.fused ? mm_widest_fused() : mm_widest();",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AF12 the trainer refuses the attention bit",
-      "new": "      BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_BF16)) return BCIR_DT_INVALID;",
-      "old": "      BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTN)) return BCIR_DT_INVALID;",
+      "new": "BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTNBF16))",
+      "old": "BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTN|BCIR_DT_CONTRACT_ATTNBF16))",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
@@ -102,8 +102,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AF14 the trainer's backward runs the v1 products under the attention bit",
-      "new": "    bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s)&~BCIR_TENSOR_ATTENTION_FUSED,g.b,g.t,g.h,g.kh,",
-      "old": "    bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,",
+      "new": "  else bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s)&~BCIR_TENSOR_ATTENTION_FUSED,g.b,g.t,g.h,g.kh,",
+      "old": "  else bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
@@ -116,15 +116,15 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AF16 the trainer's forward runs the v1 products under the attention bit",
-      "new": "  bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s)&~BCIR_TENSOR_ATTENTION_FUSED,b,t,h,kh,d,q,k,v,p,y,bad);",
-      "old": "  bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s),b,t,h,kh,d,q,k,v,p,y,bad);",
+      "new": "  else bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s)&~BCIR_TENSOR_ATTENTION_FUSED,b,t,h,kh,d,q,k,v,p,y,bad);",
+      "old": "  else bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s),b,t,h,kh,d,q,k,v,p,y,bad);",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AF17 the trainer's backward runs the fused products without the attention bit",
-      "new": "    bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s)|BCIR_TENSOR_ATTENTION_FUSED,g.b,g.t,g.h,g.kh,",
-      "old": "    bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,",
+      "new": "  else bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s)|BCIR_TENSOR_ATTENTION_FUSED,g.b,g.t,g.h,g.kh,",
+      "old": "  else bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,",
       "path": "runtime/c/bcir_decoder_train.c"
     }
   ]

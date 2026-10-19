@@ -1,0 +1,2 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 9a702a4, runtime/c against it df21dda56e866915
+{"threads": 4, "rounds": 61, "shape": [8, 128, 8, 4, 48], "bf16_instance": 8, "workspace_bytes": 8650816, "fused_ms": {"forward": 0.8453, "backward": 1.1349}, "bf16_ms": {"forward": 0.7353, "backward": 0.8235}, "fused_over_bf16": {"forward": {"median": 1.1631, "ci95": [1.1334, 1.1903], "bf16_won": 56}, "backward": {"median": 1.3777, "ci95": [1.3576, 1.3939], "bf16_won": 61}, "layer": {"median": 1.2797, "ci95": [1.2449, 1.2985], "bf16_won": 61}}}

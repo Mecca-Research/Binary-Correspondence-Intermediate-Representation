@@ -38,7 +38,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from tools.testing.red_sweep import FINDING, Fault, Sweep, SweepError, load_table  # noqa: E402
+from tools.testing.red_sweep import (  # noqa: E402
+    BUILD_FINDING,
+    FINDING,
+    Fault,
+    Sweep,
+    SweepError,
+    load_table,
+)
 
 #: A subject with one constant, and a gate that reports the constant it actually
 #: imported. The gate is red exactly when the constant is not the expected value,
@@ -173,6 +180,85 @@ def test_the_wrong_check_firing_is_not_a_catch():
         assert sweep.results[0].verdict == "WRONG CHECK"
 
 
+#: A gate that builds its subject before it checks it, as the C gates build their harnesses: a
+#: subject that does not compile is the finding `build` and nothing is checked; one that compiles
+#: is checked, and may also report a helper of its own that did not build (`BROKEN_HELPER`).
+_BUILD_GATE = """import sys
+from pathlib import Path
+here = Path(__file__).resolve().parent
+try:
+    compile((here / "subject.py").read_text(encoding="utf-8"), "subject.py", "exec")
+except SyntaxError as exc:
+    print("gate: FAILED")
+    print(f"  - build: subject.py does not compile: {exc.msg}")
+    raise SystemExit(1)
+sys.path.insert(0, str(here))
+import subject
+failed = False
+if subject.THRESHOLD != 0.70:
+    print(f"  - threshold: subject says {subject.THRESHOLD}, expected 0.70")
+    failed = True
+if getattr(subject, "BROKEN_HELPER", False):
+    print("  - build: the helper this gate builds beside the subject did not build")
+    failed = True
+print("gate: FAILED" if failed else "gate: PASSED")
+raise SystemExit(1 if failed else 0)
+"""
+
+
+def _build_gate(directory: Path) -> list[str]:
+    gate = directory / "build_gate.py"
+    gate.write_text(_BUILD_GATE, encoding="utf-8", newline="\n")
+    return [sys.executable, str(gate)]
+
+
+def test_a_fault_that_stops_the_build_is_not_a_catch():
+    """RED-VACUITY: a run that went red because the mutant did not build never ran the check the
+    fault names. The native trainer's C harness builds under -Werror, and committed entries whose
+    mutants only left a name unused were scored RED that way (docs/security/laws.md L25); the
+    sweep now calls such a run DOES NOT BUILD, a miss -- the gate's own `build` finding, never the
+    check."""
+    with _Bench() as (directory, subject, _):
+        command = _build_gate(directory)
+        before = subject.read_bytes()
+        unbuilt = Fault("a threshold that does not compile", "threshold", subject, "0.70", "0.70 +")
+        helper = Fault("a helper that does not build", "threshold", subject, "THRESHOLD = 0.70",
+                       "THRESHOLD = 0.70\nBROKEN_HELPER = True")  # fmt: skip
+        sweep = _sweep(directory, command, [unbuilt, helper])
+        assert sweep.run() == 2
+        for result in sweep.results:
+            assert result.verdict == "DOES NOT BUILD", result
+            assert result.fired == ("build",) and not result.caught, result
+            assert "the defect stopped the build before 'threshold' could run" in result.detail
+        assert "subject.py does not compile" in sweep.results[0].detail, sweep.results[0].detail
+        assert "the helper this gate builds" in sweep.results[1].detail, sweep.results[1].detail
+        assert "DOES NOT BUILD" in sweep.report()
+        assert subject.read_bytes() == before, "the sweep left the tree modified"
+
+
+def test_the_check_firing_beside_a_build_finding_is_still_red():
+    """The other half: a check that examined the defect and fired is a catch, whatever else in
+    the gate did not build -- and a fault that builds reaches its check, through the same gate."""
+    with _Bench() as (directory, subject, _):
+        command = _build_gate(directory)
+        both = Fault("the threshold moves and a helper does not build", "threshold", subject,
+                     "THRESHOLD = 0.70", "THRESHOLD = 0.55\nBROKEN_HELPER = True")  # fmt: skip
+        builds = Fault("the threshold moves", "threshold", subject, "0.70", "0.55")
+        sweep = _sweep(directory, command, [both, builds])
+        assert sweep.run() == 0
+        assert [r.verdict for r in sweep.results] == ["RED", "RED"], sweep.report()
+        assert sweep.results[0].fired == ("build", "threshold"), sweep.results[0]
+        assert sweep.results[1].fired == ("threshold",), sweep.results[1]
+
+
+def test_every_gate_that_builds_a_harness_reports_the_finding_the_sweep_reads():
+    """The C gates spell the build finding in their own sources; a gate that renamed it would turn
+    every mutant it cannot build back into a WRONG CHECK the sweep cannot tell from a real one."""
+    for gate in ("check_ring.py", "check_handoff.py", "check_planner.py", "check_hydrate.py"):
+        source = (_REPO_ROOT / "tools" / "c" / gate).read_text(encoding="utf-8")
+        assert f'print(f"  - {BUILD_FINDING}: {{exc}}")' in source, gate
+
+
 def test_a_gate_that_cannot_be_launched_is_a_verdict_not_a_catch():
     """L1: a harness error is reported as one, never as evidence."""
     with _Bench() as (directory, subject, _):
@@ -272,6 +358,13 @@ def fails():
 
 def exits():
     sys.exit(0)
+
+
+def unbuilt():
+    from bcir.toolchain import BuildFailed
+
+    raise BuildFailed("the subject's build", "In file included from s.c:1:\\n"
+                      "s.h:3:9: error: unused variable 'x' [-Werror,-Wunused-variable]\\n1 error generated.\\n")
 """
 
 
@@ -304,6 +397,19 @@ def test_the_test_gate_names_each_failing_test_as_a_finding():
     assert "  ok passes" in out, out
     code, out, fired = _check_tests("gate_subject:passes")
     assert (code, fired) == (0, set()), (code, out)
+
+
+def test_a_test_whose_own_build_failed_is_the_build_finding():
+    """RED-VACUITY on the test gate: a test stopped by its own build (`BuildFailed`) ran none of
+    its assertions, so its finding is `build` -- naming the test, the build and the compiler's
+    first error -- and never the test's own name, which the sweep would read as a catch."""
+    code, out, fired = _check_tests("gate_subject:unbuilt", "gate_subject:passes")
+    assert (code, fired) == (1, {BUILD_FINDING}), (code, out)
+    assert (
+        "  - build: unbuilt: the subject's build failed: "
+        "s.h:3:9: error: unused variable 'x' [-Werror,-Wunused-variable]"
+    ) in out, out
+    assert "  - unbuilt:" not in out and "  ok passes" in out, out
 
 
 def test_a_test_that_ends_the_process_is_a_finding_not_a_pass():

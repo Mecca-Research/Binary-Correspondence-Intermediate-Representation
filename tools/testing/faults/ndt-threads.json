@@ -18,8 +18,8 @@
     {
       "expects": "test_the_training_state_is_identical_at_every_thread_count",
       "label": "NT2 the runner's claim stops one task short (the last task of every job never runs on a pool)",
-      "new": "  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))+1<tasks) fn(ctx,t);",
-      "old": "  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<tasks) fn(ctx,t);",
+      "new": "  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))+1<tasks) {",
+      "old": "  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<tasks) {",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

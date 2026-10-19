@@ -22,7 +22,7 @@ from functools import wraps
 
 from bcir.frontends.cfront import compile_unit
 from bcir.model import Domain
-from bcir.toolchain import host_link_args
+from bcir.toolchain import BuildFailed, host_link_args
 from bcir.verify import cfront_structural_digest
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -396,7 +396,8 @@ def _compile_once(key: str, out_name: str, src_names: tuple, label: str) -> str:
         if b.returncode == 0:
             _BUILD_CACHE[key] = exe
             return exe
-    raise AssertionError(f"{label} build failed:\n{b.stderr}")
+    # the tests' setup, not their subject: check_tests.py's `build` finding (RED-VACUITY)
+    raise BuildFailed(f"{label} build", b.stderr)
 
 
 def _build_frontend(d: str) -> str:
@@ -408,6 +409,23 @@ def _build_frontend(d: str) -> str:
         ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c", "test_cfront.c"),
         "C frontend",
     )
+
+
+def test_a_twin_build_the_compiler_refuses_is_build_failed():
+    """RED-VACUITY: the binaries these tests build before they test anything -- the twin, its loop
+    and bcir-cc, through `_compile_once` -- report a build the compiler refuses as `BuildFailed`,
+    check_tests.py's finding `build`, so a cfront fault that stopped the compiler is DOES NOT BUILD
+    in a RED sweep, never the catch of the test that names it; and nothing is cached for it."""
+    if not _CC:
+        return
+    try:
+        _compile_once("red-vacuity-witness", "no-such-unit", ("bcir_no_such_unit.c",), "witness")
+    except BuildFailed as exc:
+        first = str(exc).splitlines()[0]
+        assert first.startswith("witness build failed: ") and "bcir_no_such_unit.c" in first, first
+    else:
+        raise AssertionError("a unit that does not exist was built")
+    assert "red-vacuity-witness" not in _BUILD_CACHE
 
 
 def _c_run(exe: str, fixture_path: str):

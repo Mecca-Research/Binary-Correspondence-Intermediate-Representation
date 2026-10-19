@@ -1,0 +1,33 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23",
+    "bcir.tests.test_native_decoder:test_a_run_scans_its_weights_once"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "FR1 a run's later steps still scan the weights (the commit's facts left unused: three scans a run)",
+      "new": "          (j ? DT_KNOWN : 0u)|(j+1==accumulation ? DT_DEFER : 0u));\n",
+      "old": "          (j ? DT_KNOWN : i ? DT_COMMITTED : 0u)|(j+1==accumulation ? DT_DEFER : 0u));\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "FR2 a lone call claims a run's committed weights (a caller's NaN weight reaches the forward and its arena)",
+      "new": "  return loss_backward_with(s,tokens,targets,n,accumulate,loss,DT_COMMITTED);\n",
+      "old": "  return loss_backward_with(s,tokens,targets,n,accumulate,loss,0u);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_run_scans_its_weights_once",
+      "label": "FR3 a run's first step claims the commit's facts (a NaN its caller wrote between two calls goes unscanned)",
+      "new": "          (j ? DT_KNOWN : DT_COMMITTED)|(j+1==accumulation ? DT_DEFER : 0u));\n",
+      "old": "          (j ? DT_KNOWN : i ? DT_COMMITTED : 0u)|(j+1==accumulation ? DT_DEFER : 0u));\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    }
+  ]
+}

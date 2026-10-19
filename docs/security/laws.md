@@ -435,6 +435,24 @@ two of the three new faults. The third, a harness that never opens its window, p
 check compared the report against the argv it built, which the fault had also emptied. The check now
 compares against the window the run declared. Faults: the late `stop` read, a consumer that never
 naps, a run that drops its window (`ring.json`, 25 of 25).
+Ring late-kill instance (2026-10-18): the same law, a second interleaving. A supervisor descheduled
+between seeing the producer pass half the stream and killing it let the producer finish and detach
+first, and the successor's takeover of a detached producer was rightly refused: CI hit it once, two
+violations with every record delivered. It too needed a preemption, so the killed peer now parks
+three quarters of the way through the stream, and a `--procs` run may declare a kill delay that puts
+the kill after the park on every run. A late run must report its delay and its peer parked, or the
+run is a violation. Faults: a producer and a consumer that never park, a supervisor that ignores its
+delay, a fixture that never passes it (`ring.json`, 29 of 29).
+RING-PARK instance (2026-10-19): the forcing was itself a timing assumption. The late run held the
+supervisor 100 ms after the mark and took the peer to have parked by then; on a loaded aarch64 runner
+(four cores, the suite's other workers, a 32-slot ring) the peers took longer, both late kills found
+them short of the park, and the L2 check scored the two runs: right to refuse them, wrong to depend on
+the host. An interleaving forced by a sleep is forced only on a host as fast as the sleep assumes. The
+supervisor now holds until the peer reports it has parked (`await_park`, bounded: a peer that ends
+unparked is a refusal), and a stall run stops the killed peer 300 ms at the supervisor's mark -- slower
+than the old hold on every host -- and must report the whole stall, or it is a violation. Faults: a
+fixed hold for each peer, a supervisor that never waits, a peer that never stalls, a fixture that never
+passes the stall (`ring.json`, 33 of 33).
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -1108,6 +1126,15 @@ value nothing reads; Clang's is a call no optimizer deletes. So Clang's UBSan
 is the gate's instrument, at `-O2` (`UW19`, `UW20`, `UW22`), and GCC's builds
 unoptimized only what Clang cannot (`UW17`, `UW21`) -- an instrument an
 optimizer can fold away is no instrument (L9).
+MAKE-GATE-TREES instance (2026-10-19): one gate's two paths are its run and its copy. The make
+gate's change step copies the tracked tree, and a target that reads a tree whole is tagged from
+every file on disk under it, so an untracked file there made the copy disagree with the run it
+copies: over a working tree whose new records were not yet added, the train task re-ran in the
+copy, where its corpus law could not ask git for an index, and the gate failed eleven minutes in.
+It already refused an untracked read by name before any run; it now refuses an untracked file
+under a read tree the same way (`untracked_tree_files`, over the walk the tags hash). Witness:
+`test_the_gate_names_an_untracked_file_under_a_tree_a_target_reads`; faults `make-gate.json`
+MG1-MG5.
 **Port note:** substitute endianness, ABI, and libc variance for the same
 discipline.
 
@@ -2110,6 +2137,23 @@ Witnesses: `test_null_pointer_constants_run_as_the_original_on_both_rails`,
 `test_tables_of_function_pointers_and_calls_through_them_run_as_the_original`,
 `test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails`. Faults: `cfront-values.json`
 `T45`, `cfront-calls.json` `CL15`, `cfront-globals.json` `GB8`, `cfront-fptab.json` `FT19`.
+RED-VACUITY instance (2026-10-19): a fault the compiler rejects never reached the test that names it. The native
+trainer's C harness, its library and bcir-qualify build under `-Werror`, so a mutant that leaves a name unused fails
+the build; the test gate named the failing test, and the sweep scored RED for a defect no assertion examined -- the
+treatment stopped the apparatus, and the run read as the subject's response. `NL7` (`ndt-lanes.json`) was found
+re-anchoring it; a scan of every committed C-path fault, each built as its check builds it, found fourteen on the
+head, in nine tables (twelve under clang, two under GCC alone). The property is held by the instrument now, not remembered: the builds a test runs before it tests anything
+raise `bcir.toolchain.BuildFailed`, `check_tests.py` reports that as the finding `build` -- the C gates' finding for a
+harness that did not build -- and `red_sweep.py` scores a fault whose check did not fire beside it DOES NOT BUILD,
+never RED. Re-crafted to compile, `PK1` came back NOT CAUGHT: the AMX kernel it breaks is withdrawn by its own
+admission differential and never runs, so the harness now holds the differential to passing wherever the instance is
+offered. A NOT CAUGHT is a question about the witness; a RED is one about the apparatus first.
+Witnesses: `test_a_fault_that_stops_the_build_is_not_a_catch`, `test_the_check_firing_beside_a_build_finding_is_still_red`,
+`test_every_gate_that_builds_a_harness_reports_the_finding_the_sweep_reads`,
+`test_a_test_whose_own_build_failed_is_the_build_finding` (`test_red_sweep.py`),
+`test_a_build_that_fails_names_itself_and_its_first_error` (`test_toolchain.py`),
+`test_a_trainer_that_does_not_build_raises_build_failed`, `test_a_twin_build_the_compiler_refuses_is_build_failed`.
+Faults: `red-vacuity.json` `RV1`-`RV9`, and the re-crafted entries.
 **Port note:** the C/C++ shape is a stale object file or a `ccache` hit after a
 same-size source edit, and any build system whose staleness test is coarser than
 content — timestamps, sizes, or a hash of the command line rather than of the

@@ -1,0 +1,2 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 9a702a4, runtime/c against it df21dda56e866915
+{"threads": 4, "rounds": 401, "same_bits": true, "base_ms": 2.1381, "this_ms": 2.0932, "base_over_this": {"median": 1.0129, "ci95": [1.0029, 1.0205], "this_won": 225}}

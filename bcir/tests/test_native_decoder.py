@@ -134,8 +134,10 @@ def test_native_c_harness_c11_and_c23():
         return
     root = Path(__file__).resolve().parents[2]
     c = root / "runtime" / "c"
-    from bcir.toolchain import host_link_args
+    from bcir.toolchain import build_units, host_link_args
 
+    # every build below is the test's setup: a unit the compiler refuses is BuildFailed, which
+    # check_tests.py reports as the finding `build` and a RED sweep as DOES NOT BUILD (RED-VACUITY)
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
         # and C23 once more with the writers' verdict bytes bounded at two tasks, so every scan
         # entry takes the scan after its job (NDT-SCAN-W), and once capped at AVX2, so a host whose
@@ -156,6 +158,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_WORKSPACE_PROBE",
                 "-DBCIR_DT_ATTENTION_PROBE",
                 "-DBCIR_DT_PANELS_PROBE",
+                "-DBCIR_DT_SCAN_PROBE",
                 *options,
                 "-O2",
                 "-Wall",
@@ -171,16 +174,18 @@ def test_native_c_harness_c11_and_c23():
                 "-o",
                 str(exe),
             ]
-            subprocess.run(
-                cmd + host_link_args(["-lm"]), check=True, capture_output=True, timeout=120
+            build_units(
+                cmd + host_link_args(["-lm"]), f"the C harness's {standard}{tag} build", timeout=120
             )
             result = subprocess.run(
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
             # update_pairs, division_probe (NDT-UPDATE); the bf16 contract, its trainer and the
             # workspace probe (NDT-BF16); the fused attention contract and its trainer (ATTN-FMA);
-            # the bf16 panels' writers and grouped GEMMs, and their trainer (BF16-PANELS)
-            assert result.stdout.count("PASS") == 24
+            # the bf16 panels' writers and grouped GEMMs, and their trainer (BF16-PANELS); a run's
+            # steps against one-step calls, the weight scans counted (FACTS-RUN); the bf16
+            # attention against its reference, and its trainer (BF16-ATTN)
+            assert result.stdout.count("PASS") == 27
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -207,19 +212,63 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_WORKSPACE_PROBE",
                 "-DBCIR_DT_ATTENTION_PROBE",
                 "-DBCIR_DT_PANELS_PROBE",
+                "-DBCIR_DT_SCAN_PROBE",
             ]
             cmd += ["-I", str(c)]
             cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]
             cmd += [str(c / "bcir_decoder_train.c"), "-o", str(exe)]
-            subprocess.run(
-                cmd + host_link_args(["-lm"]), check=True, capture_output=True, timeout=300
-            )
+            build_units(cmd + host_link_args(["-lm"]), "the C harness's UBSan build", timeout=300)
             result = subprocess.run([str(exe)], capture_output=True, text=True, timeout=300)
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 24
+            assert result.stdout.count("PASS") == 27
             break
+
+
+def test_a_trainer_that_does_not_build_raises_build_failed():
+    """RED-VACUITY: the witnesses' builds of the trainer report a unit the compiler refuses as
+    `BuildFailed`, so check_tests.py names the finding `build` and a RED sweep scores the mutant
+    DOES NOT BUILD, never RED -- for the library's own build (`NativeDecoder.build`, under -Werror:
+    a static function nothing calls is enough) and for a copy's (`build_library(sources=...)`,
+    without it: a hard error). Both stay RuntimeErrors."""
+    from bcir.hosted.models import native
+    from bcir.tests import native_decoder_fixtures as nf
+    from bcir.toolchain import BuildFailed
+
+    cc = nf.compiler()
+    if cc is None:
+        return
+    unused = "\nstatic int bcir_called_by_nothing(void) { return 0; }\n"
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        try:
+            nf.build_library(Path(tmp) / "copy", sources={"bcir_tensor.c": "int bcir_broken = ;\n"})
+        except BuildFailed as exc:
+            assert isinstance(exc, RuntimeError)
+            first = str(exc).splitlines()[0]
+            assert (
+                first.startswith("native decoder build of a copy failed: ") and "error" in first
+            ), first
+        else:
+            raise AssertionError("a copy that does not compile was built")
+        units = Path(tmp) / "c"
+        units.mkdir()
+        for unit in native._UNITS:
+            shutil.copyfile(native._C / unit, units / unit)
+        with open(units / "bcir_tensor.c", "a", encoding="utf-8", newline="\n") as handle:
+            handle.write(unused)
+        saved, native._C = native._C, units
+        try:
+            native.NativeDecoder.build(Path(tmp) / "own", cc=cc)
+        except BuildFailed as exc:
+            assert isinstance(exc, RuntimeError)
+            first = str(exc).splitlines()[0]
+            assert first.startswith("native decoder build failed: "), first
+            assert "bcir_called_by_nothing" in first, first
+        else:
+            raise AssertionError("a unit -Werror refuses was built")
+        finally:
+            native._C = saved
 
 
 def test_native_provider_c_abi_keeps_frameworks_off_execution_path():
@@ -579,6 +628,169 @@ def test_the_bf16_panels_keep_every_state():
         libs["panels"].bcir_decoder_panels_probe()
         nf.thread_states(built["panels"], nf.PANELS_BENCH, counts=(1,), contract="kblock+exp")
         assert libs["panels"].bcir_decoder_panels_probe() == 0
+
+
+def test_a_run_scans_its_weights_once():
+    """FACTS-RUN: inside one run call no caller code runs between a step's commit and the next
+    step, and a commit stores only admitted candidates -- finite, by the preflight or by
+    adamw_bounded's proof -- so the run's later steps skip the opening weight scan, while a
+    call's first step always runs it: its caller may have written the weights since. The scan
+    probe (BCIR_DT_SCAN_PROBE) counts the scans through the Python binding -- one for a run of
+    three steps, three for the same steps as three one-step calls, which leave the same state
+    and the same events, bit for bit, under the v1 and a bf16 contract, at one thread and at
+    four. A NaN written into the weights between two calls is the next call's refusal before
+    any step, found by the one scan it counts."""
+    import ctypes as ct
+
+    from bcir.hosted.models.native import NativeAdamW, NativeDecoder
+    from bcir.tests import native_decoder_fixtures as nf
+
+    probe = "#define BCIR_DT_SCAN_PROBE 1\n"
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.build_library(
+            tmp, sources={"bcir_decoder_train.c": probe + nf.source("bcir_decoder_train.c")}
+        )
+        if path is None:
+            return  # no C compiler: a skip, never a pass
+        # the path NativeDecoder loads (resolved), so the probe is the trainers' own library's
+        lib = ct.CDLL(str(Path(path).resolve()))
+        lib.bcir_decoder_scan_probe.restype = ct.c_ulong
+        lib.bcir_decoder_scan_probe.argtypes = []
+        spec, batch, time_ = nf.THREADS_BENCH
+        n, steps = batch * time_, 3
+        tokens = [(7 * i + 3) % spec.vocab_size for i in range(n * steps)]
+        targets = [(7 * i + 4) % spec.vocab_size for i in range(n * steps)]
+        rates = [1e-3 * (1 - 0.1 * s) for s in range(steps)]
+        opt = NativeAdamW(lr=1e-3)
+        for contract in ("v1", "bf16+exp+reduce+attn"):
+            for threads in (1, 4):
+                case = (contract, threads)
+                kw = {"batch_size": batch, "context_length": time_, "threads": threads,
+                      "contract": contract}  # fmt: skip
+                run, calls = NativeDecoder(path, spec, **kw), NativeDecoder(path, spec, **kw)
+                try:
+                    lib.bcir_decoder_scan_probe()
+                    events = run.run(tokens, targets, steps=steps, optimizer=opt,
+                                     learning_rates=rates)  # fmt: skip
+                    assert lib.bcir_decoder_scan_probe() == 1, case
+                    each = ()
+                    for s in range(steps):
+                        part = slice(s * n, (s + 1) * n)
+                        each += calls.run(tokens[part], targets[part], steps=1, optimizer=opt,
+                                          learning_rates=rates[s : s + 1])  # fmt: skip
+                    assert lib.bcir_decoder_scan_probe() == steps, case
+                    assert each == events and len(events) == steps, (case, events, each)
+                    assert nf.state_digest(run) == nf.state_digest(calls), case
+                    run.buffers["weights"][0] = float("nan")
+                    try:
+                        run.run(tokens, targets, steps=steps, optimizer=opt, learning_rates=rates)
+                    except ValueError as exc:
+                        assert str(exc) == "native run stopped after 0 complete steps (status 3)"
+                    else:
+                        raise AssertionError(f"a caller's NaN weight ran a step: {case}")
+                    assert lib.bcir_decoder_scan_probe() == 1, case
+                finally:
+                    run.close()
+                    calls.close()
+
+
+def test_the_bf16_attention_is_a_contract_of_its_own():
+    """BF16-ATTN: "+attnbf16" puts the attention's products on bfloat16 operands -- each product
+    the bf16 GEMM contract's over the depth tiles the causal mask reaches, the softmax and the
+    score adjoint v1's -- and is named only over a bf16 GEMM contract, never with "+attn". Its
+    state is one at every thread count and its own, apart from the same GEMM contract's without
+    the bit; the C plan sizes the workspace for the attention's packs too, counted in the budget;
+    its checkpoint resumes it, contract and workspace, as one state. The attention probe
+    (BCIR_DT_ATTENTION_PROBE) says every forward and backward job of each run took the bf16
+    entries under the bit and none without it, so the agreement is not vacuous."""
+    import ctypes as ct
+
+    from bcir.hosted.models.native import CONTRACTS, NativeAdamW, NativeDecoder
+    from bcir.tests import native_decoder_fixtures as nf
+
+    named = {c for c in CONTRACTS if "attnbf16" in c}
+    assert named == {"bf16+attnbf16", "bf16+exp+attnbf16", "bf16+reduce+attnbf16",
+                     "bf16+exp+reduce+attnbf16"}, named  # fmt: skip
+    probe = "#define BCIR_DT_ATTENTION_PROBE 1\n"
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.build_library(tmp, sources={"bcir_tensor.c": probe + nf.source("bcir_tensor.c")})
+        if path is None:
+            return  # no C compiler: a skip, never a pass
+        spec, batch, time_ = nf.THREADS_BENCH
+        for wrong in ("attnbf16", "kblock+attnbf16", "bf16+attn+attnbf16", "bf16+attnbf16+attn"):
+            try:
+                NativeDecoder(path, spec, batch_size=batch, context_length=time_, contract=wrong)
+            except ValueError as e:
+                assert "contract must be one of" in str(e), (wrong, e)
+            else:
+                raise AssertionError(f"contract {wrong} admitted")
+        # the path NativeDecoder loads (resolved), so the probe is the trainers' own library's
+        lib = ct.CDLL(str(Path(path).resolve()))
+        lib.bcir_tensor_attention_probe.restype = ct.c_uint
+        lib.bcir_tensor_attention_probe.argtypes = [ct.c_int]
+
+        def seen():
+            return lib.bcir_tensor_attention_probe(0), lib.bcir_tensor_attention_probe(1)
+
+        seen()
+        exp, bf16 = 1, 4  # BCIR_TENSOR_ATTENTION_EXP, BCIR_TENSOR_ATTENTION_BF16
+        states = {}
+        for contract in ("bf16+exp", "bf16+exp+attnbf16", "bf16+attnbf16",
+                         "bf16+exp+reduce+attnbf16"):  # fmt: skip
+            under = nf.thread_states(path, contract=contract)
+            assert set(under) == set(nf.THREAD_COUNTS), (contract, under)
+            assert len(set(under.values())) == 1, (contract, under)
+            states[contract] = under[1]
+            forward = (exp if "+exp" in contract else 0) | (bf16 if "attnbf16" in contract else 0)
+            assert seen() == (forward, bf16 if "attnbf16" in contract else 0), contract
+        assert states["bf16+exp+attnbf16"] != states["bf16+exp"], states
+        assert states["bf16+exp+attnbf16"] != states["bf16+attnbf16"], states
+        lib.bcir_tensor_attention_bf16_workspace.restype = ct.c_size_t
+        lib.bcir_tensor_attention_bf16_workspace.argtypes = [ct.c_size_t] * 5
+        # the workspace the larger of the GEMM groups' packs and the attention's, the unit's own
+        # count: at the bench's 40 tokens whichever, at 96 the attention's, so its count decides
+        for t in (time_, 96):
+            alone = lib.bcir_tensor_attention_bf16_workspace(batch, t, spec.n_heads, spec.n_kv_heads,
+                                                             spec.d_model // spec.n_heads)  # fmt: skip
+            kw = {"batch_size": batch, "context_length": t, "threads": 2}
+            plain = NativeDecoder(path, spec, contract="bf16+exp", **kw)
+            att = NativeDecoder(path, spec, contract="bf16+exp+attnbf16", **kw)
+            sizes = (t, alone, plain.workspace_bytes, att.workspace_bytes)
+            assert att.state.contract == 82 and att.state.workspace_bytes == att.workspace_bytes
+            assert att.workspace_bytes == max(plain.workspace_bytes, alone) > 0, sizes
+            assert t != 96 or alone > plain.workspace_bytes, sizes
+            grown = att.workspace_bytes - plain.workspace_bytes
+            assert att.memory_bytes == plain.memory_bytes + grown, sizes
+            if t != 96:
+                plain.close()
+                att.close()
+        try:
+            try:
+                NativeDecoder(path, spec, contract="bf16+attnbf16", max_memory_bytes=plain.memory_bytes,
+                              **kw)  # fmt: skip
+            except ValueError as e:
+                assert "budget" in str(e)
+            else:
+                raise AssertionError("the attention's workspace escaped the budget")
+            x = [(3 * i + 1) % spec.vocab_size for i in range(batch * 96 * 2)]
+            y = [(3 * i + 2) % spec.vocab_size for i in range(batch * 96 * 2)]
+            att.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3))
+            att.save(Path(tmp) / "attnbf16.bcirdt")
+            back = NativeDecoder.resume(path, Path(tmp) / "attnbf16.bcirdt", threads=4)
+            try:
+                assert (back.contract, back.state.contract) == ("bf16+exp+attnbf16", 82)
+                assert back.workspace_bytes == att.workspace_bytes
+                assert nf.state_digest(back) == nf.state_digest(att)
+                assert att.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)) == back.run(
+                    x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)
+                )
+                assert nf.state_digest(back) == nf.state_digest(att)
+            finally:
+                back.close()
+            assert seen() == (exp | bf16, bf16)
+        finally:
+            plain.close()
+            att.close()
 
 
 def _vma(address):

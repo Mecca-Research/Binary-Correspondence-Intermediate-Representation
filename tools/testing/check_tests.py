@@ -13,10 +13,18 @@ in order and in one process, and prints one finding per failing test, named by t
     python3 tools/testing/check_tests.py --require bcir.tests.test_c_cfront:_CC \\
         bcir.tests.test_c_cfront:test_brace_elision_runs_as_the_original_on_both_rails
 
+A test that failed because its own build of the tree's C units did not build -- it raised
+`bcir.toolchain.BuildFailed` -- is not that test's finding: no assertion of it ran. It is the finding
+`build`, the one the C gates report for a harness that did not build,
+
+    - build: <test>: <what was built> failed: <the compiler's first error>
+
+and `red_sweep.py` scores a fault that stopped the build DOES NOT BUILD, never RED (RED-VACUITY).
+
 Every exit is a verdict (L1):
 
     0  every named test passed
-    1  at least one finding: a test raised, or tried to end the process
+    1  at least one finding: a test raised, tried to end the process, or did not build
     2  the gate could not run what it was asked to: a name that resolves to no test function, or a
        `--require`d capability that is absent -- the tests return early without it, so their pass
        would examine nothing (L2) -- never a pass
@@ -35,6 +43,9 @@ import sys
 sys.path.insert(
     0, os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 )
+
+from bcir.toolchain import BuildFailed  # noqa: E402
+from tools.testing.red_sweep import BUILD_FINDING  # noqa: E402
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1
@@ -97,6 +108,9 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["BCIR_CHECK_TEST"] = spec
         try:
             fn()
+        except BuildFailed as exc:  # its build stopped it: no assertion of the test ran
+            findings += 1
+            print(f"  - {BUILD_FINDING}: {name}: {_first_line(exc)}", flush=True)
         except (Exception, SystemExit) as exc:  # a test that ends the process has not passed
             findings += 1
             print(f"  - {name}: {type(exc).__name__}: {_first_line(exc)}", flush=True)

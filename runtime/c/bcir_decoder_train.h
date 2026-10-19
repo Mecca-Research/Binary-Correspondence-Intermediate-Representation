@@ -25,7 +25,11 @@
  * KBLOCK and BF16 exclude one another. BCIR_DT_CONTRACT_ATTN (ATTN-FMA) puts the attention's
  * products under the fused contract (bcir_tensor.h's BCIR_TENSOR_ATTENTION_FUSED: every
  * multiply-add of the scores, the context and the backward's products one fmaf, the same terms in
- * the same order), with any GEMM contract or none. Other bits are refused. A state trained under one contract
+ * the same order), with any GEMM contract or none. BCIR_DT_CONTRACT_ATTNBF16 (BF16-ATTN) puts them on
+ * bfloat16 operands instead (bcir_tensor.h's bf16 attention: each product the bf16 GEMM contract's
+ * over the depth tiles the causal mask reaches, the softmax and the score adjoint v1's), with the
+ * bf16 GEMM contract alone: it packs into the same workspace, which bcir_decoder_workspace_bytes
+ * then sizes for it too, and excludes BCIR_DT_CONTRACT_ATTN. Other bits are refused. A state trained under one contract
  * is not another's: the checkpoint names it. Whatever the contract, the loss's rows, the RMSNorm gamma
  * adjoints and the embedding scatter run on the pool in the serial order (NDT-REDUCE), so every
  * loss and state is the serial one, bit for bit, at every thread count.
@@ -65,7 +69,8 @@ typedef struct bcir_decoder_adamw {
 typedef struct bcir_decoder_event { double loss,grad_norm; uint64_t step; } bcir_decoder_event;
 enum { BCIR_DT_OK=0, BCIR_DT_INVALID=1, BCIR_DT_CAPACITY=2, BCIR_DT_NUMERIC=3 };
 enum { BCIR_DT_CONTRACT_FUSED=1u, BCIR_DT_CONTRACT_EXP=2u, BCIR_DT_CONTRACT_KBLOCK=4u,
-  BCIR_DT_CONTRACT_REDUCE=8u, BCIR_DT_CONTRACT_BF16=16u, BCIR_DT_CONTRACT_ATTN=32u };
+  BCIR_DT_CONTRACT_REDUCE=8u, BCIR_DT_CONTRACT_BF16=16u, BCIR_DT_CONTRACT_ATTN=32u,
+  BCIR_DT_CONTRACT_ATTNBF16=64u };
 /* 1: the state through its provider; 2: the state ends in its pool (NDT-THREADS); 3: and in its
  * contract (NDT-FMA, NDT-EXP, NDT-KBLOCK, NDT-REDUCE, ATTN-FMA: the same field, more bits); 4: and in the
  * bf16 contract's workspace (NDT-BF16). */
@@ -97,7 +102,8 @@ BCIR_DT_API int bcir_decoder_make_plan(const bcir_decoder_spec *spec,bcir_decode
 /* Forward stores logits at the end of the activation arena. Backward computes mean
  * causal-token CE and every parameter gradient including tied-head accumulation; it consumes
  * the forward cache it recomputes, leaving each layer's attention probabilities replaced by
- * their score adjoint. IDs: batch*time, strictly [0,vocab), rejected before arena mutation.
+ * their score adjoint (under BCIR_DT_CONTRACT_ATTNBF16, as they were). IDs: batch*time, strictly
+ * [0,vocab), rejected before arena mutation.
  * accumulate=1 adds another mean batch gradient. */
 BCIR_DT_API int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t count);
 BCIR_DT_API int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,
@@ -107,7 +113,10 @@ BCIR_DT_API int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t 
 BCIR_DT_API int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *opt,
     double gradient_scale,double *grad_norm);
 /* Native loop, optional per-update rates; validate all IDs/outputs before any update.
- * A later numeric failure preserves completed steps and reports completed count. */
+ * A later numeric failure preserves completed steps and reports completed count.
+ * A call's first step scans the weights before its forward; the steps after it skip that scan,
+ * the weights being the call's own last commit -- every candidate admitted, finite -- with no
+ * caller code run since (FACTS-RUN): one call of several steps scans once. */
 BCIR_DT_API int bcir_decoder_run(bcir_decoder_state *s,const bcir_decoder_adamw *opt,
     const uint32_t *tokens,const uint32_t *targets,size_t token_count,
     const double *rates,size_t steps,bcir_decoder_event *events,
