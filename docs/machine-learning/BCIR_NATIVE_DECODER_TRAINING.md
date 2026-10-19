@@ -15,7 +15,7 @@ executes in C. PyTorch remains an independent optional reference.
 | Decoder | Embedding scatter-add backward, both residual paths, both per-layer norms, gate/up/down projections, final norm, tied or untied vocabulary head, mean token cross-entropy; the loss's rows, the gamma VJPs' row sums and the embedding scatter run on the pool in the serial order (NDT-REDUCE: rows whose terms the caller adds in row order, column ranges whose sums run over the rows in row order), so every loss and state is the serial one at every thread count under every contract |
 | Optimizer | AdamW moments, constant-time bias powers, decoupled decay, global L2 clipping, mean micro-batch accumulation, per-update learning rates. The atomic preflight is skipped only when the magnitudes the first pass records prove it would admit every element; the passes carry the same AVX2/AVX-512 variants and stay bit-identical The first pass and the preflight run on the pool one task per chunk of `bcir_decoder_reduce_chunk` elements (1,024 doubled until at most 1,024 chunks), their verdicts and maxima exact whatever the partition; the clipping norm is the contract's -- the one index-order chain in double, or under the `reduce` contract (NDT-REDUCE) the chunks' sums added in chunk order from zero, a declared reduction whose shape is a function of the parameter count alone; `bcir_decoder_gradient_norm` reports the square the update takes its root of |
 | Threads | A deterministic pool in memory the caller provides (`bcir_tensor_pool`: `size`/`init`/`stop`, no allocation in the unit; pthreads on POSIX, Win32 threads on Windows, one thread elsewhere; ABI 2 names it in the state, NDT-THREADS). The GEMM is partitioned over (column block, 64-row range) so every output element keeps its depth order; attention over (batch, query head) forward and (batch, KV head) backward with the query heads of one KV head in order, so the shared `dk`/`dv` accumulate as the reference does; SiLU, the SwiGLU VJP, the residual add and gate multiply, RMSNorm, RoPE and the AdamW commit over fixed chunks of elements, rows and positions. The loss, the embedding scatter, the gamma VJP's row sum and the update's norm pass stay serial (index-order reductions). The state after any number of steps is bit-identical at every thread count and to the one-thread trainer; a provider's GEMM or SiLU is threaded as the provider is, the pool runs the rest |
-| Buffer plan | Checked element/byte products, exact sizes for the selected retained-cache algorithm, caller-owned disjoint arenas, one adjoint workspace reused across all layers; no allocation in C |
+| Buffer plan | Checked element/byte products, exact sizes for the selected retained-cache algorithm -- or, under a recompute set (REMAT, state ABI 5), for the kept layers' caches in layer order and one slot the recomputed layers share (`bcir_decoder_activation_count`) -- caller-owned disjoint arenas, one adjoint workspace reused across all layers; the bf16 workspace's exact need, the SwiGLU panels' need and the floor (WS-PLAN: `bcir_decoder_workspace_need`, `_panels`, `_floor`), any size from the floor up one state; `memory_plan` chooses a recompute set and a workspace inside a budget (MEM-PLAN); no allocation in C |
 | Checkpoint | Atomic JSON + little-endian FP32 weights/moments; SHA-256 covers configuration, counter, bias powers and payload; bounded strict resume, no pickle |
 | Deployment | Existing strict HF tensor ingest performs projection transposes and RoPE permutation; `decoder_weights()` feeds the existing Q8 writer and decoder |
 
@@ -64,8 +64,9 @@ fields. Checkpoint hashes detect corruption and do not authenticate an artifact.
 `NativeDecoder(..., contract="fused")` trains under the fused GEMM contract (v2; `"v1"` by default),
 `contract="exp"` under the BCIR exponential, `"fused+exp"` under both, `"kblock"` under the blocked
 fused GEMM contract (v3), `"bf16"` and `"bf16+exp"` under the bf16 GEMM contract (NDT-BF16: the trainer
-lends its GEMMs `trainer.workspace_bytes` of packing workspace, counted in `max_memory_bytes`, and
-admits no CBLAS provider), and any of these with `+reduce` (`"reduce"` alone for v1) under the reduce
+lends its GEMMs `trainer.workspace_bytes` of packing workspace -- the step's exact need unless
+`workspace_bytes=` names any size from its floor up, one state either way (WS-PLAN, below) -- counted
+in `max_memory_bytes`, and admits no CBLAS provider), and any of these with `+reduce` (`"reduce"` alone for v1) under the reduce
 contract, whose clipping norm is the fixed-chunk sum the update's one pooled pass computes
 (NDT-REDUCE), and any of those with `+attn` (`"attn"` alone for v1) under the fused attention
 contract, every multiply-add of the attention's products one `fmaf` (ATTN-FMA), or, under a bf16
@@ -80,6 +81,14 @@ before measuring; the pool keeps running every kernel but the GEMM. Missing prov
 fallback. The C ABI accepts native GEMM and SiLU function pointers: C++ belongs in a
 framework/vendor/SYCL adapter when that integration requires it. The core contains
 no C++ objects, accelerator discovery or framework runtime.
+
+`NativeDecoder(..., recompute=r)` has the backward recompute the layers the bit set `r` names (bit
+l for layer l) instead of keeping their forward caches (REMAT); `workspace_bytes=` lends a bf16
+contract's GEMMs any workspace from the floor up (WS-PLAN); and `recompute="auto"` chooses both
+inside `max_memory_bytes` (MEM-PLAN: `memory_plan`, below). Whatever is chosen, the state is the
+all-kept trainer's at the exact need, bit for bit: the choice moves memory and time, never a value.
+`trainer.plan_memory` reports the arenas the choice lends (a `MemoryPlan`); a checkpoint does not
+record the set, so `resume(..., recompute=...)` chooses again.
 
 ## The train rail (TRAIN-RAIL)
 
@@ -533,12 +542,14 @@ mode. Timings are observations, never CI thresholds. A CPU micro-decoder win ove
 eager PyTorch is not evidence against compiled PyTorch, large transformers,
 accelerators or distributed training.
 
-The plan retains every layer's forward cache and reuses backward scratch; it is not
-a globally optimal liveness solver. The backward consumes the cache it recomputes each step:
+By default the plan retains every layer's forward cache and reuses backward scratch; under a
+recompute set the named layers share one cache slot and the backward recomputes each from its
+residual input (REMAT, above). Neither is a globally optimal liveness solver. The backward consumes
+the cache it recomputes each step:
 after `bcir_decoder_loss_backward` each layer's probability span holds its score adjoint (under the
 bf16 attention, the probabilities as the forward wrote them: its score adjoints live in its workspace).
 Attention storage is quadratic in context length.
-Flash/blocked attention, activation recomputation, mixed precision beyond the bf16 GEMM and attention contracts,
+Flash/blocked attention, recomputation finer than a whole layer, mixed precision beyond the bf16 GEMM and attention contracts,
 accelerator
 backward kernels, distributed collectives and device-resident checkpoints remain
 separate work. The direct loop does not issue StreamPack claims for every tensor;

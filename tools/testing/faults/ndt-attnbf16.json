@@ -32,22 +32,22 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AB4 the workspace sized for the GEMM groups alone (the attention's packs refused at the first step)",
-      "new": "    if (0) {\n      size_t att=",
-      "old": "    if (contract&BCIR_DT_CONTRACT_ATTNBF16) {\n      size_t att=",
+      "new": "  if (0) most=ws_most(most,ws_attention(g,threads));",
+      "old": "  if (contract&BCIR_DT_CONTRACT_ATTNBF16) most=ws_most(most,ws_attention(g,threads));",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AB5 the trainer's forward runs the binary32 attention under the bit",
-      "new": "  if (0)\n    (void)bcir_tensor_attention_bf16_scan_pool(",
-      "old": "  if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)\n    (void)bcir_tensor_attention_bf16_scan_pool(",
+      "new": "  if (0)\n    return bcir_tensor_attention_bf16_scan_pool(",
+      "old": "  if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)\n    return bcir_tensor_attention_bf16_scan_pool(",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AB6 the trainer's backward runs the binary32 backward under the bit (it rewrites the probabilities)",
-      "new": "  if (0)\n    (void)bcir_tensor_attention_bf16_backward_pool(",
-      "old": "  if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)\n    (void)bcir_tensor_attention_bf16_backward_pool(",
+      "new": "  if (0)\n    return bcir_tensor_attention_bf16_backward_pool(",
+      "old": "  if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)\n    return bcir_tensor_attention_bf16_backward_pool(",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

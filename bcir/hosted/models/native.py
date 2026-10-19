@@ -172,6 +172,7 @@ class _State(ct.Structure):
             ("contract", ct.c_uint32),  # ABI 3 (NDT-FMA): the GEMM contract, _CONTRACTS
             ("workspace", ct.c_void_p),  # ABI 4 (NDT-BF16): the bf16 GEMMs' packed operands
             ("workspace_bytes", _SZ),
+            ("recompute", ct.c_uint64),  # ABI 5 (REMAT): layers the backward recomputes
         ]
     )
 
@@ -309,6 +310,115 @@ def _state_buffers(rows, huge_pages):
     return buffers, advised
 
 
+_SIZE_MAX = 2 ** (8 * ct.sizeof(_SZ)) - 1
+
+
+def _bind_plan(lib):
+    """The C plan's byte counts (WS-PLAN, REMAT) on a loaded library: every figure the trainer
+    admits or asks is the C's own, read here, never re-derived."""
+    plan = ct.POINTER(_Plan)
+    for name, args in (
+        ("workspace_bytes", [plan, ct.c_uint32]),
+        ("workspace_need", [plan, ct.c_uint32, ct.c_uint]),
+        ("workspace_floor", [plan, ct.c_uint32, ct.c_uint]),
+        ("workspace_panels", [plan, ct.c_uint32]),
+        ("activation_count", [plan, ct.c_uint64]),
+    ):
+        fn = getattr(lib, "bcir_decoder_" + name)
+        fn.argtypes, fn.restype = args, _SZ
+
+
+@dataclass(frozen=True)
+class MemoryPlan:
+    """A trainer's arenas under a recompute set and a bf16 workspace (GEO-3), in bytes, every
+    count the C plan's (bcir_decoder_activation_count, bcir_decoder_workspace_need/_panels/_floor).
+    Each plan trains the state the all-kept trainer at the exact need trains, bit for bit: the
+    choice moves memory and time, never a value."""
+
+    recompute: int  # the layers the backward recomputes, bit l for layer l
+    workspace_bytes: int  # the bf16 workspace lent (0 without a bf16 GEMM contract)
+    activation_count: int  # floats of the activation arena under the recompute set
+    workspace_need: int  # every GEMM group whole (the SwiGLU block's panels where admitted)
+    workspace_panels: int  # the least at which the SwiGLU block keeps its panels; 0 none
+    workspace_floor: int  # the least the state admits on its pool
+    recomputes: int  # layer forwards the backward re-runs a step (the highest set layer is free)
+    persistent_bytes: int  # weights, gradients and the two moments
+    activation_bytes: int
+    scratch_bytes: int
+    total_bytes: int
+
+
+def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspace_bytes=None):
+    """The arenas of one trainer (GEO-3: per-layer caching coupled with packing-aware workspace
+    planning). With `recompute` given: that set and `workspace_bytes` (None: the exact need),
+    refused (ValueError) where the C refuses them -- a bit past the last layer, a workspace below
+    the floor or lent without a bf16 contract. With `recompute` None: the plan this module
+    chooses within `budget` bytes, among the choices that keep every value: the workspace at the
+    step's need, then at the SwiGLU panels' need, then at the floor, and within each the fewest
+    recomputed layers (the lowest ones; which layers is no matter of cost) -- the order the
+    measured frontier gives (docs/research/measurements/2026-10-19/geo3: a recomputed layer of
+    the 9.84M decoder frees 26 MB for about 2% of a step, the workspace below its need frees at
+    most 3.4 MB for 12-22%). A declared policy, no optimality claim (TMSAO-4); micro-batch
+    accumulation, which frees memory for less time but is not the same state, is the caller's."""
+    _bind_plan(lib)
+    if contract not in _CONTRACTS:
+        raise ValueError(f"contract must be one of {sorted(_CONTRACTS)}")
+    # ctypes wraps an out-of-range integer into its C type silently (2^64 reaches the C as the
+    # empty set), so a set or a size outside its type is refused here, never handed over
+    if recompute is not None and (type(recompute) is not int or not 0 <= recompute < 2**64):
+        raise ValueError("recompute must be a layer bit set in [0, 2^64)")
+    if workspace_bytes is not None and (
+        type(workspace_bytes) is not int or not 0 <= workspace_bytes < _SIZE_MAX
+    ):
+        raise ValueError("workspace_bytes must be None or a size in [0, SIZE_MAX)")
+    bits = _CONTRACTS[contract]
+    p = ct.byref(plan)
+    need = lib.bcir_decoder_workspace_need(p, bits, threads)
+    floor = lib.bcir_decoder_workspace_floor(p, bits, threads)
+    panels = lib.bcir_decoder_workspace_panels(p, bits)
+    if _SIZE_MAX in (need, floor, panels):
+        raise ValueError("native plan's workspace overflows size_t or the plan is refused")
+    layers = plan.spec.layers
+
+    def arenas(mask, workspace):
+        count = lib.bcir_decoder_activation_count(p, mask)
+        if count == _SIZE_MAX:
+            raise ValueError(f"recompute set {mask:#x} names a layer past the plan's {layers}")
+        named = sum(1 for layer in range(min(layers, 64)) if (mask >> layer) & 1)
+        persistent, acts, scratch = 16 * plan.parameters, 4 * count, 4 * plan.scratch
+        return MemoryPlan(
+            mask, workspace, count, need, panels, floor, max(named - 1, 0), persistent, acts,
+            scratch, persistent + acts + scratch + workspace,
+        )  # fmt: skip
+
+    if recompute is not None:
+        if workspace_bytes is None:
+            workspace_bytes = need
+        if not need and workspace_bytes:
+            raise ValueError("a workspace is lent only under a bf16 GEMM contract")
+        if workspace_bytes < floor:
+            raise ValueError(f"workspace {workspace_bytes} below the floor {floor}")
+        return arenas(recompute, workspace_bytes)
+    if type(budget) is not int or budget < 1:
+        raise ValueError("the budget must be a positive integer")
+    tiers = [need]
+    if floor <= panels < need:
+        tiers.append(panels)
+    if floor < tiers[-1]:
+        tiers.append(floor)
+    sets = [0] + [(1 << r) - 1 for r in range(2, min(layers, 64) + 1)]
+    least = None
+    for workspace in tiers:
+        for mask in sets:
+            chosen = arenas(mask, workspace)
+            if chosen.total_bytes <= budget:
+                return chosen
+            least = chosen
+    raise ValueError(
+        f"no recompute set and workspace fit {budget} bytes: the least is {least.total_bytes}"
+    )
+
+
 class NativeDecoder:
     """Caller-owned arenas planned once; native forward/backward/AdamW/run ABI.
 
@@ -400,6 +510,8 @@ class NativeDecoder:
         threads=1,
         contract="v1",
         huge_pages=True,
+        recompute=0,
+        workspace_bytes=None,
     ):
         if not isinstance(spec, DecoderSpec) or spec.activation != "silu_gate":
             raise ValueError("native decoder requires Llama/SwiGLU DecoderSpec")
@@ -428,6 +540,14 @@ class NativeDecoder:
             raise ValueError(f"contract must be one of {sorted(_CONTRACTS)}")
         if type(huge_pages) is not bool:
             raise ValueError("huge_pages must be bool")
+        if recompute != "auto" and (type(recompute) is not int or not 0 <= recompute < 2**64):
+            raise ValueError('recompute must be "auto" or a layer bit set in [0, 2^64)')
+        if workspace_bytes is not None and (
+            type(workspace_bytes) is not int or workspace_bytes < 0
+        ):
+            raise ValueError("workspace_bytes must be None or a non-negative integer")
+        if recompute == "auto" and workspace_bytes is not None:
+            raise ValueError('recompute="auto" plans the workspace too: pass no workspace_bytes')
         self.contract = contract
         self.spec, self.batch_size, self.context_length = spec, batch_size, context_length
         self.library = Path(library).resolve()
@@ -466,14 +586,20 @@ class NativeDecoder:
             spec.rms_norm_eps,
         )
         _check(self.lib.bcir_decoder_make_plan(ct.byref(shape), ct.byref(plan)))
-        # NDT-BF16: the bf16 GEMMs' workspace, sized by the C plan for the step's largest group
-        self.workspace_bytes = self.lib.bcir_decoder_workspace_bytes(
-            ct.byref(plan), _CONTRACTS[contract]
-        )
-        if self.workspace_bytes == 2 ** (8 * ct.sizeof(_SZ)) - 1:
-            raise ValueError("native plan's GEMM workspace overflows size_t")
-        self.memory_bytes = (4 * plan.parameters + plan.activations + plan.scratch) * 4
-        self.memory_bytes += self.workspace_bytes
+        # GEO-3: the arenas a recompute set and a workspace size need (memory_plan); "auto" plans
+        # both within the budget, every choice the state the all-kept plan-sized trainer reaches
+        if recompute == "auto":
+            chosen = memory_plan(self.lib, plan, contract, threads, max_memory_bytes)
+            recompute, workspace_bytes = chosen.recompute, chosen.workspace_bytes
+        self.plan_memory = memory_plan(
+            self.lib, plan, contract, threads, None, recompute=recompute,
+            workspace_bytes=workspace_bytes,
+        )  # fmt: skip
+        self.recompute = recompute
+        # NDT-BF16 / WS-PLAN: the bf16 GEMMs' workspace, by default the step's exact need
+        self.workspace_bytes = self.plan_memory.workspace_bytes
+        self.activation_count = self.plan_memory.activation_count
+        self.memory_bytes = self.plan_memory.total_bytes
         if self.memory_bytes > max_memory_bytes:
             raise ValueError(
                 f"native plan needs {self.memory_bytes} bytes, budget {max_memory_bytes}"
@@ -487,7 +613,7 @@ class NativeDecoder:
                 ("gradients", plan.parameters),
                 ("moment1", plan.parameters),
                 ("moment2", plan.parameters),
-                ("activations", plan.activations),
+                ("activations", self.activation_count),
                 ("scratch", plan.scratch),
             )
             + ((("workspace", (self.workspace_bytes + 3) // 4),) if self.workspace_bytes else ()),
@@ -502,7 +628,7 @@ class NativeDecoder:
             plan.parameters,
             plan.parameters,
             plan.parameters,
-            plan.activations,
+            self.activation_count,
             plan.scratch,
             0,
             1.0,
@@ -512,6 +638,7 @@ class NativeDecoder:
             _CONTRACTS[contract],
             ct.cast(workspace, ct.c_void_p) if workspace is not None else None,
             self.workspace_bytes,
+            recompute,
         )
         rng = random.Random(seed)
         for name, _, offset, count in self.layout:
@@ -541,10 +668,9 @@ class NativeDecoder:
     def _bind(self):
         self.lib.bcir_decoder_abi_version.argtypes = []
         self.lib.bcir_decoder_abi_version.restype = ct.c_uint32
-        if self.lib.bcir_decoder_abi_version() != 4:
+        if self.lib.bcir_decoder_abi_version() != 5:
             raise ValueError("unsupported native decoder ABI")
-        self.lib.bcir_decoder_workspace_bytes.argtypes = [ct.POINTER(_Plan), ct.c_uint32]
-        self.lib.bcir_decoder_workspace_bytes.restype = _SZ
+        _bind_plan(self.lib)
         for name, args, result in (
             ("rails", [], ct.c_int),
             ("size", [ct.c_uint], _SZ),
@@ -663,7 +789,7 @@ class NativeDecoder:
         x = self._tokens(tokens)
         _check(self.lib.bcir_decoder_forward(ct.byref(self.state), x, len(x)))
         n = self.batch_size * self.context_length * self.spec.vocab_size
-        offset = self.state.plan.activations - n
+        offset = self.activation_count - n  # REMAT: the logits are the arena's last floats
         return array("f", self.buffers["activations"][offset : offset + n])
 
     def backward(self, tokens, targets, *, accumulate=False):
@@ -804,7 +930,14 @@ class NativeDecoder:
 
     @classmethod
     def resume(
-        cls, library, path, *, max_memory_bytes=512 * 1024 * 1024, threads=1, huge_pages=True
+        cls,
+        library,
+        path,
+        *,
+        max_memory_bytes=512 * 1024 * 1024,
+        threads=1,
+        huge_pages=True,
+        recompute=0,
     ):
         with Path(path).open("rb") as stream:
             prefix = stream.read(12)
@@ -851,6 +984,7 @@ class NativeDecoder:
                 threads=threads,
                 contract=meta["contract"],
                 huge_pages=huge_pages,
+                recompute=recompute,  # REMAT: the arena's plan, never the state's: not saved
             )
             expected = obj.state.plan.parameters * 12
             payload = stream.read(expected + 1)

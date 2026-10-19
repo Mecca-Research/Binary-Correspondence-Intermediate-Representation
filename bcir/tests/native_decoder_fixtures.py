@@ -6,7 +6,11 @@ spec alone. One function per row family grades it against the C rail; the tests,
 
     train.plan.mismatch        (spec, arena) pairs over `plan_corpus()` where the program's arena
                                sum differs from `bcir_decoder_make_plan`'s count
-    train.mm.mismatch          `MM_CASES` whose native `bcir_tensor_mm` output differs in any bit
+    train.plan.remat.mismatch  (spec, recompute set) pairs over the same corpus and `REMAT_SETS`
+                               (cut to each spec's layers, every distinct set once) where the
+                               program's activation sum under the set differs from
+                               `bcir_decoder_activation_count` (REMAT, GEO-3)
+    train.mm.mismatch         `MM_CASES` whose native `bcir_tensor_mm` output differs in any bit
                                from `mm_reference` -- an independent binary32 emulation of the
                                kernel's contract (beta first, then alpha*a times b added for k
                                ascending, every operation rounded, no contraction)
@@ -131,6 +135,12 @@ ONE_CHUNK_BENCH = (DecoderSpec(16, 8, 2, 1, 16, activation="silu_gate", n_kv_hea
 #: adjoints as the GEMMs' panels wherever their slots are 64-byte aligned (the huge-page
 #: placement's are; a ctypes array's alignment is the allocator's).
 PANELS_BENCH = (DecoderSpec(64, 64, 2, 2, 128, activation="silu_gate", n_kv_heads=1), 2, 16)
+#: GEO-3 (REMAT, WS-PLAN): four layers, so a recompute set keeps some slots and shares one, on the
+#: SwiGLU panels' grid (64 rows, width 64, FF 128), so a bf16 workspace has three tiers.
+REMAT_BENCH = (DecoderSpec(97, 64, 4, 4, 128, activation="silu_gate", n_kv_heads=2), 2, 32)
+#: The recompute sets the parity and the state witnesses take: none, every layer, every other one,
+#: the highest alone (no slot freed), and all but the highest.
+REMAT_SETS = (0, 0xF, 0x5, 0x8, 0x7)
 THREAD_COUNTS = (1, 2, 3, 4)
 
 
@@ -196,6 +206,35 @@ def native_plan(lib, spec: DecoderSpec, batch: int, time_: int) -> dict[str, int
     out = dict.fromkeys(ARENAS[:4], plan.parameters)
     out.update(activations=plan.activations, scratch=plan.scratch)
     return out
+
+
+def native_activation_count(lib, spec: DecoderSpec, batch: int, time_: int, recompute: int) -> int:
+    """`bcir_decoder_activation_count` for the plan of `spec` under a recompute set (REMAT)."""
+    from bcir.hosted.models.native import _Plan, _Spec
+
+    shape = _Spec(spec.vocab_size, spec.d_model, spec.n_heads, spec.kv_heads, spec.n_layers,
+                  spec.d_ff, batch, time_, int(spec.tied_embeddings), spec.rope_base,
+                  spec.rms_norm_eps)  # fmt: skip
+    plan = _Plan()
+    make, count = lib.bcir_decoder_make_plan, lib.bcir_decoder_activation_count
+    make.argtypes, make.restype = [ct.POINTER(_Spec), ct.POINTER(_Plan)], ct.c_int
+    count.argtypes, count.restype = [ct.POINTER(_Plan), ct.c_uint64], ct.c_size_t
+    assert make(ct.byref(shape), ct.byref(plan)) == 0, (spec, batch, time_)
+    return count(ct.byref(plan), recompute)
+
+
+def recompute_plan_mismatch(lib, corpus=PLAN_CORPUS, sets=REMAT_SETS) -> int:
+    """(spec, recompute set) pairs where the program's activation sum under the set differs from
+    `bcir_decoder_activation_count` (REMAT): the sets cut to each spec's layers, every distinct
+    one counted once."""
+    bad = 0
+    for spec, batch, time_ in corpus:
+        for recompute in sorted({mask & ((1 << spec.n_layers) - 1) for mask in sets}):
+            mine = training_step_program(spec, batch, time_, recompute).arena_elements()
+            bad += mine["activations"] != native_activation_count(
+                lib, spec, batch, time_, recompute
+            )
+    return bad
 
 
 def plan_mismatch(lib, corpus=PLAN_CORPUS) -> int:
@@ -709,6 +748,8 @@ def thread_states(
     contract="v1",
     refusals=False,
     huge_pages=True,
+    recompute=0,
+    workspace_bytes=None,
 ) -> dict[int, str]:
     """The state digest after `steps` steps of `bench` -- the same seeded weights, tokens and
     rates -- with the loss and the clipping norm every step reported folded in (the norm is the
@@ -719,7 +760,8 @@ def thread_states(
     that refuses a step is a state of its own -- "refused: " and the trainer's report -- where it
     would otherwise raise: the row's verdict on a library whose pool refuses what the serial
     trainer admits (a dropped task's finiteness report since NDT-SCAN), never a traceback.
-    `huge_pages` is the trainers' state placement (NDT-PAGES), which no state may depend on."""
+    `huge_pages` is the trainers' state placement (NDT-PAGES), which no state may depend on, nor
+    may `recompute` and `workspace_bytes` (GEO-3: the recompute set, the bf16 workspace)."""
     from bcir.hosted.models.native import NativeAdamW, NativeDecoder
 
     spec, batch, time_ = bench
@@ -730,8 +772,8 @@ def thread_states(
     out = {}
     for threads in counts:
         trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
-                                threads=threads, contract=contract,
-                                huge_pages=huge_pages)  # fmt: skip
+                                threads=threads, contract=contract, huge_pages=huge_pages,
+                                recompute=recompute, workspace_bytes=workspace_bytes)  # fmt: skip
         try:
             try:
                 events = trainer.run(tokens, targets, steps=steps,
@@ -883,6 +925,7 @@ def measure(*, timed: bool = True) -> dict[str, float]:
             return out
         lib = ct.CDLL(str(path))
         out["train.plan.mismatch"] = float(plan_mismatch(lib))
+        out["train.plan.remat.mismatch"] = float(recompute_plan_mismatch(lib))
         out["train.mm.mismatch"] = float(mm_mismatch(lib))
         out["train.mm.fused.mismatch"] = float(mm_fused_mismatch(lib))
         out["train.mm.kblock.mismatch"] = float(mm_kblock_mismatch(lib))
@@ -909,6 +952,10 @@ __all__ = [
     "MM_CASES",
     "PANELS_BENCH",
     "PLAN_CORPUS",
+    "REMAT_BENCH",
+    "REMAT_SETS",
+    "native_activation_count",
+    "recompute_plan_mismatch",
     "THREAD_COUNTS",
     "THREADS_BENCH",
     "build_library",

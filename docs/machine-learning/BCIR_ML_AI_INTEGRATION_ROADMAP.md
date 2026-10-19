@@ -1385,8 +1385,9 @@ complete FP32 Llama/SwiGLU forward, every parameter gradient, clipped AdamW,
 micro-batch accumulation and checkpoint continuation. Checked caller-owned arenas
 retain forward caches and reuse one backward workspace. An explicit CBLAS provider
 can accelerate GEMM; selective framework/vendor integrations use the C ABI.
-Accelerator backward, mixed precision, recomputation and distributed training remain
-open. This path preserves the existing scalar Tape and planned logistic trainers.
+Accelerator backward, mixed precision beyond the bf16 GEMM and attention contracts,
+recomputation finer than a whole layer (GEO-3 landed whole-layer recomputation) and distributed
+training remain open. This path preserves the existing scalar Tape and planned logistic trainers.
 
 The work that takes this trainer from behind PyTorch's step time to ahead of it is laid out in
 [the training-acceleration roadmap](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md): where the

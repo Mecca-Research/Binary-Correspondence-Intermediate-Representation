@@ -1670,6 +1670,10 @@ size_t bcir_tensor_mm_bf16_group_workspace(const bcir_tensor_mm_call *chain, siz
     const bcir_tensor_mm_call *y, size_t ny) {
   return bf16_need(chain,nchain,y,ny,NULL);
 }
+size_t bcir_tensor_mm_bf16_group_panels_workspace(const bcir_tensor_mm_call *chain, size_t nchain,
+    const bcir_tensor_mm_call *y, size_t ny, const bcir_tensor_bf16_panels *pre) {
+  return bf16_need(chain,nchain,y,ny,pre);
+}
 /* the workspace's first 64-byte boundary and the bytes from it */
 static uint16_t *bf16_base(void *workspace, size_t *bytes) {
   uintptr_t p=(uintptr_t)workspace,q=(p+BF16_ALIGN-1)/BF16_ALIGN*BF16_ALIGN;
@@ -3025,12 +3029,22 @@ static size_t att16_backward_bytes(size_t t, size_t d) {
   head=bf16_sum(head,bf16_sum(bf16_strip(t,t),bf16_strip(d,t)));
   return bf16_sum(bf16_sum(kv,blocks),head);
 }
-size_t bcir_tensor_attention_bf16_workspace(size_t b, size_t t, size_t nh, size_t nk, size_t d) {
-  size_t f,w;
-  if (!b || !t || !nh || !nk || !d) return 0;
-  f=att16_mul(att16_mul(b,nk),att16_forward_bytes(t,d));
-  w=att16_mul(att16_mul(b,nk),att16_backward_bytes(t,d));
+/* the regions of `regions` tasks at once, the larger direction's, and the alignment */
+static size_t att16_regions(size_t regions, size_t t, size_t d) {
+  size_t f=att16_mul(regions,att16_forward_bytes(t,d)),w=att16_mul(regions,att16_backward_bytes(t,d));
   return bf16_sum(f>w ? f : w,BF16_ALIGN);
+}
+size_t bcir_tensor_attention_bf16_workspace(size_t b, size_t t, size_t nh, size_t nk, size_t d) {
+  if (!b || !t || !nh || !nk || !d) return 0;
+  return att16_regions(att16_mul(b,nk),t,d);
+}
+/* a pool's workers no more than the tasks: a region a worker (the entries' by_worker), else a task */
+size_t bcir_tensor_attention_bf16_pool_workspace(size_t b, size_t t, size_t nh, size_t nk,
+    size_t d, unsigned threads) {
+  size_t tasks;
+  if (!b || !t || !nh || !nk || !d) return 0;
+  tasks=att16_mul(b,nk);
+  return att16_regions(threads && threads<=tasks ? threads : tasks,t,d);
 }
 /* one product as the bf16 GEMM's call (alpha 1) over the attention's strides, its panels pa, pb */
 static void att16_call(bf16_call *c, int ta, int tb, size_t m, size_t n, size_t k, const float *a,
@@ -3327,7 +3341,8 @@ int bcir_tensor_attention_bf16_scan_pool(bcir_tensor_pool *pool, int variant, un
   int bv=att16_instance(variant);
   if (!bv || !nk || nh%nk) return 0;
   if (!b || !t || !nh || !d) return bv;
-  if (!workspace || bytes<bcir_tensor_attention_bf16_workspace(b,t,nh,nk,d)) return 0;
+  if (!workspace || bytes<bcir_tensor_attention_bf16_pool_workspace(b,t,nh,nk,d,
+      bcir_tensor_pool_threads(pool))) return 0;
   att16_fill(&j.a,b,t,nh,nk,d);
   j.a.q=q; j.a.k=k; j.a.v=v; j.a.p=p; j.a.y=y;
   j.a.exp2=(contract&BCIR_TENSOR_ATTENTION_EXP)!=0;
@@ -3350,7 +3365,8 @@ int bcir_tensor_attention_bf16_backward_pool(bcir_tensor_pool *pool, int variant
   att16_job j; size_t tasks=b*nk,usable=bytes; int bv=att16_instance(variant);
   if (!bv || !nk || nh%nk) return 0;
   if (!b || !t || !nh || !d) return bv;
-  if (!workspace || bytes<bcir_tensor_attention_bf16_workspace(b,t,nh,nk,d)) return 0;
+  if (!workspace || bytes<bcir_tensor_attention_bf16_pool_workspace(b,t,nh,nk,d,
+      bcir_tensor_pool_threads(pool))) return 0;
   att16_fill(&j.a,b,t,nh,nk,d);
   j.a.q=q; j.a.k=k; j.a.v=v; j.a.p=(float *)(uintptr_t)p; j.a.dy=dy; j.a.dq=dq; j.a.dk=dk; j.a.dv=dv;
   j.bv=bv; j.ws=(unsigned char *)(void *)bf16_base(workspace,&usable);

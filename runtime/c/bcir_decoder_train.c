@@ -6,7 +6,7 @@
 
 _Static_assert(sizeof(float)==4 && FLT_RADIX==2 && FLT_MANT_DIG==24,
     "native decoder ABI requires IEEE binary32");
-uint32_t bcir_decoder_abi_version(void) { return 4; }
+uint32_t bcir_decoder_abi_version(void) { return 5; }
 static int add(size_t *n,size_t a) {
   if (a>SIZE_MAX-*n) return 0;
   *n+=a; return 1;
@@ -51,14 +51,25 @@ static int overlap(const void *a,size_t na,const void *b,size_t nb) {
   if (na>UINTPTR_MAX-x || nb>UINTPTR_MAX-y) return 1;
   return na && nb && x<y+nb && y<x+na;
 }
+#ifdef BCIR_DT_WORKSPACE_PROBE
+/* The harness's floor (a build defining BCIR_DT_WORKSPACE_PROBE has it; the library does not):
+ * SIZE_MAX the plan's, any other value the least valid() admits -- so a product that refuses the
+ * workspace, which no admitted state reaches, is a verdict the harness can see (WS-PLAN). */
+static size_t workspace_admit=SIZE_MAX;
+void bcir_decoder_workspace_probe_admit(size_t bytes);
+void bcir_decoder_workspace_probe_admit(size_t bytes) { workspace_admit=bytes; }
+#endif
 static int valid(bcir_decoder_state *s) {
-  bcir_decoder_plan p; const float *ptr[6]; size_t len[6],cap[6],i,j;
+  bcir_decoder_plan p; const float *ptr[6]; size_t len[6],cap[6],i,j,acts;
   int rc;
   if (!s) return BCIR_DT_INVALID;
   rc=bcir_decoder_make_plan(&s->plan.spec,&p);
   if (rc) return rc;
   if (p.parameters!=s->plan.parameters || p.activations!=s->plan.activations ||
       p.scratch!=s->plan.scratch) return BCIR_DT_INVALID;
+  /* REMAT: the recompute set names layers of this plan; the arena holds what it keeps */
+  acts=bcir_decoder_activation_count(&p,s->recompute);
+  if (acts==SIZE_MAX) return BCIR_DT_INVALID;
   if (s->contract&~(uint32_t)(BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_KBLOCK|
       BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTN|BCIR_DT_CONTRACT_ATTNBF16))
     return BCIR_DT_INVALID;
@@ -70,7 +81,7 @@ static int valid(bcir_decoder_state *s) {
       (s->contract&BCIR_DT_CONTRACT_ATTN))) return BCIR_DT_INVALID;
   ptr[0]=s->weights; ptr[1]=s->gradients; ptr[2]=s->moment1; ptr[3]=s->moment2;
   ptr[4]=s->activations; ptr[5]=s->scratch;
-  len[0]=len[1]=len[2]=len[3]=p.parameters; len[4]=p.activations; len[5]=p.scratch;
+  len[0]=len[1]=len[2]=len[3]=p.parameters; len[4]=acts; len[5]=p.scratch;
   cap[0]=s->weight_capacity; cap[1]=s->gradient_capacity;
   cap[2]=s->moment1_capacity; cap[3]=s->moment2_capacity;
   cap[4]=s->activation_capacity; cap[5]=s->scratch_capacity;
@@ -82,15 +93,24 @@ static int valid(bcir_decoder_state *s) {
     for (j=0;j<i;j++) if (overlap(ptr[i],len[i]*sizeof(float),ptr[j],len[j]*sizeof(float)))
       return BCIR_DT_INVALID;
   }
-  if (s->contract&BCIR_DT_CONTRACT_BF16) {  /* the GEMMs' workspace: present, large enough, apart */
+  if (s->contract&BCIR_DT_CONTRACT_BF16) {  /* the GEMMs' workspace: present, at the floor, apart */
+    size_t least=bcir_decoder_workspace_floor(&p,s->contract,bcir_tensor_pool_threads(s->pool));
+#ifdef BCIR_DT_WORKSPACE_PROBE
+    if (workspace_admit!=SIZE_MAX) least=workspace_admit;
+#endif
     if (!s->workspace) return BCIR_DT_INVALID;
-    if (s->workspace_bytes<bcir_decoder_workspace_bytes(&p,s->contract) ||
-        s->workspace_bytes>UINTPTR_MAX-(uintptr_t)s->workspace) return BCIR_DT_CAPACITY;
+    if (s->workspace_bytes<least || s->workspace_bytes>UINTPTR_MAX-(uintptr_t)s->workspace)
+      return BCIR_DT_CAPACITY;
     if (overlap(s->workspace,s->workspace_bytes,s,sizeof(*s))) return BCIR_DT_INVALID;
     for (i=0;i<6;i++) if (overlap(s->workspace,s->workspace_bytes,ptr[i],len[i]*sizeof(float)))
       return BCIR_DT_INVALID;
   }
   return BCIR_DT_OK;
+}
+/* the activation arena's floats under the state's recompute set (valid() admitted the set) */
+static size_t arena_floats(const bcir_decoder_state *s) {
+  size_t n=bcir_decoder_activation_count(&s->plan,s->recompute);
+  return n==SIZE_MAX ? s->plan.activations : n;
 }
 static int external(bcir_decoder_state *s,const void *p,size_t bytes) {
   if (!p || bytes>UINTPTR_MAX-(uintptr_t)p) return 0;
@@ -99,7 +119,7 @@ static int external(bcir_decoder_state *s,const void *p,size_t bytes) {
     !overlap(p,bytes,s->gradients,s->plan.parameters*sizeof(float)) &&
     !overlap(p,bytes,s->moment1,s->plan.parameters*sizeof(float)) &&
     !overlap(p,bytes,s->moment2,s->plan.parameters*sizeof(float)) &&
-    !overlap(p,bytes,s->activations,s->plan.activations*sizeof(float)) &&
+    !overlap(p,bytes,s->activations,arena_floats(s)*sizeof(float)) &&
     !overlap(p,bytes,s->scratch,s->plan.scratch*sizeof(float)) &&
     !((s->contract&BCIR_DT_CONTRACT_BF16) && overlap(p,bytes,s->workspace,s->workspace_bytes));
 }
@@ -169,44 +189,139 @@ static geometry geom(const bcir_decoder_spec *s) {
   g.a=g.b*g.h*g.t*g.t; g.lp=2*g.d+2*g.d*g.d+2*g.d*g.k+3*g.d*g.f;
   g.la=5*g.nd+2*g.nk+g.a+3*g.nf; return g;
 }
-/* bcir_decoder_workspace_bytes: the step's GEMM groups, as the forward and backward issue them
- * (linears, linear, linear_backward, linears_backward below), each call (m, n, k), and the largest
- * group's packs, every call's whole -- an upper bound on what the group packs, which shares an
- * operand two calls read alike; under the bf16 attention (BF16-ATTN) at least the attention's
- * regions, which use the workspace between the GEMMs. */
-static size_t ws_sum(size_t a,size_t b) { return a>SIZE_MAX-b ? SIZE_MAX : a+b; }
+/* The bf16 workspace (WS-PLAN): what the step's GEMM groups pack, exactly. Every group as the
+ * forward and backward issue it (linears, linear, linear_backward, linears_backward and the SwiGLU
+ * block's panel groups below), every operand a distinct address but those the step's calls share
+ * -- the input q, k and v read alike, the activation two weight adjoints read alike -- and a panel
+ * operand NULL and named in pre, as the step names it: counted by the tensor unit's own rule
+ * (bcir_tensor_mm_bf16_group_panels_workspace), so the figure is the bytes the group packs, no more
+ * (the plan's figure was once every call packed whole, sharing nothing: 2.6 times this for the
+ * 9.84M decoder). `panels` counts the SwiGLU block with its panels; `which` 1 counts its panel
+ * groups alone, the least at which the block runs with them (a call a panel feeds runs whole). */
+static size_t ws_most(size_t most,size_t need) { return need>most ? need : most; }
+static bcir_tensor_mm_call ws_call(int ta,int tb,size_t m,size_t n,size_t k,const float *a,
+    const float *b) {
+  bcir_tensor_mm_call x;
+  x.ta=ta; x.tb=tb; x.m=m; x.n=n; x.k=k; x.alpha=1.0f; x.a=a; x.b=b; x.beta=0.0f; x.c=NULL;
+  return x;
+}
+static size_t ws_need(geometry g,int panels,int which) {
+  enum { N1,N2,CTX,HID,NORM,DL,CUR,DG,DU,DQ,DK,DV,WQ,WK,WV,WO,WG,WU,WD,HEAD,SYMBOLS };
+  static const float at[SYMBOLS]; static const unsigned short panel[1];
+  const size_t n=g.n,d=g.d,k=g.k,f=g.f,v=g.v; size_t most=0,q;
+  bcir_tensor_mm_call c[6]; bcir_tensor_bf16_panels pre[6];
+  memset(pre,0,sizeof pre);
+  if (!which) {
+    /* the forward: q, k and v read one input; o; gate and up read one input; the head */
+    c[0]=ws_call(0,1,n,d,d,at+N1,at+WQ); c[1]=ws_call(0,1,n,k,d,at+N1,at+WK);
+    c[2]=ws_call(0,1,n,k,d,at+N1,at+WV);
+    most=ws_most(most,bcir_tensor_mm_bf16_group_workspace(NULL,0,c,3));
+    c[0]=ws_call(0,1,n,d,d,at+CTX,at+WO); most=ws_most(most,bcir_tensor_mm_bf16_group_workspace(NULL,0,c,1));
+    c[0]=ws_call(0,1,n,f,d,at+N2,at+WG); c[1]=ws_call(0,1,n,f,d,at+N2,at+WU);
+    most=ws_most(most,bcir_tensor_mm_bf16_group_workspace(NULL,0,c,2));
+    c[0]=ws_call(0,1,n,v,d,at+NORM,at+HEAD); most=ws_most(most,bcir_tensor_mm_bf16_group_workspace(NULL,0,c,1));
+    /* the backward: a linear's dx then dW as one group, q/k/v's input adjoints a chain into dn */
+    c[0]=ws_call(0,0,n,d,v,at+DL,at+HEAD); c[1]=ws_call(1,0,v,d,n,at+DL,at+NORM);
+    most=ws_most(most,bcir_tensor_mm_bf16_group_workspace(c,1,c+1,1));
+    c[0]=ws_call(0,0,n,d,d,at+CUR,at+WO); c[1]=ws_call(1,0,d,d,n,at+CUR,at+CTX);
+    most=ws_most(most,bcir_tensor_mm_bf16_group_workspace(c,1,c+1,1));
+    c[0]=ws_call(0,0,n,d,d,at+DQ,at+WQ); c[1]=ws_call(0,0,n,d,k,at+DK,at+WK);
+    c[2]=ws_call(0,0,n,d,k,at+DV,at+WV); c[3]=ws_call(1,0,d,d,n,at+DQ,at+N1);
+    c[4]=ws_call(1,0,k,d,n,at+DK,at+N1); c[5]=ws_call(1,0,k,d,n,at+DV,at+N1);
+    most=ws_most(most,bcir_tensor_mm_bf16_group_workspace(c,3,c+3,3));
+  }
+  if (!panels) {  /* the SwiGLU block's products on binary32 operands, every one packed */
+    c[0]=ws_call(0,1,n,d,f,at+HID,at+WD); most=ws_most(most,bcir_tensor_mm_bf16_group_workspace(NULL,0,c,1));
+    c[0]=ws_call(0,0,n,f,d,at+CUR,at+WD); c[1]=ws_call(1,0,d,f,n,at+CUR,at+HID);
+    most=ws_most(most,bcir_tensor_mm_bf16_group_workspace(c,1,c+1,1));
+    c[0]=ws_call(0,0,n,d,f,at+DG,at+WG); c[1]=ws_call(0,0,n,d,f,at+DU,at+WU);
+    c[2]=ws_call(1,0,f,d,n,at+DG,at+N2); c[3]=ws_call(1,0,f,d,n,at+DU,at+N2);
+    most=ws_most(most,bcir_tensor_mm_bf16_group_workspace(c,2,c+2,2));
+  }
+  else {  /* its panel groups: the down projection's A, its weight adjoint's B, the adjoints' A, A^T */
+    c[0]=ws_call(0,1,n,d,f,NULL,at+WD); pre[0].a=panel;
+    most=ws_most(most,bcir_tensor_mm_bf16_group_panels_workspace(NULL,0,c,1,pre));
+    pre[0].a=NULL;
+    c[0]=ws_call(0,0,n,f,d,at+CUR,at+WD); c[1]=ws_call(1,0,d,f,n,at+CUR,NULL); pre[1].b=panel;
+    most=ws_most(most,bcir_tensor_mm_bf16_group_panels_workspace(c,1,c+1,1,pre));
+    pre[1].b=NULL;
+    for (q=0;q<2;q++) {
+      c[q]=ws_call(0,0,n,d,f,NULL,at+(q ? WU : WG)); c[2+q]=ws_call(1,0,f,d,n,NULL,at+N2);
+      pre[q].a=panel; pre[2+q].a=panel;
+    }
+    most=ws_most(most,bcir_tensor_mm_bf16_group_panels_workspace(c,2,c+2,2,pre));
+  }
+  return most;
+}
+/* the shapes admit the SwiGLU block's panels (the rest of panels() below is the state's); a build
+ * without them (BCIR_DT_NO_PANELS) plans the block packed, as it runs */
+static int ws_panels(geometry g) {
+#ifdef BCIR_DT_NO_PANELS
+  (void)g; return 0;
+#else
+  return g.n && g.d && g.f && !(g.n%32) && !(g.d%32) && !(g.f%32);
+#endif
+}
+static size_t ws_attention(geometry g,unsigned threads) {
+  return bcir_tensor_attention_bf16_pool_workspace(g.b,g.t,g.h,g.kh,g.hd,threads);
+}
+size_t bcir_decoder_workspace_need(const bcir_decoder_plan *plan,uint32_t contract,unsigned threads) {
+  bcir_decoder_plan p; geometry g; size_t most;
+  if (!(contract&BCIR_DT_CONTRACT_BF16)) return 0;
+  if (!plan || bcir_decoder_make_plan(&plan->spec,&p)) return SIZE_MAX;
+  g=geom(&p.spec); most=ws_need(g,ws_panels(g),0);
+  if (contract&BCIR_DT_CONTRACT_ATTNBF16) most=ws_most(most,ws_attention(g,threads));
+  return most;
+}
 size_t bcir_decoder_workspace_bytes(const bcir_decoder_plan *plan,uint32_t contract) {
-  bcir_decoder_plan p; geometry g; size_t q,c,most=0;
+  return bcir_decoder_workspace_need(plan,contract,0);
+}
+size_t bcir_decoder_workspace_panels(const bcir_decoder_plan *plan,uint32_t contract) {
+  bcir_decoder_plan p; geometry g;
   if (!(contract&BCIR_DT_CONTRACT_BF16)) return 0;
   if (!plan || bcir_decoder_make_plan(&plan->spec,&p)) return SIZE_MAX;
   g=geom(&p.spec);
-  {
-    const size_t n=g.n,d=g.d,k=g.k,f=g.f,v=g.v;
-    /* every group: up to six calls (m, n, k); a row of zeros ends a group */
-    const size_t groups[][6][3]={
-      {{n,d,d},{n,k,d},{n,k,d}},                       /* forward: q, k, v */
-      {{n,d,d}},                                        /* o */
-      {{n,f,d},{n,f,d}},                                /* gate, up */
-      {{n,d,f}},                                        /* down */
-      {{n,v,d}},                                        /* the head */
-      {{n,d,v},{v,d,n}},                                /* backward: the head's dx and dW */
-      {{n,f,d},{d,f,n}},                                /* down */
-      {{n,d,f},{n,d,f},{f,d,n},{f,d,n}},                /* gate, up */
-      {{n,d,d},{d,d,n}},                                /* o */
-      {{n,d,d},{n,d,k},{n,d,k},{d,d,n},{k,d,n},{k,d,n}} /* q, k, v */
-    };
-    for (q=0;q<sizeof(groups)/sizeof(groups[0]);q++) {
-      size_t sum=0;
-      for (c=0;c<6 && groups[q][c][0];c++)
-        sum=ws_sum(sum,bcir_tensor_mm_bf16_workspace(groups[q][c][0],groups[q][c][1],groups[q][c][2]));
-      if (sum>most) most=sum;
-    }
-    if (contract&BCIR_DT_CONTRACT_ATTNBF16) {
-      size_t att=bcir_tensor_attention_bf16_workspace(g.b,g.t,g.h,g.kh,g.hd);
-      if (att>most) most=att;
-    }
-  }
-  return most;
+  return ws_panels(g) ? ws_need(g,1,1) : 0;
+}
+/* the least: below a call's 32-row strip of A and 32-column strip of B (bcir_tensor_mm_bf16_workspace
+ * of a 32 x 32 call at its depth) its entry refuses; the step's depths are the width, the hidden
+ * width, the KV width, the vocabulary and the rows */
+size_t bcir_decoder_workspace_floor(const bcir_decoder_plan *plan,uint32_t contract,unsigned threads) {
+  bcir_decoder_plan p; geometry g; size_t depth[5],least=0,i;
+  if (!(contract&BCIR_DT_CONTRACT_BF16)) return 0;
+  if (!plan || bcir_decoder_make_plan(&plan->spec,&p)) return SIZE_MAX;
+  g=geom(&p.spec); depth[0]=g.d; depth[1]=g.f; depth[2]=g.k; depth[3]=g.v; depth[4]=g.n;
+  for (i=0;i<5;i++) least=ws_most(least,bcir_tensor_mm_bf16_workspace(32,32,depth[i]));
+  if (contract&BCIR_DT_CONTRACT_ATTNBF16) least=ws_most(least,ws_attention(g,threads));
+  return least;
+}
+/* REMAT: layer l is recomputed when its bit is set (bits past 63 name no layer). The kept layers'
+ * slots come first in layer order, the recomputed layers' one shared slot after them. */
+static int recomputes(uint64_t r,size_t l) { return l<64 && ((r>>l)&1u); }
+static size_t recomputed_below(uint64_t r,size_t l) {
+  uint64_t x=l>=64 ? r : r&(((uint64_t)1<<l)-1u); size_t c=0;
+  while (x) { x&=x-1u; c++; }
+  return c;
+}
+static size_t cache_slots(geometry g,uint64_t r) {
+  size_t gone=recomputed_below(r,g.l);
+  return g.l-gone+(gone!=0);
+}
+static size_t slot_of(geometry g,uint64_t r,size_t l) {
+  return recomputes(r,l) ? g.l-recomputed_below(r,g.l) : l-recomputed_below(r,l);
+}
+/* the highest recomputed layer: the shared slot still holds its cache when the backward reaches it */
+static size_t top_recomputed(geometry g,uint64_t r) {
+  size_t l=g.l<64 ? g.l : 64;
+  while (l-->0) if (recomputes(r,l)) return l;
+  return SIZE_MAX;
+}
+size_t bcir_decoder_activation_count(const bcir_decoder_plan *plan,uint64_t recompute) {
+  bcir_decoder_plan p; geometry g;
+  if (!plan || bcir_decoder_make_plan(&plan->spec,&p)) return SIZE_MAX;
+  g=geom(&p.spec);
+  if (g.l<64 && (recompute>>g.l)) return SIZE_MAX;
+  return p.activations-(g.l-cache_slots(g,recompute))*g.la;
 }
 typedef struct layer { float *norm1,*q,*k,*v,*o,*norm2,*gate,*up,*down; } layer;
 static layer params(float *x,geometry g) {
@@ -251,19 +366,22 @@ size_t bcir_decoder_workspace_probe(void) { size_t seen=workspace_seen; workspac
 /* calls under the state's contract as one pool job: the chain into one C, then the rest (the
  * bf16 entries' workspace is the state's, admitted by valid(); the others need none); pre names
  * the operands already packed (BF16-PANELS, the bf16 contract only), NULL none. The probe records
- * what the group would pack without them, the most the plan must hold either way. */
-static void gemm_group_with(bcir_decoder_state *s,const bcir_tensor_mm_call *chain,size_t nchain,
+ * what the group packs, its panels counted as the entry counts them (WS-PLAN: a panel operand is
+ * NULL, which a count without pre reads as one operand two calls share). Every product returns
+ * whether it ran: a refusal writes nothing, and the step it belongs to fails (WS-PLAN). */
+static int gemm_group_with(bcir_decoder_state *s,const bcir_tensor_mm_call *chain,size_t nchain,
     const bcir_tensor_mm_call *y,size_t ny,const bcir_tensor_bf16_panels *pre) {
 #ifdef BCIR_DT_WORKSPACE_PROBE
-  if (gemm_contract(s)==3) workspace_saw(bcir_tensor_mm_bf16_group_workspace(chain,nchain,y,ny));
+  if (gemm_contract(s)==3) workspace_saw(bcir_tensor_mm_bf16_group_panels_workspace(chain,nchain,y,ny,pre));
 #endif
   if (gemm_contract(s)==3)
-    (void)bcir_tensor_mm_bf16_group_panels_pool(s->pool,chain,nchain,y,ny,pre,s->workspace,
+    return bcir_tensor_mm_bf16_group_panels_pool(s->pool,chain,nchain,y,ny,pre,s->workspace,
         s->workspace_bytes);
-  else bcir_tensor_mm_group_pool(s->pool,gemm_contract(s),chain,nchain,y,ny);
+  bcir_tensor_mm_group_pool(s->pool,gemm_contract(s),chain,nchain,y,ny);
+  return 1;
 }
-static void gemm_group(bcir_decoder_state *s,const bcir_tensor_mm_call *chain,size_t nchain,
-    const bcir_tensor_mm_call *y,size_t ny) { gemm_group_with(s,chain,nchain,y,ny,NULL); }
+static int gemm_group(bcir_decoder_state *s,const bcir_tensor_mm_call *chain,size_t nchain,
+    const bcir_tensor_mm_call *y,size_t ny) { return gemm_group_with(s,chain,nchain,y,ny,NULL); }
 /* BF16-PANELS: under the bf16 contract the SwiGLU block's outputs -- the hidden activation and the
  * gate and up adjoints -- are read by bf16 GEMMs alone, so their writers store them as the GEMMs'
  * panels (each element the conversion of its binary32 value, the pack's): in the binary32 tensor's
@@ -274,13 +392,15 @@ static void gemm_group(bcir_decoder_state *s,const bcir_tensor_mm_call *chain,si
  * feeds, and the GEMM's output would then go unwritten), and the slot is 64-byte aligned;
  * otherwise binary32 and the GEMMs' packs, as before. The products are the packed ones bit for bit,
  * so the state is the same either way (a build defining BCIR_DT_NO_PANELS has no panels: the
- * harness's witness). */
+ * harness's witness). A call a panel feeds runs whole, so the workspace must hold its group's other
+ * packs (WS-PLAN): below the panel groups' need the block runs without panels, its calls in chunks. */
 static int panels(const bcir_decoder_state *s,geometry g,const float *a,const float *b) {
 #ifdef BCIR_DT_NO_PANELS
   (void)s; (void)g; (void)a; (void)b; return 0;
 #else
   return gemm_contract(s)==3 && !s->provider.mm && !s->provider.silu && g.n && g.d && g.f &&
-    !(g.n%32) && !(g.d%32) && !(g.f%32) && !((uintptr_t)a%64) && !((uintptr_t)b%64);
+    !(g.n%32) && !(g.d%32) && !(g.f%32) && !((uintptr_t)a%64) && !((uintptr_t)b%64) &&
+    s->workspace_bytes>=ws_need(g,1,1);
 #endif
 }
 static unsigned short *panel_of(float *slot) { return (unsigned short *)(void *)slot; }
@@ -296,63 +416,66 @@ BCIR_DT_API unsigned bcir_decoder_panels_probe(void) { unsigned u=panels_seen; p
 #else
 #define PANELS_SAW(bit) ((void)0)
 #endif
-static void gemm(bcir_decoder_state *s,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
+static int gemm(bcir_decoder_state *s,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
     const float *a,const float *b,float beta,float *c) {
   if (s->provider.mm) s->provider.mm(s->provider.ctx,ta,tb,m,n,k,alpha,a,b,beta,c);
   else if (gemm_contract(s)==3) {
 #ifdef BCIR_DT_WORKSPACE_PROBE
     workspace_saw(bcir_tensor_mm_bf16_workspace(m,n,k));
 #endif
-    (void)bcir_tensor_mm_bf16_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c,s->workspace,s->workspace_bytes);
+    return bcir_tensor_mm_bf16_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c,s->workspace,s->workspace_bytes);
   }
   else if (gemm_contract(s)==2) bcir_tensor_mm_kblock_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
   else if (gemm_contract(s)==1) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
   else bcir_tensor_mm_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
+  return 1;
 }
-static void linear(bcir_decoder_state *s,size_t r,size_t in,size_t out,const float *x,
-    const float *w,float *y) { gemm(s,0,1,r,out,in,1.0f,x,w,0.0f,y); }
+static int linear(bcir_decoder_state *s,size_t r,size_t in,size_t out,const float *x,
+    const float *w,float *y) { return gemm(s,0,1,r,out,in,1.0f,x,w,0.0f,y); }
 /* A linear's two VJPs -- dx = dy W (beta-scaled) and dW += dy^T x -- read one adjoint and write
  * apart, so BCIR's kernels run them as one pool job (NDT-SCHED-0: one barrier, the narrow
  * product's idle threads on the other's tasks); a provider's GEMM runs them one after the other,
  * threaded as the provider threads it. The results are the two calls', bit for bit. */
-static void linear_backward(bcir_decoder_state *s,size_t r,size_t in,size_t out,
+static int linear_backward(bcir_decoder_state *s,size_t r,size_t in,size_t out,
     const float *x,const float *w,const float *dy,float *dx,float *dw,float beta,float wbeta) {
   bcir_tensor_mm_call cx,cw;
   if (s->provider.mm) {
     gemm(s,0,0,r,in,out,1.0f,dy,w,beta,dx);
     gemm(s,1,0,out,in,r,1.0f,dy,x,wbeta,dw);
-    return;
+    return 1;
   }
   cx.ta=0; cx.tb=0; cx.m=r; cx.n=in; cx.k=out; cx.alpha=1.0f; cx.a=dy; cx.b=w; cx.beta=beta; cx.c=dx;
   cw.ta=1; cw.tb=0; cw.m=out; cw.n=in; cw.k=r; cw.alpha=1.0f; cw.a=dy; cw.b=x; cw.beta=wbeta; cw.c=dw;
-  if (gemm_contract(s)==3) gemm_group(s,&cx,1,&cw,1);
-  else bcir_tensor_mm_pair_pool(s->pool,gemm_contract(s),&cx,&cw);
+  if (gemm_contract(s)==3) return gemm_group(s,&cx,1,&cw,1);
+  bcir_tensor_mm_pair_pool(s->pool,gemm_contract(s),&cx,&cw);
+  return 1;
 }
 /* The linears that read one input -- the attention's q, k and v, the MLP's gate and up -- as one
  * pool job (NDT-SCHED-1): their outputs are disjoint, so each is its own entry's bit for bit; and
  * their VJPs as one job, the input adjoints a chain into one dx (the first at the call's beta, the
  * rest adding, in the order the separate calls added) and the weight adjoints apart. A provider's
  * GEMM runs the calls one after another, a linear's two VJPs together, as before. */
-static void linears(bcir_decoder_state *s,size_t r,size_t in,const float *x,size_t count,
+static int linears(bcir_decoder_state *s,size_t r,size_t in,const float *x,size_t count,
     const size_t *out,const float *const *w,float *const *y) {
-  bcir_tensor_mm_call c[BCIR_TENSOR_MM_GROUP]; size_t q;
+  bcir_tensor_mm_call c[BCIR_TENSOR_MM_GROUP]; size_t q; int ran=1;
   if (s->provider.mm || count>BCIR_TENSOR_MM_GROUP) {
-    for (q=0;q<count;q++) linear(s,r,in,out[q],x,w[q],y[q]);
-    return;
+    for (q=0;q<count;q++) ran&=linear(s,r,in,out[q],x,w[q],y[q]);
+    return ran;
   }
   for (q=0;q<count;q++) {
     c[q].ta=0; c[q].tb=1; c[q].m=r; c[q].n=out[q]; c[q].k=in; c[q].alpha=1.0f; c[q].a=x;
     c[q].b=w[q]; c[q].beta=0.0f; c[q].c=y[q];
   }
-  gemm_group(s,NULL,0,c,count);
+  return gemm_group(s,NULL,0,c,count);
 }
-static void linears_backward(bcir_decoder_state *s,size_t r,size_t in,const float *x,size_t count,
+static int linears_backward(bcir_decoder_state *s,size_t r,size_t in,const float *x,size_t count,
     const size_t *out,const float *const *w,const float *const *dy,float *dx,float *const *dw,
     float beta,float wbeta) {
-  bcir_tensor_mm_call cx[BCIR_TENSOR_MM_GROUP],cw[BCIR_TENSOR_MM_GROUP]; size_t q;
+  bcir_tensor_mm_call cx[BCIR_TENSOR_MM_GROUP],cw[BCIR_TENSOR_MM_GROUP]; size_t q; int ran=1;
   if (s->provider.mm || count>BCIR_TENSOR_MM_GROUP) {
-    for (q=0;q<count;q++) linear_backward(s,r,in,out[q],x,w[q],dy[q],dx,dw[q],q ? 1.0f : beta,wbeta);
-    return;
+    for (q=0;q<count;q++)
+      ran&=linear_backward(s,r,in,out[q],x,w[q],dy[q],dx,dw[q],q ? 1.0f : beta,wbeta);
+    return ran;
   }
   for (q=0;q<count;q++) {
     cx[q].ta=0; cx[q].tb=0; cx[q].m=r; cx[q].n=in; cx[q].k=out[q]; cx[q].alpha=1.0f; cx[q].a=dy[q];
@@ -360,7 +483,7 @@ static void linears_backward(bcir_decoder_state *s,size_t r,size_t in,const floa
     cw[q].ta=1; cw[q].tb=0; cw[q].m=out[q]; cw[q].n=in; cw[q].k=r; cw[q].alpha=1.0f; cw[q].a=dy[q];
     cw[q].b=x; cw[q].beta=wbeta; cw[q].c=dw[q];
   }
-  gemm_group(s,cx,count,cw,count);
+  return gemm_group(s,cx,count,cw,count);
 }
 /* y = silu(x) * u (NDT-SWIGLU-FWD): BCIR's SiLU under the state's contract and the product in one
  * pass, the two passes' values; a provider's SiLU into y, then the product, as before. *bad
@@ -388,21 +511,24 @@ static unsigned attention_contract(const bcir_decoder_state *s) {
     ((s->contract&BCIR_DT_CONTRACT_ATTN) ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
 }
 /* Under the bf16 attention (BF16-ATTN) its widest instance, packing into the state's workspace,
- * which valid() admitted for it; otherwise the binary32 attention under its contract. */
-static void attention(bcir_decoder_state *s,size_t b,size_t t,size_t h,size_t kh,size_t d,
+ * which valid() admitted for its pool; otherwise the binary32 attention under its contract. Each
+ * returns whether it ran (an entry that refuses writes nothing). */
+static int attention(bcir_decoder_state *s,size_t b,size_t t,size_t h,size_t kh,size_t d,
     const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
   if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)
-    (void)bcir_tensor_attention_bf16_scan_pool(s->pool,0,attention_contract(s),b,t,h,kh,d,q,k,v,p,
-        y,bad,s->workspace,s->workspace_bytes);
-  else bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s),b,t,h,kh,d,q,k,v,p,y,bad);
+    return bcir_tensor_attention_bf16_scan_pool(s->pool,0,attention_contract(s),b,t,h,kh,d,q,k,v,p,
+        y,bad,s->workspace,s->workspace_bytes)!=0;
+  bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s),b,t,h,kh,d,q,k,v,p,y,bad);
+  return 1;
 }
-static void attention_backward(bcir_decoder_state *s,geometry g,const float *q,const float *k,
+static int attention_backward(bcir_decoder_state *s,geometry g,const float *q,const float *k,
     const float *v,float *p,const float *dy,float *dq,float *dk,float *dv) {
   if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)
-    (void)bcir_tensor_attention_bf16_backward_pool(s->pool,0,g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,
-        dv,s->workspace,s->workspace_bytes);
-  else bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,
+    return bcir_tensor_attention_bf16_backward_pool(s->pool,0,g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,
+        dv,s->workspace,s->workspace_bytes)!=0;
+  bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,
       g.hd,q,k,v,p,dy,dq,dk,dv);
+  return 1;
 }
 /* The forward, and whether every activation it wrote is finite (NDT-SCAN-W). One scan of the
  * whole arena after it read the arena back from memory, 171 MB for the 9.84M decoder; now the
@@ -412,53 +538,65 @@ static void attention_backward(bcir_decoder_state *s,geometry g,const float *q,c
  * and hidden activations, the final norm for the last layer's output and its own; the logits are
  * scanned after the head. Every element of the arena is in exactly one call's regions, each
  * called after the region's last write, so the verdict is the one scan's, and every layer runs
- * whatever an earlier one held. */
+ * whatever an earlier one held.
+ * One layer, into its cache slot from its input x, the next layer's input after it (REMAT: the
+ * backward's recompute, `full` 0, stops at the hidden activation -- the last value the layer's
+ * backward reads -- so the down projection and the residual add run in the forward alone, and
+ * its verdict is the forward's, whose values it writes again). Returns 0 when a product refused
+ * its workspace, which wrote nothing. */
+static int layer_forward(bcir_decoder_state *s,geometry g,size_t l,float *slot,float *x,int full,
+    int *bad) {
+  const bcir_decoder_spec *sp=&s->plan.spec; int ran=1;
+  layer p=params(s->weights+g.v*g.d+l*g.lp,g);
+  cache a=activations(slot,g); float *y=x+g.nd;
+  bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,x,p.norm1,a.n1,bad);
+  {
+    size_t out[3]; const float *w[3]; float *y3[3];
+    out[0]=g.d; out[1]=g.k; out[2]=g.k; w[0]=p.q; w[1]=p.k; w[2]=p.v; y3[0]=a.q; y3[1]=a.k; y3[2]=a.v;
+    ran&=linears(s,g.n,g.d,a.n1,3,out,w,y3);
+  }
+  bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,sp->rope_base,a.q,0);
+  bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,sp->rope_base,a.k,0);
+  ran&=attention(s,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx,bad);
+  ran&=linear(s,g.n,g.d,g.d,a.ctx,p.o,a.x2);
+  bcir_tensor_add_pool(s->pool,g.nd,x,a.x2);
+  bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,a.x2,p.norm2,a.n2,bad);
+  {
+    size_t out[2]; const float *w[2]; float *y2[2];
+    out[0]=g.f; out[1]=g.f; w[0]=p.gate; w[1]=p.up; y2[0]=a.gate; y2[1]=a.up;
+    ran&=linears(s,g.n,g.d,a.n2,2,out,w,y2);
+  }
+  if (panels(s,g,a.hidden,a.hidden)) {
+    bcir_tensor_mm_call c; bcir_tensor_bf16_panels pre;
+    ran&=bcir_tensor_silu_mul_panels_pool(s->pool,swiglu_v2(s),g.n,g.f,a.gate,a.up,
+        panel_of(a.hidden),panel_of(a.hidden)+g.nf,bad);
+    c.ta=0; c.tb=1; c.m=g.n; c.n=g.d; c.k=g.f; c.alpha=1.0f; c.a=NULL; c.b=p.down; c.beta=0.0f; c.c=y;
+    pre.a=panel_of(a.hidden); pre.b=NULL;
+    if (full) ran&=gemm_group_with(s,NULL,0,&c,1,&pre);
+    PANELS_SAW(1u);
+  }
+  else {
+    silu_mul(s,g.nf,a.gate,a.up,a.hidden,bad);
+    if (full) ran&=linear(s,g.n,g.f,g.d,a.hidden,p.down,y);
+  }
+  if (full) bcir_tensor_add_pool(s->pool,g.nd,a.x2,y);
+  return ran;
+}
+/* BCIR_DT_OK, BCIR_DT_NUMERIC for a value not finite, BCIR_DT_CAPACITY for a product that ran
+ * nowhere (WS-PLAN: valid() admits no workspace that refuses, so this is a defect's verdict) */
 static int forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
   const bcir_decoder_spec *sp=&s->plan.spec;
   size_t i,l; float *xs=s->activations,*cs=xs+(g.l+1)*g.nd;
-  float *norm=cs+g.l*g.la,*logits=norm+g.nd;
+  float *norm=cs+cache_slots(g,s->recompute)*g.la,*logits=norm+g.nd;
   float *final=s->weights+g.v*g.d+g.l*g.lp;
-  const float *head=sp->tied ? s->weights : final+g.d; int bad=0;
+  const float *head=sp->tied ? s->weights : final+g.d; int bad=0,ran=1;
   for (i=0;i<g.n;i++) memcpy(xs+i*g.d,s->weights+(size_t)tokens[i]*g.d,g.d*sizeof(float));
-  for (l=0;l<g.l;l++) {
-    layer p=params(s->weights+g.v*g.d+l*g.lp,g);
-    cache a=activations(cs+l*g.la,g); float *x=xs+l*g.nd,*y=x+g.nd;
-    bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,x,p.norm1,a.n1,&bad);
-    {
-      size_t out[3]; const float *w[3]; float *y3[3];
-      out[0]=g.d; out[1]=g.k; out[2]=g.k; w[0]=p.q; w[1]=p.k; w[2]=p.v; y3[0]=a.q; y3[1]=a.k; y3[2]=a.v;
-      linears(s,g.n,g.d,a.n1,3,out,w,y3);
-    }
-    bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,sp->rope_base,a.q,0);
-    bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,sp->rope_base,a.k,0);
-    attention(s,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx,&bad);
-    linear(s,g.n,g.d,g.d,a.ctx,p.o,a.x2);
-    bcir_tensor_add_pool(s->pool,g.nd,x,a.x2);
-    bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,a.x2,p.norm2,a.n2,&bad);
-    {
-      size_t out[2]; const float *w[2]; float *y2[2];
-      out[0]=g.f; out[1]=g.f; w[0]=p.gate; w[1]=p.up; y2[0]=a.gate; y2[1]=a.up;
-      linears(s,g.n,g.d,a.n2,2,out,w,y2);
-    }
-    if (panels(s,g,a.hidden,a.hidden)) {
-      bcir_tensor_mm_call c; bcir_tensor_bf16_panels pre;
-      (void)bcir_tensor_silu_mul_panels_pool(s->pool,swiglu_v2(s),g.n,g.f,a.gate,a.up,
-          panel_of(a.hidden),panel_of(a.hidden)+g.nf,&bad);
-      c.ta=0; c.tb=1; c.m=g.n; c.n=g.d; c.k=g.f; c.alpha=1.0f; c.a=NULL; c.b=p.down; c.beta=0.0f; c.c=y;
-      pre.a=panel_of(a.hidden); pre.b=NULL;
-      gemm_group_with(s,NULL,0,&c,1,&pre);
-      PANELS_SAW(1u);
-    }
-    else {
-      silu_mul(s,g.nf,a.gate,a.up,a.hidden,&bad);
-      linear(s,g.n,g.f,g.d,a.hidden,p.down,y);
-    }
-    bcir_tensor_add_pool(s->pool,g.nd,a.x2,y);
-  }
+  for (l=0;l<g.l;l++)
+    ran&=layer_forward(s,g,l,cs+slot_of(g,s->recompute,l)*g.la,xs+l*g.nd,1,&bad);
   bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,xs+g.l*g.nd,final,norm,&bad);
-  linear(s,g.n,g.d,g.v,norm,head,logits);
+  ran&=linear(s,g.n,g.d,g.v,norm,head,logits);
   if (!finite_pool(s,logits,g.nv)) bad=1;
-  return !bad;
+  return !ran ? BCIR_DT_CAPACITY : bad ? BCIR_DT_NUMERIC : BCIR_DT_OK;
 }
 int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t n) {
   geometry g; int rc=valid(s);
@@ -466,7 +604,7 @@ int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t n) 
   g=geom(&s->plan.spec);
   if (n!=g.n || !ids(s,tokens,n)) return BCIR_DT_INVALID;
   if (!finite_pool(s,s->weights,s->plan.parameters)) return BCIR_DT_NUMERIC;
-  return forward(s,tokens,g) ? BCIR_DT_OK : BCIR_DT_NUMERIC;
+  return forward(s,tokens,g);
 }
 /* The loss's rows in ranges of BCIR_DT_ROW_CHUNK: a row's softmax, its adjoint and its term
  * (log-sum-exp plus the maximum less the target's logit, in double, as the serial loop computed
@@ -541,7 +679,7 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
     const uint32_t *targets,size_t n,int accumulate,double *loss,unsigned how) {
   geometry g; size_t i,l; double ce=0.0; loss_job lj; scatter_job sj;
   float *xs,*cs,*norm,*logits,*cur,*tmp,*dn,*dq,*dk,*dv,*dc,*dg,*du,*dh,*dl;
-  float *final,*dfinal,*head,*dhead,wb; unsigned gf; int first,rc=valid(s);
+  float *final,*dfinal,*head,*dhead,wb; unsigned gf; int first,ran=1,rc=valid(s); size_t top;
   if (rc) return rc;
   g=geom(&s->plan.spec);
   if (n!=g.n || !ids(s,tokens,n) || !ids(s,targets,n) ||
@@ -550,7 +688,8 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
   if ((!(how&(DT_KNOWN|DT_COMMITTED)) && !weights_finite(s)) ||
       (!(how&DT_KNOWN) && accumulate && !finite_pool(s,s->gradients,s->plan.parameters)))
     return BCIR_DT_NUMERIC;
-  if (!forward(s,tokens,g)) return BCIR_DT_NUMERIC;
+  rc=forward(s,tokens,g);
+  if (rc) return rc;
   /* NDT-ZERO: a fresh gradient's first writers write it -- each weight adjoint's GEMM at beta 0,
    * which adds its terms to +0.0 without reading C (what the fill and beta 1 gave), each gamma
    * VJP from +0.0 -- so only the region the scatter writes first, an untied embedding, is filled;
@@ -558,7 +697,8 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
   first=!accumulate && !s->provider.mm; wb=first ? 0.0f : 1.0f; gf=first ? BCIR_TENSOR_RMSB_FIRST : 0u;
   if (!accumulate && !first) zero_pool(s,s->gradients,s->plan.parameters);
   if (!accumulate && first && !s->plan.spec.tied) zero_pool(s,s->gradients,g.v*g.d);
-  xs=s->activations; cs=xs+(g.l+1)*g.nd; norm=cs+g.l*g.la; logits=norm+g.nd;
+  xs=s->activations; cs=xs+(g.l+1)*g.nd; norm=cs+cache_slots(g,s->recompute)*g.la; logits=norm+g.nd;
+  top=top_recomputed(g,s->recompute);
   cur=s->scratch; tmp=cur+g.nd; dn=tmp+g.nd; dq=dn+g.nd; dk=dq+g.nd;
   dv=dk+g.nk; dc=dv+g.nk; dg=dc+g.nd; du=dg+g.nf; dh=du+g.nf; dl=dh+g.nf;
   final=s->weights+g.v*g.d+g.l*g.lp; dfinal=s->gradients+g.v*g.d+g.l*g.lp;
@@ -572,13 +712,20 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
   for (i=0;i<g.n;i++) {
     double term; memcpy(&term,lj.terms+i*sizeof(double),sizeof(double)); ce+=term;
   }
-  linear_backward(s,g.n,g.d,g.v,norm,head,dl,dn,dhead,0.0f,wb);
+  ran&=linear_backward(s,g.n,g.d,g.v,norm,head,dl,dn,dhead,0.0f,wb);
   /* each gamma VJP keeps its rows' 1/rms in dq, free until the layer's query VJP */
   rms_backward(s,g.n,g.d,xs+g.l*g.nd,final,dn,cur,dfinal,dq,gf);
   for (l=g.l;l-->0;) {
     layer p=params(s->weights+g.v*g.d+l*g.lp,g);
     layer grad=params(s->gradients+g.v*g.d+l*g.lp,g);
-    cache a=activations(cs+l*g.la,g); float *x=xs+l*g.nd;
+    float *slot=cs+slot_of(g,s->recompute,l)*g.la; cache a=activations(slot,g); float *x=xs+l*g.nd;
+    /* REMAT: a recomputed layer's cache, from its input, into the shared slot -- except the highest,
+     * whose forward left it there (the slot's other layers are below it); the scratch the backward
+     * keeps between layers is not a value the forward writes */
+    if (recomputes(s->recompute,l) && l!=top) {
+      int seen=0;
+      ran&=layer_forward(s,g,l,slot,x,0,&seen);
+    }
     /* the hidden activation is a panel exactly when the forward wrote it as one (one predicate on
      * the same slot); the adjoints are panels when their own slots admit them, whichever the hidden
      * activation is (their GEMMs read the gate, the up projection and dh, never the hidden slot) */
@@ -589,13 +736,13 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
       cw.ta=1; cw.tb=0; cw.m=g.d; cw.n=g.f; cw.k=g.n; cw.alpha=1.0f; cw.a=cur; cw.b=NULL;
       cw.beta=wb; cw.c=grad.down;
       pre[0].a=NULL; pre[0].b=NULL; pre[1].a=NULL; pre[1].b=panel_of(a.hidden)+g.nf;
-      gemm_group_with(s,&cx,1,&cw,1,pre);
+      ran&=gemm_group_with(s,&cx,1,&cw,1,pre);
       PANELS_SAW(2u);
     }
-    else linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f,wb);
+    else ran&=linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f,wb);
     if (panels(s,g,dg,du)) {
       bcir_tensor_mm_call cx[2],cw[2]; bcir_tensor_bf16_panels pre[4]; size_t q;
-      (void)bcir_tensor_swiglu_backward_panels_pool(s->pool,swiglu_v2(s),g.n,g.f,a.gate,a.up,dh,
+      ran&=bcir_tensor_swiglu_backward_panels_pool(s->pool,swiglu_v2(s),g.n,g.f,a.gate,a.up,dh,
           panel_of(dg),panel_of(dg)+g.nf,panel_of(du),panel_of(du)+g.nf);
       for (q=0;q<2;q++) {
         float *slot=q ? du : dg;
@@ -605,7 +752,7 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
         cw[q].b=a.n2; cw[q].beta=wb; cw[q].c=q ? grad.up : grad.gate;
         pre[q].a=panel_of(slot); pre[q].b=NULL; pre[2+q].a=panel_of(slot)+g.nf; pre[2+q].b=NULL;
       }
-      gemm_group_with(s,cx,2,cw,2,pre);
+      ran&=gemm_group_with(s,cx,2,cw,2,pre);
       PANELS_SAW(4u);
     }
     else {
@@ -613,28 +760,29 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
       {
         size_t out[2]; const float *w[2],*d2[2]; float *dw[2];
         out[0]=g.f; out[1]=g.f; w[0]=p.gate; w[1]=p.up; d2[0]=dg; d2[1]=du; dw[0]=grad.gate; dw[1]=grad.up;
-        linears_backward(s,g.n,g.d,a.n2,2,out,w,d2,dn,dw,0.0f,wb);
+        ran&=linears_backward(s,g.n,g.d,a.n2,2,out,w,d2,dn,dw,0.0f,wb);
       }
     }
     /* NDT-RMS-ACC: the VJP adds its dx into the residual's adjoint, one rounded sum an element */
     rms_backward(s,g.n,g.d,a.x2,p.norm2,dn,cur,grad.norm2,dq,BCIR_TENSOR_RMSB_ADD|gf);
-    linear_backward(s,g.n,g.d,g.d,a.ctx,p.o,cur,dc,grad.o,0.0f,wb);
+    ran&=linear_backward(s,g.n,g.d,g.d,a.ctx,p.o,cur,dc,grad.o,0.0f,wb);
     /* the layer's probabilities are read for the last time here: the in-place backward
      * leaves its score adjoint in their place (same dq/dk/dv as the reference, bit for bit), the
      * bf16 attention's leaves them as they were */
-    attention_backward(s,g,a.q,a.k,a.v,a.p,dc,dq,dk,dv);
+    ran&=attention_backward(s,g,a.q,a.k,a.v,a.p,dc,dq,dk,dv);
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,s->plan.spec.rope_base,dq,1);
     bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,s->plan.spec.rope_base,dk,1);
     {
       size_t out[3]; const float *w[3],*d3[3]; float *dw[3];
       out[0]=g.d; out[1]=g.k; out[2]=g.k; w[0]=p.q; w[1]=p.k; w[2]=p.v;
       d3[0]=dq; d3[1]=dk; d3[2]=dv; dw[0]=grad.q; dw[1]=grad.k; dw[2]=grad.v;
-      linears_backward(s,g.n,g.d,a.n1,3,out,w,d3,dn,dw,0.0f,wb);
+      ran&=linears_backward(s,g.n,g.d,a.n1,3,out,w,d3,dn,dw,0.0f,wb);
     }
     rms_backward(s,g.n,g.d,x,p.norm1,dn,cur,grad.norm1,dq,BCIR_TENSOR_RMSB_ADD|gf);
   }
   sj.n=g.n; sj.d=g.d; sj.tokens=tokens; sj.dx=cur; sj.grad=s->gradients;
   bcir_tensor_pool_run(s->pool,scatter_task,&sj,(g.d+BCIR_DT_COL_CHUNK-1)/BCIR_DT_COL_CHUNK);
+  if (!ran) return BCIR_DT_CAPACITY;  /* a product that ran nowhere: its gradient is no gradient */
   if ((!(how&DT_DEFER) && !finite_pool(s,s->gradients,s->plan.parameters)) || !isfinite(ce))
     return BCIR_DT_NUMERIC;
   *loss=ce/(double)g.n; return BCIR_DT_OK;

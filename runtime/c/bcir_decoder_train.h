@@ -19,9 +19,14 @@
  * index-order chain, serial. BCIR_DT_CONTRACT_BF16 (ABI 4, NDT-BF16) puts BCIR's GEMMs under the
  * bf16 contract (bcir_tensor.h: operands rounded to bfloat16, accumulated as the AMX unit's
  * TDPBF16PS accumulates them, every instance bit for bit); the state then lends `workspace`, at
- * least bcir_decoder_workspace_bytes bytes disjoint from the arenas and the state, for the packed
+ * least bcir_decoder_workspace_floor bytes disjoint from the arenas and the state, for the packed
  * operands (BCIR_DT_CAPACITY below that, BCIR_DT_INVALID without one or overlapping), and a
- * provider's GEMM, as under every contract, keeps its own. One GEMM contract at a time: FUSED,
+ * provider's GEMM, as under every contract, keeps its own. Any workspace from the floor up trains
+ * the same state bit for bit (WS-PLAN): bcir_decoder_workspace_need is what the step packs, and
+ * below it a group runs its calls one at a time and a call in chunks (bcir_tensor.h), the SwiGLU
+ * block without its panels below the bytes its panel groups pack -- slower, never different; a
+ * product that refuses the workspace fails the step with BCIR_DT_CAPACITY, nothing committed. One
+ * GEMM contract at a time: FUSED,
  * KBLOCK and BF16 exclude one another. BCIR_DT_CONTRACT_ATTN (ATTN-FMA) puts the attention's
  * products under the fused contract (bcir_tensor.h's BCIR_TENSOR_ATTENTION_FUSED: every
  * multiply-add of the scores, the context and the backward's products one fmaf, the same terms in
@@ -33,8 +38,18 @@
  * is not another's: the checkpoint names it. Whatever the contract, the loss's rows, the RMSNorm gamma
  * adjoints and the embedding scatter run on the pool in the serial order (NDT-REDUCE), so every
  * loss and state is the serial one, bit for bit, at every thread count.
+ * `recompute` (ABI 5, REMAT) names layers whose forward cache the backward recomputes instead of
+ * keeping: bit l for layer l (layers past 64 are always kept; a bit past the last layer is
+ * refused). The kept layers hold their slots of the activation arena in layer order and the
+ * recomputed ones share one slot after them, so the arena needs bcir_decoder_activation_count
+ * floats, the logits its last; the backward re-runs a recomputed layer's forward from its input
+ * (the residual stream keeps every layer's) up to the hidden activation, the last value its
+ * backward reads, except the highest such layer, whose forward cache the shared slot still holds.
+ * The kernels' partitions are the shapes', so the recomputed values are the forward's bit for bit
+ * and the state is the all-kept state's under every recompute set.
  * The plan's three counts are the arena sums of the step program in
- * bcir/hosted/models/native_program.py (NDT-GEM), held to it by train.plan.mismatch. */
+ * bcir/hosted/models/native_program.py (NDT-GEM), held to it by train.plan.mismatch, and so is
+ * bcir_decoder_activation_count under a recompute set. */
 #ifndef BCIR_DECODER_TRAIN_H
 #define BCIR_DECODER_TRAIN_H
 #include "bcir_tensor.h"
@@ -62,6 +77,7 @@ typedef struct bcir_decoder_state {
   uint32_t contract;
   void *workspace;          /* ABI 4 (NDT-BF16): the bf16 contract's packs; ignored otherwise */
   size_t workspace_bytes;
+  uint64_t recompute;       /* ABI 5 (REMAT): bit l recomputes layer l's cache in the backward */
 } bcir_decoder_state;
 typedef struct bcir_decoder_adamw {
   double lr,beta1,beta2,epsilon,weight_decay,grad_clip;
@@ -73,14 +89,33 @@ enum { BCIR_DT_CONTRACT_FUSED=1u, BCIR_DT_CONTRACT_EXP=2u, BCIR_DT_CONTRACT_KBLO
   BCIR_DT_CONTRACT_ATTNBF16=64u };
 /* 1: the state through its provider; 2: the state ends in its pool (NDT-THREADS); 3: and in its
  * contract (NDT-FMA, NDT-EXP, NDT-KBLOCK, NDT-REDUCE, ATTN-FMA: the same field, more bits); 4: and in the
- * bf16 contract's workspace (NDT-BF16). */
+ * bf16 contract's workspace (NDT-BF16); 5: and in its recompute set (REMAT). */
 BCIR_DT_API uint32_t bcir_decoder_abi_version(void);
-/* The bytes of workspace a state under `contract` lends its GEMMs: 0 unless the contract names
- * BF16; else the largest of the step's GEMM groups' packs, each call's packed whole
- * (bcir_tensor_mm_bf16_workspace summed over the group: an operand the calls share is packed once,
- * so the group needs no more), so no group of the step runs in chunks. SIZE_MAX for a plan
- * bcir_decoder_make_plan refuses. */
+/* The bf16 contract's workspace (WS-PLAN), every figure 0 unless `contract` names BF16 and
+ * SIZE_MAX for a plan bcir_decoder_make_plan refuses. need: the bytes at which every GEMM group of
+ * the step packs whole -- the most any group packs, counted by the tensor unit's own rule
+ * (bcir_tensor_mm_bf16_group_panels_workspace: an operand two calls read alike packed once, a
+ * panel not at all) over the groups as the step issues them, the SwiGLU block's from its panels
+ * where the shapes admit them (the rows, the width and the hidden width multiples of 32: a state
+ * whose provider replaces the GEMM or SiLU, or whose panel slots are not 64-byte aligned, runs that
+ * block's groups without panels, in chunks where they exceed this) -- and under the bf16 attention
+ * its regions for a pool of `threads` workers (bcir_tensor_attention_bf16_pool_workspace; 0: any
+ * pool). floor: the least a state admits (valid() asks it for the state's pool): one 32-row strip
+ * of A and one 32-column strip of B at the step's deepest call, and the bf16 attention's regions
+ * for the pool. bytes: the need on any pool. */
+BCIR_DT_API size_t bcir_decoder_workspace_need(const bcir_decoder_plan *plan, uint32_t contract,
+    unsigned threads);
+BCIR_DT_API size_t bcir_decoder_workspace_floor(const bcir_decoder_plan *plan, uint32_t contract,
+    unsigned threads);
 BCIR_DT_API size_t bcir_decoder_workspace_bytes(const bcir_decoder_plan *plan, uint32_t contract);
+/* The least workspace at which the SwiGLU block runs with its panels (WS-PLAN): what its panel
+ * groups pack, each of which runs whole; 0 unless `contract` names BF16 and the shapes admit the
+ * panels, SIZE_MAX for a plan bcir_decoder_make_plan refuses. */
+BCIR_DT_API size_t bcir_decoder_workspace_panels(const bcir_decoder_plan *plan, uint32_t contract);
+/* The activation arena's floats under a recompute set (REMAT): the plan's count less one cache slot
+ * for each recomputed layer but the one slot they share -- plan->activations for none. SIZE_MAX
+ * for a plan bcir_decoder_make_plan refuses or a bit past its last layer. */
+BCIR_DT_API size_t bcir_decoder_activation_count(const bcir_decoder_plan *plan, uint64_t recompute);
 /* The reduce contract's chunk for `count` elements: 1024 doubled until the chunks number at most
  * 1024 (so 1024 up to 2^20 elements, 16384 for the 9.84M decoder). The update's first pass runs
  * one task per chunk under every contract; only under BCIR_DT_CONTRACT_REDUCE do the chunks reach

@@ -54,8 +54,8 @@
   {
    "expects": "test_the_state_lives_on_huge_pages_where_the_host_has_them",
    "label": "NG7 resume drops the placement it is given (a resumed trainer always on the mapping)",
-   "new": "            )",
-   "old": "                huge_pages=huge_pages,\n            )",
+   "new": "                recompute=recompute,",
+   "old": "                huge_pages=huge_pages,\n                recompute=recompute,",
    "path": "bcir/hosted/models/native.py"
   },
   {

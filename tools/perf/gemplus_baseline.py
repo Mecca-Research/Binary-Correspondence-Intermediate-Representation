@@ -760,6 +760,23 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="NDT-GEM",
     ),
     Metric(
+        "train.plan.remat.mismatch",
+        "train",
+        "(spec, recompute set) pairs over the six-spec plan corpus and REMAT_SETS cut to each "
+        "spec's layers, every distinct set once (bcir/tests/native_decoder_fixtures.py), where the "
+        "step program's activation sum under the set differs from bcir_decoder_activation_count: "
+        "the kept layers' cache slots in layer order and the recomputed layers' one shared slot "
+        "(REMAT, GEO-3; the set is a new trainer field, so the parent had no count to hold)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one layout, two derivations: the program lays the slots out from the spec "
+        "and the set alone (`native_program.training_step_program(..., recompute)`), the C counts "
+        "them from its own plan, so any disagreement is a defect",
+        slice_owner="GEO-3",
+    ),
+    Metric(
         "train.mm.mismatch",
         "train",
         "of 20 GEMM cases (every transpose pair, the 32-wide tiles' edges, alpha and beta forms), "

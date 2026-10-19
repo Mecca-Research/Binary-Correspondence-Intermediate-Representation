@@ -1,0 +1,68 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_recompute_and_the_workspace_keep_every_state",
+    "bcir.tests.test_native_decoder:test_the_memory_plan_fits_its_budget_and_keeps_the_state"
+  ],
+  "faults": [
+    {
+      "expects": "test_recompute_and_the_workspace_keep_every_state",
+      "label": "GP1 the program keeps a recomputed layer's own slot (no shared slot)",
+      "new": "        if True:\n            buffers += [Buffer(f\"L{layer}.{name}\", \"activations\", cache[name]) for name in _CACHE]",
+      "old": "        if layer not in redone:\n            buffers += [Buffer(f\"L{layer}.{name}\", \"activations\", cache[name]) for name in _CACHE]",
+      "path": "bcir/hosted/models/native_program.py"
+    },
+    {
+      "expects": "test_recompute_and_the_workspace_keep_every_state",
+      "label": "GP2 the program's backward re-runs no recomputed layer",
+      "new": "        if False:  # the shared slot holds another layer's cache",
+      "old": "        if layer in redone and layer != top:  # the shared slot holds another layer's cache",
+      "path": "bcir/hosted/models/native_program.py"
+    },
+    {
+      "expects": "test_the_memory_plan_fits_its_budget_and_keeps_the_state",
+      "label": "GP3 the planner shrinks the workspace before it recomputes a layer",
+      "new": "    for mask in sets:\n        for workspace in tiers:\n            chosen = arenas(mask, workspace)",
+      "old": "    for workspace in tiers:\n        for mask in sets:\n            chosen = arenas(mask, workspace)",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_recompute_and_the_workspace_keep_every_state",
+      "label": "GP4 the eval forward reads the logits at the plan's arena end",
+      "new": "        offset = self.state.plan.activations - n",
+      "old": "        offset = self.activation_count - n  # REMAT: the logits are the arena's last floats",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_recompute_and_the_workspace_keep_every_state",
+      "label": "GP5 the planner admits a workspace below the floor",
+      "new": "",
+      "old": "        if workspace_bytes < floor:\n            raise ValueError(f\"workspace {workspace_bytes} below the floor {floor}\")\n",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_memory_plan_fits_its_budget_and_keeps_the_state",
+      "label": "GP6 the auto plan takes the last fitting choice, not the first",
+      "new": "            least = chosen",
+      "old": "            if chosen.total_bytes <= budget:\n                return chosen\n            least = chosen",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_memory_plan_fits_its_budget_and_keeps_the_state",
+      "label": "GP7 the planner hands ctypes a recompute set past 2^64 (wrapped to the empty set)",
+      "new": "    if recompute is not None and type(recompute) is not int:",
+      "old": "    if recompute is not None and (type(recompute) is not int or not 0 <= recompute < 2**64):",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_memory_plan_fits_its_budget_and_keeps_the_state",
+      "label": "GP8 the planner admits a workspace past SIZE_MAX (wrapped by the C's size_t)",
+      "new": "        type(workspace_bytes) is not int or workspace_bytes < 0",
+      "old": "        type(workspace_bytes) is not int or not 0 <= workspace_bytes < _SIZE_MAX",
+      "path": "bcir/hosted/models/native.py"
+    }
+  ]
+}

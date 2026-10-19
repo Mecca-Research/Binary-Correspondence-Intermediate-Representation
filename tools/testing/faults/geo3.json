@@ -1,0 +1,137 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "GW1 the plan's need packs the attention norm's output once a weight adjoint, not once a group",
+      "new": "c[5]=ws_call(1,0,k,d,n,at+DV,at+N2);",
+      "old": "c[5]=ws_call(1,0,k,d,n,at+DV,at+N1);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "GW2 the panel groups' need counts the gate and up adjoints' A^T panels as packed",
+      "new": "      pre[q].a=panel;",
+      "old": "      pre[q].a=panel; pre[2+q].a=panel;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "GW3 the panels' predicate forgets its groups' need (the block's panels below it: a group refused)",
+      "new": "    1;",
+      "old": "    s->workspace_bytes>=ws_need(g,1,1);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "GW4 the floor forgets the rows' depth (a weight adjoint's strip refused at the floor)",
+      "new": "  g=geom(&p.spec); depth[0]=g.d; depth[1]=g.f; depth[2]=g.k; depth[3]=g.v; depth[4]=g.d;",
+      "old": "  g=geom(&p.spec); depth[0]=g.d; depth[1]=g.f; depth[2]=g.k; depth[3]=g.v; depth[4]=g.n;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "GW5 admission a byte below the floor (a workspace a byte short of it runs)",
+      "new": "    if (s->workspace_bytes+1<least || s->workspace_bytes>UINTPTR_MAX-(uintptr_t)s->workspace)",
+      "old": "    if (s->workspace_bytes<least || s->workspace_bytes>UINTPTR_MAX-(uintptr_t)s->workspace)",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "GW6 the backward commits a step whose product refused (the step's CAPACITY dropped)",
+      "new": "  (void)ran;",
+      "old": "  if (!ran) return BCIR_DT_CAPACITY;  /* a product that ran nowhere: its gradient is no gradient */",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "GW7 the forward reports a product that refused as run",
+      "new": "  (void)ran; return bad ? BCIR_DT_NUMERIC : BCIR_DT_OK;",
+      "old": "  return !ran ? BCIR_DT_CAPACITY : bad ? BCIR_DT_NUMERIC : BCIR_DT_OK;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "GW8 a GEMM group's refusal read as run",
+      "new": "    return 1|bcir_tensor_mm_bf16_group_panels_pool(s->pool,chain,nchain,y,ny,pre,s->workspace,\n        s->workspace_bytes);",
+      "old": "    return bcir_tensor_mm_bf16_group_panels_pool(s->pool,chain,nchain,y,ny,pre,s->workspace,\n        s->workspace_bytes);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "GW9 the bf16 attention's refusal read as run",
+      "new": "        y,bad,s->workspace,s->workspace_bytes)>=0;\n  bcir_tensor_attention_contract_scan_pool(",
+      "old": "        y,bad,s->workspace,s->workspace_bytes)!=0;\n  bcir_tensor_attention_contract_scan_pool(",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "GW10 the bf16 attention's forward admits every task's regions alone (a pool's own refused)",
+      "new": "  if (!workspace || bytes<bcir_tensor_attention_bf16_workspace(b,t,nh,nk,d)) return 0;\n  att16_fill(&j.a,b,t,nh,nk,d);\n  j.a.q=q; j.a.k=k; j.a.v=v; j.a.p=p; j.a.y=y;",
+      "old": "  if (!workspace || bytes<bcir_tensor_attention_bf16_pool_workspace(b,t,nh,nk,d,\n      bcir_tensor_pool_threads(pool))) return 0;\n  att16_fill(&j.a,b,t,nh,nk,d);\n  j.a.q=q; j.a.k=k; j.a.v=v; j.a.p=p; j.a.y=y;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "GW11 a pool of more workers than tasks counted a region a worker",
+      "new": "  return att16_regions(threads ? threads : tasks,t,d);",
+      "old": "  return att16_regions(threads && threads<=tasks ? threads : tasks,t,d);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "GW12 the probe counts a group without its panels (a panel operand read as one two calls share)",
+      "new": "workspace_saw(bcir_tensor_mm_bf16_group_workspace(chain,nchain,y,ny));",
+      "old": "workspace_saw(bcir_tensor_mm_bf16_group_panels_workspace(chain,nchain,y,ny,pre));",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RM1 the shared slot's free layer taken as the lowest recomputed one",
+      "new": "  size_t m; for (m=0;m<l;m++) if (recomputes(r,m)) return m;",
+      "old": "  while (l-->0) if (recomputes(r,l)) return l;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RM2 the recomputed layers' slot laid over the last kept one",
+      "new": "  return recomputes(r,l) ? g.l-recomputed_below(r,g.l)-(recomputed_below(r,g.l)<g.l) : l-recomputed_below(r,l);",
+      "old": "  return recomputes(r,l) ? g.l-recomputed_below(r,g.l) : l-recomputed_below(r,l);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RM3 the activation count forgets the shared slot",
+      "new": "  return g.l-gone;",
+      "old": "  return g.l-gone+(gone!=0);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RM4 the backward never recomputes (the shared slot read stale)",
+      "new": "    if (0 && l!=top) {",
+      "old": "    if (recomputes(s->recompute,l) && l!=top) {",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RM5 admission of a recompute bit past the last layer",
+      "new": "  (void)recompute;",
+      "old": "  if (g.l<64 && (recompute>>g.l)) return SIZE_MAX;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RM6 the arena held to the plan's count under a recompute set (an exact arena refused)",
+      "new": "  len[0]=len[1]=len[2]=len[3]=p.parameters; len[4]=p.activations+0*acts; len[5]=p.scratch;",
+      "old": "  len[0]=len[1]=len[2]=len[3]=p.parameters; len[4]=acts; len[5]=p.scratch;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    }
+  ]
+}
