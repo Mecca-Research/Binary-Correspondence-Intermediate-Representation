@@ -14,9 +14,14 @@ and accelerator backend above that boundary. Establish a measured interface befo
 an upstream extension, a portable layout-algebra module, or an out-of-tree backend. A wholesale
 fork is unnecessary at this stage. Neither system has been shown to subsume the other.
 
-**Scope requested for this update:** architecture and a few initial kernel comparisons. Full
+The companion [three-way architecture and IR analysis](BCIR_TRITON_PYTORCH_ARCHITECTURE_2026-10-19.md)
+extends this study to PyTorch's current FX/ATen and Inductor representations, MLIR trade-offs,
+runtime/driver boundaries and a competitive assessment blueprint. It adds source analysis,
+including a direct IR comparison; it does not add performance measurements.
+
+**Scope of this CPU study:** architecture and a few initial kernel comparisons. Full
 comparative model training remains **deferred until PR #820 is completed and merged**. No
-PyTorch comparison or full-model training experiment was performed for this study.
+PyTorch performance comparison or full-model training experiment was performed for this study.
 
 ## 1. Evidence boundary and version pins
 

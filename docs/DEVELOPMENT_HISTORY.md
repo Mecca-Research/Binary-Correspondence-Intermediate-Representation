@@ -289,6 +289,13 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-10-19 — TRITON-CPU-1 architecture extension:** added a source-pinned
+  [BCIR/Triton/PyTorch architecture and IR comparison](research/BCIR_TRITON_PYTORCH_ARCHITECTURE_2026-10-19.md).
+  Separates FX/ATen, Inductor and GPU-kernel representations; compares MLIR lowering depth,
+  memory/recompute planning, hardware interfaces and extensibility. Proposes a gateable
+  plan-to-execution and competitive-assessment ladder. No new benchmarks or runtime changes;
+  full comparative model training is still deferred until PR #820 completes and merges.
+
 - **2026-10-19 — TRITON-CPU-1:** refreshed the
   [Triton comparison](research/BCIR_TRITON_COMPARATIVE_ANALYSIS.md) against pinned Triton 3.8
   and current BCIR main. Added an optional compiled CPU-kernel reproducer and two sessions of
