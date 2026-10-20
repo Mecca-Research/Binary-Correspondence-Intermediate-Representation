@@ -188,6 +188,48 @@ def run_launches(
     )
 
 
+#: PX-3 (CHOOSE): the program's choice sites -- each layer's sites (`L{layer}.{kind}`) and the
+#: head's VJP (`head.vjp`) -- and each site's alternatives, every one training the same bits
+#: (NDT-SCHED-0/1, BF16-PANELS): `group` one pool job of the linears that read one input (and of
+#: their VJPs), `pair` one job of a linear's two VJPs, `calls` each call a job of its own; `panels`
+#: the SwiGLU block's bf16 panels where the program takes them at all, `plain` the block without.
+SITE_KINDS = {
+    "qkv.fwd": ("group", "calls"),
+    "gateup.fwd": ("group", "calls"),
+    "panels": ("panels", "plain"),
+    "down.vjp": ("pair", "calls"),
+    "gateup.vjp": ("group", "pair", "calls"),
+    "o.vjp": ("pair", "calls"),
+    "qkv.vjp": ("group", "pair", "calls"),
+}
+HEAD_SITE, HEAD_ALTERNATIVES = "head.vjp", ("pair", "calls")
+
+
+def choice_sites(spec: DecoderSpec) -> dict[str, tuple[str, ...]]:
+    """Every choice site of `spec`'s step program and its alternatives: the layers' in layer order,
+    then the head's."""
+    out = {f"L{layer}.{kind}": alternatives for layer in range(spec.n_layers)
+           for kind, alternatives in SITE_KINDS.items()}  # fmt: skip
+    out[HEAD_SITE] = HEAD_ALTERNATIVES
+    return out
+
+
+def default_sites(spec: DecoderSpec, *, group: bool = True, pair: bool = True,
+                  panels: bool = True) -> dict[str, str]:  # fmt: skip
+    """The alternative every site takes under `step_program`'s booleans: `group` the linears'
+    sites grouped, else their VJPs paired as `pair` says; `pair` a linear's two VJPs one job;
+    `panels` the SwiGLU block's panels."""
+
+    def pick(alternatives):
+        if "panels" in alternatives:
+            return "panels" if panels else "plain"
+        if group and "group" in alternatives:
+            return "group"
+        return "pair" if pair and "pair" in alternatives else "calls"
+
+    return {site: pick(alternatives) for site, alternatives in choice_sites(spec).items()}
+
+
 def step_program(
     spec: DecoderSpec,
     batch: int,
@@ -206,6 +248,8 @@ def step_program(
     pair: bool = True,
     panels: bool = True,
     facts: bool = True,
+    sites: dict | None = None,
+    labels: list | None = None,
 ) -> list[Launch]:
     """The program of one `bcir_decoder_run_program(state, ..., steps, accumulation, ...)` call:
     `run_launches`' walk with the host's CHECK and UPDATE records in place, under the given
@@ -214,11 +258,28 @@ def step_program(
     their VJPs as pairs), `pair` False a linear's two VJPs as two calls, `panels` False the SwiGLU
     block without its panels, `facts` False makes every scan the run's facts would leave out; and
     `recompute` is the program's own set, whose cache must fit the state's arena. Every decision
-    trains the same bits (NDT-SCHED-0/1, BF16-PANELS, FACTS-RUN, REMAT)."""
+    trains the same bits (NDT-SCHED-0/1, BF16-PANELS, FACTS-RUN, REMAT).
+
+    PX-3: `sites` takes any choice site's alternative (`choice_sites`) in place of the booleans'
+    (`default_sites`) -- a site or alternative the program does not have is refused -- and a list
+    passed as `labels` receives each launch's site, None for a launch no choice site holds: the
+    site's GEMMs, and the SwiGLU block's kernels for its `panels` site."""
     if type(steps) is not int or steps < 1 or type(accumulation) is not int or accumulation < 1:
         raise ValueError("steps and accumulation must be positive integers")
     if any(type(flag) is not bool for flag in (group, pair, panels, facts)):
         raise ValueError("group, pair, panels and facts are booleans")
+    known = choice_sites(spec)
+    chosen = default_sites(spec, group=group, pair=pair, panels=panels)
+    if sites is not None:
+        if not isinstance(sites, dict):
+            raise ValueError("sites maps a choice site to one of its alternatives")
+        for site, alternative in sites.items():
+            if type(site) is not str or site not in known or alternative not in known[site]:
+                raise ValueError(f"no choice site {site!r} with the alternative {alternative!r}")
+            chosen[site] = alternative
+    if labels is not None and (not isinstance(labels, list) or labels):
+        raise ValueError("labels is an empty list the program's sites are appended to")
+    current: list = [None]
     program = training_step_program(spec, batch, time, recompute)
     lay = _layout(program)
     redone = set(recompute_layers(spec, recompute))
@@ -250,6 +311,12 @@ def step_program(
 
     def emit(*records: Record, optional: bool = False) -> None:
         out.append(Launch(tuple(records), optional))
+        if labels is not None:
+            labels.append(current[0])
+
+    def within(site: str | None) -> None:
+        """The site the launches emitted from here on belong to (None: none)."""
+        current[0] = site
 
     def aligned(r) -> bool:
         return (align[r[0]] + r[1]) % 64 == 0
@@ -293,10 +360,10 @@ def step_program(
     def linear(rows, inp, outp, x, w, y) -> None:
         gemm((0, 1, rows, outp, inp, 0.0, x, w, y))
 
-    def linear_backward(rows, inp, outp, x, w, dy, dx, dw, beta, wbeta) -> None:
+    def linear_backward(rows, inp, outp, x, w, dy, dx, dw, beta, wbeta, site) -> None:
         cx = (0, 0, rows, inp, outp, beta, dy, w, dx)
         cw = (1, 0, outp, inp, rows, wbeta, dy, x, dw)
-        if provider_mm or not pair:
+        if provider_mm or chosen[site] == "calls":
             gemm(cx)
             gemm(cw)
         elif gemm_contract == 3:
@@ -304,17 +371,17 @@ def step_program(
         else:
             emit(call(E_PAIR, 1, 0, gemm_contract, cx), call(E_PAIR, 2, 1, gemm_contract, cw))
 
-    def linears(rows, inp, x, outs, ws_, ys) -> None:
-        if provider_mm or not group or len(outs) > _GROUP:
+    def linears(rows, inp, x, outs, ws_, ys, site) -> None:
+        if provider_mm or chosen[site] != "group" or len(outs) > _GROUP:
             for o, w, y in zip(outs, ws_, ys):
                 linear(rows, inp, o, x, w, y)
             return
         gemm_job([], [(0, 1, rows, o, inp, 0.0, x, w, y) for o, w, y in zip(outs, ws_, ys)])
 
-    def linears_backward(rows, inp, x, outs, ws_, dys, dx, dws, beta, wbeta) -> None:
-        if provider_mm or not group or len(outs) > _GROUP:
+    def linears_backward(rows, inp, x, outs, ws_, dys, dx, dws, beta, wbeta, site) -> None:
+        if provider_mm or chosen[site] != "group" or len(outs) > _GROUP:
             for q, (o, w, dy, dw) in enumerate(zip(outs, ws_, dys, dws)):
-                linear_backward(rows, inp, o, x, w, dy, dx, dw, 1.0 if q else beta, wbeta)
+                linear_backward(rows, inp, o, x, w, dy, dx, dw, 1.0 if q else beta, wbeta, site)
             return
         cx = [(0, 0, rows, inp, o, 1.0 if q else beta, dy, w, dx)
               for q, (o, w, dy) in enumerate(zip(outs, ws_, dys))]  # fmt: skip
@@ -342,10 +409,11 @@ def step_program(
         else:
             emit(_record(SILU_MUL, v2, (nf,), (x, u, y)))
 
-    def use_panels(a, b) -> bool:
+    def use_panels(a, b, site) -> bool:
         """panels(): the bf16 contract, BCIR's GEMM and SiLU, whole 32-tiles, 64-byte slots, and
         the workspace at the panel groups' need -- where the program takes the panels at all."""
-        return (panels and gemm_contract == 3 and not provider_mm and not provider_silu and n % 32 == 0
+        return (chosen[site] == "panels" and gemm_contract == 3 and not provider_mm
+                and not provider_silu and n % 32 == 0
                 and d % 32 == 0 and f % 32 == 0 and aligned(a) and aligned(b)
                 and workspace_bytes >= panels_need)  # fmt: skip
 
@@ -375,16 +443,22 @@ def step_program(
         p = lambda name: ref(f"weights:L{layer}.{name}")  # noqa: E731
         x, y = ref(f"x{layer}"), ref(f"x{layer + 1}")
         rms(x, p("norm1"), c("n1"))
-        linears(n, d, c("n1"), (d, k, k), (p("q"), p("k"), p("v")), (c("q"), c("k"), c("v")))
+        within(f"L{layer}.qkv.fwd")
+        linears(n, d, c("n1"), (d, k, k), (p("q"), p("k"), p("v")), (c("q"), c("k"), c("v")),
+                f"L{layer}.qkv.fwd")  # fmt: skip
+        within(None)
         rope(c("q"), h, 0)
         rope(c("k"), kh, 0)
         attention(c("q"), c("k"), c("v"), c("p"), c("ctx"))
         linear(n, d, d, c("ctx"), p("o"), c("x2"))
         add(x, c("x2"))
         rms(c("x2"), p("norm2"), c("n2"))
-        linears(n, d, c("n2"), (f, f), (p("gate"), p("up")), (c("gate"), c("up")))
+        within(f"L{layer}.gateup.fwd")
+        linears(n, d, c("n2"), (f, f), (p("gate"), p("up")), (c("gate"), c("up")),
+                f"L{layer}.gateup.fwd")  # fmt: skip
+        within(f"L{layer}.panels")
         hidden = c("hidden")
-        if use_panels(hidden, hidden):
+        if use_panels(hidden, hidden, f"L{layer}.panels"):
             a, b = (
                 ref(f"{slot(layer)}.hidden", 0, nf * 2),
                 ref(f"{slot(layer)}.hidden", nf * 2, nf * 2),
@@ -396,6 +470,7 @@ def step_program(
             silu_mul(c("gate"), c("up"), hidden)
             if full:
                 linear(n, f, d, hidden, p("down"), y)
+        within(None)
         if full:
             add(c("x2"), y)
 
@@ -426,8 +501,10 @@ def step_program(
         cur, dn, dq, dk, dv = sc("cur"), sc("dn"), sc("dq"), sc("dk"), sc("dv")
         dc, dg, du, dh, dl = sc("dc"), sc("dg"), sc("du"), sc("dh"), sc("dl")
         emit(_record(LOSS, 0, (n, v), (ref("logits"), ext(4 * n), dl, sc("cur", 0, 8 * n))))
+        within(HEAD_SITE)
         linear_backward(n, d, v, ref("norm"), ref(f"weights:{head}"), dl, dn,
-                        ref(f"gradients:{head}"), 0.0, wb)  # fmt: skip
+                        ref(f"gradients:{head}"), 0.0, wb, HEAD_SITE)  # fmt: skip
+        within(None)
         inv = sc("dq", 0, 4 * n)
         rms_backward(ref(f"x{L}"), ref("weights:final_norm"), dn, cur,
                      ref("gradients:final_norm"), inv, gf)  # fmt: skip
@@ -438,18 +515,22 @@ def step_program(
             if layer in redone and layer != top:
                 layer_forward(layer, False)
             hidden = c("hidden")
-            if use_panels(hidden, hidden):
+            site = f"L{layer}.down.vjp"
+            within(site)
+            if use_panels(hidden, hidden, f"L{layer}.panels"):
                 cx = (0, 0, n, f, d, 0.0, cur, p("down"), dh)
                 cw = (1, 0, d, f, n, wb, cur, None, q("down"))
                 panel = (None, ref(f"{slot(layer)}.hidden", nf * 2, nf * 2))
-                if pair:
+                if chosen[site] != "calls":
                     gemm_job([cx], [cw], [(None, None), panel])
                 else:  # the two VJPs as two jobs: the panel's call a bf16 group of its own
                     gemm(cx)
                     gemm_job([], [cw], [panel])
             else:
-                linear_backward(n, f, d, hidden, p("down"), cur, dh, q("down"), 0.0, wb)
-            if use_panels(dg, du):
+                linear_backward(n, f, d, hidden, p("down"), cur, dh, q("down"), 0.0, wb, site)
+            site = f"L{layer}.gateup.vjp"
+            if use_panels(dg, du, f"L{layer}.panels"):
+                within(f"L{layer}.panels")
                 pg = (ref("dg", 0, nf * 2), ref("dg", nf * 2, nf * 2))
                 pu = (ref("du", 0, nf * 2), ref("du", nf * 2, nf * 2))
                 emit(_record(SWIGLU_VJP_PANELS, v2, (n, f),
@@ -459,26 +540,34 @@ def step_program(
                 cw = [(1, 0, f, d, n, wb, None, c("n2"), q("gate")),
                       (1, 0, f, d, n, wb, None, c("n2"), q("up"))]  # fmt: skip
                 pre = [(pg[0], None), (pu[0], None), (pg[1], None), (pu[1], None)]
-                if group:
+                within(site)
+                if chosen[site] == "group":
                     gemm_job(cx, cw, pre)
                 else:  # each projection's VJPs a job of their own, as linear_backward's are
                     for j in range(2):
-                        if pair:
+                        if chosen[site] == "pair":
                             gemm_job([cx[j]], [cw[j]], [pre[j], pre[2 + j]])
                         else:
                             gemm_job([], [cx[j]], [pre[j]])
                             gemm_job([], [cw[j]], [pre[2 + j]])
             else:
+                within(f"L{layer}.panels")
                 emit(_record(SWIGLU_VJP, v2, (nf,), (c("gate"), c("up"), dh, dg, du)))
+                within(site)
                 linears_backward(n, d, c("n2"), (f, f), (p("gate"), p("up")), (dg, du), dn,
-                                 (q("gate"), q("up")), 0.0, wb)  # fmt: skip
+                                 (q("gate"), q("up")), 0.0, wb, site)  # fmt: skip
+            within(None)
             rms_backward(c("x2"), p("norm2"), dn, cur, q("norm2"), inv, _RMSB_ADD | gf)
-            linear_backward(n, d, d, c("ctx"), p("o"), cur, dc, q("o"), 0.0, wb)
+            within(f"L{layer}.o.vjp")
+            linear_backward(n, d, d, c("ctx"), p("o"), cur, dc, q("o"), 0.0, wb, f"L{layer}.o.vjp")
+            within(None)
             attention_backward(c("q"), c("k"), c("v"), c("p"), dc, dq, dk, dv)
             rope(dq, h, 1)
             rope(dk, kh, 1)
+            within(f"L{layer}.qkv.vjp")
             linears_backward(n, d, c("n1"), (d, k, k), (p("q"), p("k"), p("v")), (dq, dk, dv), dn,
-                             (q("q"), q("k"), q("v")), 0.0, wb)  # fmt: skip
+                             (q("q"), q("k"), q("v")), 0.0, wb, f"L{layer}.qkv.vjp")  # fmt: skip
+            within(None)
             rms_backward(ref(f"x{layer}"), p("norm1"), dn, cur, q("norm1"), inv, _RMSB_ADD | gf)
         emit(_record(SCATTER, 0, (n, d), (ext(4 * n), cur, ref("gradients:embed"))))
         emit(_record(CHECK, CHECK_RAN))
@@ -582,12 +671,17 @@ def launch_mismatches(planned: list[Launch], traced: list[tuple[int, Record]]) -
 
 
 __all__ = [
+    "HEAD_ALTERNATIVES",
+    "HEAD_SITE",
     "KIND_NAMES",
     "PROGRAM_KIND_NAMES",
     "Launch",
     "RECORD_WORDS",
     "Record",
+    "SITE_KINDS",
     "SPACES",
+    "choice_sites",
+    "default_sites",
     "launch_mismatches",
     "program_launches",
     "program_words",

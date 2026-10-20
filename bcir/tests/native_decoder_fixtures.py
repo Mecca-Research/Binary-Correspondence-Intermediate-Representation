@@ -57,6 +57,11 @@ spec alone. One function per row family grades it against the C rail; the tests,
                                planner's other choices) that stopped, trained another state or
                                events than `bcir_decoder_run_accum` on the case, or traced other
                                launches than the program states (PX-2)
+    train.plan.choose.mismatch  choice runs (`choose_runs`: the state cases under each kind of
+                               choice site switched alone to each alternative and seeded draws of
+                               one a site) that stopped, trained another state or events than the
+                               C step on the case, or traced other launches than the chosen
+                               program states (PX-3)
     train.plan.pack.mismatch   pack runs (`pack_runs`: the program runs' configurations, each as a
                                StreamPack and ExecutionPlanV1 the trainer lowers) whose lowering was
                                refused or is not the program's words, that stopped, or that trained
@@ -78,6 +83,7 @@ import hashlib
 import importlib.util
 import math
 import os
+import random
 import shutil
 import statistics
 import re
@@ -1300,6 +1306,71 @@ def program_mismatch(path, cases=None) -> tuple[int, int, list[str]]:
     return bad, runs, notes
 
 
+# --- train.plan.choose.mismatch (PX-3) -----------------------------------------------------------
+
+#: The seeded draws of an alternative per site `choose_choices` adds to each kind switched alone.
+CHOOSE_MIXES = 3
+
+
+def choose_choices(case: TraceCase) -> tuple[dict, ...]:
+    """The per-site choices `train.plan.choose.mismatch` runs a state case under (PX-3), each as
+    `step_program`'s `sites`: every kind of choice site switched alone, at every site of the kind,
+    to each alternative but the one the C step takes; then `CHOOSE_MIXES` draws of an alternative
+    a site, seeded by the case's own fields."""
+    from bcir.hosted.models.native_choose import CHOICE_KINDS, kind_of
+    from bcir.hosted.models.native_launch import choice_sites, default_sites
+
+    sites, defaults = choice_sites(case.spec), default_sites(case.spec)
+    out = []
+    for kind, alternatives in CHOICE_KINDS.items():
+        default = next(defaults[site] for site in sites if kind_of(site) == kind)
+        out += [{site: alternative for site in sites if kind_of(site) == kind}
+                for alternative in alternatives if alternative != default]  # fmt: skip
+    spec = case.spec
+    rng = random.Random("/".join(map(str, (
+        spec.vocab_size, spec.d_model, spec.n_heads, spec.n_layers, spec.d_ff, spec.kv_heads,
+        case.batch, case.time, case.contract, case.recompute, case.workspace, case.threads,
+        case.provider, case.steps, case.accumulation, case.preflight,
+    ))))  # fmt: skip
+    out += [{site: rng.choice(alternatives) for site, alternatives in sites.items()}
+            for _ in range(CHOOSE_MIXES)]  # fmt: skip
+    return tuple(out)
+
+
+def choose_runs(path, cases=None):
+    """Every run `train.plan.choose.mismatch` reads, as (case, sites, the C step's `TraceRun`, the
+    program's `ProgramRun`, the C step's own program): each state case of `cases` (the trace
+    corpus) under each of its `choose_choices`, run from its program on the trace build."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    for i in state_cases(corpus):
+        case = corpus[i]
+        step, base = trace_case(path, case), program_case(path, case).program
+        for sites in choose_choices(case):
+            yield case, sites, step, program_case(path, case, {"sites": sites}), base
+
+
+def choose_run_count(cases=None) -> int:
+    """How many runs `choose_runs` makes of `cases` (the trace corpus): the row's baseline."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    return sum(len(choose_choices(corpus[i])) for i in state_cases(corpus))
+
+
+def choose_mismatch(path, cases=None) -> tuple[int, int, list[str], int]:
+    """`train.plan.choose.mismatch`: of the choice runs (`choose_runs`), those that stopped, whose
+    state or events differ from the C step's on the same case, or whose trace differs from the
+    launches the chosen program states or dropped a record; the runs; what differed, run by run;
+    and how many runs ran another program than the C step's own (the choices that change one)."""
+    bad, runs, notes, other = 0, 0, [], 0
+    for case, sites, step, run, base in choose_runs(path, cases):
+        runs += 1
+        other += run.program != base
+        problems = program_problems(step, run)
+        if problems:
+            bad += 1
+            notes.append(f"{case} {sorted(set(sites.values()))}: {problems[0]}")
+    return bad, runs, notes, other
+
+
 # --- train.plan.pack.mismatch (PX-2b) ------------------------------------------------------------
 
 
@@ -1315,6 +1386,21 @@ def pack_library(directory) -> Path | None:
     from bcir.hosted.models.native import NativeDecoder
 
     return NativeDecoder.build(directory, cc=cc, pack=True)
+
+
+def time_library(directory, *, pack: bool = False) -> Path | None:
+    """The trainer with the PX-3 job clock (`NativeDecoder.build(..., probe="time")`), with the
+    pack lowering too where `pack`, from the tree's units as they stand -- a fault the sweep
+    injected included. None without a compiler, or outside a source checkout (an installed package
+    ships no C units: the one expected absence)."""
+    if not (_C / ("bcir_decoder_pack.c" if pack else "bcir_decoder_train.c")).is_file():
+        return None
+    cc = compiler()
+    if cc is None:
+        return None
+    from bcir.hosted.models.native import NativeDecoder
+
+    return NativeDecoder.build(directory, cc=cc, pack=pack, probe="time")
 
 
 class PackRun(NamedTuple):
@@ -1741,6 +1827,7 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         if traced is not None:  # no C units to trace (an installed package): not measured
             out["train.plan.executed.mismatch"] = float(executed_mismatch(traced)[0])
             out["train.plan.program.mismatch"] = float(program_mismatch(traced)[0])
+            out["train.plan.choose.mismatch"] = float(choose_mismatch(traced)[0])
         packed = pack_library(Path(tmp) / "pack")
         if packed is not None:  # no C units to lower with (an installed package): not measured
             out["train.plan.pack.mismatch"] = float(pack_mismatch(packed)[0])
@@ -1827,6 +1914,7 @@ __all__ = [
     "PackRun",
     "pack_case",
     "pack_library",
+    "time_library",
     "pack_mismatch",
     "pack_problems",
     "pack_runs",
@@ -1842,6 +1930,11 @@ __all__ = [
     "program_run_count",
     "program_runs",
     "state_cases",
+    "CHOOSE_MIXES",
+    "choose_choices",
+    "choose_mismatch",
+    "choose_run_count",
+    "choose_runs",
 ]
 
 

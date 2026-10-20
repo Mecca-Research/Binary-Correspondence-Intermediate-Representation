@@ -226,7 +226,7 @@
       "expects": "test_a_program_trains_the_c_steps_bits",
       "label": "PM13 the group choice leaves the panels' VJP group whole",
       "new": "                if True:\n                    gemm_job(cx, cw, pre)",
-      "old": "                if group:\n                    gemm_job(cx, cw, pre)",
+      "old": "                if chosen[site] == \"group\":\n                    gemm_job(cx, cw, pre)",
       "path": "bcir/hosted/models/native_launch.py"
     },
     {

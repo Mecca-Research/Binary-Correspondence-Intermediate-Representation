@@ -143,9 +143,10 @@ def test_native_c_harness_c11_and_c23():
         # entry takes the scan after its job (NDT-SCAN-W), and once capped at AVX2, so a host whose
         # widest variant is AVX-512 runs the update's AVX2 pairs and commit too (NDT-UPDATE); every
         # build with the commit's shared division exposed to the harness's check of it, and with
-        # PX-1's launch trace compiled in but never begun, and PX-5's layout probes compiled in but
-        # never called -- so the probes build warning-free on every compiler and standard, and the
-        # harness's every check holds with them in (inert)
+        # PX-1's launch trace compiled in but never begun, PX-5's layout probes compiled in but
+        # never called, and PX-3's job clock compiled in but never begun -- so the probes build
+        # warning-free on every compiler and standard, and the harness's every check holds with
+        # them in (inert)
         builds = (
             ("c11", [], ""),
             ("c2x", [], ""),
@@ -164,6 +165,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_SCAN_PROBE",
                 "-DBCIR_DT_TRACE_PROBE",
                 "-DBCIR_DT_LAYOUT_PROBE",
+                "-DBCIR_DT_TIME_PROBE",
                 *options,
                 "-O2",
                 "-Wall",
@@ -221,6 +223,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_SCAN_PROBE",
                 "-DBCIR_DT_TRACE_PROBE",
                 "-DBCIR_DT_LAYOUT_PROBE",
+                "-DBCIR_DT_TIME_PROBE",
             ]
             cmd += ["-I", str(c)]
             cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]
@@ -1296,9 +1299,9 @@ def test_the_harness_rows_are_the_programs_numbers():
     """`train.memory.transient`'s frozen baseline is the bench program's own ratio and its reading
     the placed pack's (PX-4), and every row of the harness's `train` group is one the fixtures
     measure -- the four NDT-GEM rows, TRAIN-RAIL's corpus row, and the PX rows over the trace
-    corpus (the launches, the programs, the packs, the placed packs) -- so a change to the
-    program, the C plan, the placement or the corpus recipe cannot leave the harness quoting a
-    stale number."""
+    corpus (the launches, the programs, the choices, the packs, the placed packs) -- so a change
+    to the program, the C plan, the placement or the corpus recipe cannot leave the harness
+    quoting a stale number."""
     import sys
 
     from bcir.tests import native_decoder_fixtures as nf
@@ -1315,7 +1318,8 @@ def test_the_harness_rows_are_the_programs_numbers():
                          "train.mm.provider.differences", "train.norm.reduce.mismatch",
                          "train.mm.bf16.mismatch", "train.plan.remat.mismatch",
                          "train.plan.executed.mismatch", "train.plan.program.mismatch",
-                         "train.plan.pack.mismatch", "train.plan.place.mismatch"}  # fmt: skip
+                         "train.plan.pack.mismatch", "train.plan.place.mismatch",
+                         "train.plan.choose.mismatch"}  # fmt: skip
     remat = rows["train.plan.remat.mismatch"]
     assert remat.kind == "exact" and remat.bound == 0 and remat.baseline == 0
     assert remat.what.startswith("(spec, recompute set) pairs") and remat.slice_owner == "GEO-3"
@@ -1326,6 +1330,12 @@ def test_the_harness_rows_are_the_programs_numbers():
     assert program.kind == "exact" and program.bound == 0 and program.baseline == runs
     assert program.what.startswith(f"of the {runs} program runs") and program.slice_owner == "PX-2"
     assert f"the {calls} cases" in program.what, "the row names the trace corpus it runs"
+    # PX-3: the state cases again, under every kind of choice site switched alone and seeded mixes
+    choose, chosen = rows["train.plan.choose.mismatch"], nf.choose_run_count()
+    states = len(nf.state_cases(nf.trace_corpus()))
+    assert choose.kind == "exact" and choose.bound == 0 and choose.baseline == chosen
+    assert choose.what.startswith(f"of the {chosen} choice runs") and choose.slice_owner == "PX-3"
+    assert f"the {states} state cases" in choose.what, "the row names the cases it runs"
     # PX-2b: the same runs, each from its pack -- the program row's corpus, one carrier more
     pack = rows["train.plan.pack.mismatch"]
     assert pack.kind == "exact" and pack.bound == 0 and pack.baseline == runs

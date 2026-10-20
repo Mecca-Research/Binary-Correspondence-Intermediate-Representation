@@ -109,6 +109,45 @@ static void tr_embed(size_t n,size_t d,const uint32_t *tokens,const float *table
 #define DT_TRACE_PROVIDER_MM(ta,tb,m,n,k,al,a,b,be,c) ((void)0)
 #define DT_TRACE_EMBED(n,d,tokens,table,x) ((void)0)
 #endif
+#ifdef BCIR_DT_TIME_PROBE
+/* PX-3 (CHOOSE): a measurement's record of what each job of a program run takes -- the nanoseconds
+ * from its dispatch to its return, added into the word of its first record's index in words the
+ * caller lends (zeroed by the caller), so a measurement reads every choice site's launches in
+ * place (bcir/hosted/models/native_choose.py). ISO C11 timespec_get, no POSIX feature macros. A
+ * build defines BCIR_DT_TIME_PROBE to have it (the measurement's builds do; the library does not):
+ * every job is then the same call between two clock reads, so the state is the library's bit for
+ * bit. A job past the lent words is counted, never dropped silently; lent none, the clock writes
+ * and counts nothing. */
+#include <time.h>
+static uint64_t *time_words;
+static size_t time_capacity,time_dropped;
+BCIR_DT_API void bcir_decoder_time_probe_begin(uint64_t *ns,size_t capacity);
+BCIR_DT_API size_t bcir_decoder_time_probe_end(void);
+void bcir_decoder_time_probe_begin(uint64_t *ns,size_t capacity) {
+  time_words=ns; time_capacity=ns ? capacity : 0; time_dropped=0;
+}
+size_t bcir_decoder_time_probe_end(void) {
+  size_t dropped=time_dropped;
+  time_words=NULL; time_capacity=time_dropped=0;
+  return dropped;
+}
+static uint64_t time_now(void) {
+  struct timespec t;
+  if (timespec_get(&t,TIME_UTC)!=TIME_UTC || t.tv_sec<0 || t.tv_nsec<0) return 0;
+  return (uint64_t)t.tv_sec*1000000000u+(uint64_t)t.tv_nsec;
+}
+static void time_job(size_t at,uint64_t t0) {
+  uint64_t t1;
+  if (!time_words) return;
+  t1=time_now();
+  if (at<time_capacity) time_words[at]+=t1>t0 ? t1-t0 : 0; else time_dropped++;
+}
+#define DT_TIME_START(t0) uint64_t t0=time_now()
+#define DT_TIME_JOB(at,t0) time_job(at,t0)
+#else
+#define DT_TIME_START(t0) ((void)0)
+#define DT_TIME_JOB(at,t0) ((void)0)
+#endif
 uint32_t bcir_decoder_abi_version(void) { return 5; }
 static int add(size_t *n,size_t a) {
   if (a>SIZE_MAX-*n) return 0;
@@ -1808,6 +1847,7 @@ static int px_run(const px_ctx *c,const bcir_decoder_adamw *o,const uint64_t *p,
   int ran=1,bad=0,rc; double ce=0.0,loss=0.0;
   while (i<records) {
     const uint64_t *w=p+i*BCIR_DT_RECORD_WORDS;
+    DT_TIME_START(t0);
     job=px_job(w,records-i);
     if (w[0]==BCIR_DT_REC_GEMM) ran&=px_gemm_run(c,w,job);
     else if (w[0]==BCIR_DT_REC_CHECK) {
@@ -1832,6 +1872,7 @@ static int px_run(const px_ctx *c,const bcir_decoder_adamw *o,const uint64_t *p,
       rc=px_kernel_run(c,w,ext ? tokens+off : NULL,ext ? targets+off : NULL,&ran,&bad,&ce);
       if (rc) return rc;
     }
+    DT_TIME_JOB(i,t0);
     i+=job;
   }
   return BCIR_DT_OK;

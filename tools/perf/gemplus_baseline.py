@@ -820,6 +820,26 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="PX-2",
     ),
     Metric(
+        "train.plan.choose.mismatch",
+        "train",
+        "of the 351 choice runs (bcir/tests/native_decoder_fixtures.py `choose_runs`: the 27 state "
+        "cases of the trace corpus, each under every kind of choice site -- the q/k/v and gate/up "
+        "projections, the SwiGLU block's panels, the down, o, gate/up and q/k/v VJPs, the head's "
+        "VJP -- switched alone at every site of the kind to each alternative the C step does not "
+        "take, and three seeded draws of an alternative a site), those that stopped, trained "
+        "another state or events than bcir_decoder_run_accum on the same case, or traced other "
+        "launches than the chosen program states (native_launch.step_program's `sites`). The "
+        "parent stated no choice a site, so all 351 were unheld (PX-3)",
+        351,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one step, every grouping: each alternative is a choice of jobs, never of a "
+        "value (NDT-SCHED-0/1, BF16-PANELS), so a measured choice may take any of them -- a run "
+        "that differs is a defect of the program model, the runner or the probe",
+        slice_owner="PX-3",
+    ),
+    Metric(
         "train.plan.pack.mismatch",
         "train",
         "of the 356 pack runs (bcir/tests/native_decoder_fixtures.py `pack_runs`: the program runs "

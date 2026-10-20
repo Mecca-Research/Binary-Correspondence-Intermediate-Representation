@@ -476,9 +476,14 @@ class NativeDecoder:
     """
 
     @staticmethod
-    def build(directory, *, cc=None, pack=False) -> Path:
+    def build(directory, *, cc=None, pack=False, probe=None) -> Path:
         """The trainer as a shared library under `directory`; with `pack`, also the PX-2b pack
-        lowering and what it runs on (`bcir_decoder_lower_pack`, `lower_pack`)."""
+        lowering and what it runs on (`bcir_decoder_lower_pack`, `lower_pack`). `probe` "time"
+        (PX-3) builds, under a name of its own, the same units with the job clock a measurement
+        reads (BCIR_DT_TIME_PROBE: `native_choose.timed_run`): the same code between two clock
+        reads a job, so the state it trains is the library's bit for bit."""
+        if probe not in (None, "time"):
+            raise ValueError('probe must be None or "time"')
         compiler = cc or os.environ.get("CC") or shutil.which("clang") or shutil.which("cc")
         if not compiler:
             raise RuntimeError("native decoder training requires a C11 compiler")
@@ -494,7 +499,8 @@ class NativeDecoder:
         suffix = (
             ".dll" if sys.platform == "win32" else ".dylib" if sys.platform == "darwin" else ".so"
         )
-        target = target_dir / (("bcir_decoder_pack" if pack else "bcir_decoder_train") + suffix)
+        stem = "bcir_decoder_pack" if pack else "bcir_decoder_train"
+        target = target_dir / (stem + ("_time" if probe else "") + suffix)
         fd, name = tempfile.mkstemp(prefix=".decoder-", suffix=suffix, dir=target_dir)
         os.close(fd)
         temporary = Path(name)
@@ -513,6 +519,8 @@ class NativeDecoder:
                 "-DBCIR_DT_BUILD_SHARED",
                 "-shared",
             ]
+            if probe == "time":
+                command.append("-DBCIR_DT_TIME_PROBE")
             if sys.platform != "win32":
                 # the pool's threads (NDT-THREADS) are pthreads here; Win32 threads need no flag
                 command += ["-fPIC", "-pthread"]
@@ -969,6 +977,27 @@ class NativeDecoder:
                 done.value,
             )
         return tuple({"step": e.step, "loss": e.loss, "grad_norm": e.grad_norm} for e in events)
+
+    def program_decisions(self, *, steps=1, gradient_accumulation=1) -> dict:
+        """The decisions a program this trainer runs is stated under, as `native_launch.
+        step_program` and `native_pack.training_pack` take them (PX-3): its contract, recompute
+        set, workspace and the panels' need, its arenas' alignment, whether a provider holds its
+        GEMMs or its SiLU, and the call's steps and accumulation -- every one read off the trainer,
+        so a program stated from them is one its `run_program` admits."""
+        from .native_launch import SPACES
+
+        if type(steps) is not int or steps < 1:
+            raise ValueError("steps must be a positive integer")
+        if type(gradient_accumulation) is not int or gradient_accumulation < 1:
+            raise ValueError("gradient_accumulation must be a positive integer")
+        provider = self.state.provider
+        return dict(
+            contract=_CONTRACTS[self.contract], recompute=self.recompute,
+            workspace_bytes=self.workspace_bytes, panels_need=self.plan_memory.workspace_panels,
+            alignment={SPACES[name]: ct.addressof(buf) % 64 for name, buf in self.buffers.items()},
+            provider_mm=bool(provider.mm), provider_silu=bool(provider.silu),
+            steps=steps, accumulation=gradient_accumulation,
+        )  # fmt: skip
 
     def lower_pack(self, pack: bytes, plan: bytes) -> array:
         """PX-2b: the launch program a StreamPack and its ExecutionPlanV1 state for this trainer

@@ -1,0 +1,246 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_native_choose:test_a_site_takes_its_alternatives_and_nothing_else",
+    "bcir.tests.test_native_choose:test_a_kind_switched_changes_only_the_launches_its_scope_labels",
+    "bcir.tests.test_native_choose:test_each_label_names_its_own_kernels",
+    "bcir.tests.test_native_choose:test_the_estimate_is_the_paired_geometric_mean_and_its_interval",
+    "bcir.tests.test_native_choose:test_a_choice_table_has_one_spelling_and_refuses_the_rest",
+    "bcir.tests.test_native_choose:test_choose_takes_only_alternatives_resolved_faster",
+    "bcir.tests.test_native_decoder:test_the_harness_rows_are_the_programs_numbers"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_kind_switched_changes_only_the_launches_its_scope_labels",
+      "label": "PS1 a site's alternative never taken (every site its default)",
+      "new": "            chosen.setdefault(site, alternative)\n",
+      "old": "            chosen[site] = alternative\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_kind_switched_changes_only_the_launches_its_scope_labels",
+      "label": "PS2 a linear's VJPs never split into calls",
+      "new": "        if provider_mm:\n",
+      "old": "        if provider_mm or chosen[site] == \"calls\":\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_kind_switched_changes_only_the_launches_its_scope_labels",
+      "label": "PS3 a group site's forward calls never split",
+      "new": "        if provider_mm or len(outs) > _GROUP:\n            for o, w, y in zip(outs, ws_, ys):\n",
+      "old": "        if provider_mm or chosen[site] != \"group\" or len(outs) > _GROUP:\n            for o, w, y in zip(outs, ws_, ys):\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_kind_switched_changes_only_the_launches_its_scope_labels",
+      "label": "PS4 a group site's VJPs never split",
+      "new": "        if provider_mm or len(outs) > _GROUP:\n            for q, (o, w, dy, dw) in enumerate(zip(outs, ws_, dys, dws)):\n",
+      "old": "        if provider_mm or chosen[site] != \"group\" or len(outs) > _GROUP:\n            for q, (o, w, dy, dw) in enumerate(zip(outs, ws_, dys, dws)):\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_kind_switched_changes_only_the_launches_its_scope_labels",
+      "label": "PS5 the panels' choice ignored (the block always on its panels)",
+      "new": "        return (gemm_contract == 3 and not provider_mm\n",
+      "old": "        return (chosen[site] == \"panels\" and gemm_contract == 3 and not provider_mm\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_each_label_names_its_own_kernels",
+      "label": "PS6 a launch's label dropped",
+      "new": "            labels.append(None)\n",
+      "old": "            labels.append(current[0])\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_each_label_names_its_own_kernels",
+      "label": "PS7 the q/k/v projections unlabelled",
+      "new": "        within(None)\n",
+      "old": "        within(f\"L{layer}.qkv.fwd\")\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_each_label_names_its_own_kernels",
+      "label": "PS8 the gate/up VJP's panel kernel read as the VJP's own",
+      "new": "                within(site)\n                pg = (ref(\"dg\", 0, nf * 2), ref(\"dg\", nf * 2, nf * 2))\n",
+      "old": "                within(f\"L{layer}.panels\")\n                pg = (ref(\"dg\", 0, nf * 2), ref(\"dg\", nf * 2, nf * 2))\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_each_label_names_its_own_kernels",
+      "label": "PS9 the head's VJP unlabelled",
+      "new": "        within(None)\n",
+      "old": "        within(HEAD_SITE)\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_site_takes_its_alternatives_and_nothing_else",
+      "label": "PS10 a site the program lacks admitted",
+      "new": "            if type(site) is not str or alternative not in known.get(site, (alternative,)):\n",
+      "old": "            if type(site) is not str or site not in known or alternative not in known[site]:\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_site_takes_its_alternatives_and_nothing_else",
+      "label": "PS11 an alternative its kind lacks admitted",
+      "new": "            if type(site) is not str or site not in known:\n",
+      "old": "            if type(site) is not str or site not in known or alternative not in known[site]:\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_site_takes_its_alternatives_and_nothing_else",
+      "label": "PS12 labels already filled admitted",
+      "new": "    if labels is not None and not isinstance(labels, list):\n",
+      "old": "    if labels is not None and (not isinstance(labels, list) or labels):\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_site_takes_its_alternatives_and_nothing_else",
+      "label": "PS13 the defaults pair a linear's VJPs whatever pair says",
+      "new": "        return \"pair\" if \"pair\" in alternatives else \"calls\"\n",
+      "old": "        return \"pair\" if pair and \"pair\" in alternatives else \"calls\"\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_site_takes_its_alternatives_and_nothing_else",
+      "label": "PS14 the defaults group whatever group says",
+      "new": "        if \"group\" in alternatives:\n",
+      "old": "        if group and \"group\" in alternatives:\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_site_takes_its_alternatives_and_nothing_else",
+      "label": "PC1 a layer spelled with a leading zero admitted",
+      "new": "            or kind not in SITE_KINDS):  # fmt: skip\n",
+      "old": "            or (digits != \"0\" and digits[0] == \"0\") or kind not in SITE_KINDS):  # fmt: skip\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_a_site_takes_its_alternatives_and_nothing_else",
+      "label": "PC2 a layer spelled in non-ASCII digits admitted",
+      "new": "    if (layer[:1] != \"L\" or not digits or not digits.isdigit()\n",
+      "old": "    if (layer[:1] != \"L\" or not digits or not digits.isascii() or not digits.isdigit()\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_a_kind_switched_changes_only_the_launches_its_scope_labels",
+      "label": "PC3 the panels' scope its own kernels alone (the VJPs it changes unread)",
+      "new": "    return (kind,)\n",
+      "old": "    return SCOPES.get(kind, (kind,))\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_the_estimate_is_the_paired_geometric_mean_and_its_interval",
+      "label": "PC4 the interval at the normal quantile, not Student-t's",
+      "new": "    half = 1.96 * statistics.stdev(logs) / math.sqrt(len(logs))\n",
+      "old": "    half = _t975(len(logs) - 1) * statistics.stdev(logs) / math.sqrt(len(logs))\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_the_estimate_is_the_paired_geometric_mean_and_its_interval",
+      "label": "PC5 the arithmetic mean of the ratios, not the geometric",
+      "new": "    mean = math.log(statistics.fmean(math.exp(v) for v in logs))\n",
+      "old": "    mean = statistics.fmean(logs)\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_the_estimate_is_the_paired_geometric_mean_and_its_interval",
+      "label": "PC6 Q8 truncated, not rounded half up",
+      "new": "        return int(Q8 * math.exp(x))\n",
+      "old": "        return int(math.floor(Q8 * math.exp(x) + 0.5))\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_the_estimate_is_the_paired_geometric_mean_and_its_interval",
+      "label": "PC7 a quantile between the table's rows taken at the row above (the narrower interval)",
+      "new": "    return _T975[min(k for k in _T975 if k >= df)]\n",
+      "old": "    return _T975[max(k for k in _T975 if k <= df)]\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_the_estimate_is_the_paired_geometric_mean_and_its_interval",
+      "label": "PC8 four rounds admitted to an estimate",
+      "new": "    if len(default_ns) != len(alternative_ns) or len(default_ns) < 4:\n",
+      "old": "    if len(default_ns) != len(alternative_ns) or len(default_ns) < 5:\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_the_estimate_is_the_paired_geometric_mean_and_its_interval",
+      "label": "PC9 a zero time admitted",
+      "new": "    if any(type(v) is not int or v < 0 for v in (*default_ns, *alternative_ns)):\n",
+      "old": "    if any(type(v) is not int or v <= 0 for v in (*default_ns, *alternative_ns)):\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_a_choice_table_has_one_spelling_and_refuses_the_rest",
+      "label": "PC10 an entry measured twice admitted",
+      "new": "            if False:\n",
+      "old": "            if (e.kind, e.alternative) in seen:\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_a_choice_table_has_one_spelling_and_refuses_the_rest",
+      "label": "PC11 an interval's low end above its mean admitted",
+      "new": "            if not (0 < e.low_q8 and e.q8 <= e.high_q8) or e.rounds < 5:\n",
+      "old": "            if not 0 < e.low_q8 <= e.q8 <= e.high_q8 or e.rounds < 5:\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_a_choice_table_has_one_spelling_and_refuses_the_rest",
+      "label": "PC12 a second spelling of a table decoded",
+      "new": "        if False:\n",
+      "old": "        if table.to_json() != text:\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_a_choice_table_has_one_spelling_and_refuses_the_rest",
+      "label": "PC13 a table's entries kept in the order given (two spellings of one table)",
+      "new": "                           entries)  # fmt: skip\n",
+      "old": "                           tuple(sorted(entries, key=lambda e: (e.kind, e.alternative))))  # fmt: skip\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_choose_takes_only_alternatives_resolved_faster",
+      "label": "PC14 a shape missing a field admitted",
+      "new": "    if (not isinstance(shape, dict) or not set(shape) <= _SHAPE_KEYS\n",
+      "old": "    if (not isinstance(shape, dict) or set(shape) != _SHAPE_KEYS\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_choose_takes_only_alternatives_resolved_faster",
+      "label": "PC15 an alternative taken on its mean, its interval crossing 256",
+      "new": "        if e.q8 < Q8 and (\n",
+      "old": "        if e.high_q8 < Q8 and (\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_choose_takes_only_alternatives_resolved_faster",
+      "label": "PC16 a tie taken in the table's order, not by the narrower interval",
+      "new": "            e.kind not in best or e.q8 < best[e.kind].q8\n",
+      "old": "            e.kind not in best or (e.q8, e.high_q8) < (best[e.kind].q8, best[e.kind].high_q8)\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_choose_takes_only_alternatives_resolved_faster",
+      "label": "PC17 a table measured at another shape taken",
+      "new": "    if False:\n",
+      "old": "    if table.shape != shape:\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_choose_takes_only_alternatives_resolved_faster",
+      "label": "PC18 a shape of another decoder taken",
+      "new": "    if False:\n",
+      "old": "    if tuple(shape[k] for k in _SPEC_KEYS) != _spec_shape(spec):\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_the_harness_rows_are_the_programs_numbers",
+      "label": "PR3 the corpus row's seeded draws dropped (the harness quoting 351 runs of 270)",
+      "new": "CHOOSE_MIXES = 0\n",
+      "old": "CHOOSE_MIXES = 3\n",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    }
+  ]
+}

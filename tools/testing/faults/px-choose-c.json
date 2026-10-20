@@ -1,0 +1,127 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_choose:_CC",
+    "bcir.tests.test_native_choose:test_the_job_clock_reads_each_job_once_and_writes_nothing_else",
+    "bcir.tests.test_native_choose:test_a_measurement_is_a_table_at_the_trainers_shape",
+    "bcir.tests.test_native_choose:test_the_trainer_states_its_own_decisions",
+    "bcir.tests.test_native_choose:test_every_alternative_trains_the_c_steps_bits",
+    "bcir.tests.test_native_choose:test_every_choice_of_the_corpus_trains_the_c_steps_bits"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_job_clock_reads_each_job_once_and_writes_nothing_else",
+      "label": "PT1 a job's time at its second record, not its first",
+      "new": "    DT_TIME_JOB(i+1,t0);\n",
+      "old": "    DT_TIME_JOB(i,t0);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_job_clock_reads_each_job_once_and_writes_nothing_else",
+      "label": "PT2 a job one past the lent words written",
+      "new": "  if (at<=time_capacity) time_words[at]+=t1>t0 ? t1-t0 : 0; else time_dropped++;\n",
+      "old": "  if (at<time_capacity) time_words[at]+=t1>t0 ? t1-t0 : 0; else time_dropped++;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_job_clock_reads_each_job_once_and_writes_nothing_else",
+      "label": "PT3 a job past the lent words dropped uncounted",
+      "new": "  if (at<time_capacity) time_words[at]+=t1>t0 ? t1-t0 : 0;\n",
+      "old": "  if (at<time_capacity) time_words[at]+=t1>t0 ? t1-t0 : 0; else time_dropped++;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_job_clock_reads_each_job_once_and_writes_nothing_else",
+      "label": "PT4 a run the clock was not begun for counted",
+      "new": "  if (!time_words && time_capacity) return;\n",
+      "old": "  if (!time_words) return;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_job_clock_reads_each_job_once_and_writes_nothing_else",
+      "label": "PB1 a probe of no kind built",
+      "new": "        if probe is not None and type(probe) is not str:\n",
+      "old": "        if probe not in (None, \"time\"):\n",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_job_clock_reads_each_job_once_and_writes_nothing_else",
+      "label": "PB2 the clocked library built without its clock",
+      "new": "            if probe == \"time\":\n                command.append(\"-DBCIR_DT_TIME_PROBES\")\n",
+      "old": "            if probe == \"time\":\n                command.append(\"-DBCIR_DT_TIME_PROBE\")\n",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_job_clock_reads_each_job_once_and_writes_nothing_else",
+      "label": "PB3 the clocked library under the plain one's name (one replaces the other)",
+      "new": "        target = target_dir / (stem + suffix)\n",
+      "old": "        target = target_dir / (stem + (\"_time\" if probe else \"\") + suffix)\n",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_a_measurement_is_a_table_at_the_trainers_shape",
+      "label": "PM1 the rounds never rotated (each arm at one place in every round)",
+      "new": "        shift = 0\n",
+      "old": "        shift = r % len(arms)\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_a_measurement_is_a_table_at_the_trainers_shape",
+      "label": "PM2 an alternative measured where it states the default's program",
+      "new": "            if True:  # else the contract or shape leaves the site one way here\n",
+      "old": "            if program != base:  # else the contract or shape leaves the site one way here\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_a_measurement_is_a_table_at_the_trainers_shape",
+      "label": "PM3 every site's launches read as each kind's",
+      "new": "                   if label is not None)  # fmt: skip\n",
+      "old": "                   if label is not None and kind_of(label) in names)  # fmt: skip\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_a_measurement_is_a_table_at_the_trainers_shape",
+      "label": "PM4 four rounds admitted to a measurement",
+      "new": "    if type(rounds) is not int or rounds < 4:\n",
+      "old": "    if type(rounds) is not int or rounds < 5:\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_the_trainer_states_its_own_decisions",
+      "label": "PM5 a table's shape naming no recompute set",
+      "new": "                 steps=steps, recompute=0,\n",
+      "old": "                 steps=steps, recompute=trainer.recompute,\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_the_trainer_states_its_own_decisions",
+      "label": "PM6 the decisions' provider read as the GEMM's alone (its SiLU's dropped)",
+      "new": "            provider_mm=bool(provider.mm), provider_silu=bool(provider.mm),\n",
+      "old": "            provider_mm=bool(provider.mm), provider_silu=bool(provider.silu),\n",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_every_choice_of_the_corpus_trains_the_c_steps_bits",
+      "label": "PR1 the corpus row's kinds switched to the C step's own alternative",
+      "new": "                for alternative in alternatives if alternative == default]  # fmt: skip\n",
+      "old": "                for alternative in alternatives if alternative != default]  # fmt: skip\n",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    },
+    {
+      "expects": "test_every_choice_of_the_corpus_trains_the_c_steps_bits",
+      "label": "PR2 the corpus row runs the C step's own program for every choice",
+      "new": "            yield case, sites, step, program_case(path, case), base\n",
+      "old": "            yield case, sites, step, program_case(path, case, {\"sites\": sites}), base\n",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    },
+    {
+      "expects": "test_every_alternative_trains_the_c_steps_bits",
+      "label": "PI1 a group site's split VJPs overwrite dx instead of adding the second and third",
+      "new": "                linear_backward(rows, inp, o, x, w, dy, dx, dw, beta, wbeta, site)\n",
+      "old": "                linear_backward(rows, inp, o, x, w, dy, dx, dw, 1.0 if q else beta, wbeta, site)\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    }
+  ]
+}

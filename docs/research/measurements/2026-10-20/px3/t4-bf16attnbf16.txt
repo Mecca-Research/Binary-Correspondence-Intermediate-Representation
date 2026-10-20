@@ -1,0 +1,7 @@
+measured in 457.6 s: [["down.vjp", "calls", 270, 260, 281], ["gateup.fwd", "calls", 268, 260, 277], ["gateup.vjp", "calls", 276, 265, 287], ["gateup.vjp", "pair", 265, 257, 274], ["head.vjp", "calls", 272, 261, 283], ["o.vjp", "calls", 266, 258, 273], ["panels", "plain", 275, 267, 282], ["qkv.fwd", "calls", 280, 269, 292], ["qkv.vjp", "calls", 296, 284, 309], ["qkv.vjp", "pair", 282, 272, 292]]
+chosen (sites off their default): none
+slowest kinds: {"down.vjp": "calls", "gateup.fwd": "calls", "gateup.vjp": "calls", "head.vjp": "calls", "o.vjp": "calls", "panels": "plain", "qkv.fwd": "calls", "qkv.vjp": "calls"}
+default2 / default (A/A: the default program against itself): x0.9825 [0.9601, 1.0055]
+chosen / default (the chosen program against the default): x0.9827 [0.9601, 1.0058]
+worst / default (the program priced slowest against the default): x1.0641 [1.0430, 1.0857]
+{"default": 420.68235250008, "default2": 407.1586326244869, "chosen": 406.74447412493464, "worst": 451.6231916250035} one state: True

@@ -97,8 +97,8 @@
     {
       "expects": "test_the_c_step_issues_the_planned_launches",
       "label": "PM1 the plan groups at most two linears (q, k, v planned as three launches)",
-      "new": "        if provider_mm or not group or len(outs) > 2:\n            for o, w, y in zip(outs, ws_, ys):",
-      "old": "        if provider_mm or not group or len(outs) > _GROUP:\n            for o, w, y in zip(outs, ws_, ys):",
+      "new": "        if provider_mm or chosen[site] != \"group\" or len(outs) > 2:\n            for o, w, y in zip(outs, ws_, ys):",
+      "old": "        if provider_mm or chosen[site] != \"group\" or len(outs) > _GROUP:\n            for o, w, y in zip(outs, ws_, ys):",
       "path": "bcir/hosted/models/native_launch.py"
     },
     {

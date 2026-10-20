@@ -3640,6 +3640,91 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     C11, clang 23 at C23; -fsyntax-only and -O3; the probe defined and not), 0 compiler findings.
   - The ladder: PX-3 takes the pack's choices from measured candidates; PX-6 (GPU) is a documented
     skip on this host.
+  PX-3 (2026-10-20): the step program's per-site choices taken from measured candidates.
+  - The ladder's row: the pack's per-call choices taken from measured candidates, and one
+    intervention measured end to end at the same state. Every choice the planner made until now was
+    one boolean over the whole step (NDT-SCHED-0/1's grouping and pairing, BF16-PANELS' panels),
+    taken the same way at every layer, and none had been measured where it runs.
+  - Choice sites (`native_launch.choice_sites`), seven a layer and one for the head: each layer's
+    q/k/v and gate/up projections (one pool job, or a call each), its SwiGLU block's bf16 panels (or
+    the block plain), and the VJPs of its down, o, gate/up and q/k/v projections (one job, a job a
+    projection, or a call each); the head's VJP. `step_program(sites=...)` takes any site's
+    alternative in place of the booleans' (`default_sites`: the booleans' program is the one its
+    default sites state, word for word) and refuses a site or an alternative the program does not
+    have; `step_program(labels=...)` names the site each launch belongs to -- the site's GEMMs, and
+    the SwiGLU kernels for its panels site. Every alternative trains the same bits; what differs is
+    the time.
+  - The job clock: a build defining BCIR_DT_TIME_PROBE (`NativeDecoder.build(probe="time")`, a
+    library of its own; the library a caller runs has no clock) adds the nanoseconds from each job's
+    dispatch to its return into the word of its first record's index, in words the caller lends --
+    ISO C11 `timespec_get`; a job past the lent words is counted; lent none, the clock writes and
+    counts nothing -- so a measurement reads every site's launches in place, on the state it trains.
+  - `bcir.hosted.models.native_choose`: `measure` runs the trainer's default program and, for each
+    kind of site and each alternative that states a program of its own, the program with every site
+    of that kind switched, in rotated rounds on one trainer (they train the same bits, so they take
+    turns on one state), reading the launches the kind's scope labels -- the panels' scope is its
+    block and the two VJPs that read its panels. `estimate` turns the paired rounds into the
+    alternative's time over the default's: the geometric mean and its 95% Student-t interval, in Q8.
+    The result is a `ChoiceTable`: frozen, generation-tagged, one canonical JSON spelling, naming
+    the shape it was measured at (the decoder, the call, the threads, the recompute set, the
+    workspace and the contract) and the host's attestation (information, never a verdict). `choose`
+    takes, per kind, the alternative whose whole interval lies below 256 with the lowest mean (the
+    narrower interval on a tie); every other site keeps its default; no table is the defaults, and a
+    table measured at another shape is refused. The measured prices rank; they never decide
+    legality: the chosen program is stated as a pack (`training_pack(sites=...)`), planned by K_BCIR
+    and verified under the plan's laws (R9 among them) like any other, and the C lowers it to the
+    program it states.
+  - `train.plan.choose.mismatch` 351 -> 0 (a new GEM+ row): the trace corpus's 27 state cases, each
+    under every kind switched alone to each alternative the C step does not take and three seeded
+    draws of an alternative a site, run from their programs on the trace build, trace exactly the
+    chosen programs and train the C step's state and events bit for bit; 283 of the 351 run a
+    program other than the C step's own (the rest are choices a contract or a shape leaves one way:
+    a provider's GEMMs, the panels outside bf16). Every alternative and seeded mixes, on a bf16 case
+    whose shapes take the panels and on a kblock case, also train the C step's bits from their packs
+    -- planned by K_BCIR, hydrated by GEM, lowered by the C to exactly the program's words.
+  - The measurement and the intervention
+    ([measurements/2026-10-20/px3/](research/measurements/2026-10-20/px3/README.json)): on the 9.84M
+    comparison decoder at four threads (this host: AVX-512F, neither AMX nor AVX512-BF16), 24
+    rotated rounds of four-step calls on one trainer of the clocked library -- 458 s under bf16, 235
+    s under binary32. Under bf16 every one of the ten alternatives reads slower at its sites than
+    the step's default, each interval wholly above 1.0: a call each for the q/k/v and gate/up
+    projections x1.094 and x1.047, the SwiGLU block plain x1.074, a call each for the down, o,
+    gate/up, q/k/v and head VJPs x1.055, x1.039, x1.078, x1.156 and x1.062, a job a projection for
+    the gate/up and q/k/v VJPs x1.035 and x1.102: NDT-SCHED-0/1's grouping and pairing and
+    BF16-PANELS' panels are the measured winners at every site. Under binary32 none of the nine
+    reads either way (x0.965 to x1.070, every interval holding 1.0). So `choose` keeps the defaults
+    under both. End to end, in 32 rounds of four trainers of the library without the clock, the
+    program the measurement prices slowest (every kind at its slowest alternative: 893 launches a
+    four-step call against the default's 577) runs x1.0641 (95% interval 1.043-1.086) of the default
+    under bf16, slower in 29 of 32 rounds, where its readings predicted x1.096 for the jobs it
+    switches; under binary32 it reads x0.9995 (0.975-1.025), its readings having predicted x1.017.
+    The chosen program is the default's, so its arm is a third trainer running the default program:
+    x0.983 and x0.966 against the first, beside the A/A control's x0.983 and x0.990. Trainers
+    running one program differ by up to 3.4% on this host, an offset the rounds' interval does not
+    hold -- which is why the choice rests on one trainer's readings in place; the slowest program's
+    x1.064 under bf16 lies beyond it (x1.083 against each of the other two). Every trainer's state
+    is one state, bit for bit.
+  - Fault sweeps, on the tree with PX-4 and PX-5 beneath: `px-choose.json` (the sites, the labels
+    and scopes, the estimate, the table, the choice and the frozen row's count: PS1-PS14, PC1-PC18,
+    PR3), 33 of 33 defects injected, each caught by its own witness; `px-choose-c.json` (the job
+    clock, the clocked build, the measurement, the decisions and shape read off the trainer, the
+    corpus row's runs and an alternative training other bits: PT1-PT4, PB1-PB3, PM1-PM6, PR1, PR2,
+    PI1), 16 of 16. The two older entries whose lines PX-3 rewrote (`px-program.json` PM13,
+    `px-trace.json` PM1) were re-anchored to the new lines, and the 17 older entries inside the
+    constructs PX-3 changed (`px-program.json` PG16-PG18, PG20, PG23, PG24, PM9, PM10, PM12, PM13;
+    `px-trace.json` PM1, PM2, PM4, PM6, PM7; `px-place.json` PL6; `red-vacuity.json` RV6) re-swept
+    on the combined tree: 17 of 17 caught. Every C entry compiles warning-free under GCC 13, clang
+    18 and clang 23, at `-fsyntax-only` and `-O3`, plain, with the clock and with the trace probe
+    (RED-VACUITY): the 4 C faults and the clean unit, 24 builds each, 0 compiler findings. The C
+    harness's C11, C2x and UBSan builds compile the clock in, never begun -- warning-free under
+    -Wpedantic -Werror on GCC 13, clang 18 and clang 23, the harness's 29 checks holding with it --
+    so the harness's own entries keep their verdicts: the clock never runs there.
+  - Not claimed, and open (PX-3b): the kernel instance and the pool's thread split as choice sites
+    (each call's instance is the host's widest; the split the pool's), and the measured prices
+    carried into K_BCIR's own candidates on its three rails (a BKPI table beside the target's
+    constants) instead of choosing beside them. The measuring host is this container's (no AMX, no
+    AVX512-BF16): a table is the host's that measured it, and names it.
+  - The ladder: PX-6 (GPU lowering and synchronization) is a documented skip on this host.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
