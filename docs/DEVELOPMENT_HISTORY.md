@@ -289,6 +289,13 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-10-20 — TRITON-CPU-1 test/kernel blueprint:** added the
+  [backend optimality tests and kernel entry gates](research/BCIR_BACKEND_OPTIMALITY_AND_KERNEL_GATES_2026-10-20.md):
+  comparator routes, a gap register beyond affine maps, sixteen proposed experiments,
+  transformation-admission rules and parallel hosted/driver/native qualification. Updated
+  the architecture report for pending #820's PX-1 trace work and reused its PX follow-ups;
+  linked the plan from the canonical driver roadmap. No runtime changes or new benchmarks.
+
 - **2026-10-19 — TRITON-CPU-1 architecture extension:** added a source-pinned
   [BCIR/Triton/PyTorch architecture and IR comparison](research/BCIR_TRITON_PYTORCH_ARCHITECTURE_2026-10-19.md).
   Separates FX/ATen, Inductor and GPU-kernel representations; compares MLIR lowering depth,

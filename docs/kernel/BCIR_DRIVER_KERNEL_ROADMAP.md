@@ -20,6 +20,12 @@ The goal is not to hand-write another collection of unrelated C drivers. A BCIR 
 device program, executes that program through a stable value ABI, records structured evidence,
 and improves future artifacts through the shared K_BCIR control plane.
 
+The [backend optimality test plan and kernel entry gates](../research/BCIR_BACKEND_OPTIMALITY_AND_KERNEL_GATES_2026-10-20.md)
+provide the comparative experiment layer: named PyTorch/Triton/BCIR routes, sixteen OT tests,
+and proposed BG gates mapped to this document's D/M milestones. Hosted GPU compilation,
+bounded UART/boot bring-up and IR/training optimization can advance in parallel. These tests
+do not replace the canonical driver lifecycle or imply a resident/native implementation.
+
 The program has three coordinated products:
 
 | Product | Repository | Responsibility | Explicit non-goal |

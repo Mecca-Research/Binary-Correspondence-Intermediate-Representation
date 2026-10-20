@@ -19,6 +19,11 @@ extends this study to PyTorch's current FX/ATen and Inductor representations, ML
 runtime/driver boundaries and a competitive assessment blueprint. It adds source analysis,
 including a direct IR comparison; it does not add performance measurements.
 
+The subsequent [backend optimality test plan and kernel gates](BCIR_BACKEND_OPTIMALITY_AND_KERNEL_GATES_2026-10-20.md)
+specify eager/compiled/IR/kernel/runtime comparisons, target qualification, telemetry and
+driver/IPC/boot entry criteria. Pending #820 has since gained PX-1 launch tracing at
+`6c01fca`; this CPU pilot remains pinned to main and does not include that pending work.
+
 **Scope of this CPU study:** architecture and a few initial kernel comparisons. Full
 comparative model training remains **deferred until PR #820 is completed and merged**. No
 PyTorch performance comparison or full-model training experiment was performed for this study.
