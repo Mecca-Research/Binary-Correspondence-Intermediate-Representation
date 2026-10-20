@@ -231,6 +231,15 @@ admission gate. None belongs in CPU microcode or controller firmware from this r
 
 ## 9. Driver/kernel/firmware sequence
 
+Physical HAM integration follows qualified relevant drivers and IPC, including their
+applicable data-science, inference and training workloads. The
+[driver/IPC qualification report](../research/BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md#7-the-dependency-order-into-physical-ham-and-sycl)
+defines that sequence and the subsequent native HAM/SYCL gate. Existing planner/replay and
+hosted SYCL oracle work can continue earlier; HMF-D0 capability discovery can prepare the
+binding. Physical promotion still requires actual route, ownership, capacity, visibility,
+completion, fault and workload evidence. It does not require every unrelated device or
+format to be implemented, or HMF-D5 controller work when no controller change is proposed.
+
 The following work is deliberately **not** implemented by this landing:
 
 | Gate | Hardware-owned work | Prerequisite and acceptance evidence |

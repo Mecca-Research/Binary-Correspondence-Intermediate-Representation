@@ -25,6 +25,11 @@ schema mappings, foreign formats, ABNF/CSN.1, buffer views and cryptographic-pro
 Its compatibility and ownership contracts extend OT-12/15/16 and BG0/BG3–BG6 without
 changing the sixteen OT definitions or freezing a new IPC/UAPI.
 
+The [driver/IPC data and AI qualification report](BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md)
+adds applicable hardware-specific data, inference and training profiles to these gates.
+Workload evidence guides IPC and precedes physical HAM/native HAM/SYCL integration. It
+retains the existing HAM planner and hosted SYCL oracle as earlier software foundations.
+
 ## 1. Pinned baseline and the pending PX ladder
 
 | Surface | Evidence used here | Status |
@@ -33,7 +38,7 @@ changing the sixteen OT definitions or freezing a new IPC/UAPI.
 | PyTorch | 2.14.1, `5c4886908584029761b579af026dcfb627c84070` | Source-inspected FX/ATen, AOTAutograd, Inductor and native/compiler interfaces |
 | Triton | 3.8.0, `c01b6774b1865984607d89d89d3a10833de92037` | Source-inspected GPU compiler; no NVIDIA/AMD GPU execution on this host |
 | Triton-CPU | Experimental snapshot `5a4885bf9b0b349a525b490a1df25f449f12d4e9` | Earlier limited CPU overlap experiment, not a production GPU comparison |
-| Pending BCIR #820 | `6c01fcad1c2ace951a077956d8d0058b6490b28f`; open, draft, unmerged at inspection | GEO-3 memory/recompute work and PX-1 native-launch tracing; inspected separately, not merged into this documentation branch or benchmarked here |
+| Pending BCIR #820 | `b6c50f11d5ed2d18bd7b7cae026547b93db235fe`; open, draft, unmerged at refresh | GEO-3 memory/recompute work, PX-1 launch witness, PX-2a checked launch-program execution and PX-2b StreamPack/ExecutionPlanV1 execution; source-inspected separately, not merged or benchmarked here |
 
 Full comparative model experiments remain blocked on **#820 completing and merging**. Freeze
 the actual merged SHA before collecting new training results. PyTorch's own Triton dependency
@@ -42,26 +47,26 @@ a compatible replacement for its bundled/pinned compiler.
 
 ### The trace gap has progressed
 
-Pending #820 now defines `native_launch.run_launches`, a trace-enabled C build, and a witness
-comparing declared and executed launches, shapes, entries, grouping and arena spans. Its
-author reports 221 traced configurations with `train.plan.executed.mismatch = 0`, plus fault
-witnesses that preserve final training bits while changing launches [B2]. These are the PR
-author's results, not measurements performed for this document. Source inspection confirms
-the probe/model and the remaining ladder:
+Pending #820 progressed from `native_launch.run_launches` and its launch witness (PX-1),
+through whole-program checking/execution (PX-2a), to lowering a StreamPack and ExecutionPlanV1
+through GEM into that executable program (PX-2b). The author reports 221 traced configurations
+at PX-1 and 356 matching pack/program/state runs at PX-2b [B2]. These are the PR author's
+results, not measurements reproduced here. Source inspection confirms the pack/lifetime and
+C lowering contracts. PX-3–PX-5 remain open at the inspected head; the remaining ladder is:
 
 | Existing follow-up | Purpose | Comparison evidence to add |
 |---|---|---|
 | PX-1 | Describe and witness the current native launches | Preserve exact call coverage and counted probe overflow; distinguish a witnessed direct loop from a plan-driven executor |
-| PX-2 | Execute the step through a C StreamPack interpreter, one claim per launch | Same kernel entries, operand spans and state; compare interpreter/dispatch overhead with the direct loop |
+| PX-2a / PX-2b | Implemented on pending #820: checked launch-program execution, then StreamPack/ExecutionPlanV1 lowering and execution, one claim per kernel call | Review after merge; preserve kernel entries, operand spans, state and refusal behavior; compare lowering/dispatch cost with the direct loop |
 | PX-3 | Carry per-call choices in the plan and measure a legal intervention | Change the admitted plan, observe the changed calls/resources, and measure the predicted effect |
 | PX-4 | Place transient storage by lifetime | Compare actual overlapping lifetimes and peak owned bytes under the same step and recomputation contract |
 | PX-5 | Add GF(2) layouts with packer parity | Check bit-layout/conversion semantics and executable pack reuse, rather than descriptor expressivity alone |
 | PX-6 | GPU lowering and synchronization | Execute on a real supported target; generated PTX or a host fallback is not the exit gate |
 
 Use these identifiers for implementation work; the OT identifiers below name experiments.
-Do not reset this ladder to "no tracing exists" or declare PX-2/PX-3 complete because PX-1
-observes the existing loop. Optional data-dependent preflight launches and trace capacity
-are part of the PX-1 contract, not discrepancies to discard.
+Do not reset this ladder to "no tracing exists", rebuild the pending PX-2 bridge, or declare
+PX-3 complete because a pack executes. Measured per-call choice and lifetime/layout optimization
+have their own gates. Optional preflight launches and trace capacity remain part of the witness.
 
 ## 2. Distinguish the kinds of optimality gap
 
@@ -103,7 +108,7 @@ and an OS microkernel. Tests at one level cannot establish superiority at anothe
 | P-IND | `torch.compile` with Inductor | Current compiled model/block baseline; record backend, graph breaks, fallbacks and actual generated/library calls |
 | P-TUNED | An explicitly budgeted Inductor tuning configuration | Best admitted compiled result under the same tuning resources; not an unlimited-search comparator |
 | B-DIRECT | BCIR's existing native C tensor/training entry points | Native library quality and host entry overhead; no attribution to an unexecuted optimizer |
-| B-PLAN | PX-2/PX-3 C execution of the selected plan, when implemented | Plan/dispatch and graph-level optimization effects on the same kernels |
+| B-PLAN | Pending PX-2a/PX-2b program/pack execution; PX-3 measured per-call selection remains open | Plan/dispatch and graph-level optimization effects on the same kernels, after merge and qualification |
 | B-MLIR | BCIR-generated MLIR lowered to an executable, on its supported subset | Actual compiled law/lowering quality; compare separately from hand-written C kernels |
 | T-DSL / T-GLUON | Triton tiled DSL / explicit-layout Gluon, same target and math contract | Compiler-generated kernel quality, layout/control trade-offs and specialization cost |
 | B-DEVICE | BCIR dispatch of the **same device image** used by a direct resident provider | Orchestration, ownership, residency and synchronization costs without changing machine code |
@@ -111,7 +116,8 @@ and an OS microkernel. Tests at one level cannot establish superiority at anothe
 | OS-DIRECT / OS-LINUX / OS-NATIVE | Equivalent RuntimeChannel operations through direct, Linux-hosted and native adapters | Transport/service/protection cost and complete-workload behavior |
 
 These routes are an experimental design, not a list of implementations already available.
-B-PLAN, B-DEVICE and native hardware routes require their implementation gates first.
+B-PLAN requires the pending branch to merge and qualify; B-DEVICE and native hardware routes
+require their implementation gates first.
 Triton needs a documented host/autodiff/optimizer harness for a full training experiment.
 P-FX/P-AOT are diagnostic compiler routes; they do not replace P-EAGER/P-IND as the principal
 user-facing comparison [P1, P2].
@@ -133,7 +139,7 @@ means #820 is not in main. OT tests are specified in §5.
 |---|---|---|---|
 | Graph capture and semantic coverage | Claim/resource frontends exist; no complete functional ATen importer or broad PyTorch program capture | FX/operator schemas, supported decompositions and explicit custom-backend import | OT-01, OT-02 |
 | Autodiff and training graph | Native decoder has forward/backward; that does not establish arbitrary graph differentiation | AOTAutograd joint graphs, effect-aware partitioning, generated backward coverage | OT-01, OT-03 |
-| Executed plan and task grouping | Main's direct C loop is separate; pending PX-1 witnesses grouping, scans, entries and spans | Generated wrappers/schedulers plus PX-2/PX-3 plan execution; retain C reference | OT-02, OT-04 |
+| Executed plan and task grouping | Main's direct C loop is separate; pending PX-1 witnesses it and PX-2a/PX-2b execute program/pack choices | Review pending executor; PX-3 measured per-call selection; retain direct C reference | OT-02, OT-04 |
 | CPU register/cache kernels | Native kernels are substantial; MLIR matmul-buffer route is a scalar tiled nest | Inductor C++ templates, admitted BLAS/library implementations, vector/register blocking and pack reuse | OT-05, OT-06 |
 | Layout algebra and conversions | Integer-affine and resource layout models do not provide GPU lane/warp/register swizzles or conversion costs | Triton GF(2) layouts, explicit Gluon layouts, preimages for replicated layouts | OT-06, OT-07 |
 | GPU instruction/tensor lowering | PTX text checks and SYCL seams do not qualify tensor-core training | TritonGPU/target dialects, LLVM/vendor assembly, tensor operation selection and real device images | OT-07, OT-08 |
@@ -160,13 +166,13 @@ Retain the external implementation as a differential reference where practical.
 ## 5. Test catalogue
 
 All tests below are **planned**, except the separately cited historical CPU pilot and pending
-PX-1 evidence. Implement runners as subsequent slices; this document introduces no executable
+PX-1/PX-2 evidence. Implement runners as subsequent slices; this document introduces no executable
 test command or fabricated result.
 
 Build on the existing [CPU overlap harness](../../tools/perf/triton_cpu_compare.py),
 [GEM+ baseline](../../tools/perf/gemplus_baseline.py),
 [before/after audit](../../tools/perf/ab_audit.py),
-[native decoder C gate](../../tools/c/sections/decoder_train.sh), and pending PX-1 witness.
+[native decoder C gate](../../tools/c/sections/decoder_train.sh), and pending PX-1/PX-2 witnesses.
 Their roles differ: regression/parity rows and the CPU pilot are not substitutes for the
 new GPU, graph-import or full-model comparison runners. Reuse semantic fixtures and evidence
 formats rather than creating a second unverified definition of the math.
@@ -332,7 +338,7 @@ evidence rather than summing overlapping kernel/event durations.
 
 | Slice | Deliverable | Gate / focused tests |
 |---|---|---|
-| Next after #820 | Review PX-1, then PX-2 streamed C execution preserving direct-loop behavior | BG0/BG1; OT-01/03/04; current direct C loop remains reference |
+| Next after #820 | Review PX-1/PX-2a/PX-2b and their merged identity/refusal evidence; qualify the existing program/pack executor | BG0/BG1; OT-01/03/04; direct C remains reference; PX-3 intervention is still required |
 | Plan-selected native execution | PX-3 per-call choices and one measured intervention; reuse memory/recompute contract | BG1; OT-04/06; costs, selected plan, trace and state refer to the same configuration |
 | Compact buffers and layouts | PX-4 lifetime placement and PX-5 pack/layout semantics | OT-06/07; measured time/memory frontier, not descriptor count |
 | Optional graph bridge | Functional ATen subset and AOTAutograd forward/backward import in an integration package | OT-01/02/03; compare BCIR and Inductor decisions on common kernels before native rewrites |
@@ -341,6 +347,7 @@ evidence rather than summing overlapping kernel/event durations.
 | Telemetry/task view | Work-correlated signal intake, trace/UI consumers and offline calibration; availability-aware ranking | OT-14 and canonical telemetry ladder; observer overhead measured, generation switch quiescent |
 | Universal interface slice | UDSI-0/1 service description and local binding, then one independently conforming foreign provider; bulk/profile/grammar extensions separately | SI-01–SI-12 as applicable, OT-12/15/16; direct RuntimeChannel and canonical ABI authority retained |
 | Driver/IPC vertical proof | DDK UART then virtio, stock Linux adapter, bounded boot/native adapter track | BG3–BG6 and canonical D/M gates; OT-15/16; physical performance gate later |
+| Data/AI workload qualification | Per-driver data/inference/training matrix and correlated dataset-to-completion/checkpoint evidence; measurements select IPC candidates | Applicable OT/SI/D/M gates; qualified relevant drivers/IPC precede physical HAM and native HAM/SYCL |
 
 Keep arena/dispatch execution in C. Use C++ for compiler/framework/accelerator APIs when useful;
 Python capture/tuning tools remain optional. Adopting an upstream compiler or library at a
@@ -388,6 +395,9 @@ were checked on 2026-10-20 UTC. These sources establish mechanisms, not benchmar
   [probe](https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation/blob/6c01fcad1c2ace951a077956d8d0058b6490b28f/runtime/c/bcir_decoder_train.c),
   [witness](https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation/blob/6c01fcad1c2ace951a077956d8d0058b6490b28f/bcir/tests/test_native_launch.py),
   [PX ladder](https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation/blob/6c01fcad1c2ace951a077956d8d0058b6490b28f/docs/research/BCIR_TRAINING_ACCELERATION_ROADMAP.md).
+  Refreshed at `b6c50f11d5ed2d18bd7b7cae026547b93db235fe`: the
+  [PX-2b pack model](https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation/blob/b6c50f11d5ed2d18bd7b7cae026547b93db235fe/bcir/hosted/models/native_pack.py)
+  and [C lowering contract](https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation/blob/b6c50f11d5ed2d18bd7b7cae026547b93db235fe/runtime/c/bcir_decoder_pack.h).
 - **[B3]** [MAP parser](../../bcir/frontends/map.py), [claim model](../../bcir/model/graph.py),
   [LangRef assembly contract](../BCIR_LANGREF.md), [RuntimeChannel v1](../../runtime/c/bcir_runtime_channel.h),
   [data-plane handoff](../kernel/BCIR_DATA_PLANE_HANDOFF.md),

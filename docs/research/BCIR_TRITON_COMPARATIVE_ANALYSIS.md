@@ -21,8 +21,10 @@ including a direct IR comparison; it does not add performance measurements.
 
 The subsequent [backend optimality test plan and kernel gates](BCIR_BACKEND_OPTIMALITY_AND_KERNEL_GATES_2026-10-20.md)
 specify eager/compiled/IR/kernel/runtime comparisons, target qualification, telemetry and
-driver/IPC/boot entry criteria. Pending #820 has since gained PX-1 launch tracing at
-`6c01fca`; this CPU pilot remains pinned to main and does not include that pending work.
+driver/IPC/boot entry criteria. Pending #820 has since progressed through PX-2b pack/plan
+execution at `b6c50f1`; this CPU pilot remains pinned to main and excludes that pending work.
+The [data/AI driver and IPC qualification report](BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md)
+extends those gates with per-device workload evidence and the physical HAM/native SYCL sequence.
 
 **Scope of this CPU study:** architecture and a few initial kernel comparisons. Full
 comparative model training remains **deferred until PR #820 is completed and merged**. No
@@ -227,6 +229,12 @@ exact BF16 group-workspace accounting, and a budgeted choice of recomputation/wo
 (state ABI 5). It distinguishes workspace **floor**, **panel threshold**, and **full need**.
 This is directly relevant to cross-kernel memory planning and to keeping operands in useful
 packed forms [B8].
+
+At the 2026-10-20 refresh, pending head `b6c50f1` also has PX-1 launch witnessing, PX-2a
+checked program execution and PX-2b StreamPack/ExecutionPlanV1 lowering into that executable
+program. PX-3–PX-5 remain open at that pin; the
+[qualification report](BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md#1-current-source-and-continuity-evidence)
+retains the source and status boundary. None of this changes the pilot's measured source.
 
 Its reported memory/performance frontier is evidence from that PR's own host and protocol.
 It was not checked out, run, or blended into the CPU measurements below. A future Triton

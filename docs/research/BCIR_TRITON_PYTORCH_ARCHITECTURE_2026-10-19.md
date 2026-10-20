@@ -20,8 +20,10 @@ It extends the architecture discussion to PyTorch without reopening full model b
 
 The [backend optimality test plan and kernel entry gates](BCIR_BACKEND_OPTIMALITY_AND_KERNEL_GATES_2026-10-20.md)
 now specifies comparator routes, sixteen experiments, the gap register, transformation-admission
-rules and parallel driver/IPC/boot milestones. It also records pending #820's newer PX-1 trace
-work and the PX-2–PX-6 follow-up ladder.
+rules and parallel driver/IPC/boot milestones. It now records pending #820's PX-1 launch
+witness and PX-2a/PX-2b program/pack execution, with PX-3–PX-6 remaining open at the refresh.
+The [driver/IPC data and AI qualification report](BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md)
+adds hardware-specific workload evidence and the dependency order into physical HAM/native SYCL.
 
 The [universal serialization/interface roadmap](../BCIR_UNIVERSAL_INTERFACE_ROADMAP.md)
 adds the proposed contract registry, ASN.1/JER source view, peer IDLs/grammars and foreign
@@ -36,7 +38,7 @@ transport compatibility and adds SI tests for useful-path cost; it makes no new 
 | Triton | Published release 3.8.0, `c01b6774b1865984607d89d89d3a10833de92037` | Production NVIDIA/AMD source inspected; no GPU execution on this study host |
 | Triton-CPU | Experimental 3.8.0+cpu, `5a4885bf9b0b349a525b490a1df25f449f12d4e9` | Only the separately documented CPU pilot was executed |
 | PyTorch | Latest published release checked: 2.14.1, `5c4886908584029761b579af026dcfb627c84070`, published 2026-09-30 | Source inspection of capture, autodiff, Inductor IR/scheduler, memory planning and code generation; PyTorch was not installed or benchmarked for this extension |
-| BCIR PR #820 | Open, draft, unmerged; refreshed 2026-10-20 at `6c01fcad1c2ace951a077956d8d0058b6490b28f` | Per-layer recomputation, exact BF16 workspace coupling and PX-1 launch tracing; pending branch evidence, not measurements repeated here |
+| BCIR PR #820 | Open, draft, unmerged; refreshed 2026-10-20 at `b6c50f11d5ed2d18bd7b7cae026547b93db235fe` | Per-layer recomputation, exact BF16 workspace coupling, PX-1 launch witness and PX-2a/PX-2b checked program/pack execution; pending branch evidence, not measurements repeated here |
 
 Full comparative model training remains deferred until [#820](https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation/pull/820)
 is completed and merged. Source pins above are independent inspection points, **not a tested
@@ -394,14 +396,14 @@ The order below prioritizes causal evidence and useful integration. It proposes 
 than claiming these interfaces have been implemented by this documentation update.
 
 The detailed [OT test catalogue and BG entry gates](BCIR_BACKEND_OPTIMALITY_AND_KERNEL_GATES_2026-10-20.md)
-refine this order. Pending #820 now implements PX-1 trace-to-program checking. Continue with
-its PX-2 streamed C execution and PX-3 plan-selected intervention after merge; trace matching
-alone is not the complete plan-driven executor. Bounded UART/boot research and a hosted
+refine this order. Pending #820 now implements PX-1 tracing and PX-2a/PX-2b checked program/pack
+execution. Review those after merge and continue PX-3 measured plan-selected interventions;
+executing the pack alone does not complete that optimization gate. Bounded UART/boot research and a hosted
 accelerator provider can proceed alongside IR/training optimization under their own gates.
 
 | Priority / proposed slice | Concrete change | Acceptance evidence |
 |---|---|---|
-| 1. Trace to plan-driven execution | Review pending PX-1 launch/arena witnesses; implement PX-2/PX-3 so the admitted per-call choices drive native execution, retaining the direct loop as reference | Complete trace/state parity first; then change one legal plan decision and show the corresponding implementation, allocation, movement or schedule changes and measured effect |
+| 1. Trace to plan-driven execution | Review pending PX-1/PX-2a/PX-2b launch/program/pack witnesses after merge; continue PX-3 measured per-call selection, retaining direct C as reference | Complete trace/state/refusal parity first; then change one legal plan decision and show the corresponding implementation, allocation, movement or schedule changes and measured effect |
 | 2. Memory/packing/recompute coupling | After #820 merges, expose its exact workspace tiers and recompute sets through the same planning contract as native execution; avoid duplicate accounting across pools/packs | Budget admitted equals observed owned storage for the declared scope; time/memory frontier at fixed full micro-batch and numerical contract; checkpoint/resume and stress refusals |
 | 3. Kernel portfolio | Inventory forward/backward/update coverage; add or improve measured bottlenecks; retain reference C, tuned C and optional vendor/compiler providers | Operator and gradient/state checks, irregular/tail cases, cold/warm resource measurements and representative held-out shapes; provider selected under declared predicates |
 | 4. Resident accelerator boundary | Extend the synchronous C provider seam with device/context, ownership, address space, streams/events, async copies, scratch, persistent packs, resource metadata and versioned device-image identity | First execute the same compiled kernel directly and through BCIR with identical resident buffers; isolate orchestration overhead before comparing alternative kernels |
@@ -479,7 +481,7 @@ no timing or performance claim is inferred from source line counts.
   [native program description](../../bcir/hosted/models/native_program.py),
   [target emission](../../bcir/codegen/targets.py) and [SYCL boundary](../kernel/SYCL_INTEROP.md).
 - **[B2]** Pending [#820](https://github.com/Mecca-Research/Binary-Correspondence-Intermediate-Representation/pull/820),
-  refreshed at `6c01fcad1c2ace951a077956d8d0058b6490b28f` for PX-1 and the updated test plan;
+  refreshed at `b6c50f11d5ed2d18bd7b7cae026547b93db235fe` for PX-1/PX-2a/PX-2b and the updated plan;
   the initial three-way inspection was at `b0ce73f89d890ff0c8ee3d42da6ca1dfbc37101e`,
   and the CPU pilot's earlier inspection was at `af1d935be77854c0d0fee2b8846714281864cd7c`.
 - **[T1]** Triton [3.8 release](https://github.com/triton-lang/triton/releases/tag/v3.8.0),

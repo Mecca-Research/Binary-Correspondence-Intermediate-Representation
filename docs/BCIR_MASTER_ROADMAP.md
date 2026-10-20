@@ -20,6 +20,12 @@ connects typed service contracts, format providers, native bindings and direct/L
 adapters. Its UDSI milestones and SI tests extend the interface plan; they add no current
 codec, transport, POSIX or cross-ISA native-binary support.
 
+The proposed [driver/IPC data and AI qualification program](research/BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md)
+makes applicable data, inference and training workloads part of driver promotion. Their
+measured ownership, movement and completion behavior guides IPC; qualified relevant drivers
+and IPC precede physical HAM and native HAM/SYCL integration. Existing HAM planning and hosted
+SYCL reference work remain software foundations, not physical deployment evidence.
+
 Every program in this roadmap obeys these invariants:
 
 1. **Legality precedes optimization.** R1–R25 and device-specific laws reject illegal
@@ -163,6 +169,11 @@ The canonical order is evidence-first:
 5. Prove queue/DMA behavior with virtio-console and virtio-blk.
 6. Freeze UAPI v1 only after UART and virtio-blk cover MMIO/event and queue/DMA lifecycles.
 7. Implement slim native IPC only after direct, Linux, and native traces agree.
+8. Qualify each driver's applicable data/inference/training profile and use complete-workload
+   traces to optimize IPC. UART remains a transport/lifecycle proof; compute targets earn
+   inference and training support separately, with explicit provider/fallback identities.
+9. Bind physical HAM and finally native HAM/SYCL only after the relevant driver/IPC workload
+   gates pass; continue existing planner/oracle and hosted-provider experiments beforehand.
 
 Driver packages reuse one authoritative device schema to generate register/packet definitions,
 assembler, decoder, verifier, simulator, RuntimeChannel binding, telemetry schema, replay corpus,
@@ -265,11 +276,12 @@ protobuf, gRPC, BMC, or UART delivery. Normative details live in
 | BCIR UAPI v1 | Gated | UART + virtio-blk evidence, generated ABI tests, compatibility and failure matrix |
 | BCIR-Linux experiment rails | Open | Reproducible LTS/next baselines; invasive patches only for measured stock-interface gaps |
 | Native kernel/IPC proof | Gated | Boot/memory/IRQ/PCIe/DMA prerequisites and direct/Linux/native parity |
+| Data/AI driver and IPC qualification | Proposed extension | Per-device capability/profile; dataset-to-completion/checkpoint evidence, model quality and measured direct/hosted/native behavior under existing D/M/OT/SI/BG gates |
 | Small real-model reference | Landed | Pinned source hashes, BCIRQ8 compactness, Python/C ID and logit parity |
 | Hosted train-to-C micro gate | Landed | Random-weight CPU training, exact resume, deterministic Safetensors/Q8 export, Python/C parity |
 | Adaptive architecture lab | Bounded reference landed | Per-shape fusion/counters on two targets, export schema, GQA/native parity, and quality evaluation |
 | Payload-free model planning | Landed baseline | Header inventory, exact memory report, measured intervals, placement candidates, verified claim/StreamPack plan; target execution remains open |
-| HAM/model-artifact fabric | Compiler/simulator baseline landed | Semantic DAG, exact declared-link routes, capacity/generation replay, StreamPack lowering, context-shard rollback, and dual-memory hard veto; physical GDS/P2PDMA/CXL/NVMe adapters remain driver-gated |
+| HAM/model-artifact fabric | Compiler/simulator baseline landed | Semantic DAG, exact declared-link routes, capacity/generation replay, StreamPack lowering, context-shard rollback, and dual-memory hard veto; physical adapters require qualified relevant drivers/IPC; native HAM/SYCL follows physical qualification |
 | Hardware RL plan policy | Bounded simulated gate landed | Real telemetry corpus, exhaustive two-target comparison, verified rematerialization/spill actions, frozen deployment artifact, measured quiescent promotion/rollback |
 | BCIR-TinyStories-32M | Spec/pins landed | Tokenizer differential, canonical BF16 run, validation/model card, reviewed publication artifacts |
 | Concrete-target qualification ([QUAL](BCIR_QUALIFICATION.md)) | Landed on one model, one host + CI x86-64/AArch64 | A second physical target with hardware counters; BCIR-TinyStories-32M through the same harness |
@@ -391,6 +403,11 @@ History explains past decisions but does not reopen superseded sequencing.
 6. Keep HAM hardware work at the documented HMF-D0–D5 gates: capability adapters first, then
    GDS/P2PDMA/CXL/NVMe work only after relevant driver/kernel prerequisites and physical rigs.
 7. Start BCIR-Linux and native-kernel implementation only at their explicit dependency gates.
+8. Use the existing training backend and exported database/query fixtures to qualify each
+   driver's applicable workload profile and inform IPC experiments; preserve the one-way
+   corpus law and defer full comparative training until #820 completes and merges.
+9. Keep physical HAM and native HAM/SYCL behind the resulting driver/IPC evidence, with
+   direct/staged routing and hosted fallback labeled separately.
 
 Completed-wave details and the former master roadmap's capability-by-capability ledger are retained
 in [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md).

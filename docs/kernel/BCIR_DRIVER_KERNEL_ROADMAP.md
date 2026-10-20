@@ -1,7 +1,7 @@
 # BCIR Driver and Kernel Roadmap v2
 
 > **Status:** canonical execution roadmap, rewritten 2026-07-15; memory-fabric boundary
-> reconciled 2026-07-18.
+> reconciled 2026-07-18; planned data/AI workload qualification added 2026-10-20.
 >
 > This document defines how BCIR develops driver/compiler packages, experiments on Linux,
 > and eventually hosts those packages in a native BCIR kernel. It replaces the historical
@@ -25,6 +25,12 @@ provide the comparative experiment layer: named PyTorch/Triton/BCIR routes, sixt
 and proposed BG gates mapped to this document's D/M milestones. Hosted GPU compilation,
 bounded UART/boot bring-up and IR/training optimization can advance in parallel. These tests
 do not replace the canonical driver lifecycle or imply a resident/native implementation.
+
+The [driver/IPC data and AI qualification report](../research/BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md)
+extends those gates with hardware-specific data, inference and training workloads. Their
+measurements guide IPC design; qualified drivers and workload-tested IPC precede physical
+HAM and native HAM/SYCL integration. Existing HAM planning and hosted SYCL oracle work remain
+valid software foundations.
 
 The program has three coordinated products:
 
@@ -200,6 +206,7 @@ The package must contain all of the following before the driver can be promoted:
 | **Reference behavior** | Device simulator or protocol model, independent scalar/reference implementation, deterministic differential oracle, and malformed-input cases |
 | **Execution binding** | Direct in-process RuntimeChannel implementation with deterministic ownership, cancellation, event, backpressure, and teardown behavior |
 | **Evidence plane** | Stable numeric signal definitions, versioned source/session/clock-aware telemetry envelope, bounded loss-accounting ring, benchmark definitions, replay/fault corpora, and artifact provenance |
+| **Data/AI qualification profile** | Per-device/provider capability and test matrix for serialization/structure, data movement, inference and full training where supported; dataset→buffer→submission→compute→completion→checkpoint identities, quality/numerical contracts, actual fallback and unavailable/refused paths |
 | **Optimization plane** | TargetProfile/DeviceManifest integration, exhaustive candidate set, frozen per-device Q8 calibration/prior, and equivalence/no-regression certificates |
 | **Adapters** | Linux and native adapters that preserve the direct contract; adapters contain transport/platform policy rather than device semantics |
 | **Promotion record** | Correctness, compatibility, resource, performance, security, and residual-risk report tied to immutable source and artifact hashes |
@@ -370,6 +377,13 @@ They are not prerequisites for the UART compiler/driver proof and must not enter
 core. A compatibility fallback through host memory is functional evidence, not direct-path
 performance evidence.
 
+Physical HAM promotion and native HAM/SYCL integration must follow qualification of the
+relevant drivers and IPC for their data/inference/training workloads. The
+[qualification report](../research/BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md#7-the-dependency-order-into-physical-ham-and-sycl)
+states the order and applicability: the existing HAM planner/replay and hosted SYCL oracle
+can develop earlier, while real routes require proven mapping, capacity, visibility,
+completion and fault behavior. Capability discovery can start before physical promotion.
+
 ### 4.5 Raw-byte model ingest and accelerator boundary
 
 The byte-native model laboratory adds a userspace planning seam, not a device implementation.
@@ -428,6 +442,31 @@ new-block/LoRA tensor work, but optimizer-state ownership and frozen-parameter p
 model artifact contract; no in-flight driver telemetry may decide which weights are legal to
 update.
 
+### 4.7 Data and AI workloads guide driver and IPC development
+
+Serialization, data-structure and lifecycle tests are necessary for every driver. Add the
+device-specific data, inference and training workloads it can actually execute to that
+ordinary qualification program. UART proves bounded transport and telemetry; storage proves
+batch delivery and durable checkpoints; a compute provider proves its supported forward,
+gradient and optimizer paths. Intel, AMD and Snapdragon identify families, not identical
+CPU/GPU/NPU capabilities. Unsupported training is recorded and refused, never counted as a
+passing model test.
+
+Use existing native model fixtures and exported, pinned database/query workloads to produce
+one evidence chain from dataset/schema to buffers, plan, submission, executed compute,
+completion and result/checkpoint. The training corpus's database tools stay outside the IR
+and kernel; fixtures cross as data under the one-way corpus law. Compare actual copies,
+packing, live bytes, queueing, tail latency, quality and recovery, as well as update/token
+throughput. Source/contract/target/provider and generation identities bind every result.
+
+Those measurements select IPC experiments such as bounded submission/completion batching,
+resident buffer reuse, typed bulk views, prefetch and checkpoint staging. Use the existing
+CostVector and legality-before-cost rule; measure the complete dependency-critical path and
+observer cost. Keep generic/direct/stock-hosted paths as controls and activate changes only
+at the established quiescent boundary. No IPC, driver or model benchmark is added by this
+roadmap text. The [full qualification specification](../research/BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md)
+maps these experiments onto existing OT/SI/BG/D/M gates.
+
 ## 5. Driver maturity and build order
 
 ### 5.1 The D0–D7 maturity ladder
@@ -437,14 +476,14 @@ U0–U9 blueprint remains the detailed reference—but may not skip one.
 
 | Gate | Deliverable | Exit criterion |
 |---|---|---|
-| **D0 — research contract** | Normative specifications, licensing/provenance, device schema, variant/errata matrix, manifest shape, telemetry signal set/envelope/ring requirements, threat/failure model, and performance baseline | Independent schema review; generated views agree; unsupported variants and unknown required signals fail closed |
+| **D0 — research contract** | Normative specifications, licensing/provenance, device schema, variant/errata matrix, manifest shape, telemetry signal set/envelope/ring requirements, threat/failure model, data/AI capability and workload profile, and performance baseline | Independent schema review; generated views agree; unsupported variants, operations and unknown required signals fail closed |
 | **D1 — compiler and oracle** | Lowering, assembler/decoder, verifier, simulator, reference behavior, listings, and deterministic law/differential tests | Round trips and simulator/reference parity pass across the bounded edge corpus |
 | **D2 — direct resident driver** | In-process RuntimeChannel implementation with explicit ownership, map/submit/event/cancel/close behavior and no raw-pointer ABI; emits through the version-zero driver telemetry contract | Loopback conformance plus Python/C telemetry parity, sanitizer, allocator-failure where hosted, lifecycle, and saturation tests pass |
 | **D3 — Linux-hosted adapter** | Stock-Linux binding using the least invasive supported mechanism for that device class | Direct-versus-Linux behavioral parity, UAPI compatibility, peer/device death, and restart tests pass |
-| **D4 — telemetry and replay** | Versioned device telemetry, benchmark suite, workload/edge corpus, collection-loss accounting, and deterministic replay | Replayed incumbent reproduces decisions and evidence; poisoned/stale data is refused |
+| **D4 — telemetry and replay** | Versioned device telemetry, benchmark suite, applicable data/inference/training workload and edge corpus, collection-loss accounting, and deterministic replay | Replayed incumbent reproduces decisions, result/state and actual work evidence; poisoned/stale data is refused |
 | **D5 — certified optimization** | Calibrated target data, frozen Q8 prior/table, exhaustive-equivalence and no-regression certificates | Guided and exhaustive choices agree; artifact is deterministic, content-addressed, and rollback-ready |
 | **D6 — lifecycle and native portability** | Hotplug, suspend/resume, reset, cancellation, timeout, recovery, and native-adapter implementation | Direct, Linux, and native traces are behaviorally equivalent for supported operations |
-| **D7 — hardware promotion** | Real-hardware correctness, compatibility, resource, reliability, and performance report | Measured win or justified parity against the incumbent stack; all required CI and hardware gates pass |
+| **D7 — hardware promotion** | Real-hardware correctness, compatibility, resource, reliability, and performance report for the declared data/AI capabilities, with numerical/quality and complete-workload evidence | Measured win or justified parity against the incumbent stack; applicable inference/training/resume and all required CI/hardware gates pass; unsupported or unavailable paths remain explicit |
 
 A driver is not “complete” before D7. Earlier stages may be useful and merged, but their labels must
 state the highest completed gate and the missing evidence.
@@ -496,9 +535,9 @@ BCIR does not reimplement UEFI firmware, a TPM, or vendor firmware.
 | **M5 — UAPI v1 freeze** | Append-only BCIR UAPI, UART/virtio-blk compatibility matrix, and generated ABI tests | UART plus virtio-blk prove both required device classes |
 | **M6 — closed optimization loop** | Telemetry-to-replay-to-frozen-Q8 promotion for at least UART and virtio-blk | Exhaustive equivalence, no-regression certificate, staged activation, rollback |
 | **M7 — targeted kernel research** | Only measured, reviewable BCIR-Linux patches that outperform or enable behavior unavailable through stock interfaces | Per-patch stock baseline, rebase test, fallback, and sanitizer/fuzz evidence |
-| **M8 — native IPC/kernel service proof** | Native RuntimeChannel adapter, slim IPC, POSIX source-compatibility slice, and preverified instance loader | Direct/Linux/native parity across UART and virtio-blk |
+| **M8 — native IPC/kernel service proof** | Native RuntimeChannel adapter, slim IPC, POSIX source-compatibility slice, and preverified instance loader | Direct/Linux/native parity across UART and virtio-blk; applicable data/AI service profiles add completion, quality, tail-latency, resource and failure evidence before promotion |
 | **M9 — hardware expansion** | Physical PCIe/storage/network and vendor accelerator packages | Device-specific D7 reports and regression-free shared contracts |
-| **M10 — memory-fabric qualification** | HMF-D0 capability envelope, then separately qualified GDS/P2PDMA, CXL, and semantic-storage adapters as hardware permits | Direct/staged parity, topology/IOMMU/lifecycle evidence, measured intervals, and no compatibility-mode result mislabeled direct |
+| **M10 — memory-fabric qualification** | HMF-D0 capability envelope, then separately qualified GDS/P2PDMA, CXL, and semantic-storage adapters as hardware permits; native HAM/SYCL integration afterward | Relevant drivers and IPC qualified for data/AI workloads first; direct/staged parity, topology/IOMMU/lifecycle/completion evidence, measured intervals, and no compatibility-mode result mislabeled direct |
 
 ## 6. BCIR-Linux: compatibility oracle and experimental fork
 

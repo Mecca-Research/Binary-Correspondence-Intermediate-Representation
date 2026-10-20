@@ -26,6 +26,13 @@ This roadmap owns the proposed UDSI work order. Existing [LangRef](BCIR_LANGREF.
 supplies OT/BG qualification gates. This document changes no frozen bytes, verifier laws,
 calling convention, dependency or runtime behavior.
 
+The [driver/IPC data and AI qualification report](research/BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md)
+extends the useful-path tests through dataset/query, typed batches, buffer admission,
+submission, compute, completion and checkpoint/result. Those workload measurements guide
+IPC design and gate physical HAM/native HAM/SYCL. BCIR JSON describes typed contracts at
+build/load/control or admitted ingestion boundaries; bulk tensors/columns can use qualified
+binary projections, direct sinks or views without mandatory JSON materialization.
+
 ## 1. Reuse the implemented foundation
 
 Baseline: BCIR main `12aa6dc5ba422418742f49e4bfc00aafdc17e07f` and documentation parent
