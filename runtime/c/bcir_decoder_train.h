@@ -193,7 +193,12 @@ BCIR_DT_API int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_
  * arguments' checks of bcir_decoder_run_accum, whose outputs, ordering of verdicts and completed
  * count this has; the program itself lies outside the state, the events and the count. The check
  * holds each call to its kernel's contract and the run to its step's shape; that the operands'
- * places compute the step's gradient is the program's, which train.plan.program.mismatch holds. */
+ * places compute the step's gradient is the program's, which train.plan.program.mismatch holds.
+ * PX-4 (PLACE): here the activation and scratch arenas are as long as the caller lent them (their
+ * capacities, any length, where the fixed step needs the plan's spans: BCIR_DT_CAPACITY there), and
+ * every operand lies inside its arena's lent length -- so a state whose two transient arenas a
+ * placement sized (bcir/hosted/models/native_pack.py's place_by_lifetime) runs the programs placed
+ * there; the arguments and the program lie outside those lengths. */
 #define BCIR_DT_RECORD_WORDS 48
 enum { BCIR_DT_REC_SCAN=1, BCIR_DT_REC_ZERO, BCIR_DT_REC_EMBED, BCIR_DT_REC_RMS, BCIR_DT_REC_GEMM,
   BCIR_DT_REC_ROPE, BCIR_DT_REC_ATTN, BCIR_DT_REC_ATTN_VJP, BCIR_DT_REC_ADD, BCIR_DT_REC_SILU_MUL,

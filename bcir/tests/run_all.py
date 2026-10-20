@@ -354,6 +354,7 @@ _MODULES = [
     "bcir.tests.test_train_c_kernels",
     "bcir.tests.test_native_decoder",
     "bcir.tests.test_native_launch",
+    "bcir.tests.test_native_place",
     "bcir.tests.test_native_run_pack",
     "bcir.tests.test_native_run_program",
     "bcir.tests.test_native_program",

@@ -1290,11 +1290,12 @@ def test_the_step_floor_is_measured_beside_the_step():
 
 
 def test_the_harness_rows_are_the_programs_numbers():
-    """`train.memory.transient`'s frozen baseline is the bench program's own ratio, and every
-    row of the harness's `train` group is one the fixtures measure -- the four NDT-GEM rows,
-    TRAIN-RAIL's corpus row, and the PX rows over the trace corpus (the launches, the programs,
-    the packs) -- so a change to the program, the C plan or the corpus recipe cannot leave the
-    harness quoting a stale number."""
+    """`train.memory.transient`'s frozen baseline is the bench program's own ratio and its reading
+    the placed pack's (PX-4), and every row of the harness's `train` group is one the fixtures
+    measure -- the four NDT-GEM rows, TRAIN-RAIL's corpus row, and the PX rows over the trace
+    corpus (the launches, the programs, the packs, the placed packs) -- so a change to the
+    program, the C plan, the placement or the corpus recipe cannot leave the harness quoting a
+    stale number."""
     import sys
 
     from bcir.tests import native_decoder_fixtures as nf
@@ -1311,7 +1312,7 @@ def test_the_harness_rows_are_the_programs_numbers():
                          "train.mm.provider.differences", "train.norm.reduce.mismatch",
                          "train.mm.bf16.mismatch", "train.plan.remat.mismatch",
                          "train.plan.executed.mismatch", "train.plan.program.mismatch",
-                         "train.plan.pack.mismatch"}  # fmt: skip
+                         "train.plan.pack.mismatch", "train.plan.place.mismatch"}  # fmt: skip
     remat = rows["train.plan.remat.mismatch"]
     assert remat.kind == "exact" and remat.bound == 0 and remat.baseline == 0
     assert remat.what.startswith("(spec, recompute set) pairs") and remat.slice_owner == "GEO-3"
@@ -1326,6 +1327,10 @@ def test_the_harness_rows_are_the_programs_numbers():
     pack = rows["train.plan.pack.mismatch"]
     assert pack.kind == "exact" and pack.bound == 0 and pack.baseline == runs
     assert pack.what.startswith(f"of the {runs} pack runs") and pack.slice_owner == "PX-2b"
+    # PX-4: the same runs again, every transient value placed by its lifetime
+    place = rows["train.plan.place.mismatch"]
+    assert place.kind == "exact" and place.bound == 0 and place.baseline == runs
+    assert place.what.startswith(f"of the {runs} placed pack runs") and place.slice_owner == "PX-4"
     bf16 = rows["train.mm.bf16.mismatch"]
     assert bf16.kind == "exact" and bf16.bound == 0 and bf16.baseline == 0
     assert (
@@ -1358,6 +1363,11 @@ def test_the_harness_rows_are_the_programs_numbers():
     ratio, held, bound, incumbent = nf.transient_ratio()
     assert rows["train.memory.transient"].baseline == ratio == held / bound
     assert (held, bound, incumbent) == (999_424, 753_664, 753_664)
+    # PX-4: the row reads the placed pack -- its arena at the bound on the values it holds
+    placed, extent, floor, optimal = nf.placed_transient()
+    assert (placed, extent, floor, optimal) == (1.0, 754_176, 754_176, True)
+    assert rows["train.memory.transient"].bound == placed
+    assert "754,176 / 754,176" in rows["train.memory.transient"].what
     assert rows["train.mm.mismatch"].what.startswith(f"of {len(nf.MM_CASES)} GEMM cases")
     pairs = len(nf.PLAN_CORPUS) * 2  # the parent stated activations and scratch only in C
     assert rows["train.plan.mismatch"].baseline == pairs

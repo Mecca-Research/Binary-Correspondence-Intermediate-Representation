@@ -381,8 +381,8 @@
     {
       "expects": "test_the_pack_fuzz_seeds_start_inside_the_grammar",
       "label": "PF5 every pack seed the v1 pack (the other configurations' seeds refused)",
-      "new": "    contract = FUZZ_CONTRACTS[0]\n    tp = training_pack(",
-      "old": "    contract = FUZZ_CONTRACTS[config & 7]\n    tp = training_pack(",
+      "new": "    contract = FUZZ_CONTRACTS[0]\n    return training_pack(",
+      "old": "    contract = FUZZ_CONTRACTS[config & 7]\n    return training_pack(",
       "path": "bcir/tests/native_decoder_fixtures.py"
     },
     {

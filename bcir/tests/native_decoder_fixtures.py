@@ -14,8 +14,11 @@ spec alone. One function per row family grades it against the C rail; the tests,
                                from `mm_reference` -- an independent binary32 emulation of the
                                kernel's contract (beta first, then alpha*a times b added for k
                                ascending, every operation rounded, no contraction)
-    train.memory.transient     what the C plan reserves for activations and workspace, over the
-                               G26 concurrent-live bound of the same values (exact; no compiler)
+    train.memory.transient     what a trainer lends for the bench step's activation and scratch
+                               values placed by their lifetimes (PX-4, `placed_transient`), over
+                               the G26 concurrent-live bound of the values it places (exact; no
+                               compiler); its frozen baseline the C plan's spans over the step
+                               program's bound (`transient_ratio`)
     train.step.ms              one native training step at `BENCH` (wall), and its floor in the
                                same run: the step's counted work at the best rate the same kernel
                                reaches on any of the step's own GEMM shapes, timed alone
@@ -58,6 +61,12 @@ spec alone. One function per row family grades it against the C rail; the tests,
                                StreamPack and ExecutionPlanV1 the trainer lowers) whose lowering was
                                refused or is not the program's words, that stopped, or that trained
                                another state or events than the C step on the case (PX-2b)
+    train.plan.place.mismatch  the same runs with every transient value placed by its lifetime and
+                               run on a trainer lending exactly the placement's arena
+                               (`place_runs`): those refused, lowered to other words than the
+                               program's at the placed places, stopped, placed below G26's bound
+                               (live values sharing bytes), or training another state or events
+                               than the C step (PX-4)
 
 Without a C compiler the native rows are not measured -- a skip, never a pass.
 """
@@ -603,10 +612,22 @@ def provider_mismatch(lib, shapes=None) -> int | None:
 
 
 def transient_ratio(bench=BENCH) -> tuple[float, int, int, int]:
-    """(C bytes / bound, C bytes, the G26 bound, GEM+'s incumbent layout) for the bench step."""
+    """(C bytes / bound, C bytes, the G26 bound, GEM+'s incumbent layout) for the bench step: the
+    C plan's fixed spans, the row's frozen baseline."""
     program = training_step_program(*bench)
     held, bound = program.transient_bytes(), program.transient_lower_bound()
     return held / bound, held, bound, program.transient_incumbent().extent
+
+
+def placed_transient(bench=BENCH) -> tuple[float, int, int, bool]:
+    """PX-4: (placed bytes / bound, the placed transient arena's bytes, G26's bound over the values
+    it places, whether every part's layout is a proved optimum) for the bench step's pack, its
+    transient values placed by their lifetimes (`native_pack.place_by_lifetime`): what a trainer
+    lends for them, the row `train.memory.transient` reads."""
+    from bcir.hosted.models.native_pack import place_by_lifetime, training_pack
+
+    placed = place_by_lifetime(training_pack(*bench, contract=0))
+    return placed.extent / placed.bound, placed.extent, placed.bound, placed.optimal
 
 
 # --- train.step.ms and its floor ------------------------------------------------------------
@@ -1007,9 +1028,10 @@ class TraceRun(NamedTuple):
     events: tuple = ()
 
 
-def _case_trainer(path, case: TraceCase):
+def _case_trainer(path, case: TraceCase, transient=None):
     """The trainer `case` runs on -- its contract, recompute set, threads, workspace tier and
-    provider -- and the state's decisions as `run_launches` and `step_program` take them."""
+    provider; its transient arenas the C plan's, or as `transient` lends them (PX-4) -- and the
+    state's decisions as `run_launches` and `step_program` take them."""
     from bcir.hosted.models import native as nat
     from bcir.hosted.models.native import NativeDecoder
     from bcir.hosted.models.native_launch import SPACES
@@ -1026,7 +1048,8 @@ def _case_trainer(path, case: TraceCase):
         workspace = memory.workspace_floor
         if case.workspace == "panels":
             workspace = max(memory.workspace_panels, workspace)
-    trainer = NativeDecoder(path, case.spec, workspace_bytes=workspace, **common)
+    trainer = NativeDecoder(path, case.spec, workspace_bytes=workspace, transient=transient,
+                            **common)  # fmt: skip
     try:
         lib = trainer.lib
         if case.provider:
@@ -1280,7 +1303,8 @@ def pack_library(directory) -> Path | None:
 class PackRun(NamedTuple):
     """One pack run: the training pack, the words its lowering wrote, the state the run left, its
     events and its status -- 0, the run's stop status, or -1 when the lowering refused the pack
-    (`why` then its reason, `native_pack.REASONS`)."""
+    (`why` then its reason, `native_pack.REASONS`) -- and, placed by lifetime (PX-4), the
+    `native_pack.Placed` it ran on."""
 
     pack: object
     words: tuple
@@ -1288,27 +1312,35 @@ class PackRun(NamedTuple):
     events: tuple
     status: int
     why: int = 0
+    placed: object = None
 
 
 def pack_case(path, case: TraceCase, choices: dict | None = None, *, placements=None,
-              run: bool = True) -> PackRun:  # fmt: skip
+              run: bool = True, place: bool = False) -> PackRun:  # fmt: skip
     """`case` from its pack (PX-2b): the program `step_program` states for the case's state and the
     planner's `choices`, stated as a module (`native_pack.training_pack`), planned, hydrated and
     placed (`pack_artifacts`: the C step's own places, or `placements`), lowered by the trainer of
-    the case on the pack build at `path` (`bcir_decoder_lower_pack`) and, with `run`, run."""
+    the case on the pack build at `path` (`bcir_decoder_lower_pack`) and, with `run`, run. With
+    `place` (PX-4) the transient values are placed by their lifetimes (`place_by_lifetime`) and the
+    pack lowered and run on a trainer of the case that lends exactly the placement's arena."""
     from bcir.hosted.models.native import NativeRunStopped, PackRefused
-    from bcir.hosted.models.native_pack import pack_artifacts, training_pack
+    from bcir.hosted.models.native_pack import pack_artifacts, place_by_lifetime, training_pack
 
     trainer, decisions = _case_trainer(path, case)
     try:
         tp = training_pack(case.spec, case.batch, case.time, **(decisions | dict(choices or {})))
+        placed = place_by_lifetime(tp) if place else None
+        if placed is not None:
+            placements = placed.placements
+            trainer.close()
+            trainer, _ = _case_trainer(path, case, transient=(placed.floats, 0))
         pack, plan, _, _ = pack_artifacts(tp, placements=placements)
         try:
             words = trainer.lower_pack(pack, plan)
         except PackRefused as refused:
-            return PackRun(tp, (), "", (), -1, refused.why)
+            return PackRun(tp, (), "", (), -1, refused.why, placed)
         if not run:
-            return PackRun(tp, tuple(words), "", (), 0)
+            return PackRun(tp, tuple(words), "", (), 0, 0, placed)
         tokens, targets, optimizer = _case_inputs(case)
         events, status = (), 0
         try:
@@ -1317,7 +1349,7 @@ def pack_case(path, case: TraceCase, choices: dict | None = None, *, placements=
                                          gradient_accumulation=case.accumulation)  # fmt: skip
         except NativeRunStopped as stopped:
             status = stopped.status
-        return PackRun(tp, tuple(words), state_digest(trainer), events, status)
+        return PackRun(tp, tuple(words), state_digest(trainer), events, status, 0, placed)
     finally:
         trainer.close()
 
@@ -1337,6 +1369,17 @@ def pack_runs(path, cases=None):
                 yield case, choices, step, pack_case(path, case, choices)
 
 
+def _ran_as_the_step(step: TraceRun, run: PackRun, problems: list[str]) -> list[str]:
+    """`problems`, then what a lowered run did otherwise than the C step's `step` on its case: it
+    stopped, or it trained another state or events -- the one check the pack and the placed runs'
+    comparisons share."""
+    if run.status:
+        problems.append(f"stopped with status {run.status}")
+    if run.state != step.state or run.events != step.events:
+        problems.append("the state or the events are not the C step's")
+    return problems
+
+
 def pack_problems(step: TraceRun, run: PackRun) -> list[str]:
     """What a pack run did otherwise than it must: a lowering refused or other than its program's
     words, a run that stopped, or another state or events than the C step's `step`."""
@@ -1345,11 +1388,58 @@ def pack_problems(step: TraceRun, run: PackRun) -> list[str]:
     problems = []
     if run.words != run.pack.words:
         problems.append("the lowering is not the program's words")
-    if run.status:
-        problems.append(f"stopped with status {run.status}")
-    if run.state != step.state or run.events != step.events:
-        problems.append("the state or the events are not the C step's")
-    return problems
+    return _ran_as_the_step(step, run, problems)
+
+
+def place_runs(path, cases=None):
+    """PX-4: `pack_runs`' configurations, each pack placed by its values' lifetimes and lowered and
+    run on a trainer lending exactly the placement's arena (`pack_case(..., place=True)`), as
+    (case, choices, the C step's `TraceRun` on the full build, the placed `PackRun`)."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    picked = set(state_cases(corpus))
+    for i, case in enumerate(corpus):
+        step = trace_case(path, case, trace=False)
+        yield case, {}, step, pack_case(path, case, place=True)
+        if i in picked:
+            for choices in program_choices(case):
+                yield case, choices, step, pack_case(path, case, choices, place=True)
+
+
+def place_problems(step: TraceRun, run: PackRun) -> list[str]:
+    """What a placed pack run did otherwise than it must: a lowering refused or other than the
+    program's words at the placement's places (`native_pack.placed_words`), a placement below G26's
+    bound -- smaller than any layout of its values over their lifetimes, so live values share
+    bytes -- or a run that stopped or trained another state or events than the C step's `step`. A
+    placement above its bound is the layout's gap to the bound, not a divergence (`place_mismatch`
+    returns it)."""
+    from bcir.hosted.models.native_pack import placed_words
+
+    if run.status == -1:
+        return [f"the lowering refused the placed pack (why {run.why})"]
+    problems = []
+    if run.words != placed_words(run.pack, run.placed.placements):
+        problems.append("the lowering is not the program's words at the placed places")
+    if run.placed.extent < run.placed.bound:
+        problems.append(f"placed at {run.placed.extent} bytes, below its {run.placed.bound} bound")
+    return _ran_as_the_step(step, run, problems)
+
+
+def place_mismatch(path, cases=None) -> tuple[int, int, list[str], list[tuple[int, bool]]]:
+    """`train.plan.place.mismatch`: of the placed pack runs (`place_runs`), those refused, lowered
+    to other words than the program's at the placed places, stopped, placed below their bound or
+    training another state or events than the C step on the same case; the runs; what differed,
+    run by run; and each run's layout as (its bytes above G26's bound, whether every part's
+    layout is a proved optimum) -- 0 and proved is TMSAO-1, the rest a bounded gap."""
+    bad, runs, notes, gaps = 0, 0, [], []
+    for case, choices, step, run in place_runs(path, cases):
+        runs += 1
+        problems = place_problems(step, run)
+        if problems:
+            bad += 1
+            notes.append(f"{case} {choices}: {problems[0]}")
+        if run.status != -1:
+            gaps.append((run.placed.extent - run.placed.bound, run.placed.optimal))
+    return bad, runs, notes, gaps
 
 
 def pack_mismatch(path, cases=None) -> tuple[int, int, list[str]]:
@@ -1405,11 +1495,76 @@ def fuzz_program(config: int, steps: int = 1, accumulation: int = 1) -> list[int
     ))  # fmt: skip
 
 
+#: PX-4: the configuration bits the two fuzz harnesses read for the transient arenas -- lent at
+#: what the program reaches in each (FUZZ_PLACED), then one float short (FUZZ_SHORT) -- and the
+#: configurations whose planner programs they are seeded with placed by lifetime.
+FUZZ_PLACED, FUZZ_SHORT = 16, 32
+FUZZ_PLACED_CONFIGS = (0, 4, 8, 13)
+
+
+def fuzz_reach(words, space: int, most: int) -> int:
+    """The floats of `space` (5 activations, 6 scratch) a program's operands reach -- each one's
+    offset and bytes there rounded up to a float, counting only operands inside the arena's `most`
+    floats: the harnesses' `reach` (runtime/c/fuzz_decoder_train.c, fuzz_decoder_pack.c)."""
+    from bcir.hosted.models.native_launch import RECORD_WORDS
+
+    floats = 0
+    for base in range(0, len(words) - len(words) % RECORD_WORDS, RECORD_WORDS):
+        for q in range(10):
+            space_, offset, nbytes = words[base + 11 + 3 * q : base + 14 + 3 * q]
+            if space_ == space and offset <= 4 * most and nbytes <= 4 * most - offset:
+                floats = max(floats, -(-(offset + nbytes) // 4))
+    return floats
+
+
+def fuzz_lent(words, config: int, plan) -> tuple[int, int] | None:
+    """The transient arenas' floats a harness lends under `config` for `words` (`plan` the state's
+    C plan: its activation and scratch counts): None for the trainer's own, else what the words
+    reach -- the activations up to the plan's whole transient span, the room the harnesses
+    allocate, since a placement holds the scratch values there too -- one float short under
+    FUZZ_SHORT."""
+    if not config & FUZZ_PLACED:
+        return None
+    acts = fuzz_reach(words, 5, plan.activations + plan.scratch)
+    scratch = fuzz_reach(words, 6, plan.scratch)
+    if config & FUZZ_SHORT:
+        if acts:
+            acts -= 1
+        elif scratch:
+            scratch -= 1
+    return acts, scratch
+
+
+def fuzz_training_pack(config: int, steps: int = 1, accumulation: int = 1):
+    """The planner's training pack for the fuzz harnesses' state under `config` -- the one both the
+    pack seeds (`fuzz_pack`) and the placed program seeds (`fuzz_placed`) are made from."""
+    from bcir.hosted.models.native_pack import training_pack
+
+    spec, batch, time_ = FUZZ_STATE
+    contract = FUZZ_CONTRACTS[config & 7]
+    return training_pack(spec, batch, time_, contract=contract, recompute=3 if config & 8 else 0,
+                         workspace_bytes=FUZZ_WORKSPACE if contract & 16 else 0, steps=steps,
+                         accumulation=accumulation)  # fmt: skip
+
+
+def fuzz_placed(config: int, steps: int = 1, accumulation: int = 1):
+    """The planner's training pack for the fuzz harnesses' state under `config`, and its transient
+    values placed by lifetime (`native_pack.place_by_lifetime`)."""
+    from bcir.hosted.models.native_pack import place_by_lifetime
+
+    tp = fuzz_training_pack(config, steps, accumulation)
+    return tp, place_by_lifetime(tp)
+
+
 def fuzz_seeds() -> list[tuple[str, bytes, bool]]:
     """The fuzz harness's seed corpus as (name, input, whether the check admits it): the
     planner's program for every configuration at one step, two of them at two steps of two
-    micro-batches, and near misses of the check's rules on the first -- so a campaign starts
-    inside the record grammar and inside its refusals."""
+    micro-batches, the planner's programs of `FUZZ_PLACED_CONFIGS` placed by lifetime on the arenas
+    they reach (PX-4) and one of them a float short, near misses of the check's rules on the
+    first, and the kept layers' program on the recompute set's arena -- so a campaign starts inside
+    the record grammar and inside its refusals."""
+    from bcir.hosted.models.native_pack import placed_words
+
     out = []
     for config in range(16):
         shapes = ((1, 1), (2, 2)) if config in (0, 4) else ((1, 1),)
@@ -1417,6 +1572,13 @@ def fuzz_seeds() -> list[tuple[str, bytes, bool]]:
             words = fuzz_program(config, steps, accumulation)
             out.append((f"c{config}_{steps}x{accumulation}",
                         fuzz_input(config, steps, accumulation, words), True))  # fmt: skip
+    for config in FUZZ_PLACED_CONFIGS:
+        tp, placed = fuzz_placed(config)
+        words = placed_words(tp, placed.placements)
+        out.append((f"placed_c{config}", fuzz_input(config | FUZZ_PLACED, 1, 1, words), True))
+        if config == 0:
+            out.append(("placed_short", fuzz_input(config | FUZZ_PLACED | FUZZ_SHORT, 1, 1, words),
+                        False))  # fmt: skip
     words, w = fuzz_program(0), 48
     records = [list(words[i : i + w]) for i in range(0, len(words), w)]
     rms = next(i for i, r in enumerate(records) if r[0] == 4)
@@ -1432,6 +1594,10 @@ def fuzz_seeds() -> list[tuple[str, bytes, bool]]:
     }
     for name, edited in misses.items():
         out.append((f"miss_{name}", fuzz_input(0, 1, 1, [x for r in edited for x in r]), False))
+    # the kept layers' program on the recompute set's trainer (PX-4): its caches past the arena the
+    # trainer lends -- the recompute set's activations -- though inside the room the harness
+    # allocates for a placement, so only a harness lending the set's own arena refuses it
+    out.append(("miss_recompute_arena", fuzz_input(8, 1, 1, fuzz_program(0)), False))
     return out
 
 
@@ -1451,26 +1617,25 @@ def fuzz_pack_parts(data: bytes) -> tuple[int, int, int, bytes, bytes]:
 def fuzz_pack(config: int, steps: int = 1, accumulation: int = 1):
     """The planner's pack and plan for the fuzz harness's state under `config` (bytes, bytes, and
     the training pack and the two objects for an edit)."""
-    from bcir.hosted.models.native_pack import pack_artifacts, training_pack
+    from bcir.hosted.models.native_pack import pack_artifacts
 
-    spec, batch, time_ = FUZZ_STATE
-    contract = FUZZ_CONTRACTS[config & 7]
-    tp = training_pack(spec, batch, time_, contract=contract, recompute=3 if config & 8 else 0,
-                       workspace_bytes=FUZZ_WORKSPACE if contract & 16 else 0, steps=steps,
-                       accumulation=accumulation)  # fmt: skip
+    tp = fuzz_training_pack(config, steps, accumulation)
     return (tp, *pack_artifacts(tp))
 
 
 def fuzz_pack_seeds() -> list[tuple[str, bytes, bool]]:
     """The pack fuzz harness's seed corpus as (name, input, whether the lowering admits it): the
     planner's pack for every configuration at one step, two of them at two steps of two
-    micro-batches, and near misses of the lowering's refusals on the first -- two live values on
-    one span (the alias law), a name outside the vocabulary, a value no lifetime places, a claim
-    past its value's lifetime, a block not the claim's."""
+    micro-batches, the planner's packs of `FUZZ_PLACED_CONFIGS` placed by lifetime and run on the
+    arenas their programs reach (PX-4) -- one of them a float short, which lowers and whose run is
+    refused -- and near misses of the lowering's refusals on the first: two live values on one
+    span (the alias law), a name outside the vocabulary, a value no lifetime places, a claim past
+    its value's lifetime, a block not the claim's."""
     import copy
     import dataclasses
 
     from bcir.abi.streampack_abi import encode
+    from bcir.hosted.models.native_pack import pack_artifacts
     from bcir.tests.plan_fixtures import raw_encode
 
     out = []
@@ -1480,6 +1645,14 @@ def fuzz_pack_seeds() -> list[tuple[str, bytes, bool]]:
             _tp, pack, plan, _, _ = fuzz_pack(config, steps, accumulation)
             out.append((f"c{config}_{steps}x{accumulation}",
                         fuzz_pack_input(config, steps, accumulation, pack, plan), True))  # fmt: skip
+    for config in FUZZ_PLACED_CONFIGS:
+        tp, placed = fuzz_placed(config)
+        pack, plan, _, _ = pack_artifacts(tp, placements=placed.placements)
+        out.append((f"placed_c{config}", fuzz_pack_input(config | FUZZ_PLACED, 1, 1, pack, plan),
+                    True))  # fmt: skip
+        if config == 0:
+            out.append(("placed_short",
+                        fuzz_pack_input(config | FUZZ_PLACED | FUZZ_SHORT, 1, 1, pack, plan), True))  # fmt: skip
     tp, pack_bytes, plan_bytes, pack, plan = fuzz_pack(0)
     claims = {c.id: c for ph in tp.module.phases for c in ph.claims}
     rms = next(i for i, seg in enumerate(pack.segments) if seg.opcode == "train.rms")
@@ -1520,7 +1693,7 @@ def fuzz_pack_seeds() -> list[tuple[str, bytes, bool]]:
 def measure(*, timed: bool = True) -> dict[str, float]:
     """Every NDT-GEM row this host can measure: the memory row always, the corpus row in a source
     checkout, the native rows with a compiler (and the timed one only when `timed`)."""
-    ratio = transient_ratio()[0]
+    ratio = placed_transient()[0]  # PX-4: the placed arena (the C plan's: `transient_ratio`)
     out = {"train.memory.transient": ratio}
     unselected = corpus_unselected()
     if unselected is not None:
@@ -1554,6 +1727,7 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         packed = pack_library(Path(tmp) / "pack")
         if packed is not None:  # no C units to lower with (an installed package): not measured
             out["train.plan.pack.mismatch"] = float(pack_mismatch(packed)[0])
+            out["train.plan.place.mismatch"] = float(place_mismatch(packed)[0])
         if timed:
             out.update(measure_step(path))
         return out
@@ -1615,22 +1789,33 @@ __all__ = [
     "trace_library",
     "checkout_library",
     "FUZZ_CONTRACTS",
+    "FUZZ_PLACED",
+    "FUZZ_PLACED_CONFIGS",
+    "FUZZ_SHORT",
     "FUZZ_STATE",
     "FUZZ_WORKSPACE",
     "fuzz_input",
+    "fuzz_lent",
     "fuzz_pack",
     "fuzz_pack_input",
     "fuzz_pack_parts",
     "fuzz_pack_seeds",
+    "fuzz_placed",
+    "fuzz_reach",
     "renumber_jobs",
     "fuzz_program",
     "fuzz_seeds",
+    "fuzz_training_pack",
     "PackRun",
     "pack_case",
     "pack_library",
     "pack_mismatch",
     "pack_problems",
     "pack_runs",
+    "place_mismatch",
+    "place_problems",
+    "place_runs",
+    "placed_transient",
     "ProgramRun",
     "program_case",
     "program_choices",

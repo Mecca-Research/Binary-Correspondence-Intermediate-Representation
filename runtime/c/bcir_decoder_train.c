@@ -162,7 +162,11 @@ static size_t workspace_admit=SIZE_MAX;
 void bcir_decoder_workspace_probe_admit(size_t bytes);
 void bcir_decoder_workspace_probe_admit(size_t bytes) { workspace_admit=bytes; }
 #endif
-static int valid(bcir_decoder_state *s) {
+/* The state checked for a run. `placed` (PX-4, a program's run): the activation and scratch arenas
+ * are as long as the caller lent them, any length, where the fixed step needs the plan's spans -- a
+ * program's checker holds each operand inside its arena's lent length, so the two transient arenas
+ * need hold only what the program places (bcir_decoder_run_program). */
+static int valid_with(bcir_decoder_state *s,int placed) {
   bcir_decoder_plan p; const float *ptr[6]; size_t len[6],cap[6],i,j,acts;
   int rc;
   if (!s) return BCIR_DT_INVALID;
@@ -188,10 +192,11 @@ static int valid(bcir_decoder_state *s) {
   cap[0]=s->weight_capacity; cap[1]=s->gradient_capacity;
   cap[2]=s->moment1_capacity; cap[3]=s->moment2_capacity;
   cap[4]=s->activation_capacity; cap[5]=s->scratch_capacity;
+  if (placed) { len[4]=cap[4]; len[5]=cap[5]; }
   for (i=0;i<6;i++) {
     if (!ptr[i] || (uintptr_t)ptr[i]%_Alignof(float)) return BCIR_DT_INVALID;
     if (cap[i]<len[i]) return BCIR_DT_CAPACITY;
-    if (len[i]*sizeof(float)>UINTPTR_MAX-(uintptr_t)ptr[i]) return BCIR_DT_CAPACITY;
+    if (len[i]>(UINTPTR_MAX-(uintptr_t)ptr[i])/sizeof(float)) return BCIR_DT_CAPACITY;
     if (overlap(ptr[i],len[i]*sizeof(float),s,sizeof(*s))) return BCIR_DT_INVALID;
     for (j=0;j<i;j++) if (overlap(ptr[i],len[i]*sizeof(float),ptr[j],len[j]*sizeof(float)))
       return BCIR_DT_INVALID;
@@ -210,29 +215,41 @@ static int valid(bcir_decoder_state *s) {
   }
   return BCIR_DT_OK;
 }
+static int valid(bcir_decoder_state *s) { return valid_with(s,0); }
 /* the activation arena's floats under the state's recompute set (valid() admitted the set) */
 static size_t arena_floats(const bcir_decoder_state *s) {
   size_t n=bcir_decoder_activation_count(&s->plan,s->recompute);
   return n==SIZE_MAX ? s->plan.activations : n;
 }
-static int external(bcir_decoder_state *s,const void *p,size_t bytes) {
+/* the bytes of the activation arena (scratch 0) or the scratch arena (1) a run reaches: the plan's
+ * spans under the fixed step, the lent lengths under a program (valid_with admitted either) */
+static size_t transient_bytes(const bcir_decoder_state *s,int placed,int scratch) {
+  if (placed) return (scratch ? s->scratch_capacity : s->activation_capacity)*sizeof(float);
+  return (scratch ? s->plan.scratch : arena_floats(s))*sizeof(float);
+}
+/* p's `bytes` lie outside the state and every arena the run reaches */
+static int external_in(bcir_decoder_state *s,int placed,const void *p,size_t bytes) {
   if (!p || bytes>UINTPTR_MAX-(uintptr_t)p) return 0;
   return !overlap(p,bytes,s,sizeof(*s)) &&
     !overlap(p,bytes,s->weights,s->plan.parameters*sizeof(float)) &&
     !overlap(p,bytes,s->gradients,s->plan.parameters*sizeof(float)) &&
     !overlap(p,bytes,s->moment1,s->plan.parameters*sizeof(float)) &&
     !overlap(p,bytes,s->moment2,s->plan.parameters*sizeof(float)) &&
-    !overlap(p,bytes,s->activations,arena_floats(s)*sizeof(float)) &&
-    !overlap(p,bytes,s->scratch,s->plan.scratch*sizeof(float)) &&
+    !overlap(p,bytes,s->activations,transient_bytes(s,placed,0)) &&
+    !overlap(p,bytes,s->scratch,transient_bytes(s,placed,1)) &&
     !((s->contract&BCIR_DT_CONTRACT_BF16) && overlap(p,bytes,s->workspace,s->workspace_bytes));
 }
-static int ids(bcir_decoder_state *s,const uint32_t *x,size_t n) {
+static int external(bcir_decoder_state *s,const void *p,size_t bytes) {
+  return external_in(s,0,p,bytes);
+}
+static int ids_in(bcir_decoder_state *s,int placed,const uint32_t *x,size_t n) {
   size_t i;
-  if (n>SIZE_MAX/sizeof(uint32_t) || !external(s,x,n*sizeof(uint32_t)) ||
+  if (n>SIZE_MAX/sizeof(uint32_t) || !external_in(s,placed,x,n*sizeof(uint32_t)) ||
       (uintptr_t)x%_Alignof(uint32_t)) return 0;
   for (i=0;i<n;i++) if (x[i]>=s->plan.spec.vocab) return 0;
   return 1;
 }
+static int ids(bcir_decoder_state *s,const uint32_t *x,size_t n) { return ids_in(s,0,x,n); }
 static int finite_span(const float *x,size_t n) {
   /* !(|x| <= FLT_MAX) is exactly !isfinite(x); a block with no exit vectorizes */
   size_t i=0,j,end;
@@ -1306,10 +1323,12 @@ static int optimizer_valid(const bcir_decoder_adamw *o) {
 /* The update a run calls with its step's closing gradient scan deferred to it (NDT-FACTS-CALL:
  * the first pass's verdict on every gradient element is the scan's, gs being 1/accumulation):
  * a refusal of the update's own arguments is reported only after that scan, so a step whose
- * gradient is not finite reports the backward's verdict first, as the separate calls do. */
+ * gradient is not finite reports the backward's verdict first, as the separate calls do.
+ * `placed` is the run's view of the transient arenas (valid_with): a program's run checks the
+ * state as its run_args did -- the arenas as lent -- and the update reads neither arena. */
 static int update_with(bcir_decoder_state *s,const bcir_decoder_adamw *o,
-    double gs,double *grad_norm,int deferred) {
-  size_t i; double norm,scale,b1,b2; int rc=valid(s);
+    double gs,double *grad_norm,int deferred,int placed) {
+  size_t i; double norm,scale,b1,b2; int rc=valid_with(s,placed);
   bcir_decoder_adamw options; pass_part parts[BCIR_DT_PASS_TASKS]; pass_result pass;
   if (rc) return rc;
   if (!o) return deferred && !finite_pool(s,s->gradients,s->plan.parameters) ? BCIR_DT_NUMERIC :
@@ -1319,7 +1338,8 @@ static int update_with(bcir_decoder_state *s,const bcir_decoder_adamw *o,
       !isfinite(s->beta1_power) || !isfinite(s->beta2_power) ||
       s->beta1_power<0 || s->beta1_power>1 || s->beta2_power<0 || s->beta2_power>1 ||
       (!s->step && (s->beta1_power!=1 || s->beta2_power!=1)) ||
-      !external(s,grad_norm,sizeof(*grad_norm)) || (uintptr_t)grad_norm%_Alignof(double))
+      !external_in(s,placed,grad_norm,sizeof(*grad_norm)) ||
+      (uintptr_t)grad_norm%_Alignof(double))
     return deferred && !finite_pool(s,s->gradients,s->plan.parameters) ? BCIR_DT_NUMERIC :
       BCIR_DT_INVALID;
   rc=first_pass(s,gs,parts,&pass);
@@ -1353,7 +1373,7 @@ static int update_with(bcir_decoder_state *s,const bcir_decoder_adamw *o,
 }
 int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     double gs,double *grad_norm) {
-  return update_with(s,o,gs,grad_norm,0);
+  return update_with(s,o,gs,grad_norm,0,0);
 }
 int bcir_decoder_run(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     const uint32_t *tokens,const uint32_t *targets,size_t count,
@@ -1366,19 +1386,20 @@ int bcir_decoder_run(bcir_decoder_state *s,const bcir_decoder_adamw *o,
 static int run_args(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     const uint32_t *tokens,const uint32_t *targets,size_t count,
     const double *rates,size_t steps,size_t accumulation,bcir_decoder_event *events,
-    size_t capacity,size_t *completed) {
-  size_t n,total,batches,i; int rc=valid(s);
+    size_t capacity,size_t *completed,int placed) {
+  size_t n,total,batches,i; int rc=valid_with(s,placed);
   if (rc) return rc;
   if (!optimizer_valid(o) || !accumulation || !completed || (uintptr_t)completed%_Alignof(size_t) ||
-      !external(s,completed,sizeof(*completed))) return BCIR_DT_INVALID;
+      !external_in(s,placed,completed,sizeof(*completed))) return BCIR_DT_INVALID;
   n=(size_t)s->plan.spec.batch*s->plan.spec.time;
   if (!product(steps,accumulation,&batches) || !product(n,batches,&total) ||
       steps>SIZE_MAX/sizeof(*events) || steps>SIZE_MAX/sizeof(*rates) ||
       s->step>UINT64_MAX-steps) return BCIR_DT_CAPACITY;
   if (count!=total || capacity<steps) return BCIR_DT_CAPACITY;
-  if (steps && (!ids(s,tokens,total) || !ids(s,targets,total) ||
-      !external(s,events,steps*sizeof(*events)) || (uintptr_t)events%_Alignof(bcir_decoder_event) ||
-      (rates && (!external(s,rates,steps*sizeof(*rates)) || (uintptr_t)rates%_Alignof(double)))))
+  if (steps && (!ids_in(s,placed,tokens,total) || !ids_in(s,placed,targets,total) ||
+      !external_in(s,placed,events,steps*sizeof(*events)) ||
+      (uintptr_t)events%_Alignof(bcir_decoder_event) || (rates &&
+      (!external_in(s,placed,rates,steps*sizeof(*rates)) || (uintptr_t)rates%_Alignof(double)))))
     return BCIR_DT_INVALID;
   /* Outputs cannot overwrite a future input, rate or completion count. */
   if (steps && (overlap(events,steps*sizeof(*events),tokens,total*sizeof(*tokens)) ||
@@ -1396,7 +1417,7 @@ int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     const double *rates,size_t steps,size_t accumulation,bcir_decoder_event *events,
     size_t capacity,size_t *completed) {
   size_t n,i,j; bcir_decoder_adamw opt;
-  int rc=run_args(s,o,tokens,targets,count,rates,steps,accumulation,events,capacity,completed);
+  int rc=run_args(s,o,tokens,targets,count,rates,steps,accumulation,events,capacity,completed,0);
   if (rc) return rc;
   n=(size_t)s->plan.spec.batch*s->plan.spec.time;
   opt=*o; *completed=0;
@@ -1410,7 +1431,7 @@ int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_adamw *o,
       loss+=part/(double)accumulation;
     }
     if (rates) opt.lr=rates[i];
-    rc=update_with(s,&opt,1.0/(double)accumulation,&norm,1); if (rc) return rc;
+    rc=update_with(s,&opt,1.0/(double)accumulation,&norm,1,0); if (rc) return rc;
     events[i].loss=loss; events[i].grad_norm=norm; events[i].step=s->step; *completed=i+1;
   }
   return BCIR_DT_OK;
@@ -1439,8 +1460,8 @@ static void px_init(px_ctx *c,bcir_decoder_state *s) {
   c->base[1]=(unsigned char *)s->weights; c->base[2]=(unsigned char *)s->gradients;
   c->base[3]=(unsigned char *)s->moment1; c->base[4]=(unsigned char *)s->moment2;
   for (i=1;i<5;i++) c->len[i]=s->plan.parameters*sizeof(float);
-  c->base[5]=(unsigned char *)s->activations; c->len[5]=arena_floats(s)*sizeof(float);
-  c->base[6]=(unsigned char *)s->scratch; c->len[6]=s->plan.scratch*sizeof(float);
+  c->base[5]=(unsigned char *)s->activations; c->len[5]=transient_bytes(s,1,0);
+  c->base[6]=(unsigned char *)s->scratch; c->len[6]=transient_bytes(s,1,1);
   c->base[7]=(unsigned char *)s->workspace;
   c->len[7]=(s->contract&BCIR_DT_CONTRACT_BF16) ? s->workspace_bytes : 0;
   c->v2=(unsigned)swiglu_v2(s); c->gc=(unsigned)gemm_contract(s);
@@ -1801,7 +1822,7 @@ static int px_run(const px_ctx *c,const bcir_decoder_adamw *o,const uint64_t *p,
     else if (w[0]==BCIR_DT_REC_UPDATE) {
       double norm;
       if (rates) opt.lr=rates[step];
-      rc=update_with(s,&opt,1.0/(double)accumulation,&norm,1); if (rc) return rc;
+      rc=update_with(s,&opt,1.0/(double)accumulation,&norm,1,1); if (rc) return rc;
       events[step].loss=loss; events[step].grad_norm=norm; events[step].step=s->step;
       *completed=++step; loss=0.0;
     }
@@ -1820,10 +1841,11 @@ int bcir_decoder_run_program(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     size_t count,const double *rates,size_t steps,size_t accumulation,bcir_decoder_event *events,
     size_t capacity,size_t *completed) {
   px_ctx c; size_t bytes;
-  int rc=run_args(s,o,tokens,targets,count,rates,steps,accumulation,events,capacity,completed);
+  int rc=run_args(s,o,tokens,targets,count,rates,steps,accumulation,events,capacity,completed,1);
   if (rc) return rc;
   if (!product(records,BCIR_DT_RECORD_WORDS*sizeof(uint64_t),&bytes)) return BCIR_DT_INVALID;
-  if (records && (!program || (uintptr_t)program%_Alignof(uint64_t) || !external(s,program,bytes) ||
+  if (records && (!program || (uintptr_t)program%_Alignof(uint64_t) ||
+      !external_in(s,1,program,bytes) ||
       overlap(program,bytes,completed,sizeof(*completed)) ||
       (steps && overlap(program,bytes,events,steps*sizeof(*events))))) return BCIR_DT_INVALID;
   px_init(&c,s);

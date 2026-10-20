@@ -468,6 +468,11 @@ class NativeDecoder:
     pages where the host has them (`_state_buffers`); `self.huge_pages` says whether the kernel
     took the advice. The state is the same either way, bit for bit; the mapping adds at most one
     huge page to what the budget bounds.
+    `transient` (PX-4) lends the activation and scratch arenas at the given float counts in place
+    of the C plan's -- what a placement of a program's values needs (`native_pack.place_by_lifetime`,
+    `Placed.floats`): such a trainer runs programs and packs placed there (`run_program`,
+    `run_pack`), every operand held inside the lent arenas, and the fixed step refuses it
+    (BCIR_DT_CAPACITY), whose spans are the plan's.
     """
 
     @staticmethod
@@ -537,6 +542,7 @@ class NativeDecoder:
         huge_pages=True,
         recompute=0,
         workspace_bytes=None,
+        transient=None,
     ):
         if not isinstance(spec, DecoderSpec) or spec.activation != "silu_gate":
             raise ValueError("native decoder requires Llama/SwiGLU DecoderSpec")
@@ -573,6 +579,17 @@ class NativeDecoder:
             raise ValueError("workspace_bytes must be None or a non-negative integer")
         if recompute == "auto" and workspace_bytes is not None:
             raise ValueError('recompute="auto" plans the workspace too: pass no workspace_bytes')
+        if transient is not None and (
+            type(transient) is not tuple
+            or len(transient) != 2
+            or any(type(x) is not int or not 0 <= x < 2**62 for x in transient)
+        ):
+            raise ValueError("transient must be None or (activation floats, scratch floats)")
+        if transient is not None and recompute == "auto":
+            raise ValueError(
+                "transient lends the arenas a placement sized for one program: pass the recompute "
+                'set it was placed under, not "auto"'
+            )
         self.contract = contract
         self.spec, self.batch_size, self.context_length = spec, batch_size, context_length
         self.library = Path(library).resolve()
@@ -625,6 +642,10 @@ class NativeDecoder:
         self.workspace_bytes = self.plan_memory.workspace_bytes
         self.activation_count = self.plan_memory.activation_count
         self.memory_bytes = self.plan_memory.total_bytes
+        # PX-4: the transient arenas a placement lends, counted in place of the plan's
+        self.transient = transient
+        lent = (self.activation_count, plan.scratch) if transient is None else transient
+        self.memory_bytes += 4 * (sum(lent) - self.activation_count - plan.scratch)
         if self.memory_bytes > max_memory_bytes:
             raise ValueError(
                 f"native plan needs {self.memory_bytes} bytes, budget {max_memory_bytes}"
@@ -638,8 +659,8 @@ class NativeDecoder:
                 ("gradients", plan.parameters),
                 ("moment1", plan.parameters),
                 ("moment2", plan.parameters),
-                ("activations", self.activation_count),
-                ("scratch", plan.scratch),
+                ("activations", lent[0]),
+                ("scratch", lent[1]),
             )
             + ((("workspace", (self.workspace_bytes + 3) // 4),) if self.workspace_bytes else ()),
             huge_pages,
@@ -653,8 +674,8 @@ class NativeDecoder:
             plan.parameters,
             plan.parameters,
             plan.parameters,
-            self.activation_count,
-            plan.scratch,
+            lent[0],
+            lent[1],
             0,
             1.0,
             1.0,

@@ -30,6 +30,7 @@ from bcir.hosted.models.native_pack import (
     REASONS,
     Placement,
     pack_artifacts,
+    placed_words,
     program_pack,
     training_pack,
 )
@@ -122,6 +123,9 @@ def test_the_placement_is_the_plans():
             differ = {i % RECORD_WORDS for i, (a, b) in enumerate(zip(run.words, run.pack.words))
                       if a != b}  # fmt: skip
             assert differ <= {12 + 3 * q for q in range(10)}, (case, sorted(differ))  # offsets
+            # exactly where the plan put them (PX-4's relocation oracle)
+            assert run.words == placed_words(tp, moved), case
+            assert placed_words(tp, tp.placements) == tp.words, case
             assert (run.state, run.events) == (step.state, step.events), case
 
 
@@ -439,8 +443,10 @@ def test_the_vocabulary_and_the_reasons_are_the_cs():
 def test_the_pack_fuzz_seeds_start_inside_the_grammar():
     """Every seed of the pack fuzz harness (runtime/c/fuzz_decoder_pack.c) lowers on the harness's
     state as its name says: the planner's packs lower and run every step at the shape their shape
-    byte names (one step, and two steps of two micro-batches), the near misses are refused at
-    their reason -- so a campaign starts inside the lowering, the runner, and the refusals."""
+    byte names (one step, and two steps of two micro-batches), the placed ones (PX-4) on the arenas
+    their programs reach -- the one a float short refused there with nothing run -- and the near
+    misses are refused at their reason: so a campaign starts inside the lowering, the runner, and
+    the refusals."""
     if _CC is None:
         return
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
@@ -467,8 +473,23 @@ def test_the_pack_fuzz_seeds_start_inside_the_grammar():
                     n = batch * time_ * steps * accumulation
                     tokens = [(7 * i + 3) % spec.vocab_size for i in range(n)]
                     targets = [(5 * i + 1) % spec.vocab_size for i in range(n)]
-                    events = trainer.run_pack(pack, plan, tokens, targets, steps=steps,
-                                              gradient_accumulation=accumulation)  # fmt: skip
+                    words = trainer.lower_pack(pack, plan)
+                    lent = nf.fuzz_lent(words, config, trainer.state.plan)
+                    if lent is not None:  # PX-4: on the arenas its program reaches
+                        trainer.close()
+                        trainer = nat.NativeDecoder(path, spec, batch_size=batch,
+                                                    context_length=time_, contract=names[contract],
+                                                    recompute=3 if config & 8 else 0,
+                                                    workspace_bytes=nf.FUZZ_WORKSPACE
+                                                    if contract & 16 else None, transient=lent)  # fmt: skip
+                    try:
+                        events = trainer.run_program(words, tokens, targets, steps=steps,
+                                                     gradient_accumulation=accumulation)  # fmt: skip
+                    except nat.NativeRunStopped as stopped:
+                        assert config & nf.FUZZ_SHORT, (name, stopped)
+                        assert (stopped.status, stopped.completed) == (1, 0), (name, stopped)
+                        continue
+                    assert not config & nf.FUZZ_SHORT, name
                     assert len(events) == steps, (name, events)
                     shapes.add((steps, accumulation))
             finally:

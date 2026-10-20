@@ -134,8 +134,8 @@
     {
       "expects": "test_a_program_trains_the_c_steps_bits",
       "label": "PG18 the update's gradient unscaled by the accumulation",
-      "new": "      rc=update_with(s,&opt,1.0,&norm,1); if (rc) return rc;\n      events[step].loss=loss;",
-      "old": "      rc=update_with(s,&opt,1.0/(double)accumulation,&norm,1); if (rc) return rc;\n      events[step].loss=loss;",
+      "new": "      rc=update_with(s,&opt,1.0,&norm,1,1); if (rc) return rc;\n      events[step].loss=loss;",
+      "old": "      rc=update_with(s,&opt,1.0/(double)accumulation,&norm,1,1); if (rc) return rc;\n      events[step].loss=loss;",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
@@ -184,7 +184,7 @@
       "expects": "test_a_refused_program_writes_nothing",
       "label": "PG25 a program inside the state admitted",
       "new": "  if (records && (!program || (uintptr_t)program%_Alignof(uint64_t) ||",
-      "old": "  if (records && (!program || (uintptr_t)program%_Alignof(uint64_t) || !external(s,program,bytes) ||",
+      "old": "  if (records && (!program || (uintptr_t)program%_Alignof(uint64_t) ||\n      !external_in(s,1,program,bytes) ||",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

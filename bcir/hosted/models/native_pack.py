@@ -18,6 +18,13 @@ is stated as BCIR's own artifacts, and reaches the trainer through them alone:
   its ExecutionPlanV1, whose lifetimes place every value: the bank it lives in (its arena; the
   workspace; the tokens or the targets), its byte offset and size there, and the phases it is live
   over -- the C step's own spans (`TrainingPack.lifetimes`) unless the caller hands another placement.
+* PX-4 (PLACE): `place_by_lifetime` is that other placement -- every value of the two transient arenas
+  laid out by its lifetime in one bank (GEM+'s static memory planner, `kbcir.static_memory`): the
+  values split where none is live across a phase boundary, each part laid out by the bounded exact
+  search from GEM+'s incumbent, the parts sharing addresses (no two are live at once). Its extent is
+  the transient arena a trainer then lends (`NativeDecoder(transient=...)`), held against G26's
+  alignment-aware concurrent-live bound over the same values: equal, the layout is a proved optimum
+  (TMSAO-1), and `train.memory.transient` reads their ratio.
 
 `bcir_decoder_lower_pack` (runtime/c/bcir_decoder_pack.c) takes the two artifacts and the state and
 nothing else: the plan's and the pack's own verifiers (the plan's alias law among them: no two
@@ -54,7 +61,7 @@ from dataclasses import dataclass
 from ...frontends.models.decode import DecoderSpec
 from ...model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 from . import native_launch as nl
-from .native_program import ARENAS, training_step_program
+from .native_program import ARENAS, TRANSIENT, training_step_program
 
 #: The claims' names other than the GEMM's, in the C's table order (bcir_decoder_pack.c).
 OPS = (
@@ -211,8 +218,9 @@ class Placement:
 @dataclass(frozen=True)
 class TrainingPack:
     """A training program as a BCIR module: the launches it states (`step_program`'s), their
-    words (what the C's lowering of the pack must equal), the module, and every value's place in
-    the state the C step itself uses."""
+    words (what the C's lowering of the pack must equal), the module, every value's place in the
+    state the C step itself uses, and each record's operand slots with the values bound to them
+    (the record's claim reads and writes them, `placed_words`)."""
 
     spec: DecoderSpec
     batch: int
@@ -222,6 +230,7 @@ class TrainingPack:
     module: Module
     placements: tuple[Placement, ...]
     tensors: int  # parameter tensors per arena: RIDs 1 .. 4 * tensors are theirs
+    bindings: tuple[tuple[tuple[int, tuple[int, ...]], ...], ...] = ()  # per record: (slot, rids)
 
     @property
     def claims(self) -> int:
@@ -315,6 +324,7 @@ def program_pack(
 
     module = Module(name=f"train_{spec.n_layers}l_{spec.d_model}d_{batch}x{time}")
     phases: list[Phase] = []
+    bindings: list[tuple[tuple[int, tuple[int, ...]], ...]] = []
     claim_id = 0
     micro = 0
     for at, launch in enumerate(program):
@@ -371,6 +381,7 @@ def program_pack(
                     rd += bound[slot]
                 if use & W:
                     wr += bound[slot]
+            bindings.append(tuple((slot, tuple(bound[slot])) for slot, _use in slots))
             opcode, lane, stride, cost, hazard = _form(r.kind)
             base = micro if r.kind in (nl.EMBED, nl.LOSS, nl.SCATTER) else 0
             claims.append(Claim(id=claim_id, opcode=opcode, lane=lane, stride_class=stride,
@@ -391,7 +402,91 @@ def program_pack(
         module.add_phase(phase)
     placements = tuple(Placement(rid, *places[rid]) for rid in sorted(places))
     return TrainingPack(spec, batch, time, program, tuple(nl.program_words(list(program))), module,
-                        placements, tensors)  # fmt: skip
+                        placements, tensors, tuple(bindings))  # fmt: skip
+
+
+def placed_words(tp: TrainingPack, placements) -> tuple[int, ...]:
+    """The words the lowering of `tp`'s pack placed by `placements` must write: the program's, every
+    operand at its value's place -- a slot's space its value's bank, its offset the value's (a run
+    of parameter tensors from its first) -- and every other word as it was. With `tp.placements`,
+    `tp.words` itself."""
+    where = {p.rid: p for p in placements}
+    words = list(tp.words)
+    for i, binding in enumerate(tp.bindings):
+        base = i * nl.RECORD_WORDS + 11
+        for slot, rids in binding:
+            place = where[rids[0]]
+            words[base + 3 * slot] = BANKS[place.bank]
+            words[base + 3 * slot + 1] = place.offset
+    return tuple(words)
+
+
+#: PX-4: the alignment a placed transient value starts at -- a cache line, as the C step's own
+#: buffers start (the kernels' arithmetic reads no address: any 4-aligned place trains the same bits).
+PLACE_ALIGNMENT = 64
+
+
+@dataclass(frozen=True)
+class Placed:
+    """PX-4: a pack's values with its transient ones placed by their lifetimes (`place_by_lifetime`):
+    every value's place, the transient bank's extent in bytes, G26's bound over the same values, the
+    parts laid out apart, and whether every part's layout is a proved optimum."""
+
+    placements: tuple[Placement, ...]
+    extent: int
+    bound: int
+    parts: int
+    optimal: bool
+
+    @property
+    def floats(self) -> int:
+        """The transient arena's floats: what a trainer lends for these placements."""
+        return -(-self.extent // 4)
+
+
+def place_by_lifetime(tp: TrainingPack, *, alignment: int = PLACE_ALIGNMENT,
+                      budget: int | None = None) -> Placed:  # fmt: skip
+    """`tp`'s values with every activation and scratch value placed by its lifetime in the one bank
+    `activations` (module docstring): a value occupies its bytes from its first phase through its
+    last (half-open ticks first .. last + 1, the plan's alias law); the values split into parts at
+    every phase no value is live across, each part laid out by `exact_layout` (GEM+'s incumbent, then
+    the bounded exact search; `budget` its work units, the solver's default when None), the parts
+    overlapping in address. Every other value -- the parameters, the workspace, the tokens and the
+    targets -- keeps its place."""
+    from ...kbcir.static_memory import (
+        DEFAULT_EXACT_BUDGET,
+        LayoutItem,
+        exact_layout,
+        layout_lower_bound,
+    )
+
+    items = sorted(
+        (LayoutItem(p.rid, p.size, alignment, p.first, p.last + 1)
+         for p in tp.placements if p.bank in TRANSIENT),
+        key=lambda item: (item.first_tick, item.rid),
+    )  # fmt: skip
+    parts: list[list] = []
+    reach = 0  # the end of the part being gathered: a value starting there begins the next
+    for item in items:
+        if not parts or item.first_tick >= reach:
+            parts.append([])
+            reach = item.last_tick
+        else:
+            reach = max(reach, item.last_tick)
+        parts[-1].append(item)
+    offsets: dict[int, int] = {}
+    extent, optimal = 0, True
+    for part in parts:
+        laid = exact_layout(part, DEFAULT_EXACT_BUDGET if budget is None else budget)
+        offsets.update(laid.offsets)
+        extent = max(extent, laid.extent)
+        optimal = optimal and laid.stop_reason == "optimal"
+    placements = tuple(
+        Placement(p.rid, "activations", offsets[p.rid], p.size, p.first, p.last)
+        if p.rid in offsets else p
+        for p in tp.placements
+    )  # fmt: skip
+    return Placed(placements, extent, layout_lower_bound(items), len(parts), optimal)
 
 
 def pack_artifacts(tp: TrainingPack, *, placements=None, target=None):
@@ -421,10 +516,14 @@ __all__ = [
     "GEMM_ORIENTS",
     "GEMM_ROLES",
     "OPS",
+    "PLACE_ALIGNMENT",
+    "Placed",
     "Placement",
     "TrainingPack",
     "op_name",
     "pack_artifacts",
+    "place_by_lifetime",
+    "placed_words",
     "program_pack",
     "training_pack",
     "uses",

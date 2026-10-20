@@ -566,9 +566,10 @@ def test_the_program_model_refuses_what_it_cannot_state():
 def test_the_fuzz_seeds_start_inside_the_grammar():
     """The fuzz harness's seeds (runtime/c/fuzz_decoder_train.c, seeded by
     tools/c/fuzz_streampack.sh) are what they claim on the harness's own state: every planner
-    program -- every configuration the harness names, two of them at two steps of two -- admitted
-    and run to its end, every near miss refused. A canonical seed refused would be a corpus that
-    never reaches the run (L2), and the campaign would hold only the check."""
+    program -- every configuration the harness names, two of them at two steps of two, four of them
+    placed by lifetime on the arenas they reach (PX-4) -- admitted and run to its end, every near
+    miss refused, the placed program a float short among them. A canonical seed refused would be a
+    corpus that never reaches the run (L2), and the campaign would hold only the check."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         lib = nf.checkout_library(Path(tmp) / "plain")
         if lib is None:
@@ -581,9 +582,14 @@ def test_the_fuzz_seeds_start_inside_the_grammar():
             steps, accumulation = 1 + (shape & 1), 1 + (shape >> 1 & 1)
             contract = nf.FUZZ_CONTRACTS[config & 7]
             words = list(struct.unpack(f"<{(len(data) - 2) // 8}Q", data[2:]))
-            trainer = NativeDecoder(lib, spec, batch_size=batch, context_length=time_,
-                                    contract=names[contract], recompute=3 if config & 8 else 0,
-                                    workspace_bytes=nf.FUZZ_WORKSPACE if contract & 16 else None)  # fmt: skip
+            common = dict(batch_size=batch, context_length=time_, contract=names[contract],
+                          recompute=3 if config & 8 else 0,
+                          workspace_bytes=nf.FUZZ_WORKSPACE if contract & 16 else None)  # fmt: skip
+            trainer = NativeDecoder(lib, spec, **common)
+            lent = nf.fuzz_lent(words, config, trainer.state.plan)
+            if lent is not None:  # PX-4: the arenas the program reaches, as the harness lends them
+                trainer.close()
+                trainer = NativeDecoder(lib, spec, transient=lent, **common)
             try:
                 n = batch * time_ * steps * accumulation
                 tokens = [(7 * i + 3) % spec.vocab_size for i in range(n)]
@@ -601,4 +607,5 @@ def test_the_fuzz_seeds_start_inside_the_grammar():
             if admitted:
                 configs.add(config)
         assert not wrong, wrong
-        assert configs == set(range(16)), sorted(configs)
+        placed = {config | nf.FUZZ_PLACED for config in nf.FUZZ_PLACED_CONFIGS}
+        assert configs == set(range(16)) | placed, sorted(configs)

@@ -1,0 +1,9 @@
+{"contract": "v1", "recompute": 0, "c_bytes": 194019328, "placed_bytes": 176685056, "bound_bytes": 176685056, "optimal": true, "values": 372}
+{"contract": "v1", "recompute": 7, "c_bytes": 141590528, "placed_bytes": 124256256, "bound_bytes": 124256256, "optimal": true, "values": 394}
+{"contract": "v1", "recompute": 63, "c_bytes": 62947328, "placed_bytes": 45613056, "bound_bytes": 45613056, "optimal": true, "values": 427}
+{"contract": "kblock+exp+reduce+attn", "recompute": 0, "c_bytes": 194019328, "placed_bytes": 176685056, "bound_bytes": 176685056, "optimal": true, "values": 372}
+{"contract": "kblock+exp+reduce+attn", "recompute": 7, "c_bytes": 141590528, "placed_bytes": 124256256, "bound_bytes": 124256256, "optimal": true, "values": 394}
+{"contract": "kblock+exp+reduce+attn", "recompute": 63, "c_bytes": 62947328, "placed_bytes": 45613056, "bound_bytes": 45613056, "optimal": true, "values": 427}
+c2 / c (A/A: the C spans against themselves): x1.0193 [0.9913, 1.0480]
+placed / c (the placed arena against the C spans): x1.0086 [0.9814, 1.0366]
+{"c_plan": 194019328, "placed": 176685056, "bound": 176685056, "placed_over_c": 0.9106569836176321, "optimal": true, "trainer_memory": {"c": 351410176, "placed": 334075904}} place 122.9 ms {"c": 227.30899035013863, "c2": 227.11264944991854, "placed": 225.3939745001844} one state: True

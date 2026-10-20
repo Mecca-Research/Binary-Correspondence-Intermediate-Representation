@@ -3498,6 +3498,94 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     (the pack seeds repeat its line) and re-swept: 1 of 1.
   - The ladder: PX-3 takes the pack's per-call choices from the measured candidates, and PX-4 packs
     the lifetimes the plan now carries.
+  PX-4 (2026-10-20): the native step's transient values placed by their lifetimes.
+  - PX-2b ran the step from a StreamPack whose ExecutionPlanV1 placed every value where the C step
+    keeps it: one span a buffer, the C plan's, 999,424 bytes of activations and scratch at the bench
+    shape against G26's 753,664-byte concurrent-live bound on the step program's values
+    (`train.memory.transient` 1.326, NDT-MEM's headroom since 2026-10-11). The pack already states
+    every value with its lifetime, so PX-4 places them by it.
+  - `native_pack.place_by_lifetime` lays every activation and scratch value of a pack out in one bank
+    (the activations) with GEM+'s static memory planner, each value its own bytes, 64-byte aligned,
+    live from its first phase through its last. The values split into parts where none is live across
+    a phase -- in phase order, a part ends where the next value starts at or past the furthest end so
+    far -- each part laid out by `exact_layout` (the incumbent portfolio, then the bounded branch and
+    bound), and the parts share addresses, since no two of their values are ever live together. The
+    extent is the largest part's; the bound is G26's alignment-aware concurrent-live bound over the
+    same values. At the bench shape -- under each contract family, several steps of several
+    micro-batches, a recompute set and the panels' bench alike -- the extent is the bound: a proved
+    optimum (TMSAO-1). Across the trace corpus's 356 placed runs the extent is the bound in 254,
+    each proved optimal, and 32 bytes (66 runs) or 52 bytes (36) above it in the other 102, where
+    the exact search stops at its budget without a proof: each gap is read beside the row
+    (`place_mismatch`'s fourth value), never counted in it.
+  - At the bench shape that is 754,176 bytes, 245,248 (24.5%) under the C plan's 999,424, and
+    `train.memory.transient` reads 1.0. The bound sits 512 bytes above the step program's: the pack
+    makes the loss rows' terms (an f64 a token), which the C keeps at the head of the scratch, a value
+    of their own, as it does the norms' 1/rms the C keeps in `dq`.
+  - `bcir_decoder_run_program` (and through it a pack's run) takes the activation and scratch arenas
+    at the lengths the caller lent -- their capacities, any length -- and holds every operand inside
+    them (PX-2a's check, by those lengths) and the program, the tokens, the targets, the events and
+    the completed count apart from them. The fixed step still needs the plan's spans and refuses a
+    shorter arena (BCIR_DT_CAPACITY). No ABI change: the capacities were the state's already.
+    `NativeDecoder(transient=(activation floats, scratch floats))` lends arenas of those lengths -- a
+    placement's `floats`, and none for the scratch -- and counts them in the memory it reports; it
+    refuses them with `recompute="auto"`, since a placement is one program's. The update a program's
+    UPDATE record runs checks the state as the run's own admission did (`update_with(..., placed)`):
+    it read the fixed step's spans at first, so every placed trainer was refused at its first update
+    (BCIR_DT_CAPACITY) -- the corpus witness's first run found it, every pure check having passed.
+  - `native_pack.placed_words` states the words the lowering of a placed pack must write, each
+    record's operand slots bound to their values (`TrainingPack.bindings`): an oracle of the C's
+    relocation that never reads the C.
+  - `train.plan.place.mismatch` 356 -> 0 (a new GEM+ row): the 356 pack runs of PX-2b, each placed by
+    lifetime and run on a trainer lending exactly the placement's arena, lower to their programs'
+    words at the placed places, place no two live values in one byte (none below its bound) and train
+    the C step's state and events bit for bit; each layout's gap to the bound is read beside the row,
+    never counted in it. A placed trainer refuses the fixed step, an arena one float short and a value
+    moved past the arena's end, each with nothing written; one lending more than the placement trains
+    the same bits; a run whose tokens lie inside the lent arenas -- past the placement's end, bytes no
+    value is placed in -- is refused.
+  - Fuzz: both trainer harnesses (`fuzz_decoder_train.c`, `fuzz_decoder_pack.c`) lend the transient
+    arenas at what a program reaches, or one float short, each as the tail of its own allocation, so
+    an overrun lands past it where ASan sees it; seeded with the placed programs and packs of four
+    configurations and a short one. A placement holds the scratch values in the activation arena, so
+    it can reach past the plan's activations: each harness allocates room for the plan's whole
+    transient span and lends a run that is not placed exactly what the trainer lends (the recompute
+    set's activations). A replay build of each (BCIR_FUZZ_REPLAY: a driver in libFuzzer's place
+    records every input's statuses) holds every seed to the verdict its Python twin holds it to
+    (`test_the_fuzz_harnesses_hold_their_seeds_to_their_verdicts`) -- the twin and the C had capped
+    the placed reach at the plan's activations alike, so two configurations' placed seeds started
+    outside the run, and only the C's own replay sees such a drift. Fuzzed under ASan and UBSan --
+    20,000 runs of the program harness and 20,000 of the pack harness under clang 18, 100,000 and
+    100,000 under clang 23 -- no finding.
+  - `px-place.json` (PL2-PL6, PA1-PA7, PD1-PD4, PC1, PC2, PC4), `px-place-corpus.json` (PL1, PW1,
+    PW2, PC3: the faults only the corpus witness catches, swept apart so the others never pay for
+    its 356 runs) and `px-place-fuzz.json` (PH1-PH3, PC5: the harnesses' room and lending, held by
+    the replay): 19 of 19, 4 of 4 and 4 of 4 caught, each by its own check. The first sweeps let
+    four through, each past a witness that never reached it, now reached: PL4 (the fixed step's
+    admission taking a lent arena) behind the run's own capacity check -- a forward, which only that
+    admission guards, now runs on an arena one float short of the plan's spans; PA2 (a part ended
+    while a value is live) and PA6 (the alignment ignored) on a stated set with no value written at
+    the phase its predecessor is last read and no size off the alignment -- the set now has both;
+    PH2 (a run that is not placed lent the whole room) with no seed between the recompute set's
+    arena and the room -- the kept layers' program now runs on the recompute set's trainer. The
+    px-place and corpus tables were swept again in a worktree of their own, their first run having
+    shared its tree with another sweep. PX-2a's PG25 and PG18 re-anchored (the program's admission
+    and update lines moved), and `px-pack.json`'s PF2 and PF5 on the shared helpers they now reach
+    (one comparison for the pack and the placed runs, one training pack for both harnesses' seeds).
+    With them, the 47 older entries inside the constructs PX-4 changed, or held by the witnesses it
+    changed, re-swept: 47 of 47 caught.
+  - The cost ([measurements/2026-10-20/px4/](research/measurements/2026-10-20/px4/README.json)): no
+    cost and no gain this host resolves for running on the placed arena -- placed / C spans x1.0022
+    (95% interval 0.987-1.018) under bf16 at four threads and x1.0086 (0.981-1.037) under binary32,
+    beside A/A controls of x1.0107 (0.998-1.023) and x1.0193 (0.991-1.048); the ten-step pack placed
+    in 123-166 ms (the median of 20 calls), its 1,640 (bf16) and 1,460 (binary32) transient values
+    in 10 parts each, one a step, at 166,199,296 and 176,685,056 bytes against the C plan's
+    194,019,328 (0.857 and 0.911 of it), each at its bound, proved; the trainer's whole memory 355.9
+    -> 328.1 MB and 351.4 -> 334.1 MB; every trainer's state one state, bit for bit, over 24 rounds
+    of 10-step calls. The placed arena against the C plan's at one step a call, by recompute set:
+    binary32 0.911 (none), 0.878 (layers 0-2), 0.725 (all six); bf16 0.857 (none), 0.833 (layers
+    0-2), 0.725 (all six) -- each at its bound, proved.
+  - The ladder: PX-5 states the layouts the kernels keep, and PX-3 takes the pack's choices from
+    measured candidates.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

@@ -1,0 +1,39 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_place:_CC",
+    "bcir.tests.test_native_place:test_every_placed_run_trains_the_c_steps_bits"
+  ],
+  "faults": [
+    {
+      "expects": "test_every_placed_run_trains_the_c_steps_bits",
+      "label": "PL1 the placed admission keeps the plan's minimum (a placed arena refused)",
+      "new": "  if (placed && cap[4]>=len[4] && cap[5]>=len[5]) { len[4]=cap[4]; len[5]=cap[5]; }",
+      "old": "  if (placed) { len[4]=cap[4]; len[5]=cap[5]; }",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_every_placed_run_trains_the_c_steps_bits",
+      "label": "PW1 the relocation oracle keeps the program's offsets",
+      "new": "            words[base + 3 * slot + 1] = words[base + 3 * slot + 1]",
+      "old": "            words[base + 3 * slot + 1] = place.offset",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_every_placed_run_trains_the_c_steps_bits",
+      "label": "PW2 the relocation oracle keeps the program's spaces",
+      "new": "            words[base + 3 * slot] = words[base + 3 * slot]",
+      "old": "            words[base + 3 * slot] = BANKS[place.bank]",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_every_placed_run_trains_the_c_steps_bits",
+      "label": "PC3 the placed corpus run on the C step's spans",
+      "new": "        yield case, {}, step, pack_case(path, case, place=False)",
+      "old": "        yield case, {}, step, pack_case(path, case, place=True)",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    }
+  ]
+}

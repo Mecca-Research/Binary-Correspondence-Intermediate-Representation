@@ -842,6 +842,27 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="PX-2b",
     ),
     Metric(
+        "train.plan.place.mismatch",
+        "train",
+        "of the 356 placed pack runs (bcir/tests/native_decoder_fixtures.py `place_runs`: the pack "
+        "runs train.plan.pack.mismatch reads, each with every activation and scratch value placed "
+        "by its lifetime -- native_pack.place_by_lifetime, GEM+'s static memory planner over the "
+        "pack's own values, in one bank -- and lowered and run on a trainer lending exactly the "
+        "placement's arena), those the lowering refused, that stopped, that were placed below "
+        "G26's concurrent-live bound on their values (live values sharing bytes), or that trained "
+        "another state or events than bcir_decoder_run_accum on the same case. A layout above its "
+        "bound is a gap, read beside the row, never a divergence. The parent ran no step on a "
+        "placed arena, so all 356 were unheld (PX-4)",
+        356,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one program, two placements: the kernels' arithmetic reads no address, and "
+        "bcir_decoder_run_program holds every operand inside the arenas the trainer lends, so a "
+        "placed run that differs is a defect of the placement, the lowering or the runner",
+        slice_owner="PX-4",
+    ),
+    Metric(
         "train.mm.mismatch",
         "train",
         "of 20 GEMM cases (every transpose pair, the 32-wide tiles' edges, alpha and beta forms), "
@@ -858,17 +879,21 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "train.memory.transient",
         "train",
-        "bytes the C plan reserves for the bench step's activations and backward workspace, over "
-        "G26's concurrent-live bound on the same values (vocab 256, width 64, 2 layers, batch 2 "
-        "x 32 tokens: 999,424 / 753,664 bytes)",
+        "bytes a trainer lends for the bench step's activations and backward workspace, over G26's "
+        "concurrent-live bound on the values they hold (vocab 256, width 64, 2 layers, batch 2 x "
+        "32 tokens). Frozen at the C plan's fixed spans over the step program's bound, 999,424 / "
+        "753,664 bytes; read since PX-4 at the step's pack with every transient value placed by "
+        "its lifetime (native_pack.place_by_lifetime) over the bound on the pack's own values, "
+        "754,176 / 754,176 -- the pack makes the two temporaries the C kept inside other buffers "
+        "values of their own (the loss rows' terms, 512 bytes, and the norms' 1/rms)",
         999_424 / 753_664,
         "x",
         "exact",
         bound=1.0,
         bound_source="the alignment-aware concurrent-live bound (`static_memory."
-        "layout_lower_bound`) over the program's values in the C order without recomputation; "
-        "GEM+'s incumbent layout portfolio reaches it on this program, so the headroom is "
-        "realizable -- by a C plan that lays the transient values out by lifetime (NDT-MEM, open)",
+        "layout_lower_bound`) over the values the arena holds, at the placement's alignment: no "
+        "layout of those values over those lifetimes is smaller, so a placement at the bound is a "
+        "proved optimum (TMSAO-1) and retires the row (NDT-MEM, PX-4)",
         slice_owner="NDT-MEM",
     ),
     Metric(
