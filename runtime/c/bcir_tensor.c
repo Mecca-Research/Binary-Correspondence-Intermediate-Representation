@@ -3377,3 +3377,98 @@ int bcir_tensor_attention_bf16_backward_pool(bcir_tensor_pool *pool, int variant
   pool_dispatch(pool,NULL,att16_task_backward,&j,tasks);
   return bv;
 }
+
+/* --- PX-5 (LAYOUT): the packers' layouts, read back ---------------------------------------------
+ * Each packer whose layout bcir/hosted/models/native_layouts.py states, run alone on an operand the
+ * caller lends, so a witness reads back what it writes and holds every element to the statement; a
+ * packer this build or host has not answers 0, nothing written. A build defines
+ * BCIR_DT_LAYOUT_PROBE to have them (the witness's builds do; the library does not). */
+#ifdef BCIR_DT_LAYOUT_PROBE
+BCIR_DT_API int bcir_tensor_probe_bf16_pack(int variant, int which, int trans, size_t rows,
+    size_t cols, float alpha, const float *x, size_t ld, uint16_t *out);
+BCIR_DT_API int bcir_tensor_probe_kb_pack(int tb, size_t k, size_t n, const float *b, size_t ldb,
+    size_t jb, size_t nj, size_t lb, size_t nl, float *bt);
+BCIR_DT_API int bcir_tensor_probe_transpose16(const float *src, size_t ld, float *dst, size_t ldd);
+BCIR_DT_API int bcir_tensor_probe_panels(int conv, int swiglu, int v2, size_t r, size_t c,
+    const float *x, const float *u, const float *dy, unsigned short *a0, unsigned short *b0,
+    unsigned short *a1, unsigned short *b1);
+/* The bf16 contract's pack of a whole operand by the instance `variant` names (1 the portable C,
+ * 4 AVX-512, 8 AMX: bcir_tensor_mm_bf16_variants' bits): which 0 packs an A of `rows` x `cols`
+ * (the depth; trans: stored cols x rows, ld apart) times alpha, which 1 a B of `rows` (the depth) x
+ * `cols` (trans: stored cols x rows); `out` holds pad32(rows) x pad32(cols) elements. */
+int bcir_tensor_probe_bf16_pack(int variant, int which, int trans, size_t rows, size_t cols,
+    float alpha, const float *x, size_t ld, uint16_t *out) {
+  bf16_call c; size_t s,tasks;
+  if (!x || !out || !rows || !cols || (variant!=1 && variant!=4 && variant!=8) ||
+      !(bcir_tensor_mm_bf16_variants()&variant)) return 0;
+  memset(&c,0,sizeof c);
+  if (!which) {
+    c.x.ta=trans!=0; c.x.m=rows; c.x.k=cols; c.x.alpha=alpha; c.x.a=x; c.x.lda=ld;
+    c.kt=bf16_pad(cols)/32; c.mp=bf16_pad(rows); c.q0=0; c.q1=c.kt; c.wa=out;
+    tasks=c.x.ta ? c.kt : c.mp/32;
+    for (s=0;s<tasks;s++) att16_pack_a(variant,&c,s);
+  } else {
+    c.x.tb=trans!=0; c.x.k=rows; c.x.n=cols; c.x.alpha=1.0f; c.x.b=x; c.x.ldb=ld;
+    c.kt=bf16_pad(rows)/32; c.np=bf16_pad(cols); c.q0=0; c.q1=c.kt; c.wb=out;
+    tasks=c.x.tb ? c.np/32 : c.kt;
+    for (s=0;s<tasks;s++) att16_pack_b(variant,&c,s);
+  }
+  return 1;
+}
+#ifdef BCIR_MM_DISPATCH
+__attribute__((target("avx512f"))) static void probe_kb_pack(const mm_args *x, float *bt,
+    size_t jb, size_t nj, size_t lb, size_t nl) {
+  kb512_pack(x,bt,jb,nj,lb,nl);
+}
+__attribute__((target("avx512f"))) static void probe_transpose16(const float *src, size_t ld,
+    float *dst, size_t ldd) {
+  kb512_transpose16(src,ld,dst,ldd);
+}
+#endif
+/* The AVX-512 blocked GEMM's packed B tile: columns [jb, jb+nj) (nj at most 48) and depths
+ * [lb, lb+nl) (nl at most BCIR_MM_KBLOCK) of a k x n B (tb: stored n x k), into bt -- nl rows of 48
+ * floats, 64-byte aligned (the tile's stores are aligned). */
+int bcir_tensor_probe_kb_pack(int tb, size_t k, size_t n, const float *b, size_t ldb, size_t jb,
+    size_t nj, size_t lb, size_t nl, float *bt) {
+#ifdef BCIR_MM_DISPATCH
+  mm_args x;
+  if (!(bcir_tensor_mm_variants()&4) || !b || !bt || (uintptr_t)bt%64 || !nj || nj>48 || !nl ||
+      nl>BCIR_MM_KBLOCK || jb>n || nj>n-jb || lb>k || nl>k-lb) return 0;
+  memset(&x,0,sizeof x);
+  x.tb=tb!=0; x.k=k; x.n=n; x.b=b; x.ldb=ldb;
+  probe_kb_pack(&x,bt,jb,nj,lb,nl);
+  return 1;
+#else
+  (void)tb; (void)k; (void)n; (void)b; (void)ldb; (void)jb; (void)nj; (void)lb; (void)nl; (void)bt;
+  return 0;
+#endif
+}
+/* The 16 x 16 register transpose: 16 rows of 16 floats, ld apart, to their transpose, ldd apart. */
+int bcir_tensor_probe_transpose16(const float *src, size_t ld, float *dst, size_t ldd) {
+#ifdef BCIR_MM_DISPATCH
+  if (!(bcir_tensor_mm_variants()&4) || !src || !dst || ld<16 || ldd<16) return 0;
+  probe_transpose16(src,ld,dst,ldd);
+  return 1;
+#else
+  (void)src; (void)ld; (void)dst; (void)ldd;
+  return 0;
+#endif
+}
+/* The panel writers (BF16-PANELS) by the conversion instance `conv` names (1 the portable C, 4
+ * AVX-512, 8 AMX), serially, where the library's entries run the host's widest: swiglu 0 the SiLU
+ * product's panels as A (a0) and as B (b0), swiglu 1 the SwiGLU VJP's two adjoints as A (a0, a1)
+ * and as A^T (b0, b1); r and c multiples of 32, as the entries take them. */
+int bcir_tensor_probe_panels(int conv, int swiglu, int v2, size_t r, size_t c, const float *x,
+    const float *u, const float *dy, unsigned short *a0, unsigned short *b0, unsigned short *a1,
+    unsigned short *b1) {
+  panel_job j; size_t t;
+  if ((conv!=1 && conv!=4 && conv!=8) || !(bcir_tensor_mm_bf16_variants()&conv) || !r || !c ||
+      r%32 || c%32 || !x || !u || !a0 || !b0 || (swiglu && (!dy || !a1 || !b1))) return 0;
+  memset(&j,0,sizeof j); j.r=r; j.c=c; j.x=x; j.u=u; j.dy=dy; j.at=swiglu!=0;
+  j.op=swiglu ? (v2 ? PANEL_SWIGLU2 : PANEL_SWIGLU1) : (v2 ? PANEL_SILU2 : PANEL_SILU1);
+  j.pa[0]=a0; j.pb[0]=b0; j.pa[1]=a1; j.pb[1]=b1;
+  j.per=1; j.variant=mm_widest(); j.conv=conv;
+  for (t=0;t<r/32;t++) panel_task(&j,t);
+  return 1;
+}
+#endif

@@ -174,10 +174,16 @@ def compiler() -> str | None:
     return host_c_compiler()
 
 
-def build_library(directory, *, sources: dict[str, str] | None = None) -> Path | None:
+def build_library(
+    directory,
+    *,
+    sources: dict[str, str] | None = None,
+    units: tuple[str, ...] = ("bcir_tensor.c", "bcir_decoder_train.c"),
+) -> Path | None:
     """The trainer as a shared library, with the build contract `NativeDecoder.build` uses --
     or, given `sources` (a unit's name -> its text), with those texts in place of the tree's
-    units (a wrong copy, never an edit of the tree). None without a compiler."""
+    units (a wrong copy, never an edit of the tree), of the `units` named (the tensor unit alone
+    for a witness of its own). None without a compiler."""
     cc = compiler()
     if cc is None:
         return None
@@ -187,13 +193,13 @@ def build_library(directory, *, sources: dict[str, str] | None = None) -> Path |
         return NativeDecoder.build(directory, cc=cc)
     target = Path(directory)
     target.mkdir(parents=True, exist_ok=True)
-    units = []
-    for name in ("bcir_tensor.c", "bcir_decoder_train.c"):
+    paths = []
+    for name in units:
         if name in sources:
             (target / name).write_text(sources[name], encoding="utf-8", newline="\n")
-            units.append(str(target / name))
+            paths.append(str(target / name))
         else:
-            units.append(str(_C / name))
+            paths.append(str(_C / name))
     suffix = ".dll" if sys.platform == "win32" else ".dylib" if sys.platform == "darwin" else ".so"
     out = target / ("bcir_decoder_train_mutant" + suffix)
     from bcir.toolchain import build_units, host_link_args
@@ -201,7 +207,7 @@ def build_library(directory, *, sources: dict[str, str] | None = None) -> Path |
     cmd = [cc, "-std=c11", "-O3", "-ffp-contract=off", "-DBCIR_DT_BUILD_SHARED", "-shared"]
     if sys.platform != "win32":
         cmd += ["-fPIC", "-pthread"]
-    cmd += ["-I", str(_C), *units, "-o", str(out)]
+    cmd += ["-I", str(_C), *paths, "-o", str(out)]
     # a copy the compiler refuses is BuildFailed (check_tests.py's `build` finding), never a test's
     build_units(cmd + host_link_args(["-lm"]), "native decoder build of a copy", timeout=180)
     return out
@@ -1017,6 +1023,17 @@ def trace_library(directory) -> Path | None:
     return build_library(directory, sources={"bcir_decoder_train.c": unit})
 
 
+def layout_library(directory) -> Path | None:
+    """The tensor unit alone, built with its layout probe (BCIR_DT_LAYOUT_PROBE, PX-5) by the
+    trainer's build contract, from the tree's unit as it stands -- a fault the sweep injected
+    included. None without a compiler, or outside a source checkout (an installed package ships no
+    C units: the one absence that is expected there)."""
+    if not (_C / "bcir_tensor.c").is_file():
+        return None
+    unit = "#define BCIR_DT_LAYOUT_PROBE 1\n" + source("bcir_tensor.c")
+    return build_library(directory, sources={"bcir_tensor.c": unit}, units=("bcir_tensor.c",))
+
+
 class TraceRun(NamedTuple):
     """One traced call: the launches its plan states, the records the probe held (launch, record),
     the records it had no room for, the state the call left (`state_digest`) and its events."""
@@ -1787,6 +1804,7 @@ __all__ = [
     "trace_case",
     "trace_corpus",
     "trace_library",
+    "layout_library",
     "checkout_library",
     "FUZZ_CONTRACTS",
     "FUZZ_PLACED",

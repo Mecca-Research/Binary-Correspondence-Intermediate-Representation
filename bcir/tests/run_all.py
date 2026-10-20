@@ -192,6 +192,7 @@ def _apply_tier(tier: str) -> None:
 
 _MODULES = [
     "bcir.tests.test_kbcir",
+    "bcir.tests.test_linear_layout",
     "bcir.tests.test_planner_compact",
     "bcir.tests.test_native_hydrate",
     "bcir.tests.test_oracle_inventory",
@@ -358,6 +359,7 @@ _MODULES = [
     "bcir.tests.test_native_run_pack",
     "bcir.tests.test_native_run_program",
     "bcir.tests.test_native_program",
+    "bcir.tests.test_native_layouts",
     "bcir.tests.test_model_manifest",
     "bcir.tests.test_model_tokenizer",
     "bcir.tests.test_model_decode",

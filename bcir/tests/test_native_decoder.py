@@ -143,8 +143,9 @@ def test_native_c_harness_c11_and_c23():
         # entry takes the scan after its job (NDT-SCAN-W), and once capped at AVX2, so a host whose
         # widest variant is AVX-512 runs the update's AVX2 pairs and commit too (NDT-UPDATE); every
         # build with the commit's shared division exposed to the harness's check of it, and with
-        # PX-1's launch trace compiled in but never begun -- so the probe builds warning-free on
-        # every compiler and standard, and the harness's every check holds with it in (inert)
+        # PX-1's launch trace compiled in but never begun, and PX-5's layout probes compiled in but
+        # never called -- so the probes build warning-free on every compiler and standard, and the
+        # harness's every check holds with them in (inert)
         builds = (
             ("c11", [], ""),
             ("c2x", [], ""),
@@ -162,6 +163,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_PANELS_PROBE",
                 "-DBCIR_DT_SCAN_PROBE",
                 "-DBCIR_DT_TRACE_PROBE",
+                "-DBCIR_DT_LAYOUT_PROBE",
                 *options,
                 "-O2",
                 "-Wall",
@@ -218,6 +220,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_PANELS_PROBE",
                 "-DBCIR_DT_SCAN_PROBE",
                 "-DBCIR_DT_TRACE_PROBE",
+                "-DBCIR_DT_LAYOUT_PROBE",
             ]
             cmd += ["-I", str(c)]
             cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]

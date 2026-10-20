@@ -3586,6 +3586,60 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     0-2), 0.725 (all six) -- each at its bound, proved.
   - The ladder: PX-5 states the layouts the kernels keep, and PX-3 takes the pack's choices from
     measured candidates.
+  PX-5 (2026-10-20): the trainer's kernel layouts stated as GF(2) maps and held to their packers.
+  - The gap (Codex's Triton comparison, `docs/research/BCIR_TRITON_COMPARATIVE_ANALYSIS.md` §3a,
+    item 1): the native trainer's packers keep their layouts as index arithmetic -- the AMX tile and
+    panel order of the bf16 GEMMs, the VNNI pair interleave, the AVX-512 blocked GEMM's B tile and
+    its 16 x 16 register transpose -- and nothing stated them, so a second spelling of the same
+    arithmetic was the only check. Triton's linear layouts treat a layout as a linear map over GF(2)
+    on the bits of the indices; PX-5 adopts that algebra beside the integer-affine maps
+    (`kbcir/layout.py`'s G3 pivot is unchanged) and states the trainer's layouts in it, before any
+    layout is generated.
+  - `bcir.kbcir.linear_layout` (dependency-free): `LinearLayout`, a map from named input dimensions
+    to named output dimensions, each a power of two, given by the image of every input bit --
+    `apply` is the XOR of the set bits' images; `compose`; one Gaussian elimination over GF(2)
+    (`rank`, `injective`, `surjective`, `kernel` -- the inputs a map sends to zero, a broadcast's --
+    and `preimage`: one input and the kernel's span); `inverse`, `convert_to` (B^-1 . A, one storage
+    to another), `product`, `rename`, `reorder_outs`; `from_function` reads a map from its images of
+    the unit inputs and checks it on every input, refusing one that is not linear. `TiledLayout`
+    puts a GF(2) tile under an integer mixed-radix grid (radices need not be powers of two: three
+    16-lane vectors make a 48-wide block) with a shape, so a tail past the operand is padding the
+    statement names. Every rule refuses what breaks it (ValueError): a value missing, extra, outside
+    its dimension or not an integer is never packed into a neighbour's bits.
+  - `bcir.hosted.models.native_layouts` states, in that algebra: the bf16 A tile (16 rows x 32
+    depths, the AMX tile register's 64-byte rows) and B tile (the VNNI interleave -- offset bit 0
+    the depth's low bit, bits 1-4 the column, 5-8 the depth's other four), the packs and panels as
+    those tiles under the C's grids (a 16-row block's depth tiles in order, rows and depth padded to
+    32), the conversion a panel writer makes from its A panel to its second panel, the AVX-512
+    blocked GEMM's B tile (a depth row of three 16-lane vectors, the columns past the block zero),
+    the register transpose and each of its four stages (unpack, shuffle, two 128-bit lane exchanges
+    -- each a 3-cycle of bits; composed, the transpose), and the A broadcast (`_mm512_set1_ps`: the
+    kernel is all four lane bits -- a statement and its kernel, not held to a packer: nothing packs
+    it).
+  - Held to the C bit for bit (`test_native_layouts`), on operands whose elements carry their
+    coordinates, in a build of the tensor unit defining BCIR_DT_LAYOUT_PROBE (one build a process):
+    the bf16 packs of every instance the host has (the portable C and AVX-512 here; AMX where
+    admitted) on ragged shapes, A and B as stored and transposed -- every element at its offset,
+    every padding offset +0.0, every instance the portable C's bytes; the panel writers by every
+    instance (the new probe `bcir_tensor_probe_panels`: the library's entries run only the host's
+    widest) and by the library's entries -- every element where the statement puts it, each second
+    panel the first converted, every instance the same bytes; the blocked GEMM's B tile at every
+    block width from 1 to 48 and both orientations, the columns past the block zero; the register
+    transpose. The algebra's laws on seeded random maps against every input (`test_linear_layout`:
+    inverse, composition, the kernel and every preimage against the map's own table, conversions,
+    the linearity refusal, the tiled round trip and its mask, and each refusal).
+  - What is not observable is not claimed: the register blocks' accumulators never leave the kernel,
+    so their layout is not held; the AMX instance does not run on this host (no AMX), so its packs
+    and panels are held where a host admits it.
+  - Fault sweeps: `px-layout.json` (the algebra and the statements its pure witnesses hold): 31 of
+    31 defects injected, each caught by its own witness (LA1-LA28, LS1-LS3); `px-layout-c.json` (the
+    C packers, the panel writers, the B tile and the transpose, and the statements only the C
+    witnesses hold): 21 of 21 caught (LS4-LS11, LC1-LC13). Every C entry compiles warning-free under
+    GCC 13, clang 18 and clang 23, at `-fsyntax-only` and `-O3`, with the layout probe and without
+    (RED-VACUITY): 13 C faults and the clean unit, 16 builds each (GCC 13, clang 18 and clang 23 at
+    C11, clang 23 at C23; -fsyntax-only and -O3; the probe defined and not), 0 compiler findings.
+  - The ladder: PX-3 takes the pack's choices from measured candidates; PX-6 (GPU) is a documented
+    skip on this host.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
