@@ -148,6 +148,7 @@ the C rail to it:
 |---|---|---|---|
 | `train.plan.mismatch` | exact | the program's arena sums against `bcir_decoder_make_plan` over a six-spec corpus (tied and untied, MHA and GQA, context one, tile-crossing widths) | 0 of 36 (spec, arena) pairs; the parent checked the 24 parameter pairs only |
 | `train.plan.executed.mismatch` | exact | the launches one `bcir_decoder_run_accum` call issues -- recorded by a build defining `BCIR_DT_TRACE_PROBE` -- against the launches [`native_launch.run_launches`](../../bcir/hosted/models/native_launch.py) states from the program's buffers and the call's decisions: every call to the tensor unit, a provider or the pool, the job it shares, its entry, shapes, scalars and the arena span of each operand, over 221 calls (six contracts, three recompute sets, one and two steps of one and two micro-batches, the panels at three workspace tiers and two thread counts, a provider's GEMM and SiLU, an update whose bound fails) | 0 of 221 (2026-10-19, PX-1); the parent held no call's launches to a plan |
+| `train.plan.program.mismatch` | exact | runs of [`bcir_decoder_run_program`](../../runtime/c/bcir_decoder_train.h) -- the step from a launch program, checked whole before anything runs -- on the programs [`native_launch.step_program`](../../bcir/hosted/models/native_launch.py) states: each call of the trace corpus from the program that takes the C step's own decisions, and its 27 state cases under each of five other choices (the linears ungrouped, a linear's VJPs unpaired, no panels, every scan made, every layer recomputed), against the C step on the same case; a run counts when its state or events differ in a bit, it stops short, or its trace (PX-1's probe) is not its program | 0 of 356 (2026-10-20, PX-2a); the parent ran no step from a program |
 | `train.mm.mismatch` | exact | `bcir_tensor_mm` against an independent binary32 emulation of its contract, bit for bit, on 20 cases (every transpose pair, the tiles' edges) | 0 of 20, and 0 on the parent kernel: the contract both keep |
 | `train.memory.transient` | exact | the bytes the C plan reserves for activations and workspace over G26's concurrent-live bound on the same values | 1.326x: 999,424 bytes held over a 753,664-byte bound at the bench shape |
 | `train.mm.fused.mismatch` | exact | `bcir_tensor_mm_fused` against an exact rational emulation of the fused contract rounded once per term, bit for bit, on the same 20 cases | 0 of 20 (2026-10-12, NDT-FMA) |
@@ -184,6 +185,28 @@ the library's call after its record -- the witness holds that build's state to t
 27 decision sets -- and a record past the words the caller lent is counted, never lost silently.
 `native_decoder_fixtures.trace_case` runs one call and returns the planned launches, the trace,
 the dropped count and the state's digest; `launch_mismatches` names each difference.
+
+The program row runs the step from its plan. `bcir_decoder_run_program` takes one call's launches
+as data -- PX-1's records, with the host's checks (the forward's, the products', each micro-batch's
+loss) and the update in place -- checks the whole program before anything runs, and runs each
+record as the step runs that call, through the step's own helpers; `NativeDecoder.run_program` is
+its binding, and `NativeRunStopped` carries a stopped run's status and the steps it completed. A
+program is refused, with nothing written, for a record outside its grammar; an operand outside the
+spaces its use admits, outside its space, of another size or off its alignment, or meeting an
+operand its job writes; a GEMM job or flags the state's kernels do not take; the weights read
+before a scan of all of them or an update has made them known finite; a run of another shape than
+the call's (one loss a micro-batch, an update after exactly `accumulation` of them, `steps`
+updates); or a program lying inside the state. What the check cannot refuse -- operands placed
+where the step's gradient is not computed -- the row holds. Every planner choice trains the C
+step's bits, so the decisions are held to the kernels from the other side as well: a program is
+the step, choice by choice. [`fuzz_decoder_train.c`](../../runtime/c/fuzz_decoder_train.c) runs
+programs nobody planned, seeded inside the grammar and next to its refusals
+(`native_decoder_fixtures.fuzz_seeds`): a refused program writes nothing, an admitted one runs to
+the same bits every time, and nothing is read or written out of bounds.
+Running from a program costs nothing this host resolves: on the 9.84M decoder, the fixed sequence
+and the program take turns on one trainer and read x1.0035 apart at four threads under bf16 (95%
+interval 0.977-1.030), inside the width of the A/A control's interval, and the check walks a step's
+223 records in about 12 us ([measurements](../research/measurements/2026-10-20/px2/README.json)).
 
 ## Evidence and scope
 

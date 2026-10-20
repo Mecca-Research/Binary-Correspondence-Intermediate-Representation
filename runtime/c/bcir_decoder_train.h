@@ -161,6 +161,51 @@ BCIR_DT_API int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_
     const uint32_t *tokens,const uint32_t *targets,size_t token_count,
     const double *rates,size_t steps,size_t accumulation,bcir_decoder_event *events,
     size_t event_capacity,size_t *completed);
+/* PX-2 (PACK): bcir_decoder_run_accum's run from a launch program -- the planner's decisions (which
+ * calls share a job, each GEMM's entry, the SwiGLU block's panels, the forward a recomputed layer
+ * re-runs, the scans the run's facts leave out, where each operand sits) carried as data and run by
+ * the trainer's own kernels (bcir/hosted/models/native_launch.py states the program for a trainer's
+ * decisions). A program is `records` records of BCIR_DT_RECORD_WORDS words, the layout PX-1's launch
+ * trace records: kind, launch (a GEMM job's calls share it; every other record is a job of one; each
+ * job's launch exceeds the one before), flags, eight dimensions, ten operands as (space, byte offset,
+ * bytes) -- spaces 1-4 the parameter arenas in the state's order, 5 activations, 6 scratch, 7 the bf16
+ * workspace (whole), 8 the micro-batch's tokens or targets (whole, offset 0); an absent one (0, 0, 0)
+ * -- and seven words of zero. A kernel record runs its call as the step runs it, so a program's
+ * trace is the program; PASS, PREFLIGHT and COMMIT are trace records only. A scan of a parameter
+ * arena fails the run (BCIR_DT_NUMERIC) on a value not finite, a scan of activations or scratch
+ * reports to the next FORWARD check; a scan of the whole weights, and an update, make the weights
+ * known finite, and no other record reads them before they are (FACTS-RUN). The host's records:
+ * CHECK -- FORWARD: a product refused its workspace, BCIR_DT_CAPACITY, else a value the forward's
+ * writers or scans found not finite, BCIR_DT_NUMERIC; RAN: a refused product, BCIR_DT_CAPACITY;
+ * LOSS: the same, then the micro-batch's loss not finite, BCIR_DT_NUMERIC, else it closes the
+ * micro-batch (its tokens are the next ones), its mean adding a 1/accumulation share to the step's
+ * loss -- and UPDATE (the update's pass record, its kind UPDATE): bcir_decoder_update's update with
+ * the gradient scaled by 1/accumulation and the step's rate, its event the step's.
+ * The whole program is checked before anything runs, BCIR_DT_INVALID with nothing written: a record
+ * of no kind or with a field outside its grammar, an operand outside the spaces its use admits
+ * (kernels read the weights, gradients, activations and scratch and write the last three), outside
+ * its space or of another size than its dimensions name, a written operand meeting another operand
+ * of its job (one GEMM chain's shared C excepted), flags other than the state's contract names, a
+ * GEMM entry or job another than the state's kernels take (bcir_tensor.h's group and panel rules
+ * included), a provider's call without the provider or BCIR's SiLU with one, the weights read
+ * before they are known, a micro-batch not closed by LOSS after exactly one loss record, an update
+ * not after exactly `accumulation` micro-batches, or a program not `steps` such steps -- after the
+ * arguments' checks of bcir_decoder_run_accum, whose outputs, ordering of verdicts and completed
+ * count this has; the program itself lies outside the state, the events and the count. The check
+ * holds each call to its kernel's contract and the run to its step's shape; that the operands'
+ * places compute the step's gradient is the program's, which train.plan.program.mismatch holds. */
+#define BCIR_DT_RECORD_WORDS 48
+enum { BCIR_DT_REC_SCAN=1, BCIR_DT_REC_ZERO, BCIR_DT_REC_EMBED, BCIR_DT_REC_RMS, BCIR_DT_REC_GEMM,
+  BCIR_DT_REC_ROPE, BCIR_DT_REC_ATTN, BCIR_DT_REC_ATTN_VJP, BCIR_DT_REC_ADD, BCIR_DT_REC_SILU_MUL,
+  BCIR_DT_REC_SILU_MUL_PANELS, BCIR_DT_REC_SWIGLU_VJP, BCIR_DT_REC_SWIGLU_VJP_PANELS,
+  BCIR_DT_REC_RMS_VJP, BCIR_DT_REC_LOSS, BCIR_DT_REC_SCATTER, BCIR_DT_REC_PASS,
+  BCIR_DT_REC_PREFLIGHT, BCIR_DT_REC_COMMIT, BCIR_DT_REC_MUL, BCIR_DT_REC_PROVIDER_SILU,
+  BCIR_DT_REC_CHECK, BCIR_DT_REC_UPDATE };
+enum { BCIR_DT_CHECK_FORWARD=1u, BCIR_DT_CHECK_RAN=2u, BCIR_DT_CHECK_LOSS=4u };
+BCIR_DT_API int bcir_decoder_run_program(bcir_decoder_state *s,const bcir_decoder_adamw *opt,
+    const uint64_t *program,size_t records,const uint32_t *tokens,const uint32_t *targets,
+    size_t token_count,const double *rates,size_t steps,size_t accumulation,
+    bcir_decoder_event *events,size_t event_capacity,size_t *completed);
 #ifdef __cplusplus
 }
 #endif

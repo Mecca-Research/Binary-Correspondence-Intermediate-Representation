@@ -23,6 +23,17 @@ every candidate in range (`adamw_bounded`, a fact of the values): it is planned 
 trace may hold it there or not. `train.plan.executed.mismatch` counts the configurations whose
 trace differs from their plan (`bcir/tests/native_decoder_fixtures.py`).
 
+PX-2 (PACK) runs the plan. `step_program` is the same walk with the host's records in place -- a
+CHECK where the step tests what its kernels reported (the forward's verdict, a refused product, the
+micro-batch's loss) and an UPDATE where it updates -- and with the decisions a planner may take
+otherwise than the C step does: calls run alone instead of grouped (`group`) or paired (`pair`), the
+SwiGLU block without its panels (`panels`), every scan made whatever the run's facts know (`facts`),
+and any recompute set whose cache fits the state's arena. `program_words` spells it as the words
+`bcir_decoder_run_program` runs, and `program_launches` is what its run issues -- the kernel records,
+each UPDATE as the update's pass, preflight and commit -- so `run_launches` is `step_program`'s
+projection, and a program's trace is held to the program as PX-1 holds the step's to its plan
+(`train.plan.program.mismatch`).
+
 A record: kind, launch (the calls of one job share it), flags, eight dimensions, then ten operands
 as (space, byte offset, bytes) -- spaces 1-4 the parameter arenas (weights, gradients, first and
 second moments), 5 activations, 6 scratch, 7 the bf16 workspace, 8 outside the state (the
@@ -36,7 +47,7 @@ panel << 25.
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ...frontends.models.decode import DecoderSpec
 from .native_program import ARENAS, recompute_layers, training_step_program
@@ -45,6 +56,9 @@ from .native_program import ARENAS, recompute_layers, training_step_program
 SCAN, ZERO, EMBED, RMS, GEMM, ROPE, ATTN, ATTN_VJP, ADD, SILU_MUL = range(1, 11)
 SILU_MUL_PANELS, SWIGLU_VJP, SWIGLU_VJP_PANELS, RMS_VJP, LOSS, SCATTER = range(11, 17)
 PASS, PREFLIGHT, COMMIT, MUL, PROVIDER_SILU = range(17, 22)
+#: The host's records of a program (PX-2): a check, the update -- and a check's three tests.
+CHECK, UPDATE = 22, 23
+CHECK_FORWARD, CHECK_RAN, CHECK_LOSS = 1, 2, 4
 KIND_NAMES = {
     SCAN: "scan", ZERO: "zero", EMBED: "embed", RMS: "rms", GEMM: "gemm", ROPE: "rope",
     ATTN: "attention", ATTN_VJP: "attention.vjp", ADD: "add", SILU_MUL: "silu_mul",
@@ -53,6 +67,8 @@ KIND_NAMES = {
     PASS: "update.pass", PREFLIGHT: "update.preflight", COMMIT: "update.commit", MUL: "mul",
     PROVIDER_SILU: "provider.silu",
 }  # fmt: skip
+#: Every kind a program may hold or a trace record: the trace's and the host's.
+PROGRAM_KIND_NAMES = KIND_NAMES | {CHECK: "check", UPDATE: "update"}
 #: Operand spaces: the six arenas in the state's order, then the workspace and the outside.
 SPACES = {name: i + 1 for i, name in enumerate(ARENAS)} | {"workspace": 7, "external": 8}
 #: A record's words: kind, launch, flags, 8 dimensions, 10 operands of 3 words, 7 spare.
@@ -94,7 +110,8 @@ class Record:
         operands = " ".join(
             f"{_SPACE_NAMES.get(s, s)}+{o}/{b}" for s, o, b in self.refs if (s, o, b) != _NONE
         )
-        return f"{KIND_NAMES.get(self.kind, self.kind)} flags={self.flags:#x} dims={list(self.dims)} {operands}"
+        name = PROGRAM_KIND_NAMES.get(self.kind, self.kind)
+        return f"{name} flags={self.flags:#x} dims={list(self.dims)} {operands}"
 
 
 _SPACE_NAMES = {v: k for k, v in SPACES.items()}
@@ -150,10 +167,58 @@ def run_launches(
     accumulation: int = 1,
 ) -> list[Launch]:
     """The launches one `bcir_decoder_run_accum(state, ..., steps, accumulation, ...)` call issues
-    under the given decisions (module docstring). `contract` is the state's bits, `alignment`
-    each space's base address modulo 64 (the panels need 64-byte slots; absent: aligned)."""
+    under the given decisions (module docstring): the launches of the program that takes the C
+    step's own. `contract` is the state's bits, `alignment` each space's base address modulo 64
+    (the panels need 64-byte slots; absent: aligned)."""
+    return program_launches(
+        step_program(
+            spec,
+            batch,
+            time,
+            contract=contract,
+            recompute=recompute,
+            workspace_bytes=workspace_bytes,
+            panels_need=panels_need,
+            alignment=alignment,
+            provider_mm=provider_mm,
+            provider_silu=provider_silu,
+            steps=steps,
+            accumulation=accumulation,
+        )  # fmt: skip
+    )
+
+
+def step_program(
+    spec: DecoderSpec,
+    batch: int,
+    time: int,
+    *,
+    contract: int,
+    recompute: int = 0,
+    workspace_bytes: int = 0,
+    panels_need: int = 0,
+    alignment: dict | None = None,
+    provider_mm: bool = False,
+    provider_silu: bool = False,
+    steps: int = 1,
+    accumulation: int = 1,
+    group: bool = True,
+    pair: bool = True,
+    panels: bool = True,
+    facts: bool = True,
+) -> list[Launch]:
+    """The program of one `bcir_decoder_run_program(state, ..., steps, accumulation, ...)` call:
+    `run_launches`' walk with the host's CHECK and UPDATE records in place, under the given
+    decisions -- the state's (`run_launches`' arguments, the state the program runs on) and the
+    planner's own: `group` False runs the linears that read one input as calls of their own (and
+    their VJPs as pairs), `pair` False a linear's two VJPs as two calls, `panels` False the SwiGLU
+    block without its panels, `facts` False makes every scan the run's facts would leave out; and
+    `recompute` is the program's own set, whose cache must fit the state's arena. Every decision
+    trains the same bits (NDT-SCHED-0/1, BF16-PANELS, FACTS-RUN, REMAT)."""
     if type(steps) is not int or steps < 1 or type(accumulation) is not int or accumulation < 1:
         raise ValueError("steps and accumulation must be positive integers")
+    if any(type(flag) is not bool for flag in (group, pair, panels, facts)):
+        raise ValueError("group, pair, panels and facts are booleans")
     program = training_step_program(spec, batch, time, recompute)
     lay = _layout(program)
     redone = set(recompute_layers(spec, recompute))
@@ -214,7 +279,7 @@ def run_launches(
         else:
             emit(call(gemm_contract, 0, 0, gemm_contract, c))
 
-    def group(chain, rest, pre=None) -> None:
+    def gemm_job(chain, rest, pre=None) -> None:
         """gemm_group_with: one job, the chain then the rest (`pre` per call, bf16 only)."""
         calls = list(chain) + list(rest)
         pre = pre or [(None, None)] * len(calls)
@@ -231,30 +296,30 @@ def run_launches(
     def linear_backward(rows, inp, outp, x, w, dy, dx, dw, beta, wbeta) -> None:
         cx = (0, 0, rows, inp, outp, beta, dy, w, dx)
         cw = (1, 0, outp, inp, rows, wbeta, dy, x, dw)
-        if provider_mm:
+        if provider_mm or not pair:
             gemm(cx)
             gemm(cw)
         elif gemm_contract == 3:
-            group([cx], [cw])
+            gemm_job([cx], [cw])
         else:
             emit(call(E_PAIR, 1, 0, gemm_contract, cx), call(E_PAIR, 2, 1, gemm_contract, cw))
 
     def linears(rows, inp, x, outs, ws_, ys) -> None:
-        if provider_mm or len(outs) > _GROUP:
+        if provider_mm or not group or len(outs) > _GROUP:
             for o, w, y in zip(outs, ws_, ys):
                 linear(rows, inp, o, x, w, y)
             return
-        group([], [(0, 1, rows, o, inp, 0.0, x, w, y) for o, w, y in zip(outs, ws_, ys)])
+        gemm_job([], [(0, 1, rows, o, inp, 0.0, x, w, y) for o, w, y in zip(outs, ws_, ys)])
 
     def linears_backward(rows, inp, x, outs, ws_, dys, dx, dws, beta, wbeta) -> None:
-        if provider_mm or len(outs) > _GROUP:
+        if provider_mm or not group or len(outs) > _GROUP:
             for q, (o, w, dy, dw) in enumerate(zip(outs, ws_, dys, dws)):
                 linear_backward(rows, inp, o, x, w, dy, dx, dw, 1.0 if q else beta, wbeta)
             return
         cx = [(0, 0, rows, inp, o, 1.0 if q else beta, dy, w, dx)
               for q, (o, w, dy) in enumerate(zip(outs, ws_, dys))]  # fmt: skip
         cw = [(1, 0, o, inp, rows, wbeta, dy, x, dw) for o, dy, dw in zip(outs, dys, dws)]
-        group(cx, cw)
+        gemm_job(cx, cw)
 
     def scan(r) -> None:
         emit(_record(SCAN, 0, (r[2] // 4,), (r,)))
@@ -277,10 +342,10 @@ def run_launches(
         else:
             emit(_record(SILU_MUL, v2, (nf,), (x, u, y)))
 
-    def panels(a, b) -> bool:
+    def use_panels(a, b) -> bool:
         """panels(): the bf16 contract, BCIR's GEMM and SiLU, whole 32-tiles, 64-byte slots, and
-        the workspace at the panel groups' need."""
-        return (gemm_contract == 3 and not provider_mm and not provider_silu and n % 32 == 0
+        the workspace at the panel groups' need -- where the program takes the panels at all."""
+        return (panels and gemm_contract == 3 and not provider_mm and not provider_silu and n % 32 == 0
                 and d % 32 == 0 and f % 32 == 0 and aligned(a) and aligned(b)
                 and workspace_bytes >= panels_need)  # fmt: skip
 
@@ -319,14 +384,14 @@ def run_launches(
         rms(c("x2"), p("norm2"), c("n2"))
         linears(n, d, c("n2"), (f, f), (p("gate"), p("up")), (c("gate"), c("up")))
         hidden = c("hidden")
-        if panels(hidden, hidden):
+        if use_panels(hidden, hidden):
             a, b = (
                 ref(f"{slot(layer)}.hidden", 0, nf * 2),
                 ref(f"{slot(layer)}.hidden", nf * 2, nf * 2),
             )
             emit(_record(SILU_MUL_PANELS, v2, (n, f), (c("gate"), c("up"), a, b)))
             if full:
-                group([], [(0, 1, n, d, f, 0.0, None, p("down"), y)], [(a, None)])
+                gemm_job([], [(0, 1, n, d, f, 0.0, None, p("down"), y)], [(a, None)])
         else:
             silu_mul(c("gate"), c("up"), hidden)
             if full:
@@ -343,6 +408,7 @@ def run_launches(
         rms(ref(f"x{L}"), ref("weights:final_norm"), ref("norm"))
         linear(n, d, v, ref("norm"), ref(f"weights:{head}"), ref("logits"))
         scan(ref("logits"))
+        emit(_record(CHECK, CHECK_FORWARD))
 
     def loss_backward(accumulate: bool, how: int) -> None:
         if not how & (_KNOWN | _COMMITTED):
@@ -372,15 +438,18 @@ def run_launches(
             if layer in redone and layer != top:
                 layer_forward(layer, False)
             hidden = c("hidden")
-            if panels(hidden, hidden):
+            if use_panels(hidden, hidden):
                 cx = (0, 0, n, f, d, 0.0, cur, p("down"), dh)
                 cw = (1, 0, d, f, n, wb, cur, None, q("down"))
-                group(
-                    [cx], [cw], [(None, None), (None, ref(f"{slot(layer)}.hidden", nf * 2, nf * 2))]
-                )
+                panel = (None, ref(f"{slot(layer)}.hidden", nf * 2, nf * 2))
+                if pair:
+                    gemm_job([cx], [cw], [(None, None), panel])
+                else:  # the two VJPs as two jobs: the panel's call a bf16 group of its own
+                    gemm(cx)
+                    gemm_job([], [cw], [panel])
             else:
                 linear_backward(n, f, d, hidden, p("down"), cur, dh, q("down"), 0.0, wb)
-            if panels(dg, du):
+            if use_panels(dg, du):
                 pg = (ref("dg", 0, nf * 2), ref("dg", nf * 2, nf * 2))
                 pu = (ref("du", 0, nf * 2), ref("du", nf * 2, nf * 2))
                 emit(_record(SWIGLU_VJP_PANELS, v2, (n, f),
@@ -390,7 +459,15 @@ def run_launches(
                 cw = [(1, 0, f, d, n, wb, None, c("n2"), q("gate")),
                       (1, 0, f, d, n, wb, None, c("n2"), q("up"))]  # fmt: skip
                 pre = [(pg[0], None), (pu[0], None), (pg[1], None), (pu[1], None)]
-                group(cx, cw, pre)
+                if group:
+                    gemm_job(cx, cw, pre)
+                else:  # each projection's VJPs a job of their own, as linear_backward's are
+                    for j in range(2):
+                        if pair:
+                            gemm_job([cx[j]], [cw[j]], [pre[j], pre[2 + j]])
+                        else:
+                            gemm_job([], [cx[j]], [pre[j]])
+                            gemm_job([], [cw[j]], [pre[2 + j]])
             else:
                 emit(_record(SWIGLU_VJP, v2, (nf,), (c("gate"), c("up"), dh, dg, du)))
                 linears_backward(n, d, c("n2"), (f, f), (p("gate"), p("up")), (dg, du), dn,
@@ -404,27 +481,59 @@ def run_launches(
                              (q("q"), q("k"), q("v")), 0.0, wb)  # fmt: skip
             rms_backward(ref(f"x{layer}"), p("norm1"), dn, cur, q("norm1"), inv, _RMSB_ADD | gf)
         emit(_record(SCATTER, 0, (n, d), (ext(4 * n), cur, ref("gradients:embed"))))
+        emit(_record(CHECK, CHECK_RAN))
         if not how & _DEFER:
             scan(ref("gradients:embed", 0, 4 * params))
+        emit(_record(CHECK, CHECK_LOSS))
 
     def update() -> None:
         # the first pass, the preflight and the commit read the gradients, then the weights and
         # the two moments, each whole
         quad = tuple(ref(f"{arena}:embed", 0, 4 * params)
                      for arena in ("gradients", "weights", "moment1", "moment2"))  # fmt: skip
-        chunk = reduce_chunk(params)
-        emit(_record(PASS, 1 if contract & _REDUCE else 0, (params, chunk), quad))
-        emit(_record(PREFLIGHT, 0, (params, chunk), quad), optional=True)
-        emit(_record(COMMIT, 0, (params,), quad))
+        emit(_record(UPDATE, 1 if contract & _REDUCE else 0, (params, reduce_chunk(params)), quad))
 
     for step in range(steps):
         for micro in range(accumulation):
             how = (_KNOWN if micro else _COMMITTED if step else 0) | (
                 _DEFER if micro + 1 == accumulation else 0
             )
+            if not facts:  # every scan, whatever the run knows
+                how = 0
             loss_backward(micro != 0, how)
         update()
     return out
+
+
+def program_launches(program: list[Launch]) -> list[Launch]:
+    """The launches a program's run issues, as the probe traces them: its kernel jobs as they
+    stand, each UPDATE as the update's pass, its preflight (optional: a fact of the values) and its
+    commit; a CHECK issues none."""
+    out = []
+    for launch in program:
+        record = launch.records[0]
+        if record.kind == CHECK:
+            continue
+        if record.kind == UPDATE:
+            commit = (record.dims[0],) + (0,) * (DIMS - 1)
+            out.append(Launch((replace(record, kind=PASS),)))
+            out.append(Launch((replace(record, kind=PREFLIGHT, flags=0),), optional=True))
+            out.append(Launch((replace(record, kind=COMMIT, flags=0, dims=commit),)))
+        else:
+            out.append(launch)
+    return out
+
+
+def program_words(program: list[Launch]) -> list[int]:
+    """A program as the `RECORD_WORDS`-word records `bcir_decoder_run_program` runs: its jobs
+    numbered from 1 in order, each record its kind, its job's number, flags, dimensions, operands
+    and seven words of zero."""
+    words: list[int] = []
+    for number, launch in enumerate(program, 1):
+        for r in launch.records:
+            words += [r.kind, number, r.flags, *r.dims, *(x for ref in r.refs for x in ref)]
+            words += [0] * (RECORD_WORDS - 3 - DIMS - 3 * REFS)
+    return words
 
 
 def read_trace(words, count: int) -> list[tuple[int, Record]]:
@@ -474,12 +583,16 @@ def launch_mismatches(planned: list[Launch], traced: list[tuple[int, Record]]) -
 
 __all__ = [
     "KIND_NAMES",
+    "PROGRAM_KIND_NAMES",
     "Launch",
     "RECORD_WORDS",
     "Record",
     "SPACES",
     "launch_mismatches",
+    "program_launches",
+    "program_words",
     "read_trace",
     "reduce_chunk",
     "run_launches",
+    "step_program",
 ]

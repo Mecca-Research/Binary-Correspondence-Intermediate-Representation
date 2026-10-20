@@ -41,8 +41,8 @@
     {
       "expects": "test_the_c_step_issues_the_planned_launches",
       "label": "PX5 the loss rows' terms written to tmp, not the arena's start",
-      "new": "  lj.terms=(unsigned char *)tmp;",
-      "old": "  lj.terms=(unsigned char *)s->scratch;",
+      "new": "  ce=loss_rows(s,g,logits,targets,dl,(unsigned char *)tmp);",
+      "old": "  ce=loss_rows(s,g,logits,targets,dl,(unsigned char *)s->scratch);",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
@@ -97,8 +97,8 @@
     {
       "expects": "test_the_c_step_issues_the_planned_launches",
       "label": "PM1 the plan groups at most two linears (q, k, v planned as three launches)",
-      "new": "        if provider_mm or len(outs) > 2:\n            for o, w, y in zip(outs, ws_, ys):",
-      "old": "        if provider_mm or len(outs) > _GROUP:\n            for o, w, y in zip(outs, ws_, ys):",
+      "new": "        if provider_mm or not group or len(outs) > 2:\n            for o, w, y in zip(outs, ws_, ys):",
+      "old": "        if provider_mm or not group or len(outs) > _GROUP:\n            for o, w, y in zip(outs, ws_, ys):",
       "path": "bcir/hosted/models/native_launch.py"
     },
     {
@@ -111,8 +111,8 @@
     {
       "expects": "test_the_c_step_issues_the_planned_launches",
       "label": "PM3 the plan states the update's preflight as always run",
-      "new": "        emit(_record(PREFLIGHT, 0, (params, chunk), quad), optional=False)",
-      "old": "        emit(_record(PREFLIGHT, 0, (params, chunk), quad), optional=True)",
+      "new": "            out.append(Launch((replace(record, kind=PREFLIGHT, flags=0),), optional=False))",
+      "old": "            out.append(Launch((replace(record, kind=PREFLIGHT, flags=0),), optional=True))",
       "path": "bcir/hosted/models/native_launch.py"
     },
     {

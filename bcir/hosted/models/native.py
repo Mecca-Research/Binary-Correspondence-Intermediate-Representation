@@ -244,6 +244,15 @@ def parameter_layout(spec: DecoderSpec):
     return tuple(out)
 
 
+class NativeRunStopped(ValueError):
+    """A native run that stopped early: its C status (1 invalid, 2 capacity, 3 non-finite) and the
+    steps it completed, which the state keeps."""
+
+    def __init__(self, message: str, status: int, completed: int):
+        super().__init__(message)
+        self.status, self.completed = status, completed
+
+
 def _check(rc: int):
     if rc:
         reason = {
@@ -855,7 +864,76 @@ class NativeDecoder:
             ct.byref(done),
         )
         if rc:
-            raise ValueError(f"native run stopped after {done.value} complete steps (status {rc})")
+            raise NativeRunStopped(
+                f"native run stopped after {done.value} complete steps (status {rc})",
+                rc,
+                done.value,
+            )
+        return tuple({"step": e.step, "loss": e.loss, "grad_norm": e.grad_norm} for e in events)
+
+    def run_program(
+        self,
+        program,
+        tokens,
+        targets,
+        *,
+        steps,
+        optimizer=NativeAdamW(),
+        learning_rates=None,
+        gradient_accumulation=1,
+    ):
+        """`run` from a launch program (PX-2, `bcir_decoder_run_program`): `program` the words
+        `native_launch.program_words` spells -- a planner's decisions for this state -- each
+        record the call the step makes for it. The C checks the whole program before anything
+        runs (a refusal is status 1, nothing written); the run's outputs are `run`'s. An
+        `array('Q')` is lent to the C as it is; any other sequence is checked (ints in
+        [0, 2**64), so no bool or float) and converted once a call."""
+        if type(steps) is not int or steps < 1 or not isinstance(optimizer, NativeAdamW):
+            raise ValueError("run_program requires positive steps and NativeAdamW")
+        if type(gradient_accumulation) is not int or gradient_accumulation < 1:
+            raise ValueError("gradient_accumulation must be a positive integer")
+        from .native_launch import RECORD_WORDS
+
+        code = None
+        if isinstance(program, array) and program.typecode == "Q" and program.itemsize == 8:
+            code = program
+        else:
+            words = list(program)
+            if not set(map(type, words)) - {int}:
+                try:
+                    code = array("Q", words)  # the range check, in C: OverflowError outside it
+                except OverflowError:
+                    code = None
+        if code is None or len(code) % RECORD_WORDS:
+            raise ValueError(f"a program is records of {RECORD_WORDS} unsigned 64-bit words")
+        fn = getattr(self.lib, "bcir_decoder_run_program", None)
+        if fn is None:
+            raise ValueError("this native decoder library has no launch-program runner (PX-2)")
+        fn.argtypes = [
+            ct.POINTER(_State), ct.POINTER(_Optimizer), ct.POINTER(ct.c_uint64), _SZ, _UP, _UP,
+            _SZ, ct.POINTER(ct.c_double), _SZ, _SZ, ct.POINTER(_Event), _SZ, ct.POINTER(_SZ),
+        ]  # fmt: skip
+        fn.restype = ct.c_int
+        x, y = (
+            self._tokens(tokens, steps=steps * gradient_accumulation),
+            self._tokens(targets, steps=steps * gradient_accumulation),
+        )
+        rates = None
+        if learning_rates is not None:
+            if len(learning_rates) != steps:
+                raise ValueError("learning rate count must equal steps")
+            rates = (ct.c_double * steps)(*learning_rates)
+        records = len(code) // RECORD_WORDS
+        view = (ct.c_uint64 * len(code)).from_buffer(code) if code else (ct.c_uint64 * 1)()
+        opt, events, done = _Optimizer(**asdict(optimizer)), (_Event * steps)(), _SZ()
+        rc = fn(ct.byref(self.state), ct.byref(opt), view, records, x, y, len(x), rates, steps,
+                gradient_accumulation, events, steps, ct.byref(done))  # fmt: skip
+        if rc:
+            raise NativeRunStopped(
+                f"native program run stopped after {done.value} complete steps (status {rc})",
+                rc,
+                done.value,
+            )
         return tuple({"step": e.step, "loss": e.loss, "grad_norm": e.grad_norm} for e in events)
 
     def state_dict(self, *, gradients=False):

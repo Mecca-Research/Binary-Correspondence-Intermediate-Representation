@@ -17,7 +17,7 @@ _Static_assert(sizeof(float)==4 && FLT_RADIX==2 && FLT_MANT_DIG==24,
  * eight dimensions, ten operands -- and records past the lent capacity are counted, never dropped
  * silently. The spaces: 1-4 the parameter arenas, 5 activations, 6 scratch, 7 the bf16 workspace,
  * 8 outside the state (the caller's tokens and targets). */
-#define BCIR_DT_TRACE_WORDS 48
+#define BCIR_DT_TRACE_WORDS BCIR_DT_RECORD_WORDS
 static const bcir_decoder_state *trace_state;
 static uint64_t *trace_words,trace_launch;
 static size_t trace_capacity,trace_count,trace_dropped;
@@ -689,16 +689,22 @@ static int layer_forward(bcir_decoder_state *s,geometry g,size_t l,float *slot,f
   if (full) bcir_tensor_add_pool(s->pool,g.nd,a.x2,y);
   return ran;
 }
+/* The embedding: each of the n tokens' rows of the d-wide table into x, in order (the forward's
+ * first launch, and a program's EMBED). */
+static void embed(size_t n,size_t d,const uint32_t *tokens,const float *table,float *x) {
+  size_t i;
+  DT_TRACE_EMBED(n,d,tokens,table,x);
+  for (i=0;i<n;i++) memcpy(x+i*d,table+(size_t)tokens[i]*d,d*sizeof(float));
+}
 /* BCIR_DT_OK, BCIR_DT_NUMERIC for a value not finite, BCIR_DT_CAPACITY for a product that ran
  * nowhere (WS-PLAN: valid() admits no workspace that refuses, so this is a defect's verdict) */
 static int forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
   const bcir_decoder_spec *sp=&s->plan.spec;
-  size_t i,l; float *xs=s->activations,*cs=xs+(g.l+1)*g.nd;
+  size_t l; float *xs=s->activations,*cs=xs+(g.l+1)*g.nd;
   float *norm=cs+cache_slots(g,s->recompute)*g.la,*logits=norm+g.nd;
   float *final=s->weights+g.v*g.d+g.l*g.lp;
   const float *head=sp->tied ? s->weights : final+g.d; int bad=0,ran=1;
-  DT_TRACE_EMBED(g.n,g.d,tokens,s->weights,xs);
-  for (i=0;i<g.n;i++) memcpy(xs+i*g.d,s->weights+(size_t)tokens[i]*g.d,g.d*sizeof(float));
+  embed(g.n,g.d,tokens,s->weights,xs);
   for (l=0;l<g.l;l++)
     ran&=layer_forward(s,g,l,cs+slot_of(g,s->recompute,l)*g.la,xs+l*g.nd,1,&bad);
   bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,xs+g.l*g.nd,final,norm,&bad);
@@ -736,6 +742,19 @@ static void loss_task(void *ctx,size_t task) {
     memcpy(jb->terms+i*sizeof(double),&term,sizeof(double));
   }
 }
+/* The loss's g.n rows over g.v logits on the pool -- their adjoints into dl, their terms into
+ * `terms` -- and the terms added in row order: the sum the step's mean divides (the backward's,
+ * and a program's LOSS). */
+static double loss_rows(bcir_decoder_state *s,geometry g,const float *logits,
+    const uint32_t *targets,float *dl,unsigned char *terms) {
+  loss_job lj; size_t i; double ce=0.0;
+  lj.n=g.n; lj.v=g.v; lj.logits=logits; lj.targets=targets; lj.dl=dl; lj.terms=terms;
+  bcir_tensor_pool_run(s->pool,loss_task,&lj,(g.n+BCIR_DT_ROW_CHUNK-1)/BCIR_DT_ROW_CHUNK);
+  for (i=0;i<g.n;i++) {
+    double term; memcpy(&term,lj.terms+i*sizeof(double),sizeof(double)); ce+=term;
+  }
+  return ce;
+}
 /* The embedding scatter in column ranges: a task adds every row's columns to its token's row in
  * row order, so a token the batch repeats accumulates as the serial loop did. */
 typedef struct scatter_job { size_t n,d; const uint32_t *tokens; const float *dx; float *grad; } scatter_job;
@@ -746,6 +765,14 @@ static void scatter_task(void *ctx,size_t task) {
     float *row=jb->grad+(size_t)jb->tokens[i]*d; const float *src=jb->dx+i*d;
     for (c=c0;c<c1;c++) row[c]+=src[c];
   }
+}
+/* the n rows of dx added into the table adjoint's token rows (the backward's last launch, and a
+ * program's SCATTER) */
+static void scatter(bcir_decoder_state *s,size_t n,size_t d,const uint32_t *tokens,const float *dx,
+    float *grad) {
+  scatter_job sj;
+  sj.n=n; sj.d=d; sj.tokens=tokens; sj.dx=dx; sj.grad=grad;
+  bcir_tensor_pool_run(s->pool,scatter_task,&sj,(d+BCIR_DT_COL_CHUNK-1)/BCIR_DT_COL_CHUNK);
 }
 static void rms_backward(bcir_decoder_state *s,size_t rows,size_t width,const float *x,
     const float *g,const float *dy,float *dx,float *dg,float *inv,unsigned how) {
@@ -785,7 +812,7 @@ static int weights_finite(bcir_decoder_state *s) {
 }
 static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
     const uint32_t *targets,size_t n,int accumulate,double *loss,unsigned how) {
-  geometry g; size_t i,l; double ce=0.0; loss_job lj; scatter_job sj;
+  geometry g; size_t l; double ce;
   float *xs,*cs,*norm,*logits,*cur,*tmp,*dn,*dq,*dk,*dv,*dc,*dg,*du,*dh,*dl;
   float *final,*dfinal,*head,*dhead,wb; unsigned gf; int first,ran=1,rc=valid(s); size_t top;
   if (rc) return rc;
@@ -814,12 +841,7 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
   dhead=s->plan.spec.tied ? s->gradients : dfinal+g.d;
   /* the rows' terms live at the arena's start (8n bytes within cur, tmp and dn: regions the
    * head's VJP writes only after they are added) */
-  lj.n=g.n; lj.v=g.v; lj.logits=logits; lj.targets=targets; lj.dl=dl;
-  lj.terms=(unsigned char *)s->scratch;
-  bcir_tensor_pool_run(s->pool,loss_task,&lj,(g.n+BCIR_DT_ROW_CHUNK-1)/BCIR_DT_ROW_CHUNK);
-  for (i=0;i<g.n;i++) {
-    double term; memcpy(&term,lj.terms+i*sizeof(double),sizeof(double)); ce+=term;
-  }
+  ce=loss_rows(s,g,logits,targets,dl,(unsigned char *)s->scratch);
   ran&=linear_backward(s,g.n,g.d,g.v,norm,head,dl,dn,dhead,0.0f,wb);
   /* each gamma VJP keeps its rows' 1/rms in dq, free until the layer's query VJP */
   rms_backward(s,g.n,g.d,xs+g.l*g.nd,final,dn,cur,dfinal,dq,gf);
@@ -888,8 +910,7 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
     }
     rms_backward(s,g.n,g.d,x,p.norm1,dn,cur,grad.norm1,dq,BCIR_TENSOR_RMSB_ADD|gf);
   }
-  sj.n=g.n; sj.d=g.d; sj.tokens=tokens; sj.dx=cur; sj.grad=s->gradients;
-  bcir_tensor_pool_run(s->pool,scatter_task,&sj,(g.d+BCIR_DT_COL_CHUNK-1)/BCIR_DT_COL_CHUNK);
+  scatter(s,g.n,g.d,tokens,cur,s->gradients);
   if (!ran) return BCIR_DT_CAPACITY;  /* a product that ran nowhere: its gradient is no gradient */
   if ((!(how&DT_DEFER) && !finite_pool(s,s->gradients,s->plan.parameters)) || !isfinite(ce))
     return BCIR_DT_NUMERIC;
@@ -1339,11 +1360,14 @@ int bcir_decoder_run(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     const double *rates,size_t steps,bcir_decoder_event *events,size_t capacity,size_t *completed) {
   return bcir_decoder_run_accum(s,o,tokens,targets,count,rates,steps,1,events,capacity,completed);
 }
-int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_adamw *o,
+/* A run's arguments, the multi-step run's and a program's alike: the state, the optimizer, the
+ * tokens and targets of steps x accumulation micro-batches, the rates, events and count -- every
+ * output apart from every input. BCIR_DT_OK when the run may start. */
+static int run_args(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     const uint32_t *tokens,const uint32_t *targets,size_t count,
     const double *rates,size_t steps,size_t accumulation,bcir_decoder_event *events,
     size_t capacity,size_t *completed) {
-  size_t n,total,batches,i,j; int rc=valid(s); bcir_decoder_adamw opt;
+  size_t n,total,batches,i; int rc=valid(s);
   if (rc) return rc;
   if (!optimizer_valid(o) || !accumulation || !completed || (uintptr_t)completed%_Alignof(size_t) ||
       !external(s,completed,sizeof(*completed))) return BCIR_DT_INVALID;
@@ -1365,6 +1389,16 @@ int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_adamw *o,
       overlap(completed,sizeof(*completed),tokens,total*sizeof(*tokens)) ||
       overlap(completed,sizeof(*completed),targets,total*sizeof(*targets)))) return BCIR_DT_INVALID;
   if (rates) for (i=0;i<steps;i++) if (!isfinite(rates[i]) || rates[i]<0) return BCIR_DT_INVALID;
+  return BCIR_DT_OK;
+}
+int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_adamw *o,
+    const uint32_t *tokens,const uint32_t *targets,size_t count,
+    const double *rates,size_t steps,size_t accumulation,bcir_decoder_event *events,
+    size_t capacity,size_t *completed) {
+  size_t n,i,j; bcir_decoder_adamw opt;
+  int rc=run_args(s,o,tokens,targets,count,rates,steps,accumulation,events,capacity,completed);
+  if (rc) return rc;
+  n=(size_t)s->plan.spec.batch*s->plan.spec.time;
   opt=*o; *completed=0;
   for (i=0;i<steps;i++) {
     double loss=0.0,norm;
@@ -1381,12 +1415,424 @@ int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_adamw *o,
   }
   return BCIR_DT_OK;
 }
+/* PX-2 (PACK): the run from a launch program (bcir_decoder_train.h). The check walks the program
+ * once with what the run will know at each record -- the micro-batch it belongs to, whether it has
+ * its loss, whether the weights are known finite -- and refuses the whole program at its first
+ * fault; the run walks it again, each record the call the step makes for it. An operand's use is
+ * read, written, both (its kernel's in-place operand: one slot) or a panel, and its job's spans
+ * are disjoint wherever one is written, a chain's shared C excepted (bcir_tensor.h). */
+#define PX_IN ((1u<<1)|(1u<<2)|(1u<<5)|(1u<<6))  /* a kernel reads weights, gradients, acts, scratch */
+#define PX_OUT ((1u<<2)|(1u<<5)|(1u<<6))         /* and writes gradients, activations, scratch */
+#define PX_EXT (1u<<8)                           /* the micro-batch's tokens or targets */
+#define PX_ONE 0x3f800000u                        /* 1.0f: the step's alpha, an accumulating beta */
+#define PX_OPS (2*BCIR_TENSOR_MM_GROUP*3)
+enum { PX_R=1u, PX_W=2u, PX_RW=3u, PX_PANEL=5u };
+typedef struct px_op { unsigned space,use,chain; size_t off,bytes; } px_op;
+typedef struct px_ctx {
+  bcir_decoder_state *s; geometry g; unsigned char *base[8]; size_t len[8];
+  uint64_t eps; unsigned v2,gc,attn,attn_vjp;
+} px_ctx;
+static void px_init(px_ctx *c,bcir_decoder_state *s) {
+  float eps=(float)s->plan.spec.rms_eps; uint32_t bits; unsigned i;
+  c->s=s; c->g=geom(&s->plan.spec); memcpy(&bits,&eps,sizeof bits); c->eps=bits;
+  c->base[0]=NULL; c->len[0]=0;
+  c->base[1]=(unsigned char *)s->weights; c->base[2]=(unsigned char *)s->gradients;
+  c->base[3]=(unsigned char *)s->moment1; c->base[4]=(unsigned char *)s->moment2;
+  for (i=1;i<5;i++) c->len[i]=s->plan.parameters*sizeof(float);
+  c->base[5]=(unsigned char *)s->activations; c->len[5]=arena_floats(s)*sizeof(float);
+  c->base[6]=(unsigned char *)s->scratch; c->len[6]=s->plan.scratch*sizeof(float);
+  c->base[7]=(unsigned char *)s->workspace;
+  c->len[7]=(s->contract&BCIR_DT_CONTRACT_BF16) ? s->workspace_bytes : 0;
+  c->v2=(unsigned)swiglu_v2(s); c->gc=(unsigned)gemm_contract(s);
+  c->attn=attention_contract(s)|((s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : 0u);
+  c->attn_vjp=(s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : attention_contract(s);
+}
+static int px_fits(uint64_t x) {
+#if SIZE_MAX < UINT64_MAX
+  return x<=SIZE_MAX;
+#else
+  (void)x; return 1;
+#endif
+}
+/* a*b*c*e, or 0 for a factor 0 or a product past size_t */
+static size_t px_size(size_t a,size_t b,size_t c,size_t e) {
+  size_t x;
+  return product(a,b,&x) && product(x,c,&x) && product(x,e,&x) ? x : 0;
+}
+/* Operand slot q of record w: `bytes` bytes (0: the slot is absent, all three words 0) of a space
+ * `mask` admits -- inside it at an offset a multiple of 4, or the micro-batch's tokens or targets
+ * whole -- kept in ops with its use. */
+static int px_slot(const px_ctx *c,const uint64_t *w,unsigned q,unsigned mask,size_t bytes,
+    unsigned use,px_op *ops,size_t *n) {
+  const uint64_t *r=w+11+3*q;
+  if (!bytes) return !r[0] && !r[1] && !r[2];
+  if (r[0]>8 || !((mask>>r[0])&1u) || r[2]!=bytes) return 0;
+  if (r[0]==8) return !r[1];
+  if (r[1]%4 || r[2]>c->len[r[0]] || r[1]>c->len[r[0]]-r[2]) return 0;
+  ops[*n].space=(unsigned)r[0]; ops[*n].use=use; ops[*n].chain=0;
+  ops[*n].off=(size_t)r[1]; ops[*n].bytes=bytes; (*n)++;
+  return 1;
+}
+/* the workspace slot q: the state's whole bf16 workspace where the call packs into it, else absent */
+static int px_ws(const px_ctx *c,const uint64_t *w,unsigned q,int packs) {
+  const uint64_t *r=w+11+3*q;
+  if (!packs) return !r[0] && !r[1] && !r[2];
+  return r[0]==7 && !r[1] && c->len[7] && r[2]==c->len[7];
+}
+/* the dimensions from `dims` on, the slots from `slots` on and the seven spare words: zero */
+static int px_rest(const uint64_t *w,unsigned dims,unsigned slots) {
+  unsigned i;
+  for (i=3+dims;i<11;i++) if (w[i]) return 0;
+  for (i=11+3*slots;i<BCIR_DT_RECORD_WORDS;i++) if (w[i]) return 0;
+  return 1;
+}
+/* no span of a record (or of a GEMM job) that is written meets another of its spans, a chain's
+ * shared C excepted, and no two panels meet (bcir_tensor.h: a panel is never shared) */
+static int px_apart(const px_op *ops,size_t n) {
+  size_t i,j;
+  for (i=0;i<n;i++) for (j=i+1;j<n;j++) {
+    const px_op *a=ops+i,*b=ops+j;
+    if (a->space!=b->space || !(a->off<b->off+b->bytes && b->off<a->off+a->bytes)) continue;
+    if (((a->use|b->use)&PX_W) && !(a->chain && b->chain)) return 0;
+    if (a->use==PX_PANEL && b->use==PX_PANEL) return 0;
+  }
+  return 1;
+}
+/* A record that is no GEMM and not the host's: its grammar, operands and the state it runs under
+ * (a contract field the state's, a provider's call only with the provider, BCIR's SiLU only
+ * without one). */
+static int px_kernel(const px_ctx *c,const uint64_t *w,px_op *ops,size_t *n) {
+  const bcir_decoder_state *s=c->s; const uint64_t f=w[2]; size_t d[8],x,y,z; unsigned i;
+  *n=0;
+  for (i=0;i<8;i++) { if (!px_fits(w[3+i])) return 0; d[i]=(size_t)w[3+i]; }
+  switch (w[0]) {
+  case BCIR_DT_REC_SCAN: case BCIR_DT_REC_ZERO:  /* n | x */
+    x=px_size(d[0],1,1,4);
+    return !f && x && px_rest(w,1,1) && (w[0]==BCIR_DT_REC_SCAN ?
+        px_slot(c,w,0,PX_IN,x,PX_R,ops,n) : px_slot(c,w,0,PX_OUT,x,PX_W,ops,n));
+  case BCIR_DT_REC_EMBED:  /* n, d | tokens, the table, x */
+    x=px_size(d[0],d[1],1,4); y=px_size(c->g.v,d[1],1,4);
+    return !f && d[0]==c->g.n && x && y && px_rest(w,2,3) &&
+        px_slot(c,w,0,PX_EXT,px_size(d[0],1,1,4),PX_R,ops,n) &&
+        px_slot(c,w,1,PX_IN,y,PX_R,ops,n) && px_slot(c,w,2,PX_OUT,x,PX_W,ops,n);
+  case BCIR_DT_REC_RMS:  /* rows, width, eps | x, gamma, y */
+    x=px_size(d[0],d[1],1,4); y=px_size(d[1],1,1,4);
+    return !f && w[5]==c->eps && x && px_rest(w,3,3) && px_slot(c,w,0,PX_IN,x,PX_R,ops,n) &&
+        px_slot(c,w,1,PX_IN,y,PX_R,ops,n) && px_slot(c,w,2,PX_OUT,x,PX_W,ops,n);
+  case BCIR_DT_REC_ROPE:  /* batch, time, heads, dim (even), inverse | x in place */
+    x=px_size(px_size(d[0],d[1],d[2],1),d[3],1,4);
+    return !f && x && !(d[3]%2) && d[4]<=1 && px_rest(w,5,1) &&
+        px_slot(c,w,0,PX_OUT,x,PX_RW,ops,n);
+  case BCIR_DT_REC_ATTN: case BCIR_DT_REC_ATTN_VJP: {
+    /* batch, time, heads, kv heads (dividing heads), dim | q k v p y, or q k v p dy dq dk dv; ws */
+    int vjp=w[0]==BCIR_DT_REC_ATTN_VJP,bf=(s->contract&BCIR_DT_CONTRACT_ATTNBF16)!=0;
+    x=px_size(px_size(d[0],d[1],d[2],1),d[4],1,4); y=px_size(px_size(d[0],d[1],d[3],1),d[4],1,4);
+    z=px_size(px_size(d[0],d[2],d[1],1),d[1],1,4);
+    if (f!=(vjp ? c->attn_vjp : c->attn) || !x || !y || !z || d[2]%d[3] || !px_rest(w,5,9) ||
+        !px_slot(c,w,0,PX_IN,x,PX_R,ops,n) || !px_slot(c,w,1,PX_IN,y,PX_R,ops,n) ||
+        !px_slot(c,w,2,PX_IN,y,PX_R,ops,n) || !px_ws(c,w,8,bf)) return 0;
+    if (!vjp)
+      return px_slot(c,w,3,PX_OUT,z,PX_W,ops,n) && px_slot(c,w,4,PX_OUT,x,PX_W,ops,n) &&
+          px_slot(c,w,5,0,0,0,ops,n) && px_slot(c,w,6,0,0,0,ops,n) && px_slot(c,w,7,0,0,0,ops,n);
+    /* the binary32 backward leaves the score adjoint in p; the bf16 one reads p alone */
+    return (bf ? px_slot(c,w,3,PX_IN,z,PX_R,ops,n) : px_slot(c,w,3,PX_OUT,z,PX_RW,ops,n)) &&
+        px_slot(c,w,4,PX_IN,x,PX_R,ops,n) && px_slot(c,w,5,PX_OUT,x,PX_W,ops,n) &&
+        px_slot(c,w,6,PX_OUT,y,PX_W,ops,n) && px_slot(c,w,7,PX_OUT,y,PX_W,ops,n);
+  }
+  case BCIR_DT_REC_ADD: case BCIR_DT_REC_MUL:  /* n | x, y (y += x, y *= x) */
+    x=px_size(d[0],1,1,4);
+    return !f && x && px_rest(w,1,2) && px_slot(c,w,0,PX_IN,x,PX_R,ops,n) &&
+        px_slot(c,w,1,PX_OUT,x,PX_RW,ops,n);
+  case BCIR_DT_REC_PROVIDER_SILU:  /* n | x, y: the provider's SiLU */
+    x=px_size(d[0],1,1,4);
+    return !f && s->provider.silu && x && px_rest(w,1,2) && px_slot(c,w,0,PX_IN,x,PX_R,ops,n) &&
+        px_slot(c,w,1,PX_OUT,x,PX_W,ops,n);
+  case BCIR_DT_REC_SILU_MUL:  /* n | x, u, y: BCIR's SiLU */
+    x=px_size(d[0],1,1,4);
+    return f==c->v2 && !s->provider.silu && x && px_rest(w,1,3) &&
+        px_slot(c,w,0,PX_IN,x,PX_R,ops,n) && px_slot(c,w,1,PX_IN,x,PX_R,ops,n) &&
+        px_slot(c,w,2,PX_OUT,x,PX_W,ops,n);
+  case BCIR_DT_REC_SILU_MUL_PANELS:  /* rows, cols (multiples of 32) | x, u, as A, as B */
+    x=px_size(d[0],d[1],1,4); y=px_size(d[0],d[1],1,2);
+    return f==c->v2 && !s->provider.silu && x && !(d[0]%32) && !(d[1]%32) && px_rest(w,2,4) &&
+        px_slot(c,w,0,PX_IN,x,PX_R,ops,n) && px_slot(c,w,1,PX_IN,x,PX_R,ops,n) &&
+        px_slot(c,w,2,PX_OUT,y,PX_W,ops,n) && px_slot(c,w,3,PX_OUT,y,PX_W,ops,n);
+  case BCIR_DT_REC_SWIGLU_VJP:  /* n | gate, up, dy, dgate, dup */
+    x=px_size(d[0],1,1,4);
+    return f==c->v2 && x && px_rest(w,1,5) && px_slot(c,w,0,PX_IN,x,PX_R,ops,n) &&
+        px_slot(c,w,1,PX_IN,x,PX_R,ops,n) && px_slot(c,w,2,PX_IN,x,PX_R,ops,n) &&
+        px_slot(c,w,3,PX_OUT,x,PX_W,ops,n) && px_slot(c,w,4,PX_OUT,x,PX_W,ops,n);
+  case BCIR_DT_REC_SWIGLU_VJP_PANELS:  /* rows, cols | gate, up, dy; each adjoint as A and A^T */
+    x=px_size(d[0],d[1],1,4); y=px_size(d[0],d[1],1,2);
+    if (f!=c->v2 || !x || d[0]%32 || d[1]%32 || !px_rest(w,2,7)) return 0;
+    for (i=0;i<3;i++) if (!px_slot(c,w,i,PX_IN,x,PX_R,ops,n)) return 0;
+    for (i=3;i<7;i++) if (!px_slot(c,w,i,PX_OUT,y,PX_W,ops,n)) return 0;
+    return 1;
+  case BCIR_DT_REC_RMS_VJP:  /* rows, width, eps | x, gamma, dy, dx, dgamma, 1/rms; how */
+    x=px_size(d[0],d[1],1,4); y=px_size(d[1],1,1,4); z=px_size(d[0],1,1,4);
+    return f<=(BCIR_TENSOR_RMSB_ADD|BCIR_TENSOR_RMSB_FIRST) && w[5]==c->eps && x &&
+        px_rest(w,3,6) && px_slot(c,w,0,PX_IN,x,PX_R,ops,n) && px_slot(c,w,1,PX_IN,y,PX_R,ops,n) &&
+        px_slot(c,w,2,PX_IN,x,PX_R,ops,n) &&
+        px_slot(c,w,3,PX_OUT,x,(f&BCIR_TENSOR_RMSB_ADD) ? PX_RW : PX_W,ops,n) &&
+        px_slot(c,w,4,PX_OUT,y,(f&BCIR_TENSOR_RMSB_FIRST) ? PX_W : PX_RW,ops,n) &&
+        px_slot(c,w,5,PX_OUT,z,PX_W,ops,n);
+  case BCIR_DT_REC_LOSS:  /* rows, vocabulary | logits, targets, dlogits, the rows' terms */
+    x=px_size(d[0],d[1],1,4);
+    return !f && d[0]==c->g.n && d[1]==c->g.v && x && px_rest(w,2,4) &&
+        px_slot(c,w,0,PX_IN,x,PX_R,ops,n) && px_slot(c,w,1,PX_EXT,px_size(d[0],1,1,4),PX_R,ops,n) &&
+        px_slot(c,w,2,PX_OUT,x,PX_W,ops,n) && px_slot(c,w,3,PX_OUT,px_size(d[0],1,1,8),PX_W,ops,n);
+  case BCIR_DT_REC_SCATTER:  /* rows, d | tokens, dx, the table's adjoint */
+    x=px_size(d[0],d[1],1,4); y=px_size(c->g.v,d[1],1,4);
+    return !f && d[0]==c->g.n && x && y && px_rest(w,2,3) &&
+        px_slot(c,w,0,PX_EXT,px_size(d[0],1,1,4),PX_R,ops,n) &&
+        px_slot(c,w,1,PX_IN,x,PX_R,ops,n) && px_slot(c,w,2,PX_OUT,y,PX_RW,ops,n);
+  default:
+    return 0;
+  }
+}
+/* A GEMM job: `job` records of one launch, each a call -- ta, tb, m, n, k, alpha 1, beta 0 or 1 --
+ * whose flags name the job's entry, the call's role and index, the job's contract field and its
+ * panels: the job the state's kernels take. A call alone is the state's contract's entry, or the
+ * provider's when it has one (and then nothing else is); a pair (NDT-SCHED-0) is two calls; a group
+ * (NDT-SCHED-1) a chain of at most BCIR_TENSOR_MM_GROUP calls into one C (one m, n and C) then at
+ * most as many others; the bf16 group the same under the bf16 contract, a call's A or B a panel of
+ * whole 32-tiles (BF16-PANELS). */
+static int px_gemm(const px_ctx *c,const uint64_t *w,size_t job,px_op *ops,size_t *n) {
+  const uint64_t *chain=NULL; unsigned e=(unsigned)(w[2]&15u); size_t q,chained=0;
+  int provider=c->s->provider.mm!=NULL;
+  *n=0;
+  switch (e) {
+  case 0: case 1: case 2: case 3: if (job!=1 || e!=c->gc || provider) return 0; break;
+  case 4: if (job!=2 || c->gc>2 || provider) return 0; break;
+  case 5: if (c->gc>2 || provider) return 0; break;
+  case 6: if (c->gc!=3 || provider) return 0; break;
+  case 7: if (job!=1 || !provider) return 0; break;
+  default: return 0;
+  }
+  for (q=0;q<job;q++) {
+    const uint64_t *r=w+q*BCIR_DT_RECORD_WORDS; const uint64_t f=r[2];
+    unsigned role=(unsigned)(f>>4&15u),pa=(unsigned)(f>>24&1u),pb=(unsigned)(f>>25&1u);
+    unsigned field=e<4 ? e : e==7 ? 15u : c->gc; size_t m,nn,k,sa,sb,sc;
+    if ((f&15u)!=e || (f>>8&255u)!=q || (f>>16&255u)!=field || f>>26 || r[3]>1 || r[4]>1 ||
+        r[8]!=PX_ONE || (r[9] && r[9]!=PX_ONE) || !px_rest(r,7,4) || !px_fits(r[5]) ||
+        !px_fits(r[6]) || !px_fits(r[7])) return 0;
+    if (e==4 ? role!=q+1 : e==5 || e==6 ? role<1 || role>2 || (role==1 && q!=chained) : role!=0)
+      return 0;
+    m=(size_t)r[5]; nn=(size_t)r[6]; k=(size_t)r[7];
+    if ((pa || pb) && (e!=6 || m%32 || nn%32 || k%32)) return 0;
+    sa=px_size(m,k,1,pa ? 2 : 4); sb=px_size(k,nn,1,pb ? 2 : 4); sc=px_size(m,nn,1,4);
+    if (!sa || !sb || !sc || !px_slot(c,r,0,PX_IN,sa,pa ? PX_PANEL : PX_R,ops,n) ||
+        !px_slot(c,r,1,PX_IN,sb,pb ? PX_PANEL : PX_R,ops,n) ||
+        !px_slot(c,r,2,PX_OUT,sc,r[9] ? PX_RW : PX_W,ops,n) || !px_ws(c,r,3,e==3 || e==6))
+      return 0;
+    if (role==1 && e!=4) {  /* a chain's call: the chain's C, m and n */
+      ops[*n-1].chain=1; chained++;
+      if (!chain) chain=r;
+      else if (r[5]!=chain[5] || r[6]!=chain[6] || r[17]!=chain[17] || r[18]!=chain[18]) return 0;
+    }
+  }
+  if (chained>BCIR_TENSOR_MM_GROUP || job-chained>BCIR_TENSOR_MM_GROUP) return 0;
+  return px_apart(ops,*n);
+}
+/* the update record: the pass's as the trace holds it -- the reduce contract's flag, the
+ * parameters and their chunk, the gradients, the weights and the two moments whole */
+static int px_update(const px_ctx *c,const uint64_t *w) {
+  static const unsigned order[4]={2,1,3,4}; size_t p=c->s->plan.parameters; unsigned q;
+  if (w[2]!=((c->s->contract&BCIR_DT_CONTRACT_REDUCE) ? 1u : 0u) || w[3]!=p ||
+      w[4]!=bcir_decoder_reduce_chunk(p) || !px_rest(w,2,4)) return 0;
+  for (q=0;q<4;q++)
+    if (w[11+3*q]!=order[q] || w[12+3*q] || w[13+3*q]!=c->len[1]) return 0;
+  return 1;
+}
+/* the records of a job starting at w (of `left` records): a GEMM's calls share its launch */
+static size_t px_job(const uint64_t *w,size_t left) {
+  size_t job=1;
+  if (w[0]==BCIR_DT_REC_GEMM)
+    while (job<left && job<2*BCIR_TENSOR_MM_GROUP && w[job*BCIR_DT_RECORD_WORDS]==BCIR_DT_REC_GEMM &&
+        w[job*BCIR_DT_RECORD_WORDS+1]==w[1]) job++;
+  return job;
+}
+/* The program checked whole: 1 when the run may start (bcir_decoder_train.h's rules). */
+static int px_check(const px_ctx *c,const uint64_t *p,size_t records,size_t steps,
+    size_t accumulation) {
+  px_op ops[PX_OPS]; size_t i=0,job,n,q,total,micro=0,batches=0,updates=0,open=0;
+  uint64_t launch=0; int known=0,loss=0;
+  if (!product(steps,accumulation,&total)) return 0;
+  while (i<records) {
+    const uint64_t *w=p+i*BCIR_DT_RECORD_WORDS;
+    if (w[1]<=launch) return 0;  /* each job's launch exceeds the one before */
+    launch=w[1]; job=px_job(w,records-i); n=0;
+    if (w[0]==BCIR_DT_REC_CHECK) {
+      if (!px_rest(w,0,0) || (w[2]!=BCIR_DT_CHECK_FORWARD && w[2]!=BCIR_DT_CHECK_RAN &&
+          w[2]!=BCIR_DT_CHECK_LOSS)) return 0;
+      if (w[2]==BCIR_DT_CHECK_LOSS) {  /* closes the micro-batch its one loss record names */
+        if (!loss) return 0;
+        loss=0; open=0; micro++; batches++; i++; continue;
+      }
+    }
+    else if (w[0]==BCIR_DT_REC_UPDATE) {  /* after exactly `accumulation` closed micro-batches */
+      if (!px_update(c,w) || open || micro!=accumulation || updates==steps) return 0;
+      micro=0; updates++; known=1; i++; continue;
+    }
+    else if (w[0]==BCIR_DT_REC_GEMM) { if (!px_gemm(c,w,job,ops,&n)) return 0; }
+    else {
+      if (!px_kernel(c,w,ops,&n) || !px_apart(ops,n)) return 0;
+      if ((w[0]==BCIR_DT_REC_EMBED || w[0]==BCIR_DT_REC_LOSS || w[0]==BCIR_DT_REC_SCATTER) &&
+          batches>=total) return 0;  /* no tokens past the run's */
+      if (w[0]==BCIR_DT_REC_LOSS) {  /* one loss a micro-batch */
+        if (loss) return 0;
+        loss=1;
+      }
+    }
+    if (!known && w[0]!=BCIR_DT_REC_SCAN)  /* FACTS-RUN: the weights read once known finite */
+      for (q=0;q<n;q++) if (ops[q].space==1) return 0;
+    if (w[0]==BCIR_DT_REC_SCAN && w[11]==1 && !w[12] && w[13]==c->len[1]) known=1;
+    open++; i+=job;
+  }
+  return !open && !micro && updates==steps;
+}
+static void *px_at(const px_ctx *c,const uint64_t *w,unsigned q) {
+  return c->base[w[11+3*q]]+(size_t)w[12+3*q];
+}
+/* a checked GEMM job of `job` calls: the entry its flags name, as the step calls it */
+static int px_gemm_run(const px_ctx *c,const uint64_t *w,size_t job) {
+  bcir_decoder_state *s=c->s; bcir_tensor_mm_call call[2*BCIR_TENSOR_MM_GROUP];
+  bcir_tensor_bf16_panels pre[2*BCIR_TENSOR_MM_GROUP]; size_t q,chain=0; int panels=0;
+  if (!job || job>2*BCIR_TENSOR_MM_GROUP) return 0; /* px_job's 1..2*GROUP calls */
+  for (q=0;q<job;q++) {
+    const uint64_t *r=w+q*BCIR_DT_RECORD_WORDS; bcir_tensor_mm_call *x=call+q;
+    pre[q].a=(r[2]>>24&1u) ? (const unsigned short *)px_at(c,r,0) : NULL;
+    pre[q].b=(r[2]>>25&1u) ? (const unsigned short *)px_at(c,r,1) : NULL;
+    panels|=pre[q].a || pre[q].b;
+    x->ta=(int)r[3]; x->tb=(int)r[4]; x->m=(size_t)r[5]; x->n=(size_t)r[6]; x->k=(size_t)r[7];
+    x->alpha=1.0f; x->beta=r[9] ? 1.0f : 0.0f;
+    x->a=pre[q].a ? NULL : (const float *)px_at(c,r,0);
+    x->b=pre[q].b ? NULL : (const float *)px_at(c,r,1);
+    x->c=(float *)px_at(c,r,2);
+    if ((r[2]>>4&15u)==1u) chain++;
+  }
+  switch (w[2]&15u) {
+  case 4: bcir_tensor_mm_pair_pool(s->pool,gemm_contract(s),call,call+1); return 1;
+  case 5: case 6:
+    return gemm_group_with(s,chain ? call : NULL,chain,call+chain,job-chain,panels ? pre : NULL);
+  default:
+    return gemm(s,call->ta,call->tb,call->m,call->n,call->k,1.0f,call->a,call->b,call->beta,
+        call->c);
+  }
+}
+/* a checked kernel record: the call the step makes for it, its verdicts into ran, bad and ce */
+static int px_kernel_run(const px_ctx *c,const uint64_t *w,const uint32_t *tokens,
+    const uint32_t *targets,int *ran,int *bad,double *ce) {
+  bcir_decoder_state *s=c->s;
+  size_t d0=(size_t)w[3],d1=(size_t)w[4],d2=(size_t)w[5],d3=(size_t)w[6],d4=(size_t)w[7];
+  switch (w[0]) {
+  case BCIR_DT_REC_SCAN:  /* a parameter arena's fails the run; another's reports to the check */
+    if (finite_pool(s,px_at(c,w,0),d0)) break;
+    if (w[11]<5) return BCIR_DT_NUMERIC;
+    *bad=1; break;
+  case BCIR_DT_REC_ZERO: zero_pool(s,px_at(c,w,0),d0); break;
+  case BCIR_DT_REC_EMBED: embed(d0,d1,tokens,px_at(c,w,1),px_at(c,w,2)); break;
+  case BCIR_DT_REC_RMS:
+    bcir_tensor_rms_scan_pool(s->pool,d0,d1,(float)s->plan.spec.rms_eps,px_at(c,w,0),px_at(c,w,1),
+        px_at(c,w,2),bad);
+    break;
+  case BCIR_DT_REC_ROPE:
+    bcir_tensor_rope_pool(s->pool,d0,d1,d2,d3,s->plan.spec.rope_base,px_at(c,w,0),(int)d4);
+    break;
+  case BCIR_DT_REC_ATTN:
+    *ran&=attention(s,d0,d1,d2,d3,d4,px_at(c,w,0),px_at(c,w,1),px_at(c,w,2),px_at(c,w,3),
+        px_at(c,w,4),bad);
+    break;
+  case BCIR_DT_REC_ATTN_VJP: {
+    geometry g=c->g;
+    g.b=d0; g.t=d1; g.h=d2; g.kh=d3; g.hd=d4;
+    *ran&=attention_backward(s,g,px_at(c,w,0),px_at(c,w,1),px_at(c,w,2),px_at(c,w,3),
+        px_at(c,w,4),px_at(c,w,5),px_at(c,w,6),px_at(c,w,7));
+    break;
+  }
+  case BCIR_DT_REC_ADD: bcir_tensor_add_pool(s->pool,d0,px_at(c,w,0),px_at(c,w,1)); break;
+  case BCIR_DT_REC_MUL: bcir_tensor_mul_pool(s->pool,d0,px_at(c,w,0),px_at(c,w,1)); break;
+  case BCIR_DT_REC_PROVIDER_SILU:
+    DT_TRACE_PROVIDER_SILU(d0,px_at(c,w,0),px_at(c,w,1));
+    s->provider.silu(s->provider.ctx,d0,px_at(c,w,0),px_at(c,w,1));
+    break;
+  case BCIR_DT_REC_SILU_MUL: silu_mul(s,d0,px_at(c,w,0),px_at(c,w,1),px_at(c,w,2),bad); break;
+  case BCIR_DT_REC_SILU_MUL_PANELS:
+    *ran&=bcir_tensor_silu_mul_panels_pool(s->pool,(int)c->v2,d0,d1,px_at(c,w,0),px_at(c,w,1),
+        px_at(c,w,2),px_at(c,w,3),bad);
+    break;
+  case BCIR_DT_REC_SWIGLU_VJP:
+    swiglu_backward(s,d0,px_at(c,w,0),px_at(c,w,1),px_at(c,w,2),px_at(c,w,3),px_at(c,w,4));
+    break;
+  case BCIR_DT_REC_SWIGLU_VJP_PANELS:
+    *ran&=bcir_tensor_swiglu_backward_panels_pool(s->pool,(int)c->v2,d0,d1,px_at(c,w,0),
+        px_at(c,w,1),px_at(c,w,2),px_at(c,w,3),px_at(c,w,4),px_at(c,w,5),px_at(c,w,6));
+    break;
+  case BCIR_DT_REC_RMS_VJP:
+    rms_backward(s,d0,d1,px_at(c,w,0),px_at(c,w,1),px_at(c,w,2),px_at(c,w,3),px_at(c,w,4),
+        px_at(c,w,5),(unsigned)w[2]);
+    break;
+  case BCIR_DT_REC_LOSS: *ce=loss_rows(s,c->g,px_at(c,w,0),targets,px_at(c,w,2),px_at(c,w,3)); break;
+  case BCIR_DT_REC_SCATTER: scatter(s,d0,d1,tokens,px_at(c,w,1),px_at(c,w,2)); break;
+  default: break;  /* none: the check admits no other kind here */
+  }
+  return BCIR_DT_OK;
+}
+/* The run of a checked program: its records in order, the host's the step's own checks, update
+ * and event (bcir_decoder_run_accum's arithmetic: the micro-batch's mean, then its share). */
+static int px_run(const px_ctx *c,const bcir_decoder_adamw *o,const uint64_t *p,size_t records,
+    const uint32_t *tokens,const uint32_t *targets,const double *rates,size_t accumulation,
+    bcir_decoder_event *events,size_t *completed) {
+  bcir_decoder_state *s=c->s; bcir_decoder_adamw opt=*o; size_t i=0,job,batch=0,step=0;
+  int ran=1,bad=0,rc; double ce=0.0,loss=0.0;
+  while (i<records) {
+    const uint64_t *w=p+i*BCIR_DT_RECORD_WORDS;
+    job=px_job(w,records-i);
+    if (w[0]==BCIR_DT_REC_GEMM) ran&=px_gemm_run(c,w,job);
+    else if (w[0]==BCIR_DT_REC_CHECK) {
+      if (!ran) return BCIR_DT_CAPACITY;  /* a product that ran nowhere */
+      if (w[2]==BCIR_DT_CHECK_FORWARD && bad) return BCIR_DT_NUMERIC;
+      if (w[2]==BCIR_DT_CHECK_LOSS) {
+        double part;
+        if (!isfinite(ce)) return BCIR_DT_NUMERIC;
+        part=ce/(double)c->g.n; loss+=part/(double)accumulation; ce=0.0; bad=0; batch++;
+      }
+    }
+    else if (w[0]==BCIR_DT_REC_UPDATE) {
+      double norm;
+      if (rates) opt.lr=rates[step];
+      rc=update_with(s,&opt,1.0/(double)accumulation,&norm,1); if (rc) return rc;
+      events[step].loss=loss; events[step].grad_norm=norm; events[step].step=s->step;
+      *completed=++step; loss=0.0;
+    }
+    else {
+      size_t off=batch*c->g.n;
+      int ext=w[0]==BCIR_DT_REC_EMBED || w[0]==BCIR_DT_REC_LOSS || w[0]==BCIR_DT_REC_SCATTER;
+      rc=px_kernel_run(c,w,ext ? tokens+off : NULL,ext ? targets+off : NULL,&ran,&bad,&ce);
+      if (rc) return rc;
+    }
+    i+=job;
+  }
+  return BCIR_DT_OK;
+}
+int bcir_decoder_run_program(bcir_decoder_state *s,const bcir_decoder_adamw *o,
+    const uint64_t *program,size_t records,const uint32_t *tokens,const uint32_t *targets,
+    size_t count,const double *rates,size_t steps,size_t accumulation,bcir_decoder_event *events,
+    size_t capacity,size_t *completed) {
+  px_ctx c; size_t bytes;
+  int rc=run_args(s,o,tokens,targets,count,rates,steps,accumulation,events,capacity,completed);
+  if (rc) return rc;
+  if (!product(records,BCIR_DT_RECORD_WORDS*sizeof(uint64_t),&bytes)) return BCIR_DT_INVALID;
+  if (records && (!program || (uintptr_t)program%_Alignof(uint64_t) || !external(s,program,bytes) ||
+      overlap(program,bytes,completed,sizeof(*completed)) ||
+      (steps && overlap(program,bytes,events,steps*sizeof(*events))))) return BCIR_DT_INVALID;
+  px_init(&c,s);
+  if (!px_check(&c,program,records,steps,accumulation)) return BCIR_DT_INVALID;
+  *completed=0;
+  return px_run(&c,o,program,records,tokens,targets,rates,accumulation,events,completed);
+}
 #ifdef BCIR_DT_TRACE_PROBE
-/* PX-1's records (the declarations at the top say what they are). */
-enum { DT_TR_SCAN=1, DT_TR_ZERO, DT_TR_EMBED, DT_TR_RMS, DT_TR_GEMM, DT_TR_ROPE, DT_TR_ATTN,
-  DT_TR_ATTN_VJP, DT_TR_ADD, DT_TR_SILU_MUL, DT_TR_SILU_MUL_PANELS, DT_TR_SWIGLU_VJP,
-  DT_TR_SWIGLU_VJP_PANELS, DT_TR_RMS_VJP, DT_TR_LOSS, DT_TR_SCATTER, DT_TR_PASS, DT_TR_PREFLIGHT,
-  DT_TR_COMMIT, DT_TR_MUL, DT_TR_PROVIDER_SILU };
+/* PX-1's records (the declarations at the top say what they are; the kinds are the header's). */
 void bcir_decoder_trace_probe_begin(const bcir_decoder_state *s,uint64_t *words,size_t capacity) {
   trace_state=s; trace_words=words; trace_capacity=words ? capacity : 0;
   trace_count=trace_dropped=0; trace_launch=0;
@@ -1433,54 +1879,54 @@ static void tr_two(unsigned kind,size_t n,const float *x,const float *y) {
   if (!w) return;
   w[3]=n; tr_ref(w,0,x,n*sizeof(float)); tr_ref(w,1,y,n*sizeof(float));
 }
-static void tr_add(size_t n,const float *x,const float *y) { tr_two(DT_TR_ADD,n,x,y); }
-static void tr_mul(size_t n,const float *x,const float *y) { tr_two(DT_TR_MUL,n,x,y); }
+static void tr_add(size_t n,const float *x,const float *y) { tr_two(BCIR_DT_REC_ADD,n,x,y); }
+static void tr_mul(size_t n,const float *x,const float *y) { tr_two(BCIR_DT_REC_MUL,n,x,y); }
 static void tr_provider_silu(size_t n,const float *x,const float *y) {
-  tr_two(DT_TR_PROVIDER_SILU,n,x,y);
+  tr_two(BCIR_DT_REC_PROVIDER_SILU,n,x,y);
 }
 static void tr_rope(size_t b,size_t t,size_t h,size_t d,const float *x,int inverse) {
-  uint64_t *w=tr_record(DT_TR_ROPE,1);
+  uint64_t *w=tr_record(BCIR_DT_REC_ROPE,1);
   if (!w) return;
   w[3]=b; w[4]=t; w[5]=h; w[6]=d; w[7]=(uint64_t)(inverse!=0);
   tr_ref(w,0,x,b*t*h*d*sizeof(float));
 }
 static void tr_rms(size_t rows,size_t width,float eps,const float *x,const float *g,const float *y) {
-  uint64_t *w=tr_record(DT_TR_RMS,1); size_t b=rows*width*sizeof(float);
+  uint64_t *w=tr_record(BCIR_DT_REC_RMS,1); size_t b=rows*width*sizeof(float);
   if (!w) return;
   w[3]=rows; w[4]=width; w[5]=tr_bits(eps);
   tr_ref(w,0,x,b); tr_ref(w,1,g,width*sizeof(float)); tr_ref(w,2,y,b);
 }
 static void tr_swiglu_vjp(int v2,size_t n,const float *g,const float *u,const float *dy,
     const float *dg,const float *du) {
-  uint64_t *w=tr_record(DT_TR_SWIGLU_VJP,1); size_t b=n*sizeof(float);
+  uint64_t *w=tr_record(BCIR_DT_REC_SWIGLU_VJP,1); size_t b=n*sizeof(float);
   if (!w) return;
   w[2]=(uint64_t)(v2!=0); w[3]=n;
   tr_ref(w,0,g,b); tr_ref(w,1,u,b); tr_ref(w,2,dy,b); tr_ref(w,3,dg,b); tr_ref(w,4,du,b);
 }
 static void tr_swiglu_vjp_panels(int v2,size_t r,size_t c,const float *g,const float *u,
     const float *dy,const void *dga,const void *dgt,const void *dua,const void *dut) {
-  uint64_t *w=tr_record(DT_TR_SWIGLU_VJP_PANELS,1); size_t b=r*c*sizeof(float),h=r*c*2;
+  uint64_t *w=tr_record(BCIR_DT_REC_SWIGLU_VJP_PANELS,1); size_t b=r*c*sizeof(float),h=r*c*2;
   if (!w) return;
   w[2]=(uint64_t)(v2!=0); w[3]=r; w[4]=c;
   tr_ref(w,0,g,b); tr_ref(w,1,u,b); tr_ref(w,2,dy,b);
   tr_ref(w,3,dga,h); tr_ref(w,4,dgt,h); tr_ref(w,5,dua,h); tr_ref(w,6,dut,h);
 }
 static void tr_silu_mul(int v2,size_t n,const float *x,const float *u,const float *y) {
-  uint64_t *w=tr_record(DT_TR_SILU_MUL,1); size_t b=n*sizeof(float);
+  uint64_t *w=tr_record(BCIR_DT_REC_SILU_MUL,1); size_t b=n*sizeof(float);
   if (!w) return;
   w[2]=(uint64_t)(v2!=0); w[3]=n;
   tr_ref(w,0,x,b); tr_ref(w,1,u,b); tr_ref(w,2,y,b);
 }
 static void tr_silu_mul_panels(int v2,size_t r,size_t c,const float *x,const float *u,
     const void *a,const void *b) {
-  uint64_t *w=tr_record(DT_TR_SILU_MUL_PANELS,1); size_t f=r*c*sizeof(float),h=r*c*2;
+  uint64_t *w=tr_record(BCIR_DT_REC_SILU_MUL_PANELS,1); size_t f=r*c*sizeof(float),h=r*c*2;
   if (!w) return;
   w[2]=(uint64_t)(v2!=0); w[3]=r; w[4]=c;
   tr_ref(w,0,x,f); tr_ref(w,1,u,f); tr_ref(w,2,a,h); tr_ref(w,3,b,h);
 }
 static void tr_rms_vjp(size_t rows,size_t width,float eps,const float *x,const float *g,
     const float *dy,const float *dx,const float *dg,const float *inv,unsigned how) {
-  uint64_t *w=tr_record(DT_TR_RMS_VJP,1); size_t b=rows*width*sizeof(float);
+  uint64_t *w=tr_record(BCIR_DT_REC_RMS_VJP,1); size_t b=rows*width*sizeof(float);
   if (!w) return;
   w[2]=how; w[3]=rows; w[4]=width; w[5]=tr_bits(eps);
   tr_ref(w,0,x,b); tr_ref(w,1,g,width*sizeof(float)); tr_ref(w,2,dy,b); tr_ref(w,3,dx,b);
@@ -1506,7 +1952,7 @@ static void tr_mm(unsigned entry,int ta,int tb,size_t m,size_t n,size_t k,float 
     const float *a,const float *b,float beta,const float *c,const void *ws,size_t bytes) {
   bcir_tensor_mm_call x;
   x.ta=ta; x.tb=tb; x.m=m; x.n=n; x.k=k; x.alpha=alpha; x.a=a; x.b=b; x.beta=beta; x.c=(float *)c;
-  tr_call(tr_record(DT_TR_GEMM,1),entry,0,0,entry<4 ? entry : 15u,&x,NULL,NULL,ws,bytes);
+  tr_call(tr_record(BCIR_DT_REC_GEMM,1),entry,0,0,entry<4 ? entry : 15u,&x,NULL,NULL,ws,bytes);
 }
 static void tr_mm_group(unsigned entry,int contract,const bcir_tensor_mm_call *chain,size_t nchain,
     const bcir_tensor_mm_call *y,size_t ny,const bcir_tensor_bf16_panels *pre,const void *ws,
@@ -1514,7 +1960,7 @@ static void tr_mm_group(unsigned entry,int contract,const bcir_tensor_mm_call *c
   size_t q; int fresh=1;
   for (q=0;q<nchain+ny;q++) {
     const bcir_tensor_mm_call *c=q<nchain ? chain+q : y+(q-nchain);
-    tr_call(tr_record(DT_TR_GEMM,fresh),entry,q<nchain ? 1u : 2u,q,(unsigned)contract,c,
+    tr_call(tr_record(BCIR_DT_REC_GEMM,fresh),entry,q<nchain ? 1u : 2u,q,(unsigned)contract,c,
         pre ? pre[q].a : NULL,pre ? pre[q].b : NULL,ws,bytes);
     fresh=0;
   }
@@ -1541,42 +1987,42 @@ static void tr_run(bcir_tensor_task_fn fn,const void *ctx) {
   uint64_t *w;
   if (fn==scan_task || fn==fill_task) {
     const span_job *j=(const span_job *)ctx;
-    if (!(w=tr_record(fn==scan_task ? DT_TR_SCAN : DT_TR_ZERO,1))) return;
+    if (!(w=tr_record(fn==scan_task ? BCIR_DT_REC_SCAN : BCIR_DT_REC_ZERO,1))) return;
     w[3]=j->n; tr_ref(w,0,fn==scan_task ? (const void *)j->x : (const void *)j->y,j->n*sizeof(float));
   }
   else if (fn==loss_task) {
     const loss_job *j=(const loss_job *)ctx;
-    if (!(w=tr_record(DT_TR_LOSS,1))) return;
+    if (!(w=tr_record(BCIR_DT_REC_LOSS,1))) return;
     w[3]=j->n; w[4]=j->v;
     tr_ref(w,0,j->logits,j->n*j->v*sizeof(float)); tr_ref(w,1,j->targets,j->n*sizeof(uint32_t));
     tr_ref(w,2,j->dl,j->n*j->v*sizeof(float)); tr_ref(w,3,j->terms,j->n*sizeof(double));
   }
   else if (fn==scatter_task) {
     const scatter_job *j=(const scatter_job *)ctx;
-    if (!(w=tr_record(DT_TR_SCATTER,1))) return;
+    if (!(w=tr_record(BCIR_DT_REC_SCATTER,1))) return;
     w[3]=j->n; w[4]=j->d;
     tr_ref(w,0,j->tokens,j->n*sizeof(uint32_t)); tr_ref(w,1,j->dx,j->n*j->d*sizeof(float));
     tr_ref(w,2,j->grad,(size_t)trace_state->plan.spec.vocab*j->d*sizeof(float));
   }
   else if (fn==pass_task) {
     const pass_job *j=(const pass_job *)ctx;
-    if (!(w=tr_record(DT_TR_PASS,1))) return;
+    if (!(w=tr_record(BCIR_DT_REC_PASS,1))) return;
     w[2]=(uint64_t)(j->reduce!=0); w[3]=j->n; w[4]=j->chunk; tr_quad(w,j->gr,j->wt,j->m1,j->m2,j->n);
   }
   else if (fn==preflight_task) {
     const preflight_job *j=(const preflight_job *)ctx;
-    if (!(w=tr_record(DT_TR_PREFLIGHT,1))) return;
+    if (!(w=tr_record(BCIR_DT_REC_PREFLIGHT,1))) return;
     w[3]=j->n; w[4]=j->chunk; tr_quad(w,j->gr,j->wt,j->m1,j->m2,j->n);
   }
   else if (fn==commit_task) {
     const commit_job *j=(const commit_job *)ctx;
-    if (!(w=tr_record(DT_TR_COMMIT,1))) return;
+    if (!(w=tr_record(BCIR_DT_REC_COMMIT,1))) return;
     w[3]=j->n; tr_quad(w,j->gr,j->wt,j->m1,j->m2,j->n);
   }
   else (void)tr_record(0,1);
 }
 static void tr_embed(size_t n,size_t d,const uint32_t *tokens,const float *table,const float *x) {
-  uint64_t *w=tr_record(DT_TR_EMBED,1);
+  uint64_t *w=tr_record(BCIR_DT_REC_EMBED,1);
   if (!w) return;
   w[3]=n; w[4]=d;
   tr_ref(w,0,tokens,n*sizeof(uint32_t));

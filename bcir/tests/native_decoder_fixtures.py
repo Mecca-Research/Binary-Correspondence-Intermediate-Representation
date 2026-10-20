@@ -49,6 +49,11 @@ spec alone. One function per row family grades it against the C rail; the tests,
                                BCIR_DT_TRACE_PROBE) differs from the launches the step program
                                states under the case's decisions (`native_launch.run_launches`),
                                or dropped a record (PX-1)
+    train.plan.program.mismatch  program runs (`program_runs`: every trace case from the program
+                               of the C step's decisions, the state cases under each of the
+                               planner's other choices) that stopped, trained another state or
+                               events than `bcir_decoder_run_accum` on the case, or traced other
+                               launches than the program states (PX-2)
 
 Without a C compiler the native rows are not measured -- a skip, never a pass.
 """
@@ -969,6 +974,14 @@ def trace_corpus() -> tuple[TraceCase, ...]:
     return tuple(cases)
 
 
+def checkout_library(directory) -> Path | None:
+    """The trainer as `build_library` builds it, or None without a compiler or outside a source
+    checkout (an installed package ships no C units: the one absence that is expected there)."""
+    if not (_C / "bcir_decoder_train.c").is_file():
+        return None
+    return build_library(directory)
+
+
 def trace_library(directory) -> Path | None:
     """The trainer built with its launch trace (BCIR_DT_TRACE_PROBE), from the tree's unit as it
     stands -- a fault the sweep injected included. None without a compiler, or outside a source
@@ -981,21 +994,21 @@ def trace_library(directory) -> Path | None:
 
 class TraceRun(NamedTuple):
     """One traced call: the launches its plan states, the records the probe held (launch, record),
-    the records it had no room for, and the state the call left (`state_digest`)."""
+    the records it had no room for, the state the call left (`state_digest`) and its events."""
 
     planned: list
     traced: list
     dropped: int
     state: str
+    events: tuple = ()
 
 
-def trace_case(path, case: TraceCase, capacity: int | None = None, *, trace: bool = True):
-    """Run `case` on the trace build at `path` (a `TraceRun`). `capacity` lends the probe that
-    many records instead of room for twice the plan's; `trace=False` runs `path` as a build
-    without the probe -- the library itself -- and holds no records."""
+def _case_trainer(path, case: TraceCase):
+    """The trainer `case` runs on -- its contract, recompute set, threads, workspace tier and
+    provider -- and the state's decisions as `run_launches` and `step_program` take them."""
     from bcir.hosted.models import native as nat
-    from bcir.hosted.models.native import NativeAdamW, NativeDecoder
-    from bcir.hosted.models.native_launch import RECORD_WORDS, SPACES, read_trace, run_launches
+    from bcir.hosted.models.native import NativeDecoder
+    from bcir.hosted.models.native_launch import SPACES
 
     common = dict(batch_size=case.batch, context_length=case.time, contract=case.contract,
                   recompute=case.recompute, threads=case.threads)  # fmt: skip
@@ -1028,42 +1041,123 @@ def trace_case(path, case: TraceCase, capacity: int | None = None, *, trace: boo
                 provider = trainer.state.provider
                 trainer.state.provider = nat._Provider(provider.ctx, provider.mm, silu)
                 trainer._provider_refs += (silu,)
-        if trace:
-            lib.bcir_decoder_trace_probe_begin.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_size_t]
-            lib.bcir_decoder_trace_probe_begin.restype = None
-            lib.bcir_decoder_trace_probe_end.argtypes = [ct.POINTER(ct.c_size_t)]
-            lib.bcir_decoder_trace_probe_end.restype = ct.c_size_t
-            lib.bcir_decoder_trace_probe_words.argtypes = []
-            lib.bcir_decoder_trace_probe_words.restype = ct.c_size_t
-            assert lib.bcir_decoder_trace_probe_words() == RECORD_WORDS
-        planned = run_launches(
-            case.spec, case.batch, case.time, contract=nat._CONTRACTS[case.contract],
-            recompute=trainer.recompute, workspace_bytes=trainer.workspace_bytes,
+        decisions = dict(
+            contract=nat._CONTRACTS[case.contract], recompute=trainer.recompute,
+            workspace_bytes=trainer.workspace_bytes,
             panels_need=trainer.plan_memory.workspace_panels,
             alignment={SPACES[name]: ct.addressof(buf) % 64 for name, buf in trainer.buffers.items()},
             provider_mm=bool(case.provider), provider_silu=case.provider == "mm+silu",
             steps=case.steps, accumulation=case.accumulation,
         )  # fmt: skip
+    except BaseException:
+        trainer.close()
+        raise
+    return trainer, decisions
+
+
+def _case_inputs(case: TraceCase):
+    """The case's tokens, targets and optimizer (an update whose bound fails where it asks)."""
+    from bcir.hosted.models.native import NativeAdamW
+
+    n = case.batch * case.time * case.steps * case.accumulation
+    tokens = [(7 * i + 3) % case.spec.vocab_size for i in range(n)]
+    targets = [(5 * i + 1) % case.spec.vocab_size for i in range(n)]
+    return tokens, targets, NativeAdamW(epsilon=1e-45) if case.preflight else NativeAdamW()
+
+
+def _probe(lib):
+    from bcir.hosted.models.native_launch import RECORD_WORDS
+
+    lib.bcir_decoder_trace_probe_begin.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_size_t]
+    lib.bcir_decoder_trace_probe_begin.restype = None
+    lib.bcir_decoder_trace_probe_end.argtypes = [ct.POINTER(ct.c_size_t)]
+    lib.bcir_decoder_trace_probe_end.restype = ct.c_size_t
+    lib.bcir_decoder_trace_probe_words.argtypes = []
+    lib.bcir_decoder_trace_probe_words.restype = ct.c_size_t
+    assert lib.bcir_decoder_trace_probe_words() == RECORD_WORDS
+
+
+def trace_case(path, case: TraceCase, capacity: int | None = None, *, trace: bool = True):
+    """Run `case` on the trace build at `path` (a `TraceRun`). `capacity` lends the probe that
+    many records instead of room for twice the plan's; `trace=False` runs `path` as a build
+    without the probe -- the library itself -- and holds no records."""
+    from bcir.hosted.models.native_launch import RECORD_WORDS, read_trace, run_launches
+
+    trainer, decisions = _case_trainer(path, case)
+    try:
+        lib = trainer.lib
+        if trace:
+            _probe(lib)
+        planned = run_launches(case.spec, case.batch, case.time, **decisions)
         if capacity is None:
             capacity = 2 * sum(len(launch.records) for launch in planned) + 64
         words = (ct.c_uint64 * (capacity * RECORD_WORDS))()
-        n = case.batch * case.time * case.steps * case.accumulation
-        tokens = [(7 * i + 3) % case.spec.vocab_size for i in range(n)]
-        targets = [(5 * i + 1) % case.spec.vocab_size for i in range(n)]
-        optimizer = NativeAdamW(epsilon=1e-45) if case.preflight else NativeAdamW()
+        tokens, targets, optimizer = _case_inputs(case)
         if not trace:
-            trainer.run(tokens, targets, steps=case.steps, optimizer=optimizer,
-                        gradient_accumulation=case.accumulation)  # fmt: skip
-            return TraceRun(planned, [], 0, state_digest(trainer))
+            events = trainer.run(tokens, targets, steps=case.steps, optimizer=optimizer,
+                                 gradient_accumulation=case.accumulation)  # fmt: skip
+            return TraceRun(planned, [], 0, state_digest(trainer), events)
         lib.bcir_decoder_trace_probe_begin(ct.addressof(trainer.state), ct.addressof(words),
                                            capacity)  # fmt: skip
         try:
-            trainer.run(tokens, targets, steps=case.steps, optimizer=optimizer,
-                        gradient_accumulation=case.accumulation)  # fmt: skip
+            events = trainer.run(tokens, targets, steps=case.steps, optimizer=optimizer,
+                                 gradient_accumulation=case.accumulation)  # fmt: skip
         finally:
             dropped = ct.c_size_t()
             count = lib.bcir_decoder_trace_probe_end(ct.byref(dropped))
-        return TraceRun(planned, read_trace(words, count), dropped.value, state_digest(trainer))
+        return TraceRun(planned, read_trace(words, count), dropped.value, state_digest(trainer),
+                        events)  # fmt: skip
+    finally:
+        trainer.close()
+
+
+class ProgramRun(NamedTuple):
+    """One program run: the program, the records its run traced (launch, record), the records it
+    had no room for, the state it left, its events, and its status (0, or the C's refusal)."""
+
+    program: list
+    traced: list
+    dropped: int
+    state: str
+    events: tuple
+    status: int
+
+
+def program_case(path, case: TraceCase, choices: dict | None = None) -> ProgramRun:
+    """Run `case` from its program (`native_launch.step_program` under the case's state and the
+    planner's `choices`) on the trace build at `path`, its launches traced."""
+    from bcir.hosted.models.native import NativeRunStopped
+    from bcir.hosted.models.native_launch import (
+        RECORD_WORDS,
+        program_words,
+        read_trace,
+        step_program,
+    )
+
+    trainer, decisions = _case_trainer(path, case)
+    try:
+        lib = trainer.lib
+        _probe(lib)
+        program = step_program(
+            case.spec, case.batch, case.time, **(decisions | dict(choices or {}))
+        )
+        capacity = 2 * sum(len(launch.records) for launch in program) + 64
+        words = (ct.c_uint64 * (capacity * RECORD_WORDS))()
+        tokens, targets, optimizer = _case_inputs(case)
+        events, status = (), 0
+        lib.bcir_decoder_trace_probe_begin(ct.addressof(trainer.state), ct.addressof(words),
+                                           capacity)  # fmt: skip
+        try:
+            events = trainer.run_program(program_words(program), tokens, targets,
+                                         steps=case.steps, optimizer=optimizer,
+                                         gradient_accumulation=case.accumulation)  # fmt: skip
+        except NativeRunStopped as stopped:
+            status = stopped.status
+        finally:
+            dropped = ct.c_size_t()
+            count = lib.bcir_decoder_trace_probe_end(ct.byref(dropped))
+        return ProgramRun(program, read_trace(words, count), dropped.value, state_digest(trainer),
+                          events, status)  # fmt: skip
     finally:
         trainer.close()
 
@@ -1075,14 +1169,160 @@ def executed_mismatch(path, cases=None) -> tuple[int, list[str]]:
 
     bad, notes = 0, []
     for case in trace_corpus() if cases is None else cases:
-        planned, traced, dropped, _ = trace_case(path, case)
-        problems = launch_mismatches(planned, traced)
-        if dropped:
-            problems.append(f"{dropped} records dropped")
+        run = trace_case(path, case)
+        problems = launch_mismatches(run.planned, run.traced)
+        if run.dropped:
+            problems.append(f"{run.dropped} records dropped")
         if problems:
             bad += 1
             notes.append(f"{case}: {problems[0]}")
     return bad, notes
+
+
+# --- train.plan.program.mismatch (PX-2) -----------------------------------------------------------
+
+
+def state_cases(corpus) -> list[int]:
+    """One case of the corpus per decision set the state could depend on -- contract, recompute
+    or not, workspace tier, threads, provider, a failing bound -- its multi-step one where the
+    corpus has it."""
+    picked: dict[tuple, int] = {}
+    for i, case in enumerate(corpus):
+        key = (case.contract, bool(case.recompute), case.workspace, case.threads, case.provider,
+               case.preflight)  # fmt: skip
+        if key not in picked or case.steps > corpus[picked[key]].steps:
+            picked[key] = i
+    return sorted(picked.values())
+
+
+def program_choices(case: TraceCase) -> tuple[dict, ...]:
+    """The planner's choices a program takes otherwise than the C step does (PX-2): the linears
+    alone (no group), a linear's VJPs as two calls (no pair), the SwiGLU block without its panels,
+    every scan the run's facts leave out, and every layer recomputed (one cache slot: the set every
+    state's arena holds)."""
+    return ({"group": False}, {"pair": False}, {"panels": False}, {"facts": False},
+            {"recompute": (1 << case.spec.n_layers) - 1})  # fmt: skip
+
+
+def program_runs(path, cases=None):
+    """Every program run `train.plan.program.mismatch` reads, as (case, choices, the C step's
+    `TraceRun`, the program's `ProgramRun`): every case of `cases` (the trace corpus) from the
+    program that takes the C step's own decisions, and its state cases under each of
+    `program_choices`."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    picked = set(state_cases(corpus))
+    for i, case in enumerate(corpus):
+        step = trace_case(path, case)
+        yield case, {}, step, program_case(path, case)
+        if i in picked:
+            for choices in program_choices(case):
+                yield case, choices, step, program_case(path, case, choices)
+
+
+def program_run_count(cases=None) -> int:
+    """How many runs `program_runs` makes of `cases` (the trace corpus): the row's baseline."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    return len(corpus) + sum(len(program_choices(corpus[i])) for i in state_cases(corpus))
+
+
+def program_problems(step: TraceRun, run: ProgramRun) -> list[str]:
+    """What a program run did otherwise than it must: stopped, dropped a record, traced other
+    launches than its program states, or left another state or events than the C step's `step`
+    on the same case. Empty when the run is the step its program states."""
+    from bcir.hosted.models.native_launch import launch_mismatches, program_launches
+
+    problems = launch_mismatches(program_launches(run.program), run.traced)
+    if run.status:
+        problems.insert(0, f"stopped with status {run.status}")
+    if run.dropped:
+        problems.append(f"{run.dropped} records dropped")
+    if run.state != step.state or run.events != step.events:
+        problems.append("the state or the events are not the C step's")
+    return problems
+
+
+def program_mismatch(path, cases=None) -> tuple[int, int, list[str]]:
+    """`train.plan.program.mismatch`: of the program runs (`program_runs`), those that stopped,
+    whose state or events differ from the C step's on the same case (`bcir_decoder_run_accum`), or
+    whose trace differs from the launches its program states or dropped a record; the runs; and
+    what differed, run by run."""
+    bad, runs, notes = 0, 0, []
+    for case, choices, step, run in program_runs(path, cases):
+        runs += 1
+        problems = program_problems(step, run)
+        if problems:
+            bad += 1
+            notes.append(f"{case} {choices}: {problems[0]}")
+    return bad, runs, notes
+
+
+#: The fuzz harness's state (runtime/c/fuzz_decoder_train.c): its spec and shape, the contracts its
+#: configuration byte's low three bits name (bit 3: every layer recomputed), its workspace.
+FUZZ_STATE = PLAN_CORPUS[0]
+FUZZ_CONTRACTS = (0, 3, 4, 14, 16, 82, 32, 36)
+FUZZ_WORKSPACE = 1 << 20
+
+
+def renumber_jobs(records: list[list[int]]) -> list[list[int]]:
+    """A program's records (lists of words) with their jobs numbered from 1 again, in place -- a
+    GEMM job's calls keep one number between them -- as an edit that adds or drops records needs,
+    so the check meets the edit rather than a launch out of order. Returns the records."""
+    number, last = 0, None
+    for r in records:
+        if not (r[0] == 5 and last == (5, r[1])):  # a GEMM call of the job before
+            number += 1
+        last = (r[0], r[1])
+        r[1] = number
+    return records
+
+
+def fuzz_input(config: int, steps: int, accumulation: int, words) -> bytes:
+    """A fuzz input: the configuration byte, the shape byte, the program's words little-endian."""
+    shape = (steps - 1) | (accumulation - 1) << 1
+    return bytes([config, shape]) + struct.pack(f"<{len(words)}Q", *words)
+
+
+def fuzz_program(config: int, steps: int = 1, accumulation: int = 1) -> list[int]:
+    """The planner's program for the fuzz harness's state under `config` (its words)."""
+    from bcir.hosted.models.native_launch import program_words, step_program
+
+    spec, batch, time_ = FUZZ_STATE
+    contract = FUZZ_CONTRACTS[config & 7]
+    return program_words(step_program(
+        spec, batch, time_, contract=contract, recompute=3 if config & 8 else 0,
+        workspace_bytes=FUZZ_WORKSPACE if contract & 16 else 0, steps=steps,
+        accumulation=accumulation,
+    ))  # fmt: skip
+
+
+def fuzz_seeds() -> list[tuple[str, bytes, bool]]:
+    """The fuzz harness's seed corpus as (name, input, whether the check admits it): the
+    planner's program for every configuration at one step, two of them at two steps of two
+    micro-batches, and near misses of the check's rules on the first -- so a campaign starts
+    inside the record grammar and inside its refusals."""
+    out = []
+    for config in range(16):
+        shapes = ((1, 1), (2, 2)) if config in (0, 4) else ((1, 1),)
+        for steps, accumulation in shapes:
+            words = fuzz_program(config, steps, accumulation)
+            out.append((f"c{config}_{steps}x{accumulation}",
+                        fuzz_input(config, steps, accumulation, words), True))  # fmt: skip
+    words, w = fuzz_program(0), 48
+    records = [list(words[i : i + w]) for i in range(0, len(words), w)]
+    rms = next(i for i, r in enumerate(records) if r[0] == 4)
+    gemm = next(i for i, r in enumerate(records) if r[0] == 5)
+    loss = next(i for i, r in enumerate(records) if r[0] == 15)
+    misses = {
+        "unscanned": renumber_jobs([list(r) for r in records[1:]]),  # weights read, not known
+        "eps": [r if i != rms else r[:5] + [r[5] + 1] + r[6:] for i, r in enumerate(records)],
+        "alpha": [r if i != gemm else r[:8] + [0x40000000] + r[9:] for i, r in enumerate(records)],
+        "twoloss": renumber_jobs(
+            [list(r) for r in records[: loss + 1] + [records[loss]] + records[loss + 1 :]]
+        ),
+    }
+    for name, edited in misses.items():
+        out.append((f"miss_{name}", fuzz_input(0, 1, 1, [x for r in edited for x in r]), False))
+    return out
 
 
 def measure(*, timed: bool = True) -> dict[str, float]:
@@ -1118,6 +1358,7 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         traced = trace_library(Path(tmp) / "trace")
         if traced is not None:  # no C units to trace (an installed package): not measured
             out["train.plan.executed.mismatch"] = float(executed_mismatch(traced)[0])
+            out["train.plan.program.mismatch"] = float(program_mismatch(traced)[0])
         if timed:
             out.update(measure_step(path))
         return out
@@ -1177,6 +1418,22 @@ __all__ = [
     "trace_case",
     "trace_corpus",
     "trace_library",
+    "checkout_library",
+    "FUZZ_CONTRACTS",
+    "FUZZ_STATE",
+    "FUZZ_WORKSPACE",
+    "fuzz_input",
+    "renumber_jobs",
+    "fuzz_program",
+    "fuzz_seeds",
+    "ProgramRun",
+    "program_case",
+    "program_choices",
+    "program_mismatch",
+    "program_problems",
+    "program_run_count",
+    "program_runs",
+    "state_cases",
 ]
 
 

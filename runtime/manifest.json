@@ -177,6 +177,7 @@
   "fuzzers": {
     "fuzz_q8_model": {"sources": ["fuzz_q8_model.c"], "libraries": ["bcir_models"], "max_len": "16384"},
     "fuzz_decoder_gem": {"sources": ["fuzz_decoder_gem.c"], "libraries": ["bcir_models"], "max_len": "24576"},
+    "fuzz_decoder_train": {"sources": ["fuzz_decoder_train.c"], "libraries": ["bcir_decoder_training"], "max_len": "131072"},
     "fuzz_telemetry_frame": {"sources": ["fuzz_telemetry_frame.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "fuzz_asn1": {"sources": ["fuzz_asn1.c"], "libraries": ["bcir_asn1"], "max_len": "8192"},
     "fuzz_per": {"sources": ["fuzz_per.c"], "libraries": ["bcir_asn1"], "max_len": "4096"},

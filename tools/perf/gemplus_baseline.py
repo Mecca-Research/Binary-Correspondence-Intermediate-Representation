@@ -798,6 +798,28 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="PX-1",
     ),
     Metric(
+        "train.plan.program.mismatch",
+        "train",
+        "of the 356 program runs (bcir/tests/native_decoder_fixtures.py `program_runs`: the 221 "
+        "cases of the trace corpus, each from the program of the C step's own decisions, and its "
+        "27 state cases under each of the planner's five other choices -- calls alone instead of "
+        "grouped, a linear's VJPs as two calls, the SwiGLU block without its panels, every scan "
+        "made, every layer recomputed), those that stopped, trained another state or events than "
+        "bcir_decoder_run_accum on the same case, or traced other launches than their program "
+        "states: bcir_decoder_run_program runs the program (native_launch.step_program) through "
+        "the trainer's own kernels after checking it whole. The parent ran no step from a "
+        "program, so all 356 were unheld (PX-2)",
+        356,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one step, two runs: every choice the program takes trains the C step's "
+        "bits (NDT-SCHED-0/1, BF16-PANELS, FACTS-RUN, REMAT: each held bit for bit where it "
+        "landed), so a run that differs -- in state, events or launches -- is a defect of the "
+        "executor, the program model or the probe",
+        slice_owner="PX-2",
+    ),
+    Metric(
         "train.mm.mismatch",
         "train",
         "of 20 GEMM cases (every transpose pair, the 32-wide tiles' edges, alpha and beta forms), "

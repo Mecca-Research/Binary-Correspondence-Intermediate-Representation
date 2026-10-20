@@ -1309,13 +1309,17 @@ def test_the_harness_rows_are_the_programs_numbers():
                          "train.mm.kblock.mismatch", "train.mm.provider.unsound",
                          "train.mm.provider.differences", "train.norm.reduce.mismatch",
                          "train.mm.bf16.mismatch", "train.plan.remat.mismatch",
-                         "train.plan.executed.mismatch"}  # fmt: skip
+                         "train.plan.executed.mismatch", "train.plan.program.mismatch"}  # fmt: skip
     remat = rows["train.plan.remat.mismatch"]
     assert remat.kind == "exact" and remat.bound == 0 and remat.baseline == 0
     assert remat.what.startswith("(spec, recompute set) pairs") and remat.slice_owner == "GEO-3"
     executed, calls = rows["train.plan.executed.mismatch"], len(nf.trace_corpus())
     assert executed.kind == "exact" and executed.bound == 0 and executed.baseline == calls
     assert executed.what.startswith(f"of the {calls} calls") and executed.slice_owner == "PX-1"
+    program, runs = rows["train.plan.program.mismatch"], nf.program_run_count()
+    assert program.kind == "exact" and program.bound == 0 and program.baseline == runs
+    assert program.what.startswith(f"of the {runs} program runs") and program.slice_owner == "PX-2"
+    assert f"the {calls} cases" in program.what, "the row names the trace corpus it runs"
     bf16 = rows["train.mm.bf16.mismatch"]
     assert bf16.kind == "exact" and bf16.bound == 0 and bf16.baseline == 0
     assert (

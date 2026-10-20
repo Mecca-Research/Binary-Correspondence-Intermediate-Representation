@@ -14,6 +14,8 @@
 #   ControlRecordV1 decoder + resident plane -- a control record from any issuer (G14)
 #   live SPSC ring + TelemetryEnvelopeV0      -- a shared region a peer writes, and the records
 #                                                 a device publishes into it (G15)
+#   native training-program runner           -- a launch program a planner hands the trainer,
+#                                               run on its state (PX-2)
 #
 # Each seeds from real Python-rail output so the campaign starts inside the format rather
 # than rediscovering its magic; the BCIRQ8 harness additionally REPAIRS the format's three
@@ -122,6 +124,16 @@ add_target dgem "decoder program interpreter" "-max_len=24576" \
   "${C}/fuzz_decoder_gem.c" "${C}/bcir_decoder_gem.c" "${C}/bcir_llama.c" "${C}/bcir_q8_model.c" \
   "${C}/bcir_q4_kernel.c" "${C}/bcir_ai_kernels.c" "${C}/bcir_decode.c" "${C}/bcir_exec.c" \
   "${C}/bcir_runtime.c"
+
+# bcir_decoder_run_program (PX-2) runs a training program on a state: every record's kind, flags,
+# dimensions and operand places come from the program. The input is a configuration byte (one of
+# eight contracts; every layer recomputed or none), a shape byte (steps and accumulation) and the
+# program's words; the harness asserts that a refused program wrote nothing -- the arenas, the
+# workspace, the events and the count lent -- and that an admitted one runs to the same bits every
+# time. Each admitted run trains real steps, so the campaign saturates its time bound: it starts
+# early.
+add_target dtrain "native training-program runner" "-max_len=131072" \
+  "${C}/fuzz_decoder_train.c" "${C}/bcir_decoder_train.c" "${C}/bcir_tensor.c"
 
 # bcir_telemetry_frame.c decodes frames a DEVICE emits over a byte transport (UART --
 # docs/kernel/TELEMETRY_FRAME_ABI.md), so the count/CRC/resync fields are all hostile.
@@ -400,6 +412,19 @@ for tied in (False, True):
                 out.joinpath(f"{name}_{tag}.bin").write_bytes(
                     fx.fuzz_seed(model_bytes, encode(edited))
                 )
+PY
+# The training-program runner: the planner's program for every configuration the harness names
+# (two at two steps of two micro-batches) and near misses of the check's rules (the weights read
+# before they are known, an RMSNorm of another eps, alpha 2, two losses in a micro-batch), so the
+# campaign starts inside the record grammar and next to its refusals (test_native_run_program
+# holds each seed to its verdict).
+python3 - "${tmp}/corpus_dtrain" <<'PY' || { echo "  FAIL: training-program seed corpus"; exit 1; }
+import sys
+from pathlib import Path
+from bcir.tests.native_decoder_fixtures import fuzz_seeds
+out = Path(sys.argv[1])
+for name, data, _admitted in fuzz_seeds():
+    out.joinpath(name + ".bin").write_bytes(data)
 PY
 python3 - "${tmp}/corpus_control" <<'PY' || { echo "  FAIL: control-plane seed corpus"; exit 1; }
 import os, sys

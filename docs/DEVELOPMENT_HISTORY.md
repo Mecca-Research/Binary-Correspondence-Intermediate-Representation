@@ -3349,6 +3349,72 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     plan and one intervention measured (PX-3), the transients placed by lifetime (PX-4, NDT-MEM's row),
     GF(2) layout maps held to the bf16 packers (PX-5), and GPU lowering and synchronization, gated on
     hardware this host lacks (PX-6).
+  PX-2a (2026-10-20): the native step run from the launch program its planner states.
+  - PX-1 held the launches the C step issues to the ones its program states; the step still ran its own
+    fixed sequence. `bcir_decoder_run_program` (bcir_decoder_train.h) runs a program instead: PX-1's
+    records -- kind, the job a call shares, flags, eight dimensions, ten operands as (space, byte offset,
+    bytes) -- with the host's in place: a CHECK where the step checks its forward, its products and a
+    micro-batch's loss, and the update's pass record as UPDATE. Each kernel record runs its call through
+    the step's own helpers (the embedding, the loss rows and the scatter became helpers of their own,
+    moved from the step unchanged: the 27 state digests are the parent's), so a program's trace is the
+    program and its bits are the step's. `native_launch.step_program` states the program for a state
+    and the planner's choices -- the linears grouped or not, a linear's VJPs paired or not, the panels
+    taken or not, the run's facts used or every scan made, any recompute set the arena holds -- and
+    `NativeDecoder.run_program` runs it (`NativeRunStopped`: the status and the steps a stopped run
+    completed): an `array('Q')` is lent to the C as it is, and a list's words are checked by one set of
+    their types and converted in C (`array('Q')`, its range check), 1.87 ms a call of ten steps where the
+    first binding's Python loop and ctypes construction took 12.8 ms. The state ABI stays 5.
+  - The whole program is checked before anything runs, and a refused one writes nothing, not even the
+    completed count: each record's grammar and canonical form; each operand inside a space its use
+    admits (kernels read the weights, gradients, activations and scratch and write the last three),
+    4-byte aligned, of the size its dimensions name and apart from every operand its job writes (one
+    GEMM chain's shared C excepted); each GEMM job one the state's kernels take (the contract's entry, a
+    pair's two roles, a group's chain and the rest, a panel only on whole 32-tiles and one call's, the
+    bf16 workspace whole), alpha 1 and beta 0 or 1, the state's eps and attention flags; a provider's
+    call only with the provider; the weights read only once a scan of all of them or an update has made
+    them known finite (FACTS-RUN); one loss a micro-batch, an update after exactly `accumulation` of
+    them, `steps` updates; the program outside the state, the events and the count. The check holds each
+    call to its kernel's contract and the run to its step's shape; that the operands' places compute the
+    step's gradient is the program's, which the witness holds.
+  - `train.plan.program.mismatch` 356 -> 0: of PX-1's trace corpus, each of the 221 calls run from the
+    program that takes the C step's own decisions, and its 27 state cases under each of five other
+    choices (the linears ungrouped, a linear's VJPs unpaired, no panels, every scan made, every layer
+    recomputed): every run trains the C step's state and events bit for bit, runs to its end and traces
+    exactly its program. Each choice changes some program and states what it names; the programs reach
+    every record kind but the trace's own three.
+  - 48 malformed programs are refused with no byte written: 37 edits of a v1 program of two steps of two
+    micro-batches, one at each rule of the check and the bound checks at their edges, a program short of
+    its last record, a valid program lying inside the state's second moment, three programs for another
+    state (another state's kernels, BCIR's SiLU under a provider's, a cache the arena cannot hold), five
+    of the bf16 contract's rules and a panel on partial tiles. A run that fails stops where the step
+    stops, every byte as the step leaves it: weights not finite (NUMERIC, nothing written), a forward
+    that overflows on finite weights (NUMERIC at its check, before a gradient is written), an update the
+    preflight refuses (NUMERIC after a step), a product refusing its workspace (CAPACITY before any
+    commit, ahead of the gradient's verdict when both fail).
+  - A new trust boundary, fuzzed: `fuzz_decoder_train.c` runs any program on a two-layer state under
+    eight contracts, with and without recompute, and asserts no access out of bounds, that a refused
+    program wrote nothing and that a run is a function of its input; `native_decoder_fixtures.fuzz_seeds`
+    seeds it with the planner's programs and near misses of the check (a seed refused or a miss admitted
+    fails `test_the_fuzz_seeds_start_inside_the_grammar`). 20,000 runs under clang 18 and 100,000 under
+    clang 23, with ASan and UBSan, no finding.
+  - The runner costs nothing this host resolves ([measurements/2026-10-20/px2/](research/measurements/2026-10-20/px2/README.json)):
+    four call paths rotated on one trainer of the 9.84M decoder -- every path trains the same bits, so no
+    ratio compares two placements of a state -- read the program x1.0035 of the fixed sequence (95%
+    interval 0.977-1.030) under bf16 at four threads, x1.0070 (0.991-1.023) under binary32 and x1.0170
+    (0.984-1.051) at one thread, each interval the width of the A/A control's beside it. The check walks a
+    step's 223 records in about 12 us; every run ends in the state of a trainer that ran each of its calls
+    through `bcir_decoder_run_accum`, bit for bit, over 1,000 steps.
+  - `px-program.json` PG1-PG25 (the check's rules, the run's verdicts, shares and counts, a program inside
+    the state) and PM8-PM19 (the program model, the binding, the fuzz seeds, the header's constants):
+    37 of 37 caught. The first sweep caught two spellings the compiler judged before the tests did
+    (RED-VACUITY): PG12 left a parameter unused, so the build refused it, and PG16 left a counter set but
+    unread in the library build. Both were respelled, and every C entry of the table compiles warning-free
+    under GCC 13, clang 18 and clang 23, with the trace probe and without. PX-1's PX5, PM1 and PM3
+    re-anchored to the moved code (the loss rows as a helper, the launch model's job builder), and
+    `px-trace.json` re-swept: 19 of 19 caught.
+  - The ladder: PX-2b carries the same program as BCIR's own artifact -- a StreamPack of claims over RIDs,
+    one a launch, their places an `ExecutionPlanV1`'s, executed through `bcir_sp_execute` -- whose
+    lifetimes PX-4 then packs.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

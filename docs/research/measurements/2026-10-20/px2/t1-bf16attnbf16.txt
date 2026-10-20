@@ -1,0 +1,5 @@
+run2 / run (A/A: one path against itself): x1.0095 [0.9849, 1.0348]
+program / run (the runner: its check and dispatch): x1.0170 [0.9839, 1.0512]
+binding / program (a list's checks and conversion): x0.9978 [0.9723, 1.0239]
+binding / run (all of it, from a list): x1.0147 [0.9898, 1.0403]
+{"run": 198.38222039998072, "run2": 203.4999849000087, "program": 206.5839330000017, "binding": 205.09925810001732} check 60.6 us, list 0.90 ms {"records": 1116, "records_per_step": 223.2, "bytes": 428544} one state: True
