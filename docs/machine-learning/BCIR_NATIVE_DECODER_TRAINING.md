@@ -149,6 +149,7 @@ the C rail to it:
 | `train.plan.mismatch` | exact | the program's arena sums against `bcir_decoder_make_plan` over a six-spec corpus (tied and untied, MHA and GQA, context one, tile-crossing widths) | 0 of 36 (spec, arena) pairs; the parent checked the 24 parameter pairs only |
 | `train.plan.executed.mismatch` | exact | the launches one `bcir_decoder_run_accum` call issues -- recorded by a build defining `BCIR_DT_TRACE_PROBE` -- against the launches [`native_launch.run_launches`](../../bcir/hosted/models/native_launch.py) states from the program's buffers and the call's decisions: every call to the tensor unit, a provider or the pool, the job it shares, its entry, shapes, scalars and the arena span of each operand, over 221 calls (six contracts, three recompute sets, one and two steps of one and two micro-batches, the panels at three workspace tiers and two thread counts, a provider's GEMM and SiLU, an update whose bound fails) | 0 of 221 (2026-10-19, PX-1); the parent held no call's launches to a plan |
 | `train.plan.program.mismatch` | exact | runs of [`bcir_decoder_run_program`](../../runtime/c/bcir_decoder_train.h) -- the step from a launch program, checked whole before anything runs -- on the programs [`native_launch.step_program`](../../bcir/hosted/models/native_launch.py) states: each call of the trace corpus from the program that takes the C step's own decisions, and its 27 state cases under each of five other choices (the linears ungrouped, a linear's VJPs unpaired, no panels, every scan made, every layer recomputed), against the C step on the same case; a run counts when its state or events differ in a bit, it stops short, or its trace (PX-1's probe) is not its program | 0 of 356 (2026-10-20, PX-2a); the parent ran no step from a program |
+| `train.plan.pack.mismatch` | exact | the same 356 runs, each from its pack: the program stated as a module of its calls and values ([`native_pack.training_pack`](../../bcir/hosted/models/native_pack.py)), planned by K_BCIR, hydrated by GEM into a StreamPack and placed by its `ExecutionPlanV1`, lowered by [`bcir_decoder_lower_pack`](../../runtime/c/bcir_decoder_pack.h) -- the two verified by their own laws, the plan's alias law among them, then each claim GEM's executor dispatches lowered to the record that runs it -- and run; a run counts when the lowering is refused or is not the program's words, the run stops, or its state or events differ in a bit from the C step's on the same case | 0 of 356 (2026-10-20, PX-2b); the parent ran no step from a StreamPack |
 | `train.mm.mismatch` | exact | `bcir_tensor_mm` against an independent binary32 emulation of its contract, bit for bit, on 20 cases (every transpose pair, the tiles' edges) | 0 of 20, and 0 on the parent kernel: the contract both keep |
 | `train.memory.transient` | exact | the bytes the C plan reserves for activations and workspace over G26's concurrent-live bound on the same values | 1.326x: 999,424 bytes held over a 753,664-byte bound at the bench shape |
 | `train.mm.fused.mismatch` | exact | `bcir_tensor_mm_fused` against an exact rational emulation of the fused contract rounded once per term, bit for bit, on the same 20 cases | 0 of 20 (2026-10-12, NDT-FMA) |
@@ -207,6 +208,25 @@ Running from a program costs nothing this host resolves: on the 9.84M decoder, t
 and the program take turns on one trainer and read x1.0035 apart at four threads under bf16 (95%
 interval 0.977-1.030), inside the width of the A/A control's interval, and the check walks a step's
 223 records in about 12 us ([measurements](../research/measurements/2026-10-20/px2/README.json)).
+
+The pack row runs the same step from BCIR's own artifacts. [`native_pack.training_pack`](../../bcir/hosted/models/native_pack.py)
+states a program as a module -- one claim a kernel call, one phase a launch, the resources the
+program's values (a write of an activation or scratch span a new value that ends the values it
+meets, a read the span's live value) -- which K_BCIR plans, GEM hydrates into a StreamPack, and the
+plan's `ExecutionPlanV1` places, every value at its bank, offset, size and phases.
+[`bcir_decoder_lower_pack`](../../runtime/c/bcir_decoder_pack.h) takes the two and the state and
+nothing else: the two are verified by their own laws in one walk of the plan (the alias law among
+them: no two lifetimes of one bank live at once on overlapping bytes), then each claim
+`bcir_sp_execute` dispatches is lowered to the record that runs it -- its name from a closed
+vocabulary, every dimension and flag from the state, every operand's place from its value's
+lifetime, live at the claim's phase -- and a refused pack writes nothing. `NativeDecoder.lower_pack`
+returns the `array('Q')` that `run_program` runs as it is, and `run_pack` is the two. Another legal
+placement -- every transient elsewhere -- lowers to the same program at its places and trains the
+same bits. Lowering a pack in every call costs nothing this host resolves -- x1.0195 (95% interval
+0.997-1.042) under bf16 at four threads and x1.0037 under binary32, beside A/A controls of x0.9979 and
+x0.9923 -- a ten-step lowering takes 47-55 ms, about half of it the plan's alias law, the one check left
+quadratic, and a pack lowered once costs nothing per call
+([measurements](../research/measurements/2026-10-20/px2b/README.json)).
 
 ## Evidence and scope
 

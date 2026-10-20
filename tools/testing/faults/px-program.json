@@ -246,8 +246,8 @@
     {
       "expects": "test_the_fuzz_seeds_start_inside_the_grammar",
       "label": "PM16 every fuzz seed the v1 program (the bf16 configurations' seeds refused)",
-      "new": "    contract = FUZZ_CONTRACTS[0]",
-      "old": "    contract = FUZZ_CONTRACTS[config & 7]",
+      "new": "    contract = FUZZ_CONTRACTS[0]\n    return program_words(step_program(",
+      "old": "    contract = FUZZ_CONTRACTS[config & 7]\n    return program_words(step_program(",
       "path": "bcir/tests/native_decoder_fixtures.py"
     },
     {

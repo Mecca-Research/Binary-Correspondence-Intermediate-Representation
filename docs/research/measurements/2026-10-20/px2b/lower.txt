@@ -1,0 +1,5 @@
+{"steps": 1, "claims": 224, "values": 372} {"sp_validate": 0.111, "sp_verify_semantic": 0.164, "ep_validate": 0.079, "ep_verify": 2.012, "ep_check_pack": 2.414, "lower_pack": 4.67}
+{"steps": 2, "claims": 447, "values": 518} {"sp_validate": 0.21, "sp_verify_semantic": 0.285, "ep_validate": 0.123, "ep_verify": 2.043, "ep_check_pack": 2.762, "lower_pack": 7.213}
+{"steps": 5, "claims": 1116, "values": 956} {"sp_validate": 0.523, "sp_verify_semantic": 0.77, "ep_validate": 0.27, "ep_verify": 7.693, "ep_check_pack": 9.036, "lower_pack": 20.2}
+{"steps": 10, "claims": 2231, "values": 1686} {"sp_validate": 1.052, "sp_verify_semantic": 1.463, "ep_validate": 0.529, "ep_verify": 23.763, "ep_check_pack": 28.386, "lower_pack": 49.577}
+{"steps": 20, "claims": 4461, "values": 3146} {"sp_validate": 2.076, "sp_verify_semantic": 2.871, "ep_validate": 0.989, "ep_verify": 79.792, "ep_check_pack": 99.036, "lower_pack": 143.756}

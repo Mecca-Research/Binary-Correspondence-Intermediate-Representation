@@ -1291,9 +1291,10 @@ def test_the_step_floor_is_measured_beside_the_step():
 
 def test_the_harness_rows_are_the_programs_numbers():
     """`train.memory.transient`'s frozen baseline is the bench program's own ratio, and every
-    row of the harness's `train` group is one the fixtures measure -- the four NDT-GEM rows, and
-    TRAIN-RAIL's corpus row -- so a change to the program, the C plan or the corpus recipe
-    cannot leave the harness quoting a stale number."""
+    row of the harness's `train` group is one the fixtures measure -- the four NDT-GEM rows,
+    TRAIN-RAIL's corpus row, and the PX rows over the trace corpus (the launches, the programs,
+    the packs) -- so a change to the program, the C plan or the corpus recipe cannot leave the
+    harness quoting a stale number."""
     import sys
 
     from bcir.tests import native_decoder_fixtures as nf
@@ -1309,7 +1310,8 @@ def test_the_harness_rows_are_the_programs_numbers():
                          "train.mm.kblock.mismatch", "train.mm.provider.unsound",
                          "train.mm.provider.differences", "train.norm.reduce.mismatch",
                          "train.mm.bf16.mismatch", "train.plan.remat.mismatch",
-                         "train.plan.executed.mismatch", "train.plan.program.mismatch"}  # fmt: skip
+                         "train.plan.executed.mismatch", "train.plan.program.mismatch",
+                         "train.plan.pack.mismatch"}  # fmt: skip
     remat = rows["train.plan.remat.mismatch"]
     assert remat.kind == "exact" and remat.bound == 0 and remat.baseline == 0
     assert remat.what.startswith("(spec, recompute set) pairs") and remat.slice_owner == "GEO-3"
@@ -1320,6 +1322,10 @@ def test_the_harness_rows_are_the_programs_numbers():
     assert program.kind == "exact" and program.bound == 0 and program.baseline == runs
     assert program.what.startswith(f"of the {runs} program runs") and program.slice_owner == "PX-2"
     assert f"the {calls} cases" in program.what, "the row names the trace corpus it runs"
+    # PX-2b: the same runs, each from its pack -- the program row's corpus, one carrier more
+    pack = rows["train.plan.pack.mismatch"]
+    assert pack.kind == "exact" and pack.bound == 0 and pack.baseline == runs
+    assert pack.what.startswith(f"of the {runs} pack runs") and pack.slice_owner == "PX-2b"
     bf16 = rows["train.mm.bf16.mismatch"]
     assert bf16.kind == "exact" and bf16.bound == 0 and bf16.baseline == 0
     assert (

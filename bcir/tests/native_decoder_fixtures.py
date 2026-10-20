@@ -54,6 +54,10 @@ spec alone. One function per row family grades it against the C rail; the tests,
                                planner's other choices) that stopped, trained another state or
                                events than `bcir_decoder_run_accum` on the case, or traced other
                                launches than the program states (PX-2)
+    train.plan.pack.mismatch   pack runs (`pack_runs`: the program runs' configurations, each as a
+                               StreamPack and ExecutionPlanV1 the trainer lowers) whose lowering was
+                               refused or is not the program's words, that stopped, or that trained
+                               another state or events than the C step on the case (PX-2b)
 
 Without a C compiler the native rows are not measured -- a skip, never a pass.
 """
@@ -1256,6 +1260,112 @@ def program_mismatch(path, cases=None) -> tuple[int, int, list[str]]:
     return bad, runs, notes
 
 
+# --- train.plan.pack.mismatch (PX-2b) ------------------------------------------------------------
+
+
+def pack_library(directory) -> Path | None:
+    """The trainer with the PX-2b pack lowering (`NativeDecoder.build(..., pack=True)`), from the
+    tree's units as they stand -- a fault the sweep injected included. None without a compiler, or
+    outside a source checkout (an installed package ships no C units: the one expected absence)."""
+    if not (_C / "bcir_decoder_pack.c").is_file():
+        return None
+    cc = compiler()
+    if cc is None:
+        return None
+    from bcir.hosted.models.native import NativeDecoder
+
+    return NativeDecoder.build(directory, cc=cc, pack=True)
+
+
+class PackRun(NamedTuple):
+    """One pack run: the training pack, the words its lowering wrote, the state the run left, its
+    events and its status -- 0, the run's stop status, or -1 when the lowering refused the pack
+    (`why` then its reason, `native_pack.REASONS`)."""
+
+    pack: object
+    words: tuple
+    state: str
+    events: tuple
+    status: int
+    why: int = 0
+
+
+def pack_case(path, case: TraceCase, choices: dict | None = None, *, placements=None,
+              run: bool = True) -> PackRun:  # fmt: skip
+    """`case` from its pack (PX-2b): the program `step_program` states for the case's state and the
+    planner's `choices`, stated as a module (`native_pack.training_pack`), planned, hydrated and
+    placed (`pack_artifacts`: the C step's own places, or `placements`), lowered by the trainer of
+    the case on the pack build at `path` (`bcir_decoder_lower_pack`) and, with `run`, run."""
+    from bcir.hosted.models.native import NativeRunStopped, PackRefused
+    from bcir.hosted.models.native_pack import pack_artifacts, training_pack
+
+    trainer, decisions = _case_trainer(path, case)
+    try:
+        tp = training_pack(case.spec, case.batch, case.time, **(decisions | dict(choices or {})))
+        pack, plan, _, _ = pack_artifacts(tp, placements=placements)
+        try:
+            words = trainer.lower_pack(pack, plan)
+        except PackRefused as refused:
+            return PackRun(tp, (), "", (), -1, refused.why)
+        if not run:
+            return PackRun(tp, tuple(words), "", (), 0)
+        tokens, targets, optimizer = _case_inputs(case)
+        events, status = (), 0
+        try:
+            events = trainer.run_program(words, tokens, targets, steps=case.steps,
+                                         optimizer=optimizer,
+                                         gradient_accumulation=case.accumulation)  # fmt: skip
+        except NativeRunStopped as stopped:
+            status = stopped.status
+        return PackRun(tp, tuple(words), state_digest(trainer), events, status)
+    finally:
+        trainer.close()
+
+
+def pack_runs(path, cases=None):
+    """Every pack run `train.plan.pack.mismatch` reads, as (case, choices, the C step's `TraceRun`
+    on the same build, the `PackRun`): the configurations `program_runs` reads -- every case of
+    `cases` (the trace corpus) from the program of the C step's own decisions, its state cases
+    under each of `program_choices` -- each as a pack."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    picked = set(state_cases(corpus))
+    for i, case in enumerate(corpus):
+        step = trace_case(path, case, trace=False)
+        yield case, {}, step, pack_case(path, case)
+        if i in picked:
+            for choices in program_choices(case):
+                yield case, choices, step, pack_case(path, case, choices)
+
+
+def pack_problems(step: TraceRun, run: PackRun) -> list[str]:
+    """What a pack run did otherwise than it must: a lowering refused or other than its program's
+    words, a run that stopped, or another state or events than the C step's `step`."""
+    if run.status == -1:
+        return [f"the lowering refused the pack (why {run.why})"]
+    problems = []
+    if run.words != run.pack.words:
+        problems.append("the lowering is not the program's words")
+    if run.status:
+        problems.append(f"stopped with status {run.status}")
+    if run.state != step.state or run.events != step.events:
+        problems.append("the state or the events are not the C step's")
+    return problems
+
+
+def pack_mismatch(path, cases=None) -> tuple[int, int, list[str]]:
+    """`train.plan.pack.mismatch`: of the pack runs (`pack_runs`), those whose lowering was refused
+    or is not their program's words, that stopped, or that trained another state or events than
+    the C step on the same case; the runs; and what differed, run by run."""
+    bad, runs, notes = 0, 0, []
+    for case, choices, step, run in pack_runs(path, cases):
+        runs += 1
+        problems = pack_problems(step, run)
+        if problems:
+            bad += 1
+            notes.append(f"{case} {choices}: {problems[0]}")
+    return bad, runs, notes
+
+
 #: The fuzz harness's state (runtime/c/fuzz_decoder_train.c): its spec and shape, the contracts its
 #: configuration byte's low three bits name (bit 3: every layer recomputed), its workspace.
 FUZZ_STATE = PLAN_CORPUS[0]
@@ -1325,6 +1435,88 @@ def fuzz_seeds() -> list[tuple[str, bytes, bool]]:
     return out
 
 
+def fuzz_pack_input(config: int, steps: int, accumulation: int, pack: bytes, plan: bytes) -> bytes:
+    """A pack fuzz input (runtime/c/fuzz_decoder_pack.c): the configuration byte, the shape byte,
+    the pack's length (u32, little-endian), the pack, then the plan."""
+    shape = (steps - 1) | (accumulation - 1) << 1
+    return bytes([config, shape]) + struct.pack("<I", len(pack)) + pack + plan
+
+
+def fuzz_pack_parts(data: bytes) -> tuple[int, int, int, bytes, bytes]:
+    """A pack fuzz input's parts: (configuration, steps, accumulation, pack, plan)."""
+    (n,) = struct.unpack_from("<I", data, 2)
+    return data[0], 1 + (data[1] & 1), 1 + (data[1] >> 1 & 1), data[6 : 6 + n], data[6 + n :]
+
+
+def fuzz_pack(config: int, steps: int = 1, accumulation: int = 1):
+    """The planner's pack and plan for the fuzz harness's state under `config` (bytes, bytes, and
+    the training pack and the two objects for an edit)."""
+    from bcir.hosted.models.native_pack import pack_artifacts, training_pack
+
+    spec, batch, time_ = FUZZ_STATE
+    contract = FUZZ_CONTRACTS[config & 7]
+    tp = training_pack(spec, batch, time_, contract=contract, recompute=3 if config & 8 else 0,
+                       workspace_bytes=FUZZ_WORKSPACE if contract & 16 else 0, steps=steps,
+                       accumulation=accumulation)  # fmt: skip
+    return (tp, *pack_artifacts(tp))
+
+
+def fuzz_pack_seeds() -> list[tuple[str, bytes, bool]]:
+    """The pack fuzz harness's seed corpus as (name, input, whether the lowering admits it): the
+    planner's pack for every configuration at one step, two of them at two steps of two
+    micro-batches, and near misses of the lowering's refusals on the first -- two live values on
+    one span (the alias law), a name outside the vocabulary, a value no lifetime places, a claim
+    past its value's lifetime, a block not the claim's."""
+    import copy
+    import dataclasses
+
+    from bcir.abi.streampack_abi import encode
+    from bcir.tests.plan_fixtures import raw_encode
+
+    out = []
+    for config in range(16):
+        shapes = ((1, 1), (2, 2)) if config in (0, 4) else ((1, 1),)
+        for steps, accumulation in shapes:
+            _tp, pack, plan, _, _ = fuzz_pack(config, steps, accumulation)
+            out.append((f"c{config}_{steps}x{accumulation}",
+                        fuzz_pack_input(config, steps, accumulation, pack, plan), True))  # fmt: skip
+    tp, pack_bytes, plan_bytes, pack, plan = fuzz_pack(0)
+    claims = {c.id: c for ph in tp.module.phases for c in ph.claims}
+    rms = next(i for i, seg in enumerate(pack.segments) if seg.opcode == "train.rms")
+    x0, n1 = claims[pack.segments[rms].claim_id].rd[0], claims[pack.segments[rms].claim_id].wr[0]
+    gemm = next(i for i, seg in enumerate(pack.segments) if seg.opcode.startswith("train.gemm."))
+    lt = {x.rid: x for x in plan.lifetimes}
+    spans = [x for x in plan.lifetimes if x.last_phase > x.first_phase and
+             x.bank in ("activations", "scratch")]  # fmt: skip
+
+    def with_lifetimes(edit):  # without the wire laws: the encoder refuses what the C must
+        q = copy.deepcopy(plan)
+        q.lifetimes = sorted(edit(list(q.lifetimes)), key=lambda x: x.rid)
+        return raw_encode(q)
+
+    def with_segment(i, block=None, **fields):
+        p = dataclasses.replace(pack, segments=list(pack.segments), blocks=list(pack.blocks))
+        if fields:
+            p.segments[i] = dataclasses.replace(p.segments[i], **fields)
+        if block:
+            p.blocks[i] = dataclasses.replace(p.blocks[i], **block)
+        return encode(p)
+
+    misses = {
+        "alias": (pack_bytes, with_lifetimes(lambda ls: [
+            dataclasses.replace(x, offset=lt[x0].offset) if x.rid == n1 else x for x in ls])),
+        "op": (with_segment(gemm, opcode="train.gemm.solo.nt"), plan_bytes),
+        "rid": (pack_bytes, with_lifetimes(lambda ls: [x for x in ls if x.rid != spans[0].rid])),
+        "live": (pack_bytes, with_lifetimes(lambda ls: [
+            dataclasses.replace(x, last_phase=x.last_phase - 1, first_tick=0, last_tick=0)
+            if x.rid == spans[0].rid else x for x in ls])),
+        "block": (with_segment(gemm, block={"count": pack.blocks[gemm].count + 1}), plan_bytes),
+    }  # fmt: skip
+    for name, (pk, pl) in misses.items():
+        out.append((f"miss_{name}", fuzz_pack_input(0, 1, 1, pk, pl), False))
+    return out
+
+
 def measure(*, timed: bool = True) -> dict[str, float]:
     """Every NDT-GEM row this host can measure: the memory row always, the corpus row in a source
     checkout, the native rows with a compiler (and the timed one only when `timed`)."""
@@ -1359,6 +1551,9 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         if traced is not None:  # no C units to trace (an installed package): not measured
             out["train.plan.executed.mismatch"] = float(executed_mismatch(traced)[0])
             out["train.plan.program.mismatch"] = float(program_mismatch(traced)[0])
+        packed = pack_library(Path(tmp) / "pack")
+        if packed is not None:  # no C units to lower with (an installed package): not measured
+            out["train.plan.pack.mismatch"] = float(pack_mismatch(packed)[0])
         if timed:
             out.update(measure_step(path))
         return out
@@ -1423,9 +1618,19 @@ __all__ = [
     "FUZZ_STATE",
     "FUZZ_WORKSPACE",
     "fuzz_input",
+    "fuzz_pack",
+    "fuzz_pack_input",
+    "fuzz_pack_parts",
+    "fuzz_pack_seeds",
     "renumber_jobs",
     "fuzz_program",
     "fuzz_seeds",
+    "PackRun",
+    "pack_case",
+    "pack_library",
+    "pack_mismatch",
+    "pack_problems",
+    "pack_runs",
     "ProgramRun",
     "program_case",
     "program_choices",

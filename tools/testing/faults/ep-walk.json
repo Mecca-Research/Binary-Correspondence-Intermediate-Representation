@@ -1,0 +1,57 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_run_pack:_CC",
+    "bcir.tests.test_execution_plan:test_the_c_twin_holds_one_step_a_claim_in_every_order",
+    "bcir.tests.test_execution_plan:test_the_c_twin_walks_a_plans_steps_in_time_linear_in_them",
+    "bcir.tests.test_execution_plan:test_the_c_twin_refuses_every_malformed_and_stale_variant",
+    "bcir.tests.test_native_run_pack:test_one_walk_checks_the_pack_and_hands_over_its_lifetimes",
+    "bcir.tests.test_native_run_pack:test_a_refused_pack_lowers_nothing"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_c_twin_holds_one_step_a_claim_in_every_order",
+      "label": "EW1 a step's claim tying the greatest so far taken as new (never rescanned)",
+      "new": "      if (i == 0 || v.claim_id >= claim_max)\n",
+      "old": "      if (i == 0 || v.claim_id > claim_max)\n",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_c_twin_holds_one_step_a_claim_in_every_order",
+      "label": "EW2 a step's claim below the greatest so far never rescanned",
+      "new": "      else if (0 && ep_claim_seen_before(data, body_len, steps_start, i, v.claim_id))\n",
+      "old": "      else if (ep_claim_seen_before(data, body_len, steps_start, i, v.claim_id))\n",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_c_twin_walks_a_plans_steps_in_time_linear_in_them",
+      "label": "EW3 every step's claim past the second rescans the steps before it",
+      "new": "      if (i == 0 || (v.claim_id > claim_max && i < 2u))\n        claim_max = v.claim_id;",
+      "old": "      if (i == 0 || v.claim_id > claim_max)\n        claim_max = v.claim_id;",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_one_walk_checks_the_pack_and_hands_over_its_lifetimes",
+      "label": "EW4 the one walk checks the pack but hands over no lifetime",
+      "new": "  cb.lifetime_ctx = ctx;\n  (void)fn;\n  return ep_check_pack(plan, plan_len, pack, pack_len, &cb);\n",
+      "old": "  cb.lifetime = fn; cb.lifetime_ctx = ctx;\n  return ep_check_pack(plan, plan_len, pack, pack_len, &cb);\n",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "EW5 the lowering reads past the plan's own laws (a plan-law refusal taken as passed)",
+      "new": "  st = bcir_ep_check_pack_lifetimes(plan, plan_len, pack, pack_len, dp_on_life, &c);\n  if (st != BCIR_OK && st != BCIR_ERR_PLAN) {\n",
+      "old": "  st = bcir_ep_check_pack_lifetimes(plan, plan_len, pack, pack_len, dp_on_life, &c);\n  if (st != BCIR_OK) {\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "EW6 a lifetime's reason refuses ahead of the plan's own laws",
+      "new": "  st = bcir_ep_check_pack_lifetimes(plan, plan_len, pack, pack_len, dp_on_life, &c);\n  if (c.why) return dp_refuse(&c, why, st, 0);\n  if (st != BCIR_OK) {\n",
+      "old": "  st = bcir_ep_check_pack_lifetimes(plan, plan_len, pack, pack_len, dp_on_life, &c);\n  if (st != BCIR_OK) {\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    }
+  ]
+}

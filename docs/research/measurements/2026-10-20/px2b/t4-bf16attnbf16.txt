@@ -1,0 +1,3 @@
+program2 / program (A/A: one path against itself): x0.9979 [0.9789, 1.0173]
+pack / program (the lowering inside every call): x1.0195 [0.9973, 1.0423]
+{"claims": 2231, "launches": 1441, "values": 1867, "pack_bytes": 432839, "plan_bytes": 217061, "program_records": 2231, "program_bytes": 856704} {"step_program": 0.0159, "program_pack (the module)": 0.0607, "optimize (K_BCIR)": 0.0284, "hydrate (GEM)": 0.0126, "plan_from_realization": 0.1094, "encode (both)": 0.1152} lower 54.47 ms (plan check 37.51 ms) {"program": 412.7037881500655, "program2": 413.266728850067, "pack": 419.65163399981975} one state: True

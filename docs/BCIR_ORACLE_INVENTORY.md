@@ -21,13 +21,13 @@ that build it. The measured numbers are not here: they live in the GEM+ harness
 | `bcir.etl` | 5 | 1 | 0 |
 | `bcir.frontends` | 44 | 6 | 1 |
 | `bcir.gem` | 18 | 5 | 6 |
-| `bcir.hosted` | 26 | 2 | 0 |
+| `bcir.hosted` | 27 | 3 | 0 |
 | `bcir.kbcir` | 93 | 7 | 3 |
 | `bcir.lower` | 19 | 0 | 0 |
 | `bcir.make` | 6 | 0 | 0 |
 | `bcir.model` | 4 | 1 | 0 |
 | `bcir.verify` | 5 | 1 | 1 |
-| **all** | **306** | **43** | **13** |
+| **all** | **307** | **44** | **13** |
 
 ## Hot paths
 
@@ -69,6 +69,7 @@ a native twin.
 | `bcir_cpp.c` | `bcir.frontends.cfront.clex`, `bcir.frontends.cfront.cpp` | cfront, cfront_abi, cfront_loop, diag, linkflags_cerf, linkflags_fftw, linkflags_gsl, linkflags_lapack, linkflags_sleef | — |
 | `bcir_decode.c` | `bcir.frontends.models.decode`, `bcir.kbcir.transformer_grads` | cfront_loop, encoder, executor, handoff, telemetry_frame | fuzz_binrec, fuzz_encode, fuzz_exec, fuzz_handoff, fuzz_telemetry_frame |
 | `bcir_decoder_gem.c` | `bcir.frontends.models.decoder_program` | — | fuzz_decoder_gem, fuzz_q8_model |
+| `bcir_decoder_pack.c` | `bcir.hosted.models.native_pack` | — | fuzz_decoder_pack |
 | `bcir_decoder_train.c` | `bcir.hosted.models.native_launch`, `bcir.hosted.models.native_program` | decoder_train, decoder_train_tsan | fuzz_decoder_train |
 | `bcir_diag.c` | `bcir.frontends.cfront.diagnostics` | cfront, cfront_abi, cfront_loop, diag, linkflags_cerf, linkflags_fftw, linkflags_gsl, linkflags_lapack, linkflags_sleef | — |
 | `bcir_ed25519.c` | `bcir.abi.ed25519` | artifact_bundle, asn1fast, cfront, cfront_abi, cfront_loop, control_plane, encoder, execution_plan, executor, handoff, jer, kplan, plan_sign, ring, ring_tsan, runtime, telemetry_frame | fuzz_artifact_bundle, fuzz_asn1_streampack, fuzz_control_plane, fuzz_encode, fuzz_exec, fuzz_handoff, fuzz_jer, fuzz_kplan, fuzz_plan_sign, fuzz_ring, fuzz_streampack, fuzz_telemetry_frame |

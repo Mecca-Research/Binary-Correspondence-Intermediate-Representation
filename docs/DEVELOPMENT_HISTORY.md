@@ -3415,6 +3415,89 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - The ladder: PX-2b carries the same program as BCIR's own artifact -- a StreamPack of claims over RIDs,
     one a launch, their places an `ExecutionPlanV1`'s, executed through `bcir_sp_execute` -- whose
     lifetimes PX-4 then packs.
+  PX-2b (2026-10-20): the native step run from a StreamPack and its ExecutionPlanV1.
+  - PX-2a ran the step from a launch program the C reads as words. Here the same program reaches the
+    trainer as BCIR's own artifacts and through them alone. `native_pack.training_pack` states it as a
+    `Module`: one claim per kernel call, one phase per launch, each phase after the one before, so GEM's
+    dispatch order (phases in order, a phase's claims by id) is the program's record order. Its
+    resources are the program's values: each parameter tensor of the four arenas, the bf16 workspace
+    and the micro-batch's tokens and targets live through the whole program; a write of a span of the
+    activations or the scratch starts a new value and ends every value of a span it meets, and a read
+    takes the span's current value -- a read of a span no live value holds is refused by the builder, so
+    a program that reads bytes another value left cannot be stated. The C step's reuse of its buffers
+    (the scratch every layer, the RMS VJP's 1/rms in the head of dq, the loss rows' terms in the head of
+    cur, the slot every recomputed layer shares) is then many values on the same bytes at disjoint
+    times. `pack_artifacts` plans the module with K_BCIR, hydrates it with GEM into a StreamPack and
+    mints its ExecutionPlanV1, whose lifetimes place every value (its bank, offset, size and phases).
+  - `bcir_decoder_lower_pack` (bcir_decoder_pack.h, a new hosted unit) takes the two artifacts and the
+    state and nothing else. It verifies them with their own verifiers -- `bcir_ep_check_pack`: the
+    pack's provenance and range laws, the plan's wire laws (the alias law among them: no two lifetimes
+    of one bank live at once on overlapping bytes), the pack the plan's lowering, one generation vector
+    -- then lowers each claim `bcir_sp_execute` dispatches, in its order, to the record that runs it. A
+    claim's name comes from a closed vocabulary (25 names and the GEMM grammar
+    `train.gemm.<alone|pair|chain|rest>.<nt|nn|tn>[.acc][.pa|.pb]`); every dimension and flag is
+    derived from the state and the operands' sizes; every operand's place is its value's lifetime, which
+    must be live at the claim's phase (the alias law's half-open interval) -- with the alias law, no
+    claim can write a byte another value still holds. Every claim is lowered and checked before any
+    record is written, so a refused pack writes nothing; a refusal names the verifiers' status or one of
+    ten reasons of its own. `NativeDecoder.lower_pack` returns the array('Q') `run_program` runs as it
+    is (`PackRefused` on a refusal), and `run_pack` is the two.
+  - `train.plan.pack.mismatch` 356 -> 0: the 356 program runs of PX-2a, each from its pack, lower to
+    exactly their program's words and train the C step's state and events bit for bit. A plan that
+    places every activation and scratch value elsewhere (the buffers in reverse order, a placement the C
+    step never uses) lowers to the same program at the new places and trains the same bits: the
+    operands' places are the plan's. The module verifies under every R-law and its plan under the plan's
+    laws against the module, the target and the pack.
+  - Twenty-three classes of pack or plan are refused at their reason with nothing written -- a name outside
+    the vocabulary or out of its grammar's order, a value no lifetime places, a claim before or past its
+    value's lifetime, two live values on one span (the alias law), a bank the state has not, the tokens',
+    the targets', a plain operand's or the bf16 workspace's value in another bank, operands too many,
+    too few or an in-place one split, a run of tensors not contiguous, a size no shape divides, a
+    block's count or base not the claim's, a claim id out of range, the plan of another pack or of
+    another generation, lifetimes in the schedule's ticks, a corrupt pack -- as are a v1 pack on a bf16
+    trainer, a plan header declaring more lifetimes than its bytes hold (before any figure is lent) and
+    short buffers (CAPACITY).
+  - A new trust boundary, fuzzed: `fuzz_decoder_pack.c` lowers any pack and plan on the training
+    harness's state under eight contracts and asserts no access out of bounds, that a refused pack
+    wrote nothing, that the lowering is a function of its input and that what it lowers to runs under
+    the runner's contract; each input is driven raw and resealed (both CRCs recomputed), so mutations
+    reach the laws behind the CRCs. `fuzz_pack_seeds` seeds it with the planner's packs and near misses
+    of the lowering's refusals (each seed held to its verdict and run at its shape byte's shape).
+    20,000 runs under clang 18 and 100,000 under clang 23 with ASan and UBSan, no finding -- on the
+    final lowering (the first campaign, before the one walk below, the same: no finding).
+  - The lowering's cost led to its verifiers. The plan walk's claim check rescanned the steps before
+    every step (quadratic in them: 17 ms of a ten-step training plan's 2,231 steps on this host); it
+    now rescans only a claim at or below the greatest so far -- QUAL-LIN's rule for a pack's
+    segments, on the plan -- so GEM's ascending plans walk it in linear time, every verdict the
+    same: each order of a plan's steps with a claim stepped twice at, below or right after the
+    greatest is refused on the C twin as the codec refuses it, and the walk's cost grows with the
+    steps, not their square (`test_execution_plan`'s two new witnesses; `test_execution_plan.c
+    --time`). And the lowering walked the plan's laws twice, in `bcir_ep_check_pack` and again to
+    read the lifetimes: `bcir_ep_check_pack_lifetimes` hands the lifetimes over as its one walk
+    verifies them, its status `bcir_ep_check_pack`'s on every input, and a status refuses ahead of
+    any reason a lifetime gives the lowering (a plan breaking a law and naming a bank the state
+    has not is refused at the law). Together, a ten-step pack's lowering 121 -> 48 ms on this host.
+    The lowering against the steps a pack carries ([lower.json](research/measurements/2026-10-20/px2b/lower.json)):
+    4.7 ms for one step, 49.6 for ten, 143.8 for twenty, of which the plan's laws are 23.8 and 79.8 --
+    the alias law, the one part left quadratic (each lifetime against every earlier one, heap-free).
+  - The lowering's cost ([measurements/2026-10-20/px2b/](research/measurements/2026-10-20/px2b/README.json)):
+    no cost this host resolves for lowering a pack inside every call -- pack / program x1.0195 (95%
+    interval 0.997-1.042) under bf16 at four threads and x1.0037 (0.972-1.037) under binary32, beside
+    A/A controls of x0.9979 and x0.9923; a ten-step lowering 47.3 and 54.5 ms (2.1% and 1.3% of a call
+    here), nothing per call once lowered and lent; the artifacts made in 0.34-0.37 s; every run the
+    reference trainer's state over 75 calls of ten steps. The container restarted at about 03:13 onto a
+    2.8 GHz Xeon with AVX-512F and neither AMX nor AVX512-BF16, so the bf16 step here (413 ms) is not
+    PX-2a's.
+  - `ep-walk.json` EW1-EW6 (the claim check's tie, rescan and linear cost; the one walk's handover;
+    the lowering's status and its precedence): 6 of 6 caught, each by its own check.
+  - `px-pack.json` PK1-PK33, PM1-PM13, PN1-PN3 and PF1-PF5: 54 of 54 caught, each by its own check
+    (the lowering's refusals and records, the module's values and names, the binding, the comparison and
+    the fuzz seeds); after the one walk, the ten entries in the lowering's moved lines (PK9, PK14,
+    PK16-PK18, PK29-PK33) re-swept: 10 of 10 caught. Every C entry of both tables compiles warning-free under
+    GCC 13, clang 18 and clang 23, at -fsyntax-only and at -O3. `px-program.json`'s PM16 re-anchored
+    (the pack seeds repeat its line) and re-swept: 1 of 1.
+  - The ladder: PX-3 takes the pack's per-call choices from the measured candidates, and PX-4 packs
+    the lifetimes the plan now carries.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

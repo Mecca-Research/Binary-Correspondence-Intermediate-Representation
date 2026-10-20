@@ -29,6 +29,12 @@ from ...toolchain import BuildFailed, host_link_args
 _ROOT = Path(__file__).resolve().parents[3]
 _C = _ROOT / "runtime" / "c"
 _UNITS = ("bcir_tensor.h", "bcir_tensor.c", "bcir_decoder_train.h", "bcir_decoder_train.c")
+#: PX-2b: the pack lowering, and the StreamPack / ExecutionPlanV1 verifiers and GEM's executor it
+#: runs on (`NativeDecoder.build(..., pack=True)`).
+_PACK_UNITS = (
+    "bcir_decoder_pack.h", "bcir_decoder_pack.c", "bcir_runtime.h", "bcir_runtime.c",
+    "bcir_exec.h", "bcir_exec.c", "bcir_streampack.h", "bcir_execution_plan.h",
+)  # fmt: skip
 _FP = ct.POINTER(ct.c_float)
 _UP = ct.POINTER(ct.c_uint32)
 _SZ = ct.c_size_t
@@ -253,6 +259,16 @@ class NativeRunStopped(ValueError):
         self.status, self.completed = status, completed
 
 
+class PackRefused(ValueError):
+    """A pack and plan `bcir_decoder_lower_pack` refused (PX-2b): its C status (1 refused, 2 a
+    buffer short) and `why`, the verifiers' bcir_status or a lowering reason
+    (`native_pack.REASONS` names both)."""
+
+    def __init__(self, message: str, status: int, why: int):
+        super().__init__(message)
+        self.status, self.why = status, why
+
+
 def _check(rc: int):
     if rc:
         reason = {
@@ -455,11 +471,14 @@ class NativeDecoder:
     """
 
     @staticmethod
-    def build(directory, *, cc=None) -> Path:
+    def build(directory, *, cc=None, pack=False) -> Path:
+        """The trainer as a shared library under `directory`; with `pack`, also the PX-2b pack
+        lowering and what it runs on (`bcir_decoder_lower_pack`, `lower_pack`)."""
         compiler = cc or os.environ.get("CC") or shutil.which("clang") or shutil.which("cc")
         if not compiler:
             raise RuntimeError("native decoder training requires a C11 compiler")
-        missing = [u for u in _UNITS if not (_C / u).is_file()]
+        units = _UNITS + (_PACK_UNITS if pack else ())
+        missing = [u for u in units if not (_C / u).is_file()]
         if missing:  # the C units ship with the repository, not with the wheel
             raise RuntimeError(
                 f"native decoder sources not found under {_C} ({', '.join(missing)}): build "
@@ -470,7 +489,7 @@ class NativeDecoder:
         suffix = (
             ".dll" if sys.platform == "win32" else ".dylib" if sys.platform == "darwin" else ".so"
         )
-        target = target_dir / ("bcir_decoder_train" + suffix)
+        target = target_dir / (("bcir_decoder_pack" if pack else "bcir_decoder_train") + suffix)
         fd, name = tempfile.mkstemp(prefix=".decoder-", suffix=suffix, dir=target_dir)
         os.close(fd)
         temporary = Path(name)
@@ -492,14 +511,8 @@ class NativeDecoder:
             if sys.platform != "win32":
                 # the pool's threads (NDT-THREADS) are pthreads here; Win32 threads need no flag
                 command += ["-fPIC", "-pthread"]
-            command += [
-                "-I",
-                str(_C),
-                str(_C / "bcir_tensor.c"),
-                str(_C / "bcir_decoder_train.c"),
-                "-o",
-                str(temporary),
-            ]
+            command += ["-I", str(_C), *(str(_C / u) for u in units if u.endswith(".c"))]
+            command += ["-o", str(temporary)]
             result = subprocess.run(
                 command + host_link_args(["-lm"]), capture_output=True, text=True, timeout=120
             )
@@ -935,6 +948,63 @@ class NativeDecoder:
                 done.value,
             )
         return tuple({"step": e.step, "loss": e.loss, "grad_norm": e.grad_norm} for e in events)
+
+    def lower_pack(self, pack: bytes, plan: bytes) -> array:
+        """PX-2b: the launch program a StreamPack and its ExecutionPlanV1 state for this trainer
+        (`native_pack.pack_artifacts` mints them), as the array('Q') `run_program` runs: the two
+        verified by their own laws (the plan's alias law among them), then each claim GEM's
+        executor dispatches lowered to the record that runs it, every operand at the place its
+        value's lifetime gives and live there (`bcir_decoder_lower_pack`). A refusal raises
+        `PackRefused` with the C's reason; a library built without `pack=True` has no lowering."""
+        from .native_launch import RECORD_WORDS
+        from .native_pack import REASONS
+
+        fn = getattr(self.lib, "bcir_decoder_lower_pack", None)
+        sizes = getattr(self.lib, "bcir_decoder_pack_sizes", None)
+        if fn is None or sizes is None:
+            raise ValueError("this native decoder library has no pack lowering (PX-2b): build it "
+                             "with pack=True")  # fmt: skip
+        if type(pack) not in (bytes, bytearray) or type(plan) not in (bytes, bytearray):
+            raise ValueError("a pack and its plan are bytes")
+        pack, plan = bytes(pack), bytes(plan)
+        sizes.argtypes = [ct.c_char_p, _SZ, ct.c_char_p, _SZ, ct.POINTER(_SZ), ct.POINTER(_SZ),
+                          ct.POINTER(ct.c_int)]  # fmt: skip
+        sizes.restype = ct.c_int
+        records, work_bytes, why = _SZ(), _SZ(), ct.c_int()
+        rc = sizes(pack, len(pack), plan, len(plan), ct.byref(records), ct.byref(work_bytes),
+                   ct.byref(why))  # fmt: skip
+        if rc == 0:
+            work = (ct.c_uint64 * max(1, -(-work_bytes.value // 8)))()
+            program = array("Q", bytes(8 * RECORD_WORDS * records.value))
+            view = (ct.c_uint64 * len(program)).from_buffer(program) if program else None
+            fn.argtypes = [ct.POINTER(_State), ct.c_char_p, _SZ, ct.c_char_p, _SZ, ct.c_void_p, _SZ,
+                           ct.POINTER(ct.c_uint64), _SZ, ct.POINTER(_SZ), ct.POINTER(ct.c_int)]  # fmt: skip
+            fn.restype = ct.c_int
+            done = _SZ()
+            rc = fn(ct.byref(self.state), pack, len(pack), plan, len(plan), work, ct.sizeof(work),
+                    view, records.value, ct.byref(done), ct.byref(why))  # fmt: skip
+            if rc == 0:
+                return program
+        raise PackRefused(
+            f"pack refused: {REASONS.get(why.value, why.value)} (status {rc})", rc, why.value
+        )
+
+    def run_pack(
+        self,
+        pack: bytes,
+        plan: bytes,
+        tokens,
+        targets,
+        *,
+        steps,
+        optimizer=NativeAdamW(),
+        learning_rates=None,
+        gradient_accumulation=1,
+    ):
+        """`run` from a StreamPack and its plan: `lower_pack`, then `run_program` (PX-2b)."""
+        return self.run_program(self.lower_pack(pack, plan), tokens, targets, steps=steps,
+                                optimizer=optimizer, learning_rates=learning_rates,
+                                gradient_accumulation=gradient_accumulation)  # fmt: skip
 
     def state_dict(self, *, gradients=False):
         buf = self.buffers["gradients" if gradients else "weights"]

@@ -945,6 +945,7 @@ static bcir_status ep_walk(const uint8_t *BCIR_RESTRICT data, size_t len,
     cur c; c.d = data; c.len = body_len; c.pos = (size_t)BCIR_EP_HEADER_SIZE; c.err = 0;
     int invoke_step = 1, invoke_lt = 1, invoke_mv = 1, invoke_gen = 1;
     size_t steps_start;
+    uint64_t claim_max = 0;           /* the greatest step claim id so far */
     uint32_t i;
     c_skip_str(&c);                     /* source_plan */
     if (c.err) return c_status(&c);
@@ -972,7 +973,9 @@ static bcir_status ep_walk(const uint8_t *BCIR_RESTRICT data, size_t len,
       }
       if (v.start > UINT64_MAX - v.duration) return BCIR_ERR_OVERFLOW;
       if (v.start + v.duration > hdr.makespan) return BCIR_ERR_PLAN;
-      if (ep_claim_seen_before(data, body_len, steps_start, i, v.claim_id))
+      if (i == 0 || v.claim_id > claim_max)
+        claim_max = v.claim_id;         /* steps no earlier step's claim */
+      else if (ep_claim_seen_before(data, body_len, steps_start, i, v.claim_id))
         return BCIR_ERR_PROVENANCE;
       if (invoke_step && cb && cb->step && cb->step(&v, cb->step_ctx)) invoke_step = 0;
     }
@@ -1181,11 +1184,12 @@ bcir_status bcir_ep_check_generation_vector(const uint8_t *BCIR_RESTRICT plan, s
   return BCIR_OK;
 }
 
-bcir_status bcir_ep_check_pack(const uint8_t *BCIR_RESTRICT plan, size_t plan_len,
-                               const uint8_t *BCIR_RESTRICT pack, size_t pack_len) {
+static bcir_status ep_check_pack(const uint8_t *BCIR_RESTRICT plan, size_t plan_len,
+                                 const uint8_t *BCIR_RESTRICT pack, size_t pack_len,
+                                 const ep_callbacks *cb) {
   bcir_ep_header ph;
   bcir_streampack_header sh;
-  bcir_status st = bcir_ep_verify(plan, plan_len);
+  bcir_status st = ep_walk(plan, plan_len, cb);
   if (st != BCIR_OK) return st;
   st = bcir_sp_verify_semantic(pack, pack_len, 0xFFFFFFFFu, 0xFFFFFFFFu);
   if (st != BCIR_OK) return st;
@@ -1239,4 +1243,17 @@ bcir_status bcir_ep_check_pack(const uint8_t *BCIR_RESTRICT plan, size_t plan_le
       if (plan[ps + k] != pack[ss + k]) return BCIR_ERR_STALE;
   }
   return BCIR_OK;
+}
+
+bcir_status bcir_ep_check_pack(const uint8_t *BCIR_RESTRICT plan, size_t plan_len,
+                               const uint8_t *BCIR_RESTRICT pack, size_t pack_len) {
+  return ep_check_pack(plan, plan_len, pack, pack_len, 0);
+}
+
+bcir_status bcir_ep_check_pack_lifetimes(const uint8_t *BCIR_RESTRICT plan, size_t plan_len,
+                                         const uint8_t *BCIR_RESTRICT pack, size_t pack_len,
+                                         bcir_ep_lifetime_fn fn, void *ctx) {
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  cb.lifetime = fn; cb.lifetime_ctx = ctx;
+  return ep_check_pack(plan, plan_len, pack, pack_len, &cb);
 }

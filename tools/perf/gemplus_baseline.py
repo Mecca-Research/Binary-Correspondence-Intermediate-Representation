@@ -820,6 +820,28 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="PX-2",
     ),
     Metric(
+        "train.plan.pack.mismatch",
+        "train",
+        "of the 356 pack runs (bcir/tests/native_decoder_fixtures.py `pack_runs`: the program runs "
+        "train.plan.program.mismatch reads, each stated as BCIR's own artifacts -- the module of "
+        "its calls and values (native_pack.training_pack), planned by K_BCIR, hydrated by GEM into a "
+        "StreamPack, placed by its ExecutionPlanV1 at the C step's own spans), those whose lowering "
+        "bcir_decoder_lower_pack refused or wrote other words than the program's, that stopped, or "
+        "that trained another state or events than bcir_decoder_run_accum on the same case: the "
+        "trainer takes the two artifacts alone, verifies them (the plan's alias law among the "
+        "laws), lowers each claim GEM's executor dispatches, and runs what it lowered. The parent "
+        "ran no step from a StreamPack, so all 356 were unheld (PX-2b)",
+        356,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one program, two carriers: the pack states the program's launches as claims "
+        "and its operands' places as lifetimes, and the lowering derives every dimension and flag "
+        "from the state, so a lowering that differs from the program's words is a defect of the "
+        "model or the lowering, and a run that differs is the program row's",
+        slice_owner="PX-2b",
+    ),
+    Metric(
         "train.mm.mismatch",
         "train",
         "of 20 GEMM cases (every transpose pair, the 32-wide tiles' edges, alpha and beta forms), "

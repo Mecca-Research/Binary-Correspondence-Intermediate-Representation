@@ -1,0 +1,85 @@
+{
+ "commit": "6b3876824c832a8de0dde56a20a4c7918575e931",
+ "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+ "contract": "kblock+exp+reduce+attn",
+ "cpu": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+ "reps": 15,
+ "rows": [
+  {
+   "claims": 224,
+   "ms": {
+    "ep_check_pack": 2.414267000858672,
+    "ep_validate": 0.07903400182840414,
+    "ep_verify": 2.0123950016568415,
+    "lower_pack": 4.669837999244919,
+    "sp_validate": 0.11124999946332537,
+    "sp_verify_semantic": 0.16437699741800316
+   },
+   "pack_bytes": 44637,
+   "plan_bytes": 31717,
+   "steps": 1,
+   "values": 372
+  },
+  {
+   "claims": 447,
+   "ms": {
+    "ep_check_pack": 2.7622269990388304,
+    "ep_validate": 0.12254499961272813,
+    "ep_verify": 2.042693999101175,
+    "lower_pack": 7.213028999103699,
+    "sp_validate": 0.2100100027746521,
+    "sp_verify_semantic": 0.2850089986168314
+   },
+   "pack_bytes": 86224,
+   "plan_bytes": 51218,
+   "steps": 2,
+   "values": 518
+  },
+  {
+   "claims": 1116,
+   "ms": {
+    "ep_check_pack": 9.03628499872866,
+    "ep_validate": 0.27046100149163976,
+    "ep_verify": 7.693092000408797,
+    "lower_pack": 20.200196999212494,
+    "sp_validate": 0.522836999152787,
+    "sp_verify_semantic": 0.7704089985054452
+   },
+   "pack_bytes": 211327,
+   "plan_bytes": 109721,
+   "steps": 5,
+   "values": 956
+  },
+  {
+   "claims": 2231,
+   "ms": {
+    "ep_check_pack": 28.385993999108905,
+    "ep_validate": 0.5294170005072374,
+    "ep_verify": 23.76257799915038,
+    "lower_pack": 49.5767030006391,
+    "sp_validate": 1.0520079995330889,
+    "sp_verify_semantic": 1.4628690005338285
+   },
+   "pack_bytes": 422557,
+   "plan_bytes": 207226,
+   "steps": 10,
+   "values": 1686
+  },
+  {
+   "claims": 4461,
+   "ms": {
+    "ep_check_pack": 99.03580199897988,
+    "ep_validate": 0.9890580004139338,
+    "ep_verify": 79.79206099844305,
+    "lower_pack": 143.7556989985751,
+    "sp_validate": 2.0757740021508653,
+    "sp_verify_semantic": 2.8712190032820217
+   },
+   "pack_bytes": 845017,
+   "plan_bytes": 402236,
+   "steps": 20,
+   "values": 3146
+  }
+ ],
+ "worktree_diff_sha256_16": "299e73d75ee7b730"
+}

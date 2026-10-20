@@ -250,6 +250,17 @@ BCIR_NODISCARD bcir_status bcir_ep_check_generation_vector(
 BCIR_NODISCARD bcir_status bcir_ep_check_pack(const uint8_t *BCIR_RESTRICT plan, size_t plan_len,
                                               const uint8_t *BCIR_RESTRICT pack, size_t pack_len);
 
+/* bcir_ep_check_pack, its plan walk handing each lifetime to `fn` as it is verified (as
+ * bcir_ep_for_each_lifetime's does; nonzero from `fn` stops the calls, never the walk): one walk
+ * where the two calls take two (PX-2b's lowering reads its placement so). The status is
+ * bcir_ep_check_pack's for every input; `fn` may have seen lifetimes of a plan or pack the
+ * status then refuses, and a caller discards what it read unless the status is BCIR_OK. */
+BCIR_NODISCARD bcir_status bcir_ep_check_pack_lifetimes(const uint8_t *BCIR_RESTRICT plan,
+                                                        size_t plan_len,
+                                                        const uint8_t *BCIR_RESTRICT pack,
+                                                        size_t pack_len, bcir_ep_lifetime_fn fn,
+                                                        void *ctx);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif

@@ -16,6 +16,8 @@
 #                                                 a device publishes into it (G15)
 #   native training-program runner           -- a launch program a planner hands the trainer,
 #                                               run on its state (PX-2)
+#   native training-pack lowering            -- a StreamPack and its ExecutionPlanV1 a planner
+#                                               hands the trainer, lowered to its program (PX-2b)
 #
 # Each seeds from real Python-rail output so the campaign starts inside the format rather
 # than rediscovering its magic; the BCIRQ8 harness additionally REPAIRS the format's three
@@ -134,6 +136,15 @@ add_target dgem "decoder program interpreter" "-max_len=24576" \
 # early.
 add_target dtrain "native training-program runner" "-max_len=131072" \
   "${C}/fuzz_decoder_train.c" "${C}/bcir_decoder_train.c" "${C}/bcir_tensor.c"
+
+# bcir_decoder_lower_pack (PX-2b) lowers a StreamPack and its ExecutionPlanV1 to a training program:
+# every byte of both comes from the caller. The input is the configuration and shape bytes, the
+# pack's length, the pack and the plan; the harness drives it raw and resealed (both CRCs
+# recomputed), and asserts that a refused pack wrote nothing to the program, that a pack lowers to
+# the same records every time, and that what it lowers to runs under the runner's contract.
+add_target dpack "native training-pack lowering" "-max_len=196608" \
+  "${C}/fuzz_decoder_pack.c" "${C}/bcir_decoder_pack.c" "${C}/bcir_decoder_train.c" \
+  "${C}/bcir_tensor.c" "${C}/bcir_runtime.c" "${C}/bcir_exec.c"
 
 # bcir_telemetry_frame.c decodes frames a DEVICE emits over a byte transport (UART --
 # docs/kernel/TELEMETRY_FRAME_ABI.md), so the count/CRC/resync fields are all hostile.
@@ -424,6 +435,18 @@ from pathlib import Path
 from bcir.tests.native_decoder_fixtures import fuzz_seeds
 out = Path(sys.argv[1])
 for name, data, _admitted in fuzz_seeds():
+    out.joinpath(name + ".bin").write_bytes(data)
+PY
+# The training-pack lowering: the planner's pack and plan for every configuration the harness names
+# (two at two steps of two micro-batches) and near misses of the lowering's refusals (two live
+# values on one span, a name outside the vocabulary, a value no lifetime places, a claim past its
+# value's lifetime, a block not the claim's); test_native_run_pack holds each seed to its verdict.
+python3 - "${tmp}/corpus_dpack" <<'PY' || { echo "  FAIL: training-pack seed corpus"; exit 1; }
+import sys
+from pathlib import Path
+from bcir.tests.native_decoder_fixtures import fuzz_pack_seeds
+out = Path(sys.argv[1])
+for name, data, _admitted in fuzz_pack_seeds():
     out.joinpath(name + ".bin").write_bytes(data)
 PY
 python3 - "${tmp}/corpus_control" <<'PY' || { echo "  FAIL: control-plane seed corpus"; exit 1; }
