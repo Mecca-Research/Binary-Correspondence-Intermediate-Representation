@@ -289,6 +289,15 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-10-20 — UDSI-PLAN universal interface blueprint:** added the
+  [universal serialization/interface roadmap](BCIR_UNIVERSAL_INTERFACE_ROADMAP.md), connecting
+  typed service contracts, ASN.1/JER projections, foreign schema/codec providers, native
+  bindings and IPC, including a proposed format-neutral BCIR JSON language and a frontend
+  independent of ASN.1. Specifies UDSI milestones and twelve proposed SI experiments; distinguishes
+  wire, API, native ABI and transport compatibility; plans peer CSN.1/ABNF frontends and
+  optional CMS/PKCS providers. Linked the backend, driver, master and ASN.1 roadmaps and
+  revised CSN.1's ASN.1-only exclusion. Documentation only; no new codec or benchmark results.
+
 - **2026-10-20 — TRITON-CPU-1 test/kernel blueprint:** added the
   [backend optimality tests and kernel entry gates](research/BCIR_BACKEND_OPTIMALITY_AND_KERNEL_GATES_2026-10-20.md):
   comparator routes, a gap register beyond affine maps, sixteen proposed experiments,

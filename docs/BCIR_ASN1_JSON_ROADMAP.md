@@ -18,6 +18,14 @@ and permits generated field dispatch, direct typed sinks, and bounded storage. I
 not turn JSON into a binary format or remove the need to parse and validate its lexical
 form.
 
+The proposed [universal interface program](BCIR_UNIVERSAL_INTERFACE_ROADMAP.md) reuses this
+schema-bound authoring/inspection rail for service descriptions and foreign-format mappings.
+Its typed contract preserves semantics that plain JSON cannot carry. Existing JER descriptors
+and the build/control versus execution boundary remain authoritative; generic service bindings,
+ABNF/CSN.1 frontends and new foreign codecs are planned separately.
+That program also proposes a native, format-neutral BCIR JSON language beyond JER, with ASN.1
+as one adapter. It has a distinct identity and does not redefine X.697 or existing JSON inputs.
+
 The target pipeline is:
 
 ```text

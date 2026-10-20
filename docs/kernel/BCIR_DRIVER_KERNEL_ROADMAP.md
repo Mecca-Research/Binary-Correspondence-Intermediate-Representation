@@ -688,6 +688,19 @@ routes, memory maps, IPC endpoints, provenance, and a rollback generation.
 - True runtime code generation is limited to small verifiable slices with an explicit code-integrity
   and rollback policy. It never shares a hard-real-time phase with compilation.
 
+### 7.6 Universal serialization and interface program
+
+The [universal interface roadmap](../BCIR_UNIVERSAL_INTERFACE_ROADMAP.md) defines the proposed
+UDSI contract/profile registry, peer schema/grammar frontends, codec providers and generated
+bindings above this transport program. ASN.1/JER supplies the initial typed source view;
+foreign profiles retain their own semantics and exact-byte identity. The same service contract
+can target direct, Linux or native adapters. Process-local vtables, pointers and callbacks never
+cross the wire; numeric handles require session-scoped authorization. SI-01–SI-12 add mapping,
+evolution, framing, buffer, crypto-provider and useful-path tests to the D/M and OT gates.
+The proposed native BCIR JSON language can describe contracts independently of ASN.1 and
+compile to qualified wire providers and local bindings. These remain planned capabilities;
+UAPI, POSIX and native-binary compatibility retain their separate qualification gates.
+
 ## 8. Validation and promotion policy
 
 ### 8.1 Per-driver evidence

@@ -19,6 +19,12 @@ existing [training acceleration](BCIR_TRAINING_ACCELERATION_ROADMAP.md) and
 [canonical driver/kernel](../kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) ladders; it does not replace
 those ladders or create new runtime functionality.
 
+The [universal serialization/interface roadmap](../BCIR_UNIVERSAL_INTERFACE_ROADMAP.md)
+adds the UDSI program and twelve proposed SI experiments for typed service descriptions,
+schema mappings, foreign formats, ABNF/CSN.1, buffer views and cryptographic-provider syntax.
+Its compatibility and ownership contracts extend OT-12/15/16 and BG0/BG3–BG6 without
+changing the sixteen OT definitions or freezing a new IPC/UAPI.
+
 ## 1. Pinned baseline and the pending PX ladder
 
 | Surface | Evidence used here | Status |
@@ -142,6 +148,7 @@ means #820 is not in main. OT tests are specified in §5.
 | Telemetry and ranking | Signal registry/envelopes/calibration exist; absent device counters remain unavailable | Work-correlated timing/counters, uncertainty-aware cost calibration, bounded autotune pruning | OT-12, OT-14 |
 | Task manager / TMOG integration | Relevant telemetry and control pieces exist; a unified device/task monitor is a proposed integration | Correlated task/resource view over the same execution trace and generation, not a second planner | OT-04, OT-14 |
 | Distributed training and data pipeline | Shard/HAM/control contracts are not device collectives or distributed training qualification | Optional established collectives, topology-aware overlap, checkpoint/restart and measured data staging | OT-12, OT-13 |
+| Universal interfaces and serialization | Existing ASN.1/JER plans and direct value ABI; broader service-IDL/format/grammar adapters remain proposed | Directional schema mappings, independent codecs, native bindings, Arrow C Data/IPC and explicitly negotiated profiles | OT-12, OT-15/16; SI-01–SI-12 |
 | Native IPC / device service | Direct loopback exists; resident hardware bindings, native IPC and independent OS remain unbuilt at the inspected pin | Canonical D0–D7/M0–M10 sequence; seL4-style IPC/IRQ/mapping measurement dimensions | OT-15, OT-16 |
 
 Do not copy whole frameworks to obtain these mechanisms. Start with an optional provider,
@@ -208,6 +215,12 @@ different chips as proof of compiler superiority.
 | OT-14 — telemetry/TMOG observer and feedback | Run the same artifact with tracing/monitoring off, sampled and detailed. Correlate task/claim, artifact, device, generation, timestamps and availability; replay missing/dropped/stale samples; calibrate offline and change only a quiescent next generation | Measured monitoring overhead, coverage/loss, timestamp uncertainty, ranking regret and held-out frontier. Unknown is not zero pressure; observed correlation is not a causal proof; no telemetry changes legality or live instructions |
 | OT-15 — IPC decomposition | Direct call, shared-memory queue plus notification, Linux process adapter and eventual native adapter. Sweep message size, batch depth, cross-core/NUMA placement, request/reply and saturation with equivalent isolation/work | One-way/round-trip latency, p50/p95/p99, throughput, copies/bytes, context switches, wakeups, cache/TLB behavior where exposed, CPU/energy and backpressure. Separate CPU instruction-per-cycle "IPC" from inter-process communication |
 | OT-16 — device/OS vertical slice | Canonical UART then virtio-console/blk: direct/Linux/native behavioral replay, queue/mapping/interrupt/cancel/reset lifecycles; UEFI boot proof separately. Later run the same admitted useful workload/device program on supported physical hardware | Correct ownership/order/completion, bounded storage, direct/Linux/native parity and recovery; QEMU proves functional behavior, not physical latency or superiority over GPU drivers |
+
+Extend OT-12/15/16 with the [SI conformance/performance matrix](../BCIR_UNIVERSAL_INTERFACE_ROADMAP.md#10-conformance-and-performance-qualification):
+hold method effects, request values, schema/profile, validation and ownership constant.
+Measure codec, copy/layout conversion, transport and complete request separately. Preserve
+semantic trace parity when adapters use different formats; require byte parity only for a
+shared wire profile. Arrow C Data callbacks and native vtables remain local bindings.
 
 For IPC/OS comparisons, preserve the isolation and scheduling contract. An in-process call
 is a useful lower-overhead reference but does not provide a separate service's isolation.
@@ -294,7 +307,7 @@ Use dependency and evidence gates instead.
 
 | Gate | Minimum exit / start condition | Relationship to existing roadmap |
 |---|---|---|
-| BG0 — measurement contract | OT route/semantic/target IDs, independent references, raw records, memory scopes and unsupported/fallback labels agreed | Enables current research and D0 contracts; no full-model benchmark until #820 merges |
+| BG0 — measurement contract | OT route/semantic/target IDs, independent references, raw records, memory scopes and unsupported/fallback labels agreed; interface tests also bind schema/mapping/profile and SI contract | Enables current research and D0 contracts; no full-model benchmark until #820 merges |
 | BG1 — trace-to-execution | PX-1 reviewed after merge; PX-2 identity and PX-3 one causal plan intervention pass on a common block | Primary IR/training integration milestone; need not block a bounded UART/boot lab |
 | BG2 — hosted accelerator slice | One real target: a resident provider, exact ownership/events and OT-07–OT-09/OT-12 evidence; device image identity retained | Parallel GPU integration using supported runtimes; addresses PX-6 incrementally |
 | BG3 — direct driver slice | Existing RuntimeChannel loopback plus a D0–D2 UART package, telemetry and bounded lifecycle tests | Start bounded driver work here; no requirement to win a complete training leaderboard |
@@ -326,6 +339,7 @@ evidence rather than summing overlapping kernel/event durations.
 | Resident GPU provider | Optional supported-runtime adapter and image/event/resource records, one real target first | BG2; OT-07/08/09/12; precise device/fallback reporting |
 | Broader kernel optimization | Add profitable fusion, tensor/attention/optimizer kernels under common contracts; keep provider/compiler alternatives | OT-05/08/10/11; compile/resource regression budgets and held-out validation |
 | Telemetry/task view | Work-correlated signal intake, trace/UI consumers and offline calibration; availability-aware ranking | OT-14 and canonical telemetry ladder; observer overhead measured, generation switch quiescent |
+| Universal interface slice | UDSI-0/1 service description and local binding, then one independently conforming foreign provider; bulk/profile/grammar extensions separately | SI-01–SI-12 as applicable, OT-12/15/16; direct RuntimeChannel and canonical ABI authority retained |
 | Driver/IPC vertical proof | DDK UART then virtio, stock Linux adapter, bounded boot/native adapter track | BG3–BG6 and canonical D/M gates; OT-15/16; physical performance gate later |
 
 Keep arena/dispatch execution in C. Use C++ for compiler/framework/accelerator APIs when useful;

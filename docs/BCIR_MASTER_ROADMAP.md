@@ -15,6 +15,11 @@ BCIR is a registry-first, phase-ordered, lane-typed, cost-governed correspondenc
 It preserves a computation's semantic claim, legal physical realizations, selected plan,
 GEM schedule, target lowering, and provenance as one auditable chain.
 
+The proposed [universal serialization/interface program](BCIR_UNIVERSAL_INTERFACE_ROADMAP.md)
+connects typed service contracts, format providers, native bindings and direct/Linux/native
+adapters. Its UDSI milestones and SI tests extend the interface plan; they add no current
+codec, transport, POSIX or cross-ISA native-binary support.
+
 Every program in this roadmap obeys these invariants:
 
 1. **Legality precedes optimization.** R1–R25 and device-specific laws reject illegal

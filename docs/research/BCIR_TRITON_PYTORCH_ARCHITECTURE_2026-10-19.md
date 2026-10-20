@@ -23,6 +23,11 @@ now specifies comparator routes, sixteen experiments, the gap register, transfor
 rules and parallel driver/IPC/boot milestones. It also records pending #820's newer PX-1 trace
 work and the PX-2–PX-6 follow-up ladder.
 
+The [universal serialization/interface roadmap](../BCIR_UNIVERSAL_INTERFACE_ROADMAP.md)
+adds the proposed contract registry, ASN.1/JER source view, peer IDLs/grammars and foreign
+providers above those backend/IPC gates. It distinguishes semantic/API, wire, native ABI and
+transport compatibility and adds SI tests for useful-path cost; it makes no new runtime claim.
+
 ## 1. Evidence, versions and scope
 
 | Project | Inspected source | Evidence boundary |
