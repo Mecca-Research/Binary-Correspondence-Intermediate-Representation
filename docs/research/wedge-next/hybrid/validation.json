@@ -1,0 +1,7 @@
+{
+  "logit_max_error": 2.2351741790771484e-07,
+  "gradient_max_error": 6.556510925292969e-07,
+  "gradient_relative_l2": 5.387556143432448e-07,
+  "loss_error": 4.026261102296758e-09,
+  "thread_identity": "0cce108484b24579455818a54e381dc5fc166f9dc30930312791bbac6152075a"
+}
