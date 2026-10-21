@@ -1,0 +1,3 @@
+layer_frame_ff built
+layer_frame_ff_ubsan built
+{"activation_bytes": 7540736, "scratch_bytes": 3682304, "persistent_bytes": 8411136, "arena_bytes": 11223040, "parameters": 525696}

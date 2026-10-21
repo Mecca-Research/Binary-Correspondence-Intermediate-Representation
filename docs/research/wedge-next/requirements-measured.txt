@@ -1,0 +1,7 @@
+numpy==2.5.4
+scipy==1.18.1
+pyarrow==26.0.0
+matplotlib==3.11.2
+pillow==13.0.0
+# Installed from the official PyTorch CPU index in the measured environment:
+torch==2.14.1+cpu

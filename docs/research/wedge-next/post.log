@@ -1,0 +1,18 @@
+{"job": "benchmark-execution-1", "state": "start"}
+{"job": "benchmark-execution-1", "state": "pass"}
+{"job": "benchmark-execution-4", "state": "start"}
+{"job": "benchmark-execution-4", "state": "pass"}
+{"job": "benchmark-architecture-1", "state": "start"}
+{"job": "benchmark-architecture-1", "state": "pass"}
+{"job": "benchmark-architecture-4", "state": "start"}
+{"job": "benchmark-architecture-4", "state": "pass"}
+{"job": "profile-1", "state": "start"}
+{"job": "profile-1", "state": "pass"}
+{"job": "profile-4", "state": "start"}
+{"job": "profile-4", "state": "pass"}
+{"job": "precision", "state": "start"}
+Traceback (most recent call last):
+  File "/workspace/scratch/d4904b8a62c3/wedge-next/run_post.py", line 19, in <module>
+    if result.returncode:raise RuntimeError(f'{name}: exit {result.returncode}; see log')
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: precision: exit 1; see log

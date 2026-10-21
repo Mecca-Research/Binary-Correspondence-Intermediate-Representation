@@ -1,0 +1,373 @@
+frame_ff_remat_ubsan built
+layer_remat_ubsan built
+lowrank32_ubsan built
+multi12_ubsan built
+{
+  "exact": [
+    {
+      "library": "baseline",
+      "context": 9,
+      "threads": 1,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 215712,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "baseline",
+      "context": 9,
+      "threads": 4,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 215712,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "reuse",
+      "context": 9,
+      "threads": 1,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 194688,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "reuse",
+      "context": 9,
+      "threads": 4,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 194688,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "fast",
+      "context": 9,
+      "threads": 1,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 194688,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "fast",
+      "context": 9,
+      "threads": 4,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 194688,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "compact",
+      "context": 9,
+      "threads": 1,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 182016,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "compact",
+      "context": 9,
+      "threads": 4,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 182016,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "frame_remat",
+      "context": 9,
+      "threads": 1,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 144792,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "frame_remat",
+      "context": 9,
+      "threads": 4,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 144792,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "ff_remat",
+      "context": 9,
+      "threads": 1,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 173952,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "ff_remat",
+      "context": 9,
+      "threads": 4,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 173952,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "frame_ff_remat",
+      "context": 9,
+      "threads": 1,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 124056,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "frame_ff_remat",
+      "context": 9,
+      "threads": 4,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 124056,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "frame_ff_compact",
+      "context": 9,
+      "threads": 1,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 111384,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "frame_ff_compact",
+      "context": 9,
+      "threads": 4,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 111384,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "layer_remat",
+      "context": 9,
+      "threads": 1,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 111312,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "layer_remat",
+      "context": 9,
+      "threads": 4,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 111312,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "layer_compact",
+      "context": 9,
+      "threads": 1,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 98640,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "layer_compact",
+      "context": 9,
+      "threads": 4,
+      "state_sha256": "8d90e3651d1ff169f046458ea773790dac095f93abd450e4844c16cfd0e308ea",
+      "transient_bytes": 98640,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "baseline",
+      "context": 64,
+      "threads": 1,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 1533952,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "baseline",
+      "context": 64,
+      "threads": 4,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 1533952,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "reuse",
+      "context": 64,
+      "threads": 1,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 1384448,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "reuse",
+      "context": 64,
+      "threads": 4,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 1384448,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "fast",
+      "context": 64,
+      "threads": 1,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 1384448,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "fast",
+      "context": 64,
+      "threads": 4,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 1384448,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "compact",
+      "context": 64,
+      "threads": 1,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 1294336,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "compact",
+      "context": 64,
+      "threads": 4,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 1294336,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "frame_remat",
+      "context": 64,
+      "threads": 1,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 1029632,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "frame_remat",
+      "context": 64,
+      "threads": 4,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 1029632,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "ff_remat",
+      "context": 64,
+      "threads": 1,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 1236992,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "ff_remat",
+      "context": 64,
+      "threads": 4,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 1236992,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "frame_ff_remat",
+      "context": 64,
+      "threads": 1,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 882176,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "frame_ff_remat",
+      "context": 64,
+      "threads": 4,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 882176,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "frame_ff_compact",
+      "context": 64,
+      "threads": 1,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 792064,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "frame_ff_compact",
+      "context": 64,
+      "threads": 4,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 792064,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "layer_remat",
+      "context": 64,
+      "threads": 1,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 791552,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "layer_remat",
+      "context": 64,
+      "threads": 4,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 791552,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "layer_compact",
+      "context": 64,
+      "threads": 1,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 701440,
+      "logits_gradients_state": "bitwise identical"
+    },
+    {
+      "library": "layer_compact",
+      "context": 64,
+      "threads": 4,
+      "state_sha256": "17b1314df9818f8cb2ee729b57a1990d7054320272fd0a29f4a03e62b26f15b5",
+      "transient_bytes": 701440,
+      "logits_gradients_state": "bitwise identical"
+    }
+  ],
+  "architectures": [
+    {
+      "name": "global",
+      "logit_max_error": 2.2351741790771484e-07,
+      "loss_error": 6.00926064464602e-08,
+      "gradient_max_error": 5.960464477539062e-07,
+      "gradient_relative_l2": 5.024102733841573e-07
+    },
+    {
+      "name": "lowrank32",
+      "logit_max_error": 2.682209014892578e-07,
+      "loss_error": 1.6673474778627906e-07,
+      "gradient_max_error": 6.556510925292969e-07,
+      "gradient_relative_l2": 5.69170140352071e-07
+    },
+    {
+      "name": "lowrank32_budget",
+      "logit_max_error": 2.891756594181061e-07,
+      "loss_error": 2.1833199959075955e-07,
+      "gradient_max_error": 8.642673492431641e-07,
+      "gradient_relative_l2": 7.485137984986068e-07
+    },
+    {
+      "name": "multi12",
+      "logit_max_error": 1.4901161193847656e-07,
+      "loss_error": 3.714127849718807e-07,
+      "gradient_max_error": 5.960464477539062e-07,
+      "gradient_relative_l2": 5.447796525004378e-07
+    },
+    {
+      "name": "multi12_budget",
+      "logit_max_error": 2.4586915969848633e-07,
+      "loss_error": 2.701082859601911e-07,
+      "gradient_max_error": 6.556510925292969e-07,
+      "gradient_relative_l2": 4.5249973368299834e-07
+    },
+    {
+      "name": "attention",
+      "logit_max_error": 2.384185791015625e-07,
+      "loss_error": 6.307825559659364e-07,
+      "gradient_max_error": 8.642673492431641e-07,
+      "gradient_relative_l2": 7.426812658195558e-07
+    }
+  ],
+  "ubsan": "pass: frame/FF rematerialization, layer rematerialization, low-rank and multi-subspace models; 4 complete steps each"
+}
