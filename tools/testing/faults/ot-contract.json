@@ -8,7 +8,8 @@
     "bcir.tests.test_ot_contract:test_every_gate_can_pass_and_none_outruns_the_gate_it_requires",
     "bcir.tests.test_ot_contract:test_the_hosts_capabilities_are_probed_or_declared_from_the_vocabulary",
     "bcir.tests.test_ot_contract:test_the_cli_lists_the_registry_and_refuses_a_malformed_records_file",
-    "bcir.tests.test_ot_contract:test_ot01s_checks_hold_a_product_to_its_bound_and_fire_past_it"
+    "bcir.tests.test_ot_contract:test_ot01s_checks_hold_a_product_to_its_bound_and_fire_past_it",
+    "bcir.tests.test_ot_contract:test_an_experiment_without_a_runner_is_recorded_on_every_host"
   ],
   "faults": [
     {
@@ -107,6 +108,13 @@
       "label": "OC14 the elementwise bound loosened",
       "new": "    bound = 1.0 * np.maximum(scale, np.finfo(np.float32).tiny)\n",
       "old": "    bound = ELEMENTWISE_ULPS * U * np.maximum(scale, np.finfo(np.float32).tiny)\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_an_experiment_without_a_runner_is_recorded_on_every_host",
+      "label": "OC15 an experiment with every capability and no runner fails the run",
+      "new": "    reason = BLOCKED[experiment.id] or (\n",
+      "old": "    reason = BLOCKED.get(experiment.id) or (\n",
       "path": "tools/perf/ot_run.py"
     }
   ]

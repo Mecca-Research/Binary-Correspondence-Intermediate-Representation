@@ -342,12 +342,37 @@ def test_ot01s_checks_hold_a_product_to_its_bound_and_fire_past_it():
     )
 
 
+def test_an_experiment_without_a_runner_is_recorded_on_every_host():
+    """The runner writes a record for every experiment on every host: one this run does not
+    measure is unavailable where the host lacks a capability it needs, and blocked -- by the
+    prerequisite `BLOCKED` names, or by its runner not yet in this tree -- where the host has them
+    all (a host with PyTorch, Triton or a declared GPU), never a failed run; every such record is
+    one the contract admits."""
+    from tools.perf import ot_run
+
+    measured_here = {"OT-01", "OT-03", "OT-04", "OT-06", "OT-14"}
+    every = set(oc.CAPABILITIES)
+    for e in oc.EXPERIMENTS:
+        if e.id in measured_here:
+            continue
+        rich = oc.validate_record(ot_run.unrun(e, every))
+        assert rich["status"] == "blocked" and rich["reason"].strip(), (e.id, rich)
+        if e.id not in ot_run.BLOCKED:
+            assert "no runner" in rich["reason"], (e.id, rich)
+        poor = oc.validate_record(ot_run.unrun(e, {"cpu"}))
+        lacking = [c for c in e.needs if c != "cpu"]
+        if lacking:
+            assert poor["status"] == "unavailable" and poor["missing"] == lacking, (e.id, poor)
+        else:
+            assert poor == rich, (e.id, poor)
+
+
 def test_a_smoke_run_writes_every_record_under_the_contract():
     """`tools/perf/ot_run.py --smoke`: sixteen records, each validated, the ones this host runs
     measured -- OT-01 (with NumPy), OT-03, OT-04, OT-06 and OT-14 -- every OT-01 element within
     its binary32 bound and the zero-size product a no-op, OT-03's direct, program and pack steps
-    one state, OT-04's intervention changing the launches and keeping the state; and the gates
-    stated, BG0 PASS."""
+    one state, OT-04's intervention changing the launches and keeping the state, OT-04 and OT-14
+    each timed beside an A/A control; and the gates stated, BG0 PASS."""
     if _CC is None:
         return
     with tempfile.TemporaryDirectory() as tmp:
@@ -372,5 +397,9 @@ def test_a_smoke_run_writes_every_record_under_the_contract():
     assert intervention["one_state"]
     assert intervention["launches"]["switched"] > intervention["launches"]["default"]
     assert records["OT-14"]["results"][0]["dropped"] == 0
+    assert records["OT-14"]["results"][0]["one_state"]
+    for timed in (intervention, records["OT-14"]["results"][0]):  # each effect beside its A/A
+        control = timed["aa_control"]
+        assert control["geometric_mean"] > 0 and len(control["ci95"]) == 2, timed
     assert doc["gates"]["BG0"]["state"] == "PASS"
     assert all(g["state"] != "PASS" for k, g in doc["gates"].items() if k in ("BG2", "BG7"))

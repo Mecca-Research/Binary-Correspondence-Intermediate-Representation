@@ -3924,24 +3924,31 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     BCIR's own rails: OT-01 (the first common block and its backward on BCIR's kernels against
     NumPy's float64); OT-03 (the direct C step against its program and its pack); OT-04 (one plan
     intervention); OT-06 (the arena frontier); OT-14 (the trace observer's cost). Unavailable here:
-    OT-02, OT-05, OT-07, OT-08, OT-09, OT-10, OT-11, OT-12, OT-13, OT-16 (PyTorch, Triton, a GPU, a
-    multi-device host, QEMU, a device rig); blocked: OT-15 (no IPC adapter to decompose).
+    OT-02, OT-05, OT-07, OT-08, OT-09, OT-10, OT-11, OT-12, OT-13, OT-16 (PyTorch and Triton in the
+    interpreter that ran, a GPU, a multi-device host, QEMU, a device rig); blocked: OT-15 (no IPC
+    adapter to decompose). An experiment whose capabilities a host has and whose runner this tree
+    lacks is recorded blocked, never a failed run: under the model-lab interpreter (torch 2.13.0,
+    Triton 3.7.1) OT-02, OT-05, OT-10 and OT-11 are.
   - Results: OT-01: every element of the block and its backward within its binary32 bound on all 9
     shapes of the proposal's CPU grid, the worst at 0.366 of its bound; the zero-size product a
     no-op; strided operands unsupported, labelled so. OT-03: 27 of 27 state cases one state and one
     event sequence, bit for bit, from the direct loop, the program and the pack. OT-04: the q/k/v
     and gate/up projections a call each -- 145 launches become 163, the state kept bit for bit --
-    x1.0222 (95% interval 0.970-1.077) of the default step on the comparison decoder, not
-    resolvable. OT-06: the bench step's transients x1.326 of G26's bound in the C plan's spans,
-    x1.000 placed by lifetime (a proved optimum). OT-14: the launch probe x1.0953 (95% interval
-    1.021-1.175) of the plain step, the same state, 2,886 records and 0 dropped. Gates on this host:
-    BG0 PASS; BG1 PASS; BG2 UNAVAILABLE; BG3 OPEN; BG4 UNAVAILABLE; BG5 UNAVAILABLE; BG6
-    UNAVAILABLE; BG7 UNAVAILABLE.
+    x0.9543 (95% interval 0.915-0.995) of the default step on the comparison decoder, beside the A/A
+    control's x0.9689 (0.927-1.013), not resolvable beside its control. OT-06: the bench step's
+    transients x1.326 of G26's bound in the C plan's spans, x1.000 placed by lifetime (a proved
+    optimum). OT-14: the launch probe x1.0159 (95% interval 0.973-1.060) of the plain step, beside
+    the A/A control's x0.9772 (0.941-1.015), not resolvable beside its control; the same state,
+    5,550 records and 0 dropped. Gates on this host: BG0 PASS; BG1 PASS; BG2 UNAVAILABLE; BG3 OPEN;
+    BG4 UNAVAILABLE; BG5 UNAVAILABLE; BG6 UNAVAILABLE; BG7 UNAVAILABLE.
   - Witnesses (`bcir/tests/test_ot_contract.py`): the registry against the proposal; each record
     rule's refusal by its message; the gates' semantics, including every gate passable with complete
     evidence and none passing while a gate it requires is only unavailable; OT-01's checks firing a
-    thousandth past their bounds; the CLI's refusals (a key twice, a malformed file); a smoke run of
-    the runner. `ot-contract.json` (OC1-OC14), 14 of 14 caught, each by its own witness.
+    thousandth past their bounds; the CLI's refusals (a key twice, a malformed file); every
+    experiment without a runner recorded on every host, blocked where the host has its capabilities
+    (it first failed the run there: a host with PyTorch); a smoke run of the runner, its timed
+    experiments each beside an A/A control. `ot-contract.json` (OC1-OC15), 15 of 15 caught, each by
+    its own witness.
   - Not claimed: any comparison with PyTorch, Triton or a device. Their routes need what this host
     lacks, and their records say so; the driver-ladder gates (BG3-BG6) wait on milestones their
     reports must attest; BG2 waits on PX-6 (GPU), pending in a local session on the hardware.

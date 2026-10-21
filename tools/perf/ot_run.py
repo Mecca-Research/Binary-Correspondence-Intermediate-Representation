@@ -29,9 +29,11 @@ pass), `blocked` naming the prerequisite the repository lacks. What runs here, o
          without, in paired, rotated rounds, with the probe's coverage (records, none dropped)
 
 OT-04 and OT-14 time the 9.84M comparison decoder of the PX records (`COMPARE`: 8 sequences of 128
-tokens, binary32, one thread); `--smoke` times the bench step and runs OT-01 on one small shape.
+tokens, binary32, one thread), each beside an A/A control -- a second trainer running the reference
+arm in the same rotation -- so an effect is read against this host's own noise; `--smoke` times the
+bench step and runs OT-01 on one small shape.
 
-    python3 tools/perf/ot_run.py OUT.json [--rows ROWS.json] [--rounds 12] [--smoke]
+    python3 tools/perf/ot_run.py OUT.json [--rows ROWS.json] [--rounds 24] [--smoke]
 
 `--rows` names `tools/perf/gemplus_baseline.py --compare --group train --json` output: the GEM+
 rows the gates read (BG1's train.plan.* rows, each met at 0). The gates are stated last; the exit
@@ -118,6 +120,14 @@ def _interval(ratios: list[float]) -> tuple[float, list[float]]:
     t = t95[max(df for df in t95 if df <= len(logs) - 1)]
     half = t * statistics.stdev(logs) / math.sqrt(len(logs))
     return math.exp(mean), [math.exp(mean - half), math.exp(mean + half)]
+
+
+def _unrun_route(route: str) -> str:
+    """The label of a comparator route this run did not compare: why, on this interpreter -- no
+    PyTorch, or PyTorch present and the route's runner not yet in this tree."""
+    if "torch" not in oc.host_capabilities():
+        return f"{route} (no PyTorch in this interpreter)"
+    return f"{route} (no runner for this route yet)"
 
 
 # --- OT-01 ----------------------------------------------------------------------------------------
@@ -248,9 +258,8 @@ def ot01(lib, shapes) -> dict:
         "results": results, "raw": raw,
         "memory_scopes": {"logical_bytes": int(sum(4 * (m * k + 2 * k * n + 3 * m * n)
                                                    for m, k, n in shapes))},
-        "labels": {"unsupported": ["strided or non-contiguous operands", "P-EAGER (no PyTorch "
-                                   "on this host)"] if "torch" not in oc.host_capabilities()
-                   else ["strided or non-contiguous operands"], "fallback": []},
+        "labels": {"unsupported": ["strided or non-contiguous operands", _unrun_route("P-EAGER")],
+                   "fallback": []},
         "gaps": ["capability"],
     }  # fmt: skip
 
@@ -290,8 +299,7 @@ def ot03(packed, traced, smoke: bool) -> dict:
         "experiment": "OT-03", "status": "measured", "routes": ["B-DIRECT", "B-PLAN"],
         "semantic": "native.decoder.step", "reference": "bcir.direct.step",
         "results": results, "raw": raw, "memory_scopes": {},
-        "labels": {"unsupported": ["P-EAGER (no PyTorch on this host)"]
-                   if "torch" not in oc.host_capabilities() else [], "fallback": []},
+        "labels": {"unsupported": [_unrun_route("P-EAGER")], "fallback": []},
         "gaps": ["integration"],
     }  # fmt: skip
 
@@ -340,6 +348,7 @@ def ot04(path, rounds: int, case) -> dict:
 
     spec, batch, time_ = case.spec, case.batch, case.time
     trainer, decisions = nf._case_trainer(path, case)
+    control, _ = nf._case_trainer(path, case)
     other, _ = nf._case_trainer(path, case)
     try:
         sites = {s: "calls" for s in choice_sites(spec) if s.endswith(("qkv.fwd", "gateup.fwd"))}
@@ -352,11 +361,14 @@ def ot04(path, rounds: int, case) -> dict:
             return lambda: tr.run_program(w, tokens, targets, steps=1, optimizer=optimizer)
 
         ms = _timed_rounds({"default": run(trainer, words["default"]),
+                            "default2": run(control, words["default"]),
                             "switched": run(other, words["switched"])}, rounds)  # fmt: skip
         mean, ci = _interval([s / d for s, d in zip(ms["switched"], ms["default"])])
-        same = nf.state_digest(trainer) == nf.state_digest(other)
+        aa_mean, aa_ci = _interval([s / d for s, d in zip(ms["default2"], ms["default"])])
+        same = nf.state_digest(trainer) == nf.state_digest(other) == nf.state_digest(control)
     finally:
         trainer.close()
+        control.close()
         other.close()
     launches = {"default": len(default), "switched": len(switched)}
     return {
@@ -364,7 +376,8 @@ def ot04(path, rounds: int, case) -> dict:
         "semantic": "native.decoder.step.sites", "reference": "bcir.default.program",
         "results": [{"intervention": "every layer's q/k/v and gate/up projections a call each",
                      "case": case_name(case), "launches": launches, "one_state": same,
-                     "time_ratio": {"geometric_mean": mean, "ci95": ci, "rounds": rounds}}],
+                     "time_ratio": {"geometric_mean": mean, "ci95": ci, "rounds": rounds},
+                     "aa_control": {"geometric_mean": aa_mean, "ci95": aa_ci, "rounds": rounds}}],
         "raw": [{"ms_per_step": {k: [round(v, 4) for v in vs] for k, vs in ms.items()}}],
         "memory_scopes": {}, "labels": {"unsupported": [], "fallback": []},
         "gaps": ["integration", "selection"],
@@ -396,6 +409,7 @@ def ot14(plain, traced, rounds: int, case) -> dict:
     from bcir.tests import native_decoder_fixtures as nf
 
     a, _ = nf._case_trainer(plain, case)
+    a2, _ = nf._case_trainer(plain, case)
     b, _ = nf._case_trainer(traced, case)
     try:
         lib = b.lib
@@ -406,15 +420,18 @@ def ot14(plain, traced, rounds: int, case) -> dict:
         lib.bcir_decoder_trace_probe_begin(ct.addressof(b.state), ct.addressof(words), capacity)
         try:
             ms = _timed_rounds({"off": lambda: a.run(tokens, targets, steps=1, optimizer=optimizer),
+                                "off2": lambda: a2.run(tokens, targets, steps=1, optimizer=optimizer),
                                 "on": lambda: b.run(tokens, targets, steps=1, optimizer=optimizer)},
                                rounds)  # fmt: skip
         finally:
             dropped = ct.c_size_t()
             count = lib.bcir_decoder_trace_probe_end(ct.byref(dropped))
         mean, ci = _interval([on / off for on, off in zip(ms["on"], ms["off"])])
-        same = nf.state_digest(a) == nf.state_digest(b)
+        aa_mean, aa_ci = _interval([o2 / off for o2, off in zip(ms["off2"], ms["off"])])
+        same = nf.state_digest(a) == nf.state_digest(b) == nf.state_digest(a2)
     finally:
         a.close()
+        a2.close()
         b.close()
     return {
         "experiment": "OT-14", "status": "measured", "routes": ["B-DIRECT"],
@@ -422,11 +439,13 @@ def ot14(plain, traced, rounds: int, case) -> dict:
         "results": [{"case": case_name(case),
                      "observer_over_plain": {"geometric_mean": mean, "ci95": ci,
                                              "rounds": rounds},
+                     "aa_control": {"geometric_mean": aa_mean, "ci95": aa_ci, "rounds": rounds},
                      "records": int(count), "dropped": int(dropped.value), "one_state": same}],
         "raw": [{"ms_per_step": {k: [round(v, 4) for v in vs] for k, vs in ms.items()}}],
         "memory_scopes": {"trace_buffer_bytes": capacity * RECORD_WORDS * 8},
-        "labels": {"unsupported": ["device counters (no PMU readable here)"]
-                   if "pmu" not in oc.host_capabilities() else [], "fallback": []},
+        "labels": {"unsupported": ["device counters (" + ("not read by this runner yet"
+                                   if "pmu" in oc.host_capabilities() else "no PMU readable here")
+                                   + ")"], "fallback": []},
         "gaps": ["system"],
     }  # fmt: skip
 
@@ -441,21 +460,26 @@ BLOCKED = {
 
 
 def unrun(experiment: oc.Experiment, caps: set[str]) -> dict:
+    """The record of an experiment this run does not measure: unavailable where the host lacks a
+    capability it needs (named), else blocked by what the repository lacks -- the prerequisite
+    `BLOCKED` names, or the experiment's runner, not yet in this tree. A host with every capability
+    an experiment needs records it blocked until its runner lands; it never fails the run."""
     lacking = [c for c in experiment.needs if c not in caps]
     if lacking:
         return {"experiment": experiment.id, "status": "unavailable", "missing": lacking,
                 "reason": "this host lacks " + ", ".join(oc.CAPABILITIES[c] for c in lacking)}  # fmt: skip
-    if experiment.id in BLOCKED:
-        return {"experiment": experiment.id, "status": "blocked",
-                "reason": BLOCKED[experiment.id]}  # fmt: skip
-    raise RuntimeError(f"{experiment.id} has every capability and no runner")
+    reason = BLOCKED.get(experiment.id) or (
+        f"no runner for {experiment.id} in this tree yet: its {', '.join(experiment.routes)} "
+        f"comparison is a later OT slice"
+    )
+    return {"experiment": experiment.id, "status": "blocked", "reason": reason}
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("out", type=Path)
     p.add_argument("--rows", type=Path, help="gemplus_baseline.py --json output (the gates' rows)")
-    p.add_argument("--rounds", type=int, default=12)
+    p.add_argument("--rounds", type=int, default=24)
     p.add_argument("--smoke", action="store_true", help="tiny shapes and four rounds")
     a = p.parse_args(argv)
     caps = oc.host_capabilities()

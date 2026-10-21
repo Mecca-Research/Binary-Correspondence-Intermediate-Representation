@@ -30,7 +30,7 @@
 |---|---|
 | `tools/perf/ot_contract.py` | the contract (BG0): routes, gaps, capabilities, the record and `validate_record`, the sixteen, the eight and `evaluate_gates`; `--list`, `--gates RECORDS.json` |
 | `tools/perf/ot_run.py` | runs the experiments the host can run, writes all sixteen records under the contract, reads the GEM+ rows a gate names (`--rows`, `gemplus_baseline.py --json`), states the gates |
-| `bcir/tests/test_ot_contract.py` | the registry against the proposal, every record rule's refusal, the gates' semantics (nothing PASS without its evidence; UNAVAILABLE never a pass; no gate ahead of the gate it requires; every gate passable with complete evidence), OT-01's checks firing past their bounds, a smoke run |
+| `bcir/tests/test_ot_contract.py` | the registry against the proposal, every record rule's refusal, the gates' semantics (nothing PASS without its evidence; UNAVAILABLE never a pass; no gate ahead of the gate it requires; every gate passable with complete evidence), OT-01's checks firing past their bounds, every experiment without a runner recorded on every host, a smoke run |
 | `tools/testing/faults/ot-contract.json` | the faults each witness exists to catch |
 
 A gate is **PASS** only when every requirement is met by evidence: an experiment's record
@@ -76,13 +76,13 @@ otherwise, naming what is missing.
 ## 4. The measured experiments
 
 The records are in [`measurements/2026-10-21/ot/`](measurements/2026-10-21/ot/README.json):
-the run on Intel(R) Xeon(R) Processor @ 2.10GHz (4 vCPUs, one thread), a provisional commit of this change (33d07ce) with nothing uncommitted below bcir, runtime/c or tools/perf, Ubuntu clang version 18.1.3 (1ubuntu1), NumPy 2.2.6, Python 3.11.15; the capabilities it found: cpu, numpy.
+the run on Intel(R) Xeon(R) Processor @ 2.10GHz (4 vCPUs, one thread), a provisional commit of this change (764e7f3) with nothing uncommitted below bcir, runtime/c or tools/perf, Ubuntu clang version 18.1.3 (1ubuntu1), NumPy 2.2.6, Python 3.11.15; the capabilities it found: cpu, numpy.
 
 - **OT-01** (B-DIRECT against NumPy float64): the first common block -- U = X Wg, V = X Wu, Y = silu(U) * V and its backward (dU, dV, dX, dWg, dWu) -- on 9 shapes (16x256x1024, 16x768x1024, 128x256x1024, 128x768x1024, 512x256x1024, 512x768x1024, 16x257x1025, 128x257x1025, 512x257x1025), every element within its binary32 bound: the worst error is 0.366 of its bound (a GEMM element within gamma_k |A| |B| of the exact product in any order, an elementwise one within 8 units of roundoff of its terms). The coverage ledger: dense row-major GEMMs and their transposes, the SiLU gate and its backward, the zero-size product a no-op; strided operands unsupported (the entries take dense rows).
 - **OT-03** (B-DIRECT against B-PLAN): 27 of 27 state cases of the trace corpus train one state and one event sequence, bit for bit, from the direct C loop, from the step program and from its StreamPack and ExecutionPlanV1 lowered by the C.
-- **OT-04** (plan intervention): every layer's q/k/v and gate/up projections a call each -- 145 launches become 163, the state the same, bit for bit -- times x1.0222 (95% interval 0.970-1.077) of the default's step over 12 paired rounds, not resolvable: the interval holds 1 (d_model 384, 6 layers, 8x128 tokens, kblock+exp+reduce+attn, 1 thread).
+- **OT-04** (plan intervention): every layer's q/k/v and gate/up projections a call each -- 145 launches become 163, the state the same, bit for bit -- times x0.9543 (95% interval 0.915-0.995) of the default's step over 24 rotated rounds, beside the A/A control's x0.9689 (0.927-1.013), not resolvable beside its control (d_model 384, 6 layers, 8x128 tokens, kblock+exp+reduce+attn, 1 thread).
 - **OT-06** (arena frontier): the bench step's transient values take 999,424 bytes in the C plan's fixed spans, x1.326 of G26's bound (753,664); placed by their lifetimes (PX-4) 754,176, x1.000, a proved optimum.
-- **OT-14** (observer cost): the step on the library with the launch trace probe times x1.0953 (95% interval 1.021-1.175) of the plain library's over 12 paired rounds, the same state, 2,886 launch records written and 0 dropped.
+- **OT-14** (observer cost): the step on the library with the launch trace probe times x1.0159 (95% interval 0.973-1.060) of the plain library's over 24 rotated rounds, beside the A/A control's x0.9772 (0.941-1.015), not resolvable beside its control; the same state on all three trainers, 5,550 launch records written and 0 dropped.
 
 ## 5. What moves each gate next
 
@@ -98,12 +98,19 @@ the run on Intel(R) Xeon(R) Processor @ 2.10GHz (4 vCPUs, one thread), a provisi
   OT-16 measured.
 - **BG7 (integrated promotion)** needs BG1, BG2, BG4, BG5 and BG6, and OT-10's complete-workload
   benefit.
-- **The P-\* and T-\* routes** need PyTorch and Triton, which this host does not have: OT-02,
-  OT-05, OT-10 and OT-11 run where they are installed, under the same contract.
+- **The P-\* and T-\* routes** need PyTorch and Triton in the interpreter that runs, and runners this
+  tree does not have yet. Where the interpreter has them, OT-02, OT-05, OT-10 and OT-11 are
+  recorded **blocked** (no runner yet) rather than unavailable -- checked on this host under the
+  model-lab pin (torch 2.13.0) with Triton 3.7.1 -- and the routes an experiment did not compare
+  stay labelled so in its record. Their runners are the next OT slice.
 
 ## 6. The rules this follows (the proposal's section 10)
 
 Correctness, refusal, trace identity and bounded accounting are deterministic gates; a timing is
-this host's evidence with an interval, never a universal threshold. An absent capability is
+this host's evidence with an interval, never a universal threshold, and is read beside an A/A
+control -- a second trainer running the reference arm in the same rotation -- so an effect counts
+only where its interval holds neither 1 nor any of the control's. That rule was earned here:
+twelve-round runs without a control read the probe's cost at about 10% twice and at nothing once;
+with the control, both timed effects sit inside this host's own noise. An absent capability is
 UNAVAILABLE, never a simulated pass, and a GPU, a multi-device host or a device rig is declared
 by its operator (`BCIR_OT_CAPABILITIES`), never inferred.
