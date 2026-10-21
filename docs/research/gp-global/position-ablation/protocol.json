@@ -1,0 +1,26 @@
+{
+  "status": "exploratory follow-up after observing main length stress test",
+  "change": "remove rotary position encoding from reduced global input; no other architecture/hyperparameter change",
+  "recipes": [
+    "global",
+    "global_symmetric"
+  ],
+  "seeds": [
+    20261017,
+    20261018,
+    20261019
+  ],
+  "steps": 400,
+  "batch": 8,
+  "context": 128,
+  "validation": "same fixed 512 examples; lowest CE at 100-step intervals",
+  "test": "same primary 2048 examples and length-stress 128 examples per length; reused benchmark samples, not a fresh confirmatory holdout",
+  "hypothesis": "Position-specific phase interactions may account for recall length failure and the wedge/symmetric optimization gap.",
+  "optimizer": "identical to main experiment",
+  "additional_tuning": "none",
+  "source_sha256": "3b98e5eaa9edeccc4e8d7d60d02594958586925dc961b68f16b50d052976e1f2",
+  "native_source_sha256": {
+    "global": "561206a744a9b42eda0e1e4ede91c279a3fadd01a605de8bb59f7dcec973148b",
+    "global_symmetric": "561206a744a9b42eda0e1e4ede91c279a3fadd01a605de8bb59f7dcec973148b"
+  }
+}

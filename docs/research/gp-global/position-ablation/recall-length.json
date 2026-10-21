@@ -1,0 +1,362 @@
+[
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261017,
+    "context": 64,
+    "test": {
+      "ce_nats": 0.109679957991908,
+      "bits_per_byte": 0.1582347314798355,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261017,
+    "context": 128,
+    "test": {
+      "ce_nats": 0.09772788665395815,
+      "bits_per_byte": 0.14099153743222415,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261017,
+    "context": 256,
+    "test": {
+      "ce_nats": 0.11082042164187078,
+      "bits_per_byte": 0.15988007273195093,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261017,
+    "context": 512,
+    "test": {
+      "ce_nats": 0.2809165339518166,
+      "bits_per_byte": 0.40527689043600196,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261017,
+    "context": 1024,
+    "test": {
+      "ce_nats": 0.8755324047088114,
+      "bits_per_byte": 1.2631262584109912,
+      "accuracy": 0.765625,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261017,
+    "context": 64,
+    "test": {
+      "ce_nats": 2.776926147958732,
+      "bits_per_byte": 4.006257582574954,
+      "accuracy": 0.078125,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261017,
+    "context": 128,
+    "test": {
+      "ce_nats": 2.752043460039373,
+      "bits_per_byte": 3.9703594521097076,
+      "accuracy": 0.1015625,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261017,
+    "context": 256,
+    "test": {
+      "ce_nats": 2.7859192385128067,
+      "bits_per_byte": 4.019231869719584,
+      "accuracy": 0.0703125,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261017,
+    "context": 512,
+    "test": {
+      "ce_nats": 2.778044367808122,
+      "bits_per_byte": 4.007870832806294,
+      "accuracy": 0.03125,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261017,
+    "context": 1024,
+    "test": {
+      "ce_nats": 2.800009215401067,
+      "bits_per_byte": 4.039559409502517,
+      "accuracy": 0.0546875,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261018,
+    "context": 64,
+    "test": {
+      "ce_nats": 2.788931648235553,
+      "bits_per_byte": 4.023577858287715,
+      "accuracy": 0.0703125,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261018,
+    "context": 128,
+    "test": {
+      "ce_nats": 2.809405630972519,
+      "bits_per_byte": 4.053115571649583,
+      "accuracy": 0.0625,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261018,
+    "context": 256,
+    "test": {
+      "ce_nats": 2.7643063512392616,
+      "bits_per_byte": 3.988051064430748,
+      "accuracy": 0.046875,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261018,
+    "context": 512,
+    "test": {
+      "ce_nats": 2.788964039794061,
+      "bits_per_byte": 4.023624589428541,
+      "accuracy": 0.1015625,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261018,
+    "context": 1024,
+    "test": {
+      "ce_nats": 2.785943345976981,
+      "bits_per_byte": 4.019266649438596,
+      "accuracy": 0.0546875,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261018,
+    "context": 64,
+    "test": {
+      "ce_nats": 0.0816068253501129,
+      "bits_per_byte": 0.11773376223529963,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261018,
+    "context": 128,
+    "test": {
+      "ce_nats": 0.07771667279299237,
+      "bits_per_byte": 0.11212145843284031,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261018,
+    "context": 256,
+    "test": {
+      "ce_nats": 0.08602864483521797,
+      "bits_per_byte": 0.1241130992781669,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261018,
+    "context": 512,
+    "test": {
+      "ce_nats": 0.19657692790292203,
+      "bits_per_byte": 0.28360055903873294,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261018,
+    "context": 1024,
+    "test": {
+      "ce_nats": 0.6274368756849243,
+      "bits_per_byte": 0.9052000690215054,
+      "accuracy": 0.8828125,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261019,
+    "context": 64,
+    "test": {
+      "ce_nats": 0.04772290432398185,
+      "bits_per_byte": 0.0688495974050271,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261019,
+    "context": 128,
+    "test": {
+      "ce_nats": 0.0429272437365386,
+      "bits_per_byte": 0.06193092165773605,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261019,
+    "context": 256,
+    "test": {
+      "ce_nats": 0.05605843374081235,
+      "bits_per_byte": 0.08087522435787252,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261019,
+    "context": 512,
+    "test": {
+      "ce_nats": 0.12661225170302157,
+      "bits_per_byte": 0.18266286764773443,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global",
+    "library_name": "global_norope",
+    "seed": 20261019,
+    "context": 1024,
+    "test": {
+      "ce_nats": 0.40132394676967964,
+      "bits_per_byte": 0.5789880677946032,
+      "accuracy": 0.90625,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261019,
+    "context": 64,
+    "test": {
+      "ce_nats": 2.783934625162782,
+      "bits_per_byte": 4.016368677881421,
+      "accuracy": 0.046875,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261019,
+    "context": 128,
+    "test": {
+      "ce_nats": 2.774589157073224,
+      "bits_per_byte": 4.00288601741383,
+      "accuracy": 0.046875,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261019,
+    "context": 256,
+    "test": {
+      "ce_nats": 2.7620549247483277,
+      "bits_per_byte": 3.9848029425973515,
+      "accuracy": 0.0546875,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261019,
+    "context": 512,
+    "test": {
+      "ce_nats": 2.784781711058895,
+      "bits_per_byte": 4.01759076450295,
+      "accuracy": 0.0703125,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "kind": "global_symmetric",
+    "library_name": "global_symmetric_norope",
+    "seed": 20261019,
+    "context": 1024,
+    "test": {
+      "ce_nats": 2.796607082988449,
+      "bits_per_byte": 4.034651169942385,
+      "accuracy": 0.0703125,
+      "scored_tokens": 128
+    }
+  }
+]

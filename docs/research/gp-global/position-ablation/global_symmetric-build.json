@@ -1,0 +1,27 @@
+{
+  "command": [
+    "gcc",
+    "-std=c11",
+    "-O3",
+    "-fPIC",
+    "-shared",
+    "-ffp-contract=off",
+    "-fno-math-errno",
+    "-pthread",
+    "-I",
+    "/workspace/scratch/d4904b8a62c3/gp-global/vendor",
+    "-DGP_RANK=22",
+    "-DGP_SYMMETRIC=1",
+    "-DGP_FUTURE=0",
+    "-DGP_PROJECTOR=0",
+    "/workspace/scratch/d4904b8a62c3/gp-global/vendor/bcir_tensor.c",
+    "/workspace/scratch/d4904b8a62c3/gp-global/build/global_symmetric_norope.c",
+    "-lm",
+    "-o",
+    "/workspace/scratch/d4904b8a62c3/gp-global/build/global_symmetric_norope.so"
+  ],
+  "source_sha256": "561206a744a9b42eda0e1e4ede91c279a3fadd01a605de8bb59f7dcec973148b",
+  "bcir_commit": "aaa2e6c0ee0ee15b83fe4d0373b48bd893e80d6d",
+  "stderr": "",
+  "change": "Remove forward and inverse rotary maps only; same prefix geometry, parameters, FF and optimizer."
+}

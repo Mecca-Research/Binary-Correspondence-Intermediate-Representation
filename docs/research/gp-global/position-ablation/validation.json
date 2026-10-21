@@ -1,0 +1,16 @@
+[
+  {
+    "kind": "global",
+    "max_logit_error": 1.7881393432617188e-07,
+    "max_gradient_error": 4.470348358154297e-07,
+    "loss_error": 9.926354227474121e-08,
+    "thread_identity_resume": "85d8654967b273cbfcdcf3fd62706178dfb7886796b182c5f6a17ce60e67ea42"
+  },
+  {
+    "kind": "global_symmetric",
+    "max_logit_error": 1.6391277313232422e-07,
+    "max_gradient_error": 6.556510925292969e-07,
+    "loss_error": 5.415930015573167e-08,
+    "thread_identity_resume": "6cc975bc44b6cc910251c9cfbc88d711691de9090c32a46705bd636183549a29"
+  }
+]
