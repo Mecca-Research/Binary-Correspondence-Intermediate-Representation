@@ -1,0 +1,9 @@
+{"kind": "global", "context": 128, "scan_ms": 0.1947689999724389, "direct_ms": 0.281472799997573}
+{"kind": "global", "context": 1024, "scan_ms": 1.5218128000014985, "direct_ms": 5.615391399987857}
+{"kind": "global", "context": 4096, "scan_ms": 5.853473333445436, "direct_ms": 71.36881566657394}
+{"kind": "global_symmetric", "context": 128, "scan_ms": 0.17923989998962497, "direct_ms": 0.2275231000567146}
+{"kind": "global_symmetric", "context": 1024, "scan_ms": 1.4532336999764084, "direct_ms": 5.343413999980839}
+{"kind": "global_symmetric", "context": 4096, "scan_ms": 5.529820666803668, "direct_ms": 69.36648100023983}
+{"kind": "projector", "context": 128, "scan_ms": 0.31536579999738024, "direct_ms": 0.34582600001158426}
+{"kind": "projector", "context": 1024, "scan_ms": 1.7083564000131446, "direct_ms": 6.044164100057969}
+{"kind": "projector", "context": 4096, "scan_ms": 5.528409666718896, "direct_ms": 69.27216133347731}

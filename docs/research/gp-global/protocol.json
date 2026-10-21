@@ -1,0 +1,93 @@
+{
+  "created_utc": "2026-10-17T12:21:48.836048+00:00",
+  "bcir_commit": "aaa2e6c0ee0ee15b83fe4d0373b48bd893e80d6d",
+  "seeds": [
+    20261017,
+    20261018,
+    20261019
+  ],
+  "tasks": [
+    "wikitext2_byte",
+    "first_token_recall"
+  ],
+  "kinds": [
+    "global",
+    "global_symmetric",
+    "projector"
+  ],
+  "steps": {
+    "wikitext2_byte": 600,
+    "first_token_recall": 400
+  },
+  "threads": 4,
+  "optimizer": {
+    "name": "native_BCIR_AdamW",
+    "peak_lr": 0.001,
+    "warmup": 30,
+    "floor_lr": 0.0001,
+    "beta1": 0.9,
+    "beta2": 0.95,
+    "epsilon": 1e-08,
+    "decay": 0.1,
+    "clip": 1.0
+  },
+  "selection": "lowest validation CE at 100-update intervals; final test once after selection",
+  "context": {
+    "wikitext2_byte": 64,
+    "first_token_recall": 128
+  },
+  "matching": "global wedge and symmetric control 525696 parameters; projector FF250 gives 526080 (+0.073%); same width/depth/vocab/pool/optimizer/data per seed",
+  "gp_rework": "rank22; current rotary vector and strictly earlier prefix sum divided by sqrt(t); normalized decomposable wedge, matched symmetric bilinear control, or ridge projector U(U^TU+1e-4I)^-1U^T/sqrt(2); pre-RMSNorm and SwiGLU; no local-offset averaging",
+  "test_seeds": {
+    "wikitext2_byte": 20261020,
+    "first_token_recall": 20261021
+  },
+  "baseline": "Prior pilot transformer/local wedge/local symmetric selected checkpoints evaluated on these same newly sampled test windows; no additional baseline training. All training and validation batches unchanged.",
+  "hypotheses": [
+    "Global reach removes the previous hard receptive-field limit but compression may still prevent retrieval.",
+    "Prefix scans improve execution independently of wedge versus symmetric geometry.",
+    "Projector removes orientation dependence, which may help invariance but discard sequence information."
+  ],
+  "frozen_choices": "Three new recipes, no per-model tuning, fixed updates/selection before reading new test outcomes.",
+  "not_reproduced": "paper 13-18M WordPiece LM and frozen DistilBERT/SNLI classification result",
+  "data": {
+    "train": {
+      "parquet_sha256": "e83889baabc497075506f91975be5fac0d45c5290b6b20582c8cd1e853d0c9f7",
+      "utf8_sha256": "fc1dd2874bf42e945db9bd38e856ae18010f5c088e7446c706c5ba2f39310ee3",
+      "bytes": 10914845,
+      "source_url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/train-00000-of-00001.parquet"
+    },
+    "validation": {
+      "parquet_sha256": "204929b7ff9d6184953f867dedb860e40aa69c078fc1e54b3baaa8fb28511c4c",
+      "utf8_sha256": "8ef749789ca0693435d20b3f81d5638c19edcebc5a68586dcf09bdf47ef9542f",
+      "bytes": 1144248,
+      "source_url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/validation-00000-of-00001.parquet"
+    },
+    "test": {
+      "parquet_sha256": "5f1bea067869d04849c0f975a2b29c4ff47d867f484f5010ea5e861eab246d91",
+      "utf8_sha256": "bbf94c53a05abe9ee670d3b6343608095822c85e26de37c70b24fc571964574a",
+      "bytes": 1287656,
+      "source_url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/test-00000-of-00001.parquet"
+    }
+  },
+  "environment": {
+    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "numpy": "2.5.4",
+    "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
+    "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "cpu_quota": "800000 100000",
+    "memory_limit": "8589934592",
+    "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0"
+  }
+}

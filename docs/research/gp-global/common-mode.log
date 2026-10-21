@@ -1,0 +1,135 @@
+[
+  {
+    "kind": "global",
+    "coefficient": 0.0,
+    "native_feature_change_l2": 0.0,
+    "native_vs_same_input_fp64_products_l2": 4.8833951128248153e-08,
+    "same_input_fp64_feature_change_l2": 4.8833951128248153e-08,
+    "native_max_plucker_residual": 6.802872709599228e-09,
+    "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+  },
+  {
+    "kind": "global",
+    "coefficient": 1.0,
+    "native_feature_change_l2": 7.55992037994949e-08,
+    "native_vs_same_input_fp64_products_l2": 4.288277322011374e-08,
+    "same_input_fp64_feature_change_l2": 5.9175112670670836e-08,
+    "native_max_plucker_residual": 4.707377293522441e-09,
+    "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+  },
+  {
+    "kind": "global",
+    "coefficient": 10.0,
+    "native_feature_change_l2": 3.3163490179300135e-07,
+    "native_vs_same_input_fp64_products_l2": 2.3528739238313725e-07,
+    "same_input_fp64_feature_change_l2": 2.59544766898311e-07,
+    "native_max_plucker_residual": 1.6703672056639363e-08,
+    "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+  },
+  {
+    "kind": "global",
+    "coefficient": 100.0,
+    "native_feature_change_l2": 3.0869136673950453e-06,
+    "native_vs_same_input_fp64_products_l2": 1.928264764194426e-06,
+    "same_input_fp64_feature_change_l2": 2.419459619180517e-06,
+    "native_max_plucker_residual": 1.9027321812581377e-07,
+    "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+  },
+  {
+    "kind": "global",
+    "coefficient": 1000.0,
+    "native_feature_change_l2": 3.046081857665514e-05,
+    "native_vs_same_input_fp64_products_l2": 2.6621383098141248e-05,
+    "same_input_fp64_feature_change_l2": 1.6827814265737976e-05,
+    "native_max_plucker_residual": 2.090124461229248e-06,
+    "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+  },
+  {
+    "kind": "global",
+    "coefficient": 10000.0,
+    "native_feature_change_l2": 0.0003464490198901143,
+    "native_vs_same_input_fp64_products_l2": 0.0002260394574442733,
+    "same_input_fp64_feature_change_l2": 0.000249293953661965,
+    "native_max_plucker_residual": 2.1102262846156572e-05,
+    "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+  },
+  {
+    "kind": "global",
+    "coefficient": 1000000.0,
+    "native_feature_change_l2": 0.03574653120756097,
+    "native_vs_same_input_fp64_products_l2": 0.02164902652757847,
+    "same_input_fp64_feature_change_l2": 0.026236564440584552,
+    "native_max_plucker_residual": 0.0031724414992848615,
+    "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+  },
+  {
+    "kind": "global_symmetric",
+    "coefficient": 0.0,
+    "native_feature_change_l2": 0.0
+  },
+  {
+    "kind": "global_symmetric",
+    "coefficient": 1.0,
+    "native_feature_change_l2": 1.0985322797139274
+  },
+  {
+    "kind": "global_symmetric",
+    "coefficient": 10.0,
+    "native_feature_change_l2": 1.7044159199752231
+  },
+  {
+    "kind": "global_symmetric",
+    "coefficient": 100.0,
+    "native_feature_change_l2": 1.7409042672899315
+  },
+  {
+    "kind": "global_symmetric",
+    "coefficient": 1000.0,
+    "native_feature_change_l2": 1.744276212102822
+  },
+  {
+    "kind": "global_symmetric",
+    "coefficient": 10000.0,
+    "native_feature_change_l2": 1.7446107390564638
+  },
+  {
+    "kind": "global_symmetric",
+    "coefficient": 1000000.0,
+    "native_feature_change_l2": 1.7446475132373132
+  },
+  {
+    "kind": "projector",
+    "coefficient": 0.0,
+    "native_feature_change_l2": 0.0
+  },
+  {
+    "kind": "projector",
+    "coefficient": 1.0,
+    "native_feature_change_l2": 5.032635122068474e-06
+  },
+  {
+    "kind": "projector",
+    "coefficient": 10.0,
+    "native_feature_change_l2": 0.00031015191841700227
+  },
+  {
+    "kind": "projector",
+    "coefficient": 100.0,
+    "native_feature_change_l2": 0.03149205500637711
+  },
+  {
+    "kind": "projector",
+    "coefficient": 1000.0,
+    "native_feature_change_l2": 0.4559889172242678
+  },
+  {
+    "kind": "projector",
+    "coefficient": 10000.0,
+    "native_feature_change_l2": 0.5263530901854508
+  },
+  {
+    "kind": "projector",
+    "coefficient": 1000000.0,
+    "native_feature_change_l2": 0.5271757997951629
+  }
+]
