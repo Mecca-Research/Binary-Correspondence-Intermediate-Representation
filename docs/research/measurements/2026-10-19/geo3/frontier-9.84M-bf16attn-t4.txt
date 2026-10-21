@@ -1,0 +1,10 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 12aa6dc, runtime/c against it cbe58694db3ed158
+GEO-3 frontier: 9.84M bf16+exp+reduce+attnbf16, 4 threads, 24 ABBA rounds of 2 steps; need 4522048, panels 2359360, floor 1081408
+  the reference: every layer kept, the workspace at the need, memory 355932224
+  lowest 2 (1 re-run), need      memory  329717824 (frees   25.00 MiB): step   74.78 ms vs   74.05 ms, x1.0119 (0.9654-1.0590), +0.048% a MiB freed
+  lowest 4 (3 re-run), need      memory  277289024 (frees   75.00 MiB): step   75.49 ms vs   68.89 ms, x1.0954 (1.0644-1.1328), +0.127% a MiB freed
+  all 6 (5 re-run), need         memory  224860224 (frees  125.00 MiB): step   80.87 ms vs   74.02 ms, x1.0903 (1.0375-1.1536), +0.072% a MiB freed
+  kept, panels                   memory  353769536 (frees    2.06 MiB): step   74.21 ms vs   73.76 ms, x1.0064 (0.9599-1.0549), +0.308% a MiB freed
+  kept, floor                    memory  352491584 (frees    3.28 MiB): step   99.05 ms vs   74.88 ms, x1.3164 (1.2606-1.3860), +9.644% a MiB freed
+  all 6 (5 re-run), floor        memory  221419584 (frees  128.28 MiB): step  106.12 ms vs   74.75 ms, x1.4251 (1.3703-1.4752), +0.331% a MiB freed
+every run the reference's state: yes

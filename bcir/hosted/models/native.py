@@ -29,6 +29,12 @@ from ...toolchain import BuildFailed, host_link_args
 _ROOT = Path(__file__).resolve().parents[3]
 _C = _ROOT / "runtime" / "c"
 _UNITS = ("bcir_tensor.h", "bcir_tensor.c", "bcir_decoder_train.h", "bcir_decoder_train.c")
+#: PX-2b: the pack lowering, and the StreamPack / ExecutionPlanV1 verifiers and GEM's executor it
+#: runs on (`NativeDecoder.build(..., pack=True)`).
+_PACK_UNITS = (
+    "bcir_decoder_pack.h", "bcir_decoder_pack.c", "bcir_runtime.h", "bcir_runtime.c",
+    "bcir_exec.h", "bcir_exec.c", "bcir_streampack.h", "bcir_execution_plan.h",
+)  # fmt: skip
 _FP = ct.POINTER(ct.c_float)
 _UP = ct.POINTER(ct.c_uint32)
 _SZ = ct.c_size_t
@@ -172,6 +178,7 @@ class _State(ct.Structure):
             ("contract", ct.c_uint32),  # ABI 3 (NDT-FMA): the GEMM contract, _CONTRACTS
             ("workspace", ct.c_void_p),  # ABI 4 (NDT-BF16): the bf16 GEMMs' packed operands
             ("workspace_bytes", _SZ),
+            ("recompute", ct.c_uint64),  # ABI 5 (REMAT): layers the backward recomputes
         ]
     )
 
@@ -243,6 +250,25 @@ def parameter_layout(spec: DecoderSpec):
     return tuple(out)
 
 
+class NativeRunStopped(ValueError):
+    """A native run that stopped early: its C status (1 invalid, 2 capacity, 3 non-finite) and the
+    steps it completed, which the state keeps."""
+
+    def __init__(self, message: str, status: int, completed: int):
+        super().__init__(message)
+        self.status, self.completed = status, completed
+
+
+class PackRefused(ValueError):
+    """A pack and plan `bcir_decoder_lower_pack` refused (PX-2b): its C status (1 refused, 2 a
+    buffer short) and `why`, the verifiers' bcir_status or a lowering reason
+    (`native_pack.REASONS` names both)."""
+
+    def __init__(self, message: str, status: int, why: int):
+        super().__init__(message)
+        self.status, self.why = status, why
+
+
 def _check(rc: int):
     if rc:
         reason = {
@@ -309,6 +335,118 @@ def _state_buffers(rows, huge_pages):
     return buffers, advised
 
 
+_SIZE_MAX = 2 ** (8 * ct.sizeof(_SZ)) - 1
+
+
+def _bind_plan(lib):
+    """The C plan's byte counts (WS-PLAN, REMAT) on a loaded library: every figure the trainer
+    admits or asks is the C's own, read here, never re-derived."""
+    plan = ct.POINTER(_Plan)
+    for name, args in (
+        ("workspace_bytes", [plan, ct.c_uint32]),
+        ("workspace_need", [plan, ct.c_uint32, ct.c_uint]),
+        ("workspace_floor", [plan, ct.c_uint32, ct.c_uint]),
+        ("workspace_panels", [plan, ct.c_uint32]),
+        ("activation_count", [plan, ct.c_uint64]),
+    ):
+        fn = getattr(lib, "bcir_decoder_" + name)
+        fn.argtypes, fn.restype = args, _SZ
+
+
+@dataclass(frozen=True)
+class MemoryPlan:
+    """A trainer's arenas under a recompute set and a bf16 workspace (GEO-3), in bytes, every
+    count the C plan's (bcir_decoder_activation_count, bcir_decoder_workspace_need/_panels/_floor).
+    Each plan trains the state the all-kept trainer at the exact need trains, bit for bit: the
+    choice moves memory and time, never a value."""
+
+    recompute: int  # the layers the backward recomputes, bit l for layer l
+    workspace_bytes: int  # the bf16 workspace lent (0 without a bf16 GEMM contract)
+    activation_count: int  # floats of the activation arena under the recompute set
+    workspace_need: int  # every GEMM group whole (the SwiGLU block's panels where admitted)
+    workspace_panels: int  # the least at which the SwiGLU block keeps its panels; 0 none
+    workspace_floor: int  # the least the state admits on its pool
+    recomputes: int  # layer forwards the backward re-runs a step (the highest set layer is free)
+    persistent_bytes: int  # weights, gradients and the two moments
+    activation_bytes: int
+    scratch_bytes: int
+    total_bytes: int
+
+
+def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspace_bytes=None):
+    """The arenas of one trainer (GEO-3: per-layer caching coupled with packing-aware workspace
+    planning). With `recompute` given: that set and `workspace_bytes` (None: the exact need),
+    refused (ValueError) where the C refuses them -- a bit past the last layer, a workspace below
+    the floor or lent without a bf16 contract. With `recompute` None: the plan this module
+    chooses within `budget` bytes, among the choices that keep every value, in the order the
+    measured frontier prices them (docs/research/measurements/2026-10-19/geo3): the fewest
+    recomputed layers (the lowest ones; which layers is no matter of cost), each with the
+    workspace at the step's need and then at the SwiGLU panels' need, and the floor only after
+    every set. On both measured shapes the panels' tier cost no step time the rounds resolved
+    (1.3-2.1 MiB freed), a re-run layer 1-11% of a step (10.5-25 MiB) and the floor 32-75%
+    (1.7-4.1 MiB). A declared policy, no optimality claim (TMSAO-4); micro-batch accumulation --
+    cheaper than recomputation at one measured shape, dearer at the other, and never the same
+    state -- is the caller's."""
+    _bind_plan(lib)
+    if contract not in _CONTRACTS:
+        raise ValueError(f"contract must be one of {sorted(_CONTRACTS)}")
+    # ctypes wraps an out-of-range integer into its C type silently (2^64 reaches the C as the
+    # empty set), so a set or a size outside its type is refused here, never handed over
+    if recompute is not None and (type(recompute) is not int or not 0 <= recompute < 2**64):
+        raise ValueError("recompute must be a layer bit set in [0, 2^64)")
+    if workspace_bytes is not None and (
+        type(workspace_bytes) is not int or not 0 <= workspace_bytes < _SIZE_MAX
+    ):
+        raise ValueError("workspace_bytes must be None or a size in [0, SIZE_MAX)")
+    bits = _CONTRACTS[contract]
+    p = ct.byref(plan)
+    need = lib.bcir_decoder_workspace_need(p, bits, threads)
+    floor = lib.bcir_decoder_workspace_floor(p, bits, threads)
+    panels = lib.bcir_decoder_workspace_panels(p, bits)
+    if _SIZE_MAX in (need, floor, panels):
+        raise ValueError("native plan's workspace overflows size_t or the plan is refused")
+    layers = plan.spec.layers
+
+    def arenas(mask, workspace):
+        count = lib.bcir_decoder_activation_count(p, mask)
+        if count == _SIZE_MAX:
+            raise ValueError(f"recompute set {mask:#x} names a layer past the plan's {layers}")
+        named = sum(1 for layer in range(min(layers, 64)) if (mask >> layer) & 1)
+        persistent, acts, scratch = 16 * plan.parameters, 4 * count, 4 * plan.scratch
+        return MemoryPlan(
+            mask, workspace, count, need, panels, floor, max(named - 1, 0), persistent, acts,
+            scratch, persistent + acts + scratch + workspace,
+        )  # fmt: skip
+
+    if recompute is not None:
+        if workspace_bytes is None:
+            workspace_bytes = need
+        if not need and workspace_bytes:
+            raise ValueError("a workspace is lent only under a bf16 GEMM contract")
+        if workspace_bytes < floor:
+            raise ValueError(f"workspace {workspace_bytes} below the floor {floor}")
+        return arenas(recompute, workspace_bytes)
+    if type(budget) is not int or budget < 1:
+        raise ValueError("the budget must be a positive integer")
+    tiers = [need]
+    if floor <= panels < need:
+        tiers.append(panels)
+    sets = [0] + [(1 << r) - 1 for r in range(2, min(layers, 64) + 1)]
+    # the frontier's prices: the panels' tier about free, then a re-run layer, the floor dearest
+    order = [(mask, workspace) for mask in sets for workspace in tiers]
+    if floor < tiers[-1]:
+        order += [(mask, floor) for mask in sets]
+    least = None
+    for mask, workspace in order:
+        chosen = arenas(mask, workspace)
+        if chosen.total_bytes <= budget:
+            return chosen
+        least = chosen
+    raise ValueError(
+        f"no recompute set and workspace fit {budget} bytes: the least is {least.total_bytes}"
+    )
+
+
 class NativeDecoder:
     """Caller-owned arenas planned once; native forward/backward/AdamW/run ABI.
 
@@ -330,14 +468,27 @@ class NativeDecoder:
     pages where the host has them (`_state_buffers`); `self.huge_pages` says whether the kernel
     took the advice. The state is the same either way, bit for bit; the mapping adds at most one
     huge page to what the budget bounds.
+    `transient` (PX-4) lends the activation and scratch arenas at the given float counts in place
+    of the C plan's -- what a placement of a program's values needs (`native_pack.place_by_lifetime`,
+    `Placed.floats`): such a trainer runs programs and packs placed there (`run_program`,
+    `run_pack`), every operand held inside the lent arenas, and the fixed step refuses it
+    (BCIR_DT_CAPACITY), whose spans are the plan's.
     """
 
     @staticmethod
-    def build(directory, *, cc=None) -> Path:
+    def build(directory, *, cc=None, pack=False, probe=None) -> Path:
+        """The trainer as a shared library under `directory`; with `pack`, also the PX-2b pack
+        lowering and what it runs on (`bcir_decoder_lower_pack`, `lower_pack`). `probe` "time"
+        (PX-3) builds, under a name of its own, the same units with the job clock a measurement
+        reads (BCIR_DT_TIME_PROBE: `native_choose.timed_run`): the same code between two clock
+        reads a job, so the state it trains is the library's bit for bit."""
+        if probe not in (None, "time"):
+            raise ValueError('probe must be None or "time"')
         compiler = cc or os.environ.get("CC") or shutil.which("clang") or shutil.which("cc")
         if not compiler:
             raise RuntimeError("native decoder training requires a C11 compiler")
-        missing = [u for u in _UNITS if not (_C / u).is_file()]
+        units = _UNITS + (_PACK_UNITS if pack else ())
+        missing = [u for u in units if not (_C / u).is_file()]
         if missing:  # the C units ship with the repository, not with the wheel
             raise RuntimeError(
                 f"native decoder sources not found under {_C} ({', '.join(missing)}): build "
@@ -348,7 +499,8 @@ class NativeDecoder:
         suffix = (
             ".dll" if sys.platform == "win32" else ".dylib" if sys.platform == "darwin" else ".so"
         )
-        target = target_dir / ("bcir_decoder_train" + suffix)
+        stem = "bcir_decoder_pack" if pack else "bcir_decoder_train"
+        target = target_dir / (stem + ("_time" if probe else "") + suffix)
         fd, name = tempfile.mkstemp(prefix=".decoder-", suffix=suffix, dir=target_dir)
         os.close(fd)
         temporary = Path(name)
@@ -367,17 +519,13 @@ class NativeDecoder:
                 "-DBCIR_DT_BUILD_SHARED",
                 "-shared",
             ]
+            if probe == "time":
+                command.append("-DBCIR_DT_TIME_PROBE")
             if sys.platform != "win32":
                 # the pool's threads (NDT-THREADS) are pthreads here; Win32 threads need no flag
                 command += ["-fPIC", "-pthread"]
-            command += [
-                "-I",
-                str(_C),
-                str(_C / "bcir_tensor.c"),
-                str(_C / "bcir_decoder_train.c"),
-                "-o",
-                str(temporary),
-            ]
+            command += ["-I", str(_C), *(str(_C / u) for u in units if u.endswith(".c"))]
+            command += ["-o", str(temporary)]
             result = subprocess.run(
                 command + host_link_args(["-lm"]), capture_output=True, text=True, timeout=120
             )
@@ -400,6 +548,9 @@ class NativeDecoder:
         threads=1,
         contract="v1",
         huge_pages=True,
+        recompute=0,
+        workspace_bytes=None,
+        transient=None,
     ):
         if not isinstance(spec, DecoderSpec) or spec.activation != "silu_gate":
             raise ValueError("native decoder requires Llama/SwiGLU DecoderSpec")
@@ -428,6 +579,25 @@ class NativeDecoder:
             raise ValueError(f"contract must be one of {sorted(_CONTRACTS)}")
         if type(huge_pages) is not bool:
             raise ValueError("huge_pages must be bool")
+        if recompute != "auto" and (type(recompute) is not int or not 0 <= recompute < 2**64):
+            raise ValueError('recompute must be "auto" or a layer bit set in [0, 2^64)')
+        if workspace_bytes is not None and (
+            type(workspace_bytes) is not int or workspace_bytes < 0
+        ):
+            raise ValueError("workspace_bytes must be None or a non-negative integer")
+        if recompute == "auto" and workspace_bytes is not None:
+            raise ValueError('recompute="auto" plans the workspace too: pass no workspace_bytes')
+        if transient is not None and (
+            type(transient) is not tuple
+            or len(transient) != 2
+            or any(type(x) is not int or not 0 <= x < 2**62 for x in transient)
+        ):
+            raise ValueError("transient must be None or (activation floats, scratch floats)")
+        if transient is not None and recompute == "auto":
+            raise ValueError(
+                "transient lends the arenas a placement sized for one program: pass the recompute "
+                'set it was placed under, not "auto"'
+            )
         self.contract = contract
         self.spec, self.batch_size, self.context_length = spec, batch_size, context_length
         self.library = Path(library).resolve()
@@ -466,14 +636,24 @@ class NativeDecoder:
             spec.rms_norm_eps,
         )
         _check(self.lib.bcir_decoder_make_plan(ct.byref(shape), ct.byref(plan)))
-        # NDT-BF16: the bf16 GEMMs' workspace, sized by the C plan for the step's largest group
-        self.workspace_bytes = self.lib.bcir_decoder_workspace_bytes(
-            ct.byref(plan), _CONTRACTS[contract]
-        )
-        if self.workspace_bytes == 2 ** (8 * ct.sizeof(_SZ)) - 1:
-            raise ValueError("native plan's GEMM workspace overflows size_t")
-        self.memory_bytes = (4 * plan.parameters + plan.activations + plan.scratch) * 4
-        self.memory_bytes += self.workspace_bytes
+        # GEO-3: the arenas a recompute set and a workspace size need (memory_plan); "auto" plans
+        # both within the budget, every choice the state the all-kept plan-sized trainer reaches
+        if recompute == "auto":
+            chosen = memory_plan(self.lib, plan, contract, threads, max_memory_bytes)
+            recompute, workspace_bytes = chosen.recompute, chosen.workspace_bytes
+        self.plan_memory = memory_plan(
+            self.lib, plan, contract, threads, None, recompute=recompute,
+            workspace_bytes=workspace_bytes,
+        )  # fmt: skip
+        self.recompute = recompute
+        # NDT-BF16 / WS-PLAN: the bf16 GEMMs' workspace, by default the step's exact need
+        self.workspace_bytes = self.plan_memory.workspace_bytes
+        self.activation_count = self.plan_memory.activation_count
+        self.memory_bytes = self.plan_memory.total_bytes
+        # PX-4: the transient arenas a placement lends, counted in place of the plan's
+        self.transient = transient
+        lent = (self.activation_count, plan.scratch) if transient is None else transient
+        self.memory_bytes += 4 * (sum(lent) - self.activation_count - plan.scratch)
         if self.memory_bytes > max_memory_bytes:
             raise ValueError(
                 f"native plan needs {self.memory_bytes} bytes, budget {max_memory_bytes}"
@@ -487,8 +667,8 @@ class NativeDecoder:
                 ("gradients", plan.parameters),
                 ("moment1", plan.parameters),
                 ("moment2", plan.parameters),
-                ("activations", plan.activations),
-                ("scratch", plan.scratch),
+                ("activations", lent[0]),
+                ("scratch", lent[1]),
             )
             + ((("workspace", (self.workspace_bytes + 3) // 4),) if self.workspace_bytes else ()),
             huge_pages,
@@ -502,8 +682,8 @@ class NativeDecoder:
             plan.parameters,
             plan.parameters,
             plan.parameters,
-            plan.activations,
-            plan.scratch,
+            lent[0],
+            lent[1],
             0,
             1.0,
             1.0,
@@ -512,6 +692,7 @@ class NativeDecoder:
             _CONTRACTS[contract],
             ct.cast(workspace, ct.c_void_p) if workspace is not None else None,
             self.workspace_bytes,
+            recompute,
         )
         rng = random.Random(seed)
         for name, _, offset, count in self.layout:
@@ -541,10 +722,9 @@ class NativeDecoder:
     def _bind(self):
         self.lib.bcir_decoder_abi_version.argtypes = []
         self.lib.bcir_decoder_abi_version.restype = ct.c_uint32
-        if self.lib.bcir_decoder_abi_version() != 4:
+        if self.lib.bcir_decoder_abi_version() != 5:
             raise ValueError("unsupported native decoder ABI")
-        self.lib.bcir_decoder_workspace_bytes.argtypes = [ct.POINTER(_Plan), ct.c_uint32]
-        self.lib.bcir_decoder_workspace_bytes.restype = _SZ
+        _bind_plan(self.lib)
         for name, args, result in (
             ("rails", [], ct.c_int),
             ("size", [ct.c_uint], _SZ),
@@ -663,7 +843,7 @@ class NativeDecoder:
         x = self._tokens(tokens)
         _check(self.lib.bcir_decoder_forward(ct.byref(self.state), x, len(x)))
         n = self.batch_size * self.context_length * self.spec.vocab_size
-        offset = self.state.plan.activations - n
+        offset = self.activation_count - n  # REMAT: the logits are the arena's last floats
         return array("f", self.buffers["activations"][offset : offset + n])
 
     def backward(self, tokens, targets, *, accumulate=False):
@@ -726,8 +906,155 @@ class NativeDecoder:
             ct.byref(done),
         )
         if rc:
-            raise ValueError(f"native run stopped after {done.value} complete steps (status {rc})")
+            raise NativeRunStopped(
+                f"native run stopped after {done.value} complete steps (status {rc})",
+                rc,
+                done.value,
+            )
         return tuple({"step": e.step, "loss": e.loss, "grad_norm": e.grad_norm} for e in events)
+
+    def run_program(
+        self,
+        program,
+        tokens,
+        targets,
+        *,
+        steps,
+        optimizer=NativeAdamW(),
+        learning_rates=None,
+        gradient_accumulation=1,
+    ):
+        """`run` from a launch program (PX-2, `bcir_decoder_run_program`): `program` the words
+        `native_launch.program_words` spells -- a planner's decisions for this state -- each
+        record the call the step makes for it. The C checks the whole program before anything
+        runs (a refusal is status 1, nothing written); the run's outputs are `run`'s. An
+        `array('Q')` is lent to the C as it is; any other sequence is checked (ints in
+        [0, 2**64), so no bool or float) and converted once a call."""
+        if type(steps) is not int or steps < 1 or not isinstance(optimizer, NativeAdamW):
+            raise ValueError("run_program requires positive steps and NativeAdamW")
+        if type(gradient_accumulation) is not int or gradient_accumulation < 1:
+            raise ValueError("gradient_accumulation must be a positive integer")
+        from .native_launch import RECORD_WORDS
+
+        code = None
+        if isinstance(program, array) and program.typecode == "Q" and program.itemsize == 8:
+            code = program
+        else:
+            words = list(program)
+            if not set(map(type, words)) - {int}:
+                try:
+                    code = array("Q", words)  # the range check, in C: OverflowError outside it
+                except OverflowError:
+                    code = None
+        if code is None or len(code) % RECORD_WORDS:
+            raise ValueError(f"a program is records of {RECORD_WORDS} unsigned 64-bit words")
+        fn = getattr(self.lib, "bcir_decoder_run_program", None)
+        if fn is None:
+            raise ValueError("this native decoder library has no launch-program runner (PX-2)")
+        fn.argtypes = [
+            ct.POINTER(_State), ct.POINTER(_Optimizer), ct.POINTER(ct.c_uint64), _SZ, _UP, _UP,
+            _SZ, ct.POINTER(ct.c_double), _SZ, _SZ, ct.POINTER(_Event), _SZ, ct.POINTER(_SZ),
+        ]  # fmt: skip
+        fn.restype = ct.c_int
+        x, y = (
+            self._tokens(tokens, steps=steps * gradient_accumulation),
+            self._tokens(targets, steps=steps * gradient_accumulation),
+        )
+        rates = None
+        if learning_rates is not None:
+            if len(learning_rates) != steps:
+                raise ValueError("learning rate count must equal steps")
+            rates = (ct.c_double * steps)(*learning_rates)
+        records = len(code) // RECORD_WORDS
+        view = (ct.c_uint64 * len(code)).from_buffer(code) if code else (ct.c_uint64 * 1)()
+        opt, events, done = _Optimizer(**asdict(optimizer)), (_Event * steps)(), _SZ()
+        rc = fn(ct.byref(self.state), ct.byref(opt), view, records, x, y, len(x), rates, steps,
+                gradient_accumulation, events, steps, ct.byref(done))  # fmt: skip
+        if rc:
+            raise NativeRunStopped(
+                f"native program run stopped after {done.value} complete steps (status {rc})",
+                rc,
+                done.value,
+            )
+        return tuple({"step": e.step, "loss": e.loss, "grad_norm": e.grad_norm} for e in events)
+
+    def program_decisions(self, *, steps=1, gradient_accumulation=1) -> dict:
+        """The decisions a program this trainer runs is stated under, as `native_launch.
+        step_program` and `native_pack.training_pack` take them (PX-3): its contract, recompute
+        set, workspace and the panels' need, its arenas' alignment, whether a provider holds its
+        GEMMs or its SiLU, and the call's steps and accumulation -- every one read off the trainer,
+        so a program stated from them is one its `run_program` admits."""
+        from .native_launch import SPACES
+
+        if type(steps) is not int or steps < 1:
+            raise ValueError("steps must be a positive integer")
+        if type(gradient_accumulation) is not int or gradient_accumulation < 1:
+            raise ValueError("gradient_accumulation must be a positive integer")
+        provider = self.state.provider
+        return dict(
+            contract=_CONTRACTS[self.contract], recompute=self.recompute,
+            workspace_bytes=self.workspace_bytes, panels_need=self.plan_memory.workspace_panels,
+            alignment={SPACES[name]: ct.addressof(buf) % 64 for name, buf in self.buffers.items()},
+            provider_mm=bool(provider.mm), provider_silu=bool(provider.silu),
+            steps=steps, accumulation=gradient_accumulation,
+        )  # fmt: skip
+
+    def lower_pack(self, pack: bytes, plan: bytes) -> array:
+        """PX-2b: the launch program a StreamPack and its ExecutionPlanV1 state for this trainer
+        (`native_pack.pack_artifacts` mints them), as the array('Q') `run_program` runs: the two
+        verified by their own laws (the plan's alias law among them), then each claim GEM's
+        executor dispatches lowered to the record that runs it, every operand at the place its
+        value's lifetime gives and live there (`bcir_decoder_lower_pack`). A refusal raises
+        `PackRefused` with the C's reason; a library built without `pack=True` has no lowering."""
+        from .native_launch import RECORD_WORDS
+        from .native_pack import REASONS
+
+        fn = getattr(self.lib, "bcir_decoder_lower_pack", None)
+        sizes = getattr(self.lib, "bcir_decoder_pack_sizes", None)
+        if fn is None or sizes is None:
+            raise ValueError("this native decoder library has no pack lowering (PX-2b): build it "
+                             "with pack=True")  # fmt: skip
+        if type(pack) not in (bytes, bytearray) or type(plan) not in (bytes, bytearray):
+            raise ValueError("a pack and its plan are bytes")
+        pack, plan = bytes(pack), bytes(plan)
+        sizes.argtypes = [ct.c_char_p, _SZ, ct.c_char_p, _SZ, ct.POINTER(_SZ), ct.POINTER(_SZ),
+                          ct.POINTER(ct.c_int)]  # fmt: skip
+        sizes.restype = ct.c_int
+        records, work_bytes, why = _SZ(), _SZ(), ct.c_int()
+        rc = sizes(pack, len(pack), plan, len(plan), ct.byref(records), ct.byref(work_bytes),
+                   ct.byref(why))  # fmt: skip
+        if rc == 0:
+            work = (ct.c_uint64 * max(1, -(-work_bytes.value // 8)))()
+            program = array("Q", bytes(8 * RECORD_WORDS * records.value))
+            view = (ct.c_uint64 * len(program)).from_buffer(program) if program else None
+            fn.argtypes = [ct.POINTER(_State), ct.c_char_p, _SZ, ct.c_char_p, _SZ, ct.c_void_p, _SZ,
+                           ct.POINTER(ct.c_uint64), _SZ, ct.POINTER(_SZ), ct.POINTER(ct.c_int)]  # fmt: skip
+            fn.restype = ct.c_int
+            done = _SZ()
+            rc = fn(ct.byref(self.state), pack, len(pack), plan, len(plan), work, ct.sizeof(work),
+                    view, records.value, ct.byref(done), ct.byref(why))  # fmt: skip
+            if rc == 0:
+                return program
+        raise PackRefused(
+            f"pack refused: {REASONS.get(why.value, why.value)} (status {rc})", rc, why.value
+        )
+
+    def run_pack(
+        self,
+        pack: bytes,
+        plan: bytes,
+        tokens,
+        targets,
+        *,
+        steps,
+        optimizer=NativeAdamW(),
+        learning_rates=None,
+        gradient_accumulation=1,
+    ):
+        """`run` from a StreamPack and its plan: `lower_pack`, then `run_program` (PX-2b)."""
+        return self.run_program(self.lower_pack(pack, plan), tokens, targets, steps=steps,
+                                optimizer=optimizer, learning_rates=learning_rates,
+                                gradient_accumulation=gradient_accumulation)  # fmt: skip
 
     def state_dict(self, *, gradients=False):
         buf = self.buffers["gradients" if gradients else "weights"]
@@ -804,7 +1131,14 @@ class NativeDecoder:
 
     @classmethod
     def resume(
-        cls, library, path, *, max_memory_bytes=512 * 1024 * 1024, threads=1, huge_pages=True
+        cls,
+        library,
+        path,
+        *,
+        max_memory_bytes=512 * 1024 * 1024,
+        threads=1,
+        huge_pages=True,
+        recompute=0,
     ):
         with Path(path).open("rb") as stream:
             prefix = stream.read(12)
@@ -851,6 +1185,7 @@ class NativeDecoder:
                 threads=threads,
                 contract=meta["contract"],
                 huge_pages=huge_pages,
+                recompute=recompute,  # REMAT: the arena's plan, never the state's: not saved
             )
             expected = obj.state.plan.parameters * 12
             payload = stream.read(expected + 1)

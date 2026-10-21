@@ -40,9 +40,17 @@ Over that program:
   same values -- the headroom is stated, not claimed realized: the C ABI's fixed spans are
   unchanged.
 
-Declared, not modeled: recomputation (it changes the order, and so the bound's premise), the
-tokens' and the logits' host copies, the provider's internal blocking, and the second pass of
-the optimizer's preflight (it reads what the commit reads, so it moves no first-touch traffic).
+Recomputation (REMAT) is the C's: `recompute`, the trainer's layer bit set, keeps the kept layers'
+caches in their slots in layer order and gives the recomputed layers one shared slot after them,
+the forward writing each recomputed layer's cache there and the backward re-running a recomputed
+layer's forward from its input -- up to the hidden activation, the last value its backward reads
+-- before that layer's VJPs, except the highest such layer, whose cache the forward left there.
+The arena sums are then `bcir_decoder_activation_count`'s (held by `train.plan.mismatch`), the
+counted work grows by the re-run products, and the transient bound is that order's.
+
+Declared, not modeled: the tokens' and the logits' host copies, the provider's internal blocking,
+and the second pass of the optimizer's preflight (it reads what the commit reads, so it moves no
+first-touch traffic).
 """
 
 from __future__ import annotations
@@ -234,9 +242,42 @@ def _geometry(spec: DecoderSpec, batch: int, time: int):
     )  # fmt: skip
 
 
-def training_step_program(spec: DecoderSpec, batch: int, time: int) -> TrainingStepProgram:
-    """One `bcir_decoder_run` step of `spec` at `batch` x `time` (module docstring)."""
+def _layer_forward(s, c, p, x, n, d, k, f, causal):
+    """One layer's forward as the C's `layer_forward` issues it into its cache slot `c`, up to the
+    hidden activation: the forward adds the down projection and the residual, the backward's
+    recompute stops here (REMAT)."""
+    s.step(c("rms1"), (x, p("norm1")), new=(c("n1"),))
+    for proj, out in (("q", d), ("k", k), ("v", k)):
+        s.linear(c(proj), n, d, out, c("n1"), p(proj), c(proj))
+    s.step(c("rope.q"), (), (c("q"),))
+    s.step(c("rope.k"), (), (c("k"),))
+    s.step(c("attention"), (c("q"), c("k"), c("v")), new=(c("p"), c("ctx")), work=4 * causal)
+    s.linear(c("o"), n, d, d, c("ctx"), p("o"), c("x2"))
+    s.step(c("residual1"), (x,), (c("x2"),))
+    s.step(c("rms2"), (c("x2"), p("norm2")), new=(c("n2"),))
+    s.linear(c("gate"), n, d, f, c("n2"), p("gate"), c("gate"))
+    s.linear(c("up"), n, d, f, c("n2"), p("up"), c("up"))
+    s.step(c("silu"), (c("gate"),), new=(c("hidden"),))
+    s.step(c("swiglu"), (c("up"),), (c("hidden"),))
+
+
+def recompute_layers(spec: DecoderSpec, recompute: int) -> tuple[int, ...]:
+    """The layers a recompute set names (bit l for layer l, bits past 63 none), refused past the
+    last layer as the C refuses them."""
+    if type(recompute) is not int or not 0 <= recompute < 2**64:
+        raise ValueError("recompute must be an integer bit set in [0, 2^64)")
+    if spec.n_layers < 64 and recompute >> spec.n_layers:
+        raise ValueError(f"recompute set {recompute:#x} names a layer past {spec.n_layers}")
+    return tuple(layer for layer in range(min(spec.n_layers, 64)) if (recompute >> layer) & 1)
+
+
+def training_step_program(
+    spec: DecoderSpec, batch: int, time: int, recompute: int = 0
+) -> TrainingStepProgram:
+    """One `bcir_decoder_run` step of `spec` at `batch` x `time` under the recompute set
+    `recompute` (module docstring)."""
     g = _geometry(spec, batch, time)
+    redone = recompute_layers(spec, recompute)
     n, d, k, f, v, L = g["n"], g["d"], g["k"], g["f"], g["v"], g["L"]
     b, t, h, hd = g["b"], g["t"], g["h"], g["hd"]
     nd, nk, nf, nv, na = n * d, n * k, n * f, n * v, b * h * t * t
@@ -256,8 +297,13 @@ def training_step_program(spec: DecoderSpec, batch: int, time: int) -> TrainingS
     cache = {"n1": nd, "q": nd, "k": nk, "v": nk, "p": na, "ctx": nd, "x2": nd, "n2": nd,
              "gate": nf, "up": nf, "hidden": nf}  # fmt: skip
     buffers += [Buffer(f"x{layer}", "activations", nd) for layer in range(L + 1)]
+    # REMAT: the kept layers' slots in layer order, the recomputed layers' one shared slot after
+    slot = {layer: ("R" if layer in redone else f"L{layer}") for layer in range(L)}
     for layer in range(L):
-        buffers += [Buffer(f"L{layer}.{name}", "activations", cache[name]) for name in _CACHE]
+        if layer not in redone:
+            buffers += [Buffer(f"L{layer}.{name}", "activations", cache[name]) for name in _CACHE]
+    if redone:
+        buffers += [Buffer(f"R.{name}", "activations", cache[name]) for name in _CACHE]
     buffers += [Buffer("norm", "activations", nd), Buffer("logits", "activations", nv)]
     work_sizes = {"cur": nd, "tmp": nd, "dn": nd, "dq": nd, "dk": nk, "dv": nk, "dc": nd,
                   "dg": nf, "du": nf, "dh": nf, "dl": nv}  # fmt: skip
@@ -271,22 +317,10 @@ def training_step_program(spec: DecoderSpec, batch: int, time: int) -> TrainingS
     # --- forward --------------------------------------------------------------------------
     s.step("embed", ("tokens", w("embed")), new=("x0",))
     for layer in range(L):
-        c = lambda name, layer=layer: f"L{layer}.{name}"  # noqa: E731
+        c = lambda name, layer=layer: f"{slot[layer]}.{name}"  # noqa: E731
         p = lambda name, layer=layer: w(f"L{layer}.{name}")  # noqa: E731
         x, y = f"x{layer}", f"x{layer + 1}"
-        s.step(c("rms1"), (x, p("norm1")), new=(c("n1"),))
-        for proj, out in (("q", d), ("k", k), ("v", k)):
-            s.linear(c(proj), n, d, out, c("n1"), p(proj), c(proj))
-        s.step(c("rope.q"), (), (c("q"),))
-        s.step(c("rope.k"), (), (c("k"),))
-        s.step(c("attention"), (c("q"), c("k"), c("v")), new=(c("p"), c("ctx")), work=4 * causal)
-        s.linear(c("o"), n, d, d, c("ctx"), p("o"), c("x2"))
-        s.step(c("residual1"), (x,), (c("x2"),))
-        s.step(c("rms2"), (c("x2"), p("norm2")), new=(c("n2"),))
-        s.linear(c("gate"), n, d, f, c("n2"), p("gate"), c("gate"))
-        s.linear(c("up"), n, d, f, c("n2"), p("up"), c("up"))
-        s.step(c("silu"), (c("gate"),), new=(c("hidden"),))
-        s.step(c("swiglu"), (c("up"),), (c("hidden"),))
+        _layer_forward(s, c, p, x, n, d, k, f, causal)
         s.linear(c("down"), n, f, d, c("hidden"), p("down"), y)
         s.step(c("residual2"), (c("x2"),), (y,))
     s.step("final_norm", (f"x{L}", w("final_norm")), new=("norm",))
@@ -298,10 +332,13 @@ def training_step_program(spec: DecoderSpec, batch: int, time: int) -> TrainingS
     s.step("cross_entropy", ("logits", "targets"), new=("dl",))
     s.linear_vjp("head.vjp", n, d, v, "norm", w(head), "dl", gr(head), "dn", False)
     s.step("final_norm.vjp", (f"x{L}", w("final_norm"), "dn"), (gr("final_norm"),), new=("cur",))
+    top = max(redone, default=None)
     for layer in reversed(range(L)):
-        c = lambda name, layer=layer: f"L{layer}.{name}"  # noqa: E731
+        c = lambda name, layer=layer: f"{slot[layer]}.{name}"  # noqa: E731
         p = lambda name, layer=layer: w(f"L{layer}.{name}")  # noqa: E731
         q = lambda name, layer=layer: gr(f"L{layer}.{name}")  # noqa: E731
+        if layer in redone and layer != top:  # the shared slot holds another layer's cache
+            _layer_forward(s, c, p, f"x{layer}", n, d, k, f, causal)
         s.linear_vjp(c("down.vjp"), n, f, d, c("hidden"), p("down"), "cur", q("down"), "dh", False)
         s.step(c("swiglu.vjp"), (c("gate"), c("up"), "dh"), new=("dg", "du"))
         s.linear_vjp(c("gate.vjp"), n, d, f, c("n2"), p("gate"), "dg", q("gate"), "dn", False)
@@ -341,5 +378,6 @@ __all__ = [
     "Step",
     "TRANSIENT",
     "TrainingStepProgram",
+    "recompute_layers",
     "training_step_program",
 ]

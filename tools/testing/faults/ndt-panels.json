@@ -165,22 +165,22 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "PN23 the trainer's predicate forgetting the model's width",
-      "new": "    !(g.n%32) && !(g.f%32) && !((uintptr_t)a%64) && !((uintptr_t)b%64);",
-      "old": "    !(g.n%32) && !(g.d%32) && !(g.f%32) && !((uintptr_t)a%64) && !((uintptr_t)b%64);",
+      "new": "    !(g.n%32) && !(g.f%32) && !((uintptr_t)a%64) && !((uintptr_t)b%64) &&",
+      "old": "    !(g.n%32) && !(g.d%32) && !(g.f%32) && !((uintptr_t)a%64) && !((uintptr_t)b%64) &&",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "PN24 the trainer's predicate forgetting the slot's alignment",
-      "new": "    !(g.n%32) && !(g.d%32) && !(g.f%32) && !((uintptr_t)a%1) && !((uintptr_t)b%1);",
-      "old": "    !(g.n%32) && !(g.d%32) && !(g.f%32) && !((uintptr_t)a%64) && !((uintptr_t)b%64);",
+      "new": "    !(g.n%32) && !(g.d%32) && !(g.f%32) && !((uintptr_t)a%1) && !((uintptr_t)b%1) &&",
+      "old": "    !(g.n%32) && !(g.d%32) && !(g.f%32) && !((uintptr_t)a%64) && !((uintptr_t)b%64) &&",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "PN25 the forward's down projection reading the hidden activation's B panel as A",
-      "new": "      pre.a=panel_of(a.hidden)+g.nf; pre.b=NULL;",
-      "old": "      pre.a=panel_of(a.hidden); pre.b=NULL;",
+      "new": "    pre.a=panel_of(a.hidden)+g.nf; pre.b=NULL;",
+      "old": "    pre.a=panel_of(a.hidden); pre.b=NULL;",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
@@ -207,15 +207,15 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "PN29 the panels' VJP writer always taking v1's VJP in the trainer",
-      "new": "      (void)bcir_tensor_swiglu_backward_panels_pool(s->pool,0,g.n,g.f,a.gate,a.up,dh,",
-      "old": "      (void)bcir_tensor_swiglu_backward_panels_pool(s->pool,swiglu_v2(s),g.n,g.f,a.gate,a.up,dh,",
+      "new": "      ran&=bcir_tensor_swiglu_backward_panels_pool(s->pool,0,g.n,g.f,a.gate,a.up,dh,",
+      "old": "      ran&=bcir_tensor_swiglu_backward_panels_pool(s->pool,swiglu_v2(s),g.n,g.f,a.gate,a.up,dh,",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "PN30 the panels' forward writer always taking v1's SiLU in the trainer",
-      "new": "      (void)bcir_tensor_silu_mul_panels_pool(s->pool,0,g.n,g.f,a.gate,a.up,",
-      "old": "      (void)bcir_tensor_silu_mul_panels_pool(s->pool,swiglu_v2(s),g.n,g.f,a.gate,a.up,",
+      "new": "    ran&=bcir_tensor_silu_mul_panels_pool(s->pool,0,g.n,g.f,a.gate,a.up,",
+      "old": "    ran&=bcir_tensor_silu_mul_panels_pool(s->pool,swiglu_v2(s),g.n,g.f,a.gate,a.up,",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

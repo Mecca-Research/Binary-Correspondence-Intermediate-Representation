@@ -52,8 +52,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NU7 the forward's gate product takes the gate for the up projection",
-      "new": "    silu_mul(s,g.nf,a.gate,a.gate,a.hidden,&bad);\n",
-      "old": "    silu_mul(s,g.nf,a.gate,a.up,a.hidden,&bad);\n",
+      "new": "    silu_mul(s,g.nf,a.gate,a.gate,a.hidden,bad);\n",
+      "old": "    silu_mul(s,g.nf,a.gate,a.up,a.hidden,bad);\n",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
@@ -66,8 +66,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NU9 the down projection's weight adjoint keeps beta 1 when it is the gradient's first writer",
-      "new": "    else linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f,1.0f);\n",
-      "old": "    else linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f,wb);\n",
+      "new": "    else ran&=linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f,1.0f);\n",
+      "old": "    else ran&=linear_backward(s,g.n,g.f,g.d,a.hidden,p.down,cur,dh,grad.down,0.0f,wb);\n",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

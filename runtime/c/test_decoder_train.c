@@ -1838,11 +1838,16 @@ static void attention_bf16_reference(void) {
       memset(dq0,0xff,nq*sizeof(float)); memset(dk0,0xff,nkv*sizeof(float)); memset(dv0,0xff,nkv*sizeof(float));
       ref_attention_backward_bf16(b,t,nh,nk,d,q,k,v,p0,dy,dq0,dk0,dv0,ds);
       for (vi=0;vi<3;vi++) for (pi=0;pi<4;pi++) {
+        /* WS-PLAN: each pool at the regions it uses -- one a worker where the workers are no more
+         * than the tasks -- the bytes past them never touched */
+        size_t own=bcir_tensor_attention_bf16_pool_workspace(b,t,nh,nk,d,bcir_tensor_pool_threads(pools[pi]));
         if (!(mask&variants[vi]) || (pi && !pools[pi])) continue;
         if ((pass || ex) && (pi==1 || pi==2)) continue;  /* two and four: the finite pass, libm's exp */
+        assert(own>0 && own<=need && own+64<=sizeof(ws));
+        memset(ws+own,0xa5,64);
         memset(p1,0xff,np*sizeof(float)); memset(y1,0xff,nq*sizeof(float)); bad=0;
         assert(bcir_tensor_attention_bf16_scan_pool(pools[pi],variants[vi],contract,b,t,nh,nk,d,q,k,v,p1,
-            y1,&bad,ws,need)==variants[vi]);
+            y1,&bad,ws,own)==variants[vi]);
         assert(same_bits_or_nan(p0,p1,np) && same_bits_or_nan(y0,y1,nq));
         for (i=0;i<np;i++) if ((i%t)>(i/t)%t) assert(p1[i]==0.0f && !signbit(p1[i]));
         assert(bad==!(all_finite(y1,nq) && all_finite(k,nkv)));
@@ -1850,8 +1855,9 @@ static void attention_bf16_reference(void) {
         memcpy(keep,p1,np*sizeof(float));
         memset(dq1,0xff,nq*sizeof(float)); memset(dk1,0xff,nkv*sizeof(float)); memset(dv1,0xff,nkv*sizeof(float));
         assert(bcir_tensor_attention_bf16_backward_pool(pools[pi],variants[vi],b,t,nh,nk,d,q,k,v,p1,dy,dq1,
-            dk1,dv1,ws,need)==variants[vi]);
+            dk1,dv1,ws,own)==variants[vi]);
         assert(same_bits_or_nan(dq0,dq1,nq) && same_bits_or_nan(dk0,dk1,nkv) && same_bits_or_nan(dv0,dv1,nkv));
+        for (i=0;i<64;i++) assert(ws[own+i]==0xa5);
         assert(!memcmp(keep,p1,np*sizeof(float)));  /* p read, never written */
         cases++;
       }
@@ -1861,13 +1867,17 @@ static void attention_bf16_reference(void) {
         apart+=memcmp(y0,y1,nq*sizeof(float))!=0;
       }
     }
-    /* refused, nothing written: a workspace one byte short or none, an instance the unit does not
-     * have, kvheads not dividing heads */
-    memset(y1,0x5a,nq*sizeof(float)); memcpy(keep,y1,nq*sizeof(float)); memset(dq1,0x5a,nq*sizeof(float));
-    assert(bcir_tensor_attention_bf16_scan_pool(NULL,0,0u,b,t,nh,nk,d,q,k,v,p1,y1,NULL,ws,need-1)==0);
-    assert(bcir_tensor_attention_bf16_scan_pool(NULL,0,0u,b,t,nh,nk,d,q,k,v,p1,y1,NULL,NULL,need)==0);
-    assert(bcir_tensor_attention_bf16_scan_pool(NULL,2,0u,b,t,nh,nk,d,q,k,v,p1,y1,NULL,ws,need)==0);
-    assert(bcir_tensor_attention_bf16_backward_pool(NULL,0,b,t,nh,nk,d,q,k,v,p1,dy,dq1,dk1,dv1,ws,need-1)==0);
+    /* refused, nothing written: a workspace one byte short of the serial entry's one region or none,
+     * an instance the unit does not have, kvheads not dividing heads */
+    {
+      size_t one=bcir_tensor_attention_bf16_pool_workspace(b,t,nh,nk,d,1);
+      assert(one<=need && (b*nk>1 ? one<need : one==need));
+      memset(y1,0x5a,nq*sizeof(float)); memcpy(keep,y1,nq*sizeof(float)); memset(dq1,0x5a,nq*sizeof(float));
+      assert(bcir_tensor_attention_bf16_scan_pool(NULL,0,0u,b,t,nh,nk,d,q,k,v,p1,y1,NULL,ws,one-1)==0);
+      assert(bcir_tensor_attention_bf16_scan_pool(NULL,0,0u,b,t,nh,nk,d,q,k,v,p1,y1,NULL,NULL,need)==0);
+      assert(bcir_tensor_attention_bf16_scan_pool(NULL,2,0u,b,t,nh,nk,d,q,k,v,p1,y1,NULL,ws,need)==0);
+      assert(bcir_tensor_attention_bf16_backward_pool(NULL,0,b,t,nh,nk,d,q,k,v,p1,dy,dq1,dk1,dv1,ws,one-1)==0);
+    }
     if (nh>1) assert(bcir_tensor_attention_bf16_scan_pool(NULL,0,0u,b,t,nh,nh+1,d,q,k,v,p1,y1,NULL,ws,sizeof(ws))==0);
     assert(!memcmp(keep,y1,nq*sizeof(float)) && !memcmp(keep,dq1,nq*sizeof(float)));
     refusals++;
@@ -2046,21 +2056,42 @@ static void trainer_bf16(void) {
       bcir_decoder_workspace_bytes(&s.plan,BCIR_DT_CONTRACT_KBLOCK)==0 &&
       bcir_decoder_workspace_bytes(NULL,BCIR_DT_CONTRACT_BF16)==SIZE_MAX);
   refused.spec.heads=3; assert(bcir_decoder_workspace_bytes(&refused,BCIR_DT_CONTRACT_BF16)==SIZE_MAX);
-  /* the plan's workspace is the step's largest group's: for the 9.84M decoder (vocab 260, width
-   * 384, 8 heads over 4, 6 layers, FF 1024, 8 x 128 tokens) the backward's gate/up group -- dx and
-   * dW of both, four calls of 1024 x 384 x 1024 -- by arithmetic over the groups (the qkv
-   * backward's six come to 6.1 MB, the down projection's two to 4.5 MB); the fixture's shapes pad
-   * to 32 and leave another group largest */
+  /* WS-PLAN: the plan's workspace is what the step's largest group packs. For the 9.84M decoder
+   * (vocab 260, width 384, 8 heads over 4, 6 layers, FF 1024, 8 x 128 tokens) that is the
+   * backward's q/k/v group: its three input adjoints' A (1024 rows by 384, by 192 twice) and B (the
+   * weights, 384 by 384 and 384 by 192 twice), its three weight adjoints' A (384, 192 and 192 rows
+   * by 1024) and the attention norm's output as their B, once -- 2 * (393,216 + 2 * 196,608 +
+   * 147,456 + 2 * 73,728 + 393,216 + 2 * 196,608 + 393,216) = 4,521,984 bytes and 64 of
+   * alignment. The gate/up group, every call packed whole, was the plan's figure (four calls of
+   * 1024 x 384 x 1024, 11,534,592); it reads its adjoints as panels, and its panel groups pack
+   * 2,359,360. The floor is a 32-row strip and a 32-column strip at the rows' depth (1024). */
   {
     bcir_decoder_spec big={260,384,8,4,6,1024,8,128,1,10000.0,1e-6}; bcir_decoder_plan bp;
     assert(bcir_decoder_make_plan(&big,&bp)==0);
-    assert(bcir_decoder_workspace_bytes(&bp,BCIR_DT_CONTRACT_BF16)==
-        4*bcir_tensor_mm_bf16_workspace(1024,384,1024));
+#ifndef BCIR_DT_NO_PANELS
+    assert(bcir_decoder_workspace_bytes(&bp,BCIR_DT_CONTRACT_BF16)==4522048u);
+    assert(bcir_decoder_workspace_need(&bp,BCIR_DT_CONTRACT_BF16,4)==4522048u);
+    assert(bcir_decoder_workspace_panels(&bp,BCIR_DT_CONTRACT_BF16)==2359360u);
+#else  /* the gate/up group packed: its four calls whole but the attention norm's B once, 786,432 less */
+    assert(bcir_decoder_workspace_bytes(&bp,BCIR_DT_CONTRACT_BF16)==10747968u &&
+        10747968u==4*bcir_tensor_mm_bf16_workspace(1024,384,1024)-786432u-3*64u);
+    assert(bcir_decoder_workspace_panels(&bp,BCIR_DT_CONTRACT_BF16)==0);
+#endif
+    assert(bcir_decoder_workspace_floor(&bp,BCIR_DT_CONTRACT_BF16,1)==bcir_tensor_mm_bf16_workspace(32,32,1024) &&
+        bcir_tensor_mm_bf16_workspace(32,32,1024)==131136u);
+    assert(bcir_decoder_workspace_panels(&bp,0)==0 && bcir_decoder_workspace_floor(&bp,0,4)==0 &&
+        bcir_decoder_workspace_need(&bp,BCIR_DT_CONTRACT_KBLOCK,4)==0);
+    assert(bcir_decoder_workspace_panels(NULL,BCIR_DT_CONTRACT_BF16)==SIZE_MAX &&
+        bcir_decoder_workspace_floor(NULL,BCIR_DT_CONTRACT_BF16,4)==SIZE_MAX &&
+        bcir_decoder_workspace_need(NULL,BCIR_DT_CONTRACT_BF16,4)==SIZE_MAX);
   }
   bad=s; bad.contract|=BCIR_DT_CONTRACT_FUSED; lend(&bad); assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
   bad=s; bad.contract|=BCIR_DT_CONTRACT_KBLOCK; lend(&bad); assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
   bad=s; assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);  /* no workspace */
-  bad=s; bad.workspace=workspace; bad.workspace_bytes=need-1; assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_CAPACITY);
+  /* WS-PLAN: admitted from the floor up (a byte short of the need runs, in chunks), refused below */
+  bad=s; bad.workspace=workspace; bad.workspace_bytes=need-1; assert(bcir_decoder_forward(&bad,x,4)==0);
+  bad=s; bad.workspace=workspace; bad.workspace_bytes=bcir_decoder_workspace_floor(&s.plan,s.contract,1)-1;
+  assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_CAPACITY);
   bad=s; bad.workspace=w; bad.workspace_bytes=need; assert(bcir_decoder_forward(&bad,x,4)==BCIR_DT_INVALID);
   bad=s; lend(&bad); assert(bcir_decoder_loss_backward(&bad,x,x,4,0,(double *)(void *)workspace)==BCIR_DT_INVALID);
   stream(ids,targets,120);
@@ -2106,9 +2137,8 @@ static void trainer_bf16(void) {
     (void)bcir_decoder_workspace_probe();
     assert(bcir_decoder_run(&st,&opt,ids,targets,40,NULL,1,events,1,&done)==0 && done==1);
     seen=bcir_decoder_workspace_probe();
-    assert(seen>0 && seen<=bcir_decoder_workspace_bytes(&st.plan,st.contract));
-    printf("  PASS bf16 workspace probe: the step's largest GEMM group packs %zu of the %zu bytes the plan asks\n",
-        seen,bcir_decoder_workspace_bytes(&st.plan,st.contract));
+    assert(seen>0 && seen==bcir_decoder_workspace_bytes(&st.plan,st.contract));
+    printf("  PASS bf16 workspace probe: the step's largest GEMM group packs the %zu bytes the plan asks\n",seen);
   }
 #endif
   printf("  PASS bf16 trainer (NDT-BF16): refusals, %zu bytes of workspace, the state at every thread count, learning\n",need);
@@ -2180,7 +2210,15 @@ static void trainer_attnbf16(void) {
     assert(bcir_decoder_make_plan(&big,&bp)==0);
     att=bcir_tensor_attention_bf16_workspace(8,128,8,4,48);
     assert(bcir_decoder_workspace_bytes(&bp,BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTNBF16)==
-        (att>4*bcir_tensor_mm_bf16_workspace(1024,384,1024) ? att : 4*bcir_tensor_mm_bf16_workspace(1024,384,1024)));
+        (att>bcir_decoder_workspace_bytes(&bp,BCIR_DT_CONTRACT_BF16) ? att : bcir_decoder_workspace_bytes(&bp,BCIR_DT_CONTRACT_BF16)));
+    /* WS-PLAN: a pool of four uses four of the 32 (batch, KV head) tasks' regions -- 1,081,408
+     * bytes, the floor; the step's GEMMs then ask more */
+    assert(bcir_tensor_attention_bf16_pool_workspace(8,128,8,4,48,4)==1081408u &&
+        bcir_tensor_attention_bf16_pool_workspace(8,128,8,4,48,0)==att && att==8650816u &&
+        bcir_tensor_attention_bf16_pool_workspace(8,128,8,4,48,64)==att);
+    assert(bcir_decoder_workspace_floor(&bp,BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTNBF16,4)==1081408u &&
+        bcir_decoder_workspace_need(&bp,BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTNBF16,4)==
+        bcir_decoder_workspace_bytes(&bp,BCIR_DT_CONTRACT_BF16));
     assert(bcir_decoder_workspace_bytes(&st.plan,contracts[0])>=bcir_tensor_attention_bf16_workspace(5,8,1,1,2) &&
         bcir_decoder_workspace_bytes(&st.plan,contracts[0])>=bcir_decoder_workspace_bytes(&st.plan,BCIR_DT_CONTRACT_BF16));
   }
@@ -2589,6 +2627,222 @@ static void facts_run(void) {
     printf("  PASS native run facts (FACTS-RUN): a run of three steps is three calls of one, state and events, under four contracts and two accumulations, serially and pooled%s\n",probed);
   }
 }
+#ifdef BCIR_DT_WORKSPACE_PROBE
+void bcir_decoder_workspace_probe_admit(size_t bytes);
+#endif
+/* A state over the large arenas for a spec (the panels shape and the fixture's), weights the
+ * harness's, moments zero, at a pool, a contract, a workspace and a recompute set. */
+enum { WP_P=40000, WP_A=48000, WP_S=24000 };
+static _Alignas(64) float wp_w[WP_P],wp_g[WP_P],wp_m[WP_P],wp_v[WP_P],wp_a[WP_A],wp_s[WP_S];
+static _Alignas(64) unsigned char wp_ws[1<<18];
+static bcir_decoder_state wide_state(const bcir_decoder_spec *spec,bcir_tensor_pool *pool,
+    uint32_t contract,size_t workspace,uint64_t recompute) {
+  bcir_decoder_state st; size_t i;
+  memset(&st,0,sizeof st);
+  assert(bcir_decoder_make_plan(spec,&st.plan)==0);
+  assert(st.plan.parameters<=WP_P && st.plan.activations<=WP_A && st.plan.scratch<=WP_S);
+  st.weights=wp_w; st.gradients=wp_g; st.moment1=wp_m; st.moment2=wp_v;
+  st.activations=wp_a; st.scratch=wp_s;
+  st.weight_capacity=st.gradient_capacity=st.moment1_capacity=st.moment2_capacity=WP_P;
+  st.activation_capacity=WP_A; st.scratch_capacity=WP_S; st.beta1_power=st.beta2_power=1.0;
+  memset(wp_m,0,sizeof wp_m); memset(wp_v,0,sizeof wp_v); memset(wp_g,0,sizeof wp_g);
+  for (i=0;i<WP_P;i++) wp_w[i]=0.1f*sinf((float)(i+1)*0.37f);
+  st.pool=pool; st.contract=contract; st.recompute=recompute;
+  assert(workspace<=sizeof wp_ws);
+  st.workspace=contract&BCIR_DT_CONTRACT_BF16 ? wp_ws : NULL; st.workspace_bytes=workspace;
+  return st;
+}
+/* WS-PLAN: the bf16 workspace from its floor up. The plan's need is what the step packs -- the
+ * probe's most, a group's panels counted as its entry counts them -- on the panels shape (32 rows,
+ * width 32, FF 128) and on the fixture's wide shape (its width off the grid: no panels). Every
+ * workspace from the floor up trains one state, at one thread and four, the SwiGLU block with its
+ * panels exactly from the panel groups' need up; below the floor admission refuses, nothing
+ * written; and where the harness's floor admits less (probe builds), the product that refuses --
+ * in the forward, or in the backward alone where the whole forward runs -- fails its step with
+ * BCIR_DT_CAPACITY, the weights as they were. */
+static void trainer_workspace_plan(void) {
+  static float ref[3][WP_P],start[WP_P];
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  static const uint32_t contracts[]={
+      BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_ATTN,
+      BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_ATTNBF16};
+  /* the panels shape's hidden width four times its width, so its SwiGLU panel groups are the step's
+   * largest and a count that packed their panels would be seen; the wide shape's rows the deepest
+   * depth, so a backward product can refuse where the whole forward runs */
+  static const bcir_decoder_spec specs[2]={{16,32,2,1,2,128,2,16,1,10000.0,1e-6},
+      {16,8,2,1,2,16,5,8,1,10000.0,1e-6}};
+  bcir_decoder_adamw opt={0.01,0.9,0.95,1e-8,0.01,0.05};
+  uint32_t ids[120],targets[120]; bcir_decoder_event events[3]; size_t done,sp,cs,k,sizes=0;
+  unsigned threads;
+  stream(ids,targets,120);
+  for (sp=0;sp<2;sp++)
+  for (cs=0;cs<sizeof(contracts)/sizeof(contracts[0]);cs++)
+  for (threads=1;threads<=(bcir_tensor_pool_rails() ? 4u : 1u);threads+=3) {
+    bcir_tensor_pool *pool=NULL; bcir_decoder_plan plan; size_t need,gate,least,size[9],n,q;
+    uint32_t c=contracts[cs];
+    assert(bcir_decoder_make_plan(&specs[sp],&plan)==0);
+    n=(size_t)specs[sp].batch*specs[sp].time;
+    if (threads>1) { pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads); assert(pool); }
+    need=bcir_decoder_workspace_need(&plan,c,threads); gate=bcir_decoder_workspace_panels(&plan,c);
+    least=bcir_decoder_workspace_floor(&plan,c,threads);
+#ifdef BCIR_DT_NO_PANELS
+    int paneled=0;  /* a build without panels plans the block packed */
+#else
+    int paneled=!sp;
+#endif
+    assert(least>0 && least<=need && need<=sizeof wp_ws && (paneled ? gate>0 && gate<=need : gate==0));
+    assert(bcir_decoder_workspace_need(&plan,c,0)>=need);  /* any pool: a region a task */
+    /* the need and a byte short, the panel groups' need and a byte short (where the floor is below
+     * it: the bf16 attention's regions can be above), between, the floor; then a byte short of it */
+    size[0]=need; size[1]=need-1; size[2]=gate; size[3]=gate-1; size[4]=(gate+least)/2;
+    size[5]=(need+least)/2; size[6]=least+1; size[7]=least; size[8]=least-1;
+    for (k=0;k<9;k++) {
+      bcir_decoder_state st;
+      int rc;
+      if (k<8 && (size[k]<least || size[k]>need)) continue;  /* a panel need of 0 less one wraps */
+      for (q=1;q<k && k<8;q++) if (size[q]==size[k]) break;
+      if (k<8 && q<k) continue;  /* the same size as an earlier one */
+      st=wide_state(&specs[sp],pool,c,size[k],0);
+      if (k==8) memcpy(start,wp_w,sizeof start);
+      done=99;
+#ifdef BCIR_DT_PANELS_PROBE
+      (void)bcir_decoder_panels_probe();
+#endif
+#ifdef BCIR_DT_WORKSPACE_PROBE
+      (void)bcir_decoder_workspace_probe();
+#endif
+      rc=bcir_decoder_run(&st,&opt,ids,targets,3*n,NULL,3,events,3,&done);
+      if (k==8) {  /* below the floor: refused before anything is written, the count included */
+        assert(rc==BCIR_DT_CAPACITY && done==99 && !memcmp(start,wp_w,sizeof start));
+        continue;
+      }
+      assert(rc==0 && done==3); sizes++;
+#ifdef BCIR_DT_PANELS_PROBE
+      assert(bcir_decoder_panels_probe()==(gate && size[k]>=gate ? 7u : 0u));
+#endif
+#ifdef BCIR_DT_WORKSPACE_PROBE
+      {  /* the step's GEMM groups pack what the plan says, no more; without panels, more */
+        size_t seen=bcir_decoder_workspace_probe(),
+            gemms=bcir_decoder_workspace_need(&plan,c&~(uint32_t)BCIR_DT_CONTRACT_ATTNBF16,threads);
+        if (!gate || size[k]>=gate) assert(seen==gemms);
+        else assert(seen>gemms);
+      }
+#endif
+      if (!k) { memcpy(ref[0],wp_w,sizeof wp_w); memcpy(ref[1],wp_m,sizeof wp_m); memcpy(ref[2],wp_v,sizeof wp_v); }
+      else assert(!memcmp(ref[0],wp_w,sizeof wp_w) && !memcmp(ref[1],wp_m,sizeof wp_m) && !memcmp(ref[2],wp_v,sizeof wp_v));
+    }
+#ifdef BCIR_DT_WORKSPACE_PROBE
+    {  /* the harness's floor admits half the plan's: the deepest product refuses, the step fails */
+      bcir_decoder_state st=wide_state(&specs[sp],pool,c,least/2,0);
+      memcpy(start,wp_w,sizeof start);
+      bcir_decoder_workspace_probe_admit(least/2);
+      assert(bcir_decoder_run(&st,&opt,ids,targets,3*n,NULL,3,events,3,&done)==BCIR_DT_CAPACITY &&
+          done==0 && !memcmp(start,wp_w,sizeof start));
+      assert(bcir_decoder_forward(&st,ids,n)==BCIR_DT_CAPACITY);
+      bcir_decoder_workspace_probe_admit(SIZE_MAX);
+    }
+    if (sp==1 && !(c&BCIR_DT_CONTRACT_ATTNBF16)) {
+      /* the forward's deepest strips and no more (its depths the width and the hidden width): the
+       * forward runs whole, the backward's weight adjoints (the rows deep) refuse, and the step fails
+       * with CAPACITY, nothing committed -- the backward's own verdict, and a group's, which the
+       * forward's refusal above reaches first */
+      size_t fwd=bcir_tensor_mm_bf16_workspace(32,32,specs[sp].ff>specs[sp].width ? specs[sp].ff :
+          specs[sp].width);
+      bcir_decoder_state st=wide_state(&specs[sp],pool,c,fwd,0);
+      assert(fwd<least);
+      memcpy(start,wp_w,sizeof start);
+      bcir_decoder_workspace_probe_admit(fwd);
+      assert(bcir_decoder_forward(&st,ids,n)==BCIR_DT_OK);
+      done=99;
+      assert(bcir_decoder_run(&st,&opt,ids,targets,3*n,NULL,3,events,3,&done)==BCIR_DT_CAPACITY &&
+          done==0 && !memcmp(start,wp_w,sizeof start));
+      bcir_decoder_workspace_probe_admit(SIZE_MAX);
+    }
+#endif
+    bcir_tensor_pool_stop(pool);
+  }
+  printf("  PASS bf16 workspace plan (WS-PLAN): one state at %zu workspaces from the floor up, the panels from "
+      "their groups' need, below the floor refused%s\n",sizes,
+#ifdef BCIR_DT_WORKSPACE_PROBE
+      "; the plan's need the probe's, a refused product the step's CAPACITY"
+#else
+      ""
+#endif
+      );
+}
+/* REMAT: every recompute set trains the state the all-kept one does, bit for bit, in the arena
+ * bcir_decoder_activation_count names: the fixture's four layers under v1, the fused and blocked
+ * contracts with the fused attention, bf16 with the fused attention and with the bf16 attention,
+ * and the panels shape's two layers under bf16, at one thread and four, a run of single steps and
+ * one of two accumulated micro-batches; the floats past the count untouched; the eval forward's
+ * logits the arena's last; a bit past the last layer refused, an arena one float short refused.
+ * Every set at one thread under v1 and under the bf16 attention (the slots' arithmetic is the
+ * contract's alone); the rest, four threads and two micro-batches on three sets -- none, every
+ * layer, every other -- so the portable build's bf16 stays within its budget. */
+static void trainer_recompute(void) {
+  static float ref[3][WP_P],logits[4096];
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  static const uint32_t contracts[]={0,
+      BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_ATTN,
+      BCIR_DT_CONTRACT_KBLOCK|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_ATTN,
+      BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_ATTN,
+      BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE|BCIR_DT_CONTRACT_ATTNBF16};
+  static const bcir_decoder_spec specs[2]={{16,8,2,1,4,16,5,8,1,10000.0,1e-6},
+      {16,32,2,1,2,64,2,16,1,10000.0,1e-6}};
+  static const uint64_t sets[]={0,0xF,0x5,0xA,0x1,0x8,0x7,0xE,0x6};
+  bcir_decoder_adamw opt={0.01,0.9,0.95,1e-8,0.01,0.05};
+  uint32_t ids[240],targets[240]; bcir_decoder_event events[3]; size_t done,sp,cs,k,runs=0;
+  unsigned threads,accum;
+  stream(ids,targets,240);
+  for (sp=0;sp<2;sp++)
+  for (cs=sp ? 3 : 0;cs<sizeof(contracts)/sizeof(contracts[0]);cs++)
+  for (threads=1;threads<=(bcir_tensor_pool_rails() ? 4u : 1u);threads+=3)
+  for (accum=1;accum<=2;accum++) {
+    int every=(cs==0 || cs==4) && threads==1 && accum==1;  /* every set, or none / all / every other */
+    bcir_tensor_pool *pool=NULL; bcir_decoder_plan plan; const bcir_decoder_spec *spec=&specs[sp];
+    size_t n=(size_t)spec->batch*spec->time,d=spec->width,hd=d/spec->heads,nd=n*d,nk=n*spec->kvheads*hd;
+    size_t la=5*nd+2*nk+(size_t)spec->batch*spec->heads*spec->time*spec->time+3*n*spec->ff,nv=n*spec->vocab;
+    uint32_t c=contracts[cs];
+    if (accum==2 && cs!=0 && cs!=4) continue;  /* before the pool starts: nothing to stop */
+    if (DT_TSAN && cs!=0 && cs!=4) continue;
+    assert(bcir_decoder_make_plan(spec,&plan)==0 && nv<=sizeof(logits)/sizeof(logits[0]));
+    if (threads>1) { pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads); assert(pool); }
+    for (k=0;k<sizeof(sets)/sizeof(sets[0]);k++) {
+      uint64_t set=sets[k]&(((uint64_t)1<<spec->layers)-1u);
+      size_t kept=0,gone,count,i,l,j;
+      bcir_decoder_state st;
+      if (!every && k>2) break;
+      for (j=0;j<k;j++) if ((sets[j]&(((uint64_t)1<<spec->layers)-1u))==set) break;
+      if (j<k) continue;  /* a set an earlier one named on these layers */
+      for (l=0;l<spec->layers;l++) kept+=!((set>>l)&1u);
+      gone=spec->layers-kept;
+      count=plan.activations-(gone ? gone-1 : 0)*la;
+      assert(bcir_decoder_activation_count(&plan,set)==count);
+      st=wide_state(spec,pool,c,bcir_decoder_workspace_need(&plan,c,threads),set);
+      for (i=count;i<WP_A;i++) wp_a[i]=-7.25f;  /* past the arena: must stay */
+      st.activation_capacity=count;
+      if (accum==1) assert(bcir_decoder_run(&st,&opt,ids,targets,3*n,NULL,3,events,3,&done)==0 && done==3);
+      else assert(bcir_decoder_run_accum(&st,&opt,ids,targets,6*n,NULL,3,2,events,3,&done)==0 && done==3);
+      for (i=count;i<WP_A;i++) assert(wp_a[i]==-7.25f);
+      if (!set) { memcpy(ref[0],wp_w,sizeof wp_w); memcpy(ref[1],wp_m,sizeof wp_m); memcpy(ref[2],wp_v,sizeof wp_v); }
+      else assert(!memcmp(ref[0],wp_w,sizeof wp_w) && !memcmp(ref[1],wp_m,sizeof wp_m) && !memcmp(ref[2],wp_v,sizeof wp_v));
+      /* the eval forward: the logits are the arena's last nv floats, the all-kept forward's */
+      assert(bcir_decoder_forward(&st,ids,n)==0);
+      if (!set) memcpy(logits,wp_a+count-nv,nv*sizeof(float));
+      else assert(!memcmp(logits,wp_a+count-nv,nv*sizeof(float)));
+      runs++;
+      /* refusals: an arena one float short; a bit past the last layer */
+      st.activation_capacity=count-1; assert(bcir_decoder_forward(&st,ids,n)==BCIR_DT_CAPACITY);
+      st.activation_capacity=count; st.recompute=set|((uint64_t)1<<spec->layers);
+      assert(bcir_decoder_forward(&st,ids,n)==BCIR_DT_INVALID);
+      assert(bcir_decoder_activation_count(&plan,st.recompute)==SIZE_MAX);
+    }
+    bcir_tensor_pool_stop(pool);
+  }
+  assert(bcir_decoder_activation_count(NULL,0)==SIZE_MAX);
+  printf("  PASS recompute (REMAT): %zu runs under up to nine recompute sets, five contracts, one thread and "
+      "four, one micro-batch and two, each the all-kept state in the arena its count names, the logits last\n",runs);
+}
 int main(void) {
   gemm_contract(); attention_reference(); attention_fused_reference(); adamw_reference();
   finite_differences(); refusals();
@@ -2596,6 +2850,7 @@ int main(void) {
   gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); fused_passes();
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();
+  trainer_workspace_plan(); trainer_recompute();
 #ifdef BCIR_DT_DIVISION_PROBE
   division_probe();
 #endif

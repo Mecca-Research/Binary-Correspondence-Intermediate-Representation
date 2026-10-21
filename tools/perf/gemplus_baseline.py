@@ -760,6 +760,129 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="NDT-GEM",
     ),
     Metric(
+        "train.plan.remat.mismatch",
+        "train",
+        "(spec, recompute set) pairs over the six-spec plan corpus and REMAT_SETS cut to each "
+        "spec's layers, every distinct set once (bcir/tests/native_decoder_fixtures.py), where the "
+        "step program's activation sum under the set differs from bcir_decoder_activation_count: "
+        "the kept layers' cache slots in layer order and the recomputed layers' one shared slot "
+        "(REMAT, GEO-3; the set is a new trainer field, so the parent had no count to hold)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one layout, two derivations: the program lays the slots out from the spec "
+        "and the set alone (`native_program.training_step_program(..., recompute)`), the C counts "
+        "them from its own plan, so any disagreement is a defect",
+        slice_owner="GEO-3",
+    ),
+    Metric(
+        "train.plan.executed.mismatch",
+        "train",
+        "of the 221 calls of the trace corpus (bcir/tests/native_decoder_fixtures.py: the plan "
+        "corpus under six contracts, three recompute sets and two call shapes; the panels' bench "
+        "at the workspace's three tiers and two thread counts; a provider's GEMM, and its GEMM and "
+        "SiLU; an update whose bound fails), those whose launch trace differs from the launches "
+        "the step program states under the call's decisions (`native_launch.run_launches`), or "
+        "dropped a record: a build defining BCIR_DT_TRACE_PROBE records every call the step issues "
+        "to the tensor unit, a provider or the pool -- its job, entry, shapes, scalars and operand "
+        "places. The parent held no call's launches to a plan, so all 221 were unheld (PX-1)",
+        221,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one step, two derivations: the program's buffers and the trainer's "
+        "decisions state the launches, the C issues them, so any difference is a defect -- of the "
+        "C (a job split or merged, an operand moved, a pass run or skipped: none of which changes "
+        "the state's bits) or of the model",
+        slice_owner="PX-1",
+    ),
+    Metric(
+        "train.plan.program.mismatch",
+        "train",
+        "of the 356 program runs (bcir/tests/native_decoder_fixtures.py `program_runs`: the 221 "
+        "cases of the trace corpus, each from the program of the C step's own decisions, and its "
+        "27 state cases under each of the planner's five other choices -- calls alone instead of "
+        "grouped, a linear's VJPs as two calls, the SwiGLU block without its panels, every scan "
+        "made, every layer recomputed), those that stopped, trained another state or events than "
+        "bcir_decoder_run_accum on the same case, or traced other launches than their program "
+        "states: bcir_decoder_run_program runs the program (native_launch.step_program) through "
+        "the trainer's own kernels after checking it whole. The parent ran no step from a "
+        "program, so all 356 were unheld (PX-2)",
+        356,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one step, two runs: every choice the program takes trains the C step's "
+        "bits (NDT-SCHED-0/1, BF16-PANELS, FACTS-RUN, REMAT: each held bit for bit where it "
+        "landed), so a run that differs -- in state, events or launches -- is a defect of the "
+        "executor, the program model or the probe",
+        slice_owner="PX-2",
+    ),
+    Metric(
+        "train.plan.choose.mismatch",
+        "train",
+        "of the 351 choice runs (bcir/tests/native_decoder_fixtures.py `choose_runs`: the 27 state "
+        "cases of the trace corpus, each under every kind of choice site -- the q/k/v and gate/up "
+        "projections, the SwiGLU block's panels, the down, o, gate/up and q/k/v VJPs, the head's "
+        "VJP -- switched alone at every site of the kind to each alternative the C step does not "
+        "take, and three seeded draws of an alternative a site), those that stopped, trained "
+        "another state or events than bcir_decoder_run_accum on the same case, or traced other "
+        "launches than the chosen program states (native_launch.step_program's `sites`). The "
+        "parent stated no choice a site, so all 351 were unheld (PX-3)",
+        351,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one step, every grouping: each alternative is a choice of jobs, never of a "
+        "value (NDT-SCHED-0/1, BF16-PANELS), so a measured choice may take any of them -- a run "
+        "that differs is a defect of the program model, the runner or the probe",
+        slice_owner="PX-3",
+    ),
+    Metric(
+        "train.plan.pack.mismatch",
+        "train",
+        "of the 356 pack runs (bcir/tests/native_decoder_fixtures.py `pack_runs`: the program runs "
+        "train.plan.program.mismatch reads, each stated as BCIR's own artifacts -- the module of "
+        "its calls and values (native_pack.training_pack), planned by K_BCIR, hydrated by GEM into a "
+        "StreamPack, placed by its ExecutionPlanV1 at the C step's own spans), those whose lowering "
+        "bcir_decoder_lower_pack refused or wrote other words than the program's, that stopped, or "
+        "that trained another state or events than bcir_decoder_run_accum on the same case: the "
+        "trainer takes the two artifacts alone, verifies them (the plan's alias law among the "
+        "laws), lowers each claim GEM's executor dispatches, and runs what it lowered. The parent "
+        "ran no step from a StreamPack, so all 356 were unheld (PX-2b)",
+        356,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one program, two carriers: the pack states the program's launches as claims "
+        "and its operands' places as lifetimes, and the lowering derives every dimension and flag "
+        "from the state, so a lowering that differs from the program's words is a defect of the "
+        "model or the lowering, and a run that differs is the program row's",
+        slice_owner="PX-2b",
+    ),
+    Metric(
+        "train.plan.place.mismatch",
+        "train",
+        "of the 356 placed pack runs (bcir/tests/native_decoder_fixtures.py `place_runs`: the pack "
+        "runs train.plan.pack.mismatch reads, each with every activation and scratch value placed "
+        "by its lifetime -- native_pack.place_by_lifetime, GEM+'s static memory planner over the "
+        "pack's own values, in one bank -- and lowered and run on a trainer lending exactly the "
+        "placement's arena), those the lowering refused, that stopped, that were placed below "
+        "G26's concurrent-live bound on their values (live values sharing bytes), or that trained "
+        "another state or events than bcir_decoder_run_accum on the same case. A layout above its "
+        "bound is a gap, read beside the row, never a divergence. The parent ran no step on a "
+        "placed arena, so all 356 were unheld (PX-4)",
+        356,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one program, two placements: the kernels' arithmetic reads no address, and "
+        "bcir_decoder_run_program holds every operand inside the arenas the trainer lends, so a "
+        "placed run that differs is a defect of the placement, the lowering or the runner",
+        slice_owner="PX-4",
+    ),
+    Metric(
         "train.mm.mismatch",
         "train",
         "of 20 GEMM cases (every transpose pair, the 32-wide tiles' edges, alpha and beta forms), "
@@ -776,17 +899,21 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "train.memory.transient",
         "train",
-        "bytes the C plan reserves for the bench step's activations and backward workspace, over "
-        "G26's concurrent-live bound on the same values (vocab 256, width 64, 2 layers, batch 2 "
-        "x 32 tokens: 999,424 / 753,664 bytes)",
+        "bytes a trainer lends for the bench step's activations and backward workspace, over G26's "
+        "concurrent-live bound on the values they hold (vocab 256, width 64, 2 layers, batch 2 x "
+        "32 tokens). Frozen at the C plan's fixed spans over the step program's bound, 999,424 / "
+        "753,664 bytes; read since PX-4 at the step's pack with every transient value placed by "
+        "its lifetime (native_pack.place_by_lifetime) over the bound on the pack's own values, "
+        "754,176 / 754,176 -- the pack makes the two temporaries the C kept inside other buffers "
+        "values of their own (the loss rows' terms, 512 bytes, and the norms' 1/rms)",
         999_424 / 753_664,
         "x",
         "exact",
         bound=1.0,
         bound_source="the alignment-aware concurrent-live bound (`static_memory."
-        "layout_lower_bound`) over the program's values in the C order without recomputation; "
-        "GEM+'s incumbent layout portfolio reaches it on this program, so the headroom is "
-        "realizable -- by a C plan that lays the transient values out by lifetime (NDT-MEM, open)",
+        "layout_lower_bound`) over the values the arena holds, at the placement's alignment: no "
+        "layout of those values over those lifetimes is smaller, so a placement at the bound is a "
+        "proved optimum (TMSAO-1) and retires the row (NDT-MEM, PX-4)",
         slice_owner="NDT-MEM",
     ),
     Metric(

@@ -152,13 +152,17 @@ BCIR_DT_API void bcir_tensor_attention_backward_contract_pool(bcir_tensor_pool *
  * query heads in order, the first from +0.0; the forward's verdict is as above. `variant` names the
  * products' instance -- 1 portable, 4 AVX-512, 8 AMX, 0 the widest bcir_tensor_mm_bf16_variants
  * admits -- every instance the same bits at every thread count. The entries pack each task's
- * operands into the workspace, at least bcir_tensor_attention_bf16_workspace bytes (one region a
- * task, the most any pool uses; a function of the shapes alone), and return the instance they ran,
- * or 0 -- writing nothing -- for an instance not admitted, kvheads not dividing heads, or a
- * smaller workspace. */
+ * operands into the workspace -- one region a worker of the pool where the workers are no more than
+ * the tasks, else one a task: bcir_tensor_attention_bf16_pool_workspace bytes for a pool of that
+ * many threads (a NULL pool one), at most bcir_tensor_attention_bf16_workspace (one region a task,
+ * the most any pool uses; a function of the shapes alone) -- and return the instance they ran, or
+ * 0 -- writing nothing -- for an instance not admitted, kvheads not dividing heads, or a smaller
+ * workspace. No value depends on which region a task packs into (WS-PLAN). */
 #define BCIR_TENSOR_ATTENTION_BF16 4u
 BCIR_DT_API size_t bcir_tensor_attention_bf16_workspace(size_t batch, size_t time, size_t heads,
     size_t kvheads, size_t dim);
+BCIR_DT_API size_t bcir_tensor_attention_bf16_pool_workspace(size_t batch, size_t time,
+    size_t heads, size_t kvheads, size_t dim, unsigned threads);
 BCIR_DT_API int bcir_tensor_attention_bf16_scan_pool(bcir_tensor_pool *pool, int variant,
     unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads, size_t dim,
     const float *q, const float *k, const float *v, float *p, float *y, int *bad, void *workspace,
@@ -298,7 +302,9 @@ BCIR_DT_API int bcir_tensor_mm_bf16_group_pool(bcir_tensor_pool *pool,
  * operand as before (pre NULL: none); a panel is never shared between calls. A call with a panel
  * runs whole in the one job: m, n and k multiples of 32, alpha 1 where A is a panel (the A pack
  * converts alpha times A; a panel is the operand alone), and the workspace holding the group's other
- * packs whole, or the entry returns 0, nothing written. The writers: SiLU(x) * u (v2 non-zero: the
+ * packs whole, or the entry returns 0, nothing written; bcir_tensor_mm_bf16_group_panels_workspace
+ * is that whole, the bytes the group packs with its panels (WS-PLAN: its rule is the entry's -- a
+ * panel neither packed nor shared). The writers: SiLU(x) * u (v2 non-zero: the
  * BCIR exponential's, bcir_tensor_silu_mul_v2_scan_pool's values; else v1's libm SiLU) as A and as B,
  * *bad set when a binary32 value is not finite (the scan entries' verdict); the SwiGLU VJP's two
  * adjoints (bcir_tensor_swiglu_backward_v2_pool's or v1's values) each as A and as A^T. They return
@@ -307,6 +313,8 @@ typedef struct bcir_tensor_bf16_panels { const unsigned short *a, *b; } bcir_ten
 BCIR_DT_API int bcir_tensor_mm_bf16_group_panels_pool(bcir_tensor_pool *pool,
     const bcir_tensor_mm_call *chain, size_t nchain, const bcir_tensor_mm_call *y, size_t ny,
     const bcir_tensor_bf16_panels *pre, void *workspace, size_t bytes);
+BCIR_DT_API size_t bcir_tensor_mm_bf16_group_panels_workspace(const bcir_tensor_mm_call *chain,
+    size_t nchain, const bcir_tensor_mm_call *y, size_t ny, const bcir_tensor_bf16_panels *pre);
 BCIR_DT_API int bcir_tensor_silu_mul_panels_pool(bcir_tensor_pool *pool, int v2, size_t r,
     size_t c, const float *x, const float *u, unsigned short *a, unsigned short *b, int *bad);
 BCIR_DT_API int bcir_tensor_swiglu_backward_panels_pool(bcir_tensor_pool *pool, int v2, size_t r,

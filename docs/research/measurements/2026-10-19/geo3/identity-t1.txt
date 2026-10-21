@@ -1,0 +1,277 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 12aa6dc, runtime/c against it cbe58694db3ed158
+GEO-3 identity at 1 thread, with the workspace and panels probes
+codex-attn kblock+exp+reduce+attn, 3 steps: need 0, panels 0, floor 0; all kept at the need rc 0, loss 5.459617, state 10a23eff24d60b14
+  kept             ws none             0: rc 0 memory   53008384, panels 0, probe         0, the same state
+  lowest 2         ws none             0: rc 0 memory   41998336, panels 0, probe         0, the same state
+  lowest 3         ws none             0: rc 0 memory   30988288, panels 0, probe         0, the same state
+  the top alone    ws none             0: rc 0 memory   53008384, panels 0, probe         0, the same state
+  the first alone  ws none             0: rc 0 memory   53008384, panels 0, probe         0, the same state
+  every other      ws none             0: rc 0 memory   41998336, panels 0, probe         0, the same state
+  the top two      ws none             0: rc 0 memory   41998336, panels 0, probe         0, the same state
+  bit L set       : rc 1 (INVALID), nothing written: yes
+codex-attn bf16+exp+reduce+attn, 3 steps: need 1933376, panels 589888, floor 131136; all kept at the need rc 0, loss 5.459778, state 936f6cf203187033
+  kept             ws need       1933376: rc 0 memory   54941760, panels 7, probe   1933376, the same state
+  kept             ws need-1     1933375: rc 0 memory   54941759, panels 7, probe   1933376, the same state
+  kept             ws panels      589888: rc 0 memory   53598272, panels 7, probe   1933376, the same state
+  kept             ws panels-1    589887: rc 0 memory   53598271, panels 0, probe   2490432, the same state
+  kept             ws floor       131136: rc 0 memory   53139520, panels 0, probe   2490432, the same state
+  lowest 2         ws need       1933376: rc 0 memory   43931712, panels 7, probe   1933376, the same state
+  lowest 2         ws need-1     1933375: rc 0 memory   43931711, panels 7, probe   1933376, the same state
+  lowest 2         ws panels      589888: rc 0 memory   42588224, panels 7, probe   1933376, the same state
+  lowest 2         ws panels-1    589887: rc 0 memory   42588223, panels 0, probe   2490432, the same state
+  lowest 2         ws floor       131136: rc 0 memory   42129472, panels 0, probe   2490432, the same state
+  lowest 3         ws need       1933376: rc 0 memory   32921664, panels 7, probe   1933376, the same state
+  lowest 3         ws need-1     1933375: rc 0 memory   32921663, panels 7, probe   1933376, the same state
+  lowest 3         ws panels      589888: rc 0 memory   31578176, panels 7, probe   1933376, the same state
+  lowest 3         ws panels-1    589887: rc 0 memory   31578175, panels 0, probe   2490432, the same state
+  lowest 3         ws floor       131136: rc 0 memory   31119424, panels 0, probe   2490432, the same state
+  the top alone    ws need       1933376: rc 0 memory   54941760, panels 7, probe   1933376, the same state
+  the top alone    ws need-1     1933375: rc 0 memory   54941759, panels 7, probe   1933376, the same state
+  the top alone    ws panels      589888: rc 0 memory   53598272, panels 7, probe   1933376, the same state
+  the top alone    ws panels-1    589887: rc 0 memory   53598271, panels 0, probe   2490432, the same state
+  the top alone    ws floor       131136: rc 0 memory   53139520, panels 0, probe   2490432, the same state
+  the first alone  ws need       1933376: rc 0 memory   54941760, panels 7, probe   1933376, the same state
+  the first alone  ws need-1     1933375: rc 0 memory   54941759, panels 7, probe   1933376, the same state
+  the first alone  ws panels      589888: rc 0 memory   53598272, panels 7, probe   1933376, the same state
+  the first alone  ws panels-1    589887: rc 0 memory   53598271, panels 0, probe   2490432, the same state
+  the first alone  ws floor       131136: rc 0 memory   53139520, panels 0, probe   2490432, the same state
+  every other      ws need       1933376: rc 0 memory   43931712, panels 7, probe   1933376, the same state
+  every other      ws need-1     1933375: rc 0 memory   43931711, panels 7, probe   1933376, the same state
+  every other      ws panels      589888: rc 0 memory   42588224, panels 7, probe   1933376, the same state
+  every other      ws panels-1    589887: rc 0 memory   42588223, panels 0, probe   2490432, the same state
+  every other      ws floor       131136: rc 0 memory   42129472, panels 0, probe   2490432, the same state
+  the top two      ws need       1933376: rc 0 memory   43931712, panels 7, probe   1933376, the same state
+  the top two      ws need-1     1933375: rc 0 memory   43931711, panels 7, probe   1933376, the same state
+  the top two      ws panels      589888: rc 0 memory   42588224, panels 7, probe   1933376, the same state
+  the top two      ws panels-1    589887: rc 0 memory   42588223, panels 0, probe   2490432, the same state
+  the top two      ws floor       131136: rc 0 memory   42129472, panels 0, probe   2490432, the same state
+  kept             ws floor-1     131135: rc 2 (CAPACITY), nothing written: yes
+  bit L set       : rc 1 (INVALID), nothing written: yes
+codex-attn bf16+exp+reduce+attnbf16, 3 steps: need 1933376, panels 589888, floor 577600; all kept at the need rc 0, loss 5.459855, state 1932938da16f3d62
+  kept             ws need       1933376: rc 0 memory   54941760, panels 7, probe   1933376, the same state
+  kept             ws need-1     1933375: rc 0 memory   54941759, panels 7, probe   1933376, the same state
+  kept             ws panels      589888: rc 0 memory   53598272, panels 7, probe   1933376, the same state
+  kept             ws panels-1    589887: rc 0 memory   53598271, panels 0, probe   2490432, the same state
+  kept             ws floor       577600: rc 0 memory   53585984, panels 0, probe   2490432, the same state
+  lowest 2         ws need       1933376: rc 0 memory   43931712, panels 7, probe   1933376, the same state
+  lowest 2         ws need-1     1933375: rc 0 memory   43931711, panels 7, probe   1933376, the same state
+  lowest 2         ws panels      589888: rc 0 memory   42588224, panels 7, probe   1933376, the same state
+  lowest 2         ws panels-1    589887: rc 0 memory   42588223, panels 0, probe   2490432, the same state
+  lowest 2         ws floor       577600: rc 0 memory   42575936, panels 0, probe   2490432, the same state
+  lowest 3         ws need       1933376: rc 0 memory   32921664, panels 7, probe   1933376, the same state
+  lowest 3         ws need-1     1933375: rc 0 memory   32921663, panels 7, probe   1933376, the same state
+  lowest 3         ws panels      589888: rc 0 memory   31578176, panels 7, probe   1933376, the same state
+  lowest 3         ws panels-1    589887: rc 0 memory   31578175, panels 0, probe   2490432, the same state
+  lowest 3         ws floor       577600: rc 0 memory   31565888, panels 0, probe   2490432, the same state
+  the top alone    ws need       1933376: rc 0 memory   54941760, panels 7, probe   1933376, the same state
+  the top alone    ws need-1     1933375: rc 0 memory   54941759, panels 7, probe   1933376, the same state
+  the top alone    ws panels      589888: rc 0 memory   53598272, panels 7, probe   1933376, the same state
+  the top alone    ws panels-1    589887: rc 0 memory   53598271, panels 0, probe   2490432, the same state
+  the top alone    ws floor       577600: rc 0 memory   53585984, panels 0, probe   2490432, the same state
+  the first alone  ws need       1933376: rc 0 memory   54941760, panels 7, probe   1933376, the same state
+  the first alone  ws need-1     1933375: rc 0 memory   54941759, panels 7, probe   1933376, the same state
+  the first alone  ws panels      589888: rc 0 memory   53598272, panels 7, probe   1933376, the same state
+  the first alone  ws panels-1    589887: rc 0 memory   53598271, panels 0, probe   2490432, the same state
+  the first alone  ws floor       577600: rc 0 memory   53585984, panels 0, probe   2490432, the same state
+  every other      ws need       1933376: rc 0 memory   43931712, panels 7, probe   1933376, the same state
+  every other      ws need-1     1933375: rc 0 memory   43931711, panels 7, probe   1933376, the same state
+  every other      ws panels      589888: rc 0 memory   42588224, panels 7, probe   1933376, the same state
+  every other      ws panels-1    589887: rc 0 memory   42588223, panels 0, probe   2490432, the same state
+  every other      ws floor       577600: rc 0 memory   42575936, panels 0, probe   2490432, the same state
+  the top two      ws need       1933376: rc 0 memory   43931712, panels 7, probe   1933376, the same state
+  the top two      ws need-1     1933375: rc 0 memory   43931711, panels 7, probe   1933376, the same state
+  the top two      ws panels      589888: rc 0 memory   42588224, panels 7, probe   1933376, the same state
+  the top two      ws panels-1    589887: rc 0 memory   42588223, panels 0, probe   2490432, the same state
+  the top two      ws floor       577600: rc 0 memory   42575936, panels 0, probe   2490432, the same state
+  kept             ws floor-1     577599: rc 2 (CAPACITY), nothing written: yes
+  bit L set       : rc 1 (INVALID), nothing written: yes
+codex-attn-b2 kblock+exp+reduce+attn, 3 steps: need 0, panels 0, floor 0; all kept at the need rc 0, loss 5.489074, state ab0bfcdbca9b3412
+  kept             ws none             0: rc 0 memory   30709760, panels 0, probe         0, the same state
+  lowest 2         ws none             0: rc 0 memory   25204736, panels 0, probe         0, the same state
+  lowest 3         ws none             0: rc 0 memory   19699712, panels 0, probe         0, the same state
+  the top alone    ws none             0: rc 0 memory   30709760, panels 0, probe         0, the same state
+  the first alone  ws none             0: rc 0 memory   30709760, panels 0, probe         0, the same state
+  every other      ws none             0: rc 0 memory   25204736, panels 0, probe         0, the same state
+  the top two      ws none             0: rc 0 memory   25204736, panels 0, probe         0, the same state
+  bit L set       : rc 1 (INVALID), nothing written: yes
+codex-attn-b2 bf16+exp+reduce+attn, 3 steps: need 1015872, panels 327744, floor 65600; all kept at the need rc 0, loss 5.488762, state 3472d1205eb3d4eb
+  kept             ws need       1015872: rc 0 memory   31725632, panels 7, probe   1015872, the same state
+  kept             ws need-1     1015871: rc 0 memory   31725631, panels 7, probe   1015872, the same state
+  kept             ws panels      327744: rc 0 memory   31037504, panels 7, probe   1015872, the same state
+  kept             ws panels-1    327743: rc 0 memory   31037503, panels 0, probe   1310784, the same state
+  kept             ws floor        65600: rc 0 memory   30775360, panels 0, probe   1310784, the same state
+  lowest 2         ws need       1015872: rc 0 memory   26220608, panels 7, probe   1015872, the same state
+  lowest 2         ws need-1     1015871: rc 0 memory   26220607, panels 7, probe   1015872, the same state
+  lowest 2         ws panels      327744: rc 0 memory   25532480, panels 7, probe   1015872, the same state
+  lowest 2         ws panels-1    327743: rc 0 memory   25532479, panels 0, probe   1310784, the same state
+  lowest 2         ws floor        65600: rc 0 memory   25270336, panels 0, probe   1310784, the same state
+  lowest 3         ws need       1015872: rc 0 memory   20715584, panels 7, probe   1015872, the same state
+  lowest 3         ws need-1     1015871: rc 0 memory   20715583, panels 7, probe   1015872, the same state
+  lowest 3         ws panels      327744: rc 0 memory   20027456, panels 7, probe   1015872, the same state
+  lowest 3         ws panels-1    327743: rc 0 memory   20027455, panels 0, probe   1310784, the same state
+  lowest 3         ws floor        65600: rc 0 memory   19765312, panels 0, probe   1310784, the same state
+  the top alone    ws need       1015872: rc 0 memory   31725632, panels 7, probe   1015872, the same state
+  the top alone    ws need-1     1015871: rc 0 memory   31725631, panels 7, probe   1015872, the same state
+  the top alone    ws panels      327744: rc 0 memory   31037504, panels 7, probe   1015872, the same state
+  the top alone    ws panels-1    327743: rc 0 memory   31037503, panels 0, probe   1310784, the same state
+  the top alone    ws floor        65600: rc 0 memory   30775360, panels 0, probe   1310784, the same state
+  the first alone  ws need       1015872: rc 0 memory   31725632, panels 7, probe   1015872, the same state
+  the first alone  ws need-1     1015871: rc 0 memory   31725631, panels 7, probe   1015872, the same state
+  the first alone  ws panels      327744: rc 0 memory   31037504, panels 7, probe   1015872, the same state
+  the first alone  ws panels-1    327743: rc 0 memory   31037503, panels 0, probe   1310784, the same state
+  the first alone  ws floor        65600: rc 0 memory   30775360, panels 0, probe   1310784, the same state
+  every other      ws need       1015872: rc 0 memory   26220608, panels 7, probe   1015872, the same state
+  every other      ws need-1     1015871: rc 0 memory   26220607, panels 7, probe   1015872, the same state
+  every other      ws panels      327744: rc 0 memory   25532480, panels 7, probe   1015872, the same state
+  every other      ws panels-1    327743: rc 0 memory   25532479, panels 0, probe   1310784, the same state
+  every other      ws floor        65600: rc 0 memory   25270336, panels 0, probe   1310784, the same state
+  the top two      ws need       1015872: rc 0 memory   26220608, panels 7, probe   1015872, the same state
+  the top two      ws need-1     1015871: rc 0 memory   26220607, panels 7, probe   1015872, the same state
+  the top two      ws panels      327744: rc 0 memory   25532480, panels 7, probe   1015872, the same state
+  the top two      ws panels-1    327743: rc 0 memory   25532479, panels 0, probe   1310784, the same state
+  the top two      ws floor        65600: rc 0 memory   25270336, panels 0, probe   1310784, the same state
+  kept             ws floor-1      65599: rc 2 (CAPACITY), nothing written: yes
+  bit L set       : rc 1 (INVALID), nothing written: yes
+codex-attn-b2 bf16+exp+reduce+attnbf16, 3 steps: need 1015872, panels 327744, floor 577600; all kept at the need rc 0, loss 5.489032, state c2c656091f4e64db
+  kept             ws need       1015872: rc 0 memory   31725632, panels 7, probe   1015872, the same state
+  kept             ws need-1     1015871: rc 0 memory   31725631, panels 7, probe   1015872, the same state
+  kept             ws floor       577600: rc 0 memory   31287360, panels 7, probe   1015872, the same state
+  lowest 2         ws need       1015872: rc 0 memory   26220608, panels 7, probe   1015872, the same state
+  lowest 2         ws need-1     1015871: rc 0 memory   26220607, panels 7, probe   1015872, the same state
+  lowest 2         ws floor       577600: rc 0 memory   25782336, panels 7, probe   1015872, the same state
+  lowest 3         ws need       1015872: rc 0 memory   20715584, panels 7, probe   1015872, the same state
+  lowest 3         ws need-1     1015871: rc 0 memory   20715583, panels 7, probe   1015872, the same state
+  lowest 3         ws floor       577600: rc 0 memory   20277312, panels 7, probe   1015872, the same state
+  the top alone    ws need       1015872: rc 0 memory   31725632, panels 7, probe   1015872, the same state
+  the top alone    ws need-1     1015871: rc 0 memory   31725631, panels 7, probe   1015872, the same state
+  the top alone    ws floor       577600: rc 0 memory   31287360, panels 7, probe   1015872, the same state
+  the first alone  ws need       1015872: rc 0 memory   31725632, panels 7, probe   1015872, the same state
+  the first alone  ws need-1     1015871: rc 0 memory   31725631, panels 7, probe   1015872, the same state
+  the first alone  ws floor       577600: rc 0 memory   31287360, panels 7, probe   1015872, the same state
+  every other      ws need       1015872: rc 0 memory   26220608, panels 7, probe   1015872, the same state
+  every other      ws need-1     1015871: rc 0 memory   26220607, panels 7, probe   1015872, the same state
+  every other      ws floor       577600: rc 0 memory   25782336, panels 7, probe   1015872, the same state
+  the top two      ws need       1015872: rc 0 memory   26220608, panels 7, probe   1015872, the same state
+  the top two      ws need-1     1015871: rc 0 memory   26220607, panels 7, probe   1015872, the same state
+  the top two      ws floor       577600: rc 0 memory   25782336, panels 7, probe   1015872, the same state
+  kept             ws floor-1     577599: rc 2 (CAPACITY), nothing written: yes
+  bit L set       : rc 1 (INVALID), nothing written: yes
+9.84M kblock+exp+reduce+attn, 2 steps: need 0, panels 0, floor 0; all kept at the need rc 0, loss 5.561406, state 3928168e4a716d00
+  kept             ws none             0: rc 0 memory  351410176, panels 0, probe         0, the same state
+  lowest 2         ws none             0: rc 0 memory  325195776, panels 0, probe         0, the same state
+  lowest 3         ws none             0: rc 0 memory  298981376, panels 0, probe         0, the same state
+  lowest 4         ws none             0: rc 0 memory  272766976, panels 0, probe         0, the same state
+  lowest 5         ws none             0: rc 0 memory  246552576, panels 0, probe         0, the same state
+  lowest 6         ws none             0: rc 0 memory  220338176, panels 0, probe         0, the same state
+  the top alone    ws none             0: rc 0 memory  351410176, panels 0, probe         0, the same state
+  the first alone  ws none             0: rc 0 memory  351410176, panels 0, probe         0, the same state
+  every other      ws none             0: rc 0 memory  298981376, panels 0, probe         0, the same state
+  the top two      ws none             0: rc 0 memory  325195776, panels 0, probe         0, the same state
+  bit L set       : rc 1 (INVALID), nothing written: yes
+9.84M bf16+exp+reduce+attn, 2 steps: need 4522048, panels 2359360, floor 131136; all kept at the need rc 0, loss 5.561443, state 544a42b365e257c4
+  kept             ws need       4522048: rc 0 memory  355932224, panels 7, probe   4522048, the same state
+  kept             ws need-1     4522047: rc 0 memory  355932223, panels 7, probe   4522048, the same state
+  kept             ws panels     2359360: rc 0 memory  353769536, panels 7, probe   4522048, the same state
+  kept             ws panels-1   2359359: rc 0 memory  353769535, panels 0, probe  10747968, the same state
+  kept             ws floor       131136: rc 0 memory  351541312, panels 0, probe  10747968, the same state
+  lowest 2         ws need       4522048: rc 0 memory  329717824, panels 7, probe   4522048, the same state
+  lowest 2         ws need-1     4522047: rc 0 memory  329717823, panels 7, probe   4522048, the same state
+  lowest 2         ws panels     2359360: rc 0 memory  327555136, panels 7, probe   4522048, the same state
+  lowest 2         ws panels-1   2359359: rc 0 memory  327555135, panels 0, probe  10747968, the same state
+  lowest 2         ws floor       131136: rc 0 memory  325326912, panels 0, probe  10747968, the same state
+  lowest 3         ws need       4522048: rc 0 memory  303503424, panels 7, probe   4522048, the same state
+  lowest 3         ws need-1     4522047: rc 0 memory  303503423, panels 7, probe   4522048, the same state
+  lowest 3         ws panels     2359360: rc 0 memory  301340736, panels 7, probe   4522048, the same state
+  lowest 3         ws panels-1   2359359: rc 0 memory  301340735, panels 0, probe  10747968, the same state
+  lowest 3         ws floor       131136: rc 0 memory  299112512, panels 0, probe  10747968, the same state
+  lowest 4         ws need       4522048: rc 0 memory  277289024, panels 7, probe   4522048, the same state
+  lowest 4         ws need-1     4522047: rc 0 memory  277289023, panels 7, probe   4522048, the same state
+  lowest 4         ws panels     2359360: rc 0 memory  275126336, panels 7, probe   4522048, the same state
+  lowest 4         ws panels-1   2359359: rc 0 memory  275126335, panels 0, probe  10747968, the same state
+  lowest 4         ws floor       131136: rc 0 memory  272898112, panels 0, probe  10747968, the same state
+  lowest 5         ws need       4522048: rc 0 memory  251074624, panels 7, probe   4522048, the same state
+  lowest 5         ws need-1     4522047: rc 0 memory  251074623, panels 7, probe   4522048, the same state
+  lowest 5         ws panels     2359360: rc 0 memory  248911936, panels 7, probe   4522048, the same state
+  lowest 5         ws panels-1   2359359: rc 0 memory  248911935, panels 0, probe  10747968, the same state
+  lowest 5         ws floor       131136: rc 0 memory  246683712, panels 0, probe  10747968, the same state
+  lowest 6         ws need       4522048: rc 0 memory  224860224, panels 7, probe   4522048, the same state
+  lowest 6         ws need-1     4522047: rc 0 memory  224860223, panels 7, probe   4522048, the same state
+  lowest 6         ws panels     2359360: rc 0 memory  222697536, panels 7, probe   4522048, the same state
+  lowest 6         ws panels-1   2359359: rc 0 memory  222697535, panels 0, probe  10747968, the same state
+  lowest 6         ws floor       131136: rc 0 memory  220469312, panels 0, probe  10747968, the same state
+  the top alone    ws need       4522048: rc 0 memory  355932224, panels 7, probe   4522048, the same state
+  the top alone    ws need-1     4522047: rc 0 memory  355932223, panels 7, probe   4522048, the same state
+  the top alone    ws panels     2359360: rc 0 memory  353769536, panels 7, probe   4522048, the same state
+  the top alone    ws panels-1   2359359: rc 0 memory  353769535, panels 0, probe  10747968, the same state
+  the top alone    ws floor       131136: rc 0 memory  351541312, panels 0, probe  10747968, the same state
+  the first alone  ws need       4522048: rc 0 memory  355932224, panels 7, probe   4522048, the same state
+  the first alone  ws need-1     4522047: rc 0 memory  355932223, panels 7, probe   4522048, the same state
+  the first alone  ws panels     2359360: rc 0 memory  353769536, panels 7, probe   4522048, the same state
+  the first alone  ws panels-1   2359359: rc 0 memory  353769535, panels 0, probe  10747968, the same state
+  the first alone  ws floor       131136: rc 0 memory  351541312, panels 0, probe  10747968, the same state
+  every other      ws need       4522048: rc 0 memory  303503424, panels 7, probe   4522048, the same state
+  every other      ws need-1     4522047: rc 0 memory  303503423, panels 7, probe   4522048, the same state
+  every other      ws panels     2359360: rc 0 memory  301340736, panels 7, probe   4522048, the same state
+  every other      ws panels-1   2359359: rc 0 memory  301340735, panels 0, probe  10747968, the same state
+  every other      ws floor       131136: rc 0 memory  299112512, panels 0, probe  10747968, the same state
+  the top two      ws need       4522048: rc 0 memory  329717824, panels 7, probe   4522048, the same state
+  the top two      ws need-1     4522047: rc 0 memory  329717823, panels 7, probe   4522048, the same state
+  the top two      ws panels     2359360: rc 0 memory  327555136, panels 7, probe   4522048, the same state
+  the top two      ws panels-1   2359359: rc 0 memory  327555135, panels 0, probe  10747968, the same state
+  the top two      ws floor       131136: rc 0 memory  325326912, panels 0, probe  10747968, the same state
+  kept             ws floor-1     131135: rc 2 (CAPACITY), nothing written: yes
+  bit L set       : rc 1 (INVALID), nothing written: yes
+9.84M bf16+exp+reduce+attnbf16, 2 steps: need 4522048, panels 2359360, floor 270400; all kept at the need rc 0, loss 5.561396, state c7880ebd6c64e7bf
+  kept             ws need       4522048: rc 0 memory  355932224, panels 7, probe   4522048, the same state
+  kept             ws need-1     4522047: rc 0 memory  355932223, panels 7, probe   4522048, the same state
+  kept             ws panels     2359360: rc 0 memory  353769536, panels 7, probe   4522048, the same state
+  kept             ws panels-1   2359359: rc 0 memory  353769535, panels 0, probe  10747968, the same state
+  kept             ws floor       270400: rc 0 memory  351680576, panels 0, probe  10747968, the same state
+  lowest 2         ws need       4522048: rc 0 memory  329717824, panels 7, probe   4522048, the same state
+  lowest 2         ws need-1     4522047: rc 0 memory  329717823, panels 7, probe   4522048, the same state
+  lowest 2         ws panels     2359360: rc 0 memory  327555136, panels 7, probe   4522048, the same state
+  lowest 2         ws panels-1   2359359: rc 0 memory  327555135, panels 0, probe  10747968, the same state
+  lowest 2         ws floor       270400: rc 0 memory  325466176, panels 0, probe  10747968, the same state
+  lowest 3         ws need       4522048: rc 0 memory  303503424, panels 7, probe   4522048, the same state
+  lowest 3         ws need-1     4522047: rc 0 memory  303503423, panels 7, probe   4522048, the same state
+  lowest 3         ws panels     2359360: rc 0 memory  301340736, panels 7, probe   4522048, the same state
+  lowest 3         ws panels-1   2359359: rc 0 memory  301340735, panels 0, probe  10747968, the same state
+  lowest 3         ws floor       270400: rc 0 memory  299251776, panels 0, probe  10747968, the same state
+  lowest 4         ws need       4522048: rc 0 memory  277289024, panels 7, probe   4522048, the same state
+  lowest 4         ws need-1     4522047: rc 0 memory  277289023, panels 7, probe   4522048, the same state
+  lowest 4         ws panels     2359360: rc 0 memory  275126336, panels 7, probe   4522048, the same state
+  lowest 4         ws panels-1   2359359: rc 0 memory  275126335, panels 0, probe  10747968, the same state
+  lowest 4         ws floor       270400: rc 0 memory  273037376, panels 0, probe  10747968, the same state
+  lowest 5         ws need       4522048: rc 0 memory  251074624, panels 7, probe   4522048, the same state
+  lowest 5         ws need-1     4522047: rc 0 memory  251074623, panels 7, probe   4522048, the same state
+  lowest 5         ws panels     2359360: rc 0 memory  248911936, panels 7, probe   4522048, the same state
+  lowest 5         ws panels-1   2359359: rc 0 memory  248911935, panels 0, probe  10747968, the same state
+  lowest 5         ws floor       270400: rc 0 memory  246822976, panels 0, probe  10747968, the same state
+  lowest 6         ws need       4522048: rc 0 memory  224860224, panels 7, probe   4522048, the same state
+  lowest 6         ws need-1     4522047: rc 0 memory  224860223, panels 7, probe   4522048, the same state
+  lowest 6         ws panels     2359360: rc 0 memory  222697536, panels 7, probe   4522048, the same state
+  lowest 6         ws panels-1   2359359: rc 0 memory  222697535, panels 0, probe  10747968, the same state
+  lowest 6         ws floor       270400: rc 0 memory  220608576, panels 0, probe  10747968, the same state
+  the top alone    ws need       4522048: rc 0 memory  355932224, panels 7, probe   4522048, the same state
+  the top alone    ws need-1     4522047: rc 0 memory  355932223, panels 7, probe   4522048, the same state
+  the top alone    ws panels     2359360: rc 0 memory  353769536, panels 7, probe   4522048, the same state
+  the top alone    ws panels-1   2359359: rc 0 memory  353769535, panels 0, probe  10747968, the same state
+  the top alone    ws floor       270400: rc 0 memory  351680576, panels 0, probe  10747968, the same state
+  the first alone  ws need       4522048: rc 0 memory  355932224, panels 7, probe   4522048, the same state
+  the first alone  ws need-1     4522047: rc 0 memory  355932223, panels 7, probe   4522048, the same state
+  the first alone  ws panels     2359360: rc 0 memory  353769536, panels 7, probe   4522048, the same state
+  the first alone  ws panels-1   2359359: rc 0 memory  353769535, panels 0, probe  10747968, the same state
+  the first alone  ws floor       270400: rc 0 memory  351680576, panels 0, probe  10747968, the same state
+  every other      ws need       4522048: rc 0 memory  303503424, panels 7, probe   4522048, the same state
+  every other      ws need-1     4522047: rc 0 memory  303503423, panels 7, probe   4522048, the same state
+  every other      ws panels     2359360: rc 0 memory  301340736, panels 7, probe   4522048, the same state
+  every other      ws panels-1   2359359: rc 0 memory  301340735, panels 0, probe  10747968, the same state
+  every other      ws floor       270400: rc 0 memory  299251776, panels 0, probe  10747968, the same state
+  the top two      ws need       4522048: rc 0 memory  329717824, panels 7, probe   4522048, the same state
+  the top two      ws need-1     4522047: rc 0 memory  329717823, panels 7, probe   4522048, the same state
+  the top two      ws panels     2359360: rc 0 memory  327555136, panels 7, probe   4522048, the same state
+  the top two      ws panels-1   2359359: rc 0 memory  327555135, panels 0, probe  10747968, the same state
+  the top two      ws floor       270400: rc 0 memory  325466176, panels 0, probe  10747968, the same state
+  kept             ws floor-1     270399: rc 2 (CAPACITY), nothing written: yes
+  bit L set       : rc 1 (INVALID), nothing written: yes
+identity at 1 thread: PASS (265 runs, 0 failures)

@@ -17,6 +17,10 @@
  * `vector=<BCIR_*>` when requested, then `OK` when every verdict is BCIR_OK. The exit
  * status is 0 exactly when it printed OK.
  *
+ * `test_execution_plan --time <plan-file> <reps>` runs bcir_ep_verify REPS times and prints the
+ * fastest run: the complexity witness of test_execution_plan.py times two plans of one shape at
+ * two sizes (the step walk's claim check rescans only at or below the greatest claim so far).
+ *
  * The harness uses libc (it is a test); the runtime stays freestanding.
  *===----------------------------------------------------------------------===*/
 #include <inttypes.h>
@@ -24,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "bcir_execution_plan.h"
 
@@ -109,7 +114,28 @@ static uint8_t *slurp(const char *path, size_t *n) {
   return buf;
 }
 
+static int time_mode(const char *path, long reps) {
+  size_t n = 0;
+  uint8_t *buf = reps < 1 ? 0 : slurp(path, &n);
+  double best = -1.0;
+  bcir_status st = BCIR_OK;
+  if (!buf) { fprintf(stderr, "time: bad arguments\n"); return 2; }
+  for (long r = 0; r < reps && st == BCIR_OK; r++) {
+    struct timespec t0, t1;
+    timespec_get(&t0, TIME_UTC);
+    st = bcir_ep_verify(buf, n);
+    timespec_get(&t1, TIME_UTC);
+    double ns = (double)(t1.tv_sec - t0.tv_sec) * 1e9 + (double)(t1.tv_nsec - t0.tv_nsec);
+    if (best < 0.0 || ns < best) best = ns;
+  }
+  free(buf);
+  if (st != BCIR_OK) { printf("ERR %s\n", status_name(st)); return 1; }
+  printf("verify ns %.0f\n", best);
+  return 0;
+}
+
 int main(int argc, char **argv) {
+  if (argc == 4 && strcmp(argv[1], "--time") == 0) return time_mode(argv[2], strtol(argv[3], NULL, 10));
   if (argc < 2) {
     fprintf(stderr, "usage: %s <plan-file> [--dump] [--pack <pack-file>] [--live rid:map:data ...]\n",
             argv[0]);

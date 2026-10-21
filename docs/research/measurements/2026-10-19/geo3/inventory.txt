@@ -1,0 +1,137 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 7feb5fc, runtime/c against it e3b0c44298fc1c14
+GEO-3 inventory: bytes; memory = 16 x parameters + 4 x (activation count + scratch) + workspace
+
+codex-attn (vocab 260, width 128, heads 4/4, layers 3, ff 256, batch 4 x 256), kblock+exp+reduce+attn
+  parameters 525696 (x16 = 8411136), activations 9179136 floats (36716544), scratch 1970176 floats (7880704), a layer's cache 2752512 floats (11010048)
+  workspace at 1 worker: need 0, panels 0, floor 0
+  workspace at 4 workers: need 0, panels 0, floor 0
+  workspace on any pool (bcir_decoder_workspace_bytes): 0
+  recompute set    re-run  activations          memory @ws 0
+  kept                  0     36716544              53008384
+  lowest 2              1     25706496              41998336
+  lowest 3              2     14696448              30988288
+  the top alone         0     36716544              53008384
+  the first alone       0     36716544              53008384
+  every other           1     25706496              41998336
+  the top two           1     25706496              41998336
+
+codex-attn (vocab 260, width 128, heads 4/4, layers 3, ff 256, batch 4 x 256), bf16+exp+reduce+attn
+  parameters 525696 (x16 = 8411136), activations 9179136 floats (36716544), scratch 1970176 floats (7880704), a layer's cache 2752512 floats (11010048)
+  workspace at 1 worker: need 1933376, panels 589888, floor 131136
+  workspace at 4 workers: need 1933376, panels 589888, floor 131136
+  workspace on any pool (bcir_decoder_workspace_bytes): 1933376
+  recompute set    re-run  activations    memory @ws 1933376     memory @ws 589888     memory @ws 131136
+  kept                  0     36716544              54941760              53598272              53139520
+  lowest 2              1     25706496              43931712              42588224              42129472
+  lowest 3              2     14696448              32921664              31578176              31119424
+  the top alone         0     36716544              54941760              53598272              53139520
+  the first alone       0     36716544              54941760              53598272              53139520
+  every other           1     25706496              43931712              42588224              42129472
+  the top two           1     25706496              43931712              42588224              42129472
+
+codex-attn (vocab 260, width 128, heads 4/4, layers 3, ff 256, batch 4 x 256), bf16+exp+reduce+attnbf16
+  parameters 525696 (x16 = 8411136), activations 9179136 floats (36716544), scratch 1970176 floats (7880704), a layer's cache 2752512 floats (11010048)
+  workspace at 1 worker: need 1933376, panels 589888, floor 577600
+  workspace at 4 workers: need 2310208, panels 589888, floor 2310208
+  workspace on any pool (bcir_decoder_workspace_bytes): 9240640
+  recompute set    re-run  activations    memory @ws 2310208
+  kept                  0     36716544              55318592
+  lowest 2              1     25706496              44308544
+  lowest 3              2     14696448              33298496
+  the top alone         0     36716544              55318592
+  the first alone       0     36716544              55318592
+  every other           1     25706496              44308544
+  the top two           1     25706496              44308544
+
+codex-attn-b2 (vocab 260, width 128, heads 4/4, layers 3, ff 256, batch 2 x 256), kblock+exp+reduce+attn
+  parameters 525696 (x16 = 8411136), activations 4589568 floats (18358272), scratch 985088 floats (3940352), a layer's cache 1376256 floats (5505024)
+  workspace at 1 worker: need 0, panels 0, floor 0
+  workspace at 4 workers: need 0, panels 0, floor 0
+  workspace on any pool (bcir_decoder_workspace_bytes): 0
+  recompute set    re-run  activations          memory @ws 0
+  kept                  0     18358272              30709760
+  lowest 2              1     12853248              25204736
+  lowest 3              2      7348224              19699712
+  the top alone         0     18358272              30709760
+  the first alone       0     18358272              30709760
+  every other           1     12853248              25204736
+  the top two           1     12853248              25204736
+
+codex-attn-b2 (vocab 260, width 128, heads 4/4, layers 3, ff 256, batch 2 x 256), bf16+exp+reduce+attn
+  parameters 525696 (x16 = 8411136), activations 4589568 floats (18358272), scratch 985088 floats (3940352), a layer's cache 1376256 floats (5505024)
+  workspace at 1 worker: need 1015872, panels 327744, floor 65600
+  workspace at 4 workers: need 1015872, panels 327744, floor 65600
+  workspace on any pool (bcir_decoder_workspace_bytes): 1015872
+  recompute set    re-run  activations    memory @ws 1015872     memory @ws 327744      memory @ws 65600
+  kept                  0     18358272              31725632              31037504              30775360
+  lowest 2              1     12853248              26220608              25532480              25270336
+  lowest 3              2      7348224              20715584              20027456              19765312
+  the top alone         0     18358272              31725632              31037504              30775360
+  the first alone       0     18358272              31725632              31037504              30775360
+  every other           1     12853248              26220608              25532480              25270336
+  the top two           1     12853248              26220608              25532480              25270336
+
+codex-attn-b2 (vocab 260, width 128, heads 4/4, layers 3, ff 256, batch 2 x 256), bf16+exp+reduce+attnbf16
+  parameters 525696 (x16 = 8411136), activations 4589568 floats (18358272), scratch 985088 floats (3940352), a layer's cache 1376256 floats (5505024)
+  workspace at 1 worker: need 1015872, panels 327744, floor 577600
+  workspace at 4 workers: need 2310208, panels 327744, floor 2310208
+  workspace on any pool (bcir_decoder_workspace_bytes): 4620352
+  recompute set    re-run  activations    memory @ws 2310208
+  kept                  0     18358272              33019968
+  lowest 2              1     12853248              27514944
+  lowest 3              2      7348224              22009920
+  the top alone         0     18358272              33019968
+  the first alone       0     18358272              33019968
+  every other           1     12853248              27514944
+  the top two           1     12853248              27514944
+
+9.84M (vocab 260, width 384, heads 8/4, layers 6, ff 1024, batch 8 x 128), kblock+exp+reduce+attn
+  parameters 9836928 (x16 = 157390848), activations 42733568 floats (170934272), scratch 5771264 floats (23085056), a layer's cache 6553600 floats (26214400)
+  workspace at 1 worker: need 0, panels 0, floor 0
+  workspace at 4 workers: need 0, panels 0, floor 0
+  workspace on any pool (bcir_decoder_workspace_bytes): 0
+  recompute set    re-run  activations          memory @ws 0
+  kept                  0    170934272             351410176
+  lowest 2              1    144719872             325195776
+  lowest 3              2    118505472             298981376
+  lowest 4              3     92291072             272766976
+  lowest 5              4     66076672             246552576
+  lowest 6              5     39862272             220338176
+  the top alone         0    170934272             351410176
+  the first alone       0    170934272             351410176
+  every other           2    118505472             298981376
+  the top two           1    144719872             325195776
+
+9.84M (vocab 260, width 384, heads 8/4, layers 6, ff 1024, batch 8 x 128), bf16+exp+reduce+attn
+  parameters 9836928 (x16 = 157390848), activations 42733568 floats (170934272), scratch 5771264 floats (23085056), a layer's cache 6553600 floats (26214400)
+  workspace at 1 worker: need 4522048, panels 2359360, floor 131136
+  workspace at 4 workers: need 4522048, panels 2359360, floor 131136
+  workspace on any pool (bcir_decoder_workspace_bytes): 4522048
+  recompute set    re-run  activations    memory @ws 4522048    memory @ws 2359360     memory @ws 131136
+  kept                  0    170934272             355932224             353769536             351541312
+  lowest 2              1    144719872             329717824             327555136             325326912
+  lowest 3              2    118505472             303503424             301340736             299112512
+  lowest 4              3     92291072             277289024             275126336             272898112
+  lowest 5              4     66076672             251074624             248911936             246683712
+  lowest 6              5     39862272             224860224             222697536             220469312
+  the top alone         0    170934272             355932224             353769536             351541312
+  the first alone       0    170934272             355932224             353769536             351541312
+  every other           2    118505472             303503424             301340736             299112512
+  the top two           1    144719872             329717824             327555136             325326912
+
+9.84M (vocab 260, width 384, heads 8/4, layers 6, ff 1024, batch 8 x 128), bf16+exp+reduce+attnbf16
+  parameters 9836928 (x16 = 157390848), activations 42733568 floats (170934272), scratch 5771264 floats (23085056), a layer's cache 6553600 floats (26214400)
+  workspace at 1 worker: need 4522048, panels 2359360, floor 270400
+  workspace at 4 workers: need 4522048, panels 2359360, floor 1081408
+  workspace on any pool (bcir_decoder_workspace_bytes): 8650816
+  recompute set    re-run  activations    memory @ws 4522048    memory @ws 2359360    memory @ws 1081408
+  kept                  0    170934272             355932224             353769536             352491584
+  lowest 2              1    144719872             329717824             327555136             326277184
+  lowest 3              2    118505472             303503424             301340736             300062784
+  lowest 4              3     92291072             277289024             275126336             273848384
+  lowest 5              4     66076672             251074624             248911936             247633984
+  lowest 6              5     39862272             224860224             222697536             221419584
+  the top alone         0    170934272             355932224             353769536             352491584
+  the first alone       0    170934272             355932224             353769536             352491584
+  every other           2    118505472             303503424             301340736             300062784
+  the top two           1    144719872             329717824             327555136             326277184

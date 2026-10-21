@@ -305,7 +305,9 @@ from the other roadmaps, importing no new subsystem:
 The opt-in [native decoder trainer](BCIR_NATIVE_DECODER_TRAINING.md) now implements
 complete FP32 Llama/SwiGLU forward, every parameter gradient, clipped AdamW,
 micro-batch accumulation and checkpoint continuation. Checked caller-owned arenas
-retain forward caches and reuse one backward workspace. An explicit CBLAS provider
+retain forward caches -- or, under a recompute set, recompute named layers' caches in the
+backward (GEO-3) -- and reuse one backward workspace. An explicit CBLAS provider
 can accelerate GEMM; selective framework/vendor integrations use the C ABI.
-Accelerator backward, mixed precision, recomputation and distributed training remain
+Accelerator backward, mixed precision beyond the bf16 GEMM and attention contracts,
+recomputation finer than a whole layer and distributed training remain
 open. This path preserves the existing scalar Tape and planned logistic trainers.

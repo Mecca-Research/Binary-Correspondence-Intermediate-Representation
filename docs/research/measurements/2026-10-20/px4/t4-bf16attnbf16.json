@@ -1,0 +1,199 @@
+{
+ "bytes": {
+  "bound": 166199296,
+  "c_plan": 194019328,
+  "optimal": true,
+  "placed": 166199296,
+  "placed_over_c": 0.8566120587738558,
+  "trainer_memory": {
+   "c": 355932224,
+   "placed": 328112192
+  }
+ },
+ "commit": "b6c50f11d5ed2d18bd7b7cae026547b93db235fe",
+ "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+ "contract": "bf16+exp+reduce+attnbf16",
+ "cpu": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+ "k": 10,
+ "median_ms_per_step": {
+  "c": 425.02837975007424,
+  "c2": 427.7352677505405,
+  "placed": 427.9840418501408
+ },
+ "ms_per_step": {
+  "c": [
+   394.855,
+   426.791,
+   401.716,
+   439.377,
+   412.345,
+   409.126,
+   427.338,
+   415.106,
+   407.359,
+   443.102,
+   443.15,
+   474.305,
+   465.15,
+   425.957,
+   422.352,
+   424.1,
+   409.937,
+   431.483,
+   427.844,
+   427.212,
+   410.449,
+   452.085,
+   410.677,
+   411.38
+  ],
+  "c2": [
+   413.686,
+   407.19,
+   424.732,
+   451.639,
+   414.925,
+   420.815,
+   420.049,
+   433.564,
+   428.831,
+   446.672,
+   442.581,
+   477.825,
+   455.949,
+   425.698,
+   446.333,
+   426.639,
+   410.941,
+   448.1,
+   430.854,
+   441.433,
+   412.839,
+   435.993,
+   407.3,
+   396.73
+  ],
+  "placed": [
+   436.385,
+   410.227,
+   405.589,
+   431.709,
+   392.641,
+   432.828,
+   416.982,
+   416.396,
+   404.275,
+   453.903,
+   424.259,
+   469.614,
+   436.626,
+   433.318,
+   435.961,
+   412.703,
+   398.895,
+   436.294,
+   447.124,
+   437.075,
+   406.386,
+   459.128,
+   417.97,
+   419.505
+  ]
+ },
+ "one_state": true,
+ "pack": {
+  "claims": 2231,
+  "launches": 1441,
+  "parts": 10,
+  "transient_values": 1640,
+  "values": 1867
+ },
+ "place_ms": {
+  "calls": 20,
+  "median": 166.17366850186954,
+  "min": 145.5518650036538
+ },
+ "ratios": {
+  "c2 / c (A/A: the C spans against themselves)": {
+   "ci95": [
+    0.998130730100167,
+    1.0233624976709343
+   ],
+   "geometric_mean": 1.010667876682256,
+   "rounds_slower": 16
+  },
+  "placed / c (the placed arena against the C spans)": {
+   "ci95": [
+    0.9867724892281672,
+    1.0178909313933289
+   ],
+   "geometric_mean": 1.002210939939179,
+   "rounds_slower": 13
+  }
+ },
+ "rounds": 24,
+ "state_sha256_16": {
+  "c": "0b1810166fdddd70",
+  "c2": "0b1810166fdddd70",
+  "placed": "0b1810166fdddd70"
+ },
+ "table": [
+  {
+   "bound_bytes": 176685056,
+   "c_bytes": 194019328,
+   "contract": "v1",
+   "optimal": true,
+   "placed_bytes": 176685056,
+   "recompute": 0,
+   "values": 372
+  },
+  {
+   "bound_bytes": 124256256,
+   "c_bytes": 141590528,
+   "contract": "v1",
+   "optimal": true,
+   "placed_bytes": 124256256,
+   "recompute": 7,
+   "values": 394
+  },
+  {
+   "bound_bytes": 45613056,
+   "c_bytes": 62947328,
+   "contract": "v1",
+   "optimal": true,
+   "placed_bytes": 45613056,
+   "recompute": 63,
+   "values": 427
+  },
+  {
+   "bound_bytes": 166199296,
+   "c_bytes": 194019328,
+   "contract": "bf16+exp+reduce+attnbf16",
+   "optimal": true,
+   "placed_bytes": 166199296,
+   "recompute": 0,
+   "values": 391
+  },
+  {
+   "bound_bytes": 117964800,
+   "c_bytes": 141590528,
+   "contract": "bf16+exp+reduce+attnbf16",
+   "optimal": true,
+   "placed_bytes": 117964800,
+   "recompute": 7,
+   "values": 415
+  },
+  {
+   "bound_bytes": 45613056,
+   "c_bytes": 62947328,
+   "contract": "bf16+exp+reduce+attnbf16",
+   "optimal": true,
+   "placed_bytes": 45613056,
+   "recompute": 63,
+   "values": 451
+  }
+ ],
+ "threads": 4,
+ "vcpus": 4,
+ "worktree_diff_sha256_16": "6cc813b450351f77"
+}

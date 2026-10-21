@@ -20,7 +20,10 @@ quick tier hides one on purpose; the c-runtime tier exposes it).
 from __future__ import annotations
 
 from dataclasses import replace
+import os
+import random
 import struct
+import subprocess
 import tempfile
 
 from bcir.abi import AbiError, decode, decode_plan, encode, encode_plan
@@ -55,6 +58,7 @@ from bcir.tests.plan_fixtures import (
     out_of_order_variant,
     parse_c_dump,
     python_refuses,
+    raw_encode,
     reseal,
     run_harness,
     stale_cases,
@@ -340,6 +344,84 @@ def test_the_c_twin_refuses_every_malformed_and_stale_variant():
             live=generation_vector(module),
         )
         assert code == 0 and "pack=BCIR_OK" in out and "vector=BCIR_OK" in out, out
+
+
+def test_the_c_twin_holds_one_step_a_claim_in_every_order():
+    """The step walk's claim check rescans the steps before a claim only when the claim is at or
+    below the greatest so far (QUAL-LIN's rule for a pack's segments, on the plan): the C twin's
+    verdict is the codec's on every order of the audit plan's steps -- as minted, reversed,
+    shuffled -- and on each order with one claim stepped twice: the greatest claim again (a tie
+    with the greatest so far), the least again (below it), the greatest again right after
+    itself. Every duplicate is refused (BCIR_ERR_PROVENANCE) and every order without one
+    accepted, on both rails."""
+    if compiler() is None:
+        return
+    module, target, _theta, result = audit_fixture()
+    plan = plan_from_realization(module, result, target, "eft", plan="plan0")
+    steps = list(plan.steps)
+    assert len(steps) >= 4
+    rng = random.Random(0x5EED_E9)
+    orders = [steps, steps[::-1]] + [rng.sample(steps, len(steps)) for _ in range(3)]
+    checked = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = build_harness(tmp)
+        for order in orders:
+            top = max(range(len(order)), key=lambda k: order[k].claim_id)
+            low = min(order, key=lambda st: st.claim_id)
+            cases = {
+                "once": order,
+                "greatest.again": order + [order[top]],
+                "least.again": order + [low],
+                "greatest.twice": order[: top + 1] + [order[top]] + order[top + 1 :],
+            }
+            for name, case in cases.items():
+                blob = raw_encode(replace(plan, steps=case))
+                twice = len({st.claim_id for st in case}) != len(case)
+                assert wire_refuses(blob) == twice, name
+                code, out = run_harness(exe, tmp, blob)
+                if twice:
+                    assert code != 0 and "verify=BCIR_ERR_PROVENANCE" in out, (name, out)
+                else:
+                    assert code == 0 and "\nOK\n" in out + "\n", (name, out)
+                checked += 1
+    assert checked == 4 * len(orders)
+
+
+def test_the_c_twin_walks_a_plans_steps_in_time_linear_in_them():
+    """The complexity witness of the step walk's claim check: the fastest of several
+    bcir_ep_verify runs over one plan shape -- the claims ascending, as GEM steps them, one
+    lifetime -- at two sizes. Linear work grows with the size ratio (16x here); a walk that
+    rescans the steps before each one grows with its square (256x; a ten-step training plan's
+    2,231 steps cost 17 ms of rescans before PX-2b). The bound is a wide band, four times the
+    linear ratio, so a shared runner's noise cannot reach it; neither can a quadratic walk get
+    under it."""
+    if compiler() is None:
+        return
+    module, target, _theta, result = audit_fixture()
+    plan = plan_from_realization(module, result, target, "eft", plan="plan0")
+    step = plan.steps[0]
+
+    def shape(n: int) -> bytes:
+        steps = [replace(step, claim_id=k, cost=0, start=0, duration=0) for k in range(n)]
+        return raw_encode(replace(plan, steps=steps, lifetimes=plan.lifetimes[:1], moves=[]))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = build_harness(tmp)
+
+        def fastest(n: int, reps: int) -> float:
+            path = os.path.join(tmp, f"steps{n}.bin")
+            with open(path, "wb") as f:
+                f.write(shape(n))
+            r = subprocess.run(
+                [exe, "--time", path, str(reps)], capture_output=True, text=True, timeout=300
+            )
+            assert r.returncode == 0, r.stdout + r.stderr
+            fields = r.stdout.split()
+            assert fields[:2] == ["verify", "ns"], r.stdout
+            return max(float(fields[2]), 1.0)
+
+        ratio = fastest(8_000, 3) / fastest(500, 7)
+        assert ratio < 64.0, f"500 -> 8000 steps cost {ratio:.0f}x (bound 64x)"
 
 
 def test_the_c_twin_binds_a_pack_to_its_plan():

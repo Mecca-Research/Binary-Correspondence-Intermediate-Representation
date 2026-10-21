@@ -3206,6 +3206,525 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - `ring.json`: the delay fault, whose code is gone, becomes five -- a fixed hold for each peer
     (RING-RACE's 100 ms), a supervisor that never waits, a peer that never stalls, a fixture that
     never passes the stall -- 33 of 33 caught; laws.md L2's RING-PARK instance.
+  GEO-3 (2026-10-19): per-layer caching coupled with packing-aware buffer planning -- the slice Codex's
+    PR818 geometric-head report names as its next opportunity -- in three parts, every state the
+    all-kept trainer's at the exact need, bit for bit ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md),
+    the measure note's §42, [measurements/2026-10-19/geo3/](research/measurements/2026-10-19/geo3/)).
+  - WS-PLAN: `bcir_decoder_workspace_need` counts what the step's bf16 GEMM groups pack by the
+    tensor unit's own rule (`bcir_tensor_mm_bf16_group_panels_workspace`, new), the groups as the
+    step issues them -- operands two calls read alike packed once, a SwiGLU panel operand not at
+    all -- where the parent summed every call packed whole: 4,522,048 bytes for the 9.84M decoder
+    against 11,534,592, 1,933,376 for Codex's attention model at B4/T256 against 2,752,768.
+    `bcir_decoder_workspace_panels` is the least at which the SwiGLU block keeps its panels (a call a
+    panel feeds runs whole, so `panels()` now asks it), `bcir_decoder_workspace_floor` one 32-row
+    strip of A and one 32-column strip of B at the step's deepest call; `valid()` admits any
+    workspace from the floor up (below: `BCIR_DT_CAPACITY`), every product returns whether it ran,
+    and a refusal fails the step with `BCIR_DT_CAPACITY`, nothing committed -- where the parent
+    ignored the GEMMs' returns, safe only while admission demanded the whole conservative sum. The
+    bf16 attention's regions are counted for the state's pool (`bcir_tensor_attention_bf16_pool_workspace`:
+    one a worker where the pool has no more workers than tasks, else one a task), its entries
+    admitting the pool's own. The harness probe now records the need with the panels named: the
+    parent's recorded a group without them, so two panel operands -- NULL addresses -- read as one
+    shared operand, a figure neither path packs (the 9.84M decoder: 6,553,664 against 4,522,048
+    with the panels and 10,747,968 without them).
+  - REMAT (state ABI 5): `bcir_decoder_state.recompute`, bit l for layer l (a bit past the last
+    layer refused). The kept layers' cache slots come first in layer order and the recomputed ones
+    share one slot after them (`bcir_decoder_activation_count`, the arena the state must lend, the
+    logits its last floats); the backward re-runs a recomputed layer's forward from its residual
+    input up to the hidden activation, the last value its backward reads -- the highest such layer
+    free, its cache still in the shared slot -- and every partition being the shapes', the values
+    are the forward's: one state under every set, thread count, contract and micro-batch count.
+    The 9.84M decoder's arenas go from 351.4 MB (binary32, every layer kept) to 220.3 MB with every
+    layer recomputed, five layer forwards a step re-run.
+  - MEM-PLAN: `memory_plan` and `NativeDecoder(recompute="auto", max_memory_bytes=...)` return the
+    first plan that fits in a declared order, TMSAO-4: the fewest recomputed layers, each with the
+    workspace at the need and then at the panels' need, the floor after every set; a set or a size
+    outside its C type is refused before ctypes can wrap it (2^64 would reach the C as the empty
+    set). Accumulation, which changes the state, stays the caller's. The GEM+ program models the
+    sets (`training_step_program(..., recompute)`: the shared slot and the re-run work) and the new
+    exact row `train.plan.remat.mismatch` holds its arenas to the C count (0).
+  - MEM-PLAN-2: the planner's first order walked every set at the need before the panels' tier, so a
+    budget a byte short of the kept plan recomputed two layers where the panels' tier would have
+    done. The frontier priced the panels' tier below one re-run on every measured shape, and the
+    order follows it; the planner's test now holds the whole walk, the scenario driver's
+    `plan_within` the same order.
+  - The frontier (ABBA rounds of whole steps; every run the reference's state): a re-run layer frees
+    25 MiB of the 9.84M decoder for x1.012 (0.965-1.059) of a step under bf16 with the bf16
+    attention at four threads and x1.057 (1.031-1.084) under binary32, and 10.5 MiB of Codex's model
+    for x1.090 and x1.087; every layer recomputed frees 125 MiB for x1.090 and x1.188, and 21 MiB for
+    x1.214 and x1.221. The workspace at the panels' need frees 1.3-2.1 MiB for no cost the rounds
+    resolve (x1.006, x1.032 at one thread, x1.044); at the floor 1.7-4.1 MiB for x1.32-1.75.
+  - Codex's attention model at its 32 MiB envelope: inside 32 MiB the planner recomputes every layer and
+    trains the B4 state bit for bit -- 29.55, 31.40 and 31.76 MiB under binary32, bf16+attn and
+    +attnbf16, for x1.158, x1.180 and x1.208 of an update kept -- where two accumulated B2
+    micro-batches (Codex's attention32) cost x1.011, x1.135 and x1.155 and train another state. The
+    9.84M decoder in 256 MiB recomputes five layers for x1.131 against accumulation's x1.095. At the
+    parent's workspace figure the bf16 plan would need 32.18 MiB: the fit is the two slices'
+    coupling.
+  - Witnesses: the C harness's `trainer_workspace_plan` (every workspace from the floor up one state
+    on two shapes, two contracts, one thread and four, the panels exactly from their groups' need,
+    the probe's need the plan's, a byte below the floor refused with nothing written, a refused
+    product the step's CAPACITY -- in the forward, and in the backward alone where the whole forward
+    runs) and `trainer_recompute` (nine sets, five contracts, one and four threads, one and two
+    micro-batches, the floats past the count untouched, the logits last, a bit past the last layer
+    and an arena a float short refused); `test_recompute_and_the_workspace_keep_every_state`
+    and `test_the_memory_plan_fits_its_budget_and_keeps_the_state`. `geo3.json` GW1-GW12 and RM1-RM6,
+    18 of 18 caught; `geo3-py.json` GP1-GP9, 9 of 9 -- the planner's
+    first test missed its order fault until it walked a contract with three distinct tiers (under
+    the bf16 attention at four workers its regions are both the need and the floor), and GP3, GP6
+    and GP9 now hold the frontier's order; GW6, GW8 and GW12 went uncaught until the harness reached
+    them (a refusal in the backward alone, a shape whose panel groups are the step's largest), and
+    GW5 and GW7 were respelled where the compiler rather than the test refused them (RED-VACUITY: an
+    unused variable under -Werror is no catch). The C harness built as the aarch64 CI job builds it
+    passes in 17.9-18.3 s against its 60 s cap and 24.7-36.8 s under UBSan against 300 s, 1.7-4.1 s
+    more than the parent's built and timed alike.
+  - Re-anchors: eighteen entries of eight older tables (`ndt-attnbf16`, `ndt-attnfma`, `ndt-bf16`,
+    `ndt-fuse`, `ndt-pages`, `ndt-panels`, `ndt-scanw`, `ndt-threads`) whose anchors GEO-3's edits
+    moved were re-anchored to the new code and caught again; the 79 older entries whose injections
+    land in the files GEO-3 changed were re-swept on the final tree with `geo3-py.json`: 88 of 88 caught.
+  JVM-STDOUT (2026-10-19): the stackify test's JVM runner keeps the VM's own output off the program's stdout.
+  - The runner reads stdout whole, and in the quick tier a JDK 21 VM that found its perf-data file
+    (`/tmp/hsperfdata_<user>/<pid>`) locked by another process logged `[warning][perf,memops] Cannot use
+    file ... because it is locked by another process` to stdout, ahead of the program's `20.0`. The
+    runner's VM now keeps no perf-data file (`-XX:-UsePerfData`, taken by every HotSpot) and, where the
+    VM has unified logging, logs to stderr (`-Xlog:disable -Xlog:all=warning:stderr`). JDK 8 will not
+    start with `-Xlog` (and already writes its VM warnings to stderr), so the runner asks the VM once.
+  - Reproduced on purpose -- a shell that holds the file for its own PID, then execs the VM, which keeps
+    the PID -- the bare launch's stdout failed the parse, and each flag alone kept it clean. Witnesses:
+    VM logging set to stdout ahead of the runner's flags (`JAVA_TOOL_OPTIONS`) and a VM asked to save its
+    perf data, each against a bare launch that shows the provocation fires; the probe against stand-in VMs
+    that refuse and take `-Xlog`. Checked on JDK 21 and on JDK 8 (Zulu 1.8.0_472). `jvm-stdout.json`
+    JS1-JS3, 3 of 3 caught. The first sweep caught the logging witness asking the code it tests whether
+    to run at all (JS2 made it skip itself); its own bare launch decides now (laws.md L11).
+  BASH-BOUND (2026-10-19): the script-running tests bound bash by the harness's child bound, not a minute.
+  - `test_latest_toolchain`'s refusal test failed once on windows-latest with Python 3.15: `check_latest.sh
+    --bogus`, refused before any leg runs, hit its 60 s bound -- Git Bash's start-up on a loaded runner.
+    The tests that run a tool's shell script (that one, the analyzer leg's, the train rail's refusal
+    test) now bound each launch by the harness's child bound (`BCIR_TEST_CHILD_TIMEOUT`, 300 s by
+    default) and ask one probe for their shell, `run_all.posix_bash()`, in place of three copies of an
+    unbounded `echo ok`. The probe has the same bound, and a probe that runs out raises rather than
+    turning into a skip (laws.md L21).
+  - Reproduced with a stand-in bash 61 s slow to refuse `--bogus`: the old test failed at 60 s with the
+    CI run's `TimeoutExpired`, the new one passes in 61 s. A wedged shell hung the old probe until it was
+    killed; it fails the new one in `BCIR_TEST_CHILD_TIMEOUT` seconds. Witness
+    `test_posix_bash_is_a_shell_probed_within_the_child_bound` (a WSL launcher's notice, a shell, a wedged
+    one); `posix-bash.json` PB1-PB3, 3 of 3 caught.
+  PX-1 (2026-10-19): the native step's launches held to the launches its step program states.
+  - The gap Codex's Triton comparison names (its 2026-10-19 update, draft PR #821): the native trainer's
+    direct C loop issues no StreamPack claim per tensor operation, and nothing showed which decisions reach
+    a call. Every decision the trainer's slices made -- a linear's two VJPs as one pool job and the linears
+    reading one input as one (NDT-SCHED), the SwiGLU block writing the GEMMs' bf16 panels (BF16-PANELS), the
+    recompute set's shared slot and re-run forwards (REMAT), the scans a step's facts leave out (NDT-SCAN,
+    FACTS-RUN), the gradients' first writers (NDT-ZERO) -- landed bit-identical, so the state cannot show
+    whether the C runs it.
+  - `native_launch.run_launches` states every launch one `bcir_decoder_run_accum` call issues -- each call
+    to the tensor unit, a provider or the pool, the job it shares, its entry (v1, fused, blocked, bf16 alone;
+    a pair's, a group's or a bf16 group's; a provider's), its shapes and scalars, and the (arena, offset,
+    bytes) of every operand -- from `training_step_program`'s buffers and the trainer's decisions alone:
+    contract, recompute set, workspace and the panels' threshold, the arenas' alignment, a provider,
+    steps and micro-batches. The update's preflight runs only when the first pass's maxima fail to bound
+    the update, a fact of the values, so it is planned optional. A build defining `BCIR_DT_TRACE_PROBE`
+    interposes every dispatch in `bcir_decoder_train.c` and records it, 48 words a record, in words the
+    caller lends; a record past them is counted. The library is untouched: without the define the probe
+    is three empty macros.
+  - `train.plan.executed.mismatch` 221 -> 0: the 221 calls of the trace corpus (the plan corpus under six
+    contracts, three recompute sets, one step and two steps of two micro-batches; the panels' bench at the
+    workspace's three tiers at one thread and four; a provider's GEMM, and its GEMM and SiLU; an update
+    whose bound fails) issue exactly their planned launches, every record kind, every GEMM entry and both
+    panel operands reached. The trace build trains the library's state on 27 decision sets (12 distinct
+    states), and a trace lent half its words holds the first half and counts the rest.
+  - What the trace sees that the state does not: each of `px-trace.json`'s eight C faults -- the linears
+    ungrouped (217 of 221 calls leave the plan), a linear's VJPs unpaired (217), the panels never written
+    (21), the final norm's 1/rms moved to `dk` (221), the loss rows' terms moved to `tmp` (221), the top
+    recomputed layer re-run (144), the deferred gradient scan run anyway (221), an untied model's first
+    fill widened to every gradient (73) -- trains the clean library's bits on all 27 decision sets.
+    `px-trace.json` PX1-PX8, PT1-PT4 (the probe: drops uncounted, every call its own launch, a recorded add
+    run twice, the workspace placed outside the state) and PM1-PM7 (the launch model and the
+    comparison): 19 of 19 caught, each by its own check (PT1
+    only by the capacity check, PT3 only by the state check). The C harness's C11, C2x and UBSan builds
+    compile the probe in, never begun: warning-free under -Wpedantic -Werror on GCC 13, clang 18 and
+    clang 23, and the harness's 29 checks hold with it.
+  - The ladder: NDT-SCHED's remaining item -- the step reading its plan -- is the training roadmap's PX
+    rows: the step as a StreamPack a C interpreter executes (PX-2), the per-call choices carried by the
+    plan and one intervention measured (PX-3), the transients placed by lifetime (PX-4, NDT-MEM's row),
+    GF(2) layout maps held to the bf16 packers (PX-5), and GPU lowering and synchronization, gated on
+    hardware this host lacks (PX-6).
+  PX-2a (2026-10-20): the native step run from the launch program its planner states.
+  - PX-1 held the launches the C step issues to the ones its program states; the step still ran its own
+    fixed sequence. `bcir_decoder_run_program` (bcir_decoder_train.h) runs a program instead: PX-1's
+    records -- kind, the job a call shares, flags, eight dimensions, ten operands as (space, byte offset,
+    bytes) -- with the host's in place: a CHECK where the step checks its forward, its products and a
+    micro-batch's loss, and the update's pass record as UPDATE. Each kernel record runs its call through
+    the step's own helpers (the embedding, the loss rows and the scatter became helpers of their own,
+    moved from the step unchanged: the 27 state digests are the parent's), so a program's trace is the
+    program and its bits are the step's. `native_launch.step_program` states the program for a state
+    and the planner's choices -- the linears grouped or not, a linear's VJPs paired or not, the panels
+    taken or not, the run's facts used or every scan made, any recompute set the arena holds -- and
+    `NativeDecoder.run_program` runs it (`NativeRunStopped`: the status and the steps a stopped run
+    completed): an `array('Q')` is lent to the C as it is, and a list's words are checked by one set of
+    their types and converted in C (`array('Q')`, its range check), 1.87 ms a call of ten steps where the
+    first binding's Python loop and ctypes construction took 12.8 ms. The state ABI stays 5.
+  - The whole program is checked before anything runs, and a refused one writes nothing, not even the
+    completed count: each record's grammar and canonical form; each operand inside a space its use
+    admits (kernels read the weights, gradients, activations and scratch and write the last three),
+    4-byte aligned, of the size its dimensions name and apart from every operand its job writes (one
+    GEMM chain's shared C excepted); each GEMM job one the state's kernels take (the contract's entry, a
+    pair's two roles, a group's chain and the rest, a panel only on whole 32-tiles and one call's, the
+    bf16 workspace whole), alpha 1 and beta 0 or 1, the state's eps and attention flags; a provider's
+    call only with the provider; the weights read only once a scan of all of them or an update has made
+    them known finite (FACTS-RUN); one loss a micro-batch, an update after exactly `accumulation` of
+    them, `steps` updates; the program outside the state, the events and the count. The check holds each
+    call to its kernel's contract and the run to its step's shape; that the operands' places compute the
+    step's gradient is the program's, which the witness holds.
+  - `train.plan.program.mismatch` 356 -> 0: of PX-1's trace corpus, each of the 221 calls run from the
+    program that takes the C step's own decisions, and its 27 state cases under each of five other
+    choices (the linears ungrouped, a linear's VJPs unpaired, no panels, every scan made, every layer
+    recomputed): every run trains the C step's state and events bit for bit, runs to its end and traces
+    exactly its program. Each choice changes some program and states what it names; the programs reach
+    every record kind but the trace's own three.
+  - 48 malformed programs are refused with no byte written: 37 edits of a v1 program of two steps of two
+    micro-batches, one at each rule of the check and the bound checks at their edges, a program short of
+    its last record, a valid program lying inside the state's second moment, three programs for another
+    state (another state's kernels, BCIR's SiLU under a provider's, a cache the arena cannot hold), five
+    of the bf16 contract's rules and a panel on partial tiles. A run that fails stops where the step
+    stops, every byte as the step leaves it: weights not finite (NUMERIC, nothing written), a forward
+    that overflows on finite weights (NUMERIC at its check, before a gradient is written), an update the
+    preflight refuses (NUMERIC after a step), a product refusing its workspace (CAPACITY before any
+    commit, ahead of the gradient's verdict when both fail).
+  - A new trust boundary, fuzzed: `fuzz_decoder_train.c` runs any program on a two-layer state under
+    eight contracts, with and without recompute, and asserts no access out of bounds, that a refused
+    program wrote nothing and that a run is a function of its input; `native_decoder_fixtures.fuzz_seeds`
+    seeds it with the planner's programs and near misses of the check (a seed refused or a miss admitted
+    fails `test_the_fuzz_seeds_start_inside_the_grammar`). 20,000 runs under clang 18 and 100,000 under
+    clang 23, with ASan and UBSan, no finding.
+  - The runner costs nothing this host resolves ([measurements/2026-10-20/px2/](research/measurements/2026-10-20/px2/README.json)):
+    four call paths rotated on one trainer of the 9.84M decoder -- every path trains the same bits, so no
+    ratio compares two placements of a state -- read the program x1.0035 of the fixed sequence (95%
+    interval 0.977-1.030) under bf16 at four threads, x1.0070 (0.991-1.023) under binary32 and x1.0170
+    (0.984-1.051) at one thread, each interval the width of the A/A control's beside it. The check walks a
+    step's 223 records in about 12 us; every run ends in the state of a trainer that ran each of its calls
+    through `bcir_decoder_run_accum`, bit for bit, over 1,000 steps.
+  - `px-program.json` PG1-PG25 (the check's rules, the run's verdicts, shares and counts, a program inside
+    the state) and PM8-PM19 (the program model, the binding, the fuzz seeds, the header's constants):
+    37 of 37 caught. The first sweep caught two spellings the compiler judged before the tests did
+    (RED-VACUITY): PG12 left a parameter unused, so the build refused it, and PG16 left a counter set but
+    unread in the library build. Both were respelled, and every C entry of the table compiles warning-free
+    under GCC 13, clang 18 and clang 23, with the trace probe and without. PX-1's PX5, PM1 and PM3
+    re-anchored to the moved code (the loss rows as a helper, the launch model's job builder), and
+    `px-trace.json` re-swept: 19 of 19 caught.
+  - The ladder: PX-2b carries the same program as BCIR's own artifact -- a StreamPack of claims over RIDs,
+    one a launch, their places an `ExecutionPlanV1`'s, executed through `bcir_sp_execute` -- whose
+    lifetimes PX-4 then packs.
+  PX-2b (2026-10-20): the native step run from a StreamPack and its ExecutionPlanV1.
+  - PX-2a ran the step from a launch program the C reads as words. Here the same program reaches the
+    trainer as BCIR's own artifacts and through them alone. `native_pack.training_pack` states it as a
+    `Module`: one claim per kernel call, one phase per launch, each phase after the one before, so GEM's
+    dispatch order (phases in order, a phase's claims by id) is the program's record order. Its
+    resources are the program's values: each parameter tensor of the four arenas, the bf16 workspace
+    and the micro-batch's tokens and targets live through the whole program; a write of a span of the
+    activations or the scratch starts a new value and ends every value of a span it meets, and a read
+    takes the span's current value -- a read of a span no live value holds is refused by the builder, so
+    a program that reads bytes another value left cannot be stated. The C step's reuse of its buffers
+    (the scratch every layer, the RMS VJP's 1/rms in the head of dq, the loss rows' terms in the head of
+    cur, the slot every recomputed layer shares) is then many values on the same bytes at disjoint
+    times. `pack_artifacts` plans the module with K_BCIR, hydrates it with GEM into a StreamPack and
+    mints its ExecutionPlanV1, whose lifetimes place every value (its bank, offset, size and phases).
+  - `bcir_decoder_lower_pack` (bcir_decoder_pack.h, a new hosted unit) takes the two artifacts and the
+    state and nothing else. It verifies them with their own verifiers -- `bcir_ep_check_pack`: the
+    pack's provenance and range laws, the plan's wire laws (the alias law among them: no two lifetimes
+    of one bank live at once on overlapping bytes), the pack the plan's lowering, one generation vector
+    -- then lowers each claim `bcir_sp_execute` dispatches, in its order, to the record that runs it. A
+    claim's name comes from a closed vocabulary (25 names and the GEMM grammar
+    `train.gemm.<alone|pair|chain|rest>.<nt|nn|tn>[.acc][.pa|.pb]`); every dimension and flag is
+    derived from the state and the operands' sizes; every operand's place is its value's lifetime, which
+    must be live at the claim's phase (the alias law's half-open interval) -- with the alias law, no
+    claim can write a byte another value still holds. Every claim is lowered and checked before any
+    record is written, so a refused pack writes nothing; a refusal names the verifiers' status or one of
+    ten reasons of its own. `NativeDecoder.lower_pack` returns the array('Q') `run_program` runs as it
+    is (`PackRefused` on a refusal), and `run_pack` is the two.
+  - `train.plan.pack.mismatch` 356 -> 0: the 356 program runs of PX-2a, each from its pack, lower to
+    exactly their program's words and train the C step's state and events bit for bit. A plan that
+    places every activation and scratch value elsewhere (the buffers in reverse order, a placement the C
+    step never uses) lowers to the same program at the new places and trains the same bits: the
+    operands' places are the plan's. The module verifies under every R-law and its plan under the plan's
+    laws against the module, the target and the pack.
+  - Twenty-three classes of pack or plan are refused at their reason with nothing written -- a name outside
+    the vocabulary or out of its grammar's order, a value no lifetime places, a claim before or past its
+    value's lifetime, two live values on one span (the alias law), a bank the state has not, the tokens',
+    the targets', a plain operand's or the bf16 workspace's value in another bank, operands too many,
+    too few or an in-place one split, a run of tensors not contiguous, a size no shape divides, a
+    block's count or base not the claim's, a claim id out of range, the plan of another pack or of
+    another generation, lifetimes in the schedule's ticks, a corrupt pack -- as are a v1 pack on a bf16
+    trainer, a plan header declaring more lifetimes than its bytes hold (before any figure is lent) and
+    short buffers (CAPACITY).
+  - A new trust boundary, fuzzed: `fuzz_decoder_pack.c` lowers any pack and plan on the training
+    harness's state under eight contracts and asserts no access out of bounds, that a refused pack
+    wrote nothing, that the lowering is a function of its input and that what it lowers to runs under
+    the runner's contract; each input is driven raw and resealed (both CRCs recomputed), so mutations
+    reach the laws behind the CRCs. `fuzz_pack_seeds` seeds it with the planner's packs and near misses
+    of the lowering's refusals (each seed held to its verdict and run at its shape byte's shape).
+    20,000 runs under clang 18 and 100,000 under clang 23 with ASan and UBSan, no finding -- on the
+    final lowering (the first campaign, before the one walk below, the same: no finding).
+  - The lowering's cost led to its verifiers. The plan walk's claim check rescanned the steps before
+    every step (quadratic in them: 17 ms of a ten-step training plan's 2,231 steps on this host); it
+    now rescans only a claim at or below the greatest so far -- QUAL-LIN's rule for a pack's
+    segments, on the plan -- so GEM's ascending plans walk it in linear time, every verdict the
+    same: each order of a plan's steps with a claim stepped twice at, below or right after the
+    greatest is refused on the C twin as the codec refuses it, and the walk's cost grows with the
+    steps, not their square (`test_execution_plan`'s two new witnesses; `test_execution_plan.c
+    --time`). And the lowering walked the plan's laws twice, in `bcir_ep_check_pack` and again to
+    read the lifetimes: `bcir_ep_check_pack_lifetimes` hands the lifetimes over as its one walk
+    verifies them, its status `bcir_ep_check_pack`'s on every input, and a status refuses ahead of
+    any reason a lifetime gives the lowering (a plan breaking a law and naming a bank the state
+    has not is refused at the law). Together, a ten-step pack's lowering 121 -> 48 ms on this host.
+    The lowering against the steps a pack carries ([lower.json](research/measurements/2026-10-20/px2b/lower.json)):
+    4.7 ms for one step, 49.6 for ten, 143.8 for twenty, of which the plan's laws are 23.8 and 79.8 --
+    the alias law, the one part left quadratic (each lifetime against every earlier one, heap-free).
+  - The lowering's cost ([measurements/2026-10-20/px2b/](research/measurements/2026-10-20/px2b/README.json)):
+    no cost this host resolves for lowering a pack inside every call -- pack / program x1.0195 (95%
+    interval 0.997-1.042) under bf16 at four threads and x1.0037 (0.972-1.037) under binary32, beside
+    A/A controls of x0.9979 and x0.9923; a ten-step lowering 47.3 and 54.5 ms (2.1% and 1.3% of a call
+    here), nothing per call once lowered and lent; the artifacts made in 0.34-0.37 s; every run the
+    reference trainer's state over 75 calls of ten steps. The container restarted at about 03:13 onto a
+    2.8 GHz Xeon with AVX-512F and neither AMX nor AVX512-BF16, so the bf16 step here (413 ms) is not
+    PX-2a's.
+  - `ep-walk.json` EW1-EW6 (the claim check's tie, rescan and linear cost; the one walk's handover;
+    the lowering's status and its precedence): 6 of 6 caught, each by its own check.
+  - `px-pack.json` PK1-PK33, PM1-PM13, PN1-PN3 and PF1-PF5: 54 of 54 caught, each by its own check
+    (the lowering's refusals and records, the module's values and names, the binding, the comparison and
+    the fuzz seeds); after the one walk, the ten entries in the lowering's moved lines (PK9, PK14,
+    PK16-PK18, PK29-PK33) re-swept: 10 of 10 caught. Every C entry of both tables compiles warning-free under
+    GCC 13, clang 18 and clang 23, at -fsyntax-only and at -O3. `px-program.json`'s PM16 re-anchored
+    (the pack seeds repeat its line) and re-swept: 1 of 1.
+  - The ladder: PX-3 takes the pack's per-call choices from the measured candidates, and PX-4 packs
+    the lifetimes the plan now carries.
+  PX-4 (2026-10-20): the native step's transient values placed by their lifetimes.
+  - PX-2b ran the step from a StreamPack whose ExecutionPlanV1 placed every value where the C step
+    keeps it: one span a buffer, the C plan's, 999,424 bytes of activations and scratch at the bench
+    shape against G26's 753,664-byte concurrent-live bound on the step program's values
+    (`train.memory.transient` 1.326, NDT-MEM's headroom since 2026-10-11). The pack already states
+    every value with its lifetime, so PX-4 places them by it.
+  - `native_pack.place_by_lifetime` lays every activation and scratch value of a pack out in one bank
+    (the activations) with GEM+'s static memory planner, each value its own bytes, 64-byte aligned,
+    live from its first phase through its last. The values split into parts where none is live across
+    a phase -- in phase order, a part ends where the next value starts at or past the furthest end so
+    far -- each part laid out by `exact_layout` (the incumbent portfolio, then the bounded branch and
+    bound), and the parts share addresses, since no two of their values are ever live together. The
+    extent is the largest part's; the bound is G26's alignment-aware concurrent-live bound over the
+    same values. At the bench shape -- under each contract family, several steps of several
+    micro-batches, a recompute set and the panels' bench alike -- the extent is the bound: a proved
+    optimum (TMSAO-1). Across the trace corpus's 356 placed runs the extent is the bound in 254,
+    each proved optimal, and 32 bytes (66 runs) or 52 bytes (36) above it in the other 102, where
+    the exact search stops at its budget without a proof: each gap is read beside the row
+    (`place_mismatch`'s fourth value), never counted in it.
+  - At the bench shape that is 754,176 bytes, 245,248 (24.5%) under the C plan's 999,424, and
+    `train.memory.transient` reads 1.0. The bound sits 512 bytes above the step program's: the pack
+    makes the loss rows' terms (an f64 a token), which the C keeps at the head of the scratch, a value
+    of their own, as it does the norms' 1/rms the C keeps in `dq`.
+  - `bcir_decoder_run_program` (and through it a pack's run) takes the activation and scratch arenas
+    at the lengths the caller lent -- their capacities, any length -- and holds every operand inside
+    them (PX-2a's check, by those lengths) and the program, the tokens, the targets, the events and
+    the completed count apart from them. The fixed step still needs the plan's spans and refuses a
+    shorter arena (BCIR_DT_CAPACITY). No ABI change: the capacities were the state's already.
+    `NativeDecoder(transient=(activation floats, scratch floats))` lends arenas of those lengths -- a
+    placement's `floats`, and none for the scratch -- and counts them in the memory it reports; it
+    refuses them with `recompute="auto"`, since a placement is one program's. The update a program's
+    UPDATE record runs checks the state as the run's own admission did (`update_with(..., placed)`):
+    it read the fixed step's spans at first, so every placed trainer was refused at its first update
+    (BCIR_DT_CAPACITY) -- the corpus witness's first run found it, every pure check having passed.
+  - `native_pack.placed_words` states the words the lowering of a placed pack must write, each
+    record's operand slots bound to their values (`TrainingPack.bindings`): an oracle of the C's
+    relocation that never reads the C.
+  - `train.plan.place.mismatch` 356 -> 0 (a new GEM+ row): the 356 pack runs of PX-2b, each placed by
+    lifetime and run on a trainer lending exactly the placement's arena, lower to their programs'
+    words at the placed places, place no two live values in one byte (none below its bound) and train
+    the C step's state and events bit for bit; each layout's gap to the bound is read beside the row,
+    never counted in it. A placed trainer refuses the fixed step, an arena one float short and a value
+    moved past the arena's end, each with nothing written; one lending more than the placement trains
+    the same bits; a run whose tokens lie inside the lent arenas -- past the placement's end, bytes no
+    value is placed in -- is refused.
+  - Fuzz: both trainer harnesses (`fuzz_decoder_train.c`, `fuzz_decoder_pack.c`) lend the transient
+    arenas at what a program reaches, or one float short, each as the tail of its own allocation, so
+    an overrun lands past it where ASan sees it; seeded with the placed programs and packs of four
+    configurations and a short one. A placement holds the scratch values in the activation arena, so
+    it can reach past the plan's activations: each harness allocates room for the plan's whole
+    transient span and lends a run that is not placed exactly what the trainer lends (the recompute
+    set's activations). A replay build of each (BCIR_FUZZ_REPLAY: a driver in libFuzzer's place
+    records every input's statuses) holds every seed to the verdict its Python twin holds it to
+    (`test_the_fuzz_harnesses_hold_their_seeds_to_their_verdicts`) -- the twin and the C had capped
+    the placed reach at the plan's activations alike, so two configurations' placed seeds started
+    outside the run, and only the C's own replay sees such a drift. Fuzzed under ASan and UBSan --
+    20,000 runs of the program harness and 20,000 of the pack harness under clang 18, 100,000 and
+    100,000 under clang 23 -- no finding.
+  - `px-place.json` (PL2-PL6, PA1-PA7, PD1-PD4, PC1, PC2, PC4), `px-place-corpus.json` (PL1, PW1,
+    PW2, PC3: the faults only the corpus witness catches, swept apart so the others never pay for
+    its 356 runs) and `px-place-fuzz.json` (PH1-PH3, PC5: the harnesses' room and lending, held by
+    the replay): 19 of 19, 4 of 4 and 4 of 4 caught, each by its own check. The first sweeps let
+    four through, each past a witness that never reached it, now reached: PL4 (the fixed step's
+    admission taking a lent arena) behind the run's own capacity check -- a forward, which only that
+    admission guards, now runs on an arena one float short of the plan's spans; PA2 (a part ended
+    while a value is live) and PA6 (the alignment ignored) on a stated set with no value written at
+    the phase its predecessor is last read and no size off the alignment -- the set now has both;
+    PH2 (a run that is not placed lent the whole room) with no seed between the recompute set's
+    arena and the room -- the kept layers' program now runs on the recompute set's trainer. The
+    px-place and corpus tables were swept again in a worktree of their own, their first run having
+    shared its tree with another sweep. PX-2a's PG25 and PG18 re-anchored (the program's admission
+    and update lines moved), and `px-pack.json`'s PF2 and PF5 on the shared helpers they now reach
+    (one comparison for the pack and the placed runs, one training pack for both harnesses' seeds).
+    With them, the 47 older entries inside the constructs PX-4 changed, or held by the witnesses it
+    changed, re-swept: 47 of 47 caught.
+  - The cost ([measurements/2026-10-20/px4/](research/measurements/2026-10-20/px4/README.json)): no
+    cost and no gain this host resolves for running on the placed arena -- placed / C spans x1.0022
+    (95% interval 0.987-1.018) under bf16 at four threads and x1.0086 (0.981-1.037) under binary32,
+    beside A/A controls of x1.0107 (0.998-1.023) and x1.0193 (0.991-1.048); the ten-step pack placed
+    in 123-166 ms (the median of 20 calls), its 1,640 (bf16) and 1,460 (binary32) transient values
+    in 10 parts each, one a step, at 166,199,296 and 176,685,056 bytes against the C plan's
+    194,019,328 (0.857 and 0.911 of it), each at its bound, proved; the trainer's whole memory 355.9
+    -> 328.1 MB and 351.4 -> 334.1 MB; every trainer's state one state, bit for bit, over 24 rounds
+    of 10-step calls. The placed arena against the C plan's at one step a call, by recompute set:
+    binary32 0.911 (none), 0.878 (layers 0-2), 0.725 (all six); bf16 0.857 (none), 0.833 (layers
+    0-2), 0.725 (all six) -- each at its bound, proved.
+  - The ladder: PX-5 states the layouts the kernels keep, and PX-3 takes the pack's choices from
+    measured candidates.
+  PX-5 (2026-10-20): the trainer's kernel layouts stated as GF(2) maps and held to their packers.
+  - The gap (Codex's Triton comparison, `docs/research/BCIR_TRITON_COMPARATIVE_ANALYSIS.md` §3a,
+    item 1): the native trainer's packers keep their layouts as index arithmetic -- the AMX tile and
+    panel order of the bf16 GEMMs, the VNNI pair interleave, the AVX-512 blocked GEMM's B tile and
+    its 16 x 16 register transpose -- and nothing stated them, so a second spelling of the same
+    arithmetic was the only check. Triton's linear layouts treat a layout as a linear map over GF(2)
+    on the bits of the indices; PX-5 adopts that algebra beside the integer-affine maps
+    (`kbcir/layout.py`'s G3 pivot is unchanged) and states the trainer's layouts in it, before any
+    layout is generated.
+  - `bcir.kbcir.linear_layout` (dependency-free): `LinearLayout`, a map from named input dimensions
+    to named output dimensions, each a power of two, given by the image of every input bit --
+    `apply` is the XOR of the set bits' images; `compose`; one Gaussian elimination over GF(2)
+    (`rank`, `injective`, `surjective`, `kernel` -- the inputs a map sends to zero, a broadcast's --
+    and `preimage`: one input and the kernel's span); `inverse`, `convert_to` (B^-1 . A, one storage
+    to another), `product`, `rename`, `reorder_outs`; `from_function` reads a map from its images of
+    the unit inputs and checks it on every input, refusing one that is not linear. `TiledLayout`
+    puts a GF(2) tile under an integer mixed-radix grid (radices need not be powers of two: three
+    16-lane vectors make a 48-wide block) with a shape, so a tail past the operand is padding the
+    statement names. Every rule refuses what breaks it (ValueError): a value missing, extra, outside
+    its dimension or not an integer is never packed into a neighbour's bits.
+  - `bcir.hosted.models.native_layouts` states, in that algebra: the bf16 A tile (16 rows x 32
+    depths, the AMX tile register's 64-byte rows) and B tile (the VNNI interleave -- offset bit 0
+    the depth's low bit, bits 1-4 the column, 5-8 the depth's other four), the packs and panels as
+    those tiles under the C's grids (a 16-row block's depth tiles in order, rows and depth padded to
+    32), the conversion a panel writer makes from its A panel to its second panel, the AVX-512
+    blocked GEMM's B tile (a depth row of three 16-lane vectors, the columns past the block zero),
+    the register transpose and each of its four stages (unpack, shuffle, two 128-bit lane exchanges
+    -- each a 3-cycle of bits; composed, the transpose), and the A broadcast (`_mm512_set1_ps`: the
+    kernel is all four lane bits -- a statement and its kernel, not held to a packer: nothing packs
+    it).
+  - Held to the C bit for bit (`test_native_layouts`), on operands whose elements carry their
+    coordinates, in a build of the tensor unit defining BCIR_DT_LAYOUT_PROBE (one build a process):
+    the bf16 packs of every instance the host has (the portable C and AVX-512 here; AMX where
+    admitted) on ragged shapes, A and B as stored and transposed -- every element at its offset,
+    every padding offset +0.0, every instance the portable C's bytes; the panel writers by every
+    instance (the new probe `bcir_tensor_probe_panels`: the library's entries run only the host's
+    widest) and by the library's entries -- every element where the statement puts it, each second
+    panel the first converted, every instance the same bytes; the blocked GEMM's B tile at every
+    block width from 1 to 48 and both orientations, the columns past the block zero; the register
+    transpose. The algebra's laws on seeded random maps against every input (`test_linear_layout`:
+    inverse, composition, the kernel and every preimage against the map's own table, conversions,
+    the linearity refusal, the tiled round trip and its mask, and each refusal).
+  - What is not observable is not claimed: the register blocks' accumulators never leave the kernel,
+    so their layout is not held; the AMX instance does not run on this host (no AMX), so its packs
+    and panels are held where a host admits it.
+  - Fault sweeps: `px-layout.json` (the algebra and the statements its pure witnesses hold): 31 of
+    31 defects injected, each caught by its own witness (LA1-LA28, LS1-LS3); `px-layout-c.json` (the
+    C packers, the panel writers, the B tile and the transpose, and the statements only the C
+    witnesses hold): 21 of 21 caught (LS4-LS11, LC1-LC13). Every C entry compiles warning-free under
+    GCC 13, clang 18 and clang 23, at `-fsyntax-only` and `-O3`, with the layout probe and without
+    (RED-VACUITY): 13 C faults and the clean unit, 16 builds each (GCC 13, clang 18 and clang 23 at
+    C11, clang 23 at C23; -fsyntax-only and -O3; the probe defined and not), 0 compiler findings.
+  - The ladder: PX-3 takes the pack's choices from measured candidates; PX-6 (GPU) is a documented
+    skip on this host.
+  PX-3 (2026-10-20): the step program's per-site choices taken from measured candidates.
+  - The ladder's row: the pack's per-call choices taken from measured candidates, and one
+    intervention measured end to end at the same state. Every choice the planner made until now was
+    one boolean over the whole step (NDT-SCHED-0/1's grouping and pairing, BF16-PANELS' panels),
+    taken the same way at every layer, and none had been measured where it runs.
+  - Choice sites (`native_launch.choice_sites`), seven a layer and one for the head: each layer's
+    q/k/v and gate/up projections (one pool job, or a call each), its SwiGLU block's bf16 panels (or
+    the block plain), and the VJPs of its down, o, gate/up and q/k/v projections (one job, a job a
+    projection, or a call each); the head's VJP. `step_program(sites=...)` takes any site's
+    alternative in place of the booleans' (`default_sites`: the booleans' program is the one its
+    default sites state, word for word) and refuses a site or an alternative the program does not
+    have; `step_program(labels=...)` names the site each launch belongs to -- the site's GEMMs, and
+    the SwiGLU kernels for its panels site. Every alternative trains the same bits; what differs is
+    the time.
+  - The job clock: a build defining BCIR_DT_TIME_PROBE (`NativeDecoder.build(probe="time")`, a
+    library of its own; the library a caller runs has no clock) adds the nanoseconds from each job's
+    dispatch to its return into the word of its first record's index, in words the caller lends --
+    ISO C11 `timespec_get`; a job past the lent words is counted; lent none, the clock writes and
+    counts nothing -- so a measurement reads every site's launches in place, on the state it trains.
+  - `bcir.hosted.models.native_choose`: `measure` runs the trainer's default program and, for each
+    kind of site and each alternative that states a program of its own, the program with every site
+    of that kind switched, in rotated rounds on one trainer (they train the same bits, so they take
+    turns on one state), reading the launches the kind's scope labels -- the panels' scope is its
+    block and the two VJPs that read its panels. `estimate` turns the paired rounds into the
+    alternative's time over the default's: the geometric mean and its 95% Student-t interval, in Q8.
+    The result is a `ChoiceTable`: frozen, generation-tagged, one canonical JSON spelling, naming
+    the shape it was measured at (the decoder, the call, the threads, the recompute set, the
+    workspace and the contract) and the host's attestation (information, never a verdict). `choose`
+    takes, per kind, the alternative whose whole interval lies below 256 with the lowest mean (the
+    narrower interval on a tie); every other site keeps its default; no table is the defaults, and a
+    table measured at another shape is refused. The measured prices rank; they never decide
+    legality: the chosen program is stated as a pack (`training_pack(sites=...)`), planned by K_BCIR
+    and verified under the plan's laws (R9 among them) like any other, and the C lowers it to the
+    program it states.
+  - `train.plan.choose.mismatch` 351 -> 0 (a new GEM+ row): the trace corpus's 27 state cases, each
+    under every kind switched alone to each alternative the C step does not take and three seeded
+    draws of an alternative a site, run from their programs on the trace build, trace exactly the
+    chosen programs and train the C step's state and events bit for bit; 283 of the 351 run a
+    program other than the C step's own (the rest are choices a contract or a shape leaves one way:
+    a provider's GEMMs, the panels outside bf16). Every alternative and seeded mixes, on a bf16 case
+    whose shapes take the panels and on a kblock case, also train the C step's bits from their packs
+    -- planned by K_BCIR, hydrated by GEM, lowered by the C to exactly the program's words.
+  - The measurement and the intervention
+    ([measurements/2026-10-20/px3/](research/measurements/2026-10-20/px3/README.json)): on the 9.84M
+    comparison decoder at four threads (this host: AVX-512F, neither AMX nor AVX512-BF16), 24
+    rotated rounds of four-step calls on one trainer of the clocked library -- 458 s under bf16, 235
+    s under binary32. Under bf16 every one of the ten alternatives reads slower at its sites than
+    the step's default, each interval wholly above 1.0: a call each for the q/k/v and gate/up
+    projections x1.094 and x1.047, the SwiGLU block plain x1.074, a call each for the down, o,
+    gate/up, q/k/v and head VJPs x1.055, x1.039, x1.078, x1.156 and x1.062, a job a projection for
+    the gate/up and q/k/v VJPs x1.035 and x1.102: NDT-SCHED-0/1's grouping and pairing and
+    BF16-PANELS' panels are the measured winners at every site. Under binary32 none of the nine
+    reads either way (x0.965 to x1.070, every interval holding 1.0). So `choose` keeps the defaults
+    under both. End to end, in 32 rounds of four trainers of the library without the clock, the
+    program the measurement prices slowest (every kind at its slowest alternative: 893 launches a
+    four-step call against the default's 577) runs x1.0641 (95% interval 1.043-1.086) of the default
+    under bf16, slower in 29 of 32 rounds, where its readings predicted x1.096 for the jobs it
+    switches; under binary32 it reads x0.9995 (0.975-1.025), its readings having predicted x1.017.
+    The chosen program is the default's, so its arm is a third trainer running the default program:
+    x0.983 and x0.966 against the first, beside the A/A control's x0.983 and x0.990. Trainers
+    running one program differ by up to 3.4% on this host, an offset the rounds' interval does not
+    hold -- which is why the choice rests on one trainer's readings in place; the slowest program's
+    x1.064 under bf16 lies beyond it (x1.083 against each of the other two). Every trainer's state
+    is one state, bit for bit.
+  - Fault sweeps, on the tree with PX-4 and PX-5 beneath: `px-choose.json` (the sites, the labels
+    and scopes, the estimate, the table, the choice and the frozen row's count: PS1-PS14, PC1-PC18,
+    PR3), 33 of 33 defects injected, each caught by its own witness; `px-choose-c.json` (the job
+    clock, the clocked build, the measurement, the decisions and shape read off the trainer, the
+    corpus row's runs and an alternative training other bits: PT1-PT4, PB1-PB3, PM1-PM6, PR1, PR2,
+    PI1), 16 of 16. The two older entries whose lines PX-3 rewrote (`px-program.json` PM13,
+    `px-trace.json` PM1) were re-anchored to the new lines, and the 17 older entries inside the
+    constructs PX-3 changed (`px-program.json` PG16-PG18, PG20, PG23, PG24, PM9, PM10, PM12, PM13;
+    `px-trace.json` PM1, PM2, PM4, PM6, PM7; `px-place.json` PL6; `red-vacuity.json` RV6) re-swept
+    on the combined tree: 17 of 17 caught. Every C entry compiles warning-free under GCC 13, clang
+    18 and clang 23, at `-fsyntax-only` and `-O3`, plain, with the clock and with the trace probe
+    (RED-VACUITY): the 4 C faults and the clean unit, 24 builds each, 0 compiler findings. The C
+    harness's C11, C2x and UBSan builds compile the clock in, never begun -- warning-free under
+    -Wpedantic -Werror on GCC 13, clang 18 and clang 23, the harness's 29 checks holding with it --
+    so the harness's own entries keep their verdicts: the clock never runs there.
+  - Not claimed, and open (PX-3b): the kernel instance and the pool's thread split as choice sites
+    (each call's instance is the host's widest; the split the pool's), and the measured prices
+    carried into K_BCIR's own candidates on its three rails (a BKPI table beside the target's
+    constants) instead of choosing beside them. The measuring host is this container's (no AMX, no
+    AVX512-BF16): a table is the host's that measured it, and names it.
+  - The ladder: PX-6 (GPU lowering and synchronization) is a documented skip on this host.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

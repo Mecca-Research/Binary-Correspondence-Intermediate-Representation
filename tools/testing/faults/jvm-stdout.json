@@ -1,0 +1,35 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_stackify_exec:_JAVA",
+    "bcir.tests.test_stackify_exec:test_jvm_stackify_assembles_and_executes_on_real_jvm",
+    "bcir.tests.test_stackify_exec:test_the_jvm_runner_keeps_the_vms_logging_off_stdout",
+    "bcir.tests.test_stackify_exec:test_the_jvm_runner_keeps_no_perf_data_file",
+    "bcir.tests.test_stackify_exec:test_the_jvm_runner_asks_the_vm_before_routing_its_logging"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_jvm_runner_keeps_no_perf_data_file",
+      "label": "JS1 the runner's VM keeps its perf-data file (the file a VM found locked and warned about on stdout)",
+      "new": "_JVM_NO_PERF_DATA = ()",
+      "old": "_JVM_NO_PERF_DATA = (\"-XX:-UsePerfData\",)",
+      "path": "bcir/tests/test_stackify_exec.py"
+    },
+    {
+      "expects": "test_the_jvm_runner_keeps_the_vms_logging_off_stdout",
+      "label": "JS2 the runner leaves a JDK 9+ VM's log on stdout, ahead of the program's output",
+      "new": "    return _JVM_NO_PERF_DATA + (() if probe.returncode == 0 else ())",
+      "old": "    return _JVM_NO_PERF_DATA + (_JVM_LOG_TO_STDERR if probe.returncode == 0 else ())",
+      "path": "bcir/tests/test_stackify_exec.py"
+    },
+    {
+      "expects": "test_the_jvm_runner_asks_the_vm_before_routing_its_logging",
+      "label": "JS3 the probe asks the VM without -Xlog, so a JDK 8 VM, which will not start with it, is handed -Xlog",
+      "new": "        [java, *_JVM_NO_PERF_DATA, \"-version\"], capture_output=True, timeout=60",
+      "old": "        [java, *_JVM_NO_PERF_DATA, *_JVM_LOG_TO_STDERR, \"-version\"], capture_output=True, timeout=60",
+      "path": "bcir/tests/test_stackify_exec.py"
+    }
+  ]
+}

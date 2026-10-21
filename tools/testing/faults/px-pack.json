@@ -1,0 +1,396 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_run_pack:_CC",
+    "bcir.tests.test_native_run_pack:test_a_refused_pack_lowers_nothing",
+    "bcir.tests.test_native_run_pack:test_the_module_is_lawful_and_states_only_live_reads",
+    "bcir.tests.test_native_run_pack:test_the_vocabulary_and_the_reasons_are_the_cs",
+    "bcir.tests.test_native_run_pack:test_the_pack_fuzz_seeds_start_inside_the_grammar",
+    "bcir.tests.test_native_run_pack:test_the_pack_comparison_sees_each_divergence",
+    "bcir.tests.test_native_run_pack:test_the_lowering_is_lent_an_array_it_can_run",
+    "bcir.tests.test_native_run_pack:test_the_placement_is_the_plans",
+    "bcir.tests.test_native_run_pack:test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK1 a claim's values never checked live at its rank",
+      "new": "    if (0 && ((uint64_t)c->rank < l->first || (uint64_t)c->rank >= l->last))\n      return dp_fail(c, BCIR_DP_LIVE);",
+      "old": "    if ((uint64_t)c->rank < l->first || (uint64_t)c->rank >= l->last)\n      return dp_fail(c, BCIR_DP_LIVE);",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK2 a value read one phase past its lifetime's end (the half-open end taken as closed)",
+      "new": "(uint64_t)c->rank > l->last)",
+      "old": "(uint64_t)c->rank >= l->last)",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK3 an in-place operand's written RID never held to its read one",
+      "new": "    if (sl->use == U_RW && dp_rid(cl->wr, *iw + j) != rid && 0) return dp_fail(c, BCIR_DP_SLOTS);",
+      "old": "    if (sl->use == U_RW && dp_rid(cl->wr, *iw + j) != rid) return dp_fail(c, BCIR_DP_SLOTS);",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK4 a run of tensors not held contiguous (its first tensor's offset and the sizes' sum taken)",
+      "new": "      if (l->bank != bank || l->size > UINT64_MAX - size)",
+      "old": "      if (l->bank != bank || l->offset != off + size || l->size > UINT64_MAX - size)",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK5 the tokens' slot taking any bank",
+      "new": "  case SL_TOKENS: bank = 8; break;",
+      "old": "  case SL_TOKENS: if (bank != BANK_TOKENS) return dp_fail(c, BCIR_DP_BANK); bank = 8; break;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK6 the targets' slot taking any bank",
+      "new": "  case SL_TARGETS: bank = 8; break;",
+      "old": "  case SL_TARGETS: if (bank != BANK_TARGETS) return dp_fail(c, BCIR_DP_BANK); bank = 8; break;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK7 the workspace's slot taking any bank",
+      "new": "  case SL_WS: break;",
+      "old": "  case SL_WS: if (bank != BANK_WORKSPACE) return dp_fail(c, BCIR_DP_BANK); break;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK8 a plain operand taking the workspace's, the tokens' or the targets' bank",
+      "new": "  default: break;",
+      "old": "  default: if (bank < 1u || bank > 6u) return dp_fail(c, BCIR_DP_BANK); break;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK9 a lifetime in a bank the state has not taken as the weights",
+      "new": "  if (b == (unsigned)DP_BANKS) b = 0;",
+      "old": "  if (b == (unsigned)DP_BANKS) return !dp_fail(c, BCIR_DP_BANK);",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK10 a block's base never held to the claim's micro-batch",
+      "new": "  if ((0 && cl->base != base) || cl->count != work) return dp_fail(c, BCIR_DP_BLOCK);",
+      "old": "  if (cl->base != base || cl->count != work) return dp_fail(c, BCIR_DP_BLOCK);",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK11 a block's count never held to the call's work",
+      "new": "  if (cl->base != base || (0 && cl->count != work)) return dp_fail(c, BCIR_DP_BLOCK);",
+      "old": "  if (cl->base != base || cl->count != work) return dp_fail(c, BCIR_DP_BLOCK);",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK12 a claim's operands past its slots admitted (the final slot count dropped)",
+      "new": "  if (0 && (ir != cl->n_rd || iw != cl->n_wr)) return dp_fail(c, BCIR_DP_SLOTS);",
+      "old": "  if (ir != cl->n_rd || iw != cl->n_wr) return dp_fail(c, BCIR_DP_SLOTS);",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK13 a dimension taken from a size no shape divides (the quotient truncated)",
+      "new": "  if (!dp_mul(x, y, &b) || !b) return 0;",
+      "old": "  if (!dp_mul(x, y, &b) || !b || a % b) return 0;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK14 a plan whose lifetimes live in the schedule's ticks admitted",
+      "new": "  if (eh.liveness != BCIR_EP_LIVENESS_PHASE && 0) {",
+      "old": "  if (eh.liveness != BCIR_EP_LIVENESS_PHASE) {",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK15 a GEMM name matched by its prefix (train.gemm.alone.nt.pa.acc read as train.gemm.alone.nt)",
+      "new": "          if (m <= n && !memcmp(name, s, m)) {",
+      "old": "          if (m == n && !memcmp(name, s, n)) {",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK16 the dispatch writing the program before every claim was checked",
+      "new": "  for (c.writing = 1; c.writing < 2; c.writing++) {",
+      "old": "  for (c.writing = 0; c.writing < 2; c.writing++) {",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK17 the work short by a word admitted",
+      "new": "  if (work_bytes + 8u < total || capacity < n) return BCIR_DT_CAPACITY;",
+      "old": "  if (work_bytes < total || capacity < n) return BCIR_DT_CAPACITY;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK18 the program short by a record admitted",
+      "new": "  if (work_bytes < total || capacity + 1u < n) return BCIR_DT_CAPACITY;",
+      "old": "  if (work_bytes < total || capacity < n) return BCIR_DT_CAPACITY;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "PK19 a plan header's lifetime count unbounded by its bytes (a work figure of 85 GB)",
+      "new": "  if (st == BCIR_OK && eh.n_lifetimes > plan_len / 34u + 0x7FFFFFFFu) st = BCIR_ERR_TRUNCATED;",
+      "old": "  if (st == BCIR_OK && eh.n_lifetimes > plan_len / 34u) st = BCIR_ERR_TRUNCATED;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK20 a linear's two VJPs lowered to the group entry",
+      "new": "    entry = role == 0u ? (c->provider ? 7u : c->gc) : role == 1u ? 5u : c->gc == 3u ? 6u : 5u;",
+      "old": "    entry = role == 0u ? (c->provider ? 7u : c->gc) : role == 1u ? 4u : c->gc == 3u ? 6u : 5u;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK21 an odd launch's GEMM calls numbered from 1",
+      "new": "    c->index = (size_t)(c->rank & 1u);",
+      "old": "    c->index = 0;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK22 every launch after the first numbered two on",
+      "new": "    c->rank = c->started ? c->rank + 2u : 0u;",
+      "old": "    c->rank = c->started ? c->rank + 1u : 0u;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK23 the micro-batch never advanced (every embed, loss and scatter the first's)",
+      "new": "  if (op == OP_CHECK_L && 0) c->micro++;",
+      "old": "  if (op == OP_CHECK_L) c->micro++;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK24 the bf16 attention's workspace slot left out",
+      "new": "    if (bf && 0) SLOT(8, U_W, SL_WS);",
+      "old": "    if (bf) SLOT(8, U_W, SL_WS);",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK25 the bf16 attention VJP's output gradient taken in place",
+      "new": "      SLOT(3, U_RW, SL_PLAIN); SLOT(4, U_R, SL_PLAIN);",
+      "old": "      SLOT(3, bf ? U_R : U_RW, SL_PLAIN); SLOT(4, U_R, SL_PLAIN);",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK26 the RMSNorm VJP's add and first flags swapped",
+      "new": "    if (op == OP_RMSV_A || op == OP_RMSV_AF) w[2] |= BCIR_TENSOR_RMSB_FIRST;\n    if (op == OP_RMSV_F || op == OP_RMSV_AF) w[2] |= BCIR_TENSOR_RMSB_ADD;",
+      "old": "    if (op == OP_RMSV_A || op == OP_RMSV_AF) w[2] |= BCIR_TENSOR_RMSB_ADD;\n    if (op == OP_RMSV_F || op == OP_RMSV_AF) w[2] |= BCIR_TENSOR_RMSB_FIRST;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK27 the attention's work counted with the VJP's factor and the VJP's with the forward's",
+      "new": "    return dp_mul(w[0] != BCIR_DT_REC_ATTN ? 2u : 4u, w[3], &x) && dp_mul(x, w[5], &x) &&",
+      "old": "    return dp_mul(w[0] == BCIR_DT_REC_ATTN ? 2u : 4u, w[3], &x) && dp_mul(x, w[5], &x) &&",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK28 a weight adjoint's B read transposed",
+      "new": "    w[4] = orient != 1u;",
+      "old": "    w[4] = orient == 0u;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK29 the RMSNorms' eps one ulp off the state's",
+      "new": "  c.eps = bits ^ 1u;",
+      "old": "  c.eps = bits;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK30 the update's reduction chunk not the state's",
+      "new": "  c.chunk = bcir_decoder_reduce_chunk(s->plan.parameters) + 1u;",
+      "old": "  c.chunk = bcir_decoder_reduce_chunk(s->plan.parameters);",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK31 the exponential contract's bit never carried (v1's SiLU and SwiGLU VJP lowered)",
+      "new": "  c.v2 = 0;",
+      "old": "  c.v2 = (s->contract & BCIR_DT_CONTRACT_EXP) != 0;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK32 the reduce contract's bit never carried on the update",
+      "new": "  c.reduce = 0;",
+      "old": "  c.reduce = (s->contract & BCIR_DT_CONTRACT_REDUCE) != 0;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PK33 a provider's GEMMs lowered to BCIR's own entry",
+      "new": "  c.provider = 0;",
+      "old": "  c.provider = s->provider.mm != NULL;",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_the_module_is_lawful_and_states_only_live_reads",
+      "label": "PM1 a write never ends the values it meets (a value read after another overwrote its bytes)",
+      "new": "            for slot, space, offset, nbytes in fresh:\n                pass\n",
+      "old": "            for slot, space, offset, nbytes in fresh:\n                end_meeting(space, offset, nbytes)\n",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PM2 an in-place update ends its own value",
+      "new": "                        end_meeting(space, offset, nbytes)",
+      "old": "                        end_meeting(space, offset, nbytes, keep=(space, offset, nbytes))",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PM3 a linear's two VJPs named a chain",
+      "new": "            \"chain\" if entry == nl.E_PAIR",
+      "old": "            \"pair\" if entry == nl.E_PAIR",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PM4 a GEMM's count its m x n (the depth left out)",
+      "new": "        return d[2] * d[3]",
+      "old": "        return d[2] * d[3] * d[4]",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PM5 the bf16 attention VJP's output gradient stated in place",
+      "new": "        return ((0, R), (1, R), (2, R), (3, RW), (4, R), (5, W), (6, W), (7, W)) + (",
+      "old": "        return ((0, R), (1, R), (2, R), (3, R if bf else RW), (4, R), (5, W), (6, W), (7, W)) + (",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PM6 the scatter's tokens bound as the targets",
+      "new": "                    tokens = (r.kind, slot) in ((nl.EMBED, 0),)",
+      "old": "                    tokens = (r.kind, slot) in ((nl.EMBED, 0), (nl.SCATTER, 0))",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PM7 the micro-batch never advanced (every block's base 0)",
+      "new": "                micro += 0",
+      "old": "                micro += 1",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_the_module_is_lawful_and_states_only_live_reads",
+      "label": "PM8 the parameters, the workspace, the tokens and the targets live only between their touches",
+      "new": "        if rid <= targets_rid and False:",
+      "old": "        if rid <= targets_rid:",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PM9 a value's lifetime never extended past its first touch",
+      "new": "        place[3], place[4] = min(place[3], at), place[4]",
+      "old": "        place[3], place[4] = min(place[3], at), max(place[4], at)",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PM10 an accumulating GEMM's C stated written, not updated",
+      "new": "        return ((0, R), (1, R), (2, W)) + ws",
+      "old": "        return ((0, R), (1, R), (2, RW if r.dims[6] else W)) + ws",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PM11 nt and nn swapped in the GEMM names",
+      "new": "GEMM_ORIENTS = {(0, 1): \"nn\", (0, 0): \"nt\", (1, 0): \"tn\"}",
+      "old": "GEMM_ORIENTS = {(0, 1): \"nt\", (0, 0): \"nn\", (1, 0): \"tn\"}",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_the_vocabulary_and_the_reasons_are_the_cs",
+      "label": "PM12 a reason renamed on one rail (claims)",
+      "new": "    101: \"op\", 102: \"claim\", 103: \"rid\", 104: \"bank\", 105: \"live\", 106: \"slots\", 107: \"run\",",
+      "old": "    101: \"op\", 102: \"claims\", 103: \"rid\", 104: \"bank\", 105: \"live\", 106: \"slots\", 107: \"run\",",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_the_vocabulary_and_the_reasons_are_the_cs",
+      "label": "PM13 the vocabulary's first two names in another order than the C's table",
+      "new": "    \"train.zero\", \"train.scan\", \"train.embed\", \"train.rms\", \"train.rope\", \"train.rope.inverse\",",
+      "old": "    \"train.scan\", \"train.zero\", \"train.embed\", \"train.rms\", \"train.rope\", \"train.rope.inverse\",",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PN1 the binding lends half the work the sizes name",
+      "new": "            work = (ct.c_uint64 * max(1, -(-work_bytes.value // 16)))()",
+      "old": "            work = (ct.c_uint64 * max(1, -(-work_bytes.value // 8)))()",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_lowering_is_lent_an_array_it_can_run",
+      "label": "PN2 the binding returns a refused pack's zeroed program",
+      "new": "            return program\n        raise PackRefused(",
+      "old": "            if rc == 0:\n                return program\n        raise PackRefused(",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_lowering_is_lent_an_array_it_can_run",
+      "label": "PN3 run_pack runs one step whatever it is asked",
+      "new": "        return self.run_program(self.lower_pack(pack, plan), tokens, targets, steps=1,",
+      "old": "        return self.run_program(self.lower_pack(pack, plan), tokens, targets, steps=steps,",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_pack_comparison_sees_each_divergence",
+      "label": "PF1 the comparison reading the lowering's first word only",
+      "new": "    if run.words[:1] != run.pack.words[:1]:",
+      "old": "    if run.words != run.pack.words:",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    },
+    {
+      "expects": "test_the_pack_comparison_sees_each_divergence",
+      "label": "PF2 the comparison never reading the events",
+      "new": "    if run.status:\n        problems.append(f\"stopped with status {run.status}\")\n    if run.state != step.state:",
+      "old": "    if run.status:\n        problems.append(f\"stopped with status {run.status}\")\n    if run.state != step.state or run.events != step.events:",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PF3 the pack runs reading no state case's other choices",
+      "new": "        yield case, {}, step, pack_case(path, case)\n        if i in picked and not i:",
+      "old": "        yield case, {}, step, pack_case(path, case)\n        if i in picked:",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    },
+    {
+      "expects": "test_the_pack_fuzz_seeds_start_inside_the_grammar",
+      "label": "PF5 every pack seed the v1 pack (the other configurations' seeds refused)",
+      "new": "    contract = FUZZ_CONTRACTS[0]\n    return training_pack(",
+      "old": "    contract = FUZZ_CONTRACTS[config & 7]\n    return training_pack(",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    },
+    {
+      "expects": "test_the_pack_fuzz_seeds_start_inside_the_grammar",
+      "label": "PF4 a seed's shape byte naming its steps alone (two steps of two micro-batches spelled 2x1)",
+      "new": "    shape = steps - 1\n    return bytes([config, shape]) + struct.pack(\"<I\", len(pack)) + pack + plan",
+      "old": "    shape = (steps - 1) | (accumulation - 1) << 1\n    return bytes([config, shape]) + struct.pack(\"<I\", len(pack)) + pack + plan",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    }
+  ]
+}

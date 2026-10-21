@@ -25,8 +25,12 @@ The WASM clang->wasm-ld->node path is already execution-validated in ``test_wasm
 resident-compiler path); the stackify ``to_wasm`` TEXT encoder is covered by the differential here.
 """
 
+import functools
+import os
 import random
 import struct
+import subprocess
+import tempfile
 from shutil import which
 
 from bcir.lower.stackify import (
@@ -256,16 +260,42 @@ def build_class(class_name, jvm_program):
     return out
 
 
-def _run_on_jvm(jvm_program):
-    import os
-    import subprocess
-    import tempfile
+# The runner reads the program's stdout whole, so the VM's own output must stay off it. In the quick
+# tier a JDK 21 VM found its perf-data file, /tmp/hsperfdata_<user>/<pid>, locked by another process
+# and wrote "[warning][perf,memops] Cannot use file ... because it is locked by another process" to
+# stdout, ahead of the program's 20.0. Two flags close the two ways in:
+#   -XX:-UsePerfData: the VM keeps no perf-data file at all. Every HotSpot takes it; OpenJ9 ignores
+#   the -XX options it does not know.
+#   -Xlog:disable -Xlog:all=warning:stderr: a JDK 9+ VM's log (unified logging), whose warnings go to
+#   stdout by default, goes to stderr. JDK 8 has no -Xlog and will not start with it (its VM warnings
+#   go to stderr already), so the runner asks the VM first.
+_JAVA = which("java")  # the VM the real-execution checks run on; None is a documented skip
+_JVM_NO_PERF_DATA = ("-XX:-UsePerfData",)
+_JVM_LOG_TO_STDERR = ("-Xlog:disable", "-Xlog:all=warning:stderr")
 
+
+@functools.cache
+def _jvm_flags(java):
+    """The runner's flags for the VM `java`: the logging route only where that VM starts with it."""
+    probe = subprocess.run(
+        [java, *_JVM_NO_PERF_DATA, *_JVM_LOG_TO_STDERR, "-version"], capture_output=True, timeout=60
+    )
+    return _JVM_NO_PERF_DATA + (_JVM_LOG_TO_STDERR if probe.returncode == 0 else ())
+
+
+def _launch_jvm(java, jvm_program, flags, env=None):
+    """Assemble the program into a class and run it on `java` with `flags` (`env`: the VM's)."""
     cls = "BcirStackTest"
-    d = tempfile.mkdtemp()
-    with open(os.path.join(d, cls + ".class"), "wb") as fh:
-        fh.write(build_class(cls, jvm_program))
-    p = subprocess.run(["java", "-cp", d, cls], capture_output=True, text=True, timeout=60)
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, cls + ".class"), "wb") as fh:
+            fh.write(build_class(cls, jvm_program))
+        return subprocess.run(
+            [java, *flags, "-cp", d, cls], capture_output=True, text=True, timeout=60, env=env
+        )
+
+
+def _run_on_jvm(jvm_program, env=None):
+    p = _launch_jvm(_JAVA, jvm_program, _jvm_flags(_JAVA), env)
     if p.returncode != 0:
         raise RuntimeError(f"java exited {p.returncode}: {p.stderr.strip()}")
     return float(p.stdout.strip())
@@ -321,25 +351,28 @@ def test_text_encoders_handle_division():
     assert abs(_interp_wasm(to_wasm(prog)) - 1.5) < 1e-9
 
 
+# (2 + 3) * 4 = 20: the headline program the real-JVM checks run
+_TWENTY = tuple(
+    assign(0, Const(2.0))
+    + assign(1, Const(3.0))
+    + assign(2, Const(4.0))
+    + stackify(BinOp("mul", BinOp("add", Local(0), Local(1)), Local(2)))
+)
+
+
 def test_jvm_stackify_assembles_and_executes_on_real_jvm():
     # H5 honesty capstone: assemble the actual to_jvm() output into a real .class and RUN it on the JVM.
-    if not which("java"):
+    if not _JAVA:
         return  # no JVM toolchain -> clean skip (the differential above still validated the encoder semantics)
-    ops = (
-        assign(0, Const(2.0))
-        + assign(1, Const(3.0))
-        + assign(2, Const(4.0))
-        + stackify(BinOp("mul", BinOp("add", Local(0), Local(1)), Local(2)))
-    )  # (2+3)*4 = 20
-    oracle = _interp_stackops(ops)
+    oracle = _interp_stackops(_TWENTY)
     assert abs(oracle - 20.0) < 1e-9
-    got = _run_on_jvm(to_jvm(ops))
+    got = _run_on_jvm(to_jvm(_TWENTY))
     assert abs(got - oracle) < 1e-4, (got, oracle)
 
 
 def test_jvm_real_execution_over_a_small_fuzz_corpus():
     # the real JVM agrees with the oracle across several distinct expressions (not just the one headline case).
-    if not which("java"):
+    if not _JAVA:
         return  # documented skip without a JVM
     rng = random.Random(0x1A2B)
     for _ in range(6):
@@ -350,6 +383,71 @@ def test_jvm_real_execution_over_a_small_fuzz_corpus():
         oracle = _interp_stackops(prog)
         got = _run_on_jvm(to_jvm(prog))
         assert abs(got - oracle) < 1e-3, (got, oracle, expr, vals)
+
+
+def _ahead_of_the_runner(options):
+    """The environment with `options` in JAVA_TOOL_OPTIONS, which the VM reads before its command line:
+    whatever they ask of the VM, the runner's own flags come after them."""
+    env = dict(os.environ)
+    env["JAVA_TOOL_OPTIONS"] = f"{env.get('JAVA_TOOL_OPTIONS', '')} {options}".strip()
+    return env
+
+
+def test_the_jvm_runner_keeps_the_vms_logging_off_stdout():
+    """A JDK 9+ VM logs to stdout unless told otherwise, and the runner reads stdout whole. Logging set
+    to stdout ahead of the runner's flags puts the VM's line before the program's 20.0 in a bare launch
+    (the control: the provocation fires) and nothing in the runner's. The bare launch, not the runner's
+    probe, decides whether the VM logs at all: a witness that asked the code it tests would skip
+    itself the moment that code stopped routing the log."""
+    if not _JAVA:
+        return  # documented skip without a JVM
+    program = to_jvm(_TWENTY)
+    env = _ahead_of_the_runner("-Xlog:gc=info:stdout")
+    bare = _launch_jvm(_JAVA, program, (), env)
+    if bare.returncode != 0 and "Unrecognized option: -Xlog" in bare.stderr:
+        return  # JDK 8: no unified logging, and its VM warnings go to stderr already
+    lines = bare.stdout.splitlines()
+    assert bare.returncode == 0 and len(lines) > 1 and lines[-1] == "20.0", bare
+    assert _run_on_jvm(program, env) == 20.0
+
+
+def test_the_jvm_runner_keeps_no_perf_data_file():
+    """The perf-data file is where the warning that broke the runner came from, and the runner's VM keeps
+    none. Asked ahead of the runner's flags to save its perf data at exit, the VM saves a file in a bare
+    launch (the control) and none in the runner's."""
+    if not _JAVA:
+        return  # documented skip without a JVM
+    program = to_jvm(_TWENTY)
+    with tempfile.TemporaryDirectory() as tmp:
+        saved = os.path.join(tmp, "perf")
+        if any(c.isspace() for c in saved):
+            return  # JAVA_TOOL_OPTIONS splits on whitespace, and JDK 8 reads no quotes in it
+        env = _ahead_of_the_runner(f"-XX:+PerfDataSaveToFile -XX:PerfDataSaveFile={saved}")
+        bare = _launch_jvm(_JAVA, program, (), env)
+        assert bare.returncode == 0 and os.path.isfile(saved), (bare.returncode, bare.stderr)
+        os.remove(saved)
+        assert _run_on_jvm(program, env) == 20.0
+        assert not os.path.exists(saved), "the runner's VM kept perf data"
+
+
+def test_the_jvm_runner_asks_the_vm_before_routing_its_logging():
+    """JDK 8 will not start with -Xlog. The runner's probe gives the logging route only to a VM that
+    starts with it: a stand-in VM that refuses -Xlog gets the perf-data flag alone, one that takes it
+    gets both."""
+    if os.name != "posix":
+        return  # the stand-in VMs are shell scripts
+    refuses = '#!/bin/sh\nfor a in "$@"; do case "$a" in -Xlog*) exit 1 ;; esac; done\nexit 0\n'
+    takes = "#!/bin/sh\nexit 0\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, script, expect in (
+            ("jdk8", refuses, _JVM_NO_PERF_DATA),
+            ("jdk9", takes, _JVM_NO_PERF_DATA + _JVM_LOG_TO_STDERR),
+        ):
+            vm = os.path.join(tmp, name)
+            with open(vm, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(script)
+            os.chmod(vm, 0o755)
+            assert _jvm_flags(vm) == expect, (name, _jvm_flags(vm))
 
 
 def _build_il(cil_program, class_name="BcirStackTest"):

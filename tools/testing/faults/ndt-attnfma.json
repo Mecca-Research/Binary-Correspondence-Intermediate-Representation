@@ -102,8 +102,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AF14 the trainer's backward runs the v1 products under the attention bit",
-      "new": "  else bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s)&~BCIR_TENSOR_ATTENTION_FUSED,g.b,g.t,g.h,g.kh,",
-      "old": "  else bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,",
+      "new": "  bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s)&~BCIR_TENSOR_ATTENTION_FUSED,g.b,g.t,g.h,g.kh,",
+      "old": "  bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
@@ -116,15 +116,15 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AF16 the trainer's forward runs the v1 products under the attention bit",
-      "new": "  else bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s)&~BCIR_TENSOR_ATTENTION_FUSED,b,t,h,kh,d,q,k,v,p,y,bad);",
-      "old": "  else bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s),b,t,h,kh,d,q,k,v,p,y,bad);",
+      "new": "  bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s)&~BCIR_TENSOR_ATTENTION_FUSED,b,t,h,kh,d,q,k,v,p,y,bad);",
+      "old": "  bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s),b,t,h,kh,d,q,k,v,p,y,bad);",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AF17 the trainer's backward runs the fused products without the attention bit",
-      "new": "  else bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s)|BCIR_TENSOR_ATTENTION_FUSED,g.b,g.t,g.h,g.kh,",
-      "old": "  else bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,",
+      "new": "  bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s)|BCIR_TENSOR_ATTENTION_FUSED,g.b,g.t,g.h,g.kh,",
+      "old": "  bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,",
       "path": "runtime/c/bcir_decoder_train.c"
     }
   ]

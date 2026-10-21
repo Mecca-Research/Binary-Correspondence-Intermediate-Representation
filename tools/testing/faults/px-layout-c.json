@@ -1,0 +1,160 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_layouts:_CC",
+    "bcir.tests.test_native_layouts:test_the_panel_writers_keep_the_stated_panels",
+    "bcir.tests.test_native_layouts:test_the_bf16_packs_keep_the_stated_packs_and_their_tails",
+    "bcir.tests.test_native_layouts:test_the_avx512_tile_and_transpose_keep_their_layouts"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_bf16_packs_keep_the_stated_packs_and_their_tails",
+      "label": "LS4 the A pack's grid depth-major (a 16-row block's depth tiles not consecutive)",
+      "new": "        (\"depth\", \"row\"),\n        ((\"row\", rows), (\"depth\", depth)),",
+      "old": "        (\"row\", \"depth\"),\n        ((\"row\", rows), (\"depth\", depth)),",
+      "path": "bcir/hosted/models/native_layouts.py"
+    },
+    {
+      "expects": "test_the_bf16_packs_keep_the_stated_packs_and_their_tails",
+      "label": "LS5 the B pack's grid depth-major",
+      "new": "        (\"depth\", \"col\"),\n        ((\"depth\", depth), (\"col\", cols)),",
+      "old": "        (\"col\", \"depth\"),\n        ((\"depth\", depth), (\"col\", cols)),",
+      "path": "bcir/hosted/models/native_layouts.py"
+    },
+    {
+      "expects": "test_the_bf16_packs_keep_the_stated_packs_and_their_tails",
+      "label": "LS6 the A pack's rows padded to 16, not to 32",
+      "new": "        ((\"row\", _blocks(rows, 16)), (\"depth\", _blocks(depth, 32))),",
+      "old": "        ((\"row\", 2 * _blocks(rows, 32)), (\"depth\", _blocks(depth, 32))),",
+      "path": "bcir/hosted/models/native_layouts.py"
+    },
+    {
+      "expects": "test_the_bf16_packs_keep_the_stated_packs_and_their_tails",
+      "label": "LS7 the B pack's padded columns stated as the operand's",
+      "new": "        ((\"depth\", depth), (\"col\", 32 * _blocks(cols, 32))),\n    )\n\n\ndef a_panel",
+      "old": "        ((\"depth\", depth), (\"col\", cols)),\n    )\n\n\ndef a_panel",
+      "path": "bcir/hosted/models/native_layouts.py"
+    },
+    {
+      "expects": "test_the_panel_writers_keep_the_stated_panels",
+      "label": "LS8 the A^T panel stated as the A panel",
+      "new": "    return a_pack(rows, cols)",
+      "old": "    return a_pack(cols, rows)",
+      "path": "bcir/hosted/models/native_layouts.py"
+    },
+    {
+      "expects": "test_the_panel_writers_keep_the_stated_panels",
+      "label": "LS9 the second panel's conversion with the B coordinates swapped",
+      "new": "        return second.offset(depth=x[\"depth\"], col=x[\"row\"])",
+      "old": "        return second.offset(depth=x[\"row\"], col=x[\"depth\"])",
+      "path": "bcir/hosted/models/native_layouts.py"
+    },
+    {
+      "expects": "test_the_avx512_tile_and_transpose_keep_their_layouts",
+      "label": "LS10 the AVX-512 B tile's lanes reversed",
+      "new": "                                  {(\"offset\", b): [(\"col\", 3 - b)] for b in range(4)})  # fmt: skip",
+      "old": "                                  {(\"offset\", b): [(\"col\", b)] for b in range(4)})  # fmt: skip",
+      "path": "bcir/hosted/models/native_layouts.py"
+    },
+    {
+      "expects": "test_the_avx512_tile_and_transpose_keep_their_layouts",
+      "label": "LS11 the AVX-512 B tile's columns past the block not padding",
+      "new": "                       ((\"depth\", depths), (\"col\", 48)))  # fmt: skip",
+      "old": "                       ((\"depth\", depths), (\"col\", cols)))  # fmt: skip",
+      "path": "bcir/hosted/models/native_layouts.py"
+    },
+    {
+      "expects": "test_the_bf16_packs_keep_the_stated_packs_and_their_tails",
+      "label": "LC1 the portable A pack's tiles depth-major",
+      "new": "        t[l*16+r]=i<x->m && d<x->k ?",
+      "old": "        t[r*32+l]=i<x->m && d<x->k ?",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_bf16_packs_keep_the_stated_packs_and_their_tails",
+      "label": "LC2 the portable B pack's depth pairs not interleaved",
+      "new": "      t[p*32+jj+16*e]=j<x->n && d<x->k ?",
+      "old": "      t[p*32+2*jj+e]=j<x->n && d<x->k ?",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_bf16_packs_keep_the_stated_packs_and_their_tails",
+      "label": "LC3 the portable A pack's tail left as the workspace held it",
+      "new": "          bf16_of(x->alpha*x->a[x->ta ? d*x->lda+i : i*x->lda+d]) : t[r*32+l];",
+      "old": "          bf16_of(x->alpha*x->a[x->ta ? d*x->lda+i : i*x->lda+d]) : (uint16_t)0;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_bf16_packs_keep_the_stated_packs_and_their_tails",
+      "label": "LC4 the AVX-512 B pack's depth pairs not interleaved",
+      "new": "      _mm512_storeu_si512(t,CVT(ve,vo)); \\",
+      "old": "      _mm512_storeu_si512(t,PAIRS(CVT(ve,vo))); \\",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_bf16_packs_keep_the_stated_packs_and_their_tails",
+      "label": "LC5 the AVX-512 transposed A pack's depth halves swapped",
+      "new": "    kb512_transpose16(st,16,tr+256,16); kb512_transpose16(st+256,16,tr,16); \\",
+      "old": "    kb512_transpose16(st,16,tr,16); kb512_transpose16(st+256,16,tr+256,16); \\",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_panel_writers_keep_the_stated_panels",
+      "label": "LC6 the A panel's tiles depth-major (every writer instance)",
+      "new": "  return ((i/16)*(depth/32)+l/32)*BF16_TILE+(l%32)*16+i%16;",
+      "old": "  return ((i/16)*(depth/32)+l/32)*BF16_TILE+(i%16)*32+l%32;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_panel_writers_keep_the_stated_panels",
+      "label": "LC7 the portable second panel's depth pairs swapped",
+      "new": "    if (j->at) j->pb[k][panel_a_at(j->r,l,r0+rr)]=h; else j->pb[k][panel_b_at(j->r,r0+(rr^1),l)]=h;",
+      "old": "    if (j->at) j->pb[k][panel_a_at(j->r,l,r0+rr)]=h; else j->pb[k][panel_b_at(j->r,r0+rr,l)]=h;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_panel_writers_keep_the_stated_panels",
+      "label": "LC8 the AVX-512 second panel's pairs taken from the odd row first",
+      "new": "      const uint16_t *e=j->pa[k]+panel_a_at(j->c,r0+2*p+1,16*jb),*o=j->pa[k]+panel_a_at(j->c,r0+2*p,16*jb);",
+      "old": "      const uint16_t *e=j->pa[k]+panel_a_at(j->c,r0+2*p,16*jb),*o=j->pa[k]+panel_a_at(j->c,r0+2*p+1,16*jb);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_avx512_tile_and_transpose_keep_their_layouts",
+      "label": "LC9 the B tile's columns past the block not zeroed (B transposed)",
+      "new": "    for (j=nj+1;j<48;j++) for (l=0;l<nl;l++) bt[l*48+j]=0.0f;",
+      "old": "    for (j=nj;j<48;j++) for (l=0;l<nl;l++) bt[l*48+j]=0.0f;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_avx512_tile_and_transpose_keep_their_layouts",
+      "label": "LC10 the B tile's ragged columns one depth short (B transposed)",
+      "new": "      for (l=j<jw ? lw : 0;l+1<nl;l++) bt[l*48+j]=column[l];",
+      "old": "      for (l=j<jw ? lw : 0;l<nl;l++) bt[l*48+j]=column[l];",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_avx512_tile_and_transpose_keep_their_layouts",
+      "label": "LC11 the B tile's third vector one column short (B as stored)",
+      "new": "    __mmask16 m2=(__mmask16)(nj>33 ? (1u<<(nj-33))-1u : 0u);\n    for (l=0;l<nl;l++) {\n      const float *row=x->b+(lb+l)*x->ldb+jb;",
+      "old": "    __mmask16 m2=(__mmask16)(nj>32 ? (1u<<(nj-32))-1u : 0u);\n    for (l=0;l<nl;l++) {\n      const float *row=x->b+(lb+l)*x->ldb+jb;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_avx512_tile_and_transpose_keep_their_layouts",
+      "label": "LC12 the transpose's quad shuffle immediates swapped",
+      "new": "    u[4*q]=_mm512_shuffle_ps(v[4*q],v[4*q+2],0xEE); u[4*q+1]=_mm512_shuffle_ps(v[4*q],v[4*q+2],0x44);",
+      "old": "    u[4*q]=_mm512_shuffle_ps(v[4*q],v[4*q+2],0x44); u[4*q+1]=_mm512_shuffle_ps(v[4*q],v[4*q+2],0xEE);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_avx512_tile_and_transpose_keep_their_layouts",
+      "label": "LC13 the transpose's last lane exchange immediates swapped",
+      "new": "  for (q=0;q<8;q++) { u[q]=_mm512_shuffle_f32x4(v[q],v[q+8],0xDD); u[q+8]=_mm512_shuffle_f32x4(v[q],v[q+8],0x88); }",
+      "old": "  for (q=0;q<8;q++) { u[q]=_mm512_shuffle_f32x4(v[q],v[q+8],0x88); u[q+8]=_mm512_shuffle_f32x4(v[q],v[q+8],0xDD); }",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

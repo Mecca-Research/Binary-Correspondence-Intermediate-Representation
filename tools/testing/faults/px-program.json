@@ -1,0 +1,275 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_run_program:_CC",
+    "bcir.tests.test_native_run_program:test_a_failing_run_stops_where_the_step_stops",
+    "bcir.tests.test_native_run_program:test_a_program_trains_the_c_steps_bits",
+    "bcir.tests.test_native_run_program:test_a_refused_program_writes_nothing",
+    "bcir.tests.test_native_run_program:test_the_fuzz_seeds_start_inside_the_grammar",
+    "bcir.tests.test_native_run_program:test_the_program_model_refuses_what_it_cannot_state",
+    "bcir.tests.test_native_run_program:test_the_record_format_is_the_headers"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG1 an operand's bound one float past its space",
+      "new": "  if (r[1]%4 || r[2]>c->len[r[0]] || r[1]>c->len[r[0]]-r[2]+4) return 0;",
+      "old": "  if (r[1]%4 || r[2]>c->len[r[0]] || r[1]>c->len[r[0]]-r[2]) return 0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG2 an operand at any byte offset (the float alignment unchecked)",
+      "new": "  if (r[2]>c->len[r[0]] || r[1]>c->len[r[0]]-r[2]) return 0;",
+      "old": "  if (r[1]%4 || r[2]>c->len[r[0]] || r[1]>c->len[r[0]]-r[2]) return 0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG3 a written operand may meet another (the kernels' disjointness unchecked)",
+      "new": "    if (0 && ((a->use|b->use)&PX_W) && !(a->chain && b->chain)) return 0;",
+      "old": "    if (((a->use|b->use)&PX_W) && !(a->chain && b->chain)) return 0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG4 two calls of a job may share a panel",
+      "new": "    if (a->use==PX_PANEL && b->use==PX_PANEL && 0) return 0;",
+      "old": "    if (a->use==PX_PANEL && b->use==PX_PANEL) return 0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG5 the weights read before they are known (FACTS-RUN's rule dropped)",
+      "new": "      for (q=0;q<n;q++) if (ops[q].space==9) return 0;",
+      "old": "      for (q=0;q<n;q++) if (ops[q].space==1) return 0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG6 a micro-batch of two loss records",
+      "new": "        loss=1;",
+      "old": "        if (loss) return 0;\n        loss=1;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG7 an update after fewer micro-batches than the accumulation",
+      "new": "      if (!px_update(c,w) || open || micro>accumulation || updates==steps) return 0;",
+      "old": "      if (!px_update(c,w) || open || micro!=accumulation || updates==steps) return 0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG8 a program of fewer steps than the run's",
+      "new": "  return !open && !micro;",
+      "old": "  return !open && !micro && updates==steps;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG9 a call alone under another contract's entry",
+      "new": "  case 0: case 1: case 2: case 3: if (job!=1 || provider) return 0; break;",
+      "old": "  case 0: case 1: case 2: case 3: if (job!=1 || e!=c->gc || provider) return 0; break;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG10 a provider's call without the provider",
+      "new": "  case 7: if (job!=1) return 0; break;",
+      "old": "  case 7: if (job!=1 || !provider) return 0; break;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG11 a chain's calls into two C",
+      "new": "      else if (r[5]!=chain[5] || r[6]!=chain[6]) return 0;",
+      "old": "      else if (r[5]!=chain[5] || r[6]!=chain[6] || r[17]!=chain[17] || r[18]!=chain[18]) return 0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG12 any span of the workspace taken as the workspace",
+      "new": "  return r[0]==7 && c->len[7];",
+      "old": "  return r[0]==7 && !r[1] && c->len[7] && r[2]==c->len[7];",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG13 a kernel may write the weights",
+      "new": "#define PX_OUT ((1u<<1)|(1u<<2)|(1u<<5)|(1u<<6)) /* and writes gradients, activations, scratch */",
+      "old": "#define PX_OUT ((1u<<2)|(1u<<5)|(1u<<6))         /* and writes gradients, activations, scratch */",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG14 an RMSNorm of another eps",
+      "new": "    return !f && x && px_rest(w,3,3) && px_slot(c,w,0,PX_IN,x,PX_R,ops,n) &&",
+      "old": "    return !f && w[5]==c->eps && x && px_rest(w,3,3) && px_slot(c,w,0,PX_IN,x,PX_R,ops,n) &&",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG15 BCIR's SiLU on a state whose provider replaces it",
+      "new": "    return f==c->v2 && x && px_rest(w,1,3) &&",
+      "old": "    return f==c->v2 && !s->provider.silu && x && px_rest(w,1,3) &&",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "PG16 every micro-batch reads the first one's tokens",
+      "new": "      size_t off=(batch%1u)*c->g.n;",
+      "old": "      size_t off=batch*c->g.n;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "PG17 a micro-batch's mean enters the step's loss whole, not its share",
+      "new": "        part=ce/(double)c->g.n; loss+=part; ce=0.0; bad=0; batch++;",
+      "old": "        part=ce/(double)c->g.n; loss+=part/(double)accumulation; ce=0.0; bad=0; batch++;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "PG18 the update's gradient unscaled by the accumulation",
+      "new": "      rc=update_with(s,&opt,1.0,&norm,1,1); if (rc) return rc;\n      events[step].loss=loss;",
+      "old": "      rc=update_with(s,&opt,1.0/(double)accumulation,&norm,1,1); if (rc) return rc;\n      events[step].loss=loss;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_failing_run_stops_where_the_step_stops",
+      "label": "PG19 a parameter arena's scan reports to the check instead of failing the run",
+      "new": "    if (w[11]<1) return BCIR_DT_NUMERIC;",
+      "old": "    if (w[11]<5) return BCIR_DT_NUMERIC;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_failing_run_stops_where_the_step_stops",
+      "label": "PG20 a product that refused its workspace never reported",
+      "new": "      if (!ran && 0) return BCIR_DT_CAPACITY;  /* a product that ran nowhere */",
+      "old": "      if (!ran) return BCIR_DT_CAPACITY;  /* a product that ran nowhere */",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "PG21 the update's commit not counted as knowing the weights (step 2's scan required)",
+      "new": "      micro=0; updates++; known=0; i++; continue;",
+      "old": "      micro=0; updates++; known=1; i++; continue;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "PG22 a GEMM job's calls gathered across launches",
+      "new": "        w[job*BCIR_DT_RECORD_WORDS+1]>=w[1]) job++;",
+      "old": "        w[job*BCIR_DT_RECORD_WORDS+1]==w[1]) job++;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "PG23 a step's event counts the run's steps, not the state's",
+      "new": "      events[step].loss=loss; events[step].grad_norm=norm; events[step].step=step;",
+      "old": "      events[step].loss=loss; events[step].grad_norm=norm; events[step].step=s->step;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_failing_run_stops_where_the_step_stops",
+      "label": "PG24 the completed count one behind",
+      "new": "      *completed=step++; loss=0.0;",
+      "old": "      *completed=++step; loss=0.0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "PG25 a program inside the state admitted",
+      "new": "  if (records && (!program || (uintptr_t)program%_Alignof(uint64_t) ||",
+      "old": "  if (records && (!program || (uintptr_t)program%_Alignof(uint64_t) ||\n      !external_in(s,1,program,bytes) ||",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "PM8 the program's records one word short",
+      "new": "            words += [0] * (RECORD_WORDS - 4 - DIMS - 3 * REFS)",
+      "old": "            words += [0] * (RECORD_WORDS - 3 - DIMS - 3 * REFS)",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_failing_run_stops_where_the_step_stops",
+      "label": "PM9 the forward's check left out (the backward runs on activations not finite)",
+      "new": "        pass",
+      "old": "        emit(_record(CHECK, CHECK_FORWARD))",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_failing_run_stops_where_the_step_stops",
+      "label": "PM10 the backward's refusal check left out (the gradient's verdict first)",
+      "new": "        pass",
+      "old": "        emit(_record(CHECK, CHECK_RAN))",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "PM11 the update's pass traced without the reduce contract's flag",
+      "new": "            out.append(Launch((replace(record, kind=PASS, flags=0),)))",
+      "old": "            out.append(Launch((replace(record, kind=PASS),)))",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "PM12 the facts choice ignored (every scan the run's facts leave out still left out)",
+      "new": "            if facts is None:  # every scan, whatever the run knows",
+      "old": "            if not facts:  # every scan, whatever the run knows",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "PM13 the group choice leaves the panels' VJP group whole",
+      "new": "                if True:\n                    gemm_job(cx, cw, pre)",
+      "old": "                if chosen[site] == \"group\":\n                    gemm_job(cx, cw, pre)",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "PM14 the binding lends the program one record short",
+      "new": "        records = len(code) // RECORD_WORDS - 1",
+      "old": "        records = len(code) // RECORD_WORDS",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_a_failing_run_stops_where_the_step_stops",
+      "label": "PM15 a stopped program run reports no completed step",
+      "new": "                f\"native program run stopped after {done.value} complete steps (status {rc})\",\n                rc,\n                0,",
+      "old": "                f\"native program run stopped after {done.value} complete steps (status {rc})\",\n                rc,\n                done.value,",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_fuzz_seeds_start_inside_the_grammar",
+      "label": "PM16 every fuzz seed the v1 program (the bf16 configurations' seeds refused)",
+      "new": "    contract = FUZZ_CONTRACTS[0]\n    return program_words(step_program(",
+      "old": "    contract = FUZZ_CONTRACTS[config & 7]\n    return program_words(step_program(",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    },
+    {
+      "expects": "test_the_record_format_is_the_headers",
+      "label": "PM17 the loss check's flag other than the header's",
+      "new": "CHECK_FORWARD, CHECK_RAN, CHECK_LOSS = 1, 2, 8",
+      "old": "CHECK_FORWARD, CHECK_RAN, CHECK_LOSS = 1, 2, 4",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_the_program_model_refuses_what_it_cannot_state",
+      "label": "PM18 the binding takes a bool for a word (True lent as 1)",
+      "new": "            if not set(map(type, words)) - {int, bool}:",
+      "old": "            if not set(map(type, words)) - {int}:",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_program_model_refuses_what_it_cannot_state",
+      "label": "PM19 the binding lends any array of 8-byte items as it is (a float or signed array's bits taken for words)",
+      "new": "        if isinstance(program, array) and program.itemsize == 8:",
+      "old": "        if isinstance(program, array) and program.typecode == \"Q\" and program.itemsize == 8:",
+      "path": "bcir/hosted/models/native.py"
+    }
+  ]
+}

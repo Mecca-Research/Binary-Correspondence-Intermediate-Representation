@@ -1,0 +1,41 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_place:_CC",
+    "bcir.tests.test_native_place:test_the_fuzz_harnesses_hold_their_seeds_to_their_verdicts",
+    "bcir.tests.test_native_run_program:test_the_fuzz_seeds_start_inside_the_grammar",
+    "bcir.tests.test_native_run_pack:test_the_pack_fuzz_seeds_start_inside_the_grammar"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_fuzz_harnesses_hold_their_seeds_to_their_verdicts",
+      "label": "PH1 the program harness's room the plan's activations (its placed seeds refused)",
+      "new": "  g_arena[4].n = g_plan.activations;",
+      "old": "  g_arena[4].n = g_plan.activations + g_plan.scratch;",
+      "path": "runtime/c/fuzz_decoder_train.c"
+    },
+    {
+      "expects": "test_the_fuzz_harnesses_hold_their_seeds_to_their_verdicts",
+      "label": "PH2 the program harness lends a recompute run the whole room (its near misses admitted)",
+      "new": "  acts = g_arena[4].n;",
+      "old": "  acts = bcir_decoder_activation_count(&g_plan, recompute);",
+      "path": "runtime/c/fuzz_decoder_train.c"
+    },
+    {
+      "expects": "test_the_fuzz_harnesses_hold_their_seeds_to_their_verdicts",
+      "label": "PH3 the pack harness's room the plan's activations (its placed packs refused)",
+      "new": "  g_arena[4].n = g_plan.activations;",
+      "old": "  g_arena[4].n = g_plan.activations + g_plan.scratch;",
+      "path": "runtime/c/fuzz_decoder_pack.c"
+    },
+    {
+      "expects": "test_the_fuzz_seeds_start_inside_the_grammar",
+      "label": "PC5 the fuzz seeds' placed arena capped at the plan's activations (a placement's scratch values past it)",
+      "new": "    acts = fuzz_reach(words, 5, plan.activations)",
+      "old": "    acts = fuzz_reach(words, 5, plan.activations + plan.scratch)",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    }
+  ]
+}

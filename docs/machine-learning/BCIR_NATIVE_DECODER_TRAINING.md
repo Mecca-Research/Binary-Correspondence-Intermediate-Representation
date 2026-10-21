@@ -15,7 +15,7 @@ executes in C. PyTorch remains an independent optional reference.
 | Decoder | Embedding scatter-add backward, both residual paths, both per-layer norms, gate/up/down projections, final norm, tied or untied vocabulary head, mean token cross-entropy; the loss's rows, the gamma VJPs' row sums and the embedding scatter run on the pool in the serial order (NDT-REDUCE: rows whose terms the caller adds in row order, column ranges whose sums run over the rows in row order), so every loss and state is the serial one at every thread count under every contract |
 | Optimizer | AdamW moments, constant-time bias powers, decoupled decay, global L2 clipping, mean micro-batch accumulation, per-update learning rates. The atomic preflight is skipped only when the magnitudes the first pass records prove it would admit every element; the passes carry the same AVX2/AVX-512 variants and stay bit-identical The first pass and the preflight run on the pool one task per chunk of `bcir_decoder_reduce_chunk` elements (1,024 doubled until at most 1,024 chunks), their verdicts and maxima exact whatever the partition; the clipping norm is the contract's -- the one index-order chain in double, or under the `reduce` contract (NDT-REDUCE) the chunks' sums added in chunk order from zero, a declared reduction whose shape is a function of the parameter count alone; `bcir_decoder_gradient_norm` reports the square the update takes its root of |
 | Threads | A deterministic pool in memory the caller provides (`bcir_tensor_pool`: `size`/`init`/`stop`, no allocation in the unit; pthreads on POSIX, Win32 threads on Windows, one thread elsewhere; ABI 2 names it in the state, NDT-THREADS). The GEMM is partitioned over (column block, 64-row range) so every output element keeps its depth order; attention over (batch, query head) forward and (batch, KV head) backward with the query heads of one KV head in order, so the shared `dk`/`dv` accumulate as the reference does; SiLU, the SwiGLU VJP, the residual add and gate multiply, RMSNorm, RoPE and the AdamW commit over fixed chunks of elements, rows and positions. The loss, the embedding scatter, the gamma VJP's row sum and the update's norm pass stay serial (index-order reductions). The state after any number of steps is bit-identical at every thread count and to the one-thread trainer; a provider's GEMM or SiLU is threaded as the provider is, the pool runs the rest |
-| Buffer plan | Checked element/byte products, exact sizes for the selected retained-cache algorithm, caller-owned disjoint arenas, one adjoint workspace reused across all layers; no allocation in C |
+| Buffer plan | Checked element/byte products, exact sizes for the selected retained-cache algorithm -- or, under a recompute set (REMAT, state ABI 5), for the kept layers' caches in layer order and one slot the recomputed layers share (`bcir_decoder_activation_count`) -- caller-owned disjoint arenas, one adjoint workspace reused across all layers; the bf16 workspace's exact need, the SwiGLU panels' need and the floor (WS-PLAN: `bcir_decoder_workspace_need`, `_panels`, `_floor`), any size from the floor up one state; `memory_plan` chooses a recompute set and a workspace inside a budget (MEM-PLAN); no allocation in C |
 | Checkpoint | Atomic JSON + little-endian FP32 weights/moments; SHA-256 covers configuration, counter, bias powers and payload; bounded strict resume, no pickle |
 | Deployment | Existing strict HF tensor ingest performs projection transposes and RoPE permutation; `decoder_weights()` feeds the existing Q8 writer and decoder |
 
@@ -64,8 +64,9 @@ fields. Checkpoint hashes detect corruption and do not authenticate an artifact.
 `NativeDecoder(..., contract="fused")` trains under the fused GEMM contract (v2; `"v1"` by default),
 `contract="exp"` under the BCIR exponential, `"fused+exp"` under both, `"kblock"` under the blocked
 fused GEMM contract (v3), `"bf16"` and `"bf16+exp"` under the bf16 GEMM contract (NDT-BF16: the trainer
-lends its GEMMs `trainer.workspace_bytes` of packing workspace, counted in `max_memory_bytes`, and
-admits no CBLAS provider), and any of these with `+reduce` (`"reduce"` alone for v1) under the reduce
+lends its GEMMs `trainer.workspace_bytes` of packing workspace -- the step's exact need unless
+`workspace_bytes=` names any size from its floor up, one state either way (WS-PLAN, below) -- counted
+in `max_memory_bytes`, and admits no CBLAS provider), and any of these with `+reduce` (`"reduce"` alone for v1) under the reduce
 contract, whose clipping norm is the fixed-chunk sum the update's one pooled pass computes
 (NDT-REDUCE), and any of those with `+attn` (`"attn"` alone for v1) under the fused attention
 contract, every multiply-add of the attention's products one `fmaf` (ATTN-FMA), or, under a bf16
@@ -80,6 +81,14 @@ before measuring; the pool keeps running every kernel but the GEMM. Missing prov
 fallback. The C ABI accepts native GEMM and SiLU function pointers: C++ belongs in a
 framework/vendor/SYCL adapter when that integration requires it. The core contains
 no C++ objects, accelerator discovery or framework runtime.
+
+`NativeDecoder(..., recompute=r)` has the backward recompute the layers the bit set `r` names (bit
+l for layer l) instead of keeping their forward caches (REMAT); `workspace_bytes=` lends a bf16
+contract's GEMMs any workspace from the floor up (WS-PLAN); and `recompute="auto"` chooses both
+inside `max_memory_bytes` (MEM-PLAN: `memory_plan`, below). Whatever is chosen, the state is the
+all-kept trainer's at the exact need, bit for bit: the choice moves memory and time, never a value.
+`trainer.plan_memory` reports the arenas the choice lends (a `MemoryPlan`); a checkpoint does not
+record the set, so `resume(..., recompute=...)` chooses again.
 
 ## The train rail (TRAIN-RAIL)
 
@@ -131,15 +140,20 @@ multiply-add of the contractions every implementation performs: each linear's pr
 VJPs, and the causal attention's six contractions. Normalization, softmax, RoPE, SwiGLU, the loss
 and the optimizer are not counted, so the count bounds the step's work from below.
 
-Four rows of the frozen GEM+ harness (`python tools/perf/gemplus_baseline.py --compare --group
+The `train` rows of the frozen GEM+ harness (`python tools/perf/gemplus_baseline.py --compare --group
 train`, graded by [`native_decoder_fixtures`](../../bcir/tests/native_decoder_fixtures.py)) hold
 the C rail to it:
 
 | Row | Kind | What it holds | Reading |
 |---|---|---|---|
 | `train.plan.mismatch` | exact | the program's arena sums against `bcir_decoder_make_plan` over a six-spec corpus (tied and untied, MHA and GQA, context one, tile-crossing widths) | 0 of 36 (spec, arena) pairs; the parent checked the 24 parameter pairs only |
+| `train.plan.executed.mismatch` | exact | the launches one `bcir_decoder_run_accum` call issues -- recorded by a build defining `BCIR_DT_TRACE_PROBE` -- against the launches [`native_launch.run_launches`](../../bcir/hosted/models/native_launch.py) states from the program's buffers and the call's decisions: every call to the tensor unit, a provider or the pool, the job it shares, its entry, shapes, scalars and the arena span of each operand, over 221 calls (six contracts, three recompute sets, one and two steps of one and two micro-batches, the panels at three workspace tiers and two thread counts, a provider's GEMM and SiLU, an update whose bound fails) | 0 of 221 (2026-10-19, PX-1); the parent held no call's launches to a plan |
+| `train.plan.program.mismatch` | exact | runs of [`bcir_decoder_run_program`](../../runtime/c/bcir_decoder_train.h) -- the step from a launch program, checked whole before anything runs -- on the programs [`native_launch.step_program`](../../bcir/hosted/models/native_launch.py) states: each call of the trace corpus from the program that takes the C step's own decisions, and its 27 state cases under each of five other choices (the linears ungrouped, a linear's VJPs unpaired, no panels, every scan made, every layer recomputed), against the C step on the same case; a run counts when its state or events differ in a bit, it stops short, or its trace (PX-1's probe) is not its program | 0 of 356 (2026-10-20, PX-2a); the parent ran no step from a program |
+| `train.plan.choose.mismatch` | exact | the trace corpus's 27 state cases, each under every kind of choice site switched alone to each alternative the C step does not take and three seeded draws of an alternative a site ([`native_launch.step_program(sites=...)`](../../bcir/hosted/models/native_launch.py)), run from their programs on the trace build; a run counts when it stops, traces other launches than the chosen program states, or leaves another state or events than the C step on the same case | 0 of 351 (2026-10-20, PX-3; 283 of the runs a program of its own); the parent stated no choice a site |
+| `train.plan.pack.mismatch` | exact | the same 356 runs, each from its pack: the program stated as a module of its calls and values ([`native_pack.training_pack`](../../bcir/hosted/models/native_pack.py)), planned by K_BCIR, hydrated by GEM into a StreamPack and placed by its `ExecutionPlanV1`, lowered by [`bcir_decoder_lower_pack`](../../runtime/c/bcir_decoder_pack.h) -- the two verified by their own laws, the plan's alias law among them, then each claim GEM's executor dispatches lowered to the record that runs it -- and run; a run counts when the lowering is refused or is not the program's words, the run stops, or its state or events differ in a bit from the C step's on the same case | 0 of 356 (2026-10-20, PX-2b); the parent ran no step from a StreamPack |
+| `train.plan.place.mismatch` | exact | the same 356 runs, each from its pack with every activation and scratch value placed by its lifetime in one bank ([`native_pack.place_by_lifetime`](../../bcir/hosted/models/native_pack.py): GEM+'s static memory planner over the pack's own values) and run on a trainer lending exactly the placement's arena (`NativeDecoder(transient=...)`); a run counts when the lowering is refused or is not the program's words at the placed places (`native_pack.placed_words`, the relocation's oracle), the placement lies below G26's bound (two live values sharing a byte), the run stops, or its state or events differ in a bit from the C step's on the same case; each layout's gap above the bound is read beside the row, never counted | 0 of 356 (2026-10-20, PX-4): 254 placements at the bound, each proved, and 102 32 or 52 bytes above it; the parent placed no value by its lifetime |
 | `train.mm.mismatch` | exact | `bcir_tensor_mm` against an independent binary32 emulation of its contract, bit for bit, on 20 cases (every transpose pair, the tiles' edges) | 0 of 20, and 0 on the parent kernel: the contract both keep |
-| `train.memory.transient` | exact | the bytes the C plan reserves for activations and workspace over G26's concurrent-live bound on the same values | 1.326x: 999,424 bytes held over a 753,664-byte bound at the bench shape |
+| `train.memory.transient` | exact | the bytes a trainer lends for the step's activations and workspace over G26's concurrent-live bound on the values they hold: since PX-4 the arena the step's pack is placed in, every transient value by its lifetime ([`native_pack.place_by_lifetime`](../../bcir/hosted/models/native_pack.py)); before it, the C plan's fixed spans | 1.0: 754,176 bytes placed over a 754,176-byte bound at the bench shape (2026-10-20, PX-4); the C plan's spans held 999,424 bytes over the step program's 753,664 (1.326x) |
 | `train.mm.fused.mismatch` | exact | `bcir_tensor_mm_fused` against an exact rational emulation of the fused contract rounded once per term, bit for bit, on the same 20 cases | 0 of 20 (2026-10-12, NDT-FMA) |
 | `train.mm.kblock.mismatch` | exact | `bcir_tensor_mm_kblock` against an exact rational emulation of the blocked fused contract (v3) on 40 cases (the 20 fused cases and 20 deeper ones crossing the split rule's three cases, an inexact alpha, beta 1), plus the depths where the C split rule and the Python one disagree | 0 of 40 (2026-10-12, NDT-KBLOCK) |
 | `train.mm.bf16.mismatch` | exact | `bcir_tensor_mm_bf16_variant` on every instance the host runs (portable, AVX-512, AMX where admitted) against an exact rational emulation of the bf16 contract -- operands rounded to bf16, per 32-term block two lanes from +0.0, each term's fma rounded once and flushed when tiny, then `c = daz(c) + (E + O)` -- on 28 cases (the 20 fused cases and 8 across one, two and five blocks with an inexact alpha and beta 1) | 0 of 28 (2026-10-17, NDT-BF16) |
@@ -157,10 +171,82 @@ roofline are not applied to the timed loop, because the bench step's working set
 cache-resident from one step to the next and first-touch traffic is not the loop's.
 `TrainingStepProgram.roofline` takes declared peaks and memory levels for a bound on a machine.
 
-The memory row records headroom, not a change: GEM+'s incumbent layout portfolio lays the same
-values out at the bound, so a plan that places the transient values by lifetime instead of one
-span per buffer would hold 245,760 bytes (25%) less at the bench shape. That changes the C ABI's fixed
-spans, so it is its own slice (NDT-MEM, open).
+The memory row reads the placed arena since PX-4 (NDT-MEM). The step's pack states every transient
+value with its lifetime, so `native_pack.place_by_lifetime` lays them out in one bank with GEM+'s
+static memory planner -- the values split where none is live across a phase, each part laid out
+by `exact_layout`, the parts sharing addresses -- and at the bench shape the extent is G26's bound
+on the same values, 754,176 bytes: a proved optimum (TMSAO-1), and 245,248 bytes (24.5%) under the
+C plan's 999,424. The bound is 512 bytes above the step program's because the pack makes the loss
+rows' terms, which the C keeps at the head of the scratch, a value of their own. A trainer lends
+only that arena (`NativeDecoder(transient=...)`): `bcir_decoder_run_program` holds every operand
+inside the lengths a caller lends and the run's arguments apart from them, while the fixed step
+still needs the plan's spans; `train.plan.place.mismatch` holds every placed run to the C step's
+bits.
+
+The executed row closes the other half of the program's claim. The decisions a trainer takes --
+which linears share a pool job, the entry each GEMM takes under the contract, the panels the SwiGLU
+block writes instead of the GEMMs packing them, the recompute set's shared slot and re-run
+forwards, the scans a step's facts leave out -- each landed bit-identical, so the state cannot show
+whether the C runs them. The trace shows it: each of the eight C faults of
+[`px-trace.json`](../../tools/testing/faults/px-trace.json) trains the clean library's bits while
+its trace leaves the plan. The probe costs nothing in the library: it exists only in a build that
+defines `BCIR_DT_TRACE_PROBE` (`native_decoder_fixtures.trace_library`), whose every dispatch is
+the library's call after its record -- the witness holds that build's state to the library's on
+27 decision sets -- and a record past the words the caller lent is counted, never lost silently.
+`native_decoder_fixtures.trace_case` runs one call and returns the planned launches, the trace,
+the dropped count and the state's digest; `launch_mismatches` names each difference.
+
+The program row runs the step from its plan. `bcir_decoder_run_program` takes one call's launches
+as data -- PX-1's records, with the host's checks (the forward's, the products', each micro-batch's
+loss) and the update in place -- checks the whole program before anything runs, and runs each
+record as the step runs that call, through the step's own helpers; `NativeDecoder.run_program` is
+its binding, and `NativeRunStopped` carries a stopped run's status and the steps it completed. A
+program is refused, with nothing written, for a record outside its grammar; an operand outside the
+spaces its use admits, outside its space, of another size or off its alignment, or meeting an
+operand its job writes; a GEMM job or flags the state's kernels do not take; the weights read
+before a scan of all of them or an update has made them known finite; a run of another shape than
+the call's (one loss a micro-batch, an update after exactly `accumulation` of them, `steps`
+updates); or a program lying inside the state. What the check cannot refuse -- operands placed
+where the step's gradient is not computed -- the row holds. Every planner choice trains the C
+step's bits, so the decisions are held to the kernels from the other side as well: a program is
+the step, choice by choice. [`fuzz_decoder_train.c`](../../runtime/c/fuzz_decoder_train.c) runs
+programs nobody planned, seeded inside the grammar and next to its refusals
+(`native_decoder_fixtures.fuzz_seeds`): a refused program writes nothing, an admitted one runs to
+the same bits every time, and nothing is read or written out of bounds.
+Running from a program costs nothing this host resolves: on the 9.84M decoder, the fixed sequence
+and the program take turns on one trainer and read x1.0035 apart at four threads under bf16 (95%
+interval 0.977-1.030), inside the width of the A/A control's interval, and the check walks a step's
+223 records in about 12 us ([measurements](../research/measurements/2026-10-20/px2/README.json)).
+
+The pack row runs the same step from BCIR's own artifacts. [`native_pack.training_pack`](../../bcir/hosted/models/native_pack.py)
+states a program as a module -- one claim a kernel call, one phase a launch, the resources the
+program's values (a write of an activation or scratch span a new value that ends the values it
+meets, a read the span's live value) -- which K_BCIR plans, GEM hydrates into a StreamPack, and the
+plan's `ExecutionPlanV1` places, every value at its bank, offset, size and phases.
+[`bcir_decoder_lower_pack`](../../runtime/c/bcir_decoder_pack.h) takes the two and the state and
+nothing else: the two are verified by their own laws in one walk of the plan (the alias law among
+them: no two lifetimes of one bank live at once on overlapping bytes), then each claim
+`bcir_sp_execute` dispatches is lowered to the record that runs it -- its name from a closed
+vocabulary, every dimension and flag from the state, every operand's place from its value's
+lifetime, live at the claim's phase -- and a refused pack writes nothing. `NativeDecoder.lower_pack`
+returns the `array('Q')` that `run_program` runs as it is, and `run_pack` is the two. Another legal
+placement -- every transient elsewhere -- lowers to the same program at its places and trains the
+same bits. Lowering a pack in every call costs nothing this host resolves -- x1.0195 (95% interval
+0.997-1.042) under bf16 at four threads and x1.0037 under binary32, beside A/A controls of x0.9979 and
+x0.9923 -- a ten-step lowering takes 47-55 ms, about half of it the plan's alias law, the one check left
+quadratic, and a pack lowered once costs nothing per call
+([measurements](../research/measurements/2026-10-20/px2b/README.json)).
+
+The choose row holds the planner's choices per site. Every choice the step's planner made was one
+boolean over the whole step; [`native_launch.choice_sites`](../../bcir/hosted/models/native_launch.py)
+makes each a site -- a layer's projections' grouping, its SwiGLU panels, its VJPs' grouping, and the
+head's VJP -- and `step_program(sites=...)` states any mix of their alternatives, each training the
+same bits. A build defining `BCIR_DT_TIME_PROBE` clocks every job of a program run in place, and
+[`native_choose`](../../bcir/hosted/models/native_choose.py) measures every alternative on one
+trainer in rotated rounds into a frozen `ChoiceTable` and chooses only alternatives whose whole
+interval lies below the default's time; the chosen program is planned and verified as a pack like
+any other. On this host every alternative reads slower at its sites under bf16 and none either way under binary32, so the choice is the defaults; the program the measurement prices slowest runs x1.064 of the default end to end under bf16
+([measurements](../research/measurements/2026-10-20/px3/README.json)).
 
 ## Evidence and scope
 
@@ -528,17 +614,37 @@ the bf16 attention's held-out model is PyTorch bf16's -- test cross-entropy +0.0
 (95% interval -0.00157 to +0.00169), inside the ±0.01 margin fixed before the runs -- at 2.315 times
 its tokens a second (2.194-2.444), in under half its memory (496-534 MB against 1,128-1,151).
 
+Since GEO-3 (2026-10-19) the trainer decides, inside a memory budget, which layers keep their
+forward caches and how much packing workspace the bf16 GEMMs are lent (the report's §42; the
+opportunity Codex's geometric-head research ends on, read in
+[BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md](../research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md)).
+The bf16 workspace's need is exact -- the step's GEMM groups counted by the tensor unit's own
+packing rule, operands two calls read alike packed once and the SwiGLU panels not at all: 4,522,048
+bytes for the 9.84M decoder, where the parent admitted 11,534,592 -- and any size from the floor up
+trains the same state, a product that cannot run failing its step with `BCIR_DT_CAPACITY` before
+anything is committed. A recompute set (state ABI 5) has the backward re-run the named layers'
+forwards instead of keeping their caches, the recomputed layers sharing one cache slot: every layer
+recomputed takes the 9.84M decoder's arenas from 351.4 MB to 220.3 MB under binary32.
+`recompute="auto"` walks the plans in the order the measured frontier prices them: each set with the
+workspace at the need and then at the panels' need (a tier whose cost the rounds did not resolve),
+and the floor, 32-75% of a step, only after every set. Every plan trains the all-kept state at the
+need, bit for bit. Codex's attention model so fits its 32 MiB envelope at its full micro-batch under every
+contract, for 16-21% of an update; two accumulated half micro-batches fit in about as much memory
+for 1-16%, and train another state.
+
 Timing output records shape, parameter count, provider, optimizer scope and reference
 mode. Timings are observations, never CI thresholds. A CPU micro-decoder win over
 eager PyTorch is not evidence against compiled PyTorch, large transformers,
 accelerators or distributed training.
 
-The plan retains every layer's forward cache and reuses backward scratch; it is not
-a globally optimal liveness solver. The backward consumes the cache it recomputes each step:
+By default the plan retains every layer's forward cache and reuses backward scratch; under a
+recompute set the named layers share one cache slot and the backward recomputes each from its
+residual input (REMAT, above). Neither is a globally optimal liveness solver. The backward consumes
+the cache it recomputes each step:
 after `bcir_decoder_loss_backward` each layer's probability span holds its score adjoint (under the
 bf16 attention, the probabilities as the forward wrote them: its score adjoints live in its workspace).
 Attention storage is quadratic in context length.
-Flash/blocked attention, activation recomputation, mixed precision beyond the bf16 GEMM and attention contracts,
+Flash/blocked attention, recomputation finer than a whole layer, mixed precision beyond the bf16 GEMM and attention contracts,
 accelerator
 backward kernels, distributed collectives and device-resident checkpoints remain
 separate work. The direct loop does not issue StreamPack claims for every tensor;

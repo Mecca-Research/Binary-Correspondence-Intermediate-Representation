@@ -130,8 +130,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NT18 the grouped forward drops its last linear (v and up never computed, at every thread count: the reference catches it)",
-      "new": "  gemm_group(s,NULL,0,c,count-1);",
-      "old": "  gemm_group(s,NULL,0,c,count);",
+      "new": "  return gemm_group(s,NULL,0,c,count-1);",
+      "old": "  return gemm_group(s,NULL,0,c,count);",
       "path": "runtime/c/bcir_decoder_train.c"
     }
   ]

@@ -142,7 +142,11 @@ def test_native_c_harness_c11_and_c23():
         # and C23 once more with the writers' verdict bytes bounded at two tasks, so every scan
         # entry takes the scan after its job (NDT-SCAN-W), and once capped at AVX2, so a host whose
         # widest variant is AVX-512 runs the update's AVX2 pairs and commit too (NDT-UPDATE); every
-        # build with the commit's shared division exposed to the harness's check of it
+        # build with the commit's shared division exposed to the harness's check of it, and with
+        # PX-1's launch trace compiled in but never begun, PX-5's layout probes compiled in but
+        # never called, and PX-3's job clock compiled in but never begun -- so the probes build
+        # warning-free on every compiler and standard, and the harness's every check holds with
+        # them in (inert)
         builds = (
             ("c11", [], ""),
             ("c2x", [], ""),
@@ -159,6 +163,9 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_ATTENTION_PROBE",
                 "-DBCIR_DT_PANELS_PROBE",
                 "-DBCIR_DT_SCAN_PROBE",
+                "-DBCIR_DT_TRACE_PROBE",
+                "-DBCIR_DT_LAYOUT_PROBE",
+                "-DBCIR_DT_TIME_PROBE",
                 *options,
                 "-O2",
                 "-Wall",
@@ -184,8 +191,9 @@ def test_native_c_harness_c11_and_c23():
             # workspace probe (NDT-BF16); the fused attention contract and its trainer (ATTN-FMA);
             # the bf16 panels' writers and grouped GEMMs, and their trainer (BF16-PANELS); a run's
             # steps against one-step calls, the weight scans counted (FACTS-RUN); the bf16
-            # attention against its reference, and its trainer (BF16-ATTN)
-            assert result.stdout.count("PASS") == 27
+            # attention against its reference, and its trainer (BF16-ATTN); the workspace from
+            # its floor up and the recompute sets (GEO-3)
+            assert result.stdout.count("PASS") == 29
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -213,6 +221,9 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_ATTENTION_PROBE",
                 "-DBCIR_DT_PANELS_PROBE",
                 "-DBCIR_DT_SCAN_PROBE",
+                "-DBCIR_DT_TRACE_PROBE",
+                "-DBCIR_DT_LAYOUT_PROBE",
+                "-DBCIR_DT_TIME_PROBE",
             ]
             cmd += ["-I", str(c)]
             cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]
@@ -222,7 +233,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 27
+            assert result.stdout.count("PASS") == 29
             break
 
 
@@ -577,6 +588,211 @@ def test_the_bf16_contract_lends_its_workspace_and_admits_no_provider():
             trainer.close()
 
 
+def test_recompute_and_the_workspace_keep_every_state():
+    """GEO-3 (REMAT, WS-PLAN): a trainer that recomputes layers in the backward, or lends its bf16
+    GEMMs any workspace from the floor up, trains the state the all-kept trainer at the exact need
+    trains, bit for bit -- the four-layer bench under v1, the blocked contract with the fused
+    attention and bf16 with the bf16 attention, at one thread and four -- in the arena the C's
+    count names (the program's own sum: train.plan.mismatch's REMAT half), the logits its last
+    floats; a set past the last layer and a workspace below the floor are refused as the C refuses
+    them."""
+    import ctypes as ct
+
+    from bcir.hosted.models.native import NativeDecoder
+    from bcir.hosted.models.native_program import training_step_program
+    from bcir.tests import native_decoder_fixtures as nf
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.build_library(tmp)
+        if path is None:
+            return  # no C compiler: a skip, never a pass
+        lib = ct.CDLL(str(Path(path).resolve()))
+        assert nf.recompute_plan_mismatch(lib) == 0
+        spec, batch, time_ = nf.REMAT_BENCH
+        # the program's counted work grows by each re-run forward, the down projection excepted:
+        # the q, k, v, o, gate and up products and the attention's two causal contractions
+        n, d, f, h = batch * time_, spec.d_model, spec.d_ff, spec.n_heads
+        k, hd = spec.kv_heads * (d // h), d // h
+        layer = (
+            2 * n * d * (d + 2 * k + d)
+            + 2 * 2 * n * d * f
+            + 4 * batch * h * hd * (time_ * (time_ + 1) // 2)
+        )
+        base_work = training_step_program(spec, batch, time_).work()
+        for recompute in nf.REMAT_SETS:
+            named = bin(recompute).count("1")
+            redo = training_step_program(spec, batch, time_, recompute).work() - base_work
+            assert redo == max(named - 1, 0) * layer, (recompute, redo, layer)
+        kw = {"batch_size": batch, "context_length": time_}
+        swept = 0
+        for contract in ("v1", "kblock+exp+reduce+attn", "bf16+exp+reduce+attn",
+                         "bf16+exp+reduce+attnbf16"):  # fmt: skip
+            base = nf.thread_states(path, nf.REMAT_BENCH, counts=(1, 4), contract=contract)
+            assert len(set(base.values())) == 1, (contract, base)
+            for recompute in nf.REMAT_SETS[1:]:
+                got = nf.thread_states(path, nf.REMAT_BENCH, counts=(1, 4), contract=contract,
+                                       recompute=recompute)  # fmt: skip
+                assert got == base, (contract, recompute, got, base)
+            plain = NativeDecoder(path, spec, contract=contract, threads=4, **kw)
+            try:
+                if plain.workspace_bytes:  # the bf16 workspace's tiers at four workers, one state
+                    # (under the bf16 attention its four regions can be the floor and the need)
+                    tiers = plain.plan_memory
+                    assert 0 < tiers.workspace_panels < tiers.workspace_need
+                    assert tiers.workspace_floor <= tiers.workspace_need
+                    sizes = {
+                        tiers.workspace_need - 1,
+                        tiers.workspace_panels,
+                        tiers.workspace_floor,
+                    }
+                    for size in sorted(z for z in sizes if z >= tiers.workspace_floor):
+                        swept += 1
+                        got = nf.thread_states(path, nf.REMAT_BENCH, counts=(4,),
+                                               contract=contract, recompute=0xF,
+                                               workspace_bytes=size)  # fmt: skip
+                        assert got == {4: base[1]}, (contract, size, got, base)
+                    for bad in (tiers.workspace_floor - 1, 0):  # four workers' floor
+                        try:
+                            NativeDecoder(path, spec, contract=contract, workspace_bytes=bad,
+                                          threads=4, **kw)  # fmt: skip
+                        except ValueError as e:
+                            assert "below the floor" in str(e)
+                        else:
+                            raise AssertionError(f"a workspace of {bad} admitted")
+                else:
+                    try:
+                        NativeDecoder(path, spec, contract=contract, workspace_bytes=64, **kw)
+                    except ValueError as e:
+                        assert "bf16" in str(e)
+                    else:
+                        raise AssertionError("a workspace lent without a bf16 contract")
+                x = [(5 * i + 2) % spec.vocab_size for i in range(batch * time_)]
+                logits = plain.forward(x)
+                assert plain.activation_count == plain.state.plan.activations  # none recomputed
+                for recompute in nf.REMAT_SETS[1:]:
+                    other = NativeDecoder(path, spec, contract=contract, recompute=recompute,
+                                          threads=4, **kw)  # fmt: skip
+                    try:
+                        program = training_step_program(spec, batch, time_, recompute)
+                        count = program.arena_elements()["activations"]
+                        assert other.activation_count == count, (recompute, count)
+                        freed = (plain.activation_count - count) * 4
+                        assert other.memory_bytes == plain.memory_bytes - freed
+                        assert other.forward(x) == logits, recompute
+                    finally:
+                        other.close()
+            finally:
+                plain.close()
+        assert swept >= 3, swept  # the bf16 contract's three tiers at least: never vacuous
+        for bad in (1 << spec.n_layers, -1, 2**64, "all"):
+            try:
+                NativeDecoder(path, spec, recompute=bad, **kw)
+            except ValueError as e:
+                assert "recompute" in str(e)
+            else:
+                raise AssertionError(f"recompute set {bad!r} admitted")
+
+
+def test_the_memory_plan_fits_its_budget_and_keeps_the_state():
+    """GEO-3 (MEM-PLAN): `memory_plan` chooses, within a budget, the fewest recomputed layers,
+    each with the workspace at the step's need and then at the SwiGLU panels' need, and the floor
+    only after every set (the frontier's prices: the panels' tier about free, the floor dearest);
+    every choice is the C's to admit (the arena its count, the workspace at least its floor),
+    fits the budget, and the trainer it makes (recompute="auto") trains the unconstrained
+    trainer's state, bit for bit. Below the least plan the budget is refused, naming the least.
+    Under the fused attention the three tiers are distinct, so the whole order is seen; under the
+    bf16 attention at four workers its regions are both the need and the floor, and the panels'
+    tier, below the floor, is never chosen."""
+    import ctypes as ct
+
+    from bcir.hosted.models.native import NativeAdamW, NativeDecoder, memory_plan
+    from bcir.tests import native_decoder_fixtures as nf
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.build_library(tmp)
+        if path is None:
+            return  # no C compiler: a skip, never a pass
+        spec, batch, time_ = nf.REMAT_BENCH
+        kw = {"batch_size": batch, "context_length": time_, "threads": 4}
+        x = [(5 * i + 2) % spec.vocab_size for i in range(2 * batch * time_)]
+        y = [(5 * i + 3) % spec.vocab_size for i in range(2 * batch * time_)]
+        orders = 0
+        for contract in ("bf16+exp+reduce+attn", "bf16+exp+reduce+attnbf16"):
+            full = NativeDecoder(path, spec, contract=contract, **kw)
+            try:
+                lib, plan, tiers = full.lib, full.state.plan, full.plan_memory
+                top = full.memory_bytes
+                assert memory_plan(lib, plan, contract, 4, top).recompute == 0
+                # the plans the order passes through, every one admitted and inside its budget
+                seen = []
+                budget = top
+                while True:
+                    try:
+                        chosen = memory_plan(lib, plan, contract, 4, budget)
+                    except ValueError as e:
+                        assert "the least is" in str(e)
+                        break
+                    assert chosen.total_bytes <= budget
+                    assert chosen.workspace_bytes >= chosen.workspace_floor
+                    assert chosen.activation_count == lib.bcir_decoder_activation_count(
+                        ct.byref(plan), chosen.recompute
+                    )
+                    seen.append((chosen.workspace_bytes, chosen.recompute))
+                    budget = chosen.total_bytes - 1
+                need, panels = tiers.workspace_need, tiers.workspace_panels
+                floor = tiers.workspace_floor
+                sets = [0] + [(1 << r) - 1 for r in range(2, spec.n_layers + 1)]
+                # the budget a recomputed pair fills at the need; a layer's cache outweighs the
+                # whole workspace, so the walk meets every (set, tier) pair the order names
+                fill = memory_plan(lib, plan, contract, 4, None, recompute=0b11).total_bytes
+                assert top - fill > need, (top, fill, need)
+                if need > panels > floor:
+                    orders += 1  # three tiers: the order between them is the test's to see
+                    # each set at the need and then at the panels' need, the floor after them all
+                    expect = [(w, r) for r in sets for w in (need, panels)] + [(floor, sets[-1])]
+                else:  # the bf16 attention's regions at four workers: the need, and the floor
+                    assert need == floor > panels
+                    expect = [(need, r) for r in sets]
+                assert seen == expect, seen
+                # the auto trainer at the budget a recomputed pair fills: the full state
+                pair = memory_plan(lib, plan, contract, 4, fill)
+                auto = NativeDecoder(path, spec, contract=contract, recompute="auto",
+                                     max_memory_bytes=fill, **kw)  # fmt: skip
+                try:
+                    assert (auto.recompute, auto.workspace_bytes) == (
+                        pair.recompute, pair.workspace_bytes)  # fmt: skip
+                    assert (auto.recompute, auto.workspace_bytes) == (0b11, need)
+                    assert auto.memory_bytes <= fill
+                    assert auto.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)) == full.run(
+                        x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)
+                    )
+                    assert nf.state_digest(auto) == nf.state_digest(full)
+                finally:
+                    auto.close()
+                try:
+                    NativeDecoder(path, spec, contract=contract, recompute="auto",
+                                  max_memory_bytes=budget, **kw)  # fmt: skip
+                except ValueError as e:
+                    assert "the least is" in str(e)
+                else:
+                    raise AssertionError("a budget below the least plan admitted")
+                # a set or a workspace outside its C type is refused, never wrapped into another
+                # by ctypes (2^64 would reach the C as the empty set, -1 as every layer)
+                bad = ({"recompute": 1 << 64}, {"recompute": -1}, {"recompute": True},
+                       {"recompute": 0, "workspace_bytes": 1 << 64},
+                       {"recompute": 0, "workspace_bytes": -1})  # fmt: skip
+                for kwargs in bad:
+                    try:
+                        memory_plan(lib, plan, contract, 4, None, **kwargs)
+                    except ValueError:
+                        pass
+                    else:
+                        raise AssertionError(f"memory_plan admitted {kwargs}")
+            finally:
+                full.close()
+        assert orders == 1, orders  # the fused attention's three tiers: the order is never vacuous
+
+
 def test_the_bf16_panels_keep_every_state():
     """BF16-PANELS: under a bf16 contract the trainer writes the SwiGLU block's outputs -- the
     hidden activation, the gate and up adjoints -- as the bf16 GEMMs' panels where their GEMMs
@@ -745,14 +961,14 @@ def test_the_bf16_attention_is_a_contract_of_its_own():
             assert seen() == (forward, bf16 if "attnbf16" in contract else 0), contract
         assert states["bf16+exp+attnbf16"] != states["bf16+exp"], states
         assert states["bf16+exp+attnbf16"] != states["bf16+attnbf16"], states
-        lib.bcir_tensor_attention_bf16_workspace.restype = ct.c_size_t
-        lib.bcir_tensor_attention_bf16_workspace.argtypes = [ct.c_size_t] * 5
-        # the workspace the larger of the GEMM groups' packs and the attention's, the unit's own
-        # count: at the bench's 40 tokens whichever, at 96 the attention's, so its count decides
+        pooled = lib.bcir_tensor_attention_bf16_pool_workspace
+        pooled.restype, pooled.argtypes = ct.c_size_t, [ct.c_size_t] * 5 + [ct.c_uint]
+        # the workspace the larger of the GEMM groups' packs and the attention's regions for the
+        # trainer's four workers (WS-PLAN), the unit's own counts: at the bench's 40 tokens
+        # whichever, at 96 the attention's, so its count decides
         for t in (time_, 96):
-            alone = lib.bcir_tensor_attention_bf16_workspace(batch, t, spec.n_heads, spec.n_kv_heads,
-                                                             spec.d_model // spec.n_heads)  # fmt: skip
-            kw = {"batch_size": batch, "context_length": t, "threads": 2}
+            alone = pooled(batch, t, spec.n_heads, spec.n_kv_heads, spec.d_model // spec.n_heads, 4)
+            kw = {"batch_size": batch, "context_length": t, "threads": 4}
             plain = NativeDecoder(path, spec, contract="bf16+exp", **kw)
             att = NativeDecoder(path, spec, contract="bf16+exp+attnbf16", **kw)
             sizes = (t, alone, plain.workspace_bytes, att.workspace_bytes)
@@ -776,10 +992,19 @@ def test_the_bf16_attention_is_a_contract_of_its_own():
             y = [(3 * i + 2) % spec.vocab_size for i in range(batch * 96 * 2)]
             att.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3))
             att.save(Path(tmp) / "attnbf16.bcirdt")
-            back = NativeDecoder.resume(path, Path(tmp) / "attnbf16.bcirdt", threads=4)
+            back = NativeDecoder.resume(path, Path(tmp) / "attnbf16.bcirdt", threads=2)
             try:
                 assert (back.contract, back.state.contract) == ("bf16+exp+attnbf16", 82)
-                assert back.workspace_bytes == att.workspace_bytes
+                # two workers' regions are fewer than the GEMMs' packs: a smaller workspace, the
+                # same state
+                two = pooled(
+                    batch, 96, spec.n_heads, spec.n_kv_heads, spec.d_model // spec.n_heads, 2
+                )
+                assert two < plain.workspace_bytes < att.workspace_bytes, (
+                    two,
+                    plain.workspace_bytes,
+                )
+                assert back.workspace_bytes == plain.workspace_bytes
                 assert nf.state_digest(back) == nf.state_digest(att)
                 assert att.run(x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)) == back.run(
                     x, y, steps=2, optimizer=NativeAdamW(lr=2e-3)
@@ -1071,10 +1296,12 @@ def test_the_step_floor_is_measured_beside_the_step():
 
 
 def test_the_harness_rows_are_the_programs_numbers():
-    """`train.memory.transient`'s frozen baseline is the bench program's own ratio, and every
-    row of the harness's `train` group is one the fixtures measure -- the four NDT-GEM rows, and
-    TRAIN-RAIL's corpus row -- so a change to the program, the C plan or the corpus recipe
-    cannot leave the harness quoting a stale number."""
+    """`train.memory.transient`'s frozen baseline is the bench program's own ratio and its reading
+    the placed pack's (PX-4), and every row of the harness's `train` group is one the fixtures
+    measure -- the four NDT-GEM rows, TRAIN-RAIL's corpus row, and the PX rows over the trace
+    corpus (the launches, the programs, the choices, the packs, the placed packs) -- so a change
+    to the program, the C plan, the placement or the corpus recipe cannot leave the harness
+    quoting a stale number."""
     import sys
 
     from bcir.tests import native_decoder_fixtures as nf
@@ -1089,7 +1316,34 @@ def test_the_harness_rows_are_the_programs_numbers():
                          "train.exp.mismatch", "train.exp.ulp.max",
                          "train.mm.kblock.mismatch", "train.mm.provider.unsound",
                          "train.mm.provider.differences", "train.norm.reduce.mismatch",
-                         "train.mm.bf16.mismatch"}  # fmt: skip
+                         "train.mm.bf16.mismatch", "train.plan.remat.mismatch",
+                         "train.plan.executed.mismatch", "train.plan.program.mismatch",
+                         "train.plan.pack.mismatch", "train.plan.place.mismatch",
+                         "train.plan.choose.mismatch"}  # fmt: skip
+    remat = rows["train.plan.remat.mismatch"]
+    assert remat.kind == "exact" and remat.bound == 0 and remat.baseline == 0
+    assert remat.what.startswith("(spec, recompute set) pairs") and remat.slice_owner == "GEO-3"
+    executed, calls = rows["train.plan.executed.mismatch"], len(nf.trace_corpus())
+    assert executed.kind == "exact" and executed.bound == 0 and executed.baseline == calls
+    assert executed.what.startswith(f"of the {calls} calls") and executed.slice_owner == "PX-1"
+    program, runs = rows["train.plan.program.mismatch"], nf.program_run_count()
+    assert program.kind == "exact" and program.bound == 0 and program.baseline == runs
+    assert program.what.startswith(f"of the {runs} program runs") and program.slice_owner == "PX-2"
+    assert f"the {calls} cases" in program.what, "the row names the trace corpus it runs"
+    # PX-3: the state cases again, under every kind of choice site switched alone and seeded mixes
+    choose, chosen = rows["train.plan.choose.mismatch"], nf.choose_run_count()
+    states = len(nf.state_cases(nf.trace_corpus()))
+    assert choose.kind == "exact" and choose.bound == 0 and choose.baseline == chosen
+    assert choose.what.startswith(f"of the {chosen} choice runs") and choose.slice_owner == "PX-3"
+    assert f"the {states} state cases" in choose.what, "the row names the cases it runs"
+    # PX-2b: the same runs, each from its pack -- the program row's corpus, one carrier more
+    pack = rows["train.plan.pack.mismatch"]
+    assert pack.kind == "exact" and pack.bound == 0 and pack.baseline == runs
+    assert pack.what.startswith(f"of the {runs} pack runs") and pack.slice_owner == "PX-2b"
+    # PX-4: the same runs again, every transient value placed by its lifetime
+    place = rows["train.plan.place.mismatch"]
+    assert place.kind == "exact" and place.bound == 0 and place.baseline == runs
+    assert place.what.startswith(f"of the {runs} placed pack runs") and place.slice_owner == "PX-4"
     bf16 = rows["train.mm.bf16.mismatch"]
     assert bf16.kind == "exact" and bf16.bound == 0 and bf16.baseline == 0
     assert (
@@ -1122,6 +1376,11 @@ def test_the_harness_rows_are_the_programs_numbers():
     ratio, held, bound, incumbent = nf.transient_ratio()
     assert rows["train.memory.transient"].baseline == ratio == held / bound
     assert (held, bound, incumbent) == (999_424, 753_664, 753_664)
+    # PX-4: the row reads the placed pack -- its arena at the bound on the values it holds
+    placed, extent, floor, optimal = nf.placed_transient()
+    assert (placed, extent, floor, optimal) == (1.0, 754_176, 754_176, True)
+    assert rows["train.memory.transient"].bound == placed
+    assert "754,176 / 754,176" in rows["train.memory.transient"].what
     assert rows["train.mm.mismatch"].what.startswith(f"of {len(nf.MM_CASES)} GEMM cases")
     pairs = len(nf.PLAN_CORPUS) * 2  # the parent stated activations and scratch only in C
     assert rows["train.plan.mismatch"].baseline == pairs

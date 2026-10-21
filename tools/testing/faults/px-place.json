@@ -1,0 +1,152 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_place:_CC",
+    "bcir.tests.test_native_place:test_the_placement_is_lawful_and_at_its_bound",
+    "bcir.tests.test_native_place:test_the_parts_are_laid_out_apart",
+    "bcir.tests.test_native_place:test_the_bench_row_reads_the_placed_arena",
+    "bcir.tests.test_native_place:test_the_place_comparison_sees_each_divergence",
+    "bcir.tests.test_native_place:test_a_placed_trainer_runs_only_what_it_holds",
+    "bcir.tests.test_native_place:test_the_arguments_lie_outside_the_lent_arenas",
+    "bcir.tests.test_native_run_pack:test_the_pack_fuzz_seeds_start_inside_the_grammar",
+    "bcir.tests.test_native_run_program:test_the_fuzz_seeds_start_inside_the_grammar",
+    "bcir.tests.test_native_run_pack:test_the_placement_is_the_plans"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_placed_trainer_runs_only_what_it_holds",
+      "label": "PL2 a program's activation space the plan's span, not the lent length (a short arena run)",
+      "new": "  c->base[5]=(unsigned char *)s->activations; c->len[5]=transient_bytes(s,0,0);",
+      "old": "  c->base[5]=(unsigned char *)s->activations; c->len[5]=transient_bytes(s,1,0);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_arguments_lie_outside_the_lent_arenas",
+      "label": "PL3 the arguments held apart from the plan's span, not the lent arena",
+      "new": "    !overlap(p,bytes,s->activations,transient_bytes(s,0,0)) &&",
+      "old": "    !overlap(p,bytes,s->activations,transient_bytes(s,placed,0)) &&",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_placed_trainer_runs_only_what_it_holds",
+      "label": "PL4 the fixed step admits a placed arena",
+      "new": "static int valid(bcir_decoder_state *s) { return valid_with(s,1); }",
+      "old": "static int valid(bcir_decoder_state *s) { return valid_with(s,0); }",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_placed_trainer_runs_only_what_it_holds",
+      "label": "PL6 the program's update checks the state on the fixed step's spans (a placed run refused)",
+      "new": "      rc=update_with(s,&opt,1.0/(double)accumulation,&norm,1,0); if (rc) return rc;",
+      "old": "      rc=update_with(s,&opt,1.0/(double)accumulation,&norm,1,1); if (rc) return rc;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_placed_trainer_runs_only_what_it_holds",
+      "label": "PL5 a lent length past the address space not refused",
+      "new": "    if (len[i]>(UINTPTR_MAX-(uintptr_t)ptr[i])/sizeof(float) && i<4) return BCIR_DT_CAPACITY;",
+      "old": "    if (len[i]>(UINTPTR_MAX-(uintptr_t)ptr[i])/sizeof(float)) return BCIR_DT_CAPACITY;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_placement_is_lawful_and_at_its_bound",
+      "label": "PA1 a value's last phase not held (half-open ticks one short)",
+      "new": "        (LayoutItem(p.rid, p.size, alignment, p.first, p.last)",
+      "old": "        (LayoutItem(p.rid, p.size, alignment, p.first, p.last + 1)",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_the_parts_are_laid_out_apart",
+      "label": "PA2 a part ended while a value is still live",
+      "new": "        if not parts or item.first_tick >= reach - 1:",
+      "old": "        if not parts or item.first_tick >= reach:",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_the_placement_is_lawful_and_at_its_bound",
+      "label": "PA3 a part's reach the last value's, not the furthest",
+      "new": "            reach = item.last_tick",
+      "old": "            reach = max(reach, item.last_tick)",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_the_parts_are_laid_out_apart",
+      "label": "PA4 the extent the last part's, not the largest",
+      "new": "        extent = laid.extent",
+      "old": "        extent = max(extent, laid.extent)",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_the_placement_is_lawful_and_at_its_bound",
+      "label": "PA5 a placed value left in its own bank",
+      "new": "        Placement(p.rid, p.bank, offsets[p.rid], p.size, p.first, p.last)",
+      "old": "        Placement(p.rid, \"activations\", offsets[p.rid], p.size, p.first, p.last)",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_the_parts_are_laid_out_apart",
+      "label": "PA6 the placement's alignment ignored (floats only)",
+      "new": "        (LayoutItem(p.rid, p.size, 4, p.first, p.last + 1)",
+      "old": "        (LayoutItem(p.rid, p.size, alignment, p.first, p.last + 1)",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_the_placement_is_lawful_and_at_its_bound",
+      "label": "PA7 a placed value's lifetime stretched past its last phase",
+      "new": "        Placement(p.rid, \"activations\", offsets[p.rid], p.size, p.first, p.last + 1)",
+      "old": "        Placement(p.rid, \"activations\", offsets[p.rid], p.size, p.first, p.last)",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_a_placed_trainer_runs_only_what_it_holds",
+      "label": "PD1 the lent arenas not counted in the trainer's memory",
+      "new": "        self.memory_bytes += 0",
+      "old": "        self.memory_bytes += 4 * (sum(lent) - self.activation_count - plan.scratch)",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_a_placed_trainer_runs_only_what_it_holds",
+      "label": "PD2 the state's capacities the plan's while the arenas are the placement's",
+      "new": "            self.activation_count,\n            plan.scratch,\n            0,",
+      "old": "            lent[0],\n            lent[1],\n            0,",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_a_placed_trainer_runs_only_what_it_holds",
+      "label": "PD3 a negative or unallocatable transient length admitted by the binding",
+      "new": "            or any(type(x) is not int for x in transient)",
+      "old": "            or any(type(x) is not int or not 0 <= x < 2**62 for x in transient)",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_a_placed_trainer_runs_only_what_it_holds",
+      "label": "PD4 a placement's arenas lent under a recompute set the budget chooses",
+      "new": "        if transient is not None and recompute is None:",
+      "old": "        if transient is not None and recompute == \"auto\":",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_place_comparison_sees_each_divergence",
+      "label": "PC1 the placed comparison blind to the lowering's words",
+      "new": "    if False:",
+      "old": "    if run.words != placed_words(run.pack, run.placed.placements):",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    },
+    {
+      "expects": "test_the_place_comparison_sees_each_divergence",
+      "label": "PC2 the placed comparison blind to a placement below its bound (live values overlapping)",
+      "new": "    if False:",
+      "old": "    if run.placed.extent < run.placed.bound:",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    },
+    {
+      "expects": "test_the_pack_fuzz_seeds_start_inside_the_grammar",
+      "label": "PC4 the fuzz seeds' arenas always the plan's (the short seed admitted)",
+      "new": "    if True:\n        return None",
+      "old": "    if not config & FUZZ_PLACED:\n        return None",
+      "path": "bcir/tests/native_decoder_fixtures.py"
+    }
+  ]
+}

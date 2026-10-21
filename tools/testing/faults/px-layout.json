@@ -1,0 +1,237 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_linear_layout:test_a_broadcast_preimage_is_one_index_and_its_kernel",
+    "bcir.tests.test_linear_layout:test_a_conversion_takes_one_storage_to_the_other",
+    "bcir.tests.test_linear_layout:test_a_malformed_map_or_argument_is_refused",
+    "bcir.tests.test_linear_layout:test_a_map_that_is_not_linear_is_refused",
+    "bcir.tests.test_linear_layout:test_a_size_must_be_a_power_of_two",
+    "bcir.tests.test_linear_layout:test_a_tiled_layout_round_trips_and_masks_its_tail",
+    "bcir.tests.test_linear_layout:test_apply_is_the_xor_of_the_set_bits",
+    "bcir.tests.test_linear_layout:test_inverse_and_compose_on_random_bijections",
+    "bcir.tests.test_linear_layout:test_product_and_reorder_keep_each_part",
+    "bcir.tests.test_linear_layout:test_the_kernel_and_the_preimages_are_the_maps",
+    "bcir.tests.test_native_layouts:test_the_tiles_are_the_amx_registers",
+    "bcir.tests.test_native_layouts:test_the_transpose_is_its_four_stages"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_size_must_be_a_power_of_two",
+      "label": "LA1 a size that is not a power of two admitted",
+      "new": "    if type(size) is not int or size < 1:",
+      "old": "    if type(size) is not int or size < 1 or size & (size - 1):",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_malformed_map_or_argument_is_refused",
+      "label": "LA2 a dimension named twice admitted",
+      "new": "    if any(type(name) is not str for name in names):",
+      "old": "    if any(type(name) is not str for name in names) or len(set(names)) != len(names):",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_malformed_map_or_argument_is_refused",
+      "label": "LA3 an image count other than the input bits admitted",
+      "new": "        if len(images) > sum(bits_of(size) for _, size in ins):",
+      "old": "        if len(images) != sum(bits_of(size) for _, size in ins):",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_malformed_map_or_argument_is_refused",
+      "label": "LA4 an image value outside its output admitted",
+      "new": "                type(v) is not int or v < 0 for v, (_, size) in zip(image, outs)",
+      "old": "                type(v) is not int or not 0 <= v < size for v, (_, size) in zip(image, outs)",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_malformed_map_or_argument_is_refused",
+      "label": "LA5 wiring that names a bit the inputs lack admitted",
+      "new": "        if not seen <= set(wiring):",
+      "old": "        if set(wiring) != seen:",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_malformed_map_or_argument_is_refused",
+      "label": "LA6 a value past its dimension packed (it spills into the next)",
+      "new": "        if type(v) is not int or v < 0:\n            raise ValueError(f\"{name}={v!r} outside [0, {size})\")\n        flat |= v << shift",
+      "old": "        if type(v) is not int or not 0 <= v < size:\n            raise ValueError(f\"{name}={v!r} outside [0, {size})\")\n        flat |= v << shift",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_malformed_map_or_argument_is_refused",
+      "label": "LA7 an extra value ignored",
+      "new": "    if not {name for name, _ in dims} <= set(values):",
+      "old": "    if set(values) != {name for name, _ in dims}:",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_apply_is_the_xor_of_the_set_bits",
+      "label": "LA8 an image's value not masked to its dimension",
+      "new": "        out[name] = flat >> shift",
+      "old": "        out[name] = (flat >> shift) & (size - 1)",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_apply_is_the_xor_of_the_set_bits",
+      "label": "LA9 an image the OR of its set bits' images, not their XOR",
+      "new": "                acc |= column",
+      "old": "                acc ^= column",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_malformed_map_or_argument_is_refused",
+      "label": "LA10 a composition checked by its sizes alone (another dimension's names admitted)",
+      "new": "        if [s for _, s in inner.outs] != [s for _, s in self.ins]:",
+      "old": "        if inner.outs != self.ins:",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_the_kernel_and_the_preimages_are_the_maps",
+      "label": "LA11 the elimination drops a pivot's input combination (a kernel vector its column alone)",
+      "new": "                v ^= pv\n            else:",
+      "old": "                v ^= pv\n                combo ^= pc\n            else:",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_the_kernel_and_the_preimages_are_the_maps",
+      "label": "LA12 the elimination replaces a pivot instead of reducing against it",
+      "new": "                if True:\n                    pivots[top] = (v, combo)\n                    break",
+      "old": "                if top not in pivots:\n                    pivots[top] = (v, combo)\n                    break",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_the_kernel_and_the_preimages_are_the_maps",
+      "label": "LA13 injective read against the output bits",
+      "new": "        return self.rank == self.out_bits",
+      "old": "        return self.rank == self.in_bits",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_the_kernel_and_the_preimages_are_the_maps",
+      "label": "LA14 surjective read against the input bits",
+      "new": "        return self.rank == self.in_bits",
+      "old": "        return self.rank == self.out_bits",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_the_kernel_and_the_preimages_are_the_maps",
+      "label": "LA15 a preimage given for an element no input reaches",
+      "new": "            if top not in pivots:\n                break",
+      "old": "            if top not in pivots:\n                return None",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_malformed_map_or_argument_is_refused",
+      "label": "LA16 the inverse of a map that is only surjective (a broadcast) admitted",
+      "new": "        if not self.surjective:\n            raise ValueError(\"only a bijection has an inverse\")",
+      "old": "        if not self.bijective:\n            raise ValueError(\"only a bijection has an inverse\")",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_conversion_takes_one_storage_to_the_other",
+      "label": "LA17 a conversion taken the other way (A^-1 . B)",
+      "new": "        return self.inverse().compose(other)",
+      "old": "        return other.inverse().compose(self)",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_map_that_is_not_linear_is_refused",
+      "label": "LA18 a function stated linear from its unit images alone",
+      "new": "            if False:",
+      "old": "            if layout.apply(**x) != {out: want[out] for out, _ in outs}:",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_product_and_reorder_keep_each_part",
+      "label": "LA19 the product's second map written to the first's outputs",
+      "new": "            image + zeros_a for image in other.images",
+      "old": "            zeros_a + image for image in other.images",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_malformed_map_or_argument_is_refused",
+      "label": "LA20 an output order that drops a dimension admitted",
+      "new": "        if not set(names) <= set(at):",
+      "old": "        if sorted(names) != sorted(at):",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_malformed_map_or_argument_is_refused",
+      "label": "LA21 a tile that is not a bijection admitted",
+      "new": "        if len(self.tile.ins) != 1 or self.tile.ins[0][0] != \"offset\":",
+      "old": "        if len(self.tile.ins) != 1 or self.tile.ins[0][0] != \"offset\" or not self.tile.bijective:",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_tiled_layout_round_trips_and_masks_its_tail",
+      "label": "LA22 a shape past its grid admitted",
+      "new": "            if not 0 < dict(self.shape)[name]:  # so a tile at least",
+      "old": "            if not 0 < dict(self.shape)[name] <= count * extent[name]:  # so a tile at least",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_tiled_layout_round_trips_and_masks_its_tail",
+      "label": "LA23 the grid decoded slowest coordinate first",
+      "new": "        for name in self.order:  # the fastest coordinate first",
+      "old": "        for name in reversed(self.order):  # the fastest coordinate first",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_tiled_layout_round_trips_and_masks_its_tail",
+      "label": "LA24 a tile's rank taken over the tile extents, not the tile counts",
+      "new": "            rank = rank * extent[name] + t",
+      "old": "            rank = rank * counts[name] + t",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_tiled_layout_round_trips_and_masks_its_tail",
+      "label": "LA25 a coordinate at the shape's edge not padding",
+      "new": "        return any(x[name] > extent for name, extent in self.shape)",
+      "old": "        return any(x[name] >= extent for name, extent in self.shape)",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_malformed_map_or_argument_is_refused",
+      "label": "LA26 an offset past the layout decoded (the grid wraps)",
+      "new": "        if type(offset) is not int or offset < 0:",
+      "old": "        if type(offset) is not int or not 0 <= offset < self.size:",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_malformed_map_or_argument_is_refused",
+      "label": "LA27 a coordinate past the grid placed",
+      "new": "            if t < 0:",
+      "old": "            if not 0 <= t < counts[name]:",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_a_malformed_map_or_argument_is_refused",
+      "label": "LA28 coordinates not one integer per dimension admitted",
+      "new": "        if not set(extent) <= set(x):",
+      "old": "        if set(x) != set(extent) or any(type(v) is not int for v in x.values()):",
+      "path": "bcir/kbcir/linear_layout.py"
+    },
+    {
+      "expects": "test_the_tiles_are_the_amx_registers",
+      "label": "LS1 the A tile's depth bits reversed",
+      "new": "    {(\"offset\", b): [(\"depth\", 4 - b)] if b < 5 else [(\"row\", b - 5)] for b in range(9)},",
+      "old": "    {(\"offset\", b): [(\"depth\", b)] if b < 5 else [(\"row\", b - 5)] for b in range(9)},",
+      "path": "bcir/hosted/models/native_layouts.py"
+    },
+    {
+      "expects": "test_the_tiles_are_the_amx_registers",
+      "label": "LS2 the B tile row-major (the VNNI pair interleave dropped)",
+      "new": "    {(\"offset\", b): [(\"col\", b)] if b < 4 else [(\"depth\", b - 4)]",
+      "old": "    {(\"offset\", b): [(\"depth\", 0)] if b == 0 else [(\"col\", b - 1)] if b < 5 else [(\"depth\", b - 4)]",
+      "path": "bcir/hosted/models/native_layouts.py"
+    },
+    {
+      "expects": "test_the_transpose_is_its_four_stages",
+      "label": "LS3 a transpose stage's 3-cycle run backwards",
+      "new": "    _stage(\"q2>t2 t2>t3 t3>q2\"),",
+      "old": "    _stage(\"q2>t3 t2>q2 t3>t2\"),",
+      "path": "bcir/hosted/models/native_layouts.py"
+    }
+  ]
+}

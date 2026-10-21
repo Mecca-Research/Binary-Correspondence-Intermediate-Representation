@@ -89,9 +89,9 @@
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
-      "label": "NB12 the plan's workspace forgets the backward's gate/up dW calls (the step's largest group)",
-      "new": "      {{n,d,f},{n,d,f}},                                /* gate, up */",
-      "old": "      {{n,d,f},{n,d,f},{f,d,n},{f,d,n}},                /* gate, up */",
+      "label": "NB12 the plan's need forgets the backward's q/k/v weight adjoints (the step's largest group)",
+      "new": "    most=ws_most(most,bcir_tensor_mm_bf16_group_workspace(c,3,c+3,0));",
+      "old": "    most=ws_most(most,bcir_tensor_mm_bf16_group_workspace(c,3,c+3,3));",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
@@ -104,8 +104,8 @@
     {
       "expects": "test_the_bf16_contract_lends_its_workspace_and_admits_no_provider",
       "label": "NB14 the Python trainer leaves the workspace out of its memory budget",
-      "new": "",
-      "old": "        self.memory_bytes += self.workspace_bytes\n",
+      "new": "            scratch, persistent + acts + scratch,",
+      "old": "            scratch, persistent + acts + scratch + workspace,",
       "path": "bcir/hosted/models/native.py"
     },
     {

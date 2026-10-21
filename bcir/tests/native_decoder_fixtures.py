@@ -6,12 +6,19 @@ spec alone. One function per row family grades it against the C rail; the tests,
 
     train.plan.mismatch        (spec, arena) pairs over `plan_corpus()` where the program's arena
                                sum differs from `bcir_decoder_make_plan`'s count
-    train.mm.mismatch          `MM_CASES` whose native `bcir_tensor_mm` output differs in any bit
+    train.plan.remat.mismatch  (spec, recompute set) pairs over the same corpus and `REMAT_SETS`
+                               (cut to each spec's layers, every distinct set once) where the
+                               program's activation sum under the set differs from
+                               `bcir_decoder_activation_count` (REMAT, GEO-3)
+    train.mm.mismatch         `MM_CASES` whose native `bcir_tensor_mm` output differs in any bit
                                from `mm_reference` -- an independent binary32 emulation of the
                                kernel's contract (beta first, then alpha*a times b added for k
                                ascending, every operation rounded, no contraction)
-    train.memory.transient     what the C plan reserves for activations and workspace, over the
-                               G26 concurrent-live bound of the same values (exact; no compiler)
+    train.memory.transient     what a trainer lends for the bench step's activation and scratch
+                               values placed by their lifetimes (PX-4, `placed_transient`), over
+                               the G26 concurrent-live bound of the values it places (exact; no
+                               compiler); its frozen baseline the C plan's spans over the step
+                               program's bound (`transient_ratio`)
     train.step.ms              one native training step at `BENCH` (wall), and its floor in the
                                same run: the step's counted work at the best rate the same kernel
                                reaches on any of the step's own GEMM shapes, timed alone
@@ -41,6 +48,30 @@ spec alone. One function per row family grades it against the C rail; the tests,
                                contract from the gradients the backward left -- plus the counts
                                of `REDUCE_CHUNK_COUNTS` where the C chunk rule and `reduce_chunk`
                                disagree (NDT-REDUCE)
+    train.plan.executed.mismatch  cases of `trace_corpus()` whose launch trace (a build defining
+                               BCIR_DT_TRACE_PROBE) differs from the launches the step program
+                               states under the case's decisions (`native_launch.run_launches`),
+                               or dropped a record (PX-1)
+    train.plan.program.mismatch  program runs (`program_runs`: every trace case from the program
+                               of the C step's decisions, the state cases under each of the
+                               planner's other choices) that stopped, trained another state or
+                               events than `bcir_decoder_run_accum` on the case, or traced other
+                               launches than the program states (PX-2)
+    train.plan.choose.mismatch  choice runs (`choose_runs`: the state cases under each kind of
+                               choice site switched alone to each alternative and seeded draws of
+                               one a site) that stopped, trained another state or events than the
+                               C step on the case, or traced other launches than the chosen
+                               program states (PX-3)
+    train.plan.pack.mismatch   pack runs (`pack_runs`: the program runs' configurations, each as a
+                               StreamPack and ExecutionPlanV1 the trainer lowers) whose lowering was
+                               refused or is not the program's words, that stopped, or that trained
+                               another state or events than the C step on the case (PX-2b)
+    train.plan.place.mismatch  the same runs with every transient value placed by its lifetime and
+                               run on a trainer lending exactly the placement's arena
+                               (`place_runs`): those refused, lowered to other words than the
+                               program's at the placed places, stopped, placed below G26's bound
+                               (live values sharing bytes), or training another state or events
+                               than the C step (PX-4)
 
 Without a C compiler the native rows are not measured -- a skip, never a pass.
 """
@@ -52,6 +83,7 @@ import hashlib
 import importlib.util
 import math
 import os
+import random
 import shutil
 import statistics
 import re
@@ -60,7 +92,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from fractions import Fraction
+from typing import NamedTuple
 from pathlib import Path
 
 from bcir.frontends.models.decode import DecoderSpec
@@ -131,6 +165,12 @@ ONE_CHUNK_BENCH = (DecoderSpec(16, 8, 2, 1, 16, activation="silu_gate", n_kv_hea
 #: adjoints as the GEMMs' panels wherever their slots are 64-byte aligned (the huge-page
 #: placement's are; a ctypes array's alignment is the allocator's).
 PANELS_BENCH = (DecoderSpec(64, 64, 2, 2, 128, activation="silu_gate", n_kv_heads=1), 2, 16)
+#: GEO-3 (REMAT, WS-PLAN): four layers, so a recompute set keeps some slots and shares one, on the
+#: SwiGLU panels' grid (64 rows, width 64, FF 128), so a bf16 workspace has three tiers.
+REMAT_BENCH = (DecoderSpec(97, 64, 4, 4, 128, activation="silu_gate", n_kv_heads=2), 2, 32)
+#: The recompute sets the parity and the state witnesses take: none, every layer, every other one,
+#: the highest alone (no slot freed), and all but the highest.
+REMAT_SETS = (0, 0xF, 0x5, 0x8, 0x7)
 THREAD_COUNTS = (1, 2, 3, 4)
 
 
@@ -140,10 +180,16 @@ def compiler() -> str | None:
     return host_c_compiler()
 
 
-def build_library(directory, *, sources: dict[str, str] | None = None) -> Path | None:
+def build_library(
+    directory,
+    *,
+    sources: dict[str, str] | None = None,
+    units: tuple[str, ...] = ("bcir_tensor.c", "bcir_decoder_train.c"),
+) -> Path | None:
     """The trainer as a shared library, with the build contract `NativeDecoder.build` uses --
     or, given `sources` (a unit's name -> its text), with those texts in place of the tree's
-    units (a wrong copy, never an edit of the tree). None without a compiler."""
+    units (a wrong copy, never an edit of the tree), of the `units` named (the tensor unit alone
+    for a witness of its own). None without a compiler."""
     cc = compiler()
     if cc is None:
         return None
@@ -153,13 +199,13 @@ def build_library(directory, *, sources: dict[str, str] | None = None) -> Path |
         return NativeDecoder.build(directory, cc=cc)
     target = Path(directory)
     target.mkdir(parents=True, exist_ok=True)
-    units = []
-    for name in ("bcir_tensor.c", "bcir_decoder_train.c"):
+    paths = []
+    for name in units:
         if name in sources:
             (target / name).write_text(sources[name], encoding="utf-8", newline="\n")
-            units.append(str(target / name))
+            paths.append(str(target / name))
         else:
-            units.append(str(_C / name))
+            paths.append(str(_C / name))
     suffix = ".dll" if sys.platform == "win32" else ".dylib" if sys.platform == "darwin" else ".so"
     out = target / ("bcir_decoder_train_mutant" + suffix)
     from bcir.toolchain import build_units, host_link_args
@@ -167,7 +213,7 @@ def build_library(directory, *, sources: dict[str, str] | None = None) -> Path |
     cmd = [cc, "-std=c11", "-O3", "-ffp-contract=off", "-DBCIR_DT_BUILD_SHARED", "-shared"]
     if sys.platform != "win32":
         cmd += ["-fPIC", "-pthread"]
-    cmd += ["-I", str(_C), *units, "-o", str(out)]
+    cmd += ["-I", str(_C), *paths, "-o", str(out)]
     # a copy the compiler refuses is BuildFailed (check_tests.py's `build` finding), never a test's
     build_units(cmd + host_link_args(["-lm"]), "native decoder build of a copy", timeout=180)
     return out
@@ -196,6 +242,35 @@ def native_plan(lib, spec: DecoderSpec, batch: int, time_: int) -> dict[str, int
     out = dict.fromkeys(ARENAS[:4], plan.parameters)
     out.update(activations=plan.activations, scratch=plan.scratch)
     return out
+
+
+def native_activation_count(lib, spec: DecoderSpec, batch: int, time_: int, recompute: int) -> int:
+    """`bcir_decoder_activation_count` for the plan of `spec` under a recompute set (REMAT)."""
+    from bcir.hosted.models.native import _Plan, _Spec
+
+    shape = _Spec(spec.vocab_size, spec.d_model, spec.n_heads, spec.kv_heads, spec.n_layers,
+                  spec.d_ff, batch, time_, int(spec.tied_embeddings), spec.rope_base,
+                  spec.rms_norm_eps)  # fmt: skip
+    plan = _Plan()
+    make, count = lib.bcir_decoder_make_plan, lib.bcir_decoder_activation_count
+    make.argtypes, make.restype = [ct.POINTER(_Spec), ct.POINTER(_Plan)], ct.c_int
+    count.argtypes, count.restype = [ct.POINTER(_Plan), ct.c_uint64], ct.c_size_t
+    assert make(ct.byref(shape), ct.byref(plan)) == 0, (spec, batch, time_)
+    return count(ct.byref(plan), recompute)
+
+
+def recompute_plan_mismatch(lib, corpus=PLAN_CORPUS, sets=REMAT_SETS) -> int:
+    """(spec, recompute set) pairs where the program's activation sum under the set differs from
+    `bcir_decoder_activation_count` (REMAT): the sets cut to each spec's layers, every distinct
+    one counted once."""
+    bad = 0
+    for spec, batch, time_ in corpus:
+        for recompute in sorted({mask & ((1 << spec.n_layers) - 1) for mask in sets}):
+            mine = training_step_program(spec, batch, time_, recompute).arena_elements()
+            bad += mine["activations"] != native_activation_count(
+                lib, spec, batch, time_, recompute
+            )
+    return bad
 
 
 def plan_mismatch(lib, corpus=PLAN_CORPUS) -> int:
@@ -549,10 +624,22 @@ def provider_mismatch(lib, shapes=None) -> int | None:
 
 
 def transient_ratio(bench=BENCH) -> tuple[float, int, int, int]:
-    """(C bytes / bound, C bytes, the G26 bound, GEM+'s incumbent layout) for the bench step."""
+    """(C bytes / bound, C bytes, the G26 bound, GEM+'s incumbent layout) for the bench step: the
+    C plan's fixed spans, the row's frozen baseline."""
     program = training_step_program(*bench)
     held, bound = program.transient_bytes(), program.transient_lower_bound()
     return held / bound, held, bound, program.transient_incumbent().extent
+
+
+def placed_transient(bench=BENCH) -> tuple[float, int, int, bool]:
+    """PX-4: (placed bytes / bound, the placed transient arena's bytes, G26's bound over the values
+    it places, whether every part's layout is a proved optimum) for the bench step's pack, its
+    transient values placed by their lifetimes (`native_pack.place_by_lifetime`): what a trainer
+    lends for them, the row `train.memory.transient` reads."""
+    from bcir.hosted.models.native_pack import place_by_lifetime, training_pack
+
+    placed = place_by_lifetime(training_pack(*bench, contract=0))
+    return placed.extent / placed.bound, placed.extent, placed.bound, placed.optimal
 
 
 # --- train.step.ms and its floor ------------------------------------------------------------
@@ -709,6 +796,8 @@ def thread_states(
     contract="v1",
     refusals=False,
     huge_pages=True,
+    recompute=0,
+    workspace_bytes=None,
 ) -> dict[int, str]:
     """The state digest after `steps` steps of `bench` -- the same seeded weights, tokens and
     rates -- with the loss and the clipping norm every step reported folded in (the norm is the
@@ -719,7 +808,8 @@ def thread_states(
     that refuses a step is a state of its own -- "refused: " and the trainer's report -- where it
     would otherwise raise: the row's verdict on a library whose pool refuses what the serial
     trainer admits (a dropped task's finiteness report since NDT-SCAN), never a traceback.
-    `huge_pages` is the trainers' state placement (NDT-PAGES), which no state may depend on."""
+    `huge_pages` is the trainers' state placement (NDT-PAGES), which no state may depend on, nor
+    may `recompute` and `workspace_bytes` (GEO-3: the recompute set, the bf16 workspace)."""
     from bcir.hosted.models.native import NativeAdamW, NativeDecoder
 
     spec, batch, time_ = bench
@@ -730,8 +820,8 @@ def thread_states(
     out = {}
     for threads in counts:
         trainer = NativeDecoder(path, spec, batch_size=batch, context_length=time_,
-                                threads=threads, contract=contract,
-                                huge_pages=huge_pages)  # fmt: skip
+                                threads=threads, contract=contract, huge_pages=huge_pages,
+                                recompute=recompute, workspace_bytes=workspace_bytes)  # fmt: skip
         try:
             try:
                 events = trainer.run(tokens, targets, steps=steps,
@@ -868,10 +958,845 @@ def corpus_unselected() -> int | None:
     return len(module.unselected(root, selected))
 
 
+# --- train.plan.executed.mismatch (PX-1) ----------------------------------------------------------
+
+#: The trace corpus's contracts: every GEMM entry BCIR has (v1, fused, blocked, bf16), the
+#: exponential, the reduce pass, and the fused and bf16 attention.
+TRACE_CONTRACTS = (
+    "v1", "fused+exp", "kblock+exp+reduce", "bf16", "bf16+exp+attnbf16", "kblock+attn",
+)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class TraceCase:
+    """One `bcir_decoder_run_accum` call to trace: a trainer and the call's shape."""
+
+    spec: DecoderSpec
+    batch: int
+    time: int
+    contract: str
+    recompute: int = 0
+    workspace: str = "need"  # the bf16 workspace's tier: "need", "panels" or "floor"
+    threads: int = 1
+    steps: int = 1
+    accumulation: int = 1
+    provider: str = ""  # "", "mm" (a CBLAS sgemm) or "mm+silu" (and a SiLU)
+    preflight: bool = False  # an update whose bound fails (epsilon 1e-45), so the preflight runs
+
+
+def trace_corpus() -> tuple[TraceCase, ...]:
+    """Every spec of the plan corpus under the six contracts, three recompute sets (none, every
+    layer, the lowest) and two call shapes (one step; two steps of two micro-batches -- FACTS-RUN's
+    skipped scan and the accumulation's scans); the panels' bench under both bf16 contracts at the
+    workspace's three tiers, at one thread and four; a provider's GEMM, and its GEMM and SiLU,
+    under v1 and the blocked contract; and an update whose bound fails."""
+    cases = []
+    for spec, batch, time_ in PLAN_CORPUS:
+        for contract in TRACE_CONTRACTS:
+            for recompute in dict.fromkeys((0, (1 << spec.n_layers) - 1, 1)):
+                for steps, accumulation in ((1, 1), (2, 2)):
+                    cases.append(TraceCase(spec, batch, time_, contract, recompute,
+                                           steps=steps, accumulation=accumulation))  # fmt: skip
+    spec, batch, time_ = PANELS_BENCH
+    for contract in ("bf16", "bf16+exp+attnbf16"):
+        for workspace in ("need", "panels", "floor"):
+            for threads in (1, 4):
+                cases.append(TraceCase(spec, batch, time_, contract, 0b10, workspace, threads))
+    spec, batch, time_ = PLAN_CORPUS[1]  # untied: the provider's zero fill and the head's own VJP
+    for contract in ("v1", "kblock+exp"):
+        for provider in ("mm", "mm+silu"):
+            cases.append(TraceCase(spec, batch, time_, contract, provider=provider, steps=2,
+                                   accumulation=2))  # fmt: skip
+    cases.append(TraceCase(spec, batch, time_, "v1", preflight=True))
+    return tuple(cases)
+
+
+def checkout_library(directory) -> Path | None:
+    """The trainer as `build_library` builds it, or None without a compiler or outside a source
+    checkout (an installed package ships no C units: the one absence that is expected there)."""
+    if not (_C / "bcir_decoder_train.c").is_file():
+        return None
+    return build_library(directory)
+
+
+def trace_library(directory) -> Path | None:
+    """The trainer built with its launch trace (BCIR_DT_TRACE_PROBE), from the tree's unit as it
+    stands -- a fault the sweep injected included. None without a compiler, or outside a source
+    checkout (an installed package ships no C units: the one absence that is expected there)."""
+    if not (_C / "bcir_decoder_train.c").is_file():
+        return None
+    unit = "#define BCIR_DT_TRACE_PROBE 1\n" + source("bcir_decoder_train.c")
+    return build_library(directory, sources={"bcir_decoder_train.c": unit})
+
+
+def layout_library(directory) -> Path | None:
+    """The tensor unit alone, built with its layout probe (BCIR_DT_LAYOUT_PROBE, PX-5) by the
+    trainer's build contract, from the tree's unit as it stands -- a fault the sweep injected
+    included. None without a compiler, or outside a source checkout (an installed package ships no
+    C units: the one absence that is expected there)."""
+    if not (_C / "bcir_tensor.c").is_file():
+        return None
+    unit = "#define BCIR_DT_LAYOUT_PROBE 1\n" + source("bcir_tensor.c")
+    return build_library(directory, sources={"bcir_tensor.c": unit}, units=("bcir_tensor.c",))
+
+
+class TraceRun(NamedTuple):
+    """One traced call: the launches its plan states, the records the probe held (launch, record),
+    the records it had no room for, the state the call left (`state_digest`) and its events."""
+
+    planned: list
+    traced: list
+    dropped: int
+    state: str
+    events: tuple = ()
+
+
+def _case_trainer(path, case: TraceCase, transient=None):
+    """The trainer `case` runs on -- its contract, recompute set, threads, workspace tier and
+    provider; its transient arenas the C plan's, or as `transient` lends them (PX-4) -- and the
+    state's decisions as `run_launches` and `step_program` take them."""
+    from bcir.hosted.models import native as nat
+    from bcir.hosted.models.native import NativeDecoder
+    from bcir.hosted.models.native_launch import SPACES
+
+    common = dict(batch_size=case.batch, context_length=case.time, contract=case.contract,
+                  recompute=case.recompute, threads=case.threads)  # fmt: skip
+    workspace = None
+    if case.workspace != "need":
+        probe = NativeDecoder(path, case.spec, **common)
+        memory = probe.plan_memory
+        probe.close()
+        # the panels' tier where it lies at or above the floor (memory_plan's tiers): under the
+        # bf16 attention the floor holds its regions, which can exceed what the panel groups pack
+        workspace = memory.workspace_floor
+        if case.workspace == "panels":
+            workspace = max(memory.workspace_panels, workspace)
+    trainer = NativeDecoder(path, case.spec, workspace_bytes=workspace, transient=transient,
+                            **common)  # fmt: skip
+    try:
+        lib = trainer.lib
+        if case.provider:
+            gemm = lib.bcir_tensor_mm
+            gemm.argtypes = [ct.c_void_p, ct.c_int, ct.c_int, ct.c_size_t, ct.c_size_t, ct.c_size_t,
+                             ct.c_float, _FP, _FP, ct.c_float, _FP]  # fmt: skip
+            gemm.restype = None
+            callback = nat._CBLAS(
+                lambda order, ta, tb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc: gemm(
+                    None, ta == 112, tb == 112, m, n, k, alpha, a, b, beta, c
+                )
+            )
+            trainer.use_cblas_function(callback, name="trace", admit=False)
+            if case.provider == "mm+silu":
+                silu = ct.cast(lib.bcir_tensor_silu, nat._SILU)
+                provider = trainer.state.provider
+                trainer.state.provider = nat._Provider(provider.ctx, provider.mm, silu)
+                trainer._provider_refs += (silu,)
+        decisions = dict(
+            contract=nat._CONTRACTS[case.contract], recompute=trainer.recompute,
+            workspace_bytes=trainer.workspace_bytes,
+            panels_need=trainer.plan_memory.workspace_panels,
+            alignment={SPACES[name]: ct.addressof(buf) % 64 for name, buf in trainer.buffers.items()},
+            provider_mm=bool(case.provider), provider_silu=case.provider == "mm+silu",
+            steps=case.steps, accumulation=case.accumulation,
+        )  # fmt: skip
+    except BaseException:
+        trainer.close()
+        raise
+    return trainer, decisions
+
+
+def _case_inputs(case: TraceCase):
+    """The case's tokens, targets and optimizer (an update whose bound fails where it asks)."""
+    from bcir.hosted.models.native import NativeAdamW
+
+    n = case.batch * case.time * case.steps * case.accumulation
+    tokens = [(7 * i + 3) % case.spec.vocab_size for i in range(n)]
+    targets = [(5 * i + 1) % case.spec.vocab_size for i in range(n)]
+    return tokens, targets, NativeAdamW(epsilon=1e-45) if case.preflight else NativeAdamW()
+
+
+def _probe(lib):
+    from bcir.hosted.models.native_launch import RECORD_WORDS
+
+    lib.bcir_decoder_trace_probe_begin.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_size_t]
+    lib.bcir_decoder_trace_probe_begin.restype = None
+    lib.bcir_decoder_trace_probe_end.argtypes = [ct.POINTER(ct.c_size_t)]
+    lib.bcir_decoder_trace_probe_end.restype = ct.c_size_t
+    lib.bcir_decoder_trace_probe_words.argtypes = []
+    lib.bcir_decoder_trace_probe_words.restype = ct.c_size_t
+    assert lib.bcir_decoder_trace_probe_words() == RECORD_WORDS
+
+
+def trace_case(path, case: TraceCase, capacity: int | None = None, *, trace: bool = True):
+    """Run `case` on the trace build at `path` (a `TraceRun`). `capacity` lends the probe that
+    many records instead of room for twice the plan's; `trace=False` runs `path` as a build
+    without the probe -- the library itself -- and holds no records."""
+    from bcir.hosted.models.native_launch import RECORD_WORDS, read_trace, run_launches
+
+    trainer, decisions = _case_trainer(path, case)
+    try:
+        lib = trainer.lib
+        if trace:
+            _probe(lib)
+        planned = run_launches(case.spec, case.batch, case.time, **decisions)
+        if capacity is None:
+            capacity = 2 * sum(len(launch.records) for launch in planned) + 64
+        words = (ct.c_uint64 * (capacity * RECORD_WORDS))()
+        tokens, targets, optimizer = _case_inputs(case)
+        if not trace:
+            events = trainer.run(tokens, targets, steps=case.steps, optimizer=optimizer,
+                                 gradient_accumulation=case.accumulation)  # fmt: skip
+            return TraceRun(planned, [], 0, state_digest(trainer), events)
+        lib.bcir_decoder_trace_probe_begin(ct.addressof(trainer.state), ct.addressof(words),
+                                           capacity)  # fmt: skip
+        try:
+            events = trainer.run(tokens, targets, steps=case.steps, optimizer=optimizer,
+                                 gradient_accumulation=case.accumulation)  # fmt: skip
+        finally:
+            dropped = ct.c_size_t()
+            count = lib.bcir_decoder_trace_probe_end(ct.byref(dropped))
+        return TraceRun(planned, read_trace(words, count), dropped.value, state_digest(trainer),
+                        events)  # fmt: skip
+    finally:
+        trainer.close()
+
+
+class ProgramRun(NamedTuple):
+    """One program run: the program, the records its run traced (launch, record), the records it
+    had no room for, the state it left, its events, and its status (0, or the C's refusal)."""
+
+    program: list
+    traced: list
+    dropped: int
+    state: str
+    events: tuple
+    status: int
+
+
+def program_case(path, case: TraceCase, choices: dict | None = None) -> ProgramRun:
+    """Run `case` from its program (`native_launch.step_program` under the case's state and the
+    planner's `choices`) on the trace build at `path`, its launches traced."""
+    from bcir.hosted.models.native import NativeRunStopped
+    from bcir.hosted.models.native_launch import (
+        RECORD_WORDS,
+        program_words,
+        read_trace,
+        step_program,
+    )
+
+    trainer, decisions = _case_trainer(path, case)
+    try:
+        lib = trainer.lib
+        _probe(lib)
+        program = step_program(
+            case.spec, case.batch, case.time, **(decisions | dict(choices or {}))
+        )
+        capacity = 2 * sum(len(launch.records) for launch in program) + 64
+        words = (ct.c_uint64 * (capacity * RECORD_WORDS))()
+        tokens, targets, optimizer = _case_inputs(case)
+        events, status = (), 0
+        lib.bcir_decoder_trace_probe_begin(ct.addressof(trainer.state), ct.addressof(words),
+                                           capacity)  # fmt: skip
+        try:
+            events = trainer.run_program(program_words(program), tokens, targets,
+                                         steps=case.steps, optimizer=optimizer,
+                                         gradient_accumulation=case.accumulation)  # fmt: skip
+        except NativeRunStopped as stopped:
+            status = stopped.status
+        finally:
+            dropped = ct.c_size_t()
+            count = lib.bcir_decoder_trace_probe_end(ct.byref(dropped))
+        return ProgramRun(program, read_trace(words, count), dropped.value, state_digest(trainer),
+                          events, status)  # fmt: skip
+    finally:
+        trainer.close()
+
+
+def executed_mismatch(path, cases=None) -> tuple[int, list[str]]:
+    """`train.plan.executed.mismatch`: the cases of `cases` (the trace corpus) whose trace differs
+    from their planned launches, or dropped a record; and what differed, case by case."""
+    from bcir.hosted.models.native_launch import launch_mismatches
+
+    bad, notes = 0, []
+    for case in trace_corpus() if cases is None else cases:
+        run = trace_case(path, case)
+        problems = launch_mismatches(run.planned, run.traced)
+        if run.dropped:
+            problems.append(f"{run.dropped} records dropped")
+        if problems:
+            bad += 1
+            notes.append(f"{case}: {problems[0]}")
+    return bad, notes
+
+
+# --- train.plan.program.mismatch (PX-2) -----------------------------------------------------------
+
+
+def state_cases(corpus) -> list[int]:
+    """One case of the corpus per decision set the state could depend on -- contract, recompute
+    or not, workspace tier, threads, provider, a failing bound -- its multi-step one where the
+    corpus has it."""
+    picked: dict[tuple, int] = {}
+    for i, case in enumerate(corpus):
+        key = (case.contract, bool(case.recompute), case.workspace, case.threads, case.provider,
+               case.preflight)  # fmt: skip
+        if key not in picked or case.steps > corpus[picked[key]].steps:
+            picked[key] = i
+    return sorted(picked.values())
+
+
+def program_choices(case: TraceCase) -> tuple[dict, ...]:
+    """The planner's choices a program takes otherwise than the C step does (PX-2): the linears
+    alone (no group), a linear's VJPs as two calls (no pair), the SwiGLU block without its panels,
+    every scan the run's facts leave out, and every layer recomputed (one cache slot: the set every
+    state's arena holds)."""
+    return ({"group": False}, {"pair": False}, {"panels": False}, {"facts": False},
+            {"recompute": (1 << case.spec.n_layers) - 1})  # fmt: skip
+
+
+def program_runs(path, cases=None):
+    """Every program run `train.plan.program.mismatch` reads, as (case, choices, the C step's
+    `TraceRun`, the program's `ProgramRun`): every case of `cases` (the trace corpus) from the
+    program that takes the C step's own decisions, and its state cases under each of
+    `program_choices`."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    picked = set(state_cases(corpus))
+    for i, case in enumerate(corpus):
+        step = trace_case(path, case)
+        yield case, {}, step, program_case(path, case)
+        if i in picked:
+            for choices in program_choices(case):
+                yield case, choices, step, program_case(path, case, choices)
+
+
+def program_run_count(cases=None) -> int:
+    """How many runs `program_runs` makes of `cases` (the trace corpus): the row's baseline."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    return len(corpus) + sum(len(program_choices(corpus[i])) for i in state_cases(corpus))
+
+
+def program_problems(step: TraceRun, run: ProgramRun) -> list[str]:
+    """What a program run did otherwise than it must: stopped, dropped a record, traced other
+    launches than its program states, or left another state or events than the C step's `step`
+    on the same case. Empty when the run is the step its program states."""
+    from bcir.hosted.models.native_launch import launch_mismatches, program_launches
+
+    problems = launch_mismatches(program_launches(run.program), run.traced)
+    if run.status:
+        problems.insert(0, f"stopped with status {run.status}")
+    if run.dropped:
+        problems.append(f"{run.dropped} records dropped")
+    if run.state != step.state or run.events != step.events:
+        problems.append("the state or the events are not the C step's")
+    return problems
+
+
+def program_mismatch(path, cases=None) -> tuple[int, int, list[str]]:
+    """`train.plan.program.mismatch`: of the program runs (`program_runs`), those that stopped,
+    whose state or events differ from the C step's on the same case (`bcir_decoder_run_accum`), or
+    whose trace differs from the launches its program states or dropped a record; the runs; and
+    what differed, run by run."""
+    bad, runs, notes = 0, 0, []
+    for case, choices, step, run in program_runs(path, cases):
+        runs += 1
+        problems = program_problems(step, run)
+        if problems:
+            bad += 1
+            notes.append(f"{case} {choices}: {problems[0]}")
+    return bad, runs, notes
+
+
+# --- train.plan.choose.mismatch (PX-3) -----------------------------------------------------------
+
+#: The seeded draws of an alternative per site `choose_choices` adds to each kind switched alone.
+CHOOSE_MIXES = 3
+
+
+def choose_choices(case: TraceCase) -> tuple[dict, ...]:
+    """The per-site choices `train.plan.choose.mismatch` runs a state case under (PX-3), each as
+    `step_program`'s `sites`: every kind of choice site switched alone, at every site of the kind,
+    to each alternative but the one the C step takes; then `CHOOSE_MIXES` draws of an alternative
+    a site, seeded by the case's own fields."""
+    from bcir.hosted.models.native_choose import CHOICE_KINDS, kind_of
+    from bcir.hosted.models.native_launch import choice_sites, default_sites
+
+    sites, defaults = choice_sites(case.spec), default_sites(case.spec)
+    out = []
+    for kind, alternatives in CHOICE_KINDS.items():
+        default = next(defaults[site] for site in sites if kind_of(site) == kind)
+        out += [{site: alternative for site in sites if kind_of(site) == kind}
+                for alternative in alternatives if alternative != default]  # fmt: skip
+    spec = case.spec
+    rng = random.Random("/".join(map(str, (
+        spec.vocab_size, spec.d_model, spec.n_heads, spec.n_layers, spec.d_ff, spec.kv_heads,
+        case.batch, case.time, case.contract, case.recompute, case.workspace, case.threads,
+        case.provider, case.steps, case.accumulation, case.preflight,
+    ))))  # fmt: skip
+    out += [{site: rng.choice(alternatives) for site, alternatives in sites.items()}
+            for _ in range(CHOOSE_MIXES)]  # fmt: skip
+    return tuple(out)
+
+
+def choose_runs(path, cases=None):
+    """Every run `train.plan.choose.mismatch` reads, as (case, sites, the C step's `TraceRun`, the
+    program's `ProgramRun`, the C step's own program): each state case of `cases` (the trace
+    corpus) under each of its `choose_choices`, run from its program on the trace build."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    for i in state_cases(corpus):
+        case = corpus[i]
+        step, base = trace_case(path, case), program_case(path, case).program
+        for sites in choose_choices(case):
+            yield case, sites, step, program_case(path, case, {"sites": sites}), base
+
+
+def choose_run_count(cases=None) -> int:
+    """How many runs `choose_runs` makes of `cases` (the trace corpus): the row's baseline."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    return sum(len(choose_choices(corpus[i])) for i in state_cases(corpus))
+
+
+def choose_mismatch(path, cases=None) -> tuple[int, int, list[str], int]:
+    """`train.plan.choose.mismatch`: of the choice runs (`choose_runs`), those that stopped, whose
+    state or events differ from the C step's on the same case, or whose trace differs from the
+    launches the chosen program states or dropped a record; the runs; what differed, run by run;
+    and how many runs ran another program than the C step's own (the choices that change one)."""
+    bad, runs, notes, other = 0, 0, [], 0
+    for case, sites, step, run, base in choose_runs(path, cases):
+        runs += 1
+        other += run.program != base
+        problems = program_problems(step, run)
+        if problems:
+            bad += 1
+            notes.append(f"{case} {sorted(set(sites.values()))}: {problems[0]}")
+    return bad, runs, notes, other
+
+
+# --- train.plan.pack.mismatch (PX-2b) ------------------------------------------------------------
+
+
+def pack_library(directory) -> Path | None:
+    """The trainer with the PX-2b pack lowering (`NativeDecoder.build(..., pack=True)`), from the
+    tree's units as they stand -- a fault the sweep injected included. None without a compiler, or
+    outside a source checkout (an installed package ships no C units: the one expected absence)."""
+    if not (_C / "bcir_decoder_pack.c").is_file():
+        return None
+    cc = compiler()
+    if cc is None:
+        return None
+    from bcir.hosted.models.native import NativeDecoder
+
+    return NativeDecoder.build(directory, cc=cc, pack=True)
+
+
+def time_library(directory, *, pack: bool = False) -> Path | None:
+    """The trainer with the PX-3 job clock (`NativeDecoder.build(..., probe="time")`), with the
+    pack lowering too where `pack`, from the tree's units as they stand -- a fault the sweep
+    injected included. None without a compiler, or outside a source checkout (an installed package
+    ships no C units: the one expected absence)."""
+    if not (_C / ("bcir_decoder_pack.c" if pack else "bcir_decoder_train.c")).is_file():
+        return None
+    cc = compiler()
+    if cc is None:
+        return None
+    from bcir.hosted.models.native import NativeDecoder
+
+    return NativeDecoder.build(directory, cc=cc, pack=pack, probe="time")
+
+
+class PackRun(NamedTuple):
+    """One pack run: the training pack, the words its lowering wrote, the state the run left, its
+    events and its status -- 0, the run's stop status, or -1 when the lowering refused the pack
+    (`why` then its reason, `native_pack.REASONS`) -- and, placed by lifetime (PX-4), the
+    `native_pack.Placed` it ran on."""
+
+    pack: object
+    words: tuple
+    state: str
+    events: tuple
+    status: int
+    why: int = 0
+    placed: object = None
+
+
+def pack_case(path, case: TraceCase, choices: dict | None = None, *, placements=None,
+              run: bool = True, place: bool = False) -> PackRun:  # fmt: skip
+    """`case` from its pack (PX-2b): the program `step_program` states for the case's state and the
+    planner's `choices`, stated as a module (`native_pack.training_pack`), planned, hydrated and
+    placed (`pack_artifacts`: the C step's own places, or `placements`), lowered by the trainer of
+    the case on the pack build at `path` (`bcir_decoder_lower_pack`) and, with `run`, run. With
+    `place` (PX-4) the transient values are placed by their lifetimes (`place_by_lifetime`) and the
+    pack lowered and run on a trainer of the case that lends exactly the placement's arena."""
+    from bcir.hosted.models.native import NativeRunStopped, PackRefused
+    from bcir.hosted.models.native_pack import pack_artifacts, place_by_lifetime, training_pack
+
+    trainer, decisions = _case_trainer(path, case)
+    try:
+        tp = training_pack(case.spec, case.batch, case.time, **(decisions | dict(choices or {})))
+        placed = place_by_lifetime(tp) if place else None
+        if placed is not None:
+            placements = placed.placements
+            trainer.close()
+            trainer, _ = _case_trainer(path, case, transient=(placed.floats, 0))
+        pack, plan, _, _ = pack_artifacts(tp, placements=placements)
+        try:
+            words = trainer.lower_pack(pack, plan)
+        except PackRefused as refused:
+            return PackRun(tp, (), "", (), -1, refused.why, placed)
+        if not run:
+            return PackRun(tp, tuple(words), "", (), 0, 0, placed)
+        tokens, targets, optimizer = _case_inputs(case)
+        events, status = (), 0
+        try:
+            events = trainer.run_program(words, tokens, targets, steps=case.steps,
+                                         optimizer=optimizer,
+                                         gradient_accumulation=case.accumulation)  # fmt: skip
+        except NativeRunStopped as stopped:
+            status = stopped.status
+        return PackRun(tp, tuple(words), state_digest(trainer), events, status, 0, placed)
+    finally:
+        trainer.close()
+
+
+def pack_runs(path, cases=None):
+    """Every pack run `train.plan.pack.mismatch` reads, as (case, choices, the C step's `TraceRun`
+    on the same build, the `PackRun`): the configurations `program_runs` reads -- every case of
+    `cases` (the trace corpus) from the program of the C step's own decisions, its state cases
+    under each of `program_choices` -- each as a pack."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    picked = set(state_cases(corpus))
+    for i, case in enumerate(corpus):
+        step = trace_case(path, case, trace=False)
+        yield case, {}, step, pack_case(path, case)
+        if i in picked:
+            for choices in program_choices(case):
+                yield case, choices, step, pack_case(path, case, choices)
+
+
+def _ran_as_the_step(step: TraceRun, run: PackRun, problems: list[str]) -> list[str]:
+    """`problems`, then what a lowered run did otherwise than the C step's `step` on its case: it
+    stopped, or it trained another state or events -- the one check the pack and the placed runs'
+    comparisons share."""
+    if run.status:
+        problems.append(f"stopped with status {run.status}")
+    if run.state != step.state or run.events != step.events:
+        problems.append("the state or the events are not the C step's")
+    return problems
+
+
+def pack_problems(step: TraceRun, run: PackRun) -> list[str]:
+    """What a pack run did otherwise than it must: a lowering refused or other than its program's
+    words, a run that stopped, or another state or events than the C step's `step`."""
+    if run.status == -1:
+        return [f"the lowering refused the pack (why {run.why})"]
+    problems = []
+    if run.words != run.pack.words:
+        problems.append("the lowering is not the program's words")
+    return _ran_as_the_step(step, run, problems)
+
+
+def place_runs(path, cases=None):
+    """PX-4: `pack_runs`' configurations, each pack placed by its values' lifetimes and lowered and
+    run on a trainer lending exactly the placement's arena (`pack_case(..., place=True)`), as
+    (case, choices, the C step's `TraceRun` on the full build, the placed `PackRun`)."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    picked = set(state_cases(corpus))
+    for i, case in enumerate(corpus):
+        step = trace_case(path, case, trace=False)
+        yield case, {}, step, pack_case(path, case, place=True)
+        if i in picked:
+            for choices in program_choices(case):
+                yield case, choices, step, pack_case(path, case, choices, place=True)
+
+
+def place_problems(step: TraceRun, run: PackRun) -> list[str]:
+    """What a placed pack run did otherwise than it must: a lowering refused or other than the
+    program's words at the placement's places (`native_pack.placed_words`), a placement below G26's
+    bound -- smaller than any layout of its values over their lifetimes, so live values share
+    bytes -- or a run that stopped or trained another state or events than the C step's `step`. A
+    placement above its bound is the layout's gap to the bound, not a divergence (`place_mismatch`
+    returns it)."""
+    from bcir.hosted.models.native_pack import placed_words
+
+    if run.status == -1:
+        return [f"the lowering refused the placed pack (why {run.why})"]
+    problems = []
+    if run.words != placed_words(run.pack, run.placed.placements):
+        problems.append("the lowering is not the program's words at the placed places")
+    if run.placed.extent < run.placed.bound:
+        problems.append(f"placed at {run.placed.extent} bytes, below its {run.placed.bound} bound")
+    return _ran_as_the_step(step, run, problems)
+
+
+def place_mismatch(path, cases=None) -> tuple[int, int, list[str], list[tuple[int, bool]]]:
+    """`train.plan.place.mismatch`: of the placed pack runs (`place_runs`), those refused, lowered
+    to other words than the program's at the placed places, stopped, placed below their bound or
+    training another state or events than the C step on the same case; the runs; what differed,
+    run by run; and each run's layout as (its bytes above G26's bound, whether every part's
+    layout is a proved optimum) -- 0 and proved is TMSAO-1, the rest a bounded gap."""
+    bad, runs, notes, gaps = 0, 0, [], []
+    for case, choices, step, run in place_runs(path, cases):
+        runs += 1
+        problems = place_problems(step, run)
+        if problems:
+            bad += 1
+            notes.append(f"{case} {choices}: {problems[0]}")
+        if run.status != -1:
+            gaps.append((run.placed.extent - run.placed.bound, run.placed.optimal))
+    return bad, runs, notes, gaps
+
+
+def pack_mismatch(path, cases=None) -> tuple[int, int, list[str]]:
+    """`train.plan.pack.mismatch`: of the pack runs (`pack_runs`), those whose lowering was refused
+    or is not their program's words, that stopped, or that trained another state or events than
+    the C step on the same case; the runs; and what differed, run by run."""
+    bad, runs, notes = 0, 0, []
+    for case, choices, step, run in pack_runs(path, cases):
+        runs += 1
+        problems = pack_problems(step, run)
+        if problems:
+            bad += 1
+            notes.append(f"{case} {choices}: {problems[0]}")
+    return bad, runs, notes
+
+
+#: The fuzz harness's state (runtime/c/fuzz_decoder_train.c): its spec and shape, the contracts its
+#: configuration byte's low three bits name (bit 3: every layer recomputed), its workspace.
+FUZZ_STATE = PLAN_CORPUS[0]
+FUZZ_CONTRACTS = (0, 3, 4, 14, 16, 82, 32, 36)
+FUZZ_WORKSPACE = 1 << 20
+
+
+def renumber_jobs(records: list[list[int]]) -> list[list[int]]:
+    """A program's records (lists of words) with their jobs numbered from 1 again, in place -- a
+    GEMM job's calls keep one number between them -- as an edit that adds or drops records needs,
+    so the check meets the edit rather than a launch out of order. Returns the records."""
+    number, last = 0, None
+    for r in records:
+        if not (r[0] == 5 and last == (5, r[1])):  # a GEMM call of the job before
+            number += 1
+        last = (r[0], r[1])
+        r[1] = number
+    return records
+
+
+def fuzz_input(config: int, steps: int, accumulation: int, words) -> bytes:
+    """A fuzz input: the configuration byte, the shape byte, the program's words little-endian."""
+    shape = (steps - 1) | (accumulation - 1) << 1
+    return bytes([config, shape]) + struct.pack(f"<{len(words)}Q", *words)
+
+
+def fuzz_program(config: int, steps: int = 1, accumulation: int = 1) -> list[int]:
+    """The planner's program for the fuzz harness's state under `config` (its words)."""
+    from bcir.hosted.models.native_launch import program_words, step_program
+
+    spec, batch, time_ = FUZZ_STATE
+    contract = FUZZ_CONTRACTS[config & 7]
+    return program_words(step_program(
+        spec, batch, time_, contract=contract, recompute=3 if config & 8 else 0,
+        workspace_bytes=FUZZ_WORKSPACE if contract & 16 else 0, steps=steps,
+        accumulation=accumulation,
+    ))  # fmt: skip
+
+
+#: PX-4: the configuration bits the two fuzz harnesses read for the transient arenas -- lent at
+#: what the program reaches in each (FUZZ_PLACED), then one float short (FUZZ_SHORT) -- and the
+#: configurations whose planner programs they are seeded with placed by lifetime.
+FUZZ_PLACED, FUZZ_SHORT = 16, 32
+FUZZ_PLACED_CONFIGS = (0, 4, 8, 13)
+
+
+def fuzz_reach(words, space: int, most: int) -> int:
+    """The floats of `space` (5 activations, 6 scratch) a program's operands reach -- each one's
+    offset and bytes there rounded up to a float, counting only operands inside the arena's `most`
+    floats: the harnesses' `reach` (runtime/c/fuzz_decoder_train.c, fuzz_decoder_pack.c)."""
+    from bcir.hosted.models.native_launch import RECORD_WORDS
+
+    floats = 0
+    for base in range(0, len(words) - len(words) % RECORD_WORDS, RECORD_WORDS):
+        for q in range(10):
+            space_, offset, nbytes = words[base + 11 + 3 * q : base + 14 + 3 * q]
+            if space_ == space and offset <= 4 * most and nbytes <= 4 * most - offset:
+                floats = max(floats, -(-(offset + nbytes) // 4))
+    return floats
+
+
+def fuzz_lent(words, config: int, plan) -> tuple[int, int] | None:
+    """The transient arenas' floats a harness lends under `config` for `words` (`plan` the state's
+    C plan: its activation and scratch counts): None for the trainer's own, else what the words
+    reach -- the activations up to the plan's whole transient span, the room the harnesses
+    allocate, since a placement holds the scratch values there too -- one float short under
+    FUZZ_SHORT."""
+    if not config & FUZZ_PLACED:
+        return None
+    acts = fuzz_reach(words, 5, plan.activations + plan.scratch)
+    scratch = fuzz_reach(words, 6, plan.scratch)
+    if config & FUZZ_SHORT:
+        if acts:
+            acts -= 1
+        elif scratch:
+            scratch -= 1
+    return acts, scratch
+
+
+def fuzz_training_pack(config: int, steps: int = 1, accumulation: int = 1):
+    """The planner's training pack for the fuzz harnesses' state under `config` -- the one both the
+    pack seeds (`fuzz_pack`) and the placed program seeds (`fuzz_placed`) are made from."""
+    from bcir.hosted.models.native_pack import training_pack
+
+    spec, batch, time_ = FUZZ_STATE
+    contract = FUZZ_CONTRACTS[config & 7]
+    return training_pack(spec, batch, time_, contract=contract, recompute=3 if config & 8 else 0,
+                         workspace_bytes=FUZZ_WORKSPACE if contract & 16 else 0, steps=steps,
+                         accumulation=accumulation)  # fmt: skip
+
+
+def fuzz_placed(config: int, steps: int = 1, accumulation: int = 1):
+    """The planner's training pack for the fuzz harnesses' state under `config`, and its transient
+    values placed by lifetime (`native_pack.place_by_lifetime`)."""
+    from bcir.hosted.models.native_pack import place_by_lifetime
+
+    tp = fuzz_training_pack(config, steps, accumulation)
+    return tp, place_by_lifetime(tp)
+
+
+def fuzz_seeds() -> list[tuple[str, bytes, bool]]:
+    """The fuzz harness's seed corpus as (name, input, whether the check admits it): the
+    planner's program for every configuration at one step, two of them at two steps of two
+    micro-batches, the planner's programs of `FUZZ_PLACED_CONFIGS` placed by lifetime on the arenas
+    they reach (PX-4) and one of them a float short, near misses of the check's rules on the
+    first, and the kept layers' program on the recompute set's arena -- so a campaign starts inside
+    the record grammar and inside its refusals."""
+    from bcir.hosted.models.native_pack import placed_words
+
+    out = []
+    for config in range(16):
+        shapes = ((1, 1), (2, 2)) if config in (0, 4) else ((1, 1),)
+        for steps, accumulation in shapes:
+            words = fuzz_program(config, steps, accumulation)
+            out.append((f"c{config}_{steps}x{accumulation}",
+                        fuzz_input(config, steps, accumulation, words), True))  # fmt: skip
+    for config in FUZZ_PLACED_CONFIGS:
+        tp, placed = fuzz_placed(config)
+        words = placed_words(tp, placed.placements)
+        out.append((f"placed_c{config}", fuzz_input(config | FUZZ_PLACED, 1, 1, words), True))
+        if config == 0:
+            out.append(("placed_short", fuzz_input(config | FUZZ_PLACED | FUZZ_SHORT, 1, 1, words),
+                        False))  # fmt: skip
+    words, w = fuzz_program(0), 48
+    records = [list(words[i : i + w]) for i in range(0, len(words), w)]
+    rms = next(i for i, r in enumerate(records) if r[0] == 4)
+    gemm = next(i for i, r in enumerate(records) if r[0] == 5)
+    loss = next(i for i, r in enumerate(records) if r[0] == 15)
+    misses = {
+        "unscanned": renumber_jobs([list(r) for r in records[1:]]),  # weights read, not known
+        "eps": [r if i != rms else r[:5] + [r[5] + 1] + r[6:] for i, r in enumerate(records)],
+        "alpha": [r if i != gemm else r[:8] + [0x40000000] + r[9:] for i, r in enumerate(records)],
+        "twoloss": renumber_jobs(
+            [list(r) for r in records[: loss + 1] + [records[loss]] + records[loss + 1 :]]
+        ),
+    }
+    for name, edited in misses.items():
+        out.append((f"miss_{name}", fuzz_input(0, 1, 1, [x for r in edited for x in r]), False))
+    # the kept layers' program on the recompute set's trainer (PX-4): its caches past the arena the
+    # trainer lends -- the recompute set's activations -- though inside the room the harness
+    # allocates for a placement, so only a harness lending the set's own arena refuses it
+    out.append(("miss_recompute_arena", fuzz_input(8, 1, 1, fuzz_program(0)), False))
+    return out
+
+
+def fuzz_pack_input(config: int, steps: int, accumulation: int, pack: bytes, plan: bytes) -> bytes:
+    """A pack fuzz input (runtime/c/fuzz_decoder_pack.c): the configuration byte, the shape byte,
+    the pack's length (u32, little-endian), the pack, then the plan."""
+    shape = (steps - 1) | (accumulation - 1) << 1
+    return bytes([config, shape]) + struct.pack("<I", len(pack)) + pack + plan
+
+
+def fuzz_pack_parts(data: bytes) -> tuple[int, int, int, bytes, bytes]:
+    """A pack fuzz input's parts: (configuration, steps, accumulation, pack, plan)."""
+    (n,) = struct.unpack_from("<I", data, 2)
+    return data[0], 1 + (data[1] & 1), 1 + (data[1] >> 1 & 1), data[6 : 6 + n], data[6 + n :]
+
+
+def fuzz_pack(config: int, steps: int = 1, accumulation: int = 1):
+    """The planner's pack and plan for the fuzz harness's state under `config` (bytes, bytes, and
+    the training pack and the two objects for an edit)."""
+    from bcir.hosted.models.native_pack import pack_artifacts
+
+    tp = fuzz_training_pack(config, steps, accumulation)
+    return (tp, *pack_artifacts(tp))
+
+
+def fuzz_pack_seeds() -> list[tuple[str, bytes, bool]]:
+    """The pack fuzz harness's seed corpus as (name, input, whether the lowering admits it): the
+    planner's pack for every configuration at one step, two of them at two steps of two
+    micro-batches, the planner's packs of `FUZZ_PLACED_CONFIGS` placed by lifetime and run on the
+    arenas their programs reach (PX-4) -- one of them a float short, which lowers and whose run is
+    refused -- and near misses of the lowering's refusals on the first: two live values on one
+    span (the alias law), a name outside the vocabulary, a value no lifetime places, a claim past
+    its value's lifetime, a block not the claim's."""
+    import copy
+    import dataclasses
+
+    from bcir.abi.streampack_abi import encode
+    from bcir.hosted.models.native_pack import pack_artifacts
+    from bcir.tests.plan_fixtures import raw_encode
+
+    out = []
+    for config in range(16):
+        shapes = ((1, 1), (2, 2)) if config in (0, 4) else ((1, 1),)
+        for steps, accumulation in shapes:
+            _tp, pack, plan, _, _ = fuzz_pack(config, steps, accumulation)
+            out.append((f"c{config}_{steps}x{accumulation}",
+                        fuzz_pack_input(config, steps, accumulation, pack, plan), True))  # fmt: skip
+    for config in FUZZ_PLACED_CONFIGS:
+        tp, placed = fuzz_placed(config)
+        pack, plan, _, _ = pack_artifacts(tp, placements=placed.placements)
+        out.append((f"placed_c{config}", fuzz_pack_input(config | FUZZ_PLACED, 1, 1, pack, plan),
+                    True))  # fmt: skip
+        if config == 0:
+            out.append(("placed_short",
+                        fuzz_pack_input(config | FUZZ_PLACED | FUZZ_SHORT, 1, 1, pack, plan), True))  # fmt: skip
+    tp, pack_bytes, plan_bytes, pack, plan = fuzz_pack(0)
+    claims = {c.id: c for ph in tp.module.phases for c in ph.claims}
+    rms = next(i for i, seg in enumerate(pack.segments) if seg.opcode == "train.rms")
+    x0, n1 = claims[pack.segments[rms].claim_id].rd[0], claims[pack.segments[rms].claim_id].wr[0]
+    gemm = next(i for i, seg in enumerate(pack.segments) if seg.opcode.startswith("train.gemm."))
+    lt = {x.rid: x for x in plan.lifetimes}
+    spans = [x for x in plan.lifetimes if x.last_phase > x.first_phase and
+             x.bank in ("activations", "scratch")]  # fmt: skip
+
+    def with_lifetimes(edit):  # without the wire laws: the encoder refuses what the C must
+        q = copy.deepcopy(plan)
+        q.lifetimes = sorted(edit(list(q.lifetimes)), key=lambda x: x.rid)
+        return raw_encode(q)
+
+    def with_segment(i, block=None, **fields):
+        p = dataclasses.replace(pack, segments=list(pack.segments), blocks=list(pack.blocks))
+        if fields:
+            p.segments[i] = dataclasses.replace(p.segments[i], **fields)
+        if block:
+            p.blocks[i] = dataclasses.replace(p.blocks[i], **block)
+        return encode(p)
+
+    misses = {
+        "alias": (pack_bytes, with_lifetimes(lambda ls: [
+            dataclasses.replace(x, offset=lt[x0].offset) if x.rid == n1 else x for x in ls])),
+        "op": (with_segment(gemm, opcode="train.gemm.solo.nt"), plan_bytes),
+        "rid": (pack_bytes, with_lifetimes(lambda ls: [x for x in ls if x.rid != spans[0].rid])),
+        "live": (pack_bytes, with_lifetimes(lambda ls: [
+            dataclasses.replace(x, last_phase=x.last_phase - 1, first_tick=0, last_tick=0)
+            if x.rid == spans[0].rid else x for x in ls])),
+        "block": (with_segment(gemm, block={"count": pack.blocks[gemm].count + 1}), plan_bytes),
+    }  # fmt: skip
+    for name, (pk, pl) in misses.items():
+        out.append((f"miss_{name}", fuzz_pack_input(0, 1, 1, pk, pl), False))
+    return out
+
+
 def measure(*, timed: bool = True) -> dict[str, float]:
     """Every NDT-GEM row this host can measure: the memory row always, the corpus row in a source
     checkout, the native rows with a compiler (and the timed one only when `timed`)."""
-    ratio = transient_ratio()[0]
+    ratio = placed_transient()[0]  # PX-4: the placed arena (the C plan's: `transient_ratio`)
     out = {"train.memory.transient": ratio}
     unselected = corpus_unselected()
     if unselected is not None:
@@ -883,6 +1808,7 @@ def measure(*, timed: bool = True) -> dict[str, float]:
             return out
         lib = ct.CDLL(str(path))
         out["train.plan.mismatch"] = float(plan_mismatch(lib))
+        out["train.plan.remat.mismatch"] = float(recompute_plan_mismatch(lib))
         out["train.mm.mismatch"] = float(mm_mismatch(lib))
         out["train.mm.fused.mismatch"] = float(mm_fused_mismatch(lib))
         out["train.mm.kblock.mismatch"] = float(mm_kblock_mismatch(lib))
@@ -897,6 +1823,15 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         out["train.exp.ulp.max"] = float(ulp)
         out["train.state.threads.mismatch"] = float(threads_mismatch(path))
         out["train.norm.reduce.mismatch"] = float(norm_mismatch(path))
+        traced = trace_library(Path(tmp) / "trace")
+        if traced is not None:  # no C units to trace (an installed package): not measured
+            out["train.plan.executed.mismatch"] = float(executed_mismatch(traced)[0])
+            out["train.plan.program.mismatch"] = float(program_mismatch(traced)[0])
+            out["train.plan.choose.mismatch"] = float(choose_mismatch(traced)[0])
+        packed = pack_library(Path(tmp) / "pack")
+        if packed is not None:  # no C units to lower with (an installed package): not measured
+            out["train.plan.pack.mismatch"] = float(pack_mismatch(packed)[0])
+            out["train.plan.place.mismatch"] = float(place_mismatch(packed)[0])
         if timed:
             out.update(measure_step(path))
         return out
@@ -909,6 +1844,10 @@ __all__ = [
     "MM_CASES",
     "PANELS_BENCH",
     "PLAN_CORPUS",
+    "REMAT_BENCH",
+    "REMAT_SETS",
+    "native_activation_count",
+    "recompute_plan_mismatch",
     "THREAD_COUNTS",
     "THREADS_BENCH",
     "build_library",
@@ -945,6 +1884,57 @@ __all__ = [
     "REDUCE_CHUNK_COUNTS",
     "norm_mismatch",
     "transient_ratio",
+    "TRACE_CONTRACTS",
+    "TraceCase",
+    "TraceRun",
+    "executed_mismatch",
+    "trace_case",
+    "trace_corpus",
+    "trace_library",
+    "layout_library",
+    "checkout_library",
+    "FUZZ_CONTRACTS",
+    "FUZZ_PLACED",
+    "FUZZ_PLACED_CONFIGS",
+    "FUZZ_SHORT",
+    "FUZZ_STATE",
+    "FUZZ_WORKSPACE",
+    "fuzz_input",
+    "fuzz_lent",
+    "fuzz_pack",
+    "fuzz_pack_input",
+    "fuzz_pack_parts",
+    "fuzz_pack_seeds",
+    "fuzz_placed",
+    "fuzz_reach",
+    "renumber_jobs",
+    "fuzz_program",
+    "fuzz_seeds",
+    "fuzz_training_pack",
+    "PackRun",
+    "pack_case",
+    "pack_library",
+    "time_library",
+    "pack_mismatch",
+    "pack_problems",
+    "pack_runs",
+    "place_mismatch",
+    "place_problems",
+    "place_runs",
+    "placed_transient",
+    "ProgramRun",
+    "program_case",
+    "program_choices",
+    "program_mismatch",
+    "program_problems",
+    "program_run_count",
+    "program_runs",
+    "state_cases",
+    "CHOOSE_MIXES",
+    "choose_choices",
+    "choose_mismatch",
+    "choose_run_count",
+    "choose_runs",
 ]
 
 

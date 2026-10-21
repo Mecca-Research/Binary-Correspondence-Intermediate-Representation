@@ -1,0 +1,8 @@
+# host: Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; head 12aa6dc, runtime/c against it cbe58694db3ed158
+the parent (ABI 4): the plan's bf16 workspace and the probe's record over one step
+  codex-attn     bf16+exp+reduce+attn       plan   2752768, probe   1933376 (rc 0, 1 step)
+  codex-attn     bf16+exp+reduce+attnbf16   plan   9240640, probe   1933376 (rc 0, 1 step)
+  codex-attn B2  bf16+exp+reduce+attn       plan   1442048, probe   1015872 (rc 0, 1 step)
+  codex-attn B2  bf16+exp+reduce+attnbf16   plan   4620352, probe   1015872 (rc 0, 1 step)
+  9.84M          bf16+exp+reduce+attn       plan  11534592, probe   6553664 (rc 0, 1 step)
+  9.84M          bf16+exp+reduce+attnbf16   plan  11534592, probe   6553664 (rc 0, 1 step)
