@@ -1,0 +1,266 @@
+{
+  "accumulation": {
+    "max_weight_error": 1.1920928955078125e-07,
+    "micro_batches": 2,
+    "updates": 5
+  },
+  "benchmark": {
+    "batch": 2,
+    "context": 16,
+    "eager_over_native": 3.7722291798815304,
+    "max_weight_error": 3.7178397178649902e-06,
+    "native_seconds": 0.006311985000024833,
+    "parameters": 90432,
+    "provider": "portable-c",
+    "pytorch_seconds": 0.0238102540000682,
+    "reference": "PyTorch eager, default SDPA, torch.optim.AdamW foreach=False fused=False",
+    "scope": "CPU FP32 full forward/backward/global clip/AdamW; native includes input marshalling and events",
+    "spec": {
+      "activation": "silu_gate",
+      "d_ff": 128,
+      "d_model": 64,
+      "n_heads": 4,
+      "n_kv_heads": 2,
+      "n_layers": 2,
+      "rms_norm_eps": 1e-06,
+      "rope_base": 10000.0,
+      "tied_embeddings": false,
+      "vocab_size": 128
+    },
+    "updates": 8
+  },
+  "cases": [
+    {
+      "context": 4,
+      "deployment": {
+        "generated_ids": [
+          5
+        ],
+        "q8_sha256": "d46daf379bfb2eda01eb734077858fd9ddfc1e5e94394c577d908fdf6a2c904d"
+      },
+      "exact_resume": true,
+      "gradient_errors": {
+        "model.embed_tokens.weight": 1.1920928955078125e-07,
+        "model.layers.0.input_layernorm.weight": 9.313225746154785e-10,
+        "model.layers.0.mlp.down_proj.weight": 9.313225746154785e-10,
+        "model.layers.0.mlp.gate_proj.weight": 1.1641532182693481e-09,
+        "model.layers.0.mlp.up_proj.weight": 2.3283064365386963e-09,
+        "model.layers.0.post_attention_layernorm.weight": 8.731149137020111e-11,
+        "model.layers.0.self_attn.k_proj.weight": 1.7462298274040222e-10,
+        "model.layers.0.self_attn.o_proj.weight": 2.9802322387695312e-08,
+        "model.layers.0.self_attn.q_proj.weight": 1.0186340659856796e-10,
+        "model.layers.0.self_attn.v_proj.weight": 2.2351741790771484e-08,
+        "model.layers.1.input_layernorm.weight": 9.313225746154785e-10,
+        "model.layers.1.mlp.down_proj.weight": 1.3969838619232178e-09,
+        "model.layers.1.mlp.gate_proj.weight": 1.3969838619232178e-09,
+        "model.layers.1.mlp.up_proj.weight": 1.862645149230957e-09,
+        "model.layers.1.post_attention_layernorm.weight": 9.00399754755199e-11,
+        "model.layers.1.self_attn.k_proj.weight": 1.7462298274040222e-10,
+        "model.layers.1.self_attn.o_proj.weight": 1.6763806343078613e-08,
+        "model.layers.1.self_attn.q_proj.weight": 1.3096723705530167e-10,
+        "model.layers.1.self_attn.v_proj.weight": 2.9802322387695312e-08,
+        "model.norm.weight": 3.725290298461914e-09
+      },
+      "initial_loss": 3.457369563722806,
+      "last_loss": 0.9177636110055145,
+      "losses": [
+        3.457369563722806,
+        3.1985878469900335,
+        2.999191956043212,
+        2.805173184433333,
+        2.6253817171023788,
+        2.451592826117747,
+        2.285375285362816,
+        2.1363527304845866,
+        1.9917316669390281,
+        1.8554567209816064,
+        1.7287967280430014,
+        1.6105677075582256,
+        1.5049116782760534,
+        1.407906609180583,
+        1.3122396298045995,
+        1.22177365720421,
+        1.1388155675156049,
+        1.0592098381697836,
+        0.9887528916197086,
+        0.9177636110055145
+      ],
+      "max_gradient_error": 1.1920928955078125e-07,
+      "max_weight_error": 8.363276720046997e-07,
+      "parameters": 4176,
+      "spec": {
+        "activation": "silu_gate",
+        "d_ff": 24,
+        "d_model": 16,
+        "n_heads": 4,
+        "n_kv_heads": 1,
+        "n_layers": 2,
+        "rms_norm_eps": 1e-06,
+        "rope_base": 10000.0,
+        "tied_embeddings": true,
+        "vocab_size": 32
+      }
+    },
+    {
+      "context": 4,
+      "deployment": {
+        "generated_ids": [
+          5
+        ],
+        "q8_sha256": "d85d584db4547362ebee4f559633d44396a80573ecd09e8290838b562f55e2ef"
+      },
+      "exact_resume": true,
+      "gradient_errors": {
+        "lm_head.weight": 5.960464477539063e-08,
+        "model.embed_tokens.weight": 1.1920928955078125e-07,
+        "model.layers.0.input_layernorm.weight": 9.313225746154785e-10,
+        "model.layers.0.mlp.down_proj.weight": 1.3969838619232178e-09,
+        "model.layers.0.mlp.gate_proj.weight": 6.693881005048752e-10,
+        "model.layers.0.mlp.up_proj.weight": 9.313225746154785e-10,
+        "model.layers.0.post_attention_layernorm.weight": 5.820766091346741e-11,
+        "model.layers.0.self_attn.k_proj.weight": 5.820766091346741e-11,
+        "model.layers.0.self_attn.o_proj.weight": 1.4901161193847656e-08,
+        "model.layers.0.self_attn.q_proj.weight": 4.729372449219227e-11,
+        "model.layers.0.self_attn.v_proj.weight": 1.816079020500183e-08,
+        "model.norm.weight": 3.725290298461914e-09
+      },
+      "initial_loss": 3.4657037197698237,
+      "last_loss": 0.602329644404833,
+      "losses": [
+        3.4657037197698237,
+        3.19328400338664,
+        2.9896108633707854,
+        2.8265825273129472,
+        2.649603340008174,
+        2.4714275670861117,
+        2.2983395793606856,
+        2.1260094814064,
+        1.9588500073739838,
+        1.7940572259095156,
+        1.6370187150265842,
+        1.4870954438162416,
+        1.345208044194786,
+        1.2124017895970443,
+        1.0887185648701714,
+        0.974350623137277,
+        0.8687716830860005,
+        0.7716108438467864,
+        0.682866441257987,
+        0.602329644404833
+      ],
+      "max_gradient_error": 1.1920928955078125e-07,
+      "max_weight_error": 9.5367431640625e-07,
+      "parameters": 3248,
+      "spec": {
+        "activation": "silu_gate",
+        "d_ff": 24,
+        "d_model": 16,
+        "n_heads": 4,
+        "n_kv_heads": 4,
+        "n_layers": 1,
+        "rms_norm_eps": 1e-06,
+        "rope_base": 10000.0,
+        "tied_embeddings": false,
+        "vocab_size": 32
+      }
+    },
+    {
+      "context": 1,
+      "deployment": {
+        "generated_ids": [
+          2
+        ],
+        "q8_sha256": "e65a46daa92ae52acae4a903a05fe1d3878f7dd1dadf8e09706bb59bed975cca"
+      },
+      "exact_resume": true,
+      "gradient_errors": {
+        "lm_head.weight": 1.7881393432617188e-07,
+        "model.embed_tokens.weight": 3.5762786865234375e-07,
+        "model.layers.0.input_layernorm.weight": 1.1641532182693481e-09,
+        "model.layers.0.mlp.down_proj.weight": 4.6566128730773926e-09,
+        "model.layers.0.mlp.gate_proj.weight": 4.190951585769653e-09,
+        "model.layers.0.mlp.up_proj.weight": 5.587935447692871e-09,
+        "model.layers.0.post_attention_layernorm.weight": 3.2014213502407074e-10,
+        "model.layers.0.self_attn.k_proj.weight": 0.0,
+        "model.layers.0.self_attn.o_proj.weight": 4.470348358154297e-08,
+        "model.layers.0.self_attn.q_proj.weight": 0.0,
+        "model.layers.0.self_attn.v_proj.weight": 4.842877388000488e-08,
+        "model.layers.1.input_layernorm.weight": 2.0954757928848267e-09,
+        "model.layers.1.mlp.down_proj.weight": 5.587935447692871e-09,
+        "model.layers.1.mlp.gate_proj.weight": 3.725290298461914e-09,
+        "model.layers.1.mlp.up_proj.weight": 1.862645149230957e-09,
+        "model.layers.1.post_attention_layernorm.weight": 2.3283064365386963e-10,
+        "model.layers.1.self_attn.k_proj.weight": 0.0,
+        "model.layers.1.self_attn.o_proj.weight": 2.9802322387695312e-08,
+        "model.layers.1.self_attn.q_proj.weight": 0.0,
+        "model.layers.1.self_attn.v_proj.weight": 4.470348358154297e-08,
+        "model.norm.weight": 3.725290298461914e-09
+      },
+      "initial_loss": 3.4773573951545993,
+      "last_loss": 0.2898212682681396,
+      "losses": [
+        3.4773573951545993,
+        3.1148994486977903,
+        2.8885275242358475,
+        2.6723248172305283,
+        2.474623213470024,
+        2.249265358649412,
+        2.018383885720521,
+        1.8081018521475454,
+        1.5992164488136673,
+        1.4096988422493952,
+        1.2294721419144412,
+        1.0638261673268916,
+        0.9180177065914719,
+        0.7844425749889925,
+        0.6692397328666888,
+        0.5700363568825977,
+        0.48296468349793353,
+        0.40954788474223114,
+        0.3451757812896885,
+        0.2898212682681396
+      ],
+      "max_gradient_error": 3.5762786865234375e-07,
+      "max_weight_error": 1.4230608940124512e-06,
+      "parameters": 4944,
+      "spec": {
+        "activation": "silu_gate",
+        "d_ff": 24,
+        "d_model": 16,
+        "n_heads": 4,
+        "n_kv_heads": 2,
+        "n_layers": 2,
+        "rms_norm_eps": 1e-06,
+        "rope_base": 10000.0,
+        "tied_embeddings": false,
+        "vocab_size": 32
+      }
+    }
+  ],
+  "hardware": "CPU only; no accelerator/backward/distributed validation",
+  "schema": "bcir.native_decoder_gate.v1",
+  "threads": {
+    "identical_state": true,
+    "last_loss": 3.631004778177687,
+    "rail": "pthreads",
+    "spec": {
+      "activation": "silu_gate",
+      "d_ff": 96,
+      "d_model": 40,
+      "n_heads": 4,
+      "n_kv_heads": 2,
+      "n_layers": 2,
+      "rms_norm_eps": 1e-06,
+      "rope_base": 10000.0,
+      "tied_embeddings": false,
+      "vocab_size": 64
+    },
+    "steps": 5,
+    "threads": [
+      1,
+      2,
+      4
+    ]
+  },
+  "torch": "2.14.1+cpu"
+}
