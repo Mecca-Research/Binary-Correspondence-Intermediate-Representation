@@ -1,0 +1,119 @@
+{
+  "prior_archive_sha256": "e3899d3a52ab283e2aa7976fdc7c1e6bb95566563ceb3b97ffa808596caf2731",
+  "rows": [
+    {
+      "task": "kv_curriculum",
+      "seed": 20261018,
+      "prior_case": "kv_bucket_global",
+      "same_selected_model_optimizer_state": true,
+      "same_training_inputs": true,
+      "current_state_sha256": "795e1c5c2788cc4860b2d8808c5851c88dbf69917378179fc175f10831ec73ae",
+      "prior_state_sha256": "795e1c5c2788cc4860b2d8808c5851c88dbf69917378179fc175f10831ec73ae"
+    },
+    {
+      "task": "kv_curriculum",
+      "seed": 20261019,
+      "prior_case": "kv_bucket_global",
+      "same_selected_model_optimizer_state": true,
+      "same_training_inputs": true,
+      "current_state_sha256": "f28c1c3e98ed7d816c917176a02653fcdaa7515f99f5b5ae924b75bab7729683",
+      "prior_state_sha256": "f28c1c3e98ed7d816c917176a02653fcdaa7515f99f5b5ae924b75bab7729683"
+    },
+    {
+      "task": "kv_curriculum",
+      "seed": 20261020,
+      "prior_case": "kv_bucket_global",
+      "same_selected_model_optimizer_state": true,
+      "same_training_inputs": true,
+      "current_state_sha256": "fb90a780b69898c937e06d3f484b356dcc1636164d79b984cf359536db9fac5d",
+      "prior_state_sha256": "fb90a780b69898c937e06d3f484b356dcc1636164d79b984cf359536db9fac5d"
+    },
+    {
+      "task": "ordered",
+      "seed": 20261018,
+      "prior_case": "ordered_bucket_global",
+      "same_selected_model_optimizer_state": true,
+      "same_training_inputs": true,
+      "current_state_sha256": "27911dc14ba206ae4671faf15e7a0cb7312285fcda2bd5569a3515048bf89ee9",
+      "prior_state_sha256": "27911dc14ba206ae4671faf15e7a0cb7312285fcda2bd5569a3515048bf89ee9"
+    },
+    {
+      "task": "ordered",
+      "seed": 20261019,
+      "prior_case": "ordered_bucket_global",
+      "same_selected_model_optimizer_state": true,
+      "same_training_inputs": true,
+      "current_state_sha256": "c6edaf093aa9f2085322244904cc4e10d94e823d9c76c0bc6facdcde30dfba45",
+      "prior_state_sha256": "c6edaf093aa9f2085322244904cc4e10d94e823d9c76c0bc6facdcde30dfba45"
+    },
+    {
+      "task": "ordered",
+      "seed": 20261020,
+      "prior_case": "ordered_bucket_global",
+      "same_selected_model_optimizer_state": true,
+      "same_training_inputs": true,
+      "current_state_sha256": "5b6bbfb3042c13276b1a525fabe3371c78c071fa71fed42d6011ff39b3f747a1",
+      "prior_state_sha256": "5b6bbfb3042c13276b1a525fabe3371c78c071fa71fed42d6011ff39b3f747a1"
+    },
+    {
+      "task": "lm",
+      "model": "global",
+      "seed": 20261018,
+      "prior_case": "lm_bucket_global",
+      "same_selected_model_optimizer_state": false,
+      "same_training_inputs": true,
+      "current_state_sha256": "7a99bf3d2e8d37663c724a64138eba75c6eff1905e606dafc69473eb6fa5bc8c",
+      "prior_state_sha256": "e568f2aee4a815d4348c48c62f69212bd871d976b5d39342a0d0c924edfb5145"
+    },
+    {
+      "task": "lm",
+      "model": "global",
+      "seed": 20261019,
+      "prior_case": "lm_bucket_global",
+      "same_selected_model_optimizer_state": false,
+      "same_training_inputs": true,
+      "current_state_sha256": "34b51f6be36d644cd38e4e5323ee8849c0f8e7006238e7542513787dda92f0c3",
+      "prior_state_sha256": "50b49719eda1c05b63cdf03e55aa604e4a51af1b81e50ac80dd50273320dcf4e"
+    },
+    {
+      "task": "lm",
+      "model": "global",
+      "seed": 20261020,
+      "prior_case": "lm_bucket_global",
+      "same_selected_model_optimizer_state": false,
+      "same_training_inputs": true,
+      "current_state_sha256": "2f65c95e6a8dc1c0220fe0deae640f6276c818bc0156a2075db79cd78d703aed",
+      "prior_state_sha256": "bef65f7a088c6c1c7d3ab5409a4b11838756a31b374bd8be2c2557c9a2662b42"
+    },
+    {
+      "task": "lm",
+      "model": "hybrid",
+      "seed": 20261018,
+      "prior_case": "lm_bucket_hybrid",
+      "same_selected_model_optimizer_state": false,
+      "same_training_inputs": true,
+      "current_state_sha256": "838482f49307f8e950a03ced44862b90c15bd2e87c1ea29bf24396bff1a08a0f",
+      "prior_state_sha256": "e7085ddae744008f7ec967e033d718fd35916a116b409e37939d54b6f3b89f76"
+    },
+    {
+      "task": "lm",
+      "model": "hybrid",
+      "seed": 20261019,
+      "prior_case": "lm_bucket_hybrid",
+      "same_selected_model_optimizer_state": false,
+      "same_training_inputs": true,
+      "current_state_sha256": "2b46fca8f37482b005a5acd5a86fd6040b7a28514ee597f0e302b9bd08589acb",
+      "prior_state_sha256": "43fb51963edfca00bdeb2e86c811010ed9d1f4b8b24be654d19bf5c01d1215b4"
+    },
+    {
+      "task": "lm",
+      "model": "hybrid",
+      "seed": 20261020,
+      "prior_case": "lm_bucket_hybrid",
+      "same_selected_model_optimizer_state": false,
+      "same_training_inputs": true,
+      "current_state_sha256": "9ec1e8fa5bef246c3bc60bbe9f399d6c8298871b35436d9f6007b5501d689b08",
+      "prior_state_sha256": "8aae4b0d726b59d0d0bc9d6fc402b2db64d7ff4825cd119e0d386a1551fd2acf"
+    }
+  ]
+}
