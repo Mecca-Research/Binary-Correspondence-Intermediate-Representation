@@ -1,0 +1,26 @@
+{
+  "command": [
+    "gcc",
+    "-std=c11",
+    "-O3",
+    "-fPIC",
+    "-shared",
+    "-ffp-contract=off",
+    "-fno-math-errno",
+    "-pthread",
+    "-I",
+    "/workspace/scratch/d4904b8a62c3/wedge-query-aware/vendor",
+    "-DGP_RANK=22",
+    "-DGP_PROJECTOR=0",
+    "-DGP_SYMMETRIC=0",
+    "-DGP_HEADS=1",
+    "/workspace/scratch/d4904b8a62c3/wedge-query-aware/vendor/bcir_tensor.c",
+    "/workspace/scratch/d4904b8a62c3/wedge-query-aware/build/attention.c",
+    "-lm",
+    "-o",
+    "/workspace/scratch/d4904b8a62c3/wedge-query-aware/build/attention.so"
+  ],
+  "bcir_commit": "aaa2e6c0ee0ee15b83fe4d0373b48bd893e80d6d",
+  "source_sha256": "3795ef2a3d4878ba2ae3dbbb94a97f5efbe1533c1dc48759b2059f6b6021960c",
+  "stderr": ""
+}
