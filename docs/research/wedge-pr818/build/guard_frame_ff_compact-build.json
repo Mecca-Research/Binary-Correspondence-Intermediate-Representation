@@ -1,0 +1,26 @@
+{
+  "command": [
+    "gcc",
+    "-std=c11",
+    "-O3",
+    "-fPIC",
+    "-shared",
+    "-ffp-contract=off",
+    "-fno-math-errno",
+    "-pthread",
+    "-I",
+    "/workspace/scratch/d4904b8a62c3/wedge-pr818/vendor-new",
+    "-DGP_RANK=22",
+    "-DGP_PROJECTOR=0",
+    "-DGP_SYMMETRIC=0",
+    "-DGP_HEADS=1",
+    "/workspace/scratch/d4904b8a62c3/wedge-pr818/vendor-new/bcir_tensor.c",
+    "/workspace/scratch/d4904b8a62c3/wedge-pr818/build/guard_frame_ff_compact.c",
+    "-lm",
+    "-o",
+    "/workspace/scratch/d4904b8a62c3/wedge-pr818/build/guard_frame_ff_compact.so"
+  ],
+  "pin": "237651126684569e5b756dcc8d1c89ed2e86d0e3",
+  "source_sha256": "55f769870df59ea1bd4d41cefbc73e1a114313d1ba62e7f59843b5e2f4e35e4c",
+  "stderr": ""
+}
