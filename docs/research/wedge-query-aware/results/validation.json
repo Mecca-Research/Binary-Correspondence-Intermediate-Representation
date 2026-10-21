@@ -1,0 +1,167 @@
+{
+  "primitive": [
+    {
+      "query_scale": 1.0,
+      "forward_max": 0.0,
+      "du_relative": 7.025616009326647e-08,
+      "dp_relative": 4.333014401739671e-08
+    },
+    {
+      "query_scale": 1e-08,
+      "forward_max": 0.0,
+      "du_relative": 3.018756314555475e-08,
+      "dp_relative": 4.7161307348823206e-08
+    },
+    {
+      "query_scale": 1000.0,
+      "forward_max": 0.0,
+      "du_relative": 4.164090483762731e-08,
+      "dp_relative": 3.9296590087898574e-08
+    },
+    {
+      "query_scale": 0.0,
+      "forward_max": 0.0,
+      "du_relative": 6.069220972472236e-08,
+      "dp_relative": 0.0
+    },
+    {
+      "geometry_case": "ordinary",
+      "forward_max": 0.0,
+      "dz_relative": 1.2585353684440134e-07,
+      "finite": true,
+      "directional_fd": -0.5262053532182343,
+      "directional_ad": -0.5262407246874271,
+      "fd_relative": 6.721537793158673e-05
+    },
+    {
+      "geometry_case": "zero",
+      "forward_max": 0.0,
+      "dz_relative": 0.0,
+      "finite": true
+    },
+    {
+      "geometry_case": "collinear",
+      "forward_max": 0.0,
+      "dz_relative": 9.186348571314604e-08,
+      "finite": true
+    },
+    {
+      "geometry_case": "nearly_collinear",
+      "forward_max": 0.0,
+      "dz_relative": 1.0073041749329918e-07,
+      "finite": true
+    },
+    {
+      "geometry_case": "tiny_query",
+      "forward_max": 0.0,
+      "dz_relative": 1.0916572936483449e-07,
+      "finite": true
+    }
+  ],
+  "models": [
+    {
+      "width": 32,
+      "layers": 2,
+      "ff": 48,
+      "variant": "query_guard_compact",
+      "logit_max": 1.9371509552001953e-07,
+      "loss_error": 5.416654529355469e-07,
+      "gradient_relative": 5.281071963219969e-07,
+      "gradient_max": 2.8312206268310547e-07
+    },
+    {
+      "width": 32,
+      "layers": 2,
+      "ff": 48,
+      "variant": "query_guard_frame_ff_compact",
+      "logit_max": 1.9371509552001953e-07,
+      "loss_error": 5.416654529355469e-07,
+      "gradient_relative": 5.281071963219969e-07,
+      "gradient_max": 2.8312206268310547e-07
+    },
+    {
+      "width": 32,
+      "layers": 2,
+      "ff": 48,
+      "variant": "query_guard_layer_frame_ff",
+      "logit_max": 1.9371509552001953e-07,
+      "loss_error": 5.416654529355469e-07,
+      "gradient_relative": 5.281071963219969e-07,
+      "gradient_max": 2.8312206268310547e-07
+    },
+    {
+      "width": 128,
+      "layers": 3,
+      "ff": 257,
+      "variant": "query_guard_compact",
+      "logit_max": 4.76837158203125e-07,
+      "loss_error": 1.4627634037367443e-07,
+      "gradient_relative": 7.332809125318992e-07,
+      "gradient_max": 3.725290298461914e-07
+    },
+    {
+      "width": 128,
+      "layers": 3,
+      "ff": 257,
+      "variant": "query_guard_frame_ff_compact",
+      "logit_max": 4.76837158203125e-07,
+      "loss_error": 1.4627634037367443e-07,
+      "gradient_relative": 7.332809125318992e-07,
+      "gradient_max": 3.725290298461914e-07
+    },
+    {
+      "width": 128,
+      "layers": 3,
+      "ff": 257,
+      "variant": "query_guard_layer_frame_ff",
+      "logit_max": 4.76837158203125e-07,
+      "loss_error": 1.4627634037367443e-07,
+      "gradient_relative": 7.332809125318992e-07,
+      "gradient_max": 3.725290298461914e-07
+    },
+    {
+      "width": 128,
+      "layers": 3,
+      "ff": 250,
+      "variant": "query_guard_compact",
+      "logit_max": 6.258487701416016e-07,
+      "loss_error": 2.1626479806968746e-07,
+      "gradient_relative": 6.923580669368289e-07,
+      "gradient_max": 4.0978193283081055e-07
+    },
+    {
+      "width": 128,
+      "layers": 3,
+      "ff": 250,
+      "variant": "query_guard_frame_ff_compact",
+      "logit_max": 6.258487701416016e-07,
+      "loss_error": 2.1626479806968746e-07,
+      "gradient_relative": 6.923580669368289e-07,
+      "gradient_max": 4.0978193283081055e-07
+    },
+    {
+      "width": 128,
+      "layers": 3,
+      "ff": 250,
+      "variant": "query_guard_layer_frame_ff",
+      "logit_max": 6.258487701416016e-07,
+      "loss_error": 2.1626479806968746e-07,
+      "gradient_relative": 6.923580669368289e-07,
+      "gradient_max": 4.0978193283081055e-07
+    }
+  ],
+  "state": {
+    "dynamic_shape_variant_thread_digest": "1601de674fd98d09f3cf810fdccd6a52a4b660be4ced9e427330d9c452c7ed1a",
+    "resume": "exact",
+    "redzones_ubsan": [
+      "query_guard_compact",
+      "query_guard_frame_ff_compact",
+      "query_guard_layer_frame_ff",
+      "query_guard_compact_ubsan",
+      "query_guard_layer_frame_ff_ubsan"
+    ],
+    "normalized_accumulation_gradient_relative": 8.538258246246052e-08,
+    "first_updated_weights_relative": 4.284158777874715e-09,
+    "causality": "exact prefix equality"
+  }
+}
