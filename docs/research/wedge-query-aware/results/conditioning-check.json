@@ -1,0 +1,82 @@
+[
+  {
+    "query": false,
+    "duplicate_first_two": false,
+    "guard": false,
+    "variant": "compact",
+    "gradient_relative": 5.401424622275012e-07,
+    "c_gradient_norm": 2.9053254050491915,
+    "torch_gradient_norm": 2.9053254867559004,
+    "logit_max": 2.086162567138672e-07
+  },
+  {
+    "query": false,
+    "duplicate_first_two": false,
+    "guard": true,
+    "variant": "guard_compact",
+    "gradient_relative": 5.401424622275012e-07,
+    "c_gradient_norm": 2.9053254050491915,
+    "torch_gradient_norm": 2.9053254867559004,
+    "logit_max": 2.086162567138672e-07
+  },
+  {
+    "query": false,
+    "duplicate_first_two": true,
+    "guard": false,
+    "variant": "compact",
+    "gradient_relative": 1.2611545361314354,
+    "c_gradient_norm": 344205.08949241665,
+    "torch_gradient_norm": 337887.29975730827,
+    "logit_max": 1.825392246246338e-07
+  },
+  {
+    "query": false,
+    "duplicate_first_two": true,
+    "guard": true,
+    "variant": "guard_compact",
+    "gradient_relative": 4.451750793247948e-07,
+    "c_gradient_norm": 2.8064597740867585,
+    "torch_gradient_norm": 2.806459762095852,
+    "logit_max": 1.825392246246338e-07
+  },
+  {
+    "query": true,
+    "duplicate_first_two": false,
+    "guard": false,
+    "variant": "query_compact",
+    "gradient_relative": 5.502518605880115e-07,
+    "c_gradient_norm": 2.543285030542367,
+    "torch_gradient_norm": 2.543285212847449,
+    "logit_max": 1.9371509552001953e-07
+  },
+  {
+    "query": true,
+    "duplicate_first_two": false,
+    "guard": true,
+    "variant": "query_guard_compact",
+    "gradient_relative": 5.502518605880115e-07,
+    "c_gradient_norm": 2.543285030542367,
+    "torch_gradient_norm": 2.543285212847449,
+    "logit_max": 1.9371509552001953e-07
+  },
+  {
+    "query": true,
+    "duplicate_first_two": true,
+    "guard": false,
+    "variant": "query_compact",
+    "gradient_relative": 1.26135067918865,
+    "c_gradient_norm": 595041.1061889788,
+    "torch_gradient_norm": 599187.9419596274,
+    "logit_max": 2.086162567138672e-07
+  },
+  {
+    "query": true,
+    "duplicate_first_two": true,
+    "guard": true,
+    "variant": "query_guard_compact",
+    "gradient_relative": 5.056274400524863e-07,
+    "c_gradient_norm": 2.658826613122005,
+    "torch_gradient_norm": 2.6588266934900915,
+    "logit_max": 2.086162567138672e-07
+  }
+]
