@@ -1,116 +1,13 @@
 {
-  "stage": "predeclared architecture and memory follow-up",
-  "bcir_commit": "aaa2e6c0ee0ee15b83fe4d0373b48bd893e80d6d",
-  "created_utc": "2026-10-17T16:43:06.318137+00:00",
-  "seeds": [
-    20261017,
-    20261018,
-    20261019
-  ],
-  "tasks": {
-    "byte_lm": {
-      "steps": 600,
-      "batch": 4,
-      "context": 64
-    },
-    "recall_fixed": {
-      "steps": 400,
-      "batch": 8,
-      "context": 128
-    },
-    "recall_variable": {
-      "steps": 400,
-      "batch": 4,
-      "context": 256
-    },
-    "recall_ordered": {
-      "steps": 600,
-      "batch": 8,
-      "context": 128
-    }
-  },
-  "task_models": {
-    "byte_lm": [
-      "global",
-      "lowrank32",
-      "lowrank32_budget",
-      "multi12",
-      "multi12_budget",
-      "attention"
-    ],
-    "recall_fixed": [
-      "global",
-      "lowrank32",
-      "lowrank32_budget",
-      "multi12",
-      "multi12_budget",
-      "attention"
-    ],
-    "recall_variable": [
-      "global",
-      "lowrank32_budget",
-      "multi12_budget"
-    ],
-    "recall_ordered": [
-      "global",
-      "attention"
-    ]
-  },
-  "selection": "lowest validation CE at 100-step intervals; no test tuning; no test-driven candidate changes",
-  "optimizer": {
-    "lr_peak": 0.001,
-    "warmup": 30,
-    "floor": 0.0001,
-    "betas": [
-      0.9,
-      0.95
-    ],
-    "epsilon": 1e-08,
-    "decay": 0.1,
-    "clip": 1
-  },
+  "stage": "exploratory follow-up after main global-only language comparison",
+  "blend": 0.5,
+  "equation": "v_t=0.5*sum_{j<t} z_j/sqrt(t)+0.5*z_(t-1), then a single normalized wedge with current z_t",
+  "train": "same batches, seeds, optimizer, fixed budgets and validation selection as main byte_lm/recall_fixed",
   "test_seeds": {
-    "byte_lm": 20261029,
-    "recall_fixed": 20261030,
-    "recall_variable": 20261031,
-    "recall_ordered": 20261101
+    "byte_lm": 20261102,
+    "recall_fixed": 20261103
   },
-  "data": {
-    "train": {
-      "parquet_sha256": "e83889baabc497075506f91975be5fac0d45c5290b6b20582c8cd1e853d0c9f7",
-      "utf8_sha256": "fc1dd2874bf42e945db9bd38e856ae18010f5c088e7446c706c5ba2f39310ee3",
-      "bytes": 10914845,
-      "source_url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/train-00000-of-00001.parquet"
-    },
-    "validation": {
-      "parquet_sha256": "204929b7ff9d6184953f867dedb860e40aa69c078fc1e54b3baaa8fb28511c4c",
-      "utf8_sha256": "8ef749789ca0693435d20b3f81d5638c19edcebc5a68586dcf09bdf47ef9542f",
-      "bytes": 1144248,
-      "source_url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/validation-00000-of-00001.parquet"
-    },
-    "test": {
-      "parquet_sha256": "5f1bea067869d04849c0f975a2b29c4ff47d867f484f5010ea5e861eab246d91",
-      "utf8_sha256": "bbf94c53a05abe9ee670d3b6343608095822c85e26de37c70b24fc571964574a",
-      "bytes": 1287656,
-      "source_url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/test-00000-of-00001.parquet"
-    }
-  },
-  "variable_length": "single physical context256, per-example query placed at sampled length64/128/256, zero loss elsewhere; future padding is causally unreachable",
-  "ordered_recall": "first value and all distractors share tokens0..15; query257 at end; loss only at query. This challenges the disjoint-vocabulary pooled-content shortcut.",
-  "multilinear": "output-mode low-rank factorization of skew readout tensor; product of two rank12 subspaces; restrictions change model class and need training, no lossless-compression claim",
-  "host": {
-    "cpu": "AMD EPYC 9V74 80-Core Processor",
-    "cpu_quota": "800000 100000",
-    "memory_limit": "8589934592",
-    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
-    "numpy": "2.5.4",
-    "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0"
-  },
-  "source_sha256": {
-    "train_next.py": "b8c8aabdbc1358be403889737e124ab8a09f17f3a95baef64395be84aa40e41a",
-    "experiment.py": "3b20535483e77aeb2a47a92faf02f944c2350ad19392e6b7cff8afe81588d5d8",
-    "candidates.py": "ab4993d3db8005980f4378d406a343eff358c946a794b2d5fac2359d70ecb31f",
-    "build_next.py": "bade0328cc0be81a40c2213833f49f95eb443e8e4be8b35c2f3580370e058d6d",
-    "multi_core.h": "9db14c920bbb3d82a99d7e7c328c74d22e623098378d4d272cf93ca8040a8094"
-  }
+  "hyperparameter_search": "none; one fixed equal blend",
+  "source_sha256": "d47ba13a4356b3a6d268af651084f642ccf227f894a2fccbe8af5b5c886a4869",
+  "native_source_sha256": "e62e4b0d9e751ef4e817970ce17cf6716a7660a9afcc34c8fc10223150cfdd13"
 }
