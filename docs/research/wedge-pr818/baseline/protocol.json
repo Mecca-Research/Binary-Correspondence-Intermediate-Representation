@@ -1,0 +1,234 @@
+{
+  "created_utc": "2026-10-18T14:47:37.710131+00:00",
+  "seeds": [
+    20261018,
+    20261019,
+    20261020
+  ],
+  "cases": [
+    [
+      "kv_curriculum",
+      "global"
+    ],
+    [
+      "kv_curriculum",
+      "query_full"
+    ],
+    [
+      "kv_curriculum",
+      "query_matched"
+    ],
+    [
+      "kv_curriculum",
+      "attention"
+    ],
+    [
+      "kv_single",
+      "global"
+    ],
+    [
+      "kv_single",
+      "query_full"
+    ],
+    [
+      "kv_single",
+      "query_matched"
+    ],
+    [
+      "kv_single",
+      "attention"
+    ],
+    [
+      "ordered",
+      "global"
+    ],
+    [
+      "ordered",
+      "query_full"
+    ],
+    [
+      "ordered",
+      "query_matched"
+    ],
+    [
+      "ordered",
+      "attention"
+    ],
+    [
+      "lm",
+      "global"
+    ],
+    [
+      "lm",
+      "query_full"
+    ],
+    [
+      "lm",
+      "query_matched"
+    ],
+    [
+      "lm",
+      "attention"
+    ],
+    [
+      "lm",
+      "hybrid"
+    ]
+  ],
+  "parameters": {
+    "global": 525696,
+    "query_full": 534144,
+    "query_matched": 526080,
+    "attention": 525696,
+    "hybrid": 525696
+  },
+  "numerical_contract": "All global-family candidates use the inherited FP64 ill-conditioning guard, with zero feature/VJP for absent planes <=1e-6. Query norm is separately clamped at1e-6; contraction rows reduce in FP64, round to FP32. Full231-coordinate Wp readout retained.",
+  "initialization": "Stable per-parameter name/seed; unchanged tensors identical across candidates. New Wc uses std1.0, as Wp, for unit-normalized feature scale. No zero-initialized start or per-candidate tuning.",
+  "training": {
+    "kv_curriculum": "900 updates B4; unique random keys/values, 2pairs for300 then4; balanced64/128/256.",
+    "kv_single": "900 updates B4; same task with1pair throughout; balanced64/128/256.",
+    "ordered": "900 updates B4; first-value recall with shared target/distractor alphabet; balanced64/128/256.",
+    "lm": "600 updates, exactly256 supervised bytes/update, balanced32/64/128; batches8/4/2; independent rawWikiText2 splits."
+  },
+  "optimizer": {
+    "algorithm": "native C AdamW",
+    "peak_lr": 0.001,
+    "warmup_updates": 30,
+    "floor_lr": 0.0001,
+    "beta1": 0.9,
+    "beta2": 0.95,
+    "epsilon": 1e-08,
+    "weight_decay": 0.1,
+    "clip_norm": 1.0
+  },
+  "memory": "32MiB controlled arrays/pool/staging/C-record budget for every model; global/query/hybrid full effective microbatch; attention largest fitting microbatch and accumulation. Not RSS. No timing calibration; choose cheaper fitting reconstruction tier.",
+  "selection": "Lowest aggregate validation CE every100 updates. All lengths aggregated; same validation per task/candidate/seed. Initial step not eligible.",
+  "hypotheses": [
+    "Query contraction improves single-pair value access and4-pair assignment retrieval compared with full global head.",
+    "Check whether extra parameters or FF reallocation account for gain.",
+    "Check ordered recall and byte-language trade-offs."
+  ],
+  "final_tests": {
+    "seed_base": 20262100,
+    "association_pairs": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "association_lengths": [
+      64,
+      128,
+      256,
+      512,
+      1024
+    ],
+    "primary": "kv_curriculum trained models on4pairs T128 and256; kv_single trained models on1pair T128 and256.",
+    "examples_per_length_pair": 256,
+    "long_examples": 128,
+    "counterfactuals": "4pair value swaps preserving token multiset; query-key-only changes at fixed records; report both-correct rates and predicted-in-set rate.",
+    "ordered_lengths": [
+      128,
+      256,
+      512,
+      1024,
+      2048
+    ],
+    "lm_lengths": [
+      32,
+      64,
+      128,
+      512
+    ]
+  },
+  "interpretation": "Three seeds, small prototype; no universal capability or throughput claims. No final-test tuning. Any later exploratory extension gets a separate protocol before new data.",
+  "source_sha256": {
+    "experiment.py": "c0c731b8e454213cb47ea96d5d9aec71dc666ae217638985b54d5689a01dedd2",
+    "native_abi.py": "b3ceabd05a9fecbc17f0f42d1c472289f327c175bfc99de495e9abed5a0cbaf8",
+    "policy.py": "e2b9c9d036dd939f1ccb575eefa590ae10932344f1f7755c26743d833ebfedd3",
+    "tasks.py": "e206e5c4e37e4a552e49e8e6dd890eccd73219f8a591eb3097531a14f78577dc",
+    "oracle.py": "fad65618eda97e00cc8dacb4075de73cd8ee30ca7cb81b00a9157917f7f1ccd5",
+    "query_core.h": "12264b7189fe0ee64b5ff19b6398a38c8403371e774058109eb39350536a0899",
+    "build_query.py": "faef510367a39fd34776e0fd41df9f154060e3e9a15f9983ce6136feb5c8486f",
+    "build_next.py": "bade0328cc0be81a40c2213833f49f95eb443e8e4be8b35c2f3580370e058d6d",
+    "study.py": "a82142b2808e90f67fb3c13695b25d5733cf2b003d92ad5d28783e4d44a8187a",
+    "validate_query.py": "cc4533939f90864694e318f34ee3126a1a1d92051a79351318f61a6a2181736e",
+    "precision_core.h": "22c52f58325d9245f2dfefa684246b4eb54ff9b15aadcf2c6dc1d67a8743f727",
+    "run_experiments.py": "f47cfe83495b43855cd3d3d47e885c967504801b59ee7be5290e2b56cbb254e6",
+    "build/attention.c": "3795ef2a3d4878ba2ae3dbbb94a97f5efbe1533c1dc48759b2059f6b6021960c",
+    "build/compact.c": "31baa80919dee11d36ea7ba76e570c9a6ce734c3daaa1cdc8c87069840941f04",
+    "build/frame_ff_compact.c": "a61d7868a18a8e7126b171b7ef847304b31ffa50a0c8b69300d3b24edeef0037",
+    "build/guard_compact.c": "a52baebf4a90b89cd843974b23891c616b644b595356640183d1e0bf1054f078",
+    "build/guard_frame_ff_compact.c": "f4ba458d8e4526b5996a9736348c9bbcbff6f6946b1c4434e6e57a43d2ba1dd2",
+    "build/guard_hybrid_compact.c": "63bba77b6cfab57c476c523dbe9c34ca500ce9d89f66afe100e6dae059c2c04a",
+    "build/guard_layer_frame_ff.c": "aefd31699a804e1134f707ee6d242f107447d991f4b4fa3c7c3834a040162c0b",
+    "build/hybrid_compact.c": "ac7285596db962ec8a9f8b81a5072929d35acbb44d15ac6ba857d72e6f38dd36",
+    "build/layer_frame_ff.c": "a750d960123450b5ba169f73baac22b62de418eeef3b20b40ca972b587d3d26a",
+    "build/query_compact.c": "4beaaae722e1ffc870ce999614c3f9dd164cb55f830c2884eb7eada3f9a585dd",
+    "build/query_compact_ubsan.c": "4beaaae722e1ffc870ce999614c3f9dd164cb55f830c2884eb7eada3f9a585dd",
+    "build/query_frame_ff_compact.c": "7284ee55204fbc9a37350c4dd60ea86a194bed9c1a3bc17f9c30c746229d1351",
+    "build/query_guard_compact.c": "bd5bf55ea691d96152b84b543dcbb36fdf5ec8251180369486d23e93d39cda2f",
+    "build/query_guard_compact_ubsan.c": "bd5bf55ea691d96152b84b543dcbb36fdf5ec8251180369486d23e93d39cda2f",
+    "build/query_guard_frame_ff_compact.c": "915cd3bc64fd4b56a5ac8bb079a3a9e4fc221f89758493a35178c644fd84540d",
+    "build/query_guard_layer_frame_ff.c": "179b3bdb2d9b04287f62695e671dc220050e42337481830072a699f075e5165d",
+    "build/query_guard_layer_frame_ff_ubsan.c": "179b3bdb2d9b04287f62695e671dc220050e42337481830072a699f075e5165d",
+    "build/query_layer_frame_ff.c": "8f05ca67f6bedfc6311e72a4c9a69375c66ca689cfc6e72046449f6f7397bf3f",
+    "build/query_layer_frame_ff_ubsan.c": "8f05ca67f6bedfc6311e72a4c9a69375c66ca689cfc6e72046449f6f7397bf3f",
+    "foundation/attention.c": "3795ef2a3d4878ba2ae3dbbb94a97f5efbe1533c1dc48759b2059f6b6021960c",
+    "foundation/compact.c": "31baa80919dee11d36ea7ba76e570c9a6ce734c3daaa1cdc8c87069840941f04",
+    "foundation/fast.c": "30f1aa55d37147fff0d9749128e60619100dddc8fe90f72d999a533f135ec0b6",
+    "foundation/frame_ff_compact.c": "a61d7868a18a8e7126b171b7ef847304b31ffa50a0c8b69300d3b24edeef0037",
+    "foundation/hybrid_compact.c": "ac7285596db962ec8a9f8b81a5072929d35acbb44d15ac6ba857d72e6f38dd36",
+    "foundation/layer_compact.c": "abac95ce61488c99128888a92d5445044dd0761c4cdee442d4b53eaf4e39f9b8",
+    "foundation/layer_frame_ff.c": "a750d960123450b5ba169f73baac22b62de418eeef3b20b40ca972b587d3d26a",
+    "vendor/LICENSE": "af5b836ce2209a8b1df54b45c8f569e5f4e2848db72c182fd1cedd689e78e387",
+    "vendor/bcir_decoder_train.c": "fdf1ad89e9971d3c749d298a63d010eaeda3b8a1325243435fa7c09325185628",
+    "vendor/bcir_decoder_train.h": "be9e37762c29207f467461ff0eeb500dd07d9d3c8f1cb53b74357918d6d20add",
+    "vendor/bcir_tensor.c": "08aca3fd822d116722c834f9f302b364b725f9b0a10b0e22c8bfa510fa5c494b",
+    "vendor/bcir_tensor.h": "2e678fe9202b3f6dfd476a8ade15747a8e6392b0f58baacfbbc7a7288a8d5938"
+  },
+  "data": {
+    "train": {
+      "parquet_sha256": "e83889baabc497075506f91975be5fac0d45c5290b6b20582c8cd1e853d0c9f7",
+      "utf8_sha256": "fc1dd2874bf42e945db9bd38e856ae18010f5c088e7446c706c5ba2f39310ee3",
+      "bytes": 10914845,
+      "source_url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/train-00000-of-00001.parquet"
+    },
+    "validation": {
+      "parquet_sha256": "204929b7ff9d6184953f867dedb860e40aa69c078fc1e54b3baaa8fb28511c4c",
+      "utf8_sha256": "8ef749789ca0693435d20b3f81d5638c19edcebc5a68586dcf09bdf47ef9542f",
+      "bytes": 1144248,
+      "source_url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/validation-00000-of-00001.parquet"
+    },
+    "test": {
+      "parquet_sha256": "5f1bea067869d04849c0f975a2b29c4ff47d867f484f5010ea5e861eab246d91",
+      "utf8_sha256": "bbf94c53a05abe9ee670d3b6343608095822c85e26de37c70b24fc571964574a",
+      "bytes": 1287656,
+      "source_url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/test-00000-of-00001.parquet"
+    }
+  },
+  "foundation": {
+    "archive_sha256": "e3899d3a52ab283e2aa7976fdc7c1e6bb95566563ceb3b97ffa808596caf2731",
+    "native_pin": "aaa2e6c0ee0ee15b83fe4d0373b48bd893e80d6d",
+    "inspected_main": "be6e377a2eb417cb4bfe3de5243ca09961ba1833"
+  },
+  "host": {
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "cpu_quota": "800000 100000",
+    "memory_limit": "8589934592",
+    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "numpy": "2.3.5",
+    "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0"
+  }
+}
