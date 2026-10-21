@@ -1,0 +1,277 @@
+{
+  "precision_full_model": {
+    "max_logit_error": 2.1420419216156006e-07,
+    "loss_error": 2.642343446268569e-07,
+    "gradient_max_error": 2.4586915969848633e-07,
+    "gradient_relative_l2": 5.780204332950234e-07
+  },
+  "rows": [
+    {
+      "task": "byte_lm_hybrid_paired",
+      "name": "attention",
+      "seed": 20261017,
+      "test": {
+        "ce_nats": 2.1790930532479744,
+        "bits_per_byte": 3.1437667415564428,
+        "accuracy": 0.3856201171875,
+        "scored_tokens": 16384
+      },
+      "input_sha256": "a1ed0a79b0603b361b74c89bae6746ad5fd74683178901dd24e5d335d7065360"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261017,
+      "context": 64,
+      "test": {
+        "ce_nats": 1.2915395133432535,
+        "bits_per_byte": 1.863297651012457,
+        "accuracy": 0.9375,
+        "scored_tokens": 128
+      },
+      "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261017,
+      "context": 128,
+      "test": {
+        "ce_nats": 1.2390993537546429,
+        "bits_per_byte": 1.7876424928305428,
+        "accuracy": 0.9453125,
+        "scored_tokens": 128
+      },
+      "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261017,
+      "context": 256,
+      "test": {
+        "ce_nats": 1.2911987292849927,
+        "bits_per_byte": 1.86280600354159,
+        "accuracy": 0.9453125,
+        "scored_tokens": 128
+      },
+      "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261017,
+      "context": 512,
+      "test": {
+        "ce_nats": 1.5239847741607373,
+        "bits_per_byte": 2.1986452760719826,
+        "accuracy": 0.859375,
+        "scored_tokens": 128
+      },
+      "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261017,
+      "context": 1024,
+      "test": {
+        "ce_nats": 1.9281451841045036,
+        "bits_per_byte": 2.781725495221505,
+        "accuracy": 0.515625,
+        "scored_tokens": 128
+      },
+      "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+    },
+    {
+      "task": "byte_lm_hybrid_paired",
+      "name": "attention",
+      "seed": 20261018,
+      "test": {
+        "ce_nats": 2.2135722222154106,
+        "bits_per_byte": 3.1935096676397356,
+        "accuracy": 0.374755859375,
+        "scored_tokens": 16384
+      },
+      "input_sha256": "a1ed0a79b0603b361b74c89bae6746ad5fd74683178901dd24e5d335d7065360"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261018,
+      "context": 64,
+      "test": {
+        "ce_nats": 0.7956056626070588,
+        "bits_per_byte": 1.1478163439463815,
+        "accuracy": 1.0,
+        "scored_tokens": 128
+      },
+      "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261018,
+      "context": 128,
+      "test": {
+        "ce_nats": 0.7448624423624126,
+        "bits_per_byte": 1.074609351740694,
+        "accuracy": 1.0,
+        "scored_tokens": 128
+      },
+      "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261018,
+      "context": 256,
+      "test": {
+        "ce_nats": 0.8334079755557009,
+        "bits_per_byte": 1.2023535533715202,
+        "accuracy": 1.0,
+        "scored_tokens": 128
+      },
+      "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261018,
+      "context": 512,
+      "test": {
+        "ce_nats": 1.2752231021463718,
+        "bits_per_byte": 1.8397580454936107,
+        "accuracy": 0.828125,
+        "scored_tokens": 128
+      },
+      "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261018,
+      "context": 1024,
+      "test": {
+        "ce_nats": 2.0093568110900457,
+        "bits_per_byte": 2.8988891067360707,
+        "accuracy": 0.15625,
+        "scored_tokens": 128
+      },
+      "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+    },
+    {
+      "task": "byte_lm_hybrid_paired",
+      "name": "attention",
+      "seed": 20261019,
+      "test": {
+        "ce_nats": 2.1772549977221716,
+        "bits_per_byte": 3.1411149879644884,
+        "accuracy": 0.37957763671875,
+        "scored_tokens": 16384
+      },
+      "input_sha256": "a1ed0a79b0603b361b74c89bae6746ad5fd74683178901dd24e5d335d7065360"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261019,
+      "context": 64,
+      "test": {
+        "ce_nats": 0.6318901014639554,
+        "bits_per_byte": 0.9116247157688724,
+        "accuracy": 1.0,
+        "scored_tokens": 128
+      },
+      "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261019,
+      "context": 128,
+      "test": {
+        "ce_nats": 0.5809767366829666,
+        "bits_per_byte": 0.838172256884369,
+        "accuracy": 1.0,
+        "scored_tokens": 128
+      },
+      "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261019,
+      "context": 256,
+      "test": {
+        "ce_nats": 0.6423124507599973,
+        "bits_per_byte": 0.9266609874126847,
+        "accuracy": 1.0,
+        "scored_tokens": 128
+      },
+      "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261019,
+      "context": 512,
+      "test": {
+        "ce_nats": 0.8923950405462703,
+        "bits_per_byte": 1.2874538995100095,
+        "accuracy": 0.9609375,
+        "scored_tokens": 128
+      },
+      "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+    },
+    {
+      "task": "hybrid_length",
+      "name": "hybrid",
+      "seed": 20261019,
+      "context": 1024,
+      "test": {
+        "ce_nats": 1.3594125320481765,
+        "bits_per_byte": 1.9612177185082134,
+        "accuracy": 0.671875,
+        "scored_tokens": 128
+      },
+      "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+    },
+    {
+      "task": "guarded_global_length",
+      "name": "precise",
+      "seed": 20261017,
+      "context": 1024,
+      "test": {
+        "ce_nats": 0.8345390383436845,
+        "bits_per_byte": 1.203985332046678,
+        "accuracy": 0.78125,
+        "scored_tokens": 128
+      }
+    },
+    {
+      "task": "guarded_global_length",
+      "name": "precise",
+      "seed": 20261018,
+      "context": 1024,
+      "test": {
+        "ce_nats": 0.6909774963172891,
+        "bits_per_byte": 0.996869807302825,
+        "accuracy": 0.828125,
+        "scored_tokens": 128
+      }
+    },
+    {
+      "task": "guarded_global_length",
+      "name": "precise",
+      "seed": 20261019,
+      "context": 1024,
+      "test": {
+        "ce_nats": 0.5102541537941948,
+        "bits_per_byte": 0.7361411372718794,
+        "accuracy": 0.8515625,
+        "scored_tokens": 128
+      }
+    }
+  ]
+}

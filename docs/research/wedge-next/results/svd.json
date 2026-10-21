@@ -1,0 +1,794 @@
+[
+  {
+    "seed": 20261017,
+    "rank": "dense",
+    "context": 128,
+    "test": {
+      "ce_nats": 0.10175238872894432,
+      "bits_per_byte": 0.14679766661785404,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 525696
+  },
+  {
+    "seed": 20261017,
+    "rank": "dense",
+    "context": 512,
+    "test": {
+      "ce_nats": 0.27978617566885894,
+      "bits_per_byte": 0.40364612814675116,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 525696
+  },
+  {
+    "seed": 20261017,
+    "rank": "dense",
+    "context": 1024,
+    "test": {
+      "ce_nats": 0.6956769334755176,
+      "bits_per_byte": 1.0036496619859705,
+      "accuracy": 0.875,
+      "scored_tokens": 128
+    },
+    "parameters": 525696
+  },
+  {
+    "seed": 20261017,
+    "rank": 16,
+    "context": 128,
+    "test": {
+      "ce_nats": 3.22947781482174,
+      "bits_per_byte": 4.659151628104251,
+      "accuracy": 0.140625,
+      "scored_tokens": 128
+    },
+    "parameters": 454224,
+    "relative_projector_weight_errors": [
+      0.8329388184855436,
+      0.8351899240067018,
+      0.8342467780764433
+    ],
+    "weights_sha256": "6fc1f45aa128f5825cf5711be701e74d955c8965c5dcbbefadd9ffbeab6700d3",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261017,
+    "rank": 16,
+    "context": 512,
+    "test": {
+      "ce_nats": 3.2832999269136174,
+      "bits_per_byte": 4.736800522309372,
+      "accuracy": 0.15625,
+      "scored_tokens": 128
+    },
+    "parameters": 454224,
+    "relative_projector_weight_errors": [
+      0.8329388184855436,
+      0.8351899240067018,
+      0.8342467780764433
+    ],
+    "weights_sha256": "6fc1f45aa128f5825cf5711be701e74d955c8965c5dcbbefadd9ffbeab6700d3",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261017,
+    "rank": 16,
+    "context": 1024,
+    "test": {
+      "ce_nats": 3.3741274038630804,
+      "bits_per_byte": 4.867836872880819,
+      "accuracy": 0.171875,
+      "scored_tokens": 128
+    },
+    "parameters": 454224,
+    "relative_projector_weight_errors": [
+      0.8329388184855436,
+      0.8351899240067018,
+      0.8342467780764433
+    ],
+    "weights_sha256": "6fc1f45aa128f5825cf5711be701e74d955c8965c5dcbbefadd9ffbeab6700d3",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261017,
+    "rank": 32,
+    "context": 128,
+    "test": {
+      "ce_nats": 2.0421398840925544,
+      "bits_per_byte": 2.946185083581891,
+      "accuracy": 0.4765625,
+      "scored_tokens": 128
+    },
+    "parameters": 471456,
+    "relative_projector_weight_errors": [
+      0.687711800337685,
+      0.6913138188932136,
+      0.6921484090403103
+    ],
+    "weights_sha256": "e967c41e4be257e1d135f05909da69befb9bcbe7ca96526b88514beab5a0ff32",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261017,
+    "rank": 32,
+    "context": 512,
+    "test": {
+      "ce_nats": 2.7406279442516266,
+      "bits_per_byte": 3.9538903440935362,
+      "accuracy": 0.2265625,
+      "scored_tokens": 128
+    },
+    "parameters": 471456,
+    "relative_projector_weight_errors": [
+      0.687711800337685,
+      0.6913138188932136,
+      0.6921484090403103
+    ],
+    "weights_sha256": "e967c41e4be257e1d135f05909da69befb9bcbe7ca96526b88514beab5a0ff32",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261017,
+    "rank": 32,
+    "context": 1024,
+    "test": {
+      "ce_nats": 2.9150048866694096,
+      "bits_per_byte": 4.205463094165053,
+      "accuracy": 0.1875,
+      "scored_tokens": 128
+    },
+    "parameters": 471456,
+    "relative_projector_weight_errors": [
+      0.687711800337685,
+      0.6913138188932136,
+      0.6921484090403103
+    ],
+    "weights_sha256": "e967c41e4be257e1d135f05909da69befb9bcbe7ca96526b88514beab5a0ff32",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261017,
+    "rank": 64,
+    "context": 128,
+    "test": {
+      "ce_nats": 0.3270553521386215,
+      "bits_per_byte": 0.47184113462658295,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 505920,
+    "relative_projector_weight_errors": [
+      0.4391924879167845,
+      0.4419275756590085,
+      0.44163952590503625
+    ],
+    "weights_sha256": "0140ed70b20c088fd2f1c294a383c411981617d0bb17e790d644d27679d77175",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261017,
+    "rank": 64,
+    "context": 512,
+    "test": {
+      "ce_nats": 1.114741077374789,
+      "bits_per_byte": 1.6082314242038285,
+      "accuracy": 0.7734375,
+      "scored_tokens": 128
+    },
+    "parameters": 505920,
+    "relative_projector_weight_errors": [
+      0.4391924879167845,
+      0.4419275756590085,
+      0.44163952590503625
+    ],
+    "weights_sha256": "0140ed70b20c088fd2f1c294a383c411981617d0bb17e790d644d27679d77175",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261017,
+    "rank": 64,
+    "context": 1024,
+    "test": {
+      "ce_nats": 1.4094178736902143,
+      "bits_per_byte": 2.0333601769131397,
+      "accuracy": 0.6953125,
+      "scored_tokens": 128
+    },
+    "parameters": 505920,
+    "relative_projector_weight_errors": [
+      0.4391924879167845,
+      0.4419275756590085,
+      0.44163952590503625
+    ],
+    "weights_sha256": "0140ed70b20c088fd2f1c294a383c411981617d0bb17e790d644d27679d77175",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261017,
+    "rank": 128,
+    "context": 128,
+    "test": {
+      "ce_nats": 0.10175239707731219,
+      "bits_per_byte": 0.14679767866200297,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 574848,
+    "relative_projector_weight_errors": [
+      3.5797978406258184e-08,
+      3.5674270442421765e-08,
+      3.621303572713189e-08
+    ],
+    "weights_sha256": "ca9c2f99ffaa7f5c13f9d31a3f30679c9002441fa67172304ccb7d57ce9c0a01",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261017,
+    "rank": 128,
+    "context": 512,
+    "test": {
+      "ce_nats": 0.27978619174156905,
+      "bits_per_byte": 0.40364615133477033,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 574848,
+    "relative_projector_weight_errors": [
+      3.5797978406258184e-08,
+      3.5674270442421765e-08,
+      3.621303572713189e-08
+    ],
+    "weights_sha256": "ca9c2f99ffaa7f5c13f9d31a3f30679c9002441fa67172304ccb7d57ce9c0a01",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261017,
+    "rank": 128,
+    "context": 1024,
+    "test": {
+      "ce_nats": 0.695677000362501,
+      "bits_per_byte": 1.0036497584834898,
+      "accuracy": 0.875,
+      "scored_tokens": 128
+    },
+    "parameters": 574848,
+    "relative_projector_weight_errors": [
+      3.5797978406258184e-08,
+      3.5674270442421765e-08,
+      3.621303572713189e-08
+    ],
+    "weights_sha256": "ca9c2f99ffaa7f5c13f9d31a3f30679c9002441fa67172304ccb7d57ce9c0a01",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261018,
+    "rank": "dense",
+    "context": 128,
+    "test": {
+      "ce_nats": 0.07562265126454658,
+      "bits_per_byte": 0.10910042395823685,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 525696
+  },
+  {
+    "seed": 20261018,
+    "rank": "dense",
+    "context": 512,
+    "test": {
+      "ce_nats": 0.18638040810930173,
+      "bits_per_byte": 0.26889009049815077,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 525696
+  },
+  {
+    "seed": 20261018,
+    "rank": "dense",
+    "context": 1024,
+    "test": {
+      "ce_nats": 0.6322578741107555,
+      "bits_per_byte": 0.9121552995425856,
+      "accuracy": 0.8984375,
+      "scored_tokens": 128
+    },
+    "parameters": 525696
+  },
+  {
+    "seed": 20261018,
+    "rank": 16,
+    "context": 128,
+    "test": {
+      "ce_nats": 2.8089351729637184,
+      "bits_per_byte": 4.052436844213339,
+      "accuracy": 0.1640625,
+      "scored_tokens": 128
+    },
+    "parameters": 454224,
+    "relative_projector_weight_errors": [
+      0.8338465117657771,
+      0.8317995883888146,
+      0.8346704543843064
+    ],
+    "weights_sha256": "b910c5714285030f73efed574ab196b5ac03fc0c15ef9fe90abc206ef00c2324",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261018,
+    "rank": 16,
+    "context": 512,
+    "test": {
+      "ce_nats": 3.0437389590541555,
+      "bits_per_byte": 4.391187101987966,
+      "accuracy": 0.1015625,
+      "scored_tokens": 128
+    },
+    "parameters": 454224,
+    "relative_projector_weight_errors": [
+      0.8338465117657771,
+      0.8317995883888146,
+      0.8346704543843064
+    ],
+    "weights_sha256": "b910c5714285030f73efed574ab196b5ac03fc0c15ef9fe90abc206ef00c2324",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261018,
+    "rank": 16,
+    "context": 1024,
+    "test": {
+      "ce_nats": 3.1030526497489954,
+      "bits_per_byte": 4.476758669410233,
+      "accuracy": 0.109375,
+      "scored_tokens": 128
+    },
+    "parameters": 454224,
+    "relative_projector_weight_errors": [
+      0.8338465117657771,
+      0.8317995883888146,
+      0.8346704543843064
+    ],
+    "weights_sha256": "b910c5714285030f73efed574ab196b5ac03fc0c15ef9fe90abc206ef00c2324",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261018,
+    "rank": 32,
+    "context": 128,
+    "test": {
+      "ce_nats": 1.4683187667076116,
+      "bits_per_byte": 2.11833620317327,
+      "accuracy": 0.703125,
+      "scored_tokens": 128
+    },
+    "parameters": 471456,
+    "relative_projector_weight_errors": [
+      0.690386321269132,
+      0.6870384307706574,
+      0.6901202794455447
+    ],
+    "weights_sha256": "7983610de4186fdd817a8413510fa7154f1fb2c03448accc9abb6fb2478825bd",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261018,
+    "rank": 32,
+    "context": 512,
+    "test": {
+      "ce_nats": 2.5312091156192906,
+      "bits_per_byte": 3.6517628385568894,
+      "accuracy": 0.0625,
+      "scored_tokens": 128
+    },
+    "parameters": 471456,
+    "relative_projector_weight_errors": [
+      0.690386321269132,
+      0.6870384307706574,
+      0.6901202794455447
+    ],
+    "weights_sha256": "7983610de4186fdd817a8413510fa7154f1fb2c03448accc9abb6fb2478825bd",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261018,
+    "rank": 32,
+    "context": 1024,
+    "test": {
+      "ce_nats": 2.727774183357952,
+      "bits_per_byte": 3.9353462869954594,
+      "accuracy": 0.0859375,
+      "scored_tokens": 128
+    },
+    "parameters": 471456,
+    "relative_projector_weight_errors": [
+      0.690386321269132,
+      0.6870384307706574,
+      0.6901202794455447
+    ],
+    "weights_sha256": "7983610de4186fdd817a8413510fa7154f1fb2c03448accc9abb6fb2478825bd",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261018,
+    "rank": 64,
+    "context": 128,
+    "test": {
+      "ce_nats": 0.23514385218945394,
+      "bits_per_byte": 0.33924086944925264,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 505920,
+    "relative_projector_weight_errors": [
+      0.4412786540115146,
+      0.43824753200677957,
+      0.4412541611018315
+    ],
+    "weights_sha256": "79b848b195f99c7c58a7df6fd7124417f533f5e6068617457472e21162c584de",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261018,
+    "rank": 64,
+    "context": 512,
+    "test": {
+      "ce_nats": 1.1073300027120216,
+      "bits_per_byte": 1.597539503540196,
+      "accuracy": 0.6953125,
+      "scored_tokens": 128
+    },
+    "parameters": 505920,
+    "relative_projector_weight_errors": [
+      0.4412786540115146,
+      0.43824753200677957,
+      0.4412541611018315
+    ],
+    "weights_sha256": "79b848b195f99c7c58a7df6fd7124417f533f5e6068617457472e21162c584de",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261018,
+    "rank": 64,
+    "context": 1024,
+    "test": {
+      "ce_nats": 1.9976282307263786,
+      "bits_per_byte": 2.8819683420087405,
+      "accuracy": 0.359375,
+      "scored_tokens": 128
+    },
+    "parameters": 505920,
+    "relative_projector_weight_errors": [
+      0.4412786540115146,
+      0.43824753200677957,
+      0.4412541611018315
+    ],
+    "weights_sha256": "79b848b195f99c7c58a7df6fd7124417f533f5e6068617457472e21162c584de",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261018,
+    "rank": 128,
+    "context": 128,
+    "test": {
+      "ce_nats": 0.0756226541795379,
+      "bits_per_byte": 0.10910042816368037,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 574848,
+    "relative_projector_weight_errors": [
+      3.5561128774075324e-08,
+      3.5823523393405836e-08,
+      3.54255903193841e-08
+    ],
+    "weights_sha256": "d7b9e162e51d97e1aad97d86e9619a32c51036fd2083809a3af1c6b220cb9c8d",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261018,
+    "rank": 128,
+    "context": 512,
+    "test": {
+      "ce_nats": 0.18638041886750734,
+      "bits_per_byte": 0.26889010601896063,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 574848,
+    "relative_projector_weight_errors": [
+      3.5561128774075324e-08,
+      3.5823523393405836e-08,
+      3.54255903193841e-08
+    ],
+    "weights_sha256": "d7b9e162e51d97e1aad97d86e9619a32c51036fd2083809a3af1c6b220cb9c8d",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261018,
+    "rank": 128,
+    "context": 1024,
+    "test": {
+      "ce_nats": 0.6322578563071394,
+      "bits_per_byte": 0.9121552738573968,
+      "accuracy": 0.8984375,
+      "scored_tokens": 128
+    },
+    "parameters": 574848,
+    "relative_projector_weight_errors": [
+      3.5561128774075324e-08,
+      3.5823523393405836e-08,
+      3.54255903193841e-08
+    ],
+    "weights_sha256": "d7b9e162e51d97e1aad97d86e9619a32c51036fd2083809a3af1c6b220cb9c8d",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261019,
+    "rank": "dense",
+    "context": 128,
+    "test": {
+      "ce_nats": 0.04369847945316956,
+      "bits_per_byte": 0.063043579601476,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 525696
+  },
+  {
+    "seed": 20261019,
+    "rank": "dense",
+    "context": 512,
+    "test": {
+      "ce_nats": 0.13316404075949664,
+      "bits_per_byte": 0.1921151012284616,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 525696
+  },
+  {
+    "seed": 20261019,
+    "rank": "dense",
+    "context": 1024,
+    "test": {
+      "ce_nats": 0.4625157262506189,
+      "bits_per_byte": 0.6672691445949253,
+      "accuracy": 0.8828125,
+      "scored_tokens": 128
+    },
+    "parameters": 525696
+  },
+  {
+    "seed": 20261019,
+    "rank": 16,
+    "context": 128,
+    "test": {
+      "ce_nats": 2.828954586023279,
+      "bits_per_byte": 4.081318752155876,
+      "accuracy": 0.1796875,
+      "scored_tokens": 128
+    },
+    "parameters": 454224,
+    "relative_projector_weight_errors": [
+      0.8341276080331864,
+      0.8344648548952545,
+      0.8364025414911389
+    ],
+    "weights_sha256": "3ad1a499c348c1810f41bf3baa0a527728c156e53b0557e0c377ce48f124aa6c",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261019,
+    "rank": 16,
+    "context": 512,
+    "test": {
+      "ce_nats": 3.126939759556155,
+      "bits_per_byte": 4.511220484270193,
+      "accuracy": 0.0234375,
+      "scored_tokens": 128
+    },
+    "parameters": 454224,
+    "relative_projector_weight_errors": [
+      0.8341276080331864,
+      0.8344648548952545,
+      0.8364025414911389
+    ],
+    "weights_sha256": "3ad1a499c348c1810f41bf3baa0a527728c156e53b0557e0c377ce48f124aa6c",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261019,
+    "rank": 16,
+    "context": 1024,
+    "test": {
+      "ce_nats": 3.0980063059872136,
+      "bits_per_byte": 4.46947833429049,
+      "accuracy": 0.0859375,
+      "scored_tokens": 128
+    },
+    "parameters": 454224,
+    "relative_projector_weight_errors": [
+      0.8341276080331864,
+      0.8344648548952545,
+      0.8364025414911389
+    ],
+    "weights_sha256": "3ad1a499c348c1810f41bf3baa0a527728c156e53b0557e0c377ce48f124aa6c",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261019,
+    "rank": 32,
+    "context": 128,
+    "test": {
+      "ce_nats": 1.9136944871653574,
+      "bits_per_byte": 2.760877546410009,
+      "accuracy": 0.7421875,
+      "scored_tokens": 128
+    },
+    "parameters": 471456,
+    "relative_projector_weight_errors": [
+      0.6928909765547314,
+      0.6908751470992897,
+      0.6924059218228916
+    ],
+    "weights_sha256": "a0ac9ff0491cbcff8e7d4f934988f47b35931069196e011ab096070d8d94eefe",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261019,
+    "rank": 32,
+    "context": 512,
+    "test": {
+      "ce_nats": 2.4682598035285297,
+      "bits_per_byte": 3.560946178176177,
+      "accuracy": 0.3203125,
+      "scored_tokens": 128
+    },
+    "parameters": 471456,
+    "relative_projector_weight_errors": [
+      0.6928909765547314,
+      0.6908751470992897,
+      0.6924059218228916
+    ],
+    "weights_sha256": "a0ac9ff0491cbcff8e7d4f934988f47b35931069196e011ab096070d8d94eefe",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261019,
+    "rank": 32,
+    "context": 1024,
+    "test": {
+      "ce_nats": 2.6268604085544585,
+      "bits_per_byte": 3.7897584845290737,
+      "accuracy": 0.2734375,
+      "scored_tokens": 128
+    },
+    "parameters": 471456,
+    "relative_projector_weight_errors": [
+      0.6928909765547314,
+      0.6908751470992897,
+      0.6924059218228916
+    ],
+    "weights_sha256": "a0ac9ff0491cbcff8e7d4f934988f47b35931069196e011ab096070d8d94eefe",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261019,
+    "rank": 64,
+    "context": 128,
+    "test": {
+      "ce_nats": 0.15649205630499927,
+      "bits_per_byte": 0.2257703135697389,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 505920,
+    "relative_projector_weight_errors": [
+      0.44572892028506284,
+      0.44245438320116637,
+      0.4416086835153343
+    ],
+    "weights_sha256": "162629c7548eb2dc491116bdc353eba214e5f0d833395584a5d6304d2fdaec78",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261019,
+    "rank": 64,
+    "context": 512,
+    "test": {
+      "ce_nats": 0.48840905229993326,
+      "bits_per_byte": 0.7046253176783921,
+      "accuracy": 0.953125,
+      "scored_tokens": 128
+    },
+    "parameters": 505920,
+    "relative_projector_weight_errors": [
+      0.44572892028506284,
+      0.44245438320116637,
+      0.4416086835153343
+    ],
+    "weights_sha256": "162629c7548eb2dc491116bdc353eba214e5f0d833395584a5d6304d2fdaec78",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261019,
+    "rank": 64,
+    "context": 1024,
+    "test": {
+      "ce_nats": 0.9256429684573036,
+      "bits_per_byte": 1.3354205202270912,
+      "accuracy": 0.796875,
+      "scored_tokens": 128
+    },
+    "parameters": 505920,
+    "relative_projector_weight_errors": [
+      0.44572892028506284,
+      0.44245438320116637,
+      0.4416086835153343
+    ],
+    "weights_sha256": "162629c7548eb2dc491116bdc353eba214e5f0d833395584a5d6304d2fdaec78",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261019,
+    "rank": 128,
+    "context": 128,
+    "test": {
+      "ce_nats": 0.04369848346441358,
+      "bits_per_byte": 0.06304358538847785,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 574848,
+    "relative_projector_weight_errors": [
+      3.563697569692452e-08,
+      3.546321786548827e-08,
+      3.556272250902218e-08
+    ],
+    "weights_sha256": "61830692952c13c316fd638df1144b393462055d94e822f07fdc61c324ea454e",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261019,
+    "rank": 128,
+    "context": 512,
+    "test": {
+      "ce_nats": 0.13316404621639374,
+      "bits_per_byte": 0.1921151091011,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "parameters": 574848,
+    "relative_projector_weight_errors": [
+      3.563697569692452e-08,
+      3.546321786548827e-08,
+      3.556272250902218e-08
+    ],
+    "weights_sha256": "61830692952c13c316fd638df1144b393462055d94e822f07fdc61c324ea454e",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  },
+  {
+    "seed": 20261019,
+    "rank": 128,
+    "context": 1024,
+    "test": {
+      "ce_nats": 0.4625157103127034,
+      "bits_per_byte": 0.6672691216013736,
+      "accuracy": 0.8828125,
+      "scored_tokens": 128
+    },
+    "parameters": 574848,
+    "relative_projector_weight_errors": [
+      3.563697569692452e-08,
+      3.546321786548827e-08,
+      3.556272250902218e-08
+    ],
+    "weights_sha256": "61830692952c13c316fd638df1144b393462055d94e822f07fdc61c324ea454e",
+    "scope": "Inference-only factorization of pretrained dense recall weights; no fine tuning; optimizer state reset, not migrated."
+  }
+]

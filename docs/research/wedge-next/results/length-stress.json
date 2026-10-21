@@ -1,0 +1,2546 @@
+[
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261017,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.00032888185570319195,
+      "bits_per_byte": 0.0004744762222613547,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.00030558952595681477,
+      "bits_per_byte": 0.00044087249364550585,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261017,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.0009580614077699112,
+      "bits_per_byte": 0.00138219044185675,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261017,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.029661840491665557,
+      "bits_per_byte": 0.04279299018096535,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261017,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.8588142010342916,
+      "bits_per_byte": 2.681702029766153,
+      "accuracy": 0.5234375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 4.615122012231928,
+      "bits_per_byte": 6.6582136401444965,
+      "accuracy": 0.1953125,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261018,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.0003737104819807324,
+      "bits_per_byte": 0.000539150259081827,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.00034365287127041677,
+      "bits_per_byte": 0.0004957862931690836,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261018,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.000559505134621413,
+      "bits_per_byte": 0.0008071952830702245,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261018,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.008255018319275317,
+      "bits_per_byte": 0.011909473991666046,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261018,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.5393397085735625,
+      "bits_per_byte": 0.7781027229135774,
+      "accuracy": 0.734375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 4.931460049333099,
+      "bits_per_byte": 7.114592957514905,
+      "accuracy": 0.1796875,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261019,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.00037379512570145934,
+      "bits_per_byte": 0.0005392723741579621,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.00032566334453039414,
+      "bits_per_byte": 0.00046983289215331357,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261019,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.0005820515043919033,
+      "bits_per_byte": 0.0008397228189281597,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261019,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.008771508632208463,
+      "bits_per_byte": 0.012654612004801885,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261019,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.43329250983768863,
+      "bits_per_byte": 0.6251089551971658,
+      "accuracy": 0.9296875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "attention",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 4.503080464895546,
+      "bits_per_byte": 6.496571855428772,
+      "accuracy": 0.140625,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261017,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.11036205130492543,
+      "bits_per_byte": 0.15921878411994927,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.09977631266152182,
+      "bits_per_byte": 0.14394679147496423,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261017,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.11063385871767548,
+      "bits_per_byte": 0.15961091932640062,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261017,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.2275719491296364,
+      "bits_per_byte": 0.3283169224547619,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261017,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.8345390383436845,
+      "bits_per_byte": 1.203985332046678,
+      "accuracy": 0.78125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 6.518909045855814,
+      "bits_per_byte": 9.404797752462388,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261018,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.08005604770640834,
+      "bits_per_byte": 0.11549646301920559,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.07617000728268863,
+      "bits_per_byte": 0.10989009177121112,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261018,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.08859325743897375,
+      "bits_per_byte": 0.12781305316340671,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261018,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.19287002340865878,
+      "bits_per_byte": 0.27825262630781034,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261018,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.6909774963172891,
+      "bits_per_byte": 0.996869807302825,
+      "accuracy": 0.828125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 7.540947999240016,
+      "bits_per_byte": 10.879288282105122,
+      "accuracy": 0.0078125,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261019,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.046778324568730247,
+      "bits_per_byte": 0.06748685687640149,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.04276396791669938,
+      "bits_per_byte": 0.06169536444215694,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261019,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.054499766841929,
+      "bits_per_byte": 0.07862654335245572,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261019,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.1456818788460073,
+      "bits_per_byte": 0.21017452415852153,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261019,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.5102541537941948,
+      "bits_per_byte": 0.7361411372718794,
+      "accuracy": 0.8515625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "global",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 7.1990066065513965,
+      "bits_per_byte": 10.385971130598586,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261017,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.3666924597184381,
+      "bits_per_byte": 0.5290253931671667,
+      "accuracy": 0.953125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.31189345957117054,
+      "bits_per_byte": 0.44996714740903015,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261017,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.5110966560636623,
+      "bits_per_byte": 0.7373566111179778,
+      "accuracy": 0.984375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261017,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.0475226271336469,
+      "bits_per_byte": 1.511255699384691,
+      "accuracy": 0.6015625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261017,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.8177419625255182,
+      "bits_per_byte": 2.622447314951337,
+      "accuracy": 0.3515625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 8.340830942376952,
+      "bits_per_byte": 12.033275437460448,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261018,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.5022883272327452,
+      "bits_per_byte": 0.7246488787950944,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.41627614208163427,
+      "bits_per_byte": 0.6005595258215634,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261018,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.6361838908996675,
+      "bits_per_byte": 0.9178193444943957,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261018,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.641928468759286,
+      "bits_per_byte": 2.3688020593734316,
+      "accuracy": 0.421875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261018,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 2.5156276436019516,
+      "bits_per_byte": 3.629283526147724,
+      "accuracy": 0.234375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 7.3858149172767495,
+      "bits_per_byte": 10.655478554078897,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261019,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.26909950678500333,
+      "bits_per_byte": 0.3882285239443903,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.23320613215146418,
+      "bits_per_byte": 0.3364453303598136,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261019,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.28158570460817395,
+      "bits_per_byte": 0.4062422996234371,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261019,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.3992054906345882,
+      "bits_per_byte": 0.5759317816341659,
+      "accuracy": 0.9921875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261019,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.6862004298233335,
+      "bits_per_byte": 0.9899779571619984,
+      "accuracy": 0.8984375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 5.82504403055049,
+      "bits_per_byte": 8.403762135835052,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261017,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.30117343025503823,
+      "bits_per_byte": 0.4345014142764618,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.255231193257373,
+      "bits_per_byte": 0.36822077679258464,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261017,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.347189103176343,
+      "bits_per_byte": 0.5008879974031967,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261017,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.7132553049505777,
+      "bits_per_byte": 1.0290098913399437,
+      "accuracy": 0.859375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261017,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.3974190430256013,
+      "bits_per_byte": 2.016049523416836,
+      "accuracy": 0.46875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 6.986394847765936,
+      "bits_per_byte": 10.07923720056412,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261018,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.0154970931541707,
+      "bits_per_byte": 1.4650526203306797,
+      "accuracy": 0.796875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.9072387343079183,
+      "bits_per_byte": 1.3088688228884138,
+      "accuracy": 0.8125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261018,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.0131335287586853,
+      "bits_per_byte": 1.4616427176984914,
+      "accuracy": 0.8203125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261018,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.5197259532269234,
+      "bits_per_byte": 2.1925010962307354,
+      "accuracy": 0.4765625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261018,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.8719839087589816,
+      "bits_per_byte": 2.7007019017905205,
+      "accuracy": 0.3828125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 8.202037836261098,
+      "bits_per_byte": 11.833039311557531,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261019,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.31169821707451023,
+      "bits_per_byte": 0.44968547202732756,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.2868765521374932,
+      "bits_per_byte": 0.4138753791160856,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261019,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.32048830192563804,
+      "bits_per_byte": 0.46236688385104285,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261019,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.5637578414067443,
+      "bits_per_byte": 0.8133306420597768,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261019,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.1255885651311086,
+      "bits_per_byte": 1.6238810409959745,
+      "accuracy": 0.7734375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "lowrank32_budget",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 6.507831914957633,
+      "bits_per_byte": 9.388816830648302,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261017,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.16069584591464592,
+      "bits_per_byte": 0.23183509999251667,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.14806671842468375,
+      "bits_per_byte": 0.21361512039199376,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261017,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.17763160840190292,
+      "bits_per_byte": 0.25626824054655567,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261017,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.5802924334285671,
+      "bits_per_byte": 0.8371850159727827,
+      "accuracy": 0.8984375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261017,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.7186291699772998,
+      "bits_per_byte": 2.479457780653366,
+      "accuracy": 0.359375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 10.788190828446671,
+      "bits_per_byte": 15.564069408363812,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261018,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.19189503598276933,
+      "bits_per_byte": 0.27684601678355053,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.17507695042073212,
+      "bits_per_byte": 0.25258264814595316,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261018,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.2206226730255556,
+      "bits_per_byte": 0.31829123628163636,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261018,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.4556444891478128,
+      "bits_per_byte": 0.6573560449019347,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261018,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.1943527546647357,
+      "bits_per_byte": 1.723086796226887,
+      "accuracy": 0.671875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 7.633851910990818,
+      "bits_per_byte": 11.01332029486719,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261019,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.1818415406969873,
+      "bits_per_byte": 0.2623418889911522,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.15118851891506166,
+      "bits_per_byte": 0.2181189264781067,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261019,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.25764750606212267,
+      "bits_per_byte": 0.37170677929323354,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261019,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.0137071449940078,
+      "bits_per_byte": 1.4624702709965645,
+      "accuracy": 0.6953125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261019,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 2.0559712847153344,
+      "bits_per_byte": 2.9661395766689242,
+      "accuracy": 0.3828125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 7.88019731384477,
+      "bits_per_byte": 11.36872158591038,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261017,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.14882122465553949,
+      "bits_per_byte": 0.21470364278956916,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.1324268447378373,
+      "bits_per_byte": 0.19105155218385061,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261017,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.18379206444368096,
+      "bits_per_byte": 0.2651558999276433,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261017,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.7536066851185012,
+      "bits_per_byte": 1.0872246274012323,
+      "accuracy": 0.7734375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261017,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.5006129676624729,
+      "bits_per_byte": 2.16492688674032,
+      "accuracy": 0.5703125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 10.940358821256952,
+      "bits_per_byte": 15.78360141697323,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261018,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.1670170418504399,
+      "bits_per_byte": 0.2409546580215741,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.1561361648772755,
+      "bits_per_byte": 0.2252568707718669,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261018,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.1815696517168116,
+      "bits_per_byte": 0.2619496361077804,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261018,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.3209114532918417,
+      "bits_per_byte": 0.4629773622286102,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261018,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.869760959111429,
+      "bits_per_byte": 1.2547998224688872,
+      "accuracy": 0.796875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 10.641512911391738,
+      "bits_per_byte": 15.352457904820735,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261019,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.08847159900522646,
+      "bits_per_byte": 0.12763753714435716,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.08043622040991598,
+      "bits_per_byte": 0.11604493629323741,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261019,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.10384867073560888,
+      "bits_per_byte": 0.14982196227317376,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261019,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.28071062751140663,
+      "bits_per_byte": 0.40497983023553535,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261019,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.078128693872281,
+      "bits_per_byte": 1.555410920089635,
+      "accuracy": 0.5703125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_fixed",
+    "name": "multi12_budget",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "ordered_OOD",
+    "test": {
+      "ce_nats": 7.129503792897884,
+      "bits_per_byte": 10.285699766012833,
+      "accuracy": 0.0,
+      "scored_tokens": 128
+    }
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261017,
+    "context": 64,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 2.5386267111363048e-05,
+      "bits_per_byte": 3.662464166824606e-05,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "b30521742947418351b79686b685acb56926be7229e9626e4e305c6ba1261925"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 1.845458696261848e-05,
+      "bits_per_byte": 2.66243410926238e-05,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "21780b582b1f6212c6ab2e86980f1c3fdd36f367f1e9b7aa9c0ba454347f445b"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261017,
+    "context": 256,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 8.45991790370676e-05,
+      "bits_per_byte": 0.00012205081606005498,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "749e0824b5c2c9503d8d280683c9edaa00d6e9f5c6a9ce66e8c62c174e671aa7"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261017,
+    "context": 512,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.004826814643088623,
+      "bits_per_byte": 0.006963621548874188,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "f73854b899a7db2b6a79cb6d4b3e641f3b6eda972f8762c6774bfbfd3825b419"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261017,
+    "context": 1024,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.6897453368401094,
+      "bits_per_byte": 0.9950921769355136,
+      "accuracy": 0.7890625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "642e3e5df1a07601090d886e85a19f2c6da419290f4adfee7b375b96e5909af7"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261018,
+    "context": 64,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 3.496365054952988e-05,
+      "bits_per_byte": 5.044188525918144e-05,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "b30521742947418351b79686b685acb56926be7229e9626e4e305c6ba1261925"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 7.274979987162422e-06,
+      "bits_per_byte": 1.0495577550045681e-05,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "21780b582b1f6212c6ab2e86980f1c3fdd36f367f1e9b7aa9c0ba454347f445b"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261018,
+    "context": 256,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.0025132179077255318,
+      "bits_per_byte": 0.003625807012148961,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "749e0824b5c2c9503d8d280683c9edaa00d6e9f5c6a9ce66e8c62c174e671aa7"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261018,
+    "context": 512,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 4.010708096577331e-05,
+      "bits_per_byte": 5.7862286813853296e-05,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "f73854b899a7db2b6a79cb6d4b3e641f3b6eda972f8762c6774bfbfd3825b419"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261018,
+    "context": 1024,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.0329366824326603,
+      "bits_per_byte": 0.04751758840893365,
+      "accuracy": 0.9921875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "642e3e5df1a07601090d886e85a19f2c6da419290f4adfee7b375b96e5909af7"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261019,
+    "context": 64,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 1.791226012581859e-05,
+      "bits_per_byte": 2.5841928854631603e-05,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "b30521742947418351b79686b685acb56926be7229e9626e4e305c6ba1261925"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 1.447674388610487e-05,
+      "bits_per_byte": 2.088552661270312e-05,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "21780b582b1f6212c6ab2e86980f1c3fdd36f367f1e9b7aa9c0ba454347f445b"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261019,
+    "context": 256,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.41686480151908245,
+      "bits_per_byte": 0.6014087818727423,
+      "accuracy": 0.9140625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "749e0824b5c2c9503d8d280683c9edaa00d6e9f5c6a9ce66e8c62c174e671aa7"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261019,
+    "context": 512,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.04349856385025662,
+      "bits_per_byte": 0.06275516235255717,
+      "accuracy": 0.9921875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "f73854b899a7db2b6a79cb6d4b3e641f3b6eda972f8762c6774bfbfd3825b419"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "attention",
+    "seed": 20261019,
+    "context": 1024,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 6.150947711986051,
+      "bits_per_byte": 8.873941760849592,
+      "accuracy": 0.1171875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "642e3e5df1a07601090d886e85a19f2c6da419290f4adfee7b375b96e5909af7"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261017,
+    "context": 64,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.03474645334882494,
+      "bits_per_byte": 0.05012853593482945,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "b30521742947418351b79686b685acb56926be7229e9626e4e305c6ba1261925"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.03531688079823001,
+      "bits_per_byte": 0.0509514887872731,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "21780b582b1f6212c6ab2e86980f1c3fdd36f367f1e9b7aa9c0ba454347f445b"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261017,
+    "context": 256,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.03899887026923187,
+      "bits_per_byte": 0.05626347673769286,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "749e0824b5c2c9503d8d280683c9edaa00d6e9f5c6a9ce66e8c62c174e671aa7"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261017,
+    "context": 512,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.05246412647816788,
+      "bits_per_byte": 0.07568973509462416,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "f73854b899a7db2b6a79cb6d4b3e641f3b6eda972f8762c6774bfbfd3825b419"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261017,
+    "context": 1024,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.21021191964657676,
+      "bits_per_byte": 0.3032716940098656,
+      "accuracy": 0.9765625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "642e3e5df1a07601090d886e85a19f2c6da419290f4adfee7b375b96e5909af7"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261018,
+    "context": 64,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.0743074709706587,
+      "bits_per_byte": 0.10720301987036993,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "b30521742947418351b79686b685acb56926be7229e9626e4e305c6ba1261925"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.07065827440441422,
+      "bits_per_byte": 0.10193834208101997,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "21780b582b1f6212c6ab2e86980f1c3fdd36f367f1e9b7aa9c0ba454347f445b"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261018,
+    "context": 256,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.07517594501134699,
+      "bits_per_byte": 0.1084559630620117,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "749e0824b5c2c9503d8d280683c9edaa00d6e9f5c6a9ce66e8c62c174e671aa7"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261018,
+    "context": 512,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.14531765689641837,
+      "bits_per_byte": 0.20964906295806668,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "f73854b899a7db2b6a79cb6d4b3e641f3b6eda972f8762c6774bfbfd3825b419"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261018,
+    "context": 1024,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 1.1303792316729075,
+      "bits_per_byte": 1.6307925118583804,
+      "accuracy": 0.6640625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "642e3e5df1a07601090d886e85a19f2c6da419290f4adfee7b375b96e5909af7"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261019,
+    "context": 64,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.031059020304735438,
+      "bits_per_byte": 0.044808694568511435,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "b30521742947418351b79686b685acb56926be7229e9626e4e305c6ba1261925"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.0277618732194113,
+      "bits_per_byte": 0.040051916819432806,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "21780b582b1f6212c6ab2e86980f1c3fdd36f367f1e9b7aa9c0ba454347f445b"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261019,
+    "context": 256,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.03201178432281178,
+      "bits_per_byte": 0.046183242492527615,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "749e0824b5c2c9503d8d280683c9edaa00d6e9f5c6a9ce66e8c62c174e671aa7"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261019,
+    "context": 512,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 0.10781622196492963,
+      "bits_per_byte": 0.1555459287561877,
+      "accuracy": 0.9921875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "f73854b899a7db2b6a79cb6d4b3e641f3b6eda972f8762c6774bfbfd3825b419"
+  },
+  {
+    "training_task": "recall_ordered",
+    "name": "global",
+    "seed": 20261019,
+    "context": 1024,
+    "test_kind": "ordered",
+    "test": {
+      "ce_nats": 1.3624151184969697,
+      "bits_per_byte": 1.9655495350877277,
+      "accuracy": 0.53125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "642e3e5df1a07601090d886e85a19f2c6da419290f4adfee7b375b96e5909af7"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261017,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.9014460889168189,
+      "bits_per_byte": 1.3005118021090463,
+      "accuracy": 0.9765625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.8942899226908739,
+      "bits_per_byte": 1.2901876365830984,
+      "accuracy": 0.9921875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261017,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.9242173725572158,
+      "bits_per_byte": 1.3333638200917228,
+      "accuracy": 0.984375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261017,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.0609180172481245,
+      "bits_per_byte": 1.530581162273621,
+      "accuracy": 0.9609375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261017,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.2452741749505543,
+      "bits_per_byte": 1.79655087674826,
+      "accuracy": 0.890625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261018,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.6605337459988853,
+      "bits_per_byte": 0.952948759692402,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.660590698303678,
+      "bits_per_byte": 0.9530309245000936,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261018,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.6563842423817736,
+      "bits_per_byte": 0.9469622914018442,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261018,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.6915756807026162,
+      "bits_per_byte": 0.9977328049490737,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261018,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.8722864775969905,
+      "bits_per_byte": 1.2584433754636801,
+      "accuracy": 0.9921875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261019,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.5272627489914596,
+      "bits_per_byte": 0.7606793532154611,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.5194055037301875,
+      "bits_per_byte": 0.7493437444419755,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261019,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.5386945236413972,
+      "bits_per_byte": 0.7771719178114863,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261019,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.5683793871379725,
+      "bits_per_byte": 0.8199981231674612,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "global",
+    "seed": 20261019,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.7468814547357764,
+      "bits_per_byte": 1.0775221708792395,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261017,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.0814204525324114,
+      "bits_per_byte": 1.5601599239844086,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.0673828163741224,
+      "bits_per_byte": 1.5399078959130414,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261017,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.129074864532758,
+      "bits_per_byte": 1.628910707853788,
+      "accuracy": 0.96875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261017,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.2348871809168707,
+      "bits_per_byte": 1.7815656119661216,
+      "accuracy": 0.9375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261017,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.4215624867561463,
+      "bits_per_byte": 2.050881149956875,
+      "accuracy": 0.8515625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261018,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.5011103962685448,
+      "bits_per_byte": 2.1656445245234965,
+      "accuracy": 0.59375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.4854212510525913,
+      "bits_per_byte": 2.1430098725246536,
+      "accuracy": 0.625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261018,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.4530228170719646,
+      "bits_per_byte": 2.0962688124882347,
+      "accuracy": 0.640625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261018,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.5196634855335756,
+      "bits_per_byte": 2.1924109743993263,
+      "accuracy": 0.65625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261018,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.6147967808745003,
+      "bits_per_byte": 2.3296593078111036,
+      "accuracy": 0.609375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261019,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.6777764199589182,
+      "bits_per_byte": 2.4205197207951703,
+      "accuracy": 0.46875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.6658123499671942,
+      "bits_per_byte": 2.4032592163492614,
+      "accuracy": 0.5234375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261019,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.698189686326395,
+      "bits_per_byte": 2.4499698389518745,
+      "accuracy": 0.5078125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261019,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.6994050000557426,
+      "bits_per_byte": 2.4517231660423286,
+      "accuracy": 0.53125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "lowrank32_budget",
+    "seed": 20261019,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.8763265205147683,
+      "bits_per_byte": 2.7069669662351004,
+      "accuracy": 0.3828125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261017,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.9859181899818817,
+      "bits_per_byte": 1.4223792834090838,
+      "accuracy": 0.8828125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261017,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.9989902807553215,
+      "bits_per_byte": 1.4412383239419757,
+      "accuracy": 0.921875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261017,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.0191654902578369,
+      "bits_per_byte": 1.4703449986401504,
+      "accuracy": 0.9375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261017,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.156761501854616,
+      "bits_per_byte": 1.668854082216924,
+      "accuracy": 0.953125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261017,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.2932787343964887,
+      "bits_per_byte": 1.8658068166009691,
+      "accuracy": 0.7734375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261018,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.1952020028284116,
+      "bits_per_byte": 1.7243120023411063,
+      "accuracy": 0.859375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261018,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.1670908558355813,
+      "bits_per_byte": 1.6837561899808493,
+      "accuracy": 0.890625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261018,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.191350493068201,
+      "bits_per_byte": 1.718755448310115,
+      "accuracy": 0.8515625,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261018,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.2938615214865055,
+      "bits_per_byte": 1.8666476006456305,
+      "accuracy": 0.8359375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261018,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.5161125768415429,
+      "bits_per_byte": 2.1872880960386816,
+      "accuracy": 0.7421875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261019,
+    "context": 64,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.9995934575027196,
+      "bits_per_byte": 1.4421085240442264,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "88658bbf4eb402497705231688366a6a6298f6d1af87272e8db6dc030ed9e01b"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261019,
+    "context": 128,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.9800219659245069,
+      "bits_per_byte": 1.4138728302015389,
+      "accuracy": 1.0,
+      "scored_tokens": 128
+    },
+    "input_sha256": "3b274b4773e599ac49c4f36993409d68a9a26f176af0313936ba63eac0893c50"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261019,
+    "context": 256,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 0.999931257339451,
+      "bits_per_byte": 1.442595866193492,
+      "accuracy": 0.984375,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ae46df1ad137a474b9c979e66e6c0e81a30dc1a8c4cfbb9704c3a8be445429fb"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261019,
+    "context": 512,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.0365232655437118,
+      "bits_per_byte": 1.4953869749659472,
+      "accuracy": 0.96875,
+      "scored_tokens": 128
+    },
+    "input_sha256": "9d523f3c78a6385c7d9df5dd26af86f44c6dc32026ebfd7bdad7f22917eb1137"
+  },
+  {
+    "training_task": "recall_variable",
+    "name": "multi12_budget",
+    "seed": 20261019,
+    "context": 1024,
+    "test_kind": "disjoint_vocab",
+    "test": {
+      "ce_nats": 1.3279993697256103,
+      "bits_per_byte": 1.9158981050068071,
+      "accuracy": 0.953125,
+      "scored_tokens": 128
+    },
+    "input_sha256": "ad1374f2c52871b8ce3c1df6b8abdb67cbb6296b55c5afe6d047e2a7bc8ec4ff"
+  }
+]

@@ -1,0 +1,69 @@
+{
+  "checks": [
+    {
+      "context": 9,
+      "library": "baseline",
+      "threads": 1,
+      "state_sha256": "064f326cfb3e9d169c6748f153c4d18eb0f8728d02de48d9b5cb1bced292e3d9",
+      "logit_gradient_state": "bitwise identical"
+    },
+    {
+      "context": 9,
+      "library": "baseline",
+      "threads": 4,
+      "state_sha256": "064f326cfb3e9d169c6748f153c4d18eb0f8728d02de48d9b5cb1bced292e3d9",
+      "logit_gradient_state": "bitwise identical"
+    },
+    {
+      "context": 9,
+      "library": "layer_frame_ff",
+      "threads": 1,
+      "state_sha256": "064f326cfb3e9d169c6748f153c4d18eb0f8728d02de48d9b5cb1bced292e3d9",
+      "logit_gradient_state": "bitwise identical"
+    },
+    {
+      "context": 9,
+      "library": "layer_frame_ff",
+      "threads": 4,
+      "state_sha256": "064f326cfb3e9d169c6748f153c4d18eb0f8728d02de48d9b5cb1bced292e3d9",
+      "logit_gradient_state": "bitwise identical"
+    },
+    {
+      "context": 64,
+      "library": "baseline",
+      "threads": 1,
+      "state_sha256": "ececa2672955c9b7c834083280bde7654f24d827bfad8cd9201ebf5e6c19007e",
+      "logit_gradient_state": "bitwise identical"
+    },
+    {
+      "context": 64,
+      "library": "baseline",
+      "threads": 4,
+      "state_sha256": "ececa2672955c9b7c834083280bde7654f24d827bfad8cd9201ebf5e6c19007e",
+      "logit_gradient_state": "bitwise identical"
+    },
+    {
+      "context": 64,
+      "library": "layer_frame_ff",
+      "threads": 1,
+      "state_sha256": "ececa2672955c9b7c834083280bde7654f24d827bfad8cd9201ebf5e6c19007e",
+      "logit_gradient_state": "bitwise identical"
+    },
+    {
+      "context": 64,
+      "library": "layer_frame_ff",
+      "threads": 4,
+      "state_sha256": "ececa2672955c9b7c834083280bde7654f24d827bfad8cd9201ebf5e6c19007e",
+      "logit_gradient_state": "bitwise identical"
+    }
+  ],
+  "ubsan": "pass",
+  "memory": {
+    "activation_bytes": 7540736,
+    "scratch_bytes": 3682304,
+    "persistent_bytes": 8411136,
+    "arena_bytes": 11223040,
+    "parameters": 525696
+  },
+  "scope": "Additional exact execution endpoint, after the frozen main learning protocol; not a globally minimal training-memory claim."
+}

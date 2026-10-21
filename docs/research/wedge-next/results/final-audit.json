@@ -1,0 +1,516 @@
+{
+  "frozen_sources": {
+    "train_next.py": "b8c8aabdbc1358be403889737e124ab8a09f17f3a95baef64395be84aa40e41a",
+    "experiment.py": "3b20535483e77aeb2a47a92faf02f944c2350ad19392e6b7cff8afe81588d5d8",
+    "candidates.py": "ab4993d3db8005980f4378d406a343eff358c946a794b2d5fac2359d70ecb31f",
+    "build_next.py": "bade0328cc0be81a40c2213833f49f95eb443e8e4be8b35c2f3580370e058d6d",
+    "multi_core.h": "9db14c920bbb3d82a99d7e7c328c74d22e623098378d4d272cf93ca8040a8094"
+  },
+  "checkpoint_restores": [
+    {
+      "task": "byte_lm",
+      "name": "attention",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/byte_lm-attention-20261017.npz",
+      "sha256": "b89debf6242bf8523decfd285d69d149485d6beec9786e21d643727ca47e37c8",
+      "state_sha256": "e668949d1ad983a8bbbb2dbdea88cefc333589a409ca348e802832b858305e5f"
+    },
+    {
+      "task": "byte_lm",
+      "name": "attention",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/byte_lm-attention-20261018.npz",
+      "sha256": "daea9a209220fb8fc4b3e1f9f642230d7e81ed0fd10c4e7d61e88fd542dab05e",
+      "state_sha256": "7ee5649ffd87186b36d9631e3f5d4dbe9bc170ed235f27e45571f2757435c6dc"
+    },
+    {
+      "task": "byte_lm",
+      "name": "attention",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/byte_lm-attention-20261019.npz",
+      "sha256": "4e7fdf0742d86cfc62584118e8ec1bf377b55e2ee03d1979d48f567d159915b4",
+      "state_sha256": "59a18c1705c6921ddc7b80599b9b8027e82365f81d5048b09556b6982869721c"
+    },
+    {
+      "task": "byte_lm",
+      "name": "global",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/byte_lm-global-20261017.npz",
+      "sha256": "21e183c2ca5e9e064edba95d1b706ab3c187184d3c6ef30d21b02b68b5236c65",
+      "state_sha256": "5c08ab1f6d051286c6fb3d660b635c2d7d6bcfa8ac5daa6468e2b93cd2c4103d"
+    },
+    {
+      "task": "byte_lm",
+      "name": "global",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/byte_lm-global-20261018.npz",
+      "sha256": "f676912d4231bf7fdbcbb062f9c24bc90adc7170d8885c8020667a8d78955ad0",
+      "state_sha256": "85030879bcb37eab1cf4bdf2ea89330cb87989f69fd9197500f3befce4ecc070"
+    },
+    {
+      "task": "byte_lm",
+      "name": "global",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/byte_lm-global-20261019.npz",
+      "sha256": "b13f8615bfbb1dd62b5e87a95e6dc2fe4a9eda998e4c723179d9da5524ad4bb1",
+      "state_sha256": "740c6439bf15a1ee4bb1bf46724537b6c05dbfbf35461d83de04cf7e86f2f330"
+    },
+    {
+      "task": "byte_lm",
+      "name": "lowrank32",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/byte_lm-lowrank32-20261017.npz",
+      "sha256": "d27b2ca42a260cff7d8283a6d42e8e49b3daa735f2a33964ee91e6ff2fe5eed8",
+      "state_sha256": "290493777cbbcfb901b13231e4fa6149d4b32ae24ee1940450328c0d0bb0b674"
+    },
+    {
+      "task": "byte_lm",
+      "name": "lowrank32",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/byte_lm-lowrank32-20261018.npz",
+      "sha256": "4a999dd37456f1c1ffc90efdc2b7ce0f26304c96b13f0d5f305f25f77b644bcc",
+      "state_sha256": "80c638c6df71949262ea49b36857c0348f51159afe3983f29bb508c5e9755059"
+    },
+    {
+      "task": "byte_lm",
+      "name": "lowrank32",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/byte_lm-lowrank32-20261019.npz",
+      "sha256": "8e431e4ddf01fc8cd7a78d4e8279af09e64e2eb05e865ec06d5f942529191569",
+      "state_sha256": "9991b18824fb2ab52678d8ce384967e23d774580d011e652ddb3e9002ea335d4"
+    },
+    {
+      "task": "byte_lm",
+      "name": "lowrank32_budget",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/byte_lm-lowrank32_budget-20261017.npz",
+      "sha256": "fc7ae0cf8a1ac0fac6a7ad00014d3a2200114665f0d13bcb23b8ce8d6a0da0e2",
+      "state_sha256": "f81fd8389a5bbba1cd43bb68ce930fd6bc66ec4c84e9664bb4f0e23cdb6f1b1b"
+    },
+    {
+      "task": "byte_lm",
+      "name": "lowrank32_budget",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/byte_lm-lowrank32_budget-20261018.npz",
+      "sha256": "d43fe64036449077d796fed692851de12704a3261e116474d6a5297942db24a4",
+      "state_sha256": "ecb22ae3732d88b19039606a0b5b57e304d57a59f32b310b06b781776a6324db"
+    },
+    {
+      "task": "byte_lm",
+      "name": "lowrank32_budget",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/byte_lm-lowrank32_budget-20261019.npz",
+      "sha256": "cf41295a68c66a77f878e5ddfef9e7a8842764b3dfff26648d733fa84fb8375a",
+      "state_sha256": "8358d306dde1bdfbe5f398c80d72c0f25377571c64ad80592cc0e17946288ac9"
+    },
+    {
+      "task": "byte_lm",
+      "name": "multi12",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/byte_lm-multi12-20261017.npz",
+      "sha256": "e42ac9a03dd2ff84da401fd9ab43f2aaa85f2ef52402e76f2710e71b0358ed10",
+      "state_sha256": "77427e6c818e8d5a65171c481abc0e901891e94010ccac8f09d0c6352d2a20a6"
+    },
+    {
+      "task": "byte_lm",
+      "name": "multi12",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/byte_lm-multi12-20261018.npz",
+      "sha256": "ceac1162570539251dbdfea55d3d3b5dbb0a88f7d5d66cb578301d4de542f23e",
+      "state_sha256": "08daabf020f93cd3f34ff4093a0fd2a45d1157358755283d53901ba2f40b459d"
+    },
+    {
+      "task": "byte_lm",
+      "name": "multi12",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/byte_lm-multi12-20261019.npz",
+      "sha256": "a3f962ba21f9967d4fb694002ce4b304d940ebdaaee2d4ab0fd9f6df01db7c77",
+      "state_sha256": "3f50d57550d38d4f4d631e660e8187e4608172a21ad9ac2414dfca6f66319da3"
+    },
+    {
+      "task": "byte_lm",
+      "name": "multi12_budget",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/byte_lm-multi12_budget-20261017.npz",
+      "sha256": "2f4f4ef852bc3d587388a716f341818691c371ea79896e5192b287400f3c11f1",
+      "state_sha256": "8c9db43945649558cdb854adee9eadded52425547abc724a8717fb341a0d38a5"
+    },
+    {
+      "task": "byte_lm",
+      "name": "multi12_budget",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/byte_lm-multi12_budget-20261018.npz",
+      "sha256": "b457c7c53c39661f61ab1130872546fa3df4e7ec9ce619b5130acb836b2df460",
+      "state_sha256": "7d4032664ea2d7536398184a9b2d9225000b5d9163211aa59ea5a731778154f7"
+    },
+    {
+      "task": "byte_lm",
+      "name": "multi12_budget",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/byte_lm-multi12_budget-20261019.npz",
+      "sha256": "e1b054f76c53767982a0013219355d79be3da47aba19f669898a2c3956960a04",
+      "state_sha256": "4c72bed252f89f351d75367d1218b755eb0f29d6f96fa81f2a26d0156b09e601"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "attention",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/recall_fixed-attention-20261017.npz",
+      "sha256": "a90a8fa5ae1f8dcd6e26647db6862f31359a99c738b1ad39d1252dc57227c289",
+      "state_sha256": "28d3fd150bb8921fa338425034f5beed0b2d4d79e7fe34a3de0416687c2bb45f"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "attention",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/recall_fixed-attention-20261018.npz",
+      "sha256": "ae96fbaa079d45ef2409618dc39c8de5a4a06d7268117b274d220695783b8638",
+      "state_sha256": "d9a5400ccab8f434698fb61b2e881fb266a853bb0a0be4094d8f6400dd5e3fd4"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "attention",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/recall_fixed-attention-20261019.npz",
+      "sha256": "b310a3af915cdb7b4c8d959db862c5d20211085b012113be482fc453f112f16e",
+      "state_sha256": "ee0b1113f563585c08aedd6910f6e9ef26d284f63cd415df61061623192adcbd"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "global",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/recall_fixed-global-20261017.npz",
+      "sha256": "49fb3c52672baf54c9a5cf03f45c1dc94e315dfc992d60885ba4fae0437f219c",
+      "state_sha256": "a6f0e0e04a9ae64a1b3750e78d55acd98e74460851012f399867456fb9aa3d45"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "global",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/recall_fixed-global-20261018.npz",
+      "sha256": "9e4838c566ffaca4423ae8ac6d3cb73d1d7d527b581dd0f6b8ed812eb67dfb08",
+      "state_sha256": "b7c9a4e7506990b05588edfed0a2702d0f19f65941f6199b57536d9f3028af36"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "global",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/recall_fixed-global-20261019.npz",
+      "sha256": "463378fb79306ee339f93de33155c237f6523acecaf61dc35442e85f274f2024",
+      "state_sha256": "38b9ba6d39338d73b6f6276e5c15e8a466cd6de2d6c33315cfc2eedc66170a37"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "lowrank32",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/recall_fixed-lowrank32-20261017.npz",
+      "sha256": "3fd08850cd2ef13067f067a016559ef431f300a9e49f4cdc4c5a451a0f96c0c6",
+      "state_sha256": "de10fc4d7a70a3f9056bd3c2aa1ab8b7ae402ea623038e4b2bda9c429d3f2998"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "lowrank32",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/recall_fixed-lowrank32-20261018.npz",
+      "sha256": "c8eb6e4ad51ea65dd692303ac9aacfdd0bbfa2c37d17628bff1d5f3d9e361afe",
+      "state_sha256": "6e7832e6f7a98c69378ea67bc1c75160799bd09eeb25bee51db94c86a429450b"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "lowrank32",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/recall_fixed-lowrank32-20261019.npz",
+      "sha256": "e5e0f706e1da790cc4bdd7cf65a0f9bf2fa0525da06c1a4b8d29803626f02717",
+      "state_sha256": "75a69a77582b0b1c14e7f2a97c423de5794c421aee777468f29e43c275fdc61b"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "lowrank32_budget",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/recall_fixed-lowrank32_budget-20261017.npz",
+      "sha256": "2f2b4fa460f05a786a7157647ddbfe7352f1e39ebef97fe4bef56632f20049dc",
+      "state_sha256": "cb847d2e994d22a0b48331bcd9d99dad3a0d404b29c710d92917faa1be858563"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "lowrank32_budget",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/recall_fixed-lowrank32_budget-20261018.npz",
+      "sha256": "46c86b003358c7f80239df73c779a4859cb384bf12fbbce911e9c7230d636b50",
+      "state_sha256": "ee92b639a9d33f37fd736149af853d6c3395d97d84370e26bec81fddb8298121"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "lowrank32_budget",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/recall_fixed-lowrank32_budget-20261019.npz",
+      "sha256": "a553b84dc63490fdabc4afae352e9298d327bacae89f0bfa21ae7c5983c90195",
+      "state_sha256": "04e807e197661d1cac3d24ef15bf9ab121bd3d07de664741d2bbec8580b44752"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "multi12",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/recall_fixed-multi12-20261017.npz",
+      "sha256": "956256e4e4f4f630ae8f9e5a6a5076adbc14425c9cbab27815f6d54cab1e3954",
+      "state_sha256": "14b3dc325e118e58f33313e7571418446b423f34cee74d45a555a9aafd2cf256"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "multi12",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/recall_fixed-multi12-20261018.npz",
+      "sha256": "920673cf6d8317de0e1528df095e4890dd56c0b76d3aab9783c8af04eb3d7003",
+      "state_sha256": "c86fb783047858c11357286582c824e449ff845dd0840c5219f9a9cb19ea6508"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "multi12",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/recall_fixed-multi12-20261019.npz",
+      "sha256": "87858618357d099f8da223aec056480cbc28ed85d3543d630a66af37a89e691d",
+      "state_sha256": "f7cf9af6978e1328b4743d17b3337635bd673fc713fdbd23a7537f07d9f4e67d"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "multi12_budget",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/recall_fixed-multi12_budget-20261017.npz",
+      "sha256": "03e3e68f1d5fbf017f0417a5c6cb9cf3b544dc1034bfb2e39e23b2ca1c698c71",
+      "state_sha256": "2d14fc90a4596080b861f80e321bff12b251f0b8a0f64d39ffe983faad89c733"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "multi12_budget",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/recall_fixed-multi12_budget-20261018.npz",
+      "sha256": "cac6431d3f72d7cc6c9237f33df95ba439db61ea80b07f00eecc572f6701653e",
+      "state_sha256": "0820aff15337cba0ab81678d120ba3156fbb767653ba1a0a1469c28bbb20ff2f"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "multi12_budget",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/recall_fixed-multi12_budget-20261019.npz",
+      "sha256": "9a28d7d71e8b1fff6979ec934bd61810e23b69b93e9babcd25970c75a958803c",
+      "state_sha256": "2153e4a6a6ca8ef4a8eaadd32c32dd7791ebdc42e0931ea1c5cc8ccd899d4478"
+    },
+    {
+      "task": "recall_ordered",
+      "name": "attention",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/recall_ordered-attention-20261017.npz",
+      "sha256": "633a4f31bc6bdbabbda3b80b0e5cb5d70387d11e2530f8290ec7abeb803cdcdd",
+      "state_sha256": "ed586078e65e7fee57706d20a884f781e9083316fbd1e86a2dff1f161e65c72e"
+    },
+    {
+      "task": "recall_ordered",
+      "name": "attention",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/recall_ordered-attention-20261018.npz",
+      "sha256": "ad91e7c36f4c309919679924389a347a94fc429e6b5e65cfad44182d7d7d4314",
+      "state_sha256": "779e7f41ca056b8e162ab2b1cc2b01b7ff46d0ca7d093193a95c2ad6dc6dd492"
+    },
+    {
+      "task": "recall_ordered",
+      "name": "attention",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/recall_ordered-attention-20261019.npz",
+      "sha256": "8e4f2e10af4e987a773dca2d493ec2c4f895bfe31575a80d551ea3e65f7b456c",
+      "state_sha256": "0d9eb2b1272ea46e329e423b3dee82de2ad0ac7e7cbc960f1d95acffb9fe66cc"
+    },
+    {
+      "task": "recall_ordered",
+      "name": "global",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/recall_ordered-global-20261017.npz",
+      "sha256": "f1abf13c576086c83315647029bd12e02aa6f820a49575b184465418087971d2",
+      "state_sha256": "89505dd2a1e0e9e823eec8443d028319d584ebedaac0de611923d397b8adc22d"
+    },
+    {
+      "task": "recall_ordered",
+      "name": "global",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/recall_ordered-global-20261018.npz",
+      "sha256": "5fab4f4ea4ef5d3daa4a8c3cf8e8d91727877ed16bb94208a4cccf4dbd4ed8ee",
+      "state_sha256": "a5d35dfea85c67434caa42b409dec0478be77b4043773fb97eb2f784d063147f"
+    },
+    {
+      "task": "recall_ordered",
+      "name": "global",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/recall_ordered-global-20261019.npz",
+      "sha256": "1d0ff9b29768b71cb6b51326c880afae32ad128478096f8d26a4ee4dfdf6d450",
+      "state_sha256": "268417ac78bce8a8c81fbc564daa78a08e5854acfd04735909e4d199b2435abe"
+    },
+    {
+      "task": "recall_variable",
+      "name": "global",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/recall_variable-global-20261017.npz",
+      "sha256": "b0585d334b921c1f9abcd5225e7dcb83633a8f3870163f2f617bd57d00c144c7",
+      "state_sha256": "4fd3bd61ba78e2222ed1acff1c50c8c165b40686664b6c053f4eb11058244b87"
+    },
+    {
+      "task": "recall_variable",
+      "name": "global",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/recall_variable-global-20261018.npz",
+      "sha256": "4f4e7e31a882f278dd9d1f13ae3626abb764a2a90442bf6c0c0d435025aa6ad0",
+      "state_sha256": "37edc9beb7b07915afc3623b791e296b23bbb968514f061246d20befb05b61b4"
+    },
+    {
+      "task": "recall_variable",
+      "name": "global",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/recall_variable-global-20261019.npz",
+      "sha256": "76eb987b6dd82a6d349bc82c55300a5eae6eb02ac87d23a29ea53910a5e52be0",
+      "state_sha256": "045a68958de18d5a1156a6b345c668ed81c681fec7b5bd762372d7e112567330"
+    },
+    {
+      "task": "recall_variable",
+      "name": "lowrank32_budget",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/recall_variable-lowrank32_budget-20261017.npz",
+      "sha256": "320b3c4d585df3acac13e636e2435e05d9c2a1b2e7385df1ae793b51d9a7a81c",
+      "state_sha256": "2040fe7e0a940a6ae5f2a39ee6536d13e8ad9aed4f56ff5d7529e1243a9d322f"
+    },
+    {
+      "task": "recall_variable",
+      "name": "lowrank32_budget",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/recall_variable-lowrank32_budget-20261018.npz",
+      "sha256": "1ef121b4e1d75baec24e1a14f1226281d914738ed27c8a4b4c714bcc45766ae5",
+      "state_sha256": "5fa5adebfed36ff9c6d892d07f9e98a2d48477195c49dbc9a92d2fad84426068"
+    },
+    {
+      "task": "recall_variable",
+      "name": "lowrank32_budget",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/recall_variable-lowrank32_budget-20261019.npz",
+      "sha256": "f854b2d2b7cfb51f19855dc8513b0b0beb5d440004670d252053a1b8bf908e33",
+      "state_sha256": "83e48315635d5276176efa027908f161d67ce5aab846fc426470fd9df245f108"
+    },
+    {
+      "task": "recall_variable",
+      "name": "multi12_budget",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/recall_variable-multi12_budget-20261017.npz",
+      "sha256": "8fc4d72e8adcd71fbc5446f625ac7e0a3df3e027471ab9de4bf90c7792afa8bd",
+      "state_sha256": "86c1ec536117a20055f314f17da8acfe6b36b4359b7922e60b5614bc9d177dc2"
+    },
+    {
+      "task": "recall_variable",
+      "name": "multi12_budget",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/recall_variable-multi12_budget-20261018.npz",
+      "sha256": "6c94ef8411019f1a2b6061b638ab8e1869c10bf77c88d28ed8c71590d1cda303",
+      "state_sha256": "429d77e1fa110b28ee1ffbb7969e4d8590c56321a7df9066663c2ff3a20c16b0"
+    },
+    {
+      "task": "recall_variable",
+      "name": "multi12_budget",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/recall_variable-multi12_budget-20261019.npz",
+      "sha256": "924cc59c9eae832dd7169829f882864b550a302a070d5be1ded6354e9002fe62",
+      "state_sha256": "d5554183c1f45ee3f27454983e779536cf80d6f8a751aa00cf2b850dc7ad6d2f"
+    },
+    {
+      "task": "byte_lm",
+      "name": "global",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/byte_lm-global-20261017.npz",
+      "sha256": "21e183c2ca5e9e064edba95d1b706ab3c187184d3c6ef30d21b02b68b5236c65",
+      "state_sha256": "5c08ab1f6d051286c6fb3d660b635c2d7d6bcfa8ac5daa6468e2b93cd2c4103d"
+    },
+    {
+      "task": "byte_lm",
+      "name": "global",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/byte_lm-global-20261018.npz",
+      "sha256": "f676912d4231bf7fdbcbb062f9c24bc90adc7170d8885c8020667a8d78955ad0",
+      "state_sha256": "85030879bcb37eab1cf4bdf2ea89330cb87989f69fd9197500f3befce4ecc070"
+    },
+    {
+      "task": "byte_lm",
+      "name": "global",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/byte_lm-global-20261019.npz",
+      "sha256": "b13f8615bfbb1dd62b5e87a95e6dc2fe4a9eda998e4c723179d9da5524ad4bb1",
+      "state_sha256": "740c6439bf15a1ee4bb1bf46724537b6c05dbfbf35461d83de04cf7e86f2f330"
+    },
+    {
+      "task": "byte_lm",
+      "name": "hybrid",
+      "seed": 20261017,
+      "checkpoint": "hybrid/checkpoints/byte_lm-hybrid-20261017.npz",
+      "sha256": "3979eca09ad64ea28d7283724557c55f8d4b130f03c4cee746980edf19b225f2",
+      "state_sha256": "88901aa1df848e397d1c676710fd8efcd34f0ba0a7bd1334959defa2f70dccf1"
+    },
+    {
+      "task": "byte_lm",
+      "name": "hybrid",
+      "seed": 20261018,
+      "checkpoint": "hybrid/checkpoints/byte_lm-hybrid-20261018.npz",
+      "sha256": "faaba82b800b2352cb98cf81553edaefc86ed0ddea4b6d114367ff99a30a92ef",
+      "state_sha256": "15b4e17466e21755cdb08a138d12c3de42ab9dd1b68e7b0c9717510d8eea9051"
+    },
+    {
+      "task": "byte_lm",
+      "name": "hybrid",
+      "seed": 20261019,
+      "checkpoint": "hybrid/checkpoints/byte_lm-hybrid-20261019.npz",
+      "sha256": "39b5ce38ed775a01aec1ff98572f69f43aaa1f11efd0bd06b72f44e154446796",
+      "state_sha256": "f079c711d0e8a6170b6d0e164b2e6b265801a3de0a03e38fd7fdd5f064866e7f"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "global",
+      "seed": 20261017,
+      "checkpoint": "checkpoints/recall_fixed-global-20261017.npz",
+      "sha256": "49fb3c52672baf54c9a5cf03f45c1dc94e315dfc992d60885ba4fae0437f219c",
+      "state_sha256": "a6f0e0e04a9ae64a1b3750e78d55acd98e74460851012f399867456fb9aa3d45"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "global",
+      "seed": 20261018,
+      "checkpoint": "checkpoints/recall_fixed-global-20261018.npz",
+      "sha256": "9e4838c566ffaca4423ae8ac6d3cb73d1d7d527b581dd0f6b8ed812eb67dfb08",
+      "state_sha256": "b7c9a4e7506990b05588edfed0a2702d0f19f65941f6199b57536d9f3028af36"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "global",
+      "seed": 20261019,
+      "checkpoint": "checkpoints/recall_fixed-global-20261019.npz",
+      "sha256": "463378fb79306ee339f93de33155c237f6523acecaf61dc35442e85f274f2024",
+      "state_sha256": "38b9ba6d39338d73b6f6276e5c15e8a466cd6de2d6c33315cfc2eedc66170a37"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "hybrid",
+      "seed": 20261017,
+      "checkpoint": "hybrid/checkpoints/recall_fixed-hybrid-20261017.npz",
+      "sha256": "b7257f30a7c15a19b4cec952101ef5f4bf7288d3c08da5984528eeb6d92f6a78",
+      "state_sha256": "1016092ab8117ebc5d6e036dececde95dbe8707a4bfc29798b5351171ea81e8d"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "hybrid",
+      "seed": 20261018,
+      "checkpoint": "hybrid/checkpoints/recall_fixed-hybrid-20261018.npz",
+      "sha256": "2f299aaebd76fa44813b51a52d45344e525e275c7e4b85852e977459bec1a3f7",
+      "state_sha256": "0dfba2f764ec3abe862586bf024b38365e7cf8e044f131014783d01b8b8c8be0"
+    },
+    {
+      "task": "recall_fixed",
+      "name": "hybrid",
+      "seed": 20261019,
+      "checkpoint": "hybrid/checkpoints/recall_fixed-hybrid-20261019.npz",
+      "sha256": "1b6e348d5660dbd0302a6848a47d8bb96186cdb0cadeeafff3326441fcada3b2",
+      "state_sha256": "7afcab95cec54191cd9921f931725e3dc453c29331797968564c35b4c22fe3d7"
+    }
+  ],
+  "benchmark_state_checks": "all six repetitions and thread counts agree; exact variants also agree across timing blocks"
+}

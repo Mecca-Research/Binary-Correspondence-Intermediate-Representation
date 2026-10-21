@@ -1,0 +1,66 @@
+[
+  {
+    "variant": "baseline",
+    "parameters": 525696,
+    "activation_bytes": 24403968,
+    "scratch_bytes": 7970816,
+    "arena_bytes": 32374784,
+    "persistent_bytes": 8411136
+  },
+  {
+    "variant": "fast",
+    "parameters": 525696,
+    "activation_bytes": 24403968,
+    "scratch_bytes": 6381568,
+    "arena_bytes": 30785536,
+    "persistent_bytes": 8411136
+  },
+  {
+    "variant": "compact",
+    "parameters": 525696,
+    "activation_bytes": 24403968,
+    "scratch_bytes": 3682304,
+    "arena_bytes": 28086272,
+    "persistent_bytes": 8411136
+  },
+  {
+    "variant": "frame_remat",
+    "parameters": 525696,
+    "activation_bytes": 21565440,
+    "scratch_bytes": 6381568,
+    "arena_bytes": 27947008,
+    "persistent_bytes": 8411136
+  },
+  {
+    "variant": "ff_remat",
+    "parameters": 525696,
+    "activation_bytes": 18087936,
+    "scratch_bytes": 6381568,
+    "arena_bytes": 24469504,
+    "persistent_bytes": 8411136
+  },
+  {
+    "variant": "frame_ff_compact",
+    "parameters": 525696,
+    "activation_bytes": 15249408,
+    "scratch_bytes": 3682304,
+    "arena_bytes": 18931712,
+    "persistent_bytes": 8411136
+  },
+  {
+    "variant": "layer_compact",
+    "parameters": 525696,
+    "activation_bytes": 10592256,
+    "scratch_bytes": 3682304,
+    "arena_bytes": 14274560,
+    "persistent_bytes": 8411136
+  },
+  {
+    "variant": "attention",
+    "parameters": 525696,
+    "activation_bytes": 74465280,
+    "scratch_bytes": 7880704,
+    "arena_bytes": 82345984,
+    "persistent_bytes": 8411136
+  }
+]
