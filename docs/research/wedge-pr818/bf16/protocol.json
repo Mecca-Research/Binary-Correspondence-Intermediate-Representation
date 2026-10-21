@@ -1,0 +1,39 @@
+{
+  "created_utc": "2026-10-18T22:26:56.916481+00:00",
+  "source_sha256": "f09a20191577a9c16c4d24576efd26e022cfe238d6a75bfc87e2777f7e8a9983",
+  "primary_protocol_sha256": "e7a1f0c0da74627eb6ec7889d1688215840e7e4e7c5141fa0f135ca8fa954e78",
+  "seeds": [
+    20261018,
+    20261019,
+    20261020
+  ],
+  "cases": [
+    [
+      "kv_curriculum",
+      "global"
+    ],
+    [
+      "kv_curriculum",
+      "query_full"
+    ],
+    [
+      "kv_curriculum",
+      "attention"
+    ],
+    [
+      "ordered",
+      "query_full"
+    ],
+    [
+      "lm",
+      "query_full"
+    ]
+  ],
+  "contract": 26,
+  "training_updates": 12600,
+  "controlled": "Same parameter shapes, initialization, data streams, optimizer, rates, supervised counts, memory envelope, validation frequency and selection as the FP32 primary study.",
+  "difference": "Only BF16 GEMM arithmetic plus its declared packing buffers. Attention-FMA bit32 stays off. FP32 optimizer and stored parameters retained.",
+  "panel_admission": "Original query/global FF257 and FF250 recipes are not changed to fit FF256 panels. Dedicated FF256 panel timing/parity is a separate synthetic probe.",
+  "evaluation": "Rerun fixed regression samples: association4pairs T128/T256 and value-swap/query-change T128; orderedT1024/T2048; LM32/64/128. Samples previously used by the FP32 study, so no claim of fresh holdout.",
+  "claim_limit": "This AMD EPYC host lacks AMX. Results cannot reproduce or reject upstream Intel-AMX throughput numbers."
+}
