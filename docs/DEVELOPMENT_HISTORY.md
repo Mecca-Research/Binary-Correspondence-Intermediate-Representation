@@ -3784,6 +3784,13 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed, and open (PX-3b-2): the measured prices inside K_BCIR's own candidates on its three
     rails, so the plan rather than a choice beside it takes the dispatch. PX-6 (GPU) stays pending: it
     continues in a local session on the hardware.
+  - Found by CI's aarch64 oracle after the push: the witness that the trainer states its own
+    decisions required each of them, the instances its families admit among them, to take more than
+    one value over its cases -- but an aarch64 host's families all admit the portable instance
+    alone, so there the instances take one value whatever the contract. They are required to vary
+    only where the host's families differ, and otherwise held to the masks the cases spell from each
+    contract's name; the old witness fails, and the new one passes, against the trainer built with
+    `BCIR_TENSOR_MAX_VARIANT` 1 on this host, which admits the portable instance alone as aarch64 does.
   PX-3b-2 (2026-10-21): the measured prices inside K_BCIR's own candidates, on its three rails.
   - PX-3b-1 chose the dispatch beside the plan: `choose_dispatch` read a table and the program
     stated its pick. A target carries the table now -- `cost.MeasuredPrices`, frozen and

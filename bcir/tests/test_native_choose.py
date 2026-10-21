@@ -527,8 +527,11 @@ def test_the_trainer_states_its_own_decisions():
     cases -- and `trainer_shape` the shape a table measured on it names, on cases where every
     decision but the arenas' alignment takes more than one value
     (contracts, recompute sets, the workspace's tiers and the panels' need, a provider's GEMM and
-    its SiLU, steps and accumulation, the pool's threads and the instances each job family admits),
-    and refuses steps or an accumulation that is not a positive integer."""
+    its SiLU, steps and accumulation, the pool's threads and the instances each job family admits
+    -- these last wherever the host's families differ: on a host whose families all admit the same
+    instances, an aarch64 host's the portable one alone, they take that one value, which the cases
+    spell from each contract's name rather than read off the trainer), and refuses steps or an
+    accumulation that is not a positive integer."""
     if _CC is None:
         return
     corpus = nf.trace_corpus()
@@ -550,8 +553,10 @@ def test_the_trainer_states_its_own_decisions():
         if path is None:
             return
         seen: dict[str, set] = {}
+        spelled: set = set()  # the host's instances, spelled from each case's contract
         for i, case in enumerate(cases):
             trainer, decisions = nf._case_trainer(path, case)
+            spelled.add(repr(decisions["instances"]))
             try:
                 got = trainer.program_decisions(
                     steps=case.steps, gradient_accumulation=case.accumulation
@@ -578,7 +583,11 @@ def test_the_trainer_states_its_own_decisions():
             finally:
                 trainer.close()
         varied = {field for field, values in seen.items() if len(values) > 1}
-        assert set(seen) - {"alignment"} <= varied, sorted(set(seen) - varied)
+        # the instances vary with the contract only where the host's families differ; where they
+        # all admit the same instances (an aarch64 host: the portable one alone) the one value is
+        # held above to the masks spelled from each contract's name
+        fixed = {"alignment"} | ({"instances"} if len(spelled) == 1 else set())
+        assert set(seen) - fixed <= varied, sorted(set(seen) - fixed - varied)
 
 
 assert DecoderSpec  # the spec type the fixtures' shapes are made of
