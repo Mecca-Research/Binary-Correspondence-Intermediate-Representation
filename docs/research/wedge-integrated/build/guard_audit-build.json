@@ -1,0 +1,26 @@
+{
+  "command": [
+    "gcc",
+    "-std=c11",
+    "-O3",
+    "-fPIC",
+    "-shared",
+    "-ffp-contract=off",
+    "-fno-math-errno",
+    "-pthread",
+    "-I",
+    "/workspace/scratch/d4904b8a62c3/wedge-integrated/vendor",
+    "-DGP_RANK=22",
+    "-DGP_PROJECTOR=0",
+    "-DGP_SYMMETRIC=0",
+    "-DGP_HEADS=1",
+    "/workspace/scratch/d4904b8a62c3/wedge-integrated/vendor/bcir_tensor.c",
+    "/workspace/scratch/d4904b8a62c3/wedge-integrated/build/guard_audit.c",
+    "-lm",
+    "-o",
+    "/workspace/scratch/d4904b8a62c3/wedge-integrated/build/guard_audit.so"
+  ],
+  "bcir_commit": "aaa2e6c0ee0ee15b83fe4d0373b48bd893e80d6d",
+  "source_sha256": "dc9af5bd49bec1096b65676234404622f7b42544b3e7b1dda8e7761dc4a8d897",
+  "stderr": ""
+}
