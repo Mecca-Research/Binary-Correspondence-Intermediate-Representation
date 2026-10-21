@@ -1,0 +1,8 @@
+{
+  "native_vs_common_factor_max_error": 2.1763460755774844e-08,
+  "native_local_max_plucker_residual": 6.563258270197991e-09,
+  "tested_frames": 128,
+  "relations_per_frame": 7315,
+  "identity": "sum_s (u wedge v_s)/max(norm(u wedge v_s),eps)/m = u wedge [sum_s v_s/max(norm(u wedge v_s),eps)/m]",
+  "correction": "A generic average of wedges can be nondecomposable, but the prior local mixer shares u within a token. Its nonzero features remain decomposable in exact arithmetic. The earlier generic counterexample did not establish failure for that mixer."
+}

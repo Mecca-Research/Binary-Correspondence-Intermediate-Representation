@@ -1,0 +1,2110 @@
+{
+  "quality": {
+    "transformer": {
+      "parameters": 525696,
+      "lm_ce": {
+        "mean": 2.162826635907407,
+        "sd": 0.019549001949668278,
+        "ci95": [
+          2.1142642229371553,
+          2.211389048877659
+        ],
+        "values": [
+          2.150092037281805,
+          2.1853350620585594,
+          2.1530528083818568
+        ]
+      },
+      "lm_accuracy": {
+        "mean": 0.3837687174479167,
+        "sd": 0.007770744636854437,
+        "ci95": [
+          0.36446511764712497,
+          0.4030723172487084
+        ],
+        "values": [
+          0.39031982421875,
+          0.37518310546875,
+          0.38580322265625
+        ]
+      },
+      "recall_accuracy": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "recall_ce": {
+        "mean": 0.00032510079416837233,
+        "sd": 1.979430085879563e-05,
+        "ci95": [
+          0.00027592902492730616,
+          0.0003742725634094385
+        ],
+        "values": [
+          0.00030332424273855473,
+          0.0003420016152974048,
+          0.0003299765244691574
+        ]
+      }
+    },
+    "grassmann": {
+      "parameters": 525696,
+      "lm_ce": {
+        "mean": 2.3725750902130387,
+        "sd": 0.0019978625790278057,
+        "ci95": [
+          2.367612124437581,
+          2.3775380559884964
+        ],
+        "values": [
+          2.373053190594661,
+          2.3742905271425476,
+          2.3703815529019066
+        ]
+      },
+      "lm_accuracy": {
+        "mean": 0.3211466471354167,
+        "sd": 0.001625568388300633,
+        "ci95": [
+          0.31710851139900986,
+          0.3251847828718235
+        ],
+        "values": [
+          0.32220458984375,
+          0.31927490234375,
+          0.32196044921875
+        ]
+      },
+      "recall_accuracy": {
+        "mean": 0.0625,
+        "sd": 0.0029700988917471774,
+        "ci95": [
+          0.05512186533538298,
+          0.06987813466461702
+        ],
+        "values": [
+          0.064453125,
+          0.05908203125,
+          0.06396484375
+        ]
+      },
+      "recall_ce": {
+        "mean": 2.7930544613855433,
+        "sd": 0.012041105585848996,
+        "ci95": [
+          2.7631426969085684,
+          2.822966225862518
+        ],
+        "values": [
+          2.8038273890356056,
+          2.7952802407328274,
+          2.780055754388197
+        ]
+      }
+    },
+    "symmetric": {
+      "parameters": 525696,
+      "lm_ce": {
+        "mean": 2.374348836946061,
+        "sd": 0.004077947614664427,
+        "ci95": [
+          2.3642186534899308,
+          2.384479020402191
+        ],
+        "values": [
+          2.371631509320696,
+          2.372377072155654,
+          2.3790379293618313
+        ]
+      },
+      "lm_accuracy": {
+        "mean": 0.3208211263020833,
+        "sd": 0.0011489101483964437,
+        "ci95": [
+          0.31796707527503904,
+          0.3236751773291276
+        ],
+        "values": [
+          0.32025146484375,
+          0.3221435546875,
+          0.320068359375
+        ]
+      },
+      "recall_accuracy": {
+        "mean": 0.062337239583333336,
+        "sd": 0.0028610670298253493,
+        "ci95": [
+          0.05522995507869868,
+          0.06944452408796799
+        ],
+        "values": [
+          0.064453125,
+          0.05908203125,
+          0.0634765625
+        ]
+      },
+      "recall_ce": {
+        "mean": 2.7927075533112298,
+        "sd": 0.011254489612566042,
+        "ci95": [
+          2.764749851238152,
+          2.8206652553843075
+        ],
+        "values": [
+          2.8026709882822263,
+          2.794951554414454,
+          2.78050011723701
+        ]
+      }
+    },
+    "global": {
+      "parameters": 525696,
+      "lm_ce": {
+        "mean": 2.456812363226271,
+        "sd": 0.0030942181135500506,
+        "ci95": [
+          2.4491258993220204,
+          2.4644988271305217
+        ],
+        "values": [
+          2.4593107252485935,
+          2.453351208856707,
+          2.457775155573513
+        ]
+      },
+      "lm_accuracy": {
+        "mean": 0.2947998046875,
+        "sd": 0.0023764553630287824,
+        "ci95": [
+          0.2888963622999089,
+          0.3007032470750911
+        ],
+        "values": [
+          0.29296875,
+          0.2974853515625,
+          0.2939453125
+        ]
+      },
+      "recall_accuracy": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "recall_ce": {
+        "mean": 0.16795434205131568,
+        "sd": 0.10394862370267281,
+        "ci95": [
+          -0.09026835417303805,
+          0.42617703827566944
+        ],
+        "values": [
+          0.28761207031019764,
+          0.11630089354571566,
+          0.09995006229803374
+        ]
+      }
+    },
+    "global_symmetric": {
+      "parameters": 525696,
+      "lm_ce": {
+        "mean": 2.4669369868571707,
+        "sd": 0.0017113029270062032,
+        "ci95": [
+          2.462685874719966,
+          2.4711880989943755
+        ],
+        "values": [
+          2.4652129252815174,
+          2.4669627961010883,
+          2.468635239188906
+        ]
+      },
+      "lm_accuracy": {
+        "mean": 0.2908935546875,
+        "sd": 0.0015786764106906204,
+        "ci95": [
+          0.2869719050810528,
+          0.2948152042939472
+        ],
+        "values": [
+          0.29119873046875,
+          0.29229736328125,
+          0.2891845703125
+        ]
+      },
+      "recall_accuracy": {
+        "mean": 0.06884765625,
+        "sd": 0.008038123844313638,
+        "ci95": [
+          0.04887984967662096,
+          0.08881546282337904
+        ],
+        "values": [
+          0.078125,
+          0.064453125,
+          0.06396484375
+        ]
+      },
+      "recall_ce": {
+        "mean": 2.746412753646025,
+        "sd": 0.019891518422397166,
+        "ci95": [
+          2.696999482588972,
+          2.795826024703078
+        ],
+        "values": [
+          2.7316779169298613,
+          2.7385212092163034,
+          2.76903913479191
+        ]
+      }
+    },
+    "projector": {
+      "parameters": 526080,
+      "lm_ce": {
+        "mean": 2.465482138719464,
+        "sd": 0.001627642477915456,
+        "ci95": [
+          2.4614388506588276,
+          2.4695254267801006
+        ],
+        "values": [
+          2.4656968734419076,
+          2.4637577875039174,
+          2.4669917552125673
+        ]
+      },
+      "lm_accuracy": {
+        "mean": 0.29071044921875,
+        "sd": 0.0020123097560833174,
+        "ci95": [
+          0.2857115946659403,
+          0.2957093037715597
+        ],
+        "values": [
+          0.2894287109375,
+          0.29302978515625,
+          0.2896728515625
+        ]
+      },
+      "recall_accuracy": {
+        "mean": 0.060872395833333336,
+        "sd": 0.002689243431292042,
+        "ci95": [
+          0.05419194480958392,
+          0.06755284685708275
+        ],
+        "values": [
+          0.0595703125,
+          0.05908203125,
+          0.06396484375
+        ]
+      },
+      "recall_ce": {
+        "mean": 2.7773739989813286,
+        "sd": 0.018102274209858434,
+        "ci95": [
+          2.732405456948174,
+          2.8223425410144833
+        ],
+        "values": [
+          2.7831640108003994,
+          2.791872933221172,
+          2.7570850529224145
+        ]
+      }
+    }
+  },
+  "contrasts": {
+    "global_minus_grassmann": {
+      "lm_ce": {
+        "mean": 0.0842372730132328,
+        "sd": 0.004518903157119733,
+        "ci95": [
+          0.07301169526488405,
+          0.09546285076158156
+        ],
+        "values": [
+          0.08625753465393249,
+          0.07906068171415948,
+          0.08739360267160645
+        ]
+      },
+      "recall_accuracy": {
+        "mean": 0.9375,
+        "sd": 0.0029700988917471774,
+        "ci95": [
+          0.930121865335383,
+          0.944878134664617
+        ],
+        "values": [
+          0.935546875,
+          0.94091796875,
+          0.93603515625
+        ]
+      }
+    },
+    "global_minus_global_symmetric": {
+      "lm_ce": {
+        "mean": -0.010124623630899313,
+        "sd": 0.003906960306381276,
+        "ci95": [
+          -0.019830051066292667,
+          -0.00041919619550596053
+        ],
+        "values": [
+          -0.005902200032923854,
+          -0.013611587244381163,
+          -0.010860083615392924
+        ]
+      },
+      "recall_accuracy": {
+        "mean": 0.93115234375,
+        "sd": 0.008038123844313638,
+        "ci95": [
+          0.911184537176621,
+          0.951120150323379
+        ],
+        "values": [
+          0.921875,
+          0.935546875,
+          0.93603515625
+        ]
+      }
+    },
+    "global_minus_transformer": {
+      "lm_ce": {
+        "mean": 0.29398572731886413,
+        "sd": 0.0226024026246771,
+        "ci95": [
+          0.2378382465827391,
+          0.35013320805498915
+        ],
+        "values": [
+          0.3092186879667884,
+          0.26801614679814767,
+          0.30472234719165625
+        ]
+      },
+      "recall_accuracy": {
+        "mean": 0.0,
+        "sd": 0.0,
+        "ci95": [
+          0.0,
+          0.0
+        ],
+        "values": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "projector_minus_global": {
+      "lm_ce": {
+        "mean": 0.008669775493192885,
+        "sd": 0.0020652427807710256,
+        "ci95": [
+          0.0035394280175594607,
+          0.013800122968826309
+        ],
+        "values": [
+          0.006386148193314067,
+          0.010406578647210285,
+          0.009216599639054301
+        ]
+      },
+      "recall_accuracy": {
+        "mean": -0.9391276041666666,
+        "sd": 0.002689243431292042,
+        "ci95": [
+          -0.945808055190416,
+          -0.9324471531429173
+        ],
+        "values": [
+          -0.9404296875,
+          -0.94091796875,
+          -0.93603515625
+        ]
+      }
+    }
+  },
+  "timing": {
+    "1": {
+      "64": {
+        "transformer": {
+          "median_ms": 6.038382900032957,
+          "min_ms": 5.54760509994594,
+          "max_ms": 7.614147900039825,
+          "transient_bytes": 2197504,
+          "total_arena_bytes": 10608640,
+          "repetitions": 6
+        },
+        "grassmann": {
+          "median_ms": 7.570049399964773,
+          "min_ms": 7.315582600040216,
+          "max_ms": 7.599100300012651,
+          "transient_bytes": 2000896,
+          "total_arena_bytes": 10412032,
+          "repetitions": 6
+        },
+        "symmetric": {
+          "median_ms": 7.807852699988871,
+          "min_ms": 7.4909214000399515,
+          "max_ms": 14.487363599982928,
+          "transient_bytes": 2000896,
+          "total_arena_bytes": 10412032,
+          "repetitions": 6
+        },
+        "global": {
+          "median_ms": 5.987703499977215,
+          "min_ms": 5.60229110005821,
+          "max_ms": 7.560094500058767,
+          "transient_bytes": 2023424,
+          "total_arena_bytes": 10434560,
+          "repetitions": 6
+        },
+        "global_symmetric": {
+          "median_ms": 5.847220599980574,
+          "min_ms": 5.656558400005451,
+          "max_ms": 11.958908300039184,
+          "transient_bytes": 2023424,
+          "total_arena_bytes": 10434560,
+          "repetitions": 6
+        },
+        "projector": {
+          "median_ms": 6.510452949987666,
+          "min_ms": 5.970094299937045,
+          "max_ms": 7.280877300036082,
+          "transient_bytes": 2024448,
+          "total_arena_bytes": 10441728,
+          "repetitions": 6
+        }
+      },
+      "128": {
+        "transformer": {
+          "median_ms": 9.058248099972843,
+          "min_ms": 8.635727699947893,
+          "max_ms": 9.998715399979119,
+          "transient_bytes": 4788224,
+          "total_arena_bytes": 13199360,
+          "repetitions": 6
+        },
+        "grassmann": {
+          "median_ms": 12.5155261499458,
+          "min_ms": 12.252849699962098,
+          "max_ms": 12.761983900054474,
+          "transient_bytes": 4001792,
+          "total_arena_bytes": 12412928,
+          "repetitions": 6
+        },
+        "symmetric": {
+          "median_ms": 12.96054414997343,
+          "min_ms": 12.395144200036157,
+          "max_ms": 14.741353099998378,
+          "transient_bytes": 4001792,
+          "total_arena_bytes": 12412928,
+          "repetitions": 6
+        },
+        "global": {
+          "median_ms": 8.734704749986122,
+          "min_ms": 8.665781400031847,
+          "max_ms": 9.312966400011646,
+          "transient_bytes": 4046848,
+          "total_arena_bytes": 12457984,
+          "repetitions": 6
+        },
+        "global_symmetric": {
+          "median_ms": 8.769603100017775,
+          "min_ms": 8.578810400013026,
+          "max_ms": 15.384928399998898,
+          "transient_bytes": 4046848,
+          "total_arena_bytes": 12457984,
+          "repetitions": 6
+        },
+        "projector": {
+          "median_ms": 8.682190099989384,
+          "min_ms": 8.554873199955182,
+          "max_ms": 9.350509900014004,
+          "transient_bytes": 4048896,
+          "total_arena_bytes": 12466176,
+          "repetitions": 6
+        }
+      },
+      "256": {
+        "transformer": {
+          "median_ms": 17.355016000010437,
+          "min_ms": 16.359621199990215,
+          "max_ms": 24.029134700049326,
+          "transient_bytes": 11149312,
+          "total_arena_bytes": 19560448,
+          "repetitions": 6
+        },
+        "grassmann": {
+          "median_ms": 22.99664719998873,
+          "min_ms": 21.820162100084417,
+          "max_ms": 23.13139450006929,
+          "transient_bytes": 8003584,
+          "total_arena_bytes": 16414720,
+          "repetitions": 6
+        },
+        "symmetric": {
+          "median_ms": 22.511228250050408,
+          "min_ms": 22.117373600030987,
+          "max_ms": 25.86525940005231,
+          "transient_bytes": 8003584,
+          "total_arena_bytes": 16414720,
+          "repetitions": 6
+        },
+        "global": {
+          "median_ms": 14.36910164998153,
+          "min_ms": 13.866496999980882,
+          "max_ms": 15.14764039993679,
+          "transient_bytes": 8093696,
+          "total_arena_bytes": 16504832,
+          "repetitions": 6
+        },
+        "global_symmetric": {
+          "median_ms": 14.21301090003908,
+          "min_ms": 13.83057920002102,
+          "max_ms": 15.106340200054547,
+          "transient_bytes": 8093696,
+          "total_arena_bytes": 16504832,
+          "repetitions": 6
+        },
+        "projector": {
+          "median_ms": 14.366100449979058,
+          "min_ms": 14.184306399965863,
+          "max_ms": 16.183763700064446,
+          "transient_bytes": 8097792,
+          "total_arena_bytes": 16515072,
+          "repetitions": 6
+        }
+      },
+      "512": {
+        "transformer": {
+          "median_ms": 45.07533000000876,
+          "min_ms": 40.422021500035044,
+          "max_ms": 106.47680490001221,
+          "transient_bytes": 28590080,
+          "total_arena_bytes": 37001216,
+          "repetitions": 6
+        },
+        "grassmann": {
+          "median_ms": 44.14607574994989,
+          "min_ms": 43.08828570001424,
+          "max_ms": 50.525501599986455,
+          "transient_bytes": 16007168,
+          "total_arena_bytes": 24418304,
+          "repetitions": 6
+        },
+        "symmetric": {
+          "median_ms": 44.13196460000108,
+          "min_ms": 42.794334900008835,
+          "max_ms": 50.2775844000098,
+          "transient_bytes": 16007168,
+          "total_arena_bytes": 24418304,
+          "repetitions": 6
+        },
+        "global": {
+          "median_ms": 27.84843690001253,
+          "min_ms": 25.902236599995376,
+          "max_ms": 32.941079899956094,
+          "transient_bytes": 16187392,
+          "total_arena_bytes": 24598528,
+          "repetitions": 6
+        },
+        "global_symmetric": {
+          "median_ms": 27.47738104999371,
+          "min_ms": 25.02295989997947,
+          "max_ms": 41.45011949995023,
+          "transient_bytes": 16187392,
+          "total_arena_bytes": 24598528,
+          "repetitions": 6
+        },
+        "projector": {
+          "median_ms": 26.812996300031955,
+          "min_ms": 25.078712400045333,
+          "max_ms": 32.94696210004986,
+          "transient_bytes": 16195584,
+          "total_arena_bytes": 24612864,
+          "repetitions": 6
+        }
+      },
+      "1024": {
+        "transformer": {
+          "median_ms": 164.45832549998158,
+          "min_ms": 148.3591651000097,
+          "max_ms": 257.23191429997314,
+          "transient_bytes": 82345984,
+          "total_arena_bytes": 90757120,
+          "repetitions": 6
+        },
+        "grassmann": {
+          "median_ms": 85.80943964998369,
+          "min_ms": 83.86994510001387,
+          "max_ms": 91.08473279993632,
+          "transient_bytes": 32014336,
+          "total_arena_bytes": 40425472,
+          "repetitions": 6
+        },
+        "symmetric": {
+          "median_ms": 87.971176200017,
+          "min_ms": 83.68396450005093,
+          "max_ms": 149.58003209994786,
+          "transient_bytes": 32014336,
+          "total_arena_bytes": 40425472,
+          "repetitions": 6
+        },
+        "global": {
+          "median_ms": 53.2497717500064,
+          "min_ms": 49.00291379999544,
+          "max_ms": 89.50215179993393,
+          "transient_bytes": 32374784,
+          "total_arena_bytes": 40785920,
+          "repetitions": 6
+        },
+        "global_symmetric": {
+          "median_ms": 52.12104644997453,
+          "min_ms": 48.76490679998824,
+          "max_ms": 83.90021149998574,
+          "transient_bytes": 32374784,
+          "total_arena_bytes": 40785920,
+          "repetitions": 6
+        },
+        "projector": {
+          "median_ms": 55.79735689998415,
+          "min_ms": 48.45478480001475,
+          "max_ms": 79.76962350003305,
+          "transient_bytes": 32391168,
+          "total_arena_bytes": 40808448,
+          "repetitions": 6
+        }
+      }
+    },
+    "4": {
+      "64": {
+        "transformer": {
+          "median_ms": 3.51630719997047,
+          "min_ms": 2.278709000074741,
+          "max_ms": 4.514139500042802,
+          "transient_bytes": 2197504,
+          "total_arena_bytes": 10608640,
+          "repetitions": 6
+        },
+        "grassmann": {
+          "median_ms": 6.411834400023508,
+          "min_ms": 5.201488500006235,
+          "max_ms": 6.912500100042962,
+          "transient_bytes": 2000896,
+          "total_arena_bytes": 10412032,
+          "repetitions": 6
+        },
+        "symmetric": {
+          "median_ms": 6.577837200029535,
+          "min_ms": 4.612455799997406,
+          "max_ms": 7.911637400047766,
+          "transient_bytes": 2000896,
+          "total_arena_bytes": 10412032,
+          "repetitions": 6
+        },
+        "global": {
+          "median_ms": 4.314539100005277,
+          "min_ms": 3.9986863000194717,
+          "max_ms": 7.287029199960671,
+          "transient_bytes": 2023424,
+          "total_arena_bytes": 10434560,
+          "repetitions": 6
+        },
+        "global_symmetric": {
+          "median_ms": 4.586954900014462,
+          "min_ms": 3.6618332999751146,
+          "max_ms": 5.5131784000877815,
+          "transient_bytes": 2023424,
+          "total_arena_bytes": 10434560,
+          "repetitions": 6
+        },
+        "projector": {
+          "median_ms": 4.1831929000181844,
+          "min_ms": 2.9622657000800245,
+          "max_ms": 5.280555299941625,
+          "transient_bytes": 2024448,
+          "total_arena_bytes": 10441728,
+          "repetitions": 6
+        }
+      },
+      "128": {
+        "transformer": {
+          "median_ms": 5.838363849989037,
+          "min_ms": 4.924240699983784,
+          "max_ms": 6.8656691000796854,
+          "transient_bytes": 4788224,
+          "total_arena_bytes": 13199360,
+          "repetitions": 6
+        },
+        "grassmann": {
+          "median_ms": 9.768011400001342,
+          "min_ms": 7.971489900046436,
+          "max_ms": 10.809973799950967,
+          "transient_bytes": 4001792,
+          "total_arena_bytes": 12412928,
+          "repetitions": 6
+        },
+        "symmetric": {
+          "median_ms": 10.227101700002095,
+          "min_ms": 9.320528999978706,
+          "max_ms": 24.937190299988288,
+          "transient_bytes": 4001792,
+          "total_arena_bytes": 12412928,
+          "repetitions": 6
+        },
+        "global": {
+          "median_ms": 7.074100150020968,
+          "min_ms": 5.324103000020841,
+          "max_ms": 15.376147799997852,
+          "transient_bytes": 4046848,
+          "total_arena_bytes": 12457984,
+          "repetitions": 6
+        },
+        "global_symmetric": {
+          "median_ms": 6.927369649974935,
+          "min_ms": 6.046149299982062,
+          "max_ms": 9.863605600003211,
+          "transient_bytes": 4046848,
+          "total_arena_bytes": 12457984,
+          "repetitions": 6
+        },
+        "projector": {
+          "median_ms": 6.40768605003359,
+          "min_ms": 4.401863600014622,
+          "max_ms": 7.946345999971527,
+          "transient_bytes": 4048896,
+          "total_arena_bytes": 12466176,
+          "repetitions": 6
+        }
+      },
+      "256": {
+        "transformer": {
+          "median_ms": 9.592402150019552,
+          "min_ms": 7.124885899975197,
+          "max_ms": 13.576773800014053,
+          "transient_bytes": 11149312,
+          "total_arena_bytes": 19560448,
+          "repetitions": 6
+        },
+        "grassmann": {
+          "median_ms": 17.296206799937863,
+          "min_ms": 15.253822399972705,
+          "max_ms": 22.361931599971285,
+          "transient_bytes": 8003584,
+          "total_arena_bytes": 16414720,
+          "repetitions": 6
+        },
+        "symmetric": {
+          "median_ms": 17.803683900001488,
+          "min_ms": 16.029544900084147,
+          "max_ms": 19.518613599939272,
+          "transient_bytes": 8003584,
+          "total_arena_bytes": 16414720,
+          "repetitions": 6
+        },
+        "global": {
+          "median_ms": 10.886248550059463,
+          "min_ms": 9.362466299990047,
+          "max_ms": 12.613058899933094,
+          "transient_bytes": 8093696,
+          "total_arena_bytes": 16504832,
+          "repetitions": 6
+        },
+        "global_symmetric": {
+          "median_ms": 10.863420350051456,
+          "min_ms": 9.198523000031855,
+          "max_ms": 11.796730700007174,
+          "transient_bytes": 8093696,
+          "total_arena_bytes": 16504832,
+          "repetitions": 6
+        },
+        "projector": {
+          "median_ms": 10.318485750030959,
+          "min_ms": 8.31345019996661,
+          "max_ms": 12.484885400044732,
+          "transient_bytes": 8097792,
+          "total_arena_bytes": 16515072,
+          "repetitions": 6
+        }
+      },
+      "512": {
+        "transformer": {
+          "median_ms": 22.322749649993057,
+          "min_ms": 17.739064799934567,
+          "max_ms": 34.091198599981,
+          "transient_bytes": 28590080,
+          "total_arena_bytes": 37001216,
+          "repetitions": 6
+        },
+        "grassmann": {
+          "median_ms": 33.78413295004066,
+          "min_ms": 29.798459199992067,
+          "max_ms": 47.908955899947614,
+          "transient_bytes": 16007168,
+          "total_arena_bytes": 24418304,
+          "repetitions": 6
+        },
+        "symmetric": {
+          "median_ms": 32.35181674999694,
+          "min_ms": 30.605056900003547,
+          "max_ms": 41.31362939997416,
+          "transient_bytes": 16007168,
+          "total_arena_bytes": 24418304,
+          "repetitions": 6
+        },
+        "global": {
+          "median_ms": 19.641038000008848,
+          "min_ms": 16.485405399998854,
+          "max_ms": 34.09867860000304,
+          "transient_bytes": 16187392,
+          "total_arena_bytes": 24598528,
+          "repetitions": 6
+        },
+        "global_symmetric": {
+          "median_ms": 17.952744449985403,
+          "min_ms": 15.043982799943478,
+          "max_ms": 32.448399199984124,
+          "transient_bytes": 16187392,
+          "total_arena_bytes": 24598528,
+          "repetitions": 6
+        },
+        "projector": {
+          "median_ms": 18.700575799994112,
+          "min_ms": 14.237238999976398,
+          "max_ms": 25.994960000025458,
+          "transient_bytes": 16195584,
+          "total_arena_bytes": 24612864,
+          "repetitions": 6
+        }
+      },
+      "1024": {
+        "transformer": {
+          "median_ms": 65.1576526500321,
+          "min_ms": 54.82363519995488,
+          "max_ms": 72.4402738000208,
+          "transient_bytes": 82345984,
+          "total_arena_bytes": 90757120,
+          "repetitions": 6
+        },
+        "grassmann": {
+          "median_ms": 65.35294465002153,
+          "min_ms": 60.85166120001304,
+          "max_ms": 80.43713680008295,
+          "transient_bytes": 32014336,
+          "total_arena_bytes": 40425472,
+          "repetitions": 6
+        },
+        "symmetric": {
+          "median_ms": 65.836008999986,
+          "min_ms": 56.56951270002537,
+          "max_ms": 155.25094790000367,
+          "transient_bytes": 32014336,
+          "total_arena_bytes": 40425472,
+          "repetitions": 6
+        },
+        "global": {
+          "median_ms": 37.97233105005944,
+          "min_ms": 29.099992800001928,
+          "max_ms": 49.06652019999456,
+          "transient_bytes": 32374784,
+          "total_arena_bytes": 40785920,
+          "repetitions": 6
+        },
+        "global_symmetric": {
+          "median_ms": 33.2627344499997,
+          "min_ms": 28.674890199999936,
+          "max_ms": 43.509856299988314,
+          "transient_bytes": 32374784,
+          "total_arena_bytes": 40785920,
+          "repetitions": 6
+        },
+        "projector": {
+          "median_ms": 30.384726249940286,
+          "min_ms": 26.959095099937258,
+          "max_ms": 60.794600100052776,
+          "transient_bytes": 32391168,
+          "total_arena_bytes": 40808448,
+          "repetitions": 6
+        }
+      }
+    }
+  },
+  "kernel": {
+    "global": {
+      "128": {
+        "scan": 0.1947689999724389,
+        "direct": 0.281472799997573,
+        "speedup": 1.4451622179987742
+      },
+      "1024": {
+        "scan": 1.5218128000014985,
+        "direct": 5.615391399987857,
+        "speedup": 3.6899357135005877
+      },
+      "4096": {
+        "scan": 5.853473333445436,
+        "direct": 71.36881566657394,
+        "speedup": 12.19255843514115
+      }
+    },
+    "global_symmetric": {
+      "128": {
+        "scan": 0.17923989998962497,
+        "direct": 0.2275231000567146,
+        "speedup": 1.2693775218011416
+      },
+      "1024": {
+        "scan": 1.4532336999764084,
+        "direct": 5.343413999980839,
+        "speedup": 3.676913080165691
+      },
+      "4096": {
+        "scan": 5.529820666803668,
+        "direct": 69.36648100023983,
+        "speedup": 12.544074243972698
+      }
+    },
+    "projector": {
+      "128": {
+        "scan": 0.31536579999738024,
+        "direct": 0.34582600001158426,
+        "speedup": 1.0965868842292255
+      },
+      "1024": {
+        "scan": 1.7083564000131446,
+        "direct": 6.044164100057969,
+        "speedup": 3.537999506432887
+      },
+      "4096": {
+        "scan": 5.528409666718896,
+        "direct": 69.27216133347731,
+        "speedup": 12.530214927901726
+      }
+    }
+  },
+  "validation": {
+    "global": [
+      {
+        "masked": false,
+        "max_logit_error": 1.210719347000122e-07,
+        "loss_error": 2.2684451472798628e-07,
+        "max_gradient_error": 3.2782554626464844e-07,
+        "gradient_relative_l2": 4.888478883913194e-07
+      },
+      {
+        "masked": true,
+        "max_logit_error": 1.2293457984924316e-07,
+        "loss_error": 6.378268633255857e-07,
+        "max_gradient_error": 5.364418029785156e-07,
+        "gradient_relative_l2": 5.682932737727242e-07
+      }
+    ],
+    "global_symmetric": [
+      {
+        "masked": false,
+        "max_logit_error": 1.341104507446289e-07,
+        "loss_error": 4.997517066840373e-07,
+        "max_gradient_error": 1.6391277313232422e-07,
+        "gradient_relative_l2": 3.7559112797680427e-07
+      },
+      {
+        "masked": true,
+        "max_logit_error": 1.2293457984924316e-07,
+        "loss_error": 2.353688737244397e-07,
+        "max_gradient_error": 3.8743019104003906e-07,
+        "gradient_relative_l2": 3.90283162232663e-07
+      }
+    ],
+    "projector": [
+      {
+        "masked": false,
+        "max_logit_error": 1.1920928955078125e-07,
+        "loss_error": 1.7220743764312374e-07,
+        "max_gradient_error": 1.7881393432617188e-07,
+        "gradient_relative_l2": 4.107186555302178e-07
+      },
+      {
+        "masked": true,
+        "max_logit_error": 1.043081283569336e-07,
+        "loss_error": 2.458900727475566e-08,
+        "max_gradient_error": 3.5762786865234375e-07,
+        "gradient_relative_l2": 4.0007475377024093e-07
+      }
+    ],
+    "geometry": {
+      "wedge_max_plucker_residual": 1.0408340855860843e-17,
+      "wedge_positive_basis_change_max_error": 5.551115123125783e-17,
+      "wedge_reflection_distance": 1.9999999999999998,
+      "ridge_projector_orthogonal_basis_change_max_error": 1.1102230246251565e-16,
+      "ridge_projector_general_basis_change_max_error": 1.1736957721275587e-06,
+      "ridge_projector_idempotence_max_error": 1.5418266898215016e-06,
+      "ridge": 0.0001,
+      "note": "Ridge projector is smooth and approximately a rank-two orthogonal projector; it is not exactly idempotent or GL(2)-invariant."
+    },
+    "identity": [
+      {
+        "kind": "global",
+        "threads": [
+          1,
+          4
+        ],
+        "full_state_sha256": "e8826b8e33365163cda254de71e7044b33e00a52bdaac1c2b2288c17c5d857ec",
+        "resume": "exact"
+      },
+      {
+        "kind": "global_symmetric",
+        "threads": [
+          1,
+          4
+        ],
+        "full_state_sha256": "a604cd6659dc5f5b086b82664a0cfe45c8c0c21210ec4905f471ade25c020371",
+        "resume": "exact"
+      },
+      {
+        "kind": "projector",
+        "threads": [
+          1,
+          4
+        ],
+        "full_state_sha256": "8210ad096565ece9553d44588af188be9a3a2603e7b1f4a9a35869c3c2020fc4",
+        "resume": "exact"
+      }
+    ],
+    "causality": [
+      {
+        "kind": "global",
+        "future_perturbation_prefix_change": 0.0,
+        "position1_to127_change": 0.06013050675392151
+      },
+      {
+        "kind": "global_symmetric",
+        "future_perturbation_prefix_change": 0.0,
+        "position1_to127_change": 0.08935657143592834
+      },
+      {
+        "kind": "projector",
+        "future_perturbation_prefix_change": 0.0,
+        "position1_to127_change": 0.062368959188461304
+      }
+    ],
+    "primitives": [
+      {
+        "kind": "global",
+        "case": "random",
+        "forward_max_error": 0.0,
+        "gradient_relative_l2": 1.0613492186160412e-07,
+        "gradient_max_error": 1.1920928955078125e-07,
+        "scan_vs_direct_gradient_relative_l2": 7.486275194716169e-08,
+        "finite_difference_samples": 24,
+        "max_finite_difference_error": 3.2930963178995354e-05
+      },
+      {
+        "kind": "global",
+        "case": "zero",
+        "forward_max_error": 0.0,
+        "gradient_relative_l2": 0.0,
+        "gradient_max_error": 0.0,
+        "scan_vs_direct_gradient_relative_l2": 0.0,
+        "finite_difference_samples": 0,
+        "max_finite_difference_error": null
+      },
+      {
+        "kind": "global",
+        "case": "collinear",
+        "forward_max_error": 0.0,
+        "gradient_relative_l2": 8.909434929986729e-08,
+        "gradient_max_error": 2.5,
+        "scan_vs_direct_gradient_relative_l2": 5.404152752827624e-08,
+        "finite_difference_samples": 0,
+        "max_finite_difference_error": null
+      },
+      {
+        "kind": "global",
+        "case": "near_collinear",
+        "forward_max_error": 0.0,
+        "gradient_relative_l2": 1.0585503821112302e-07,
+        "gradient_max_error": 7.62939453125e-05,
+        "scan_vs_direct_gradient_relative_l2": 5.872435440671626e-08,
+        "finite_difference_samples": 0,
+        "max_finite_difference_error": null
+      },
+      {
+        "kind": "global_symmetric",
+        "case": "random",
+        "forward_max_error": 0.0,
+        "gradient_relative_l2": 1.1812992566644391e-07,
+        "gradient_max_error": 1.4901161193847656e-07,
+        "scan_vs_direct_gradient_relative_l2": 6.646460608967358e-08,
+        "finite_difference_samples": 24,
+        "max_finite_difference_error": 3.730836928317327e-05
+      },
+      {
+        "kind": "global_symmetric",
+        "case": "zero",
+        "forward_max_error": 0.0,
+        "gradient_relative_l2": 0.0,
+        "gradient_max_error": 0.0,
+        "scan_vs_direct_gradient_relative_l2": 0.0,
+        "finite_difference_samples": 0,
+        "max_finite_difference_error": null
+      },
+      {
+        "kind": "global_symmetric",
+        "case": "collinear",
+        "forward_max_error": 0.0,
+        "gradient_relative_l2": 9.702064333891267e-08,
+        "gradient_max_error": 5.960464477539063e-08,
+        "scan_vs_direct_gradient_relative_l2": 6.389529255101663e-08,
+        "finite_difference_samples": 0,
+        "max_finite_difference_error": null
+      },
+      {
+        "kind": "global_symmetric",
+        "case": "near_collinear",
+        "forward_max_error": 0.0,
+        "gradient_relative_l2": 1.116122334041909e-07,
+        "gradient_max_error": 8.940696716308594e-08,
+        "scan_vs_direct_gradient_relative_l2": 5.771984473078102e-08,
+        "finite_difference_samples": 0,
+        "max_finite_difference_error": null
+      },
+      {
+        "kind": "projector",
+        "case": "random",
+        "forward_max_error": 0.0,
+        "gradient_relative_l2": 0.0,
+        "gradient_max_error": 0.0,
+        "scan_vs_direct_gradient_relative_l2": 6.8560915644594e-08,
+        "finite_difference_samples": 24,
+        "max_finite_difference_error": 3.2000876331594874e-05
+      },
+      {
+        "kind": "projector",
+        "case": "zero",
+        "forward_max_error": 0.0,
+        "gradient_relative_l2": 0.0,
+        "gradient_max_error": 0.0,
+        "scan_vs_direct_gradient_relative_l2": 0.0,
+        "finite_difference_samples": 0,
+        "max_finite_difference_error": null
+      },
+      {
+        "kind": "projector",
+        "case": "collinear",
+        "forward_max_error": 1.1641532182693481e-10,
+        "gradient_relative_l2": 3.513610288950768e-06,
+        "gradient_max_error": 2.3283064365386963e-06,
+        "scan_vs_direct_gradient_relative_l2": 8.210640343603092e-08,
+        "finite_difference_samples": 0,
+        "max_finite_difference_error": null
+      },
+      {
+        "kind": "projector",
+        "case": "near_collinear",
+        "forward_max_error": 1.862645149230957e-09,
+        "gradient_relative_l2": 2.3002515316469517e-08,
+        "gradient_max_error": 3.814697265625e-06,
+        "scan_vs_direct_gradient_relative_l2": 5.741595528354569e-08,
+        "finite_difference_samples": 0,
+        "max_finite_difference_error": null
+      }
+    ],
+    "ubsan": "pass: four complete training steps each for global wedge and projector, two threads"
+  },
+  "common_factor_erratum": {
+    "native_vs_common_factor_max_error": 2.1763460755774844e-08,
+    "native_local_max_plucker_residual": 6.563258270197991e-09,
+    "tested_frames": 128,
+    "relations_per_frame": 7315,
+    "identity": "sum_s (u wedge v_s)/max(norm(u wedge v_s),eps)/m = u wedge [sum_s v_s/max(norm(u wedge v_s),eps)/m]",
+    "correction": "A generic average of wedges can be nondecomposable, but the prior local mixer shares u within a token. Its nonzero features remain decomposable in exact arithmetic. The earlier generic counterexample did not establish failure for that mixer."
+  },
+  "subspace": [
+    {
+      "kind": "global",
+      "similarity": "signed inner product",
+      "noise_std": 0.0,
+      "accuracy": 0.501875,
+      "queries": 3200,
+      "classes": 32
+    },
+    {
+      "kind": "global",
+      "similarity": "absolute inner product (orientation-invariant)",
+      "noise_std": 0.0,
+      "accuracy": 1.0,
+      "queries": 3200,
+      "classes": 32
+    },
+    {
+      "kind": "global_symmetric",
+      "similarity": "signed inner product",
+      "noise_std": 0.0,
+      "accuracy": 0.461875,
+      "queries": 3200,
+      "classes": 32
+    },
+    {
+      "kind": "projector",
+      "similarity": "signed inner product",
+      "noise_std": 0.0,
+      "accuracy": 1.0,
+      "queries": 3200,
+      "classes": 32
+    },
+    {
+      "kind": "global",
+      "similarity": "signed inner product",
+      "noise_std": 0.02,
+      "accuracy": 0.50625,
+      "queries": 3200,
+      "classes": 32
+    },
+    {
+      "kind": "global",
+      "similarity": "absolute inner product (orientation-invariant)",
+      "noise_std": 0.02,
+      "accuracy": 1.0,
+      "queries": 3200,
+      "classes": 32
+    },
+    {
+      "kind": "global_symmetric",
+      "similarity": "signed inner product",
+      "noise_std": 0.02,
+      "accuracy": 0.4590625,
+      "queries": 3200,
+      "classes": 32
+    },
+    {
+      "kind": "projector",
+      "similarity": "signed inner product",
+      "noise_std": 0.02,
+      "accuracy": 1.0,
+      "queries": 3200,
+      "classes": 32
+    },
+    {
+      "kind": "global",
+      "similarity": "signed inner product",
+      "noise_std": 0.1,
+      "accuracy": 0.51125,
+      "queries": 3200,
+      "classes": 32
+    },
+    {
+      "kind": "global",
+      "similarity": "absolute inner product (orientation-invariant)",
+      "noise_std": 0.1,
+      "accuracy": 1.0,
+      "queries": 3200,
+      "classes": 32
+    },
+    {
+      "kind": "global_symmetric",
+      "similarity": "signed inner product",
+      "noise_std": 0.1,
+      "accuracy": 0.4375,
+      "queries": 3200,
+      "classes": 32
+    },
+    {
+      "kind": "projector",
+      "similarity": "signed inner product",
+      "noise_std": 0.1,
+      "accuracy": 1.0,
+      "queries": 3200,
+      "classes": 32
+    }
+  ],
+  "streaming": [
+    {
+      "kind": "global",
+      "chunk": 1,
+      "steps": [
+        513,
+        513
+      ],
+      "max_feature_error": 0.0,
+      "persistent_bytes_per_stream": 184,
+      "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+    },
+    {
+      "kind": "global",
+      "chunk": 7,
+      "steps": [
+        513,
+        513
+      ],
+      "max_feature_error": 0.0,
+      "persistent_bytes_per_stream": 184,
+      "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+    },
+    {
+      "kind": "global",
+      "chunk": 64,
+      "steps": [
+        513,
+        513
+      ],
+      "max_feature_error": 0.0,
+      "persistent_bytes_per_stream": 184,
+      "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+    },
+    {
+      "kind": "global",
+      "chunk": 513,
+      "steps": [
+        513,
+        513
+      ],
+      "max_feature_error": 0.0,
+      "persistent_bytes_per_stream": 184,
+      "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+    },
+    {
+      "kind": "global_symmetric",
+      "chunk": 1,
+      "steps": [
+        513,
+        513
+      ],
+      "max_feature_error": 0.0,
+      "persistent_bytes_per_stream": 184,
+      "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+    },
+    {
+      "kind": "global_symmetric",
+      "chunk": 7,
+      "steps": [
+        513,
+        513
+      ],
+      "max_feature_error": 0.0,
+      "persistent_bytes_per_stream": 184,
+      "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+    },
+    {
+      "kind": "global_symmetric",
+      "chunk": 64,
+      "steps": [
+        513,
+        513
+      ],
+      "max_feature_error": 0.0,
+      "persistent_bytes_per_stream": 184,
+      "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+    },
+    {
+      "kind": "global_symmetric",
+      "chunk": 513,
+      "steps": [
+        513,
+        513
+      ],
+      "max_feature_error": 0.0,
+      "persistent_bytes_per_stream": 184,
+      "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+    },
+    {
+      "kind": "projector",
+      "chunk": 1,
+      "steps": [
+        513,
+        513
+      ],
+      "max_feature_error": 0.0,
+      "persistent_bytes_per_stream": 184,
+      "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+    },
+    {
+      "kind": "projector",
+      "chunk": 7,
+      "steps": [
+        513,
+        513
+      ],
+      "max_feature_error": 0.0,
+      "persistent_bytes_per_stream": 184,
+      "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+    },
+    {
+      "kind": "projector",
+      "chunk": 64,
+      "steps": [
+        513,
+        513
+      ],
+      "max_feature_error": 0.0,
+      "persistent_bytes_per_stream": 184,
+      "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+    },
+    {
+      "kind": "projector",
+      "chunk": 513,
+      "steps": [
+        513,
+        513
+      ],
+      "max_feature_error": 0.0,
+      "persistent_bytes_per_stream": 184,
+      "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+    }
+  ],
+  "timing_state_identity": "all 30 kind/context cells exact across repetitions and one/four threads",
+  "recall_length": {
+    "64": {
+      "transformer": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "global": {
+        "mean": 0.3229166666666667,
+        "sd": 0.2806344537197515,
+        "ci95": [
+          -0.3742179630350207,
+          1.0200512963683541
+        ],
+        "values": [
+          0.5078125,
+          0.0,
+          0.4609375
+        ]
+      },
+      "global_symmetric": {
+        "mean": 0.036458333333333336,
+        "sd": 0.03252603124165833,
+        "ci95": [
+          -0.04434080748763953,
+          0.11725747415430621
+        ],
+        "values": [
+          0.046875,
+          0.0,
+          0.0625
+        ]
+      },
+      "projector": {
+        "mean": 0.06510416666666667,
+        "sd": 0.016263015620829165,
+        "ci95": [
+          0.02470459625618024,
+          0.1055037370771531
+        ],
+        "values": [
+          0.078125,
+          0.0703125,
+          0.046875
+        ]
+      }
+    },
+    "128": {
+      "transformer": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "global": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "global_symmetric": {
+        "mean": 0.07291666666666667,
+        "sd": 0.03252603124165832,
+        "ci95": [
+          -0.00788247415430618,
+          0.15371580748763952
+        ],
+        "values": [
+          0.109375,
+          0.0625,
+          0.046875
+        ]
+      },
+      "projector": {
+        "mean": 0.0703125,
+        "sd": 0.028168369339562415,
+        "ci95": [
+          0.00033839144508127084,
+          0.14028660855491873
+        ],
+        "values": [
+          0.1015625,
+          0.0625,
+          0.046875
+        ]
+      }
+    },
+    "256": {
+      "transformer": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "global": {
+        "mean": 0.08854166666666667,
+        "sd": 0.09320588629256918,
+        "ci95": [
+          -0.1429945904298176,
+          0.3200779237631509
+        ],
+        "values": [
+          0.046875,
+          0.0234375,
+          0.1953125
+        ]
+      },
+      "global_symmetric": {
+        "mean": 0.08854166666666667,
+        "sd": 0.039322054350368486,
+        "ci95": [
+          -0.00913973144857981,
+          0.18622306478191314
+        ],
+        "values": [
+          0.046875,
+          0.125,
+          0.09375
+        ]
+      },
+      "projector": {
+        "mean": 0.057291666666666664,
+        "sd": 0.011933790872280832,
+        "ci95": [
+          0.02764648671669198,
+          0.08693684661664135
+        ],
+        "values": [
+          0.0703125,
+          0.046875,
+          0.0546875
+        ]
+      }
+    },
+    "512": {
+      "transformer": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "global": {
+        "mean": 0.10677083333333333,
+        "sd": 0.0828026723728367,
+        "ci95": [
+          -0.09892240774173751,
+          0.3124640744084042
+        ],
+        "values": [
+          0.03125,
+          0.09375,
+          0.1953125
+        ]
+      },
+      "global_symmetric": {
+        "mean": 0.06770833333333333,
+        "sd": 0.03522851369392886,
+        "ci95": [
+          -0.019804146062668282,
+          0.15522081272933494
+        ],
+        "values": [
+          0.03125,
+          0.1015625,
+          0.0703125
+        ]
+      },
+      "projector": {
+        "mean": 0.06770833333333333,
+        "sd": 0.03522851369392886,
+        "ci95": [
+          -0.019804146062668282,
+          0.15522081272933494
+        ],
+        "values": [
+          0.03125,
+          0.1015625,
+          0.0703125
+        ]
+      }
+    },
+    "1024": {
+      "transformer": {
+        "mean": 0.6953125,
+        "sd": 0.2080238586827242,
+        "ci95": [
+          0.17855258770242344,
+          1.2120724122975766
+        ],
+        "values": [
+          0.5,
+          0.671875,
+          0.9140625
+        ]
+      },
+      "global": {
+        "mean": 0.036458333333333336,
+        "sd": 0.06314768569261532,
+        "ci95": [
+          -0.12040921410544914,
+          0.19332588077211582
+        ],
+        "values": [
+          0.0,
+          0.109375,
+          0.0
+        ]
+      },
+      "global_symmetric": {
+        "mean": 0.026041666666666668,
+        "sd": 0.023867581744561668,
+        "ci95": [
+          -0.03324869323328271,
+          0.08533202656661604
+        ],
+        "values": [
+          0.0,
+          0.03125,
+          0.046875
+        ]
+      },
+      "projector": {
+        "mean": 0.052083333333333336,
+        "sd": 0.004510548978043952,
+        "ci95": [
+          0.040878508516277445,
+          0.06328815815038923
+        ],
+        "values": [
+          0.0546875,
+          0.0546875,
+          0.046875
+        ]
+      }
+    }
+  },
+  "position_ablation": {
+    "primary_recall": {
+      "global": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "ci95": [
+          1.0,
+          1.0
+        ],
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "global_symmetric": {
+        "mean": 0.060872395833333336,
+        "sd": 0.002689243431292042,
+        "ci95": [
+          0.05419194480958392,
+          0.06755284685708275
+        ],
+        "values": [
+          0.0595703125,
+          0.05908203125,
+          0.06396484375
+        ]
+      }
+    },
+    "length": {
+      "64": {
+        "global": {
+          "mean": 1.0,
+          "sd": 0.0,
+          "ci95": [
+            1.0,
+            1.0
+          ],
+          "values": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "global_symmetric": {
+          "mean": 0.06510416666666667,
+          "sd": 0.016263015620829165,
+          "ci95": [
+            0.02470459625618024,
+            0.1055037370771531
+          ],
+          "values": [
+            0.078125,
+            0.0703125,
+            0.046875
+          ]
+        }
+      },
+      "128": {
+        "global": {
+          "mean": 1.0,
+          "sd": 0.0,
+          "ci95": [
+            1.0,
+            1.0
+          ],
+          "values": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "global_symmetric": {
+          "mean": 0.0703125,
+          "sd": 0.028168369339562415,
+          "ci95": [
+            0.00033839144508127084,
+            0.14028660855491873
+          ],
+          "values": [
+            0.1015625,
+            0.0625,
+            0.046875
+          ]
+        }
+      },
+      "256": {
+        "global": {
+          "mean": 1.0,
+          "sd": 0.0,
+          "ci95": [
+            1.0,
+            1.0
+          ],
+          "values": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "global_symmetric": {
+          "mean": 0.057291666666666664,
+          "sd": 0.011933790872280832,
+          "ci95": [
+            0.02764648671669198,
+            0.08693684661664135
+          ],
+          "values": [
+            0.0703125,
+            0.046875,
+            0.0546875
+          ]
+        }
+      },
+      "512": {
+        "global": {
+          "mean": 1.0,
+          "sd": 0.0,
+          "ci95": [
+            1.0,
+            1.0
+          ],
+          "values": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "global_symmetric": {
+          "mean": 0.06770833333333333,
+          "sd": 0.03522851369392886,
+          "ci95": [
+            -0.019804146062668282,
+            0.15522081272933494
+          ],
+          "values": [
+            0.03125,
+            0.1015625,
+            0.0703125
+          ]
+        }
+      },
+      "1024": {
+        "global": {
+          "mean": 0.8515625,
+          "sd": 0.07534102157025746,
+          "ci95": [
+            0.6644050270755284,
+            1.0387199729244716
+          ],
+          "values": [
+            0.765625,
+            0.8828125,
+            0.90625
+          ]
+        },
+        "global_symmetric": {
+          "mean": 0.059895833333333336,
+          "sd": 0.009021097956087904,
+          "ci95": [
+            0.03748618369922155,
+            0.08230548296744512
+          ],
+          "values": [
+            0.0546875,
+            0.0546875,
+            0.0703125
+          ]
+        }
+      }
+    },
+    "timing": {
+      "1": {
+        "transformer": {
+          "median_ms": 138.3199348999824,
+          "min_ms": 134.68859699996756,
+          "max_ms": 147.2927169000286,
+          "transient_bytes": 82345984
+        },
+        "global": {
+          "median_ms": 49.16246804996263,
+          "min_ms": 47.93311780003933,
+          "max_ms": 62.47623849994852,
+          "transient_bytes": 32374784
+        },
+        "global_norope": {
+          "median_ms": 48.971865500016065,
+          "min_ms": 46.895054600008734,
+          "max_ms": 53.5916527000154,
+          "transient_bytes": 32374784
+        },
+        "global_symmetric_norope": {
+          "median_ms": 47.47385609998673,
+          "min_ms": 45.7493806000457,
+          "max_ms": 72.41182440002376,
+          "transient_bytes": 32374784
+        }
+      },
+      "4": {
+        "transformer": {
+          "median_ms": 60.63809264996962,
+          "min_ms": 42.28387699995437,
+          "max_ms": 67.21893089998048,
+          "transient_bytes": 82345984
+        },
+        "global": {
+          "median_ms": 30.533446749996074,
+          "min_ms": 28.342961499947705,
+          "max_ms": 34.23105869997016,
+          "transient_bytes": 32374784
+        },
+        "global_norope": {
+          "median_ms": 31.367730799956917,
+          "min_ms": 28.366017699954682,
+          "max_ms": 33.40502579994791,
+          "transient_bytes": 32374784
+        },
+        "global_symmetric_norope": {
+          "median_ms": 30.82077650001338,
+          "min_ms": 30.454391700004635,
+          "max_ms": 32.81613469998774,
+          "transient_bytes": 32374784
+        }
+      }
+    }
+  },
+  "common_mode": [
+    {
+      "kind": "global",
+      "coefficient": 0.0,
+      "native_feature_change_l2": 0.0,
+      "native_vs_same_input_fp64_products_l2": 4.8833951128248153e-08,
+      "same_input_fp64_feature_change_l2": 4.8833951128248153e-08,
+      "native_max_plucker_residual": 6.802872709599228e-09,
+      "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+    },
+    {
+      "kind": "global",
+      "coefficient": 1.0,
+      "native_feature_change_l2": 7.55992037994949e-08,
+      "native_vs_same_input_fp64_products_l2": 4.288277322011374e-08,
+      "same_input_fp64_feature_change_l2": 5.9175112670670836e-08,
+      "native_max_plucker_residual": 4.707377293522441e-09,
+      "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+    },
+    {
+      "kind": "global",
+      "coefficient": 10.0,
+      "native_feature_change_l2": 3.3163490179300135e-07,
+      "native_vs_same_input_fp64_products_l2": 2.3528739238313725e-07,
+      "same_input_fp64_feature_change_l2": 2.59544766898311e-07,
+      "native_max_plucker_residual": 1.6703672056639363e-08,
+      "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+    },
+    {
+      "kind": "global",
+      "coefficient": 100.0,
+      "native_feature_change_l2": 3.0869136673950453e-06,
+      "native_vs_same_input_fp64_products_l2": 1.928264764194426e-06,
+      "same_input_fp64_feature_change_l2": 2.419459619180517e-06,
+      "native_max_plucker_residual": 1.9027321812581377e-07,
+      "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+    },
+    {
+      "kind": "global",
+      "coefficient": 1000.0,
+      "native_feature_change_l2": 3.046081857665514e-05,
+      "native_vs_same_input_fp64_products_l2": 2.6621383098141248e-05,
+      "same_input_fp64_feature_change_l2": 1.6827814265737976e-05,
+      "native_max_plucker_residual": 2.090124461229248e-06,
+      "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+    },
+    {
+      "kind": "global",
+      "coefficient": 10000.0,
+      "native_feature_change_l2": 0.0003464490198901143,
+      "native_vs_same_input_fp64_products_l2": 0.0002260394574442733,
+      "same_input_fp64_feature_change_l2": 0.000249293953661965,
+      "native_max_plucker_residual": 2.1102262846156572e-05,
+      "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+    },
+    {
+      "kind": "global",
+      "coefficient": 1000000.0,
+      "native_feature_change_l2": 0.03574653120756097,
+      "native_vs_same_input_fp64_products_l2": 0.02164902652757847,
+      "same_input_fp64_feature_change_l2": 0.026236564440584552,
+      "native_max_plucker_residual": 0.0031724414992848615,
+      "same_input_fp64_max_plucker_residual": 6.938893903907228e-18
+    },
+    {
+      "kind": "global_symmetric",
+      "coefficient": 0.0,
+      "native_feature_change_l2": 0.0
+    },
+    {
+      "kind": "global_symmetric",
+      "coefficient": 1.0,
+      "native_feature_change_l2": 1.0985322797139274
+    },
+    {
+      "kind": "global_symmetric",
+      "coefficient": 10.0,
+      "native_feature_change_l2": 1.7044159199752231
+    },
+    {
+      "kind": "global_symmetric",
+      "coefficient": 100.0,
+      "native_feature_change_l2": 1.7409042672899315
+    },
+    {
+      "kind": "global_symmetric",
+      "coefficient": 1000.0,
+      "native_feature_change_l2": 1.744276212102822
+    },
+    {
+      "kind": "global_symmetric",
+      "coefficient": 10000.0,
+      "native_feature_change_l2": 1.7446107390564638
+    },
+    {
+      "kind": "global_symmetric",
+      "coefficient": 1000000.0,
+      "native_feature_change_l2": 1.7446475132373132
+    },
+    {
+      "kind": "projector",
+      "coefficient": 0.0,
+      "native_feature_change_l2": 0.0
+    },
+    {
+      "kind": "projector",
+      "coefficient": 1.0,
+      "native_feature_change_l2": 5.032635122068474e-06
+    },
+    {
+      "kind": "projector",
+      "coefficient": 10.0,
+      "native_feature_change_l2": 0.00031015191841700227
+    },
+    {
+      "kind": "projector",
+      "coefficient": 100.0,
+      "native_feature_change_l2": 0.03149205500637711
+    },
+    {
+      "kind": "projector",
+      "coefficient": 1000.0,
+      "native_feature_change_l2": 0.4559889172242678
+    },
+    {
+      "kind": "projector",
+      "coefficient": 10000.0,
+      "native_feature_change_l2": 0.5263530901854508
+    },
+    {
+      "kind": "projector",
+      "coefficient": 1000000.0,
+      "native_feature_change_l2": 0.5271757997951629
+    }
+  ]
+}

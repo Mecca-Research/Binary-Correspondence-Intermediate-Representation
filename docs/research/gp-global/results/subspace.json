@@ -1,0 +1,98 @@
+[
+  {
+    "kind": "global",
+    "similarity": "signed inner product",
+    "noise_std": 0.0,
+    "accuracy": 0.501875,
+    "queries": 3200,
+    "classes": 32
+  },
+  {
+    "kind": "global",
+    "similarity": "absolute inner product (orientation-invariant)",
+    "noise_std": 0.0,
+    "accuracy": 1.0,
+    "queries": 3200,
+    "classes": 32
+  },
+  {
+    "kind": "global_symmetric",
+    "similarity": "signed inner product",
+    "noise_std": 0.0,
+    "accuracy": 0.461875,
+    "queries": 3200,
+    "classes": 32
+  },
+  {
+    "kind": "projector",
+    "similarity": "signed inner product",
+    "noise_std": 0.0,
+    "accuracy": 1.0,
+    "queries": 3200,
+    "classes": 32
+  },
+  {
+    "kind": "global",
+    "similarity": "signed inner product",
+    "noise_std": 0.02,
+    "accuracy": 0.50625,
+    "queries": 3200,
+    "classes": 32
+  },
+  {
+    "kind": "global",
+    "similarity": "absolute inner product (orientation-invariant)",
+    "noise_std": 0.02,
+    "accuracy": 1.0,
+    "queries": 3200,
+    "classes": 32
+  },
+  {
+    "kind": "global_symmetric",
+    "similarity": "signed inner product",
+    "noise_std": 0.02,
+    "accuracy": 0.4590625,
+    "queries": 3200,
+    "classes": 32
+  },
+  {
+    "kind": "projector",
+    "similarity": "signed inner product",
+    "noise_std": 0.02,
+    "accuracy": 1.0,
+    "queries": 3200,
+    "classes": 32
+  },
+  {
+    "kind": "global",
+    "similarity": "signed inner product",
+    "noise_std": 0.1,
+    "accuracy": 0.51125,
+    "queries": 3200,
+    "classes": 32
+  },
+  {
+    "kind": "global",
+    "similarity": "absolute inner product (orientation-invariant)",
+    "noise_std": 0.1,
+    "accuracy": 1.0,
+    "queries": 3200,
+    "classes": 32
+  },
+  {
+    "kind": "global_symmetric",
+    "similarity": "signed inner product",
+    "noise_std": 0.1,
+    "accuracy": 0.4375,
+    "queries": 3200,
+    "classes": 32
+  },
+  {
+    "kind": "projector",
+    "similarity": "signed inner product",
+    "noise_std": 0.1,
+    "accuracy": 1.0,
+    "queries": 3200,
+    "classes": 32
+  }
+]

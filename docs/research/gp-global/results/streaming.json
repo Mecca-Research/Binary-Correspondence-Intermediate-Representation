@@ -1,0 +1,134 @@
+[
+  {
+    "kind": "global",
+    "chunk": 1,
+    "steps": [
+      513,
+      513
+    ],
+    "max_feature_error": 0.0,
+    "persistent_bytes_per_stream": 184,
+    "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+  },
+  {
+    "kind": "global",
+    "chunk": 7,
+    "steps": [
+      513,
+      513
+    ],
+    "max_feature_error": 0.0,
+    "persistent_bytes_per_stream": 184,
+    "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+  },
+  {
+    "kind": "global",
+    "chunk": 64,
+    "steps": [
+      513,
+      513
+    ],
+    "max_feature_error": 0.0,
+    "persistent_bytes_per_stream": 184,
+    "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+  },
+  {
+    "kind": "global",
+    "chunk": 513,
+    "steps": [
+      513,
+      513
+    ],
+    "max_feature_error": 0.0,
+    "persistent_bytes_per_stream": 184,
+    "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+  },
+  {
+    "kind": "global_symmetric",
+    "chunk": 1,
+    "steps": [
+      513,
+      513
+    ],
+    "max_feature_error": 0.0,
+    "persistent_bytes_per_stream": 184,
+    "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+  },
+  {
+    "kind": "global_symmetric",
+    "chunk": 7,
+    "steps": [
+      513,
+      513
+    ],
+    "max_feature_error": 0.0,
+    "persistent_bytes_per_stream": 184,
+    "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+  },
+  {
+    "kind": "global_symmetric",
+    "chunk": 64,
+    "steps": [
+      513,
+      513
+    ],
+    "max_feature_error": 0.0,
+    "persistent_bytes_per_stream": 184,
+    "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+  },
+  {
+    "kind": "global_symmetric",
+    "chunk": 513,
+    "steps": [
+      513,
+      513
+    ],
+    "max_feature_error": 0.0,
+    "persistent_bytes_per_stream": 184,
+    "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+  },
+  {
+    "kind": "projector",
+    "chunk": 1,
+    "steps": [
+      513,
+      513
+    ],
+    "max_feature_error": 0.0,
+    "persistent_bytes_per_stream": 184,
+    "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+  },
+  {
+    "kind": "projector",
+    "chunk": 7,
+    "steps": [
+      513,
+      513
+    ],
+    "max_feature_error": 0.0,
+    "persistent_bytes_per_stream": 184,
+    "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+  },
+  {
+    "kind": "projector",
+    "chunk": 64,
+    "steps": [
+      513,
+      513
+    ],
+    "max_feature_error": 0.0,
+    "persistent_bytes_per_stream": 184,
+    "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+  },
+  {
+    "kind": "projector",
+    "chunk": 513,
+    "steps": [
+      513,
+      513
+    ],
+    "max_feature_error": 0.0,
+    "persistent_bytes_per_stream": 184,
+    "scope": "feature mixer only; excludes model weights, full decoder and training arenas"
+  }
+]

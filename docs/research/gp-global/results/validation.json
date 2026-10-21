@@ -1,0 +1,229 @@
+{
+  "global": [
+    {
+      "masked": false,
+      "max_logit_error": 1.210719347000122e-07,
+      "loss_error": 2.2684451472798628e-07,
+      "max_gradient_error": 3.2782554626464844e-07,
+      "gradient_relative_l2": 4.888478883913194e-07
+    },
+    {
+      "masked": true,
+      "max_logit_error": 1.2293457984924316e-07,
+      "loss_error": 6.378268633255857e-07,
+      "max_gradient_error": 5.364418029785156e-07,
+      "gradient_relative_l2": 5.682932737727242e-07
+    }
+  ],
+  "global_symmetric": [
+    {
+      "masked": false,
+      "max_logit_error": 1.341104507446289e-07,
+      "loss_error": 4.997517066840373e-07,
+      "max_gradient_error": 1.6391277313232422e-07,
+      "gradient_relative_l2": 3.7559112797680427e-07
+    },
+    {
+      "masked": true,
+      "max_logit_error": 1.2293457984924316e-07,
+      "loss_error": 2.353688737244397e-07,
+      "max_gradient_error": 3.8743019104003906e-07,
+      "gradient_relative_l2": 3.90283162232663e-07
+    }
+  ],
+  "projector": [
+    {
+      "masked": false,
+      "max_logit_error": 1.1920928955078125e-07,
+      "loss_error": 1.7220743764312374e-07,
+      "max_gradient_error": 1.7881393432617188e-07,
+      "gradient_relative_l2": 4.107186555302178e-07
+    },
+    {
+      "masked": true,
+      "max_logit_error": 1.043081283569336e-07,
+      "loss_error": 2.458900727475566e-08,
+      "max_gradient_error": 3.5762786865234375e-07,
+      "gradient_relative_l2": 4.0007475377024093e-07
+    }
+  ],
+  "geometry": {
+    "wedge_max_plucker_residual": 1.0408340855860843e-17,
+    "wedge_positive_basis_change_max_error": 5.551115123125783e-17,
+    "wedge_reflection_distance": 1.9999999999999998,
+    "ridge_projector_orthogonal_basis_change_max_error": 1.1102230246251565e-16,
+    "ridge_projector_general_basis_change_max_error": 1.1736957721275587e-06,
+    "ridge_projector_idempotence_max_error": 1.5418266898215016e-06,
+    "ridge": 0.0001,
+    "note": "Ridge projector is smooth and approximately a rank-two orthogonal projector; it is not exactly idempotent or GL(2)-invariant."
+  },
+  "identity": [
+    {
+      "kind": "global",
+      "threads": [
+        1,
+        4
+      ],
+      "full_state_sha256": "e8826b8e33365163cda254de71e7044b33e00a52bdaac1c2b2288c17c5d857ec",
+      "resume": "exact"
+    },
+    {
+      "kind": "global_symmetric",
+      "threads": [
+        1,
+        4
+      ],
+      "full_state_sha256": "a604cd6659dc5f5b086b82664a0cfe45c8c0c21210ec4905f471ade25c020371",
+      "resume": "exact"
+    },
+    {
+      "kind": "projector",
+      "threads": [
+        1,
+        4
+      ],
+      "full_state_sha256": "8210ad096565ece9553d44588af188be9a3a2603e7b1f4a9a35869c3c2020fc4",
+      "resume": "exact"
+    }
+  ],
+  "causality": [
+    {
+      "kind": "global",
+      "future_perturbation_prefix_change": 0.0,
+      "position1_to127_change": 0.06013050675392151
+    },
+    {
+      "kind": "global_symmetric",
+      "future_perturbation_prefix_change": 0.0,
+      "position1_to127_change": 0.08935657143592834
+    },
+    {
+      "kind": "projector",
+      "future_perturbation_prefix_change": 0.0,
+      "position1_to127_change": 0.062368959188461304
+    }
+  ],
+  "primitives": [
+    {
+      "kind": "global",
+      "case": "random",
+      "forward_max_error": 0.0,
+      "gradient_relative_l2": 1.0613492186160412e-07,
+      "gradient_max_error": 1.1920928955078125e-07,
+      "scan_vs_direct_gradient_relative_l2": 7.486275194716169e-08,
+      "finite_difference_samples": 24,
+      "max_finite_difference_error": 3.2930963178995354e-05
+    },
+    {
+      "kind": "global",
+      "case": "zero",
+      "forward_max_error": 0.0,
+      "gradient_relative_l2": 0.0,
+      "gradient_max_error": 0.0,
+      "scan_vs_direct_gradient_relative_l2": 0.0,
+      "finite_difference_samples": 0,
+      "max_finite_difference_error": null
+    },
+    {
+      "kind": "global",
+      "case": "collinear",
+      "forward_max_error": 0.0,
+      "gradient_relative_l2": 8.909434929986729e-08,
+      "gradient_max_error": 2.5,
+      "scan_vs_direct_gradient_relative_l2": 5.404152752827624e-08,
+      "finite_difference_samples": 0,
+      "max_finite_difference_error": null
+    },
+    {
+      "kind": "global",
+      "case": "near_collinear",
+      "forward_max_error": 0.0,
+      "gradient_relative_l2": 1.0585503821112302e-07,
+      "gradient_max_error": 7.62939453125e-05,
+      "scan_vs_direct_gradient_relative_l2": 5.872435440671626e-08,
+      "finite_difference_samples": 0,
+      "max_finite_difference_error": null
+    },
+    {
+      "kind": "global_symmetric",
+      "case": "random",
+      "forward_max_error": 0.0,
+      "gradient_relative_l2": 1.1812992566644391e-07,
+      "gradient_max_error": 1.4901161193847656e-07,
+      "scan_vs_direct_gradient_relative_l2": 6.646460608967358e-08,
+      "finite_difference_samples": 24,
+      "max_finite_difference_error": 3.730836928317327e-05
+    },
+    {
+      "kind": "global_symmetric",
+      "case": "zero",
+      "forward_max_error": 0.0,
+      "gradient_relative_l2": 0.0,
+      "gradient_max_error": 0.0,
+      "scan_vs_direct_gradient_relative_l2": 0.0,
+      "finite_difference_samples": 0,
+      "max_finite_difference_error": null
+    },
+    {
+      "kind": "global_symmetric",
+      "case": "collinear",
+      "forward_max_error": 0.0,
+      "gradient_relative_l2": 9.702064333891267e-08,
+      "gradient_max_error": 5.960464477539063e-08,
+      "scan_vs_direct_gradient_relative_l2": 6.389529255101663e-08,
+      "finite_difference_samples": 0,
+      "max_finite_difference_error": null
+    },
+    {
+      "kind": "global_symmetric",
+      "case": "near_collinear",
+      "forward_max_error": 0.0,
+      "gradient_relative_l2": 1.116122334041909e-07,
+      "gradient_max_error": 8.940696716308594e-08,
+      "scan_vs_direct_gradient_relative_l2": 5.771984473078102e-08,
+      "finite_difference_samples": 0,
+      "max_finite_difference_error": null
+    },
+    {
+      "kind": "projector",
+      "case": "random",
+      "forward_max_error": 0.0,
+      "gradient_relative_l2": 0.0,
+      "gradient_max_error": 0.0,
+      "scan_vs_direct_gradient_relative_l2": 6.8560915644594e-08,
+      "finite_difference_samples": 24,
+      "max_finite_difference_error": 3.2000876331594874e-05
+    },
+    {
+      "kind": "projector",
+      "case": "zero",
+      "forward_max_error": 0.0,
+      "gradient_relative_l2": 0.0,
+      "gradient_max_error": 0.0,
+      "scan_vs_direct_gradient_relative_l2": 0.0,
+      "finite_difference_samples": 0,
+      "max_finite_difference_error": null
+    },
+    {
+      "kind": "projector",
+      "case": "collinear",
+      "forward_max_error": 1.1641532182693481e-10,
+      "gradient_relative_l2": 3.513610288950768e-06,
+      "gradient_max_error": 2.3283064365386963e-06,
+      "scan_vs_direct_gradient_relative_l2": 8.210640343603092e-08,
+      "finite_difference_samples": 0,
+      "max_finite_difference_error": null
+    },
+    {
+      "kind": "projector",
+      "case": "near_collinear",
+      "forward_max_error": 1.862645149230957e-09,
+      "gradient_relative_l2": 2.3002515316469517e-08,
+      "gradient_max_error": 3.814697265625e-06,
+      "scan_vs_direct_gradient_relative_l2": 5.741595528354569e-08,
+      "finite_difference_samples": 0,
+      "max_finite_difference_error": null
+    }
+  ],
+  "ubsan": "pass: four complete training steps each for global wedge and projector, two threads"
+}
