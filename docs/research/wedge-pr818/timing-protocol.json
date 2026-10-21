@@ -1,0 +1,14 @@
+{
+  "created_utc": "2026-10-18T22:34:50.885404+00:00",
+  "source_sha256": "63868cfb38a65ae9d7f958f32a0cee340e98a989f7f51b9e116fb5ee24d21374",
+  "study_protocol_sha256": "e7a1f0c0da74627eb6ec7889d1688215840e7e4e7c5141fa0f135ca8fa954e78",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "method": "24 paired AB/BA rounds, three native updates each, warm pools, fixed synthetic dense targets and identical initial state restored outside each timed call. No other experiment job runs concurrently.",
+  "scope": "Same four logical CPUs and four native threads. Inference/selection/data loading excluded. Compact cached arena for both sides. Old/new and panel comparisons hold allocation placement fixed; Placement rows separately compare merged default allocation against a merged 2MiB-aligned madvise arena.",
+  "interpretation": "Ratios above1 favor B. Bootstrap intervals describe repeated timing observations on this host, not population/hardware uncertainty. BF16 panel tests compare one arithmetic contract with panels disabled/enabled."
+}

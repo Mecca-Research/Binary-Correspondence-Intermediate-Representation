@@ -1,0 +1,153 @@
+{
+  "audit": {
+    "training_runs": 51,
+    "training_updates": 41400,
+    "all_training_checks_pass": true,
+    "evaluated_runs": 51,
+    "all_regression_rows_equal": true,
+    "scope": "Exact stored FP32 state/history/loss/gradient-norm and fixed held-out prediction comparison. Wall times, source-derived policy IDs and checkpoint ZIP container hashes intentionally excluded."
+  },
+  "BF16_quality": {
+    "kv_curriculum/attention": {
+      "evaluation_contexts": [
+        128,
+        256
+      ],
+      "aggregation": "Within each seed, supervised-token-weighted over focused contexts; then mean of three seed metrics.",
+      "per_seed": [
+        {
+          "seed": 20261018,
+          "accuracy": 0.236328125,
+          "ce_nats": 2.204311079273327
+        },
+        {
+          "seed": 20261019,
+          "accuracy": 0.2265625,
+          "ce_nats": 2.253216954836907
+        },
+        {
+          "seed": 20261020,
+          "accuracy": 0.240234375,
+          "ce_nats": 2.2124595479736238
+        }
+      ],
+      "accuracy": 0.234375,
+      "ce_nats": 2.223329194027953,
+      "buffers_mib": 30.67125701904297,
+      "training_ms_per_update": 15.662744288148149
+    },
+    "kv_curriculum/global": {
+      "evaluation_contexts": [
+        128,
+        256
+      ],
+      "aggregation": "Within each seed, supervised-token-weighted over focused contexts; then mean of three seed metrics.",
+      "per_seed": [
+        {
+          "seed": 20261018,
+          "accuracy": 0.078125,
+          "ce_nats": 2.780414648705152
+        },
+        {
+          "seed": 20261019,
+          "accuracy": 0.06640625,
+          "ce_nats": 2.7793440157272102
+        },
+        {
+          "seed": 20261020,
+          "accuracy": 0.083984375,
+          "ce_nats": 2.7812348803478475
+        }
+      ],
+      "accuracy": 0.076171875,
+      "ce_nats": 2.7803311815934033,
+      "buffers_mib": 28.97594451904297,
+      "training_ms_per_update": 16.146404897407322
+    },
+    "kv_curriculum/query_full": {
+      "evaluation_contexts": [
+        128,
+        256
+      ],
+      "aggregation": "Within each seed, supervised-token-weighted over focused contexts; then mean of three seed metrics.",
+      "per_seed": [
+        {
+          "seed": 20261018,
+          "accuracy": 0.08203125,
+          "ce_nats": 2.781760723188521
+        },
+        {
+          "seed": 20261019,
+          "accuracy": 0.05859375,
+          "ce_nats": 2.7796288046809963
+        },
+        {
+          "seed": 20261020,
+          "accuracy": 0.078125,
+          "ce_nats": 2.7850426621137134
+        }
+      ],
+      "accuracy": 0.07291666666666667,
+      "ce_nats": 2.7821440633277437,
+      "buffers_mib": 29.36266326904297,
+      "training_ms_per_update": 19.240531604814773
+    },
+    "lm/query_full": {
+      "evaluation_contexts": [
+        32,
+        64,
+        128
+      ],
+      "aggregation": "Within each seed, supervised-token-weighted over focused contexts; then mean of three seed metrics.",
+      "per_seed": [
+        {
+          "seed": 20261018,
+          "accuracy": 0.29624720982142855,
+          "ce_nats": 2.4556270588175657
+        },
+        {
+          "seed": 20261019,
+          "accuracy": 0.2984095982142857,
+          "ce_nats": 2.4565396626984173
+        },
+        {
+          "seed": 20261020,
+          "accuracy": 0.2997349330357143,
+          "ce_nats": 2.4580112546163764
+        }
+      ],
+      "accuracy": 0.29813058035714285,
+      "ce_nats": 2.45672599204412,
+      "buffers_mib": 15.742546081542969,
+      "training_ms_per_update": 8.308627150555974
+    },
+    "ordered/query_full": {
+      "evaluation_contexts": [
+        1024,
+        2048
+      ],
+      "aggregation": "Within each seed, supervised-token-weighted over focused contexts; then mean of three seed metrics.",
+      "per_seed": [
+        {
+          "seed": 20261018,
+          "accuracy": 0.9947916666666666,
+          "ce_nats": 0.03729540892614394
+        },
+        {
+          "seed": 20261019,
+          "accuracy": 0.9895833333333334,
+          "ce_nats": 0.05198850565075603
+        },
+        {
+          "seed": 20261020,
+          "accuracy": 0.96875,
+          "ce_nats": 0.08798822702162779
+        }
+      ],
+      "accuracy": 0.984375,
+      "ce_nats": 0.05909071386617592,
+      "buffers_mib": 29.36266326904297,
+      "training_ms_per_update": 18.199540415555557
+    }
+  }
+}

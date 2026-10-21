@@ -1,0 +1,8 @@
+{
+  "training_runs": 51,
+  "training_updates": 41400,
+  "all_training_checks_pass": true,
+  "evaluated_runs": 51,
+  "all_regression_rows_equal": true,
+  "scope": "Exact stored FP32 state/history/loss/gradient-norm and fixed held-out prediction comparison. Wall times, source-derived policy IDs and checkpoint ZIP container hashes intentionally excluded."
+}

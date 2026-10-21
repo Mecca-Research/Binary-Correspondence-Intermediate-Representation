@@ -1,0 +1,74 @@
+[
+  {
+    "model": "global",
+    "contract": 14,
+    "context": 256,
+    "frame_resident_bound_bytes": 27352184,
+    "cached_minus_frame_activation_bytes_per_layer": 3051520.0,
+    "cached_scratch_bytes": 3682304,
+    "frame_scratch_bytes": 3682304,
+    "32MiB_slack_bytes": 6202248,
+    "arithmetic_only_cached_layer_upper_estimate": 2,
+    "qualification": "Inventory-derived idea, not an implemented or timed mixed-layer plan. A real plan must prove all mixed scratch/packing lifetimes."
+  },
+  {
+    "model": "global",
+    "contract": 26,
+    "context": 256,
+    "frame_resident_bound_bytes": 30383480,
+    "cached_minus_frame_activation_bytes_per_layer": 3051520.0,
+    "cached_scratch_bytes": 3682304,
+    "frame_scratch_bytes": 3682304,
+    "32MiB_slack_bytes": 3170952,
+    "arithmetic_only_cached_layer_upper_estimate": 1,
+    "qualification": "Inventory-derived idea, not an implemented or timed mixed-layer plan. A real plan must prove all mixed scratch/packing lifetimes."
+  },
+  {
+    "model": "query_full",
+    "contract": 14,
+    "context": 256,
+    "frame_resident_bound_bytes": 27757688,
+    "cached_minus_frame_activation_bytes_per_layer": 3051520.0,
+    "cached_scratch_bytes": 3682304,
+    "frame_scratch_bytes": 3682304,
+    "32MiB_slack_bytes": 5796744,
+    "arithmetic_only_cached_layer_upper_estimate": 1,
+    "qualification": "Inventory-derived idea, not an implemented or timed mixed-layer plan. A real plan must prove all mixed scratch/packing lifetimes."
+  },
+  {
+    "model": "query_full",
+    "contract": 26,
+    "context": 256,
+    "frame_resident_bound_bytes": 30788984,
+    "cached_minus_frame_activation_bytes_per_layer": 3051520.0,
+    "cached_scratch_bytes": 3682304,
+    "frame_scratch_bytes": 3682304,
+    "32MiB_slack_bytes": 2765448,
+    "arithmetic_only_cached_layer_upper_estimate": 0,
+    "qualification": "Inventory-derived idea, not an implemented or timed mixed-layer plan. A real plan must prove all mixed scratch/packing lifetimes."
+  },
+  {
+    "model": "query_matched",
+    "contract": 14,
+    "context": 256,
+    "frame_resident_bound_bytes": 27456632,
+    "cached_minus_frame_activation_bytes_per_layer": 2994176.0,
+    "cached_scratch_bytes": 3596288,
+    "frame_scratch_bytes": 3596288,
+    "32MiB_slack_bytes": 6097800,
+    "arithmetic_only_cached_layer_upper_estimate": 2,
+    "qualification": "Inventory-derived idea, not an implemented or timed mixed-layer plan. A real plan must prove all mixed scratch/packing lifetimes."
+  },
+  {
+    "model": "query_matched",
+    "contract": 26,
+    "context": 256,
+    "frame_resident_bound_bytes": 30209400,
+    "cached_minus_frame_activation_bytes_per_layer": 2994176.0,
+    "cached_scratch_bytes": 3596288,
+    "frame_scratch_bytes": 3596288,
+    "32MiB_slack_bytes": 3345032,
+    "arithmetic_only_cached_layer_upper_estimate": 1,
+    "qualification": "Inventory-derived idea, not an implemented or timed mixed-layer plan. A real plan must prove all mixed scratch/packing lifetimes."
+  }
+]

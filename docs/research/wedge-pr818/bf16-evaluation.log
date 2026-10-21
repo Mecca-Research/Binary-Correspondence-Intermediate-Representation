@@ -1,0 +1,33 @@
+{"case": "train-kv_curriculum-attention-20261018", "context": 128, "test": {"ce_nats": 2.2380568434142694, "accuracy": 0.2421875, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.98828125}}
+{"case": "train-kv_curriculum-attention-20261018", "context": 256, "test": {"ce_nats": 2.1705653151323845, "accuracy": 0.23046875, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.98828125}}
+{"case": "train-kv_curriculum-attention-20261019", "context": 128, "test": {"ce_nats": 2.289144870965413, "accuracy": 0.20703125, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.99609375}}
+{"case": "train-kv_curriculum-attention-20261019", "context": 256, "test": {"ce_nats": 2.217289038708401, "accuracy": 0.24609375, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.9921875}}
+{"case": "train-kv_curriculum-attention-20261020", "context": 128, "test": {"ce_nats": 2.248715147984356, "accuracy": 0.2109375, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.984375}}
+{"case": "train-kv_curriculum-attention-20261020", "context": 256, "test": {"ce_nats": 2.1762039479628914, "accuracy": 0.26953125, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.98046875}}
+{"case": "train-kv_curriculum-global-20261018", "context": 128, "test": {"ce_nats": 2.776165048030324, "accuracy": 0.08984375, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.2734375}}
+{"case": "train-kv_curriculum-global-20261018", "context": 256, "test": {"ce_nats": 2.784664249379981, "accuracy": 0.06640625, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.25390625}}
+{"case": "train-kv_curriculum-global-20261019", "context": 128, "test": {"ce_nats": 2.7971925376283187, "accuracy": 0.05078125, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.25390625}}
+{"case": "train-kv_curriculum-global-20261019", "context": 256, "test": {"ce_nats": 2.761495493826102, "accuracy": 0.08203125, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.265625}}
+{"case": "train-kv_curriculum-global-20261020", "context": 128, "test": {"ce_nats": 2.7664584038113365, "accuracy": 0.1015625, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.2890625}}
+{"case": "train-kv_curriculum-global-20261020", "context": 256, "test": {"ce_nats": 2.796011356884358, "accuracy": 0.06640625, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.2265625}}
+{"case": "train-kv_curriculum-query_full-20261018", "context": 128, "test": {"ce_nats": 2.779340414577077, "accuracy": 0.08984375, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.296875}}
+{"case": "train-kv_curriculum-query_full-20261018", "context": 256, "test": {"ce_nats": 2.7841810317999647, "accuracy": 0.07421875, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.2734375}}
+{"case": "train-kv_curriculum-query_full-20261019", "context": 128, "test": {"ce_nats": 2.796856305159722, "accuracy": 0.05078125, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.2578125}}
+{"case": "train-kv_curriculum-query_full-20261019", "context": 256, "test": {"ce_nats": 2.76240130420227, "accuracy": 0.06640625, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.24609375}}
+{"case": "train-kv_curriculum-query_full-20261020", "context": 128, "test": {"ce_nats": 2.7761994116797166, "accuracy": 0.08984375, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.2734375}}
+{"case": "train-kv_curriculum-query_full-20261020", "context": 256, "test": {"ce_nats": 2.7938859125477102, "accuracy": 0.06640625, "scored_tokens": 256, "invalid_output_rate": 0.0, "prediction_in_candidate_set_rate": 0.25390625}}
+{"case": "train-lm-query_full-20261018", "context": 32, "test": {"ce_nats": 2.4543926793270088, "accuracy": 0.30517578125, "scored_tokens": 2048, "invalid_output_rate": 0.0}}
+{"case": "train-lm-query_full-20261018", "context": 64, "test": {"ce_nats": 2.4246412674145605, "accuracy": 0.290771484375, "scored_tokens": 4096, "invalid_output_rate": 0.0}}
+{"case": "train-lm-query_full-20261018", "context": 128, "test": {"ce_nats": 2.471428549391707, "accuracy": 0.2967529296875, "scored_tokens": 8192, "invalid_output_rate": 0.0}}
+{"case": "train-lm-query_full-20261019", "context": 32, "test": {"ce_nats": 2.4675705862778248, "accuracy": 0.3056640625, "scored_tokens": 2048, "invalid_output_rate": 0.0}}
+{"case": "train-lm-query_full-20261019", "context": 64, "test": {"ce_nats": 2.421658472138426, "accuracy": 0.294921875, "scored_tokens": 4096, "invalid_output_rate": 0.0}}
+{"case": "train-lm-query_full-20261019", "context": 128, "test": {"ce_nats": 2.471222527083561, "accuracy": 0.29833984375, "scored_tokens": 8192, "invalid_output_rate": 0.0}}
+{"case": "train-lm-query_full-20261020", "context": 32, "test": {"ce_nats": 2.4623834802719218, "accuracy": 0.30712890625, "scored_tokens": 2048, "invalid_output_rate": 0.0}}
+{"case": "train-lm-query_full-20261020", "context": 64, "test": {"ce_nats": 2.4266839357673873, "accuracy": 0.295166015625, "scored_tokens": 4096, "invalid_output_rate": 0.0}}
+{"case": "train-lm-query_full-20261020", "context": 128, "test": {"ce_nats": 2.472581857626984, "accuracy": 0.3001708984375, "scored_tokens": 8192, "invalid_output_rate": 0.0}}
+{"case": "train-ordered-query_full-20261018", "context": 1024, "test": {"ce_nats": 0.004805362012484174, "accuracy": 1.0, "scored_tokens": 128, "invalid_output_rate": 0.0}}
+{"case": "train-ordered-query_full-20261018", "context": 2048, "test": {"ce_nats": 0.10227550275346348, "accuracy": 0.984375, "scored_tokens": 64, "invalid_output_rate": 0.0}}
+{"case": "train-ordered-query_full-20261019", "context": 1024, "test": {"ce_nats": 0.00934721193960962, "accuracy": 1.0, "scored_tokens": 128, "invalid_output_rate": 0.0}}
+{"case": "train-ordered-query_full-20261019", "context": 2048, "test": {"ce_nats": 0.13727109307304886, "accuracy": 0.96875, "scored_tokens": 64, "invalid_output_rate": 0.0}}
+{"case": "train-ordered-query_full-20261020", "context": 1024, "test": {"ce_nats": 0.010557508996633685, "accuracy": 1.0, "scored_tokens": 128, "invalid_output_rate": 0.0}}
+{"case": "train-ordered-query_full-20261020", "context": 2048, "test": {"ce_nats": 0.24284966307161598, "accuracy": 0.90625, "scored_tokens": 64, "invalid_output_rate": 0.0}}

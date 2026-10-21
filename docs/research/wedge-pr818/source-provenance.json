@@ -1,0 +1,63 @@
+{
+  "old_pin_is_ancestor_of_merge": true,
+  "tracked_repository_diff": [],
+  "vendored_source_bytes_match_git": true,
+  "files": [
+    {
+      "version": "old",
+      "commit": "aaa2e6c0ee0ee15b83fe4d0373b48bd893e80d6d",
+      "path": "runtime/c/bcir_decoder_train.c",
+      "sha256": "fdf1ad89e9971d3c749d298a63d010eaeda3b8a1325243435fa7c09325185628",
+      "bytes": 43155
+    },
+    {
+      "version": "old",
+      "commit": "aaa2e6c0ee0ee15b83fe4d0373b48bd893e80d6d",
+      "path": "runtime/c/bcir_decoder_train.h",
+      "sha256": "be9e37762c29207f467461ff0eeb500dd07d9d3c8f1cb53b74357918d6d20add",
+      "bytes": 6799
+    },
+    {
+      "version": "old",
+      "commit": "aaa2e6c0ee0ee15b83fe4d0373b48bd893e80d6d",
+      "path": "runtime/c/bcir_tensor.c",
+      "sha256": "08aca3fd822d116722c834f9f302b364b725f9b0a10b0e22c8bfa510fa5c494b",
+      "bytes": 101185
+    },
+    {
+      "version": "old",
+      "commit": "aaa2e6c0ee0ee15b83fe4d0373b48bd893e80d6d",
+      "path": "runtime/c/bcir_tensor.h",
+      "sha256": "2e678fe9202b3f6dfd476a8ade15747a8e6392b0f58baacfbbc7a7288a8d5938",
+      "bytes": 19881
+    },
+    {
+      "version": "new",
+      "commit": "237651126684569e5b756dcc8d1c89ed2e86d0e3",
+      "path": "runtime/c/bcir_decoder_train.c",
+      "sha256": "853a4fd1a2b3a2e307d4e6512e92c0ddf03789c597313a0a18105bbbfe97a8d7",
+      "bytes": 62858
+    },
+    {
+      "version": "new",
+      "commit": "237651126684569e5b756dcc8d1c89ed2e86d0e3",
+      "path": "runtime/c/bcir_decoder_train.h",
+      "sha256": "687e49cdc6e45ed4a13a3102bf95e343e636c229f5056dfa802138d80b68212d",
+      "bytes": 8431
+    },
+    {
+      "version": "new",
+      "commit": "237651126684569e5b756dcc8d1c89ed2e86d0e3",
+      "path": "runtime/c/bcir_tensor.c",
+      "sha256": "05366858d5390abed2b16adc9a232cff85652cdcf2cbe58a8beccba261aea270",
+      "bytes": 150659
+    },
+    {
+      "version": "new",
+      "commit": "237651126684569e5b756dcc8d1c89ed2e86d0e3",
+      "path": "runtime/c/bcir_tensor.h",
+      "sha256": "57a896875185e744909cfb0fd82a5c54e5994d5087b6616d3bbdff1d59527f3d",
+      "bytes": 28422
+    }
+  ]
+}

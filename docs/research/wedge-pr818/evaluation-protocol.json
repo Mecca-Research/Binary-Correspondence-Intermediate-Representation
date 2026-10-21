@@ -1,0 +1,10 @@
+{
+  "created_utc": "2026-10-18T22:40:25.651687+00:00",
+  "study_protocol_sha256": "e7a1f0c0da74627eb6ec7889d1688215840e7e4e7c5141fa0f135ca8fa954e78",
+  "source_sha256": {
+    "evaluate_query.py": "31e88ecc4b5709725efc82f4e37bf12750039f82f3eb5449db0cc2eeebb702b8"
+  },
+  "seed_base": 20262100,
+  "samples": "Previously evaluated regression samples: association256/length/pairs/seed exceptT1024=128; ordered256 exceptT1024=128,T2048=64; LM64 windows/length/seed",
+  "inference_budget": "common512MiB controlled-buffer envelope, independent of32MiB training; no model/optimizer updates or test-based selection"
+}

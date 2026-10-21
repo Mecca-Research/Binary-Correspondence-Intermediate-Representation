@@ -1,0 +1,5109 @@
+{
+  "pr818": {
+    "base": "be6e377a2eb417cb4bfe3de5243ca09961ba1833",
+    "head": "f3e7f0be5f467ac154da8d0e096921acbc177ba4",
+    "files": 662,
+    "added": 390139,
+    "deleted": 466,
+    "categories": {
+      ".claude": {
+        "files": 1,
+        "added": 6,
+        "deleted": 6
+      },
+      "bcir": {
+        "files": 7,
+        "added": 984,
+        "deleted": 63
+      },
+      "cmake": {
+        "files": 1,
+        "added": 7,
+        "deleted": 2
+      },
+      "docs": {
+        "files": 6,
+        "added": 2718,
+        "deleted": 29
+      },
+      "measurement_records": {
+        "files": 615,
+        "added": 380107,
+        "deleted": 30
+      },
+      "runtime": {
+        "files": 5,
+        "added": 4481,
+        "deleted": 287
+      },
+      "tools": {
+        "files": 27,
+        "added": 1836,
+        "deleted": 49
+      }
+    },
+    "rows": [
+      {
+        "path": ".claude/context/BCIR_DIGEST.md",
+        "added": 6,
+        "deleted": 6
+      },
+      {
+        "path": "bcir/hosted/models/native.py",
+        "added": 106,
+        "deleted": 9
+      },
+      {
+        "path": "bcir/hosted/training/bpe.py",
+        "added": 8,
+        "deleted": 5
+      },
+      {
+        "path": "bcir/tests/native_decoder_fixtures.py",
+        "added": 335,
+        "deleted": 19
+      },
+      {
+        "path": "bcir/tests/test_hosted_training_pipeline.py",
+        "added": 36,
+        "deleted": 0
+      },
+      {
+        "path": "bcir/tests/test_native_decoder.py",
+        "added": 416,
+        "deleted": 29
+      },
+      {
+        "path": "bcir/tests/test_qualification.py",
+        "added": 70,
+        "deleted": 1
+      },
+      {
+        "path": "bcir/tests/test_train_rail.py",
+        "added": 13,
+        "deleted": 0
+      },
+      {
+        "path": "cmake/BCIRTests.cmake",
+        "added": 7,
+        "deleted": 2
+      },
+      {
+        "path": "docs/DEVELOPMENT_HISTORY.md",
+        "added": 659,
+        "deleted": 1
+      },
+      {
+        "path": "docs/STATUS.md",
+        "added": 1,
+        "deleted": 1
+      },
+      {
+        "path": "docs/machine-learning/BCIR_NATIVE_DECODER_TRAINING.md",
+        "added": 308,
+        "deleted": 12
+      },
+      {
+        "path": "docs/research/BCIR_GEMPLUS_ROADMAP.md",
+        "added": 23,
+        "deleted": 1
+      },
+      {
+        "path": "docs/research/BCIR_NDT_MEASURE_2026-10-12.md",
+        "added": 1654,
+        "deleted": 3
+      },
+      {
+        "path": "docs/research/BCIR_TRAINING_ACCELERATION_ROADMAP.md",
+        "added": 73,
+        "deleted": 11
+      },
+      {
+        "path": "docs/research/measurements/2026-10-11/train_comparison.py",
+        "added": 99,
+        "deleted": 30
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/policy/README.json",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/policy/card-fast-t1.json",
+        "added": 126,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/policy/card-fast-t4.json",
+        "added": 126,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/policy/card-v1-t1.json",
+        "added": 120,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/README.json",
+        "added": 15,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/attribution-t4-before-1.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/attribution-t4-before-2.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/attribution-t4-before-3.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/attribution-t4-pool-1.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/attribution-t4-pool-2.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/attribution-t4-pool-3.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/attribution-t4-slices-1.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/attribution-t4-slices-2.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/attribution-t4-slices-3.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/bench_pool.c",
+        "added": 40,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/breakdown-bcir-kblock+exp+reduce-t4-after-1.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/breakdown-bcir-kblock+exp+reduce-t4-after-2.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/breakdown-bcir-kblock+exp+reduce-t4-after-3.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/breakdown-bcir-kblock+exp+reduce-t4-after-4.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/breakdown-bcir-kblock+exp+reduce-t4-before-1.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/breakdown-bcir-kblock+exp+reduce-t4-before-2.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/breakdown-bcir-kblock+exp+reduce-t4-before-3.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/breakdown-bcir-kblock+exp+reduce-t4-before-4.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/fma-topology.json",
+        "added": 137,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/fma_topology.c",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/gemm-rates-landed-1.json",
+        "added": 198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/gemm-rates-landed-2.json",
+        "added": 198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/gemm-rates-landed-3.json",
+        "added": 198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/gemm-rates-stage1.json",
+        "added": 198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/gemm-rates-stage2.json",
+        "added": 198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/gemm-rates-stage3.json",
+        "added": 198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/gemm-rates-static.json",
+        "added": 198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/gemm_rates.py",
+        "added": 100,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/identity-after.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/pool/pool-latency.json",
+        "added": 1582,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/reduce/README.json",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/reduce/breakdown-bcir-kblock+exp+reduce-t1-1.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/reduce/breakdown-bcir-kblock+exp+reduce-t1-2.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/reduce/breakdown-bcir-kblock+exp+reduce-t4-1.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/reduce/breakdown-bcir-kblock+exp+reduce-t4-2.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/reduce/breakdown-bcir-kblock+exp+reduce-t4-3.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/reduce/breakdown-bcir-kblock+exp-t1-1.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/reduce/breakdown-bcir-kblock+exp-t4-1.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/reduce/breakdown-bcir-kblock+exp-t4-2.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/reduce/breakdown-bcir-kblock+exp-t4-3.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/reduce/identity-reduce.json",
+        "added": 75,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/reduce/runs/lm-bcir-kblock+exp+reduce-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/reduce/runs/lm-bcir-kblock+exp+reduce.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/README.json",
+        "added": 11,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/attribution-t4-after-1.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/attribution-t4-after-2.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/attribution-t4-after-3.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/attribution-t4-before-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/attribution-t4-before-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/attribution-t4-before-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/attribution.py",
+        "added": 261,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/breakdown-bcir-kblock+exp+reduce-t4-after-1.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/breakdown-bcir-kblock+exp+reduce-t4-after-2.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/breakdown-bcir-kblock+exp+reduce-t4-after-3.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/breakdown-bcir-kblock+exp+reduce-t4-after-4.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/breakdown-bcir-kblock+exp+reduce-t4-after-5.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/breakdown-bcir-kblock+exp+reduce-t4-after-6.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/breakdown-bcir-kblock+exp+reduce-t4-before-1.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/breakdown-bcir-kblock+exp+reduce-t4-before-2.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/breakdown-bcir-kblock+exp+reduce-t4-before-3.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/breakdown-bcir-kblock+exp+reduce-t4-before-4.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/breakdown-bcir-kblock+exp+reduce-t4-before-5.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/breakdown-bcir-kblock+exp+reduce-t4-before-6.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/identity-after.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/identity-before.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/sched0/README.json",
+        "added": 5,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/sched0/breakdown-bcir-kblock+exp+reduce-t4-after-1.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/sched0/breakdown-bcir-kblock+exp+reduce-t4-after-2.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/sched0/breakdown-bcir-kblock+exp+reduce-t4-after-3.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/sched0/breakdown-bcir-kblock+exp+reduce-t4-before-1.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/sched0/breakdown-bcir-kblock+exp+reduce-t4-before-2.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/sched0/breakdown-bcir-kblock+exp+reduce-t4-before-3.json",
+        "added": 29,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/README.json",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attention-kernels.json",
+        "added": 259,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-A-1.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-A-2.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-A-3.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-P-1.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-P-2.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-P-3.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-T1-1.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-T1-2.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-T1-3.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-T2-1.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-T2-2.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-T2-3.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-T3-1.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-T3-2.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/attribution-t4-T3-3.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/slices/bench_attn.c",
+        "added": 36,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/README.json",
+        "added": 11,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/attribution-t4-after-1.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/attribution-t4-after-2.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/attribution-t4-after-3.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/attribution-t4-before-1.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/attribution-t4-before-2.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/attribution-t4-before-3.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/gemm-pages-1.json",
+        "added": 256,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/gemm-pages-2.json",
+        "added": 256,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/gemm_pages.py",
+        "added": 119,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/identity-after.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/pages_ab.py",
+        "added": 126,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/step-t1-1.json",
+        "added": 50,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/step-t2-1.json",
+        "added": 58,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/step-t4-1.json",
+        "added": 74,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-14/pages/step-t4-2.json",
+        "added": 74,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/README.json",
+        "added": 14,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attention-t1-t4.jsonl",
+        "added": 32,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attention_ab.py",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attention_time.c",
+        "added": 35,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-attn7-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-attn7-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-attn7-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-attn7-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-attn7-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-attn7-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-attn7-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-attn7-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-base-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-base-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-base-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-base-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-base-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-base-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-base-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/attribution-t4-base-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/identity.json",
+        "added": 58,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/nan-payloads.json",
+        "added": 3931,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/attn7/nan_payloads.c",
+        "added": 142,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/README.json",
+        "added": 11,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/attribution-t4-before-1.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/attribution-t4-before-2.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/attribution-t4-before-3.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/attribution-t4-before-4.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/attribution-t4-beta-1.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/attribution-t4-beta-2.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/attribution-t4-beta-3.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/attribution-t4-beta-4.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/entries-t1.jsonl",
+        "added": 288,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/entries-t4.jsonl",
+        "added": 288,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/gemm_entries.c",
+        "added": 73,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/gemm_probe.c",
+        "added": 357,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/identity.json",
+        "added": 74,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/probe-ceiling.jsonl",
+        "added": 14,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/probe-split.jsonl",
+        "added": 12,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/probe-t1.jsonl",
+        "added": 180,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/beta/probe-t4.jsonl",
+        "added": 180,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/dp/README.json",
+        "added": 9,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/dp/attribution-t4-before-1.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/dp/attribution-t4-before-2.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/dp/attribution-t4-before-3.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/dp/attribution-t4-before-4.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/dp/attribution-t4-dp-1.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/dp/attribution-t4-dp-2.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/dp/attribution-t4-dp-3.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/dp/attribution-t4-dp-4.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/dp/identity.json",
+        "added": 58,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/README.json",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-base-1.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-base-2.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-base-3.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-base-4.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-base-5.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-base-6.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-base-7.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-base-8.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-full-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-full-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-full-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-full-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-full-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-full-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-full-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-full-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-fuse-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-fuse-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-fuse-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-fuse-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-fuse-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-fuse-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-fuse-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/attribution-t4-fuse-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/identity.json",
+        "added": 74,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/fuse/statedump.c",
+        "added": 178,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/gemm4t/README.json",
+        "added": 12,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/gemm4t/fma-peak.jsonl",
+        "added": 12,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/gemm4t/fma_peak.c",
+        "added": 38,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/gemm4t/gemm-calls-t4.json",
+        "added": 130,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/gemm4t/gemm-cold-t4.json",
+        "added": 197,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/gemm4t/gemm-tasks-t4.json",
+        "added": 251,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/gemm4t/gemm_calls.py",
+        "added": 220,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/gemm4t/gemm_cold.py",
+        "added": 128,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/gemm4t/gemm_tasks.py",
+        "added": 117,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/gemm4t/tasks_instrument.py",
+        "added": 79,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/gemm4t/transposed-a.jsonl",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/gemm4t/transposed_a.c",
+        "added": 40,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lanes/README.json",
+        "added": 9,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lanes/attribution-t4-before-1.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lanes/attribution-t4-before-2.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lanes/attribution-t4-before-3.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lanes/attribution-t4-before-4.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lanes/attribution-t4-before-5.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lanes/attribution-t4-lanes-1.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lanes/attribution-t4-lanes-2.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lanes/attribution-t4-lanes-3.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lanes/attribution-t4-lanes-4.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lanes/attribution-t4-lanes-5.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lanes/identity.json",
+        "added": 74,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/README.json",
+        "added": 13,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r1-a0ea747-bcir-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r1-a0ea747-torch-eager-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r2-a0ea747-bcir-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r2-a0ea747-torch-compiled-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r2-a0ea747-torch-eager-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r3-742234a-bcir-t4-1.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r3-742234a-bcir-t4-2.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r3-742234a-torch-compiled-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r3-742234a-torch-eager-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r4-78cbd29-bcir-t4-1.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r4-78cbd29-bcir-t4-4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r4-78cbd29-torch-compiled-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r4-78cbd29-torch-eager-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r5-78cbd29-bcir-t4-2.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r5-78cbd29-torch-compiled-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r5-78cbd29-torch-eager-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r6-64bfd62-bcir-t4-1.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r6-64bfd62-bcir-t4-4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r6-64bfd62-sources.sha256",
+        "added": 6,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r6-64bfd62-torch-compiled-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r6-64bfd62-torch-eager-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r7-14b5941-bcir-t4-1.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r7-14b5941-bcir-t4-4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r7-14b5941-torch-compiled-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/lm/r7-14b5941-torch-eager-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/README.json",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-base-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-base-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-base-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-base-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-base-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-base-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-base-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-base-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-prepack-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-prepack-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-prepack-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-prepack-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-prepack-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-prepack-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-prepack-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/attribution-t4-prepack-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/gemm-entries-t4.jsonl",
+        "added": 192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/prepack/prototype.py",
+        "added": 346,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/rope/README.json",
+        "added": 9,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/rope/attribution-t4-before-1.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/rope/attribution-t4-before-2.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/rope/attribution-t4-before-3.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/rope/attribution-t4-before-4.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/rope/attribution-t4-rope-1.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/rope/attribution-t4-rope-2.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/rope/attribution-t4-rope-3.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/rope/attribution-t4-rope-4.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/rope/identity.json",
+        "added": 58,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/sched1/README.json",
+        "added": 9,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/sched1/attribution-t4-sched1-1.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/sched1/attribution-t4-sched1-2.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/sched1/attribution-t4-sched1-3.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/sched1/attribution-t4-sched1-4.json",
+        "added": 45,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-16/sched1/identity.json",
+        "added": 74,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/README.json",
+        "added": 19,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/attribution-t4-bf16-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/attribution-t4-bf16-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/attribution-t4-bf16-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/attribution-t4-kblock-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/attribution-t4-kblock-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/attribution-t4-kblock-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/check.c",
+        "added": 225,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/check.txt",
+        "added": 26,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/cols_check.c",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/cols_check.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/cvt2.c",
+        "added": 37,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/cvt2.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/gemm-t1.txt",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/gemm-t4.txt",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/gemm-v4.txt",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/gemm.c",
+        "added": 57,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/identity.json",
+        "added": 90,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/README.json",
+        "added": 11,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/paired_bf16.py",
+        "added": 171,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/run.sh",
+        "added": 50,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-bf16-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-bf16-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-bf16-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-bf16-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-bf16-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-bf16-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-bf16-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-bf16-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-bf16-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-bf16-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-eager-bf16-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-eager-bf16-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/summary.json",
+        "added": 532,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/run.sh",
+        "added": 67,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/semantics.c",
+        "added": 438,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/semantics.txt",
+        "added": 63,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/step-t1.txt",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/step-t4.txt",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/step.py",
+        "added": 61,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/tininess.c",
+        "added": 104,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/tininess.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/README.json",
+        "added": 9,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/r8-cf435d4-bcir-t4-1.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/r8-cf435d4-bcir-t4-4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/r8-cf435d4-torch-compiled-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/r8-cf435d4-torch-eager-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/r9-2afa3e3-bcir-t4-1.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/r9-2afa3e3-bcir-t4-4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/r9-2afa3e3-torch-compiled-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/r9-2afa3e3-torch-eager-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/README.json",
+        "added": 12,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/cold-base-cache.json",
+        "added": 198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/cold-base-colmajor.json",
+        "added": 198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/cold-base-grp.json",
+        "added": 198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/gemm-ab-t4-1.txt",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/gemm-ab-t4-2.txt",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/gemm_ab.py",
+        "added": 71,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/variants.py",
+        "added": 169,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/README.json",
+        "added": 11,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/eager.sh",
+        "added": 18,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/paired.py",
+        "added": 141,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/run.sh",
+        "added": 39,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/bcir-1001.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/bcir-2002.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/bcir-20261011.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/bcir-3003.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/bcir-4004.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-compiled-1001.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-compiled-2002.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-compiled-20261011.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-compiled-3003.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-compiled-4004.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-eager-1001.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-eager-20261011.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/summary.json",
+        "added": 227,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/README.json",
+        "added": 14,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-base-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-base-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-base-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-base-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-base-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-base-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-base-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-base-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-scanw-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-scanw-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-scanw-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-scanw-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-scanw-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-scanw-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-scanw-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/attribution-t4-scanw-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-base-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-base-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-base-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-base-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-base-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-base-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-base-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-base-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-scanw-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-scanw-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-scanw-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-scanw-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-scanw-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-scanw-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-scanw-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/first-attribution-t4-scanw-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/identity.json",
+        "added": 58,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/scan-overhead.txt",
+        "added": 9,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/scan_overhead.c",
+        "added": 43,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/verdicts.c",
+        "added": 153,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/scanw/verdicts.txt",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/README.json",
+        "added": 13,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/division-check.txt",
+        "added": 1,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/division_check.c",
+        "added": 106,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/identity.json",
+        "added": 58,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/update-probe.txt",
+        "added": 13,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/update_probe.c",
+        "added": 191,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/README.json",
+        "added": 15,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attention-t1.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attention-t4-512.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attention-t4.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attention.c",
+        "added": 83,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-attn-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-attn-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-attn-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-attn-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-attn-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-bf16-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-bf16-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-bf16-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-bf16-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-bf16-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/identity-bf16.json",
+        "added": 90,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/identity-kblock.json",
+        "added": 90,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/identity-unchanged-bf16.json",
+        "added": 58,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/identity-unchanged-kblock.json",
+        "added": 58,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/README.json",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/paired_attn.py",
+        "added": 156,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/run.sh",
+        "added": 52,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-attn-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-attn-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-attn-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-attn-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-attn-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-attn-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-attn-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-attn-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-attn-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-attn-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/torch-compiled-bf16-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/torch-compiled-bf16-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/torch-compiled-bf16-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/torch-compiled-bf16-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/torch-compiled-bf16-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/summary.json",
+        "added": 615,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/run.sh",
+        "added": 67,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/step-t1.txt",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/step-t4-kblock.txt",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/step-t4.txt",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/step.py",
+        "added": 61,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/README.json",
+        "added": 20,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-10.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-9.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-10.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-9.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-10.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-9.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/summary.json",
+        "added": 102,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab_summary.py",
+        "added": 64,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/block-t1.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/block-t4.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/block.c",
+        "added": 103,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/identity-bf16-attn.json",
+        "added": 90,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/identity-bf16.json",
+        "added": 58,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/identity-kblock.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/kern-t1.txt",
+        "added": 18,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/kern-t4.txt",
+        "added": 18,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/kern.c",
+        "added": 164,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/kern.patch",
+        "added": 47,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/README.json",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/paired_panels.py",
+        "added": 175,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/run.sh",
+        "added": 64,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-base-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-base-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-base-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-base-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-base-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-panels-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-panels-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-panels-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-panels-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-panels-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/torch-compiled-bf16-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/torch-compiled-bf16-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/torch-compiled-bf16-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/torch-compiled-bf16-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/torch-compiled-bf16-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/summary.json",
+        "added": 386,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/mm.py",
+        "added": 65,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/nan/nan.sh",
+        "added": 40,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/nan/out.txt",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/onednn-t1.txt",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/onednn-t4.txt",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/README.json",
+        "added": 12,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/attribution-t4.json",
+        "added": 36,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/fine-t4.json",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/fused-t4.json",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/pair.py",
+        "added": 83,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/patches.py",
+        "added": 192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/run.sh",
+        "added": 13,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/phases-base-t1.txt",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/phases-base-t4.txt",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/phases-t1.txt",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/phases-t4.txt",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/phases.c",
+        "added": 104,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/run.sh",
+        "added": 106,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/steppair-t1.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/steppair-t4.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/steppair.py",
+        "added": 93,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/README.json",
+        "added": 12,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/patch_v4.py",
+        "added": 181,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/pw.c",
+        "added": 91,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/pw_split.c",
+        "added": 88,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/run.sh",
+        "added": 19,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/screen-t1.txt",
+        "added": 22,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/screen-t4.txt",
+        "added": 22,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/split-t1.txt",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/split-t4.txt",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/split.py",
+        "added": 32,
+        "deleted": 0
+      },
+      {
+        "path": "runtime/c/bcir_decoder_train.c",
+        "added": 710,
+        "deleted": 105
+      },
+      {
+        "path": "runtime/c/bcir_decoder_train.h",
+        "added": 42,
+        "deleted": 4
+      },
+      {
+        "path": "runtime/c/bcir_tensor.c",
+        "added": 1855,
+        "deleted": 103
+      },
+      {
+        "path": "runtime/c/bcir_tensor.h",
+        "added": 182,
+        "deleted": 6
+      },
+      {
+        "path": "runtime/c/test_decoder_train.c",
+        "added": 1692,
+        "deleted": 69
+      },
+      {
+        "path": "tools/c/sections/decoder_train_tsan.sh",
+        "added": 6,
+        "deleted": 3
+      },
+      {
+        "path": "tools/models/build_lab_model.py",
+        "added": 67,
+        "deleted": 3
+      },
+      {
+        "path": "tools/models/configs/bcir-corpus-860k.json",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "tools/models/configs/bcir-docs-860k.json",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "tools/models/train_rail.sh",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "tools/perf/gemplus_baseline.py",
+        "added": 74,
+        "deleted": 8
+      },
+      {
+        "path": "tools/testing/faults/README.md",
+        "added": 17,
+        "deleted": 2
+      },
+      {
+        "path": "tools/testing/faults/bpe.json",
+        "added": 24,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-attn.json",
+        "added": 124,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-attnfma.json",
+        "added": 131,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-bf16.json",
+        "added": 133,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-exp.json",
+        "added": 9,
+        "deleted": 2
+      },
+      {
+        "path": "tools/testing/faults/ndt-fma.json",
+        "added": 6,
+        "deleted": 6
+      },
+      {
+        "path": "tools/testing/faults/ndt-fuse.json",
+        "added": 158,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-kblock.json",
+        "added": 66,
+        "deleted": 10
+      },
+      {
+        "path": "tools/testing/faults/ndt-lanes.json",
+        "added": 88,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-pages.json",
+        "added": 69,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-panels.json",
+        "added": 257,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-pass.json",
+        "added": 26,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-perf.json",
+        "added": 4,
+        "deleted": 4
+      },
+      {
+        "path": "tools/testing/faults/ndt-reduce.json",
+        "added": 90,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-rope.json",
+        "added": 46,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-scan.json",
+        "added": 75,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-scanw.json",
+        "added": 130,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-threads.json",
+        "added": 81,
+        "deleted": 11
+      },
+      {
+        "path": "tools/testing/faults/ndt-update.json",
+        "added": 109,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/train-policy.json",
+        "added": 36,
+        "deleted": 0
+      }
+    ]
+  },
+  "exact_experiment_pin": {
+    "base": "aaa2e6c0ee0ee15b83fe4d0373b48bd893e80d6d",
+    "head": "237651126684569e5b756dcc8d1c89ed2e86d0e3",
+    "files": 342,
+    "added": 270809,
+    "deleted": 197,
+    "categories": {
+      ".claude": {
+        "files": 1,
+        "added": 6,
+        "deleted": 6
+      },
+      "bcir": {
+        "files": 3,
+        "added": 368,
+        "deleted": 21
+      },
+      "docs": {
+        "files": 7,
+        "added": 1398,
+        "deleted": 14
+      },
+      "measurement_records": {
+        "files": 313,
+        "added": 265966,
+        "deleted": 27
+      },
+      "runtime": {
+        "files": 5,
+        "added": 2393,
+        "deleted": 106
+      },
+      "tools": {
+        "files": 13,
+        "added": 678,
+        "deleted": 23
+      }
+    },
+    "rows": [
+      {
+        "path": ".claude/context/BCIR_DIGEST.md",
+        "added": 6,
+        "deleted": 6
+      },
+      {
+        "path": "bcir/hosted/models/native.py",
+        "added": 45,
+        "deleted": 10
+      },
+      {
+        "path": "bcir/tests/native_decoder_fixtures.py",
+        "added": 137,
+        "deleted": 0
+      },
+      {
+        "path": "bcir/tests/test_native_decoder.py",
+        "added": 186,
+        "deleted": 11
+      },
+      {
+        "path": "docs/DEVELOPMENT_HISTORY.md",
+        "added": 233,
+        "deleted": 1
+      },
+      {
+        "path": "docs/STATUS.md",
+        "added": 1,
+        "deleted": 1
+      },
+      {
+        "path": "docs/machine-learning/BCIR_NATIVE_DECODER_TRAINING.md",
+        "added": 67,
+        "deleted": 5
+      },
+      {
+        "path": "docs/research/BCIR_GEMPLUS_ROADMAP.md",
+        "added": 5,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/BCIR_NDT_MEASURE_2026-10-12.md",
+        "added": 631,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/BCIR_PR816_PERFORMANCE_RERUN_2026-10-13.md",
+        "added": 441,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/BCIR_TRAINING_ACCELERATION_ROADMAP.md",
+        "added": 20,
+        "deleted": 7
+      },
+      {
+        "path": "docs/research/measurements/2026-10-11/train_comparison.py",
+        "added": 81,
+        "deleted": 23
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/benchmark_bpe.py",
+        "added": 132,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/benchmark_bpe_gc.py",
+        "added": 76,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/collect_results.py",
+        "added": 116,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/plot_results.py",
+        "added": 85,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/record_metadata.py",
+        "added": 98,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/rerun_training.py",
+        "added": 206,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/results.json",
+        "added": 1,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/run_matrix.py",
+        "added": 88,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/run_quality.py",
+        "added": 116,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/run_structures.py",
+        "added": 56,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/scan/attribution.py",
+        "added": 6,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/training-comparison.svg",
+        "added": 2456,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/verification.json",
+        "added": 193,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-13/verify_results.py",
+        "added": 66,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/README.json",
+        "added": 19,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/attribution-t4-bf16-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/attribution-t4-bf16-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/attribution-t4-bf16-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/attribution-t4-kblock-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/attribution-t4-kblock-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/attribution-t4-kblock-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/check.c",
+        "added": 225,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/check.txt",
+        "added": 26,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/cols_check.c",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/cols_check.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/cvt2.c",
+        "added": 37,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/cvt2.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/gemm-t1.txt",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/gemm-t4.txt",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/gemm-v4.txt",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/gemm.c",
+        "added": 57,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/identity.json",
+        "added": 90,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/README.json",
+        "added": 11,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/paired_bf16.py",
+        "added": 171,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/run.sh",
+        "added": 50,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-bf16-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-bf16-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-bf16-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-bf16-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/bcir-bf16-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-bf16-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-bf16-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-bf16-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-bf16-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-compiled-bf16-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-eager-bf16-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/runs/torch-eager-bf16-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/lm/summary.json",
+        "added": 532,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/run.sh",
+        "added": 67,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/semantics.c",
+        "added": 438,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/semantics.txt",
+        "added": 63,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/step-t1.txt",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/step-t4.txt",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/step.py",
+        "added": 61,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/tininess.c",
+        "added": 104,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/bf16/tininess.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/README.json",
+        "added": 5,
+        "deleted": 4
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/r9-2afa3e3-bcir-t4-1.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/r9-2afa3e3-bcir-t4-4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/r9-2afa3e3-torch-compiled-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/lm/r9-2afa3e3-torch-eager-t4.json",
+        "added": 3192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/README.json",
+        "added": 12,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-base-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-cache-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-col-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-base-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r256-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/attribution-t4-rows-r512-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/cold-base-cache.json",
+        "added": 198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/cold-base-colmajor.json",
+        "added": 198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/cold-base-grp.json",
+        "added": 198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/gemm-ab-t4-1.txt",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/gemm-ab-t4-2.txt",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/gemm_ab.py",
+        "added": 71,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/pack/variants.py",
+        "added": 169,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/README.json",
+        "added": 11,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/eager.sh",
+        "added": 18,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/paired.py",
+        "added": 141,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/run.sh",
+        "added": 39,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/bcir-1001.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/bcir-2002.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/bcir-20261011.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/bcir-3003.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/bcir-4004.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-compiled-1001.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-compiled-2002.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-compiled-20261011.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-compiled-3003.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-compiled-4004.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-eager-1001.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/runs/torch-eager-20261011.json",
+        "added": 3198,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/paired/summary.json",
+        "added": 227,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/README.json",
+        "added": 13,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-base-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/attribution-t4-update-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/division-check.txt",
+        "added": 1,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/division_check.c",
+        "added": 106,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/identity.json",
+        "added": 58,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/update-probe.txt",
+        "added": 13,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-17/update/update_probe.c",
+        "added": 191,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/README.json",
+        "added": 15,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attention-t1.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attention-t4-512.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attention-t4.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attention.c",
+        "added": 83,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-attn-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-attn-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-attn-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-attn-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-attn-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-bf16-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-bf16-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-bf16-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-bf16-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/attribution-t4-bf16-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/identity-bf16.json",
+        "added": 90,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/identity-kblock.json",
+        "added": 90,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/identity-unchanged-bf16.json",
+        "added": 58,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/identity-unchanged-kblock.json",
+        "added": 58,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/README.json",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/paired_attn.py",
+        "added": 156,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/run.sh",
+        "added": 52,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-attn-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-attn-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-attn-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-attn-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-attn-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-attn-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-attn-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-attn-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-attn-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/bcir-bf16-attn-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/torch-compiled-bf16-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/torch-compiled-bf16-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/torch-compiled-bf16-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/torch-compiled-bf16-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/runs/torch-compiled-bf16-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/lm/summary.json",
+        "added": 615,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/run.sh",
+        "added": 67,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/step-t1.txt",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/step-t4-kblock.txt",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/step-t4.txt",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/attnfma/step.py",
+        "added": 61,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/README.json",
+        "added": 20,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-10.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-base-9.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-10.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-kern-9.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-1.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-10.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-2.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-3.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-4.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-5.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-6.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-7.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-8.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/attribution-t4-panels-9.json",
+        "added": 44,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab/summary.json",
+        "added": 102,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/ab_summary.py",
+        "added": 64,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/block-t1.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/block-t4.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/block.c",
+        "added": 103,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/identity-bf16-attn.json",
+        "added": 90,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/identity-bf16.json",
+        "added": 58,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/identity-kblock.json",
+        "added": 42,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/kern-t1.txt",
+        "added": 18,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/kern-t4.txt",
+        "added": 18,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/kern.c",
+        "added": 164,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/kern.patch",
+        "added": 47,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/README.json",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/paired_panels.py",
+        "added": 175,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/run.sh",
+        "added": 64,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-base-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-base-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-base-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-base-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-base-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-panels-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-panels-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-panels-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-panels-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/bcir-panels-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/torch-compiled-bf16-1001.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/torch-compiled-bf16-2002.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/torch-compiled-bf16-20261011.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/torch-compiled-bf16-3003.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/runs/torch-compiled-bf16-4004.json",
+        "added": 3199,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/lm/summary.json",
+        "added": 386,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/mm.py",
+        "added": 65,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/nan/nan.sh",
+        "added": 40,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/nan/out.txt",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/onednn-t1.txt",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/onednn-t4.txt",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/README.json",
+        "added": 12,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/attribution-t4.json",
+        "added": 36,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/fine-t4.json",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/fused-t4.json",
+        "added": 16,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/pair.py",
+        "added": 83,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/patches.py",
+        "added": 192,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/packs/run.sh",
+        "added": 13,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/phases-base-t1.txt",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/phases-base-t4.txt",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/phases-t1.txt",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/phases-t4.txt",
+        "added": 17,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/phases.c",
+        "added": 104,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/run.sh",
+        "added": 106,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/steppair-t1.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/steppair-t4.txt",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/steppair.py",
+        "added": 93,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/README.json",
+        "added": 12,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/patch_v4.py",
+        "added": 181,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/pw.c",
+        "added": 91,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/pw_split.c",
+        "added": 88,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/run.sh",
+        "added": 19,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/screen-t1.txt",
+        "added": 22,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/screen-t4.txt",
+        "added": 22,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/split-t1.txt",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/split-t4.txt",
+        "added": 10,
+        "deleted": 0
+      },
+      {
+        "path": "docs/research/measurements/2026-10-18/panels/writer/split.py",
+        "added": 32,
+        "deleted": 0
+      },
+      {
+        "path": "runtime/c/bcir_decoder_train.c",
+        "added": 356,
+        "deleted": 36
+      },
+      {
+        "path": "runtime/c/bcir_decoder_train.h",
+        "added": 22,
+        "deleted": 4
+      },
+      {
+        "path": "runtime/c/bcir_tensor.c",
+        "added": 956,
+        "deleted": 57
+      },
+      {
+        "path": "runtime/c/bcir_tensor.h",
+        "added": 102,
+        "deleted": 2
+      },
+      {
+        "path": "runtime/c/test_decoder_train.c",
+        "added": 957,
+        "deleted": 7
+      },
+      {
+        "path": "tools/perf/gemplus_baseline.py",
+        "added": 21,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/README.md",
+        "added": 4,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-attn.json",
+        "added": 6,
+        "deleted": 6
+      },
+      {
+        "path": "tools/testing/faults/ndt-attnfma.json",
+        "added": 131,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-bf16.json",
+        "added": 133,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-fma.json",
+        "added": 5,
+        "deleted": 5
+      },
+      {
+        "path": "tools/testing/faults/ndt-fuse.json",
+        "added": 4,
+        "deleted": 4
+      },
+      {
+        "path": "tools/testing/faults/ndt-kblock.json",
+        "added": 2,
+        "deleted": 2
+      },
+      {
+        "path": "tools/testing/faults/ndt-lanes.json",
+        "added": 2,
+        "deleted": 2
+      },
+      {
+        "path": "tools/testing/faults/ndt-panels.json",
+        "added": 257,
+        "deleted": 0
+      },
+      {
+        "path": "tools/testing/faults/ndt-perf.json",
+        "added": 2,
+        "deleted": 2
+      },
+      {
+        "path": "tools/testing/faults/ndt-threads.json",
+        "added": 2,
+        "deleted": 2
+      },
+      {
+        "path": "tools/testing/faults/ndt-update.json",
+        "added": 109,
+        "deleted": 0
+      }
+    ]
+  }
+}

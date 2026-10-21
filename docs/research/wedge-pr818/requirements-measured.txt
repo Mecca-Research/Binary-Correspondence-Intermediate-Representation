@@ -1,0 +1,7 @@
+numpy==2.3.5
+pyarrow==26.0.0
+matplotlib==3.10.8
+pillow==12.3.0
+safetensors==0.8.0
+# Independent reference, installed using the official PyTorch CPU index:
+torch==2.14.1+cpu
