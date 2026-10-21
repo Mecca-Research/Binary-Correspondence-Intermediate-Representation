@@ -46,7 +46,9 @@
  * start + duration <= makespan; claim ids unique; lifetimes with ascending RIDs, a
  * power-of-two alignment the offset honors, size >= 1, first_phase <= last_phase,
  * last_tick > first_tick, and no two lifetimes of one bank live at once at overlapping
- * addresses (the alias law by bytes, BCIR_ERR_PLAN); moves with legal kind/coherence codes,
+ * addresses (the alias law by bytes, BCIR_ERR_PLAN: pairwise without scratch, swept in
+ * O(n log n) over scratch a caller lends -- bcir_ep_verify_lent, ALIAS-SWEEP -- the verdict the
+ * same); moves with legal kind/coherence codes,
  * size >= 1, two different banks unless the edge is a remat, and a writeback that is neither
  * compressed nor a remat; on v3 the move laws below (BCIR_EP_MOVE_HAS_*); an ascending
  * generation vector; the declared records consume the body exactly (BCIR_ERR_TRAILING).
@@ -208,6 +210,20 @@ BCIR_NODISCARD bcir_status bcir_ep_validate(const uint8_t *BCIR_RESTRICT data, s
  * undeclared bytes before the CRC. Mirrors bcir/abi/execution_plan_abi.py::validate_plan. */
 BCIR_NODISCARD bcir_status bcir_ep_verify(const uint8_t *BCIR_RESTRICT data, size_t len);
 
+/* ALIAS-SWEEP: the scratch the alias law's sweep takes for a plan of `n_lifetimes` lifetimes --
+ * BCIR_EP_SWEEP_BYTES_PER_LIFETIME a lifetime and BCIR_EP_SWEEP_BYTES_FIXED -- or 0 when that
+ * overflows a size_t. */
+#define BCIR_EP_SWEEP_BYTES_PER_LIFETIME 62u
+#define BCIR_EP_SWEEP_BYTES_FIXED 4u
+BCIR_NODISCARD size_t bcir_ep_sweep_bytes(uint32_t n_lifetimes);
+
+/* bcir_ep_verify, the alias law judged by a sweep (ALIAS-SWEEP) when `scratch` -- any alignment,
+ * apart from the plan, its bytes the walk's -- holds bcir_ep_sweep_bytes(n_lifetimes): O(n log n)
+ * in the lifetimes where the pairwise law is quadratic, and the status bcir_ep_verify's on every
+ * input. Scratch that is short, or none, judges the law pairwise. */
+BCIR_NODISCARD bcir_status bcir_ep_verify_lent(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                               void *scratch, size_t scratch_len);
+
 /* The plan's name (the pack's `source_plan` must equal it); validates first. */
 BCIR_NODISCARD const char *bcir_ep_source_plan(const uint8_t *BCIR_RESTRICT data, size_t len,
                                                uint16_t *BCIR_RESTRICT out_len);
@@ -265,12 +281,15 @@ BCIR_NODISCARD bcir_status bcir_ep_check_pack_lifetimes(const uint8_t *BCIR_REST
  * before the lifetimes (as bcir_ep_for_each_step's does), both with `ctx`; either may be NULL.
  * PX-3b-2's lowering reads each step's realization -- a measured one runs an alternative -- and
  * its placement in the one walk. The status is bcir_ep_check_pack's for every input, and what the
- * callbacks saw is the caller's to discard unless it is BCIR_OK. */
+ * callbacks saw is the caller's to discard unless it is BCIR_OK. `scratch` (`scratch_len` bytes,
+ * as bcir_ep_verify_lent takes it; NULL lends none) judges the plan's alias law by the sweep, the
+ * status and the lifetimes handed over the same either way. */
 BCIR_NODISCARD bcir_status bcir_ep_check_pack_walk(const uint8_t *BCIR_RESTRICT plan,
                                                    size_t plan_len,
                                                    const uint8_t *BCIR_RESTRICT pack,
                                                    size_t pack_len, bcir_ep_step_fn step,
-                                                   bcir_ep_lifetime_fn lifetime, void *ctx);
+                                                   bcir_ep_lifetime_fn lifetime, void *ctx,
+                                                   void *scratch, size_t scratch_len);
 
 #ifdef __cplusplus
 }  /* extern "C" */

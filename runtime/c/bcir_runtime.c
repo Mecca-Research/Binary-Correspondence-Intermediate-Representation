@@ -828,21 +828,249 @@ static void ep_read_lifetime(cur *c, uint16_t version, bcir_ep_lifetime_view *v)
   }
 }
 
-/* The alias law by bytes: does any lifetime before `before` share `v`'s bank, live at the
- * same time (half-open ticks) and overlap it in address? Re-walks the validated prefix. */
-static int ep_lifetime_aliases_before(const uint8_t *data, size_t body_len, size_t start,
-                                      uint32_t before, uint16_t version,
-                                      const bcir_ep_lifetime_view *v) {
+/* A lifetime's own laws, in the walk's order: the record read whole, RIDs ascending, a bank and
+ * bytes, a power-of-two alignment its offset keeps, no interval past the 64-bit line, phases and
+ * ticks in order. */
+static bcir_status ep_lifetime_own_laws(const cur *c, const bcir_ep_lifetime_view *v,
+                                        int have_prev, uint32_t prev) {
+  if (c->err) return c_status(c);
+  if (have_prev && v->rid <= prev) return BCIR_ERR_PLAN;
+  if (v->bank_len == 0u || v->size == 0u) return BCIR_ERR_PLAN;
+  if (v->alignment == 0u || (v->alignment & (v->alignment - 1u)) != 0u) return BCIR_ERR_PLAN;
+  if ((v->offset & ((uint64_t)v->alignment - 1u)) != 0u) return BCIR_ERR_PLAN;
+  if (v->offset > UINT64_MAX - v->size) return BCIR_ERR_OVERFLOW;
+  if (v->last_phase < v->first_phase) return BCIR_ERR_PLAN;
+  if (v->last_tick <= v->first_tick) return BCIR_ERR_PLAN;
+  return BCIR_OK;
+}
+
+/* The alias law by bytes: two lifetimes of one bank live at once (half-open ticks) on
+ * overlapping addresses. */
+static int ep_lifetimes_alias(const bcir_ep_lifetime_view *a, const bcir_ep_lifetime_view *b) {
+  return str_eq(a->bank, a->bank_len, b->bank, b->bank_len) &&
+         a->first_tick < b->last_tick && b->first_tick < a->last_tick &&
+         a->offset < b->offset + b->size && b->offset < a->offset + a->size;
+}
+
+/* The first of the first `k` lifetimes that aliases an earlier one (k when none does), with no
+ * scratch: each against every earlier one, re-walking the validated prefix -- quadratic. */
+static uint32_t ep_first_alias_rewalk(const uint8_t *data, size_t body_len, size_t start,
+                                      uint32_t k, uint16_t version) {
   cur c; c.d = data; c.len = body_len; c.pos = start; c.err = 0;
-  for (uint32_t i = 0; i < before && !c.err; i++) {
-    bcir_ep_lifetime_view prior;
-    ep_read_lifetime(&c, version, &prior);
-    if (c.err) return 0;
-    if (!str_eq(prior.bank, prior.bank_len, v->bank, v->bank_len)) continue;
-    if (!(prior.first_tick < v->last_tick && v->first_tick < prior.last_tick)) continue;
-    if (prior.offset < v->offset + v->size && v->offset < prior.offset + prior.size) return 1;
+  for (uint32_t i = 0; i < k; i++) {
+    bcir_ep_lifetime_view v;
+    cur p; p.d = data; p.len = body_len; p.pos = start; p.err = 0;
+    ep_read_lifetime(&c, version, &v);
+    for (uint32_t j = 0; j < i; j++) {
+      bcir_ep_lifetime_view prior;
+      ep_read_lifetime(&p, version, &prior);
+      if (ep_lifetimes_alias(&prior, &v)) return i;
+    }
   }
-  return 0;
+  return k;
+}
+
+/* ALIAS-SWEEP: the same first record in O(n log n) over caller-lent scratch.
+ *
+ * A sweep decides whether a prefix [0, p) of the records holds an aliasing pair. It visits the
+ * records' ticks in order -- at one tick the ends before the starts, the intervals being
+ * half-open -- keeping the live records ranked by (bank, offset, index). Until a pair is found
+ * the live records of one bank lie pairwise apart in bytes, so a record that starts aliases a
+ * live one only if it aliases the live record ranked just below it or just above it: two looks a
+ * start, each O(log n) in a Fenwick tree over the ranks. The prefixes are monotone (a pair in
+ * [0, p) is one in [0, p + 1)), so the first aliasing record is a binary search of sweeps, run
+ * only once the whole is known to hold a pair: a plan the law admits costs one sweep.
+ *
+ * The scratch is bytes (little-endian, any alignment): per lifetime 42 bytes of fields -- its
+ * offset, end, first and last tick and the position and length of its bank's octets in the plan
+ * -- and five u32 (three orders: by key, by first tick, by last tick; its rank; a node of the
+ * tree), and one u32 more, the tree's unused node 0: BCIR_EP_SWEEP_BYTES_PER_LIFETIME a lifetime
+ * and BCIR_EP_SWEEP_BYTES_FIXED. */
+#define EP_SW_FIELDS 42u
+
+size_t bcir_ep_sweep_bytes(uint32_t n_lifetimes) {
+  /* a u32 fits a size_t, so the count is exact; the product overflows only where size_t has 32
+   * bits (a count past (2^32 - 5) / 62), and then names no scratch */
+  const size_t n = (size_t)n_lifetimes;
+  if (n > (SIZE_MAX - BCIR_EP_SWEEP_BYTES_FIXED) / BCIR_EP_SWEEP_BYTES_PER_LIFETIME) return 0;
+  return n * BCIR_EP_SWEEP_BYTES_PER_LIFETIME + BCIR_EP_SWEEP_BYTES_FIXED;
+}
+
+static void sw_put16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+static void sw_put32(uint8_t *p, uint32_t v) {
+  p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
+}
+static void sw_put64(uint8_t *p, uint64_t v) {
+  sw_put32(p, (uint32_t)v);
+  sw_put32(p + 4, (uint32_t)(v >> 32));
+}
+
+typedef struct {
+  const uint8_t *data;   /* the plan: the banks' octets */
+  uint8_t *f;            /* the fields, EP_SW_FIELDS bytes a record */
+  uint8_t *by_key, *by_first, *by_last, *rank;  /* u32 arrays */
+  uint8_t *tree;         /* u32 nodes 0 .. n */
+  uint32_t n;            /* the records the sweep reads: those before the first breaking its own law */
+} ep_sweep;
+
+static uint32_t sw_at(const uint8_t *arr, size_t i) { return rd32(arr + 4u * i); }
+static void sw_set(uint8_t *arr, size_t i, uint32_t v) { sw_put32(arr + 4u * i, v); }
+static const uint8_t *sw_rec(const ep_sweep *s, uint32_t i) { return s->f + (size_t)i * EP_SW_FIELDS; }
+static uint64_t sw_off(const ep_sweep *s, uint32_t i) { return rd64(sw_rec(s, i)); }
+static uint64_t sw_end(const ep_sweep *s, uint32_t i) { return rd64(sw_rec(s, i) + 8); }
+static uint64_t sw_first(const ep_sweep *s, uint32_t i) { return rd64(sw_rec(s, i) + 16); }
+static uint64_t sw_last(const ep_sweep *s, uint32_t i) { return rd64(sw_rec(s, i) + 24); }
+static const char *sw_bank(const ep_sweep *s, uint32_t i, uint16_t *len) {
+  *len = rd16(sw_rec(s, i) + 40);
+  return (const char *)(s->data + (size_t)rd64(sw_rec(s, i) + 32));
+}
+
+/* Carve the lent scratch for `n_lifetimes` records; 0 when none is lent or it is short. */
+static int ep_sweep_lend(ep_sweep *s, uint8_t *scratch, size_t scratch_len, const uint8_t *data,
+                         uint32_t n_lifetimes) {
+  size_t need = bcir_ep_sweep_bytes(n_lifetimes), n = n_lifetimes;
+  if (!scratch || need == 0u || scratch_len < need) return 0;
+  s->data = data;
+  s->f = scratch;
+  s->by_key = s->f + n * EP_SW_FIELDS;
+  s->by_first = s->by_key + 4u * n;
+  s->by_last = s->by_first + 4u * n;
+  s->rank = s->by_last + 4u * n;
+  s->tree = s->rank + 4u * n;
+  s->n = 0;
+  return 1;
+}
+
+/* Record `i`'s fields, as the walk read it (its own laws kept: its end does not wrap). */
+static void ep_sweep_put(ep_sweep *s, uint32_t i, const bcir_ep_lifetime_view *v) {
+  uint8_t *p = s->f + (size_t)i * EP_SW_FIELDS;
+  sw_put64(p, v->offset);
+  sw_put64(p + 8, v->offset + v->size);
+  sw_put64(p + 16, v->first_tick);
+  sw_put64(p + 24, v->last_tick);
+  sw_put64(p + 32, (uint64_t)((const uint8_t *)v->bank - s->data));
+  sw_put16(p + 40, v->bank_len);
+}
+
+/* The three orders, each total (the index last): -1, 0 or 1 as record a sorts before, with or
+ * after b. 0 by key (the bank's octets in shortlex, then the offset), 1 by first tick, 2 by last. */
+static int sw_cmp_u64(uint64_t a, uint64_t b) { return a < b ? -1 : a > b ? 1 : 0; }
+static int sw_cmp(const ep_sweep *s, int order, uint32_t a, uint32_t b) {
+  int r = 0;
+  if (order == 0) {
+    uint16_t la, lb;
+    const char *ba = sw_bank(s, a, &la), *bb = sw_bank(s, b, &lb);
+    if (la != lb) return la < lb ? -1 : 1;
+    for (uint16_t i = 0; i < la && !r; i++)
+      if (ba[i] != bb[i]) r = (uint8_t)ba[i] < (uint8_t)bb[i] ? -1 : 1;
+    if (!r) r = sw_cmp_u64(sw_off(s, a), sw_off(s, b));
+  } else {
+    r = order == 1 ? sw_cmp_u64(sw_first(s, a), sw_first(s, b))
+                   : sw_cmp_u64(sw_last(s, a), sw_last(s, b));
+  }
+  return r ? r : sw_cmp_u64(a, b);
+}
+
+/* Heapsort of the record indices 0 .. n by `order`: in place, no recursion, O(n log n) on every
+ * input. */
+static void sw_sift(const ep_sweep *s, uint8_t *arr, int order, size_t root, size_t n) {
+  for (;;) {
+    size_t child = 2u * root + 1u;
+    uint32_t top;
+    if (child >= n) return;
+    if (child + 1u < n && sw_cmp(s, order, sw_at(arr, child), sw_at(arr, child + 1u)) < 0)
+      child++;
+    if (sw_cmp(s, order, sw_at(arr, root), sw_at(arr, child)) >= 0) return;
+    top = sw_at(arr, root);
+    sw_set(arr, root, sw_at(arr, child));
+    sw_set(arr, child, top);
+    root = child;
+  }
+}
+static void sw_sort(const ep_sweep *s, uint8_t *arr, int order) {
+  size_t n = s->n, i;
+  for (i = 0; i < n; i++) sw_set(arr, i, (uint32_t)i);
+  for (i = n / 2u; i-- > 0;) sw_sift(s, arr, order, i, n);
+  for (i = n; i-- > 1;) {
+    uint32_t top = sw_at(arr, 0);
+    sw_set(arr, 0, sw_at(arr, i));
+    sw_set(arr, i, top);
+    sw_sift(s, arr, order, 0, i);
+  }
+}
+
+/* The Fenwick tree over the ranks: node i (1 .. n) counts the live ranks (i - lowbit(i), i]. */
+static void sw_tree_add(ep_sweep *s, uint32_t rank, uint32_t delta) {  /* delta 1 or UINT32_MAX */
+  for (size_t i = (size_t)rank + 1u; i <= s->n; i += i & (~i + 1u))
+    sw_set(s->tree, i, sw_at(s->tree, i) + delta);
+}
+static uint32_t sw_tree_below(const ep_sweep *s, uint32_t rank) {  /* the live ranks below `rank` */
+  uint32_t c = 0;
+  for (size_t i = rank; i > 0; i -= i & (~i + 1u)) c += sw_at(s->tree, i);
+  return c;
+}
+static uint32_t sw_tree_kth(const ep_sweep *s, uint32_t k) {       /* the k-th live rank, 1-based */
+  size_t pos = 0, step = 1;
+  while (step <= s->n / 2u) step <<= 1;
+  for (; step; step >>= 1)
+    if (pos + step <= s->n && sw_at(s->tree, pos + step) < k) {
+      pos += step;
+      k -= sw_at(s->tree, pos);
+    }
+  return (uint32_t)pos;
+}
+
+/* Do records a and b, both live, alias: one bank and overlapping bytes. */
+static int sw_alias(const ep_sweep *s, uint32_t a, uint32_t b) {
+  uint16_t la, lb;
+  const char *ba = sw_bank(s, a, &la), *bb = sw_bank(s, b, &lb);
+  return str_eq(ba, la, bb, lb) && sw_off(s, a) < sw_end(s, b) && sw_off(s, b) < sw_end(s, a);
+}
+
+/* Do records [0, p) hold an aliasing pair? */
+static int sw_prefix_aliases(ep_sweep *s, uint32_t p) {
+  size_t at_start = 0, at_end = 0, i;
+  uint32_t live = 0;
+  for (i = 0; i <= s->n; i++) sw_set(s->tree, i, 0);
+  for (;;) {
+    uint32_t x, r, below;
+    while (at_start < s->n && sw_at(s->by_first, at_start) >= p) at_start++;
+    while (at_end < s->n && sw_at(s->by_last, at_end) >= p) at_end++;
+    if (at_start == s->n) return 0;                 /* every record started: no pair */
+    x = sw_at(s->by_first, at_start);
+    if (at_end < s->n && sw_last(s, sw_at(s->by_last, at_end)) <= sw_first(s, x)) {
+      sw_tree_add(s, sw_at(s->rank, sw_at(s->by_last, at_end)), UINT32_MAX);  /* an end first */
+      live--;
+      at_end++;
+      continue;
+    }
+    r = sw_at(s->rank, x);
+    below = sw_tree_below(s, r);
+    if (below && sw_alias(s, x, sw_at(s->by_key, sw_tree_kth(s, below)))) return 1;
+    if (below < live && sw_alias(s, x, sw_at(s->by_key, sw_tree_kth(s, below + 1u)))) return 1;
+    sw_tree_add(s, r, 1u);
+    live++;
+    at_start++;
+  }
+}
+
+/* The first of the sweep's n records that aliases an earlier one, n when none does. */
+static uint32_t ep_sweep_first_alias(ep_sweep *s) {
+  uint32_t lo, hi;
+  size_t i;
+  if (s->n < 2u) return s->n;
+  sw_sort(s, s->by_key, 0);
+  sw_sort(s, s->by_first, 1);
+  sw_sort(s, s->by_last, 2);
+  for (i = 0; i < s->n; i++) sw_set(s->rank, sw_at(s->by_key, i), (uint32_t)i);
+  if (!sw_prefix_aliases(s, s->n)) return s->n;
+  lo = 2u;                                          /* [0, lo - 1) holds no pair, [0, hi) one */
+  hi = s->n;
+  while (lo < hi) {
+    uint32_t mid = lo + (hi - lo) / 2u;
+    if (sw_prefix_aliases(s, mid)) hi = mid; else lo = mid + 1u;
+  }
+  return lo - 1u;
 }
 
 /* The placement slot of step `cid`: found in the validated step prefix (no heap). */
@@ -930,6 +1158,7 @@ typedef struct ep_callbacks {
   bcir_ep_lifetime_fn lifetime; void *lifetime_ctx;
   bcir_ep_move_fn move; void *move_ctx;
   bcir_gen_fn gen; void *gen_ctx;
+  uint8_t *scratch; size_t scratch_len;  /* ALIAS-SWEEP: the alias law's sweep, when lent */
 } ep_callbacks;
 
 /* The one walk: validate, then every record family under the wire laws, invoking the
@@ -943,7 +1172,7 @@ static bcir_status ep_walk(const uint8_t *BCIR_RESTRICT data, size_t len,
   {
     const size_t body_len = len - 4u;
     cur c; c.d = data; c.len = body_len; c.pos = (size_t)BCIR_EP_HEADER_SIZE; c.err = 0;
-    int invoke_step = 1, invoke_lt = 1, invoke_mv = 1, invoke_gen = 1;
+    int invoke_step = 1, invoke_mv = 1, invoke_gen = 1;
     size_t steps_start;
     uint64_t claim_max = 0;           /* the greatest step claim id so far */
     uint32_t i;
@@ -981,24 +1210,42 @@ static bcir_status ep_walk(const uint8_t *BCIR_RESTRICT data, size_t len,
     }
     size_t lifetimes_start = c.pos;
     {
-      uint32_t prev = 0; int have_prev = 0;
-      for (i = 0; i < hdr.n_lifetimes; i++) {
+      /* each record's own laws first, to the first that breaks one (`own` its status), then the
+       * alias law over the records before it: the first that aliases an earlier one is refused
+       * (BCIR_ERR_PLAN) ahead of any later record's own law -- the verdict of one walk checking
+       * both record by record. The lifetime callback sees the records before that verdict, in
+       * order, as such a walk hands them over. */
+      uint32_t prev = 0, k, first;
+      int have_prev = 0;
+      bcir_status own = BCIR_OK;
+      ep_sweep sw;
+      const int lent = cb && ep_sweep_lend(&sw, cb->scratch, cb->scratch_len, data,
+                                           hdr.n_lifetimes);
+      for (k = 0; k < hdr.n_lifetimes; k++) {
         bcir_ep_lifetime_view v;
         ep_read_lifetime(&c, hdr.version, &v);
-        if (c.err) return c_status(&c);
-        if (have_prev && v.rid <= prev) return BCIR_ERR_PLAN;
+        own = ep_lifetime_own_laws(&c, &v, have_prev, prev);
+        if (own != BCIR_OK) break;
         prev = v.rid; have_prev = 1;
-        if (v.bank_len == 0u || v.size == 0u) return BCIR_ERR_PLAN;
-        if (v.alignment == 0u || (v.alignment & (v.alignment - 1u)) != 0u) return BCIR_ERR_PLAN;
-        if ((v.offset & ((uint64_t)v.alignment - 1u)) != 0u) return BCIR_ERR_PLAN;
-        if (v.offset > UINT64_MAX - v.size) return BCIR_ERR_OVERFLOW;
-        if (v.last_phase < v.first_phase) return BCIR_ERR_PLAN;
-        if (v.last_tick <= v.first_tick) return BCIR_ERR_PLAN;
-        /* no two lifetimes of one bank live at once at overlapping addresses */
-        if (ep_lifetime_aliases_before(data, body_len, lifetimes_start, i, hdr.version, &v))
-          return BCIR_ERR_PLAN;
-        if (invoke_lt && cb && cb->lifetime && cb->lifetime(&v, cb->lifetime_ctx)) invoke_lt = 0;
+        if (lent) ep_sweep_put(&sw, k, &v);
       }
+      /* no two lifetimes of one bank live at once at overlapping addresses */
+      if (lent) {
+        sw.n = k;
+        first = ep_sweep_first_alias(&sw);
+      } else {
+        first = ep_first_alias_rewalk(data, body_len, lifetimes_start, k, hdr.version);
+      }
+      if (cb && cb->lifetime) {
+        cur r; r.d = data; r.len = body_len; r.pos = lifetimes_start; r.err = 0;
+        for (i = 0; i < first; i++) {
+          bcir_ep_lifetime_view v;
+          ep_read_lifetime(&r, hdr.version, &v);
+          if (cb->lifetime(&v, cb->lifetime_ctx)) break;
+        }
+      }
+      if (first < k) return BCIR_ERR_PLAN;
+      if (own != BCIR_OK) return own;
     }
     for (i = 0; i < hdr.n_moves; i++) {
       bcir_ep_move_view v;
@@ -1067,6 +1314,13 @@ bcir_status bcir_ep_verify(const uint8_t *BCIR_RESTRICT data, size_t len) {
   return ep_walk(data, len, 0);
 }
 
+bcir_status bcir_ep_verify_lent(const uint8_t *BCIR_RESTRICT data, size_t len, void *scratch,
+                                size_t scratch_len) {
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  cb.scratch = (uint8_t *)scratch; cb.scratch_len = scratch_len;
+  return ep_walk(data, len, &cb);
+}
+
 const char *bcir_ep_source_plan(const uint8_t *BCIR_RESTRICT data, size_t len,
                                 uint16_t *BCIR_RESTRICT out_len) {
   cur c;
@@ -1083,28 +1337,28 @@ const char *bcir_ep_source_plan(const uint8_t *BCIR_RESTRICT data, size_t len,
 
 bcir_status bcir_ep_for_each_step(const uint8_t *BCIR_RESTRICT data, size_t len,
                                   bcir_ep_step_fn fn, void *ctx) {
-  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   cb.step = fn; cb.step_ctx = ctx;
   return ep_walk(data, len, &cb);
 }
 
 bcir_status bcir_ep_for_each_lifetime(const uint8_t *BCIR_RESTRICT data, size_t len,
                                       bcir_ep_lifetime_fn fn, void *ctx) {
-  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   cb.lifetime = fn; cb.lifetime_ctx = ctx;
   return ep_walk(data, len, &cb);
 }
 
 bcir_status bcir_ep_for_each_move(const uint8_t *BCIR_RESTRICT data, size_t len,
                                   bcir_ep_move_fn fn, void *ctx) {
-  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   cb.move = fn; cb.move_ctx = ctx;
   return ep_walk(data, len, &cb);
 }
 
 bcir_status bcir_ep_for_each_generation(const uint8_t *BCIR_RESTRICT data, size_t len,
                                         bcir_gen_fn fn, void *ctx) {
-  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   cb.gen = fn; cb.gen_ctx = ctx;
   return ep_walk(data, len, &cb);
 }
@@ -1253,7 +1507,7 @@ bcir_status bcir_ep_check_pack(const uint8_t *BCIR_RESTRICT plan, size_t plan_le
 bcir_status bcir_ep_check_pack_lifetimes(const uint8_t *BCIR_RESTRICT plan, size_t plan_len,
                                          const uint8_t *BCIR_RESTRICT pack, size_t pack_len,
                                          bcir_ep_lifetime_fn fn, void *ctx) {
-  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   cb.lifetime = fn; cb.lifetime_ctx = ctx;
   return ep_check_pack(plan, plan_len, pack, pack_len, &cb);
 }
@@ -1261,9 +1515,10 @@ bcir_status bcir_ep_check_pack_lifetimes(const uint8_t *BCIR_RESTRICT plan, size
 bcir_status bcir_ep_check_pack_walk(const uint8_t *BCIR_RESTRICT plan, size_t plan_len,
                                     const uint8_t *BCIR_RESTRICT pack, size_t pack_len,
                                     bcir_ep_step_fn step, bcir_ep_lifetime_fn lifetime,
-                                    void *ctx) {
-  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+                                    void *ctx, void *scratch, size_t scratch_len) {
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   cb.step = step; cb.step_ctx = ctx;
   cb.lifetime = lifetime; cb.lifetime_ctx = ctx;
+  cb.scratch = (uint8_t *)scratch; cb.scratch_len = scratch_len;
   return ep_check_pack(plan, plan_len, pack, pack_len, &cb);
 }

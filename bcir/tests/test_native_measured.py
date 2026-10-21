@@ -244,7 +244,9 @@ def test_the_check_walk_hands_over_every_step_and_lifetime():
     """`bcir_ep_check_pack_walk` -- the lowering's one walk of the plan's laws -- returns
     `bcir_ep_check_pack`'s status on the intact pair and on every pack and plan the lowering's
     refusals name, and on an admitted pair hands over exactly the steps `bcir_ep_for_each_step`
-    and the lifetimes `bcir_ep_for_each_lifetime` walk, in their order, steps first."""
+    and the lifetimes `bcir_ep_for_each_lifetime` walk, in their order, steps first; and with its
+    alias law swept over scratch the caller lends (ALIAS-SWEEP, `bcir_ep_sweep_bytes` of it) the
+    same status and the same steps and lifetimes, on every pair."""
     if _CC is None:
         return
     from bcir.tests.test_native_run_pack import _refusals
@@ -274,8 +276,11 @@ def test_the_check_walk_hands_over_every_step_and_lifetime():
             check.restype = ct.c_int
             walk = lib.bcir_ep_check_pack_walk
             walk.argtypes = [ct.c_char_p, ct.c_size_t, ct.c_char_p, ct.c_size_t, hand, hand,
-                             ct.c_void_p]  # fmt: skip
+                             ct.c_void_p, ct.c_void_p, ct.c_size_t]  # fmt: skip
             walk.restype = ct.c_int
+            sweep_bytes = lib.bcir_ep_sweep_bytes
+            sweep_bytes.argtypes = [ct.c_uint32]
+            sweep_bytes.restype = ct.c_size_t
             steps = lib.bcir_ep_for_each_step
             steps.argtypes = [ct.c_char_p, ct.c_size_t, hand, ct.c_void_p]
             steps.restype = ct.c_int
@@ -290,8 +295,16 @@ def test_the_check_walk_hands_over_every_step_and_lifetime():
             for name, pk, pl, verdict in pairs:
                 handed: list = []
                 status = walk(pl, len(pl), pk, len(pk), collector(handed, "step"),
-                              collector(handed, "life"), None)  # fmt: skip
+                              collector(handed, "life"), None, None, 0)  # fmt: skip
                 assert status == check(pl, len(pl), pk, len(pk)) == verdict, (name, status)
+                # the same walk, its alias law swept over lent scratch: the same verdict and hand-over
+                declared = int.from_bytes(pl[24:28], "little") if len(pl) >= 28 else 0
+                need = sweep_bytes(declared)
+                room = (ct.c_uint8 * max(1, need))() if need <= 1 << 26 else None
+                lent: list = []
+                status_lent = walk(pl, len(pl), pk, len(pk), collector(lent, "step"),
+                                   collector(lent, "life"), None, room, need if room else 0)  # fmt: skip
+                assert (status_lent, lent) == (status, handed), name
                 if status:
                     refused += 1
                     continue

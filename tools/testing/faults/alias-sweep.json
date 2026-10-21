@@ -1,0 +1,66 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_execution_plan:test_the_alias_laws_sweep_names_the_pairwise_laws_first_alias_on_every_draw",
+    "bcir.tests.test_execution_plan:test_the_alias_laws_sweep_grows_with_the_lifetimes_not_their_square"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_alias_laws_sweep_names_the_pairwise_laws_first_alias_on_every_draw",
+      "label": "AP1 the ends after the starts at one tick",
+      "new": "        while at < len(ends) and rows[ends[at]].last_tick < row.first_tick:\n",
+      "old": "        while at < len(ends) and rows[ends[at]].last_tick <= row.first_tick:\n",
+      "path": "bcir/abi/execution_plan_abi.py"
+    },
+    {
+      "expects": "test_the_alias_laws_sweep_names_the_pairwise_laws_first_alias_on_every_draw",
+      "label": "AP2 only the live neighbour below looked at",
+      "new": "        for k in (below,):  # the live rank just below x's, then just above it\n",
+      "old": "        for k in (below, below + 1):  # the live rank just below x's, then just above it\n",
+      "path": "bcir/abi/execution_plan_abi.py"
+    },
+    {
+      "expects": "test_the_alias_laws_sweep_names_the_pairwise_laws_first_alias_on_every_draw",
+      "label": "AP3 only the live neighbour above looked at",
+      "new": "        for k in (below + 1,):  # the live rank just below x's, then just above it\n",
+      "old": "        for k in (below, below + 1):  # the live rank just below x's, then just above it\n",
+      "path": "bcir/abi/execution_plan_abi.py"
+    },
+    {
+      "expects": "test_the_alias_laws_sweep_names_the_pairwise_laws_first_alias_on_every_draw",
+      "label": "AP4 the live rows ranked without their bank",
+      "new": "    by_key = sorted(range(n), key=lambda i: (rows[i].offset, i))\n",
+      "old": "    by_key = sorted(range(n), key=lambda i: (rows[i].bank, rows[i].offset, i))\n",
+      "path": "bcir/abi/execution_plan_abi.py"
+    },
+    {
+      "expects": "test_the_alias_laws_sweep_names_the_pairwise_laws_first_alias_on_every_draw",
+      "label": "AP5 the first aliasing lifetime one past",
+      "new": "            lo = mid + 1\n    return lo\n",
+      "old": "            lo = mid + 1\n    return lo - 1\n",
+      "path": "bcir/abi/execution_plan_abi.py"
+    },
+    {
+      "expects": "test_the_alias_laws_sweep_names_the_pairwise_laws_first_alias_on_every_draw",
+      "label": "AP6 an ended row left in the tree",
+      "new": "            while j <= n:\n                tree[j] -= 0\n",
+      "old": "            while j <= n:\n                tree[j] -= 1\n",
+      "path": "bcir/abi/execution_plan_abi.py"
+    },
+    {
+      "expects": "test_the_alias_laws_sweep_names_the_pairwise_laws_first_alias_on_every_draw",
+      "label": "AP7 the message naming the last earlier alias",
+      "new": "        b = next(r for r in reversed(rows[:first]) if lifetimes_alias(r, a))\n",
+      "old": "        b = next(r for r in rows[:first] if lifetimes_alias(r, a))\n",
+      "path": "bcir/abi/execution_plan_abi.py"
+    },
+    {
+      "expects": "test_the_alias_laws_sweep_grows_with_the_lifetimes_not_their_square",
+      "label": "AP8 the pairwise law kept (no sweep)",
+      "new": "    order = (by_key, by_first, by_last, rank)\n    if not any(lifetimes_alias(rows[j], rows[i]) for i in range(n) for j in range(i)):\n        return n\n",
+      "old": "    order = (by_key, by_first, by_last, rank)\n    if not _prefix_aliases(rows, n, order):\n        return n\n",
+      "path": "bcir/abi/execution_plan_abi.py"
+    }
+  ]
+}

@@ -481,15 +481,20 @@ static int dp_on_item(const bcir_exec_item *it, void *vc) {
 
 static size_t dp_round(size_t x) { return (x + 7u) & ~(size_t)7u; }
 
-/* the claim table, the lifetime table, the segment order and the executor's two buffers */
+/* the claim table, the lifetime table, the segment order and the executor's two buffers -- the
+ * last two lent first to the plan walk's alias law (ALIAS-SWEEP: its sweep's scratch), which is
+ * done with them before the executor takes them, so they hold the larger of the two */
 static int dp_parts(size_t n, size_t nl, size_t part[5], size_t *total) {
-  size_t i;
+  size_t i, sweep;
   if (!dp_size_mul(n, sizeof(dp_claim), &part[0]) ||
       !dp_size_mul(nl, sizeof(dp_life), &part[1]) ||
       !dp_size_mul(n, sizeof(uint32_t), &part[2]) ||
       !dp_size_mul(n, sizeof(bcir_exec_item), &part[3]) ||
       !dp_size_mul(n, sizeof(bcir_phase_stat), &part[4]))
     return 0;
+  sweep = bcir_ep_sweep_bytes((uint32_t)nl);  /* nl: the plan header's u32 lifetime count */
+  if (sweep == 0u) return 0;
+  if (sweep > part[3] && sweep - part[3] > part[4]) part[4] = sweep - part[3];
   *total = 8u;
   for (i = 0; i < 5u; i++) {
     if (part[i] > SIZE_MAX - 7u) return 0;
@@ -610,10 +615,12 @@ int bcir_decoder_lower_pack(const bcir_decoder_state *s, const uint8_t *pack, si
   c.reduce = (s->contract & BCIR_DT_CONTRACT_REDUCE) != 0;
   c.provider = s->provider.mm != NULL;
   /* the two verified by their own laws, the plan's walk handing over its steps (PX-3b-2: their
-   * measured alternatives) and its lifetimes as it verifies them: one walk of the plan's laws (two
-   * quadratic in its records, no heap) where a check and two walks would take three. A status
-   * refuses ahead of any reason the steps or the lifetimes gave. */
-  st = bcir_ep_check_pack_walk(plan, plan_len, pack, pack_len, dp_on_step, dp_on_life, &c);
+   * measured alternatives) and its lifetimes as it verifies them: one walk of the plan's laws
+   * where a check and two walks would take three, its alias law swept over the executor's bytes
+   * (ALIAS-SWEEP), lent before the executor takes them. A status refuses ahead of any reason the
+   * steps or the lifetimes gave. */
+  st = bcir_ep_check_pack_walk(plan, plan_len, pack, pack_len, dp_on_step, dp_on_life, &c, at,
+                               part[3] + part[4]);
   if (st != BCIR_OK) {
     *why = (int)st;
     return BCIR_DT_INVALID;

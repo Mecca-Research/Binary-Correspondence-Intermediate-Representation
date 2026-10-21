@@ -3855,6 +3855,54 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: a gain. The row's tables are seeded and this host's one pick is not resolvable end
     to end (PX-3b-1), so the slice shows the prices reach the plan and the plan the C, not that a
     measured plan runs faster; a table prices only the host that measured it.
+  ALIAS-SWEEP (2026-10-21): the plan's alias law in O(n log n), every verdict the same.
+  - PX-2b left the alias law the one quadratic check of the plan walk: each lifetime against every
+    earlier one, re-walking the validated prefix with no heap -- more than half of a ten-step
+    lowering (the plan's and the pack's laws, the alias law among them, 36.5 of its 51.2 ms on the
+    PX-3b host), and on the Python codec 2.7 s at 8,000 lifetimes, growing with their square. Both
+    rails now judge it by a sweep. Visiting the lifetimes' ticks in order -- at one tick the ends
+    before the starts, the intervals being half-open -- keeps the live lifetimes ranked by (bank,
+    offset) in a Fenwick tree; until a pair is found the live lifetimes of one bank lie apart, so a
+    lifetime that starts aliases a live one only if it aliases one of its two neighbours. The
+    verdict names the first lifetime aliasing an earlier one, as the pairwise law did, refused ahead
+    of any later lifetime's own law: the prefixes are monotone, so that lifetime is a binary search
+    of sweeps, run only once the whole is known to hold a pair -- a plan the law admits costs one
+    sweep.
+  - The C twin sweeps over scratch the caller lends -- `bcir_ep_verify_lent`, and
+    `bcir_ep_check_pack_walk`'s new scratch arguments: 62 bytes a lifetime and 4
+    (`bcir_ep_sweep_bytes`), little-endian bytes at any alignment, no heap -- and judges the law
+    pairwise without it, `bcir_ep_verify` among them; the lowering lends its executor's bytes, which
+    the walk is done with before the executor takes them (`work` grows only where the sweep needs
+    more). The walk reads each record's own laws first, then the alias law over the records before
+    the first that breaks one, then hands its callback the records before the verdict -- the
+    lifetimes one walk checking both record by record would have handed over. The Python codec's
+    `first_alias` is the same sweep, and `validate_plan` names the same pair as before.
+  - Witnesses: the codec's sweep against the pairwise law on 3,000 crowded draws (equal ticks,
+    touching spans, three banks) and each draw moved apart, its message the pairwise law's, the
+    boundaries pinned; the C twin's lent and unlent verdicts and the codec's on 400 crowded plans, a
+    third with a lifetime breaking its own law, the lifetimes handed over with scratch and without
+    the same, no byte past the lent scratch written (canary bytes, an odd address); both rails' cost
+    n log n in the lifetimes (16x the lifetimes under 64x the time) and the lent verdict under a
+    quarter of the pairwise one's time at 32,000; the lowering's check walk handing over the same
+    steps and lifetimes with the executor's scratch, on every refusal of `test_native_run_pack`. The
+    StreamPack fuzz harness aborts where the lent verdict, or the lifetimes the lent walk hands
+    over, differ from the pairwise ones.
+  - Measured ([alias-sweep/](research/measurements/2026-10-21/alias-sweep/), the 9.84M comparison
+    decoder's packs, binary32, one thread, the PX-3b host): a ten-step lowering 51.2 -> 26.8 ms
+    (x1.91; the tree before by its own driver), twenty steps 149 -> 51.2 ms; the plan verifier at
+    ten steps 20.7 -> 1.5 ms lent (x13.9), at twenty 70.4 -> 2.8 (x25.2); the lowering's walk 22.4
+    -> 4.8 and 78.7 -> 9.5 ms, the rest of it the records' own laws and the pack's claim checks; the
+    codec's law 82.2 -> 6.2 and 312 -> 12.6 ms, and over GEM's reuse shape 2,712 -> 24.2 ms at 8,000
+    lifetimes, 111 ms at 32,000 (the pairwise law, about 43 s by its square, not run). The scratch:
+    104,536 bytes for a ten-step plan's 1,686 lifetimes.
+  - Fault sweeps: `alias-sweep.json` (AP1-AP8: the codec's sweep -- the order of ends and starts at
+    one tick, either neighbour unlooked-at, the rank without its bank, the first alias one past, an
+    ended row left live, the message's pair, the pairwise law kept), 8 of 8 caught, each by its own
+    witness; `alias-sweep-c.json` (AC1-AC10: the C twin's sweep, its tree and its k-th rank, the
+    scratch's size, the lent scratch never swept, the walk's hand-over), 10 of 10, every fault
+    compiling warning-free under GCC 13 and clang 18 and 23 (RED-VACUITY); `ep-walk.json`'s EW5 and
+    EW6, which the walk's new arguments moved, re-anchored, each keeping its defect, and the older
+    entries over the code ALIAS-SWEEP touched (EW4-EW6, ML5, PK33) re-swept, 5 of 5.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

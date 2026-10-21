@@ -14,7 +14,9 @@
  * plan.
  *
  * bcir_decoder_lower_pack verifies the two artifacts with their own verifiers -- bcir_ep_check_pack's
- * laws, in one walk of the plan that hands the lowering its lifetimes (bcir_ep_check_pack_lifetimes):
+ * laws, in one walk of the plan that hands the lowering its steps and lifetimes
+ * (bcir_ep_check_pack_walk, its alias law swept over `work`'s executor bytes before the executor
+ * takes them: ALIAS-SWEEP):
  * the pack's provenance and range laws; the plan's wire laws, among them the alias law -- no two
  * lifetimes of one bank live at once on overlapping bytes; the pack the plan's lowering, one claim
  * per step in step order; one generation vector -- then lowers each claim GEM's executor dispatches

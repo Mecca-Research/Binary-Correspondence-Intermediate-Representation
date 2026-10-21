@@ -235,9 +235,13 @@ returns the `array('Q')` that `run_program` runs as it is, and `run_pack` is the
 placement -- every transient elsewhere -- lowers to the same program at its places and trains the
 same bits. Lowering a pack in every call costs nothing this host resolves -- x1.0195 (95% interval
 0.997-1.042) under bf16 at four threads and x1.0037 under binary32, beside A/A controls of x0.9979 and
-x0.9923 -- a ten-step lowering takes 47-55 ms, about half of it the plan's alias law, the one check left
-quadratic, and a pack lowered once costs nothing per call
-([measurements](../research/measurements/2026-10-20/px2b/README.json)).
+x0.9923 -- a ten-step lowering takes 47-55 ms, and a pack lowered once costs nothing per call
+([measurements](../research/measurements/2026-10-20/px2b/README.json)). About half of those
+milliseconds were the plan's alias law, the one check PX-2b left quadratic; since ALIAS-SWEEP both
+rails judge it by a sweep in O(n log n) -- the C over scratch the lowering lends from its
+executor's bytes, every verdict the pairwise law's -- and the same ten-step lowering takes 26.8 ms
+where it took 51.2 on the PX-3b host
+([measurements](../research/measurements/2026-10-21/alias-sweep/README.json)).
 
 The choose row holds the planner's choices per site. Every choice the step's planner made was one
 boolean over the whole step; [`native_launch.choice_sites`](../../bcir/hosted/models/native_launch.py)

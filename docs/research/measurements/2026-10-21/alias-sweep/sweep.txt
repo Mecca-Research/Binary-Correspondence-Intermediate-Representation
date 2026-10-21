@@ -1,0 +1,13 @@
+{"steps": 1, "claims": 224, "values": 372} {"sp_validate": 0.111, "sp_verify_semantic": 0.154, "ep_validate": 0.08, "ep_verify": 1.194, "ep_check_pack": 1.946, "lower_pack": 4.639}
+{"steps": 2, "claims": 447, "values": 518} {"sp_validate": 0.22, "sp_verify_semantic": 0.299, "ep_validate": 0.126, "ep_verify": 2.348, "ep_check_pack": 3.011, "lower_pack": 7.353}
+{"steps": 5, "claims": 1116, "values": 956} {"sp_validate": 0.533, "sp_verify_semantic": 0.809, "ep_validate": 0.274, "ep_verify": 9.109, "ep_check_pack": 10.125, "lower_pack": 20.867}
+{"steps": 10, "claims": 2231, "values": 1686} {"sp_validate": 1.077, "sp_verify_semantic": 1.513, "ep_validate": 0.52, "ep_verify": 26.904, "ep_check_pack": 36.543, "lower_pack": 51.171}
+{"steps": 20, "claims": 4461, "values": 3146} {"sp_validate": 2.126, "sp_verify_semantic": 2.998, "ep_validate": 1.013, "ep_verify": 88.273, "ep_check_pack": 99.207, "lower_pack": 148.797}
+{"steps": 1, "claims": 224, "lifetimes": 372} {"ep_verify": 0.898, "ep_verify_lent": 0.216, "walk": 1.267, "walk_lent": 0.572, "lower_pack": 2.644, "py_pairwise": 3.65, "py_sweep": 0.841, "lower_pack_before": 4.639}
+{"steps": 2, "claims": 447, "lifetimes": 518} {"ep_verify": 1.695, "ep_verify_lent": 0.318, "walk": 2.429, "walk_lent": 0.96, "lower_pack": 5.407, "py_pairwise": 9.353, "py_sweep": 1.402, "lower_pack_before": 7.353}
+{"steps": 5, "claims": 1116, "lifetimes": 956} {"ep_verify": 6.371, "ep_verify_lent": 0.73, "walk": 7.339, "walk_lent": 2.633, "lower_pack": 13.248, "py_pairwise": 26.949, "py_sweep": 2.94, "lower_pack_before": 20.867}
+{"steps": 10, "claims": 2231, "lifetimes": 1686} {"ep_verify": 20.738, "ep_verify_lent": 1.492, "walk": 22.357, "walk_lent": 4.8, "lower_pack": 26.797, "py_pairwise": 82.223, "py_sweep": 6.173, "lower_pack_before": 51.171}
+{"steps": 20, "claims": 4461, "lifetimes": 3146} {"ep_verify": 70.42, "ep_verify_lent": 2.792, "walk": 78.744, "walk_lent": 9.498, "lower_pack": 51.154, "py_pairwise": 312.306, "py_sweep": 12.558, "lower_pack_before": 148.797}
+{"lifetimes": 2000, "ms": {"py_sweep": 5.097048997413367, "py_pairwise": 148.20652799971867}}
+{"lifetimes": 8000, "ms": {"py_sweep": 24.214327000663616, "py_pairwise": 2712.1576739955344}}
+{"lifetimes": 32000, "ms": {"py_sweep": 110.63028500211658, "py_pairwise": null}}

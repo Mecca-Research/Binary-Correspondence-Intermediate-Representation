@@ -42,15 +42,15 @@
     {
       "expects": "test_a_refused_pack_lowers_nothing",
       "label": "EW5 the lowering reads past the plan's own laws (a plan-law refusal taken as passed)",
-      "new": "  st = bcir_ep_check_pack_walk(plan, plan_len, pack, pack_len, dp_on_step, dp_on_life, &c);\n  if (st != BCIR_OK && st != BCIR_ERR_PLAN) {\n",
-      "old": "  st = bcir_ep_check_pack_walk(plan, plan_len, pack, pack_len, dp_on_step, dp_on_life, &c);\n  if (st != BCIR_OK) {\n",
+      "new": "  st = bcir_ep_check_pack_walk(plan, plan_len, pack, pack_len, dp_on_step, dp_on_life, &c, at,\n                               part[3] + part[4]);\n  if (st != BCIR_OK && st != BCIR_ERR_PLAN) {\n",
+      "old": "  st = bcir_ep_check_pack_walk(plan, plan_len, pack, pack_len, dp_on_step, dp_on_life, &c, at,\n                               part[3] + part[4]);\n  if (st != BCIR_OK) {\n",
       "path": "runtime/c/bcir_decoder_pack.c"
     },
     {
       "expects": "test_a_refused_pack_lowers_nothing",
       "label": "EW6 a lifetime's reason refuses ahead of the plan's own laws",
-      "new": "  st = bcir_ep_check_pack_walk(plan, plan_len, pack, pack_len, dp_on_step, dp_on_life, &c);\n  if (c.why) return dp_refuse(&c, why, st, 0);\n  if (st != BCIR_OK) {\n",
-      "old": "  st = bcir_ep_check_pack_walk(plan, plan_len, pack, pack_len, dp_on_step, dp_on_life, &c);\n  if (st != BCIR_OK) {\n",
+      "new": "  st = bcir_ep_check_pack_walk(plan, plan_len, pack, pack_len, dp_on_step, dp_on_life, &c, at,\n                               part[3] + part[4]);\n  if (c.why) return dp_refuse(&c, why, st, 0);\n  if (st != BCIR_OK) {\n",
+      "old": "  st = bcir_ep_check_pack_walk(plan, plan_len, pack, pack_len, dp_on_step, dp_on_life, &c, at,\n                               part[3] + part[4]);\n  if (st != BCIR_OK) {\n",
       "path": "runtime/c/bcir_decoder_pack.c"
     }
   ]
