@@ -1,0 +1,113 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_ot_contract:test_the_registry_is_the_proposals_sixteen_and_eight",
+    "bcir.tests.test_ot_contract:test_a_record_has_one_shape_and_refuses_the_rest",
+    "bcir.tests.test_ot_contract:test_a_gate_passes_only_on_the_evidence_that_meets_it",
+    "bcir.tests.test_ot_contract:test_every_gate_can_pass_and_none_outruns_the_gate_it_requires",
+    "bcir.tests.test_ot_contract:test_the_hosts_capabilities_are_probed_or_declared_from_the_vocabulary",
+    "bcir.tests.test_ot_contract:test_the_cli_lists_the_registry_and_refuses_a_malformed_records_file",
+    "bcir.tests.test_ot_contract:test_ot01s_checks_hold_a_product_to_its_bound_and_fire_past_it"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_record_has_one_shape_and_refuses_the_rest",
+      "label": "OC1 an unavailable record carrying results",
+      "new": "    if False and any(k in record for k in (\"results\", \"raw\")):\n",
+      "old": "    if any(k in record for k in (\"results\", \"raw\")):\n",
+      "path": "tools/perf/ot_contract.py"
+    },
+    {
+      "expects": "test_a_gate_passes_only_on_the_evidence_that_meets_it",
+      "label": "OC2 an unavailable record met as measured",
+      "new": "                met = rec is not None and rec[\"status\"] != \"blocked\"\n",
+      "old": "                met = rec is not None and rec[\"status\"] == \"measured\"\n",
+      "path": "tools/perf/ot_contract.py"
+    },
+    {
+      "expects": "test_every_gate_can_pass_and_none_outruns_the_gate_it_requires",
+      "label": "OC3 a gate met by an UNAVAILABLE prerequisite",
+      "new": "                met = out[req.key][0] != \"OPEN\"\n",
+      "old": "                met = out[req.key][0] == \"PASS\"\n",
+      "path": "tools/perf/ot_contract.py"
+    },
+    {
+      "expects": "test_a_gate_passes_only_on_the_evidence_that_meets_it",
+      "label": "OC4 a milestone attested through a parent path",
+      "new": "    if any(part in (\"\", \".\") or \":\" in part for part in parts):\n",
+      "old": "    if any(part in (\"\", \".\", \"..\") or \":\" in part for part in parts):\n",
+      "path": "tools/perf/ot_contract.py"
+    },
+    {
+      "expects": "test_the_hosts_capabilities_are_probed_or_declared_from_the_vocabulary",
+      "label": "OC5 a declared capability outside the vocabulary admitted",
+      "new": "        if cap not in CAPABILITIES and False:\n",
+      "old": "        if cap not in CAPABILITIES:\n",
+      "path": "tools/perf/ot_contract.py"
+    },
+    {
+      "expects": "test_a_gate_passes_only_on_the_evidence_that_meets_it",
+      "label": "OC6 a row met at any value",
+      "new": "                met = req.key in rows\n",
+      "old": "                met = rows.get(req.key) == 0\n",
+      "path": "tools/perf/ot_contract.py"
+    },
+    {
+      "expects": "test_a_gate_passes_only_on_the_evidence_that_meets_it",
+      "label": "OC7 two records of one experiment admitted",
+      "new": "        if record[\"experiment\"] in by_id and False:\n",
+      "old": "        if record[\"experiment\"] in by_id:\n",
+      "path": "tools/perf/ot_contract.py"
+    },
+    {
+      "expects": "test_a_gate_passes_only_on_the_evidence_that_meets_it",
+      "label": "OC8 the gates read records the contract never held",
+      "new": "    for record in records:\n        pass\n",
+      "old": "    for record in records:\n        validate_record(record)\n",
+      "path": "tools/perf/ot_contract.py"
+    },
+    {
+      "expects": "test_the_cli_lists_the_registry_and_refuses_a_malformed_records_file",
+      "label": "OC9 an invalid records file a verdict",
+      "new": "        print(f\"ot_contract: INVALID: {exc}\")\n        return 0\n",
+      "old": "        print(f\"ot_contract: INVALID: {exc}\")\n        return 2\n",
+      "path": "tools/perf/ot_contract.py"
+    },
+    {
+      "expects": "test_the_cli_lists_the_registry_and_refuses_a_malformed_records_file",
+      "label": "OC10 a key twice resolved to its last value",
+      "new": "        if key in out and False:\n            raise ValueError(f\"the key {key!r} twice in one object\")\n",
+      "old": "        if key in out:\n            raise ValueError(f\"the key {key!r} twice in one object\")\n",
+      "path": "tools/perf/ot_contract.py"
+    },
+    {
+      "expects": "test_a_record_has_one_shape_and_refuses_the_rest",
+      "label": "OC11 an identifier of capitals admitted",
+      "new": "_ID = re.compile(r\"[A-Za-z0-9][A-Za-z0-9._+-]*\\Z\", re.ASCII)\n",
+      "old": "_ID = re.compile(r\"[a-z0-9][a-z0-9._+-]*\\Z\", re.ASCII)\n",
+      "path": "tools/perf/ot_contract.py"
+    },
+    {
+      "expects": "test_a_record_has_one_shape_and_refuses_the_rest",
+      "label": "OC12 a blocked record naming missing capabilities",
+      "new": "    elif \"missing\" in record and False:\n",
+      "old": "    elif \"missing\" in record:\n",
+      "path": "tools/perf/ot_contract.py"
+    },
+    {
+      "expects": "test_ot01s_checks_hold_a_product_to_its_bound_and_fire_past_it",
+      "label": "OC13 the GEMM bound loosened to the products' magnitude",
+      "new": "    gamma = 1.0\n",
+      "old": "    gamma = depth * U / (1 - depth * U)\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_ot01s_checks_hold_a_product_to_its_bound_and_fire_past_it",
+      "label": "OC14 the elementwise bound loosened",
+      "new": "    bound = 1.0 * np.maximum(scale, np.finfo(np.float32).tiny)\n",
+      "old": "    bound = ELEMENTWISE_ULPS * U * np.maximum(scale, np.finfo(np.float32).tiny)\n",
+      "path": "tools/perf/ot_run.py"
+    }
+  ]
+}

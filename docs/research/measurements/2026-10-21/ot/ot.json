@@ -1,0 +1,1598 @@
+{
+ "capabilities": [
+  "cpu",
+  "numpy"
+ ],
+ "gates": {
+  "BG0": {
+   "state": "PASS",
+   "unmet": []
+  },
+  "BG1": {
+   "state": "PASS",
+   "unmet": []
+  },
+  "BG2": {
+   "state": "UNAVAILABLE",
+   "unmet": [
+    "capability gpu: one real target with a resident provider",
+    "record OT-07: OT-07 on that target",
+    "record OT-08: OT-08 on that target",
+    "record OT-09: OT-09 on that target",
+    "record OT-12: OT-12 on that target"
+   ]
+  },
+  "BG3": {
+   "state": "OPEN",
+   "unmet": [
+    "milestone UART-D2: a D0-D2 UART package beside the RuntimeChannel loopback, with telemetry and bounded lifecycle tests"
+   ]
+  },
+  "BG4": {
+   "state": "UNAVAILABLE",
+   "unmet": [
+    "gate BG3: the direct driver slice",
+    "milestone M2: UART through Linux-hosted D3, direct/Linux parity",
+    "milestone M4: virtio console and block, direct/Linux parity",
+    "record OT-15: OT-15 measured",
+    "record OT-16: OT-16 measured"
+   ]
+  },
+  "BG5": {
+   "state": "UNAVAILABLE",
+   "unmet": [
+    "gate BG4: the Linux queue/transport proof",
+    "capability qemu: a UEFI/reset boot proof",
+    "milestone M8: the native service: direct/Linux/native replay",
+    "record OT-16: direct/Linux/native replay for the supported devices"
+   ]
+  },
+  "BG6": {
+   "state": "UNAVAILABLE",
+   "unmet": [
+    "gate BG5: the native service/boot proof",
+    "capability physical-device: a profile on the declared workload's hardware",
+    "milestone M7: an adapter or kernel change that improves the declared workload"
+   ]
+  },
+  "BG7": {
+   "state": "UNAVAILABLE",
+   "unmet": [
+    "gate BG2: BG2 passed",
+    "gate BG4: BG4 passed",
+    "gate BG5: BG5 passed",
+    "gate BG6: BG6 passed",
+    "record OT-10: a reproducible complete-workload benefit"
+   ]
+  }
+ },
+ "proposal": "PR #821, docs/research/BCIR_BACKEND_OPTIMALITY_AND_KERNEL_GATES_2026-10-20.md at c01a53c8d577af2bde6ff182e15fff67782eb4e2",
+ "records": [
+  {
+   "experiment": "OT-01",
+   "gaps": [
+    "capability"
+   ],
+   "labels": {
+    "fallback": [],
+    "unsupported": [
+     "strided or non-contiguous operands",
+     "P-EAGER (no PyTorch on this host)"
+    ]
+   },
+   "memory_scopes": {
+    "logical_bytes": 59040024
+   },
+   "raw": [
+    {
+     "checks": [
+      {
+       "depth": 256,
+       "kind": "gemm",
+       "max_abs_error": 2.1164272614448976e-06,
+       "max_error_over_bound": 0.013132407099375638,
+       "tensor": "U"
+      },
+      {
+       "depth": 256,
+       "kind": "gemm",
+       "max_abs_error": 2.3902577748202702e-06,
+       "max_error_over_bound": 0.01621974633432071,
+       "tensor": "V"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 7.836939230898565e-07,
+       "max_error_over_bound": 0.20638256512711858,
+       "tensor": "Y"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 4.298889493270508e-07,
+       "max_error_over_bound": 0.25889976665569026,
+       "tensor": "dU"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 4.880646118365917e-07,
+       "max_error_over_bound": 0.21446113059418112,
+       "tensor": "dV"
+      },
+      {
+       "depth": 2048,
+       "kind": "gemm",
+       "max_abs_error": 9.508207327701967e-06,
+       "max_error_over_bound": 0.002218956787636462,
+       "tensor": "dX"
+      },
+      {
+       "depth": 16,
+       "kind": "gemm",
+       "max_abs_error": 3.7246591979567256e-06,
+       "max_error_over_bound": 0.3655046153862861,
+       "tensor": "dWg"
+      },
+      {
+       "depth": 16,
+       "kind": "gemm",
+       "max_abs_error": 4.496147283816754e-06,
+       "max_error_over_bound": 0.2887894824202251,
+       "tensor": "dWu"
+      }
+     ],
+     "shape": {
+      "k": 256,
+      "m": 16,
+      "n": 1024
+     }
+    },
+    {
+     "checks": [
+      {
+       "depth": 768,
+       "kind": "gemm",
+       "max_abs_error": 4.066703661376181e-06,
+       "max_error_over_bound": 0.004819780834004548,
+       "tensor": "U"
+      },
+      {
+       "depth": 768,
+       "kind": "gemm",
+       "max_abs_error": 4.3543863870176835e-06,
+       "max_error_over_bound": 0.0053610469129844705,
+       "tensor": "V"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 6.611619696172966e-07,
+       "max_error_over_bound": 0.19987590413799675,
+       "tensor": "Y"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 6.776229550808921e-07,
+       "max_error_over_bound": 0.23056151026591173,
+       "tensor": "dU"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 7.479043571123611e-07,
+       "max_error_over_bound": 0.21918113881223972,
+       "tensor": "dV"
+      },
+      {
+       "depth": 2048,
+       "kind": "gemm",
+       "max_abs_error": 6.441558927150481e-06,
+       "max_error_over_bound": 0.002831453423791303,
+       "tensor": "dX"
+      },
+      {
+       "depth": 16,
+       "kind": "gemm",
+       "max_abs_error": 4.5447403458354074e-06,
+       "max_error_over_bound": 0.32848172399081726,
+       "tensor": "dWg"
+      },
+      {
+       "depth": 16,
+       "kind": "gemm",
+       "max_abs_error": 6.089087278837724e-06,
+       "max_error_over_bound": 0.32803883039806736,
+       "tensor": "dWu"
+      }
+     ],
+     "shape": {
+      "k": 768,
+      "m": 16,
+      "n": 1024
+     }
+    },
+    {
+     "checks": [
+      {
+       "depth": 256,
+       "kind": "gemm",
+       "max_abs_error": 2.7666203878951023e-06,
+       "max_error_over_bound": 0.018720662140074517,
+       "tensor": "U"
+      },
+      {
+       "depth": 256,
+       "kind": "gemm",
+       "max_abs_error": 2.7920402270176226e-06,
+       "max_error_over_bound": 0.018363541976765426,
+       "tensor": "V"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 1.1707638698510436e-06,
+       "max_error_over_bound": 0.22232770435036353,
+       "tensor": "Y"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 8.903562900286488e-07,
+       "max_error_over_bound": 0.27103239306040516,
+       "tensor": "dU"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 9.743343047929898e-07,
+       "max_error_over_bound": 0.21504106891075409,
+       "tensor": "dV"
+      },
+      {
+       "depth": 2048,
+       "kind": "gemm",
+       "max_abs_error": 1.3386800808312671e-05,
+       "max_error_over_bound": 0.002809078413368534,
+       "tensor": "dX"
+      },
+      {
+       "depth": 128,
+       "kind": "gemm",
+       "max_abs_error": 2.1555792901750692e-05,
+       "max_error_over_bound": 0.06475655847112625,
+       "tensor": "dWg"
+      },
+      {
+       "depth": 128,
+       "kind": "gemm",
+       "max_abs_error": 2.0092410995431464e-05,
+       "max_error_over_bound": 0.05235709889969587,
+       "tensor": "dWu"
+      }
+     ],
+     "shape": {
+      "k": 256,
+      "m": 128,
+      "n": 1024
+     }
+    },
+    {
+     "checks": [
+      {
+       "depth": 768,
+       "kind": "gemm",
+       "max_abs_error": 5.230521319177228e-06,
+       "max_error_over_bound": 0.006499024259583621,
+       "tensor": "U"
+      },
+      {
+       "depth": 768,
+       "kind": "gemm",
+       "max_abs_error": 5.143837104704119e-06,
+       "max_error_over_bound": 0.0067662912893755095,
+       "tensor": "V"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 9.440806110205813e-07,
+       "max_error_over_bound": 0.2138864841022453,
+       "tensor": "Y"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 9.168144767812691e-07,
+       "max_error_over_bound": 0.2546325853384828,
+       "tensor": "dU"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 1.0442545619326893e-06,
+       "max_error_over_bound": 0.2176098737864736,
+       "tensor": "dV"
+      },
+      {
+       "depth": 2048,
+       "kind": "gemm",
+       "max_abs_error": 6.799349418606937e-06,
+       "max_error_over_bound": 0.0028359432541407953,
+       "tensor": "dX"
+      },
+      {
+       "depth": 128,
+       "kind": "gemm",
+       "max_abs_error": 2.0067879333396377e-05,
+       "max_error_over_bound": 0.054921507547963926,
+       "tensor": "dWg"
+      },
+      {
+       "depth": 128,
+       "kind": "gemm",
+       "max_abs_error": 2.002899521613699e-05,
+       "max_error_over_bound": 0.05803521496756696,
+       "tensor": "dWu"
+      }
+     ],
+     "shape": {
+      "k": 768,
+      "m": 128,
+      "n": 1024
+     }
+    },
+    {
+     "checks": [
+      {
+       "depth": 256,
+       "kind": "gemm",
+       "max_abs_error": 3.361971856907786e-06,
+       "max_error_over_bound": 0.020490241754306502,
+       "tensor": "U"
+      },
+      {
+       "depth": 256,
+       "kind": "gemm",
+       "max_abs_error": 3.286539395741528e-06,
+       "max_error_over_bound": 0.020195566381396926,
+       "tensor": "V"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 8.343137718469507e-07,
+       "max_error_over_bound": 0.22211982932819305,
+       "tensor": "Y"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 9.823591109459073e-07,
+       "max_error_over_bound": 0.2958204282692387,
+       "tensor": "dU"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 7.946430695682238e-07,
+       "max_error_over_bound": 0.22264314430665866,
+       "tensor": "dV"
+      },
+      {
+       "depth": 2048,
+       "kind": "gemm",
+       "max_abs_error": 1.5262988510400533e-05,
+       "max_error_over_bound": 0.0036081804460700367,
+       "tensor": "dX"
+      },
+      {
+       "depth": 512,
+       "kind": "gemm",
+       "max_abs_error": 6.392277396116697e-05,
+       "max_error_over_bound": 0.012935366928818486,
+       "tensor": "dWg"
+      },
+      {
+       "depth": 512,
+       "kind": "gemm",
+       "max_abs_error": 5.4902715042715045e-05,
+       "max_error_over_bound": 0.012972391208130825,
+       "tensor": "dWu"
+      }
+     ],
+     "shape": {
+      "k": 256,
+      "m": 512,
+      "n": 1024
+     }
+    },
+    {
+     "checks": [
+      {
+       "depth": 768,
+       "kind": "gemm",
+       "max_abs_error": 5.072589352117518e-06,
+       "max_error_over_bound": 0.00656891367077891,
+       "tensor": "U"
+      },
+      {
+       "depth": 768,
+       "kind": "gemm",
+       "max_abs_error": 5.1970268941659015e-06,
+       "max_error_over_bound": 0.00617436055349313,
+       "tensor": "V"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 1.258518286917365e-06,
+       "max_error_over_bound": 0.23040680875637976,
+       "tensor": "Y"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 1.0979053897131053e-06,
+       "max_error_over_bound": 0.3232126915699769,
+       "tensor": "dU"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 1.2842843322147246e-06,
+       "max_error_over_bound": 0.2178175272798226,
+       "tensor": "dV"
+      },
+      {
+       "depth": 2048,
+       "kind": "gemm",
+       "max_abs_error": 8.717385652445842e-06,
+       "max_error_over_bound": 0.003930375819822178,
+       "tensor": "dX"
+      },
+      {
+       "depth": 512,
+       "kind": "gemm",
+       "max_abs_error": 6.101911739619936e-05,
+       "max_error_over_bound": 0.013985668088331762,
+       "tensor": "dWg"
+      },
+      {
+       "depth": 512,
+       "kind": "gemm",
+       "max_abs_error": 6.59950126866704e-05,
+       "max_error_over_bound": 0.015861425634023974,
+       "tensor": "dWu"
+      }
+     ],
+     "shape": {
+      "k": 768,
+      "m": 512,
+      "n": 1024
+     }
+    },
+    {
+     "checks": [
+      {
+       "depth": 257,
+       "kind": "gemm",
+       "max_abs_error": 2.094707230337889e-06,
+       "max_error_over_bound": 0.012774264406449687,
+       "tensor": "U"
+      },
+      {
+       "depth": 257,
+       "kind": "gemm",
+       "max_abs_error": 2.263064307506113e-06,
+       "max_error_over_bound": 0.015038190934606921,
+       "tensor": "V"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 5.420975703884778e-07,
+       "max_error_over_bound": 0.20005545165541053,
+       "tensor": "Y"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 6.518157942281277e-07,
+       "max_error_over_bound": 0.20824464427018893,
+       "tensor": "dU"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 5.53106004552717e-07,
+       "max_error_over_bound": 0.19233264664773442,
+       "tensor": "dV"
+      },
+      {
+       "depth": 2050,
+       "kind": "gemm",
+       "max_abs_error": 1.022900421610018e-05,
+       "max_error_over_bound": 0.002354986176964165,
+       "tensor": "dX"
+      },
+      {
+       "depth": 16,
+       "kind": "gemm",
+       "max_abs_error": 5.339161575079743e-06,
+       "max_error_over_bound": 0.3215947199640939,
+       "tensor": "dWg"
+      },
+      {
+       "depth": 16,
+       "kind": "gemm",
+       "max_abs_error": 2.9331104940411024e-06,
+       "max_error_over_bound": 0.29984054583725067,
+       "tensor": "dWu"
+      }
+     ],
+     "shape": {
+      "k": 257,
+      "m": 16,
+      "n": 1025
+     }
+    },
+    {
+     "checks": [
+      {
+       "depth": 257,
+       "kind": "gemm",
+       "max_abs_error": 3.19680734506278e-06,
+       "max_error_over_bound": 0.020154865633123246,
+       "tensor": "U"
+      },
+      {
+       "depth": 257,
+       "kind": "gemm",
+       "max_abs_error": 3.106029883515049e-06,
+       "max_error_over_bound": 0.021023053028085912,
+       "tensor": "V"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 9.964552356578338e-07,
+       "max_error_over_bound": 0.2289963720983298,
+       "tensor": "Y"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 9.55278659731107e-07,
+       "max_error_over_bound": 0.28468758349121015,
+       "tensor": "dU"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 7.403396171667964e-07,
+       "max_error_over_bound": 0.21865237350013483,
+       "tensor": "dV"
+      },
+      {
+       "depth": 2050,
+       "kind": "gemm",
+       "max_abs_error": 1.1922718014645284e-05,
+       "max_error_over_bound": 0.00298506743451302,
+       "tensor": "dX"
+      },
+      {
+       "depth": 128,
+       "kind": "gemm",
+       "max_abs_error": 2.0367816469857303e-05,
+       "max_error_over_bound": 0.06729457365931339,
+       "tensor": "dWg"
+      },
+      {
+       "depth": 128,
+       "kind": "gemm",
+       "max_abs_error": 2.0099079847568646e-05,
+       "max_error_over_bound": 0.05720298638515955,
+       "tensor": "dWu"
+      }
+     ],
+     "shape": {
+      "k": 257,
+      "m": 128,
+      "n": 1025
+     }
+    },
+    {
+     "checks": [
+      {
+       "depth": 257,
+       "kind": "gemm",
+       "max_abs_error": 3.1995630092040983e-06,
+       "max_error_over_bound": 0.020897041749805074,
+       "tensor": "U"
+      },
+      {
+       "depth": 257,
+       "kind": "gemm",
+       "max_abs_error": 4.129395563712279e-06,
+       "max_error_over_bound": 0.026226697766970248,
+       "tensor": "V"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 9.335626209860948e-07,
+       "max_error_over_bound": 0.24434643009800666,
+       "tensor": "Y"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 1.2631779995331271e-06,
+       "max_error_over_bound": 0.27830188254276556,
+       "tensor": "dU"
+      },
+      {
+       "kind": "elementwise",
+       "max_abs_error": 8.086353808778313e-07,
+       "max_error_over_bound": 0.2259043544969511,
+       "tensor": "dV"
+      },
+      {
+       "depth": 2050,
+       "kind": "gemm",
+       "max_abs_error": 1.4152500993347417e-05,
+       "max_error_over_bound": 0.0033324220114695404,
+       "tensor": "dX"
+      },
+      {
+       "depth": 512,
+       "kind": "gemm",
+       "max_abs_error": 8.442978537459567e-05,
+       "max_error_over_bound": 0.0188250556825736,
+       "tensor": "dWg"
+      },
+      {
+       "depth": 512,
+       "kind": "gemm",
+       "max_abs_error": 6.457630344058884e-05,
+       "max_error_over_bound": 0.014782995221542743,
+       "tensor": "dWu"
+      }
+     ],
+     "shape": {
+      "k": 257,
+      "m": 512,
+      "n": 1025
+     }
+    }
+   ],
+   "reference": "numpy.float64",
+   "results": [
+    {
+     "max_error_over_bound": 0.3655046153862861,
+     "shape": {
+      "k": 256,
+      "m": 16,
+      "n": 1024
+     },
+     "within_bound": true
+    },
+    {
+     "max_error_over_bound": 0.32848172399081726,
+     "shape": {
+      "k": 768,
+      "m": 16,
+      "n": 1024
+     },
+     "within_bound": true
+    },
+    {
+     "max_error_over_bound": 0.27103239306040516,
+     "shape": {
+      "k": 256,
+      "m": 128,
+      "n": 1024
+     },
+     "within_bound": true
+    },
+    {
+     "max_error_over_bound": 0.2546325853384828,
+     "shape": {
+      "k": 768,
+      "m": 128,
+      "n": 1024
+     },
+     "within_bound": true
+    },
+    {
+     "max_error_over_bound": 0.2958204282692387,
+     "shape": {
+      "k": 256,
+      "m": 512,
+      "n": 1024
+     },
+     "within_bound": true
+    },
+    {
+     "max_error_over_bound": 0.3232126915699769,
+     "shape": {
+      "k": 768,
+      "m": 512,
+      "n": 1024
+     },
+     "within_bound": true
+    },
+    {
+     "max_error_over_bound": 0.3215947199640939,
+     "shape": {
+      "k": 257,
+      "m": 16,
+      "n": 1025
+     },
+     "within_bound": true
+    },
+    {
+     "max_error_over_bound": 0.28468758349121015,
+     "shape": {
+      "k": 257,
+      "m": 128,
+      "n": 1025
+     },
+     "within_bound": true
+    },
+    {
+     "max_error_over_bound": 0.27830188254276556,
+     "shape": {
+      "k": 257,
+      "m": 512,
+      "n": 1025
+     },
+     "within_bound": true
+    },
+    {
+     "ledger": [
+      {
+       "operation": "gemm nn / nt / tn (dense row-major, alpha, beta)",
+       "state": "supported"
+      },
+      {
+       "operation": "silu(U) * V",
+       "state": "supported"
+      },
+      {
+       "operation": "swiglu backward (dU, dV)",
+       "state": "supported"
+      },
+      {
+       "detail": "m = 0 writes nothing",
+       "operation": "the zero-size product",
+       "state": "supported"
+      },
+      {
+       "detail": "the tensor entries take dense row-major operands and their transposes",
+       "operation": "strided or non-contiguous operands",
+       "state": "unsupported"
+      }
+     ],
+     "within_bound": true,
+     "worst_error_over_bound": 0.3655046153862861
+    }
+   ],
+   "routes": [
+    "B-DIRECT"
+   ],
+   "semantic": "swiglu.block.fwd+bwd.binary32",
+   "status": "measured",
+   "target": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "threads": 1
+   },
+   "versions": {
+    "bcir": "33d07ce7bbfd77d389b993e28ebe44d7b6f7fb2e",
+    "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "numpy": "2.2.6",
+    "python": "3.11.15"
+   }
+  },
+  {
+   "experiment": "OT-02",
+   "missing": [
+    "torch"
+   ],
+   "reason": "this host lacks PyTorch, for the P-* routes",
+   "status": "unavailable"
+  },
+  {
+   "experiment": "OT-03",
+   "gaps": [
+    "integration"
+   ],
+   "labels": {
+    "fallback": [],
+    "unsupported": [
+     "P-EAGER (no PyTorch on this host)"
+    ]
+   },
+   "memory_scopes": {},
+   "raw": [
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='v1', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "direct": "3f86955b7e640ffcb624d9a98da720ef38c37e730c979fe38756e476ff0e61f5",
+     "direct_trace_build": "3f86955b7e640ffcb624d9a98da720ef38c37e730c979fe38756e476ff0e61f5",
+     "pack": "3f86955b7e640ffcb624d9a98da720ef38c37e730c979fe38756e476ff0e61f5",
+     "pack_status": 0,
+     "program": "3f86955b7e640ffcb624d9a98da720ef38c37e730c979fe38756e476ff0e61f5",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='v1', recompute=3, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "direct": "3f86955b7e640ffcb624d9a98da720ef38c37e730c979fe38756e476ff0e61f5",
+     "direct_trace_build": "3f86955b7e640ffcb624d9a98da720ef38c37e730c979fe38756e476ff0e61f5",
+     "pack": "3f86955b7e640ffcb624d9a98da720ef38c37e730c979fe38756e476ff0e61f5",
+     "pack_status": 0,
+     "program": "3f86955b7e640ffcb624d9a98da720ef38c37e730c979fe38756e476ff0e61f5",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='fused+exp', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "direct": "4f17e5e10e1c9ecb79b4ca3c3660d4caaae4bb734e9659cd544cdd24039528f5",
+     "direct_trace_build": "4f17e5e10e1c9ecb79b4ca3c3660d4caaae4bb734e9659cd544cdd24039528f5",
+     "pack": "4f17e5e10e1c9ecb79b4ca3c3660d4caaae4bb734e9659cd544cdd24039528f5",
+     "pack_status": 0,
+     "program": "4f17e5e10e1c9ecb79b4ca3c3660d4caaae4bb734e9659cd544cdd24039528f5",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='fused+exp', recompute=3, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "direct": "4f17e5e10e1c9ecb79b4ca3c3660d4caaae4bb734e9659cd544cdd24039528f5",
+     "direct_trace_build": "4f17e5e10e1c9ecb79b4ca3c3660d4caaae4bb734e9659cd544cdd24039528f5",
+     "pack": "4f17e5e10e1c9ecb79b4ca3c3660d4caaae4bb734e9659cd544cdd24039528f5",
+     "pack_status": 0,
+     "program": "4f17e5e10e1c9ecb79b4ca3c3660d4caaae4bb734e9659cd544cdd24039528f5",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='kblock+exp+reduce', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "direct": "412900306595703850b047b0051726d14dd76fbd1c3c956f4431c38cd9429025",
+     "direct_trace_build": "412900306595703850b047b0051726d14dd76fbd1c3c956f4431c38cd9429025",
+     "pack": "412900306595703850b047b0051726d14dd76fbd1c3c956f4431c38cd9429025",
+     "pack_status": 0,
+     "program": "412900306595703850b047b0051726d14dd76fbd1c3c956f4431c38cd9429025",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='kblock+exp+reduce', recompute=3, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "direct": "412900306595703850b047b0051726d14dd76fbd1c3c956f4431c38cd9429025",
+     "direct_trace_build": "412900306595703850b047b0051726d14dd76fbd1c3c956f4431c38cd9429025",
+     "pack": "412900306595703850b047b0051726d14dd76fbd1c3c956f4431c38cd9429025",
+     "pack_status": 0,
+     "program": "412900306595703850b047b0051726d14dd76fbd1c3c956f4431c38cd9429025",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='bf16', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "direct": "9e2aaddfe7b9ab561fd1dac73d1a87ca86b7227c81011b1aee17ffba74d2371e",
+     "direct_trace_build": "9e2aaddfe7b9ab561fd1dac73d1a87ca86b7227c81011b1aee17ffba74d2371e",
+     "pack": "9e2aaddfe7b9ab561fd1dac73d1a87ca86b7227c81011b1aee17ffba74d2371e",
+     "pack_status": 0,
+     "program": "9e2aaddfe7b9ab561fd1dac73d1a87ca86b7227c81011b1aee17ffba74d2371e",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='bf16', recompute=3, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "direct": "9e2aaddfe7b9ab561fd1dac73d1a87ca86b7227c81011b1aee17ffba74d2371e",
+     "direct_trace_build": "9e2aaddfe7b9ab561fd1dac73d1a87ca86b7227c81011b1aee17ffba74d2371e",
+     "pack": "9e2aaddfe7b9ab561fd1dac73d1a87ca86b7227c81011b1aee17ffba74d2371e",
+     "pack_status": 0,
+     "program": "9e2aaddfe7b9ab561fd1dac73d1a87ca86b7227c81011b1aee17ffba74d2371e",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='bf16+exp+attnbf16', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "direct": "8468bcd468640e543dcf4fd141a0e4ad5d116bbd266ac0e34d2a52bab66184b5",
+     "direct_trace_build": "8468bcd468640e543dcf4fd141a0e4ad5d116bbd266ac0e34d2a52bab66184b5",
+     "pack": "8468bcd468640e543dcf4fd141a0e4ad5d116bbd266ac0e34d2a52bab66184b5",
+     "pack_status": 0,
+     "program": "8468bcd468640e543dcf4fd141a0e4ad5d116bbd266ac0e34d2a52bab66184b5",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='bf16+exp+attnbf16', recompute=3, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "direct": "8468bcd468640e543dcf4fd141a0e4ad5d116bbd266ac0e34d2a52bab66184b5",
+     "direct_trace_build": "8468bcd468640e543dcf4fd141a0e4ad5d116bbd266ac0e34d2a52bab66184b5",
+     "pack": "8468bcd468640e543dcf4fd141a0e4ad5d116bbd266ac0e34d2a52bab66184b5",
+     "pack_status": 0,
+     "program": "8468bcd468640e543dcf4fd141a0e4ad5d116bbd266ac0e34d2a52bab66184b5",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='kblock+attn', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "direct": "3a7d3990f070639994e9c287bee6e44a77b0afd528b6dc9ee06dbf3b5e6f64f0",
+     "direct_trace_build": "3a7d3990f070639994e9c287bee6e44a77b0afd528b6dc9ee06dbf3b5e6f64f0",
+     "pack": "3a7d3990f070639994e9c287bee6e44a77b0afd528b6dc9ee06dbf3b5e6f64f0",
+     "pack_status": 0,
+     "program": "3a7d3990f070639994e9c287bee6e44a77b0afd528b6dc9ee06dbf3b5e6f64f0",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='kblock+attn', recompute=3, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "direct": "3a7d3990f070639994e9c287bee6e44a77b0afd528b6dc9ee06dbf3b5e6f64f0",
+     "direct_trace_build": "3a7d3990f070639994e9c287bee6e44a77b0afd528b6dc9ee06dbf3b5e6f64f0",
+     "pack": "3a7d3990f070639994e9c287bee6e44a77b0afd528b6dc9ee06dbf3b5e6f64f0",
+     "pack_status": 0,
+     "program": "3a7d3990f070639994e9c287bee6e44a77b0afd528b6dc9ee06dbf3b5e6f64f0",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16', recompute=2, workspace='need', threads=4, steps=1, accumulation=1, provider='', preflight=False)",
+     "direct": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "direct_trace_build": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "pack": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "pack_status": 0,
+     "program": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16', recompute=2, workspace='panels', threads=1, steps=1, accumulation=1, provider='', preflight=False)",
+     "direct": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "direct_trace_build": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "pack": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "pack_status": 0,
+     "program": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16', recompute=2, workspace='panels', threads=4, steps=1, accumulation=1, provider='', preflight=False)",
+     "direct": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "direct_trace_build": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "pack": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "pack_status": 0,
+     "program": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16', recompute=2, workspace='floor', threads=1, steps=1, accumulation=1, provider='', preflight=False)",
+     "direct": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "direct_trace_build": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "pack": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "pack_status": 0,
+     "program": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16', recompute=2, workspace='floor', threads=4, steps=1, accumulation=1, provider='', preflight=False)",
+     "direct": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "direct_trace_build": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "pack": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "pack_status": 0,
+     "program": "39078e609e6e4d3f2b1f2eabca7b584cdf3245216808e2a02dafede057864dea",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16+exp+attnbf16', recompute=2, workspace='need', threads=4, steps=1, accumulation=1, provider='', preflight=False)",
+     "direct": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "direct_trace_build": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "pack": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "pack_status": 0,
+     "program": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16+exp+attnbf16', recompute=2, workspace='panels', threads=1, steps=1, accumulation=1, provider='', preflight=False)",
+     "direct": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "direct_trace_build": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "pack": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "pack_status": 0,
+     "program": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16+exp+attnbf16', recompute=2, workspace='panels', threads=4, steps=1, accumulation=1, provider='', preflight=False)",
+     "direct": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "direct_trace_build": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "pack": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "pack_status": 0,
+     "program": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16+exp+attnbf16', recompute=2, workspace='floor', threads=1, steps=1, accumulation=1, provider='', preflight=False)",
+     "direct": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "direct_trace_build": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "pack": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "pack_status": 0,
+     "program": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16+exp+attnbf16', recompute=2, workspace='floor', threads=4, steps=1, accumulation=1, provider='', preflight=False)",
+     "direct": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "direct_trace_build": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "pack": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "pack_status": 0,
+     "program": "0e84344fc7202015f534a464ddf85d65a51c0b3d5da685aa41a91f24883adbb7",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=0, tied_embeddings=False, rms_norm_eps=1e-06), batch=2, time=3, contract='v1', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='mm', preflight=False)",
+     "direct": "b8b7056df00ed4a21c8de3c08f7fded393697f518990dc975bebc131e5d5ad80",
+     "direct_trace_build": "b8b7056df00ed4a21c8de3c08f7fded393697f518990dc975bebc131e5d5ad80",
+     "pack": "b8b7056df00ed4a21c8de3c08f7fded393697f518990dc975bebc131e5d5ad80",
+     "pack_status": 0,
+     "program": "b8b7056df00ed4a21c8de3c08f7fded393697f518990dc975bebc131e5d5ad80",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=0, tied_embeddings=False, rms_norm_eps=1e-06), batch=2, time=3, contract='v1', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='mm+silu', preflight=False)",
+     "direct": "b8b7056df00ed4a21c8de3c08f7fded393697f518990dc975bebc131e5d5ad80",
+     "direct_trace_build": "b8b7056df00ed4a21c8de3c08f7fded393697f518990dc975bebc131e5d5ad80",
+     "pack": "b8b7056df00ed4a21c8de3c08f7fded393697f518990dc975bebc131e5d5ad80",
+     "pack_status": 0,
+     "program": "b8b7056df00ed4a21c8de3c08f7fded393697f518990dc975bebc131e5d5ad80",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=0, tied_embeddings=False, rms_norm_eps=1e-06), batch=2, time=3, contract='kblock+exp', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='mm', preflight=False)",
+     "direct": "4f66c91b2cf19947864d6521972b72146d7780acc932b86d82e271146a85c8cd",
+     "direct_trace_build": "4f66c91b2cf19947864d6521972b72146d7780acc932b86d82e271146a85c8cd",
+     "pack": "4f66c91b2cf19947864d6521972b72146d7780acc932b86d82e271146a85c8cd",
+     "pack_status": 0,
+     "program": "4f66c91b2cf19947864d6521972b72146d7780acc932b86d82e271146a85c8cd",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=0, tied_embeddings=False, rms_norm_eps=1e-06), batch=2, time=3, contract='kblock+exp', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='mm+silu', preflight=False)",
+     "direct": "93a1b9103a14c90aaf33d013a48d659996e9f3e489be08de9acd9b4ca1a81a22",
+     "direct_trace_build": "93a1b9103a14c90aaf33d013a48d659996e9f3e489be08de9acd9b4ca1a81a22",
+     "pack": "93a1b9103a14c90aaf33d013a48d659996e9f3e489be08de9acd9b4ca1a81a22",
+     "pack_status": 0,
+     "program": "93a1b9103a14c90aaf33d013a48d659996e9f3e489be08de9acd9b4ca1a81a22",
+     "program_status": 0
+    },
+    {
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=0, tied_embeddings=False, rms_norm_eps=1e-06), batch=2, time=3, contract='v1', recompute=0, workspace='need', threads=1, steps=1, accumulation=1, provider='', preflight=True)",
+     "direct": "4ca4daf68f6228c469aabcb60f1a32e59c3985194e825ebb1520eaf94cded50d",
+     "direct_trace_build": "4ca4daf68f6228c469aabcb60f1a32e59c3985194e825ebb1520eaf94cded50d",
+     "pack": "4ca4daf68f6228c469aabcb60f1a32e59c3985194e825ebb1520eaf94cded50d",
+     "pack_status": 0,
+     "program": "4ca4daf68f6228c469aabcb60f1a32e59c3985194e825ebb1520eaf94cded50d",
+     "program_status": 0
+    }
+   ],
+   "reference": "bcir.direct.step",
+   "results": [
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='v1', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='v1', recompute=3, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='fused+exp', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='fused+exp', recompute=3, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='kblock+exp+reduce', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='kblock+exp+reduce', recompute=3, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='bf16', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='bf16', recompute=3, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='bf16+exp+attnbf16', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='bf16+exp+attnbf16', recompute=3, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='kblock+attn', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=1, time=4, contract='kblock+attn', recompute=3, workspace='need', threads=1, steps=2, accumulation=2, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16', recompute=2, workspace='need', threads=4, steps=1, accumulation=1, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16', recompute=2, workspace='panels', threads=1, steps=1, accumulation=1, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16', recompute=2, workspace='panels', threads=4, steps=1, accumulation=1, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16', recompute=2, workspace='floor', threads=1, steps=1, accumulation=1, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16', recompute=2, workspace='floor', threads=4, steps=1, accumulation=1, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16+exp+attnbf16', recompute=2, workspace='need', threads=4, steps=1, accumulation=1, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16+exp+attnbf16', recompute=2, workspace='panels', threads=1, steps=1, accumulation=1, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16+exp+attnbf16', recompute=2, workspace='panels', threads=4, steps=1, accumulation=1, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16+exp+attnbf16', recompute=2, workspace='floor', threads=1, steps=1, accumulation=1, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=64, d_model=64, n_heads=2, n_layers=2, d_ff=128, rope_base=10000.0, activation='silu_gate', n_kv_heads=1, tied_embeddings=True, rms_norm_eps=1e-06), batch=2, time=16, contract='bf16+exp+attnbf16', recompute=2, workspace='floor', threads=4, steps=1, accumulation=1, provider='', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=0, tied_embeddings=False, rms_norm_eps=1e-06), batch=2, time=3, contract='v1', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='mm', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=0, tied_embeddings=False, rms_norm_eps=1e-06), batch=2, time=3, contract='v1', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='mm+silu', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=0, tied_embeddings=False, rms_norm_eps=1e-06), batch=2, time=3, contract='kblock+exp', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='mm', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=0, tied_embeddings=False, rms_norm_eps=1e-06), batch=2, time=3, contract='kblock+exp', recompute=0, workspace='need', threads=1, steps=2, accumulation=2, provider='mm+silu', preflight=False)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    },
+    {
+     "builds_agree": true,
+     "case": "TraceCase(spec=DecoderSpec(vocab_size=16, d_model=8, n_heads=2, n_layers=2, d_ff=16, rope_base=10000.0, activation='silu_gate', n_kv_heads=0, tied_embeddings=False, rms_norm_eps=1e-06), batch=2, time=3, contract='v1', recompute=0, workspace='need', threads=1, steps=1, accumulation=1, provider='', preflight=True)",
+     "one_state": true,
+     "pack_is_direct": true,
+     "program_is_direct": true
+    }
+   ],
+   "routes": [
+    "B-DIRECT",
+    "B-PLAN"
+   ],
+   "semantic": "native.decoder.step",
+   "status": "measured",
+   "target": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "threads": 1
+   },
+   "versions": {
+    "bcir": "33d07ce7bbfd77d389b993e28ebe44d7b6f7fb2e",
+    "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "numpy": "2.2.6",
+    "python": "3.11.15"
+   }
+  },
+  {
+   "experiment": "OT-04",
+   "gaps": [
+    "integration",
+    "selection"
+   ],
+   "labels": {
+    "fallback": [],
+    "unsupported": []
+   },
+   "memory_scopes": {},
+   "raw": [
+    {
+     "ms_per_step": {
+      "default": [
+       856.4082,
+       737.7268,
+       855.0029,
+       761.9233,
+       786.5759,
+       729.4661,
+       768.6683,
+       844.5077,
+       810.517,
+       785.27,
+       816.5858,
+       790.8278
+      ],
+      "switched": [
+       794.6302,
+       717.5299,
+       964.3245,
+       748.2101,
+       955.5622,
+       805.2726,
+       819.2855,
+       790.6223,
+       787.7201,
+       780.4466,
+       789.3498,
+       823.9022
+      ]
+     }
+    }
+   ],
+   "reference": "bcir.default.program",
+   "results": [
+    {
+     "case": {
+      "batch": 8,
+      "contract": "kblock+exp+reduce+attn",
+      "d_ff": 1024,
+      "d_model": 384,
+      "kv_heads": 4,
+      "n_heads": 8,
+      "n_layers": 6,
+      "threads": 1,
+      "time": 128,
+      "vocab": 260
+     },
+     "intervention": "every layer's q/k/v and gate/up projections a call each",
+     "launches": {
+      "default": 145,
+      "switched": 163
+     },
+     "one_state": true,
+     "time_ratio": {
+      "ci95": [
+       0.9698788122475492,
+       1.0772937676931844
+      ],
+      "geometric_mean": 1.022176305659622,
+      "rounds": 12
+     }
+    }
+   ],
+   "routes": [
+    "B-DIRECT",
+    "B-PLAN"
+   ],
+   "semantic": "native.decoder.step.sites",
+   "status": "measured",
+   "target": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "threads": 1
+   },
+   "versions": {
+    "bcir": "33d07ce7bbfd77d389b993e28ebe44d7b6f7fb2e",
+    "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "numpy": "2.2.6",
+    "python": "3.11.15"
+   }
+  },
+  {
+   "experiment": "OT-05",
+   "missing": [
+    "torch"
+   ],
+   "reason": "this host lacks PyTorch, for the P-* routes",
+   "status": "unavailable"
+  },
+  {
+   "experiment": "OT-06",
+   "gaps": [
+    "bound-slack",
+    "realization"
+   ],
+   "labels": {
+    "fallback": [],
+    "unsupported": []
+   },
+   "memory_scopes": {
+    "c_plan_transient_bytes": 999424,
+    "lower_bound_bytes": 753664,
+    "placed_transient_bytes": 754176
+   },
+   "raw": [
+    {
+     "bound_bytes": 753664,
+     "c_plan_bytes": 999424,
+     "incumbent_bytes": 753664,
+     "placed_bound_bytes": 754176,
+     "placed_bytes": 754176
+    }
+   ],
+   "reference": "g26.lower.bound",
+   "results": [
+    {
+     "c_plan_over_bound": 1.326086956521739,
+     "placed_optimal": true,
+     "placed_over_bound": 1.0
+    }
+   ],
+   "routes": [
+    "B-DIRECT",
+    "B-PLAN"
+   ],
+   "semantic": "native.decoder.transients",
+   "status": "measured",
+   "target": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "threads": 1
+   },
+   "versions": {
+    "bcir": "33d07ce7bbfd77d389b993e28ebe44d7b6f7fb2e",
+    "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "numpy": "2.2.6",
+    "python": "3.11.15"
+   }
+  },
+  {
+   "experiment": "OT-07",
+   "missing": [
+    "gpu",
+    "triton"
+   ],
+   "reason": "this host lacks a qualified GPU with a supported runtime (CUDA, HIP or SYCL), Triton, for the T-* routes",
+   "status": "unavailable"
+  },
+  {
+   "experiment": "OT-08",
+   "missing": [
+    "gpu",
+    "triton"
+   ],
+   "reason": "this host lacks a qualified GPU with a supported runtime (CUDA, HIP or SYCL), Triton, for the T-* routes",
+   "status": "unavailable"
+  },
+  {
+   "experiment": "OT-09",
+   "missing": [
+    "gpu"
+   ],
+   "reason": "this host lacks a qualified GPU with a supported runtime (CUDA, HIP or SYCL)",
+   "status": "unavailable"
+  },
+  {
+   "experiment": "OT-10",
+   "missing": [
+    "torch"
+   ],
+   "reason": "this host lacks PyTorch, for the P-* routes",
+   "status": "unavailable"
+  },
+  {
+   "experiment": "OT-11",
+   "missing": [
+    "torch",
+    "triton"
+   ],
+   "reason": "this host lacks PyTorch, for the P-* routes, Triton, for the T-* routes",
+   "status": "unavailable"
+  },
+  {
+   "experiment": "OT-12",
+   "missing": [
+    "gpu"
+   ],
+   "reason": "this host lacks a qualified GPU with a supported runtime (CUDA, HIP or SYCL)",
+   "status": "unavailable"
+  },
+  {
+   "experiment": "OT-13",
+   "missing": [
+    "multi-device"
+   ],
+   "reason": "this host lacks a qualified multi-device host",
+   "status": "unavailable"
+  },
+  {
+   "experiment": "OT-14",
+   "gaps": [
+    "system"
+   ],
+   "labels": {
+    "fallback": [],
+    "unsupported": [
+     "device counters (no PMU readable here)"
+    ]
+   },
+   "memory_scopes": {
+    "trace_buffer_bytes": 25165824
+   },
+   "raw": [
+    {
+     "ms_per_step": {
+      "off": [
+       862.8412,
+       820.2785,
+       777.0824,
+       902.9642,
+       776.7204,
+       783.5023,
+       739.0149,
+       1020.5394,
+       949.1985,
+       894.8607,
+       799.02,
+       795.5588
+      ],
+      "on": [
+       874.0331,
+       846.7358,
+       961.7251,
+       1224.4196,
+       888.8731,
+       816.2123,
+       899.6983,
+       941.2059,
+       906.8829,
+       994.9211,
+       860.5585,
+       882.4148
+      ]
+     }
+    }
+   ],
+   "reference": "bcir.untraced.step",
+   "results": [
+    {
+     "case": {
+      "batch": 8,
+      "contract": "kblock+exp+reduce+attn",
+      "d_ff": 1024,
+      "d_model": 384,
+      "kv_heads": 4,
+      "n_heads": 8,
+      "n_layers": 6,
+      "threads": 1,
+      "time": 128,
+      "vocab": 260
+     },
+     "dropped": 0,
+     "observer_over_plain": {
+      "ci95": [
+       1.0209337443029516,
+       1.1750458521357272
+      ],
+      "geometric_mean": 1.0952825943785376,
+      "rounds": 12
+     },
+     "one_state": true,
+     "records": 2886
+    }
+   ],
+   "routes": [
+    "B-DIRECT"
+   ],
+   "semantic": "native.decoder.step.trace",
+   "status": "measured",
+   "target": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "threads": 1
+   },
+   "versions": {
+    "bcir": "33d07ce7bbfd77d389b993e28ebe44d7b6f7fb2e",
+    "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "numpy": "2.2.6",
+    "python": "3.11.15"
+   }
+  },
+  {
+   "experiment": "OT-15",
+   "reason": "RuntimeChannel has its direct adapter alone: no shared-memory queue, Linux process or native adapter exists to decompose against it (the driver ladder's M2, M3 and M8)",
+   "status": "blocked"
+  },
+  {
+   "experiment": "OT-16",
+   "missing": [
+    "qemu",
+    "physical-device"
+   ],
+   "reason": "this host lacks QEMU, for the functional device/OS slice, a qualified physical device rig (never inferred: declared by its operator)",
+   "status": "unavailable"
+  }
+ ],
+ "rows": {
+  "train.corpus.unselected": 0.0,
+  "train.exp.mismatch": 0.0,
+  "train.exp.ulp.max": 1.0,
+  "train.memory.transient": 1.0,
+  "train.mm.bf16.mismatch": 0.0,
+  "train.mm.fused.mismatch": 0.0,
+  "train.mm.kblock.mismatch": 0.0,
+  "train.mm.mismatch": 0.0,
+  "train.mm.provider.differences": 0.0,
+  "train.mm.provider.unsound": 0.0,
+  "train.norm.reduce.mismatch": 0.0,
+  "train.plan.choose.mismatch": 0.0,
+  "train.plan.dispatch.mismatch": 0.0,
+  "train.plan.executed.mismatch": 0.0,
+  "train.plan.measured.mismatch": 0.0,
+  "train.plan.mismatch": 0.0,
+  "train.plan.pack.mismatch": 0.0,
+  "train.plan.place.mismatch": 0.0,
+  "train.plan.program.mismatch": 0.0,
+  "train.plan.remat.mismatch": 0.0,
+  "train.state.threads.mismatch": 0.0,
+  "train.step.ms": 2.206053501140559
+ },
+ "target": {
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "threads": 1
+ },
+ "versions": {
+  "bcir": "33d07ce7bbfd77d389b993e28ebe44d7b6f7fb2e",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "numpy": "2.2.6",
+  "python": "3.11.15"
+ }
+}

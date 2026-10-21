@@ -1,0 +1,12 @@
+{
+ "what": "OT/BG (2026-10-21): the first run of the sixteen backend-optimality experiments PR #821 proposes (docs/research/BCIR_BACKEND_OPTIMALITY_AND_KERNEL_GATES_2026-10-20.md on its branch, at c01a53c8), under the measurement contract tools/perf/ot_contract.py holds (BG0): every experiment's record -- measured where this host and the repository hold what it needs, unavailable naming the capabilities the host lacks, blocked naming the prerequisite the repository lacks -- and the eight gates stated over them and the GEM+ rows they read. The records are tools/perf/ot_run.py's; the gates read gemplus_baseline.py's train rows (rows.json).",
+ "host": "Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPUs; capabilities cpu, numpy; Python 3.11.15, NumPy 2.2.6, Ubuntu clang version 18.1.3 (1ubuntu1). The run names the commit it ran on (33d07ce7bbfd77d389b993e28ebe44d7b6f7fb2e). No PyTorch, Triton, GPU, QEMU, multi-device host, physical device rig or readable PMU here: their experiments are unavailable, never simulated. Wall times are indicative: one virtualized host, one process at a time.",
+ "records": {
+  "ot.json": "tools/perf/ot_run.py's output: the sixteen records, the host's capabilities, the rows the gates read and each gate's state with what it lacks",
+  "ot.txt": "the run's printed summary",
+  "rows.json": "tools/perf/gemplus_baseline.py --compare --group train --json: the GEM+ rows BG1 reads"
+ },
+ "reading": "Measured here: OT-01, OT-03, OT-04, OT-06, OT-14; unavailable: OT-02, OT-05, OT-07, OT-08, OT-09, OT-10, OT-11, OT-12, OT-13, OT-16; blocked: OT-15. Gates: BG0 PASS; BG1 PASS; BG2 UNAVAILABLE; BG3 OPEN; BG4 UNAVAILABLE; BG5 UNAVAILABLE; BG6 UNAVAILABLE; BG7 UNAVAILABLE.",
+ "witnesses": "bcir/tests/test_ot_contract.py: the registry against the proposal (sixteen and eight, every route compared by some experiment, every gate requiring only defined gates); every record rule's refusal by its own message; the gates' semantics -- nothing PASS without the evidence that meets it, UNAVAILABLE never a pass, no gate ahead of the gate it requires, every gate passable with complete evidence, a milestone met only by a report the repository holds; OT-01's checks firing past their bounds; the CLI's refusals; a smoke run of the runner.",
+ "faults": "tools/testing/faults/ot-contract.json OC1-OC14, each injected and caught by its own witness."
+}
