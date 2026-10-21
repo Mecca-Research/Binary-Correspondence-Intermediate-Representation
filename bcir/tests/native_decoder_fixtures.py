@@ -62,6 +62,12 @@ spec alone. One function per row family grades it against the C rail; the tests,
                                one a site) that stopped, trained another state or events than the
                                C step on the case, or traced other launches than the chosen
                                program states (PX-3)
+    train.plan.dispatch.mismatch  dispatch runs (`dispatch_runs`: the state cases under each
+                               dispatch kind switched alone to the portable instance, its family's
+                               widest and each worker count below the threads, and seeded draws of
+                               one a kind) that stopped, trained another state or events than the
+                               C step on the case, or traced other launches than the dispatched
+                               program states (PX-3b)
     train.plan.pack.mismatch   pack runs (`pack_runs`: the program runs' configurations, each as a
                                StreamPack and ExecutionPlanV1 the trainer lowers) whose lowering was
                                refused or is not the program's words, that stopped, or that trained
@@ -1051,6 +1057,23 @@ class TraceRun(NamedTuple):
     events: tuple = ()
 
 
+def _case_instances(lib, contract: str) -> dict:
+    """The instances each family of `contract`'s jobs admits on this host (PX-3b), spelled from
+    the contract's name rather than read off the trainer: its GEMMs the bf16 GEMM's under "bf16",
+    the fused GEMM's under "fused" or "kblock", v1's otherwise; its attention's products the bf16
+    GEMM's under "attnbf16", the fused GEMM's under "attn", v1's otherwise."""
+    words = set(contract.split("+"))
+
+    def admitted(name):
+        fn = getattr(lib, f"bcir_tensor_mm_{name}variants")
+        fn.argtypes, fn.restype = [], ct.c_int
+        return int(fn())
+
+    gemm = "bf16_" if "bf16" in words else "fused_" if words & {"fused", "kblock"} else ""
+    attention = "bf16_" if "attnbf16" in words else "fused_" if "attn" in words else ""
+    return {"gemm": admitted(gemm), "attention": admitted(attention)}
+
+
 def _case_trainer(path, case: TraceCase, transient=None):
     """The trainer `case` runs on -- its contract, recompute set, threads, workspace tier and
     provider; its transient arenas the C plan's, or as `transient` lends them (PX-4) -- and the
@@ -1098,6 +1121,7 @@ def _case_trainer(path, case: TraceCase, transient=None):
             alignment={SPACES[name]: ct.addressof(buf) % 64 for name, buf in trainer.buffers.items()},
             provider_mm=bool(case.provider), provider_silu=case.provider == "mm+silu",
             steps=case.steps, accumulation=case.accumulation,
+            threads=case.threads, instances=_case_instances(lib, case.contract),
         )  # fmt: skip
     except BaseException:
         trainer.close()
@@ -1163,7 +1187,9 @@ def trace_case(path, case: TraceCase, capacity: int | None = None, *, trace: boo
 
 class ProgramRun(NamedTuple):
     """One program run: the program, the records its run traced (launch, record), the records it
-    had no room for, the state it left, its events, and its status (0, or the C's refusal)."""
+    had no room for, the state it left, its events, its status (0, or the C's refusal), and the
+    host its defaults resolve on (PX-3b: the pool's threads and the instances each family admits,
+    which the trace's words 41-42 name where the program left them to the host)."""
 
     program: list
     traced: list
@@ -1171,6 +1197,8 @@ class ProgramRun(NamedTuple):
     state: str
     events: tuple
     status: int
+    threads: int = 1
+    instances: dict | None = None
 
 
 def program_case(path, case: TraceCase, choices: dict | None = None) -> ProgramRun:
@@ -1207,7 +1235,7 @@ def program_case(path, case: TraceCase, choices: dict | None = None) -> ProgramR
             dropped = ct.c_size_t()
             count = lib.bcir_decoder_trace_probe_end(ct.byref(dropped))
         return ProgramRun(program, read_trace(words, count), dropped.value, state_digest(trainer),
-                          events, status)  # fmt: skip
+                          events, status, decisions["threads"], decisions["instances"])  # fmt: skip
     finally:
         trainer.close()
 
@@ -1281,7 +1309,9 @@ def program_problems(step: TraceRun, run: ProgramRun) -> list[str]:
     on the same case. Empty when the run is the step its program states."""
     from bcir.hosted.models.native_launch import launch_mismatches, program_launches
 
-    problems = launch_mismatches(program_launches(run.program), run.traced)
+    problems = launch_mismatches(
+        program_launches(run.program, threads=run.threads, instances=run.instances), run.traced
+    )
     if run.status:
         problems.insert(0, f"stopped with status {run.status}")
     if run.dropped:
@@ -1368,6 +1398,100 @@ def choose_mismatch(path, cases=None) -> tuple[int, int, list[str], int]:
         if problems:
             bad += 1
             notes.append(f"{case} {sorted(set(sites.values()))}: {problems[0]}")
+    return bad, runs, notes, other
+
+
+# --- train.plan.dispatch.mismatch (PX-3b) ---------------------------------------------------------
+
+#: The seeded draws of an alternative per dispatch kind `dispatch_choices` adds to the kinds alone.
+DISPATCH_MIXES = 3
+
+
+def _dispatch_spellings(case: TraceCase) -> dict[str, tuple[str, ...]]:
+    """Each dispatch kind's alternatives `dispatch_choices` runs, as spellings every host states
+    alike: an instance kind (a GEMM of BCIR's entries, an attention) the portable instance and its
+    family's widest ("i1", "iW"), every kind each worker count below the case's threads."""
+    from bcir.hosted.models.native_launch import (
+        DISPATCH_KINDS,
+        GEMM_DISPATCH_KINDS,
+        INSTANCE_KINDS,
+    )
+
+    out = {}
+    for kind in DISPATCH_KINDS:
+        named = kind in INSTANCE_KINDS and not (case.provider and kind in GEMM_DISPATCH_KINDS)
+        out[kind] = (("i1", "iW") if named else ()) + tuple(f"t{k}" for k in range(1, case.threads))
+    return out
+
+
+def dispatch_choices(case: TraceCase, instances: dict) -> tuple[dict, ...]:
+    """The dispatches `train.plan.dispatch.mismatch` runs a state case under (PX-3b), each as
+    `step_program`'s `dispatch`: every dispatch kind switched alone to each of its spellings
+    (`_dispatch_spellings`: the portable instance and the widest the host's `instances` admit for
+    the kind's family, each worker count below the case's threads), then `DISPATCH_MIXES` draws of
+    one spelling a kind, seeded by the case's own fields -- a set of runs every host counts alike
+    (the widest is the portable instance on a host with no other)."""
+    from bcir.hosted.models.native_launch import GEMM_DISPATCH_KINDS
+
+    def spelled(kind, alternative):
+        if alternative != "iW":
+            return alternative
+        mask = instances["gemm" if kind in GEMM_DISPATCH_KINDS else "attention"]
+        return f"i{max(bit for bit in (1, 2, 4, 8) if mask & bit)}"
+
+    spellings = _dispatch_spellings(case)
+    out = [{kind: spelled(kind, a)} for kind, alts in spellings.items() for a in alts]
+    spec = case.spec
+    rng = random.Random("dispatch/" + "/".join(map(str, (
+        spec.vocab_size, spec.d_model, spec.n_heads, spec.n_layers, spec.d_ff, spec.kv_heads,
+        case.batch, case.time, case.contract, case.recompute, case.workspace, case.threads,
+        case.provider, case.steps, case.accumulation, case.preflight,
+    ))))  # fmt: skip
+    out += [{kind: spelled(kind, rng.choice(alts)) for kind, alts in spellings.items() if alts}
+            for _ in range(DISPATCH_MIXES)]  # fmt: skip
+    return tuple(out)
+
+
+def dispatch_runs(path, cases=None):
+    """Every run `train.plan.dispatch.mismatch` reads, as (case, dispatch, the C step's
+    `TraceRun`, the program's `ProgramRun`, the C step's own program): each state case of `cases`
+    (the trace corpus) under each of its `dispatch_choices`, run from its program on the trace
+    build."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    for i in state_cases(corpus):
+        case = corpus[i]
+        trainer, decisions = _case_trainer(path, case)
+        trainer.close()
+        step, base = trace_case(path, case), program_case(path, case).program
+        for dispatch in dispatch_choices(case, decisions["instances"]):
+            yield case, dispatch, step, program_case(path, case, {"dispatch": dispatch}), base
+
+
+def dispatch_run_count(cases=None) -> int:
+    """How many runs `dispatch_runs` makes of `cases` (the trace corpus): the row's baseline, the
+    same on every host."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    total = 0
+    for i in state_cases(corpus):
+        spellings = _dispatch_spellings(corpus[i])
+        total += sum(map(len, spellings.values())) + DISPATCH_MIXES * any(spellings.values())
+    return total
+
+
+def dispatch_mismatch(path, cases=None) -> tuple[int, int, list[str], int]:
+    """`train.plan.dispatch.mismatch`: of the dispatch runs (`dispatch_runs`), those that stopped,
+    whose state or events differ from the C step's on the same case, or whose trace differs from
+    the launches the dispatched program states as the host resolves them (the instance each GEMM
+    and attention job ran, the workers each job ran on) or dropped a record; the runs; what
+    differed, run by run; and how many runs ran another program than the C step's own."""
+    bad, runs, notes, other = 0, 0, [], 0
+    for case, dispatch, step, run, base in dispatch_runs(path, cases):
+        runs += 1
+        other += run.program != base
+        problems = program_problems(step, run)
+        if problems:
+            bad += 1
+            notes.append(f"{case} {dispatch if len(dispatch) < 3 else 'mix'}: {problems[0]}")
     return bad, runs, notes, other
 
 
@@ -1585,8 +1709,9 @@ def fuzz_input(config: int, steps: int, accumulation: int, words) -> bytes:
     return bytes([config, shape]) + struct.pack(f"<{len(words)}Q", *words)
 
 
-def fuzz_program(config: int, steps: int = 1, accumulation: int = 1) -> list[int]:
-    """The planner's program for the fuzz harness's state under `config` (its words)."""
+def fuzz_program(config: int, steps: int = 1, accumulation: int = 1, dispatch=None) -> list[int]:
+    """The planner's program for the fuzz harness's state under `config` (its words), its jobs'
+    dispatch as `dispatch` names it (PX-3b; the state has one thread)."""
     from bcir.hosted.models.native_launch import program_words, step_program
 
     spec, batch, time_ = FUZZ_STATE
@@ -1594,8 +1719,20 @@ def fuzz_program(config: int, steps: int = 1, accumulation: int = 1) -> list[int
     return program_words(step_program(
         spec, batch, time_, contract=contract, recompute=3 if config & 8 else 0,
         workspace_bytes=FUZZ_WORKSPACE if contract & 16 else 0, steps=steps,
-        accumulation=accumulation,
+        accumulation=accumulation, dispatch=dispatch,
     ))  # fmt: skip
+
+
+#: PX-3b: the dispatch a fuzz seed names -- the portable instance (every host admits it) on every
+#: GEMM and attention job, one worker (the state's one thread) on every other kind
+FUZZ_DISPATCH_CONFIGS = (0, 3, 4, 5, 6)
+
+
+def fuzz_dispatch() -> dict:
+    """The dispatch `FUZZ_DISPATCH_CONFIGS`' seeds name (PX-3b)."""
+    from bcir.hosted.models.native_launch import DISPATCH_KINDS, INSTANCE_KINDS
+
+    return {kind: "i1" if kind in INSTANCE_KINDS else "t1" for kind in DISPATCH_KINDS}
 
 
 #: PX-4: the configuration bits the two fuzz harnesses read for the transient arenas -- lent at
@@ -1701,6 +1838,37 @@ def fuzz_seeds() -> list[tuple[str, bytes, bool]]:
     # trainer lends -- the recompute set's activations -- though inside the room the harness
     # allocates for a placement, so only a harness lending the set's own arena refuses it
     out.append(("miss_recompute_arena", fuzz_input(8, 1, 1, fuzz_program(0)), False))
+    # PX-3b: programs naming their jobs' dispatch, and near misses of the dispatch rules on the
+    # first -- an instance the family never admits (v1's GEMMs have no AMX), two instances at once,
+    # an instance on a kernel that has none, more workers than the state's one thread, a worker
+    # count on a CHECK, and a GEMM job whose records disagree
+    for config in FUZZ_DISPATCH_CONFIGS:
+        words = fuzz_program(config, dispatch=fuzz_dispatch())
+        out.append((f"dispatch_c{config}", fuzz_input(config, 1, 1, words), True))
+    words = fuzz_program(0, dispatch=fuzz_dispatch())
+    records = [list(words[i : i + w]) for i in range(0, len(words), w)]
+    job = next(
+        r[1] for i, r in enumerate(records[1:], 1) if r[0] == 5 and records[i - 1][:2] == r[:2]
+    )
+    gemms = [i for i, r in enumerate(records) if r[0] == 5 and r[1] == job]
+    rms = next(i for i, r in enumerate(records) if r[0] == 4)
+    check = next(i for i, r in enumerate(records) if r[0] == 22)
+
+    def edited(at, word, value):
+        return [
+            r if i not in at else r[:word] + [value] + r[word + 1 :] for i, r in enumerate(records)
+        ]
+
+    misses = {
+        "instance_absent": edited(gemms, 41, 8),
+        "instance_bits": edited(gemms, 41, 3),
+        "instance_kernel": edited([rms], 41, 1),
+        "workers_past": edited([rms], 42, 2),
+        "workers_check": edited([check], 42, 1),
+        "job_split": edited(gemms[1:], 41, 0),
+    }
+    for name, records_ in misses.items():
+        out.append((f"miss_{name}", fuzz_input(0, 1, 1, [x for r in records_ for x in r]), False))
     return out
 
 
@@ -1788,6 +1956,7 @@ def fuzz_pack_seeds() -> list[tuple[str, bytes, bool]]:
             if x.rid == spans[0].rid else x for x in ls])),
         "block": (with_segment(gemm, block={"count": pack.blocks[gemm].count + 1}), plan_bytes),
     }  # fmt: skip
+
     for name, (pk, pl) in misses.items():
         out.append((f"miss_{name}", fuzz_pack_input(0, 1, 1, pk, pl), False))
     return out
@@ -1828,6 +1997,7 @@ def measure(*, timed: bool = True) -> dict[str, float]:
             out["train.plan.executed.mismatch"] = float(executed_mismatch(traced)[0])
             out["train.plan.program.mismatch"] = float(program_mismatch(traced)[0])
             out["train.plan.choose.mismatch"] = float(choose_mismatch(traced)[0])
+            out["train.plan.dispatch.mismatch"] = float(dispatch_mismatch(traced)[0])
         packed = pack_library(Path(tmp) / "pack")
         if packed is not None:  # no C units to lower with (an installed package): not measured
             out["train.plan.pack.mismatch"] = float(pack_mismatch(packed)[0])
@@ -1894,11 +2064,13 @@ __all__ = [
     "layout_library",
     "checkout_library",
     "FUZZ_CONTRACTS",
+    "FUZZ_DISPATCH_CONFIGS",
     "FUZZ_PLACED",
     "FUZZ_PLACED_CONFIGS",
     "FUZZ_SHORT",
     "FUZZ_STATE",
     "FUZZ_WORKSPACE",
+    "fuzz_dispatch",
     "fuzz_input",
     "fuzz_lent",
     "fuzz_pack",
@@ -1935,6 +2107,11 @@ __all__ = [
     "choose_mismatch",
     "choose_run_count",
     "choose_runs",
+    "DISPATCH_MIXES",
+    "dispatch_choices",
+    "dispatch_mismatch",
+    "dispatch_run_count",
+    "dispatch_runs",
 ]
 
 

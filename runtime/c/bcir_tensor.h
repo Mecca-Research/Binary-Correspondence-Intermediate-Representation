@@ -386,6 +386,42 @@ BCIR_DT_API void bcir_tensor_attention_backward(size_t batch, size_t time, size_
 BCIR_DT_API void bcir_tensor_attention_backward_inplace(size_t batch, size_t time,
     size_t heads, size_t kvheads, size_t dim, const float *q, const float *k, const float *v,
     float *p, const float *dy, float *dq, float *dk, float *dv);
+/* PX-3b (DISPATCH): the instance a job runs and the threads it runs on, as a planner names them.
+ *
+ * bcir_tensor_pool_cap(pool, workers) has the jobs after it run on the caller and workers 1 ..
+ * workers-1 of the pool -- 0, or a count at or past the pool's, all of them -- and returns the cap
+ * in force before (0: all); bcir_tensor_pool_workers is what the next job runs on (a NULL pool 1).
+ * Every partition is a function of the shapes alone, so a job's result is the same bits at every
+ * cap; a worker past the cap reports each job without claiming a task (the reports stay the
+ * barrier), a cap of one runs every job on the caller, and what a job's workspace must hold (the
+ * bf16 entries' regions) stays a function of the pool's threads. A NULL pool: no effect, 0.
+ *
+ * The GEMM and attention entries with the instance named: `variant` 0 the widest the family admits
+ * (the plain entries above), else one bit of it -- bcir_tensor_mm_contract_variants(contract): v1's
+ * (contract 0) bcir_tensor_mm_variants, the fused and blocked contracts' (1, 2)
+ * bcir_tensor_mm_fused_variants, the bf16 contract's (3) bcir_tensor_mm_bf16_variants; the binary32
+ * attention's products the fused GEMM's under BCIR_TENSOR_ATTENTION_FUSED, v1's otherwise. Each
+ * returns the instance it ran, or 0 having written nothing -- an instance the family does not admit,
+ * a contract outside 0..3, panels outside the bf16 contract, or what its plain entry refuses -- and
+ * its results are the plain entry's bit for bit, every instance of a family the same bits. */
+BCIR_DT_API unsigned bcir_tensor_pool_cap(bcir_tensor_pool *pool, unsigned workers);
+BCIR_DT_API unsigned bcir_tensor_pool_workers(const bcir_tensor_pool *pool);
+BCIR_DT_API int bcir_tensor_mm_contract_variants(int contract);
+BCIR_DT_API int bcir_tensor_mm_contract_variant_pool(bcir_tensor_pool *pool, int contract,
+    int variant, int ta, int tb, size_t m, size_t n, size_t k, float alpha, const float *a,
+    const float *b, float beta, float *c, void *workspace, size_t bytes);
+BCIR_DT_API int bcir_tensor_mm_pair_variant_pool(bcir_tensor_pool *pool, int contract, int variant,
+    const bcir_tensor_mm_call *x, const bcir_tensor_mm_call *y);
+BCIR_DT_API int bcir_tensor_mm_group_variant_pool(bcir_tensor_pool *pool, int contract, int variant,
+    const bcir_tensor_mm_call *chain, size_t nchain, const bcir_tensor_mm_call *y, size_t ny,
+    const bcir_tensor_bf16_panels *pre, void *workspace, size_t bytes);
+BCIR_DT_API int bcir_tensor_attention_contract_variant_scan_pool(bcir_tensor_pool *pool,
+    int variant, unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads,
+    size_t dim, const float *q, const float *k, const float *v, float *p, float *y, int *bad);
+BCIR_DT_API int bcir_tensor_attention_backward_contract_variant_pool(bcir_tensor_pool *pool,
+    int variant, unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads,
+    size_t dim, const float *q, const float *k, const float *v, float *p, const float *dy,
+    float *dq, float *dk, float *dv);
 #ifdef __cplusplus
 }
 #endif

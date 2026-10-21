@@ -502,6 +502,37 @@ static int mm_widest_fused(void) {
   int v=bcir_tensor_mm_fused_variants();
   return v&4 ? 4 : v&2 ? 2 : 1;
 }
+/* PX-3b (DISPATCH): the instance a job of a binary32 family runs for a request -- 0 the widest the
+ * family admits (every entry's default), else the one bit asked when the family admits it -- or
+ * 0, refused: v1's instances are bcir_tensor_mm_variants', the fused and blocked contracts'
+ * bcir_tensor_mm_fused_variants', and every instance of a family is the same bits. */
+static int mm_instance(int fused, int variant) {
+  int have=fused ? bcir_tensor_mm_fused_variants() : bcir_tensor_mm_variants();
+  if (!variant) return fused ? mm_widest_fused() : mm_widest();
+  return (variant==1 || variant==2 || variant==4) && (have&variant) ? variant : 0;
+}
+/* The harness's record of the instances jobs ran since the last read, by family -- bit v of family
+ * f set when a task of a family-f job ran instance v -- so a witness holds a program's named
+ * instance to the kernels that ran it. A build defines BCIR_TENSOR_INSTANCE_PROBE to have it (the
+ * harness's builds do; the library does not); a read while no job runs. */
+enum { INSTANCE_GEMM=0, INSTANCE_BF16=1, INSTANCE_ATTN=2, INSTANCE_ATTN16=3 };
+#ifdef BCIR_TENSOR_INSTANCE_PROBE
+static unsigned instance_seen[4];
+#if defined(__GNUC__) || defined(__clang__)
+#define INSTANCE_SAW(f,v) ((void)__atomic_fetch_or(&instance_seen[f],(unsigned)(v),__ATOMIC_RELAXED))
+#else
+#define INSTANCE_SAW(f,v) ((void)(instance_seen[f]|=(unsigned)(v)))
+#endif
+BCIR_DT_API unsigned bcir_tensor_instance_probe(int family);
+unsigned bcir_tensor_instance_probe(int family) {
+  unsigned seen;
+  if (family<0 || family>3) return 0u;
+  seen=instance_seen[family]; instance_seen[family]=0u;
+  return seen;
+}
+#else
+#define INSTANCE_SAW(f,v) ((void)0)
+#endif
 /* --- the BCIR exponential (NDT-EXP) ------------------------------------------------------------
  * Branch-free: the argument is clamped into the range the reduction handles, a maximum and then a
  * minimum in the comparison order of the vector instructions (`x > lo ? x : lo`), so a NaN clamps to
@@ -650,6 +681,7 @@ static int mm_variant_any(int variant, int fused, int ta, int tb, size_t m, size
   mm_args x; mm_range r; size_t i; int fold=fused==MM_KBLOCK && m && n && k;
   int have=fused ? bcir_tensor_mm_fused_variants() : bcir_tensor_mm_variants();
   if ((variant!=1 && variant!=2 && variant!=4) || !(have&variant)) return 0;
+  INSTANCE_SAW(INSTANCE_GEMM,variant);
   if (!fold) for (i=0;i<m*n;i++) c[i]=mm_scaled(beta,c[i]);
   if (!m || !n || !k) return variant;
   x.ta=ta; x.tb=tb; x.m=m; x.n=n; x.k=k; x.alpha=alpha; x.a=a; x.lda=ta ? m : k;
@@ -727,7 +759,7 @@ typedef struct pool_worker { bcir_tensor_pool *pool; unsigned id; } pool_worker;
  * no value may depend on which worker ran a task. */
 typedef void (*pool_task_w)(void *ctx, size_t task, unsigned worker);
 struct bcir_tensor_pool {
-  unsigned threads,pending; unsigned long generation; int stop;
+  unsigned threads,pending,cap; unsigned long generation; int stop;
   bcir_tensor_task_fn fn; pool_task_w fnw; void *ctx; size_t tasks,next;
 #if defined(BCIR_POOL_PTHREADS)
   pthread_mutex_t mutex; pthread_cond_t wake,done; pthread_t *workers;
@@ -768,15 +800,32 @@ int bcir_tensor_pool_rails(void) {
 #endif
 }
 unsigned bcir_tensor_pool_threads(const bcir_tensor_pool *pool) { return pool ? pool->threads : 1; }
+/* PX-3b (DISPATCH): the workers the jobs after it run on. The cap is the caller's, set between jobs:
+ * a worker reads it only after it sees a generation, which the caller publishes after setting it,
+ * and every worker reports each generation before the caller returns, so the cap a worker reads is
+ * the one of the job it reports for. */
+unsigned bcir_tensor_pool_cap(bcir_tensor_pool *pool, unsigned workers) {
+  unsigned prev;
+  if (!pool) return 0u;
+  prev=pool->cap;
+  pool->cap=workers>=pool->threads ? 0u : workers;
+  return prev;
+}
+unsigned bcir_tensor_pool_workers(const bcir_tensor_pool *pool) {
+  return !pool ? 1u : pool->cap ? pool->cap : pool->threads;
+}
 static void pool_tasks(bcir_tensor_pool *p, unsigned id) {
-  size_t t;
+  size_t t; unsigned workers=p->cap ? p->cap : p->threads;
+  if (id>=workers) return;  /* past the job's cap: the worker reports without claiming a task */
 #if defined(BCIR_POOL_ATOMIC)
-  bcir_tensor_task_fn fn=p->fn; pool_task_w fnw=p->fnw; void *ctx=p->ctx; size_t tasks=p->tasks;
-  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<tasks) {
-    if (fnw) fnw(ctx,t,id); else fn(ctx,t);
+  {
+    bcir_tensor_task_fn fn=p->fn; pool_task_w fnw=p->fnw; void *ctx=p->ctx; size_t tasks=p->tasks;
+    while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<tasks) {
+      if (fnw) fnw(ctx,t,id); else fn(ctx,t);
+    }
   }
 #else
-  for (t=id;t<p->tasks;t+=p->threads) { if (p->fnw) p->fnw(p->ctx,t,id); else p->fn(p->ctx,t); }
+  for (t=id;t<p->tasks;t+=workers) { if (p->fnw) p->fnw(p->ctx,t,id); else p->fn(p->ctx,t); }
 #endif
 }
 #if defined(BCIR_POOL_PTHREADS) || defined(BCIR_POOL_WIN32)
@@ -930,7 +979,7 @@ static void pool_dispatch(bcir_tensor_pool *p, bcir_tensor_task_fn fn, pool_task
     size_t tasks) {
   size_t t;
   if (!tasks) return;
-  if (!p || p->threads==1 || tasks==1) {
+  if (!p || p->threads==1 || tasks==1 || p->cap==1) {  /* a cap of one: the caller alone */
     for (t=0;t<tasks;t++) { if (fnw) fnw(ctx,t,0u); else fn(ctx,t); }
     return;
   }
@@ -986,6 +1035,7 @@ static void mm_task(void *ctx, size_t task) {
   mm_job *j=(mm_job *)ctx; mm_range r; size_t col=task%j->cols,row=task/j->cols,i,jj;
   r.jb0=col*j->nr; r.jb1=r.jb0+j->nr<j->x.n ? r.jb0+j->nr : j->x.n;
   r.r0=row*BCIR_MM_ROWS; r.r1=r.r0+BCIR_MM_ROWS<j->x.m ? r.r0+BCIR_MM_ROWS : j->x.m;
+  INSTANCE_SAW(INSTANCE_GEMM,j->variant);
   if (!j->x.fold) for (i=r.r0;i<r.r1;i++) {
     float *ci=j->x.c+i*j->x.ldc;
     for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=mm_scaled(j->beta,ci[jj]);
@@ -993,26 +1043,26 @@ static void mm_task(void *ctx, size_t task) {
   if (j->x.k) mm_run_range(j->variant,j->fused,&j->x,&r);
 }
 /* The job of one GEMM under a contract: its partition's task count (0 for an empty product). */
-static size_t mm_job_init(mm_job *j, int fused, int ta, int tb, size_t m, size_t n, size_t k,
-    float alpha, const float *a, const float *b, float beta, float *c) {
+static size_t mm_job_init(mm_job *j, int fused, int variant, int ta, int tb, size_t m, size_t n,
+    size_t k, float alpha, const float *a, const float *b, float beta, float *c) {
   if (!m || !n) return 0;
-  j->beta=beta; j->fused=fused; j->variant=fused ? mm_widest_fused() : mm_widest(); j->nr=mm_nr(j->variant,fused);
+  j->beta=beta; j->fused=fused; j->variant=variant; j->nr=mm_nr(j->variant,fused);
   j->x.ta=ta; j->x.tb=tb; j->x.m=m; j->x.n=n; j->x.k=k; j->x.alpha=alpha; j->x.a=a; j->x.lda=ta ? m : k;
   j->x.b=b; j->x.ldb=tb ? k : n; j->x.c=c; j->x.ldc=n; j->x.mode=MM_FULL;
   j->x.beta=beta; j->x.fold=fused==MM_KBLOCK && k;
   j->cols=(n+j->nr-1)/j->nr; j->rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;
   return j->cols*j->rowsets;
 }
-static void mm_serial_any(int fused, int ta, int tb, size_t m, size_t n, size_t k, float alpha,
-    const float *a, const float *b, float beta, float *c) {
-  (fused==MM_KBLOCK ? bcir_tensor_mm_kblock : fused ? bcir_tensor_mm_fused : bcir_tensor_mm)
-    (NULL,ta,tb,m,n,k,alpha,a,b,beta,c);
+/* `variant` resolved (mm_instance): the instance every call of the job runs */
+static void mm_serial_any(int fused, int variant, int ta, int tb, size_t m, size_t n, size_t k,
+    float alpha, const float *a, const float *b, float beta, float *c) {
+  mm_variant_any(variant,fused,ta,tb,m,n,k,alpha,a,b,beta,c);
 }
-static void mm_pool_any(bcir_tensor_pool *pool, int fused, int ta, int tb, size_t m, size_t n,
-    size_t k, float alpha, const float *a, const float *b, float beta, float *c) {
+static void mm_pool_any(bcir_tensor_pool *pool, int fused, int variant, int ta, int tb, size_t m,
+    size_t n, size_t k, float alpha, const float *a, const float *b, float beta, float *c) {
   mm_job j; size_t tasks;
-  if (!pool || pool->threads==1) { mm_serial_any(fused,ta,tb,m,n,k,alpha,a,b,beta,c); return; }
-  tasks=mm_job_init(&j,fused,ta,tb,m,n,k,alpha,a,b,beta,c);
+  if (!pool || pool->threads==1) { mm_serial_any(fused,variant,ta,tb,m,n,k,alpha,a,b,beta,c); return; }
+  tasks=mm_job_init(&j,fused,variant,ta,tb,m,n,k,alpha,a,b,beta,c);
   pool_run(pool,mm_task,&j,tasks);
 }
 /* Two GEMMs, one job (NDT-SCHED-0): tasks [0, split) are the first's, the rest the second's,
@@ -1023,18 +1073,25 @@ static void mm_pair_task(void *ctx, size_t task) {
   mm_pair_job *j=(mm_pair_job *)ctx;
   if (task<j->split) mm_task(&j->a,task); else mm_task(&j->b,task-j->split);
 }
-void bcir_tensor_mm_pair_pool(bcir_tensor_pool *pool, int contract, const bcir_tensor_mm_call *x,
+static void mm_pair_any(bcir_tensor_pool *pool, int fused, int variant, const bcir_tensor_mm_call *x,
     const bcir_tensor_mm_call *y) {
   mm_pair_job j; size_t second;
-  int fused=contract==2 ? MM_KBLOCK : contract==1 ? MM_FUSED : MM_V1;
   if (!pool || pool->threads==1) {
-    mm_serial_any(fused,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
-    mm_serial_any(fused,y->ta,y->tb,y->m,y->n,y->k,y->alpha,y->a,y->b,y->beta,y->c);
+    mm_serial_any(fused,variant,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
+    mm_serial_any(fused,variant,y->ta,y->tb,y->m,y->n,y->k,y->alpha,y->a,y->b,y->beta,y->c);
     return;
   }
-  j.split=mm_job_init(&j.a,fused,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
-  second=mm_job_init(&j.b,fused,y->ta,y->tb,y->m,y->n,y->k,y->alpha,y->a,y->b,y->beta,y->c);
+  j.split=mm_job_init(&j.a,fused,variant,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
+  second=mm_job_init(&j.b,fused,variant,y->ta,y->tb,y->m,y->n,y->k,y->alpha,y->a,y->b,y->beta,y->c);
   pool_run(pool,mm_pair_task,&j,j.split+second);
+}
+static int mm_family(int contract) {
+  return contract==2 ? MM_KBLOCK : contract==1 ? MM_FUSED : MM_V1;
+}
+void bcir_tensor_mm_pair_pool(bcir_tensor_pool *pool, int contract, const bcir_tensor_mm_call *x,
+    const bcir_tensor_mm_call *y) {
+  int fused=mm_family(contract);
+  mm_pair_any(pool,fused,mm_instance(fused,0),x,y);
 }
 /* A chain into one C and independent GEMMs as one job (NDT-SCHED-1): tasks [0, split) are the
  * chain's tiles -- a tile's task runs each chained call's task for that tile in turn, which
@@ -1052,39 +1109,43 @@ static void mm_group_task(void *ctx, size_t task) {
   for (q=0;task>=j->start[q+1];q++) {}
   mm_task(&j->y[q],task-j->start[q]);
 }
-static void mm_call_serial(int fused, const bcir_tensor_mm_call *x) {
-  mm_serial_any(fused,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
+static void mm_call_serial(int fused, int variant, const bcir_tensor_mm_call *x) {
+  mm_serial_any(fused,variant,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
 }
-static size_t mm_call_init(mm_job *j, int fused, const bcir_tensor_mm_call *x) {
-  return mm_job_init(j,fused,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
+static size_t mm_call_init(mm_job *j, int fused, int variant, const bcir_tensor_mm_call *x) {
+  return mm_job_init(j,fused,variant,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
 }
-void bcir_tensor_mm_group_pool(bcir_tensor_pool *pool, int contract, const bcir_tensor_mm_call *x,
+static void mm_group_any(bcir_tensor_pool *pool, int fused, int variant, const bcir_tensor_mm_call *x,
     size_t nx, const bcir_tensor_mm_call *y, size_t ny) {
   mm_group_job j; size_t q;
-  int fused=contract==2 ? MM_KBLOCK : contract==1 ? MM_FUSED : MM_V1;
   int serial=!pool || pool->threads==1 || nx>BCIR_TENSOR_MM_GROUP || ny>BCIR_TENSOR_MM_GROUP;
   for (q=1;q<nx && !serial;q++) serial=x[q].c!=x[0].c || x[q].m!=x[0].m || x[q].n!=x[0].n;
   if (serial) {
-    for (q=0;q<nx;q++) mm_call_serial(fused,x+q);
-    for (q=0;q<ny;q++) mm_call_serial(fused,y+q);
+    for (q=0;q<nx;q++) mm_call_serial(fused,variant,x+q);
+    for (q=0;q<ny;q++) mm_call_serial(fused,variant,y+q);
     return;
   }
   j.nx=nx; j.split=0; j.start[0]=0;
-  for (q=0;q<nx;q++) { size_t tasks=mm_call_init(&j.x[q],fused,x+q); if (!q) j.split=tasks; }
-  for (q=0;q<ny;q++) j.start[q+1]=j.start[q]+mm_call_init(&j.y[q],fused,y+q);
+  for (q=0;q<nx;q++) { size_t tasks=mm_call_init(&j.x[q],fused,variant,x+q); if (!q) j.split=tasks; }
+  for (q=0;q<ny;q++) j.start[q+1]=j.start[q]+mm_call_init(&j.y[q],fused,variant,y+q);
   pool_run(pool,mm_group_task,&j,j.split+j.start[ny]);
+}
+void bcir_tensor_mm_group_pool(bcir_tensor_pool *pool, int contract, const bcir_tensor_mm_call *x,
+    size_t nx, const bcir_tensor_mm_call *y, size_t ny) {
+  int fused=mm_family(contract);
+  mm_group_any(pool,fused,mm_instance(fused,0),x,nx,y,ny);
 }
 void bcir_tensor_mm_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m, size_t n, size_t k,
     float alpha, const float *a, const float *b, float beta, float *c) {
-  mm_pool_any(pool,MM_V1,ta,tb,m,n,k,alpha,a,b,beta,c);
+  mm_pool_any(pool,MM_V1,mm_instance(MM_V1,0),ta,tb,m,n,k,alpha,a,b,beta,c);
 }
 void bcir_tensor_mm_fused_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m, size_t n,
     size_t k, float alpha, const float *a, const float *b, float beta, float *c) {
-  mm_pool_any(pool,MM_FUSED,ta,tb,m,n,k,alpha,a,b,beta,c);
+  mm_pool_any(pool,MM_FUSED,mm_instance(MM_FUSED,0),ta,tb,m,n,k,alpha,a,b,beta,c);
 }
 void bcir_tensor_mm_kblock_pool(bcir_tensor_pool *pool, int ta, int tb, size_t m, size_t n,
     size_t k, float alpha, const float *a, const float *b, float beta, float *c) {
-  mm_pool_any(pool,MM_KBLOCK,ta,tb,m,n,k,alpha,a,b,beta,c);
+  mm_pool_any(pool,MM_KBLOCK,mm_instance(MM_KBLOCK,0),ta,tb,m,n,k,alpha,a,b,beta,c);
 }
 /* --- the bf16 contract (NDT-BF16) --------------------------------------------------------------
  * Every instance accumulates from one packed layout (bcir_tensor.h): A as tiles of 16 rows x 32
@@ -1611,6 +1672,7 @@ static void bf16_region(int variant, const bf16_call *c, size_t t) {
 }
 static void bf16_compute_task(void *ctx, size_t task) {
   bf16_job *j=(bf16_job *)ctx; size_t q;
+  INSTANCE_SAW(INSTANCE_BF16,j->variant);
   if (task<j->split) { for (q=0;q<j->nchain;q++) bf16_region(j->variant,&j->call[q],task); return; }
   task-=j->split;
   for (q=0;task>=j->tasks[q+1];q++) {}
@@ -1762,6 +1824,13 @@ static int bf16_widest(void) {
   int v=bcir_tensor_mm_bf16_variants();
   return v&8 ? 8 : v&4 ? 4 : 1;
 }
+/* PX-3b: the bf16 contract's instance for a request (mm_instance's rule over
+ * bcir_tensor_mm_bf16_variants: 0 the widest, else 1 portable, 4 AVX-512 or 8 AMX when admitted). */
+static int bf16_instance(int variant) {
+  if (!variant) return bf16_widest();
+  return (variant==1 || variant==4 || variant==8) && (bcir_tensor_mm_bf16_variants()&variant) ?
+    variant : 0;
+}
 int bcir_tensor_mm_bf16_group_pool(bcir_tensor_pool *pool, const bcir_tensor_mm_call *chain,
     size_t nchain, const bcir_tensor_mm_call *y, size_t ny, void *workspace, size_t bytes) {
   return bf16_group_any(pool,bf16_widest(),chain,nchain,y,ny,NULL,workspace,bytes);
@@ -1785,6 +1854,50 @@ int bcir_tensor_mm_bf16_variant(int variant, int ta, int tb, size_t m, size_t n,
   if ((variant!=1 && variant!=4 && variant!=8) || !(bcir_tensor_mm_bf16_variants()&variant)) return 0;
   x.ta=ta; x.tb=tb; x.m=m; x.n=n; x.k=k; x.alpha=alpha; x.a=a; x.b=b; x.beta=beta; x.c=c;
   return bf16_group_any(NULL,variant,NULL,0,&x,1,NULL,workspace,bytes) ? variant : 0;
+}
+/* --- PX-3b (DISPATCH): the GEMM entries with the instance named (bcir_tensor.h) ---------------- */
+int bcir_tensor_mm_contract_variants(int contract) {
+  return contract==3 ? bcir_tensor_mm_bf16_variants() : contract==1 || contract==2 ?
+    bcir_tensor_mm_fused_variants() : contract==0 ? bcir_tensor_mm_variants() : 0;
+}
+int bcir_tensor_mm_contract_variant_pool(bcir_tensor_pool *pool, int contract, int variant, int ta,
+    int tb, size_t m, size_t n, size_t k, float alpha, const float *a, const float *b, float beta,
+    float *c, void *workspace, size_t bytes) {
+  int fused,v;
+  if (contract==3) {
+    bcir_tensor_mm_call x;
+    if (!(v=bf16_instance(variant))) return 0;
+    x.ta=ta; x.tb=tb; x.m=m; x.n=n; x.k=k; x.alpha=alpha; x.a=a; x.b=b; x.beta=beta; x.c=c;
+    return bf16_group_any(pool,v,NULL,0,&x,1,NULL,workspace,bytes) ? v : 0;
+  }
+  if (contract<0 || contract>2) return 0;
+  fused=mm_family(contract);
+  if (!(v=mm_instance(fused,variant))) return 0;
+  mm_pool_any(pool,fused,v,ta,tb,m,n,k,alpha,a,b,beta,c);
+  return v;
+}
+int bcir_tensor_mm_pair_variant_pool(bcir_tensor_pool *pool, int contract, int variant,
+    const bcir_tensor_mm_call *x, const bcir_tensor_mm_call *y) {
+  int fused,v;
+  if (contract<0 || contract>2) return 0;
+  fused=mm_family(contract);
+  if (!(v=mm_instance(fused,variant))) return 0;
+  mm_pair_any(pool,fused,v,x,y);
+  return v;
+}
+int bcir_tensor_mm_group_variant_pool(bcir_tensor_pool *pool, int contract, int variant,
+    const bcir_tensor_mm_call *chain, size_t nchain, const bcir_tensor_mm_call *y, size_t ny,
+    const bcir_tensor_bf16_panels *pre, void *workspace, size_t bytes) {
+  int fused,v;
+  if (contract==3) {
+    if (!(v=bf16_instance(variant))) return 0;
+    return bf16_group_any(pool,v,chain,nchain,y,ny,pre,workspace,bytes) ? v : 0;
+  }
+  if (contract<0 || contract>2 || pre) return 0;
+  fused=mm_family(contract);
+  if (!(v=mm_instance(fused,variant))) return 0;
+  mm_group_any(pool,fused,v,chain,nchain,y,ny);
+  return v;
 }
 /* --- the writers' verdicts (NDT-SCAN-W) --------------------------------------------------------
  * A task that wrote a region reports whether it is finite into its own byte of the caller's
@@ -2762,7 +2875,9 @@ static void att_head(const att_job *a, size_t r, size_t h) {
   if (a->bad) att_verdict(a,r,h);
 }
 static void att_task(void *ctx, size_t task) {
-  att_job *a=(att_job *)ctx; att_head(a,task/a->nh,task%a->nh);
+  att_job *a=(att_job *)ctx;
+  INSTANCE_SAW(INSTANCE_ATTN,a->variant);
+  att_head(a,task/a->nh,task%a->nh);
 }
 #ifdef BCIR_DT_ATTENTION_PROBE
 /* The trainer harness's record of the contract the attention's jobs ran (ATTN-FMA) -- what each
@@ -2782,12 +2897,15 @@ unsigned bcir_tensor_attention_probe(int backward) {
   return c;
 }
 #endif
-static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, size_t b, size_t t, size_t nh,
-    size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y, int *bad) {
+/* `variant` resolved (mm_instance over the products' family: the fused GEMM's under FUSED, v1's
+ * otherwise) */
+static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int variant, size_t b, size_t t,
+    size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
+    int *bad) {
   att_job a; unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=b*nh;
   a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.group=1; a.q=q; a.k=k; a.v=v; a.dy=NULL; a.p=p; a.y=y;
   a.dq=NULL; a.dk=NULL; a.dv=NULL; a.exp2=exp2; a.fused=fused;
-  a.variant=fused ? mm_widest_fused() : mm_widest();
+  a.variant=variant;
 #ifdef BCIR_DT_ATTENTION_PROBE
   attention_saw(0,(a.exp2 ? BCIR_TENSOR_ATTENTION_EXP : 0u)|(a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u));
 #endif
@@ -2799,27 +2917,34 @@ static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, size_t b,
 }
 void bcir_tensor_attention_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,0,0,b,t,nh,nk,d,q,k,v,p,y,NULL);
+  attention_any(pool,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL);
 }
 void bcir_tensor_attention_v2_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,1,0,b,t,nh,nk,d,q,k,v,p,y,NULL);
+  attention_any(pool,1,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL);
 }
 void bcir_tensor_attention_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
     size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
     int *bad) {
-  attention_any(pool,0,0,b,t,nh,nk,d,q,k,v,p,y,bad);
+  attention_any(pool,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad);
 }
 void bcir_tensor_attention_v2_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
     size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
     int *bad) {
-  attention_any(pool,1,0,b,t,nh,nk,d,q,k,v,p,y,bad);
+  attention_any(pool,1,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad);
 }
 void bcir_tensor_attention_contract_scan_pool(bcir_tensor_pool *pool, unsigned contract, size_t b,
     size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v,
     float *p, float *y, int *bad) {
-  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0,
-      b,t,nh,nk,d,q,k,v,p,y,bad);
+  bcir_tensor_attention_contract_variant_scan_pool(pool,0,contract,b,t,nh,nk,d,q,k,v,p,y,bad);
+}
+int bcir_tensor_attention_contract_variant_scan_pool(bcir_tensor_pool *pool, int variant,
+    unsigned contract, size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q,
+    const float *k, const float *v, float *p, float *y, int *bad) {
+  int fused=(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0,iv=mm_instance(fused ? MM_FUSED : MM_V1,variant);
+  if (!iv) return 0;
+  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,fused,iv,b,t,nh,nk,d,q,k,v,p,y,bad);
+  return iv;
 }
 void bcir_tensor_attention(size_t b, size_t t, size_t nh, size_t nk, size_t d,
     const float *q, const float *k, const float *v, float *p, float *y) {
@@ -2933,6 +3058,7 @@ static void att_head_backward(const att_job *a, size_t r, size_t h, const float 
 static void att_task_backward(void *ctx, size_t task) {
   att_job *a=(att_job *)ctx; size_t per=a->nh/a->group,r=task/per,first=(task%per)*a->group,h,i;
   size_t t=a->t,d=a->d,nh=a->nh,nk=a->nk,share=nh/nk,kh=first/share;
+  INSTANCE_SAW(INSTANCE_ATTN,a->variant);
   /* the adjoints accumulate, so they start at zero here, in the task that owns them (NDT-SCAN; the
    * caller's fill was serial): this task's query heads' dq columns, and its KV head's dk and dv
    * columns where the task holds that KV head's first query head -- the task that runs before the
@@ -2957,15 +3083,24 @@ static void att_task_backward(void *ctx, size_t task) {
 void bcir_tensor_attention_backward_contract_pool(bcir_tensor_pool *pool, unsigned contract,
     size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k,
     const float *v, float *p, const float *dy, float *dq, float *dk, float *dv) {
-  att_job a;
+  bcir_tensor_attention_backward_contract_variant_pool(pool,0,contract,b,t,nh,nk,d,q,k,v,p,dy,dq,dk,
+      dv);
+}
+int bcir_tensor_attention_backward_contract_variant_pool(bcir_tensor_pool *pool, int variant,
+    unsigned contract, size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q,
+    const float *k, const float *v, float *p, const float *dy, float *dq, float *dk, float *dv) {
+  att_job a; int fused=(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0;
+  int iv=mm_instance(fused ? MM_FUSED : MM_V1,variant);
+  if (!iv) return 0;
   a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.q=q; a.k=k; a.v=v; a.dy=dy; a.p=p; a.y=NULL;
   a.dq=dq; a.dk=dk; a.dv=dv; a.exp2=0; a.bad=NULL;
-  a.fused=(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0; a.variant=a.fused ? mm_widest_fused() : mm_widest();
+  a.fused=fused; a.variant=iv;
   a.group=nh/nk;
 #ifdef BCIR_DT_ATTENTION_PROBE
   attention_saw(1,a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
 #endif
   pool_run(pool,att_task_backward,&a,b*nh/a.group);
+  return iv;
 }
 void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *pool, size_t b, size_t t,
     size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v, float *p,
@@ -3218,6 +3353,7 @@ static void att16_task(void *ctx, size_t task, unsigned worker) {
   const att16_job *j=(const att16_job *)ctx; const att_job *a=&j->a;
   size_t t=a->t,d=a->d,nh=a->nh,nk=a->nk,share=nh/nk,r=task/nk,kh=task%nk,h;
   unsigned char *region=j->ws+(j->by_worker ? (size_t)worker : task)*j->per;
+  INSTANCE_SAW(INSTANCE_ATTN16,j->bv);
   uint16_t *kb=(uint16_t *)(void *)region,*vb=kb+bf16_strip(t,d)/2,*qa=vb+bf16_strip(d,t)/2;
   uint16_t *pa=qa+bf16_strip(t,d)/2; float *ys=(float *)(void *)(pa+bf16_strip(t,t)/2);
   bf16_call c;
@@ -3309,6 +3445,7 @@ static void att16_task_backward(void *ctx, size_t task, unsigned worker) {
   const att16_job *j=(const att16_job *)ctx; const att_job *a=&j->a;
   size_t t=a->t,d=a->d,nh=a->nh,nk=a->nk,share=nh/nk,r=task/nk,kh=task%nk,tp=bf16_pad(t),h;
   att16_back w=att16_parts(j->ws+(j->by_worker ? (size_t)worker : task)*j->per,t,d);
+  INSTANCE_SAW(INSTANCE_ATTN16,j->bv);
   bf16_call c;
 #ifdef BCIR_BF16_AMX
   if (j->bv==8) bf16_amx_begin();
@@ -3326,10 +3463,7 @@ static void att16_task_backward(void *ctx, size_t task, unsigned worker) {
   att16_transpose(a->variant,t,d,w.dkt,tp,a->dk+(r*t*nk+kh)*d,nk*d);
 }
 /* the instance a call names (0: the widest admitted), or 0 where it is not admitted */
-static int att16_instance(int variant) {
-  int bv=variant ? variant : bf16_widest();
-  return (bv==1 || bv==4 || bv==8) && (bcir_tensor_mm_bf16_variants()&bv) ? bv : 0;
-}
+static int att16_instance(int variant) { return bf16_instance(variant); }
 static void att16_fill(att_job *a, size_t b, size_t t, size_t nh, size_t nk, size_t d) {
   memset(a,0,sizeof *a);
   a->b=b; a->t=t; a->nh=nh; a->nk=nk; a->d=d; a->variant=mm_widest(); a->group=nh/nk;

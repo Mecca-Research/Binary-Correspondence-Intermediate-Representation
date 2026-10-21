@@ -490,13 +490,19 @@ def test_a_failing_run_stops_where_the_step_stops():
 
 def test_the_record_format_is_the_headers():
     """The record kinds, the check's tests and the record's words the launch model spells are
-    the header's (bcir_decoder_train.h), read from its text: two rails out of their own sources."""
+    the header's (bcir_decoder_train.h), read from its text: two rails out of their own sources --
+    PX-3b's two dispatch words among them."""
     header = _C / "bcir_decoder_train.h"
     if not header.is_file():
         return  # an installed package ships no C units: the one absence that is expected
     text = header.read_text(encoding="utf-8")
     words = re.search(r"#define BCIR_DT_RECORD_WORDS (\d+)", text)
     assert words and int(words.group(1)) == RECORD_WORDS
+    from bcir.hosted.models.native_launch import WORD_INSTANCE, WORD_WORKERS
+
+    dispatch = dict(re.findall(r"#define BCIR_DT_WORD_(INSTANCE|WORKERS) (\d+)", text))
+    assert {k: int(v) for k, v in dispatch.items()} == {
+        "INSTANCE": WORD_INSTANCE, "WORKERS": WORD_WORKERS}  # fmt: skip
     enum = re.search(r"enum \{ (BCIR_DT_REC_SCAN=1,[^}]*)\}", text, re.S)
     assert enum, "the header names no record kinds"
     names = [name.split("=")[0].strip() for name in enum.group(1).split(",") if name.strip()]

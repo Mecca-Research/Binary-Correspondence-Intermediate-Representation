@@ -3725,6 +3725,65 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     constants) instead of choosing beside them. The measuring host is this container's (no AMX, no
     AVX512-BF16): a table is the host's that measured it, and names it.
   - The ladder: PX-6 (GPU lowering and synchronization) is a documented skip on this host.
+  PX-3b-1 (2026-10-21): the kernel instance and the pool's thread split as choices of the step program.
+  - PX-3 left both fixed by the host: every GEMM and attention ran its family's widest instance, every
+    job every thread of the pool. They are words of the program now -- 41, the instance a job's GEMMs
+    or attention products run (one bit of `bcir_tensor.h`'s: 1 portable, 2 AVX2, 4 AVX-512, 8 AMX,
+    that the job's family admits; 0 the widest, as before), and 42, the workers it runs on (0 all the
+    pool's threads, as before) -- alike in every record of a job. A program of zeros is the program
+    before PX-3b, word for word.
+  - `bcir_tensor`: `bcir_tensor_pool_cap` (a job's workers: the workers past a cap report every
+    generation without claiming a task, a cap of one runs on the caller in order) and the
+    `*_variant_pool` entries of the GEMM, its pair and group jobs and the attention and its VJP, each
+    returning the instance it ran (0: nothing written). Every instance of a family is the contract's
+    bits and a pool's partition is a function of the shapes alone, so every dispatch trains the same
+    bits.
+  - `bcir_decoder_run_program` holds the words to the host before anything runs -- an instance the
+    family lacks, two at once, an instance on a kernel without one or on a provider's GEMM, more
+    workers than the pool's threads, workers on a CHECK, a job whose records disagree: each refused
+    with nothing written -- and leaves the pool's cap as it found it, however the run ends. The trace
+    records the instance a job ran (the entry's own return) and its workers, and the C harness's
+    instance probe (BCIR_TENSOR_INSTANCE_PROBE) holds every entry to the kernels that ran.
+  - Python: `native_launch.step_program(dispatch=...)` states a dispatch per kind -- a GEMM's role
+    (each linear's forward and VJP, the head's), an attention, every other kernel -- and labels each
+    launch's kind (`dispatch_labels`); `dispatch_alternatives` names what a host admits,
+    `parse_dispatch` the grammar, `program_launches` the defaults as the trace records them.
+    `native_choose` measures the dispatch like any site (`dispatch:<kind>`, a table naming the host's
+    instance masks: its times are of that host's defaults, so another host's table is refused) and
+    `choose_dispatch` takes only alternatives resolved faster.
+  - `train.plan.dispatch.mismatch` 1,153 -> 0 (a new GEM+ row): the 27 state cases under every
+    dispatch kind switched alone to the portable instance, to its family's widest named and to each
+    worker count below the case's threads, and three seeded draws of one a kind, run from their
+    programs on the trace build, trace the dispatched programs as the host resolves them and train
+    the C step's state and events bit for bit; 1,063 of them run a program other than the C step's
+    own. Every admitted instance of every family is the plain entry's bits at caps one, two and all.
+  - The measurement ([px3b/](research/measurements/2026-10-21/px3b/README.json)), on this host
+    (AVX-512, AVX512-BF16 and AMX) at four threads: under bf16 none of the 93 alternatives reads faster
+    at its sites -- AVX-512 in place of AMX x4.74-x10.11 on the GEMMs, the portable instance
+    x274-x646, one to three workers x0.92-x3.82 -- so the default dispatch is kept (a third trainer on
+    it x0.9875 of the first, the A/A control x1.0012); under binary32 the embedding gradient's scatter
+    at one worker reads x0.848 (0.734-0.980) at its sites and is chosen, x1.0101 (0.990-1.030) end to
+    end beside the A/A control's x0.989: not resolvable. Every GEMM and attention on the portable
+    instance runs x215 under bf16 (18.8 s a step against 79.5 ms) and x62.5 under binary32 end to end,
+    as the sites' readings predict (x240 and x64.5). The two slowest arms first shared the 32 rounds of
+    the others -- at 18.8 s a step, hours of them -- so they take six rounds of their own beside a
+    default trainer of their own (`--slow-rounds`).
+  - Fault sweeps: `px-dispatch.json` (PY1-PY28: the alternatives, the grammar, the host, the program,
+    the resolution, the table, the choice and the row), 28 of 28 caught, each by its own witness;
+    `px-dispatch-c.json` (PC1-PC4, PI1-PI6, PK1-PK10, PR1-PR7, PT1-PT3, PB1-PB4: the pool's cap, the
+    instance an entry runs, the check, the run, the trace, the binding and the measurement), 34 of 34
+    -- four first stopped a strict build (`-Wunused`: two in the sweep's own build, two more under GCC
+    13's `-Wall -Wextra -Werror`), were rewritten to build warning-free under GCC 13, clang 18 and
+    clang 23 and caught. The 20 entries of
+    eight older tables whose lines PX-3b rewrote (`geo3.json` GW8, GW9; `ndt-attnbf16.json` AB8;
+    `ndt-attnfma.json` AF10, AF11, AF14, AF16, AF17; `ndt-kblock.json` NK5; `ndt-threads.json` NT9,
+    NT10, NT14, NT16; `px-choose.json` PC14, PC17, PC18; `px-program.json` PM8, PM11; `px-trace.json`
+    PT2, PM3) were re-anchored to the new lines, each keeping its defect, and re-swept: 20 of 20
+    caught (GW8 first stopped the build, `-Wparentheses`, and was rewritten), with GW12, inside the
+    construct GW8 anchors in, 1 of 1.
+  - Not claimed, and open (PX-3b-2): the measured prices inside K_BCIR's own candidates on its three
+    rails, so the plan rather than a choice beside it takes the dispatch. PX-6 (GPU) stays pending: it
+    continues in a local session on the hardware.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

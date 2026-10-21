@@ -170,13 +170,14 @@ BCIR_DT_API int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_
  * job's launch exceeds the one before), flags, eight dimensions, ten operands as (space, byte offset,
  * bytes) -- spaces 1-4 the parameter arenas in the state's order, 5 activations, 6 scratch, 7 the bf16
  * workspace (whole), 8 the micro-batch's tokens or targets (whole, offset 0); an absent one (0, 0, 0)
- * -- and seven words of zero. A kernel record runs its call as the step runs it, so a program's
- * trace is the program; PASS, PREFLIGHT and COMMIT are trace records only. A scan of a parameter
- * arena fails the run (BCIR_DT_NUMERIC) on a value not finite, a scan of activations or scratch
- * reports to the next FORWARD check; a scan of the whole weights, and an update, make the weights
- * known finite, and no other record reads them before they are (FACTS-RUN). The host's records:
- * CHECK -- FORWARD: a product refused its workspace, BCIR_DT_CAPACITY, else a value the forward's
- * writers or scans found not finite, BCIR_DT_NUMERIC; RAN: a refused product, BCIR_DT_CAPACITY;
+ * -- and seven spare words, zero but the two PX-3b names below. A kernel record runs its call as
+ * the step runs it, so a program's trace is the program; PASS, PREFLIGHT and COMMIT are trace
+ * records only. A scan of a parameter arena fails the run (BCIR_DT_NUMERIC) on a value not
+ * finite, a scan of activations or scratch reports to the next FORWARD check; a scan of the whole
+ * weights, and an update, make the weights known finite, and no other record reads them before
+ * they are (FACTS-RUN). The host's records: CHECK -- FORWARD: a product refused its workspace,
+ * BCIR_DT_CAPACITY, else a value the forward's writers or scans found not finite, BCIR_DT_NUMERIC;
+ * RAN: a refused product, BCIR_DT_CAPACITY;
  * LOSS: the same, then the micro-batch's loss not finite, BCIR_DT_NUMERIC, else it closes the
  * micro-batch (its tokens are the next ones), its mean adding a 1/accumulation share to the step's
  * loss -- and UPDATE (the update's pass record, its kind UPDATE): bcir_decoder_update's update with
@@ -198,8 +199,20 @@ BCIR_DT_API int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_
  * capacities, any length, where the fixed step needs the plan's spans: BCIR_DT_CAPACITY there), and
  * every operand lies inside its arena's lent length -- so a state whose two transient arenas a
  * placement sized (bcir/hosted/models/native_pack.py's place_by_lifetime) runs the programs placed
- * there; the arguments and the program lie outside those lengths. */
+ * there; the arguments and the program lie outside those lengths.
+ * PX-3b (DISPATCH): two of the seven spare words name how a job runs, alike in every record of it.
+ * Word 41 is the instance -- 0 the widest the job's family admits (what the step runs), else one bit
+ * bcir_tensor_mm_contract_variants admits for the state's GEMM contract, or for an attention the
+ * instance family its products take (bcir_tensor.h) -- and only a GEMM job of BCIR's entries or an
+ * attention (ATTN, ATTN_VJP) may name one. Word 42 is the job's workers -- 0 all the pool's threads,
+ * else 1 .. the pool's threads (bcir_tensor_pool_cap) -- on any record but CHECK. Every instance of
+ * a family and every cap is the same bits, so a program of any is the program of none, bit for bit;
+ * a word outside its grammar is BCIR_DT_INVALID with nothing written. A trace records in them the
+ * instance a GEMM or attention launch ran (the entry's return) and the workers its job ran on. A
+ * run leaves the pool's cap as it found it, however it ends. */
 #define BCIR_DT_RECORD_WORDS 48
+#define BCIR_DT_WORD_INSTANCE 41
+#define BCIR_DT_WORD_WORKERS 42
 enum { BCIR_DT_REC_SCAN=1, BCIR_DT_REC_ZERO, BCIR_DT_REC_EMBED, BCIR_DT_REC_RMS, BCIR_DT_REC_GEMM,
   BCIR_DT_REC_ROPE, BCIR_DT_REC_ATTN, BCIR_DT_REC_ATTN_VJP, BCIR_DT_REC_ADD, BCIR_DT_REC_SILU_MUL,
   BCIR_DT_REC_SILU_MUL_PANELS, BCIR_DT_REC_SWIGLU_VJP, BCIR_DT_REC_SWIGLU_VJP_PANELS,

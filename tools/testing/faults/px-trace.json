@@ -76,8 +76,8 @@
     {
       "expects": "test_the_c_step_issues_the_planned_launches",
       "label": "PT2 the probe numbers every call its own launch (a group reads as its calls)",
-      "new": "  trace_launch++;",
-      "old": "  if (fresh) trace_launch++;",
+      "new": "  trace_launch++; if (fresh) trace_mark=trace_count;",
+      "old": "  if (fresh) { trace_launch++; trace_mark=trace_count; }",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
@@ -111,8 +111,8 @@
     {
       "expects": "test_the_c_step_issues_the_planned_launches",
       "label": "PM3 the plan states the update's preflight as always run",
-      "new": "            out.append(Launch((replace(record, kind=PREFLIGHT, flags=0),), optional=False))",
-      "old": "            out.append(Launch((replace(record, kind=PREFLIGHT, flags=0),), optional=True))",
+      "new": "            out.append(Launch((replace(update, kind=PREFLIGHT, flags=0),), optional=False))",
+      "old": "            out.append(Launch((replace(update, kind=PREFLIGHT, flags=0),), optional=True))",
       "path": "bcir/hosted/models/native_launch.py"
     },
     {

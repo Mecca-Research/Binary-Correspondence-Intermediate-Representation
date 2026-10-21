@@ -997,7 +997,28 @@ class NativeDecoder:
             alignment={SPACES[name]: ct.addressof(buf) % 64 for name, buf in self.buffers.items()},
             provider_mm=bool(provider.mm), provider_silu=bool(provider.silu),
             steps=steps, accumulation=gradient_accumulation,
+            threads=self.threads, instances=self.instance_families(),
         )  # fmt: skip
+
+    def instance_families(self) -> dict:
+        """PX-3b (DISPATCH): the instances this host admits for the trainer's jobs, as masks of
+        bcir_tensor.h's bits (1 portable, 2 AVX2, 4 AVX-512, 8 AMX): "gemm" its GEMM contract's
+        family (bcir_tensor_mm_contract_variants), "attention" its attention's products' (the bf16
+        family under +attnbf16, the fused GEMM's under +attn, v1's otherwise)."""
+        lib, bits = self.lib, _CONTRACTS[self.contract]
+        for name in ("mm_variants", "mm_fused_variants", "mm_bf16_variants"):
+            fn = getattr(lib, "bcir_tensor_" + name)
+            fn.argtypes, fn.restype = [], ct.c_int
+        lib.bcir_tensor_mm_contract_variants.argtypes = [ct.c_int]
+        lib.bcir_tensor_mm_contract_variants.restype = ct.c_int
+        gemm = 3 if bits & _BF16 else 2 if bits & _KBLOCK else 1 if bits & 1 else 0
+        attention = (lib.bcir_tensor_mm_bf16_variants() if bits & _ATTNBF16 else
+                     lib.bcir_tensor_mm_fused_variants() if bits & _ATTN else
+                     lib.bcir_tensor_mm_variants())  # fmt: skip
+        return {
+            "gemm": int(lib.bcir_tensor_mm_contract_variants(gemm)),
+            "attention": int(attention),
+        }
 
     def lower_pack(self, pack: bytes, plan: bytes) -> array:
         """PX-2b: the launch program a StreamPack and its ExecutionPlanV1 state for this trainer

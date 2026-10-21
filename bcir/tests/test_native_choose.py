@@ -527,8 +527,8 @@ def test_the_trainer_states_its_own_decisions():
     cases -- and `trainer_shape` the shape a table measured on it names, on cases where every
     decision but the arenas' alignment takes more than one value
     (contracts, recompute sets, the workspace's tiers and the panels' need, a provider's GEMM and
-    its SiLU, steps and accumulation), and refuses steps or an accumulation that is not a positive
-    integer."""
+    its SiLU, steps and accumulation, the pool's threads and the instances each job family admits),
+    and refuses steps or an accumulation that is not a positive integer."""
     if _CC is None:
         return
     corpus = nf.trace_corpus()
@@ -543,6 +543,7 @@ def test_the_trainer_states_its_own_decisions():
             if c.spec == nf.PANELS_BENCH[0] and c.contract == "bf16" and c.threads == 1
         ),
         *(c for c in corpus if c.provider),
+        next(c for c in corpus if c.threads > 1),
     ]
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         path = nf.checkout_library(Path(tmp) / "plain")

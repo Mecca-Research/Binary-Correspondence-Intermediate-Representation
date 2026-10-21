@@ -112,7 +112,10 @@ embedding, MLP, GRU, encoder, adaptive-transformer, byte-latent, selective-SSM,
 sequence-interface adaptation, and constructive-growth stages. These
 remain reference infrastructure—not
 a production training framework or serving stack. Real multi-target calibration, whole-model Q4,
-large-corpus training, GPU execution, and the Phase-C data/memory organs remain open.
+large-corpus training, GPU execution, and the Phase-C data/memory organs remain open; the native
+trainer's device rung (PX-6: the step program lowered and synchronized for a GPU) is **pending**,
+gated on hardware this host lacks, and continues in a local session on the hardware
+([the training roadmap's PX row](../research/BCIR_TRAINING_ACCELERATION_ROADMAP.md)).
 
 ### 1.1 Hosted model laboratory — dependency boundary and first closed gate
 

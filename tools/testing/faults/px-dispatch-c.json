@@ -1,0 +1,256 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_dispatch:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23",
+    "bcir.tests.test_native_dispatch:test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+    "bcir.tests.test_native_dispatch:test_a_program_the_host_cannot_dispatch_is_refused_with_nothing_written",
+    "bcir.tests.test_native_dispatch:test_a_run_leaves_the_pool_as_it_found_it",
+    "bcir.tests.test_native_dispatch:test_a_dispatch_measurement_is_a_table_at_the_hosts_instances",
+    "bcir.tests.test_native_place:test_the_fuzz_harnesses_hold_their_seeds_to_their_verdicts",
+    "bcir.tests.test_native_run_program:test_the_fuzz_seeds_start_inside_the_grammar",
+    "bcir.tests.test_native_choose:test_the_trainer_states_its_own_decisions"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PC1 a capped job's tasks claimed by every worker",
+      "new": "  if (id>=p->threads) return;  /* past the job's cap: the worker reports without claiming a task */\n  (void)workers;\n",
+      "old": "  if (id>=workers) return;  /* past the job's cap: the worker reports without claiming a task */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_a_run_leaves_the_pool_as_it_found_it",
+      "label": "PC2 the cap's call returning the new cap",
+      "new": "  pool->cap=workers>=pool->threads ? 0u : workers;\n  (void)prev;\n  return pool->cap;\n",
+      "old": "  pool->cap=workers>=pool->threads ? 0u : workers;\n  return prev;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PC3 a cap at or past the threads kept as asked",
+      "new": "  pool->cap=workers;\n",
+      "old": "  pool->cap=workers>=pool->threads ? 0u : workers;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+      "label": "PC4 the workers read without the cap",
+      "new": "  return !pool ? 1u : pool->threads;\n",
+      "old": "  return !pool ? 1u : pool->cap ? pool->cap : pool->threads;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+      "label": "PI1 a binary32 GEMM request run as the widest",
+      "new": "  return (variant==1 || variant==2 || variant==4) && (have&variant) ?\n    (fused ? mm_widest_fused() : mm_widest()) : 0;\n",
+      "old": "  return (variant==1 || variant==2 || variant==4) && (have&variant) ? variant : 0;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PI2 a GEMM job's kernels the widest while the entry names the request",
+      "new": "  j->beta=beta; j->fused=fused; j->variant=fused ? mm_widest_fused() : mm_widest();\n  (void)variant; j->nr=mm_nr(j->variant,fused);\n",
+      "old": "  j->beta=beta; j->fused=fused; j->variant=variant; j->nr=mm_nr(j->variant,fused);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+      "label": "PI3 a bf16 GEMM request run as the widest",
+      "new": "  return (variant==1 || variant==4 || variant==8) && (bcir_tensor_mm_bf16_variants()&variant) ?\n    bf16_widest() : 0;\n",
+      "old": "  return (variant==1 || variant==4 || variant==8) && (bcir_tensor_mm_bf16_variants()&variant) ?\n    variant : 0;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+      "label": "PI4 the bf16 attention's request ignored",
+      "new": "static int att16_instance(int variant) { return bf16_instance(variant ? 0 : 0); }\n",
+      "old": "static int att16_instance(int variant) { return bf16_instance(variant); }\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PI5 the attention's products the widest while the entry names the request",
+      "new": "  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,fused,\n      mm_instance(fused ? MM_FUSED : MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad);\n",
+      "old": "  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,fused,iv,b,t,nh,nk,d,q,k,v,p,y,bad);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PI6 the attention VJP's products the widest while the entry names the request",
+      "new": "  a.fused=fused; a.variant=mm_instance(fused ? MM_FUSED : MM_V1,0);\n",
+      "old": "  a.fused=fused; a.variant=iv;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_a_program_the_host_cannot_dispatch_is_refused_with_nothing_written",
+      "label": "PK1 a provider's GEMM given its contract's family",
+      "new": "    return bcir_tensor_mm_contract_variants(gemm_contract(s));\n",
+      "old": "    return (w[2]&15u)==7u ? 0 : bcir_tensor_mm_contract_variants(gemm_contract(s));\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_fuzz_seeds_start_inside_the_grammar",
+      "label": "PK2 every kernel given the GEMM family",
+      "new": "      (s->contract&BCIR_DT_CONTRACT_ATTN) ? bcir_tensor_mm_fused_variants() : bcir_tensor_mm_variants();\n  return bcir_tensor_mm_contract_variants(gemm_contract(s));\n}\n",
+      "old": "      (s->contract&BCIR_DT_CONTRACT_ATTN) ? bcir_tensor_mm_fused_variants() : bcir_tensor_mm_variants();\n  return 0;\n}\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+      "label": "PK3 the bf16 attention given the fused GEMM's family",
+      "new": "    return (s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? bcir_tensor_mm_fused_variants() :\n",
+      "old": "    return (s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? bcir_tensor_mm_bf16_variants() :\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_program_the_host_cannot_dispatch_is_refused_with_nothing_written",
+      "label": "PK4 two instances admitted",
+      "new": "  if (v && !((uint64_t)(unsigned)mask&v)) return 0;  /* one bit of the family's */\n",
+      "old": "  if (v && ((v&(v-1)) || !((uint64_t)(unsigned)mask&v))) return 0;  /* one bit of the family's */\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_program_the_host_cannot_dispatch_is_refused_with_nothing_written",
+      "label": "PK5 one worker past the pool admitted",
+      "new": "  if (k>(uint64_t)bcir_tensor_pool_threads(c->s->pool)+1u || (k && w[0]==BCIR_DT_REC_CHECK)) return 0;\n",
+      "old": "  if (k>(uint64_t)bcir_tensor_pool_threads(c->s->pool) || (k && w[0]==BCIR_DT_REC_CHECK)) return 0;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_program_the_host_cannot_dispatch_is_refused_with_nothing_written",
+      "label": "PK6 the workers read through 32 bits",
+      "new": "  if ((unsigned)k>bcir_tensor_pool_threads(c->s->pool) || (k && w[0]==BCIR_DT_REC_CHECK)) return 0;\n",
+      "old": "  if (k>(uint64_t)bcir_tensor_pool_threads(c->s->pool) || (k && w[0]==BCIR_DT_REC_CHECK)) return 0;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_fuzz_seeds_start_inside_the_grammar",
+      "label": "PK7 workers on a CHECK admitted",
+      "new": "  if (k>(uint64_t)bcir_tensor_pool_threads(c->s->pool)) return 0;\n",
+      "old": "  if (k>(uint64_t)bcir_tensor_pool_threads(c->s->pool) || (k && w[0]==BCIR_DT_REC_CHECK)) return 0;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_fuzz_harnesses_hold_their_seeds_to_their_verdicts",
+      "label": "PK8 a job's records never held alike",
+      "new": "  (void)job;\n  for (q=1;q<1;q++)\n    if (w[q*BCIR_DT_RECORD_WORDS+BCIR_DT_WORD_INSTANCE]!=v ||\n",
+      "old": "  for (q=1;q<job;q++)\n    if (w[q*BCIR_DT_RECORD_WORDS+BCIR_DT_WORD_INSTANCE]!=v ||\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_program_the_host_cannot_dispatch_is_refused_with_nothing_written",
+      "label": "PK9 a job's records held alike in the instance alone",
+      "new": "    if (w[q*BCIR_DT_RECORD_WORDS+BCIR_DT_WORD_INSTANCE]!=v) return 0;\n",
+      "old": "    if (w[q*BCIR_DT_RECORD_WORDS+BCIR_DT_WORD_INSTANCE]!=v ||\n        w[q*BCIR_DT_RECORD_WORDS+BCIR_DT_WORD_WORKERS]!=k) return 0;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_program_the_host_cannot_dispatch_is_refused_with_nothing_written",
+      "label": "PK10 the spare word after the dispatch words admitted",
+      "new": "    if (w[i] && i!=BCIR_DT_WORD_INSTANCE && i!=BCIR_DT_WORD_WORKERS && i!=BCIR_DT_WORD_WORKERS+1)\n      return 0;\n",
+      "old": "    if (w[i] && i!=BCIR_DT_WORD_INSTANCE && i!=BCIR_DT_WORD_WORKERS) return 0;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+      "label": "PR1 a GEMM job's instance dropped",
+      "new": "  int variant=0;\n",
+      "old": "  int variant=(int)w[BCIR_DT_WORD_INSTANCE];\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+      "label": "PR2 the attention's instance dropped",
+      "new": "    *ran&=attention_v(s,0,d0,d1,d2,d3,d4,px_at(c,w,0),px_at(c,w,1),\n",
+      "old": "    *ran&=attention_v(s,(int)w[BCIR_DT_WORD_INSTANCE],d0,d1,d2,d3,d4,px_at(c,w,0),px_at(c,w,1),\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+      "label": "PR3 the attention VJP's instance dropped",
+      "new": "    *ran&=attention_backward_v(s,0,g,px_at(c,w,0),px_at(c,w,1),\n",
+      "old": "    *ran&=attention_backward_v(s,(int)w[BCIR_DT_WORD_INSTANCE],g,px_at(c,w,0),px_at(c,w,1),\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+      "label": "PR4 a job never capped",
+      "new": "    (void)0;  /* PX-3b: the job's workers */\n",
+      "old": "    bcir_tensor_pool_cap(s->pool,(unsigned)w[BCIR_DT_WORD_WORKERS]);  /* PX-3b: the job's workers */\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+      "label": "PR5 a job capped by its instance word",
+      "new": "    bcir_tensor_pool_cap(s->pool,(unsigned)w[BCIR_DT_WORD_INSTANCE]);  /* PX-3b: the job's workers */\n",
+      "old": "    bcir_tensor_pool_cap(s->pool,(unsigned)w[BCIR_DT_WORD_WORKERS]);  /* PX-3b: the job's workers */\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_run_leaves_the_pool_as_it_found_it",
+      "label": "PR6 the cap left at all threads after a run, not as found",
+      "new": "  bcir_tensor_pool_cap(c->s->pool,0u); (void)before;\n",
+      "old": "  bcir_tensor_pool_cap(c->s->pool,before);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_run_leaves_the_pool_as_it_found_it",
+      "label": "PR7 the cap never restored after a run",
+      "new": "  (void)before;\n",
+      "old": "  bcir_tensor_pool_cap(c->s->pool,before);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+      "label": "PT1 a record's workers traced as the pool's threads",
+      "new": "  w[BCIR_DT_WORD_WORKERS]=bcir_tensor_pool_threads(trace_state->pool);  /* PX-3b: the job's workers */\n",
+      "old": "  w[BCIR_DT_WORD_WORKERS]=bcir_tensor_pool_workers(trace_state->pool);  /* PX-3b: the job's workers */\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+      "label": "PT2 the instance traced into the launch's first record alone",
+      "new": "  for (i=trace_mark;i<trace_count && i<trace_mark+1;i++)\n",
+      "old": "  for (i=trace_mark;i<trace_count;i++)\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
+      "label": "PT3 the instance asked traced, not the one that ran",
+      "new": "   (bcir_tensor_mm_contract_variant_pool(pool,ct,va,ta,tb,m,n,k,al,a,b,be,c,ws,bytes),tr_ran(va)))\n",
+      "old": "   tr_ran(bcir_tensor_mm_contract_variant_pool(pool,ct,va,ta,tb,m,n,k,al,a,b,be,c,ws,bytes)))\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_trainer_states_its_own_decisions",
+      "label": "PB1 the bf16 GEMM's family read as the fused GEMM's",
+      "new": "        gemm = 2 if bits & _BF16 else 2 if bits & _KBLOCK else 1 if bits & 1 else 0\n",
+      "old": "        gemm = 3 if bits & _BF16 else 2 if bits & _KBLOCK else 1 if bits & 1 else 0\n",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_a_dispatch_measurement_is_a_table_at_the_hosts_instances",
+      "label": "PB2 a dispatch arm read by its site labels",
+      "new": "        if of is not None and False:  # PX-3b: the kind's jobs, by their dispatch labels\n",
+      "old": "        if of is not None:  # PX-3b: the kind's jobs, by their dispatch labels\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_a_dispatch_measurement_is_a_table_at_the_hosts_instances",
+      "label": "PB3 a dispatch arm stated without its dispatch",
+      "new": "dispatch={},\n",
+      "old": "dispatch={of: alternative},\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_a_dispatch_measurement_is_a_table_at_the_hosts_instances",
+      "label": "PB4 a dispatch table's shape without the host's instances",
+      "new": "    if instances and False:\n        shape[\"instances\"] = trainer.instance_families()\n",
+      "old": "    if instances:\n        shape[\"instances\"] = trainer.instance_families()\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    }
+  ]
+}

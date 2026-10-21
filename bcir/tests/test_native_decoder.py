@@ -142,11 +142,12 @@ def test_native_c_harness_c11_and_c23():
         # and C23 once more with the writers' verdict bytes bounded at two tasks, so every scan
         # entry takes the scan after its job (NDT-SCAN-W), and once capped at AVX2, so a host whose
         # widest variant is AVX-512 runs the update's AVX2 pairs and commit too (NDT-UPDATE); every
-        # build with the commit's shared division exposed to the harness's check of it, and with
+        # build with the commit's shared division exposed to the harness's check of it, with
         # PX-1's launch trace compiled in but never begun, PX-5's layout probes compiled in but
         # never called, and PX-3's job clock compiled in but never begun -- so the probes build
         # warning-free on every compiler and standard, and the harness's every check holds with
-        # them in (inert)
+        # them in (inert) -- and with PX-3b's instance probe, which the harness's dispatch checks
+        # read (the instance each job's kernels ran)
         builds = (
             ("c11", [], ""),
             ("c2x", [], ""),
@@ -166,6 +167,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_TRACE_PROBE",
                 "-DBCIR_DT_LAYOUT_PROBE",
                 "-DBCIR_DT_TIME_PROBE",
+                "-DBCIR_TENSOR_INSTANCE_PROBE",
                 *options,
                 "-O2",
                 "-Wall",
@@ -192,8 +194,9 @@ def test_native_c_harness_c11_and_c23():
             # the bf16 panels' writers and grouped GEMMs, and their trainer (BF16-PANELS); a run's
             # steps against one-step calls, the weight scans counted (FACTS-RUN); the bf16
             # attention against its reference, and its trainer (BF16-ATTN); the workspace from
-            # its floor up and the recompute sets (GEO-3)
-            assert result.stdout.count("PASS") == 29
+            # its floor up and the recompute sets (GEO-3); the pool's cap and the entries with
+            # the instance named (PX-3b)
+            assert result.stdout.count("PASS") == 31
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -224,6 +227,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_TRACE_PROBE",
                 "-DBCIR_DT_LAYOUT_PROBE",
                 "-DBCIR_DT_TIME_PROBE",
+                "-DBCIR_TENSOR_INSTANCE_PROBE",
             ]
             cmd += ["-I", str(c)]
             cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]
@@ -233,7 +237,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 29
+            assert result.stdout.count("PASS") == 31
             break
 
 
@@ -1319,7 +1323,7 @@ def test_the_harness_rows_are_the_programs_numbers():
                          "train.mm.bf16.mismatch", "train.plan.remat.mismatch",
                          "train.plan.executed.mismatch", "train.plan.program.mismatch",
                          "train.plan.pack.mismatch", "train.plan.place.mismatch",
-                         "train.plan.choose.mismatch"}  # fmt: skip
+                         "train.plan.choose.mismatch", "train.plan.dispatch.mismatch"}  # fmt: skip
     remat = rows["train.plan.remat.mismatch"]
     assert remat.kind == "exact" and remat.bound == 0 and remat.baseline == 0
     assert remat.what.startswith("(spec, recompute set) pairs") and remat.slice_owner == "GEO-3"
@@ -1336,6 +1340,11 @@ def test_the_harness_rows_are_the_programs_numbers():
     assert choose.kind == "exact" and choose.bound == 0 and choose.baseline == chosen
     assert choose.what.startswith(f"of the {chosen} choice runs") and choose.slice_owner == "PX-3"
     assert f"the {states} state cases" in choose.what, "the row names the cases it runs"
+    # PX-3b: the state cases again, under every dispatch kind switched alone and seeded mixes
+    dispatch, dispatched = rows["train.plan.dispatch.mismatch"], nf.dispatch_run_count()
+    assert dispatch.kind == "exact" and dispatch.bound == 0 and dispatch.baseline == dispatched
+    assert dispatch.what.startswith(f"of the {dispatched:,} dispatch runs")
+    assert dispatch.slice_owner == "PX-3b" and f"the {states} state cases" in dispatch.what
     # PX-2b: the same runs, each from its pack -- the program row's corpus, one carrier more
     pack = rows["train.plan.pack.mismatch"]
     assert pack.kind == "exact" and pack.bound == 0 and pack.baseline == runs

@@ -2843,6 +2843,187 @@ static void trainer_recompute(void) {
   printf("  PASS recompute (REMAT): %zu runs under up to nine recompute sets, five contracts, one thread and "
       "four, one micro-batch and two, each the all-kept state in the arena its count names, the logits last\n",runs);
 }
+/* PX-3b (DISPATCH): the pool's cap. A job runs on the caller and at most cap-1 workers, every task
+ * once, and on the caller alone, in ascending order, at a cap of one; the last cap set is the one
+ * in force, and 0 or a count at or past the pool's is all its threads. A task notes the address of a
+ * local of its own frame: one thread, one address (its call chain is the same every task), so the
+ * distinct addresses are the threads that ran tasks -- no atomics and no OS call. */
+static uintptr_t cap_frame[512]; static unsigned cap_runs[512]; static size_t cap_seq[512],cap_at;
+static void cap_task(void *ctx, size_t task) {
+  volatile unsigned char here=0; volatile unsigned long spin;
+  cap_frame[task]=(uintptr_t)&here; cap_runs[task]++;
+  if (ctx) cap_seq[cap_at++]=task;  /* the serial run's order (one thread: no race) */
+  for (spin=0;spin<2000ul;spin++) {}  /* work enough that every worker running takes tasks */
+}
+static size_t cap_threads(void) {
+  size_t i,j,count=0;
+  for (i=0;i<512;i++) {
+    for (j=0;j<i && cap_frame[j]!=cap_frame[i];j++) {}
+    count+=j==i;
+  }
+  return count;
+}
+static void pool_caps(void) {
+  static _Alignas(max_align_t) unsigned char memory[4096];
+  bcir_tensor_pool *pool; unsigned threads=4,k; size_t i,r;
+  assert(bcir_tensor_pool_cap(NULL,3)==0 && bcir_tensor_pool_workers(NULL)==1);
+  if (!bcir_tensor_pool_size(threads)) {
+    printf("  PASS pool cap (PX-3b): a serial-only host, the cap of no pool 0\n");
+    return;
+  }
+  pool=bcir_tensor_pool_init(memory,sizeof(memory),threads); assert(pool!=NULL);
+  assert(bcir_tensor_pool_workers(pool)==4);
+  assert(bcir_tensor_pool_cap(pool,2)==0 && bcir_tensor_pool_workers(pool)==2);
+  assert(bcir_tensor_pool_cap(pool,9)==2 && bcir_tensor_pool_workers(pool)==4);
+  assert(bcir_tensor_pool_cap(pool,4)==0 && bcir_tensor_pool_workers(pool)==4);
+  assert(bcir_tensor_pool_cap(pool,1)==0 && bcir_tensor_pool_workers(pool)==1);
+  assert(bcir_tensor_pool_cap(pool,0)==1 && bcir_tensor_pool_workers(pool)==4);
+  for (k=1;k<=threads;k++) {
+    bcir_tensor_pool_cap(pool,k);
+    for (r=0;r<20;r++) {
+      size_t seen;
+      memset(cap_frame,0,sizeof(cap_frame)); memset(cap_runs,0,sizeof(cap_runs)); cap_at=0;
+      bcir_tensor_pool_run(pool,cap_task,k==1 ? (void *)cap_seq : NULL,512);
+      for (i=0;i<512;i++) assert(cap_runs[i]==1 && cap_frame[i]);
+      seen=cap_threads(); assert(seen>=1 && seen<=k);
+      if (k==1) { assert(cap_at==512); for (i=0;i<512;i++) assert(cap_seq[i]==i); }
+    }
+  }
+  bcir_tensor_pool_cap(pool,0); bcir_tensor_pool_stop(pool);
+  /* how many threads claimed tasks is the scheduler's, never printed: a verdict's text is the same
+   * on every run (the BCIR Make gate holds a section's output to its shell run's, byte for byte) */
+  printf("  PASS pool cap (PX-3b): 20 jobs of 512 tasks at each cap of a four-thread pool, every task "
+      "once, on at most cap threads, one in order on the caller\n");
+}
+/* PX-3b: the GEMM and attention entries with the instance named. Every instance a family admits is
+ * the plain entry's bits, at caps one, two and all of a four-thread pool, each returns the one it
+ * ran, and the kernels that ran were that instance's -- the tensor unit's probe, which this harness's
+ * build defines, sees exactly it (the widest for 0) and nothing for a refusal; anything else -- a bit
+ * the family does not admit, two bits, a contract outside 0..3, panels outside the bf16 contract --
+ * returns 0 with nothing written. */
+#ifdef BCIR_TENSOR_INSTANCE_PROBE
+unsigned bcir_tensor_instance_probe(int family);
+#define DISPATCH_CLEAR(f) ((void)bcir_tensor_instance_probe(f))
+#define DISPATCH_RAN(f,want) assert(bcir_tensor_instance_probe(f)==(unsigned)(want))
+#else
+#define DISPATCH_CLEAR(f) ((void)(f))
+#define DISPATCH_RAN(f,want) ((void)(f),(void)(want))
+#endif
+static int dispatch_same(const float *x, const float *y, size_t n) { return !memcmp(x,y,n*sizeof(float)); }
+static int dispatch_widest(int mask) { return mask&8 ? 8 : mask&4 ? 4 : mask&2 ? 2 : 1; }
+static void dispatch_entries(void) {
+  static float a[67*130],b[130*45],c[67*45],want[67*45],got[67*45],b2[130*45],c2[67*45],o[67*45];
+  static float q[2*33*4*16],kk[2*33*2*16],vv[2*33*2*16],dy[2*33*4*16],p0[2*4*33*33],p1[2*4*33*33];
+  static float y0[2*33*4*16],y1[2*33*4*16],dq0[2*33*4*16],dq1[2*33*4*16],dk0[2*33*2*16],dk1[2*33*2*16],
+      dv0[2*33*2*16],dv1[2*33*2*16];
+  static _Alignas(64) unsigned char ws[1<<20];
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  static const unsigned att_contracts[]={0,BCIR_TENSOR_ATTENTION_FUSED,
+      BCIR_TENSOR_ATTENTION_EXP|BCIR_TENSOR_ATTENTION_FUSED,BCIR_TENSOR_ATTENTION_EXP};
+  static const int bad[]={3,6,12,16,-1,-4};
+  const size_t m=67,n=45,k=130; size_t i,cases=0,refused=0,ai,bi; int contract,v;
+  unsigned cap,threads=bcir_tensor_pool_rails() ? 4u : 1u; bcir_tensor_pool *pool=NULL;
+  if (threads>1 && bcir_tensor_pool_size(threads)) pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads);
+  if (!pool) threads=1;
+  for (i=0;i<m*k;i++) a[i]=sinf((float)i*0.71f)*(i%3 ? 1.5f : 0.125f);
+  for (i=0;i<k*n;i++) { b[i]=cosf((float)i*1.37f)-0.25f; b2[i]=sinf((float)i*0.11f); }
+  for (i=0;i<m*n;i++) c[i]=sinf((float)i*0.3f);
+  for (contract=0;contract<4;contract++) {
+    int mask=bcir_tensor_mm_contract_variants(contract),f=contract==3 ? 1 : 0;
+    bcir_tensor_mm_call x,y,chain[2];
+    assert(mask&1);
+    x.ta=0; x.tb=0; x.m=m; x.n=n; x.k=k; x.alpha=1.0f; x.a=a; x.b=b; x.beta=0.5f; x.c=NULL;
+    y=x; y.b=b2; y.beta=0.0f;
+    for (cap=1;cap<=threads;cap=cap==1 ? 2u : cap*2u) {
+      bcir_tensor_pool_cap(pool,cap);
+      /* one call: the plain entry's (variant 0) result, the widest instance, then every instance */
+      memcpy(want,c,sizeof(c)); DISPATCH_CLEAR(f);
+      assert(bcir_tensor_mm_contract_variant_pool(pool,contract,0,0,0,m,n,k,1.0f,a,b,0.5f,want,ws,
+          sizeof(ws))==dispatch_widest(mask));
+      DISPATCH_RAN(f,dispatch_widest(mask));
+      for (v=1;v<=8;v*=2) {
+        memcpy(got,c,sizeof(c)); DISPATCH_CLEAR(f);
+        if (!(mask&v)) {
+          assert(bcir_tensor_mm_contract_variant_pool(pool,contract,v,0,0,m,n,k,1.0f,a,b,0.5f,got,ws,sizeof(ws))==0);
+          DISPATCH_RAN(f,0); assert(dispatch_same(got,c,m*n)); refused++; continue;
+        }
+        assert(bcir_tensor_mm_contract_variant_pool(pool,contract,v,0,0,m,n,k,1.0f,a,b,0.5f,got,ws,sizeof(ws))==v);
+        DISPATCH_RAN(f,v); assert(dispatch_same(got,want,m*n)); cases++;
+        /* a chain of two into one C as one job, against the default instance's */
+        memcpy(got,c,sizeof(c)); memcpy(c2,c,sizeof(c));
+        chain[0]=x; chain[0].c=c2; chain[1]=y; chain[1].beta=1.0f; chain[1].c=c2;
+        assert(bcir_tensor_mm_group_variant_pool(pool,contract,0,chain,2,NULL,0,NULL,ws,sizeof(ws)));
+        chain[0].c=got; chain[1].c=got; DISPATCH_CLEAR(f);
+        assert(bcir_tensor_mm_group_variant_pool(pool,contract,v,chain,2,NULL,0,NULL,ws,sizeof(ws))==v);
+        DISPATCH_RAN(f,v); assert(dispatch_same(got,c2,m*n)); cases++;
+        if (contract<3) {  /* the pair (NDT-SCHED-0): its first call is the one above */
+          bcir_tensor_mm_call px=x,py=y;
+          memcpy(got,c,sizeof(c)); memset(o,0,sizeof(o)); px.c=got; py.c=o; DISPATCH_CLEAR(f);
+          assert(bcir_tensor_mm_pair_variant_pool(pool,contract,v,&px,&py)==v);
+          DISPATCH_RAN(f,v); assert(dispatch_same(got,want,m*n)); cases++;
+        }
+      }
+      for (i=0;i<sizeof(bad)/sizeof(bad[0]);i++) {
+        memcpy(got,c,sizeof(c)); DISPATCH_CLEAR(f);
+        assert(bcir_tensor_mm_contract_variant_pool(pool,contract,bad[i],0,0,m,n,k,1.0f,a,b,0.5f,got,ws,sizeof(ws))==0);
+        DISPATCH_RAN(f,0); assert(dispatch_same(got,c,m*n)); refused++;
+      }
+    }
+    if (contract<3) {  /* panels belong to the bf16 contract */
+      bcir_tensor_bf16_panels pre[1]={{NULL,NULL}}; bcir_tensor_mm_call one=x;
+      memcpy(got,c,sizeof(c)); one.c=got;
+      assert(bcir_tensor_mm_group_variant_pool(pool,contract,0,NULL,0,&one,1,pre,ws,sizeof(ws))==0);
+      assert(dispatch_same(got,c,m*n)); refused++;
+    }
+  }
+  for (contract=-1;contract<=4;contract+=5) {
+    memcpy(got,c,sizeof(c));
+    assert(bcir_tensor_mm_contract_variant_pool(pool,contract,0,0,0,m,n,k,1.0f,a,b,0.5f,got,ws,sizeof(ws))==0);
+    assert(bcir_tensor_mm_contract_variants(contract)==0 && dispatch_same(got,c,m*n)); refused++;
+  }
+  /* the binary32 attention: its products' family, every instance the default's bits */
+  for (i=0;i<sizeof(q)/sizeof(q[0]);i++) { q[i]=sinf((float)i*0.37f); dy[i]=cosf((float)i*0.23f); }
+  for (i=0;i<sizeof(kk)/sizeof(kk[0]);i++) { kk[i]=cosf((float)i*0.41f); vv[i]=sinf((float)i*0.19f)-0.1f; }
+  for (ai=0;ai<sizeof(att_contracts)/sizeof(att_contracts[0]);ai++) {
+    unsigned ct=att_contracts[ai];
+    int mask=(ct&BCIR_TENSOR_ATTENTION_FUSED) ? bcir_tensor_mm_fused_variants() : bcir_tensor_mm_variants();
+    bcir_tensor_pool_cap(pool,0); DISPATCH_CLEAR(2);
+    assert(bcir_tensor_attention_contract_variant_scan_pool(pool,0,ct,2,33,4,2,16,q,kk,vv,p0,y0,NULL)==
+        dispatch_widest(mask));
+    memcpy(p1,p0,sizeof(p0));
+    assert(bcir_tensor_attention_backward_contract_variant_pool(pool,0,ct,2,33,4,2,16,q,kk,vv,p1,dy,dq0,
+        dk0,dv0)==dispatch_widest(mask));
+    DISPATCH_RAN(2,dispatch_widest(mask));
+    for (bi=0;bi<4;bi++) {
+      v=1<<bi;
+      for (cap=1;cap<=threads;cap=cap==1 ? 2u : cap*2u) {
+        bcir_tensor_pool_cap(pool,cap);
+        memset(y1,0,sizeof(y1)); memset(p1,0,sizeof(p1)); DISPATCH_CLEAR(2);
+        if (!(mask&v)) {
+          assert(bcir_tensor_attention_contract_variant_scan_pool(pool,v,ct,2,33,4,2,16,q,kk,vv,p1,y1,NULL)==0);
+          DISPATCH_RAN(2,0);
+          for (i=0;i<sizeof(y1)/sizeof(y1[0]);i++) assert(y1[i]==0.0f);
+          refused++; continue;
+        }
+        assert(bcir_tensor_attention_contract_variant_scan_pool(pool,v,ct,2,33,4,2,16,q,kk,vv,p1,y1,NULL)==v);
+        assert(dispatch_same(y1,y0,sizeof(y0)/sizeof(y0[0])) && dispatch_same(p1,p0,sizeof(p0)/sizeof(p0[0])));
+        assert(bcir_tensor_attention_backward_contract_variant_pool(pool,v,ct,2,33,4,2,16,q,kk,vv,p1,dy,dq1,
+            dk1,dv1)==v);
+        DISPATCH_RAN(2,v);
+        assert(dispatch_same(dq1,dq0,sizeof(dq0)/sizeof(dq0[0])) && dispatch_same(dk1,dk0,sizeof(dk0)/sizeof(dk0[0])) &&
+            dispatch_same(dv1,dv0,sizeof(dv0)/sizeof(dv0[0])));
+        cases++;
+      }
+    }
+    DISPATCH_CLEAR(2);
+    assert(bcir_tensor_attention_contract_variant_scan_pool(pool,3,ct,2,33,4,2,16,q,kk,vv,p1,y1,NULL)==0);
+    DISPATCH_RAN(2,0); refused++;
+  }
+  bcir_tensor_pool_cap(pool,0); bcir_tensor_pool_stop(pool);
+  printf("  PASS instances (PX-3b): %zu runs of every admitted instance at caps one, two and all, each "
+      "the plain entry's bits, naming what ran, the kernels that ran its own; %zu requests outside the "
+      "families refused, nothing written\n",cases,refused);
+}
 int main(void) {
   gemm_contract(); attention_reference(); attention_fused_reference(); adamw_reference();
   finite_differences(); refusals();
@@ -2850,7 +3031,7 @@ int main(void) {
   gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); fused_passes();
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();
-  trainer_workspace_plan(); trainer_recompute();
+  trainer_workspace_plan(); trainer_recompute(); pool_caps(); dispatch_entries();
 #ifdef BCIR_DT_DIVISION_PROBE
   division_probe();
 #endif

@@ -840,6 +840,30 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="PX-3",
     ),
     Metric(
+        "train.plan.dispatch.mismatch",
+        "train",
+        "of the 1,153 dispatch runs (bcir/tests/native_decoder_fixtures.py `dispatch_runs`: the 27 "
+        "state cases of the trace corpus, each under every dispatch kind -- a GEMM's role, an "
+        "attention, every other kernel -- switched alone to the portable instance and to its "
+        "family's widest named (a GEMM of BCIR's entries, an attention) and to each worker count "
+        "below the case's threads, and three seeded draws of one a kind), those that stopped, "
+        "trained another state or events than bcir_decoder_run_accum on the same case, or traced "
+        "other launches than the dispatched program states as the host resolves them (the "
+        "instance each GEMM and attention job ran, the workers each job ran on: "
+        "native_launch.step_program's `dispatch`, words 41 and 42). The parent named no job's "
+        "instance or workers, so all 1,153 were unheld (PX-3b)",
+        1153,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one step, every instance and every cap: each instance of a family is the "
+        "contract's bits and a pool's partition is a function of the shapes alone "
+        "(bcir_tensor.h), so a dispatch is a choice of who runs a job and on which unit, never "
+        "of a value -- a run that differs is a defect of the dispatch, the program model or the "
+        "probe",
+        slice_owner="PX-3b",
+    ),
+    Metric(
         "train.plan.pack.mismatch",
         "train",
         "of the 356 pack runs (bcir/tests/native_decoder_fixtures.py `pack_runs`: the program runs "
