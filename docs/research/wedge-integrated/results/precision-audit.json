@@ -1,0 +1,254 @@
+[
+  {
+    "case": "ordered_bucket_guard",
+    "seed": 20261018,
+    "scenario": "ordinary",
+    "context": 128,
+    "pair_checks": 12288,
+    "guard_selected": 96,
+    "absent_planes": 96,
+    "guard_fraction": 0.0078125,
+    "absent_fraction": 0.0078125,
+    "gram_ratio_histogram": [
+      96,
+      0,
+      0,
+      0,
+      4946,
+      7246
+    ],
+    "bins": [
+      "<=1e-8",
+      "(1e-8,1e-6]",
+      "(1e-6,1e-4]",
+      "(1e-4,1e-2]",
+      "(1e-2,0.5]",
+      ">0.5"
+    ],
+    "scope": "Audit-only atomic counters, excluded from training and timed variants."
+  },
+  {
+    "case": "ordered_bucket_guard",
+    "seed": 20261018,
+    "scenario": "ordinary",
+    "context": 1024,
+    "pair_checks": 98304,
+    "guard_selected": 96,
+    "absent_planes": 96,
+    "guard_fraction": 0.0009765625,
+    "absent_fraction": 0.0009765625,
+    "gram_ratio_histogram": [
+      96,
+      0,
+      0,
+      0,
+      40868,
+      57340
+    ],
+    "bins": [
+      "<=1e-8",
+      "(1e-8,1e-6]",
+      "(1e-6,1e-4]",
+      "(1e-4,1e-2]",
+      "(1e-2,0.5]",
+      ">0.5"
+    ],
+    "scope": "Audit-only atomic counters, excluded from training and timed variants."
+  },
+  {
+    "case": "ordered_bucket_guard",
+    "seed": 20261018,
+    "scenario": "repeat_heavy",
+    "context": 1024,
+    "pair_checks": 98304,
+    "guard_selected": 115,
+    "absent_planes": 96,
+    "guard_fraction": 0.0011698404947916667,
+    "absent_fraction": 0.0009765625,
+    "gram_ratio_histogram": [
+      96,
+      0,
+      19,
+      39022,
+      50426,
+      8741
+    ],
+    "bins": [
+      "<=1e-8",
+      "(1e-8,1e-6]",
+      "(1e-6,1e-4]",
+      "(1e-4,1e-2]",
+      "(1e-2,0.5]",
+      ">0.5"
+    ],
+    "scope": "Audit-only atomic counters, excluded from training and timed variants."
+  },
+  {
+    "case": "ordered_bucket_guard",
+    "seed": 20261019,
+    "scenario": "ordinary",
+    "context": 128,
+    "pair_checks": 12288,
+    "guard_selected": 96,
+    "absent_planes": 96,
+    "guard_fraction": 0.0078125,
+    "absent_fraction": 0.0078125,
+    "gram_ratio_histogram": [
+      96,
+      0,
+      0,
+      0,
+      4721,
+      7471
+    ],
+    "bins": [
+      "<=1e-8",
+      "(1e-8,1e-6]",
+      "(1e-6,1e-4]",
+      "(1e-4,1e-2]",
+      "(1e-2,0.5]",
+      ">0.5"
+    ],
+    "scope": "Audit-only atomic counters, excluded from training and timed variants."
+  },
+  {
+    "case": "ordered_bucket_guard",
+    "seed": 20261019,
+    "scenario": "ordinary",
+    "context": 1024,
+    "pair_checks": 98304,
+    "guard_selected": 96,
+    "absent_planes": 96,
+    "guard_fraction": 0.0009765625,
+    "absent_fraction": 0.0009765625,
+    "gram_ratio_histogram": [
+      96,
+      0,
+      0,
+      0,
+      37880,
+      60328
+    ],
+    "bins": [
+      "<=1e-8",
+      "(1e-8,1e-6]",
+      "(1e-6,1e-4]",
+      "(1e-4,1e-2]",
+      "(1e-2,0.5]",
+      ">0.5"
+    ],
+    "scope": "Audit-only atomic counters, excluded from training and timed variants."
+  },
+  {
+    "case": "ordered_bucket_guard",
+    "seed": 20261019,
+    "scenario": "repeat_heavy",
+    "context": 1024,
+    "pair_checks": 98304,
+    "guard_selected": 106,
+    "absent_planes": 96,
+    "guard_fraction": 0.0010782877604166667,
+    "absent_fraction": 0.0009765625,
+    "gram_ratio_histogram": [
+      96,
+      0,
+      10,
+      41084,
+      48051,
+      9063
+    ],
+    "bins": [
+      "<=1e-8",
+      "(1e-8,1e-6]",
+      "(1e-6,1e-4]",
+      "(1e-4,1e-2]",
+      "(1e-2,0.5]",
+      ">0.5"
+    ],
+    "scope": "Audit-only atomic counters, excluded from training and timed variants."
+  },
+  {
+    "case": "ordered_bucket_guard",
+    "seed": 20261020,
+    "scenario": "ordinary",
+    "context": 128,
+    "pair_checks": 12288,
+    "guard_selected": 96,
+    "absent_planes": 96,
+    "guard_fraction": 0.0078125,
+    "absent_fraction": 0.0078125,
+    "gram_ratio_histogram": [
+      96,
+      0,
+      0,
+      0,
+      4599,
+      7593
+    ],
+    "bins": [
+      "<=1e-8",
+      "(1e-8,1e-6]",
+      "(1e-6,1e-4]",
+      "(1e-4,1e-2]",
+      "(1e-2,0.5]",
+      ">0.5"
+    ],
+    "scope": "Audit-only atomic counters, excluded from training and timed variants."
+  },
+  {
+    "case": "ordered_bucket_guard",
+    "seed": 20261020,
+    "scenario": "ordinary",
+    "context": 1024,
+    "pair_checks": 98304,
+    "guard_selected": 96,
+    "absent_planes": 96,
+    "guard_fraction": 0.0009765625,
+    "absent_fraction": 0.0009765625,
+    "gram_ratio_histogram": [
+      96,
+      0,
+      0,
+      0,
+      45053,
+      53155
+    ],
+    "bins": [
+      "<=1e-8",
+      "(1e-8,1e-6]",
+      "(1e-6,1e-4]",
+      "(1e-4,1e-2]",
+      "(1e-2,0.5]",
+      ">0.5"
+    ],
+    "scope": "Audit-only atomic counters, excluded from training and timed variants."
+  },
+  {
+    "case": "ordered_bucket_guard",
+    "seed": 20261020,
+    "scenario": "repeat_heavy",
+    "context": 1024,
+    "pair_checks": 98304,
+    "guard_selected": 110,
+    "absent_planes": 96,
+    "guard_fraction": 0.0011189778645833333,
+    "absent_fraction": 0.0009765625,
+    "gram_ratio_histogram": [
+      96,
+      0,
+      14,
+      50084,
+      39482,
+      8628
+    ],
+    "bins": [
+      "<=1e-8",
+      "(1e-8,1e-6]",
+      "(1e-6,1e-4]",
+      "(1e-4,1e-2]",
+      "(1e-2,0.5]",
+      ">0.5"
+    ],
+    "scope": "Audit-only atomic counters, excluded from training and timed variants."
+  }
+]

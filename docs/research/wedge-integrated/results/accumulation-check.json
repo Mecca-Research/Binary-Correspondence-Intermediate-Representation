@@ -1,0 +1,54 @@
+{
+  "checks": [
+    {
+      "family": "global",
+      "microbatch": 4,
+      "normalized_gradient_relative_l2_vs_torch": 6.472473046414962e-07,
+      "loss_error": 6.0971530047027045e-09
+    },
+    {
+      "family": "global",
+      "microbatch": 2,
+      "normalized_gradient_relative_l2_vs_torch": 6.474641622844501e-07,
+      "loss_error": 6.0971530047027045e-09
+    },
+    {
+      "family": "global",
+      "microbatch": 1,
+      "normalized_gradient_relative_l2_vs_torch": 6.503078679997998e-07,
+      "loss_error": 6.0971530047027045e-09
+    },
+    {
+      "family": "attention",
+      "microbatch": 4,
+      "normalized_gradient_relative_l2_vs_torch": 7.312272600756842e-07,
+      "loss_error": 1.4861071218064126e-07
+    },
+    {
+      "family": "attention",
+      "microbatch": 2,
+      "normalized_gradient_relative_l2_vs_torch": 7.32876799247606e-07,
+      "loss_error": 1.4861071129246284e-07
+    },
+    {
+      "family": "attention",
+      "microbatch": 1,
+      "normalized_gradient_relative_l2_vs_torch": 7.315260859286354e-07,
+      "loss_error": 1.4861071218064126e-07
+    },
+    {
+      "family": "attention-full-shape",
+      "microbatch": 2,
+      "normalized_gradient_relative_l2_vs_full": 1.8202366902642098e-07,
+      "weight_relative_l2_after_one_update": 2.939413379365874e-09
+    },
+    {
+      "family": "attention-full-shape",
+      "microbatch": 1,
+      "normalized_gradient_relative_l2_vs_full": 1.8362270282068494e-07,
+      "weight_relative_l2_after_one_update": 2.9392153155782808e-09
+    }
+  ],
+  "gradient_buffer_contract": "raw sum of microbatch means; optimizer applies1/accumulation internally",
+  "scope": "Checks normalization and independent gradients, not equality of long nonconvex training trajectories."
+}
