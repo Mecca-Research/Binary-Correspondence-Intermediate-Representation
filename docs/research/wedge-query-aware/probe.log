@@ -1,0 +1,83 @@
+{
+  "guarded_geometry": [
+    {
+      "case": "ordinary",
+      "p_max": 0.0,
+      "c_max": 0.0,
+      "gradient_relative": 1.0493978311882942e-07
+    },
+    {
+      "case": "zero",
+      "p_max": 0.0,
+      "c_max": 0.0,
+      "gradient_relative": 0.0
+    },
+    {
+      "case": "collinear",
+      "p_max": 0.0,
+      "c_max": 0.0,
+      "gradient_relative": 5.008562785662168e-08
+    },
+    {
+      "case": "nearly_collinear",
+      "p_max": 0.0,
+      "c_max": 0.0,
+      "gradient_relative": 5.306308369085809e-08
+    },
+    {
+      "case": "tiny_query",
+      "p_max": 0.0,
+      "c_max": 0.0,
+      "gradient_relative": 1.3252591176957896e-07
+    }
+  ],
+  "control_models": [
+    {
+      "model": "global",
+      "variant": "guard_compact",
+      "logit_max": 2.5331974029541016e-07,
+      "gradient_relative": 5.368525265416454e-07,
+      "loss_error": 4.159720123908528e-07
+    },
+    {
+      "model": "hybrid",
+      "variant": "guard_hybrid_compact",
+      "logit_max": 2.682209014892578e-07,
+      "gradient_relative": 6.177643944403145e-07,
+      "loss_error": 6.17207633446526e-07
+    },
+    {
+      "model": "attention",
+      "variant": "attention",
+      "logit_max": 2.2351741790771484e-07,
+      "gradient_relative": 3.9509664645024396e-07,
+      "loss_error": 1.6215591980284216e-07
+    }
+  ],
+  "budget_transitions": [
+    {
+      "budget_mib": 96,
+      "variant": "query_guard_compact",
+      "resident_bound_bytes": 36936808,
+      "state_sha256": "a9faa5039964afacbe0a28876c30895ba734e0507ac060b3e1ffc96b33674e3b"
+    },
+    {
+      "budget_mib": 32,
+      "variant": "query_guard_frame_ff_compact",
+      "resident_bound_bytes": 27782248,
+      "state_sha256": "47733c4bd78c43980f601d1adc312f82cb4b090a9417b3560112ec6e53a639a3"
+    },
+    {
+      "budget_mib": 20,
+      "variant": "query_guard_layer_frame_ff",
+      "resident_bound_bytes": 19893352,
+      "state_sha256": "c20b9915704c896d2cca79f0b2c7ce56bb57f71df88179887b3986a576fd286d"
+    },
+    {
+      "budget_mib": 64,
+      "variant": "query_guard_compact",
+      "resident_bound_bytes": 36936808,
+      "state_sha256": "1f57688fe743cdb3944c96ba0a52e40dbac7c2af14662f3ef03f0145373fe53d"
+    }
+  ]
+}

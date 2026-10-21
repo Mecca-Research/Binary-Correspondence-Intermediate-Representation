@@ -1,0 +1,10 @@
+{
+  "created_utc": "2026-10-18T14:59:59.288909+00:00",
+  "study_protocol_sha256": "2339f6e12fbc97a2713d72ab6ff82ed2508309f9f674b72a9e18a93c0b90a2d7",
+  "source_sha256": {
+    "evaluate_query.py": "7ccd2b77f6a17315e1bc0e0cbecd785154a13dd75fc2163d191bef1fef3e7478"
+  },
+  "seed_base": 20262100,
+  "samples": "association256/length/pairs/seed exceptT1024=128; ordered256 exceptT1024=128,T2048=64; LM64 windows/length/seed",
+  "inference_budget": "common512MiB controlled-buffer envelope, independent of32MiB training; no model/optimizer updates or test-based selection"
+}

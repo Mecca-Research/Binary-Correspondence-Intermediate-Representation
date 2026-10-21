@@ -1,0 +1,11 @@
+attention built
+guard_hybrid_compact built
+guard_compact built
+query_guard_compact built
+guard_frame_ff_compact built
+query_guard_frame_ff_compact built
+guard_layer_frame_ff built
+query_guard_layer_frame_ff built
+query_guard_compact_ubsan built
+query_guard_layer_frame_ff_ubsan built
+Full wedge + query contraction built; no head coordinates removed.
