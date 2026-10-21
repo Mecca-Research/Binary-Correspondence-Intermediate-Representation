@@ -1,0 +1,11 @@
+{
+  "verdict": "pass",
+  "source_hashes_verified": 44,
+  "paired_training_input_groups": 12,
+  "paired_test_input_groups": 49,
+  "training_buffer_bound": "all51 runs and admitted shapes <=32MiB",
+  "evaluation_state": "unchanged digests recorded for all51 checkpoints",
+  "max_independent_model_gradient_relative": 7.332809125318992e-07,
+  "guarded_geometry_max_gradient_relative": 1.3252591176957896e-07,
+  "qualifications": "GCC13 focused research gates only. Full repository matrix, LLVM/Clang/MLIR23, Python3.15, ARM/Windows and accelerators unqualified."
+}
