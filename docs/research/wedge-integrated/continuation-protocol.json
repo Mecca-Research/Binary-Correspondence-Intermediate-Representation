@@ -1,0 +1,27 @@
+{
+  "stage": "40-update memory-transition continuation after main training",
+  "case": "ordered_bucket_global",
+  "seeds": [
+    20261018,
+    20261019,
+    20261020
+  ],
+  "updates": 40,
+  "effective_batch": 4,
+  "context": 1024,
+  "lr": 0.0001,
+  "budgets_mib": [
+    160,
+    64,
+    32,
+    20
+  ],
+  "updates_per_budget": 10,
+  "control": "160MiB with full microbatch4 and cached fast plan",
+  "adaptive": "calibrated feasible recomputation/microbatch choice, reconfigure only at update boundaries",
+  "data_seed_offset": 700,
+  "fresh_test_seed": 20261693,
+  "test_examples": 128,
+  "selection": "no best-test checkpoint selection; evaluate before and after all40 updates",
+  "source_sha256": "88cba3c346358c904dcb473eba00b9db556f9abf47af9385974e082fc637c978"
+}

@@ -1,0 +1,19 @@
+fast built
+compact built
+frame_ff_compact built
+layer_compact built
+layer_frame_ff built
+hybrid built
+attention built
+hybrid_compact built
+guard_compact built
+hybrid_frame_ff_compact built
+guard_frame_ff_compact built
+hybrid_layer_frame_ff built
+guard_layer_frame_ff built
+guard_audit built
+compact_ubsan built
+layer_frame_ff_ubsan built
+guard_compact_ubsan built
+hybrid_compact_ubsan built
+integrated native portfolio built

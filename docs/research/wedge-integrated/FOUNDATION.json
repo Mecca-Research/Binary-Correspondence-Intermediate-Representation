@@ -1,0 +1,6 @@
+{
+  "source_archive_sha256": "27e08abb19750ee3f8d33267d7f36603deaa3fbe6b3dc960a18e45411357ebca",
+  "native_pin": "aaa2e6c0ee0ee15b83fe4d0373b48bd893e80d6d",
+  "planner_pin": "be6e377a2eb417cb4bfe3de5243ca09961ba1833",
+  "adaptation": "experiment.py imports the vendored ABI instead of a sibling checkout. Native C sources and learned-model equations remain pinned."
+}

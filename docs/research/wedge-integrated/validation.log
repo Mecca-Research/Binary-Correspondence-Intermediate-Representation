@@ -1,0 +1,96 @@
+{
+  "transitions": [
+    {
+      "threads": 1,
+      "bind_count": 6,
+      "final_state_sha256": "1b5427725495a2485d2eaf7478223d83eec8bfdfeae06ba0a13870516568a7cd",
+      "per_update_native_reference": "bitwise identical"
+    },
+    {
+      "threads": 4,
+      "bind_count": 6,
+      "final_state_sha256": "676a4efdfb593ff57f0e27846e7859b1cc4f2606c2b9d650beab1692b70a1efd",
+      "per_update_native_reference": "bitwise identical"
+    }
+  ],
+  "trimming": [
+    {
+      "length": 64,
+      "max_logit_error": 0.0,
+      "loss_error": 0.0,
+      "gradient_max_error": 5.960464477539063e-08,
+      "gradient_relative_l2": 3.6911988132715123e-08,
+      "gradient_bitwise_equal": false
+    },
+    {
+      "length": 128,
+      "max_logit_error": 0.0,
+      "loss_error": 0.0,
+      "gradient_max_error": 1.1920928955078125e-07,
+      "gradient_relative_l2": 3.597756048634437e-08,
+      "gradient_bitwise_equal": false
+    }
+  ],
+  "independent_gradients": [
+    {
+      "family": "global",
+      "logit_max_error": 2.8312206268310547e-07,
+      "gradient_max_error": 2.1457672119140625e-06,
+      "gradient_relative_l2": 6.604819304811826e-07
+    },
+    {
+      "family": "guard",
+      "logit_max_error": 2.635642886161804e-07,
+      "gradient_max_error": 5.960464477539062e-07,
+      "gradient_relative_l2": 4.922885636915453e-07
+    },
+    {
+      "family": "hybrid",
+      "logit_max_error": 2.384185791015625e-07,
+      "gradient_max_error": 1.0728836059570312e-06,
+      "gradient_relative_l2": 5.569949053096934e-07
+    }
+  ],
+  "resume_sha256": "b69ba5c2cd225b7324e60d822c5741071627755193c6fa8e67fd2a1ef941e27e",
+  "cross_thread_dynamic_shapes_sha256": "b69ba5c2cd225b7324e60d822c5741071627755193c6fa8e67fd2a1ef941e27e",
+  "budget_resize": [
+    {
+      "budget_mib": 96,
+      "variant": "fast",
+      "resident_bound_bytes": 39230568,
+      "state_sha256": "e8ba72873ab85ec652ae9a03191dc6d26cb89edac7ed780d01c705a11c54ad32"
+    },
+    {
+      "budget_mib": 32,
+      "variant": "frame_ff_compact",
+      "resident_bound_bytes": 27376744,
+      "state_sha256": "02ed8f0121a192da048b5c3be126ce5eb609051c643623692894ae8c2d97ae6d"
+    },
+    {
+      "budget_mib": 20,
+      "variant": "layer_frame_ff",
+      "resident_bound_bytes": 19668072,
+      "state_sha256": "92a047da6aee87e0cf9fe918fc1151a6725d637b539ce4a92652e466858fbc43"
+    },
+    {
+      "budget_mib": 64,
+      "variant": "fast",
+      "resident_bound_bytes": 39230568,
+      "state_sha256": "8b6f919217e97a3eba751a46214d7fa7f2ecd820ad1cba6380789b89cc18d2e8"
+    }
+  ],
+  "loss_weight_refusals": "pass: all masked and unequal supervised counts",
+  "impossible_budget": "refused before array allocation",
+  "ubsan": "pass: compact, layer/frame/FF, guarded compact, hybrid compact",
+  "precision_audit_counters": [
+    384,
+    6,
+    6,
+    6,
+    0,
+    0,
+    0,
+    2,
+    376
+  ]
+}

@@ -1,0 +1,100 @@
+{
+  "rows": [
+    {
+      "scenario": "4-pairs-T64",
+      "examples": 128,
+      "correct": 128,
+      "accuracy": 1.0,
+      "logical_input_sha256": "d5293e5e5429b4aadeade1f11ea781f7d8e84b5f4b6a28c7834d55c89ca9ecfc"
+    },
+    {
+      "scenario": "4-pairs-T128",
+      "examples": 128,
+      "correct": 128,
+      "accuracy": 1.0,
+      "logical_input_sha256": "fd87924a610f60ba97ec95745f21eeaaa989e3e944d9d9f3e13246147027b356"
+    },
+    {
+      "scenario": "4-pairs-T256",
+      "examples": 128,
+      "correct": 128,
+      "accuracy": 1.0,
+      "logical_input_sha256": "6ebf5c655c12a8e5fa99717a4e9e476a2229f5f694b396204823538676f5c86c"
+    },
+    {
+      "scenario": "4-pairs-T512",
+      "examples": 128,
+      "correct": 128,
+      "accuracy": 1.0,
+      "logical_input_sha256": "6bbe2808b21fec93c598e2290020910b21e82a582ea08a18d0951bc05b916484"
+    },
+    {
+      "scenario": "4-pairs-T1024",
+      "examples": 128,
+      "correct": 128,
+      "accuracy": 1.0,
+      "logical_input_sha256": "aa4e46f67cd690c5ca56bc77b60f704712271a653566f1d3b2eb5c47412f822f"
+    },
+    {
+      "scenario": "4-pairs-T2048",
+      "examples": 32,
+      "correct": 32,
+      "accuracy": 1.0,
+      "logical_input_sha256": "a748c617f94f8e8a89ac6f1e5adc0bb00f10d92c5182d4d40b4e4f7aba402e83"
+    },
+    {
+      "scenario": "counterfactual-original-T128",
+      "examples": 128,
+      "correct": 128,
+      "accuracy": 1.0,
+      "logical_input_sha256": "05ee0b48627dc4ac7e45aac1a014a14fcb2cbb0a562e26bde5605f6da131ba40"
+    },
+    {
+      "scenario": "counterfactual-swapped-T128",
+      "examples": 128,
+      "correct": 128,
+      "accuracy": 1.0,
+      "logical_input_sha256": "172e739d25ff573f17500ede355f3760523f19194f53fee1b082418447f2abc8"
+    },
+    {
+      "scenario": "counterfactual-original-T512",
+      "examples": 128,
+      "correct": 128,
+      "accuracy": 1.0,
+      "logical_input_sha256": "fc90b840d3d3a48680cad747a57df5d9b39abe3e3957f5cd96be97cdd350969e"
+    },
+    {
+      "scenario": "counterfactual-swapped-T512",
+      "examples": 128,
+      "correct": 128,
+      "accuracy": 1.0,
+      "logical_input_sha256": "091f8fb0d58a06ef2811e21b144710a0f2a8f8591acc513324363aa4f6385d6a"
+    },
+    {
+      "scenario": "1-pairs-T256",
+      "examples": 128,
+      "correct": 128,
+      "accuracy": 1.0,
+      "logical_input_sha256": "de269b0cc64ebcb5fbf588025ec2a1c622b8ed021dcdbcc64b7162ad63e29383"
+    },
+    {
+      "scenario": "2-pairs-T256",
+      "examples": 128,
+      "correct": 128,
+      "accuracy": 1.0,
+      "logical_input_sha256": "a18092b22e17e7474538d5ce17818a804a3581d2bbe745474aa19d7050ddfb27"
+    },
+    {
+      "scenario": "8-pairs-T256",
+      "examples": 128,
+      "correct": 128,
+      "accuracy": 1.0,
+      "logical_input_sha256": "e6a0c2e22fd57a3faa9a31a42856872e40e6b2eb6b599b259a8d5a5d201accfe"
+    }
+  ],
+  "state_bytes_per_stream": 68,
+  "ubsan": "pass",
+  "missing-query-refusal": "pass",
+  "source_sha256": "306968c8d846c07b42a108d1ac0c483e8e53cda5f962b6d9c23d042787366fd3",
+  "scope": "Exact grammar-known parser/lookup reference with no learned parameters. Confirms dataset labels and demonstrates structured-memory feasibility; it does not learn the grammar or constitute a general neural-model comparison."
+}

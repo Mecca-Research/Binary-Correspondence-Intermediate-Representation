@@ -1,0 +1,23 @@
+{
+  "stage": "continuation archival, deterministic replay and short-tail control",
+  "updates": 40,
+  "lr": 0.0001,
+  "long_context": 1024,
+  "short_context": 128,
+  "effective_batch": 4,
+  "long_arms": "identical data and budget sequence to continuation-protocol.json; require matching final state digests",
+  "short_control": "same first values/labels as long data, crop to128 and move query to final position; same40 updates but1/8 as many physical tokens",
+  "evaluation_lengths": [
+    1024,
+    2048,
+    4096
+  ],
+  "examples": [
+    128,
+    64,
+    32
+  ],
+  "fresh_test_seed_base": 20261910,
+  "selection": "none; all arms evaluated only after all40 updates",
+  "source_sha256": "c33f2d0a7004a188cfea7094fe079f2c140fc8b12957c21bd12c2399e1affbba"
+}
