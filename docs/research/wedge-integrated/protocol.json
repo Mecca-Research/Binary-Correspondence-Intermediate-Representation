@@ -1,178 +1,25 @@
 {
-  "created_utc": "2026-10-18T09:51:58.319124+00:00",
+  "stage": "matched32MiB attention follow-up after main quality evaluation",
+  "models": [
+    "retained global32",
+    "retained attention64",
+    "new attention32 with accumulation"
+  ],
   "seeds": [
     20261018,
     20261019,
     20261020
   ],
-  "cases": {
-    "ordered_fixed_global": {
-      "task": "ordered",
-      "family": "global",
-      "mode": "fixed",
-      "budget_mib": 32
-    },
-    "ordered_padded_global": {
-      "task": "ordered",
-      "family": "global",
-      "mode": "padded",
-      "budget_mib": 32
-    },
-    "ordered_bucket_global": {
-      "task": "ordered",
-      "family": "global",
-      "mode": "bucket",
-      "budget_mib": 32
-    },
-    "ordered_bucket_guard": {
-      "task": "ordered",
-      "family": "guard",
-      "mode": "bucket",
-      "budget_mib": 32
-    },
-    "ordered_bucket_attention": {
-      "task": "ordered",
-      "family": "attention",
-      "mode": "bucket",
-      "budget_mib": 64
-    },
-    "kv_bucket_global": {
-      "task": "kv",
-      "family": "global",
-      "mode": "bucket",
-      "budget_mib": 32
-    },
-    "kv_bucket_attention": {
-      "task": "kv",
-      "family": "attention",
-      "mode": "bucket",
-      "budget_mib": 64
-    },
-    "lm_bucket_global": {
-      "task": "lm",
-      "family": "global",
-      "mode": "bucket",
-      "budget_mib": 32
-    },
-    "lm_bucket_hybrid": {
-      "task": "lm",
-      "family": "hybrid",
-      "mode": "bucket",
-      "budget_mib": 32
-    },
-    "lm_bucket_attention": {
-      "task": "lm",
-      "family": "attention",
-      "mode": "bucket",
-      "budget_mib": 32
-    }
-  },
-  "steps": {
-    "ordered": 900,
-    "kv": 900,
-    "lm": 600
-  },
-  "optimizer": {
-    "peak_lr": 0.001,
-    "warmup": 30,
-    "floor_fraction": 0.1,
-    "beta1": 0.9,
-    "beta2": 0.95,
-    "epsilon": 1e-08,
-    "decay": 0.1,
-    "clip": 1
-  },
-  "selection": "Lowest aggregate validation CE at 100-update intervals, balanced evaluation lengths; no final-test selection.",
-  "ordered": "All values and distractors tokens0..15; BOS256 and query257. Fixed128 or balanced batch-homogeneous64/128/256. Padded and bucketed cases have the same canonical prefixes, targets, update order and effective batch4.",
-  "kv": "Random unique keys32..47 and values0..15, marker258, filler64..95. Last query specifies one key. Two pairs for first300 updates, four thereafter. Balanced lengths64/128/256; four examples/update.",
-  "language": "Balanced lengths32/64/128; effective batch8/4/2 gives exactly256 supervised bytes/update, 153600 bytes/run. Raw WikiText2 train, validation and test splits remain disjoint.",
-  "controller": "Quality-controlled runs retain full effective microbatch; budget chooses recomputation. Separate constrained-runtime experiment also chooses microbatch/accumulation.",
-  "budgets": "Native array/pool/staging/C-record bounds, not process RSS. Recall attention reference gets64MiB so full effective microbatch4 fits; global/guard use32MiB. All language cases use32MiB.",
-  "validation_seed": 30300,
-  "final_test_seed_base": 20261110,
-  "no_test_driven_candidates": true,
-  "hyperparameter_search": "None; fixed learning rates/budgets/recipes shared by task.",
-  "data": {
-    "train": {
-      "parquet_sha256": "e83889baabc497075506f91975be5fac0d45c5290b6b20582c8cd1e853d0c9f7",
-      "utf8_sha256": "fc1dd2874bf42e945db9bd38e856ae18010f5c088e7446c706c5ba2f39310ee3",
-      "bytes": 10914845,
-      "source_url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/train-00000-of-00001.parquet"
-    },
-    "validation": {
-      "parquet_sha256": "204929b7ff9d6184953f867dedb860e40aa69c078fc1e54b3baaa8fb28511c4c",
-      "utf8_sha256": "8ef749789ca0693435d20b3f81d5638c19edcebc5a68586dcf09bdf47ef9542f",
-      "bytes": 1144248,
-      "source_url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/validation-00000-of-00001.parquet"
-    },
-    "test": {
-      "parquet_sha256": "5f1bea067869d04849c0f975a2b29c4ff47d867f484f5010ea5e861eab246d91",
-      "utf8_sha256": "bbf94c53a05abe9ee670d3b6343608095822c85e26de37c70b24fc571964574a",
-      "bytes": 1287656,
-      "source_url": "https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/test-00000-of-00001.parquet"
-    }
-  },
-  "foundation": {
-    "source_archive_sha256": "27e08abb19750ee3f8d33267d7f36603deaa3fbe6b3dc960a18e45411357ebca",
-    "native_pin": "aaa2e6c0ee0ee15b83fe4d0373b48bd893e80d6d",
-    "planner_pin": "be6e377a2eb417cb4bfe3de5243ca09961ba1833",
-    "adaptation": "experiment.py imports the vendored ABI instead of a sibling checkout. Native C sources and learned-model equations remain pinned."
-  },
-  "calibration_sha256": "cb7f7995f842add02db050c0f97bb751f570f45dcfc893aa085a4192eb82dddc",
-  "source_sha256": {
-    "policy.py": "b540a582e36590d0f66cb04d2f7c61e793e6d23ecce88e37b24c8f18f4d1cbaa",
-    "tasks.py": "e206e5c4e37e4a552e49e8e6dd890eccd73219f8a591eb3097531a14f78577dc",
-    "train_integrated.py": "963340e18f18547ee0a59e1efd4d2728ba0d818d0a4e833c59fa63fdd857bec9",
-    "experiment.py": "41e9cd78265955cab8d601d5c4f01d14e57f58ddff4a6de79afa559912fc77a2",
-    "native_abi.py": "b3ceabd05a9fecbc17f0f42d1c472289f327c175bfc99de495e9abed5a0cbaf8",
-    "build_integrated.py": "8c7e2970d932e5ec4065e864ec4d74eebe0a4883cc5ee30ed4db08d102d2302f",
-    "oracle.py": "5bcaf00f212062d415285136c9c02ba0b39664e41fea2ee3dfc418f7b4f995a4",
-    "oracle_hybrid.py": "ac8ab677fb31495e4f0ffc91bad96900473e46ad6bbc1cdbb7b5c36cf845c39c",
-    "oracle_precise.py": "a27b13039606f02a476d1d5bea6f0f7d2be5103d32fba7e2474fdbc650b0d44e",
-    "validate_integrated.py": "b89e130eddabc6feec7842b3650793e43e92dd6d3ed5397fb51285caab4c980b",
-    "calibrate.py": "6040319f7563a6856566003709bd472e45d7e912805a50959d40b5c60e613510",
-    "build/attention.c": "3795ef2a3d4878ba2ae3dbbb94a97f5efbe1533c1dc48759b2059f6b6021960c",
-    "build/compact.c": "31baa80919dee11d36ea7ba76e570c9a6ce734c3daaa1cdc8c87069840941f04",
-    "build/compact_ubsan.c": "31baa80919dee11d36ea7ba76e570c9a6ce734c3daaa1cdc8c87069840941f04",
-    "build/fast.c": "30f1aa55d37147fff0d9749128e60619100dddc8fe90f72d999a533f135ec0b6",
-    "build/frame_ff_compact.c": "a61d7868a18a8e7126b171b7ef847304b31ffa50a0c8b69300d3b24edeef0037",
-    "build/guard_audit.c": "dc9af5bd49bec1096b65676234404622f7b42544b3e7b1dda8e7761dc4a8d897",
-    "build/guard_compact.c": "a52baebf4a90b89cd843974b23891c616b644b595356640183d1e0bf1054f078",
-    "build/guard_compact_ubsan.c": "a52baebf4a90b89cd843974b23891c616b644b595356640183d1e0bf1054f078",
-    "build/guard_frame_ff_compact.c": "f4ba458d8e4526b5996a9736348c9bbcbff6f6946b1c4434e6e57a43d2ba1dd2",
-    "build/guard_layer_frame_ff.c": "aefd31699a804e1134f707ee6d242f107447d991f4b4fa3c7c3834a040162c0b",
-    "build/hybrid.c": "e62e4b0d9e751ef4e817970ce17cf6716a7660a9afcc34c8fc10223150cfdd13",
-    "build/hybrid_compact.c": "ac7285596db962ec8a9f8b81a5072929d35acbb44d15ac6ba857d72e6f38dd36",
-    "build/hybrid_compact_ubsan.c": "ac7285596db962ec8a9f8b81a5072929d35acbb44d15ac6ba857d72e6f38dd36",
-    "build/hybrid_frame_ff_compact.c": "7d1adabc94eaf6d8aa763c273d8d5b91ec4a8e1d075a45d4518f4ba7db2cc049",
-    "build/hybrid_layer_frame_ff.c": "6e46573db2bb4a12f9990c9f2b97e2e379522345b3337402adf966e8ccef61a6",
-    "build/layer_compact.c": "abac95ce61488c99128888a92d5445044dd0761c4cdee442d4b53eaf4e39f9b8",
-    "build/layer_frame_ff.c": "a750d960123450b5ba169f73baac22b62de418eeef3b20b40ca972b587d3d26a",
-    "build/layer_frame_ff_ubsan.c": "a750d960123450b5ba169f73baac22b62de418eeef3b20b40ca972b587d3d26a",
-    "build/precise.c": "1cc4f5fcf1076269b918eaf9c000de6f0450905be533f07d57af000c6bed45c5",
-    "vendor/LICENSE": "af5b836ce2209a8b1df54b45c8f569e5f4e2848db72c182fd1cedd689e78e387",
-    "vendor/bcir_decoder_train.c": "fdf1ad89e9971d3c749d298a63d010eaeda3b8a1325243435fa7c09325185628",
-    "vendor/bcir_decoder_train.h": "be9e37762c29207f467461ff0eeb500dd07d9d3c8f1cb53b74357918d6d20add",
-    "vendor/bcir_tensor.c": "08aca3fd822d116722c834f9f302b364b725f9b0a10b0e22c8bfa510fa5c494b",
-    "vendor/bcir_tensor.h": "2e678fe9202b3f6dfd476a8ade15747a8e6392b0f58baacfbbc7a7288a8d5938"
-  },
-  "host": {
-    "cpu": "AMD EPYC 9V74 80-Core Processor",
-    "affinity": [
-      0,
-      1,
-      2,
-      3,
-      4,
-      5,
-      6,
-      7,
-      8
-    ],
-    "cpu_quota": "800000 100000",
-    "memory_limit": "8589934592",
-    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
-    "numpy": "2.5.4",
-    "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0"
-  }
+  "updates": 900,
+  "effective_batch": 4,
+  "lengths": [
+    64,
+    128,
+    256
+  ],
+  "data": "identical ordered-variable prefixes, labels, update order, optimizer and validation as main study",
+  "microbatch": "largest feasible from1/2/4; attention has one layout, no timing tuning",
+  "fresh_test_seed_base": 20261810,
+  "selection": "lowest validation CE at100-update intervals; no final-test checkpoint selection",
+  "source_sha256": "757d253848c1f1cc279b237ea70e566269b50507e9e2d62416fbed53b8fd2383"
 }
