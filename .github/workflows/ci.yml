@@ -129,6 +129,9 @@ jobs:
           # the six-target capability matrix must equal a fresh emission too (drift gate)
           python3 -m bcir.kbcir.differential --emit-matrix
           git diff --exit-code -- mlir/test/passes/target_matrix.mlir
+          # PX-3b-2: the measured-table plan parity must equal a fresh emission too
+          python3 -m bcir.kbcir.differential --emit-measured
+          git diff --exit-code -- mlir/test/passes/plan_measured.mlir mlir/test/passes/verify_measured.mlir
 
       - name: BCIR trust-boundary fuzz (seeded by gen_module)
         if: matrix.shard == 1

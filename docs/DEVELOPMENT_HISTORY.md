@@ -3784,6 +3784,70 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed, and open (PX-3b-2): the measured prices inside K_BCIR's own candidates on its three
     rails, so the plan rather than a choice beside it takes the dispatch. PX-6 (GPU) stays pending: it
     continues in a local session on the hardware.
+  PX-3b-2 (2026-10-21): the measured prices inside K_BCIR's own candidates, on its three rails.
+  - PX-3b-1 chose the dispatch beside the plan: `choose_dispatch` read a table and the program
+    stated its pick. A target carries the table now -- `cost.MeasuredPrices`, frozen and
+    generation-tagged: entries of (op, count, alternative, Q8 1..255), the alternative an instance
+    (`i<bit>`) or a worker count (`t<k>`), in one spelling (strictly ascending by op, count and
+    alternative, at most seven a key, no op spelled as an opcode -- the law rail's name for an op-less
+    claim) -- and `realize._offer_rows` offers a claim of a priced (op, count), after each of its own
+    realizations, that realization run each priced alternative (`<name>@<alternative>`: the same
+    lane, width and operands, its compute and memory axes scaled by the entry's Q8 after the
+    discount, floored). Control ops and the barrier are never measured (`UNMEASURED_OPCODES`). The
+    planner prices the rows like any candidate, R9 re-derives the same offer and `hash_target` folds
+    the table; a target with no table, or with one no claim reads, plans every module, writes every
+    record and hashes as before, byte for byte.
+  - The C planner: BKPI and BKPR version 1 ([the planner ABI](kernel/BCIR_PLANNER_ABI.md)) -- the
+    measured section (`n_measured` at @40; an entry's op, count, code and Q8, the code the instance's
+    bit or 0x8000 | k) and a step's code -- each version-1 law refused on both rails
+    (`planner.malformed.accepted` 188 -> 0, 71 + 23 variants). `bcir_kplan.c` offers the measured rows
+    and writes the compact planner's bytes, and the native hydrate's packs carry the measured names
+    (`planner.measured.parity` 456 -> 0, a new row: 114 version-1 records -- every module of the fixed
+    corpus and two native-trainer training packs under every target, each with a table drawn over
+    its claims, and the seed module under a table naming its capital-led op -- each held to R9, the
+    plan's price, the native planner's bytes and the native hydrate's pack). The decoder walks the op
+    table forward once to name every entry's op, so a version-1 record stays linear.
+  - The law rail: the capability's `measured_gen`, `measured_ops`, `measured_alternatives` and
+    `measured_values` attributes and their verifier (one spelling, as the oracle's; the structural
+    corpus's `measured.*` cases on both rails), `BCIRCostModel.h`'s `appendMeasured`, `-bcir-plan`'s
+    `kbcir.plan_alternative`, R9 matching it and R13 folding the table.
+    `differential --emit-measured` writes `plan_measured.mlir` (the oracle's plan, alternatives and
+    m_target on every example program under two targets and a table no claim reads) and
+    `verify_measured.mlir` (the verifier's refusals), drift-gated in CI; a measured path's symbol is
+    quoted where it is not bare (`@"path_2_tile@i4"`).
+  - The trainer: `native_choose.measured_prices` keys the picks of a dispatch table on the (op,
+    count) of each kind's jobs' claims, a key shared by two kinds priced at the dearer of their
+    prices; `carried_kinds` leaves out, and names, a pick whose keys another kind's claims hold at
+    another pick or at none, so a carried price never moves a job the measurement did not price.
+    `bcir_ep_check_pack_walk` hands the lowering each plan step in the walk that verifies the plan,
+    and `bcir_decoder_lower_pack` writes a step's alternative into its job's dispatch words (41 and
+    42), refusing any other spelling (`BCIR_DP_ALTERNATIVE`); `bcir_decoder_run_program` holds the
+    dispatch to the host, so a measured plan another host cannot run is lowered and then refused
+    with nothing written. `native_pack.plan_dispatch` reads the plan's alternatives as the lowering
+    does.
+  - `train.plan.measured.mismatch` 54 -> 0 (a new GEM+ row): the 27 state cases of the trace corpus,
+    each under two seeded tables that measured the dispatch, their picks carried into K_BCIR's
+    candidates, the default program planned on the AVX-512 profile carrying them, hydrated, placed and
+    lowered by the C, write the program `step_program` states under the carried dispatch and train
+    the C step's state and events bit for bit.
+  - Fault sweeps: `px-measured.json` (MO1-MO20: the offer, the planner's slots, the table's spelling,
+    the hash, the records, the law rail's text, the trainer's prices, the carried kinds and the
+    plan's dispatch), 20 of 20 caught, each by its own witness -- MO6, the planner's slots sized
+    without the measured rows, first read the same plans (every corpus module left the slots slack
+    to spare) and was caught once a witness planned a one-claim module whose key carries the
+    table's most entries, which leaves the slots none;
+    `px-measured-c.json` (MC1-MC6 the native planner, ML1-ML5 the lowering and the check walk), 11 of
+    11. The older entries PX-3b-2 moved (`ep-walk.json` EW5, EW6; `hydrate.json`'s vector width) were
+    re-anchored, each keeping its defect, and re-swept.
+  - On this host's own tables ([carry.py](research/measurements/2026-10-21/px3b/carry.py)): under
+    binary32 PX-3b-1's one pick -- the embedding gradient's scatter at one worker -- is carried as one
+    entry (`train.scatter`, 393,216, `t1`, Q8 217), and the comparison decoder's four-step pack plans
+    its four scatter claims at `gather@t1` among 893, lowers to exactly the program the chosen dispatch
+    states and trains that program's state bit for bit; under bf16 there is no pick to carry and the
+    plan is the default's.
+  - Not claimed: a gain. The row's tables are seeded and this host's one pick is not resolvable end
+    to end (PX-3b-1), so the slice shows the prices reach the plan and the plan the C, not that a
+    measured plan runs faster; a table prices only the host that measured it.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

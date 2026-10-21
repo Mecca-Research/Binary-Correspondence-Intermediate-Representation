@@ -1257,3 +1257,13 @@ bcir_status bcir_ep_check_pack_lifetimes(const uint8_t *BCIR_RESTRICT plan, size
   cb.lifetime = fn; cb.lifetime_ctx = ctx;
   return ep_check_pack(plan, plan_len, pack, pack_len, &cb);
 }
+
+bcir_status bcir_ep_check_pack_walk(const uint8_t *BCIR_RESTRICT plan, size_t plan_len,
+                                    const uint8_t *BCIR_RESTRICT pack, size_t pack_len,
+                                    bcir_ep_step_fn step, bcir_ep_lifetime_fn lifetime,
+                                    void *ctx) {
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  cb.step = step; cb.step_ctx = ctx;
+  cb.lifetime = lifetime; cb.lifetime_ctx = ctx;
+  return ep_check_pack(plan, plan_len, pack, pack_len, &cb);
+}

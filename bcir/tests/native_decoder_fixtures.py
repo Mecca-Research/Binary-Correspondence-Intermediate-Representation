@@ -78,6 +78,13 @@ spec alone. One function per row family grades it against the C rail; the tests,
                                program's at the placed places, stopped, placed below G26's bound
                                (live values sharing bytes), or training another state or events
                                than the C step (PX-4)
+    train.plan.measured.mismatch  measured runs (`measured_runs`: the state cases at two threads
+                               at least under seeded choice tables, their dispatch picks carried
+                               into K_BCIR's candidates by `native_choose.measured_prices`, the
+                               default program planned on them and lowered by the C) whose
+                               lowering was refused or is not the program the carried dispatch
+                               states, that stopped, or that trained another state or events
+                               than the C step on the case (PX-3b-2)
 
 Without a C compiler the native rows are not measured -- a skip, never a pass.
 """
@@ -1543,11 +1550,12 @@ class PackRun(NamedTuple):
 
 
 def pack_case(path, case: TraceCase, choices: dict | None = None, *, placements=None,
-              run: bool = True, place: bool = False) -> PackRun:  # fmt: skip
+              run: bool = True, place: bool = False, target=None) -> PackRun:  # fmt: skip
     """`case` from its pack (PX-2b): the program `step_program` states for the case's state and the
-    planner's `choices`, stated as a module (`native_pack.training_pack`), planned, hydrated and
-    placed (`pack_artifacts`: the C step's own places, or `placements`), lowered by the trainer of
-    the case on the pack build at `path` (`bcir_decoder_lower_pack`) and, with `run`, run. With
+    planner's `choices`, stated as a module (`native_pack.training_pack`), planned (on `target`,
+    `pack_artifacts`' AVX-512 profile by default -- PX-3b-2: one carrying a measured table), hydrated
+    and placed (`pack_artifacts`: the C step's own places, or `placements`), lowered by the trainer
+    of the case on the pack build at `path` (`bcir_decoder_lower_pack`) and, with `run`, run. With
     `place` (PX-4) the transient values are placed by their lifetimes (`place_by_lifetime`) and the
     pack lowered and run on a trainer of the case that lends exactly the placement's arena."""
     from bcir.hosted.models.native import NativeRunStopped, PackRefused
@@ -1561,7 +1569,7 @@ def pack_case(path, case: TraceCase, choices: dict | None = None, *, placements=
             placements = placed.placements
             trainer.close()
             trainer, _ = _case_trainer(path, case, transient=(placed.floats, 0))
-        pack, plan, _, _ = pack_artifacts(tp, placements=placements)
+        pack, plan, _, _ = pack_artifacts(tp, placements=placements, target=target)
         try:
             words = trainer.lower_pack(pack, plan)
         except PackRefused as refused:
@@ -1681,6 +1689,124 @@ def pack_mismatch(path, cases=None) -> tuple[int, int, list[str]]:
             bad += 1
             notes.append(f"{case} {choices}: {problems[0]}")
     return bad, runs, notes
+
+
+# --- train.plan.measured.mismatch (PX-3b-2) ------------------------------------------------------
+
+#: The seeded choice tables `measured_tables` draws per state case.
+MEASURED_TABLES = 2
+
+
+def measured_case(case: TraceCase) -> TraceCase:
+    """A state case as `train.plan.measured.mismatch` runs it: at two threads at least, so every host
+    has a worker count to price (`t1`) whatever instances it has."""
+    from dataclasses import replace
+
+    return case if case.threads >= 2 else replace(case, threads=2)
+
+
+def _measured_shape(case: TraceCase, decisions: dict) -> dict:
+    spec = case.spec
+    return {"vocab": spec.vocab_size, "d_model": spec.d_model, "n_heads": spec.n_heads,
+            "n_layers": spec.n_layers, "d_ff": spec.d_ff, "kv_heads": spec.kv_heads,
+            "batch": case.batch, "time": case.time, "threads": decisions["threads"],
+            "steps": case.steps, "recompute": decisions["recompute"],
+            "workspace_bytes": decisions["workspace_bytes"], "contract": case.contract,
+            "instances": dict(decisions["instances"])}  # fmt: skip
+
+
+def measured_tables(case: TraceCase, decisions: dict) -> tuple:
+    """The choice tables `train.plan.measured.mismatch` carries into K_BCIR for a case (PX-3b-2):
+    `MEASURED_TABLES` draws, seeded by the case's own fields, of a `ChoiceTable` at the case's
+    shape that measured the dispatch -- every dispatch kind with alternatives on the host
+    (`dispatch_alternatives`) measured, with three chances in four, at one or two of them, each
+    at a price drawn below 256 and an interval resolved faster or not -- every table one whose
+    `rms` kernel is resolved faster at `t1`, a pick every host runs and no other kind's claims
+    share: so every run dispatches."""
+    from bcir.hosted.models.native_choose import ChoiceEntry, ChoiceTable
+    from bcir.hosted.models.native_launch import dispatch_alternatives
+
+    spec = case.spec
+    rng = random.Random("measured/" + "/".join(map(str, (
+        spec.vocab_size, spec.d_model, spec.n_heads, spec.n_layers, spec.d_ff, spec.kv_heads,
+        case.batch, case.time, case.contract, case.recompute, case.workspace, case.threads,
+        case.provider, case.steps, case.accumulation, case.preflight,
+    ))))  # fmt: skip
+    shape = _measured_shape(case, decisions)
+    alternatives = dispatch_alternatives(**decisions)
+    out = []
+    for g in range(MEASURED_TABLES):
+        entries = [ChoiceEntry("dispatch:rms", "t1", 200, 180, 240, 5)]
+        for kind, alts in alternatives.items():
+            if kind == "rms" or not alts or rng.random() >= 0.75:
+                continue
+            for alternative in rng.sample(alts, min(len(alts), rng.choice((1, 2)))):
+                q8 = rng.randrange(64, 256)
+                low, high = max(1, q8 - rng.randrange(0, 40)), min(300, q8 + rng.randrange(0, 40))
+                entries.append(ChoiceEntry(f"dispatch:{kind}", alternative, q8, low, high, 5))
+        out.append(ChoiceTable(1 + g, shape, {"cpu": "seeded"}, tuple(entries)))
+    return tuple(out)
+
+
+def measured_runs(path, cases=None):
+    """Every run `train.plan.measured.mismatch` reads, as (case, the dispatch K_BCIR's prices
+    carry, the kinds left out, the C step's `TraceRun`, the `PackRun`): each state case of `cases`
+    (the trace corpus) at two threads at least (`measured_case`), under each of its
+    `measured_tables` -- carried into K_BCIR by `native_choose.measured_prices` on the AVX-512
+    profile, the default program planned on it, hydrated, placed and lowered by the C on the pack
+    build at `path`, and run."""
+    from bcir.hosted.models.native_choose import choose_dispatch, measured_prices
+    from bcir.kbcir.cost import TargetProfile
+
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    for i in state_cases(corpus):
+        case = measured_case(corpus[i])
+        trainer, decisions = _case_trainer(path, case)
+        trainer.close()
+        step = trace_case(path, case, trace=False)
+        for table in measured_tables(case, decisions):
+            shape = table.shape
+            prices, left = measured_prices(table, case.spec, shape, **decisions)
+            carried = {k: a for k, a in choose_dispatch(table, case.spec, shape).items()
+                       if k not in left}  # fmt: skip
+            target = TargetProfile.x86_avx512().with_measured(prices) if prices else None
+            yield case, carried, left, step, pack_case(path, case, target=target)
+
+
+def measured_run_count(cases=None) -> int:
+    """How many runs `measured_runs` makes of `cases` (the trace corpus): the row's baseline, the
+    same on every host."""
+    corpus = trace_corpus() if cases is None else tuple(cases)
+    return MEASURED_TABLES * len(state_cases(corpus))
+
+
+def measured_mismatch(path, cases=None) -> tuple[int, int, list[str], int]:
+    """`train.plan.measured.mismatch` (PX-3b-2): of the measured runs (`measured_runs`), those
+    whose lowering refused the pack, or wrote other words than the program `step_program` states
+    under the carried dispatch -- every job of a carried kind at its pick: K_BCIR took each
+    measured realization the prices offered and the C lowered it to the job's dispatch words --
+    or that stopped, or trained another state or events than the C step on the same case; the
+    runs; what differed, run by run; and how many picks the runs carried."""
+    from bcir.hosted.models.native_launch import program_words, step_program
+
+    bad, runs, notes, picks = 0, 0, [], 0
+    for case, carried, _left, step, run in measured_runs(path, cases):
+        runs += 1
+        picks += len(carried)
+        if run.status == -1:
+            problems = [f"the lowering refused the pack (why {run.why})"]
+        else:
+            trainer, decisions = _case_trainer(path, case)
+            trainer.close()
+            want = program_words(step_program(case.spec, case.batch, case.time, **decisions,
+                                              dispatch=carried))  # fmt: skip
+            problems = [] if run.words == tuple(want) else [
+                "the lowering is not the dispatched program's words"]  # fmt: skip
+            problems = _ran_as_the_step(step, run, problems)
+        if problems:
+            bad += 1
+            notes.append(f"{case} {sorted(carried)}: {problems[0]}")
+    return bad, runs, notes, picks
 
 
 #: The fuzz harness's state (runtime/c/fuzz_decoder_train.c): its spec and shape, the contracts its
@@ -1901,7 +2027,8 @@ def fuzz_pack_seeds() -> list[tuple[str, bytes, bool]]:
     arenas their programs reach (PX-4) -- one of them a float short, which lowers and whose run is
     refused -- and near misses of the lowering's refusals on the first: two live values on one
     span (the alias law), a name outside the vocabulary, a value no lifetime places, a claim past
-    its value's lifetime, a block not the claim's."""
+    its value's lifetime, a block not the claim's -- and, PX-3b-2, the first's plan with its norms
+    run at one worker (`<name>@t1`), lowered and run, and a step naming no alternative, refused."""
     import copy
     import dataclasses
 
@@ -1957,6 +2084,16 @@ def fuzz_pack_seeds() -> list[tuple[str, bytes, bool]]:
         "block": (with_segment(gemm, block={"count": pack.blocks[gemm].count + 1}), plan_bytes),
     }  # fmt: skip
 
+    def with_steps(suffix):  # PX-3b-2: each step's candidate run an alternative, or not
+        q = copy.deepcopy(plan)
+        q.steps = [dataclasses.replace(st, candidate=st.candidate + suffix(st)) for st in q.steps]
+        return raw_encode(q)
+
+    norms = {seg.claim_id for seg in pack.segments if seg.opcode == "train.rms"}
+    out.append(("measured_t1", fuzz_pack_input(0, 1, 1, pack_bytes, with_steps(
+        lambda st: "@t1" if st.claim_id in norms else "")), True))  # fmt: skip
+    misses["alternative"] = (pack_bytes, with_steps(
+        lambda st: "@i3" if st.claim_id == pack.segments[gemm].claim_id else ""))  # fmt: skip
     for name, (pk, pl) in misses.items():
         out.append((f"miss_{name}", fuzz_pack_input(0, 1, 1, pk, pl), False))
     return out
@@ -2002,6 +2139,7 @@ def measure(*, timed: bool = True) -> dict[str, float]:
         if packed is not None:  # no C units to lower with (an installed package): not measured
             out["train.plan.pack.mismatch"] = float(pack_mismatch(packed)[0])
             out["train.plan.place.mismatch"] = float(place_mismatch(packed)[0])
+            out["train.plan.measured.mismatch"] = float(measured_mismatch(packed)[0])
         if timed:
             out.update(measure_step(path))
         return out
@@ -2111,6 +2249,12 @@ __all__ = [
     "dispatch_choices",
     "dispatch_mismatch",
     "dispatch_run_count",
+    "MEASURED_TABLES",
+    "measured_case",
+    "measured_mismatch",
+    "measured_run_count",
+    "measured_runs",
+    "measured_tables",
     "dispatch_runs",
 ]
 

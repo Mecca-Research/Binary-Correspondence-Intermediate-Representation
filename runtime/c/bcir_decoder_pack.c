@@ -40,6 +40,7 @@ typedef struct dp_claim {
   const uint8_t *rd, *wr; /* the segment's RIDs, little-endian u32, in the pack */
   uint64_t base, count;
   uint16_t n_rd, n_wr;
+  uint16_t instance, workers; /* PX-3b-2: the plan step's measured alternative (0: the default) */
   uint8_t op, form, seen;
 } dp_claim;
 typedef struct dp_life { uint64_t offset, size, first, last; uint32_t rid; unsigned bank; } dp_life;
@@ -129,7 +130,44 @@ static int dp_name(const char *s, size_t n, unsigned *op, unsigned *form) {
   return dp_gemm_name(s, n, form);
 }
 
+/* PX-3b-2: a measured realization's alternative, `i<bit>` (1, 2, 4 or 8) or `t<k>` (1 .. 32767,
+ * ASCII digits, no leading zero) -- cost.measured_alternative_key's grammar -- as (instance,
+ * workers); 0 for any other spelling. */
+static int dp_alternative(const char *s, size_t n, uint16_t *instance, uint16_t *workers) {
+  uint32_t v = 0;
+  size_t i;
+  if (n < 2u || n > 6u || (s[0] != 'i' && s[0] != 't') || s[1] == '0') return 0;
+  for (i = 1; i < n; i++) {
+    if (s[i] < '0' || s[i] > '9') return 0;
+    v = v * 10u + (uint32_t)(s[i] - '0');
+  }
+  if (s[0] == 'i') {
+    if (v != 1u && v != 2u && v != 4u && v != 8u) return 0;
+    *instance = (uint16_t)v;
+  } else {
+    if (v > 32767u) return 0;
+    *workers = (uint16_t)v;
+  }
+  return 1;
+}
+
 /* --- the walks ------------------------------------------------------------------------ */
+
+/* each plan step, as the walk verifies it: a measured realization (`<name>@<alternative>`, the
+ * plan's candidate string) names its claim's dispatch; any other runs the default */
+static int dp_on_step(const bcir_ep_step_view *v, void *vc) {
+  dp_ctx *c = (dp_ctx *)vc;
+  dp_claim *cl;
+  size_t at = 0;
+  if (v->claim_id >= c->n) return !dp_fail(c, BCIR_DP_CLAIMS);
+  while (at < v->candidate_len && v->candidate[at] != '@') at++;
+  if (at == v->candidate_len) return 0;
+  cl = &c->claims[v->claim_id];
+  if (!dp_alternative(v->candidate + at + 1u, v->candidate_len - at - 1u, &cl->instance,
+                      &cl->workers))
+    return !dp_fail(c, BCIR_DP_ALTERNATIVE);
+  return 0;
+}
 
 static int dp_on_life(const bcir_ep_lifetime_view *v, void *vc) {
   dp_ctx *c = (dp_ctx *)vc;
@@ -263,6 +301,8 @@ static int dp_record(dp_ctx *c, const dp_claim *cl, uint64_t *w) {
   uint64_t q, work, base;
   memset(w, 0, BCIR_DT_RECORD_WORDS * sizeof *w);
   w[1] = (uint64_t)c->rank + 1u;
+  w[BCIR_DT_WORD_INSTANCE] = cl->instance; /* PX-3b-2: the plan's alternative (0: the default) */
+  w[BCIR_DT_WORD_WORKERS] = cl->workers;
   switch (op) {
   case OP_SCAN: SLOT(0, U_R, SL_RUN); break;
   case OP_ZERO: SLOT(0, U_W, SL_RUN); break;
@@ -569,10 +609,11 @@ int bcir_decoder_lower_pack(const bcir_decoder_state *s, const uint8_t *pack, si
   c.v2 = (s->contract & BCIR_DT_CONTRACT_EXP) != 0;
   c.reduce = (s->contract & BCIR_DT_CONTRACT_REDUCE) != 0;
   c.provider = s->provider.mm != NULL;
-  /* the two verified by their own laws, the plan's walk handing over its lifetimes as it verifies
-   * them: one walk of the plan's laws (two quadratic in its records, no heap) where a check and a
-   * lifetime walk would take two. A status refuses ahead of any reason the lifetimes gave. */
-  st = bcir_ep_check_pack_lifetimes(plan, plan_len, pack, pack_len, dp_on_life, &c);
+  /* the two verified by their own laws, the plan's walk handing over its steps (PX-3b-2: their
+   * measured alternatives) and its lifetimes as it verifies them: one walk of the plan's laws (two
+   * quadratic in its records, no heap) where a check and two walks would take three. A status
+   * refuses ahead of any reason the steps or the lifetimes gave. */
+  st = bcir_ep_check_pack_walk(plan, plan_len, pack, pack_len, dp_on_step, dp_on_life, &c);
   if (st != BCIR_OK) {
     *why = (int)st;
     return BCIR_DT_INVALID;

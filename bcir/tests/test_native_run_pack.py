@@ -283,6 +283,13 @@ def _refusals(tp, pack, plan):
     q = copy.deepcopy(plan)
     q.liveness = "schedule"
     out.append(("liveness", encode(pack), raw_encode(q), "liveness"))
+    # PX-3b-2: a step's measured realization naming no alternative -- two bits, no workers, a
+    # leading zero, too many workers, a non-ASCII digit, another letter, none at all
+    at = next(i for i, st in enumerate(plan.steps) if st.claim_id == pack.segments[gemm].claim_id)
+    for alt in ("i3", "t0", "t01", "t32768", "t\u0661", "w1", ""):
+        q = copy.deepcopy(plan)
+        q.steps[at] = dataclasses.replace(q.steps[at], candidate=q.steps[at].candidate + "@" + alt)
+        out.append((f"alternative-{alt!a}", encode(pack), raw_encode(q), "alternative"))
     # two defects: the tokens' lifetime (ahead of every transient's) in a bank the state has not,
     # and the first norm's output on its input's bytes -- the plan's own laws refuse it before any
     # reason a lifetime gives the lowering (one walk hands it the lifetimes as it verifies them)
@@ -299,7 +306,8 @@ def test_a_refused_pack_lowers_nothing():
     alias law), a bank the state has not or a slot does not take (the tokens', the targets', a
     plain operand's, the bf16 workspace's), operands not the claim's, a run of tensors not
     contiguous, a size no shape divides, a block not the claim's, claim ids out of range, a plan
-    not the pack's or of another generation, lifetimes not in phases, a corrupt pack -- is refused
+    not the pack's or of another generation, lifetimes not in phases, a step's measured realization
+    naming no alternative (PX-3b-2), a corrupt pack -- is refused
     with its reason (BCIR_DT_INVALID) and nothing written: the program buffer as it was, no record
     counted. Short buffers are BCIR_DT_CAPACITY; a pack for another state's contract is refused;
     and the intact pairs lower (the v1 trainer's and the bf16 trainer's own)."""

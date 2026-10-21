@@ -15,6 +15,10 @@ static uint32_t kp_rd32(const uint8_t *p) {
 static uint64_t kp_rd64(const uint8_t *p) {
   return (uint64_t)kp_rd32(p) | ((uint64_t)kp_rd32(p + 4) << 32);
 }
+static void kp_wr16(uint8_t *p, uint16_t v) {
+  p[0] = (uint8_t)v;
+  p[1] = (uint8_t)(v >> 8);
+}
 static void kp_wr32(uint8_t *p, uint32_t v) {
   p[0] = (uint8_t)v;
   p[1] = (uint8_t)(v >> 8);
@@ -115,12 +119,51 @@ static const uint8_t kp_domain_tier[DOM_MAX + 1] = {3, 4, 6, 3, 5, 4};
 
 static uint64_t kp_input_size(uint32_t n_widths, uint32_t n_phases, uint32_t n_deps,
                               uint32_t n_claims, uint32_t n_refs, uint32_t n_resources,
-                              uint32_t n_ops, uint32_t op_bytes) {
+                              uint32_t n_ops, uint32_t op_bytes, uint32_t n_measured) {
   return (uint64_t)BCIR_KP_INPUT_HEADER_SIZE + BCIR_KP_SCOPE_SIZE + 4u * (uint64_t)n_widths +
          12u * (uint64_t)n_phases + 4u * (uint64_t)n_deps +
          (uint64_t)BCIR_KP_CLAIM_SIZE * n_claims + 4u * (uint64_t)n_refs +
          (uint64_t)BCIR_KP_RESOURCE_SIZE * n_resources + 2u * (uint64_t)n_ops + op_bytes +
-         BCIR_KP_CRC_SIZE;
+         (uint64_t)BCIR_KP_MEASURED_SIZE * n_measured + BCIR_KP_CRC_SIZE;
+}
+
+/* PX-3b-2: whether `code` names a measured alternative -- an instance's bit (1, 2, 4, 8), or
+ * BCIR_KP_MEASURED_WORKERS | k for 1 .. 32767 workers (planner_abi.measured_alternative). */
+static int kp_code_valid(uint32_t code) {
+  if (code == 1u || code == 2u || code == 4u || code == 8u) return 1;
+  return (code & BCIR_KP_MEASURED_WORKERS) && (code & ~BCIR_KP_MEASURED_WORKERS) != 0u &&
+         code <= 0xFFFFu;
+}
+
+/* cost.spelled_as_opcode (PX-3b-2): an ASCII capital, then ASCII capitals, digits and
+ * underscores -- the law rail's spelling of an op-less claim's op, which no measured entry names. */
+static int kp_opcode_spelled(const uint8_t *s, size_t n) {
+  if (n == 0u || s[0] < 'A' || s[0] > 'Z') return 0;
+  for (size_t i = 1; i < n; i++)
+    if (!((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '_')) return 0;
+  return 1;
+}
+
+/* The measured entry i of a validated input: op index, count, code, q8. */
+#define MS_OP(in, i)    kp_rd32((in)->data + (in)->off_measured + BCIR_KP_MEASURED_SIZE * (size_t)(i))
+#define MS_COUNT(in, i) kp_rd32((in)->data + (in)->off_measured + BCIR_KP_MEASURED_SIZE * (size_t)(i) + 4u)
+#define MS_CODE(in, i)  kp_rd16((in)->data + (in)->off_measured + BCIR_KP_MEASURED_SIZE * (size_t)(i) + 8u)
+#define MS_Q8(in, i)    kp_rd16((in)->data + (in)->off_measured + BCIR_KP_MEASURED_SIZE * (size_t)(i) + 10u)
+
+/* The entries a claim of op index `op` and `count` is offered: [first, first + n) of the table,
+ * which is ascending by (op, count, code) -- a binary search for its lower bound. */
+static uint32_t kp_measured_range(const bcir_kp_input *in, uint32_t op, uint32_t count,
+                                  uint32_t *first) {
+  uint32_t lo = 0, hi = in->n_measured;
+  while (lo < hi) {
+    uint32_t mid = lo + (hi - lo) / 2u, mop = MS_OP(in, mid);
+    if (mop < op || (mop == op && MS_COUNT(in, mid) < count)) lo = mid + 1u;
+    else hi = mid;
+  }
+  *first = lo;
+  uint32_t n = 0;
+  while (lo + n < in->n_measured && MS_OP(in, lo + n) == op && MS_COUNT(in, lo + n) == count) n++;
+  return n;
 }
 
 static int kp_bytes_lt(const uint8_t *a, size_t na, const uint8_t *b, size_t nb) {
@@ -139,10 +182,12 @@ bcir_status bcir_kp_decode_input(const uint8_t *data, size_t len, bcir_kp_input 
   if (!data || len < (size_t)BCIR_KP_INPUT_HEADER_SIZE + BCIR_KP_SCOPE_SIZE + BCIR_KP_CRC_SIZE)
     return BCIR_ERR_TRUNCATED;
   if (data[0] != 'B' || data[1] != 'K' || data[2] != 'P' || data[3] != 'I') return BCIR_ERR_MAGIC;
-  if (kp_rd16(data + 4) != BCIR_KP_VERSION) return BCIR_ERR_VERSION;
+  uint16_t version = kp_rd16(data + 4);
+  if (version != BCIR_KP_VERSION && version != BCIR_KP_VERSION_MEASURED) return BCIR_ERR_VERSION;
   if (kp_rd32(data + len - 4) != bcir_crc32(data, len - 4)) return BCIR_ERR_CRC;
   if (kp_rd16(data + 6) != 0) return BCIR_ERR_RESERVED;
-  for (size_t i = 40; i < 64; i++)
+  /* version 1's n_measured is @40; every other header byte past n_widths is reserved */
+  for (size_t i = version == BCIR_KP_VERSION_MEASURED ? 44u : 40u; i < 64; i++)
     if (data[i]) return BCIR_ERR_RESERVED;
   /* 2. the counts, then the size */
   v.n_phases = kp_rd32(data + 8);
@@ -153,13 +198,17 @@ bcir_status bcir_kp_decode_input(const uint8_t *data, size_t len, bcir_kp_input 
   v.n_ops = kp_rd32(data + 28);
   v.op_bytes = kp_rd32(data + 32);
   v.n_widths = kp_rd32(data + 36);
+  v.n_measured = version == BCIR_KP_VERSION_MEASURED ? kp_rd32(data + 40) : 0u;
   if (v.n_widths < 1 || v.n_widths > BCIR_KP_WIDTHS_MAX) return BCIR_ERR_PLANNER;
+  if (version == BCIR_KP_VERSION_MEASURED &&
+      (v.n_measured < 1 || v.n_measured > BCIR_KP_MEASURED_MAX))
+    return BCIR_ERR_PLANNER;
   if (v.n_phases > BCIR_KP_CLAIMS_MAX || v.n_claims > BCIR_KP_CLAIMS_MAX ||
       v.n_ops > BCIR_KP_CLAIMS_MAX || v.n_deps > BCIR_KP_REFS_MAX || v.n_refs > BCIR_KP_REFS_MAX ||
       v.n_resources > BCIR_KP_REFS_MAX || v.op_bytes > BCIR_KP_OP_BYTES_MAX)
     return BCIR_ERR_PLANNER;
   uint64_t size = kp_input_size(v.n_widths, v.n_phases, v.n_deps, v.n_claims, v.n_refs,
-                                v.n_resources, v.n_ops, v.op_bytes);
+                                v.n_resources, v.n_ops, v.op_bytes, v.n_measured);
   if ((uint64_t)len < size) return BCIR_ERR_TRUNCATED;
   if ((uint64_t)len > size) return BCIR_ERR_TRAILING;
   v.data = data;
@@ -172,6 +221,7 @@ bcir_status bcir_kp_decode_input(const uint8_t *data, size_t len, bcir_kp_input 
   v.off_resources = v.off_refs + 4u * (size_t)v.n_refs;
   v.off_op_lens = v.off_resources + (size_t)BCIR_KP_RESOURCE_SIZE * v.n_resources;
   v.off_ops = v.off_op_lens + 2u * (size_t)v.n_ops;
+  v.off_measured = v.off_ops + (size_t)v.op_bytes;
   /* 3. the scope: target (8), tiers (14), theta (8), policy (12) */
   const uint8_t *sc = data + BCIR_KP_INPUT_HEADER_SIZE;
   uint32_t cacheline = kp_rd32(sc), elem_bytes = kp_rd32(sc + 4), mem_unit = kp_rd32(sc + 12);
@@ -218,6 +268,34 @@ bcir_status bcir_kp_decode_input(const uint8_t *data, size_t len, bcir_kp_input 
     prev_len = n;
     pos += n;
   }
+  /* 5b. PX-3b-2: the measured table -- each entry's op an index naming a non-empty op never
+   * spelled as an opcode, its count positive, its code an alternative's, its price 1 .. 255;
+   * strictly ascending by (op, count, code); at most BCIR_KP_MEASURED_PER_KEY_MAX entries sharing
+   * an op and count. The entries ascend by op, so one forward walk of the op table finds each
+   * entry's bytes (`at_off`, op `at_op`'s): linear in the record. */
+  uint32_t run = 0, at_op = 0;
+  size_t at_off = v.off_ops;
+  for (uint32_t i = 0; i < v.n_measured; i++) {
+    uint32_t op = MS_OP(&v, i), count = MS_COUNT(&v, i), code = MS_CODE(&v, i), q8 = MS_Q8(&v, i);
+    if (op >= v.n_ops || kp_rd16(data + v.off_op_lens + 2u * (size_t)op) == 0)
+      return BCIR_ERR_PLANNER;
+    if (op < at_op) return BCIR_ERR_PLANNER; /* not ascending by op */
+    while (at_op < op) at_off += kp_rd16(data + v.off_op_lens + 2u * (size_t)at_op++);
+    if (kp_opcode_spelled(data + at_off, kp_rd16(data + v.off_op_lens + 2u * (size_t)op)))
+      return BCIR_ERR_PLANNER;
+    if (count < 1u) return BCIR_ERR_PLANNER;
+    if (!kp_code_valid(code)) return BCIR_ERR_PLANNER;
+    if (q8 < 1u || q8 > 255u) return BCIR_ERR_PLANNER;
+    if (i) {
+      uint32_t pop = MS_OP(&v, i - 1u), pcount = MS_COUNT(&v, i - 1u), pcode = MS_CODE(&v, i - 1u);
+      if (!(pop < op || (pop == op && (pcount < count || (pcount == count && pcode < code)))))
+        return BCIR_ERR_PLANNER;
+      run = pop == op && pcount == count ? run + 1u : 1u;
+    } else {
+      run = 1u;
+    }
+    if (run > BCIR_KP_MEASURED_PER_KEY_MAX) return BCIR_ERR_PLANNER;
+  }
   /* 6. each claim, in order */
   uint64_t ref_pos = 0;
   uint32_t next_resource = 0;
@@ -257,8 +335,8 @@ bcir_status bcir_kp_decode_input(const uint8_t *data, size_t len, bcir_kp_input 
 
 typedef struct kp_layout {
   uint64_t ph_tab, ph_color, ph_stack, ph_dep, ph_claim, topo, pos_claim, pos_phase, cl_ref,
-      rdver, res_ver, res_vstamp, res_bstamp, id_tab, id_stamp, op_seen, pos_mode, node_start,
-      pred, chosen, total;
+      rdver, res_ver, res_vstamp, res_bstamp, id_tab, id_stamp, op_seen, ms_seen, pos_mode,
+      node_start, pred, chosen, total;
   uint32_t cap_p, cap_c;
   uint64_t n_nodes;
 } kp_layout;
@@ -312,16 +390,36 @@ static void kp_geometry(const bcir_kp_input *in, kp_geom *g) {
   g->tile = last < 16u ? last : 16u;
 }
 
-/* How many realizations realize._offer_rows enumerates for a claim. */
-static unsigned kp_row_count(const uint8_t *cl, const kp_geom *g, uint32_t reduce_gather) {
+/* realize.UNMEASURED_OPCODES: the control ops and the barrier, never offered a measured
+ * alternative (PX-3b-2). */
+static int kp_unmeasured(uint8_t op) {
+  return op == OP_NOP || op == OP_PHASE_ENTER || op == OP_PHASE_LEAVE || op == OP_PROV_NOTE ||
+         op == OP_BARRIER;
+}
+
+/* How many measured entries a claim is offered (PX-3b-2): the table's entries naming its op
+ * and count, none for an unmeasured opcode; `first` the first of them. */
+static uint32_t kp_measured_hits(const bcir_kp_input *in, const uint8_t *cl, uint32_t *first) {
+  *first = 0;
+  if (!in->n_measured || kp_unmeasured(CL_OPCODE(cl))) return 0;
+  return kp_measured_range(in, CL_OP(cl), CL_COUNT(cl), first);
+}
+
+/* How many realizations realize._offer_rows enumerates for a claim: its own, each also run
+ * each measured entry it is offered. */
+static unsigned kp_row_count(const bcir_kp_input *in, const uint8_t *cl, const kp_geom *g,
+                             uint32_t reduce_gather) {
   uint8_t op = CL_OPCODE(cl), sc = CL_SC(cl);
+  unsigned own;
+  uint32_t first;
   if (op == OP_NOP || op == OP_PHASE_ENTER || op == OP_PHASE_LEAVE || op == OP_PROV_NOTE) return 1;
   if (op == OP_BARRIER) return 1;
-  if (op >= OP_ATOMIC_ADD && op <= OP_CMPXCHG) return 1;
-  if (CL_OP(cl) == reduce_gather) return 2;
-  if (sc == SC_UNIT || sc == SC_SCALAR) return g->n_uw;
-  if (sc == SC_STRIDED || sc == SC_CACHELINE) return 2;
-  return 1; /* RANDOM, TILE */
+  if (op >= OP_ATOMIC_ADD && op <= OP_CMPXCHG) own = 1;
+  else if (CL_OP(cl) == reduce_gather) own = 2;
+  else if (sc == SC_UNIT || sc == SC_SCALAR) own = g->n_uw;
+  else if (sc == SC_STRIDED || sc == SC_CACHELINE) own = 2;
+  else own = 1; /* RANDOM, TILE */
+  return own * (1u + kp_measured_hits(in, cl, &first));
 }
 
 static bcir_status kp_plan_layout(const bcir_kp_input *in, kp_layout *L) {
@@ -334,7 +432,7 @@ static bcir_status kp_plan_layout(const bcir_kp_input *in, kp_layout *L) {
   uint32_t reduce_gather = kp_reduce_gather_op(in);
   uint64_t nodes = 0;
   for (uint32_t c = 0; c < in->n_claims; c++)
-    nodes += kp_row_count(in->data + in->off_claims + (size_t)BCIR_KP_CLAIM_SIZE * c, &g,
+    nodes += kp_row_count(in, in->data + in->off_claims + (size_t)BCIR_KP_CLAIM_SIZE * c, &g,
                           reduce_gather);
   uint64_t np = in->n_phases, nc = in->n_claims, o = 0;
   L->cap_p = kp_pow2_at_least(2u * np);
@@ -356,6 +454,7 @@ static bcir_status kp_plan_layout(const bcir_kp_input *in, kp_layout *L) {
   L->id_tab = o;     o += 4u * (uint64_t)L->cap_c;
   L->id_stamp = o;   o += 4u * (uint64_t)L->cap_c;
   L->op_seen = o;    o += ((uint64_t)in->n_ops + 7u) / 8u;
+  L->ms_seen = o;    o += in->n_measured;
   L->pos_mode = o;   o += nc;
   L->node_start = o; o += 4u * (nc + 1u);
   L->pred = o;       o += nodes;
@@ -432,9 +531,11 @@ static void kp_weights(kp_ctx *x) {
 }
 
 /* One realization: realize._offer_rows' spec (lane, width, name, stride penalty, extra
- * compile). */
+ * compile) and -- PX-3b-2 -- the measured alternative it runs (code 0: its own; else the code
+ * and the price that scales its compute and memory axes). */
 typedef struct kp_spec {
   uint8_t lane, name;
+  uint16_t code, q8;
   uint32_t width, sp, extra;
 } kp_spec;
 
@@ -452,17 +553,13 @@ static unsigned kp_specs(const kp_ctx *x, const uint8_t *cl, int ham, kp_spec *o
   unsigned n = 0;
 #define KP_SPEC(L_, W_, N_, SP_, EX_) \
   (out[n].lane = (uint8_t)(L_), out[n].width = (W_), out[n].name = (uint8_t)(N_), \
-   out[n].sp = (SP_), out[n].extra = (EX_), n++)
+   out[n].sp = (SP_), out[n].extra = (EX_), out[n].code = 0u, out[n].q8 = 0u, n++)
   if (op == OP_NOP || op == OP_PHASE_ENTER || op == OP_PHASE_LEAVE || op == OP_PROV_NOTE) {
     KP_SPEC(LANE_H, 1u, BCIR_KP_NAME_NOOP, 0u, 0u);
     return n;
   }
   if (op == OP_BARRIER) {
     KP_SPEC(LANE_H, 1u, BCIR_KP_NAME_BARRIER, 0u, 0u);
-    return n;
-  }
-  if (op >= OP_ATOMIC_ADD && op <= OP_CMPXCHG) {
-    KP_SPEC(LANE_A, 1u, BCIR_KP_NAME_ATOMIC, 1u, 0u);
     return n;
   }
   uint32_t gp = x->target[T_GATHER];
@@ -472,7 +569,9 @@ static unsigned kp_specs(const kp_ctx *x, const uint8_t *cl, int ham, kp_spec *o
     uint32_t b = kp_bit_length(nn - 1u);
     gp = b > 1u ? b : 1u;
   }
-  if (CL_OP(cl) == x->reduce_gather) {
+  if (op >= OP_ATOMIC_ADD && op <= OP_CMPXCHG) { /* one realization, measured too (PX-3b-2) */
+    KP_SPEC(LANE_A, 1u, BCIR_KP_NAME_ATOMIC, 1u, 0u);
+  } else if (CL_OP(cl) == x->reduce_gather) {
     KP_SPEC(LANE_U, 1u, BCIR_KP_NAME_BLOCKED, 1u, 0u);
     KP_SPEC(LANE_GGG, 1u, BCIR_KP_NAME_GATHER, gp, 0u);
   } else if (sc == SC_UNIT || sc == SC_SCALAR) {
@@ -499,6 +598,17 @@ static unsigned kp_specs(const kp_ctx *x, const uint8_t *cl, int ham, kp_spec *o
     KP_SPEC(LANE_T, x->g.tile, BCIR_KP_NAME_TILE, 1u, 0u);
   }
 #undef KP_SPEC
+  /* PX-3b-2: each own realization run each measured entry the claim is offered, in the order
+   * (realization, then entry) -- the rows realize._offer_rows appends after its own */
+  uint32_t first, hits = kp_measured_hits(x->in, cl, &first);
+  unsigned own = n;
+  for (unsigned k = 0; k < own; k++)
+    for (uint32_t e = 0; e < hits; e++) {
+      out[n] = out[k];
+      out[n].code = MS_CODE(x->in, first + e);
+      out[n].q8 = MS_Q8(x->in, first + e);
+      n++;
+    }
   return n;
 }
 
@@ -543,6 +653,10 @@ static void kp_base(const kp_ctx *x, const uint8_t *cl, const kp_spec *sp, uint3
     base[D_MEMORY] = kp_shr8(kp_mul(base[D_MEMORY], q));
   } else if (mode == MODE_DEFOREST) {
     base[D_MEMORY] = kp_shr8(kp_mul(base[D_MEMORY], 192u));
+  }
+  if (sp->code) { /* PX-3b-2: a measured alternative, priced after the discount */
+    base[D_COMPUTE] = kp_shr8(kp_mul(base[D_COMPUTE], sp->q8));
+    base[D_MEMORY] = kp_shr8(kp_mul(base[D_MEMORY], sp->q8));
   }
 }
 
@@ -684,6 +798,17 @@ static bcir_status kp_check(kp_ctx *x) {
     }
   }
   if (seen != in->n_ops) return BCIR_ERR_PLANNER;
+  /* PX-3b-2: every measured entry is read -- some claim not of an unmeasured opcode has its
+   * op and count (planner_abi.check_input) */
+  if (in->n_measured) {
+    kp_zero(x->s + x->L.ms_seen, (size_t)in->n_measured);
+    for (uint32_t c = 0; c < in->n_claims; c++) {
+      uint32_t first, n = kp_measured_hits(in, kp_claim(x, c), &first);
+      for (uint32_t k = 0; k < n; k++) x->s[x->L.ms_seen + first + k] = 1u;
+    }
+    for (uint32_t i = 0; i < in->n_measured; i++)
+      if (!x->s[x->L.ms_seen + i]) return BCIR_ERR_PLANNER;
+  }
   return BCIR_OK;
 }
 
@@ -824,8 +949,8 @@ bcir_status bcir_kp_plan(const bcir_kp_input *in, void *scratch, size_t scratch_
   }
 
   /* One pass: the offer of each column (realize.fused_offer) and its relaxation (optimize). */
-  kp_u128 dist[2][BCIR_KP_WIDTHS_MAX];
-  uint32_t width[2][BCIR_KP_WIDTHS_MAX];
+  kp_u128 dist[2][BCIR_KP_ROWS_MAX];
+  uint32_t width[2][BCIR_KP_ROWS_MAX];
   /* Every row the SINK reads is written by its column first (n_claims > 0 means one column ran),
    * but GCC 13's -O2 flow analysis cannot see that once the hydrate shares this unit. */
   kp_zero((uint8_t *)dist, sizeof dist);
@@ -894,7 +1019,7 @@ bcir_status bcir_kp_plan(const bcir_kp_input *in, void *scratch, size_t scratch_
       uint32_t bw, lat;
       int ham;
       kp_factors(x, cl, ref0, &bw, &lat, &ham);
-      kp_spec specs[BCIR_KP_WIDTHS_MAX];
+      kp_spec specs[BCIR_KP_ROWS_MAX];
       unsigned rows = kp_specs(x, cl, ham, specs);
       int shares = pos > 0 && kp_shares_reads(x, prev_claim, c);
       unsigned nxt = cur ^ 1u;
@@ -974,7 +1099,7 @@ bcir_status bcir_kp_plan(const bcir_kp_input *in, void *scratch, size_t scratch_
     uint32_t ref0 = S32(x->L.cl_ref, c), bw, lat;
     int ham;
     kp_factors(x, cl, ref0, &bw, &lat, &ham);
-    kp_spec specs[BCIR_KP_WIDTHS_MAX];
+    kp_spec specs[BCIR_KP_ROWS_MAX];
     (void)kp_specs(x, cl, ham, specs);
     const kp_spec *sp = &specs[x->s[x->L.chosen + j]];
     kp_u128 base[D_N], plain, fused;
@@ -999,6 +1124,8 @@ bcir_status bcir_kp_plan(const bcir_kp_input *in, void *scratch, size_t scratch_
     kp_wr32(step + 8, sp->width);
     step[12] = sp->lane;
     step[13] = sp->name;
+    kp_wr16(step + 14, sp->code); /* PX-3b-2: the measured alternative (0: its own) */
+    if (sp->code) out[4] = (uint8_t)BCIR_KP_VERSION_MEASURED;
     kp_wr64(step + 16, cost.lo);
     prev_width = sp->width;
   }
@@ -1017,7 +1144,8 @@ bcir_status bcir_kp_decode_realization(const uint8_t *data, size_t len,
   if (!data || len < (size_t)BCIR_KP_REALIZATION_HEADER_SIZE + BCIR_KP_CRC_SIZE)
     return BCIR_ERR_TRUNCATED;
   if (data[0] != 'B' || data[1] != 'K' || data[2] != 'P' || data[3] != 'R') return BCIR_ERR_MAGIC;
-  if (kp_rd16(data + 4) != BCIR_KP_VERSION) return BCIR_ERR_VERSION;
+  uint16_t version = kp_rd16(data + 4);
+  if (version != BCIR_KP_VERSION && version != BCIR_KP_VERSION_MEASURED) return BCIR_ERR_VERSION;
   if (kp_rd32(data + len - 4) != bcir_crc32(data, len - 4)) return BCIR_ERR_CRC;
   if (kp_rd16(data + 6) != 0) return BCIR_ERR_RESERVED;
   uint32_t n = kp_rd32(data + 8);
@@ -1029,9 +1157,11 @@ bcir_status bcir_kp_decode_realization(const uint8_t *data, size_t len,
   uint64_t score = kp_rd64(data + 16);
   if (score > (uint64_t)INT64_MAX) return BCIR_ERR_OVERFLOW;
   kp_u128 total = kp_u(0);
+  int measured = 0;
   for (uint32_t i = 0; i < n; i++) {
     const uint8_t *s = data + BCIR_KP_REALIZATION_HEADER_SIZE + (size_t)BCIR_KP_STEP_SIZE * i;
-    if (kp_rd16(s + 14) != 0) return BCIR_ERR_RESERVED;
+    uint16_t code = kp_rd16(s + 14);
+    if (code != 0 && version == BCIR_KP_VERSION) return BCIR_ERR_RESERVED;
     for (unsigned k = 0; k < 13; k++)
       if (kp_rd64(s + 16 + 8u * k) > (uint64_t)INT64_MAX) return BCIR_ERR_OVERFLOW;
     uint32_t width = kp_rd32(s + 8);
@@ -1041,9 +1171,12 @@ bcir_status bcir_kp_decode_realization(const uint8_t *data, size_t len,
                                  : (name != BCIR_KP_NAME_UX_BUCKET && name != BCIR_KP_NAME_TILE &&
                                     width != 1u))
       return BCIR_ERR_PLANNER;
+    if (code != 0 && !kp_code_valid(code)) return BCIR_ERR_PLANNER; /* PX-3b-2 */
+    measured |= code != 0;
     total = kp_add(total, kp_u(kp_rd64(s + 16)));
   }
   if (!kp_eq(total, kp_u(score))) return BCIR_ERR_PLANNER;
+  if (version == BCIR_KP_VERSION_MEASURED && !measured) return BCIR_ERR_PLANNER;
   out->data = data;
   out->len = len;
   out->n_steps = n;
@@ -1115,6 +1248,7 @@ static bcir_status kh_plan_layout(const bcir_kp_input *in, const bcir_kp_binding
   L->cl_ref = o;   o += 4u * nc;
   L->id_tab = o;   o += 4u * (uint64_t)L->cap_c;
   L->op_seen = o;  o += ((uint64_t)in->n_ops + 7u) / 8u;
+  L->ms_seen = o;  o += in->n_measured; /* PX-3b-2: kp_check's measured-entry law */
   H->pos = o;      o += 4u * np;
   H->cl_phase = o; o += 4u * nc;
   H->seen = o;     o += nc;
@@ -1341,13 +1475,22 @@ static void kh_emit(kh_ctx *h, kh_w *w) {
     uint32_t op = CL_OP(cl), op_len = kp_rd16(in->data + in->off_op_lens + 2u * (size_t)op);
     if (op_len) {
       kh_str(w, in->data + in->off_ops + S32(h->H.op_off, op), op_len);
-    } else if (st[13] == BCIR_KP_NAME_VEC) {
-      kh_str(w, label, kh_label(label, "vec", width));
-    } else {
-      const char *name = kh_names[st[13]];
+    } else { /* the realization's name, the oracle's `claim.op or cand.name` */
+      uint8_t name[40];
       size_t k = 0;
-      while (name[k]) k++;
-      kh_str(w, (const uint8_t *)name, k);
+      if (st[13] == BCIR_KP_NAME_VEC) {
+        k = kh_label(name, "vec", width);
+      } else {
+        for (const char *own = kh_names[st[13]]; own[k]; k++) name[k] = (uint8_t)own[k];
+      }
+      uint16_t code = kp_rd16(st + 14); /* PX-3b-2: a measured one is "<name>@<alternative>" */
+      if (code) {
+        name[k++] = '@';
+        k += code & BCIR_KP_MEASURED_WORKERS
+                 ? kh_label(name + k, "t", code & ~BCIR_KP_MEASURED_WORKERS)
+                 : kh_label(name + k, "i", code);
+      }
+      kh_str(w, name, k);
     }
     kh_u16(w, (uint16_t)n_rd);
     for (uint32_t k = 0; k < n_rd; k++) kh_u32(w, kh_rid(h, kp_ref(x, (uint64_t)ref0 + k)));

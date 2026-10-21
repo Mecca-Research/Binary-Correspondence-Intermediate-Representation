@@ -1,4 +1,4 @@
-# The K_BCIR planner's records — BKPI, BKPR and BKPB (version zero, experimental)
+# The K_BCIR planner's records — BKPI, BKPR and BKPB (versions zero and one, experimental)
 
 A native planner may own a certificate only after it reproduces the Python plan byte for byte over
 a generated corpus — the way the C twins earn their rails (GEM+ roadmap G17, staged plan S4-A).
@@ -21,6 +21,17 @@ target is `runtime/c/fuzz_kplan.c`.
 repository reads it. A change is a version bump, never a reinterpretation. They are not the BCIR
 UAPI.
 
+**Version one (PX-3b-2).** A target may carry a frozen, generation-tagged table of measured
+alternatives (`cost.MeasuredPrices`, `TargetProfile.measured`): the claims of an op and a count
+may run an alternative -- an instance (`i<bit>`: 1 portable, 2 AVX2, 4 AVX-512, 8 AMX) or a worker
+count (`t<k>`) -- at `q8`/256 of their default's time. The offer then gives such a claim, after its
+own realizations, each of them run each entry (`<name>@<alternative>`: the same lane, width and
+operands, the base after the intra-phase discount with its compute and memory axes scaled by the
+entry's `q8`, floored), and the planner prices them like any candidate. A BKPI record carries the
+entries some claim is offered, and is then version one; a BKPR record whose plan runs a measured
+alternative is version one. Every other record is version zero, byte for byte: a target without a
+table, or with one no claim reads, writes the record it always wrote.
+
 ## Conventions
 
 - Little-endian; every field has a fixed width.
@@ -33,10 +44,10 @@ UAPI.
 ## BKPI — the planner input
 
 ```
-header (64)  @0 magic "BKPI"  @4 version u16 = 0  @6 flags u16 = 0
+header (64)  @0 magic "BKPI"  @4 version u16 = 0 or 1  @6 flags u16 = 0
              @8 n_phases u32  @12 n_deps u32  @16 n_claims u32  @20 n_refs u32
              @24 n_resources u32  @28 n_ops u32  @32 op_bytes u32  @36 n_widths u32
-             @40 reserved[24] = 0
+             @40 reserved[24] = 0 (version 1: @40 n_measured u32, then reserved[20] = 0)
 scope (168)  @64  target 8 x u32: cacheline, elem_bytes, gather_penalty, mem_unit,
                   base_overhead, thermal_density, power_density, per_op_heat
              @96  tiers 7 x (bw_factor u32, lat_factor u32), indexed by MemTier (L1 .. SSD)
@@ -50,6 +61,7 @@ sections     widths    n_widths x u32 -- lane_widths in declaration order
              resources n_resources x (declared u8, domain u8, access u8, reserved u8)
              op lens   n_ops x u16
              op bytes  op_bytes -- the op strings, concatenated
+             measured  n_measured x (op u32, count u32, code u16, q8 u16) -- version 1 only
 trailer      crc32 u32
 ```
 
@@ -80,6 +92,13 @@ exactly. `reduce.gather` is the one op whose spelling changes the enumeration.
 - The op table is strictly ascending and fully referenced.
 - The tiers are resolved per normative tier by name, so a hierarchy that lacks one reads DRAM's
   factors (`MemoryHierarchy.by_name`).
+- The measured section holds exactly the table's entries some claim is offered: an entry whose
+  (op, count) no claim of a measured opcode has -- every control op and the barrier are never
+  measured (`realize.UNMEASURED_OPCODES`) -- changes no plan and is left out, and a table no claim
+  reads is a version-zero record. An entry's op is its op-table index, its alternative a **code**:
+  the instance's bit (1, 2, 4, 8), or `0x8000 | k` for `t<k>` (k 1..32767). The entries are
+  strictly ascending by (op, count, code) -- the table's own order, since the instances' bits sort
+  before the worker counts.
 
 `encode_input` decodes its own output before it returns it, so it refuses exactly what the decoder
 refuses.
@@ -92,6 +111,7 @@ refuses.
 | operand references, dependencies, resources | ≤ 2²⁶ |
 | operands of one claim (reads + writes) | ≤ 255 |
 | lane widths | 1..16 entries, each 1..2¹⁶ |
+| measured entries (version 1) | 1..2²⁴, at most 7 of one (op, count); count 1..2³² − 1; `q8` 1..255 |
 | target constants, tier factors, policy weights | ≤ 2¹⁶ (tier factors, `elem_bytes`, `mem_unit` ≥ 1; `cacheline` a power of two) |
 | Theta fields | ≤ 100 |
 | count | u32 |
@@ -104,7 +124,10 @@ Inside these bounds every intermediate the planner forms is exact in 128 bits:
 - So an edge weight is under 12 × 2⁹⁸, and a path weight, over at most 2²⁴ columns, under 2¹²⁶.
 
 Each multiplication multiplies a value under 2⁹⁶ by a factor under 2³², so the C twin's `kp_mul`
-never loses a bit. The C planner therefore never wraps. It refuses a plan only when a value the
+never loses a bit. A measured realization's compute and memory are its own's scaled by `q8` < 2⁸ and
+shifted right by 8, so they never grow; seven entries a key keep a claim's rows, every width each
+run as its own and as each entry, under 16 × 8 = 128, so the C planner's predecessor index fits its
+u8. The C planner therefore never wraps. It refuses a plan only when a value the
 realization must carry exceeds 2⁶³ − 1 (`BCIR_ERR_OVERFLOW`), which is exactly when the Python
 encoder refuses the same plan. Python's integers are unbounded, so the two rails agree on every
 input in the domain.
@@ -122,10 +145,12 @@ Two fixtures make this observable:
 
 1. shorter than the fixed part (236 bytes) → `BCIR_ERR_TRUNCATED`
 2. magic ≠ `BKPI` → `BCIR_ERR_MAGIC`
-3. version ≠ 0 → `BCIR_ERR_VERSION`
+3. version neither 0 nor 1 → `BCIR_ERR_VERSION`
 4. the CRC → `BCIR_ERR_CRC`
-5. flags or the header's reserved bytes not zero → `BCIR_ERR_RESERVED`
-6. a section count outside its bound (`n_widths` 1..16) → `BCIR_ERR_PLANNER`
+5. flags or the header's reserved bytes not zero (version 1: those after `n_measured`) →
+   `BCIR_ERR_RESERVED`
+6. a section count outside its bound (`n_widths` 1..16; version 1: `n_measured` 1..2²⁴) →
+   `BCIR_ERR_PLANNER`
 7. the size is not the sections' exact sum → `BCIR_ERR_TRUNCATED` (short) or
    `BCIR_ERR_TRAILING` (long)
 8. the scope, in order: `cacheline`, then `elem_bytes` and `mem_unit`, the target constants, the
@@ -136,6 +161,13 @@ Two fixtures make this observable:
     its vocabulary, or an undeclared resource carrying either → `BCIR_ERR_PLANNER`
 12. the op table: the lengths do not add up → `BCIR_ERR_PLANNER`; an op not UTF-8 →
     `BCIR_ERR_UTF8`; not strictly ascending → `BCIR_ERR_PLANNER`
+    - version 1, each measured entry in order: its op an index naming no non-empty op, or one
+      spelled as an opcode (an ASCII capital, then capitals, digits and underscores:
+      `cost.spelled_as_opcode` -- the law rail writes an op-less claim's op as its opcode's name,
+      so such an entry would name there the op-less claims the oracle never offers it), a count of
+      zero, a code no alternative takes, a price outside 1..255, the entries not strictly
+      ascending, or more than 7 of one (op, count) → `BCIR_ERR_PLANNER`. The entries ascend by op,
+      so one forward walk of the op table finds each entry's op: linear in the record.
 13. each claim in order:
     - its pad → `BCIR_ERR_RESERVED`;
     - its vocabulary, more than 255 operands, operands past the record's, an operand out of
@@ -143,9 +175,10 @@ Two fixtures make this observable:
       primary → `BCIR_ERR_PLANNER`
 14. an operand reference or a resource never accounted for → `BCIR_ERR_PLANNER`
 
-Three laws need memory proportional to the record, so the decoder does not apply them. They are
+Four laws need memory proportional to the record, so the decoder does not apply them. They are
 `check_input`'s and `bcir_kp_plan`'s, applied before any planning, in this order: a phase id names
-one phase, a claim id names one claim, and every op string is referenced (`BCIR_ERR_PLANNER`).
+one phase, a claim id names one claim, every op string is referenced, and (version 1) every
+measured entry is one some claim of a measured opcode is offered (`BCIR_ERR_PLANNER`).
 The compact Python planner still plans a module with a repeated claim id: every occurrence plans
 with the last one's realizations, as the id-keyed candidate map always made it. Such a module is
 outside the native domain.
@@ -153,15 +186,18 @@ outside the native domain.
 ## BKPR — the realization
 
 ```
-header (32)  @0 magic "BKPR"  @4 version u16 = 0  @6 flags u16 = 0  @8 n_steps u32
+header (32)  @0 magic "BKPR"  @4 version u16 = 0 or 1  @6 flags u16 = 0  @8 n_steps u32
              @12 reserved u32 = 0  @16 score u64  @24 reserved u64 = 0
 steps        n_steps x 120: claim_id u32 | phase_id u32 | width u32 | lane u8 | name u8 |
-             reserved u16 | cost u64 | base 12 x u64 (cost.DIMS order)
+             code u16 (version 1; reserved = 0 in version 0) | cost u64 |
+             base 12 x u64 (cost.DIMS order)
 trailer      crc32 u32
 ```
 
 `name` codes: noop 0, barrier 1, atomic 2, blocked 3, gather 4, scalar 5, vec 6 (`vec<width>`),
-strided 7, ux_bucket 8, tile 9. The steps are in planning order. `cost` is the realized cost of
+strided 7, ux_bucket 8, tile 9. A measured realization `<name>@<alternative>` is its own
+realization's name code beside the alternative's code (as BKPI codes it; 0 is the realization
+itself). The steps are in planning order. `cost` is the realized cost of
 the edge the path took, and `base` is the realization's coupled base cost, after the CSE or
 deforestation discount.
 
@@ -172,12 +208,13 @@ Laws (`decode_realization` / `bcir_kp_decode_realization`, in order):
 3. the size is not `36 + 120·n_steps` → `BCIR_ERR_TRUNCATED` or `BCIR_ERR_TRAILING`
 4. the score above 2⁶³ − 1 → `BCIR_ERR_OVERFLOW`
 5. each step:
-   - its pad → `BCIR_ERR_RESERVED`;
+   - its pad (version 0: the code too) → `BCIR_ERR_RESERVED`;
    - its cost or a base component above 2⁶³ − 1 → `BCIR_ERR_OVERFLOW`;
    - a lane, name or zero width outside the vocabulary, a `vec` narrower than 2, or a width-one
      realization (noop, barrier, atomic, blocked, gather, scalar, strided) wider than 1 →
-     `BCIR_ERR_PLANNER`
+     `BCIR_ERR_PLANNER`; version 1: a code no alternative takes → `BCIR_ERR_PLANNER`
 6. the score is not the sum of the step costs → `BCIR_ERR_PLANNER`
+7. version 1 with no step running a measured alternative → `BCIR_ERR_PLANNER`
 
 ## The planner, step by step
 
@@ -188,7 +225,8 @@ Laws (`decode_realization` / `bcir_kp_decode_realization`, in order):
 | phase order: dependency-first, roots in declaration order, a missing dependency ignored, a back edge skipped | `model.topological_phase_ids` | `kp_topo` |
 | weights: the policy folded with Theta | `weights.weights` | `kp_weights` |
 | the lane geometry: ascending unique widths, the cacheline-bucket and tile widths | `realize._geometry` | `kp_geometry` |
-| the enumeration of a claim's realizations, with its primary resource's tier and addressing model | `realize._offer_rows` | `kp_specs`, `kp_factors` |
+| the enumeration of a claim's realizations, with its primary resource's tier and addressing model | `realize._offer_rows` (`_own_rows`) | `kp_specs`, `kp_factors` |
+| PX-3b-2: each own realization run each measured entry the claim is offered, priced after the discount | `realize._offer_rows` | `kp_measured_hits`, the measured rows of `kp_specs`, `kp_base`'s scaling |
 | the base cost | `realize._base_cost` | `kp_base` |
 | the intra-phase discount: CSE by value-numbered identity over eligible claims, else deforestation unless a barrier fences it | `realize.fused_offer`, `cse_eligible`, `cse_identity` | `kp_cse_eligible`, the identity table, the version and fence stamps |
 | an edge's weight in both path contexts | `realize._edge_cost_pair` | `kp_edge` |
@@ -261,8 +299,17 @@ the first byte is written (`bcir_kp_hydrate_size`). The scratch is the caller's
     planner is the pre-G17 planner (`realize_reference`, kept verbatim), in its plan, its BKPR
     bytes and its ExecutionPlanV1 bytes. The native planner writes the same BKPR bytes, or makes
     the same refusal.
-  - `planner.malformed.accepted` 148 → 0: one variant per BKPI and BKPR law (54 + 20), each refused with
-    its status on both rails. A test requires every law's message to be reached by some variant.
+  - `planner.malformed.accepted` 188 → 0: one variant per BKPI and BKPR law (71 + 23, the
+    version-one laws among them), each refused with its status on both rails. A test requires
+    every law's message to be reached by some variant.
+  - `planner.measured.parity` 456 → 0 (PX-3b-2): the measured corpus
+    (`planner_fixtures.measured_cases`: every module of the fixed corpus and two native-trainer
+    training packs under every target, each with a measured table drawn over its claims, and the
+    seed module under a table naming its capital-led op -- 114 version-one records) under four
+    comparisons -- R9 judges the compact planner's plan as it
+    judges the same target's plan without the table, the plan is priced at or below that plan, the
+    native planner writes the compact planner's version-one BKPR bytes (or makes the same
+    refusal), and the native hydrate writes the oracle's pack.
   - `planner.r9.misjudged` 232 → 0: R9 through the compact offer. The planner's own plan of every
     legal fixed module is accepted. Every forgery of a field a step carries is refused with a
     diagnostic, with the scope and without it.
@@ -291,8 +338,11 @@ the first byte is written (`bcir_kp_hydrate_size`). The scratch is the caller's
 
 ## Not claimed
 
-- The MLIR `-bcir-plan` pass is unchanged. It reproduces the planner's scores on its frozen
-  corpus; this record is not its input.
+- This record is not the MLIR `-bcir-plan` pass's input. The pass reads the same measured table
+  off the target capability's `measured_*` attributes and derives the same offer
+  (`BCIRCostModel.h` `appendMeasured`), names the alternative its plan takes
+  (`kbcir.plan_alternative`), and is held to the oracle on `mlir/test/passes/plan_measured.mlir`
+  (generated, drift-gated); R9 re-derives it and R13 folds the table into `hash_target`.
 - The proposal's CXX3 joint solvers (scheduled liveness, bank placement, the exact portfolio)
   remain Python-only.
 - No certificate is produced natively. The native planner reproduces the plan; the certificate

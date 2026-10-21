@@ -864,6 +864,28 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="PX-3b",
     ),
     Metric(
+        "train.plan.measured.mismatch",
+        "train",
+        "of the 54 measured runs (bcir/tests/native_decoder_fixtures.py `measured_runs`: the 27 "
+        "state cases of the trace corpus at two threads at least, each under two seeded choice "
+        "tables that measured the dispatch -- the rms kernel's t1 resolved faster in every one -- "
+        "their picks carried into K_BCIR's candidates by native_choose.measured_prices, the "
+        "default program planned on the AVX-512 profile carrying them, hydrated, placed and "
+        "lowered by the C), those whose lowering was refused or wrote other words than the "
+        "program step_program states under the carried dispatch, that stopped, or that trained "
+        "another state or events than the C step on the same case. The parent priced no measured "
+        "alternative, so its plans ran every job at the default and all 54 were unheld (PX-3b-2)",
+        54,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a measured realization is its own realization's lane and width at a lower "
+        "price, so the planner takes it and the lowering writes its alternative into the job's "
+        "dispatch words, and every dispatch trains the same bits (PX-3b) -- a run that differs is "
+        "a defect of the prices, the planner, the plan's candidate string or the lowering",
+        slice_owner="PX-3b-2",
+    ),
+    Metric(
         "train.plan.pack.mismatch",
         "train",
         "of the 356 pack runs (bcir/tests/native_decoder_fixtures.py `pack_runs`: the program runs "
@@ -2061,8 +2083,8 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "planner.malformed.accepted",
         "kplan",
-        "(malformed record, rail) pairs not refused with the declared status: one BKPI variant per wire and planning law, one BKPR variant per wire law (54 + 20), on the Python codec and the C twin",
-        148,
+        "(malformed record, rail) pairs not refused with the declared status: one BKPI variant per wire and planning law, one BKPR variant per wire law (71 + 23, PX-3b-2's version-1 laws among them), on the Python codec and the C twin",
+        188,
         "count",
         "exact",
         bound=0,
@@ -2079,6 +2101,17 @@ METRICS: tuple[Metric, ...] = (
         bound=0,
         bound_source="every forgery refused with a diagnostic and every honest plan accepted; the parent raised on 176 forgery verdicts (a plain-int lane, an unhashable phase) and accepted 56 (a first step's phase was never bound to its claim)",
         slice_owner="G17",
+    ),
+    Metric(
+        "planner.measured.parity",
+        "kplan",
+        "(case, comparison) pairs over the measured corpus (bcir/tests/planner_fixtures.py `measured_cases`: every module of the fixed corpus and two native-trainer training packs under every target, each with a measured table drawn over its claims, and the seed module under a table naming its capital-led op: 114 cases, every one a version-1 BKPI record) that fail: R9 judging the compact planner's plan otherwise than the same target's plan without its table, the plan priced above that plan, the native planner writing other bytes than the compact planner's (its version-1 BKPR record, or the same refusal), or the native hydrate another pack than the oracle's. The parent priced no measured alternative, so all 456 were unheld (PX-3b-2)",
+        456,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a measured alternative is a candidate like any other: its lane and width its own realization's, its price that realization's scaled -- every rail derives the same offer, so the same plan, the same bytes and the same pack",
+        slice_owner="PX-3b-2",
     ),
     # The 2026-09-04 profile's 6.06 M was the whole K_BCIR->StreamPack chain at scale 8 before
     # S0-A made R9 re-derive the planner's offer; this row is the planner alone, the thing G17

@@ -506,6 +506,17 @@ for i, case in enumerate(corpus_cases()[::97][:32]):   # modes 0 and 2: real rec
     except Exception:
         continue
     open(os.path.join(d, f"plan_{i}.bin"), "wb").write(b"\x01" + plan)
+from bcir.tests.planner_fixtures import measured_cases    # PX-3b-2: version-1 records and plans
+for i, case in enumerate(measured_cases()[::7][:16]):
+    args = (case.module, case.h, case.theta, case.policy)
+    record = encode_input(*args)
+    open(os.path.join(d, f"measured_input_{i}.bin"), "wb").write(b"\x00" + record)
+    open(os.path.join(d, f"measured_unsealed_{i}.bin"), "wb").write(b"\x02" + record[:-4])
+    try:
+        plan = encode_realization(optimize(*args))
+    except Exception:
+        continue
+    open(os.path.join(d, f"measured_plan_{i}.bin"), "wb").write(b"\x01" + plan)
 for name, blob, _status in malformed_inputs():           # one per law
     open(os.path.join(d, "bad_input_" + name + ".bin"), "wb").write(b"\x00" + blob)
 for name, blob, _status in malformed_realizations():

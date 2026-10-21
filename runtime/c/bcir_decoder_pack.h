@@ -28,9 +28,13 @@
  * so a refused pack writes nothing to `program` (*records 0): BCIR_DT_INVALID with `why` the
  * verifiers' bcir_status (1..25), ahead of any reason of the lowering's own, or a BCIR_DP_* reason
  * below; BCIR_DT_CAPACITY when `work` or `program` is short of bcir_decoder_pack_sizes' figures.
- * `work` is scratch: its bytes are the lowering's. The lowered program is the planner's, checked
- * again whole by bcir_decoder_run_program before anything runs (its records' grammar, operands and
- * job shapes are its check's, not this one's).
+ * `work` is scratch: its bytes are the lowering's. PX-3b-2: a claim whose plan step runs a
+ * measured realization, `<name>@i<bit>` or `<name>@t<k>` (K_BCIR's offer under a target's measured
+ * table, the plan's own candidate string), lowers to a record of that instance (word 41) or that
+ * many workers (word 42); its own realization, to the default dispatch (both 0). The lowered
+ * program is the planner's, checked again whole by bcir_decoder_run_program before anything runs
+ * (its records' grammar, operands, job shapes and dispatch -- a job's records alike, an instance
+ * its family admits on the host, workers within the pool -- are its check's, not this one's).
  *===----------------------------------------------------------------------===*/
 #ifndef BCIR_DECODER_PACK_H
 #define BCIR_DECODER_PACK_H
@@ -54,7 +58,9 @@ extern "C" {
  *   RUN       a run of tensors not one contiguous span of one bank
  *   SHAPE     a dimension the operands do not determine (a size not a whole multiple)
  *   BLOCK     a block's base not the claim's micro-batch, or its count not the call's work
- *   LIVENESS  a plan whose lifetimes live in the schedule's ticks, not the phases' */
+ *   LIVENESS  a plan whose lifetimes live in the schedule's ticks, not the phases'
+ *   ALTERNATIVE  a step's realization `<name>@<alternative>` whose alternative is neither `i<bit>`
+ *             (1, 2, 4 or 8) nor `t<k>` (1 .. 32767 workers, ASCII digits, no leading zero) */
 enum {
   BCIR_DP_OP = 101,
   BCIR_DP_CLAIMS,
@@ -65,7 +71,8 @@ enum {
   BCIR_DP_RUN,
   BCIR_DP_SHAPE,
   BCIR_DP_BLOCK,
-  BCIR_DP_LIVENESS
+  BCIR_DP_LIVENESS,
+  BCIR_DP_ALTERNATIVE
 };
 
 /* The records and the work bytes bcir_decoder_lower_pack needs for this pack and plan (the pack's

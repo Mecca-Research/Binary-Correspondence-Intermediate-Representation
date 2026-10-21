@@ -38,9 +38,18 @@ an instance or a worker count, measured against the default program, each kind a
 
 The chosen program is then planned and verified like any other: `native_pack.training_pack(...,
 sites=...)` states it as a module whose claims carry each call's role, K_BCIR plans it, the plan's
-laws (R9 among them) verify it, and the C lowers it to the program it states. The measured prices
-inform the choice and do not enter the plan's own costs: carrying them into K_BCIR's candidates on
-its three rails (a BKPI table beside the target's constants) is the open half of the ladder's row.
+laws (R9 among them) verify it, and the C lowers it to the program it states.
+
+PX-3b-2 carries the dispatch prices into K_BCIR's own candidates instead of choosing beside them:
+`measured_prices` turns `choose_dispatch`'s picks into a `cost.MeasuredPrices` table keyed on the
+program's claims -- one entry per (op, count) the claims of a kind's jobs hold, the kind's pick at
+its measured price -- so a target carrying it (`TargetProfile.with_measured`) offers every such
+claim, beside each of its realizations, that realization run the pick (`<name>@<alternative>`,
+`realize._offer_rows`), on the oracle, the C planner (BKPI/BKPR version 1) and the law rail alike;
+the planner takes it by its own min-plus, R9 re-derives it, and the C lowering of the pack writes
+the plan's alternative into the job's dispatch words (`bcir_decoder_pack.c`). A pick the claims'
+keys cannot carry alone -- a key two kinds' claims hold with different picks -- is left out and
+named, never priced at another kind's measurement.
 """
 
 from __future__ import annotations
@@ -76,12 +85,14 @@ __all__ = [
     "Q8",
     "SCOPES",
     "choose",
+    "carried_kinds",
     "choose_dispatch",
     "dispatch_kind",
     "estimate",
     "host_attestation",
     "kind_of",
     "measure",
+    "measured_prices",
     "scope",
     "timed_run",
     "trainer_shape",
@@ -369,6 +380,78 @@ def choose_dispatch(table: ChoiceTable | None, spec: DecoderSpec, shape: dict) -
         raise ValueError(f"the table was measured at {table.shape}, not at {shape}")
     best = _best(table, site_kinds=False)
     return {dispatch_kind(kind): best[kind].alternative for kind in sorted(best)}
+
+
+def carried_kinds(picks: dict, keys: dict, holders: dict) -> set:
+    """The kinds whose pick (`picks`: a kind -> its alternative) a table keyed on claims can carry
+    (`measured_prices`): `keys` maps a kind to the (op, count) keys its jobs' claims hold,
+    `holders` a key to the kinds holding it. A kind is carried when every key of its claims is
+    held by carried kinds of its own pick alone; a kind with no claim is never carried. Found as
+    the greatest such set: from every picked kind with claims, the kinds a key ties to another
+    pick -- or to no pick -- are dropped, then the kinds those leave tied, until none is."""
+    carried = {kind for kind in picks if keys.get(kind)}
+    while True:
+        uncarried = {kind for kind in carried
+                     if any(h not in carried or picks[h] != picks[kind]
+                            for key in keys[kind] for h in holders[key])}  # fmt: skip
+        if not uncarried:
+            return carried
+        carried -= uncarried
+
+
+def measured_prices(table: ChoiceTable | None, spec: DecoderSpec, shape: dict, **decisions):
+    """PX-3b-2: the dispatch `choose_dispatch` takes from `table`, as K_BCIR's own prices -- a
+    `cost.MeasuredPrices` table for the target the program's pack is planned on -- and the kinds
+    whose pick it does not carry, as `(prices or None, kinds)`.
+
+    The program is `step_program(spec, batch, time, **decisions)` at the shape's batch and time,
+    under the trainer's decisions (`NativeDecoder.program_decisions`: the shape's threads and
+    instances, no dispatch -- the picks are measured against the default dispatch); its claims are
+    its records, each keyed (op, count) as `native_pack.program_pack` states it (`op_name`,
+    `work`). A kind's pick is carried by one entry per key its jobs' claims hold: the pick's
+    alternative at its price, the highest of the prices of the kinds holding the key (the least
+    any of them was measured to gain). A key the claims of two kinds hold takes one alternative,
+    so a kind any of whose keys another kind holds with another pick (or with none: the default)
+    is carried by no entry -- the planner would otherwise price its claims at another kind's
+    measurement, or one job's claims at two alternatives -- and that leaves its keys' other kinds
+    uncarried in turn, until every carried kind's keys are held by carried kinds of its pick
+    alone. The table's generation is `table`'s; the kinds returned, sorted, are the picks no entry
+    carries (a kind with no job in the program among them). `table` None, or no pick, is
+    `(None, ())`."""
+    from ...kbcir.cost import MeasuredEntry, MeasuredPrices
+    from .native_pack import op_name, work
+
+    picks = choose_dispatch(table, spec, shape)  # the shape and table checked as it checks them
+    if not picks:
+        return None, ()
+    for name in ("dispatch", "dispatch_labels"):
+        if name in decisions:
+            raise ValueError(f"measured_prices states the default program: no {name}")
+    for name in ("threads", "instances"):
+        if name in decisions and decisions[name] != table.shape.get(name):
+            raise ValueError(f"the decisions' {name} are not the {name} the table measured at")
+    best = _best(table, site_kinds=False)
+    price = {dispatch_kind(kind): entry.q8 for kind, entry in best.items()}
+    labels: list = []
+    program = step_program(spec, table.shape["batch"], table.shape["time"], **decisions,
+                           dispatch_labels=labels)  # fmt: skip
+    keys: dict[str, set] = {}  # a kind -> the (op, count) keys its jobs' claims hold
+    holders: dict[tuple, set] = {}  # a key -> the kinds holding it
+    for launch, kind in zip(program, labels):
+        if kind is None:  # a CHECK: no dispatch
+            continue
+        for record in launch.records:
+            key = (op_name(record), work(record))
+            keys.setdefault(kind, set()).add(key)
+            holders.setdefault(key, set()).add(kind)
+    carried = carried_kinds(picks, keys, holders)
+    entries = sorted(
+        (MeasuredEntry(op, count, picks[next(iter(hs))], max(price[h] for h in hs))
+         for (op, count), hs in holders.items() if hs <= carried),
+        key=lambda e: (e.op, e.count),
+    )  # fmt: skip
+    left = tuple(sorted(set(picks) - carried))
+    return (MeasuredPrices(table.generation, tuple(entries)) if entries else None), left
 
 
 def host_attestation() -> dict:

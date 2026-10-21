@@ -1323,7 +1323,8 @@ def test_the_harness_rows_are_the_programs_numbers():
                          "train.mm.bf16.mismatch", "train.plan.remat.mismatch",
                          "train.plan.executed.mismatch", "train.plan.program.mismatch",
                          "train.plan.pack.mismatch", "train.plan.place.mismatch",
-                         "train.plan.choose.mismatch", "train.plan.dispatch.mismatch"}  # fmt: skip
+                         "train.plan.choose.mismatch", "train.plan.dispatch.mismatch",
+                         "train.plan.measured.mismatch"}  # fmt: skip
     remat = rows["train.plan.remat.mismatch"]
     assert remat.kind == "exact" and remat.bound == 0 and remat.baseline == 0
     assert remat.what.startswith("(spec, recompute set) pairs") and remat.slice_owner == "GEO-3"
@@ -1345,6 +1346,12 @@ def test_the_harness_rows_are_the_programs_numbers():
     assert dispatch.kind == "exact" and dispatch.bound == 0 and dispatch.baseline == dispatched
     assert dispatch.what.startswith(f"of the {dispatched:,} dispatch runs")
     assert dispatch.slice_owner == "PX-3b" and f"the {states} state cases" in dispatch.what
+    # PX-3b-2: the state cases again, under seeded tables whose picks K_BCIR prices and plans
+    measured, priced = rows["train.plan.measured.mismatch"], nf.measured_run_count()
+    assert measured.kind == "exact" and measured.bound == 0 and measured.baseline == priced
+    assert measured.what.startswith(f"of the {priced} measured runs")
+    assert measured.slice_owner == "PX-3b-2" and f"the {states} state cases" in measured.what
+    assert nf.MEASURED_TABLES == 2 and "each under two seeded choice tables" in measured.what
     # PX-2b: the same runs, each from its pack -- the program row's corpus, one carrier more
     pack = rows["train.plan.pack.mismatch"]
     assert pack.kind == "exact" and pack.bound == 0 and pack.baseline == runs

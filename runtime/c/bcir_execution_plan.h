@@ -261,6 +261,17 @@ BCIR_NODISCARD bcir_status bcir_ep_check_pack_lifetimes(const uint8_t *BCIR_REST
                                                         size_t pack_len, bcir_ep_lifetime_fn fn,
                                                         void *ctx);
 
+/* bcir_ep_check_pack_lifetimes, the walk handing each step to `step` too, as it is verified and
+ * before the lifetimes (as bcir_ep_for_each_step's does), both with `ctx`; either may be NULL.
+ * PX-3b-2's lowering reads each step's realization -- a measured one runs an alternative -- and
+ * its placement in the one walk. The status is bcir_ep_check_pack's for every input, and what the
+ * callbacks saw is the caller's to discard unless it is BCIR_OK. */
+BCIR_NODISCARD bcir_status bcir_ep_check_pack_walk(const uint8_t *BCIR_RESTRICT plan,
+                                                   size_t plan_len,
+                                                   const uint8_t *BCIR_RESTRICT pack,
+                                                   size_t pack_len, bcir_ep_step_fn step,
+                                                   bcir_ep_lifetime_fn lifetime, void *ctx);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif

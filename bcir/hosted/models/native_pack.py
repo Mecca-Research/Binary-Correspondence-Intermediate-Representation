@@ -87,7 +87,7 @@ REASONS = {
     14: "utf8", 15: "generation", 16: "plan", 17: "control", 18: "mac", 19: "telemetry",
     20: "ring", 21: "full", 22: "busy", 23: "lifetime", 24: "shard", 25: "planner",
     101: "op", 102: "claims", 103: "rid", 104: "bank", 105: "live", 106: "slots", 107: "run",
-    108: "shape", 109: "block", 110: "liveness",
+    108: "shape", 109: "block", 110: "liveness", 111: "alternative",
 }  # fmt: skip
 
 _SIMPLE = {
@@ -405,11 +405,12 @@ def program_pack(
                         placements, tensors, tuple(bindings))  # fmt: skip
 
 
-def placed_words(tp: TrainingPack, placements) -> tuple[int, ...]:
+def placed_words(tp: TrainingPack, placements, dispatch=None) -> tuple[int, ...]:
     """The words the lowering of `tp`'s pack placed by `placements` must write: the program's, every
     operand at its value's place -- a slot's space its value's bank, its offset the value's (a run
     of parameter tensors from its first) -- and every other word as it was. With `tp.placements`,
-    `tp.words` itself."""
+    `tp.words` itself. PX-3b-2: `dispatch`, a claim id -> (instance, workers) map as `plan_dispatch`
+    reads a plan, puts each claim's into its record's words 41 and 42 (claim i is record i)."""
     where = {p.rid: p for p in placements}
     words = list(tp.words)
     for i, binding in enumerate(tp.bindings):
@@ -418,7 +419,34 @@ def placed_words(tp: TrainingPack, placements) -> tuple[int, ...]:
             place = where[rids[0]]
             words[base + 3 * slot] = BANKS[place.bank]
             words[base + 3 * slot + 1] = place.offset
+    for claim, (instance, workers) in (dispatch or {}).items():
+        words[claim * nl.RECORD_WORDS + nl.WORD_INSTANCE] = instance
+        words[claim * nl.RECORD_WORDS + nl.WORD_WORKERS] = workers
     return tuple(words)
+
+
+def plan_dispatch(plan) -> dict[int, tuple[int, int]]:
+    """PX-3b-2: each claim's dispatch as `plan`'s steps state it, (instance, workers): a measured
+    realization `<name>@i<bit>` (K_BCIR's offer under a target's measured table) that instance, one
+    `<name>@t<k>` that many workers, and every other realization the default (0, 0) -- the C
+    lowering's reading of the plan's candidate strings (bcir_decoder_pack.c `dp_on_step`); an
+    alternative outside `cost.measured_alternative_key`'s grammar is refused, as the lowering
+    refuses it (ALTERNATIVE)."""
+    from ...kbcir.cost import measured_alternative_key
+
+    out: dict[int, tuple[int, int]] = {}
+    for step in plan.steps:
+        _, at, alternative = step.candidate.partition("@")
+        if not at:
+            out[step.claim_id] = (0, 0)
+            continue
+        try:
+            kind, value = measured_alternative_key(alternative)
+        except ValueError:
+            raise ValueError(f"claim {step.claim_id}: {step.candidate!r} runs no alternative "
+                             "(ALTERNATIVE)") from None  # fmt: skip
+        out[step.claim_id] = (value, 0) if kind == 0 else (0, value)
+    return out
 
 
 #: PX-4: the alignment a placed transient value starts at -- a cache line, as the C step's own
@@ -524,6 +552,7 @@ __all__ = [
     "pack_artifacts",
     "place_by_lifetime",
     "placed_words",
+    "plan_dispatch",
     "program_pack",
     "training_pack",
     "uses",

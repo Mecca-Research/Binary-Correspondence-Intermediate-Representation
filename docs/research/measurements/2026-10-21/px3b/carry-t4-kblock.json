@@ -1,0 +1,50 @@
+{
+ "carried": {
+  "scatter": "t1"
+ },
+ "chosen": {
+  "scatter": "t1"
+ },
+ "claims": 893,
+ "commit": "d1379177d138d7b4c3bf752b5ea95aa1be3473ec",
+ "contract": "kblock+exp+reduce+attn",
+ "k": 4,
+ "lifetimes": 810,
+ "measured_prices": {
+  "entries": [
+   [
+    "train.scatter",
+    393216,
+    "t1",
+    217
+   ]
+  ],
+  "generation": 1
+ },
+ "measured_step_count": 4,
+ "measured_steps": [
+  "gather@t1"
+ ],
+ "measurement": "t4-kblock.json",
+ "one_state": true,
+ "plan_dispatch": [
+  "instance 0 workers 0",
+  "instance 0 workers 1"
+ ],
+ "seconds": {
+  "lower": 0.0162,
+  "plan_hydrate_place": 0.13
+ },
+ "state_sha256_16": {
+  "chosen program": "3d7fc458e39b67fa",
+  "lowered pack": "3d7fc458e39b67fa"
+ },
+ "threads": 4,
+ "trees": {
+  "bcir": "397c953a8d20608ad6fa9609d27dabf8e763f6be",
+  "runtime/c": "d33d600f5d0f80363e538de6ddea3623eca4cccf"
+ },
+ "uncarried": [],
+ "words_are_the_carried_program": true,
+ "worktree_diff_sha256_16": "e3b0c44298fc1c14"
+}

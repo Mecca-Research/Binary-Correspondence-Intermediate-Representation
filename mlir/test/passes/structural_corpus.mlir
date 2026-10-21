@@ -423,6 +423,141 @@ bcir.module @m {
 
 // -----
 
+// measured.legal [legal]
+bcir.module @m {
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["k.add", "k.mm", "k.mm", "k.mm"], measured_alternatives = ["t2", "i1", "i4", "t32767"], measured_values = array<i64: 64, 64, 4096, 220, 4096, 128, 4096, 250> }
+}
+
+// -----
+
+// measured.generation.zero [R8] -- a price table is a cost-law input: filed under the cost law, as the descriptor is
+bcir.module @m {
+  // expected-error @+1 {{measured_gen must be a positive generation (got 0)}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 0 : i64, measured_ops = ["k.mm"], measured_alternatives = ["i4"], measured_values = array<i64: 4096, 128> }
+}
+
+// -----
+
+// measured.empty [R8]
+bcir.module @m {
+  // expected-error @+1 {{a measured table holds at least one entry}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = [], measured_alternatives = [], measured_values = array<i64> }
+}
+
+// -----
+
+// measured.op.empty [R8]
+bcir.module @m {
+  // expected-error @+1 {{measured_ops: every op is a non-empty string of at most 65535 bytes}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = [""], measured_alternatives = ["i4"], measured_values = array<i64: 4096, 128> }
+}
+
+// -----
+
+// measured.op.opcode [R8] -- the law rail spells an op-less claim's op as its opcode's name
+bcir.module @m {
+  // expected-error @+1 {{measured_ops: 'T_MACC' is spelled as an opcode (an op-less claim's op)}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["T_MACC"], measured_alternatives = ["i4"], measured_values = array<i64: 4096, 128> }
+}
+
+// -----
+
+// measured.count.zero [R8]
+bcir.module @m {
+  // expected-error @+1 {{measured_values: a count is 1 .. 2**32 - 1 (got 0)}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["k.mm"], measured_alternatives = ["i4"], measured_values = array<i64: 0, 128> }
+}
+
+// -----
+
+// measured.count.wide [R8]
+bcir.module @m {
+  // expected-error @+1 {{measured_values: a count is 1 .. 2**32 - 1 (got 4294967296)}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["k.mm"], measured_alternatives = ["i4"], measured_values = array<i64: 4294967296, 128> }
+}
+
+// -----
+
+// measured.alternative.two_bits [R8]
+bcir.module @m {
+  // expected-error @+1 {{measured_alternatives: 'i3' is not i<bit> (1, 2, 4 or 8) or t<workers> (1 .. 32767)}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["k.mm"], measured_alternatives = ["i3"], measured_values = array<i64: 4096, 128> }
+}
+
+// -----
+
+// measured.alternative.leading_zero [R8]
+bcir.module @m {
+  // expected-error @+1 {{measured_alternatives: 't01' is not i<bit> (1, 2, 4 or 8) or t<workers> (1 .. 32767)}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["k.mm"], measured_alternatives = ["t01"], measured_values = array<i64: 4096, 128> }
+}
+
+// -----
+
+// measured.alternative.workers_past [R8]
+bcir.module @m {
+  // expected-error @+1 {{measured_alternatives: 't32768' is not i<bit> (1, 2, 4 or 8) or t<workers> (1 .. 32767)}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["k.mm"], measured_alternatives = ["t32768"], measured_values = array<i64: 4096, 128> }
+}
+
+// -----
+
+// measured.price.zero [R8]
+bcir.module @m {
+  // expected-error @+1 {{measured_values: a price is 1 .. 255 (got 0)}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["k.mm"], measured_alternatives = ["i4"], measured_values = array<i64: 4096, 0> }
+}
+
+// -----
+
+// measured.price.default [R8] -- 256 is the default's own time: an entry is an alternative resolved faster
+bcir.module @m {
+  // expected-error @+1 {{measured_values: a price is 1 .. 255 (got 256)}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["k.mm"], measured_alternatives = ["i4"], measured_values = array<i64: 4096, 256> }
+}
+
+// -----
+
+// measured.order [R8] -- the alternatives' order is the instances' bits, then the worker counts
+bcir.module @m {
+  // expected-error @+1 {{a measured table's entries are strictly ascending by (op, count, alternative)}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["k.mm", "k.mm"], measured_alternatives = ["t1", "i4"], measured_values = array<i64: 4096, 128, 4096, 128> }
+}
+
+// -----
+
+// measured.twice [R8]
+bcir.module @m {
+  // expected-error @+1 {{a measured table's entries are strictly ascending by (op, count, alternative)}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["k.mm", "k.mm"], measured_alternatives = ["i4", "i4"], measured_values = array<i64: 4096, 128, 4096, 100> }
+}
+
+// -----
+
+// measured.per_key [R8]
+bcir.module @m {
+  // expected-error @+1 {{more than 7 measured entries share one op and count}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["k.mm", "k.mm", "k.mm", "k.mm", "k.mm", "k.mm", "k.mm", "k.mm"], measured_alternatives = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8"], measured_values = array<i64: 4096, 128, 4096, 128, 4096, 128, 4096, 128, 4096, 128, 4096, 128, 4096, 128, 4096, 128> }
+}
+
+// -----
+
+// measured.half_declared [R8] -- a table is one value in the oracle's object model; four attributes on the law rail
+bcir.module @m {
+  // expected-error @+1 {{measured_gen, measured_ops, measured_alternatives and measured_values are declared together}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["k.mm"], measured_alternatives = ["i4"] }
+}
+
+// -----
+
+// measured.arity [R8] -- an entry cannot mismatch its own arity in the oracle's object model
+bcir.module @m {
+  // expected-error @+1 {{a measured table holds one op, one alternative and two values (count, q8) per entry; got 1 ops, 1 alternatives and 3 values}}
+  bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32, measured_gen = 1 : i64, measured_ops = ["k.mm"], measured_alternatives = ["i4"], measured_values = array<i64: 4096, 128, 7> }
+}
+
+// -----
+
 // addr.i64_under_x86_64 [legal]
 bcir.module @m {
   bcir.target.capability @cpu { triple = "x86_64-avx512", isa_features = [], lane_widths = array<i64: 1, 8, 16>, cacheline = 64 : i32, elem_bytes = 4 : i32 }

@@ -49,7 +49,18 @@ def BCIR_TargetCapabilityOp : BCIR_Op<"target.capability", [Symbol]> {
     // one tier's factors moved a plan's score thirty-fold under an unchanged digest, and no
     // attribute existed to recompute the widened hash from.
     OptionalAttr<StrArrayAttr>:$mem_tier_names,
-    OptionalAttr<DenseI64ArrayAttr>:$mem_tier_values);
+    OptionalAttr<DenseI64ArrayAttr>:$mem_tier_values,
+    // PX-3b-2: the measured alternatives the offer prices beside each realization -- the mirror
+    // of cost.py TargetProfile.measured (MeasuredPrices) -- four attributes declared together:
+    // the table's generation, each entry's op and alternative (`i<bit>` an instance, `t<k>` k
+    // workers) in two parallel string arrays, and two i64 per entry, (count, q8), in the table's
+    // order (strictly ascending by op, count and alternative). A claim whose (op, count) an
+    // entry names is offered each of its realizations run that alternative, its compute and
+    // memory axes scaled by q8/256. Absent = no table: every offer, plan and hash as before.
+    OptionalAttr<I64Attr>:$measured_gen,
+    OptionalAttr<StrArrayAttr>:$measured_ops,
+    OptionalAttr<StrArrayAttr>:$measured_alternatives,
+    OptionalAttr<DenseI64ArrayAttr>:$measured_values);
   let assemblyFormat = "$sym_name attr-dict";
   // Parse-time well-formedness: bounded cost-model fields have the signs their
   // arithmetic requires, the cacheline is a positive power of two, lane widths

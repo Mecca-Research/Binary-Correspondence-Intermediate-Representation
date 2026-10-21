@@ -33,6 +33,15 @@ docs/kernel/BCIR_PLANNER_ABI.md and the C view runtime/c/bcir_kplan.h):
     steps n_steps x 120: claim_id:u32 phase_id:u32 width:u32 lane:u8 name:u8 reserved:u16
       cost:u64 base:12 x u64 | crc32:u32
 
+PX-3b-2 -- version 1 of both, the target's measured table (`TargetProfile.measured`): a BKPI
+record whose target prices a measured alternative some claim is offered is version 1, its header's
+reserved bytes holding `n_measured:u32 @40` (the rest still zero) and a section after the op bytes,
+`n_measured x 12: op:u32 (an op-table index) count:u32 code:u16 q8:u16`, strictly ascending by
+(op, count, code), where a code is an instance's bit (1, 2, 4, 8) or 0x8000 | k for k workers; a
+BKPR record whose plan runs a measured alternative is version 1, the step's reserved u16 its code
+(0: the realization's own). Every other record is version zero, byte for byte, and a version-1
+record without what makes it one is refused: one spelling per input.
+
 One spelling per input: resource indices are assigned in first-reference order (phases in
 declaration order, a claim's reads, then its writes, then its primary resource), the op table is
 strictly ascending and fully referenced, and a claim's primary resource is written only when it
@@ -52,7 +61,8 @@ import struct
 import zlib
 from dataclasses import dataclass
 
-from ..kbcir.cost import MemTier
+from ..kbcir.cost import MEASURED_PER_KEY_MAX as _MEASURED_PER_KEY_MAX
+from ..kbcir.cost import MemTier, spelled_as_opcode
 from ..model import Lane, Opcode, StrideClass
 from ..model.lanes import Domain
 from .streampack_abi import AbiError
@@ -60,6 +70,15 @@ from .streampack_abi import AbiError
 INPUT_MAGIC = b"BKPI"
 REALIZATION_MAGIC = b"BKPR"
 VERSION = 0
+#: PX-3b-2: the version of a BKPI record carrying a measured table, and of a BKPR record whose
+#: plan runs a measured alternative (module docstring).
+VERSION_MEASURED = 1
+MEASURED_SIZE = 12
+MEASURED_MAX = 1 << 24
+#: The measured entries one (op, count) may hold: the C planner's rows per claim stay under 128
+#: (16 widths x (1 + 7)), so a predecessor index fits its u8 -- the table's own bound.
+MEASURED_PER_KEY_MAX = _MEASURED_PER_KEY_MAX
+MEASURED_WORKERS = 0x8000  # a code's worker flag: t<k> is 0x8000 | k
 INPUT_HEADER_SIZE = 64
 SCOPE_SIZE = 168
 CLAIM_SIZE = 48
@@ -118,6 +137,8 @@ assert _SCOPE.size == SCOPE_SIZE
 _CLAIM = struct.Struct("<IBBBBBBBBIIHHqqII")
 assert _CLAIM.size == CLAIM_SIZE
 _PHASE = struct.Struct("<III")
+_MEASURED = struct.Struct("<IIHH")
+assert _MEASURED.size == MEASURED_SIZE
 _R_HEADER = struct.Struct("<4sHHIIQQ")
 assert _R_HEADER.size == REALIZATION_HEADER_SIZE
 _STEP = struct.Struct("<IIIBBHQ" + "Q" * 12)
@@ -180,6 +201,8 @@ class PlannerInput:
     phases: tuple[tuple[int, tuple[int, ...], tuple[InputClaim, ...]], ...]
     resources: tuple[InputResource, ...]
     ops: tuple[bytes, ...]
+    # PX-3b-2: the measured table as (op index, count, code, q8), ascending; empty in version 0
+    measured: tuple[tuple[int, int, int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -191,6 +214,7 @@ class RealizedStep:
     name: int
     cost: int
     base: tuple[int, ...]
+    alternative: int = 0  # PX-3b-2: the measured alternative's code (0: the realization's own)
 
 
 @dataclass(frozen=True)
@@ -199,6 +223,31 @@ class Realization:
 
     score: int
     steps: tuple[RealizedStep, ...]
+
+
+# --- the measured alternatives' codes (PX-3b-2) ---------------------------------------------
+
+
+def measured_code(alternative: str) -> int:
+    """The code a measured alternative takes on the records: an instance's bit for `i<bit>`,
+    0x8000 | k for `t<k>` (`cost.measured_alternative_key`'s spelling, refused otherwise)."""
+    from ..kbcir.cost import measured_alternative_key
+
+    try:
+        kind, value = measured_alternative_key(alternative)
+    except ValueError as exc:
+        raise _refuse(str(exc)) from None
+    return value if kind == 0 else MEASURED_WORKERS | value
+
+
+def measured_alternative(code: int) -> str:
+    """The alternative a code names (`measured_code`'s inverse); a code no alternative takes is
+    refused (`BCIR_ERR_PLANNER`)."""
+    if code in (1, 2, 4, 8):
+        return f"i{code}"
+    if code & MEASURED_WORKERS and 1 <= code & ~MEASURED_WORKERS <= MEASURED_WORKERS - 1:
+        return f"t{code & ~MEASURED_WORKERS}"
+    raise _refuse(f"measured code {code:#x} names no alternative")
 
 
 # --- BKPI: the planner input ----------------------------------------------------------------
@@ -299,6 +348,21 @@ def encode_input(module, h, theta, policy=None) -> bytes:
         phases.append((ph.phase_id, tuple(ph.deps), tuple(claims)))
     mem = h.mem
     tiers = tuple((mem.by_name(t.name).bw_factor, mem.by_name(t.name).lat_factor) for t in MemTier)
+    # PX-3b-2: the measured entries some claim is offered -- the ones `realize._offer_rows`
+    # reads (a non-control claim of the entry's op and count); the rest change no plan, so the
+    # one spelling leaves them out, and a table no claim reads is a version-zero record
+    measured = ()
+    table = getattr(h, "measured", None)
+    if table is not None:
+        from ..kbcir.realize import UNMEASURED_OPCODES
+
+        read = {(c.op, c.count) for ph in module.phases for c in ph.claims
+                if c.opcode not in UNMEASURED_OPCODES}  # fmt: skip
+        measured = tuple(
+            (op_index[e.op.encode("utf-8")], e.count, measured_code(e.alternative), e.q8)
+            for e in table.entries
+            if (e.op, e.count) in read
+        )
     value = PlannerInput(
         target=(
             h.cacheline,
@@ -317,6 +381,7 @@ def encode_input(module, h, theta, policy=None) -> bytes:
         phases=tuple(phases),
         resources=tuple(resource_rows),
         ops=tuple(op_names),
+        measured=measured,
     )
     data = _pack_input(value)
     if decode_input(data) != value:  # the encoder refuses what the decoder refuses
@@ -356,10 +421,11 @@ def _pack_input(v: PlannerInput) -> bytes:
     for c in claims:
         if len(c.reads) > 0xFFFF or len(c.writes) > 0xFFFF:
             raise _refuse(f"claim {c.id}: {len(c.reads) + len(c.writes)} operands")
+    n_measured = len(v.measured)
     out = bytearray()
     out += _IN_HEADER.pack(
         INPUT_MAGIC,
-        VERSION,
+        VERSION_MEASURED if n_measured else VERSION,
         0,
         _u32(len(v.phases), "the phase count"),
         _u32(n_deps, "the dependency count"),
@@ -369,7 +435,9 @@ def _pack_input(v: PlannerInput) -> bytes:
         _u32(len(v.ops), "the op count"),
         _u32(sum(len(o) for o in v.ops), "the op bytes"),
         _u32(len(v.widths), "the width count"),
-        bytes(24),
+        (struct.pack("<I", _u32(n_measured, "the measured count")) + bytes(20))
+        if n_measured
+        else bytes(24),
     )
     scope = [*v.target, *(f for pair in v.tiers for f in pair), *v.theta, *v.policy]
     out += _SCOPE.pack(*(_u32(x, "a scope value") for x in scope))
@@ -404,6 +472,10 @@ def _pack_input(v: PlannerInput) -> bytes:
         out += bytes((r.declared, r.domain, r.access, 0))
     out += b"".join(struct.pack("<H", len(o)) for o in v.ops)
     out += b"".join(v.ops)
+    for op, count, code, q8 in v.measured:
+        if not 0 <= code <= 0xFFFF or not 0 <= q8 <= 0xFFFF:
+            raise _refuse(f"a measured code {code!r} or price {q8!r} does not fit 16 bits")
+        out += _MEASURED.pack(_u32(op, "a measured op"), _u32(count, "a measured count"), code, q8)
     out += struct.pack("<I", zlib.crc32(bytes(out)) & U32)
     return bytes(out)
 
@@ -420,26 +492,31 @@ class _Reader:
         return chunk
 
 
-def _framing(data: bytes, magic: bytes, fixed: int) -> None:
-    """The framing laws, in order: truncated, magic, version, CRC, flags."""
+def _framing(data: bytes, magic: bytes, fixed: int, versions=(VERSION,)) -> int:
+    """The framing laws, in order: truncated, magic, version (one of `versions`), CRC, flags.
+    Returns the record's version."""
     if len(data) < fixed + CRC_SIZE:
         raise PlannerAbiError("BCIR_ERR_TRUNCATED", "shorter than the fixed part")
     if data[:4] != magic:
         raise PlannerAbiError("BCIR_ERR_MAGIC", f"magic {data[:4]!r} is not {magic!r}")
     version, flags = struct.unpack_from("<HH", data, 4)
-    if version != VERSION:
-        raise PlannerAbiError("BCIR_ERR_VERSION", f"version {version} is not {VERSION}")
+    if version not in versions:
+        raise PlannerAbiError("BCIR_ERR_VERSION", f"version {version} is not one of {versions}")
     crc = struct.unpack_from("<I", data, len(data) - CRC_SIZE)[0]
     if crc != zlib.crc32(data[: len(data) - CRC_SIZE]) & U32:
         raise PlannerAbiError("BCIR_ERR_CRC", "the CRC does not match")
     if flags != 0:
         raise PlannerAbiError("BCIR_ERR_RESERVED", "flags are not zero")
+    return version
 
 
-def input_size(n_widths, n_phases, n_deps, n_claims, n_refs, n_resources, n_ops, op_bytes) -> int:
+def input_size(
+    n_widths, n_phases, n_deps, n_claims, n_refs, n_resources, n_ops, op_bytes, n_measured=0
+) -> int:
     """The exact size of a BKPI record with these section counts."""
     return (
-        INPUT_HEADER_SIZE
+        MEASURED_SIZE * n_measured
+        + INPUT_HEADER_SIZE
         + SCOPE_SIZE
         + 4 * n_widths
         + 12 * n_phases
@@ -457,12 +534,16 @@ def decode_input(data: bytes) -> PlannerInput:
     """Decode a BKPI record, applying every law in the specification's order (the C twin's
     `bcir_kp_decode_input` names the same first violation):
 
-    1. the framing laws (`_framing`), then the header's reserved bytes;
-    2. the section counts against their bounds, then the size (short: TRUNCATED, long:
-       TRAILING);
+    1. the framing laws (`_framing`: version 0 or 1), then the header's reserved bytes (version
+       1: all but `n_measured`);
+    2. the section counts against their bounds (version 1: 1 .. 2**24 measured entries), then
+       the size (short: TRUNCATED, long: TRAILING);
     3. the scope (cacheline, the target constants, the tier factors, Theta, the policy);
     4. the lane widths; the phases (their counts add up to the header's; unique ids);
-    5. the resource table; the op table (lengths add up; UTF-8; strictly ascending);
+    5. the resource table; the op table (lengths add up; UTF-8; strictly ascending); the
+       measured table (PX-3b-2: each entry's op an op-table index naming a non-empty op never
+       spelled as an opcode (`cost.spelled_as_opcode`), its count positive, its code an alternative's, its price 1 .. 255, the entries strictly
+       ascending by (op, count, code), at most `MEASURED_PER_KEY_MAX` sharing an op and count);
     6. each claim in order (reserved, its vocabulary, its operand count, its operands in
        first-reference order, its primary resource);
     7. every operand and resource accounted for.
@@ -471,14 +552,18 @@ def decode_input(data: bytes) -> PlannerInput:
     a claim id one claim, and every op string is referenced -- are `check_input`'s, applied by
     the C planner before it plans (the C decoder reads in place, with no scratch)."""
     data = bytes(data)
-    _framing(data, INPUT_MAGIC, INPUT_HEADER_SIZE + SCOPE_SIZE)
+    version = _framing(data, INPUT_MAGIC, INPUT_HEADER_SIZE + SCOPE_SIZE,
+                       (VERSION, VERSION_MEASURED))  # fmt: skip
     (_, _, _, n_phases, n_deps, n_claims, n_refs, n_resources, n_ops, op_bytes, n_widths, res) = (
         _IN_HEADER.unpack_from(data, 0)
     )
-    if any(res):
+    n_measured = struct.unpack_from("<I", res, 0)[0] if version == VERSION_MEASURED else 0
+    if any(res[4:] if version == VERSION_MEASURED else res):
         raise PlannerAbiError("BCIR_ERR_RESERVED", "the header's reserved bytes are not zero")
     if not 1 <= n_widths <= WIDTHS_MAX:
         raise _refuse(f"{n_widths} lane widths is outside 1..{WIDTHS_MAX}")
+    if version == VERSION_MEASURED and not 1 <= n_measured <= MEASURED_MAX:
+        raise _refuse(f"{n_measured} measured entries is outside 1..{MEASURED_MAX} (version 1)")
     if (
         n_phases > CLAIMS_MAX
         or n_claims > CLAIMS_MAX
@@ -489,7 +574,9 @@ def decode_input(data: bytes) -> PlannerInput:
         or op_bytes > OP_BYTES_MAX
     ):
         raise _refuse("a section count exceeds its declared bound")
-    size = input_size(n_widths, n_phases, n_deps, n_claims, n_refs, n_resources, n_ops, op_bytes)
+    size = input_size(
+        n_widths, n_phases, n_deps, n_claims, n_refs, n_resources, n_ops, op_bytes, n_measured
+    )
     if len(data) < size:
         raise PlannerAbiError("BCIR_ERR_TRUNCATED", f"{len(data)} bytes; the sections need {size}")
     if len(data) > size:
@@ -524,6 +611,7 @@ def decode_input(data: bytes) -> PlannerInput:
     res_rows = [tuple(r.take(RESOURCE_SIZE)) for _ in range(n_resources)]
     op_lens = struct.unpack(f"<{n_ops}H", r.take(2 * n_ops))
     blob = r.take(op_bytes)
+    measured_rows = [_MEASURED.unpack(r.take(MEASURED_SIZE)) for _ in range(n_measured)]
 
     resources = []
     for declared, domain, access, reserved in res_rows:
@@ -549,6 +637,26 @@ def decode_input(data: bytes) -> PlannerInput:
         if ops and not ops[-1] < op:
             raise _refuse("the op table is not strictly ascending")
         ops.append(op)
+    measured: list = []
+    run = 0  # the entries so far sharing the last entry's (op, count)
+    for op, count, code, q8 in measured_rows:  # PX-3b-2
+        if op >= n_ops or not ops[op]:
+            raise _refuse(f"measured entry {len(measured)}: op {op} names no non-empty op")
+        if spelled_as_opcode(ops[op].decode("utf-8")):
+            raise _refuse(f"measured entry {len(measured)}: op {op} is spelled as an opcode")
+        if count < 1:
+            raise _refuse(f"measured entry {len(measured)}: a count of zero")
+        measured_alternative(code)
+        if not 1 <= q8 <= 255:
+            raise _refuse(f"measured entry {len(measured)}: price {q8} is outside 1..255")
+        if measured and not measured[-1][:3] < (op, count, code):
+            raise _refuse("the measured table is not strictly ascending by (op, count, code)")
+        run = run + 1 if measured and measured[-1][:2] == (op, count) else 1
+        if run > MEASURED_PER_KEY_MAX:
+            raise _refuse(
+                f"more than {MEASURED_PER_KEY_MAX} measured entries share one op and count"
+            )
+        measured.append((op, count, code, q8))
 
     claims = []
     next_resource = 0
@@ -627,13 +735,15 @@ def decode_input(data: bytes) -> PlannerInput:
         phases=tuple(phases),
         resources=tuple(resources),
         ops=tuple(ops),
+        measured=tuple(measured),
     )
 
 
 def check_input(value: PlannerInput) -> None:
     """The laws a record's decoder cannot apply without memory, in the C planner's order
     (`bcir_kp_plan` refuses them before it plans): a phase id names one phase, a claim id
-    names one claim, and every op string in the table is referenced."""
+    names one claim, every op string in the table is referenced, and (PX-3b-2) every measured
+    entry is read -- some claim not a control op has its op and count."""
     phase_ids = [pid for pid, _, _ in value.phases]
     if len(set(phase_ids)) != len(phase_ids):
         raise _refuse("a phase id names two phases")
@@ -642,9 +752,26 @@ def check_input(value: PlannerInput) -> None:
         raise _refuse("a claim id names two claims")
     if len({c.op for _, _, cs in value.phases for c in cs}) != len(value.ops):
         raise _refuse("an op string is never referenced")
+    if value.measured:
+        from ..kbcir.realize import UNMEASURED_OPCODES
+
+        read = {(c.op, c.count) for _, _, cs in value.phases for c in cs
+                if c.opcode not in UNMEASURED_OPCODES}  # fmt: skip
+        if any((op, count) not in read for op, count, _, _ in value.measured):
+            raise _refuse("a measured entry no claim reads")
 
 
 # --- BKPR: the realization -------------------------------------------------------------------
+
+
+def _name_codes(name: str, width: int) -> tuple[int, int]:
+    """A realization's (name code, alternative code): `<name>@<alternative>` is a measured one
+    (PX-3b-2), its alternative's code (`measured_code`) beside its own name's; any other name
+    has alternative code 0."""
+    own, at, alternative = name.partition("@")
+    if not at:
+        return _name_code(name, width), 0
+    return _name_code(own, width), measured_code(alternative)
 
 
 def _name_code(name: str, width: int) -> int:
@@ -671,15 +798,17 @@ def encode_realization(result) -> bytes:
             raise PlannerAbiError(
                 "BCIR_ERR_OVERFLOW", f"claim {s.claim_id}: a cost exceeds 2**63-1"
             )
+        name, alternative = _name_codes(c.name, c.width)
         steps.append(
             RealizedStep(
                 _u32(s.claim_id, "a claim id"),
                 _u32(s.phase_id, "a phase id"),
                 _u32(c.width, "a width"),
                 int(c.lane),
-                _name_code(c.name, c.width),
+                name,
                 s.cost,
                 base,
+                alternative,
             )
         )
     if not isinstance(result.score, int) or result.score < 0:
@@ -694,18 +823,23 @@ def encode_realization(result) -> bytes:
 
 
 def _pack_realization(v: Realization) -> bytes:
-    out = bytearray(_R_HEADER.pack(REALIZATION_MAGIC, VERSION, 0, len(v.steps), 0, v.score, 0))
+    version = VERSION_MEASURED if any(s.alternative for s in v.steps) else VERSION
+    out = bytearray(_R_HEADER.pack(REALIZATION_MAGIC, version, 0, len(v.steps), 0, v.score, 0))
     for s in v.steps:
-        out += _STEP.pack(s.claim_id, s.phase_id, s.width, s.lane, s.name, 0, s.cost, *s.base)
+        out += _STEP.pack(
+            s.claim_id, s.phase_id, s.width, s.lane, s.name, s.alternative, s.cost, *s.base
+        )
     out += struct.pack("<I", zlib.crc32(bytes(out)) & U32)
     return bytes(out)
 
 
 def decode_realization(data: bytes) -> Realization:
     """Decode a BKPR record (the C twin's `bcir_kp_decode_realization` applies the same laws,
-    in the same order)."""
+    in the same order). PX-3b-2: in a version-1 record a step's reserved u16 is its measured
+    alternative's code (0: its own realization, another code refused), and some step runs one."""
     data = bytes(data)
-    _framing(data, REALIZATION_MAGIC, REALIZATION_HEADER_SIZE)
+    version = _framing(data, REALIZATION_MAGIC, REALIZATION_HEADER_SIZE,
+                       (VERSION, VERSION_MEASURED))  # fmt: skip
     _, _, _, n_steps, reserved, score, reserved2 = _R_HEADER.unpack_from(data, 0)
     if reserved or reserved2:
         raise PlannerAbiError("BCIR_ERR_RESERVED", "the header's reserved fields are not zero")
@@ -724,7 +858,7 @@ def decode_realization(data: bytes) -> Realization:
         row = _STEP.unpack_from(data, REALIZATION_HEADER_SIZE + STEP_SIZE * i)
         claim_id, phase_id, width, lane, name, res, cost = row[:7]
         base = tuple(row[7:])
-        if res:
+        if res and version == VERSION:
             raise PlannerAbiError("BCIR_ERR_RESERVED", f"step {i}: a reserved field is not zero")
         if cost > I64_MAX or any(b > I64_MAX for b in base):
             raise PlannerAbiError("BCIR_ERR_OVERFLOW", f"step {i}: a cost exceeds 2**63-1")
@@ -732,10 +866,14 @@ def decode_realization(data: bytes) -> Realization:
             raise _refuse(f"step {i}: lane, name or width is outside its vocabulary")
         if (name == NAME_VEC and width < 2) or (name in _WIDTH_ONE and width != 1):
             raise _refuse(f"step {i}: realization {NAMES[name]!r} cannot have width {width}")
+        if res:
+            measured_alternative(res)
         total += cost
-        steps.append(RealizedStep(claim_id, phase_id, width, lane, name, cost, base))
+        steps.append(RealizedStep(claim_id, phase_id, width, lane, name, cost, base, res))
     if total != score:
         raise _refuse(f"the score {score} is not the sum of the step costs {total}")
+    if version == VERSION_MEASURED and not any(s.alternative for s in steps):
+        raise _refuse("a version-1 realization runs no measured alternative")
     return Realization(score, tuple(steps))
 
 
