@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 static float w[4096],grad[4096],m[4096],v[4096],act[32768],scratch[32768];
@@ -3024,6 +3025,165 @@ static void dispatch_entries(void) {
       "the plain entry's bits, naming what ran, the kernels that ran its own; %zu requests outside the "
       "families refused, nothing written\n",cases,refused);
 }
+/* INFER-ATTN: the forward under BCIR_TENSOR_ATTENTION_SCRATCH against the stored forward, bit for
+ * bit -- the context and the verdict -- and nothing written past bcir_tensor_attention_scratch_floats
+ * floats of p, which is smaller than the stored probabilities wherever a context is longer than its
+ * strip: the strips ran, not the stored forward. The short contexts (1, 5, 33, 64 and 40 rows of 130
+ * channels, past the scores' 128-channel block: one strip) run every instance the products admit
+ * under each contract (v1, EXP, FUSED, both), serially and on pools of two and four, finite and not.
+ * A row's values are its own, so a long context needs only the boundaries its strips add, and runs
+ * fewer arms -- v1 and EXP+FUSED, one thread and four, finite: two strips with the v1 kernel's rows
+ * in the second (330), strips that start inside a 32-column block and end in those rows (700 and
+ * 703: strips of 80), and, at one thread on the widest instances, the 32-row strips and slots of a
+ * context past 2,048 (2100). The bf16 attention likewise, on each of its instances. */
+static void attention_scratch(void) {
+  static const size_t shapes[][5]={{1,1,1,1,2},{1,5,2,1,3},{2,33,4,2,17},{1,64,2,2,8},
+      {1,40,2,1,130},{1,330,2,1,8},{1,700,2,1,8},{1,703,1,1,12},{1,2100,1,1,4}};
+  static const unsigned contracts[]={0u,BCIR_TENSOR_ATTENTION_EXP,BCIR_TENSOR_ATTENTION_FUSED,
+      BCIR_TENSOR_ATTENTION_EXP|BCIR_TENSOR_ATTENTION_FUSED};
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  const uint32_t canary=0x7fc0deadu;
+  size_t s,c,i,cases=0,bf16_cases=0,compact=0; unsigned threads,pass; int variant;
+  for (threads=1;threads<=4;threads+=threads==1 ? 1 : 2) {
+    bcir_tensor_pool *pool=NULL;
+    if (threads>1) {
+      size_t need=bcir_tensor_pool_size(threads);
+      if (!need) continue;
+      assert(need<=sizeof(pool_memory));
+      pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads); assert(pool);
+    }
+    for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) {
+      size_t b=shapes[s][0],t=shapes[s][1],nh=shapes[s][2],nk=shapes[s][3],d=shapes[s][4];
+      int longer=t>64,longest=t>=2048;
+      if ((longer && threads==2) || (longest && threads>1)) continue;
+      size_t nq=b*t*nh*d,nkv=b*t*nk*d,np=b*nh*t*t,sf=bcir_tensor_attention_scratch_floats(b,t,nh);
+      size_t ws=bcir_tensor_attention_bf16_pool_workspace(b,t,nh,nk,d,threads);
+      float *q=malloc(nq*sizeof(float)),*k=malloc(nkv*sizeof(float)),*v=malloc(nkv*sizeof(float));
+      float *y0=malloc(nq*sizeof(float)),*y1=malloc(nq*sizeof(float)),*p0=malloc(np*sizeof(float));
+      float *p1=malloc((sf+4096)*sizeof(float)); unsigned char *raw=malloc(ws+64),*work;
+      assert(q && k && v && y0 && y1 && p0 && p1 && raw && sf<=np);
+      work=raw+(64-(uintptr_t)raw%64)%64;  /* a 64-byte boundary: the packs' own, no slack taken */
+      /* a slot a (batch, query head): whole rows, at least 32 of them or all */
+      assert(sf%(b*nh*t)==0 && (sf/(b*nh*t)>=32 || sf/(b*nh*t)==t) && (t<2048 || sf==b*nh*32*t));
+      compact+=sf<np;
+      for (pass=0;pass<2;pass++) for (c=0;c<sizeof(contracts)/sizeof(contracts[0]);c++) {
+        unsigned ct=contracts[c];
+        int fmask=(ct&BCIR_TENSOR_ATTENTION_FUSED) ? bcir_tensor_mm_fused_variants() : bcir_tensor_mm_variants();
+        int bmask=bcir_tensor_mm_bf16_variants();
+        if (longer && (pass || c==1 || c==2)) continue;
+        for (variant=1;variant<=8;variant*=2) {
+          int fp32=variant<8 && (fmask&variant) && (!longest || variant*2>(fmask&7));
+          /* the bf16 attention has no fused contract: its products are the bf16 GEMM's */
+          int bf16=!(ct&BCIR_TENSOR_ATTENTION_FUSED) && variant!=2 && (bmask&variant) &&
+              (!longest || variant*2>bmask);
+          int bad0,bad1,form;
+          for (form=0;form<2;form++) {
+            if (!(form ? bf16 : fp32)) continue;
+            for (i=0;i<nq;i++) q[i]=sinf((float)i*0.37f)*1.7f;
+            for (i=0;i<nkv;i++) { k[i]=cosf((float)i*0.53f)*1.3f; v[i]=sinf((float)i*0.29f)-0.1f; }
+            if (pass && t>3) { v[(t-1)*nk*d]=INFINITY; q[d]=NAN; }
+            memset(p0,0xff,np*sizeof(float)); memset(y0,0xff,nq*sizeof(float));
+            memset(y1,0xff,nq*sizeof(float));
+            for (i=0;i<sf+4096;i++) memcpy(p1+i,&canary,sizeof canary);
+            bad0=bad1=0;
+            if (form) {
+              assert(bcir_tensor_attention_bf16_scan_pool(pool,variant,ct,b,t,nh,nk,d,q,k,v,p0,y0,
+                  &bad0,work,ws)==variant);
+              assert(bcir_tensor_attention_bf16_scan_pool(pool,variant,ct|BCIR_TENSOR_ATTENTION_SCRATCH,
+                  b,t,nh,nk,d,q,k,v,p1,y1,&bad1,work,ws)==variant);
+              bf16_cases++;
+            } else {
+              assert(bcir_tensor_attention_contract_variant_scan_pool(pool,variant,ct,b,t,nh,nk,d,q,k,v,
+                  p0,y0,&bad0)==variant);
+              assert(bcir_tensor_attention_contract_variant_scan_pool(pool,variant,
+                  ct|BCIR_TENSOR_ATTENTION_SCRATCH,b,t,nh,nk,d,q,k,v,p1,y1,&bad1)==variant);
+              cases++;
+            }
+            assert(!memcmp(y0,y1,nq*sizeof(float)) && bad0==bad1 && bad0==(pass && t>3));
+            for (i=sf;i<sf+4096;i++) assert(!memcmp(p1+i,&canary,sizeof canary));
+          }
+        }
+      }
+      free(q); free(k); free(v); free(y0); free(y1); free(p0); free(p1); free(raw);
+    }
+    if (pool) bcir_tensor_pool_stop(pool);
+  }
+  assert(cases>0 && bf16_cases>0 && compact>0);
+  printf("  PASS attention without its probabilities (INFER-ATTN): the context and the verdict the "
+      "stored forward's on %zu binary32 and %zu bf16 cases, every write inside the scratch slots\n",
+      cases,bf16_cases);
+}
+/* INFER-ATTN: bcir_decoder_forward's attention keeps no probabilities, and its logits are the
+ * backward's forward's bit for bit: under the v1, EXP and ATTN-FMA attention, a GEMM contract and
+ * the bf16 attention, at one and four threads, over a context of one strip and of nine (700 rows);
+ * with the probe, every forward job ran under SCRATCH and the backward's forward never did. */
+static void trainer_infer(void) {
+  static const uint32_t contracts[]={0,BCIR_DT_CONTRACT_EXP,BCIR_DT_CONTRACT_ATTN,
+      BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_ATTN,
+      BCIR_DT_CONTRACT_KBLOCK|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE,
+      BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_ATTNBF16,
+      BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_ATTNBF16};
+  static const uint32_t times[]={8,700};
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  size_t c,ti,i,runs=0; unsigned threads;
+  for (ti=0;ti<sizeof(times)/sizeof(times[0]);ti++) for (c=0;c<sizeof(contracts)/sizeof(contracts[0]);c++)
+    for (threads=1;threads<=4;threads+=3) {
+      bcir_decoder_spec spec={16,8,2,1,1,16,1,4,1,10000.0,1e-6};
+      bcir_decoder_state st; bcir_tensor_pool *pool=NULL; size_t n,need,off=128;
+      uint32_t *ids,*targets; float *logits; double loss; unsigned char *raw;
+      if (threads>1) {
+        if (!bcir_tensor_pool_size(threads) || bcir_tensor_pool_size(threads)>sizeof(pool_memory)) continue;
+        pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads); assert(pool);
+      }
+      spec.time=times[ti]; n=spec.batch*spec.time;
+      memset(&st,0,sizeof st);
+      assert(bcir_decoder_make_plan(&spec,&st.plan)==0);
+      st.weights=calloc(st.plan.parameters,sizeof(float)); st.gradients=calloc(st.plan.parameters,sizeof(float));
+      st.moment1=calloc(st.plan.parameters,sizeof(float)); st.moment2=calloc(st.plan.parameters,sizeof(float));
+      st.activations=calloc(st.plan.activations,sizeof(float)); st.scratch=calloc(st.plan.scratch,sizeof(float));
+      assert(st.weights && st.gradients && st.moment1 && st.moment2 && st.activations && st.scratch);
+      st.weight_capacity=st.gradient_capacity=st.moment1_capacity=st.moment2_capacity=st.plan.parameters;
+      st.activation_capacity=st.plan.activations; st.scratch_capacity=st.plan.scratch;
+      st.beta1_power=st.beta2_power=1.0; st.pool=pool; st.contract=contracts[c];
+      for (i=0;i<st.plan.parameters;i++) st.weights[i]=0.1f*sinf((float)(i+1)*0.37f);
+      for (i=0;i<8;i++) st.weights[off+i]=1.0f;  /* the layer's two norms and the final one */
+      off+=8+64+32+32+64; for (i=0;i<8;i++) st.weights[off+i]=1.0f;
+      off+=8+3*128; for (i=0;i<8;i++) st.weights[off+i]=1.0f;
+      need=bcir_decoder_workspace_bytes(&st.plan,st.contract);
+      raw=malloc(need+64); assert(raw);
+      st.workspace=need ? raw+(64-(uintptr_t)raw%64)%64 : NULL; st.workspace_bytes=need;
+      ids=malloc(n*sizeof(uint32_t)); targets=malloc(n*sizeof(uint32_t)); logits=malloc(n*16*sizeof(float));
+      assert(ids && targets && logits);
+      stream(ids,targets,n);
+#ifdef BCIR_DT_ATTENTION_PROBE
+      (void)bcir_tensor_attention_probe(0); (void)bcir_tensor_attention_probe(1);
+#endif
+      assert(bcir_decoder_forward(&st,ids,n)==BCIR_DT_OK);
+#ifdef BCIR_DT_ATTENTION_PROBE
+      {
+        unsigned want=((st.contract&BCIR_DT_CONTRACT_EXP) ? BCIR_TENSOR_ATTENTION_EXP : 0u)|
+            ((st.contract&BCIR_DT_CONTRACT_ATTNBF16) ? BCIR_TENSOR_ATTENTION_BF16 :
+             (st.contract&BCIR_DT_CONTRACT_ATTN) ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
+        assert(bcir_tensor_attention_probe(0)==(want|BCIR_TENSOR_ATTENTION_SCRATCH));
+        memcpy(logits,st.activations+st.plan.activations-n*16,n*16*sizeof(float));
+        assert(bcir_decoder_loss_backward(&st,ids,targets,n,0,&loss)==BCIR_DT_OK);
+        assert(bcir_tensor_attention_probe(0)==want);
+      }
+#else
+      memcpy(logits,st.activations+st.plan.activations-n*16,n*16*sizeof(float));
+      assert(bcir_decoder_loss_backward(&st,ids,targets,n,0,&loss)==BCIR_DT_OK);
+#endif
+      assert(!memcmp(logits,st.activations+st.plan.activations-n*16,n*16*sizeof(float)));
+      runs++;
+      free(ids); free(targets); free(logits); free(raw);
+      free(st.weights); free(st.gradients); free(st.moment1); free(st.moment2);
+      free(st.activations); free(st.scratch);
+      if (pool) bcir_tensor_pool_stop(pool);
+    }
+  assert(runs>0);
+  printf("  PASS the forward without its probabilities (INFER-ATTN): %zu forwards, their logits the "
+      "backward's forward's bit for bit\n",runs);
+}
 int main(void) {
   gemm_contract(); attention_reference(); attention_fused_reference(); adamw_reference();
   finite_differences(); refusals();
@@ -3032,6 +3192,7 @@ int main(void) {
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();
   trainer_workspace_plan(); trainer_recompute(); pool_caps(); dispatch_entries();
+  attention_scratch(); trainer_infer();
 #ifdef BCIR_DT_DIVISION_PROBE
   division_probe();
 #endif

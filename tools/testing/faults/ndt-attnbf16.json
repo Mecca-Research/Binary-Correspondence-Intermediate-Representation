@@ -102,8 +102,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AB14 the future scores are not zeroed (no row's)",
-      "new": "    att16_future(a->variant,t,r0,0,ph);",
-      "old": "    att16_future(a->variant,t,r0,rows,ph);",
+      "new": "    if (!a->scratch) att16_future(a->variant,t,r0,0,ph);\n",
+      "old": "    if (!a->scratch) att16_future(a->variant,t,r0,rows,ph);\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -123,8 +123,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AB17 the probabilities' strip packs the key tiles before the diagonal only",
-      "new": "    att16_pack_rows(j->bv,&cy,ib,ph+r0*t,t,rows,ib);  /* the block's strip of P, key tiles 0 .. ib */",
-      "old": "    att16_pack_rows(j->bv,&cy,ib,ph+r0*t,t,rows,ib+1);  /* the block's strip of P, key tiles 0 .. ib */",
+      "new": "    att16_pack_rows(j->bv,&cy,ib,blkp,t,rows,ib);  /* the block's strip of P, key tiles 0 .. ib */\n",
+      "old": "    att16_pack_rows(j->bv,&cy,ib,blkp,t,rows,ib+1);  /* the block's strip of P, key tiles 0 .. ib */\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

@@ -325,3 +325,48 @@ forward that keeps no probabilities when no backward reads them, each value as i
 The same comparison at decoder scale (OT-10: the 9.84M-parameter decoder, 300 updates on four
 threads) and against Triton-CPU's kernels (OT-05) is recorded in the
 [OT/BG ledger](BCIR_OT_BG_LEDGER.md).
+
+## 6. INFER-ATTN: the inference update the comparison named (2026-10-22)
+
+Section 5's one loss was the attention model's inference at long context, where BCIR wrote every
+head's t x t probabilities that no backward would read. INFER-ATTN is the forward without them. Under
+`BCIR_TENSOR_ATTENTION_SCRATCH` each (batch, query head) runs its rows a strip at a time -- its
+scores, its softmax and its context -- in a slot of whole rows at the start of p, about 64K floats of
+scores a strip (256 KB, in the core's cache), at least the bf16 attention's 32-row query block.
+Every value is the stored attention's: a score is its channels' products added in order from +0.0, a
+context element its keys' in order from +0.0, a row's softmax its own row's, whichever strip holds
+the row. `bcir_decoder_forward` passes the bit -- the backward runs its own forward, which keeps its
+probabilities -- and a caller of the tensor entry may lend just
+`bcir_tensor_attention_scratch_floats(batch, time, heads)` floats of p: 4 MiB at B4/T2048 in place
+of the 256 MiB a layer the stored forward writes. Records:
+[measurements/2026-10-22/infer-attn/](measurements/2026-10-22/infer-attn/README.json).
+
+The attention model's inference on level 3 -- section 5's level-2 overlay, built against main's
+headers and linked with this branch's tensor unit before INFER-ATTN and after it, the overlay's
+inference forward passing the bit (`build_level3.py`) -- one forward of 4 x T tokens, 12 rotated
+rounds:
+
+| T | before ms | after ms | P-EAGER ms | P-IND ms | after / before | after / P-EAGER | after / P-IND | A/A |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1024 | 83.3 | 65.9 | 106.2 | 70.5 | 0.79 [0.71, 0.87] | 0.63 [0.56, 0.71] | 0.91 [0.78, 1.06] | 1.03 [0.96, 1.11] |
+| 2048 | 263.7 | 201.2 | 169.0 | 137.3 | 0.75 [0.72, 0.78] | 1.17 [1.09, 1.26] | 1.36 [1.22, 1.51] | 1.01 [0.97, 1.05] |
+
+Codex's trained attention checkpoints give byte-identical logits from both builds at T1024 and
+T2048, and the build after INFER-ATTN writes 27.2M floats of its arena in a forward where the build
+before writes 49.3M: the scratch path ran. The kernel alone, at the model's shape, runs at
+0.68 (0.65-0.71) of the stored forward's time.
+
+So the probabilities were part of the loss, not all of it. Without them BCIR's inference at T1024 is
+faster than eager PyTorch's and at parity with Inductor's; at T2048 it is down from 1.56 times eager's
+time (this run's build before) to the table's, and still behind both routes. What remains is the
+attention's own rate: about 85% of the forward after INFER-ATTN (three layers' 59.7 ms calls of
+210 ms), about 72 GFLOP/s on four cores at head dimension 32. PyTorch's flash kernel
+keeps a block's scores in cache by an online softmax, whose sum is not this one's: on BCIR's rails
+that is a new arithmetic contract with its own bounds, not these bits. Within this contract the next
+inference step is the attention kernel's rate at small head dimensions.
+
+What it does not do: the training step still stores P for its backward. The same strips with the
+backward recomputing a row's probabilities from its maximum and sum -- the same roundings, so the same
+bits -- would take the O(t^2) memory out of training too; that is the next training update for
+attention (the tiled attention the training roadmap names), and a larger one, since the arena, the
+budget policy and the step program's plan all change with it.

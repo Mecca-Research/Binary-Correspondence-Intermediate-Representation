@@ -108,8 +108,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "SW15 the forward drops the attention's verdict",
-      "new": "  { int ignored=0; ran&=attention(s,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx,&ignored); }\n",
-      "old": "  ran&=attention(s,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx,bad);\n",
+      "new": "  { int ignored=0; ran&=attention(s,scratch,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx,&ignored); }\n",
+      "old": "  ran&=attention(s,scratch,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx,bad);\n",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

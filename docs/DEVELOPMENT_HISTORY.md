@@ -4046,6 +4046,57 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: P-TUNED (no budgeted autotuning lifecycle ran), T-GLUON and every GPU route (no
     GPU), B-MLIR on the block, T-DSL inside OT-11 (the interpreter that runs PyTorch has no Triton
     with a usable backend).
+  INFER-ATTN (2026-10-22): the attention forward for inference without its probabilities, every
+    value as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §6,
+    [measurements/2026-10-22/infer-attn/](research/measurements/2026-10-22/infer-attn/README.json)).
+  - The loss it answers: GEO-2's comparison on the study's attention model, whose inference at T2048
+    read 1.74 times eager PyTorch's time while the attention wrote every head's t x t probabilities
+    -- 256 MiB a layer at B4/T2048 -- that no backward reads.
+  - `BCIR_TENSOR_ATTENTION_SCRATCH` (8u) makes p the forward's scratch: each (batch, query head)
+    runs its rows a strip at a time -- scores, softmax, context -- in its own slot of whole rows at
+    the start of p, about 64K floats of scores a strip (at least 32 rows, a multiple of 16), so a
+    strip's scores, probabilities and the context's reads of them stay in the core's cache;
+    `bcir_tensor_attention_scratch_floats(batch, time, heads)` is all of p it writes. Every context
+    value and verdict is the stored attention's bit for bit: a score is its channels' products added
+    in order from +0.0, a context element its keys' in order from +0.0, a row's softmax its own --
+    the AVX-512 blocks start at the strip's first row (`att512_scores_from`, `att512_context_from`),
+    the v1 kernel's rows run as a rectangle and a triangle under the causal mask with the terms in
+    their order. The bf16 attention takes the bit alike: its 32-row query blocks in the slot, the
+    future columns its packed key tiles reach filled. The backward ignores the bit.
+  - `bcir_decoder_forward` passes it: no backward reads its cache, and the backward runs its own
+    forward, which keeps its probabilities, as REMAT's recompute and the PX-2 program runner do. The
+    tensor unit's probe records the bit.
+  - Measured on the committed tree against the one before it (24 or 12 rotated rounds, each beside
+    an A/A control): the kernel at B4/T2048, the GEO model's attention, x0.677 (0.646-0.710) of the
+    stored forward at four threads and x0.679 at one, with p 256 MiB down to a 4 MiB slot; B1/T8192
+    x0.730 (p 1 GiB); B1/T4096 with 8 heads of 64 x0.785; the 9.84M decoder's T128 x0.890.
+    `bcir_decoder_forward` end to end at the GEO model's dimensions: x0.822 at T1024 and x0.786 at
+    T2048 (x0.770 on one thread, x0.883 under bf16); the 9.84M decoder at T128 unchanged (x0.999,
+    its attention a small part of its forward). The GEO study's attention model itself, on level 3
+    (GEO-2b's overlay with the tensor unit swapped, `build_level3.py`): x0.786 (0.709-0.871) at
+    T1024 and x0.748 (0.717-0.780) at T2048 of the build before; against PyTorch, at T1024 x0.632 of
+    eager's time and x0.910 (0.780-1.062) of Inductor's, at T2048 x1.173 and x1.355. The T2048 loss
+    narrows (this run's build before read about x1.56 of eager's time) but stays.
+  - Codex's trained attention checkpoints (the bundle's lm and kv_single models) give byte-identical
+    logits from both builds at T1024 and T2048, and one forward from a zeroed arena writes 49.3M
+    nonzero floats on the stored build against 27.2M on the scratch build: the scratch path ran.
+  - What remains at T2048 is the attention's own rate: after INFER-ATTN it is about 85% of that
+    forward (three layers' 59.7 ms calls of 210 ms), about 72 GFLOP/s on four cores at head
+    dimension 32. That is the next inference update; an online softmax would be a new arithmetic
+    contract, not these bits.
+  - Witnesses (`runtime/c/test_decoder_train.c`): `attention_scratch` -- 398 binary32 and 133 bf16
+    cases over shapes, contracts, instances and thread counts, each context and verdict the stored
+    attention's bit for bit, nothing written past the scratch extent (a canary after it), every slot
+    at least 32 rows or all of them; `trainer_infer` -- 7 contracts at two contexts and two thread
+    counts, the forward's logits the backward's forward's, the probe naming the bit after the
+    forward and not after the backward. `infer-attn.json` IA1-IA17, each caught by its own check,
+    every one compiling warning-free under GCC 13, clang 18 and clang 23; nine earlier faults (AB14,
+    AB17, AF1, AF2, AF10, AF16, SW15, PI5, PR2) re-anchored to the lines INFER-ATTN moved, each
+    keeping its defect, caught again.
+  - Not claimed: training's attention memory (the backward still stores P; the exact-recompute tiled
+    attention is the training update the roadmap names); a smaller decoder arena (the plan still
+    sizes each layer's probability region for training, so the forward leaves it untouched rather
+    than unallocated); AMX timing; a GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

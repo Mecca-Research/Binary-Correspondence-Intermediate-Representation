@@ -1,0 +1,15 @@
+{
+ "what": "vacuity3.py: after one forward from a zeroed arena, the activation floats each level-3 build wrote -- the stored build every layer's probabilities, the scratch build its slots alone -- with the logits equal",
+ "time": 1024,
+ "before": {
+  "activation_floats": 74465280,
+  "nonzero_floats": 49324032
+ },
+ "after": {
+  "activation_floats": 74465280,
+  "nonzero_floats": 27182592
+ },
+ "probabilities_floats_per_layer": 16777216,
+ "logits_equal_bytes": true,
+ "after_writes_fewer": true
+}

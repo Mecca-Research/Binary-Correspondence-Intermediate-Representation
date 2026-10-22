@@ -11,15 +11,15 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AF1 the scores' fused block instantiates v1's arithmetic",
-      "new": "  att512_scores_any(0,rows,d,q,ldq,k,ldk,s,lds);",
-      "old": "  att512_scores_any(1,rows,d,q,ldq,k,ldk,s,lds);",
+      "new": "  att512_scores_any(0,0,rows,d,q,ldq,k,ldk,s,lds);",
+      "old": "  att512_scores_any(1,0,rows,d,q,ldq,k,ldk,s,lds);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AF2 the context's fused block instantiates v1's arithmetic",
-      "new": "  att512_context_any(0,rows,d,p,ldp,v,ldv,y,ldy,first);",
-      "old": "  att512_context_any(1,rows,d,p,ldp,v,ldv,y,ldy,first);",
+      "new": "  att512_context_any(0,0,rows,d,p,ldp,v,ldv,y,ldy,first);",
+      "old": "  att512_context_any(1,0,rows,d,p,ldp,v,ldv,y,ldy,first);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -74,8 +74,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AF10 the forward's contract entry ignores the fused bit",
-      "new": "  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,0,iv,b,t,nh,nk,d,q,k,v,p,y,bad);",
-      "old": "  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,fused,iv,b,t,nh,nk,d,q,k,v,p,y,bad);",
+      "new": "  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,0,\n",
+      "old": "  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,fused,\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -116,8 +116,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AF16 the trainer's forward runs the v1 products under the attention bit",
-      "new": "  return bcir_tensor_attention_contract_variant_scan_pool(s->pool,variant,\n      attention_contract(s)&~BCIR_TENSOR_ATTENTION_FUSED,b,t,\n",
-      "old": "  return bcir_tensor_attention_contract_variant_scan_pool(s->pool,variant,attention_contract(s),b,t,\n",
+      "new": "  return bcir_tensor_attention_contract_variant_scan_pool(s->pool,variant,\n      contract&~BCIR_TENSOR_ATTENTION_FUSED,b,t,\n",
+      "old": "  return bcir_tensor_attention_contract_variant_scan_pool(s->pool,variant,contract,b,t,\n",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

@@ -1,0 +1,175 @@
+{
+ "what": "attn_bench.c: the attention forward stored (p written) against scratch (BCIR_TENSOR_ATTENTION_SCRATCH) and stored again (the A/A control), 24 rotated rounds a shape, the context held equal bit for bit first; built from the after tree's bcir_tensor.c",
+ "build": {
+  "compiler": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "flags": "-std=c11 -O3 -ffp-contract=off -fno-math-errno -pthread",
+  "before": "a96b15cb766e14fd75d3efd6f007c65ec993696a",
+  "after": "5013c3c6fc7e1647078116940d165cbac9127c5d",
+  "before_tensor_c_sha256": "f2bf2a40df38b20094735d9897f5d9266ffc97c155336b6399af3c90935392fe",
+  "after_tensor_c_sha256": "760f4c82f79750474e1b89880e3918ccfb19e14c7ae1ab7151cf48b0581de239"
+ },
+ "cases": [
+  {
+   "shape": [
+    4,
+    1024,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 1,
+   "rounds": 24,
+   "scratch_floats": 1048576,
+   "stored_floats": 16777216,
+   "stored_ms_median": 21.5051,
+   "scratch_ms_median": 15.7555,
+   "stored-AA_ms_median": 21.5509,
+   "scratch_over_stored": [
+    0.7101,
+    0.6689,
+    0.754
+   ],
+   "aa_over_stored": [
+    0.9631,
+    0.9128,
+    1.0162
+   ]
+  },
+  {
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 1,
+   "rounds": 24,
+   "scratch_floats": 1048576,
+   "stored_floats": 67108864,
+   "stored_ms_median": 86.1109,
+   "scratch_ms_median": 59.7445,
+   "stored-AA_ms_median": 80.9569,
+   "scratch_over_stored": [
+    0.6773,
+    0.6461,
+    0.7101
+   ],
+   "aa_over_stored": [
+    0.9499,
+    0.9161,
+    0.9851
+   ]
+  },
+  {
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "contract": 1,
+   "rounds": 24,
+   "scratch_floats": 1048576,
+   "stored_floats": 67108864,
+   "stored_ms_median": 296.9393,
+   "scratch_ms_median": 198.7878,
+   "stored-AA_ms_median": 293.7783,
+   "scratch_over_stored": [
+    0.679,
+    0.6514,
+    0.7078
+   ],
+   "aa_over_stored": [
+    0.987,
+    0.9534,
+    1.0217
+   ]
+  },
+  {
+   "shape": [
+    8,
+    128,
+    8,
+    4,
+    48
+   ],
+   "threads": 4,
+   "contract": 3,
+   "rounds": 24,
+   "scratch_floats": 1048576,
+   "stored_floats": 1048576,
+   "stored_ms_median": 1.0087,
+   "scratch_ms_median": 0.9145,
+   "stored-AA_ms_median": 1.0223,
+   "scratch_over_stored": [
+    0.8902,
+    0.864,
+    0.9172
+   ],
+   "aa_over_stored": [
+    1.03,
+    0.9663,
+    1.0978
+   ]
+  },
+  {
+   "shape": [
+    1,
+    4096,
+    8,
+    8,
+    64
+   ],
+   "threads": 4,
+   "contract": 3,
+   "rounds": 24,
+   "scratch_floats": 1048576,
+   "stored_floats": 134217728,
+   "stored_ms_median": 258.0139,
+   "scratch_ms_median": 199.767,
+   "stored-AA_ms_median": 267.0947,
+   "scratch_over_stored": [
+    0.785,
+    0.7533,
+    0.818
+   ],
+   "aa_over_stored": [
+    1.027,
+    0.9899,
+    1.0654
+   ]
+  },
+  {
+   "shape": [
+    1,
+    8192,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 1,
+   "rounds": 24,
+   "scratch_floats": 1048576,
+   "stored_floats": 268435456,
+   "stored_ms_median": 335.1804,
+   "scratch_ms_median": 243.8691,
+   "stored-AA_ms_median": 333.0493,
+   "scratch_over_stored": [
+    0.73,
+    0.7023,
+    0.7587
+   ],
+   "aa_over_stored": [
+    0.9815,
+    0.9425,
+    1.0221
+   ]
+  }
+ ]
+}

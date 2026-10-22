@@ -2456,6 +2456,7 @@ void bcir_tensor_rope(size_t b, size_t t, size_t heads, size_t dim,
 typedef struct att_job {
   size_t b,t,nh,nk,d,group; const float *q,*k,*v,*dy; float *p,*y,*dq,*dk,*dv; int variant,exp2;
   int fused;  /* ATTN-FMA: the products' every multiply-add one fmaf */
+  int scratch;  /* INFER-ATTN: the forward's probabilities are scratch, a strip of rows at a time */
   unsigned char *bad;  /* the forward's verdict bytes, one a task (NDT-SCAN-W), or NULL */
 } att_job;
 #ifdef BCIR_MM_DISPATCH
@@ -2489,8 +2490,11 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE __mmask16 att512_lanes(size_t 
 #define ATT_MADD_MASK(f,acc,take,a,b) ((f) ? _mm512_mask3_fmadd_ps((a),(b),(acc),(take)) : \
     _mm512_mask_add_ps((acc),(take),(acc),_mm512_mul_ps((a),(b))))
 #define ATT_MADD1(f,acc,a,b) ((f) ? fmaf((a),(b),(acc)) : (acc)+(a)*(b))
-__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_scores_any(int f, size_t rows, size_t d,
-    const float *q, size_t ldq, const float *k, size_t ldk, float *s, size_t lds) {
+/* The scores of rows [r0, rows) -- rows 0 .. rows-1's keys, the causal reach of the block's last row
+ * -- with s at row r0 (INFER-ATTN: a strip's own scratch; r0 0 for the whole attention, s its
+ * probabilities); r0 a multiple of eight, so a row block starts where the whole call's would. */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_scores_any(int f, size_t r0, size_t rows,
+    size_t d, const float *q, size_t ldq, const float *k, size_t ldk, float *s, size_t lds) {
   _Alignas(64) float kt[BCIR_ATT_DC*32];
   size_t j0,c0,i0,r,c,j;
   for (j0=0;j0<rows;j0+=32) {
@@ -2503,10 +2507,10 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_scores_any(int f, 
         for (jb=0;jb<jw;jb+=16) for (cb=0;cb<cw;cb+=16) kb512_transpose16(k+(j0+jb)*ldk+c0+cb,ldk,kt+cb*32+jb,32);
         for (c=0;c<nc;c++) for (j=c<cw ? jw : 0;j<32;j++) kt[c*32+j]=j<nj ? k[(j0+j)*ldk+c0+c] : 0.0f;
       }
-      for (i0=j0;i0<rows;i0+=8) {
+      for (i0=j0>r0 ? j0 : r0;i0<rows;i0+=8) {
         __m512 a0[8],a1[8];
         for (r=0;r<8;r++) {
-          const float *sr=s+(i0+r)*lds+j0; size_t keep=i0+r-j0+1<nj ? i0+r-j0+1 : nj;
+          const float *sr=s+(i0+r-r0)*lds+j0; size_t keep=i0+r-j0+1<nj ? i0+r-j0+1 : nj;
           a0[r]=_mm512_maskz_loadu_ps(c0 ? att512_lanes(keep) : 0,sr);
           a1[r]=_mm512_maskz_loadu_ps(c0 ? att512_lanes(keep>16 ? keep-16 : 0) : 0,sr+16);
         }
@@ -2519,7 +2523,7 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_scores_any(int f, 
         }
         for (r=0;r<8;r++) {
           size_t i=i0+r,keep=i-j0+1<nj ? i-j0+1 : nj;
-          float *sr=s+i*lds+j0;
+          float *sr=s+(i-r0)*lds+j0;
           __mmask16 k0=att512_lanes(keep),k1=att512_lanes(keep>16 ? keep-16 : 0);
           if (c0+nc<d) { _mm512_mask_storeu_ps(sr,k0,a0[r]); _mm512_mask_storeu_ps(sr+16,k1,a1[r]); }
           else {  /* the last channel block: the block's future lanes as +0.0 */
@@ -2533,19 +2537,29 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_scores_any(int f, 
 }
 __attribute__((target("avx512f"))) static void att512_scores(size_t rows, size_t d,
     const float *q, size_t ldq, const float *k, size_t ldk, float *s, size_t lds) {
-  att512_scores_any(0,rows,d,q,ldq,k,ldk,s,lds);
+  att512_scores_any(0,0,rows,d,q,ldq,k,ldk,s,lds);
 }
 __attribute__((target("avx512f"))) static void att512_scores_fma(size_t rows, size_t d,
     const float *q, size_t ldq, const float *k, size_t ldk, float *s, size_t lds) {
-  att512_scores_any(1,rows,d,q,ldq,k,ldk,s,lds);
+  att512_scores_any(1,0,rows,d,q,ldq,k,ldk,s,lds);
 }
-__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_context_any(int f, size_t rows, size_t d,
-    const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy, int first) {
+__attribute__((target("avx512f"))) static void att512_scores_from(size_t r0, size_t rows, size_t d,
+    const float *q, size_t ldq, const float *k, size_t ldk, float *s, size_t lds) {
+  att512_scores_any(0,r0,rows,d,q,ldq,k,ldk,s,lds);
+}
+__attribute__((target("avx512f"))) static void att512_scores_from_fma(size_t r0, size_t rows,
+    size_t d, const float *q, size_t ldq, const float *k, size_t ldk, float *s, size_t lds) {
+  att512_scores_any(1,r0,rows,d,q,ldq,k,ldk,s,lds);
+}
+/* The context of rows [r0, rows), p at row r0 and y at row 0 (INFER-ATTN: a strip's probabilities;
+ * r0 0 for the whole attention), r0 a multiple of eight. */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_context_any(int f, size_t r0, size_t rows,
+    size_t d, const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy, int first) {
   size_t c0,i0,r,j,dj;
   for (c0=0;c0<d;c0+=48) {
     size_t nc=d-c0<48 ? d-c0 : 48;
     __mmask16 m0=att512_lanes(nc),m1=att512_lanes(nc>16 ? nc-16 : 0),m2=att512_lanes(nc>32 ? nc-32 : 0);
-    for (i0=0;i0<rows;i0+=8) {
+    for (i0=r0;i0<rows;i0+=8) {
       __m512 a0[8],a1[8],a2[8];
       for (r=0;r<8;r++) {
         const float *yr=y+(i0+r)*ldy+c0;
@@ -2557,7 +2571,7 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_context_any(int f,
         __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_maskz_loadu_ps(m1,vj+16),
             b2=_mm512_maskz_loadu_ps(m2,vj+32);
         for (r=0;r<8;r++) {
-          __m512 pv=_mm512_set1_ps(p[(i0+r)*ldp+j]);
+          __m512 pv=_mm512_set1_ps(p[(i0+r-r0)*ldp+j]);
           a0[r]=ATT_MADD(f,a0[r],pv,b0); a1[r]=ATT_MADD(f,a1[r],pv,b1);
           a2[r]=ATT_MADD(f,a2[r],pv,b2);
         }
@@ -2568,7 +2582,7 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_context_any(int f,
             b2=_mm512_maskz_loadu_ps(m2,vj+32);
         for (r=0;r<8;r++) {
           __mmask16 take=(__mmask16)(r>=dj ? 0xffffu : 0u);
-          __m512 pv=_mm512_set1_ps(p[(i0+r)*ldp+i0+dj]);
+          __m512 pv=_mm512_set1_ps(p[(i0+r-r0)*ldp+i0+dj]);
           a0[r]=ATT_MADD_MASK(f,a0[r],take,pv,b0);
           a1[r]=ATT_MADD_MASK(f,a1[r],take,pv,b1);
           a2[r]=ATT_MADD_MASK(f,a2[r],take,pv,b2);
@@ -2584,11 +2598,19 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_context_any(int f,
 }
 __attribute__((target("avx512f"))) static void att512_context(size_t rows, size_t d,
     const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy, int first) {
-  att512_context_any(0,rows,d,p,ldp,v,ldv,y,ldy,first);
+  att512_context_any(0,0,rows,d,p,ldp,v,ldv,y,ldy,first);
 }
 __attribute__((target("avx512f"))) static void att512_context_fma(size_t rows, size_t d,
     const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy, int first) {
-  att512_context_any(1,rows,d,p,ldp,v,ldv,y,ldy,first);
+  att512_context_any(1,0,rows,d,p,ldp,v,ldv,y,ldy,first);
+}
+__attribute__((target("avx512f"))) static void att512_context_from(size_t r0, size_t rows, size_t d,
+    const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy) {
+  att512_context_any(0,r0,rows,d,p,ldp,v,ldv,y,ldy,1);
+}
+__attribute__((target("avx512f"))) static void att512_context_from_fma(size_t r0, size_t rows,
+    size_t d, const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy) {
+  att512_context_any(1,r0,rows,d,p,ldp,v,ldv,y,ldy,1);
 }
 /* out_j += sum over i >= j, ascending, of m_ij x_i (the KGE products: dv from P and dY, dk from dS
  * and Q): blocks of eight output rows j0..j0+7, the channels 48 at a time; term i reaches the rows
@@ -2874,10 +2896,86 @@ static void att_head(const att_job *a, size_t r, size_t h) {
   att_rows(a->variant,a->fused,&x,t,ATT_CONTEXT,1);
   if (a->bad) att_verdict(a,r,h);
 }
+/* INFER-ATTN: the rows of a scratch forward's strip, a multiple of 16 -- about BCIR_ATT_STRIP floats
+ * of scores at a time (256 KB), so a strip's scores, probabilities and the context's reads of them
+ * stay in the core's cache -- and at least 32, the bf16 attention's query block. No value depends
+ * on it: a row's scores, softmax and context are its own. A (batch, query head)'s strip is its
+ * slot of att_scratch_rows rows at p + (r*heads+h)*rows*t: the scratch forward writes only the
+ * first batch*heads*rows*t floats of p (bcir_tensor_attention_scratch_floats). */
+#define BCIR_ATT_STRIP 65536
+static size_t att_strip_rows(size_t t) {
+  size_t rows=BCIR_ATT_STRIP/(t ? t : 1)/16*16;
+  return rows<32 ? 32 : rows;
+}
+static size_t att_scratch_rows(size_t t) { size_t rows=att_strip_rows(t); return rows<t ? rows : t; }
+size_t bcir_tensor_attention_scratch_floats(size_t batch, size_t time, size_t heads) {
+  size_t n=batch,f[3]; int i;
+  f[0]=heads; f[1]=att_scratch_rows(time); f[2]=time;
+  for (i=0;i<3;i++) n=n && f[i]>SIZE_MAX/n ? SIZE_MAX : n*f[i];
+  return n;
+}
+/* INFER-ATTN: rows [i0, i1) of one (batch, query head) through a strip s of scratch, the row i at
+ * s + (i-i0)*t -- their scores, softmax and context, every value att_head's bit for bit: a score is
+ * its channels' products added in order from +0.0, a context element its keys' j <= i in order from
+ * +0.0, and a row's softmax is its own. The AVX-512 blocks take the strip's whole blocks of eight
+ * (att512_scores_from, att512_context_from, from row i0); the rest -- the attention's last t%8
+ * rows on AVX-512, every row on another instance -- run the v1 kernel as att_rows does, as a
+ * rectangle (keys [0, v0): below every row's diagonal) and a triangle (keys [v0, i1) under the
+ * causal mask, its rows and keys counted from v0), the terms in their order: the context's triangle
+ * adds onto the sums its rectangle stored. i0 is a multiple of 16 (att_softmax_block's blocks). */
+static void att_strip(const att_job *a, size_t r, size_t h, size_t i0, size_t i1, float *s) {
+  size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),ldq=nh*d,ldk=nk*d,v0=i0,i;
+  const float *q=a->q+(r*t*nh+h)*d,*k=a->k+(r*t*nk+kh)*d,*v=a->v+(r*t*nk+kh)*d;
+  float *y=a->y+(r*t*nh+h)*d; int family=a->fused ? MM_FUSED : MM_V1;
+  mm_args x; mm_range all;
+#ifdef BCIR_MM_DISPATCH
+  if (a->variant==4) {
+    size_t whole=att_v1_rows(4,t);
+    v0=i1<whole ? i1 : whole>i0 ? whole : i0;
+    if (i0<v0) (a->fused ? att512_scores_from_fma : att512_scores_from)(i0,v0,d,q,ldq,k,ldk,s,t);
+  }
+#endif
+  memset(&x,0,sizeof x);
+  if (v0<i1) {  /* the v1 kernel's rows: their scores accumulate from the fill's +0.0 */
+    for (i=v0;i<i1;i++) memset(s+(i-i0)*t,0,i1*sizeof(float));
+    x.ta=0; x.tb=1; x.m=i1-v0; x.k=d; x.alpha=1.0f; x.a=q+v0*ldq; x.lda=ldq; x.ldb=ldk; x.ldc=t;
+    all.jb0=0; all.r0=0; all.r1=x.m;
+    if (v0) {
+      x.n=v0; x.b=k; x.c=s+(v0-i0)*t; x.mode=MM_FULL; all.jb1=x.n;
+      mm_run_range(a->variant,family,&x,&all);
+    }
+    x.n=i1-v0; x.b=k+v0*ldk; x.c=s+(v0-i0)*t+v0; x.mode=MM_LOWER; all.jb1=x.n;
+    mm_run_range(a->variant,family,&x,&all);
+  }
+  att_softmax_block(a,s,t,i0,i1-i0);
+#ifdef BCIR_MM_DISPATCH
+  if (i0<v0) (a->fused ? att512_context_from_fma : att512_context_from)(i0,v0,d,s,t,v,ldk,y,ldq);
+#endif
+  if (v0<i1) {  /* the v1 rows' context from +0.0: the rectangle's keys, then the triangle's */
+    for (i=v0;i<i1;i++) memset(y+i*ldq,0,d*sizeof(float));
+    x.ta=0; x.tb=0; x.m=i1-v0; x.n=d; x.alpha=1.0f; x.lda=t; x.ldb=ldk; x.c=y+v0*ldq; x.ldc=ldq;
+    all.jb0=0; all.jb1=d; all.r0=0; all.r1=x.m;
+    if (v0) {
+      x.k=v0; x.a=s+(v0-i0)*t; x.b=v; x.mode=MM_FULL;
+      mm_run_range(a->variant,family,&x,&all);
+    }
+    x.k=i1-v0; x.a=s+(v0-i0)*t+v0; x.b=v+v0*ldk; x.mode=MM_KLE;
+    mm_run_range(a->variant,family,&x,&all);
+  }
+}
+/* INFER-ATTN: one (batch, query head) of a scratch forward -- its rows a strip at a time in its slot
+ * of p, which holds the last strip's probabilities after it. */
+static void att_head_scratch(const att_job *a, size_t r, size_t h) {
+  size_t t=a->t,rows=att_strip_rows(t),i0;
+  float *s=a->p+(r*a->nh+h)*att_scratch_rows(t)*t;
+  for (i0=0;i0<t;i0+=rows) att_strip(a,r,h,i0,t-i0<rows ? t : i0+rows,s);
+  if (a->bad) att_verdict(a,r,h);
+}
 static void att_task(void *ctx, size_t task) {
   att_job *a=(att_job *)ctx;
   INSTANCE_SAW(INSTANCE_ATTN,a->variant);
-  att_head(a,task/a->nh,task%a->nh);
+  if (a->scratch) att_head_scratch(a,task/a->nh,task%a->nh);
+  else att_head(a,task/a->nh,task%a->nh);
 }
 #ifdef BCIR_DT_ATTENTION_PROBE
 /* The trainer harness's record of the contract the attention's jobs ran (ATTN-FMA) -- what each
@@ -2898,16 +2996,17 @@ unsigned bcir_tensor_attention_probe(int backward) {
 }
 #endif
 /* `variant` resolved (mm_instance over the products' family: the fused GEMM's under FUSED, v1's
- * otherwise) */
-static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int variant, size_t b, size_t t,
-    size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
-    int *bad) {
+ * otherwise); `scratch` the INFER-ATTN forward, its probabilities a strip at a time */
+static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int scratch, int variant,
+    size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k,
+    const float *v, float *p, float *y, int *bad) {
   att_job a; unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=b*nh;
   a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.group=1; a.q=q; a.k=k; a.v=v; a.dy=NULL; a.p=p; a.y=y;
-  a.dq=NULL; a.dk=NULL; a.dv=NULL; a.exp2=exp2; a.fused=fused;
+  a.dq=NULL; a.dk=NULL; a.dv=NULL; a.exp2=exp2; a.fused=fused; a.scratch=scratch;
   a.variant=variant;
 #ifdef BCIR_DT_ATTENTION_PROBE
-  attention_saw(0,(a.exp2 ? BCIR_TENSOR_ATTENTION_EXP : 0u)|(a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u));
+  attention_saw(0,(a.exp2 ? BCIR_TENSOR_ATTENTION_EXP : 0u)|(a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u)|
+      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u));
 #endif
   a.bad=scan_bytes(bad,bytes,tasks);
   pool_run(pool,att_task,&a,tasks);
@@ -2917,21 +3016,21 @@ static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int varia
 }
 void bcir_tensor_attention_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL);
+  attention_any(pool,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL);
 }
 void bcir_tensor_attention_v2_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,1,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL);
+  attention_any(pool,1,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL);
 }
 void bcir_tensor_attention_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
     size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
     int *bad) {
-  attention_any(pool,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad);
+  attention_any(pool,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad);
 }
 void bcir_tensor_attention_v2_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
     size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
     int *bad) {
-  attention_any(pool,1,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad);
+  attention_any(pool,1,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad);
 }
 void bcir_tensor_attention_contract_scan_pool(bcir_tensor_pool *pool, unsigned contract, size_t b,
     size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v,
@@ -2943,7 +3042,8 @@ int bcir_tensor_attention_contract_variant_scan_pool(bcir_tensor_pool *pool, int
     const float *k, const float *v, float *p, float *y, int *bad) {
   int fused=(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0,iv=mm_instance(fused ? MM_FUSED : MM_V1,variant);
   if (!iv) return 0;
-  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,fused,iv,b,t,nh,nk,d,q,k,v,p,y,bad);
+  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,fused,
+      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,iv,b,t,nh,nk,d,q,k,v,p,y,bad);
   return iv;
 }
 void bcir_tensor_attention(size_t b, size_t t, size_t nh, size_t nk, size_t d,
@@ -3096,6 +3196,7 @@ int bcir_tensor_attention_backward_contract_variant_pool(bcir_tensor_pool *pool,
   a.dq=dq; a.dk=dk; a.dv=dv; a.exp2=0; a.bad=NULL;
   a.fused=fused; a.variant=iv;
   a.group=nh/nk;
+  a.scratch=0;  /* the backward reads its probabilities: never the scratch forward's */
 #ifdef BCIR_DT_ATTENTION_PROBE
   attention_saw(1,a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
 #endif
@@ -3328,21 +3429,27 @@ static void att16_transpose(int variant, size_t rows, size_t cols, const float *
   for (i=0;i<rows;i++) for (c=i<rw ? cw : 0;c<cols;c++) out[i*ldo+c]=in[c*ldi+i];
 }
 /* One query head of a forward task: kb and vb are its KV head's K^T and V panels. A query block's
- * scores land in p, its future +0.0, its softmax in place, its strip of P packed from those rows. */
+ * scores land in p, its future +0.0, its softmax in place, its strip of P packed from those rows.
+ * Under SCRATCH (INFER-ATTN) they land in the head's slot of p instead (att_scratch_rows rows, at
+ * least the block's 32), and only the future columns its packed key tiles reach are filled: the
+ * strip of P the context packs is the stored attention's, so the context is too. */
 static void att16_forward_head(const att16_job *j, size_t r, size_t h, uint16_t *kb, uint16_t *vb,
     uint16_t *qa, uint16_t *pa, float *ys) {
-  const att_job *a=&j->a; size_t t=a->t,nh=a->nh,d=a->d,dp=bf16_pad(d),nb=(t+31)/32,ib;
-  float *ph=a->p+(r*nh+h)*t*t,*yh=a->y+(r*t*nh+h)*d; bf16_call cs,cy,blk;
+  const att_job *a=&j->a; size_t t=a->t,nh=a->nh,d=a->d,dp=bf16_pad(d),nb=(t+31)/32,ib,u;
+  float *ph=a->scratch ? a->p+(r*nh+h)*att_scratch_rows(t)*t : a->p+(r*nh+h)*t*t;
+  float *yh=a->y+(r*t*nh+h)*d; bf16_call cs,cy,blk;
   att16_call(&cs,0,1,t,t,d,a->q+(r*t*nh+h)*d,nh*d,NULL,0,NULL,t,qa,kb);
   att16_pack(j->bv,&cs,1,0);
   att16_call(&cy,0,0,t,d,t,NULL,0,NULL,0,NULL,dp,pa,vb);
   for (ib=0;ib<nb;ib++) {
-    size_t r0=ib*32,rows=t-r0<32 ? t-r0 : 32,cols=r0+rows;
-    att16_block(&blk,&cs,ib,ph+r0*t,t);
+    size_t r0=ib*32,rows=t-r0<32 ? t-r0 : 32,cols=r0+rows,reach=32*(ib+1)<t ? 32*(ib+1) : t;
+    float *blkp=a->scratch ? ph : ph+r0*t;  /* the slot, or the block's own rows */
+    att16_block(&blk,&cs,ib,blkp,t);
     att16_region(j->bv,&blk,0,rows,0,cols,0,cs.kt,1);  /* the block's scores to its diagonal */
-    att16_future(a->variant,t,r0,rows,ph);
-    att_softmax_block(a,ph+r0*t,t,r0,rows);
-    att16_pack_rows(j->bv,&cy,ib,ph+r0*t,t,rows,ib+1);  /* the block's strip of P, key tiles 0 .. ib */
+    if (!a->scratch) att16_future(a->variant,t,r0,rows,ph);
+    else for (u=0;u<rows;u++) if (r0+u+1<reach) memset(blkp+u*t+r0+u+1,0,(reach-r0-u-1)*sizeof(float));
+    att_softmax_block(a,blkp,t,r0,rows);
+    att16_pack_rows(j->bv,&cy,ib,blkp,t,rows,ib+1);  /* the block's strip of P, key tiles 0 .. ib */
     att16_block(&blk,&cy,ib,ys,dp);
     att16_region(j->bv,&blk,0,rows,0,dp,0,ib+1,1);  /* its context, through ys */
     att16_copy(a->variant,rows,d,ys,dp,yh+r0*nh*d,nh*d);
@@ -3480,10 +3587,12 @@ int bcir_tensor_attention_bf16_scan_pool(bcir_tensor_pool *pool, int variant, un
   att16_fill(&j.a,b,t,nh,nk,d);
   j.a.q=q; j.a.k=k; j.a.v=v; j.a.p=p; j.a.y=y;
   j.a.exp2=(contract&BCIR_TENSOR_ATTENTION_EXP)!=0;
+  j.a.scratch=(contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0;
   j.bv=bv; j.ws=(unsigned char *)(void *)bf16_base(workspace,&usable);
   j.per=att16_forward_bytes(t,d); j.by_worker=bcir_tensor_pool_threads(pool)<=tasks;
 #ifdef BCIR_DT_ATTENTION_PROBE
-  attention_saw(0,(j.a.exp2 ? BCIR_TENSOR_ATTENTION_EXP : 0u)|BCIR_TENSOR_ATTENTION_BF16);
+  attention_saw(0,(j.a.exp2 ? BCIR_TENSOR_ATTENTION_EXP : 0u)|BCIR_TENSOR_ATTENTION_BF16|
+      (j.a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u));
 #endif
   j.a.bad=scan_bytes(bad,verdicts,heads);
   pool_dispatch(pool,NULL,att16_task,&j,tasks);

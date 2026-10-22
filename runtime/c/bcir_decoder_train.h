@@ -134,11 +134,14 @@ BCIR_DT_API int bcir_decoder_gradient_norm(bcir_decoder_state *s,double gradient
  * final_norm; untied head. Retain caches; reuse adjoints across all layers.
  * Capacities are float element counts, not bytes. */
 BCIR_DT_API int bcir_decoder_make_plan(const bcir_decoder_spec *spec,bcir_decoder_plan *plan);
-/* Forward stores logits at the end of the activation arena. Backward computes mean
- * causal-token CE and every parameter gradient including tied-head accumulation; it consumes
- * the forward cache it recomputes, leaving each layer's attention probabilities replaced by
- * their score adjoint (under BCIR_DT_CONTRACT_ATTNBF16, as they were). IDs: batch*time, strictly
- * [0,vocab), rejected before arena mutation.
+/* Forward stores logits at the end of the activation arena. No backward reads its cache (the
+ * backward runs its own forward), so its attention keeps no probabilities (INFER-ATTN): each
+ * layer's probability region is the attention's scratch, its contents after it unspecified, and
+ * every other value -- the logits, the verdict -- is the backward's forward's bit for bit.
+ * Backward computes mean causal-token CE and every parameter gradient including tied-head
+ * accumulation; it consumes the forward cache it recomputes, leaving each layer's attention
+ * probabilities replaced by their score adjoint (under BCIR_DT_CONTRACT_ATTNBF16, as they were).
+ * IDs: batch*time, strictly [0,vocab), rejected before arena mutation.
  * accumulate=1 adds another mean batch gradient. */
 BCIR_DT_API int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t count);
 BCIR_DT_API int bcir_decoder_loss_backward(bcir_decoder_state *s,const uint32_t *tokens,

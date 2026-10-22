@@ -73,8 +73,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "PI5 the attention's products the widest while the entry names the request",
-      "new": "  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,fused,\n      mm_instance(fused ? MM_FUSED : MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad);\n",
-      "old": "  attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,fused,iv,b,t,nh,nk,d,q,k,v,p,y,bad);\n",
+      "new": "      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,mm_instance(fused ? MM_FUSED : MM_V1,0),b,t,nh,\n      nk,d,q,k,v,p,y,bad);\n",
+      "old": "      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,iv,b,t,nh,nk,d,q,k,v,p,y,bad);\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -164,8 +164,8 @@
     {
       "expects": "test_every_dispatch_trains_the_c_steps_bits_and_is_traced_as_stated",
       "label": "PR2 the attention's instance dropped",
-      "new": "    *ran&=attention_v(s,0,d0,d1,d2,d3,d4,px_at(c,w,0),px_at(c,w,1),\n",
-      "old": "    *ran&=attention_v(s,(int)w[BCIR_DT_WORD_INSTANCE],d0,d1,d2,d3,d4,px_at(c,w,0),px_at(c,w,1),\n",
+      "new": "    *ran&=attention_v(s,0,0,d0,d1,d2,d3,d4,px_at(c,w,0),px_at(c,w,1),\n",
+      "old": "    *ran&=attention_v(s,(int)w[BCIR_DT_WORD_INSTANCE],0,d0,d1,d2,d3,d4,px_at(c,w,0),px_at(c,w,1),\n",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

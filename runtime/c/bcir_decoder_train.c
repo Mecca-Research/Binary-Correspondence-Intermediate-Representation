@@ -675,18 +675,20 @@ static unsigned attention_contract(const bcir_decoder_state *s) {
 }
 /* Under the bf16 attention (BF16-ATTN) its widest instance, packing into the state's workspace,
  * which valid() admitted for its pool; otherwise the binary32 attention under its contract. Each
- * returns whether it ran (an entry that refuses writes nothing). */
-static int attention_v(bcir_decoder_state *s,int variant,size_t b,size_t t,size_t h,size_t kh,
-    size_t d,const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
+ * returns whether it ran (an entry that refuses writes nothing). `scratch`: the forward no backward
+ * reads (INFER-ATTN: bcir_decoder_forward's), whose probabilities are the entry's scratch. */
+static int attention_v(bcir_decoder_state *s,int variant,int scratch,size_t b,size_t t,size_t h,
+    size_t kh,size_t d,const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
+  unsigned contract=attention_contract(s)|(scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u);
   if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)
-    return bcir_tensor_attention_bf16_scan_pool(s->pool,variant,attention_contract(s),b,t,h,kh,d,q,k,
+    return bcir_tensor_attention_bf16_scan_pool(s->pool,variant,contract,b,t,h,kh,d,q,k,
         v,p,y,bad,s->workspace,s->workspace_bytes)!=0;
-  return bcir_tensor_attention_contract_variant_scan_pool(s->pool,variant,attention_contract(s),b,t,
+  return bcir_tensor_attention_contract_variant_scan_pool(s->pool,variant,contract,b,t,
       h,kh,d,q,k,v,p,y,bad)!=0;
 }
-static int attention(bcir_decoder_state *s,size_t b,size_t t,size_t h,size_t kh,size_t d,
-    const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
-  return attention_v(s,0,b,t,h,kh,d,q,k,v,p,y,bad);
+static int attention(bcir_decoder_state *s,int scratch,size_t b,size_t t,size_t h,size_t kh,
+    size_t d,const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
+  return attention_v(s,0,scratch,b,t,h,kh,d,q,k,v,p,y,bad);
 }
 static int attention_backward_v(bcir_decoder_state *s,int variant,geometry g,const float *q,
     const float *k,const float *v,float *p,const float *dy,float *dq,float *dk,float *dv) {
@@ -712,10 +714,11 @@ static int attention_backward(bcir_decoder_state *s,geometry g,const float *q,co
  * One layer, into its cache slot from its input x, the next layer's input after it (REMAT: the
  * backward's recompute, `full` 0, stops at the hidden activation -- the last value the layer's
  * backward reads -- so the down projection and the residual add run in the forward alone, and
- * its verdict is the forward's, whose values it writes again). Returns 0 when a product refused
- * its workspace, which wrote nothing. */
+ * its verdict is the forward's, whose values it writes again). `scratch`: no backward reads this
+ * forward's cache (INFER-ATTN), so the attention keeps no probabilities. Returns 0 when a product
+ * refused its workspace, which wrote nothing. */
 static int layer_forward(bcir_decoder_state *s,geometry g,size_t l,float *slot,float *x,int full,
-    int *bad) {
+    int scratch,int *bad) {
   const bcir_decoder_spec *sp=&s->plan.spec; int ran=1;
   layer p=params(s->weights+g.v*g.d+l*g.lp,g);
   cache a=activations(slot,g); float *y=x+g.nd;
@@ -727,7 +730,7 @@ static int layer_forward(bcir_decoder_state *s,geometry g,size_t l,float *slot,f
   }
   bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,sp->rope_base,a.q,0);
   bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,sp->rope_base,a.k,0);
-  ran&=attention(s,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx,bad);
+  ran&=attention(s,scratch,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx,bad);
   ran&=linear(s,g.n,g.d,g.d,a.ctx,p.o,a.x2);
   bcir_tensor_add_pool(s->pool,g.nd,x,a.x2);
   bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,a.x2,p.norm2,a.n2,bad);
@@ -760,8 +763,9 @@ static void embed(size_t n,size_t d,const uint32_t *tokens,const float *table,fl
   for (i=0;i<n;i++) memcpy(x+i*d,table+(size_t)tokens[i]*d,d*sizeof(float));
 }
 /* BCIR_DT_OK, BCIR_DT_NUMERIC for a value not finite, BCIR_DT_CAPACITY for a product that ran
- * nowhere (WS-PLAN: valid() admits no workspace that refuses, so this is a defect's verdict) */
-static int forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
+ * nowhere (WS-PLAN: valid() admits no workspace that refuses, so this is a defect's verdict);
+ * `scratch` for bcir_decoder_forward's, which no backward reads (INFER-ATTN) */
+static int forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g,int scratch) {
   const bcir_decoder_spec *sp=&s->plan.spec;
   size_t l; float *xs=s->activations,*cs=xs+(g.l+1)*g.nd;
   float *norm=cs+cache_slots(g,s->recompute)*g.la,*logits=norm+g.nd;
@@ -769,7 +773,7 @@ static int forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
   const float *head=sp->tied ? s->weights : final+g.d; int bad=0,ran=1;
   embed(g.n,g.d,tokens,s->weights,xs);
   for (l=0;l<g.l;l++)
-    ran&=layer_forward(s,g,l,cs+slot_of(g,s->recompute,l)*g.la,xs+l*g.nd,1,&bad);
+    ran&=layer_forward(s,g,l,cs+slot_of(g,s->recompute,l)*g.la,xs+l*g.nd,1,scratch,&bad);
   bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,xs+g.l*g.nd,final,norm,&bad);
   ran&=linear(s,g.n,g.d,g.v,norm,head,logits);
   if (!finite_pool(s,logits,g.nv)) bad=1;
@@ -781,7 +785,7 @@ int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t n) 
   g=geom(&s->plan.spec);
   if (n!=g.n || !ids(s,tokens,n)) return BCIR_DT_INVALID;
   if (!finite_pool(s,s->weights,s->plan.parameters)) return BCIR_DT_NUMERIC;
-  return forward(s,tokens,g);
+  return forward(s,tokens,g,1);
 }
 /* The loss's rows in ranges of BCIR_DT_ROW_CHUNK: a row's softmax, its adjoint and its term
  * (log-sum-exp plus the maximum less the target's logit, in double, as the serial loop computed
@@ -886,7 +890,7 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
   if ((!(how&(DT_KNOWN|DT_COMMITTED)) && !weights_finite(s)) ||
       (!(how&DT_KNOWN) && accumulate && !finite_pool(s,s->gradients,s->plan.parameters)))
     return BCIR_DT_NUMERIC;
-  rc=forward(s,tokens,g);
+  rc=forward(s,tokens,g,0);
   if (rc) return rc;
   /* NDT-ZERO: a fresh gradient's first writers write it -- each weight adjoint's GEMM at beta 0,
    * which adds its terms to +0.0 without reading C (what the fill and beta 1 gave), each gamma
@@ -917,7 +921,7 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
      * keeps between layers is not a value the forward writes */
     if (recomputes(s->recompute,l) && l!=top) {
       int seen=0;
-      ran&=layer_forward(s,g,l,slot,x,0,&seen);
+      ran&=layer_forward(s,g,l,slot,x,0,0,&seen);
     }
     /* the hidden activation is a panel exactly when the forward wrote it as one (one predicate on
      * the same slot); the adjoints are panels when their own slots admit them, whichever the hidden
@@ -1836,7 +1840,7 @@ static int px_kernel_run(const px_ctx *c,const uint64_t *w,const uint32_t *token
     bcir_tensor_rope_pool(s->pool,d0,d1,d2,d3,s->plan.spec.rope_base,px_at(c,w,0),(int)d4);
     break;
   case BCIR_DT_REC_ATTN:
-    *ran&=attention_v(s,(int)w[BCIR_DT_WORD_INSTANCE],d0,d1,d2,d3,d4,px_at(c,w,0),px_at(c,w,1),
+    *ran&=attention_v(s,(int)w[BCIR_DT_WORD_INSTANCE],0,d0,d1,d2,d3,d4,px_at(c,w,0),px_at(c,w,1),
         px_at(c,w,2),px_at(c,w,3),px_at(c,w,4),bad);
     break;
   case BCIR_DT_REC_ATTN_VJP: {

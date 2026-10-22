@@ -678,7 +678,13 @@ residual input (REMAT, above). Neither is a globally optimal liveness solver. Th
 the cache it recomputes each step:
 after `bcir_decoder_loss_backward` each layer's probability span holds its score adjoint (under the
 bf16 attention, the probabilities as the forward wrote them: its score adjoints live in its workspace).
-Attention storage is quadratic in context length.
+Training's attention storage is quadratic in context length; inference's is not (INFER-ATTN):
+`bcir_decoder_forward`, whose cache no backward reads, runs its attention under
+`BCIR_TENSOR_ATTENTION_SCRATCH` -- each head's rows a strip at a time through a slot of about 64K
+floats at the start of its probability region -- and every logit is the backward's forward's bit for
+bit. The plan still sizes each layer's probability region for training, so the forward leaves it
+untouched rather than unallocated; a caller of the tensor entry may lend just
+`bcir_tensor_attention_scratch_floats(batch, time, heads)` floats.
 Flash/blocked attention, recomputation finer than a whole layer, mixed precision beyond the bf16 GEMM and attention contracts,
 accelerator
 backward kernels, distributed collectives and device-resident checkpoints remain

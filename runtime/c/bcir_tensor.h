@@ -128,10 +128,21 @@ BCIR_DT_API void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *p
  * order from the same start; the scaling, the softmax and the score adjoint p_ij (dp_ij - dot_i)
  * times the scale 1/sqrtf(dim) are v1's. Without FUSED each entry is its v1 entry above, bit for
  * bit; with it every instance (portable fmaf, AVX2+FMA and AVX-512 FMA, chosen as the fused GEMM's
- * are) is bit-identical to the fmaf loops at every thread count. Other bits are ignored, and the
- * backward ignores EXP. bad is the forward's verdict as above, or NULL for none. */
+ * are) is bit-identical to the fmaf loops at every thread count. BCIR_TENSOR_ATTENTION_SCRATCH
+ * (INFER-ATTN) makes p the forward's scratch instead of its output, for a forward no backward
+ * follows: each (batch, query head) runs its rows a strip at a time -- scores, softmax, context --
+ * in its own slot at the start of p (bcir_tensor_attention_scratch_floats below), so a strip stays
+ * in the core's cache, and y and the verdict are the stored attention's bit for bit; p's contents
+ * after it are unspecified and no backward may read them (the bf16 entry below takes the bit
+ * alike). Other bits are ignored, and the backward ignores EXP and SCRATCH. bad is the forward's
+ * verdict as above, or NULL. */
 #define BCIR_TENSOR_ATTENTION_EXP 1u
 #define BCIR_TENSOR_ATTENTION_FUSED 2u
+#define BCIR_TENSOR_ATTENTION_SCRATCH 8u
+/* The floats of p a forward under BCIR_TENSOR_ATTENTION_SCRATCH writes, at its start: a slot of
+ * whole rows a (batch, query head) -- at least 32 rows or all of them, about 64K floats -- the
+ * strips running through it. A caller may lend just these; SIZE_MAX where the count overflows. */
+BCIR_DT_API size_t bcir_tensor_attention_scratch_floats(size_t batch, size_t time, size_t heads);
 BCIR_DT_API void bcir_tensor_attention_contract_scan_pool(bcir_tensor_pool *pool,
     unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads, size_t dim,
     const float *q, const float *k, const float *v, float *p, float *y, int *bad);
@@ -146,10 +157,11 @@ BCIR_DT_API void bcir_tensor_attention_backward_contract_pool(bcir_tensor_pool *
  * the depth tiles the causal mask reaches from its 32-row block: a query block's key tiles 0 .. its
  * own (Y, dQ), a key block's query tiles from its own on (dV, dK), every channel tile (S, dP; their
  * blocks past the diagonal are not computed). A tile's terms past the mask are the +0.0
- * probabilities and score adjoints p holds there. The scaling, the softmax (BCIR_TENSOR_ATTENTION_EXP
- * as above; other bits ignored), the dot and the score adjoint p_ij (dp_ij - dot_i) scale are v1's
- * in v1's order; the future probabilities and adjoints are +0.0; a KV head's dk and dv take its
- * query heads in order, the first from +0.0; the forward's verdict is as above. `variant` names the
+ * probabilities and score adjoints p holds there. The scaling, the softmax
+ * (BCIR_TENSOR_ATTENTION_EXP and BCIR_TENSOR_ATTENTION_SCRATCH as above; other bits ignored), the
+ * dot and the score adjoint p_ij (dp_ij - dot_i) scale are v1's in v1's order; the future
+ * probabilities and adjoints are +0.0; a KV head's dk and dv take its query heads in order, the
+ * first from +0.0; the forward's verdict is as above. `variant` names the
  * products' instance -- 1 portable, 4 AVX-512, 8 AMX, 0 the widest bcir_tensor_mm_bf16_variants
  * admits -- every instance the same bits at every thread count. The entries pack each task's
  * operands into the workspace -- one region a worker of the pool where the workers are no more than

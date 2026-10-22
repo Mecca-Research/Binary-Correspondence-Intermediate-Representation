@@ -1,0 +1,37 @@
+{
+ "what": "logits.py: Codex's trained attention checkpoints (the bundle's selected lm and kv_single attention models), each build's forward logits at batch 4, as .npy bytes",
+ "cases": [
+  {
+   "checkpoint": "lm-attention-20261018.npz",
+   "time": 1024,
+   "batch": 4,
+   "before_sha256": "882e2dbbaa1ef693450d2dc6e311ca8bed47a234b7ba91c68a4385f44fe64e80",
+   "after_sha256": "882e2dbbaa1ef693450d2dc6e311ca8bed47a234b7ba91c68a4385f44fe64e80",
+   "equal": true
+  },
+  {
+   "checkpoint": "lm-attention-20261018.npz",
+   "time": 2048,
+   "batch": 4,
+   "before_sha256": "728617e49389af882066a9e9a9f6029a8aec281573fe1555af2cb2cd3ca7eecf",
+   "after_sha256": "728617e49389af882066a9e9a9f6029a8aec281573fe1555af2cb2cd3ca7eecf",
+   "equal": true
+  },
+  {
+   "checkpoint": "kv_single-attention-20261018.npz",
+   "time": 1024,
+   "batch": 4,
+   "before_sha256": "5de13f0a1aa7ed37551394a6b954c81dbed473c065307fa9fb3aa238c3a98558",
+   "after_sha256": "5de13f0a1aa7ed37551394a6b954c81dbed473c065307fa9fb3aa238c3a98558",
+   "equal": true
+  },
+  {
+   "checkpoint": "kv_single-attention-20261018.npz",
+   "time": 2048,
+   "batch": 4,
+   "before_sha256": "f16dc182a7ebd5372d533331af3362d9d4907379d74ec78d1092849df31df22d",
+   "after_sha256": "f16dc182a7ebd5372d533331af3362d9d4907379d74ec78d1092849df31df22d",
+   "equal": true
+  }
+ ]
+}
