@@ -370,3 +370,42 @@ backward recomputing a row's probabilities from its maximum and sum -- the same 
 bits -- would take the O(t^2) memory out of training too; that is the next training update for
 attention (the tiled attention the training roadmap names), and a larger one, since the arena, the
 budget policy and the step program's plan all change with it.
+
+## 7. ATTN-RATE: the attention's own rate (2026-10-22)
+
+Section 6 left the attention's own rate: about 85% of the model's forward at T2048. Timed a phase at a
+time on one core (an instrumented copy of the tensor unit, TSC cycles a call at B4/T2048, head
+dimension 32), the scratch kernel ran its scores in 169M cycles, its softmax in 196M and its context in
+224M. Two causes, each fixed with every value kept:
+
+- **EXP-LANES.** The BCIR exponential's polynomial is a chain of seven dependent multiply-then-add
+  steps under `-ffp-contract=off`, and the softmax's loop of it ran at the chain's latency. The
+  exponential's own loops now take it over a block of elements a step at a time -- four vectors in a
+  row on AVX-512, two on AVX2 -- so the chains overlap whichever compiler builds the unit. That matters
+  here: Codex's study builds with GCC, whose unroll pragma leaves the chains one after another, and
+  whose AVX2 instance of the old loop was not vectorized at all.
+- **CTX-WIDTH.** The AVX-512 context computed a 48-channel block as three 16-lane vectors whatever the
+  head's width; at the study's head dimension 32 the third vector's lanes were all masked off, yet
+  loaded and multiplied. The block now runs the vectors its channels reach.
+
+On one core the softmax fell to 169M cycles and the context to 178M; the scores were unchanged. The
+attention model on level 3, built as section 6 built it (and with GCC, as the study builds it), one
+forward of 4 x T tokens, 12 rotated rounds
+([measurements/2026-10-22/attn-rate/](measurements/2026-10-22/attn-rate/README.json)):
+
+| T | before ms | after ms | P-EAGER ms | P-IND ms | after / before | after / P-EAGER | after / P-IND | A/A |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1024 | 69.8 | 60.7 | 108.5 | 83.0 | 0.88 [0.78, 0.99] | 0.61 [0.55, 0.67] | 0.78 [0.69, 0.88] | 1.01 [0.92, 1.12] |
+| 2048 | 209.2 | 193.5 | 189.2 | 170.4 | 0.92 [0.87, 0.97] | 1.05 [0.96, 1.16] | 1.13 [1.08, 1.19] | 1.03 [0.95, 1.11] |
+
+The trained checkpoints' logits are byte-identical from both builds at T1024 and T2048. At T1024 the
+model's inference is now faster than eager PyTorch's and than Inductor's; at T2048 it is at parity
+with eager's and 1.13 times Inductor's. The rows' absolute times differ from section 6's: the host's
+speed moves between sessions, which is why each comparison here is paired within its session.
+
+What remains at T2048 is three phases at about a third each: scores 168M, softmax 169M and context
+178M cycles on one core. Each has a candidate within this contract that has not been measured yet: the
+softmax's maximum taken where the scores are stored, rather than in its own transposed pass; a head's
+key panels packed once for all its strips (each strip repacks every panel up to its last row, 32 times
+the stored forward's packs at T2048); and the context's eight broadcasts a key. An online softmax, as
+in PyTorch's flash kernel, would be a new arithmetic contract.

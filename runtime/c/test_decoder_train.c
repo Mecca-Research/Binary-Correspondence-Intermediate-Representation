@@ -330,7 +330,7 @@ static void attention_reference(void) {
   static const size_t shapes[][5]={{1,1,1,1,2},{1,2,1,1,1},{2,5,4,2,6},{1,37,2,1,48},
       {2,70,8,4,48},{1,33,3,1,65},{1,40,2,2,130},{2,64,4,1,24},{1,330,2,1,8},
       {1,7,1,1,3},{1,8,1,1,16},{1,9,2,1,17},{1,31,1,1,15},{1,32,2,2,47},{1,33,2,1,49},
-      {1,40,1,1,1}};
+      {1,40,1,1,1},{1,20,1,1,32},{1,9,2,1,33},{1,11,2,2,81}};  /* the context's widths: 32, 33, 48+33 */
   size_t s,i,pass;
   for (pass=0;pass<2;pass++) for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) {
     size_t b=shapes[s][0],t=shapes[s][1],nh=shapes[s][2],nk=shapes[s][3],d=shapes[s][4];
@@ -373,7 +373,7 @@ static void attention_fused_reference(void) {
   static const size_t shapes[][5]={{1,1,1,1,2},{1,2,1,1,1},{2,5,4,2,6},{1,37,2,1,48},
       {2,70,8,4,48},{1,33,3,1,65},{1,40,2,2,130},{2,64,4,1,24},{1,330,2,1,8},
       {1,7,1,1,3},{1,8,1,1,16},{1,9,2,1,17},{1,31,1,1,15},{1,32,2,2,47},{1,33,2,1,49},
-      {1,40,1,1,1}};
+      {1,40,1,1,1},{1,20,1,1,32},{1,9,2,1,33},{1,11,2,2,81}};  /* the context's widths: 32, 33, 48+33 */
   static _Alignas(max_align_t) unsigned char pool_memory[4096];
   size_t s,i,pass,cases=0,apart=0; unsigned ex,threads; int bad;
   for (threads=1;threads<=4;threads+=threads==1 ? 1 : 2) {
@@ -1113,6 +1113,33 @@ static void exp_contract(void) {
     if (!(mask&variant)) { assert(bcir_tensor_exp_variant(variant,20000,x,e1)==0); continue; }
     assert(bcir_tensor_exp_variant(variant,20000,x,e1)==variant);
     for (i=0;i<20000;i++) assert(e1[i]==bcir_tensor_expf(x[i]));
+  }
+  {  /* EXP-LANES: each instance on the edges -- +-0, +-inf, NaN, the overflow and underflow
+      * thresholds and their neighbours, the clamps -- in a block's lanes and in the tail, each value
+      * exp1's (a NaN a NaN); and a call whose y partly overlaps x (y = x + sh) element by element in
+      * order, as the element loop runs it: each element's input what the element sh before it wrote */
+    static const float edge[]={0.0f,-0.0f,INFINITY,-INFINITY,NAN,88.72283172607421875f,88.7228394f,
+        88.7228241f,-103.972084045410156f,-103.97209f,-103.97208f,89.0f,89.5f,-104.0f,-104.5f,
+        -87.33654f,1e-30f,-1e-30f,3.4e38f,-3.4e38f};
+    static const size_t shifts[]={1,9,17,60};  /* 60: past n bytes, inside n floats */
+    static float ex[203],ey[203],ez[263],ref[263];
+    size_t ne=sizeof(edge)/sizeof(edge[0]),sh,si;
+    for (i=0;i<203;i++) ex[i]=edge[(i*7)%ne];
+    for (variant=1;variant<=4;variant*=2) {
+      if (!(mask&variant)) continue;
+      assert(bcir_tensor_exp_variant(variant,203,ex,ey)==variant);
+      for (i=0;i<203;i++) {
+        float want=bcir_tensor_expf(ex[i]);
+        assert(isnan(want) ? isnan(ey[i]) : !memcmp(&want,&ey[i],sizeof(float)));
+      }
+      for (si=0;si<sizeof(shifts)/sizeof(shifts[0]);si++) {
+        sh=shifts[si];
+        for (i=0;i<203+sh;i++) ez[i]=ref[i]=sinf((float)i*0.41f)*9.0f;
+        for (i=0;i<203;i++) ref[i+sh]=bcir_tensor_expf(ref[i]);
+        assert(bcir_tensor_exp_variant(variant,203,ez,ez+sh)==variant);
+        assert(!memcmp(ez,ref,(203+sh)*sizeof(float)));
+      }
+    }
   }
   bcir_tensor_exp(20000,x,e1);
   for (i=0;i<20000;i++) assert(e1[i]==bcir_tensor_expf(x[i]));

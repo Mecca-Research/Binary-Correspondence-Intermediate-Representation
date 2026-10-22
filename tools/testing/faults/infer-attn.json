@@ -17,8 +17,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "IA2 a strip's context reads its probabilities as the whole attention's rows",
-      "new": "          __m512 pv=_mm512_set1_ps(p[(i0+r)*ldp+j]);\n",
-      "old": "          __m512 pv=_mm512_set1_ps(p[(i0+r-r0)*ldp+j]);\n",
+      "new": "      __m512 pv=_mm512_set1_ps(p[(i0+r)*ldp+j]);\n",
+      "old": "      __m512 pv=_mm512_set1_ps(p[(i0+r-r0)*ldp+j]);\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

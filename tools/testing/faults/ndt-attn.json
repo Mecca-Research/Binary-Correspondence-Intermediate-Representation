@@ -39,8 +39,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NA5 the context's diagonal keys reach every row of the block (a row takes keys past itself)",
-      "new": "          __mmask16 take=(__mmask16)0xffffu;",
-      "old": "          __mmask16 take=(__mmask16)(r>=dj ? 0xffffu : 0u);",
+      "new": "      __mmask16 take=(__mmask16)0xffffu;",
+      "old": "      __mmask16 take=(__mmask16)(r>=dj ? 0xffffu : 0u);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -109,8 +109,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NA15 a row the context's diagonal key skips loses its sum (zero-masked where the add must merge)",
-      "new": "          a0[r]=_mm512_maskz_add_ps(take,a0[r],_mm512_mul_ps(pv,b0));",
-      "old": "          a0[r]=ATT_MADD_MASK(f,a0[r],take,pv,b0);",
+      "new": "      a0[r]=_mm512_maskz_add_ps(take,a0[r],_mm512_mul_ps(pv,b0));",
+      "old": "      a0[r]=ATT_MADD_MASK(f,a0[r],take,pv,b0);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

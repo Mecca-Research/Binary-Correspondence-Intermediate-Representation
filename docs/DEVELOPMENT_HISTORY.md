@@ -4097,6 +4097,65 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     attention is the training update the roadmap names); a smaller decoder arena (the plan still
     sizes each layer's probability region for training, so the forward leaves it untouched rather
     than unallocated); AMX timing; a GPU.
+  ATTN-RATE (2026-10-22): the attention's exponential and context at their rate, every value as it
+    was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §7,
+    [measurements/2026-10-22/attn-rate/](research/measurements/2026-10-22/attn-rate/README.json)).
+  - The loss it answers: INFER-ATTN's residual -- the GEO attention model's inference at T2048 still
+    x1.17 of eager PyTorch's time, the attention about 85% of that forward. Timed a phase at a time on
+    one core (an instrumented copy of the unit, TSC cycles a call at B4/T2048), the scratch kernel ran
+    its scores in 169M, its softmax in 196M and its context in 224M: the softmax and the context, more
+    than the products' rate.
+  - EXP-LANES: the BCIR exponential's polynomial is a chain of seven dependent multiply-then-add steps
+    under -ffp-contract=off, and its loops ran at the chain's latency. The exponential's own loops (its
+    instances and the softmax's rows in place) now take exp1 over a block of elements, each step over
+    the whole block before the next: four vectors in a row on AVX-512 (64 elements) and two on AVX2
+    (16; four spill its sixteen registers), whichever compiler builds them. GCC's unroll pragma copies
+    a vector's whole chain after the previous one's (measured no change), and its AVX2 instance did not
+    vectorize exp1 at all (8.7 ns an element against clang's 1.8). The portable instance keeps its
+    loop, and a call whose y partly overlaps x runs the element loop whole. The SiLU, the SwiGLU
+    product and its VJP keep exp1 an element under clang's interleave pragma, four vectors an
+    iteration (a block there holds too many arrays to stay in registers: measured slower at 1M
+    elements); GCC builds them as before.
+  - CTX-WIDTH: the AVX-512 context ran a 48-channel block as three 16-lane vectors whatever the head's
+    width, so at head dimension 32 the third vector, every lane masked off, was loaded and multiplied
+    anyway. `att512_ctx_block` runs the vectors a block's channels reach -- one, two or three -- each
+    element's terms the same, in the same order.
+  - Every value is the same: `attn_hash.c`'s 88 cases (y, and p when stored) and `elem_hash.c`'s 181
+    lines (each exponential instance, the SiLU, the SwiGLU product and VJP, serial and pooled, over
+    lengths that end mid-block and inputs with +-0, +-inf, NaN and the thresholds) byte for byte before
+    and after under clang 18 and GCC 13; the GEO model's trained checkpoints' logits byte-identical at
+    T1024 and T2048.
+  - Measured on the committed tree against the one before it, the kernels and the training step with
+    both builds in one process (A, B and B again as the A/A control, each round's outputs held equal),
+    the forward in rotated processes. The exponential x0.75 (clang) and x0.76 (GCC) at 16K elements,
+    x0.76 and x0.81 at 1M; GCC's AVX2 instance x0.47-0.49; clang's SwiGLU product x0.71 and its VJP x0.67
+    (x0.91 at 1M). The attention at B4/T2048 x0.78 (scratch) and x0.84 (stored, the training forward)
+    under clang, x0.86 and x0.90 under GCC; B1/T4096 with 8 heads of 64 x0.83; on one core the softmax
+    196M -> 169M cycles and the context 224M -> 178M, the scores unchanged. `bcir_decoder_forward` at the
+    GEO model's dimensions x0.899 at T1024 and x0.876 at T2048 (x0.896 on one thread); the 9.84M decoder
+    at head dimension 48 unchanged (x0.978), as is its training step (clang x0.967, 0.931-1.006). GCC's
+    decoder step read x0.924 (0.897-0.952), more than its exponential and context account for (under
+    1% of that step), so this record does not attribute it. The GEO study's attention model on level 3,
+    built with GCC as the study builds it: x0.878 at T1024 and x0.920 (0.872-0.971) at T2048 of the
+    build before; against PyTorch, at T1024 x0.607 of eager's time and x0.777 (0.685-0.882) of
+    Inductor's -- faster than both -- and at T2048 at parity with eager (x1.053, 0.961-1.155) and
+    x1.130 of Inductor's.
+  - What remains at T2048 is three phases at about a third each (scores 168M, softmax 169M, context
+    178M cycles on one core). Candidates within this contract, none measured yet: the softmax's
+    maximum taken where the scores are stored, not in its own transposed pass; a head's key panels
+    packed once for all its strips (each strip packs every panel up to its last row: 32 times the
+    stored forward's packs at T2048); the context's eight broadcasts a key. An online softmax would be
+    a new arithmetic contract.
+  - Witnesses (`runtime/c/test_decoder_train.c`): the context widths 32, 33 and 48+33 added to the v1
+    and fused attention references; every exponential instance on the edges and on a call whose y
+    lies past x and overlaps it (y = x + 1, 9, 17 and 60), element by element as the loop runs it --
+    both hold on the tree before too. `attn-rate.json` CW1-CW6 and EL1-EL6, each caught by its own
+    check and compiling warning-free under GCC 13, clang 18 and clang 23; NE3 and five INFER-ATTN-era
+    faults (IA2, NA5, NA15, NU1, NZ3) re-anchored to the lines this moved, each keeping its defect,
+    caught again; `ndt-exp.json` 6 of 6 and NL11 caught on the final tree.
+  - Not claimed: the portable instance (every non-x86 host's, untimed here) and GCC's SiLU and SwiGLU
+    loops are unchanged; the decoder's training step, at head dimension 48, gains nothing resolved
+    under clang; AMX timing; a GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

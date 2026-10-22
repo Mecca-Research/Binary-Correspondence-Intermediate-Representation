@@ -1,0 +1,95 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "CW1 the context's two-vector block taken only past 17 channels",
+      "new": "      else if (nc>17) att512_ctx_block(f,2,r0,i0,c0,p,ldp,v,ldv,y,ldy,first,m0,m1,m2);\n",
+      "old": "      else if (nc>16) att512_ctx_block(f,2,r0,i0,c0,p,ldp,v,ldv,y,ldy,first,m0,m1,m2);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "CW2 the context's three-vector block taken only past 33 channels",
+      "new": "      if (nc>33) att512_ctx_block(f,3,r0,i0,c0,p,ldp,v,ldv,y,ldy,first,m0,m1,m2);\n",
+      "old": "      if (nc>32) att512_ctx_block(f,3,r0,i0,c0,p,ldp,v,ldv,y,ldy,first,m0,m1,m2);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "CW3 the second vector's values never loaded for the keys below the block",
+      "new": "    const float *vj=v+j*ldv+c0;\n    __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();\n",
+      "old": "    const float *vj=v+j*ldv+c0;\n    __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();\n    if (nv>1) b1=_mm512_maskz_loadu_ps(m1,vj+16);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "CW4 the diagonal keys' third vector never accumulated",
+      "new": "      if (nv>2) a2[r]=ATT_MADD_MASK(f,a2[r],(__mmask16)0,pv,b2);\n",
+      "old": "      if (nv>2) a2[r]=ATT_MADD_MASK(f,a2[r],take,pv,b2);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "CW5 the second vector never stored",
+      "new": "",
+      "old": "    if (nv>1) _mm512_mask_storeu_ps(yr+16,m1,a1[r]);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "CW6 the third vector's values read at the second's channels",
+      "new": "    if (nv>2) b2=_mm512_maskz_loadu_ps(m2,vj+16);\n    for (r=0;r<8;r++) {\n      __m512 pv=_mm512_set1_ps(p[(i0+r-r0)*ldp+j]);\n",
+      "old": "    if (nv>2) b2=_mm512_maskz_loadu_ps(m2,vj+32);\n    for (r=0;r<8;r++) {\n      __m512 pv=_mm512_set1_ps(p[(i0+r-r0)*ldp+j]);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "EL1 the exponential's block drops a polynomial step (the 1/24 term)",
+      "new": "",
+      "old": "  for (l=0;l<nb;l++) p[l]=p[l]*r[l]+1.0f/24.0f;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "EL2 the block's reduction without ln 2's low part",
+      "new": "  for (l=0;l<nb;l++) r[l]=xc[l]-kf[l]*BCIR_EXP_LN2_HI;\n",
+      "old": "  for (l=0;l<nb;l++) r[l]=(xc[l]-kf[l]*BCIR_EXP_LN2_HI)-kf[l]*BCIR_EXP_LN2_LO;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "EL3 the block's power of two split as k/2 twice (an odd k loses a factor of two)",
+      "new": "    int32_t k1=k[l]/2,k2=k1;\n    float v=(p[l]*exp_bits",
+      "old": "    int32_t k1=k[l]/2,k2=k[l]-k1;\n    float v=(p[l]*exp_bits",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "EL4 the block's NaN select dropped (a NaN input takes the clamp's value)",
+      "new": "    y[l]=v;                                                       /* NaN stays NaN */\n",
+      "old": "    y[l]=xs[l]==xs[l] ? v : xs[l];                                /* NaN stays NaN */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "EL5 the exponential's blocks taken on a call whose y lies past x and overlaps it",
+      "new": "  if (nb && (x==y || y>x || ew_apart(x,y,n))) for (;i+nb<=n;i+=nb) {\n",
+      "old": "  if (nb && (x==y || ew_apart(x,y,n))) for (;i+nb<=n;i+=nb) {\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "EL6 the apart test counting floats as bytes (a y n bytes past x taken as apart)",
+      "new": "  uintptr_t p=(uintptr_t)a,q=(uintptr_t)b,bytes=(uintptr_t)n;\n",
+      "old": "  uintptr_t p=(uintptr_t)a,q=(uintptr_t)b,bytes=(uintptr_t)(n*sizeof(float));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

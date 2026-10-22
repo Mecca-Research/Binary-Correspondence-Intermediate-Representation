@@ -566,35 +566,99 @@ BCIR_MM_INLINE float sigmoid2(float x) {
   float e=exp1(x<0.0f ? x : -x),s=1.0f/(1.0f+e);
   return x>=0.0f ? s : e*s;
 }
-BCIR_MM_INLINE void exp_body(size_t n, const float *x, float *y) { size_t i; for (i=0;i<n;i++) y[i]=exp1(x[i]); }
+/* EXP-LANES: exp1's polynomial is a chain -- seven dependent multiply-then-add steps under
+ * -ffp-contract=off -- so a loop of exp1 an element runs at the chain's latency unless several
+ * vectors' chains are in flight at once. The exponential's own loops take exp1 over a block of nb
+ * elements (the caller's local copy), each of its steps over the whole block before the next: the
+ * vectorizer makes each step four vectors in a row on AVX-512 (nb 64) and two on AVX2 (nb 16: four
+ * would spill its sixteen registers), whichever compiler builds it. Each element's operations and
+ * their order are exp1's, so each value is exp1's; a block reads its inputs before it writes its
+ * outputs. */
+#define BCIR_EXP_BLOCK 64  /* the most elements a block holds */
+BCIR_MM_INLINE void exp1_block(size_t nb, const float *xs, float *y) {
+  float xc[BCIR_EXP_BLOCK],kf[BCIR_EXP_BLOCK],r[BCIR_EXP_BLOCK],p[BCIR_EXP_BLOCK]; int32_t k[BCIR_EXP_BLOCK];
+  size_t l;
+  for (l=0;l<nb;l++) { float lo=xs[l]>-104.0f ? xs[l] : -104.0f; xc[l]=lo<89.0f ? lo : 89.0f; }
+  for (l=0;l<nb;l++) { kf[l]=rintf(xc[l]*BCIR_EXP_LOG2E); k[l]=(int32_t)kf[l]; }
+  for (l=0;l<nb;l++) r[l]=(xc[l]-kf[l]*BCIR_EXP_LN2_HI)-kf[l]*BCIR_EXP_LN2_LO;
+  for (l=0;l<nb;l++) p[l]=1.0f/5040.0f*r[l]+1.0f/720.0f;
+  for (l=0;l<nb;l++) p[l]=p[l]*r[l]+1.0f/120.0f;
+  for (l=0;l<nb;l++) p[l]=p[l]*r[l]+1.0f/24.0f;
+  for (l=0;l<nb;l++) p[l]=p[l]*r[l]+1.0f/6.0f;
+  for (l=0;l<nb;l++) p[l]=p[l]*r[l]+0.5f;
+  for (l=0;l<nb;l++) p[l]=p[l]*r[l]+1.0f;
+  for (l=0;l<nb;l++) p[l]=p[l]*r[l]+1.0f;
+  for (l=0;l<nb;l++) {
+    int32_t k1=k[l]/2,k2=k[l]-k1;
+    float v=(p[l]*exp_bits((uint32_t)(k1+127)<<23))*exp_bits((uint32_t)(k2+127)<<23);
+    v=xs[l]>88.72283172607421875f ? exp_bits(0x7f800000u) : v;   /* above ln(FLT_MAX): +inf */
+    v=xs[l]<-103.972084045410156f ? 0.0f : v;                     /* below the last subnormal: 0 */
+    y[l]=xs[l]==xs[l] ? v : xs[l];                                /* NaN stays NaN */
+  }
+}
+/* Whether two n-element arrays lie apart (no byte in common). The block reads a block's inputs
+ * before it writes its outputs and the element loop reads and writes an element at a time, so they
+ * agree wherever y is x or lies apart from it; a call whose y partly overlaps x runs the element
+ * loop whole. */
+BCIR_MM_INLINE int ew_apart(const float *a, const float *b, size_t n) {
+  uintptr_t p=(uintptr_t)a,q=(uintptr_t)b,bytes=(uintptr_t)(n*sizeof(float));
+  return p+bytes<=q || q+bytes<=p;
+}
+/* nb 0 runs the element loop alone: the portable instance keeps it (every non-x86 host's
+ * instance, where this was not timed). */
+BCIR_MM_INLINE void exp_body(size_t nb, size_t n, const float *x, float *y) {
+  float xs[BCIR_EXP_BLOCK]; size_t i=0,l;
+  if (nb && (x==y || ew_apart(x,y,n))) for (;i+nb<=n;i+=nb) {
+    for (l=0;l<nb;l++) xs[l]=x[i+l];
+    exp1_block(nb,xs,y+i);
+  }
+  for (;i<n;i++) y[i]=exp1(x[i]);
+}
 /* The same exponential over a row in place (the softmax's rows): one pointer, so the loop
  * vectorizes without an alias check, and exp1 per element as exp_body applies it. */
-BCIR_MM_INLINE void exp_inplace_body(size_t n, float *x) { size_t i; for (i=0;i<n;i++) x[i]=exp1(x[i]); }
-BCIR_MM_INLINE void silu2_body(size_t n, const float *x, float *y) { size_t i; for (i=0;i<n;i++) y[i]=x[i]*sigmoid2(x[i]); }
+BCIR_MM_INLINE void exp_inplace_body(size_t nb, size_t n, float *x) {
+  float xs[BCIR_EXP_BLOCK]; size_t i=0,l;
+  if (nb) for (;i+nb<=n;i+=nb) {
+    for (l=0;l<nb;l++) xs[l]=x[i+l];
+    exp1_block(nb,xs,x+i);
+  }
+  for (;i<n;i++) x[i]=exp1(x[i]);
+}
+/* The sigmoid's loops below keep exp1 an element and ask clang's vectorizer for four vectors an
+ * iteration, interleaved, which overlaps their chains alike (measured faster on AVX-512 and AVX2;
+ * a block there would hold too many arrays to stay in registers). GCC's unroll pragma copies a
+ * vector's whole chain after the previous one's and measured no change, so GCC builds them as
+ * before. */
+#if defined(__clang__)
+#define BCIR_EXP_LANES _Pragma("clang loop interleave_count(4)")
+#else
+#define BCIR_EXP_LANES
+#endif
+BCIR_MM_INLINE void silu2_body(size_t n, const float *x, float *y) { size_t i; BCIR_EXP_LANES for (i=0;i<n;i++) y[i]=x[i]*sigmoid2(x[i]); }
 /* The SwiGLU forward's product in the same pass (NDT-SWIGLU-FWD): the SiLU rounded to binary32 as
  * silu2_body stores it, then its product with u rounded -- the two passes' value bit for bit. */
 BCIR_MM_INLINE void silu2mul_body(size_t n, const float *x, const float *u, float *y) {
-  size_t i; for (i=0;i<n;i++) { float s=x[i]*sigmoid2(x[i]); y[i]=s*u[i]; }
+  size_t i; BCIR_EXP_LANES for (i=0;i<n;i++) { float s=x[i]*sigmoid2(x[i]); y[i]=s*u[i]; }
 }
 BCIR_MM_INLINE void swiglu2_body(size_t n, const float *g, const float *u, const float *dy,
     float *dg, float *du) {
   size_t i;
-  for (i=0;i<n;i++) {
+  BCIR_EXP_LANES for (i=0;i<n;i++) {
     float s=sigmoid2(g[i]);
     dg[i]=dy[i]*u[i]*(s+g[i]*s*(1.0f-s)); du[i]=dy[i]*g[i]*s;
   }
 }
-static void exp_generic(size_t n, const float *x, float *y) { exp_body(n,x,y); }
-static void exp_inplace_generic(size_t n, float *x) { exp_inplace_body(n,x); }
+static void exp_generic(size_t n, const float *x, float *y) { exp_body(0,n,x,y); }
+static void exp_inplace_generic(size_t n, float *x) { exp_inplace_body(0,n,x); }
 static void silu2_generic(size_t n, const float *x, float *y) { silu2_body(n,x,y); }
 static void silu2mul_generic(size_t n, const float *x, const float *u, float *y) { silu2mul_body(n,x,u,y); }
 static void swiglu2_generic(size_t n, const float *g, const float *u, const float *dy, float *dg,
     float *du) { swiglu2_body(n,g,u,dy,dg,du); }
 #ifdef BCIR_MM_DISPATCH
-__attribute__((target("avx2"))) static void exp_avx2(size_t n, const float *x, float *y) { exp_body(n,x,y); }
-__attribute__((target("avx512f"))) static void exp_avx512(size_t n, const float *x, float *y) { exp_body(n,x,y); }
-__attribute__((target("avx2"))) static void exp_inplace_avx2(size_t n, float *x) { exp_inplace_body(n,x); }
-__attribute__((target("avx512f"))) static void exp_inplace_avx512(size_t n, float *x) { exp_inplace_body(n,x); }
+__attribute__((target("avx2"))) static void exp_avx2(size_t n, const float *x, float *y) { exp_body(16,n,x,y); }
+__attribute__((target("avx512f"))) static void exp_avx512(size_t n, const float *x, float *y) { exp_body(64,n,x,y); }
+__attribute__((target("avx2"))) static void exp_inplace_avx2(size_t n, float *x) { exp_inplace_body(16,n,x); }
+__attribute__((target("avx512f"))) static void exp_inplace_avx512(size_t n, float *x) { exp_inplace_body(64,n,x); }
 __attribute__((target("avx2"))) static void silu2_avx2(size_t n, const float *x, float *y) { silu2_body(n,x,y); }
 __attribute__((target("avx512f"))) static void silu2_avx512(size_t n, const float *x, float *y) { silu2_body(n,x,y); }
 __attribute__((target("avx2"))) static void silu2mul_avx2(size_t n, const float *x, const float *u, float *y) {
@@ -2551,48 +2615,63 @@ __attribute__((target("avx512f"))) static void att512_scores_from_fma(size_t r0,
     size_t d, const float *q, size_t ldq, const float *k, size_t ldk, float *s, size_t lds) {
   att512_scores_any(1,r0,rows,d,q,ldq,k,ldk,s,lds);
 }
+/* One 8-row block of the context over nv of a 48-channel block's three 16-lane vectors (nv the
+ * vectors the block's channels reach: 1, 2 or 3) -- the lanes past them masked off in every vector
+ * as before, so a vector no channel reaches is not computed at all; each element's terms the same. */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_ctx_block(int f, int nv, size_t r0, size_t i0,
+    size_t c0, const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy, int first,
+    __mmask16 m0, __mmask16 m1, __mmask16 m2) {
+  __m512 a0[8],a1[8],a2[8]; size_t r,j,dj;
+  for (r=0;r<8;r++) {
+    const float *yr=y+(i0+r)*ldy+c0;
+    a0[r]=_mm512_maskz_loadu_ps(first ? 0 : m0,yr);
+    if (nv>1) a1[r]=_mm512_maskz_loadu_ps(first ? 0 : m1,yr+16);
+    if (nv>2) a2[r]=_mm512_maskz_loadu_ps(first ? 0 : m2,yr+32);
+  }
+  for (j=0;j<=i0;j++) {  /* every row of the block takes key j */
+    const float *vj=v+j*ldv+c0;
+    __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();
+    if (nv>1) b1=_mm512_maskz_loadu_ps(m1,vj+16);
+    if (nv>2) b2=_mm512_maskz_loadu_ps(m2,vj+32);
+    for (r=0;r<8;r++) {
+      __m512 pv=_mm512_set1_ps(p[(i0+r-r0)*ldp+j]);
+      a0[r]=ATT_MADD(f,a0[r],pv,b0);
+      if (nv>1) a1[r]=ATT_MADD(f,a1[r],pv,b1);
+      if (nv>2) a2[r]=ATT_MADD(f,a2[r],pv,b2);
+    }
+  }
+  for (dj=1;dj<8;dj++) {  /* key i0+dj: the rows r >= dj, the others masked out */
+    const float *vj=v+(i0+dj)*ldv+c0;
+    __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();
+    if (nv>1) b1=_mm512_maskz_loadu_ps(m1,vj+16);
+    if (nv>2) b2=_mm512_maskz_loadu_ps(m2,vj+32);
+    for (r=0;r<8;r++) {
+      __mmask16 take=(__mmask16)(r>=dj ? 0xffffu : 0u);
+      __m512 pv=_mm512_set1_ps(p[(i0+r-r0)*ldp+i0+dj]);
+      a0[r]=ATT_MADD_MASK(f,a0[r],take,pv,b0);
+      if (nv>1) a1[r]=ATT_MADD_MASK(f,a1[r],take,pv,b1);
+      if (nv>2) a2[r]=ATT_MADD_MASK(f,a2[r],take,pv,b2);
+    }
+  }
+  for (r=0;r<8;r++) {
+    float *yr=y+(i0+r)*ldy+c0;
+    _mm512_mask_storeu_ps(yr,m0,a0[r]);
+    if (nv>1) _mm512_mask_storeu_ps(yr+16,m1,a1[r]);
+    if (nv>2) _mm512_mask_storeu_ps(yr+32,m2,a2[r]);
+  }
+}
 /* The context of rows [r0, rows), p at row r0 and y at row 0 (INFER-ATTN: a strip's probabilities;
  * r0 0 for the whole attention), r0 a multiple of eight. */
 __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_context_any(int f, size_t r0, size_t rows,
     size_t d, const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy, int first) {
-  size_t c0,i0,r,j,dj;
+  size_t c0,i0;
   for (c0=0;c0<d;c0+=48) {
     size_t nc=d-c0<48 ? d-c0 : 48;
     __mmask16 m0=att512_lanes(nc),m1=att512_lanes(nc>16 ? nc-16 : 0),m2=att512_lanes(nc>32 ? nc-32 : 0);
     for (i0=r0;i0<rows;i0+=8) {
-      __m512 a0[8],a1[8],a2[8];
-      for (r=0;r<8;r++) {
-        const float *yr=y+(i0+r)*ldy+c0;
-        a0[r]=_mm512_maskz_loadu_ps(first ? 0 : m0,yr); a1[r]=_mm512_maskz_loadu_ps(first ? 0 : m1,yr+16);
-        a2[r]=_mm512_maskz_loadu_ps(first ? 0 : m2,yr+32);
-      }
-      for (j=0;j<=i0;j++) {  /* every row of the block takes key j */
-        const float *vj=v+j*ldv+c0;
-        __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_maskz_loadu_ps(m1,vj+16),
-            b2=_mm512_maskz_loadu_ps(m2,vj+32);
-        for (r=0;r<8;r++) {
-          __m512 pv=_mm512_set1_ps(p[(i0+r-r0)*ldp+j]);
-          a0[r]=ATT_MADD(f,a0[r],pv,b0); a1[r]=ATT_MADD(f,a1[r],pv,b1);
-          a2[r]=ATT_MADD(f,a2[r],pv,b2);
-        }
-      }
-      for (dj=1;dj<8;dj++) {  /* key i0+dj: the rows r >= dj, the others masked out */
-        const float *vj=v+(i0+dj)*ldv+c0;
-        __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_maskz_loadu_ps(m1,vj+16),
-            b2=_mm512_maskz_loadu_ps(m2,vj+32);
-        for (r=0;r<8;r++) {
-          __mmask16 take=(__mmask16)(r>=dj ? 0xffffu : 0u);
-          __m512 pv=_mm512_set1_ps(p[(i0+r-r0)*ldp+i0+dj]);
-          a0[r]=ATT_MADD_MASK(f,a0[r],take,pv,b0);
-          a1[r]=ATT_MADD_MASK(f,a1[r],take,pv,b1);
-          a2[r]=ATT_MADD_MASK(f,a2[r],take,pv,b2);
-        }
-      }
-      for (r=0;r<8;r++) {
-        float *yr=y+(i0+r)*ldy+c0;
-        _mm512_mask_storeu_ps(yr,m0,a0[r]); _mm512_mask_storeu_ps(yr+16,m1,a1[r]);
-        _mm512_mask_storeu_ps(yr+32,m2,a2[r]);
-      }
+      if (nc>32) att512_ctx_block(f,3,r0,i0,c0,p,ldp,v,ldv,y,ldy,first,m0,m1,m2);
+      else if (nc>16) att512_ctx_block(f,2,r0,i0,c0,p,ldp,v,ldv,y,ldy,first,m0,m1,m2);
+      else att512_ctx_block(f,1,r0,i0,c0,p,ldp,v,ldv,y,ldy,first,m0,m1,m2);
     }
   }
 }

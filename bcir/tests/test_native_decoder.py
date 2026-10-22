@@ -424,7 +424,7 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
         ("exp_ulp", "bcir_tensor.c", tensor,
          "#define BCIR_EXP_LN2_LO 1.428606765330187e-06f", "#define BCIR_EXP_LN2_LO 0.0f"),
         ("exp_mismatch", "bcir_tensor.c", tensor,
-         "static void exp_avx2(size_t n, const float *x, float *y) { exp_body(n,x,y); }",
+         "static void exp_avx2(size_t n, const float *x, float *y) { exp_body(16,n,x,y); }",
          "static void exp_avx2(size_t n, const float *x, float *y) { size_t i; for (i=0;i<n;i++) y[i]=expf(x[i]); }"),
         ("plan", "bcir_decoder_train.c", train,
          "!term(&p.scratch,5,nd)", "!term(&p.scratch,6,nd)"),
