@@ -1,0 +1,53 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BW1 the transposed products' two-vector block taken only past 17 channels",
+      "new": "      else if (nc>17) att512_tr_block(f,2,j0,t,c0,m,ldm,x,ldx,out,ldo,first,m0,m1,m2);\n",
+      "old": "      else if (nc>16) att512_tr_block(f,2,j0,t,c0,m,ldm,x,ldx,out,ldo,first,m0,m1,m2);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BW2 the transposed products' three-vector block taken only past 33 channels",
+      "new": "      if (nc>33) att512_tr_block(f,3,j0,t,c0,m,ldm,x,ldx,out,ldo,first,m0,m1,m2);\n",
+      "old": "      if (nc>32) att512_tr_block(f,3,j0,t,c0,m,ldm,x,ldx,out,ldo,first,m0,m1,m2);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BW3 the second vector's terms never loaded for the terms past the block's diagonal",
+      "new": "    if (nv>2) b2=_mm512_maskz_loadu_ps(m2,xi+32);\n    for (r=0;r<8;r++) {\n      __m512 mv=_mm512_set1_ps(mi[r]);\n",
+      "old": "    if (nv>1) b1=_mm512_maskz_loadu_ps(m1,xi+16);\n    if (nv>2) b2=_mm512_maskz_loadu_ps(m2,xi+32);\n    for (r=0;r<8;r++) {\n      __m512 mv=_mm512_set1_ps(mi[r]);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BW4 the diagonal terms' third vector never accumulated",
+      "new": "      if (nv>2) a2[r]=ATT_MADD_MASK(f,a2[r],(__mmask16)0,mv,b2);\n",
+      "old": "      if (nv>2) a2[r]=ATT_MADD_MASK(f,a2[r],take,mv,b2);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BW5 the second vector never stored",
+      "new": "",
+      "old": "    if (nv>1) _mm512_mask_storeu_ps(o+16,m1,a1[r]);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BW6 the third vector's terms read at the second's channels",
+      "new": "    if (nv>1) b1=_mm512_maskz_loadu_ps(m1,xi+16);\n    if (nv>2) b2=_mm512_maskz_loadu_ps(m2,xi+16);\n    for (r=0;r<8;r++) {\n      __m512 mv=_mm512_set1_ps(mi[r]);\n",
+      "old": "    if (nv>1) b1=_mm512_maskz_loadu_ps(m1,xi+16);\n    if (nv>2) b2=_mm512_maskz_loadu_ps(m2,xi+32);\n    for (r=0;r<8;r++) {\n      __m512 mv=_mm512_set1_ps(mi[r]);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

@@ -556,6 +556,11 @@ records NDT-PREPACK, the GEMM's tiles packed once, measured slower and not kept)
 1,000-step language-model run at four threads takes 211.0 / 225.6 ms a step (4,853 / 4,538 tokens a
 second) against eager PyTorch's 304.5 (3,362) and `torch.compile`'s 310.5 (3,298) in one later
 session, the same state `5137e013…` and held-out cross-entropy (§24).
+Since CTX-WIDTH and BWD-WIDTH (2026-10-22) those register blocks run the 16-lane vectors a 48-channel
+block's channels reach -- one, two or three -- not three whatever the head's width, every value as it
+was (`attn-rate.json` CW1-CW6, `bwd-width.json` BW1-BW6): at head dimension 32 the context and the
+transposed products no longer compute a third vector of masked lanes, the backward x0.85 on one core at
+B4/T2048 (the [GEO review](../research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §7-§8).
 Since NDT-SCAN-W (2026-10-17) the forward's verdict on its activations is taken by their writers: the
 RMSNorm, the SwiGLU product and the attention read back what their tasks wrote while it is in the
 core's cache, a region answering through another its value reaches and the attention reading its

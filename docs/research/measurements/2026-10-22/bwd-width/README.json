@@ -1,0 +1,80 @@
+{
+ "what": "BWD-WIDTH (2026-10-22): the attention backward's transposed products (dV = P^T dY and dK = dS^T Q) run as the 16-lane vectors a 48-channel block's channels reach -- one, two or three -- as CTX-WIDTH did for the context, every value as it was; measured on the committed tree against the tree before it: the cross-build hashes, the backward with both builds in one process, the decoder's training step, and the GEO study's attention model's training update built as the study builds it, against PyTorch.",
+ "host": "Intel(R) Xeon(R) Processor @ 2.80GHz, 4 vCPU (AVX-512F, no AMX), Linux 6.18; clang 18.1.3, gcc 13.3.0; Python 3.11.15, torch 2.13.0+cu130 (CPU), numpy 2.2.6; OMP_WAIT_POLICY=PASSIVE",
+ "records": {
+  "hashes.json": "bwd_hash.c and ../attn-rate/attn_hash.c from both trees, clang and gcc",
+  "backward.json": "ab_bwd.c: the attention backward, both tensor units in one process, A/B/A-A rounds",
+  "step.json": "../attn-rate/step_ab.c: the training step, both trainers in one process on three identical states",
+  "geo-long.json": "../geo2/port/geo_compare.py on ATTN-RATE's level-3 build: the training update at T512, T1024 and T2048 and the inference at T2048 against P-EAGER and P-IND, the loss this answers",
+  "geo-train-second.json": "the same with 24 rounds: the second run (backward.json's second_run)",
+  "geo-train.json": "train_compare.py: the GEO attention model's training update (forward, backward, clipping, AdamW) on both level-3 builds against P-EAGER and P-IND, the two builds' trained states equal by digest first",
+  "level3-builds.json": "../infer-attn/build_level3.py's two builds (gcc, as the study's level 2 is built)",
+  "phases.json": "instrument_bwd.py + bwd_phase_bench.c: the backward's seven phases, before and after, TSC cycles a call"
+ },
+ "reading": {
+  "hashes": [
+   "clang: backward 34 cases, forward 88 cases, before == after: True/True",
+   "gcc: backward 34 cases, forward 88 cases, before == after: True/True",
+   "clang's lines gcc's: {'bwd_hash': True, 'attn_hash': True}"
+  ],
+  "backward": [
+   "first run, 12 rounds: clang 4x2048x4x4x32 contract 0 at 4 thread(s): 205.98 -> 179.18 ms, 0.890 (0.820-0.965) of before, A/A 0.973 (0.887-1.067)",
+   "first run, 12 rounds: clang 4x1024x4x4x32 contract 0 at 4 thread(s): 40.04 -> 33.79 ms, 0.857 (0.796-0.923) of before, A/A 0.993 (0.887-1.111)",
+   "first run, 12 rounds: clang 4x512x4x4x32 contract 0 at 4 thread(s): 7.71 -> 6.57 ms, 0.863 (0.770-0.968) of before, A/A 0.967 (0.881-1.061)",
+   "first run, 12 rounds: clang 4x2048x4x4x32 contract 0 at 1 thread(s): 684.70 -> 583.17 ms, 0.850 (0.815-0.888) of before, A/A 1.028 (0.977-1.081)",
+   "first run, 12 rounds: clang 1x4096x8x8x64 contract 2 at 4 thread(s): 717.94 -> 640.91 ms, 0.894 (0.864-0.924) of before, A/A 0.979 (0.930-1.030)",
+   "first run, 12 rounds: clang 8x128x8x4x48 contract 2 at 4 thread(s): 1.54 -> 1.54 ms, 1.033 (0.918-1.164) of before, A/A 0.944 (0.857-1.038)",
+   "first run, 12 rounds: gcc 4x2048x4x4x32 contract 0 at 4 thread(s): 188.02 -> 165.41 ms, 0.878 (0.806-0.956) of before, A/A 0.975 (0.898-1.058)",
+   "first run, 12 rounds: gcc 4x1024x4x4x32 contract 0 at 4 thread(s): 36.84 -> 28.68 ms, 0.868 (0.805-0.934) of before, A/A 1.007 (0.945-1.073)",
+   "second run, 24 rounds: clang 4x2048x4x4x32 contract 0 at 4 thread(s): 224.58 -> 199.74 ms, 0.886 (0.841-0.934) of before, A/A 1.030 (0.975-1.089)",
+   "second run, 24 rounds: clang 4x1024x4x4x32 contract 0 at 4 thread(s): 50.81 -> 40.59 ms, 0.817 (0.766-0.871) of before, A/A 1.063 (0.973-1.162)",
+   "second run, 24 rounds: clang 4x512x4x4x32 contract 0 at 4 thread(s): 7.15 -> 6.01 ms, 0.859 (0.804-0.919) of before, A/A 0.989 (0.927-1.054)",
+   "second run, 24 rounds: gcc 4x2048x4x4x32 contract 0 at 4 thread(s): 209.92 -> 177.40 ms, 0.839 (0.803-0.877) of before, A/A 1.080 (1.036-1.126)"
+  ],
+  "step": [
+   "first run, 24 rounds: clang geo-dims T512 kblock+exp+reduce, step: 81.9 -> 78.9 ms, 0.943 (0.899-0.988) of before, A/A 0.992 (0.944-1.043)",
+   "first run, 16 rounds: clang geo-dims T1024 kblock+exp+reduce, step: 261.2 -> 231.2 ms, 0.925 (0.872-0.982) of before, A/A 0.974 (0.928-1.021)",
+   "first run, 12 rounds: clang geo-dims T2048 kblock+exp+reduce, step: 987.3 -> 911.8 ms, 0.912 (0.873-0.953) of before, A/A 1.000 (0.957-1.044)",
+   "first run, 24 rounds: clang decoder-9.84M kblock+exp+reduce+attn, step: 313.0 -> 294.0 ms, 0.963 (0.927-1.001) of before, A/A 1.032 (0.969-1.099)",
+   "first run, 12 rounds: gcc geo-dims T2048 kblock+exp+reduce, step: 1079.3 -> 991.8 ms, 0.905 (0.869-0.941) of before, A/A 1.010 (0.969-1.053)",
+   "second run, 24 rounds: clang geo-dims T512 kblock+exp+reduce, step: 96.5 -> 93.0 ms, 0.938 (0.891-0.987) of before, A/A 0.965 (0.924-1.009)",
+   "second run, 24 rounds: clang geo-dims T1024 kblock+exp+reduce, step: 297.3 -> 263.9 ms, 0.911 (0.865-0.959) of before, A/A 0.967 (0.929-1.006)"
+  ],
+  "geo_attention_model": [
+   "first run, 12 rounds: T512: B-BEFORE 100.3, B-AFTER 89.8, P-EAGER 245.5, P-IND 167.4 ms an update; after/before 0.898 (0.829-0.972), after/eager 0.368 (0.339-0.401), after/Inductor 0.537 (0.497-0.581), A/A 0.971 (0.908-1.039)",
+   "first run, 12 rounds: T1024: B-BEFORE 286.4, B-AFTER 271.9, P-EAGER 364.3, P-IND 293.0 ms an update; after/before 0.958 (0.911-1.008), after/eager 0.739 (0.676-0.807), after/Inductor 0.923 (0.852-1.001), A/A 0.984 (0.940-1.031)",
+   "first run, 12 rounds: T2048: B-BEFORE 1038.8, B-AFTER 1020.2, P-EAGER 753.8, P-IND 684.4 ms an update; after/before 0.985 (0.950-1.022), after/eager 1.382 (1.301-1.468), after/Inductor 1.551 (1.474-1.632), A/A 1.027 (0.982-1.073)",
+   "second run, 24 rounds: T512: B-BEFORE 92.3, B-AFTER 85.8, P-EAGER 228.6, P-IND 169.3 ms an update; after/before 0.915 (0.875-0.956), after/eager 0.363 (0.347-0.379), after/Inductor 0.488 (0.462-0.515), A/A 0.978 (0.931-1.028)",
+   "second run, 24 rounds: T1024: B-BEFORE 283.2, B-AFTER 262.8, P-EAGER 335.7, P-IND 282.1 ms an update; after/before 0.914 (0.879-0.950), after/eager 0.766 (0.728-0.806), after/Inductor 0.919 (0.882-0.958), A/A 1.002 (0.975-1.028)",
+   "second run, 24 rounds: T2048: B-BEFORE 1054.6, B-AFTER 980.3, P-EAGER 720.7, P-IND 689.9 ms an update; after/before 0.920 (0.892-0.948), after/eager 1.346 (1.297-1.396), after/Inductor 1.416 (1.360-1.473), A/A 1.001 (0.974-1.029)"
+  ],
+  "phases": [
+   "after clang 4x2048x4x4x32 contract 0 at 1 thread(s): 2026M TSC cycles a call -- dv 564M, dp_pass0 300M, dot 121M, dp_pass1 209M, ds 66M, dq 231M, dk 528M",
+   "after clang 4x1024x4x4x32 contract 0 at 1 thread(s): 395M TSC cycles a call -- dv 115M, dp_pass0 77M, dot 23M, dp_pass1 34M, ds 12M, dq 45M, dk 86M",
+   "after clang 4x512x4x4x32 contract 0 at 1 thread(s): 83M TSC cycles a call -- dv 24M, dp_pass0 12M, dot 5M, dp_pass1 3M, ds 4M, dq 15M, dk 17M",
+   "after clang 4x2048x4x4x32 contract 0 at 4 thread(s): 609M TSC cycles a call -- dv 655M, dp_pass0 309M, dot 142M, dp_pass1 217M, ds 87M, dq 223M, dk 594M",
+   "after clang 1x4096x8x8x64 contract 2 at 1 thread(s): 8864M TSC cycles a call -- dv 2241M, dp_pass0 1243M, dot 418M, dp_pass1 1029M, ds 280M, dq 1353M, dk 2282M",
+   "after gcc 4x2048x4x4x32 contract 0 at 1 thread(s): 1807M TSC cycles a call -- dv 512M, dp_pass0 248M, dot 110M, dp_pass1 174M, ds 55M, dq 203M, dk 499M",
+   "before clang 4x2048x4x4x32 contract 0 at 1 thread(s): 2546M TSC cycles a call -- dv 768M, dp_pass0 323M, dot 133M, dp_pass1 227M, ds 81M, dq 259M, dk 747M",
+   "before clang 4x1024x4x4x32 contract 0 at 1 thread(s): 558M TSC cycles a call -- dv 165M, dp_pass0 90M, dot 36M, dp_pass1 42M, ds 16M, dq 56M, dk 150M",
+   "before clang 4x512x4x4x32 contract 0 at 1 thread(s): 108M TSC cycles a call -- dv 36M, dp_pass0 13M, dot 6M, dp_pass1 3M, ds 5M, dq 16M, dk 27M",
+   "before clang 4x2048x4x4x32 contract 0 at 4 thread(s): 775M TSC cycles a call -- dv 891M, dp_pass0 355M, dot 151M, dp_pass1 258M, ds 105M, dq 246M, dk 883M",
+   "before clang 1x4096x8x8x64 contract 2 at 1 thread(s): 8749M TSC cycles a call -- dv 2482M, dp_pass0 1034M, dot 393M, dp_pass1 872M, ds 229M, dq 1265M, dk 2458M",
+   "before gcc 4x2048x4x4x32 contract 0 at 1 thread(s): 2236M TSC cycles a call -- dv 684M, dp_pass0 268M, dot 130M, dp_pass1 189M, ds 69M, dq 231M, dk 658M"
+  ]
+ },
+ "reproduce": [
+  "git show BEFORE:runtime/c/<unit> > BEFORE_SRC/<unit>; git show AFTER:... > AFTER_SRC/<unit>  # bcir_tensor.c/.h, bcir_decoder_train.c/.h",
+  "CF='-std=c11 -O3 -ffp-contract=off -fno-math-errno -pthread'",
+  "CC $CF -I SRC bwd_hash.c SRC/bcir_tensor.c -lm; CC $CF -I SRC ../attn-rate/attn_hash.c SRC/bcir_tensor.c -lm  # run each, compare BEFORE's lines with AFTER's",
+  "CC $CF -fPIC -shared -I SRC SRC/bcir_tensor.c -lm -o libtensor_X.so; clang -O2 ab_bwd.c -ldl -lm; ab_bwd libtensor_BEFORE.so libtensor_AFTER.so 12 B T H KH D THREADS CONTRACT",
+  "CC $CF -fPIC -shared -I SRC SRC/bcir_tensor.c SRC/bcir_decoder_train.c -lm -o libdec_X.so; clang -O2 -I SRC ../attn-rate/step_ab.c -ldl -lm; step_ab libdec_BEFORE.so libdec_AFTER.so VOCAB WIDTH HEADS KVHEADS LAYERS FF BATCH TIME CONTRACT THREADS ROUNDS",
+  "python3 -I ../infer-attn/build_level3.py LEVEL2_WORK BEFORE_WORK BEFORE_SRC MAIN_SRC --scratch (and AFTER); TORCH_PY -I train_compare.py BEFORE_WORK AFTER_WORK geo-train.json --rounds 12 --steps 3 --threads 4 --times 512,1024,2048  # the work dirs: GEO-2b's level 2 without its build, baseline, bf16, checkpoints and results",
+  "TORCH_PY -I ../geo2/port/geo_compare.py ATTN_RATE_WORK geo-long.json --models attention --train-t 512,1024,2048 --infer-t 2048 --rounds 12 --steps 3",
+  "python3 -I instrument_bwd.py SRC/bcir_tensor.c phase_tensor.c; CC $CF -I SRC bwd_phase_bench.c phase_tensor.c -lm; bwd_phase_bench B T H KH D THREADS ROUNDS CONTRACT"
+ ],
+ "faults": "tools/testing/faults/bwd-width.json BW1-BW6, each injected and caught by its own check, each compiling warning-free under GCC 13, clang 18 and clang 23; NA8, NA9, NA16 (ndt-attn.json) and NZ5 (ndt-fuse.json) re-anchored to the lines this moved, each keeping its defect, caught again.",
+ "scripts": "the Python script is the one that ran, formatted by ruff 0.16.6 (the same AST); the C benches byte for byte",
+ "before": "df6e8dd9589ea7b90084181726141e5451fa0f3c",
+ "after": "946fe782f765c170c20b2cf703d15abb630cac2a"
+}

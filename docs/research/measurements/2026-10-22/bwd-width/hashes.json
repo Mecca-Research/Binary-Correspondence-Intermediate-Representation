@@ -1,0 +1,33 @@
+{
+ "what": "bwd_hash.c (34 cases: 17 shapes whose head widths meet the 16-lane boundaries -- 2, 3, 8, 15, 16, 17, 24, 32, 33, 47, 48, 49, 64, 81, 130 -- x contracts 0 and 2 (the fused one); each case's dq, dk, dv and the score adjoints the backward leaves in p, after the stored forward) and attn_hash.c (ATTN-RATE's 88 forward cases), each built from the tree before and after",
+ "compilers": {
+  "clang": {
+   "bwd_hash": {
+    "lines": 34,
+    "before_equals_after": true,
+    "after_sha256": "0d86758cb4c015e8d9c0e0cfce6f99a50840713c23d056a5fd9b9d9090cad1fa"
+   },
+   "attn_hash": {
+    "lines": 88,
+    "before_equals_after": true,
+    "after_sha256": "82c1c266c72d70c53319f163de63a351199f58ea24d516aae0e03cc99fd24736"
+   }
+  },
+  "gcc": {
+   "bwd_hash": {
+    "lines": 34,
+    "before_equals_after": true,
+    "after_sha256": "0d86758cb4c015e8d9c0e0cfce6f99a50840713c23d056a5fd9b9d9090cad1fa"
+   },
+   "attn_hash": {
+    "lines": 88,
+    "before_equals_after": true,
+    "after_sha256": "82c1c266c72d70c53319f163de63a351199f58ea24d516aae0e03cc99fd24736"
+   }
+  }
+ },
+ "clang_equals_gcc": {
+  "bwd_hash": true,
+  "attn_hash": true
+ }
+}

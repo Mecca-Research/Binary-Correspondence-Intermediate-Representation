@@ -330,7 +330,7 @@ static void attention_reference(void) {
   static const size_t shapes[][5]={{1,1,1,1,2},{1,2,1,1,1},{2,5,4,2,6},{1,37,2,1,48},
       {2,70,8,4,48},{1,33,3,1,65},{1,40,2,2,130},{2,64,4,1,24},{1,330,2,1,8},
       {1,7,1,1,3},{1,8,1,1,16},{1,9,2,1,17},{1,31,1,1,15},{1,32,2,2,47},{1,33,2,1,49},
-      {1,40,1,1,1},{1,20,1,1,32},{1,9,2,1,33},{1,11,2,2,81}};  /* the context's widths: 32, 33, 48+33 */
+      {1,40,1,1,1},{1,20,1,1,32},{1,9,2,1,33},{1,11,2,2,81}};  /* the context's and the transposed products' widths: 32, 33, 48+33 */
   size_t s,i,pass;
   for (pass=0;pass<2;pass++) for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) {
     size_t b=shapes[s][0],t=shapes[s][1],nh=shapes[s][2],nk=shapes[s][3],d=shapes[s][4];
@@ -373,7 +373,7 @@ static void attention_fused_reference(void) {
   static const size_t shapes[][5]={{1,1,1,1,2},{1,2,1,1,1},{2,5,4,2,6},{1,37,2,1,48},
       {2,70,8,4,48},{1,33,3,1,65},{1,40,2,2,130},{2,64,4,1,24},{1,330,2,1,8},
       {1,7,1,1,3},{1,8,1,1,16},{1,9,2,1,17},{1,31,1,1,15},{1,32,2,2,47},{1,33,2,1,49},
-      {1,40,1,1,1},{1,20,1,1,32},{1,9,2,1,33},{1,11,2,2,81}};  /* the context's widths: 32, 33, 48+33 */
+      {1,40,1,1,1},{1,20,1,1,32},{1,9,2,1,33},{1,11,2,2,81}};  /* the context's and the transposed products' widths: 32, 33, 48+33 */
   static _Alignas(max_align_t) unsigned char pool_memory[4096];
   size_t s,i,pass,cases=0,apart=0; unsigned ex,threads; int bad;
   for (threads=1;threads<=4;threads+=threads==1 ? 1 : 2) {

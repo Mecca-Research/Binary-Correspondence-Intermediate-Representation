@@ -4156,6 +4156,67 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: the portable instance (every non-x86 host's, untimed here) and GCC's SiLU and SwiGLU
     loops are unchanged; the decoder's training step, at head dimension 48, gains nothing resolved
     under clang; AMX timing; a GPU.
+  BWD-WIDTH (2026-10-22): the attention backward's transposed products at the head's width, every value
+    as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §8,
+    [measurements/2026-10-22/bwd-width/](research/measurements/2026-10-22/bwd-width/README.json)).
+  - The loss it answers: the GEO attention model's training update at long context. Paired with PyTorch
+    on ATTN-RATE's tree (the study's update -- forward, backward, clipping, AdamW -- of 4 x T tokens, 12
+    rotated rounds), BCIR took 94, 281 and 1107 ms at T512, T1024 and T2048 (medians) against eager
+    PyTorch's 219, 364 and 783 and Inductor's 165, 292 and 739, paired: faster than both at T512 (x0.42
+    and x0.55 of their times), faster than eager's and at parity with Inductor's at T1024 (x0.80;
+    x0.994, 0.964-1.025), x1.43 of eager's time and x1.51 of Inductor's at T2048. BCIR's update grows as
+    T squared there (x3.9 from T1024 to T2048, PyTorch's x2.2-2.5): the stored attention, whose forward
+    took 66 ms a layer at T2048 on four threads after ATTN-RATE and its backward 206 ms -- three
+    quarters of it.
+  - The change: the backward's two transposed products -- dV = P^T dY and dK = dS^T Q,
+    `att512_transposed_any` -- ran a 48-channel block as three 16-lane vectors whatever the head's
+    width, the waste CTX-WIDTH removed from the context: at head dimension 32 a third vector of masked
+    lanes was loaded, multiplied and stored for every term. `att512_tr_block` runs the vectors a block's
+    channels reach -- one, two or three -- each element's terms the same, in the same order.
+  - Every value is the same: `bwd_hash.c`'s 34 backward cases (17 shapes whose head widths meet the
+    16-lane boundaries, v1 and fused: dq, dk, dv and the score adjoints left in p) and ATTN-RATE's 88
+    forward cases byte for byte before and after under clang 18 and GCC 13; the GEO model's trained
+    state (weights, both moments, the step) the same digest from both builds after three updates at each
+    context.
+  - Measured on the committed tree against the one before it, both builds in one process (A, B and B
+    again as the A/A control, each round's outputs held equal). Each row whose interval held 1 or met
+    its A/A interval, but the two controls at head dimension 48, ran again with 24 rounds, declared
+    before it ran; both runs are recorded. The backward at B4/T2048, head dimension 32, x0.850
+    (0.815-0.888) on one core; on four threads x0.886 (0.841-0.934) at T2048, x0.817 at T1024 and x0.859
+    at T512 (24 rounds; the 12-round run x0.890, 0.857 and 0.863, each meeting its A/A interval); GCC
+    x0.839 at T2048 and x0.868 at T1024; B1/T4096 with 8 heads of 64 x0.894; the 9.84M decoder's
+    attention, head dimension 48 -- three vectors either way -- unchanged (x1.033, 0.918-1.164). The
+    training step at the GEO model's dimensions x0.912 (0.873-0.953) at T2048 under clang and x0.905
+    under GCC; at T512 and T1024 x0.938 and x0.911 in the 24-round run (x0.943 and x0.925 in the first),
+    each meeting its A/A interval; the 9.84M decoder's step unchanged (x0.963, 0.927-1.001). The GEO
+    study's attention model on level 3 (built with GCC, as the study builds it): x0.914 (0.879-0.950) of
+    the build before at T1024 and x0.920 (0.892-0.948) at T2048 over 24 rounds (the 12-round first run
+    x0.958 and x0.985, its intervals holding 1), x0.915 at T512 meeting its A/A interval; the trained
+    state the same digest. Against PyTorch the update is faster than eager's and Inductor's at T512
+    (x0.36 and x0.49 of their times) and at T1024 (x0.77 and x0.92), and at T2048 x1.35 of eager's time
+    and x1.42 of Inductor's.
+  - What remains at T2048, timed a phase at a time on one core (an instrumented copy of the unit, TSC
+    cycles a call at B4): of the backward's 2026M, dV 564M and dK 528M -- the two transposed products
+    still more than half, at about 8 cycles a vector multiply-add against the context form's 3.4 for the
+    same multiply-adds (dQ, 231M) -- the dP tiles 300M and their second evaluation 209M (past T512 they
+    take the GEMM kernel: the values' transposed panel holds 16384 floats; past the first 256 columns
+    pass 1 evaluates them again), the row dots 121M and the score adjoints 66M. Each transposed product
+    walks P down its columns, a row of P a term: at T2048 an 8 KB stride, a new page every term. Walking
+    P a band of rows at a time, each output row's terms still in ascending order, is the next training
+    update.
+  - ATTN-SOFTMAX, measured and not taken: the first of ATTN-RATE's candidates -- the softmax's maximum
+    taken along the stored rows (order-free: NaN skipped, and exp1(+-0) = 1 makes the zero's sign
+    irrelevant), its exponential in row order and one transpose for the in-order sum -- every value the
+    same (the 88 cases, both compilers), at parity: the inference attention at B4/T2048 x0.970
+    (0.915-1.028) of its time on one core, x0.973 (0.929-1.020) on four, x0.950 (0.886-1.018) under GCC.
+    The transposes it removed were spent again in the pass it added; the softmax's remainder is its
+    exponential and its division, both fixed by the contract.
+  - Witnesses: the v1 and fused attention references already hold the backward at the widths the vector
+    boundaries meet (1, 15-17, 24, 32, 33, 47-49, 65, 81, 130); `bwd-width.json` BW1-BW6, each caught by
+    its own check and compiling warning-free under GCC 13, clang 18 and clang 23; NA8, NA9, NA16 and NZ5
+    re-anchored to the lines this moved, each keeping its defect, caught again.
+  - Not claimed: the portable and AVX2 instances (the change is the AVX-512 kernel's); the 9.84M decoder
+    at head dimension 48, three vectors either way; AMX timing; a GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

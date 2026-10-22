@@ -60,15 +60,15 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NA8 the transposed products' diagonal terms reach every row of the block (dv and dk take terms before their own row)",
-      "new": "          __mmask16 take=(__mmask16)0xffffu;",
-      "old": "          __mmask16 take=(__mmask16)(r<=di ? 0xffffu : 0u);",
+      "new": "      __mmask16 take=(__mmask16)0xffffu;",
+      "old": "      __mmask16 take=(__mmask16)(r<=di ? 0xffffu : 0u);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NA9 the transposed products' full terms start one term late (each block loses term j0+7 for every row)",
-      "new": "      for (i=j0+8;i<t;i++) {  /* every row of the block takes term i */",
-      "old": "      for (i=j0+7;i<t;i++) {  /* every row of the block takes term i */",
+      "new": "  for (i=j0+8;i<t;i++) {  /* every row of the block takes term i */",
+      "old": "  for (i=j0+7;i<t;i++) {  /* every row of the block takes term i */",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -116,8 +116,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NA16 a row the transposed products' diagonal term skips loses its sum (zero-masked where the add must merge)",
-      "new": "          a0[r]=_mm512_maskz_add_ps(take,a0[r],_mm512_mul_ps(mv,b0));",
-      "old": "          a0[r]=ATT_MADD_MASK(f,a0[r],take,mv,b0);",
+      "new": "      a0[r]=_mm512_maskz_add_ps(take,a0[r],_mm512_mul_ps(mv,b0));",
+      "old": "      a0[r]=ATT_MADD_MASK(f,a0[r],take,mv,b0);",
       "path": "runtime/c/bcir_tensor.c"
     }
   ]

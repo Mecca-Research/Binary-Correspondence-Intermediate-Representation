@@ -409,3 +409,62 @@ softmax's maximum taken where the scores are stored, rather than in its own tran
 key panels packed once for all its strips (each strip repacks every panel up to its last row, 32 times
 the stored forward's packs at T2048); and the context's eight broadcasts a key. An online softmax, as
 in PyTorch's flash kernel, would be a new arithmetic contract.
+
+## 8. BWD-WIDTH: the training update at long context (2026-10-22)
+
+Sections 6 and 7 measured the model's inference. Its training update at long context, paired with
+PyTorch the same way on ATTN-RATE's tree (the study's update -- forward, backward, clipping, AdamW -- of
+4 x T tokens, 12 rotated rounds), was faster than both PyTorch routes at T512, faster than eager's and
+at parity with Inductor's at T1024, and slower at T2048: BCIR took 94, 281 and 1107 ms an update at
+T512, T1024 and T2048 (medians), against eager PyTorch's 219, 364 and 783 and Inductor's 165, 292 and
+739 -- paired, x0.994 (0.964-1.025) of Inductor's time at T1024, and x1.43 of eager's and x1.51 of
+Inductor's at T2048. BCIR's time grows as T squared there (x3.9 from T1024 to T2048, PyTorch's
+x2.2-2.5): the stored attention, whose forward took 66 ms a layer at T2048 on four threads after
+ATTN-RATE and whose backward took 206 ms.
+
+The backward's two transposed products -- dV = P^T dY and dK = dS^T Q -- had the waste CTX-WIDTH removed
+from the context: a 48-channel block run as three 16-lane vectors whatever the head's width, so at the
+study's head dimension 32 a third vector of masked lanes was loaded, multiplied and stored for every
+term. **BWD-WIDTH** runs the vectors a block's channels reach, each element's terms the same, in the
+same order. The backward fell to x0.850 (0.815-0.888) of its time on one core at B4/T2048, x0.82-0.89 on
+four threads under clang and x0.84 under GCC (a second run of 24 rounds, declared before it ran, where
+the first run's 12 rounds left the four-thread rows inside their controls' noise); the decoder's
+training step at the study's dimensions x0.912 at T2048 under clang and x0.905 under GCC. Every adjoint
+is the same: 34 backward cases byte for byte under both compilers, and the model's trained state the
+same digest from both builds.
+
+The attention model on level 3, built as sections 6 and 7 built it (and with GCC, as the study builds
+it), one training update of 4 x T tokens, 24 rotated rounds of three updates
+([measurements/2026-10-22/bwd-width/](measurements/2026-10-22/bwd-width/README.json); the 12-round first
+run is recorded beside it):
+
+| T | before ms | after ms | P-EAGER ms | P-IND ms | after / before | after / P-EAGER | after / P-IND | A/A |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 512 | 92.3 | 85.8 | 228.6 | 169.3 | 0.91 [0.88, 0.96] | 0.36 [0.35, 0.38] | 0.49 [0.46, 0.51] | 0.98 [0.93, 1.03] |
+| 1024 | 283.2 | 262.8 | 335.7 | 282.1 | 0.91 [0.88, 0.95] | 0.77 [0.73, 0.81] | 0.92 [0.88, 0.96] | 1.00 [0.98, 1.03] |
+| 2048 | 1054.6 | 980.3 | 720.7 | 689.9 | 0.92 [0.89, 0.95] | 1.35 [1.30, 1.40] | 1.42 [1.36, 1.47] | 1.00 [0.97, 1.03] |
+
+The trained state is the same digest from both builds at every context. At T1024 and T2048 the update is
+x0.91 and x0.92 of the build before's time, each interval clear of its control's; at T512 x0.91, its
+interval meeting its control's. The first run, 12 rounds, read x0.90, x0.96 and x0.98, none clear of its
+control. Against PyTorch the update is now faster than Inductor's at T1024 too (x0.92, where ATTN-RATE's
+tree was at parity, x0.994), and at T2048 still x1.35 of eager's time and x1.42 of Inductor's.
+
+One candidate section 7 named was measured and not taken. **ATTN-SOFTMAX** took the softmax's maximum
+along the stored rows -- an order-free maximum: NaN is skipped, and since exp1(+-0) = 1 the sign of a
+zero maximum changes no value -- then its exponential in row order and one transpose for the in-order
+sum. Every value was the same (the 88 attention cases under both compilers), and the attention ran at
+parity: the inference attention at B4/T2048 x0.970 (0.915-1.028) of its time on one core, x0.973
+(0.929-1.020) on four, x0.950 (0.886-1.018) under GCC. The transposes it removed were spent again in the
+pass it added; what remains of the softmax is its exponential and its division, both fixed by the
+contract.
+
+What remains at T2048 is mostly the backward's two transposed products. Timed a phase at a time on one
+core (an instrumented copy of the unit, TSC cycles a call at B4/T2048), the backward after BWD-WIDTH
+spends 564M of its 2026M cycles on dV and 528M on dK, about 8 cycles a vector multiply-add, where dQ --
+the same multiply-adds in the context's form -- takes 231M, about 3.4. Each transposed product walks P
+down its columns, a row of P a term: at T2048 an 8 KB stride and a new 4 KB page every term. A band of
+P's rows at a time, each output row's terms still in ascending order, would read P along its rows; that
+is the next training update, to be measured. After it come the dP tiles (300M, and 209M more for their
+second evaluation): past T512 they take the GEMM kernel, since the values' transposed panel holds 16384
+floats, and past the first 256 columns pass 1 evaluates them again.
