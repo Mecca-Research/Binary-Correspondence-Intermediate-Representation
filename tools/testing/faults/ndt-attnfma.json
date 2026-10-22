@@ -32,8 +32,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AF4 the probability adjoint's fused tiles instantiate v1's arithmetic",
-      "new": "  att512_dp_any(0,rows,i0,jt,cols,d,dy,ldy,vt,t,tile,ldt);",
-      "old": "  att512_dp_any(1,rows,i0,jt,cols,d,dy,ldy,vt,t,tile,ldt);",
+      "new": "  att512_dp_any(0,rows,i0,jt,cols,d,dy,ldy,vt,ldv,tile,ldt);",
+      "old": "  att512_dp_any(1,rows,i0,jt,cols,d,dy,ldy,vt,ldv,tile,ldt);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

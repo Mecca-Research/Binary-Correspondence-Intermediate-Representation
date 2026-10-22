@@ -561,6 +561,11 @@ block's channels reach -- one, two or three -- not three whatever the head's wid
 was (`attn-rate.json` CW1-CW6, `bwd-width.json` BW1-BW6): at head dimension 32 the context and the
 transposed products no longer compute a third vector of masked lanes, the backward x0.85 on one core at
 B4/T2048 (the [GEO review](../research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §7-§8).
+Since BWD-LONG (2026-10-22) the backward at long context reads P along its rows: once a row of P spans a
+4 KB page the transposed products run a band of 32 rows at a time, each element's terms still in
+ascending order, and past the KV head's whole transposed panel each probability-adjoint tile gets its
+own panel for the register blocks (`bwd-long.json` BB1-BB6 and DP1-DP4): the backward x0.60 on one core
+at B4/T2048, every value as it was (§9).
 Since NDT-SCAN-W (2026-10-17) the forward's verdict on its activations is taken by their writers: the
 RMSNorm, the SwiGLU product and the attention read back what their tasks wrote while it is in the
 core's cache, a region answering through another its value reaches and the attention reading its

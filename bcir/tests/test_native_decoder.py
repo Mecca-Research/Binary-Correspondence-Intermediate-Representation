@@ -140,8 +140,11 @@ def test_native_c_harness_c11_and_c23():
     # check_tests.py reports as the finding `build` and a RED sweep as DOES NOT BUILD (RED-VACUITY)
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
         # and C23 once more with the writers' verdict bytes bounded at two tasks, so every scan
-        # entry takes the scan after its job (NDT-SCAN-W), and once capped at AVX2, so a host whose
-        # widest variant is AVX-512 runs the update's AVX2 pairs and commit too (NDT-UPDATE); every
+        # entry takes the scan after its job (NDT-SCAN-W), once capped at AVX2, so a host whose
+        # widest variant is AVX-512 runs the update's AVX2 pairs and commit too (NDT-UPDATE), and
+        # once with the backward's long-context paths at every context -- the transposed products
+        # banded from 16 terms and every probability-adjoint tile on its own panel -- so the
+        # attention references hold what a long context takes otherwise (BWD-LONG); every
         # build with the commit's shared division exposed to the harness's check of it, with
         # PX-1's launch trace compiled in but never begun, PX-5's layout probes compiled in but
         # never called, and PX-3's job clock compiled in but never begun -- so the probes build
@@ -153,6 +156,7 @@ def test_native_c_harness_c11_and_c23():
             ("c2x", [], ""),
             ("c2x", ["-DBCIR_TENSOR_SCAN_TASKS=2"], "-bounded"),
             ("c2x", ["-DBCIR_TENSOR_MAX_VARIANT=2"], "-avx2"),
+            ("c2x", ["-DBCIR_ATT_BAND_FROM=16", "-DBCIR_ATT_WHOLE=0"], "-long"),
         )
         for standard, options, tag in builds:
             exe = Path(temporary) / f"gate-{standard}{tag}"

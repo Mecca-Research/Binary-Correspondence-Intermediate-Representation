@@ -4217,6 +4217,67 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     re-anchored to the lines this moved, each keeping its defect, caught again.
   - Not claimed: the portable and AVX2 instances (the change is the AVX-512 kernel's); the 9.84M decoder
     at head dimension 48, three vectors either way; AMX timing; a GPU.
+  BWD-LONG (2026-10-22): the attention backward at long context, every value as it was
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §9,
+    [measurements/2026-10-22/bwd-long/](research/measurements/2026-10-22/bwd-long/README.json)).
+  - The loss it answers: BWD-WIDTH's residual. Timed a phase at a time on one core at B4/T2048 (TSC
+    cycles a call), the backward spent 494M and 491M of its 1823M on its two transposed products, dV =
+    P^T dY and dK = dS^T Q, at about 7 cycles a vector multiply-add where dQ -- the same multiply-adds
+    in the context's form, walking P along its rows -- took 3.2; and 266M and 181M on its
+    probability-adjoint tiles, which past T512 took the GEMM kernel.
+  - BWD-BAND: each transposed-product block walked its terms down P's columns, a row of P a term -- at
+    T2048 an 8 KB stride, a new page every term. Once a row of P spans a 4 KB page
+    (`BCIR_ATT_BAND_FROM`, 1024 floats) the terms run a band of 32 rows of P at a time
+    (`BCIR_ATT_BAND`): every 8-row output block the band reaches takes the band's terms -- its diagonal
+    terms first when the band holds them -- before the next band starts, its sums stored between bands,
+    so a band's rows are read along their columns. Each element takes its terms in ascending order
+    either way; below the threshold one band holds every term, the loop as it was (banded at every
+    context, the 9.84M decoder's attention at T128 read x1.074, 1.028-1.121).
+  - DP-PANEL: the probability-adjoint tiles read the KV head's values transposed once into the task's
+    16384-float panel (NDT-ATTN-5), so past it -- T512 at head dimension 32 -- they took the GEMM
+    kernel. Each tile's values are now transposed into the same buffer as the tile is evaluated (d x 64
+    floats, head dimensions to 256), for the register blocks: the GEMM kernel's arithmetic for these
+    operands, the same bits.
+  - Every value is the same: `band_hash.c`'s 48 backward cases -- BWD-WIDTH's 17 shapes and 7 past the
+    threshold, T1024 to T2048, whole bands and a context ending inside one, a GQA group, head widths of
+    one to three vectors, v1 and fused: dq, dk, dv and the score adjoints left in p -- and ATTN-RATE's
+    88 forward cases byte for byte before and after under clang 18 and GCC 13; the GEO model's trained
+    state the same digest from both builds after three updates at each context.
+  - Measured on the committed tree against the one before it, both builds in one process (A, B and B
+    again as the A/A control, each round's outputs held equal), 24 rounds every row. The backward x0.597
+    (0.554-0.644) of its time on one core at B4/T2048; on four threads x0.641 at T2048 and x0.707 at
+    T1024 (GCC x0.635 and x0.687); B1/T4096 with 8 heads of 64 x0.695; T512 (x0.994) and the 9.84M
+    decoder's attention at T128 (x0.977) unchanged. On one core the phases at T2048: dV 494M -> 211M, dK
+    491M -> 199M, the tiles 266M -> 166M and their second evaluation 181M -> 116M, the rest unchanged;
+    the backward 1823M -> 1077M. The training step at the GEO model's dimensions x0.804 (0.783-0.825) at
+    T2048 under clang and x0.797 under GCC, x0.852 at T1024, x0.958 at T512 (0.910-1.009); the 9.84M
+    decoder's step read x0.899 (0.860-0.940), more than its unchanged attention accounts for, so this
+    record does not attribute it. The GEO study's attention model on level 3 (built with GCC, as the
+    study builds it): x0.789 (0.769-0.810) of the build before at T2048 and x0.904 (0.877-0.931) at
+    T1024, unchanged at T512 (x0.984); the trained state the same digest. Against PyTorch the update is
+    faster than eager's and Inductor's at T512 (x0.38 and x0.55 of their times) and T1024 (x0.68 and
+    x0.85), and at T2048 x1.09 (1.051-1.131) of eager's time and x1.23 of Inductor's -- from x1.35 and
+    x1.42 after BWD-WIDTH.
+  - The design runs, recorded with the slice: bands of 16 measured the same as 32 and bands of 64
+    slower; banded at every context, short contexts paid (the T128 decoder's x1.074), hence the
+    threshold; the tiles' panels over the bands alone x0.842 on one core at T2048 and x0.826 at T1024.
+  - BWD-FUSE, measured and not taken: each 32-row strip of P taken through every pass while it is in
+    cache -- dV's band of P's rows, the tiles and dots, the score adjoints, dK's band of dS's rows, dQ's
+    rows -- every value the same (48 cases, both compilers), at T2048 x0.927 (0.842-1.021) on one core
+    and x0.930 on four, parity under GCC and at T4096, and x1.092 (1.017-1.172) at T1024: a strip's
+    bands keep all of dV's and dK's accumulators live, a larger working set than the separate passes.
+  - What remains at T2048, on one core: of 1077M, dQ 215M, dV 211M, dK 199M, the tiles 166M and their
+    second evaluation 116M, the row dots 110M, the score adjoints 53M -- every product now at about 3.1
+    cycles a vector multiply-add, two vector operations a term under v1's separate multiply and add.
+  - Witnesses: the C harness builds once more with both paths at every context (`BCIR_ATT_BAND_FROM` 16,
+    `BCIR_ATT_WHOLE` 0: bands from 16 terms, every tile on its own panel), so the v1 and fused attention
+    references hold them -- contexts of 33 to 330 run two to eleven bands, a context ending inside a
+    band among them; `bwd-long.json` BB1-BB6 and DP1-DP4, each caught by its own check and compiling
+    warning-free under GCC 13, clang 18 and clang 23; NA9, NA13, NZ5, AF4, NT8, BW1 and BW2 re-anchored
+    to the lines this moved, each keeping its defect, caught again.
+  - Not claimed: the threshold and the band's height are this host's choice, and no value depends on
+    them; the portable and AVX2 instances; the bf16 attention's own transposed products; AMX timing; a
+    GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

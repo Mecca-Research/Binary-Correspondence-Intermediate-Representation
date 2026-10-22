@@ -1,0 +1,269 @@
+{
+ "what": "instrument_bwd2.py's copy of each tensor unit (TSC cycles summed per phase of every head's backward: dV = P^T dY, pass 0's dP tiles, pass 0's row dots, pass 1's recomputed dP tiles, pass 1's score adjoints, dQ = dS K, dK = dS^T Q) under ../bwd-width/bwd_phase_bench.c, each round the stored forward untimed then the backward; cycles a call (on four threads the phases are summed over the threads, the wall is the call's). The after tree ran first, then the before tree, one after the other (not interleaved)",
+ "rows": [
+  {
+   "side": "after",
+   "compiler": "clang",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "contract": 0,
+   "rounds": 3,
+   "wall_cycles_per_call": 1076644343,
+   "dv": 210505370,
+   "dp_pass0": 166414362,
+   "dot": 110082493,
+   "dp_pass1": 115710355,
+   "ds": 53488846,
+   "dq": 215204175,
+   "dk": 198577859
+  },
+  {
+   "side": "after",
+   "compiler": "clang",
+   "shape": [
+    4,
+    1024,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "contract": 0,
+   "rounds": 4,
+   "wall_cycles_per_call": 305279680,
+   "dv": 62233357,
+   "dp_pass0": 50926192,
+   "dot": 34406980,
+   "dp_pass1": 28009288,
+   "ds": 16285668,
+   "dq": 55251650,
+   "dk": 55945051
+  },
+  {
+   "side": "after",
+   "compiler": "clang",
+   "shape": [
+    4,
+    512,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "contract": 0,
+   "rounds": 6,
+   "wall_cycles_per_call": 70088082,
+   "dv": 21740805,
+   "dp_pass0": 9929097,
+   "dot": 4792444,
+   "dp_pass1": 2427390,
+   "ds": 3342922,
+   "dq": 11519469,
+   "dk": 14520235
+  },
+  {
+   "side": "after",
+   "compiler": "clang",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 0,
+   "rounds": 3,
+   "wall_cycles_per_call": 361312463,
+   "dv": 295847703,
+   "dp_pass0": 186834235,
+   "dot": 135009809,
+   "dp_pass1": 134945030,
+   "ds": 73294032,
+   "dq": 215124281,
+   "dk": 278271205
+  },
+  {
+   "side": "after",
+   "compiler": "clang",
+   "shape": [
+    1,
+    4096,
+    8,
+    8,
+    64
+   ],
+   "threads": 1,
+   "contract": 2,
+   "rounds": 2,
+   "wall_cycles_per_call": 5204716638,
+   "dv": 1355328703,
+   "dp_pass0": 491557448,
+   "dot": 368237977,
+   "dp_pass1": 404441179,
+   "ds": 200381981,
+   "dq": 1183866993,
+   "dk": 1185161678
+  },
+  {
+   "side": "after",
+   "compiler": "gcc",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "contract": 0,
+   "rounds": 3,
+   "wall_cycles_per_call": 1142110387,
+   "dv": 218659730,
+   "dp_pass0": 180955333,
+   "dot": 118053010,
+   "dp_pass1": 129936215,
+   "ds": 59945255,
+   "dq": 214926519,
+   "dk": 212473357
+  },
+  {
+   "side": "before",
+   "compiler": "clang",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "contract": 0,
+   "rounds": 3,
+   "wall_cycles_per_call": 1823188719,
+   "dv": 493990078,
+   "dp_pass0": 265808057,
+   "dot": 111945497,
+   "dp_pass1": 180888783,
+   "ds": 58840277,
+   "dq": 213614653,
+   "dk": 491058154
+  },
+  {
+   "side": "before",
+   "compiler": "clang",
+   "shape": [
+    4,
+    1024,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "contract": 0,
+   "rounds": 4,
+   "wall_cycles_per_call": 394741075,
+   "dv": 110573725,
+   "dp_pass0": 73762430,
+   "dot": 25489931,
+   "dp_pass1": 34803182,
+   "ds": 12855189,
+   "dq": 49761194,
+   "dk": 85397760
+  },
+  {
+   "side": "before",
+   "compiler": "clang",
+   "shape": [
+    4,
+    512,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "contract": 0,
+   "rounds": 6,
+   "wall_cycles_per_call": 62652515,
+   "dv": 19773765,
+   "dp_pass0": 8658155,
+   "dot": 3846140,
+   "dp_pass1": 2210993,
+   "ds": 2793381,
+   "dq": 10260992,
+   "dk": 13515205
+  },
+  {
+   "side": "before",
+   "compiler": "clang",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 0,
+   "rounds": 3,
+   "wall_cycles_per_call": 566616653,
+   "dv": 575559142,
+   "dp_pass0": 295913511,
+   "dot": 135209020,
+   "dp_pass1": 211817543,
+   "ds": 77693375,
+   "dq": 220896326,
+   "dk": 543430207
+  },
+  {
+   "side": "before",
+   "compiler": "clang",
+   "shape": [
+    1,
+    4096,
+    8,
+    8,
+    64
+   ],
+   "threads": 1,
+   "contract": 2,
+   "rounds": 2,
+   "wall_cycles_per_call": 7250026897,
+   "dv": 1975909934,
+   "dp_pass0": 929200071,
+   "dot": 361168235,
+   "dp_pass1": 766055353,
+   "ds": 203177769,
+   "dq": 1150852018,
+   "dk": 1848024204
+  },
+  {
+   "side": "before",
+   "compiler": "gcc",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "contract": 0,
+   "rounds": 3,
+   "wall_cycles_per_call": 1858237893,
+   "dv": 506244849,
+   "dp_pass0": 260509667,
+   "dot": 120060525,
+   "dp_pass1": 181217899,
+   "ds": 59235593,
+   "dq": 223989439,
+   "dk": 499696516
+  }
+ ]
+}

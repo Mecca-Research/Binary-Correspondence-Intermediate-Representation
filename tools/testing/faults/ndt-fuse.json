@@ -137,7 +137,7 @@
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NZ5 the transposed products start from what dv holds on the KV head's first query head (no fill precedes them)",
       "new": "    a0[r]=_mm512_maskz_loadu_ps(m0,o);\n",
-      "old": "    a0[r]=_mm512_maskz_loadu_ps(first ? 0 : m0,o);\n",
+      "old": "    a0[r]=_mm512_maskz_loadu_ps(zero ? 0 : m0,o);\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

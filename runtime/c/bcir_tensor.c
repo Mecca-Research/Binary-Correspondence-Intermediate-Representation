@@ -2691,21 +2691,24 @@ __attribute__((target("avx512f"))) static void att512_context_from_fma(size_t r0
     size_t d, const float *p, size_t ldp, const float *v, size_t ldv, float *y, size_t ldy) {
   att512_context_any(1,r0,rows,d,p,ldp,v,ldv,y,ldy,1);
 }
-/* One 8-row block of the transposed products over nv of a 48-channel block's three 16-lane vectors
- * (BWD-WIDTH: nv the vectors the block's channels reach, 1, 2 or 3; the lanes past them masked off in
- * every vector as before, so a vector no channel reaches is not computed at all; each element's
- * terms the same, in the same order). */
-__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_tr_block(int f, int nv, size_t j0, size_t t,
-    size_t c0, const float *m, size_t ldm, const float *x, size_t ldx, float *out, size_t ldo, int first,
-    __mmask16 m0, __mmask16 m1, __mmask16 m2) {
-  __m512 a0[8],a1[8],a2[8]; size_t r,i,di;
+/* One 8-row block of the transposed products over the terms [ib, ie) of a band, on nv of a 48-channel
+ * block's three 16-lane vectors (BWD-WIDTH: nv the vectors the block's channels reach, 1, 2 or 3; the
+ * lanes past them masked off in every vector as before, so a vector no channel reaches is not
+ * computed at all). The block's sums start from +0.0 (zero) or from what out holds -- the previous
+ * band's sums, or the previous query head's -- and take the band's terms in ascending order: the
+ * block's diagonal terms j0..j0+6 when the band holds them (BWD-BAND), then every later term; each
+ * element's terms the same, in the same order. */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_tr_block(int f, int nv, size_t j0, size_t ib,
+    size_t ie, size_t c0, const float *m, size_t ldm, const float *x, size_t ldx, float *out, size_t ldo,
+    int zero, __mmask16 m0, __mmask16 m1, __mmask16 m2) {
+  __m512 a0[8],a1[8],a2[8]; size_t r,i,di; int diag=j0>=ib;  /* the band holds the block's diagonal */
   for (r=0;r<8;r++) {
     const float *o=out+(j0+r)*ldo+c0;
-    a0[r]=_mm512_maskz_loadu_ps(first ? 0 : m0,o);
-    if (nv>1) a1[r]=_mm512_maskz_loadu_ps(first ? 0 : m1,o+16);
-    if (nv>2) a2[r]=_mm512_maskz_loadu_ps(first ? 0 : m2,o+32);
+    a0[r]=_mm512_maskz_loadu_ps(zero ? 0 : m0,o);
+    if (nv>1) a1[r]=_mm512_maskz_loadu_ps(zero ? 0 : m1,o+16);
+    if (nv>2) a2[r]=_mm512_maskz_loadu_ps(zero ? 0 : m2,o+32);
   }
-  for (di=0;di<7;di++) {  /* term j0+di: the rows r <= di */
+  for (di=0;diag && di<7;di++) {  /* term j0+di: the rows r <= di */
     const float *xi=x+(j0+di)*ldx+c0,*mi=m+(j0+di)*ldm+j0;
     __m512 b0=_mm512_maskz_loadu_ps(m0,xi),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();
     if (nv>1) b1=_mm512_maskz_loadu_ps(m1,xi+16);
@@ -2718,7 +2721,7 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_tr_block(int f, in
       if (nv>2) a2[r]=ATT_MADD_MASK(f,a2[r],take,mv,b2);
     }
   }
-  for (i=j0+7;i<t;i++) {  /* every row of the block takes term i */
+  for (i=diag ? j0+7 : ib;i<ie;i++) {  /* every row of the block takes term i */
     const float *xi=x+i*ldx+c0,*mi=m+i*ldm+j0;
     __m512 b0=_mm512_maskz_loadu_ps(m0,xi),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();
     if (nv>1) b1=_mm512_maskz_loadu_ps(m1,xi+16);
@@ -2737,20 +2740,37 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_tr_block(int f, in
     if (nv>2) _mm512_mask_storeu_ps(o+32,m2,a2[r]);
   }
 }
+/* BWD-BAND: a block walking its terms down m's columns reads a row of m a term; once a row of m spans
+ * a 4 KB page (BCIR_ATT_BAND_FROM floats) every term lands on a new page, and at T2048 the walk ran at
+ * about 8 cycles a vector multiply-add, where the context's walk along rows takes 3.4 for the same
+ * products. From there the terms run a band of BCIR_ATT_BAND rows of m at a time, every block the band
+ * reaches taking the band's terms before the next band starts, so a band's rows are read along their
+ * columns; below it one band holds every term, as before. No value depends on the band: each element
+ * takes its terms in ascending order either way, its sum stored between bands exactly -- the C
+ * harness's long-context build lowers BCIR_ATT_BAND_FROM to 16, so its attention references hold the
+ * bands at every context they reach. */
+#define BCIR_ATT_BAND 32
+#ifndef BCIR_ATT_BAND_FROM
+#define BCIR_ATT_BAND_FROM 1024
+#endif
 /* out_j += sum over i >= j, ascending, of m_ij x_i (the KGE products: dv from P and dY, dk from dS
  * and Q): blocks of eight output rows j0..j0+7, the channels 48 at a time; term i reaches the rows
  * j <= i -- the block's diagonal terms some rows, every later term all eight. */
 __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_transposed_any(int f, size_t rows,
     size_t t, size_t d, const float *m, size_t ldm, const float *x, size_t ldx, float *out,
     size_t ldo, int first) {
-  size_t c0,j0;
+  size_t c0,j0,ib,band=ldm<BCIR_ATT_BAND_FROM ? t : BCIR_ATT_BAND;
   for (c0=0;c0<d;c0+=48) {
     size_t nc=d-c0<48 ? d-c0 : 48;
     __mmask16 m0=att512_lanes(nc),m1=att512_lanes(nc>16 ? nc-16 : 0),m2=att512_lanes(nc>32 ? nc-32 : 0);
-    for (j0=0;j0<rows;j0+=8) {
-      if (nc>32) att512_tr_block(f,3,j0,t,c0,m,ldm,x,ldx,out,ldo,first,m0,m1,m2);
-      else if (nc>16) att512_tr_block(f,2,j0,t,c0,m,ldm,x,ldx,out,ldo,first,m0,m1,m2);
-      else att512_tr_block(f,1,j0,t,c0,m,ldm,x,ldx,out,ldo,first,m0,m1,m2);
+    for (ib=0;ib<t;ib+=band) {
+      size_t ie=t-ib<band ? t : ib+band;
+      for (j0=0;j0<rows && j0<ie;j0+=8) {  /* the blocks the band's terms reach */
+        int zero=first && j0>=ib;  /* the block's first band */
+        if (nc>32) att512_tr_block(f,3,j0,ib,ie,c0,m,ldm,x,ldx,out,ldo,zero,m0,m1,m2);
+        else if (nc>16) att512_tr_block(f,2,j0,ib,ie,c0,m,ldm,x,ldx,out,ldo,zero,m0,m1,m2);
+        else att512_tr_block(f,1,j0,ib,ie,c0,m,ldm,x,ldx,out,ldo,zero,m0,m1,m2);
+      }
     }
   }
 }
@@ -2847,12 +2867,14 @@ __attribute__((target("avx512f"))) static void att512_panel(size_t t, size_t d, 
   for (j=0;j<t;j++) for (c=j<tw ? dw : 0;c<d;c++) vt[c*t+j]=v[j*ldv+c];
 }
 /* The probability-adjoint tile dp_ij = dy_i . v_j for rows i0..i0+rows-1 and columns jt..jt+cols-1
- * from the panel: blocks of eight rows by 32 columns, only those holding some j <= i (the others
+ * from a panel of the values transposed -- vt at column jt, its rows ldv floats apart: the KV head's
+ * whole panel, or the tile's own (DP-PANEL) -- in blocks of eight rows by 32 columns, only those
+ * holding some j <= i (the others
  * are never read), each element from the zero the tile holds with one rounded product and one
  * rounded sum per channel in order -- the v1 kernel's arithmetic for these operands; rows past the
  * last whole eight one at a time, the same chain. */
 __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_dp_any(int f, size_t rows, size_t i0,
-    size_t jt, size_t cols, size_t d, const float *dy, size_t ldy, const float *vt, size_t t,
+    size_t jt, size_t cols, size_t d, const float *dy, size_t ldy, const float *vt, size_t ldv,
     float *tile, size_t ldt) {
   size_t jb,ig,r,c;
   for (jb=0;jb<cols;jb+=32) {
@@ -2866,7 +2888,7 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_dp_any(int f, size
         a0[r]=_mm512_maskz_loadu_ps(m0,tr); a1[r]=_mm512_maskz_loadu_ps(m1,tr+16);
       }
       for (c=0;c<d;c++) {
-        const float *vc=vt+c*t+jt+jb;
+        const float *vc=vt+c*ldv+jb;
         __m512 b0=_mm512_maskz_loadu_ps(m0,vc),b1=_mm512_maskz_loadu_ps(m1,vc+16);
         for (r=0;r<8;r++) {
           __m512 qv=_mm512_set1_ps(dy[(i0+ig+r)*ldy+c]);
@@ -2882,21 +2904,21 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_dp_any(int f, size
       size_t j;
       for (j=0;j<nj;j++) {
         float acc=tile[ig*ldt+jb+j];
-        for (c=0;c<d;c++) acc=ATT_MADD1(f,acc,dy[(i0+ig)*ldy+c],vt[c*t+jt+jb+j]);
+        for (c=0;c<d;c++) acc=ATT_MADD1(f,acc,dy[(i0+ig)*ldy+c],vt[c*ldv+jb+j]);
         tile[ig*ldt+jb+j]=acc;
       }
     }
   }
 }
 __attribute__((target("avx512f"))) static void att512_dp(size_t rows, size_t i0, size_t jt,
-    size_t cols, size_t d, const float *dy, size_t ldy, const float *vt, size_t t, float *tile,
+    size_t cols, size_t d, const float *dy, size_t ldy, const float *vt, size_t ldv, float *tile,
     size_t ldt) {
-  att512_dp_any(0,rows,i0,jt,cols,d,dy,ldy,vt,t,tile,ldt);
+  att512_dp_any(0,rows,i0,jt,cols,d,dy,ldy,vt,ldv,tile,ldt);
 }
 __attribute__((target("avx512f"))) static void att512_dp_fma(size_t rows, size_t i0, size_t jt,
-    size_t cols, size_t d, const float *dy, size_t ldy, const float *vt, size_t t, float *tile,
+    size_t cols, size_t d, const float *dy, size_t ldy, const float *vt, size_t ldv, float *tile,
     size_t ldt) {
-  att512_dp_any(1,rows,i0,jt,cols,d,dy,ldy,vt,t,tile,ldt);
+  att512_dp_any(1,rows,i0,jt,cols,d,dy,ldy,vt,ldv,tile,ldt);
 }
 #endif
 enum { ATT_SCORES, ATT_CONTEXT, ATT_TRANSPOSED };
@@ -3179,7 +3201,8 @@ void bcir_tensor_attention_backward(size_t b, size_t t, size_t nh, size_t nk,
  * accumulator receives the reference's terms in the reference's order -- heads in order for the
  * shared GQA dk/dv, i ascending within a head -- so dq, dk and dv are bit-identical to it. On
  * AVX-512 the dp tiles are register blocks over the KV head's values transposed once per task
- * (NDT-ATTN-5: att512_panel, att512_dp), the GEMM kernel's v1 arithmetic for these operands. */
+ * (NDT-ATTN-5: att512_panel, att512_dp), or past that panel's bound over each tile's values
+ * transposed as the tile is evaluated (DP-PANEL), the GEMM kernel's v1 arithmetic for these operands. */
 #define BCIR_ATT_ROWS 32
 #define BCIR_ATT_COLS 64
 /* The probability adjoint's tiles a row block keeps between its two passes (NDT-ATTN-1): its first
@@ -3188,15 +3211,22 @@ void bcir_tensor_attention_backward(size_t b, size_t t, size_t nh, size_t nk,
  * tile was evaluated before. */
 #define BCIR_ATT_KEEP 256
 /* The largest KV head (d x t floats) whose values the backward transposes once into its task's
- * stack (NDT-ATTN-5), 64 KB; a longer context's tiles take the GEMM kernel as before. */
+ * stack (NDT-ATTN-5), 64 KB. Past it -- T512 at head dimension 32 -- the tiles took the GEMM kernel;
+ * since DP-PANEL each tile's values are transposed into the same buffer as the tile is evaluated
+ * (d x 64 floats, head dimensions to 256), for the register blocks' arithmetic, the GEMM kernel's.
+ * BCIR_ATT_WHOLE is the whole panel's bound: the C harness's long-context build lowers it to 0, so
+ * its attention references hold the tiles' panels at every shape. */
 #define BCIR_ATT_PANEL 16384
+#ifndef BCIR_ATT_WHOLE
+#define BCIR_ATT_WHOLE BCIR_ATT_PANEL
+#endif
 /* One (batch, query head) of the backward; the heads of one KV head share dk and dv, so a task
  * is a (batch, KV head) and runs its `group` = heads/kvheads query heads in order -- the order
  * the serial loop adds. A task of fewer heads would put one KV head's query heads on two threads,
  * racing on its dk and dv (the TSan section's injected fault). */
-static void att_head_backward(const att_job *a, size_t r, size_t h, const float *vt) {
+static void att_head_backward(const att_job *a, size_t r, size_t h, const float *vt, float *tp) {
   size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,i,j,i0; float scale=1.0f/sqrtf((float)d);
-  (void)vt;  /* the AVX-512 instance's panel; NULL elsewhere */
+  (void)vt; (void)tp;  /* the AVX-512 instance's panels; NULL elsewhere */
   int variant=a->variant; const float *q=a->q,*k=a->k,*v=a->v,*dy=a->dy; float *p=a->p,*dq=a->dq,*dk=a->dk,*dv=a->dv;
   {
     size_t kh=h/(nh/nk),ldh=nh*d,ldk=nk*d; float *ph=p+(r*nh+h)*t*t;
@@ -3217,8 +3247,11 @@ static void att_head_backward(const att_job *a, size_t r, size_t h, const float 
         if (!pass || jt>=BCIR_ATT_KEEP) {
           memset(tile,0,rows*BCIR_ATT_COLS*sizeof(float));
 #ifdef BCIR_MM_DISPATCH
-          if (vt) (a->fused ? att512_dp_fma : att512_dp)(rows,i0,jt,cols,d,dyh,ldh,vt,t,tile,BCIR_ATT_COLS);
-          else
+          if (vt) (a->fused ? att512_dp_fma : att512_dp)(rows,i0,jt,cols,d,dyh,ldh,vt+jt,t,tile,BCIR_ATT_COLS);
+          else if (tp) {  /* the tile's values transposed into its own panel */
+            att512_panel(cols,d,vk+jt*ldk,ldk,tp);
+            (a->fused ? att512_dp_fma : att512_dp)(rows,i0,jt,cols,d,dyh,ldh,tp,cols,tile,BCIR_ATT_COLS);
+          } else
 #endif
           {
             mm_range all;
@@ -3266,13 +3299,15 @@ static void att_task_backward(void *ctx, size_t task) {
     }
   }
   {
-    const float *vt=NULL;
+    const float *vt=NULL; float *tp=NULL;
 #ifdef BCIR_MM_DISPATCH
-    /* the KV head's values transposed once for its query heads' probability-adjoint tiles */
+    /* the KV head's values transposed once for its query heads' probability-adjoint tiles, or the
+     * buffer each tile's are transposed into */
     _Alignas(64) float panel[BCIR_ATT_PANEL];
-    if (a->variant==4 && d*t<=BCIR_ATT_PANEL) { att512_panel(t,d,a->v+(r*t*nk+kh)*d,nk*d,panel); vt=panel; }
+    if (a->variant==4 && d*t<=BCIR_ATT_WHOLE) { att512_panel(t,d,a->v+(r*t*nk+kh)*d,nk*d,panel); vt=panel; }
+    else if (a->variant==4 && d*BCIR_ATT_COLS<=BCIR_ATT_PANEL) tp=panel;
 #endif
-    for (h=first;h<first+a->group;h++) att_head_backward(a,r,h,vt);
+    for (h=first;h<first+a->group;h++) att_head_backward(a,r,h,vt,tp);
   }
 }
 void bcir_tensor_attention_backward_contract_pool(bcir_tensor_pool *pool, unsigned contract,

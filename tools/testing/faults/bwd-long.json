@@ -1,0 +1,81 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BB1 every band of a first query head's block starts from +0.0 (the earlier bands' sums lost)",
+      "new": "        int zero=first;  /* the block's first band */\n",
+      "old": "        int zero=first && j0>=ib;  /* the block's first band */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BB2 every band taken as holding its blocks' diagonal (a later band adds a block's diagonal terms again)",
+      "new": "  __m512 a0[8],a1[8],a2[8]; size_t r,i,di; int diag=1;  /* the band holds the block's diagonal */\n",
+      "old": "  __m512 a0[8],a1[8],a2[8]; size_t r,i,di; int diag=j0>=ib;  /* the band holds the block's diagonal */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BB3 a band's first block taken as below the band (its diagonal terms unmasked, from the band's first row)",
+      "new": "  __m512 a0[8],a1[8],a2[8]; size_t r,i,di; int diag=j0>ib;  /* the band holds the block's diagonal */\n",
+      "old": "  __m512 a0[8],a1[8],a2[8]; size_t r,i,di; int diag=j0>=ib;  /* the band holds the block's diagonal */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BB4 a band reaching only the blocks below its first row (no block's diagonal band runs)",
+      "new": "      for (j0=0;j0<rows && j0<ib;j0+=8) {  /* the blocks the band's terms reach */\n",
+      "old": "      for (j0=0;j0<rows && j0<ie;j0+=8) {  /* the blocks the band's terms reach */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BB5 every whole band's last term dropped",
+      "new": "      size_t ie=t-ib<band ? t : ib+band-1;\n",
+      "old": "      size_t ie=t-ib<band ? t : ib+band;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BB6 the last band's terms dropped where the context ends inside a band",
+      "new": "      size_t ie=t-ib<band ? ib : ib+band;\n",
+      "old": "      size_t ie=t-ib<band ? t : ib+band;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "DP1 the KV head's whole panel read from its first column for every tile",
+      "new": "          if (vt) (a->fused ? att512_dp_fma : att512_dp)(rows,i0,jt,cols,d,dyh,ldh,vt,t,tile,BCIR_ATT_COLS);\n",
+      "old": "          if (vt) (a->fused ? att512_dp_fma : att512_dp)(rows,i0,jt,cols,d,dyh,ldh,vt+jt,t,tile,BCIR_ATT_COLS);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "DP2 every tile's own panel transposed from the head's first values",
+      "new": "            att512_panel(cols,d,vk,ldk,tp);\n",
+      "old": "            att512_panel(cols,d,vk+jt*ldk,ldk,tp);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "DP3 a tile's second 32 columns read at its first 32 from the panel",
+      "new": "        const float *vc=vt+c*ldv;\n",
+      "old": "        const float *vc=vt+c*ldv+jb;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "DP4 the rows past a tile's last whole eight read every column at the first",
+      "new": "        for (c=0;c<d;c++) acc=ATT_MADD1(f,acc,dy[(i0+ig)*ldy+c],vt[c*ldv+jb]);\n",
+      "old": "        for (c=0;c<d;c++) acc=ATT_MADD1(f,acc,dy[(i0+ig)*ldy+c],vt[c*ldv+jb+j]);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

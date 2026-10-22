@@ -468,3 +468,56 @@ P's rows at a time, each output row's terms still in ascending order, would read
 is the next training update, to be measured. After it come the dP tiles (300M, and 209M more for their
 second evaluation): past T512 they take the GEMM kernel, since the values' transposed panel holds 16384
 floats, and past the first 256 columns pass 1 evaluates them again.
+
+## 9. BWD-LONG: the backward at long context (2026-10-22)
+
+Section 8 left the backward's two transposed products at more than half of it: timed a phase at a time
+on one core at B4/T2048, dV and dK took 494M and 491M of the backward's 1823M TSC cycles, about 7 cycles
+a vector multiply-add, where dQ -- the same multiply-adds in the context's form -- took 3.2. Each walked
+its terms down P's columns, a row of P a term: at T2048 an 8 KB stride, a new page every term. And past
+T512 the probability-adjoint tiles took the GEMM kernel, because the KV head's transposed values no
+longer fit the task's 16384-float panel. Two changes, each with every value kept:
+
+- **BWD-BAND.** Once a row of P spans a 4 KB page, the transposed products run their terms a band of 32
+  rows of P at a time: every output block the band reaches takes the band's terms before the next band
+  starts, its sums stored between bands exactly, so a band's rows are read along their columns. Each
+  element takes its terms in ascending order either way; a shorter context keeps one band, since banding
+  there only costs (x1.07 on the 9.84M decoder's attention at T128).
+- **DP-PANEL.** Past the whole panel, each tile's values are transposed into the same buffer as the tile
+  is evaluated, so the tile runs the register blocks -- the GEMM kernel's arithmetic for these operands,
+  the same bits.
+
+On one core at T2048 the backward fell from 1823M to 1077M cycles: dV to 211M, dK to 199M, the tiles to
+166M and their second evaluation to 116M. With both builds in one process and 24 rounds a row, the
+backward runs at x0.60 of its time on one core and x0.64 on four threads at T2048 (GCC x0.64),
+x0.69-0.71 at T1024 and x0.70 at T4096 with heads of 64, unchanged at T512 and at the decoder's T128;
+the decoder's training step at the study's dimensions x0.80 at T2048 under clang and GCC. Every value is
+the same: 48 backward cases, 7 of them past the threshold, byte for byte under both compilers. The
+attention model on level 3, built as the earlier sections built it (and with GCC, as the study builds
+it), one training update of 4 x T tokens, 24 rotated rounds of three updates
+([measurements/2026-10-22/bwd-long/](measurements/2026-10-22/bwd-long/README.json)):
+
+| T | before ms | after ms | P-EAGER ms | P-IND ms | after / before | after / P-EAGER | after / P-IND | A/A |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 512 | 81.8 | 79.9 | 212.7 | 150.7 | 0.98 [0.93, 1.04] | 0.38 [0.37, 0.40] | 0.55 [0.52, 0.58] | 0.97 [0.93, 1.01] |
+| 1024 | 253.8 | 234.9 | 334.3 | 272.4 | 0.90 [0.88, 0.93] | 0.68 [0.65, 0.71] | 0.85 [0.81, 0.88] | 1.01 [0.97, 1.05] |
+| 2048 | 938.8 | 743.1 | 673.1 | 605.5 | 0.79 [0.77, 0.81] | 1.09 [1.05, 1.13] | 1.23 [1.19, 1.27] | 1.00 [0.98, 1.02] |
+
+The trained state is the same digest from both builds at every context. The update is x0.79 of the build
+before's time at T2048 and x0.90 at T1024, unchanged at T512. Against PyTorch it is faster than eager's
+and Inductor's at T512 and T1024 and, at T2048, x1.09 of eager's time and x1.23 of Inductor's -- from
+x1.35 and x1.42 after BWD-WIDTH, and x1.43 and x1.51 on ATTN-RATE's tree.
+
+One more candidate was measured and not taken. **BWD-FUSE** took each 32-row strip of P through every
+pass while it is in cache -- dV's band of P's rows, the tiles and their dots, the score adjoints, dK's
+band of the adjoints' rows and dQ's rows -- every value the same, and read x0.93 at T2048 (its interval
+holding 1), parity under GCC and at T4096, and x1.09 at T1024: a strip's bands keep all of dV's and dK's
+accumulators live, a larger working set than the separate passes'.
+
+What remains at T2048 on one core is 1077M cycles: dQ 215M, dV 211M, dK 199M, the tiles 166M and their
+second evaluation 116M, the row dots 110M and the score adjoints 53M. Every product now runs at about
+3.1 cycles a vector multiply-add -- two vector operations a term, since the study's contract multiplies
+and adds separately. What remains is those products' traffic in P (268 MB a layer at B4/T2048, written
+by the forward, then read five times and rewritten once by the backward) and the passes around them:
+the tiles' second evaluation (the first 256 columns are kept between the passes, the rest evaluated
+twice) and the row dots' transposes.
