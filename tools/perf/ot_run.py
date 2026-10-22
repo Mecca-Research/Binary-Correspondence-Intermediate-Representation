@@ -600,8 +600,9 @@ def _triton_evidence(path) -> dict:
 
 
 def ot05(plain, threads: int, smoke: bool, rounds: int, triton=None) -> dict:
-    """The block portfolio: B-DIRECT under three GEMM contracts, P-EAGER and P-IND, at one thread
-    and at the host's (OT-01's shapes), each beside B-DIRECT's A/A control."""
+    """The block portfolio: B-DIRECT under three GEMM contracts and under the trainer's (kblock+exp),
+    P-EAGER and P-IND, at one thread and at the host's (OT-01's shapes), each beside B-DIRECT's A/A
+    control."""
     from tools.perf import ot_torch
 
     shapes = OT01_SMOKE if smoke else OT01_SHAPES
@@ -641,7 +642,9 @@ def ot05(plain, threads: int, smoke: bool, rounds: int, triton=None) -> dict:
             4 * (m * k + 2 * k * n + 6 * m * n + m * k + 2 * k * n) for m, k, n in shapes)},
         "labels": {"unsupported": unsupported,
                    "fallback": [f"P-* products: {ot_torch.TORCH_CONTRACT}; B-DIRECT's are its "
-                                "contracts' fixed orders (v1, fused v2, blocked v3)"]},
+                                "contracts' fixed orders (v1, fused v2, blocked v3), its "
+                                "elementwise passes v1's libm SiLU but in kblock+exp (the BCIR "
+                                "exponential's)"]},
         "gaps": ["realization", "competitor"],
     }  # fmt: skip
 

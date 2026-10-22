@@ -27,13 +27,22 @@
 - **Against PyTorch and Triton**: BCIR's decoder trains faster than both PyTorch routes at four
   threads -- OT-10: 272 ms a step against eager's 533 and Inductor's 390, in under half their
   memory, its held-out losses within 0.021 nats of theirs -- and its plan costs milliseconds where
-  Inductor's first call costs 43-77 s (OT-02, OT-11). Kernel by kernel it is ahead of Triton-CPU
+  Inductor's first call costs 44-80 s (OT-02, OT-11). Kernel by kernel it is ahead of Triton-CPU
   (OT-05's T-DSL rows: its GEMM 2.2-3.4 times faster, its RMSNorm 2.6-10 times, the SwiGLU product
-  under the BCIR exponential at parity at a million elements). Against PyTorch's own block (OT-05)
-  it leads at four threads, 1.13-3.64 times, three 512-row comparisons at parity; at one thread it
-  trails on the 128-row blocks of width 256 (1.17-1.18 times PyTorch's time) and on every 512-row
-  block (1.36-1.44 times), where MKL's GEMMs outrun B-DIRECT's k-blocked ones. That names the next
-  training update: the k-blocked GEMM's single-thread rate on the block's shapes.
+  under the BCIR exponential at parity at a million elements). Against PyTorch's own SwiGLU block
+  (OT-05), run as the trainer runs it -- kblock+exp, the k-blocked GEMMs with the BCIR exponential's
+  passes -- it is faster at four threads in sixteen of eighteen comparisons (1.32-5.45 times) and at
+  parity in two (512 x 768 x 1024); at one thread faster in ten (1.07-1.72 times), at parity in
+  five, and slower in three: 512 x 768 x 1024 (1.37 and 1.38 times eager's and Inductor's time) and
+  512 x 257 x 1025 against Inductor (1.10 times its time). The day's first run read 1.17-1.44 times
+  PyTorch's time at one thread on the 128- and 512-row blocks and put it down to MKL's GEMMs; it had
+  held PyTorch against v1's libm SiLU passes, which the trainer does not run (that arm reads
+  1.15-1.47 times again here), and they take 3.4-7.3 times the BCIR exponential's time. Taken apart
+  at one thread, the block's GEMMs keep pace with MKL's but on the largest block, whose A (1.5 MiB)
+  is larger than the core's 1 MiB L2 cache -- its three GEMM forms, each run twice in the block,
+  29.3 ms against MKL's 22.6, the nn and tn forms 1.35 and 1.45 times its time -- and in the weight
+  adjoint's transposed form, behind at seven of the nine shapes (1.04-1.53 times). Those two name
+  the next training update.
 - **The gates on this host**: BG0 PASS, BG1 PASS, BG2 UNAVAILABLE, BG3 OPEN, BG4 UNAVAILABLE, BG5
   UNAVAILABLE, BG6 UNAVAILABLE, BG7 UNAVAILABLE.
 
@@ -43,10 +52,11 @@
 |---|---|
 | `tools/perf/ot_contract.py` | the contract (BG0): routes, gaps, capabilities, the record and `validate_record`, the sixteen, the eight and `evaluate_gates`; `--list`, `--gates RECORDS.json` |
 | `tools/perf/ot_run.py` | runs the experiments the host can run, writes all sixteen records under the contract, reads the GEM+ rows a gate names (`--rows`, `gemplus_baseline.py --json`), a Triton-CPU session (`--triton`) and a training frontier (`--frontier`) -- every input read before any experiment runs -- and states the gates |
-| `tools/perf/ot_torch.py` | the PyTorch routes: P-EAGER's numerics for OT-01, the capture cost of P-FX, P-AOT and P-IND (OT-02), the block portfolio's P-EAGER and P-IND arms (OT-05) and Inductor's cache lifecycle (OT-11), each compiled step in its own process with a fresh cache |
+| `tools/perf/ot_torch.py` | the PyTorch routes: P-EAGER's numerics for OT-01, the capture cost of P-FX, P-AOT and P-IND (OT-02), the block portfolio's P-EAGER and P-IND arms beside B-DIRECT's under each GEMM contract and under the trainer's own, kblock+exp (OT-05), and Inductor's cache lifecycle (OT-11), each compiled step in its own process with a fresh cache |
 | PR #821's Triton-CPU pilot | T-DSL's rows (OT-05): its own interpreter and wheel (`triton-cpu`), its BCIR side built from this tree's `bcir_tensor.c`; a session is admitted only over this tree's tensor unit, passed and correct on both sides |
+| `docs/research/measurements/2026-10-22/block-parts/block_parts.py` | OT-05's block taken apart at one thread: each GEMM form under BCIR's three contracts against torch.mm (MKL), each elementwise pass under v1's libm SiLU, the BCIR exponential's and PyTorch's |
 | `docs/research/measurements/2026-10-11/train_comparison.py` | OT-10's runs: one prepared recipe, each route's learning curve, step time, tokens a second and memory |
-| `bcir/tests/test_ot_contract.py` | the registry against the proposal, every record rule's refusal, the gates' semantics (nothing PASS without its evidence; UNAVAILABLE never a pass; no gate ahead of the gate it requires; every gate passable with complete evidence), OT-01's checks firing past their bounds and its verdict every route's, every experiment without a runner recorded on every host, the PyTorch routes' records keeping every route that ran and every failure, a Triton session admitted only as evidence about this tree, the runner's inputs refused before it runs, a record naming the PyTorch and threads it ran, a smoke run |
+| `bcir/tests/test_ot_contract.py` | the registry against the proposal, every record rule's refusal, the gates' semantics (nothing PASS without its evidence; UNAVAILABLE never a pass; no gate ahead of the gate it requires; every gate passable with complete evidence), OT-01's checks firing past their bounds and its verdict every route's, every experiment without a runner recorded on every host, the PyTorch routes' records keeping every route that ran and every failure, OT-05's arms each run under its own contracts and paired round by round, a Triton session admitted only as evidence about this tree, the runner's inputs refused before it runs, a record naming the PyTorch and threads it ran, a smoke run |
 | `tools/testing/faults/ot-contract.json` | the faults each witness exists to catch |
 
 A gate is **PASS** only when every requirement is met by evidence: an experiment's record
@@ -92,14 +102,14 @@ otherwise, naming what is missing.
 ## 4. The measured experiments
 
 The records are in [`measurements/2026-10-22/ot/`](measurements/2026-10-22/ot/README.json)
-(the first run's, BCIR's routes alone, in [`measurements/2026-10-21/ot/`](measurements/2026-10-21/ot/README.json)):
-the run on Intel(R) Xeon(R) Processor @ 2.80GHz (4 vCPUs; BCIR's timed experiments at one thread, the PyTorch routes at the host's), a provisional commit of this change (e81fb74) with nothing uncommitted below bcir, runtime/c or tools/perf, Ubuntu clang version 18.1.3 (1ubuntu1), NumPy 2.2.6, Python 3.11.15, PyTorch 2.13.0+cu130 (AVX512, BLAS mkl); the capabilities it found: cpu, numpy, torch.
+(the block taken apart in [`measurements/2026-10-22/block-parts/`](measurements/2026-10-22/block-parts/README.json); the first run's, BCIR's routes alone, in [`measurements/2026-10-21/ot/`](measurements/2026-10-21/ot/README.json)):
+the run on Intel(R) Xeon(R) Processor @ 2.80GHz (4 vCPUs; BCIR's timed experiments at one thread, the PyTorch routes at the host's), a provisional commit of this change (84e4db0) with nothing uncommitted below bcir, runtime/c or tools/perf, Ubuntu clang version 18.1.3 (1ubuntu1), NumPy 2.2.6, Python 3.11.15, PyTorch 2.13.0+cu130 (AVX512, BLAS mkl); the capabilities it found: cpu, numpy, torch.
 
 - **OT-01** (B-DIRECT against NumPy float64): the first common block -- U = X Wg, V = X Wu, Y = silu(U) * V and its backward (dU, dV, dX, dWg, dWu) -- on 18 shapes (16x256x1024, 16x768x1024, 128x256x1024, 128x768x1024, 512x256x1024, 512x768x1024, 16x257x1025, 128x257x1025, 512x257x1025, 16x256x1024, 16x768x1024, 128x256x1024, 128x768x1024, 512x256x1024, 512x768x1024, 16x257x1025, 128x257x1025, 512x257x1025), every element within its binary32 bound: the worst error is 0.366 of its bound (a GEMM element within gamma_k |A| |B| of the exact product in any order, an elementwise one within 8 units of roundoff of its terms). The coverage ledger: dense row-major GEMMs and their transposes, the SiLU gate and its backward, the zero-size product a no-op; strided operands unsupported (the entries take dense rows).
 - **OT-03** (B-DIRECT against B-PLAN): 27 of 27 state cases of the trace corpus train one state and one event sequence, bit for bit, from the direct C loop, from the step program and from its StreamPack and ExecutionPlanV1 lowered by the C.
-- **OT-04** (plan intervention): every layer's q/k/v and gate/up projections a call each -- 145 launches become 163, the state the same, bit for bit -- times x0.9989 (95% interval 0.970-1.029) of the default's step over 24 rotated rounds, beside the A/A control's x1.0014 (0.970-1.034), not resolvable beside its control (d_model 384, 6 layers, 8x128 tokens, kblock+exp+reduce+attn, 1 thread).
+- **OT-04** (plan intervention): every layer's q/k/v and gate/up projections a call each -- 145 launches become 163, the state the same, bit for bit -- times x1.0043 (95% interval 0.974-1.035) of the default's step over 24 rotated rounds, beside the A/A control's x0.9762 (0.943-1.010), not resolvable beside its control (d_model 384, 6 layers, 8x128 tokens, kblock+exp+reduce+attn, 1 thread).
 - **OT-06** (arena frontier): the bench step's transient values take 999,424 bytes in the C plan's fixed spans, x1.326 of G26's bound (753,664); placed by their lifetimes (PX-4) 754,176, x1.000, a proved optimum.
-- **OT-14** (observer cost): the step on the library with the launch trace probe times x1.1564 (95% interval 1.128-1.185) of the plain library's over 24 rotated rounds, beside the A/A control's x1.0077 (0.980-1.037); the same state on all three trainers, 5,550 launch records written and 0 dropped.
+- **OT-14** (observer cost): the step on the library with the launch trace probe times x1.1209 (95% interval 1.092-1.150) of the plain library's over 24 rotated rounds, beside the A/A control's x0.9811 (0.951-1.012); the same state on all three trainers, 5,550 launch records written and 0 dropped.
 
 ### 4.1 Against PyTorch and Triton
 
@@ -109,37 +119,53 @@ the run on Intel(R) Xeon(R) Processor @ 2.80GHz (4 vCPUs; BCIR's timed experimen
 
 | Route | Capture and first call (s) | Warm call (s) | Frames | Graph breaks | Why |
 |---|---:|---:|---:|---:|---|
-| P-FX/module | 2.65 | 0.5381 | 6 | 2 | Data-dependent branching |
-| P-FX/loss | 2.09 | 0.4424 | 1 | 0 | -- |
-| P-AOT/module | 7.98 | 0.5890 | 6 | 2 | Data-dependent branching |
-| P-AOT/loss | 6.83 | 0.4608 | 1 | 0 | -- |
-| P-IND/module | 48.86 | 0.3925 | 6 | 2 | Data-dependent branching |
-| P-IND/loss | 42.95 | 0.3912 | 1 | 0 | -- |
+| P-FX/module | 5.55 | 0.5463 | 6 | 2 | Data-dependent branching |
+| P-FX/loss | 3.45 | 0.5315 | 1 | 0 | -- |
+| P-AOT/module | 9.17 | 0.7510 | 6 | 2 | Data-dependent branching |
+| P-AOT/loss | 6.77 | 0.6574 | 1 | 0 | -- |
+| P-IND/module | 76.24 | 0.4343 | 6 | 2 | Data-dependent branching |
+| P-IND/loss | 44.25 | 0.4765 | 1 | 0 | -- |
 
-  B-PLAN prices the same step without a compiler in the loop: the step program 6.61 ms (145 launches), its 10,752 words 1.17 ms, the training pack 20.38 ms, StreamPack and ExecutionPlanV1 lowered 116 ms (44,637 and 31,717 bytes); the C library it runs on builds once in 11.8 s for every shape.
+  B-PLAN prices the same step without a compiler in the loop: the step program 4.02 ms (145 launches), its 10,752 words 0.52 ms, the training pack 9.69 ms, StreamPack and ExecutionPlanV1 lowered 67 ms (44,637 and 31,717 bytes); the C library it runs on builds once in 11.5 s for every shape.
 
-- **OT-05, the block portfolio** (OT-01's SwiGLU block, forward and backward, binary32): B-DIRECT under its three GEMM contracts and an A/A control against P-EAGER and P-IND; each ratio is B-DIRECT k-blocked's time over the route's, the geometric mean of the rounds' paired ratios with its 95% interval (below 1 BCIR is faster):
+- **OT-05, the block portfolio** (OT-01's SwiGLU block, forward and backward, binary32): B-DIRECT under the trainer's contract -- kblock+exp, the k-blocked GEMMs with the BCIR exponential's SiLU passes, as OT-10's B-DIRECT trains -- and under its three GEMM contracts with v1's libm SiLU passes, beside an A/A control, against P-EAGER and P-IND; each ratio is the first arm's time over the second's, the geometric mean of the rounds' paired ratios with its 95% interval (below 1 the first is faster):
 
-| Shape (m x k x n) | Threads | kblock ms | P-EAGER ms | P-IND ms | kblock / P-EAGER | kblock / P-IND | kblock / fused | kblock / v1 | A/A |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 16 x 256 x 1024 | 1 | 2.157 | 2.613 | 2.997 | 0.81 [0.76, 0.86] | 0.71 [0.67, 0.75] | 0.69 [0.64, 0.74] | 0.52 [0.46, 0.60] | 1.05 [0.98, 1.12] |
-| 16 x 768 x 1024 | 1 | 6.760 | 5.809 | 6.584 | 1.10 [1.03, 1.17] | 1.01 [0.96, 1.06] | 0.59 [0.56, 0.62] | 0.54 [0.51, 0.57] | 1.01 [0.97, 1.05] |
-| 128 x 256 x 1024 | 1 | 8.380 | 7.362 | 7.227 | 1.17 [1.11, 1.23] | 1.18 [1.10, 1.26] | 0.68 [0.65, 0.72] | 0.57 [0.53, 0.61] | 0.99 [0.96, 1.02] |
-| 128 x 768 x 1024 | 1 | 18.820 | 19.812 | 19.627 | 0.95 [0.93, 0.98] | 0.96 [0.93, 1.00] | 0.61 [0.59, 0.63] | 0.48 [0.46, 0.49] | 0.99 [0.95, 1.02] |
-| 512 x 256 x 1024 | 1 | 27.723 | 19.939 | 18.976 | 1.36 [1.33, 1.40] | 1.42 [1.36, 1.48] | 0.67 [0.65, 0.68] | 0.51 [0.49, 0.54] | 1.00 [0.98, 1.02] |
-| 512 x 768 x 1024 | 1 | 74.486 | 52.897 | 49.417 | 1.41 [1.32, 1.51] | 1.44 [1.34, 1.56] | 0.66 [0.62, 0.70] | 0.51 [0.49, 0.54] | 0.97 [0.93, 1.02] |
-| 16 x 257 x 1025 | 1 | 2.120 | 3.247 | 3.781 | 0.75 [0.69, 0.82] | 0.64 [0.58, 0.70] | 0.61 [0.57, 0.65] | 0.50 [0.47, 0.54] | 0.98 [0.90, 1.07] |
-| 128 x 257 x 1025 | 1 | 8.350 | 7.203 | 6.980 | 1.17 [1.13, 1.22] | 1.17 [1.10, 1.26] | 0.65 [0.64, 0.66] | 0.52 [0.50, 0.53] | 0.99 [0.95, 1.03] |
-| 512 x 257 x 1025 | 1 | 29.586 | 22.165 | 21.371 | 1.38 [1.27, 1.51] | 1.44 [1.29, 1.60] | 0.70 [0.65, 0.75] | 0.53 [0.48, 0.57] | 0.97 [0.92, 1.03] |
-| 16 x 256 x 1024 | 4 | 0.885 | 2.550 | 3.240 | 0.37 [0.33, 0.42] | 0.27 [0.24, 0.31] | 0.61 [0.57, 0.65] | 0.55 [0.49, 0.63] | 1.01 [0.88, 1.14] |
-| 16 x 768 x 1024 | 4 | 1.870 | 4.366 | 5.039 | 0.44 [0.41, 0.46] | 0.36 [0.33, 0.39] | 0.56 [0.53, 0.60] | 0.45 [0.42, 0.48] | 1.10 [1.03, 1.18] |
-| 128 x 256 x 1024 | 4 | 2.603 | 3.808 | 3.964 | 0.67 [0.65, 0.69] | 0.65 [0.63, 0.67] | 0.68 [0.65, 0.71] | 0.56 [0.54, 0.58] | 1.01 [0.96, 1.05] |
-| 128 x 768 x 1024 | 4 | 5.904 | 8.800 | 8.822 | 0.69 [0.64, 0.74] | 0.68 [0.64, 0.73] | 0.61 [0.59, 0.64] | 0.47 [0.44, 0.50] | 1.03 [0.97, 1.08] |
-| 512 x 256 x 1024 | 4 | 9.550 | 10.667 | 9.940 | 0.88 [0.81, 0.96] | 0.96 [0.90, 1.02] | 0.60 [0.56, 0.64] | 0.54 [0.51, 0.56] | 0.99 [0.94, 1.04] |
-| 512 x 768 x 1024 | 4 | 19.955 | 20.791 | 19.975 | 0.96 [0.91, 1.03] | 0.99 [0.91, 1.07] | 0.58 [0.56, 0.61] | 0.46 [0.44, 0.49] | 0.97 [0.93, 1.01] |
-| 16 x 257 x 1025 | 4 | 0.916 | 2.468 | 3.325 | 0.37 [0.35, 0.39] | 0.28 [0.27, 0.29] | 0.61 [0.58, 0.65] | 0.53 [0.50, 0.56] | 1.00 [0.95, 1.05] |
-| 128 x 257 x 1025 | 4 | 3.106 | 5.166 | 5.002 | 0.59 [0.53, 0.65] | 0.62 [0.58, 0.66] | 0.57 [0.53, 0.60] | 0.46 [0.43, 0.48] | 1.04 [1.00, 1.08] |
-| 512 x 257 x 1025 | 4 | 9.531 | 10.326 | 10.900 | 0.89 [0.81, 0.97] | 0.87 [0.79, 0.96] | 0.53 [0.50, 0.57] | 0.46 [0.44, 0.49] | 1.01 [0.98, 1.04] |
+| Shape (m x k x n) | Threads | kblock+exp ms | P-EAGER ms | P-IND ms | kblock+exp / P-EAGER | kblock+exp / P-IND | kblock+exp / kblock | kblock / fused | kblock / v1 | A/A |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 16 x 256 x 1024 | 1 | 1.679 | 2.587 | 2.877 | 0.65 [0.62, 0.69] | 0.58 [0.54, 0.63] | 0.80 [0.73, 0.88] | 0.71 [0.68, 0.75] | 0.56 [0.52, 0.62] | 1.00 [0.93, 1.08] |
+| 16 x 768 x 1024 | 1 | 4.970 | 5.666 | 6.114 | 0.93 [0.87, 1.00] | 0.84 [0.78, 0.91] | 0.84 [0.78, 0.91] | 0.57 [0.55, 0.60] | 0.50 [0.47, 0.54] | 1.06 [1.01, 1.10] |
+| 128 x 256 x 1024 | 1 | 5.908 | 7.252 | 6.828 | 0.82 [0.79, 0.85] | 0.86 [0.82, 0.90] | 0.72 [0.67, 0.76] | 0.68 [0.66, 0.70] | 0.56 [0.53, 0.60] | 1.00 [0.97, 1.04] |
+| 128 x 768 x 1024 | 1 | 16.166 | 19.506 | 19.081 | 0.86 [0.82, 0.89] | 0.87 [0.82, 0.92] | 0.91 [0.86, 0.97] | 0.59 [0.57, 0.61] | 0.45 [0.43, 0.47] | 0.95 [0.90, 1.00] |
+| 512 x 256 x 1024 | 1 | 20.628 | 20.376 | 19.403 | 1.01 [0.99, 1.03] | 1.05 [1.01, 1.08] | 0.73 [0.71, 0.74] | 0.68 [0.66, 0.69] | 0.54 [0.52, 0.56] | 1.01 [0.99, 1.03] |
+| 512 x 768 x 1024 | 1 | 67.485 | 50.454 | 50.507 | 1.37 [1.31, 1.43] | 1.38 [1.30, 1.47] | 0.94 [0.88, 1.00] | 0.67 [0.64, 0.71] | 0.51 [0.48, 0.54] | 0.98 [0.95, 1.01] |
+| 16 x 257 x 1025 | 1 | 1.816 | 2.832 | 3.012 | 0.65 [0.58, 0.72] | 0.61 [0.54, 0.68] | 0.82 [0.72, 0.93] | 0.70 [0.64, 0.76] | 0.50 [0.43, 0.58] | 1.06 [0.99, 1.14] |
+| 128 x 257 x 1025 | 1 | 5.824 | 6.744 | 6.512 | 0.88 [0.84, 0.93] | 0.92 [0.86, 0.98] | 0.72 [0.67, 0.77] | 0.65 [0.64, 0.67] | 0.52 [0.51, 0.54] | 1.01 [0.96, 1.06] |
+| 512 x 257 x 1025 | 1 | 21.030 | 21.202 | 20.312 | 1.01 [0.96, 1.06] | 1.10 [1.04, 1.17] | 0.75 [0.69, 0.81] | 0.65 [0.63, 0.68] | 0.50 [0.47, 0.52] | 0.96 [0.90, 1.02] |
+| 16 x 256 x 1024 | 4 | 0.591 | 2.530 | 3.213 | 0.24 [0.21, 0.28] | 0.18 [0.16, 0.21] | 0.57 [0.45, 0.72] | 0.81 [0.66, 1.00] | 0.69 [0.57, 0.82] | 1.19 [0.93, 1.52] |
+| 16 x 768 x 1024 | 4 | 1.465 | 4.267 | 4.999 | 0.39 [0.31, 0.49] | 0.33 [0.27, 0.41] | 0.90 [0.73, 1.10] | 0.61 [0.58, 0.64] | 0.45 [0.42, 0.49] | 1.01 [0.91, 1.12] |
+| 128 x 256 x 1024 | 4 | 2.013 | 4.499 | 4.538 | 0.46 [0.43, 0.48] | 0.46 [0.43, 0.49] | 0.77 [0.73, 0.81] | 0.62 [0.60, 0.63] | 0.55 [0.53, 0.57] | 0.96 [0.92, 1.00] |
+| 128 x 768 x 1024 | 4 | 4.561 | 8.052 | 7.999 | 0.56 [0.53, 0.60] | 0.55 [0.50, 0.61] | 0.80 [0.74, 0.85] | 0.58 [0.54, 0.61] | 0.47 [0.44, 0.49] | 1.07 [1.01, 1.13] |
+| 512 x 256 x 1024 | 4 | 6.973 | 9.724 | 9.857 | 0.68 [0.63, 0.73] | 0.69 [0.63, 0.74] | 0.73 [0.67, 0.80] | 0.64 [0.61, 0.67] | 0.52 [0.48, 0.56] | 1.01 [0.93, 1.09] |
+| 512 x 768 x 1024 | 4 | 18.952 | 20.539 | 21.124 | 0.91 [0.87, 0.95] | 0.89 [0.82, 0.96] | 0.90 [0.86, 0.94] | 0.62 [0.60, 0.65] | 0.49 [0.47, 0.51] | 0.99 [0.94, 1.05] |
+| 16 x 257 x 1025 | 4 | 0.726 | 2.789 | 3.582 | 0.29 [0.25, 0.35] | 0.23 [0.18, 0.30] | 0.76 [0.57, 1.02] | 0.72 [0.63, 0.83] | 0.58 [0.51, 0.67] | 1.12 [0.98, 1.28] |
+| 128 x 257 x 1025 | 4 | 2.119 | 4.865 | 4.674 | 0.45 [0.41, 0.49] | 0.47 [0.43, 0.51] | 0.74 [0.69, 0.80] | 0.57 [0.53, 0.62] | 0.48 [0.45, 0.52] | 0.95 [0.86, 1.05] |
+| 512 x 257 x 1025 | 4 | 7.886 | 10.677 | 10.603 | 0.74 [0.69, 0.80] | 0.76 [0.69, 0.84] | 0.74 [0.69, 0.80] | 0.59 [0.56, 0.61] | 0.48 [0.44, 0.52] | 1.04 [0.98, 1.10] |
+
+  `kblock+exp / kblock` is the elementwise contract's share: the same k-blocked GEMMs, the BCIR exponential's passes in place of v1's libm SiLU.
+
+  The block taken apart at one thread ([block-parts](measurements/2026-10-22/block-parts/README.json): each part's median over rotated rounds, BCIR's serial path and PyTorch at one thread; the GEMM columns BCIR's k-blocked time over torch.mm's, MKL's, the elementwise ones milliseconds):
+
+| Shape (m x k x n) | nn: kblock / MKL | nt: kblock / MKL | tn: kblock / MKL | SiLU product v1 / v2 / PyTorch (ms) | SwiGLU VJP v1 / v2 / PyTorch (ms) |
+|---|---:|---:|---:|---:|---:|
+| 16 x 256 x 1024 | 0.92 | 0.74 | 0.98 | 0.19 / 0.03 / 0.06 | 0.20 / 0.04 / 0.14 |
+| 16 x 768 x 1024 | 0.80 | 0.65 | 1.53 | 0.32 / 0.04 / 0.06 | 0.31 / 0.05 / 0.19 |
+| 128 x 256 x 1024 | 0.70 | 0.95 | 1.19 | 1.19 / 0.23 / 0.30 | 1.33 / 0.34 / 1.01 |
+| 128 x 768 x 1024 | 0.58 | 0.95 | 1.42 | 1.16 / 0.23 / 0.32 | 1.30 / 0.28 / 0.94 |
+| 512 x 256 x 1024 | 0.93 | 1.12 | 1.04 | 4.71 / 0.87 / 1.80 | 5.49 / 1.22 / 12.02 |
+| 512 x 768 x 1024 | 1.35 | 1.09 | 1.45 | 4.49 / 0.95 / 1.50 | 5.08 / 1.47 / 11.93 |
+| 16 x 257 x 1025 | 1.13 | 0.79 | 0.90 | 0.20 / 0.03 / 0.05 | 0.21 / 0.03 / 0.12 |
+| 128 x 257 x 1025 | 0.95 | 0.93 | 1.27 | 1.15 / 0.21 / 0.23 | 1.27 / 0.27 / 0.88 |
+| 512 x 257 x 1025 | 0.84 | 0.99 | 1.17 | 4.60 / 0.94 / 1.54 | 5.14 / 1.25 / 11.57 |
 
   T-DSL, the Triton-CPU pilot's session over this tree's tensor unit (its own interpreter and wheel; BCIR's side over Triton's, below 1 BCIR is faster):
 
@@ -188,11 +214,11 @@ the run on Intel(R) Xeon(R) Processor @ 2.80GHz (4 vCPUs; BCIR's timed experimen
 
 | Case | First call (s) | Warm call (s) | Second shape's first call (s) | Frames after it |
 |---|---:|---:|---:|---:|
-| P-IND cold, static shapes | 43.53 | 0.4233 | 26.74 | 2 |
-| P-IND, its cache kept from the cold run | 7.15 | 0.3736 | 1.47 | 2 |
-| P-IND cold, dynamic shapes | 77.31 | 0.3897 | 0.20 | 1 |
+| P-IND cold, static shapes | 43.64 | 0.5144 | 29.24 | 2 |
+| P-IND, its cache kept from the cold run | 7.94 | 0.4268 | 1.47 | 2 |
+| P-IND cold, dynamic shapes | 80.11 | 0.4208 | 0.22 | 1 |
 
-  B-PLAN: one C library for every shape: a new shape costs its plan alone; the two shapes' plans 7.53, 4.37 ms.
+  B-PLAN: one C library for every shape: a new shape costs its plan alone; the two shapes' plans 5.27, 4.71 ms.
 
 ## 5. What moves each gate next
 

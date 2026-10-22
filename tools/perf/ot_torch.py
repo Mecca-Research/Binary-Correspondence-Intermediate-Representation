@@ -16,8 +16,10 @@ nothing in BCIR's core imports this module):
          B-PLAN's planning of the same step (the step program, its words, the TrainingPack, the
          StreamPack and ExecutionPlanV1 lowering) and the C library's build, BCIR's codegen
   OT-05  the block portfolio: the common block's forward and forward + backward at OT-01's shapes
-         on B-DIRECT under three GEMM contracts (v1, the fused v2, the blocked v3) and on P-EAGER and
-         P-IND, at one thread and at the host's, in rotated rounds beside an A/A control
+         on B-DIRECT under three GEMM contracts (v1, the fused v2, the blocked v3) with v1's libm
+         elementwise passes, and as the trainer runs it (the blocked v3 with the BCIR exponential's
+         passes, kblock+exp), and on P-EAGER and P-IND, at one thread and at the host's, in rotated
+         rounds beside an A/A control
   OT-11  the cache lifecycle: P-IND cold (a fresh process, an empty cache), warm (the same process,
          the same shape), persistent (a fresh process over the first's cache) and across a shape
          change (static and dynamic), beside B-PLAN (one library for every shape, a plan a shape)
@@ -56,6 +58,21 @@ SMOKE_SHAPE = (2, 32)
 #: The GEMM contracts B-DIRECT runs in OT-05, each its entry in the plain library.
 CONTRACT_ENTRIES = {"v1": "bcir_tensor_mm_pool", "fused": "bcir_tensor_mm_fused_pool",
                     "kblock": "bcir_tensor_mm_kblock_pool"}  # fmt: skip
+#: The block's two elementwise passes (the SiLU product forward, the SwiGLU VJP backward) under
+#: each elementwise contract: v1's libm SiLU, or the BCIR exponential's (NDT-EXP's `exp` bit).
+ELEMENTWISE_ENTRIES = {"v1": ("bcir_tensor_silu_mul_pool", "bcir_tensor_swiglu_backward_pool"),
+                       "exp": ("bcir_tensor_silu_mul_v2_pool",
+                               "bcir_tensor_swiglu_backward_v2_pool")}  # fmt: skip
+#: OT-05's B-DIRECT arms, each (GEMM contract, elementwise contract): the three GEMM contracts
+#: under v1's elementwise passes, kblock's A/A control, and kblock+exp -- the block under the
+#: trainer's fast arithmetic contract (OT-10's B-DIRECT trained kblock+exp+reduce+attn; the
+#: trainer's forward pass also scans its product for non-finite values, which no arm here does),
+#: the arm a comparison with PyTorch's block reads first.
+BLOCK_ARMS = {"v1": ("v1", "v1"), "fused": ("fused", "v1"), "kblock": ("kblock", "v1"),
+              "kblock-AA": ("kblock", "v1"), "kblock+exp": ("kblock", "exp")}  # fmt: skip
+#: The arm every OT-05 ratio is paired against (each round's time over the other arm's), and the
+#: trainer's own arm, whose paired ratios the record carries beside it.
+REFERENCE_ARM, TRAINER_ARM = "B-DIRECT/kblock", "B-DIRECT/kblock+exp"
 TORCH_CONTRACT = "the BLAS PyTorch dispatches to (its own summation order, FMA)"
 
 
@@ -176,10 +193,11 @@ def _native(lib):
             fp,
         ]
         f.restype = None
-    lib.bcir_tensor_silu_mul_pool.argtypes = [ct.c_void_p, sz, fp, fp, fp]
-    lib.bcir_tensor_silu_mul_pool.restype = None
-    lib.bcir_tensor_swiglu_backward_pool.argtypes = [ct.c_void_p, sz, fp, fp, fp, fp, fp]
-    lib.bcir_tensor_swiglu_backward_pool.restype = None
+    for silu_mul, vjp in ELEMENTWISE_ENTRIES.values():
+        getattr(lib, silu_mul).argtypes = [ct.c_void_p, sz, fp, fp, fp]
+        getattr(lib, silu_mul).restype = None
+        getattr(lib, vjp).argtypes = [ct.c_void_p, sz, fp, fp, fp, fp, fp]
+        getattr(lib, vjp).restype = None
     lib.bcir_tensor_pool_size.argtypes = [ct.c_uint]
     lib.bcir_tensor_pool_size.restype = sz
     lib.bcir_tensor_pool_init.argtypes = [ct.c_void_p, sz, ct.c_uint]
@@ -208,8 +226,12 @@ class Pool:
             self.handle = None
 
 
-def _block_native(lib, pool, mm, x, wg, wu, dy, out):
-    """B-DIRECT's block under one GEMM entry `mm`: (forward, forward + backward) closures."""
+def _block_native(lib, pool, arm, x, wg, wu, dy, out):
+    """B-DIRECT's block as one of BLOCK_ARMS runs it -- its GEMM contract's entry for the six
+    products, its elementwise contract's for the two passes: (forward, forward + backward)."""
+    gemm, elementwise = BLOCK_ARMS[arm]
+    mm = getattr(lib, CONTRACT_ENTRIES[gemm])
+    silu_mul, vjp = (getattr(lib, e) for e in ELEMENTWISE_ENTRIES[elementwise])
     fp = ct.POINTER(ct.c_float)
     m, k = x.shape
     n = wg.shape[1]
@@ -220,11 +242,11 @@ def _block_native(lib, pool, mm, x, wg, wu, dy, out):
     def forward():
         mm(h, 0, 0, m, n, k, 1.0, px, pg, 0.0, p["u"])
         mm(h, 0, 0, m, n, k, 1.0, px, pu, 0.0, p["v"])
-        lib.bcir_tensor_silu_mul_pool(h, m * n, p["u"], p["v"], p["y"])
+        silu_mul(h, m * n, p["u"], p["v"], p["y"])
 
     def both():
         forward()
-        lib.bcir_tensor_swiglu_backward_pool(h, m * n, p["u"], p["v"], pdy, p["du"], p["dv"])
+        vjp(h, m * n, p["u"], p["v"], pdy, p["du"], p["dv"])
         mm(h, 0, 1, m, k, n, 1.0, p["du"], pg, 0.0, p["dx"])
         mm(h, 0, 1, m, k, n, 1.0, p["dv"], pu, 1.0, p["dx"])
         mm(h, 1, 0, k, n, m, 1.0, px, p["du"], 0.0, p["dwg"])
@@ -268,8 +290,11 @@ def _block_torch(x, wg, wu, dy, compiled: bool):
 
 
 def portfolio(lib_path, shapes, threads_list, rounds: int) -> dict:
-    """OT-05: the block on B-DIRECT under each GEMM contract (and an A/A control under the blocked
-    v3, the trainer's fast contract) against P-EAGER and P-IND, per thread count and shape."""
+    """OT-05: the block on B-DIRECT under each GEMM contract with v1's elementwise passes, an A/A
+    control under the blocked v3, and the block under the trainer's contract (kblock+exp: the
+    blocked v3 with the BCIR exponential's passes), against P-EAGER and P-IND, per thread count and
+    shape. Each phase's paired ratios read against REFERENCE_ARM (`kblock_over`) and TRAINER_ARM
+    (`trainer_over`): each round's time over the other arm's in the same round."""
     import numpy as np
     import torch
 
@@ -288,14 +313,11 @@ def portfolio(lib_path, shapes, threads_list, rounds: int) -> dict:
                 wu = (rng.standard_normal((k, n), dtype=np.float32) / np.sqrt(k)).astype(np.float32)
                 dy = rng.standard_normal((m, n), dtype=np.float32)
                 arms_f, arms_b, compile_s = {}, {}, {}
-                for name, entry in [
-                    *CONTRACT_ENTRIES.items(),
-                    ("kblock-AA", CONTRACT_ENTRIES["kblock"]),
-                ]:
+                for name in BLOCK_ARMS:
                     out = {a: np.zeros(s, np.float32) for a, s in
                            (("u", (m, n)), ("v", (m, n)), ("y", (m, n)), ("du", (m, n)),
                             ("dv", (m, n)), ("dx", (m, k)), ("dwg", (k, n)), ("dwu", (k, n)))}  # fmt: skip
-                    f, b = _block_native(lib, pools[0], getattr(lib, entry), x, wg, wu, dy, out)
+                    f, b = _block_native(lib, pools[0], name, x, wg, wu, dy, out)
                     arms_f[f"B-DIRECT/{name}"], arms_b[f"B-DIRECT/{name}"] = f, b
                 for route, compiled in (("P-EAGER", False), ("P-IND", True)):
                     try:
@@ -311,19 +333,30 @@ def portfolio(lib_path, shapes, threads_list, rounds: int) -> dict:
                        "gemm_flop": {"forward": 4 * m * k * n, "forward_backward": 12 * m * k * n},
                        "compile_seconds": compile_s}  # fmt: skip
                 for phase, arms in (("forward", arms_f), ("forward_backward", arms_b)):
-                    ms = rotated(arms, rounds)
-                    ref = ms["B-DIRECT/kblock"]
-                    row[phase] = {
-                        "ms": {a: statistics.median(v) for a, v in ms.items()},
-                        "kblock_over": {a: interval([r / o for r, o in zip(ref, v)])
-                                        for a, v in ms.items() if a != "B-DIRECT/kblock"},
-                        "raw_ms": {a: [round(t, 4) for t in v] for a, v in ms.items()},
-                    }  # fmt: skip
+                    row[phase] = phase_summary(rotated(arms, rounds))
                 rows.append(row)
         finally:
             for p in pools:
                 p.close()
     return {"rows": rows, "failures": failures}
+
+
+def paired_over(ms: dict, arm: str) -> dict:
+    """`arm`'s paired ratios over every other arm: each round's time over the other's in the same
+    round, as an interval (a value under 1: `arm` the faster)."""
+    ref = ms[arm]
+    return {a: interval([r / o for r, o in zip(ref, v)]) for a, v in ms.items() if a != arm}
+
+
+def phase_summary(ms: dict) -> dict:
+    """One OT-05 phase from its rotated rounds ({arm: [ms, ...]}): each arm's median, the paired
+    ratios against the reference and the trainer's arm, and the rounds themselves."""
+    return {
+        "ms": {a: statistics.median(v) for a, v in ms.items()},
+        "kblock_over": paired_over(ms, REFERENCE_ARM),
+        "trainer_over": paired_over(ms, TRAINER_ARM),
+        "raw_ms": {a: [round(t, 4) for t in v] for a, v in ms.items()},
+    }
 
 
 # --- OT-02 and OT-11: capture and the compiler's cache, each measurement its own process ----------

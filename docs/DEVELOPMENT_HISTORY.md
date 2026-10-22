@@ -3995,7 +3995,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   OT P-routes (2026-10-22): PyTorch's and Triton's routes of PR #821's experiments, run.
   - `tools/perf/ot_torch.py` runs PyTorch's routes in the OT records: P-EAGER beside B-DIRECT in
     OT-01; the capture cost of P-FX, P-AOT and P-IND (OT-02); P-EAGER and P-IND in the block
-    portfolio (OT-05), whose T-DSL rows come from a session of PR #821's Triton-CPU pilot in its own
+    portfolio (OT-05), beside B-DIRECT's block under each GEMM contract and under the trainer's own
+    (kblock+exp), whose T-DSL rows come from a session of PR #821's Triton-CPU pilot in its own
     interpreter, admitted only over this tree's `bcir_tensor.c`; the frontier from
     train_comparison.py's runs over one recipe (OT-10); Inductor's cache lifecycle (OT-11). Each
     compiled step runs in its own process with a fresh cache; Triton is a capability only with a
@@ -4006,27 +4007,42 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     UNAVAILABLE ([ledger](research/BCIR_OT_BG_LEDGER.md),
     [measurements/2026-10-22/ot/](research/measurements/2026-10-22/ot/README.json)).
   - Results: OT-01's P-EAGER within its binary32 bound beside B-DIRECT (worst 0.351 and 0.366 of the
-    bound). OT-02: the decoder step's first compiled call 2.1 s (P-FX), 6.8 s (P-AOT) and 43.0 s
+    bound). OT-02: the decoder step's first compiled call 3.5 s (P-FX), 6.8 s (P-AOT) and 44.3 s
     (P-IND) as one whole-loss graph, the module form breaking at its input checks (2 graph breaks);
-    B-PLAN's step program and its words 7.8 ms (its TrainingPack 20.4 ms more, the StreamPack and
-    plan lowered in 116 ms) over a library built once in 11.8 s. OT-05: B-DIRECT's k-blocked block,
-    forward and backward, faster than PyTorch's at four threads (1.13-3.64 times, three 512-row
-    comparisons at parity); at one thread 1.17-1.44 times PyTorch's time on the 128-row blocks of
-    width 256 and every 512-row block (MKL's GEMMs), faster on the rest (up to 1.56 times) but 16 x
-    768 against eager (1.10 times its time); against Triton-CPU its GEMM 2.2-3.4 times and its
-    RMSNorm 2.6-10.0 times faster, the SwiGLU product under the BCIR exponential at parity at a
-    million elements. OT-10: the 9.84M decoder's 300 updates at 272 ms a step on B-DIRECT against
-    533 (P-EAGER) and 390 (P-IND), validation CE 2.3525, 2.3643 and 2.3730, peak RSS 489, 1118 and
-    1059 MB. OT-11: Inductor's first call 43.5 s cold, 7.1 s on its kept cache, 77.3 s with dynamic
-    shapes; B-PLAN's program a shape at most 7.5 ms.
+    B-PLAN's step program and its words 4.5 ms (its TrainingPack 9.7 ms more, the StreamPack and
+    plan lowered in 67 ms) over a library built once in 11.5 s. OT-05, the block as the trainer runs
+    it (kblock+exp), forward and backward, against PyTorch's: at four threads faster in sixteen of
+    eighteen comparisons (1.32-5.45 times), at parity in two (512 x 768 x 1024); at one thread
+    faster in ten (1.07-1.72 times), at parity in five, slower in three: 512 x 768 x 1024 (1.37 and
+    1.38 times eager's and Inductor's time) and 512 x 257 x 1025 against Inductor (1.10 times its
+    time); against Triton-CPU its GEMM 2.2-3.4 times and its RMSNorm 2.6-10.0 times faster, the
+    SwiGLU product under the BCIR exponential at parity at a million elements. OT-10: the 9.84M
+    decoder's 300 updates at 272 ms a step on B-DIRECT against 533 (P-EAGER) and 390 (P-IND),
+    validation CE 2.3525, 2.3643 and 2.3730, peak RSS 489, 1118 and 1059 MB. OT-11: Inductor's first
+    call 43.6 s cold, 7.9 s on its kept cache, 80.1 s with dynamic shapes; B-PLAN's program a shape
+    at most 5.3 ms.
+  - A reading corrected before merge: the day's first run (`e81fb74`, pushed in `6e11a62`) compared
+    PyTorch's block with B-DIRECT's GEMM contracts under v1's libm SiLU passes alone, read 1.17-1.44
+    times PyTorch's time at one thread on the 128- and 512-row blocks, and put it down to MKL's
+    GEMMs. The block taken apart at one thread (`block_parts.py`,
+    [block-parts/](research/measurements/2026-10-22/block-parts/README.json)) showed v1's passes at
+    3.4-7.3 times the BCIR exponential's time -- the trainer runs the exponential's -- so the
+    portfolio gained the trainer's arm and the run was repeated; the exponential's passes take the
+    block to 0.72-0.94 of the libm arm's time at one thread. What remains is GEMM time: the
+    k-blocked forms keep pace with MKL's but on the largest block, whose A (1.5 MiB) is larger than
+    the core's 1 MiB L2 cache (the nn and tn forms 1.35 and 1.45 times MKL's), and in the weight
+    adjoint's transposed form (1.04-1.53 times at seven of nine shapes) -- the next training
+    update's target.
   - Witnesses (`bcir/tests/test_ot_contract.py`): the PyTorch records keep every route that ran and
-    every failure; a Triton session is evidence about this tree alone, every BCIR implementation a
-    case times correct on both sides (the first run's reader assumed one implementation a case: the
-    smoke run against the real session found it); Triton a capability only with a usable backend;
-    OT-10's frontier from one recipe; OT-01's verdict every route's; the runner's inputs refused
-    before it runs (a rows file it could not read failed the run only after its last experiment,
-    until it was read first); a record naming the PyTorch and the threads it ran. `ot-contract.json`
-    OC1-OC38, each caught by its own witness.
+    every failure; OT-05's arms each run their GEMM contract's and elementwise contract's entries,
+    declared as `bcir_tensor.h` declares them, and every phase's ratios pair a round with the same
+    round; a Triton session is evidence about this tree alone, every BCIR implementation a case
+    times correct on both sides (the first run's reader assumed one implementation a case: the smoke
+    run against the real session found it); Triton a capability only with a usable backend; OT-10's
+    frontier from one recipe; OT-01's verdict every route's; the runner's inputs refused before it
+    runs (a rows file it could not read failed the run only after its last experiment, until it was
+    read first); a record naming the PyTorch and the threads it ran. `ot-contract.json` OC1-OC48,
+    each caught by its own witness.
   - Not claimed: P-TUNED (no budgeted autotuning lifecycle ran), T-GLUON and every GPU route (no
     GPU), B-MLIR on the block, T-DSL inside OT-11 (the interpreter that runs PyTorch has no Triton
     with a usable backend).

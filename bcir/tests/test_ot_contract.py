@@ -585,8 +585,8 @@ def test_the_pytorch_routes_records_keep_every_route_and_failure():
 
     saved = (ot_torch.capture_cost, ot_torch.portfolio, ot_torch.lifecycle)
     ms = {"B-DIRECT/v1": 2.0, "B-DIRECT/fused": 1.5, "B-DIRECT/kblock": 1.0,
-          "B-DIRECT/kblock-AA": 1.0, "P-EAGER": 3.0}  # fmt: skip
-    phase = {"ms": ms, "kblock_over": {}, "raw_ms": {k: [v] for k, v in ms.items()}}
+          "B-DIRECT/kblock-AA": 1.0, "B-DIRECT/kblock+exp": 0.6, "P-EAGER": 3.0}  # fmt: skip
+    phase = ot_torch.phase_summary({a: [v, v * 1.01, v * 0.99, v] for a, v in ms.items()})
     step = {"first_s": 2.0, "warm_s": 0.5, "frames": 2, "graph_breaks": 1,
             "break_reasons": ["Data-dependent branching\n  Explanation: ..."]}  # fmt: skip
     try:
@@ -610,6 +610,11 @@ def test_the_pytorch_routes_records_keep_every_route_and_failure():
         assert fx["capture_s"] == 1.5 and fx["break_reasons"] == ["Data-dependent branching"]
         five = oc.validate_record({**ot_run.ot05("lib", 4, True, 4), **target})
         assert five["routes"] == ["P-EAGER", "B-DIRECT"], five["routes"]
+        for name in ("forward", "forward_backward"):  # both pairings kept, the rounds in raw alone
+            got = five["results"][0][name]
+            assert set(got) == {"ms", "kblock_over", "trainer_over"}, sorted(got)
+            assert "P-EAGER" in got["trainer_over"] and "B-DIRECT/kblock" in got["trainer_over"]
+            assert "B-DIRECT/kblock+exp" in five["raw"][0][name]
         assert any("no compiler" in u for u in five["labels"]["unsupported"])
         assert any(u.startswith("T-DSL") for u in five["labels"]["unsupported"])
         session = ot_run._triton_evidence  # the T-DSL rows from a named session alone
@@ -621,6 +626,97 @@ def test_the_pytorch_routes_records_keep_every_route_and_failure():
         assert any("persistent_static: timeout" in u for u in eleven["labels"]["unsupported"])
     finally:
         ot_torch.capture_cost, ot_torch.portfolio, ot_torch.lifecycle = saved
+
+
+def _declared_parameters(header: str, name: str) -> int:
+    """How many parameters `name`'s declaration in `header` takes (its prototype read as text)."""
+    start = header.index(f" {name}(") + len(name) + 2
+    return header[start : header.index(");", start)].count(",") + 1
+
+
+def test_the_block_portfolio_runs_each_arm_under_its_contracts():
+    """OT-05's B-DIRECT arms, without a compiler or NumPy: each arm runs its GEMM contract's entry
+    for the block's six products and its elementwise contract's entries for the two passes -- the
+    trainer's arm (kblock+exp) the BCIR exponential's passes, never v1's libm ones, and every other
+    arm v1's -- each entry's signature declared as bcir_tensor.h declares it; and each phase's
+    ratios pair a round with the same round, against the reference and against the trainer's arm."""
+    import math
+    import types
+
+    from tools.perf import ot_torch
+
+    class Entry:
+        def __init__(self, name, calls):
+            self.name, self.calls, self.argtypes, self.restype = name, calls, None, "unset"
+
+        def __call__(self, *args):
+            self.calls.append((self.name, len(args)))
+
+    class Lib:
+        def __init__(self):
+            self.calls, self.entries = [], {}
+
+        def __getattr__(self, name):
+            if not name.startswith("bcir_tensor_"):
+                raise AttributeError(name)
+            return self.entries.setdefault(name, Entry(name, self.calls))
+
+    class Array:  # what _block_native reads of an array: its shape and its address
+        def __init__(self, *shape):
+            self.shape, self.ctypes = shape, types.SimpleNamespace(data_as=lambda fp: None)
+
+    header = (ROOT / "runtime" / "c" / "bcir_tensor.h").read_text(encoding="utf-8")
+    lib = ot_torch._native(Lib())
+    entries = [*ot_torch.CONTRACT_ENTRIES.values(),
+               *(e for pair in ot_torch.ELEMENTWISE_ENTRIES.values() for e in pair)]  # fmt: skip
+    for name in entries:
+        e = lib.entries[name]
+        assert e.restype is None and len(e.argtypes) == _declared_parameters(header, name), name
+    assert ot_torch.ELEMENTWISE_ENTRIES["exp"] == (
+        "bcir_tensor_silu_mul_v2_pool",
+        "bcir_tensor_swiglu_backward_v2_pool",
+    ), ot_torch.ELEMENTWISE_ENTRIES
+    m, k, n = 4, 3, 5
+    out = {a: Array(*s) for a, s in (("u", (m, n)), ("v", (m, n)), ("y", (m, n)), ("du", (m, n)),
+                                     ("dv", (m, n)), ("dx", (m, k)), ("dwg", (k, n)),
+                                     ("dwu", (k, n)))}  # fmt: skip
+    pool = types.SimpleNamespace(handle=None)
+    ran = {}
+    for arm in ot_torch.BLOCK_ARMS:
+        lib.calls.clear()
+        forward, both = ot_torch._block_native(lib, pool, arm, Array(m, k), Array(k, n),
+                                               Array(k, n), Array(m, n), out)  # fmt: skip
+        forward()
+        assert len(lib.calls) == 3, (arm, lib.calls)
+        lib.calls.clear()
+        both()
+        ran[arm] = [name for name, _ in lib.calls]
+        assert all(argc == len(lib.entries[name].argtypes) for name, argc in lib.calls), lib.calls
+    assert set(ran) == {"v1", "fused", "kblock", "kblock-AA", "kblock+exp"}, sorted(ran)
+    v1, exp = ot_torch.ELEMENTWISE_ENTRIES["v1"], ot_torch.ELEMENTWISE_ENTRIES["exp"]
+    for arm, calls in ran.items():  # each arm's contracts read from its name, not from the table
+        mm = ot_torch.CONTRACT_ENTRIES[arm.split("-")[0].split("+")[0]]
+        silu_mul, vjp = exp if arm == "kblock+exp" else v1
+        assert calls == [mm, mm, silu_mul, vjp, mm, mm, mm, mm], (arm, calls)
+    arms = (ot_torch.REFERENCE_ARM, ot_torch.TRAINER_ARM)
+    assert arms == ("B-DIRECT/kblock", "B-DIRECT/kblock+exp"), arms
+
+    # paired rounds: the trainer's arm half the reference's in every round, the rounds unordered
+    ms = {"B-DIRECT/kblock": [1.0, 4.0, 2.0, 8.0], "B-DIRECT/kblock+exp": [0.5, 2.0, 1.0, 4.0],
+          "P-EAGER": [3.0, 1.0, 5.0, 2.0]}  # fmt: skip
+    phase = ot_torch.phase_summary(ms)
+    assert set(phase["kblock_over"]) == {"B-DIRECT/kblock+exp", "P-EAGER"}, phase["kblock_over"]
+    assert set(phase["trainer_over"]) == {"B-DIRECT/kblock", "P-EAGER"}, phase["trainer_over"]
+    half = phase["trainer_over"]["B-DIRECT/kblock"]
+    assert math.isclose(half["geometric_mean"], 0.5) and half["rounds"] == 4, half
+    assert all(math.isclose(c, 0.5) for c in half["ci95"]), half  # paired: no spread at all
+    twice = phase["kblock_over"]["B-DIRECT/kblock+exp"]
+    assert all(math.isclose(c, 2.0) for c in [twice["geometric_mean"], *twice["ci95"]]), twice
+    eager = phase["trainer_over"]["P-EAGER"]
+    want = math.exp(sum(math.log(r / o) for r, o in zip(ms["B-DIRECT/kblock+exp"],
+                                                        ms["P-EAGER"])) / 4)  # fmt: skip
+    assert math.isclose(eager["geometric_mean"], want) and eager["ci95"][1] > eager["ci95"][0]
+    assert phase["ms"]["B-DIRECT/kblock+exp"] == 1.5 and phase["raw_ms"]["P-EAGER"] == ms["P-EAGER"]
 
 
 def test_triton_is_a_capability_only_with_a_usable_backend():

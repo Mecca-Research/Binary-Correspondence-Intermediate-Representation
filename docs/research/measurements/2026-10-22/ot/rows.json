@@ -1,6 +1,6 @@
 {
   "baseline_host": "WSL2, AMD Ryzen 5 2600 (6c/12t, AVX2, 8 MiB L3), 7.7 GiB RAM, Python 3.10.12, GCC 11.4, Clang/MLIR 22.1.8, no PMU/RAPL",
-  "host": "Linux-6.18.44-fc-v139-x86_64-with-glibc2.39",
+  "host": "Linux-6.18.44-fc-v140-x86_64-with-glibc2.39",
   "repeats": 5,
   "rows": [
     {
@@ -887,16 +887,16 @@
     },
     {
       "baseline": 10.05,
-      "bound": 1.0110423138485203,
+      "bound": 0.9854222343772534,
       "bound_measured": true,
       "bound_source": "G26's roofline for the step program's order, compute term, same library and run: the step's counted contraction work (every linear's product and two VJPs, the causal attention's six contractions) at the best rate bcir_tensor_mm reaches on any of the step's own GEMM shapes timed alone. A bound on this host's kernel (TMSAO-3), not on the silicon; the memory terms are not applied (the bench step's working set stays cache-resident across steps, so first-touch traffic is not the loop's)",
       "floor_violated": false,
       "group": "train",
-      "headroom": 0.7146292497899986,
-      "improvement": 0.647471840808745,
+      "headroom": 0.7064617661580347,
+      "improvement": 0.665965273633089,
       "key": "train.step.ms",
       "kind": "wall",
-      "measured": 3.5429079998721136,
+      "measured": 3.3570489999874553,
       "noise": 0.15,
       "slice": "NDT-GEM",
       "unit": "ms",
