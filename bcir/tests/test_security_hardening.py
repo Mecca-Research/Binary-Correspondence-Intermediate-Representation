@@ -283,6 +283,39 @@ def test_python_style_gate_and_hooks_run_one_pinned_ruff() -> None:
     assert "ruff==" not in body.replace('startswith("ruff==")', "")
 
 
+def test_the_style_gate_and_the_hooks_spare_the_same_frozen_bundles() -> None:
+    """The research bundles under docs/research are frozen evidence: each one's protocol and
+    manifest hash its files' bytes, so the style gate's ruff and the byte-rewriting hooks
+    (trailing whitespace, end of file, line endings) must leave them as uploaded -- restyling one
+    breaks the reproduction it exists for (GEO-2 reran the PR818 study from those bytes; three of
+    its files had already gained a trailing newline from a web rename). All four spare the same
+    roots, each named on its own (no glob: a new bundle is a decision), and where the tree holds
+    one it is a bundle: its manifest -- MANIFEST_SHA256.json, SOURCE_MANIFEST.json or
+    manifest.json, the three spellings the bundles use -- is there to hold its bytes to."""
+    import tomllib
+
+    pyproject = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    excluded = sorted(
+        p for p in pyproject["tool"]["ruff"]["extend-exclude"] if p.startswith("docs/research/")
+    )
+    assert excluded and all(re.fullmatch(r"docs/research/[a-z0-9-]+", p) for p in excluded), (
+        excluded
+    )
+    names = sorted(p.rsplit("/", 1)[1] for p in excluded)
+    hooks = (_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    for hook in ("trailing-whitespace", "end-of-file-fixer", "mixed-line-ending"):
+        start = hooks.index(f"- id: {hook}\n")
+        end = hooks.find("- id:", start + 1)
+        block = hooks[start : end if end != -1 else len(hooks)]
+        spared = re.search(r"\^docs/research/\(([a-z0-9|-]+)\)/", block)
+        assert spared, f"the {hook} hook does not spare the frozen bundles"
+        assert sorted(spared.group(1).split("|")) == names, (hook, spared.group(1), names)
+    manifests = ("MANIFEST_SHA256.json", "SOURCE_MANIFEST.json", "manifest.json")
+    for p in excluded:
+        if (_ROOT / p).exists():
+            assert any((_ROOT / p / m).is_file() for m in manifests), f"{p} is not a frozen bundle"
+
+
 def test_build_system_excludes_known_vulnerable_setuptools_releases() -> None:
     """The isolated PEP 517 backend must exclude GHSA-h35f-9h28-mq5c."""
     text = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")

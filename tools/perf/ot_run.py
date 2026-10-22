@@ -34,10 +34,14 @@ arm in the same rotation -- so an effect is read against this host's own noise; 
 bench step and runs OT-01 on one small shape.
 
     python3 tools/perf/ot_run.py OUT.json [--rows ROWS.json] [--rounds 24] [--smoke]
+        [--triton SESSION.json] [--frontier DATA_DIR]
 
-`--rows` names `tools/perf/gemplus_baseline.py --compare --group train --json` output: the GEM+
-rows the gates read (BG1's train.plan.* rows, each met at 0). The gates are stated last; the exit
-status is 0 when every record validates.
+`--rows` names the report `tools/perf/gemplus_baseline.py --compare --group train --json ROWS.json`
+writes: the GEM+ rows the gates read (BG1's train.plan.* rows, each met at 0). `--triton` names a
+Triton-CPU pilot session (OT-05's T-DSL rows), `--frontier` train_comparison.py's prepared data
+and its runs (OT-10). Every file named is read before any experiment runs, and one the run cannot
+use is refused then (exit status 2). The gates are stated last; the exit status is 0 when every
+record validates.
 """
 
 from __future__ import annotations
@@ -89,7 +93,11 @@ def _target(threads: int) -> dict:
     return {"cpu": cpu, "threads": threads}
 
 
-def _versions() -> dict:
+def _versions(caps=frozenset()) -> dict:
+    """What the run ran: this tree's commit (+dirty where bcir/, runtime/c or tools/perf differ from
+    it), Python, NumPy, the C compiler, and -- where PyTorch is a capability -- the PyTorch the P-*
+    routes ran, its CPU capability, threads and BLAS, each a plain string (`torch.__version__` is a
+    str subclass, which the contract's versions refuse)."""
     commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True,
                             text=True).stdout.strip() or "unknown"  # fmt: skip
     dirty = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain", "--", "bcir",
@@ -108,7 +116,30 @@ def _versions() -> dict:
     if cc:
         first = subprocess.run([cc, "--version"], capture_output=True, text=True).stdout
         out["cc"] = first.splitlines()[0] if first else cc
+    if "torch" in caps:
+        from tools.perf import ot_torch
+
+        out.update({k: str(v) for k, v in ot_torch.torch_versions().items()})
     return out
+
+
+def _ran_at(threads: int, frontier) -> dict:
+    """The threads each measured experiment ran at, for its record's target: the PyTorch routes'
+    runners the host's (OT-05's widest rows), OT-10 its runs' own, every other experiment one."""
+    out = {"OT-02": threads, "OT-05": threads, "OT-11": threads}
+    if frontier is not None:
+        ran = [r["threads"] for r in frontier["results"] if type(r.get("threads")) is int]
+        if ran:
+            out["OT-10"] = max(ran)
+    return out
+
+
+def _stamp(record: dict, ran_at: dict, versions: dict) -> dict:
+    """A measured record with its target -- this host's CPU and the threads it ran at -- and the
+    versions that ran; any other record as it is."""
+    if record["status"] != "measured":
+        return record
+    return {**record, "target": _target(ran_at.get(record["experiment"], 1)), "versions": versions}
 
 
 def _interval(ratios: list[float]) -> tuple[float, list[float]]:
@@ -163,8 +194,10 @@ def elementwise_check(name: str, got, exact, scale) -> dict:
             "max_error_over_bound": ratio}  # fmt: skip
 
 
-def ot01(lib, shapes) -> dict:
-    """The first common block forward and backward on the native kernels against float64."""
+def ot01(lib, shapes, with_torch: bool = False) -> dict:
+    """The first common block forward and backward on the native kernels against float64; with
+    `with_torch`, the same block on PyTorch eager (P-EAGER, tools/perf/ot_torch.py) from the same
+    inputs, held to the same bounds."""
     import numpy as np
 
     mm = lib.bcir_tensor_mm
@@ -227,9 +260,17 @@ def ot01(lib, shapes) -> dict:
         ]  # fmt: skip
         case_worst = max(c["max_error_over_bound"] for c in checks)
         worst = max(worst, case_worst)
-        results.append({"shape": {"m": m, "k": k, "n": n}, "within_bound": case_worst <= 1.0,
-                        "max_error_over_bound": case_worst})  # fmt: skip
-        raw.append({"shape": {"m": m, "k": k, "n": n}, "checks": checks})
+        results.append({"route": "B-DIRECT", "shape": {"m": m, "k": k, "n": n},
+                        "within_bound": case_worst <= 1.0, "max_error_over_bound": case_worst})  # fmt: skip
+        raw.append({"route": "B-DIRECT", "shape": {"m": m, "k": k, "n": n}, "checks": checks})
+    routes, unsupported, torch_worst = ["B-DIRECT"], [_unrun_route("P-EAGER")], 0.0
+    if with_torch:
+        from tools.perf import ot_torch
+
+        torch_results, torch_raw, torch_worst = ot_torch.p_eager_block(shapes)
+        results += torch_results
+        raw += torch_raw
+        routes, unsupported = ["B-DIRECT", "P-EAGER"], []
     # the coverage ledger: what the entries admit beyond dense row-major operands -- the
     # zero-size product writes nothing (m = 0 over a sentinel output)
     sentinel = np.full((2, 2), 7.0, np.float32)
@@ -249,16 +290,17 @@ def ot01(lib, shapes) -> dict:
         {
             "ledger": ledger,
             "worst_error_over_bound": worst,
-            "within_bound": worst <= 1.0 and untouched,
+            "p_eager_worst_error_over_bound": torch_worst if with_torch else None,
+            "within_bound": worst <= 1.0 and torch_worst <= 1.0 and untouched,
         }
     )
     return {
-        "experiment": "OT-01", "status": "measured", "routes": ["B-DIRECT"],
+        "experiment": "OT-01", "status": "measured", "routes": routes,
         "semantic": "swiglu.block.fwd+bwd.binary32", "reference": "numpy.float64",
         "results": results, "raw": raw,
         "memory_scopes": {"logical_bytes": int(sum(4 * (m * k + 2 * k * n + 3 * m * n)
                                                    for m, k, n in shapes))},
-        "labels": {"unsupported": ["strided or non-contiguous operands", _unrun_route("P-EAGER")],
+        "labels": {"unsupported": ["strided or non-contiguous operands (B-DIRECT)", *unsupported],
                    "fallback": []},
         "gaps": ["capability"],
     }  # fmt: skip
@@ -450,10 +492,258 @@ def ot14(plain, traced, rounds: int, case) -> dict:
     }  # fmt: skip
 
 
+# --- OT-02, OT-05, OT-11: the PyTorch routes (tools/perf/ot_torch.py) --------------------------------
+
+#: The experiments whose runner needs PyTorch: measured where it imports, else unavailable.
+TORCH_RUNNERS = ("OT-02", "OT-05", "OT-11")
+
+
+def _first_line(reason: str) -> str:
+    return reason.strip().splitlines()[0] if reason.strip() else reason
+
+
+def ot02(threads: int, smoke: bool) -> dict:
+    """Capture cost of the decoder's training step: P-EAGER (no capture), P-FX, P-AOT and P-IND --
+    each cold in its own process, the module as written and its loss as one graph -- beside B-PLAN's
+    planning and lowering of the same step and the C library's build."""
+    from tools.perf import ot_torch
+
+    out = ot_torch.capture_cost(threads, smoke)
+    results, failed = [], []
+    for name, row in out["routes"].items():
+        if "failed" in row:
+            failed.append(f"{name}: {row['failed']}")
+            continue
+        if name != "B-PLAN":
+            row = {**row, "capture_s": row["first_s"] - row["warm_s"],
+                   "break_reasons": sorted({_first_line(r) for r in row["break_reasons"]})}  # fmt: skip
+        results.append({"route": name, **row})
+    ran = sorted({r["route"].split("/")[0] for r in results}, key=list(oc.ROUTES).index)
+    return {
+        "experiment": "OT-02", "status": "measured", "routes": ran,
+        "semantic": "native.decoder.step.capture", "reference": "p-eager.uncaptured.step",
+        "results": [{k: v for k, v in out.items() if k != "routes"}, *results],
+        "raw": [out["routes"]], "memory_scopes": {},
+        "labels": {"unsupported": ["the compilers' peak memory (not read by this runner)",
+                                   *failed], "fallback": []},
+        "gaps": ["capability", "compilation"],
+    }  # fmt: skip
+
+
+#: The Triton-CPU pilot's protocol (PR #821's tools/perf/triton_cpu_compare.py, its own
+#: interpreter: the experimental triton-cpu build needs Python 3.12 and runs without PyTorch).
+TRITON_PROTOCOL = "bcir-triton-cpu-pilot-v2"
+
+
+def _triton_evidence(path) -> dict:
+    """A Triton-CPU pilot session as OT-05's T-DSL rows: its protocol, its PASS, every case's
+    correctness on both sides and its paired ratio -- and its BCIR side this tree's tensor unit (the
+    session's hash of bcir_tensor.c), or it is no evidence about this tree (ValueError). A case
+    times one or more of BCIR's implementations against Triton's kernel (the GEMM's fused and
+    k-blocked contracts, SwiGLU's libm and BCIR exponentials), each with its own correctness and
+    ratio: a row each, every one correct on both sides."""
+    import hashlib
+
+    doc = oc.load_json(path)
+    if not isinstance(doc, dict) or doc.get("protocol") != TRITON_PROTOCOL:
+        raise ValueError(f"a Triton-CPU session names protocol {TRITON_PROTOCOL!r}")
+    if doc.get("status") != "PASS" or not isinstance(doc.get("cases"), list) or not doc["cases"]:
+        raise ValueError("a Triton-CPU session passed and carries its cases")
+    here = hashlib.sha256((ROOT / "runtime" / "c" / "bcir_tensor.c").read_bytes()).hexdigest()
+    if doc.get("tensor_c_sha256") != here:
+        raise ValueError("the Triton-CPU session's BCIR side is not this tree's bcir_tensor.c")
+    rows = []
+    for c in doc["cases"]:
+        name = f"{c.get('kind')} {c.get('shape')}" if isinstance(c, dict) else repr(c)
+        ratios = c.get("ratios") if isinstance(c, dict) else None
+        if not isinstance(ratios, dict) or not ratios:
+            raise ValueError(f"a Triton-CPU case times one of BCIR's implementations: {name}")
+        correct, median = c.get("correctness"), c.get("median_ns")
+        for impl, ratio in sorted(ratios.items()):
+            ok = (
+                impl.startswith("bcir")
+                and isinstance(correct, dict)
+                and all(
+                    isinstance(correct.get(side), dict) and correct[side].get("pass") is True
+                    for side in (impl, "triton")
+                )
+            )
+            timed = (
+                isinstance(ratio, dict)
+                and type(ratio.get("bcir_over_triton")) is float
+                and isinstance(median, dict)
+                and all(type(median.get(side)) is float for side in (impl, "triton"))
+            )
+            if not ok or not timed:
+                raise ValueError(f"a Triton-CPU case is correct on both sides: {name} ({impl})")
+            rows.append({"kind": c["kind"], "shape": c["shape"], "threads": c.get("threads"),
+                         "implementation": impl,
+                         "median_ns": {impl: median[impl], "triton": median["triton"]},
+                         "bcir_over_triton": ratio["bcir_over_triton"],
+                         "ci95": ratio.get("paired_bootstrap_95pct")})  # fmt: skip
+    source = {
+        k: doc.get(k)
+        for k in (
+            "protocol",
+            "utc",
+            "cpu",
+            "rounds",
+            "harness_sha256",
+            "triton_package",
+            "triton_cpu_source",
+            "triton_cpu_wheel_sha256",
+            "tensor_c_sha256",
+            "numerics",
+        )
+    }
+    return {"summary": {"cases": rows, "numerics": doc.get("numerics")}, "source": source}
+
+
+def ot05(plain, threads: int, smoke: bool, rounds: int, triton=None) -> dict:
+    """The block portfolio: B-DIRECT under three GEMM contracts, P-EAGER and P-IND, at one thread
+    and at the host's (OT-01's shapes), each beside B-DIRECT's A/A control."""
+    from tools.perf import ot_torch
+
+    shapes = OT01_SMOKE if smoke else OT01_SHAPES
+    out = ot_torch.portfolio(plain, shapes, sorted({1, threads}), max(rounds, 4))
+    ran = sorted({a.split("/")[0] for row in out["rows"] for a in row["forward"]["ms"]},
+                 key=list(oc.ROUTES).index)  # fmt: skip
+    unsupported = [*out["failures"],
+                   "B-MLIR (BCIR's MLIR route lowers one matmul buffer nest, not this block)",
+                   "T-GLUON (Gluon's explicit layouts target a GPU)"]  # fmt: skip
+    if triton is None:
+        unsupported.append(
+            "T-DSL ("
+            + (
+                "its Triton-CPU rows are a separate run: name them --triton"
+                if "triton" not in oc.host_capabilities()
+                else "no runner yet"
+            )
+            + ")"
+        )
+    results = [{k: v for k, v in row.items() if k != "raw_ms"} for row in out["rows"]]
+    raw = [{"shape": row["shape"], "threads": row["threads"],
+            "forward": row["forward"]["raw_ms"], "forward_backward": row["forward_backward"]["raw_ms"]}
+           for row in out["rows"]]  # fmt: skip
+    if triton is not None:
+        ran.append("T-DSL")
+        results.append({"route": "T-DSL", **triton["summary"]})
+        raw.append({"route": "T-DSL", "source": triton["source"]})
+    for row in results:
+        for phase in ("forward", "forward_backward"):
+            if phase in row:
+                row[phase] = {k: v for k, v in row[phase].items() if k != "raw_ms"}
+    return {
+        "experiment": "OT-05", "status": "measured", "routes": ran,
+        "semantic": "swiglu.block.fwd+bwd.binary32", "reference": "b-direct.kblock",
+        "results": results, "raw": raw,
+        "memory_scopes": {"block_logical_bytes_largest": max(
+            4 * (m * k + 2 * k * n + 6 * m * n + m * k + 2 * k * n) for m, k, n in shapes)},
+        "labels": {"unsupported": unsupported,
+                   "fallback": [f"P-* products: {ot_torch.TORCH_CONTRACT}; B-DIRECT's are its "
+                                "contracts' fixed orders (v1, fused v2, blocked v3)"]},
+        "gaps": ["realization", "competitor"],
+    }  # fmt: skip
+
+
+#: train_comparison.py's backends as OT-10's routes (its `bcir` backend runs the direct C loop)
+FRONTIER_ROUTES = {"bcir": "B-DIRECT", "torch-eager": "P-EAGER", "torch-compiled": "P-IND",
+                   "torch-tuned": "P-TUNED"}  # fmt: skip
+
+
+def ot10(data, task: str = "lm") -> dict:
+    """The complete training frontier from train_comparison.py's runs over one prepared recipe
+    (`data`: its prepare.json and runs/): each route's learning against its training seconds (its
+    evaluations), its held-out cross-entropy, its median step and tokens a second, its compile and
+    first steps, its peak RSS -- every run on the recipe's weights, schedule, batch and steps (the
+    runs refused otherwise: a frontier across two recipes is not one)."""
+    data = Path(data)
+    prepared = oc.load_json(data / "prepare.json")
+    runs = {}
+    for path in sorted((data / "runs").glob(f"{task}-*.json")):
+        r = oc.load_json(path)
+        route = FRONTIER_ROUTES.get(r.get("backend"))
+        if route is None or r.get("task") != task:
+            continue
+        if route in runs:
+            raise ValueError(f"two {route} runs of {task} in {data}")
+        runs[route] = (path.name, r)
+    if not runs:
+        raise ValueError(f"no train_comparison.py runs of {task} in {data}")
+    steps = {len(r["losses"]) for _, r in runs.values()}
+    if len(steps) != 1:
+        raise ValueError(f"the runs trained different step counts: {sorted(steps)}")
+    results = []
+    for route in sorted(runs, key=list(oc.ROUTES).index):
+        name, r = runs[route]
+        results.append({
+            "route": route, "run": name, "contract": r.get("contract"), "threads": r.get("threads"),
+            "steps": len(r["losses"]), "median_step_ms": r["median_step_ms"],
+            "tokens_per_second": r["tokens_per_second"], "train_seconds": r["train_seconds"],
+            "compile_and_first_steps_seconds": r.get("compile_and_first_steps_seconds"),
+            "curve": [{"step": e["step"], "train_seconds": e["train_seconds"],
+                       "cross_entropy": e["cross_entropy"]} for e in r["evals"]],
+            "final": {split: {"cross_entropy": v["cross_entropy"], "accuracy": v["accuracy"]}
+                      for split, v in r["final"].items()},
+            "peak_rss_mb": r["rss_mb"]["peak"], "state_sha256": r["state_sha256"],
+        })  # fmt: skip
+    rss = {r["route"]: int(r["peak_rss_mb"] * 2**20) for r in results}
+    return {
+        "experiment": "OT-10", "status": "measured", "routes": [r["route"] for r in results],
+        "semantic": f"native.decoder.train.{task}", "reference": "p-eager.training.curve",
+        "results": [{"recipe": {"weights_sha256": prepared.get("weights_sha256"),
+                                "batch": prepared.get("batch"), "context": prepared.get("context"),
+                                "parameters": prepared.get("parameters"), "steps": steps.pop(),
+                                "task": task}}, *results],
+        "raw": [{"route": r["route"], "losses": runs[r["route"]][1]["losses"]} for r in results],
+        "memory_scopes": {f"{k}_peak_rss_bytes": v for k, v in rss.items()},
+        "labels": {"unsupported": [f"{rt} (no run)" for rt in ("P-TUNED", "P-IND", "P-EAGER")
+                                   if rt not in runs] + ["B-PLAN's own learning run (OT-03: its "
+                                   "state is B-DIRECT's bit for bit; OT-04 prices the step)"],
+                   "fallback": []},
+        "gaps": ["competitor"],
+    }  # fmt: skip
+
+
+def ot11(threads: int, smoke: bool) -> dict:
+    """P-IND's cache lifecycle over the decoder's step -- cold, warm, persistent, a shape change
+    static and dynamic -- beside B-PLAN's (one library for every shape, a plan a shape)."""
+    from tools.perf import ot_torch
+
+    out = ot_torch.lifecycle(threads, smoke)
+    failed = [
+        f"{k}: {v['failed']}" for k, v in out.items() if isinstance(v, dict) and "failed" in v
+    ]
+    rows = {k: v for k, v in out.items()
+            if k in ("cold_static", "persistent_static", "cold_dynamic") and "failed" not in v}  # fmt: skip
+    results = [{"case": k, **{f: v.get(f) for f in ("first_s", "warm_s", "frames",
+                                                      "second_shape_first_s", "second_shape_warm_s",
+                                                      "frames_after_second_shape")}}
+               for k, v in rows.items()]  # fmt: skip
+    results.append({"case": "B-PLAN", **out["B-PLAN"]})
+    triton = "triton" in oc.host_capabilities()
+    return {
+        "experiment": "OT-11", "status": "measured",
+        "routes": ["P-IND", "B-PLAN"] if rows else ["B-PLAN"],
+        "semantic": "native.decoder.step.lifecycle", "reference": "p-ind.cold.compile",
+        "results": [{k: v for k, v in out.items() if k in ("decoder", "batch", "time", "second_time",
+                                                             "threads")}, *results],
+        "raw": [out], "memory_scopes": {},
+        "labels": {"unsupported": [*failed,
+                                   "P-TUNED (a budgeted autotuning lifecycle: not run here)",
+                                   "T-DSL (" + ("no runner yet" if triton else
+                                                "no Triton with a usable backend here") + ")"],
+                   "fallback": []},
+        "gaps": ["compilation"],
+    }  # fmt: skip
+
+
 # --- the others -------------------------------------------------------------------------------------
 
 #: The prerequisite each experiment's runner needs from the repository, where one is missing.
 BLOCKED = {
+    "OT-10": "the complete-training frontier is read from train_comparison.py's runs over one "
+             "prepared recipe: name its data directory (prepare.json and runs/) with --frontier",
     "OT-15": "RuntimeChannel has its direct adapter alone: no shared-memory queue, Linux process or "
              "native adapter exists to decompose against it (the driver ladder's M2, M3 and M8)",
 }  # fmt: skip
@@ -475,13 +765,44 @@ def unrun(experiment: oc.Experiment, caps: set[str]) -> dict:
     return {"experiment": experiment.id, "status": "blocked", "reason": reason}
 
 
+def _rows(path) -> dict:
+    """The GEM+ rows the gates read, from the report `gemplus_baseline.py --compare --json PATH`
+    writes: each row's key and the value it measured (a row not measured is absent). A file that is
+    not that report -- empty, malformed, a key twice, no rows -- is refused (ValueError)."""
+    try:
+        doc = oc.load_json(path)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path}: the rows file is not JSON ({exc.msg})") from None
+    if not isinstance(doc, dict) or not isinstance(doc.get("rows"), list) or not doc["rows"]:
+        raise ValueError(f"{path}: a rows file is gemplus_baseline.py's report, its rows a list")
+    return {r["key"]: r["measured"] for r in doc["rows"]
+            if isinstance(r, dict) and type(r.get("key")) is str
+            and type(r.get("measured")) in (int, float)}  # fmt: skip
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("out", type=Path)
     p.add_argument("--rows", type=Path, help="gemplus_baseline.py --json output (the gates' rows)")
     p.add_argument("--rounds", type=int, default=24)
     p.add_argument("--smoke", action="store_true", help="tiny shapes and four rounds")
+    p.add_argument("--triton", type=Path, help="a Triton-CPU pilot session (OT-05's T-DSL rows)")
+    p.add_argument(
+        "--frontier",
+        type=Path,
+        help="train_comparison.py's prepared data with its runs (OT-10's routes)",
+    )
     a = p.parse_args(argv)
+    # every file the run reads, read before any experiment runs: a malformed one is a refusal now,
+    # not a traceback after the run's hour of measurement
+    try:
+        rows = _rows(a.rows) if a.rows else {}
+        triton = _triton_evidence(a.triton) if a.triton else None
+        frontier = ot10(a.frontier) if a.frontier else None
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"ot_run: {exc}", file=sys.stderr)
+        return 2
+    os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")  # before PyTorch loads: no spinning team
     caps = oc.host_capabilities()
     from bcir.tests import native_decoder_fixtures as nf
 
@@ -493,7 +814,8 @@ def main(argv=None) -> int:
         runners = {}
         if plain is not None and "numpy" in caps:
             runners["OT-01"] = lambda: ot01(ct.CDLL(str(plain)),
-                                            OT01_SMOKE if a.smoke else OT01_SHAPES)  # fmt: skip
+                                            OT01_SMOKE if a.smoke else OT01_SHAPES,
+                                            with_torch="torch" in caps)  # fmt: skip
         if packed is not None and traced is not None:
             runners["OT-03"] = lambda: ot03(packed, traced, a.smoke)
         case = timed_case(a.smoke)
@@ -502,21 +824,22 @@ def main(argv=None) -> int:
         runners["OT-06"] = ot06
         if plain is not None and traced is not None:
             runners["OT-14"] = lambda: ot14(plain, traced, rounds, case)
-        versions = _versions()
+        threads = os.cpu_count() or 1
+        if "torch" in caps:
+            runners["OT-02"] = lambda: ot02(threads, a.smoke)
+            runners["OT-11"] = lambda: ot11(threads, a.smoke)
+            if plain is not None:
+                runners["OT-05"] = lambda: ot05(plain, threads, a.smoke, rounds, triton)
+            if frontier is not None:
+                runners["OT-10"] = lambda: frontier
+        versions, ran_at = _versions(caps), _ran_at(threads, frontier)
         for experiment in oc.EXPERIMENTS:
             run = runners.get(experiment.id)
-            record = run() if run else unrun(experiment, caps)
-            if record["status"] == "measured":
-                record = {**record, "target": _target(1), "versions": versions}
+            record = _stamp(run() if run else unrun(experiment, caps), ran_at, versions)
             records.append(oc.validate_record(record))
             print(f"{experiment.id} {record['status']}", flush=True)
-    rows = {}
-    if a.rows:  # gemplus_baseline.py --compare --json: each row's key and the value it measured
-        doc = json.loads(a.rows.read_text())
-        rows = {r["key"]: r["measured"] for r in doc["rows"]
-                if type(r.get("key")) is str and isinstance(r.get("measured"), (int, float))}  # fmt: skip
     gates = oc.evaluate_gates(records, rows, capabilities=caps)
-    out = {"proposal": oc.PROPOSAL, "capabilities": sorted(caps), "target": _target(1),
+    out = {"proposal": oc.PROPOSAL, "capabilities": sorted(caps), "target": _target(threads),
            "versions": versions, "records": records, "rows": rows,
            "gates": {g: {"state": s, "unmet": u} for g, (s, u) in gates.items()}}  # fmt: skip
     a.out.write_text(

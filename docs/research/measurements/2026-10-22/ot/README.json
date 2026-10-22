@@ -1,0 +1,21 @@
+{
+ "what": "OT P-routes (2026-10-22): the second run of PR #821's sixteen backend-optimality experiments under tools/perf/ot_contract.py, the first with PyTorch's routes -- P-EAGER in OT-01, P-FX, P-AOT and P-IND in OT-02 (capture cost), P-EAGER and P-IND in OT-05 (the block portfolio), the frontier's P-EAGER and P-IND runs in OT-10, P-IND's cache lifecycle in OT-11 (tools/perf/ot_torch.py) -- and Triton-CPU's (T-DSL in OT-05, from a session of PR #821's pilot over this tree's tensor unit). The first run's records, BCIR's routes alone, are measurements/2026-10-21/ot/.",
+ "host": "Intel(R) Xeon(R) Processor @ 2.80GHz, 4 vCPUs (family 6, model 85: AVX-512F and VNNI, no AMX); capabilities cpu, numpy, torch; Python 3.11.15, NumPy 2.2.6, Ubuntu clang version 18.1.3 (1ubuntu1); PyTorch 2.13.0+cu130 (CPU capability AVX512, BLAS mkl (Intel(R) oneAPI Math Kernel Library Version 2024.2-Product Build 20240605 for Intel(R) 64 architecture applications)). The run names its commit (e81fb743b571ba4af1d875a049f1f49e6db12775). Triton-CPU ran in its own interpreter (Python 3.12.3, NumPy 2.3.5, triton 3.8.0+cpu from triton-cpu 5a4885bf9b0b, wheel sha256 693f657501e6d791...), its BCIR side built from this tree's bcir_tensor.c (f2bf2a40df38b200...). Wall times are indicative: one virtualized host, one process at a time.",
+ "records": {
+  "ot.json": "tools/perf/ot_run.py's output: the sixteen records, the capabilities, the rows the gates read and each gate's state with what it lacks",
+  "ot.txt": "the run's printed summary",
+  "rows.json": "tools/perf/gemplus_baseline.py --compare --group train --json rows.json: the GEM+ rows BG1 reads",
+  "triton-cpu/session-a.json": "the Triton-CPU pilot's session the run read (--triton): protocol bcir-triton-cpu-pilot-v2, 20 compiled CPU cases, 21 rounds each",
+  "triton-cpu/session-b.json": "a second session of the same pilot, minutes later: its repeat",
+  "frontier/": "OT-10's data (--frontier): train_comparison.py's prepare.json (the recipe; its token files are not copied, prepare rebuilds them from the corpus commit it names), breakdown.json (BCIR's step by kernel family and eager PyTorch's by phase, one thread) and the three 300-update runs, one per route"
+ },
+ "reading": "Measured here: OT-01, OT-02, OT-03, OT-04, OT-05, OT-06, OT-10, OT-11, OT-14; unavailable: OT-07, OT-08, OT-09, OT-12, OT-13, OT-16; blocked: OT-15. Gates: BG0 PASS; BG1 PASS; BG2 UNAVAILABLE; BG3 OPEN; BG4 UNAVAILABLE; BG5 UNAVAILABLE; BG6 UNAVAILABLE; BG7 UNAVAILABLE.",
+ "reproduce": [
+  "python3 tools/perf/gemplus_baseline.py --compare --group train --json rows.json",
+  "python3 docs/research/measurements/2026-10-11/train_comparison.py prepare --data DATA",
+  "for b in bcir torch-eager torch-compiled: train_comparison.py train --data DATA --task lm --backend $b --steps 300 --threads 4 (bcir: --contract kblock+exp+reduce+attn)",
+  "TRITON_DEFAULT_BACKEND=cpu OMP_NUM_THREADS=2 TRITON_PY triton_cpu_compare.py --out SESSION --rounds 21 --target-ms 8  # PR #821's harness, in its own interpreter",
+  "TORCH_PY tools/perf/ot_run.py ot.json --rows rows.json --triton SESSION/results.json --frontier DATA"
+ ],
+ "faults": "tools/testing/faults/ot-contract.json OC1-OC38, each injected and caught by its own witness."
+}

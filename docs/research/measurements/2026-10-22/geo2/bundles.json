@@ -1,0 +1,435 @@
+{
+ "bundles": {
+  "gp-global": {
+   "differs": [],
+   "manifest": "manifest.json",
+   "manifest_entries": 206,
+   "missing": [
+    {
+     "bytes": null,
+     "path": "vendor/LICENSE"
+    }
+   ],
+   "newline_only": [],
+   "ok": 205,
+   "tree_bytes": 262367150,
+   "tree_files": 206,
+   "unlisted": []
+  },
+  "wedge-integrated": {
+   "differs": [],
+   "manifest": "SOURCE_MANIFEST.json",
+   "manifest_entries": 205,
+   "missing": [
+    {
+     "bytes": 8387,
+     "path": "protocol.json"
+    },
+    {
+     "bytes": 17701,
+     "path": "vendor/LICENSE"
+    }
+   ],
+   "newline_only": [
+    "matched-budget/protocol.json",
+    "matched-budget/results/evaluation.json"
+   ],
+   "ok": 201,
+   "tree_bytes": 276045806,
+   "tree_files": 204,
+   "unlisted": []
+  },
+  "wedge-next": {
+   "differs": [],
+   "manifest": "SOURCE_MANIFEST.json",
+   "manifest_entries": 326,
+   "missing": [
+    {
+     "bytes": 699,
+     "path": "build/attention-build.json"
+    },
+    {
+     "bytes": 43778,
+     "path": "build/attention.c"
+    },
+    {
+     "bytes": 256808,
+     "path": "build/attention.so"
+    },
+    {
+     "bytes": 697,
+     "path": "build/baseline-build.json"
+    },
+    {
+     "bytes": 49092,
+     "path": "build/baseline.c"
+    },
+    {
+     "bytes": 257184,
+     "path": "build/baseline.so"
+    },
+    {
+     "bytes": 695,
+     "path": "build/compact-build.json"
+    },
+    {
+     "bytes": 49910,
+     "path": "build/compact.c"
+    },
+    {
+     "bytes": 257272,
+     "path": "build/compact.so"
+    },
+    {
+     "bytes": 689,
+     "path": "build/fast-build.json"
+    },
+    {
+     "bytes": 49852,
+     "path": "build/fast.c"
+    },
+    {
+     "bytes": 257272,
+     "path": "build/fast.so"
+    },
+    {
+     "bytes": 697,
+     "path": "build/ff_remat-build.json"
+    },
+    {
+     "bytes": 50126,
+     "path": "build/ff_remat.c"
+    },
+    {
+     "bytes": 261424,
+     "path": "build/ff_remat.so"
+    },
+    {
+     "bytes": 713,
+     "path": "build/frame_ff_compact-build.json"
+    },
+    {
+     "bytes": 50300,
+     "path": "build/frame_ff_compact.c"
+    },
+    {
+     "bytes": 261432,
+     "path": "build/frame_ff_compact.so"
+    },
+    {
+     "bytes": 709,
+     "path": "build/frame_ff_remat-build.json"
+    },
+    {
+     "bytes": 50276,
+     "path": "build/frame_ff_remat.c"
+    },
+    {
+     "bytes": 261432,
+     "path": "build/frame_ff_remat.so"
+    },
+    {
+     "bytes": 782,
+     "path": "build/frame_ff_remat_ubsan-build.json"
+    },
+    {
+     "bytes": 50276,
+     "path": "build/frame_ff_remat_ubsan.c"
+    },
+    {
+     "bytes": 715304,
+     "path": "build/frame_ff_remat_ubsan.so"
+    },
+    {
+     "bytes": 703,
+     "path": "build/frame_remat-build.json"
+    },
+    {
+     "bytes": 50028,
+     "path": "build/frame_remat.c"
+    },
+    {
+     "bytes": 257280,
+     "path": "build/frame_remat.so"
+    },
+    {
+     "bytes": 49092,
+     "path": "build/global_norope.c"
+    },
+    {
+     "bytes": 49092,
+     "path": "build/global_symmetric_norope.c"
+    },
+    {
+     "bytes": 693,
+     "path": "build/hybrid-build.json"
+    },
+    {
+     "bytes": 49961,
+     "path": "build/hybrid.c"
+    },
+    {
+     "bytes": 261368,
+     "path": "build/hybrid.so"
+    },
+    {
+     "bytes": 707,
+     "path": "build/layer_compact-build.json"
+    },
+    {
+     "bytes": 50190,
+     "path": "build/layer_compact.c"
+    },
+    {
+     "bytes": 261360,
+     "path": "build/layer_compact.so"
+    },
+    {
+     "bytes": 709,
+     "path": "build/layer_frame_ff-build.json"
+    },
+    {
+     "bytes": 50558,
+     "path": "build/layer_frame_ff.c"
+    },
+    {
+     "bytes": 261416,
+     "path": "build/layer_frame_ff.so"
+    },
+    {
+     "bytes": 782,
+     "path": "build/layer_frame_ff_ubsan-build.json"
+    },
+    {
+     "bytes": 50558,
+     "path": "build/layer_frame_ff_ubsan.c"
+    },
+    {
+     "bytes": 710488,
+     "path": "build/layer_frame_ff_ubsan.so"
+    },
+    {
+     "bytes": 703,
+     "path": "build/layer_remat-build.json"
+    },
+    {
+     "bytes": 50132,
+     "path": "build/layer_remat.c"
+    },
+    {
+     "bytes": 261360,
+     "path": "build/layer_remat.so"
+    },
+    {
+     "bytes": 776,
+     "path": "build/layer_remat_ubsan-build.json"
+    },
+    {
+     "bytes": 50132,
+     "path": "build/layer_remat_ubsan.c"
+    },
+    {
+     "bytes": 721376,
+     "path": "build/layer_remat_ubsan.so"
+    },
+    {
+     "bytes": 699,
+     "path": "build/lowrank32-build.json"
+    },
+    {
+     "bytes": 50088,
+     "path": "build/lowrank32.c"
+    },
+    {
+     "bytes": 261320,
+     "path": "build/lowrank32.so"
+    },
+    {
+     "bytes": 772,
+     "path": "build/lowrank32_ubsan-build.json"
+    },
+    {
+     "bytes": 50088,
+     "path": "build/lowrank32_ubsan.c"
+    },
+    {
+     "bytes": 721368,
+     "path": "build/lowrank32_ubsan.so"
+    },
+    {
+     "bytes": 695,
+     "path": "build/multi12-build.json"
+    },
+    {
+     "bytes": 48984,
+     "path": "build/multi12.c"
+    },
+    {
+     "bytes": 261368,
+     "path": "build/multi12.so"
+    },
+    {
+     "bytes": 768,
+     "path": "build/multi12_ubsan-build.json"
+    },
+    {
+     "bytes": 48984,
+     "path": "build/multi12_ubsan.c"
+    },
+    {
+     "bytes": 731768,
+     "path": "build/multi12_ubsan.so"
+    },
+    {
+     "bytes": 695,
+     "path": "build/precise-build.json"
+    },
+    {
+     "bytes": 51401,
+     "path": "build/precise.c"
+    },
+    {
+     "bytes": 261480,
+     "path": "build/precise.so"
+    },
+    {
+     "bytes": 695,
+     "path": "build/profile-build.json"
+    },
+    {
+     "bytes": 51252,
+     "path": "build/profile.c"
+    },
+    {
+     "bytes": 261600,
+     "path": "build/profile.so"
+    },
+    {
+     "bytes": 691,
+     "path": "build/reuse-build.json"
+    },
+    {
+     "bytes": 49103,
+     "path": "build/reuse.c"
+    },
+    {
+     "bytes": 257184,
+     "path": "build/reuse.so"
+    },
+    {
+     "bytes": 693,
+     "path": "build/svd128-build.json"
+    },
+    {
+     "bytes": 50102,
+     "path": "build/svd128.c"
+    },
+    {
+     "bytes": 261312,
+     "path": "build/svd128.so"
+    },
+    {
+     "bytes": 691,
+     "path": "build/svd16-build.json"
+    },
+    {
+     "bytes": 50088,
+     "path": "build/svd16.c"
+    },
+    {
+     "bytes": 261312,
+     "path": "build/svd16.so"
+    },
+    {
+     "bytes": 691,
+     "path": "build/svd32-build.json"
+    },
+    {
+     "bytes": 50088,
+     "path": "build/svd32.c"
+    },
+    {
+     "bytes": 261312,
+     "path": "build/svd32.so"
+    },
+    {
+     "bytes": 691,
+     "path": "build/svd64-build.json"
+    },
+    {
+     "bytes": 50088,
+     "path": "build/svd64.c"
+    },
+    {
+     "bytes": 261312,
+     "path": "build/svd64.so"
+    },
+    {
+     "bytes": 43778,
+     "path": "build/transformer.c"
+    },
+    {
+     "bytes": 3906,
+     "path": "protocol.json"
+    },
+    {
+     "bytes": 17701,
+     "path": "vendor/LICENSE"
+    }
+   ],
+   "newline_only": [
+    "ham-artifacts/attention-96MiB.json",
+    "hybrid/protocol.json",
+    "hybrid/results/byte_lm-global-20261017.json",
+    "results/benchmark-architecture-1thread.json"
+   ],
+   "ok": 239,
+   "tree_bytes": 379655146,
+   "tree_files": 244,
+   "unlisted": []
+  },
+  "wedge-pr818": {
+   "differs": [],
+   "manifest": "MANIFEST_SHA256.json",
+   "manifest_entries": 448,
+   "missing": [
+    {
+     "bytes": 609,
+     "path": "evaluation-protocol.json"
+    },
+    {
+     "bytes": 17701,
+     "path": "vendor-new/LICENSE"
+    },
+    {
+     "bytes": 17701,
+     "path": "vendor-old/LICENSE"
+    }
+   ],
+   "newline_only": [
+    "baseline/results/eval-kv_curriculum-attention-20261018.json",
+    "bf16/evaluation-protocol.json",
+    "results/before-after-audit.json"
+   ],
+   "ok": 442,
+   "tree_bytes": 497491301,
+   "tree_files": 446,
+   "unlisted": []
+  },
+  "wedge-query-aware": {
+   "differs": [],
+   "manifest": "SOURCE_MANIFEST.json",
+   "manifest_entries": 269,
+   "missing": [],
+   "newline_only": [
+    "build/attention-build.json",
+    "results/baseline-continuity.json"
+   ],
+   "ok": 267,
+   "tree_bytes": 358171225,
+   "tree_files": 270,
+   "unlisted": []
+  }
+ },
+ "rev": "origin/main"
+}

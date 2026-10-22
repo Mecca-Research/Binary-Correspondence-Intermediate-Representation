@@ -3952,6 +3952,84 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: any comparison with PyTorch, Triton or a device. Their routes need what this host
     lacks, and their records say so; the driver-ladder gates (BG3-BG6) wait on milestones their
     reports must attest; BG2 waits on PX-6 (GPU), pending in a local session on the hardware.
+  GEO-2 (2026-10-22): Codex's PR818 geometric-head study rerun from its bundle, bit for bit, as
+    uploaded and on current main ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §5,
+    [measurements/2026-10-22/geo2/](research/measurements/2026-10-22/geo2/)).
+  - The five study bundles reached main on 2026-10-21 (`docs/research/{gp-global,wedge-next,
+    wedge-integrated,wedge-query-aware,wedge-pr818}`, 1,370 files, 1.77 GB). GEO-0: every bundle's
+    manifest against the bytes main holds -- PR818's 442 of 448 files byte-identical (its 66 selected
+    checkpoints among them), three more equal but for the trailing newline GitHub's web rename adds,
+    three absent (an evaluation protocol its evaluation rewrites; two LICENSE copies, this
+    repository's by hash); the earlier bundles likewise, short only of `wedge-next`'s and
+    `wedge-integrated`'s `protocol.json` and `wedge-next`'s generated `build/` directory.
+  - The host had moved: an Intel Xeon @ 2.80 GHz (family 6, model 85: AVX-512F and VNNI, no AMX),
+    so the bf16 GEMMs ran the AVX-512F instance Codex's AMD EPYC ran, and the AMX timing GEO-2
+    planned stays open.
+  - GEO-2a, as uploaded: Codex's `build_upgrade.py` regenerates its 17 overlay sources byte for byte
+    and the frozen protocol holds every source; the drivers ran unchanged (`launch.py` answers the
+    protocol's two cgroup-v2 reads on this cgroup-v1 host). All 51 binary32 runs (41,400 updates)
+    and 15 bf16 runs (12,600) equal Codex's records in every field -- state digests, histories, every
+    update's loss and gradient norm, the budget policy's decisions -- and all 66 evaluations (633
+    rows, 138 counterfactual groups): AMD's results on Intel, the bf16 T2048 ordered-recall gain
+    (89.06% to 95.31%) example for example.
+  - GEO-2b, current main: `build_main.py` makes `build_upgrade.py`'s graft from origin/main's trainer
+    (the state checks, the workspace functions, the GEMM dispatch, the attention entry, the SwiGLU
+    blocks, the optimizer and run tail; not the PX-2 runner, the transformer's step) with main's
+    tensor unit (ABI 5); every refusal main's products return is counted and held at 0; three driver
+    lines change for ABI 5 and the protocol carries the port (eleven entries re-hashed, 37 held).
+    All 66 runs and their evaluations equal Codex's again, field for field. The policy's decisions
+    are Codex's in every run; its bytes moved only where main's accounting did (the state record's
+    8-byte `recompute` word, the bf16 attention's exact WS-PLAN need). Every change since PR818 --
+    FACTS-RUN, BF16-ATTN, ATTN-SOFT, GEO-3, PX-1 to PX-5 -- keeps the study's bits under both
+    arithmetic families.
+  - Against PyTorch (`geo_compare.py`: the study's three models at batch 4 on four threads, twelve
+    rounds in rotated order, B-DIRECT twice as an A/A control): BCIR trains every model faster, 2.1
+    to 7.5 times the bundle's own Torch equations (P-EAGER) and 1.9 to 3.3 times `torch.compile`
+    (P-IND), and runs both geometric heads' inference 3.2 to 4.2 times faster than either. The one
+    loss is the attention baseline's inference at T2048: 1.74 (95% interval 1.52-1.98) times
+    P-EAGER's time and 1.59 (1.36-1.87) times P-IND's, at parity at T1024. Its attention writes every
+    head's t x t probabilities (268 MB a layer at B4/T2048) even with no backward to read them;
+    PyTorch's CPU flash kernel never forms them. That is the next inference update.
+  - Not claimed: AMX timing (no AMX here); a rerun of the four earlier studies (two protocols absent);
+    any learning result beyond what the bundle's own records already state.
+  OT P-routes (2026-10-22): PyTorch's and Triton's routes of PR #821's experiments, run.
+  - `tools/perf/ot_torch.py` runs PyTorch's routes in the OT records: P-EAGER beside B-DIRECT in
+    OT-01; the capture cost of P-FX, P-AOT and P-IND (OT-02); P-EAGER and P-IND in the block
+    portfolio (OT-05), whose T-DSL rows come from a session of PR #821's Triton-CPU pilot in its own
+    interpreter, admitted only over this tree's `bcir_tensor.c`; the frontier from
+    train_comparison.py's runs over one recipe (OT-10); Inductor's cache lifecycle (OT-11). Each
+    compiled step runs in its own process with a fresh cache; Triton is a capability only with a
+    usable backend; every input file is read before an experiment runs, and every measured record
+    names the PyTorch it ran (2.13.0+cu130, AVX512, BLAS mkl) and the threads it ran at. Measured on
+    this host: OT-01, OT-02, OT-03, OT-04, OT-05, OT-06, OT-10, OT-11, OT-14; gates: BG0 PASS; BG1
+    PASS; BG2 UNAVAILABLE; BG3 OPEN; BG4 UNAVAILABLE; BG5 UNAVAILABLE; BG6 UNAVAILABLE; BG7
+    UNAVAILABLE ([ledger](research/BCIR_OT_BG_LEDGER.md),
+    [measurements/2026-10-22/ot/](research/measurements/2026-10-22/ot/README.json)).
+  - Results: OT-01's P-EAGER within its binary32 bound beside B-DIRECT (worst 0.351 and 0.366 of the
+    bound). OT-02: the decoder step's first compiled call 2.1 s (P-FX), 6.8 s (P-AOT) and 43.0 s
+    (P-IND) as one whole-loss graph, the module form breaking at its input checks (2 graph breaks);
+    B-PLAN's step program and its words 7.8 ms (its TrainingPack 20.4 ms more, the StreamPack and
+    plan lowered in 116 ms) over a library built once in 11.8 s. OT-05: B-DIRECT's k-blocked block,
+    forward and backward, faster than PyTorch's at four threads (1.13-3.64 times, three 512-row
+    comparisons at parity); at one thread 1.17-1.44 times PyTorch's time on the 128-row blocks of
+    width 256 and every 512-row block (MKL's GEMMs), faster on the rest (up to 1.56 times) but 16 x
+    768 against eager (1.10 times its time); against Triton-CPU its GEMM 2.2-3.4 times and its
+    RMSNorm 2.6-10.0 times faster, the SwiGLU product under the BCIR exponential at parity at a
+    million elements. OT-10: the 9.84M decoder's 300 updates at 272 ms a step on B-DIRECT against
+    533 (P-EAGER) and 390 (P-IND), validation CE 2.3525, 2.3643 and 2.3730, peak RSS 489, 1118 and
+    1059 MB. OT-11: Inductor's first call 43.5 s cold, 7.1 s on its kept cache, 77.3 s with dynamic
+    shapes; B-PLAN's program a shape at most 7.5 ms.
+  - Witnesses (`bcir/tests/test_ot_contract.py`): the PyTorch records keep every route that ran and
+    every failure; a Triton session is evidence about this tree alone, every BCIR implementation a
+    case times correct on both sides (the first run's reader assumed one implementation a case: the
+    smoke run against the real session found it); Triton a capability only with a usable backend;
+    OT-10's frontier from one recipe; OT-01's verdict every route's; the runner's inputs refused
+    before it runs (a rows file it could not read failed the run only after its last experiment,
+    until it was read first); a record naming the PyTorch and the threads it ran. `ot-contract.json`
+    OC1-OC38, each caught by its own witness.
+  - Not claimed: P-TUNED (no budgeted autotuning lifecycle ran), T-GLUON and every GPU route (no
+    GPU), B-MLIR on the block, T-DSL inside OT-11 (the interpreter that runs PyTorch has no Triton
+    with a usable backend).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

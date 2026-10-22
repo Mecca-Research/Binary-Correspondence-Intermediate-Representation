@@ -8,8 +8,15 @@
     "bcir.tests.test_ot_contract:test_every_gate_can_pass_and_none_outruns_the_gate_it_requires",
     "bcir.tests.test_ot_contract:test_the_hosts_capabilities_are_probed_or_declared_from_the_vocabulary",
     "bcir.tests.test_ot_contract:test_the_cli_lists_the_registry_and_refuses_a_malformed_records_file",
+    "bcir.tests.test_ot_contract:test_the_runner_refuses_an_unusable_input_before_any_experiment_runs",
+    "bcir.tests.test_ot_contract:test_a_pytorch_routes_record_names_its_pytorch_and_its_threads",
     "bcir.tests.test_ot_contract:test_ot01s_checks_hold_a_product_to_its_bound_and_fire_past_it",
-    "bcir.tests.test_ot_contract:test_an_experiment_without_a_runner_is_recorded_on_every_host"
+    "bcir.tests.test_ot_contract:test_an_experiment_without_a_runner_is_recorded_on_every_host",
+    "bcir.tests.test_ot_contract:test_a_triton_session_is_evidence_about_this_tree_alone",
+    "bcir.tests.test_ot_contract:test_the_pytorch_routes_records_keep_every_route_and_failure",
+    "bcir.tests.test_ot_contract:test_triton_is_a_capability_only_with_a_usable_backend",
+    "bcir.tests.test_ot_contract:test_the_frontier_is_read_from_one_recipe_alone",
+    "bcir.tests.test_ot_contract:test_ot01s_verdict_is_every_routes"
   ],
   "faults": [
     {
@@ -115,6 +122,167 @@
       "label": "OC15 an experiment with every capability and no runner fails the run",
       "new": "    reason = BLOCKED[experiment.id] or (\n",
       "old": "    reason = BLOCKED.get(experiment.id) or (\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_a_triton_session_is_evidence_about_this_tree_alone",
+      "label": "OC16 a Triton session over another tree's tensor unit admitted",
+      "new": "    if doc.get(\"tensor_c_sha256\") != here and False:\n",
+      "old": "    if doc.get(\"tensor_c_sha256\") != here:\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_a_triton_session_is_evidence_about_this_tree_alone",
+      "label": "OC17 a Triton case incorrect on one side admitted",
+      "new": "            if not timed:\n",
+      "old": "            if not ok or not timed:\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_the_pytorch_routes_records_keep_every_route_and_failure",
+      "label": "OC18 OT-05's failed routes dropped from its labels",
+      "new": "    unsupported = [\n",
+      "old": "    unsupported = [*out[\"failures\"],\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_the_pytorch_routes_records_keep_every_route_and_failure",
+      "label": "OC19 OT-02's failed capture recorded as a route that ran",
+      "new": "        if \"failed\" in row and False:\n",
+      "old": "        if \"failed\" in row:\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_triton_is_a_capability_only_with_a_usable_backend",
+      "label": "OC20 a Triton package without a usable backend a capability",
+      "new": "        return True\n",
+      "old": "        return triton.runtime.driver.active is not None\n",
+      "path": "tools/perf/ot_contract.py"
+    },
+    {
+      "expects": "test_the_frontier_is_read_from_one_recipe_alone",
+      "label": "OC21 a frontier across two step counts admitted",
+      "new": "    if len(steps) != 1 and False:\n",
+      "old": "    if len(steps) != 1:\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_the_frontier_is_read_from_one_recipe_alone",
+      "label": "OC22 two runs of one route in a frontier admitted",
+      "new": "        if route in runs and False:\n",
+      "old": "        if route in runs:\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_ot01s_verdict_is_every_routes",
+      "label": "OC23 OT-01's verdict blind to P-EAGER's bound",
+      "new": "            \"within_bound\": worst <= 1.0 and untouched,\n",
+      "old": "            \"within_bound\": worst <= 1.0 and torch_worst <= 1.0 and untouched,\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_an_experiment_without_a_runner_is_recorded_on_every_host",
+      "label": "OC24 OT-10 recorded runnerless where its runs are only unnamed",
+      "new": "    \"OT-10x\": \"the complete-training frontier is read from train_comparison.py's runs over one \"\n",
+      "old": "    \"OT-10\": \"the complete-training frontier is read from train_comparison.py's runs over one \"\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_a_triton_session_is_evidence_about_this_tree_alone",
+      "label": "OC25 a Triton ratio that is not one of BCIR's implementations admitted",
+      "new": "                impl.startswith(\"\")\n",
+      "old": "                impl.startswith(\"bcir\")\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_a_triton_session_is_evidence_about_this_tree_alone",
+      "label": "OC26 a BCIR implementation's own correctness unread",
+      "new": "                    for side in (\"triton\",)\n",
+      "old": "                    for side in (impl, \"triton\")\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_a_triton_session_is_evidence_about_this_tree_alone",
+      "label": "OC27 a BCIR implementation with no ratio admitted",
+      "new": "                and ratio.get(\"bcir_over_triton\") is not False\n",
+      "old": "                and type(ratio.get(\"bcir_over_triton\")) is float\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_a_triton_session_is_evidence_about_this_tree_alone",
+      "label": "OC28 a side with no median admitted",
+      "new": "                and type(median.get(\"triton\")) is float\n",
+      "old": "                and all(type(median.get(side)) is float for side in (impl, \"triton\"))\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_a_triton_session_is_evidence_about_this_tree_alone",
+      "label": "OC29 a case timing none of BCIR's implementations admitted",
+      "new": "        if not isinstance(ratios, dict):\n",
+      "old": "        if not isinstance(ratios, dict) or not ratios:\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_the_runner_refuses_an_unusable_input_before_any_experiment_runs",
+      "label": "OC30 a rows report with no rows admitted",
+      "new": "    if not isinstance(doc, dict) or not isinstance(doc.get(\"rows\"), list):\n",
+      "old": "    if not isinstance(doc, dict) or not isinstance(doc.get(\"rows\"), list) or not doc[\"rows\"]:\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_the_runner_refuses_an_unusable_input_before_any_experiment_runs",
+      "label": "OC31 a row measuring a boolean read as its number",
+      "new": "            and isinstance(r.get(\"measured\"), (int, float))}  # fmt: skip\n",
+      "old": "            and type(r.get(\"measured\")) in (int, float)}  # fmt: skip\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_the_runner_refuses_an_unusable_input_before_any_experiment_runs",
+      "label": "OC32 the rows file left unread until the experiments have run",
+      "new": "        rows = {}\n",
+      "old": "        rows = _rows(a.rows) if a.rows else {}\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_the_runner_refuses_an_unusable_input_before_any_experiment_runs",
+      "label": "OC33 an unusable input a traceback, not a refusal",
+      "new": "        raise\n",
+      "old": "        print(f\"ot_run: {exc}\", file=sys.stderr)\n        return 2\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_a_pytorch_routes_record_names_its_pytorch_and_its_threads",
+      "label": "OC34 the PyTorch the P-* routes ran left unnamed",
+      "new": "    if False:\n        from tools.perf import ot_torch\n",
+      "old": "    if \"torch\" in caps:\n        from tools.perf import ot_torch\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_a_pytorch_routes_record_names_its_pytorch_and_its_threads",
+      "label": "OC35 a PyTorch version kept as its str subclass",
+      "new": "        out.update(ot_torch.torch_versions())\n",
+      "old": "        out.update({k: str(v) for k, v in ot_torch.torch_versions().items()})\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_a_pytorch_routes_record_names_its_pytorch_and_its_threads",
+      "label": "OC36 OT-10's target one thread whatever its runs ran at",
+      "new": "            out[\"OT-10\"] = 1\n",
+      "old": "            out[\"OT-10\"] = max(ran)\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_a_pytorch_routes_record_names_its_pytorch_and_its_threads",
+      "label": "OC37 a measured record's target one thread whatever it ran at",
+      "new": "    return {**record, \"target\": _target(1), \"versions\": versions}\n",
+      "old": "    return {**record, \"target\": _target(ran_at.get(record[\"experiment\"], 1)), \"versions\": versions}\n",
+      "path": "tools/perf/ot_run.py"
+    },
+    {
+      "expects": "test_a_pytorch_routes_record_names_its_pytorch_and_its_threads",
+      "label": "OC38 a record not measured stamped with a target and versions",
+      "new": "    if False:\n        return record\n",
+      "old": "    if record[\"status\"] != \"measured\":\n        return record\n",
       "path": "tools/perf/ot_run.py"
     }
   ]

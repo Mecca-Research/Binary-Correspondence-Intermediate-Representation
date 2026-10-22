@@ -1,0 +1,37 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_security_hardening:test_the_style_gate_and_the_hooks_spare_the_same_frozen_bundles"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_style_gate_and_the_hooks_spare_the_same_frozen_bundles",
+      "label": "FB1 a frozen bundle the style gate restyles",
+      "new": "    \"docs/research/wedge-query-aware\",\n",
+      "old": "    \"docs/research/wedge-query-aware\", \"docs/research/wedge-pr818\",\n",
+      "path": "pyproject.toml"
+    },
+    {
+      "expects": "test_the_style_gate_and_the_hooks_spare_the_same_frozen_bundles",
+      "label": "FB2 a frozen bundle the end-of-file hook rewrites",
+      "new": "        exclude: '\\.(ll|mlir)$|^training/llvm/dataset/|^runtime/c/cfront_sec_lextail\\.c$|^docs/research/(gp-global|wedge-next)/'\n",
+      "old": "        exclude: '\\.(ll|mlir)$|^training/llvm/dataset/|^runtime/c/cfront_sec_lextail\\.c$|^docs/research/(gp-global|wedge-next|wedge-integrated|wedge-query-aware|wedge-pr818)/'\n",
+      "path": ".pre-commit-config.yaml"
+    },
+    {
+      "expects": "test_the_style_gate_and_the_hooks_spare_the_same_frozen_bundles",
+      "label": "FB3 a glob in place of the named bundle roots",
+      "new": "    \"docs/research/gp-global\", \"docs/research/wedge-*\", \"docs/research/wedge-integrated\",\n",
+      "old": "    \"docs/research/gp-global\", \"docs/research/wedge-next\", \"docs/research/wedge-integrated\",\n",
+      "path": "pyproject.toml"
+    },
+    {
+      "expects": "test_the_style_gate_and_the_hooks_spare_the_same_frozen_bundles",
+      "label": "FB4 a directory spared that is no frozen bundle",
+      "new": "    \"docs/research/wedge-query-aware\", \"docs/research/wedge-pr818\", \"docs/research/measurements\",\n",
+      "old": "    \"docs/research/wedge-query-aware\", \"docs/research/wedge-pr818\",\n",
+      "path": "pyproject.toml"
+    }
+  ]
+}

@@ -6,14 +6,17 @@ token mixer -- a rank-22 Grassmann/Plücker head offered as an alternative to at
 525,696-parameter byte decoder (width 128, three layers, tied 260-token embeddings, RMSNorm,
 SwiGLU) -- that end with a rerun on merged main after PR #818 (10-17 *Global Wedge Advancement*,
 10-18 *Global Integrated Recipe*, 10-18 *Query-Aware Head*, 10-18 *PR818 Geometric Head*). The
-reports, their figures and five study bundles (256-410 MB each) live in the requester's "BCIR
-Research" folder, not in this repository. This note reads the reports against the tree: what the
-tree confirms, what it corrects, which confounds the comparisons carry, and what the repository
-adopted -- the slice the last report names, **coupling per-layer caching with packing-aware buffer
-planning** (GEO-3, the NDT measure note's [§42](BCIR_NDT_MEASURE_2026-10-12.md), records in
-[measurements/2026-10-19/geo3/](measurements/2026-10-19/geo3/)). The bundles were not re-run here:
-their training runs, checkpoints and protocols are the next step (GEO-2), and nothing below
-restates one of their learning results as this repository's measurement.
+reports and their figures live in the requester's "BCIR Research" folder; the five study bundles
+were uploaded to main on 2026-10-21 under `docs/research/` (`gp-global`, `wedge-next`,
+`wedge-integrated`, `wedge-query-aware`, `wedge-pr818`: 1,370 files, 1.77 GB, each a
+self-contained research tree with its frozen protocols, run records and selected checkpoints). This
+note reads the reports against the tree: what the tree confirms, what it corrects, which confounds
+the comparisons carry, and what the repository adopted -- the slice the last report names,
+**coupling per-layer caching with packing-aware buffer planning** (GEO-3, the NDT measure note's
+[§42](BCIR_NDT_MEASURE_2026-10-12.md), records in
+[measurements/2026-10-19/geo3/](measurements/2026-10-19/geo3/)). Sections 1 to 4 were written before
+the bundles were run; section 5 is the rerun (GEO-2, 2026-10-22), and only it states a learning
+result as this repository's measurement.
 
 ## 1. The research, in brief
 
@@ -166,8 +169,9 @@ count under every set (the new exact row `train.plan.remat.mismatch`, 0).
 
 Open, in order:
 
-1. **GEO-2: rerun the studies on this AMX host** from their bundles (the binary32 regression first,
-   then the bf16 arms, then the paired timing), against current main.
+1. **GEO-2's AMX timing.** The rerun itself landed (section 5): every binary32 and bf16 run and
+   evaluation of the PR818 study reproduced bit for bit, as uploaded and against current main. What
+   it could not do is time the bf16 arms on AMX: the session's host moved to one without it.
 2. **The geometric head as a maintained extension** (PR818 §6.6): its C geometry and VJP behind a
    stable runtime interface with its own contract and digests, so tensor-unit work reaches it
    without textual surgery -- and so REMAT and WS-PLAN apply to it as they do to attention.
@@ -175,3 +179,149 @@ Open, in order:
    aggregation -- outside the trainer's remit, gated on the reports' own one-pair, four-pair, swap
    and query-change tests.
 4. **Causal suffix trimming** behind a causality certificate, as a declared transformation.
+
+## 5. GEO-2: the studies rerun from their bundles (2026-10-22)
+
+GEO-2 reran the last of the five studies -- PR818's: its 51 binary32 runs are the earlier studies'
+recipes on merged PR #818, its 15 bf16 runs the new numerical family -- from the uploaded bytes, as
+uploaded and against current main, every record held to Codex's field by field with no tolerance.
+Records: [measurements/2026-10-22/geo2/](measurements/2026-10-22/geo2/).
+
+**The bundles (GEO-0).** Each bundle's manifest against the bytes main holds
+([bundles.json](measurements/2026-10-22/geo2/bundles.json)):
+
+| Bundle | Manifest entries | Byte-identical | Equal but a trailing newline | Absent |
+|---|---:|---:|---:|---|
+| `wedge-pr818` | 448 | 442 | 3 | `evaluation-protocol.json`, `vendor-new/LICENSE`, `vendor-old/LICENSE` |
+| `wedge-query-aware` | 269 | 267 | 2 | none |
+| `wedge-integrated` | 205 | 201 | 2 | `protocol.json`, `vendor/LICENSE` |
+| `wedge-next` | 326 | 239 | 4 | `protocol.json`, `vendor/LICENSE` and the generated `build/` directory (81 files) |
+| `gp-global` | 206 | 205 | 0 | `vendor/LICENSE` |
+
+A trailing newline is what GitHub's web editor adds when it renames a file; the JSON is the same.
+Every absent LICENSE is this repository's LICENSE by hash (the work copies restored it from there);
+PR818's root `evaluation-protocol.json` is written afresh by its evaluation. The earlier bundles'
+gaps -- `wedge-next`'s and `wedge-integrated`'s `protocol.json`, `wedge-next`'s generated `build/`
+directory -- touch none of PR818's study, but reproducing those studies themselves would need the
+two protocols (they are in the Drive zips).
+
+**The host.** Not the AMX host this note planned on: the session's container moved to an Intel
+Xeon (family 6, model 85: AVX-512F and VNNI, no AVX512-BF16, no AMX) @ 2.80 GHz, 4 vCPUs, GCC 13.3.
+Its bf16 GEMMs run the AVX-512F instance -- the one Codex's AMD EPYC 9V74 ran -- and the AMX timing
+stays open (section 4); the arithmetic does not depend on the instance (NDT-BF16: one result on
+every instance).
+
+**As uploaded (GEO-2a).** Codex's own build (`build_upgrade.py`) regenerates all 17 overlay sources
+byte for byte, and the frozen protocol's freeze check holds every source it names; the drivers ran
+unchanged under the bundle's NumPy 2.3.5 and pyarrow 26.0.0 (a launcher answers the two cgroup-v2
+files the protocol's host block reads -- this host mounts v1 -- and that block is discarded under a
+frozen protocol). On Intel silicon, against the AMD records:
+
+| | Runs | Updates | Equal to Codex's |
+|---|---:|---:|---|
+| binary32 training | 51 | 41,400 | 51 |
+| binary32 evaluation | 51 | -- | 51: 600 rows, 120 counterfactual groups |
+| bf16 training | 15 | 12,600 | 15 |
+| bf16 evaluation | 15 | -- | 15: 33 rows, 18 counterfactual groups |
+
+Equal means every field: the selected and final state digests, the input digests, the validation
+histories, every update's loss, gradient norm and step, and the budget policy's decisions; for an
+evaluation, every row's predictions, labels and metrics and every counterfactual group. The bf16
+ordered-recall result the PR818 report calls promising -- 89.06% to 95.31% at T2048 -- reproduces
+example for example on another vendor's machine: it is a property of the declared arithmetic, not of
+the AMD host. Whether it holds over more seeds and a fresh test set stays the report's own question
+(section 3).
+
+**Against current main (GEO-2b).** The overlays are copies of the ABI-3 trainer with the research
+head written in; `build_upgrade.py` upgraded them by grafting PR818's blocks at exact anchors. The
+port makes the same graft from origin/main (490f5be0; its runtime is 44b16ff7's): main's state
+checks (REMAT's recompute-aware arena, WS-PLAN's floor), its workspace functions (the attention model
+takes main's exact need; the research heads keep their own group bound, which main's transformer
+`ws_need` cannot describe), its GEMM dispatch (WS-PLAN's refusal returns), its attention entry
+(BF16-ATTN), the SwiGLU block's forward and backward (BF16-PANELS under WS-PLAN's gate) and its
+optimizer and run tail (FACTS-RUN, `run_args`), compiled with main's tensor unit and headers (ABI 5).
+Not grafted: the PX-2 program runner, which runs the transformer's launch program -- its records name
+the transformer's embedding, attention, loss rows and scatter -- a step the research heads do not
+have and the study never calls. Main's products return whether they ran and the research steps
+ignore the return, so every refusal is counted where it happens and the host requires the count to be
+0 after every call; it stayed 0. Three driver lines change for ABI 5 (the state's trailing
+`recompute` word, 0; ABI 5 admitted where they assert 4; the refusal check), and the protocol
+carries the port: its eleven changed entries re-hashed, the other 37 held.
+
+| | Runs | Updates | Equal to Codex's |
+|---|---:|---:|---|
+| binary32 training | 51 | 41,400 | 51 |
+| binary32 evaluation | 51 | -- | 51: 600 rows, 120 counterfactual groups |
+| bf16 training | 15 | 12,600 | 15 |
+| bf16 evaluation | 15 | -- | 15: 33 rows, 18 counterfactual groups |
+
+The policy's decisions are Codex's in every run -- the same variants, micro-batches and accumulation
+-- and its byte accounting moves only where main's moved it: the C state record is 8 bytes longer
+(ABI 5's `recompute`), and the bf16 attention packs at WS-PLAN's exact need (1,015,872 bytes at
+B2/T256, the figure section 2.1 derived, against the conservative 1,442,048), at the same
+micro-batches. A first level -- the PR818-grafted overlays on main's tensor unit alone -- was probed
+bit for bit (every head under both contracts, six updates each,
+[probe.json](measurements/2026-10-22/geo2/probe.json)) and not run in full: level 2 contains it.
+
+So every change main made to the native rail since PR818 -- FACTS-RUN, BF16-ATTN and ATTN-SOFT, GEO-3
+and PX-1 to PX-5 -- keeps every bit of Codex's study under both arithmetic families. That is an
+independent check, on another program than BCIR's own decoder, of ATTN-SOFT's "every value as it
+was" and of WS-PLAN's "the same bits from the floor up".
+
+**Against PyTorch.** [`geo_compare.py`](measurements/2026-10-22/geo2/port/geo_compare.py) ran the
+study's three model families at batch 4 on four threads -- the global head (`global`), the
+query-aware head (`query_full`) and the attention baseline (`attention`: the bundle's transformer,
+width 128, three layers, four heads of 32, RoPE) -- on three routes: B-DIRECT, the level-2 build
+through the bundle's own `Native` host; P-EAGER, the bundle's independent Torch equations
+(`oracle.torch_model_next`, the reference Codex validated every head against) with
+`torch.optim.AdamW` after `clip_grad_norm_`; and P-IND, the same module through `torch.compile`
+(Inductor) with the fused AdamW. B-DIRECT ran twice, the second instance an A/A control, and twelve
+rounds rotated the arms' order. Each ratio is the geometric mean of the rounds' paired ratios with
+its 95% interval; below 1 BCIR is faster. Torch 2.13.0, NumPy 2.2.6
+([geo-compare.json](measurements/2026-10-22/geo2/geo-compare.json)). The routes are matched
+work, not one arithmetic: the first update's loss agrees to 7.1e-7 and the forward's logits to
+3.2e-6, PyTorch's kernels keeping their own summation orders.
+
+Training, one update of 4 x T tokens (forward, backward, clipping, AdamW):
+
+| Model | T | B-DIRECT ms | P-EAGER ms | P-IND ms | B-DIRECT / P-EAGER | B-DIRECT / P-IND | A/A |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `global` | 128 | 20.5 | 148.8 | 60.7 | 0.13 [0.13, 0.14] | 0.33 [0.30, 0.35] | 1.00 [0.92, 1.09] |
+| `global` | 256 | 36.7 | 203.0 | 82.6 | 0.18 [0.17, 0.19] | 0.43 [0.40, 0.47] | 1.01 [0.95, 1.07] |
+| `global` | 512 | 71.2 | 276.3 | 123.9 | 0.24 [0.22, 0.25] | 0.54 [0.49, 0.59] | 0.98 [0.93, 1.04] |
+| `query_full` | 128 | 21.6 | 165.5 | 70.8 | 0.13 [0.12, 0.15] | 0.31 [0.29, 0.33] | 1.04 [0.97, 1.12] |
+| `query_full` | 256 | 38.8 | 208.9 | 97.4 | 0.19 [0.17, 0.20] | 0.38 [0.36, 0.40] | 1.00 [0.94, 1.06] |
+| `query_full` | 512 | 77.6 | 354.0 | 159.7 | 0.22 [0.20, 0.23] | 0.48 [0.45, 0.51] | 0.92 [0.86, 0.99] |
+| `attention` | 128 | 16.5 | 86.8 | 52.6 | 0.19 [0.18, 0.20] | 0.31 [0.28, 0.35] | 1.06 [0.97, 1.15] |
+| `attention` | 256 | 33.0 | 110.1 | 64.8 | 0.29 [0.27, 0.31] | 0.49 [0.46, 0.53] | 1.04 [0.97, 1.12] |
+| `attention` | 512 | 75.3 | 152.1 | 144.0 | 0.48 [0.45, 0.51] | 0.50 [0.47, 0.53] | 0.97 [0.90, 1.06] |
+
+Inference, one forward of 4 x T tokens:
+
+| Model | T | B-DIRECT ms | P-EAGER ms | P-IND ms | B-DIRECT / P-EAGER | B-DIRECT / P-IND | A/A |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `global` | 1024 | 38.2 | 131.0 | 137.8 | 0.30 [0.26, 0.34] | 0.28 [0.25, 0.31] | 1.01 [0.96, 1.06] |
+| `global` | 2048 | 76.7 | 249.8 | 252.0 | 0.31 [0.28, 0.34] | 0.30 [0.27, 0.33] | 1.01 [0.97, 1.06] |
+| `query_full` | 1024 | 38.6 | 158.7 | 175.4 | 0.25 [0.21, 0.29] | 0.24 [0.20, 0.27] | 1.02 [0.94, 1.11] |
+| `query_full` | 2048 | 85.0 | 292.4 | 285.0 | 0.29 [0.26, 0.32] | 0.29 [0.27, 0.32] | 1.01 [0.95, 1.07] |
+| `attention` | 1024 | 78.9 | 73.4 | 81.0 | 1.07 [0.98, 1.16] | 1.01 [0.93, 1.09] | 1.03 [0.94, 1.12] |
+| `attention` | 2048 | 267.0 | 161.9 | 181.0 | 1.74 [1.52, 1.98] | 1.59 [1.36, 1.87] | 1.00 [0.96, 1.04] |
+
+BCIR trains every model faster: 2.1 to 7.5 times P-EAGER and 1.9 to 3.3 times P-IND, the margin
+narrowing as the context grows. It runs both geometric heads' inference 3.2 to 4.2 times faster
+than either route. The A/A control's interval holds 1 in every case but `query_full` training at
+T512 (0.92 [0.86, 0.99]): this host's noise, so a ratio inside about 8% of 1 is not resolved.
+
+The one loss is the attention baseline's inference at long context: at parity at T1024
+(1.07 [0.98, 1.16] against P-EAGER), at T2048 1.74 times slower than P-EAGER and 1.59 times slower
+than P-IND. The cause is the attention's probabilities. BCIR's attention writes every head's t x t
+probabilities to the arena, because the backward reads them, and the forward writes them even when
+no backward follows. At B4/T2048 that is 268 MB a layer (the attention model's arena is 1,061 MB,
+the global head's 225 MB), written, read by the softmax's passes and read again by the context
+product. PyTorch's `scaled_dot_product_attention` -- the oracle's call -- runs a flash-style kernel on this
+CPU (`_scaled_dot_product_flash_attention_for_cpu`, the operator the decoder-scale profile names)
+that never forms them: a block's scores stay in cache. That sets the next inference update: an attention
+forward that keeps no probabilities when no backward reads them, each value as it was.
+The same comparison at decoder scale (OT-10: the 9.84M-parameter decoder, 300 updates on four
+threads) and against Triton-CPU's kernels (OT-05) is recorded in the
+[OT/BG ledger](BCIR_OT_BG_LEDGER.md).

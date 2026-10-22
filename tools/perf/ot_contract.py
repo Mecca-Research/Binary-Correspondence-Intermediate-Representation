@@ -129,13 +129,17 @@ EXPERIMENTS: tuple[Experiment, ...] = (
     Experiment("OT-09", "same image, different dispatcher", "5.2", ("B-DEVICE",),
                ("system",), ("gpu",), ("BG0", "BG2")),
     Experiment("OT-10", "complete training frontier", "5.2",
-               ("B-PLAN", "P-EAGER", "P-IND", "P-TUNED"), ("competitor", "bound-slack"),
+               ("B-DIRECT", "B-PLAN", "P-EAGER", "P-IND", "P-TUNED"), ("competitor", "bound-slack"),
                ("cpu", "torch"), ("BG0", "BG7"),
                "the fixed recipe against P-EAGER and P-IND, then the best-admitted-recipe study "
-               "(P-TUNED: a budgeted Inductor tuning); every comparator needs PyTorch"),
+               "(P-TUNED: a budgeted Inductor tuning); every comparator needs PyTorch. BCIR's "
+               "direct step and its plan-executed step are one state bit for bit (OT-03), so a "
+               "learning curve on B-DIRECT is B-PLAN's too; their time differs by OT-04's ratio"),
     Experiment("OT-11", "specialization/cache lifecycle", "5.2",
                ("P-IND", "P-TUNED", "T-DSL", "B-PLAN"),
-               ("compilation",), ("cpu", "torch", "triton"), ("BG0",)),
+               ("compilation",), ("cpu", "torch"), ("BG0",),
+               "P-IND's and B-PLAN's lifecycle; T-DSL's needs Triton with a usable backend (the "
+               "experimental CPU build, or a GPU's)"),
     Experiment("OT-12", "data/residency path", "5.3", ("B-DEVICE", "S-DEVICE"),
                ("system",), ("gpu",), ("BG0", "BG2")),
     Experiment("OT-13", "collectives/checkpoint", "5.3", ("P-EAGER", "B-PLAN"),
@@ -334,16 +338,19 @@ def validate_record(record) -> dict:
 
 
 def host_capabilities() -> set[str]:
-    """The capabilities this host shows: the CPU always; NumPy, PyTorch or Triton when they import;
-    QEMU when a system emulator is on the path; a PMU when `perf_event_open` admits this process. A
-    GPU, a multi-device host and a physical device rig are never inferred: their operator declares
-    them (`BCIR_OT_CAPABILITIES`, comma-separated), as section 10 requires their qualification."""
+    """The capabilities this host shows: the CPU always; NumPy or PyTorch when they import, Triton
+    when it imports with a usable backend; QEMU when a system emulator is on the path; a PMU when
+    `perf_event_open` admits this process. A GPU, a multi-device host and a physical device rig are
+    never inferred: their operator declares them (`BCIR_OT_CAPABILITIES`, comma-separated), as
+    section 10 requires their qualification."""
     import importlib.util
 
     caps = {"cpu"}
-    for name in ("numpy", "torch", "triton"):
+    for name in ("numpy", "torch"):
         if importlib.util.find_spec(name) is not None:
             caps.add(name)
+    if _triton_usable():
+        caps.add("triton")
     if shutil.which("qemu-system-x86_64") or shutil.which("qemu-system-aarch64"):
         caps.add("qemu")
     if _pmu_readable():
@@ -354,6 +361,21 @@ def host_capabilities() -> set[str]:
             raise ValueError(f"BCIR_OT_CAPABILITIES names no capability {cap!r}")
         caps.add(cap)
     return caps
+
+
+def _triton_usable() -> bool:
+    """Whether Triton imports and names an active backend -- a GPU's driver, or the CPU backend of
+    the experimental triton-cpu build: a package without a target runs no kernel."""
+    import importlib.util
+
+    if importlib.util.find_spec("triton") is None:
+        return False
+    try:
+        import triton
+
+        return triton.runtime.driver.active is not None
+    except Exception:  # no usable backend: a GPU build without its device, a broken install
+        return False
 
 
 def _pmu_readable() -> bool:
