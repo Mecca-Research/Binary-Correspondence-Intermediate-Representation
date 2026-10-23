@@ -3132,11 +3132,13 @@ static void attention_contig(void) {
     if (need && need<=sizeof(pool_memory[0]))
       pools[pi]=bcir_tensor_pool_init(pool_memory[pi-1],sizeof(pool_memory[0]),counts[pi]);
   }
-  {  /* the sizes */
-    size_t f=(1024*4+15)/16*16;
-    assert(bcir_tensor_attention_workspace(1,1024,2,1,4)==2*7*f*4+63);
-    assert(bcir_tensor_attention_pool_workspace(1,1024,2,1,4,1)==7*f*4+63);
-    assert(bcir_tensor_attention_pool_workspace(1,1024,2,1,4,2)==2*7*f*4+63);
+  {  /* the sizes: a region the backward's seven copies and its kept tiles (BWD-KEEP: 32 rows of 64
+      * columns a tile, enough tiles for the context), past the workspace's first 64-byte boundary */
+    size_t f=(1024*4+15)/16*16,per=(7*f+1024/64*32*64)*4,f2=(1057*4+15)/16*16;
+    assert(bcir_tensor_attention_workspace(1,1024,2,1,4)==2*per+63);
+    assert(bcir_tensor_attention_pool_workspace(1,1024,2,1,4,1)==per+63);
+    assert(bcir_tensor_attention_pool_workspace(1,1024,2,1,4,2)==2*per+63);
+    assert(bcir_tensor_attention_pool_workspace(1,1057,2,1,4,1)==(7*f2+(1057/64+1)*32*64)*4+63);
     assert(bcir_tensor_attention_pool_workspace(1,1024,2,1,4,64)==bcir_tensor_attention_workspace(1,1024,2,1,4));
     assert(bcir_tensor_attention_pool_workspace(1,1024,2,1,4,0)==bcir_tensor_attention_workspace(1,1024,2,1,4));
     assert(bcir_tensor_attention_workspace(1,1024,1,1,4)==0 && bcir_tensor_attention_workspace(1,1024,3,2,4)==0);
@@ -3692,6 +3694,93 @@ static void trainer_lower(void) {
   printf("  PASS a training step from NaN-filled arenas (P-LOWER): %zu steps the zeroed arenas' bit for bit, %zu of "
       "them leaving the canary where their stored forward's strips left p's future columns\n",runs,lowered);
 }
+/* BWD-KEEP: with a region (ATT-CONTIG's: from BCIR_ATT_CONTIG_FROM positions, where a row holds more than
+ * one head) a backward task keeps every probability-adjoint tile of a row block and evaluates each once;
+ * without one -- no workspace, or a byte short of the pool's need -- the tiles past the first
+ * BCIR_ATT_KEEP (256) columns are evaluated twice, as before. dq, dk and dv are the same bits all three
+ * ways, under v1's and the fused contract's products, serially and on a pool of four, at the threshold's
+ * context and past it (33 rows on: neither a whole row block nor a whole tile); and where the build has
+ * the unit's probe, the tiles each backward evaluated are its path's count -- the path the values cannot
+ * show. The attention references and ATT-CONTIG's cases hold the kept path to the reference loops. */
+#ifdef BCIR_DT_ATTENTION_PROBE
+size_t bcir_tensor_attention_tiles_probe(void);
+#endif
+/* one head's tiles: row blocks of 32, each reaching tiles of 64 columns to its last row's; past the
+ * first 256 columns each evaluated again where the row block's tiles are not kept */
+static size_t keep_tiles(size_t t,int kept) {
+  size_t i0,n=0;
+  for (i0=0;i0<t;i0+=32) {
+    size_t end=i0+32<t ? i0+32 : t,tiles=(end+63)/64;
+    n+=tiles+(kept || tiles<=256/64 ? 0 : tiles-256/64);
+  }
+  return n;
+}
+static void attention_keep(void) {
+#ifdef BCIR_ATT_CONTIG_FROM
+  const size_t from=BCIR_ATT_CONTIG_FROM;
+#else
+  const size_t from=1024;
+#endif
+  const size_t ts[2]={from,from+33},b=1,nh=2,nk=1,d=4;
+  static const unsigned contracts[]={0u,BCIR_TENSOR_ATTENTION_FUSED};
+  static _Alignas(max_align_t) unsigned char pool_memory[16384];
+  bcir_tensor_pool *pools[2]={NULL,NULL};
+  size_t si,c,i,pi,arm,cases=0,apart=0;
+  {
+    size_t need=bcir_tensor_pool_size(4);
+    if (need && need<=sizeof(pool_memory)) pools[1]=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),4);
+  }
+  for (si=0;si<2;si++) {
+    size_t t=ts[si],nq=b*t*nh*d,nkv=b*t*nk*d,np=b*nh*t*t,most=bcir_tensor_attention_workspace(b,t,nh,nk,d);
+    float *q,*k,*v,*dy,*p0,*pw,*y,*dq[3],*dk[3],*dv[3];
+    unsigned char *raw,*ws;
+    if (DT_TSAN && t>=1024) continue;
+    q=malloc(nq*sizeof(float)); k=malloc(nkv*sizeof(float)); v=malloc(nkv*sizeof(float));
+    dy=malloc(nq*sizeof(float)); y=malloc(nq*sizeof(float)); p0=malloc(np*sizeof(float)); pw=malloc(np*sizeof(float));
+    raw=malloc(most+128);
+    assert(q && k && v && dy && y && p0 && pw && raw);
+    for (arm=0;arm<3;arm++) {
+      dq[arm]=malloc(nq*sizeof(float)); dk[arm]=malloc(nkv*sizeof(float)); dv[arm]=malloc(nkv*sizeof(float));
+      assert(dq[arm] && dk[arm] && dv[arm]);
+    }
+    ws=raw+(64-(uintptr_t)raw%64)%64;
+    for (i=0;i<nq;i++) { q[i]=sinf((float)i*0.37f)*1.7f; dy[i]=cosf((float)i*0.11f)*0.5f; }
+    for (i=0;i<nkv;i++) { k[i]=cosf((float)i*0.53f)*1.3f; v[i]=sinf((float)i*0.29f)-0.1f; }
+    for (c=0;c<sizeof(contracts)/sizeof(contracts[0]);c++) {
+      bcir_tensor_attention_contract_scan_pool(NULL,contracts[c],b,t,nh,nk,d,q,k,v,p0,y,NULL);
+      for (pi=0;pi<2;pi++) {
+        size_t own=bcir_tensor_attention_pool_workspace(b,t,nh,nk,d,bcir_tensor_pool_threads(pools[pi]));
+        if (pi && !pools[pi]) continue;
+        assert(own>0 && own<=most+64);
+        for (arm=0;arm<3;arm++) {  /* lent none, a byte short of the pool's need, the need */
+          size_t bytes=arm==2 ? own : arm==1 ? own-1 : 0;
+          memcpy(pw,p0,np*sizeof(float));
+          memset(dq[arm],0xff,nq*sizeof(float)); memset(dk[arm],0xff,nkv*sizeof(float));
+          memset(dv[arm],0xff,nkv*sizeof(float));
+#ifdef BCIR_DT_ATTENTION_PROBE
+          (void)bcir_tensor_attention_tiles_probe();
+#endif
+          assert(bcir_tensor_attention_backward_contract_variant_ws_pool(pools[pi],0,contracts[c],b,t,nh,nk,d,q,k,v,pw,
+              dy,dq[arm],dk[arm],dv[arm],arm ? ws : NULL,bytes));
+#ifdef BCIR_DT_ATTENTION_PROBE
+          assert(bcir_tensor_attention_tiles_probe()==b*nh*keep_tiles(t,arm==2));
+#endif
+          if (arm) assert(!memcmp(dq[0],dq[arm],nq*sizeof(float)) && !memcmp(dk[0],dk[arm],nkv*sizeof(float)) &&
+              !memcmp(dv[0],dv[arm],nkv*sizeof(float)));
+        }
+        cases++;
+        apart+=keep_tiles(t,1)!=keep_tiles(t,0);
+      }
+    }
+    free(q); free(k); free(v); free(dy); free(y); free(p0); free(pw); free(raw);
+    for (arm=0;arm<3;arm++) { free(dq[arm]); free(dk[arm]); free(dv[arm]); }
+  }
+  if (pools[1]) bcir_tensor_pool_stop(pools[1]);
+  assert(cases>0 && (from>256+32 ? apart>0 : 1));
+  printf("  PASS BWD-KEEP: %zu backwards at the copies' threshold %zu and past it the same bits lent none, a byte "
+      "short and the need, each path's tiles counted (%zu of them at a context where keeping saves a second "
+      "evaluation)\n",cases,from,apart);
+}
 int main(void) {
   gemm_contract(); attention_reference(); attention_fused_reference(); adamw_reference();
   finite_differences(); refusals();
@@ -3700,7 +3789,8 @@ int main(void) {
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();
   trainer_workspace_plan(); trainer_recompute(); pool_caps(); dispatch_entries();
-  attention_scratch(); attention_contig(); attention_strips(); attention_lower(); trainer_infer();
+  attention_scratch(); attention_contig(); attention_strips(); attention_lower(); attention_keep();
+  trainer_infer();
   trainer_lower();
 #ifdef BCIR_DT_DIVISION_PROBE
   division_probe();

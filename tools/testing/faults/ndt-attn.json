@@ -11,22 +11,22 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NA1 the second pass reads every kept probability-adjoint tile from the first slot (a row block past 64 columns takes the first tile's values)",
-      "new": "float *tile=jt<BCIR_ATT_KEEP ? kept[0] : spare;",
-      "old": "float *tile=jt<BCIR_ATT_KEEP ? kept[jt/BCIR_ATT_COLS] : spare;",
+      "new": "jt<BCIR_ATT_KEEP ? kept[0] : spare;",
+      "old": "jt<BCIR_ATT_KEEP ? kept[jt/BCIR_ATT_COLS] : spare;",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NA2 the tile at the kept bound is not evaluated again (the second pass reads the spare slot, which holds the last tile the first pass evaluated)",
-      "new": "if (!pass || jt>BCIR_ATT_KEEP) {",
-      "old": "if (!pass || jt>=BCIR_ATT_KEEP) {",
+      "new": "if (!pass || (!a->keep && jt>BCIR_ATT_KEEP)) {",
+      "old": "if (!pass || (!a->keep && jt>=BCIR_ATT_KEEP)) {",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NA3 no tile is evaluated again in the second pass (past the kept columns, every tile reads the spare slot's last values)",
       "new": "if (!pass) {",
-      "old": "if (!pass || jt>=BCIR_ATT_KEEP) {",
+      "old": "if (!pass || (!a->keep && jt>=BCIR_ATT_KEEP)) {",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

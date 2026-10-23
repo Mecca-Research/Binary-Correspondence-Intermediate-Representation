@@ -219,8 +219,8 @@ def test_native_c_harness_c11_and_c23():
             # the instance named (PX-3b); the attention without its probabilities and the forward
             # that runs it (INFER-ATTN); the attention's workspace entries (ATT-CONTIG); the stored
             # forward a strip of rows at a time (FWD-STRIP); the stored forward under LOWER and a
-            # training step from NaN-filled arenas (P-LOWER)
-            assert result.stdout.count("PASS") == 37
+            # training step from NaN-filled arenas (P-LOWER); the backward's kept tiles (BWD-KEEP)
+            assert result.stdout.count("PASS") == 38
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -261,7 +261,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 37
+            assert result.stdout.count("PASS") == 38
             break
 
 

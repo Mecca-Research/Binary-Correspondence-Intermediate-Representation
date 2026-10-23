@@ -108,8 +108,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AC15 a region the forward's four copies, not the backward's seven",
-      "new": "  return f>SIZE_MAX/(7*sizeof(float)) ? SIZE_MAX : 4*f*sizeof(float);",
-      "old": "  return f>SIZE_MAX/(7*sizeof(float)) ? SIZE_MAX : 7*f*sizeof(float);",
+      "new": "  return (4*f+k)*sizeof(float);\n",
+      "old": "  return (7*f+k)*sizeof(float);\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

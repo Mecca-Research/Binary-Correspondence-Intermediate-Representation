@@ -2528,6 +2528,9 @@ typedef struct att_job {
    * region's bytes, a region a worker or a task; acc: a sub-job's dk and dv add its head's terms to
    * what they hold (a KV head's later query heads) */
   unsigned char *ws; size_t per; int by_worker,acc;
+  /* BWD-KEEP: a backward task's room in its region for every probability-adjoint tile of a row
+   * block (NULL: the stack's first BCIR_ATT_KEEP columns, the tiles past them evaluated twice) */
+  float *keep;
 } att_job;
 #ifdef BCIR_MM_DISPATCH
 /* The attention's masked products on AVX-512 (NDT-ATTN-2: the forward's scores and context;
@@ -3111,6 +3114,7 @@ static void att_head_scratch(const att_job *a, size_t r, size_t h) {
 #endif
 #ifdef BCIR_DT_ATTENTION_PROBE
 static size_t attention_strips_seen;  /* the heads a stored forward ran a strip at a time */
+static size_t attention_tiles_seen;  /* BWD-KEEP: the probability-adjoint tiles a backward evaluated */
 #endif
 static void att_head_strips(const att_job *a, size_t r, size_t h) {
   size_t t=a->t,rows=att_strip_rows(t),i0,i;
@@ -3154,11 +3158,14 @@ static size_t att_ctg_floats(size_t t, size_t d) {
 static int att_ctg_copies(size_t t, size_t nh, size_t nk) {
   return t>=BCIR_ATT_CONTIG_FROM && (nh>1 || nk>1);
 }
-/* a region: the backward's seven copies (K, V, dK, dV, and a query head's Q, dY and dQ); the
- * forward's four (Q, K, V, the context) fit in them */
+static size_t att_keep_floats(size_t t);  /* BWD-KEEP: with the tiles' geometry, below */
+/* a region: the backward's seven copies (K, V, dK, dV, and a query head's Q, dY and dQ) and the room
+ * for a row block's every probability-adjoint tile (BWD-KEEP); the forward's four (Q, K, V, the
+ * context) fit in them */
 static size_t att_ctg_per(size_t t, size_t d) {
-  size_t f=att_ctg_floats(t,d);
-  return f>SIZE_MAX/(7*sizeof(float)) ? SIZE_MAX : 7*f*sizeof(float);
+  size_t f=att_ctg_floats(t,d),k=att_keep_floats(t);
+  if (f>SIZE_MAX/7 || k>SIZE_MAX-7*f || 7*f+k>SIZE_MAX/sizeof(float)) return SIZE_MAX;
+  return (7*f+k)*sizeof(float);
 }
 /* `regions` regions, and the slack to the workspace's first 64-byte boundary */
 static size_t att_ctg_bytes(size_t regions, size_t t, size_t d) {
@@ -3252,6 +3259,13 @@ size_t bcir_tensor_attention_strips_probe(void);
 size_t bcir_tensor_attention_strips_probe(void) {
   return __atomic_exchange_n(&attention_strips_seen,(size_t)0,__ATOMIC_RELAXED);
 }
+/* BWD-KEEP's record: the probability-adjoint tiles the backwards evaluated since the last read (a read
+ * starts it again) -- each once where a task keeps a row block's tiles, past BCIR_ATT_KEEP columns
+ * twice where it does not: the path the values cannot show */
+size_t bcir_tensor_attention_tiles_probe(void);
+size_t bcir_tensor_attention_tiles_probe(void) {
+  return __atomic_exchange_n(&attention_tiles_seen,(size_t)0,__ATOMIC_RELAXED);
+}
 #endif
 /* `variant` resolved (mm_instance over the products' family: the fused GEMM's under FUSED, v1's
  * otherwise); `scratch` the INFER-ATTN forward, its probabilities a strip at a time; `lower` the
@@ -3265,6 +3279,7 @@ static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int scrat
   a.variant=variant;
   a.strips=!scratch && t>=BCIR_ATT_STRIP_FROM;  /* FWD-STRIP */
   a.lower=lower && !scratch;  /* P-LOWER */
+  a.keep=NULL;
 #ifdef BCIR_DT_ATTENTION_PROBE
   attention_saw(0,(a.exp2 ? BCIR_TENSOR_ATTENTION_EXP : 0u)|(a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u)|
       (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u)|(a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u));
@@ -3362,6 +3377,15 @@ void bcir_tensor_attention_backward(size_t b, size_t t, size_t nh, size_t nk,
  * evaluating the same product again; a longer context evaluates its further tiles twice, as every
  * tile was evaluated before. */
 #define BCIR_ATT_KEEP 256
+/* BWD-KEEP: given a region (ATT-CONTIG's: from BCIR_ATT_CONTIG_FROM positions, where a row holds more
+ * than one head), a backward task keeps every tile of a row block there -- ceil(t/BCIR_ATT_COLS)
+ * tiles of BCIR_ATT_ROWS x BCIR_ATT_COLS floats after its seven copies, a row block's at most -- so its
+ * second pass reads every tile its first evaluated, and none is evaluated twice: at T2048 the tiles
+ * past the first 256 columns are three quarters of them. The values are the same either way: a kept
+ * tile holds the bits its second evaluation would have. */
+static size_t att_keep_floats(size_t t) {
+  return att_ctg_mul(t/BCIR_ATT_COLS+(t%BCIR_ATT_COLS!=0),BCIR_ATT_ROWS*BCIR_ATT_COLS);
+}
 /* The largest KV head (d x t floats) whose values the backward transposes once into its task's
  * stack (NDT-ATTN-5), 64 KB. Past it -- T512 at head dimension 32 -- the tiles took the GEMM kernel;
  * since DP-PANEL each tile's values are transposed into the same buffer as the tile is evaluated
@@ -3396,8 +3420,12 @@ static void att_head_backward(const att_job *a, size_t r, size_t h, const float 
       for (i=0;i<rows;i++) dot[i]=0.0f;
       for (pass=0;pass<2;pass++) for (jt=0;jt<i0+rows;jt+=BCIR_ATT_COLS) {
         size_t cols=i0+rows-jt<BCIR_ATT_COLS ? i0+rows-jt : BCIR_ATT_COLS;
-        float *tile=jt<BCIR_ATT_KEEP ? kept[jt/BCIR_ATT_COLS] : spare;
-        if (!pass || jt>=BCIR_ATT_KEEP) {
+        float *tile=a->keep ? a->keep+jt/BCIR_ATT_COLS*(BCIR_ATT_ROWS*BCIR_ATT_COLS) :  /* BWD-KEEP */
+            jt<BCIR_ATT_KEEP ? kept[jt/BCIR_ATT_COLS] : spare;
+        if (!pass || (!a->keep && jt>=BCIR_ATT_KEEP)) {
+#ifdef BCIR_DT_ATTENTION_PROBE
+          (void)__atomic_fetch_add(&attention_tiles_seen,(size_t)1,__ATOMIC_RELAXED);
+#endif
           memset(tile,0,rows*BCIR_ATT_COLS*sizeof(float));
 #ifdef BCIR_MM_DISPATCH
           if (vt) (a->fused ? att512_dp_fma : att512_dp)(rows,i0,jt,cols,d,dyh,ldh,vt+jt,t,tile,BCIR_ATT_COLS);
@@ -3477,6 +3505,7 @@ static void att_task_backward_contig(const att_job *a, size_t task, unsigned wor
   att_rows_in(vc,a->v+(r*t*nk+kh)*d,t,d,nk*d);
   for (i=v1;i<t;i++) { memset(dkc+i*d,0,d*sizeof(float)); memset(dvc+i*d,0,d*sizeof(float)); }
   s.b=1; s.nh=1; s.nk=1; s.group=1; s.k=kc; s.v=vc; s.dk=dkc; s.dv=dvc; s.ws=NULL;
+  s.keep=dqc+f;  /* BWD-KEEP: the row blocks' tiles after the seven copies */
   {
 #ifdef BCIR_MM_DISPATCH
     _Alignas(64) float panel[BCIR_ATT_PANEL];
@@ -3525,7 +3554,7 @@ int bcir_tensor_attention_backward_contract_variant_ws_pool(bcir_tensor_pool *po
   a.fused=fused; a.variant=iv;
   a.group=nh/nk;
   a.scratch=0;  /* the backward reads its probabilities: never the scratch forward's */
-  a.strips=0; a.lower=0;
+  a.strips=0; a.lower=0; a.keep=NULL;
 #ifdef BCIR_DT_ATTENTION_PROBE
   attention_saw(1,a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
 #endif

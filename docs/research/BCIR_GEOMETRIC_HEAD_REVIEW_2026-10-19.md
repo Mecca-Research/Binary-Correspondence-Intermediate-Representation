@@ -759,3 +759,85 @@ in x0.964 of eager PyTorch's time and x1.063 of Inductor's; at T1024 and T512 it
 What remains of the forward's gap to the flash kernel is the stored probabilities themselves; below
 the threshold the head-at-a-time forward still writes its future columns, and the bf16 forward writes
 them for its backward.
+
+## 13. BWD-KEEP: every probability-adjoint tile evaluated once (2026-10-23)
+
+Timed a part at a time with the trainer's job clock (`step_parts.py`), the GEO step at T2048 -- 297 ms
+under kblock+exp+reduce on four threads -- spent 41% of its time in the attention's backward, 23% in its
+forward and about a quarter in the GEMMs. The backward evaluates a row block's probability-adjoint tiles
+(dP = dY V^T, 32 rows by 64 columns) once for the rows' dots and again for their score adjoints; it kept
+the first 256 columns' tiles on its stack (32 KB) and evaluated every tile past them twice -- three
+quarters of a row block's tiles at T2048. A prototype that kept every tile on the stack ran the backward
+at x0.909 of the tree's on four threads and x0.873 on one, every value the same
+([measurements/2026-10-23/bwd-keep/](measurements/2026-10-23/bwd-keep/README.json), `prototype.json`);
+a 256 KB frame is no library's to take on a caller's thread.
+
+**BWD-KEEP** keeps the tiles in the workspace the caller already lends: ATT-CONTIG's region of a task,
+from `BCIR_ATT_CONTIG_FROM` positions where a row holds more than one head, now also holds 32 rows of the
+context's width in whole tiles after the seven copies, and a backward task keeps every tile of a row
+block there, so its second pass reads every tile its first evaluated. A kept tile holds the bits its
+second evaluation would have, so dq, dk and dv are as they were: 208 cases of the stored forward under
+LOWER and the backward from it, and BWD-LONG's 48 backward cases, byte for byte against the tree before
+under clang and GCC, and with the tree after built to keep its tiles at every context; the workspace
+entries the entries without one in ATT-CONTIG's 564 cases. Without a region -- no workspace, less than
+the pool's need, or below the threshold -- a task keeps the stack's first 256 columns and evaluates the
+rest twice, as before. The region grows by the kept tiles -- at T2048 and a head width of 32, by a
+seventh -- and the trainer's need with it.
+
+The attention, both trees in one process, both lent the larger of their two needs, 48 rounds a row (the
+last row the 64 declared before they ran):
+
+| shape | rounds | forward | backward | total | A/A backward | A/A total |
+|---|---:|---:|---:|---:|---:|---:|
+| B4/T2048, 4 heads of 32, EXP, clang, 4 threads | 48 | 1.034 | 0.905 (0.866-0.946) | 0.953 (0.920-0.987) | 1.027 | 1.022 |
+| B4/T2048, 4 heads of 32, v1, clang, 4 threads | 48 | 1.002 | 0.854 (0.813-0.897) | 0.925 (0.895-0.957) | 0.971 | 0.976 |
+| B4/T2048, 4 heads of 32, EXP, clang, 1 thread | 48 | 0.994 | 0.874 (0.857-0.891) | 0.916 (0.902-0.931) | 0.986 | 0.988 |
+| B4/T1024, 4 heads of 32, EXP, clang, 4 threads | 48 | 0.986 | 0.898 (0.868-0.929) | 0.931 (0.906-0.956) | 0.999 | 0.988 |
+| B4/T512, 4 heads of 32, EXP, clang, 4 threads | 48 | 0.958 | 1.002 (0.977-1.029) | 0.983 (0.945-1.022) | 1.002 | 0.982 |
+| B2/T1024, 8 heads of 64, FUSED, clang, 4 threads | 48 | 0.992 | 0.902 (0.868-0.937) | 0.942 (0.907-0.979) | 0.958 | 0.979 |
+| B1/T2048, 8 heads of 64, FUSED, clang, 4 threads | 48 | 0.987 | 0.874 (0.833-0.915) | 0.929 (0.881-0.979) | 1.013 | 0.996 |
+| B1/T4096, 8 heads of 64, FUSED, clang, 4 threads | 48 | 1.000 | 0.875 (0.838-0.913) | 0.931 (0.900-0.963) | 0.988 | 0.988 |
+| B4/T2048, 4 heads of 32 (2 KV), EXP, clang, 4 threads | 48 | 1.001 | 0.868 (0.829-0.909) | 0.915 (0.882-0.950) | 0.999 | 0.998 |
+| B4/T2048, 4 heads of 32, EXP, gcc, 4 threads | 48 | 1.009 | 0.877 (0.850-0.905) | 0.924 (0.896-0.953) | 0.985 | 0.979 |
+| B4/T1024, 4 heads of 32, EXP, gcc, 4 threads | 48 | 0.989 | 0.877 (0.849-0.907) | 0.918 (0.886-0.951) | 0.961 | 0.964 |
+| B4/T2048, 4 heads of 32, EXP, clang, 4 threads | 64 | 1.002 | 0.865 (0.843-0.888) | 0.914 (0.896-0.933) | 1.001 | 1.000 |
+
+The backward resolves on every shape from T1024 on: x0.854-x0.905 under clang, x0.877 under GCC at
+T1024 and T2048, x0.868 with GQA and x0.874-x0.875 with 8 heads of 64 at T2048 and T4096 (at T1024
+x0.902, meeting a control that drifted to x0.958); T512, below the threshold, is at parity. The whole
+attention resolves on one thread, with GQA, at T1024 and under GCC; on four threads under clang its
+48-round total met its control's interval by 0.006 beside a forward -- which the slice does not touch --
+reading x1.034 inside its own, and the 64 rounds declared for it resolved, x0.914 with the forward at
+x1.002. The training step at the study's dimensions resolved at T2048 under GCC (x0.944), under clang's
+v1 contract (x0.955) and under clang's kblock+exp+reduce (x0.955, clearing its control by 0.0002; in the
+64 declared rounds x0.937, 0.919-0.957); T1024 read x0.941 under clang and x0.966 under GCC and T512
+x0.967, each meeting its control, and the 9.84M decoder (T128) is at parity.
+
+Against PyTorch's own attention on the same inputs, the attention as the trainer now runs it:
+
+| B4, 4 heads of 32, 4 threads | forward ms | backward ms | total ms | forward / BCIR's | backward / BCIR's | total / BCIR's |
+|---|---:|---:|---:|---:|---:|---:|
+| T2048: BCIR (the probabilities stored, LOWER, the tiles kept) | 22.3 | 35.3 | 57.5 | 1 | 1 | 1 |
+| T2048: PyTorch flash (none stored, recomputed) | 17.2 | 38.0 | 55.4 | 0.796 (0.731-0.867) | 1.116 (0.974-1.279) | 0.994 (0.888-1.113) |
+| T2048: PyTorch math (the probabilities stored) | 183.3 | 155.7 | 343.2 | 7.893 (7.234-8.613) | 4.477 (3.898-5.142) | 5.818 (5.212-6.495) |
+| T1024: BCIR (the probabilities stored, LOWER, the tiles kept) | 6.0 | 8.8 | 15.0 | 1 | 1 | 1 |
+| T1024: PyTorch flash (none stored, recomputed) | 5.7 | 12.9 | 18.8 | 0.993 (0.932-1.058) | 1.364 (1.270-1.465) | 1.222 (1.168-1.279) |
+| T1024: PyTorch math (the probabilities stored) | 43.6 | 41.1 | 85.2 | 7.433 (7.087-7.795) | 4.573 (4.213-4.963) | 5.685 (5.359-6.032) |
+
+At T1024 BCIR's attention is now the faster, the flash kernel taking x1.22 of its time; at T2048 the two
+are at parity, BCIR's backward the faster and its forward the slower. The attention model on level 3,
+built with GCC as the study builds it, both builds lent their regions and stating LOWER on their stored
+forward:
+
+| T | rounds | before ms | after ms | P-EAGER ms | P-IND ms | after / before | after / P-EAGER | after / P-IND | A/A |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 512 | 32 | 45.5 | 45.3 | 85.3 | 61.3 | 1.022 (0.996-1.049) | 0.539 (0.517-0.562) | 0.744 (0.713-0.776) | 1.012 (0.975-1.051) |
+| 1024 | 32 | 107.5 | 102.8 | 145.8 | 119.1 | 0.967 (0.946-0.989) | 0.717 (0.688-0.747) | 0.862 (0.830-0.896) | 1.001 (0.975-1.028) |
+| 2048 | 32 | 302.2 | 285.3 | 313.5 | 285.3 | 0.946 (0.931-0.961) | 0.911 (0.892-0.930) | 1.005 (0.983-1.029) | 0.987 (0.973-1.002) |
+
+The trained state is the same digest from both builds at every context. At T2048 the update now runs
+in x0.911 of eager PyTorch's time and at parity with Inductor's (x1.005, 0.983-1.029), from x1.063; at
+T1024 and T512 it is faster than both. What remains of the attention's gap to the flash kernel is the
+stored forward's -- the probabilities j <= i written out for the backward to read, x1.26 of the flash
+forward's time; below the copies' threshold, or with one head a row, no region is lent and the tiles
+past 256 columns are evaluated twice as before.

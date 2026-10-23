@@ -452,7 +452,10 @@ BCIR_DT_API int bcir_tensor_attention_backward_contract_variant_pool(bcir_tensor
  * the measuring hosts; no value depends on it), each task copies its head's rows into a region of the
  * workspace -- the forward's q, k and v rows and its context, the backward's K and V rows and their
  * adjoints and each query head's Q, dY and dQ -- runs on them and copies its results back: values
- * moved, none computed. One region a worker of the pool where the workers are no more than the
+ * moved, none computed. A backward task also keeps every probability-adjoint tile of a row block in
+ * its region (BWD-KEEP: 32 rows of the context's width, after the copies), so its second pass reads
+ * the tiles its first evaluated instead of evaluating those past the first 256 columns again -- the
+ * same bits either way. One region a worker of the pool where the workers are no more than the
  * forward's tasks (batch x heads), else one a task: bcir_tensor_attention_pool_workspace bytes for a
  * pool of that many threads (a NULL pool one), at most bcir_tensor_attention_workspace (one region a
  * task, a function of the shapes alone), both 0 where no task copies (or kvheads not dividing heads).

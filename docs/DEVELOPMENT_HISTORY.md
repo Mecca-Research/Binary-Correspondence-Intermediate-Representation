@@ -4484,6 +4484,68 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     and PI5 re-anchored on the lines the slice rewrote and caught again.
   - Not claimed: below the threshold, where the head-at-a-time forward writes every column; the bf16
     attention; AMX timing; a GPU.
+  BWD-KEEP (2026-10-23): the attention backward keeps every probability-adjoint tile of a row block,
+    every value as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §13,
+    [measurements/2026-10-23/bwd-keep/](research/measurements/2026-10-23/bwd-keep/README.json)).
+  - The loss it answers: timed a part at a time with the trainer's job clock, the GEO step at T2048
+    spent 41% of its time in the attention's backward, 23% in its forward and about a quarter in the
+    GEMMs. The backward evaluates a row block's probability-adjoint tiles (dP = dY V^T, 32 rows by 64
+    columns) once for the rows' dots and again for their score adjoints; it kept the first 256 columns'
+    tiles on its stack (32 KB) and evaluated every tile past them twice -- three quarters of a row
+    block's tiles at T2048.
+  - BWD-KEEP: given a region of the lent workspace (ATT-CONTIG's, from `BCIR_ATT_CONTIG_FROM` positions
+    where a row holds more than one head), a backward task keeps every tile of a row block there -- 32
+    rows of the context's width in whole tiles of 64 columns, after the seven copies -- so its second
+    pass reads every tile its first evaluated and none is evaluated twice. A kept tile holds the bits
+    its second evaluation would have, so dq, dk and dv are as they were; without a region (no
+    workspace, or less than the pool's need) a task keeps the stack's first 256 columns and evaluates
+    the rest twice, as before. The region grows by the kept tiles (at T2048 and a head width of 32, a
+    seventh), and the trainer's need with it.
+  - Every value is the same: 208 cases of the stored forward under LOWER and the backward from it, and
+    BWD-LONG's 48 backward cases, byte for byte against the tree before under clang 18 and GCC 13, and
+    with the tree after built to keep its tiles at every context; ATTN-RATE's 88 forward cases and
+    FWD-STRIP's 288 long-context stored forwards byte for byte before and after; the workspace entries
+    the entries without one in ATT-CONTIG's 564 cases; the GEO model's trained state the same digest
+    from both level-3 builds at every context.
+  - Measured on the committed tree against the one before it, both lent the larger of their two needs,
+    48 rounds a row: the attention's backward at B4/T2048 x0.905 (0.866-0.946) on four threads and
+    x0.865 (0.843-0.888) in the 64 rounds declared before they ran, x0.874 on one thread, v1 x0.854,
+    GQA (4 heads, 2 KV heads) x0.868, GCC x0.877; at T1024 x0.898 under clang and x0.877 under GCC;
+    8 heads of 64 x0.874-x0.875 at T2048 and T4096 (x0.902 at T1024, meeting a control that drifted to
+    x0.958); T512 at parity, below the threshold. The whole attention x0.916 on one thread, x0.915 with
+    GQA, x0.924 under GCC and x0.931 at T1024; on four threads under clang x0.953, meeting its control's
+    interval by 0.006 beside a forward -- which the slice does not touch -- reading x1.034 inside its
+    own, and in the declared 64 rounds x0.914 (0.896-0.933), the forward x1.002. The training step at
+    the GEO dimensions at T2048 x0.944 under GCC and x0.955 under clang's v1 contract; under clang's
+    kblock+exp+reduce x0.955, clearing its control by 0.0002, and in the declared 64 rounds x0.937
+    (0.919-0.957); T512, T1024 and the 9.84M decoder (T128) not resolved. The GEO study's attention
+    model on level 3, built with GCC as the study builds it, both builds lent their regions: x0.946
+    (0.931-0.961) at T2048 in 32 rounds -- now x0.911 (0.892-0.930) of eager PyTorch's time and x1.005
+    (0.983-1.029) of Inductor's, parity; T1024 x0.967 (meeting its control), T512 at parity.
+  - Against PyTorch's scaled_dot_product_attention on the same inputs (B4, 4 heads of 32, four threads,
+    24 rounds), the attention as the trainer runs it: at T2048 BCIR 57.5 ms against the flash kernel's
+    55.4, flash x0.994 (0.888-1.113) of BCIR's -- parity -- BCIR's backward the faster (35.3 ms against
+    38.0) and its forward the slower (22.3 against 17.2, flash's x0.796); at T1024 BCIR the faster, flash
+    x1.222 (1.168-1.279) of its time, the flash backward x1.364; PyTorch's math kernel, which stores the
+    probabilities as BCIR does, x5.8 of BCIR's time at T2048.
+  - The prototype first: every tile kept on the stack (a 256 KB frame, which no library may take on a
+    caller's thread), BWD-LONG's 48 backward cases byte for byte against the tree's; timed in 32 rounds
+    at x0.909 of the backward at B4/T2048 on four threads, x0.873 on one and x0.924 at T1024.
+  - What remains: the stored forward at x1.26 of the flash forward's time -- the probabilities j <= i
+    written out for the backward to read, where the flash kernel recomputes them; below the copies'
+    threshold, or with one head a row, no region is lent and the tiles past 256 columns are evaluated
+    twice as before; the GEMMs, about a quarter of the step.
+  - Witnesses: `attention_keep` runs each backward three ways -- lent none, a byte short of the pool's
+    need and the need -- at the copies' threshold and 33 positions past it (neither a whole row block
+    nor a whole tile), under v1's and the fused products, serially and on a pool of four: the same bits
+    all three ways, and the unit's probe (`bcir_tensor_attention_tiles_probe`) counts each path's tile
+    evaluations. ATT-CONTIG's size pins hold the region's layout, a context past a whole number of tiles
+    among them; the harness's -contig build keeps the tiles at every context, so the attention
+    references and ATT-CONTIG's cases hold the kept path to the reference loops. `bwd-keep.json`
+    BK1-BK7, each caught by its own check; AC15 and NA1-NA3 re-anchored on the lines the slice rewrote
+    and caught again.
+  - Not claimed: below the copies' threshold or with one head a row, where no region is lent; the bf16
+    attention (its own backward); AMX timing; a GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
