@@ -4646,6 +4646,44 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     minutes on one runner and reached 40 on two others, its build-parity step 970 seconds against 1,882.
   - Not claimed: timing on AVX2-only hosts (their instance takes the tasks, the chunks and the order, not the edge
     width); the bf16 contract's GEMMs; AMX; a GPU.
+  SCORES-T (2026-10-23): the inference forward's 16-row groups with their rows in the lanes, every value as it was
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §16,
+    [measurements/2026-10-23/scores-t/](research/measurements/2026-10-23/scores-t/README.json)).
+  - The loss it answers: after MM-ROWS the GEO model's inference at T2048 took x1.17 of Inductor's time, two thirds
+    of it the attention's scratch forward. The scores landed with the keys in the lanes (8-row x 32-key blocks into
+    the strip's rows) while the softmax needs each row's chain in a lane of its own, so it transposed every 16 x 16
+    block in registers once for the maximum and twice for the exponential and sum, and the score blocks packed each
+    32-key panel afresh for every 32-row strip.
+  - SCORES-T: on the AVX-512 instance under the exp contract a scratch strip runs a 16-row group at a time with its
+    rows in the lanes -- the group's queries transposed once into a d x 16 panel, its scores 16 x 16 blocks with one
+    accumulator a key (each score its channels' products in order from +0.0), the softmax on the blocks as they
+    stand, the context reading a key's eight rows' probabilities side by side; heads to 256 channels, strips ending
+    on a whole group; every other case, the libm softmax and the stored forward keep the row path. A probe counts
+    the groups run in the lanes.
+  - Every value is the same: `scratch_hash.c` (the scratch forward's context and verdict, the stored forward's every
+    byte of p under LOWER too, 1,248 cases with a pool of four and the workspace lent) and the tree's fwd, lower,
+    attn and band hashes, before == after under clang and GCC, clang's lines GCC's.
+  - Measured on the committed tree against the one before it, in one process beside an A/A control: the scratch
+    forward at B4/T2048 x0.927 on four threads (GCC x0.917) and x0.920 on one, x0.884 at T512, x0.848 at T256, x0.891
+    at T128, x0.859 under the fused attention contract, x0.889 for 8 heads of 64; `bcir_decoder_forward` at the GEO
+    dimensions x0.927 at T1024 and x0.906 at T2048. The GEO study's attention model on level 3 (GCC, 24 rounds):
+    inference x0.945 at T512, x0.916 at T1024 and x0.924 at T2048 -- now x1.056 (0.991-1.126) of Inductor's time
+    at T2048, at parity, and x0.977 of eager PyTorch's; x0.839 of Inductor's at T1024. The 9.84M decoder's forward
+    (T128, its GEMMs most of it) at parity; its attention x0.883.
+  - The prototype's phases at B4/T2048 (TSC cycles a probability): the scores 1.96 -> 1.62, the softmax 2.37 -> 1.82
+    (the maximum 0.25 -> 0.18, the exponential and sum 1.54 -> 1.13, the division 0.54 -> 0.44), the context 1.70
+    -> 1.56.
+  - Measured, not taken: the stored training forward on the same path, its groups transposed out to p's rows
+    (every byte of p the same). The transposes out cost 0.79 cycles a probability, which the row path spends inside
+    its other phases: x1.014 at T2048 and x0.940 at T1024, meeting its control.
+  - The backward a phase at a time (B4/T2048, four threads, 36.2 ms a layer), against v1's 1.45 cycles a product:
+    dV 1.92 (75%), the dP tiles 2.02 (72%), the dots 0.68, the score adjoints 0.46, dQ 1.55 (93%), dK 1.76 (82%), the
+    copies and the rest 1.15 (12%); prefetching the copies read 0.78, the call's time within noise.
+  - Witnesses: the C harness's `attention_lanes` -- the scratch forward against the reference loops under the four
+    contracts over head widths 16 to 257 and contexts 16 to 1040, every instance, a pool of four, the workspace
+    lent, finite and not, the probe's count of the groups in the lanes; `scores-t.json` ST1-ST12, each caught by its
+    own check, ST10 (the probe's count) and ST12 (a 17-channel context) only by the new case.
+  - Not claimed: AVX2-only and non-x86 hosts (the row path); the stored forward; the bf16 attention; a GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

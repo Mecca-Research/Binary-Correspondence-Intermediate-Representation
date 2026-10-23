@@ -31,15 +31,15 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "CW4 the diagonal keys' third vector never accumulated",
-      "new": "      if (nv>2) a2[r]=ATT_MADD_MASK(f,a2[r],(__mmask16)0,pv,b2);\n",
-      "old": "      if (nv>2) a2[r]=ATT_MADD_MASK(f,a2[r],take,pv,b2);\n",
+      "new": "      __m512 pv=_mm512_set1_ps(p[(i0+r-r0)*ldp+i0+dj]);\n      a0[r]=ATT_MADD_MASK(f,a0[r],take,pv,b0);\n      if (nv>1) a1[r]=ATT_MADD_MASK(f,a1[r],take,pv,b1);\n      if (nv>2) a2[r]=ATT_MADD_MASK(f,a2[r],(__mmask16)0,pv,b2);\n",
+      "old": "      __m512 pv=_mm512_set1_ps(p[(i0+r-r0)*ldp+i0+dj]);\n      a0[r]=ATT_MADD_MASK(f,a0[r],take,pv,b0);\n      if (nv>1) a1[r]=ATT_MADD_MASK(f,a1[r],take,pv,b1);\n      if (nv>2) a2[r]=ATT_MADD_MASK(f,a2[r],take,pv,b2);\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "CW5 the second vector never stored",
-      "new": "",
-      "old": "    if (nv>1) _mm512_mask_storeu_ps(yr+16,m1,a1[r]);\n",
+      "new": "    if (nv>2) _mm512_mask_storeu_ps(yr+32,m2,a2[r]);\n  }\n}\n/* The context of rows [r0, rows), p at row r0",
+      "old": "    if (nv>1) _mm512_mask_storeu_ps(yr+16,m1,a1[r]);\n    if (nv>2) _mm512_mask_storeu_ps(yr+32,m2,a2[r]);\n  }\n}\n/* The context of rows [r0, rows), p at row r0",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

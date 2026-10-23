@@ -80,8 +80,8 @@
   {
    "expects": "test_native_c_harness_c11_and_c23",
    "label": "NL11 the transposed exponentials take libm's expf (the v2 softmax is the BCIR exponential's, in every row)",
-   "new": "    { int q; for (q=0;q<256;q++) blk[q]=expf(blk[q]); }\n",
-   "old": "    exp_inplace_avx512(256,blk);\n",
+   "new": "    for (c=0;c<16;c++) _mm512_store_ps(blk+c*16,_mm512_sub_ps(_mm512_mul_ps(_mm512_load_ps(blk+c*16),sc),mx));\n    { int q; for (q=0;q<256;q++) blk[q]=expf(blk[q]); }\n",
+   "old": "    for (c=0;c<16;c++) _mm512_store_ps(blk+c*16,_mm512_sub_ps(_mm512_mul_ps(_mm512_load_ps(blk+c*16),sc),mx));\n    exp_inplace_avx512(256,blk);\n",
    "path": "runtime/c/bcir_tensor.c"
   }
  ]

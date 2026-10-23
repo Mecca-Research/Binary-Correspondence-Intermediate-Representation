@@ -3002,6 +3002,130 @@ __attribute__((target("avx512f"))) static void att512_dp_fma(size_t rows, size_t
     size_t ldt) {
   att512_dp_any(1,rows,i0,jt,cols,d,dy,ldy,vt,ldv,tile,ldt);
 }
+/* SCORES-T: a scratch strip's 16-row group (rows R..R+15, R a multiple of 16) with its rows in the
+ * lanes. Its scores are 16 x 16 blocks in the slot, block jb (keys jb..jb+15, jb <= R) at sg + jb*16,
+ * the block's column c (key jb+c) one vector whose lane u is row R+u -- so p(R+u, j) is sg[j*16 + u],
+ * sg aligned or not. A score is att512_scores_any's: its channels' products in order from +0.0 (one
+ * rounded product and one rounded sum a term, or one fmaf under ATTN-FMA), the group's queries
+ * transposed once into a d x 16 panel and each key's channel broadcast, one accumulator a key. On a
+ * row-major strip the softmax transposes each 16 x 16 block once for the maximum and twice for the
+ * exponential and sum, and the score blocks pack each 32-key panel for 32 rows; here a block's lanes
+ * are its rows already. BCIR_ATT_TQ is the widest head the panel holds. */
+#define BCIR_ATT_TQ 256
+__attribute__((target("avx512f"))) static void att512_tq(size_t d, const float *q, size_t ldq, float *qt) {
+  size_t c,u,dw=d/16*16;  /* qt[c*16+u] = q[u*ldq+c]: whole 16 x 16 blocks, then the ragged channels */
+  for (c=0;c<dw;c+=16) kb512_transpose16(q+c,ldq,qt+c*16,16);
+  for (c=dw;c<d;c++) for (u=0;u<16;u++) qt[c*16+u]=q[u*ldq+c];
+}
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_tscores_any(int f, size_t R, size_t d,
+    const float *qt, const float *k, size_t ldk, float *sg) {
+  size_t jb,c,kk;
+  for (jb=0;jb<=R;jb+=16) {
+    __m512 acc[16]; const float *kb=k+jb*ldk; float *blk=sg+jb*16;
+    for (kk=0;kk<16;kk++) acc[kk]=_mm512_setzero_ps();
+    for (c=0;c<d;c++) {
+      __m512 qv=_mm512_load_ps(qt+c*16);
+      for (kk=0;kk<16;kk++) acc[kk]=ATT_MADD(f,acc[kk],qv,_mm512_set1_ps(kb[kk*ldk+c]));
+    }
+    for (kk=0;kk<16;kk++) _mm512_storeu_ps(blk+kk*16,acc[kk]);
+  }
+}
+__attribute__((target("avx512f"))) static void att512_tscores(size_t R, size_t d, const float *qt,
+    const float *k, size_t ldk, float *sg) {
+  att512_tscores_any(0,R,d,qt,k,ldk,sg);
+}
+__attribute__((target("avx512f"))) static void att512_tscores_fma(size_t R, size_t d, const float *qt,
+    const float *k, size_t ldk, float *sg) {
+  att512_tscores_any(1,R,d,qt,k,ldk,sg);
+}
+/* The group's softmax under the exp contract, att_softmax_block's 16-row arithmetic on the blocks as
+ * they stand: lane u takes column c of block jb where jb+c <= R+u; the raw scores' maxima, scaled;
+ * each element exp1(x*scale - max), the lanes past a row's diagonal +0.0, summed in column order;
+ * then each element it takes divided by its row's sum. */
+__attribute__((target("avx512f"))) static void att512_tsoftmax(size_t R, float scale, float *sg) {
+  __m512 mx=_mm512_set1_ps(-INFINITY),s=_mm512_setzero_ps(),sc=_mm512_set1_ps(scale); size_t jb,c;
+  for (jb=0;jb<=R;jb+=16) for (c=0;c<16;c++) {
+    __mmask16 k=(__mmask16)(jb<R ? 0xffffu : (0xffffu<<c)&0xffffu);
+    mx=_mm512_mask_max_ps(mx,k,_mm512_loadu_ps(sg+jb*16+c*16),mx);
+  }
+  mx=_mm512_mul_ps(mx,sc);
+  for (jb=0;jb<=R;jb+=16) {
+    float *blk=sg+jb*16;
+    for (c=0;c<16;c++) _mm512_storeu_ps(blk+c*16,_mm512_sub_ps(_mm512_mul_ps(_mm512_loadu_ps(blk+c*16),sc),mx));
+    exp_inplace_avx512(256,blk);
+    for (c=0;c<16;c++) {
+      __mmask16 k=(__mmask16)(jb<R ? 0xffffu : (0xffffu<<c)&0xffffu);
+      __m512 x=_mm512_maskz_mov_ps(k,_mm512_loadu_ps(blk+c*16));
+      s=_mm512_mask_add_ps(s,k,s,x);
+      _mm512_storeu_ps(blk+c*16,x);
+    }
+  }
+  for (jb=0;jb<=R;jb+=16) for (c=0;c<16;c++) {
+    __mmask16 k=(__mmask16)(jb<R ? 0xffffu : (0xffffu<<c)&0xffffu);
+    __m512 x=_mm512_loadu_ps(sg+jb*16+c*16);
+    _mm512_storeu_ps(sg+jb*16+c*16,_mm512_mask_div_ps(x,k,x,s));
+  }
+}
+/* One 8-row block of the group's context (rows R+rb.., rb 0 or 8) from its blocks: att512_ctx_block's
+ * terms in its order from +0.0, the eight rows' probabilities of key j side by side at sg + j*16 + rb. */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_tctx_block(int f, int nv, size_t R, size_t rb,
+    size_t c0, const float *sg, const float *v, size_t ldv, float *y, size_t ldy, __mmask16 m0,
+    __mmask16 m1, __mmask16 m2) {
+  __m512 a0[8],a1[8],a2[8]; size_t r,j,dj,i0=R+rb;
+  for (r=0;r<8;r++) { a0[r]=_mm512_setzero_ps(); a1[r]=_mm512_setzero_ps(); a2[r]=_mm512_setzero_ps(); }
+  for (j=0;j<=i0;j++) {  /* every row of the block takes key j */
+    const float *vj=v+j*ldv+c0,*pj=sg+j*16+rb;
+    __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();
+    if (nv>1) b1=_mm512_maskz_loadu_ps(m1,vj+16);
+    if (nv>2) b2=_mm512_maskz_loadu_ps(m2,vj+32);
+    for (r=0;r<8;r++) {
+      __m512 pv=_mm512_set1_ps(pj[r]);
+      a0[r]=ATT_MADD(f,a0[r],pv,b0);
+      if (nv>1) a1[r]=ATT_MADD(f,a1[r],pv,b1);
+      if (nv>2) a2[r]=ATT_MADD(f,a2[r],pv,b2);
+    }
+  }
+  for (dj=1;dj<8;dj++) {  /* key i0+dj: the rows r >= dj, the others masked out */
+    const float *vj=v+(i0+dj)*ldv+c0,*pj=sg+(i0+dj)*16+rb;
+    __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();
+    if (nv>1) b1=_mm512_maskz_loadu_ps(m1,vj+16);
+    if (nv>2) b2=_mm512_maskz_loadu_ps(m2,vj+32);
+    for (r=0;r<8;r++) {
+      __mmask16 take=(__mmask16)(r>=dj ? 0xffffu : 0u);
+      __m512 pv=_mm512_set1_ps(pj[r]);
+      a0[r]=ATT_MADD_MASK(f,a0[r],take,pv,b0);
+      if (nv>1) a1[r]=ATT_MADD_MASK(f,a1[r],take,pv,b1);
+      if (nv>2) a2[r]=ATT_MADD_MASK(f,a2[r],take,pv,b2);
+    }
+  }
+  for (r=0;r<8;r++) {
+    float *yr=y+(i0+r)*ldy+c0;
+    _mm512_mask_storeu_ps(yr,m0,a0[r]);
+    if (nv>1) _mm512_mask_storeu_ps(yr+16,m1,a1[r]);
+    if (nv>2) _mm512_mask_storeu_ps(yr+32,m2,a2[r]);
+  }
+}
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_tcontext_any(int f, size_t R, size_t d,
+    const float *sg, const float *v, size_t ldv, float *y, size_t ldy) {
+  size_t c0,rb;
+  for (c0=0;c0<d;c0+=48) {
+    size_t nc=d-c0<48 ? d-c0 : 48;
+    __mmask16 m0=att512_lanes(nc),m1=att512_lanes(nc>16 ? nc-16 : 0),m2=att512_lanes(nc>32 ? nc-32 : 0);
+    for (rb=0;rb<16;rb+=8) {
+      if (nc>32) att512_tctx_block(f,3,R,rb,c0,sg,v,ldv,y,ldy,m0,m1,m2);
+      else if (nc>16) att512_tctx_block(f,2,R,rb,c0,sg,v,ldv,y,ldy,m0,m1,m2);
+      else att512_tctx_block(f,1,R,rb,c0,sg,v,ldv,y,ldy,m0,m1,m2);
+    }
+  }
+}
+__attribute__((target("avx512f"))) static void att512_tcontext(size_t R, size_t d, const float *sg,
+    const float *v, size_t ldv, float *y, size_t ldy) {
+  att512_tcontext_any(0,R,d,sg,v,ldv,y,ldy);
+}
+__attribute__((target("avx512f"))) static void att512_tcontext_fma(size_t R, size_t d, const float *sg,
+    const float *v, size_t ldv, float *y, size_t ldy) {
+  att512_tcontext_any(1,R,d,sg,v,ldv,y,ldy);
+}
 #endif
 enum { ATT_SCORES, ATT_CONTEXT, ATT_TRANSPOSED };
 /* One of the attention's masked products over its t rows: the AVX-512 register blocks for the
@@ -3122,11 +3246,43 @@ size_t bcir_tensor_attention_scratch_floats(size_t batch, size_t time, size_t he
  * rectangle (keys [0, v0): below every row's diagonal) and a triangle (keys [v0, i1) under the
  * causal mask, its rows and keys counted from v0), the terms in their order: the context's triangle
  * adds onto the sums its rectangle stored. i0 is a multiple of 16 (att_softmax_block's blocks). */
+#ifdef BCIR_DT_ATTENTION_PROBE
+static size_t attention_lanes_seen;  /* SCORES-T: the 16-row groups a scratch forward ran in the lanes */
+#endif
+#ifdef BCIR_MM_DISPATCH
+/* SCORES-T: a scratch strip's rows [i0, i1) a 16-row group at a time, each group's scores, softmax
+ * and context with its rows in the lanes (att512_tscores, att512_tsoftmax, att512_tcontext), its
+ * blocks in the slot s: the AVX-512 instance under the exp contract, i1 a multiple of 16 (whole
+ * groups, none of them the v1 kernel's rows) and a head of at most BCIR_ATT_TQ channels. A stored
+ * forward keeps the row path: its probabilities must reach p's rows, and transposing them out cost
+ * what the transposes saved (measured: parity at T2048). Every value is the row path's. */
+static void att_strip_lanes(const att_job *a, size_t r, size_t h, size_t i0, size_t i1, float *s) {
+  size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),ldq=nh*d,ldk=nk*d,R;
+  const float *q=a->q+(r*t*nh+h)*d,*k=a->k+(r*t*nk+kh)*d,*v=a->v+(r*t*nk+kh)*d;
+  float *y=a->y+(r*t*nh+h)*d,scale=1.0f/sqrtf((float)d);
+  _Alignas(64) float qt[BCIR_ATT_TQ*16];
+  for (R=i0;R<i1;R+=16) {
+    att512_tq(d,q+R*ldq,ldq,qt);
+    (a->fused ? att512_tscores_fma : att512_tscores)(R,d,qt,k,ldk,s);
+    att512_tsoftmax(R,scale,s);
+    (a->fused ? att512_tcontext_fma : att512_tcontext)(R,d,s,v,ldk,y,ldq);
+  }
+#ifdef BCIR_DT_ATTENTION_PROBE
+  (void)__atomic_fetch_add(&attention_lanes_seen,(i1-i0)/16,__ATOMIC_RELAXED);
+#endif
+}
+#endif
 static void att_strip(const att_job *a, size_t r, size_t h, size_t i0, size_t i1, float *s) {
   size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),ldq=nh*d,ldk=nk*d,v0=i0,i;
   const float *q=a->q+(r*t*nh+h)*d,*k=a->k+(r*t*nk+kh)*d,*v=a->v+(r*t*nk+kh)*d;
   float *y=a->y+(r*t*nh+h)*d; int family=a->fused ? MM_FUSED : MM_V1;
   mm_args x; mm_range all;
+#ifdef BCIR_MM_DISPATCH
+  if (a->scratch && a->variant==4 && a->exp2 && d<=BCIR_ATT_TQ && i1%16==0) {  /* SCORES-T */
+    att_strip_lanes(a,r,h,i0,i1,s);
+    return;
+  }
+#endif
 #ifdef BCIR_MM_DISPATCH
   if (a->variant==4) {
     size_t whole=att_v1_rows(4,t);
@@ -3338,6 +3494,12 @@ size_t bcir_tensor_attention_strips_probe(void) {
 size_t bcir_tensor_attention_tiles_probe(void);
 size_t bcir_tensor_attention_tiles_probe(void) {
   return __atomic_exchange_n(&attention_tiles_seen,(size_t)0,__ATOMIC_RELAXED);
+}
+/* SCORES-T's record: the 16-row groups the scratch forwards ran with their rows in the lanes since the
+ * last read (a read starts it again) -- the path the values cannot show */
+size_t bcir_tensor_attention_lanes_probe(void);
+size_t bcir_tensor_attention_lanes_probe(void) {
+  return __atomic_exchange_n(&attention_lanes_seen,(size_t)0,__ATOMIC_RELAXED);
 }
 #endif
 /* `variant` resolved (mm_instance over the products' family: the fused GEMM's under FUSED, v1's

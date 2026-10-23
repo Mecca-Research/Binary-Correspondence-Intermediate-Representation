@@ -1,0 +1,74 @@
+{
+ "what": "scratch_hash.c: the scratch forward's context and verdict and the stored forward's p (every float, future columns included, after a NaN fill -- under LOWER too), y and verdict, over contexts 16 to 2050 (multiples of 16 and not), head widths 4 to 256, GQA groups, the four contracts with and without LOWER, serially and on a pool of four, without a workspace and lent the pool's need, finite and with an infinite key; and the tree's attention hashes (../fwd-strip/fwd_hash.c, ../p-lower/lower_hash.c, ../../2026-10-22/attn-rate/attn_hash.c, ../../2026-10-22/bwd-long/band_hash.c); built from the tree before and the tree after with clang and gcc",
+ "trees": {
+  "before": "c9bd8922b5c53b413c5a0536910df083da118cd7",
+  "after": "44b1adf63ae71d966e2a055ac7c6e49b664af6f4"
+ },
+ "instruments": {
+  "scratch_hash": {
+   "clang": {
+    "lines": 1248,
+    "before_equals_after": true,
+    "after_sha256": "2a65201ca0b71fb57975dbb5c1ba2ad3479439916d0674a59268b0f1aa06018b"
+   },
+   "gcc": {
+    "lines": 1248,
+    "before_equals_after": true,
+    "after_sha256": "2a65201ca0b71fb57975dbb5c1ba2ad3479439916d0674a59268b0f1aa06018b"
+   },
+   "clang_equals_gcc": true
+  },
+  "fwd_hash": {
+   "clang": {
+    "lines": 288,
+    "before_equals_after": true,
+    "after_sha256": "9738e8dd066e52097e479a239e5e842e49392fa8dcb8d38bd12a65409272e213"
+   },
+   "gcc": {
+    "lines": 288,
+    "before_equals_after": true,
+    "after_sha256": "9738e8dd066e52097e479a239e5e842e49392fa8dcb8d38bd12a65409272e213"
+   },
+   "clang_equals_gcc": true
+  },
+  "lower_hash": {
+   "clang": {
+    "lines": 208,
+    "before_equals_after": true,
+    "after_sha256": "ff14859ede5a4c6af243511dc2b79b1a88f1ce5b2381619f9d1ed787acdff006"
+   },
+   "gcc": {
+    "lines": 208,
+    "before_equals_after": true,
+    "after_sha256": "ff14859ede5a4c6af243511dc2b79b1a88f1ce5b2381619f9d1ed787acdff006"
+   },
+   "clang_equals_gcc": true
+  },
+  "attn_hash": {
+   "clang": {
+    "lines": 88,
+    "before_equals_after": true,
+    "after_sha256": "82c1c266c72d70c53319f163de63a351199f58ea24d516aae0e03cc99fd24736"
+   },
+   "gcc": {
+    "lines": 88,
+    "before_equals_after": true,
+    "after_sha256": "82c1c266c72d70c53319f163de63a351199f58ea24d516aae0e03cc99fd24736"
+   },
+   "clang_equals_gcc": true
+  },
+  "band_hash": {
+   "clang": {
+    "lines": 48,
+    "before_equals_after": true,
+    "after_sha256": "b83443463509fc0393564895fb294632d18000df2d3b636b2b4cabd016a105c0"
+   },
+   "gcc": {
+    "lines": 48,
+    "before_equals_after": true,
+    "after_sha256": "b83443463509fc0393564895fb294632d18000df2d3b636b2b4cabd016a105c0"
+   },
+   "clang_equals_gcc": true
+  }
+ }
+}

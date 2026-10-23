@@ -1,0 +1,95 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "ST1 the scores' channels summed last to first (another rounding order)",
+      "new": "    for (c=d;c-->0;) {\n      __m512 qv=_mm512_load_ps(qt+c*16);\n",
+      "old": "    for (c=0;c<d;c++) {\n      __m512 qv=_mm512_load_ps(qt+c*16);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "ST2 a group's diagonal block of scores never computed (the slot's stale floats taken)",
+      "new": "  for (jb=0;jb<R;jb+=16) {\n    __m512 acc[16]; const float *kb=k+jb*ldk; float *blk=sg+jb*16;\n",
+      "old": "  for (jb=0;jb<=R;jb+=16) {\n    __m512 acc[16]; const float *kb=k+jb*ldk; float *blk=sg+jb*16;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "ST3 the queries' ragged channels left out of the panel (the stack's floats taken)",
+      "new": "  for (c=dw+1;c<d;c++) for (u=0;u<16;u++) qt[c*16+u]=q[u*ldq+c];\n",
+      "old": "  for (c=dw;c<d;c++) for (u=0;u<16;u++) qt[c*16+u]=q[u*ldq+c];\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "ST4 the maximum over a diagonal block that leaves out the diagonal",
+      "new": "    mx=_mm512_mask_max_ps(mx,(__mmask16)(k&(jb<R ? 0xffffu : (0xffffu<<(c+1))&0xffffu)),_mm512_loadu_ps(sg+jb*16+c*16),mx);\n",
+      "old": "    mx=_mm512_mask_max_ps(mx,k,_mm512_loadu_ps(sg+jb*16+c*16),mx);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "ST5 the maximum left unscaled (every exponential's argument shifted)",
+      "new": "  for (jb=0;jb<=R;jb+=16) {\n    float *blk=sg+jb*16;\n",
+      "old": "  mx=_mm512_mul_ps(mx,sc);\n  for (jb=0;jb<=R;jb+=16) {\n    float *blk=sg+jb*16;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "ST6 the future lanes' exponentials kept and summed (a row's sum takes its future keys)",
+      "new": "      __m512 x=_mm512_loadu_ps(blk+c*16); (void)k;\n      s=_mm512_add_ps(s,x);\n",
+      "old": "      __m512 x=_mm512_maskz_mov_ps(k,_mm512_loadu_ps(blk+c*16));\n      s=_mm512_mask_add_ps(s,k,s,x);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "ST7 the context's second 8-row block reading the first block's probabilities",
+      "new": "    const float *vj=v+j*ldv+c0,*pj=sg+j*16;\n",
+      "old": "    const float *vj=v+j*ldv+c0,*pj=sg+j*16+rb;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "ST8 the context's diagonal keys from the second on (key i0+1 never taken)",
+      "new": "  for (dj=2;dj<8;dj++) {  /* key i0+dj: the rows r >= dj, the others masked out */\n    const float *vj=v+(i0+dj)*ldv+c0,*pj=sg+(i0+dj)*16+rb;\n",
+      "old": "  for (dj=1;dj<8;dj++) {  /* key i0+dj: the rows r >= dj, the others masked out */\n    const float *vj=v+(i0+dj)*ldv+c0,*pj=sg+(i0+dj)*16+rb;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "ST9 the lanes under libm's exponential too (BCIR's exponential where the contract names expf)",
+      "new": "  if (a->scratch && a->variant==4 && d<=BCIR_ATT_TQ && i1%16==0) {  /* SCORES-T */\n",
+      "old": "  if (a->scratch && a->variant==4 && a->exp2 && d<=BCIR_ATT_TQ && i1%16==0) {  /* SCORES-T */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "ST10 a strip that ends on an odd group kept on the row path (every value the same, the probe's count not)",
+      "new": "  if (a->scratch && a->variant==4 && a->exp2 && d<=BCIR_ATT_TQ && i1%32==0) {  /* SCORES-T */\n",
+      "old": "  if (a->scratch && a->variant==4 && a->exp2 && d<=BCIR_ATT_TQ && i1%16==0) {  /* SCORES-T */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "ST11 the queries' panel short of its last whole 16-channel block (the stack's floats taken)",
+      "new": "  for (c=0;c+16<dw;c+=16) kb512_transpose16(q+c,ldq,qt+c*16,16);\n",
+      "old": "  for (c=0;c<dw;c+=16) kb512_transpose16(q+c,ldq,qt+c*16,16);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "ST12 a context of 17 channels run on one 16-lane vector (its last channel never written)",
+      "new": "      else if (nc>17) att512_tctx_block(f,2,R,rb,c0,sg,v,ldv,y,ldy,m0,m1,m2);\n",
+      "old": "      else if (nc>16) att512_tctx_block(f,2,R,rb,c0,sg,v,ldv,y,ldy,m0,m1,m2);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

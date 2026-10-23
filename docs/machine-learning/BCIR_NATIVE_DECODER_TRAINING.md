@@ -604,6 +604,13 @@ whole column blocks as leave its job sixteen tasks (every column from 2,048 rows
 reach, and a paired or grouped job starts with its larger tasks -- the weight adjoints (`mm-rows.json`
 MR1-MR8): the step's GEMMs x0.837 at T2048, the training step at the GEO dimensions x0.905-x0.939 and the GEO
 attention model's training update x0.968 at T2048, x0.919 of Inductor's time, every value as it was (§15).
+Since SCORES-T (2026-10-23) `bcir_decoder_forward`'s attention -- the scratch forward, its probabilities never
+stored -- runs each strip a 16-row group at a time with the group's rows in the vector lanes on AVX-512 under
+the exp contract: the queries transposed once, the scores 16 x 16 blocks, the softmax with none of the three
+register transposes a block took, the context reading a key's eight rows side by side (`scores-t.json`
+ST1-ST12): the scratch forward x0.927 at B4/T2048, the forward x0.906 at the GEO dimensions, and the GEO
+attention model's inference at T2048 at parity with Inductor (x1.056, 0.991-1.126), every value as it was
+(§16). The stored training forward keeps its row path.
 Since NDT-SCAN-W (2026-10-17) the forward's verdict on its activations is taken by their writers: the
 RMSNorm, the SwiGLU product and the attention read back what their tasks wrote while it is in the
 core's cache, a region answering through another its value reaches and the attention reading its

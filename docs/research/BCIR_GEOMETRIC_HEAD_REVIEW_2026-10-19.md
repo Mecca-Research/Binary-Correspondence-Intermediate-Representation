@@ -986,3 +986,65 @@ What remains in the GEMMs: the weight adjoints, at about half the core's rate (t
 and in three to nine tasks. Their next step is a split over the depth -- each K block's product into its own room,
 the blocks then folded into C in order, every value the same -- which needs the trainer to lend that room; and the
 kernel's loop placement, which moves its rate by a few percent with any edit of the unit.
+
+## 16. SCORES-T: the inference forward's groups with their rows in the lanes (2026-10-23)
+
+After MM-ROWS the GEO model's inference at T2048 still took x1.17 of Inductor's time, two thirds of it the
+attention's scratch forward (INFER-ATTN: a forward no backward reads). ATT-BOUND had timed that forward a phase at a
+time: the scores 2.07 TSC cycles a probability, the softmax 2.26 (its maximum 0.25, its exponential and sum 1.46,
+its division 0.53) and the context 1.83, against v1's measured 1.45 for each product. Part of the softmax's cost
+is layout. The scores land with the keys in the lanes, an 8-row x 32-key block at a time, while the softmax needs
+each row's chain in a lane of its own, so it transposed every 16 x 16 block in registers: once for the maximum, and
+twice for the exponential and sum (in and back out). The score blocks also packed each 32-key panel of keys afresh
+for every 32-row strip. Now, on the AVX-512 instance under the exp contract, a scratch strip runs a 16-row group at a
+time with the group's rows in the lanes from the start, every value as it was ([measurements/2026-10-23/scores-t/](measurements/2026-10-23/scores-t/README.json)):
+
+- **The scores**: the group's queries transposed once into a d x 16 panel; each 16 x 16 block takes one
+  accumulator a key and broadcasts the key's channel, a score its channels' products in order from +0.0, as
+  before.
+- **The softmax** on the blocks as they stand: the maximum, the exponential and sum, and the division, each lane
+  taking a column where the key is at most its row, with no transpose.
+- **The context** reads a key's probabilities for the block's eight rows side by side (64 bytes) where it read
+  eight rows a row of p apart, otherwise att512_ctx_block's terms in its order.
+
+A head of up to 256 channels and a strip ending on a whole group take the lanes; the rest, other instances and the
+libm softmax keep the row path, with the same values. The prototype's phases at B4/T2048 on four threads (TSC cycles
+a probability, summed over the threads): the scores 1.96 -> 1.62, the softmax 2.37 -> 1.82 (the maximum 0.25 ->
+0.18, the exponential and sum 1.54 -> 1.13, the division 0.54 -> 0.44) and the context 1.70 -> 1.56.
+
+Every value is the same: `scratch_hash.c` (the scratch forward's context and verdict, and the stored forward's every
+byte of p, under LOWER too: contexts 16 to 2050, heads of 4 to 256 channels, the four contracts, a pool of four, the
+workspace lent, an infinite key), with the tree's fwd, lower, attn and band hashes, before == after under clang and
+GCC, and clang's lines GCC's. Measured on the committed tree against the one before it, in one process beside an A/A
+control:
+
+| | after / before |
+|---|---:|
+| the scratch forward, B4/T2048, 4 heads of 32, four threads | 0.927 (0.908-0.947); GCC 0.917 (0.898-0.936) |
+| the same on one thread | 0.920 (0.910-0.930) |
+| at T512, T256, T128 | 0.884 (0.859-0.910), 0.848 (0.839-0.857), 0.891 (0.854-0.930) |
+| at T1024 | 0.911 (0.856-0.970), meeting its control's interval |
+| under the fused attention contract (ATTN-FMA), T2048 | 0.859 (0.836-0.882) |
+| 8 heads of 64, B1/T2048 / 4 heads of 128, B1/T1024 | 0.889 (0.868-0.910) / 1.023, holding 1 |
+| the 9.84M decoder's attention (B8/T128, 8 heads of 48, ATTN-FMA) | 0.883 (0.861-0.906) |
+| `bcir_decoder_forward` at the GEO dimensions, T512 / T1024 / T2048 | 0.951, meeting its control / 0.927 (0.901-0.954) / 0.906 (0.882-0.932) |
+| the same at T2048 on one thread / under GCC | 0.927 (0.917-0.937) / 0.937 (0.917-0.957) |
+| the 9.84M decoder's forward (T128, its GEMMs most of it) | 0.999, holding 1 |
+| the stored forward (a control: it keeps the row path) | 1.004, holding 1 |
+
+The GEO study's attention model, built as the study builds it (level 3, GCC, 24 rounds), its logits the same bytes:
+its inference x0.945 at T512, x0.916 at T1024 and x0.924 (0.896-0.952) at T2048. At T2048 that's x1.056 of Inductor's
+time (0.991-1.126: at parity, where it was x1.17) and x0.977 of eager PyTorch's (0.942-1.013); at T1024 x0.839 of
+Inductor's (0.772-0.912) and x0.717 of eager's.
+
+Measured and not taken: the stored training forward on the same path, its groups' probabilities transposed out to
+p's rows for the backward (a block's future lanes +0.0 where the row path stores them; every byte of p the same).
+Its transposes out cost 0.79 cycles a probability, which the row path spends inside its other phases. At B4/T2048 the
+forward read x1.014 (0.972-1.057) on four threads and x1.016 on one, and x0.940 at T1024, meeting its control.
+
+The backward a phase at a time (B4/T2048, four threads, lent the pool's workspace as the trainer lends it; 36.2 ms
+a layer), in TSC cycles a probability against v1's 1.45 a product: dV = P^T dY 1.92 (75%), the dP tiles 2.02 (72%),
+the rows' dots 0.68, the score adjoints 0.46, dQ = dS K 1.55 (93%), dK = dS^T Q 1.76 (82%), and the tasks' copies in
+and out with the rest 1.15 (12% of the call). The copies prefetched 16 rows ahead read 0.78, the call's time within
+noise. The backward's room is in its dP tiles and its transposed products: dP's per-tile panels transpose each
+tile's values afresh for every row block, and the dots transpose P and dP for each 16 x 16 block, as the softmax did.

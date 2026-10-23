@@ -3864,6 +3864,105 @@ static void attention_keep(void) {
       "short and the need, each path's tiles counted (%zu of them at a context where keeping saves a second "
       "evaluation)\n",cases,from,apart);
 }
+/* SCORES-T: the scratch forward's 16-row groups with their rows in the lanes -- the AVX-512 instance under
+ * the exp contract -- against the reference loops (v1's and the fused contract's, under the BCIR
+ * exponential and libm's), bit for bit: the context and the verdict, every write inside the scratch slots.
+ * Head widths 16, 17, 32, 64, 130, 256 and 257 (the queries' panel by whole 16 x 16 blocks, by ragged
+ * channels and by both; the context's one, two and three 16-lane vectors and its channels past 48; the
+ * widest head the panel holds, and one past it, the row path), contexts of one group (16) and of several
+ * (32, 48, 80), past the strip threshold (1040: 48-row strips, every one whole groups) and ragged (1030: its
+ * last strip the row path's), GQA groups, every instance, serially and on a pool of four, without a
+ * workspace and lent the pool's need, finite and with an infinite key and value. Where the build has the
+ * unit's probe, the groups each forward ran in the lanes are its path's count -- every group of every strip
+ * that ends on one, under EXP on AVX-512, and none otherwise: the path the values cannot show. */
+#ifdef BCIR_DT_ATTENTION_PROBE
+size_t bcir_tensor_attention_lanes_probe(void);
+static size_t lanes_groups(size_t t) {  /* a head's groups in the lanes: its strips that end on a whole group */
+  size_t rows=bcir_tensor_attention_scratch_floats(1,t,1)/t,i0,n=0;
+  for (i0=0;i0<t;i0+=rows) {
+    size_t i1=t-i0<rows ? t : i0+rows;
+    if (i1%16==0) n+=(i1-i0)/16;
+  }
+  return n;
+}
+#endif
+static void attention_lanes(void) {
+  static const size_t shapes[][5]={{1,16,1,1,16},{2,48,2,1,17},{1,48,2,2,32},{1,80,1,1,64},
+      {1,32,2,1,130},{1,16,1,1,256},{1,16,1,1,257},{1,1040,2,1,32},{1,1030,2,2,16}};
+  static const unsigned contracts[]={0u,BCIR_TENSOR_ATTENTION_EXP,BCIR_TENSOR_ATTENTION_FUSED,
+      BCIR_TENSOR_ATTENTION_EXP|BCIR_TENSOR_ATTENTION_FUSED};
+  static _Alignas(max_align_t) unsigned char pool_memory[16384];
+  const uint32_t canary=0x7fc0f00du;
+  bcir_tensor_pool *pools[2]={NULL,NULL};
+  size_t s,c,i,pi,lend,cases=0; unsigned pass; int variant;
+#ifdef BCIR_DT_ATTENTION_PROBE
+  size_t lanes=0;
+#endif
+  {
+    size_t need=bcir_tensor_pool_size(4);
+    if (need && need<=sizeof(pool_memory)) pools[1]=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),4);
+  }
+  for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) {
+    size_t b=shapes[s][0],t=shapes[s][1],nh=shapes[s][2],nk=shapes[s][3],d=shapes[s][4];
+    size_t nq=b*t*nh*d,nkv=b*t*nk*d,np=b*nh*t*t,sf=bcir_tensor_attention_scratch_floats(b,t,nh);
+    size_t most=bcir_tensor_attention_workspace(b,t,nh,nk,d);
+    float *q,*k,*v,*p0,*y0,*p1,*y1; unsigned char *raw,*ws;
+    if (DT_TSAN && t>=1024) continue;
+    q=malloc(nq*sizeof(float)); k=malloc(nkv*sizeof(float)); v=malloc(nkv*sizeof(float));
+    p0=malloc(np*sizeof(float)); y0=malloc(nq*sizeof(float)); y1=malloc(nq*sizeof(float));
+    p1=malloc((sf+4096)*sizeof(float)); raw=malloc(most+128);
+    assert(q && k && v && p0 && y0 && y1 && p1 && raw && sf<=np);
+    ws=raw+(64-(uintptr_t)raw%64)%64;
+    for (pass=0;pass<2;pass++) {
+      for (i=0;i<nq;i++) q[i]=sinf((float)i*0.37f)*1.7f;
+      for (i=0;i<nkv;i++) { k[i]=cosf((float)i*0.53f)*1.3f; v[i]=sinf((float)i*0.29f)-0.1f; }
+      if (pass) { k[(t/2)*nk*d]=INFINITY; v[(t-1)*nk*d+d-1]=INFINITY; }
+      for (c=0;c<sizeof(contracts)/sizeof(contracts[0]);c++) {
+        unsigned ct=contracts[c]; int ex=(ct&BCIR_TENSOR_ATTENTION_EXP)!=0,fused=(ct&BCIR_TENSOR_ATTENTION_FUSED)!=0;
+        int fmask=fused ? bcir_tensor_mm_fused_variants() : bcir_tensor_mm_variants();
+        if (fused) ref_attention_fused(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
+        else ref_attention(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
+        for (variant=1;variant<=4;variant*=2) {
+          if (!(fmask&variant)) continue;
+          for (pi=0;pi<2;pi++) for (lend=0;lend<2;lend++) {
+            unsigned threads=bcir_tensor_pool_threads(pools[pi]);
+            size_t bytes=lend ? bcir_tensor_attention_pool_workspace(b,t,nh,nk,d,threads) : 0;
+            int bad=0;  /* the verdict raises it, as every caller's does */
+            if ((pi && !pools[pi]) || (lend && !bytes)) continue;  /* no pool; nothing to lend: no task copies */
+            assert(bytes<=most+64);
+            memset(y1,0xff,nq*sizeof(float));
+            for (i=0;i<sf+4096;i++) memcpy(p1+i,&canary,sizeof canary);
+#ifdef BCIR_DT_ATTENTION_PROBE
+            (void)bcir_tensor_attention_lanes_probe();
+#endif
+            assert(bcir_tensor_attention_contract_variant_scan_ws_pool(pools[pi],variant,
+                ct|BCIR_TENSOR_ATTENTION_SCRATCH,b,t,nh,nk,d,q,k,v,p1,y1,&bad,lend ? ws : NULL,bytes)==variant);
+#ifdef BCIR_DT_ATTENTION_PROBE
+            {
+              size_t want=variant==4 && ex && d<=256 ? b*nh*lanes_groups(t) : 0;
+              assert(bcir_tensor_attention_lanes_probe()==want);
+              lanes+=want;
+            }
+#endif
+            assert(!memcmp(y0,y1,nq*sizeof(float)) && bad==(int)pass);
+            for (i=sf;i<sf+4096;i++) assert(!memcmp(p1+i,&canary,sizeof canary));
+            cases++;
+          }
+        }
+      }
+    }
+    free(q); free(k); free(v); free(p0); free(y0); free(y1); free(p1); free(raw);
+  }
+  if (pools[1]) bcir_tensor_pool_stop(pools[1]);
+  assert(cases>0);
+  printf("  PASS the scratch forward's groups in the lanes (SCORES-T): the context and the verdict the reference "
+      "loops' on %zu cases -- head widths 16 to 257, contexts 16 to 1040, the four contracts, every instance, a "
+      "pool of four, the workspace lent -- every write inside the scratch slots",cases);
+#ifdef BCIR_DT_ATTENTION_PROBE
+  printf("; %zu groups run in the lanes, each forward's count the probe's",lanes);
+#endif
+  printf("\n");
+}
 int main(void) {
   gemm_contract(); attention_reference(); attention_fused_reference(); adamw_reference();
   finite_differences(); refusals();
@@ -3873,6 +3972,7 @@ int main(void) {
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();
   trainer_workspace_plan(); trainer_recompute(); pool_caps(); dispatch_entries();
   attention_scratch(); attention_contig(); attention_strips(); attention_lower(); attention_keep();
+  attention_lanes();
   trainer_infer();
   trainer_lower();
 #ifdef BCIR_DT_DIVISION_PROBE
