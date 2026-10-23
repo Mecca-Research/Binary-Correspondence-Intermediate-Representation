@@ -3871,8 +3871,11 @@ static void attention_keep(void) {
  * channels and by both; the context's one, two and three 16-lane vectors and its channels past 48; the
  * widest head the panel holds, and one past it, the row path), contexts of one group (16) and of several
  * (32, 48, 80), past the strip threshold (1040: 48-row strips, every one whole groups) and ragged (1030: its
- * last strip the row path's), GQA groups, every instance, serially and on a pool of four, without a
- * workspace and lent the pool's need, finite and with an infinite key and value. Where the build has the
+ * last strip the row path's), GQA groups, every instance to context 80 and the AVX-512 one past the
+ * threshold (the strips' groups are its; the row path there is attention_scratch's and attention_strips',
+ * and the portable instance's loops are the costliest case a host without AVX-512 runs), serially and on
+ * a pool of four, without a workspace and lent the pool's need, finite and with an infinite key and value.
+ * Where the build has the
  * unit's probe, the groups each forward ran in the lanes are its path's count -- every group of every strip
  * that ends on one, under EXP on AVX-512, and none otherwise: the path the values cannot show. */
 #ifdef BCIR_DT_ATTENTION_PROBE
@@ -3908,6 +3911,7 @@ static void attention_lanes(void) {
     size_t most=bcir_tensor_attention_workspace(b,t,nh,nk,d);
     float *q,*k,*v,*p0,*y0,*p1,*y1; unsigned char *raw,*ws;
     if (DT_TSAN && t>=1024) continue;
+    if (t>=1024 && !(bcir_tensor_mm_variants()&4) && !(bcir_tensor_mm_fused_variants()&4)) continue;  /* the lanes' */
     q=malloc(nq*sizeof(float)); k=malloc(nkv*sizeof(float)); v=malloc(nkv*sizeof(float));
     p0=malloc(np*sizeof(float)); y0=malloc(nq*sizeof(float)); y1=malloc(nq*sizeof(float));
     p1=malloc((sf+4096)*sizeof(float)); raw=malloc(most+128);
@@ -3920,10 +3924,11 @@ static void attention_lanes(void) {
       for (c=0;c<sizeof(contracts)/sizeof(contracts[0]);c++) {
         unsigned ct=contracts[c]; int ex=(ct&BCIR_TENSOR_ATTENTION_EXP)!=0,fused=(ct&BCIR_TENSOR_ATTENTION_FUSED)!=0;
         int fmask=fused ? bcir_tensor_mm_fused_variants() : bcir_tensor_mm_variants();
+        if (t>=1024 && !(fmask&4)) continue;
         if (fused) ref_attention_fused(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
         else ref_attention(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
         for (variant=1;variant<=4;variant*=2) {
-          if (!(fmask&variant)) continue;
+          if (!(fmask&variant) || (t>=1024 && variant!=4)) continue;
           for (pi=0;pi<2;pi++) for (lend=0;lend<2;lend++) {
             unsigned threads=bcir_tensor_pool_threads(pools[pi]);
             size_t bytes=lend ? bcir_tensor_attention_pool_workspace(b,t,nh,nk,d,threads) : 0;
@@ -3956,8 +3961,8 @@ static void attention_lanes(void) {
   if (pools[1]) bcir_tensor_pool_stop(pools[1]);
   assert(cases>0);
   printf("  PASS the scratch forward's groups in the lanes (SCORES-T): the context and the verdict the reference "
-      "loops' on %zu cases -- head widths 16 to 257, contexts 16 to 1040, the four contracts, every instance, a "
-      "pool of four, the workspace lent -- every write inside the scratch slots",cases);
+      "loops' on %zu cases -- head widths 16 to 257, contexts 16 to 80 on every instance and 1030 and 1040 on "
+      "AVX-512, the four contracts, a pool of four, the workspace lent -- every write inside the scratch slots",cases);
 #ifdef BCIR_DT_ATTENTION_PROBE
   printf("; %zu groups run in the lanes, each forward's count the probe's",lanes);
 #endif

@@ -207,8 +207,10 @@ def test_native_c_harness_c11_and_c23():
             build_units(
                 cmd + host_link_args(["-lm"]), f"the C harness's {standard}{tag} build", timeout=120
             )
+            # 120 s: a contended CI shard ran the C11 build past 60 s (2026-10-23), about three times
+            # an idle four-core host's time for the same binary
             result = subprocess.run(
-                [str(exe)], check=True, capture_output=True, text=True, timeout=60
+                [str(exe)], check=True, capture_output=True, text=True, timeout=120
             )
             # update_pairs, division_probe (NDT-UPDATE); the bf16 contract, its trainer and the
             # workspace probe (NDT-BF16); the fused attention contract and its trainer (ATTN-FMA);

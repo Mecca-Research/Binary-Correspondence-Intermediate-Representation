@@ -4680,9 +4680,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     dV 1.92 (75%), the dP tiles 2.02 (72%), the dots 0.68, the score adjoints 0.46, dQ 1.55 (93%), dK 1.76 (82%), the
     copies and the rest 1.15 (12%); prefetching the copies read 0.78, the call's time within noise.
   - Witnesses: the C harness's `attention_lanes` -- the scratch forward against the reference loops under the four
-    contracts over head widths 16 to 257 and contexts 16 to 1040, every instance, a pool of four, the workspace
-    lent, finite and not, the probe's count of the groups in the lanes; `scores-t.json` ST1-ST12, each caught by its
-    own check, ST10 (the probe's count) and ST12 (a 17-channel context) only by the new case.
+    contracts over head widths 16 to 257, contexts 16 to 80 on every instance and 1030 and 1040 (past the strip
+    threshold) on AVX-512, a pool of four, the workspace lent, finite and not, the probe's count of the groups in the
+    lanes; `scores-t.json` ST1-ST12, each caught by its own check, ST10 (the probe's count) and ST12 (a 17-channel
+    context) only by the new case. The long contexts ran on every instance at first; on a contended CI shard that
+    pushed the harness's C11 build past its 60-second limit, and on the other instances they repeat the row path
+    `attention_scratch` and `attention_strips` already cover, so they run on AVX-512 alone and the limit is 120 seconds.
   - Not claimed: AVX2-only and non-x86 hosts (the row path); the stored forward; the bf16 attention; a GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
