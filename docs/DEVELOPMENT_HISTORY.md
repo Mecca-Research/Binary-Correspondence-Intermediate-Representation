@@ -4546,6 +4546,38 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     and caught again.
   - Not claimed: below the copies' threshold or with one head a row, where no region is lent; the bf16
     attention (its own backward); AMX timing; a GPU.
+  ATT-BOUND (2026-10-23): the attention at its contract's arithmetic; four ways at its forward measured and
+    not taken; the GEO model's inference read against PyTorch
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §14,
+    [measurements/2026-10-23/att-bound/](research/measurements/2026-10-23/att-bound/README.json)). Records and
+    instruments; no change to the runtime.
+  - Inference: the GEO attention model's one forward of 4 x 2048 tokens takes 100.2 ms against eager
+    PyTorch's 92.5 and Inductor's 83.2 -- x1.057 (0.969-1.152) of eager's time, x1.190 (1.116-1.269) of
+    Inductor's; at T1024 x0.714 of eager's and at parity with Inductor's (x0.992). Two thirds of it is the
+    attention's forward, the training forward's kernels.
+  - The forward a phase at a time (TSC cycles, B4/T2048, 4 heads of 32, EXP, one core): the scores 2.07
+    cycles a probability, the context 1.83, the softmax 2.26 (its max 0.25, exponential and sum 1.46,
+    division 0.53). Under v1 a score or a context term is four vector operations a probability on two
+    ports, 2.0 cycles: the products run at v1's arithmetic; the exponential-and-sum pass is mostly BCIR's
+    exponential, whose sequence (about 38 vector operations for 16 lanes) the EXP contract fixes.
+  - Measured and not taken, every value the same in each (the stored forward under LOWER with the backward
+    from it, 208 cases; 88 forward cases; 288 stored forwards; clang and GCC; and with copies and strips at
+    every context), 32 rounds beside an A/A control: FWD-STREAM, each stored strip computed in the region and
+    streamed out with non-temporal stores -- the attention x1.12 at B4/T2048 and x1.15 at T1024 (the 260 MB
+    L3 holds a layer's probabilities for the backward; streaming stores send them to memory), parity where
+    they outgrow it (8 heads of 64 at T4096; the step); the strip at a padded stride copied out -- the
+    forward x1.04-x1.12; SCRATCH-PAD, the scratch forward's strips padded with no copy -- parity (x0.98),
+    so a power-of-two context's L1 set conflicts are not a cost; SOFTMAX-DIV, the softmax's division in 16
+    lanes where the compilers divide in 4 -- no row resolved in two runs.
+  - What the fused attention contract (ATTN-FMA, in the tree; not the GEO study's) would buy, one library,
+    interleaved beside an A/A control: the attention x0.822 (0.781-0.865) at B4/T2048 on four threads, the
+    backward x0.778 and the forward x0.895, the scratch forward x0.874; the GEO step under
+    kblock+exp+reduce+attn 252.5 ms against 290.5. Every attention value differs under it (another
+    arithmetic): the study's choice, recorded as a reading.
+  - The GEMMs: 25.8 GFLOP in 74.3 ms of the step at T2048, 347 GFLOP/s on four cores -- 59% of the AVX-512
+    FMA peak at the TSC's 2.3 GHz, about MKL's rate on these shapes (OT-05).
+  - Not claimed: counter-based figures (this VM has no PMU; the cycles are TSC); the fused contract's
+    effect on the study's trained results; AMX; a GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

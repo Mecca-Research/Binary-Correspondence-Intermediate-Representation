@@ -593,6 +593,11 @@ at T2048 and a head width of 32, the trainer's need with it -- so its second pas
 evaluated, where it evaluated those past the first 256 columns again (`bwd-keep.json` BK1-BK7): the attention's
 backward x0.85-x0.91 from T1024 on, the whole attention faster than PyTorch's flash kernel at T1024, the
 training step at the GEO dimensions x0.94-x0.96 at T2048, every value as it was (§13).
+ATT-BOUND (2026-10-23) timed the attention against its contract's arithmetic: under v1's products its scores and
+context run at v1's two vector operations a channel, and four ways at its forward measured no faster
+(`att-bound/`); under the `attn` contract (ATTN-FMA) the attention takes x0.82 of v1's time at B4/T2048 and the
+GEO step x0.87 -- another arithmetic, every attention value different, so a contract to choose, not a free
+speed-up (§14).
 Since NDT-SCAN-W (2026-10-17) the forward's verdict on its activations is taken by their writers: the
 RMSNorm, the SwiGLU product and the attention read back what their tasks wrote while it is in the
 core's cache, a region answering through another its value reaches and the attention reading its

@@ -841,3 +841,77 @@ T1024 and T512 it is faster than both. What remains of the attention's gap to th
 stored forward's -- the probabilities j <= i written out for the backward to read, x1.26 of the flash
 forward's time; below the copies' threshold, or with one head a row, no region is lent and the tiles
 past 256 columns are evaluated twice as before.
+
+## 14. ATT-BOUND: the attention at its contract's arithmetic (2026-10-23)
+
+After BWD-KEEP the GEO model's training update at T2048 runs at parity with Inductor; its inference does
+not. One forward of 4 x 2048 tokens takes 100.2 ms against eager PyTorch's 92.5 and Inductor's 83.2 --
+x1.057 (0.969-1.152) of eager's time and x1.190 (1.116-1.269) of Inductor's -- where at T1024 it takes
+x0.714 of eager's and is at parity with Inductor's (x0.992). Two thirds of that forward is the attention's,
+the same kernels the training forward runs; the step at T2048 now spends 38% of its time in the attention's
+backward, 24% in its forward and 26% in the GEMMs
+([measurements/2026-10-23/att-bound/](measurements/2026-10-23/att-bound/README.json); records and
+instruments, no change to the runtime).
+
+**The forward against its arithmetic.** The scratch forward timed a phase at a time in TSC cycles
+(`instrument_phases.py`, `phase_bench.c`: B4/T2048, 4 heads of 32, the EXP contract):
+
+| B4/T2048, 4 heads of 32, EXP | scores | softmax | of it: max | exp + sum | division | context |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 thread, cycles a probability | 2.07 | 2.26 | 0.25 | 1.46 | 0.53 | 1.83 |
+| 4 threads, cycles a probability | 2.05 | 2.29 | 0.25 | 1.47 | 0.53 | 1.84 |
+
+A score or a context term is 32 channels' products and sums; under v1 a multiply and an add each, four
+vector operations a probability on the core's two vector ports: 2.0 cycles. The scores (with each strip's
+key panels) and the context run at that arithmetic. The softmax's exponential-and-sum pass is mostly BCIR's
+exponential -- the EXP contract's fixed sequence, about 38 vector operations for 16 lanes, some 1.1 of the
+pass's 1.46 cycles -- and its division runs at the divider's rate. Four ways at the forward were built and
+measured against the tree they edit, every value the same in each (`prototypes.json`: the stored forward
+under LOWER and the backward from it, ATTN-RATE's 88 forward cases and FWD-STRIP's 288 stored forwards, or
+for the scratch forward its 88, under clang and GCC, and again with the copies and strips at every
+context), 32 rounds a row beside an A/A control:
+
+| prototype | values | forward, B4/T2048, 4 threads | 1 thread | T1024 | 8 heads of 64, T4096 | attention, B4/T2048, 4 threads | step T2048 / T1024 / T2048 gcc |
+|---|---|---:|---:|---:|---:|---:|---:|
+| FWD-STREAM (the strip in the region, streamed out) | 12 of 12 equal | 1.190 (1.146-1.235) | 1.035 | 1.253 | 1.017 | 1.121 (1.075-1.170) | 0.991 / 0.988 / 1.009 |
+| the strip at a padded stride, copied out | 12 of 12 equal | 1.037 (0.985-1.093) | 1.120 | 1.088 | 1.072 | 1.001 (0.959-1.044) | 1.009 / 0.998 / 1.011 |
+| SOFTMAX-DIV (16-lane division) | 12 of 12 equal | 1.017 (0.979-1.057) | 0.964 | 0.965 | 0.966 | 1.018 (0.972-1.067) | 0.976 / 0.977 / 1.000 |
+| SCRATCH-PAD (the scratch forward's strips padded) | 4 of 4 equal | 0.983 (0.943-1.024) | 0.980 | 0.993 | -- | -- | -- |
+
+None is taken. FWD-STREAM computes each strip of the stored forward in the region's kept-tiles room and
+streams it out to p with non-temporal stores, skipping each line's read before its write; on this host the
+260 MB L3 holds a layer's probabilities for the backward, and streaming stores send them to memory instead:
+the attention x1.12 at T2048 and x1.15 at T1024, at parity only where the probabilities outgrow the L3 (8
+heads of 64 at T4096) and in the step, whose three layers outgrow it too. The padded stride tests the
+other suspicion -- a power-of-two context puts a 16-row transpose's rows in one L1 set -- and the copy costs
+more than the stride saves; SCRATCH-PAD, which pads the scratch forward's strips with no copy at all, is
+at parity on one thread (x0.980) and four, so the sets are not a cost here. SOFTMAX-DIV divides in 16
+lanes where the compilers' baseline-ISA loop divides in 4, and no row resolves in two runs: the divider is
+the bound, not the vector width. Each prototype's first run, by the drivers `proto_ab.sh` generalises,
+read the same (`first_runs`).
+
+**What the fused contract would buy.** The tree already has the attention's fused contract (ATTN-FMA:
+every multiply-add of the scores, the context and the backward's products one `fmaf`), which the GEO study
+does not use. One library, each arm under its contract word, interleaved beside an A/A control
+(`ab_contract.c`, 32 rounds):
+
+| v1 against the fused products (one library) | forward | backward | total | A/A total |
+|---|---:|---:|---:|---:|
+| B4/T2048, 4 threads | 0.895 (0.846-0.947) | 0.778 (0.735-0.824) | 0.822 (0.781-0.865) | 1.012 |
+| B4/T2048, 1 thread | 0.900 (0.877-0.924) | 0.765 (0.738-0.793) | 0.814 (0.792-0.837) | 0.984 |
+| B4/T1024, 4 threads | 0.872 (0.843-0.901) | 0.795 (0.770-0.820) | 0.825 (0.803-0.848) | 1.003 |
+| B4/T2048, 4 threads, scratch forward | 0.874 (0.838-0.910) | -- | -- | 1.003 |
+
+and the training step at the GEO dimensions under kblock+exp+reduce+attn took 252.5 ms against 290.5
+under kblock+exp+reduce (`step-parts.json`, 8 rounds each, not interleaved). The fused contract changes
+every attention value -- another arithmetic, declared, not a faster way to the same bits -- so it is the
+study's choice to make, not this tree's; under it BCIR's attention at T2048 would take some 47 ms against
+the flash kernel's 55.
+
+**The GEMMs.** The step's GEMMs at T2048 run 25.8 GFLOP in 74.3 ms (`gemm.json`): 347 GFLOP/s on four
+cores, about 87 a core -- 59% of the AVX-512 FMA peak at the TSC's 2.3 GHz, the rate at which OT-05 found
+BCIR's k-blocked GEMMs level with MKL's on most of these shapes.
+
+What remains, then, is the contract more than the kernels: under v1's products and the EXP contract's
+exponential the attention runs at its arithmetic, and the GEO model's inference gap to Inductor at T2048 is
+mostly the fused multiply-add.

@@ -1,0 +1,65 @@
+{
+ "T": 2048,
+ "contract": "kblock+exp+reduce",
+ "threads": 4,
+ "parts": "parts_T2048_keep.json",
+ "claims": [
+  {
+   "claim": "train.gemm.chain.nn",
+   "ms_median": 30.4213665,
+   "gflop": 11.274289152,
+   "gflop_per_s": 370.604297213276,
+   "calls": 30,
+   "shapes": [
+    "nn 8192x128x128",
+    "nn 8192x128x256",
+    "tn 128x128x8192",
+    "tn 256x128x8192"
+   ]
+  },
+  {
+   "claim": "train.gemm.pair.nn",
+   "ms_median": 18.286068,
+   "gflop": 5.922357248,
+   "gflop_per_s": 323.87264708848284,
+   "calls": 14,
+   "shapes": [
+    "nn 8192x128x128",
+    "nn 8192x128x260",
+    "nn 8192x256x128",
+    "tn 128x128x8192",
+    "tn 128x256x8192",
+    "tn 260x128x8192"
+   ]
+  },
+  {
+   "claim": "train.gemm.rest.nt",
+   "ms_median": 16.263897,
+   "gflop": 5.637144576,
+   "gflop_per_s": 346.6047882620014,
+   "calls": 15,
+   "shapes": [
+    "nt 8192x128x128",
+    "nt 8192x256x128"
+   ]
+  },
+  {
+   "claim": "train.gemm.alone.nt",
+   "ms_median": 9.2974455,
+   "gflop": 2.961178624,
+   "gflop_per_s": 318.49378670732733,
+   "calls": 7,
+   "shapes": [
+    "nt 8192x128x128",
+    "nt 8192x128x256",
+    "nt 8192x260x128"
+   ]
+  }
+ ],
+ "all": {
+  "ms": 74.268777,
+  "gflop": 25.7949696,
+  "gflop_per_s": 347.3191648221163
+ },
+ "what": "gemm_rates.py: the GEO step's GEMM claims at T2048 under kblock+exp+reduce on four threads -- each claim's calls and FLOPs from the trainer's step program, its time from step_parts.py's reading (step-parts.json)"
+}
