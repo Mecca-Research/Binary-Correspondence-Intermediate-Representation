@@ -219,8 +219,9 @@ def test_native_c_harness_c11_and_c23():
             # the instance named (PX-3b); the attention without its probabilities and the forward
             # that runs it (INFER-ATTN); the attention's workspace entries (ATT-CONTIG); the stored
             # forward a strip of rows at a time (FWD-STRIP); the stored forward under LOWER and a
-            # training step from NaN-filled arenas (P-LOWER); the backward's kept tiles (BWD-KEEP)
-            assert result.stdout.count("PASS") == 38
+            # training step from NaN-filled arenas (P-LOWER); the backward's kept tiles (BWD-KEEP);
+            # the blocked GEMM's tasks, chunks, edge blocks and job order (MM-ROWS)
+            assert result.stdout.count("PASS") == 39
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -261,7 +262,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 38
+            assert result.stdout.count("PASS") == 39
             break
 
 
@@ -416,8 +417,8 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
         # single row left at its beta-scaled value, a transposed tile's ragged columns stale
         # below the whole blocks, a ragged block's partial added with one fused rounding
         ("mm_kblock@4", "bcir_tensor.c", tensor,
-         "      for (;i<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);\n",
-         "      for (;i+1<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);\n"),
+         "  for (;i<r1;i++) kb512_block(1,nv,x,bt,i,jb,nj,lb,nl);\n",
+         "  for (;i+1<r1;i++) kb512_block(1,nv,x,bt,i,jb,nj,lb,nl);\n"),
         ("mm_kblock@4", "bcir_tensor.c", tensor,
          "      for (l=j<jw ? lw : 0;l<nl;l++) bt[l*48+j]=column[l];\n",
          "      for (l=lw;l<nl;l++) bt[l*48+j]=column[l];\n"),

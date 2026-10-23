@@ -920,3 +920,69 @@ with MKL's on most of these shapes, so MKL leaves the same room; it is the large
 What remains, then: the GEMMs at 41% of the host's FMA rate -- a quarter of the step and about a third of
 the inference forward -- and the attention's products at 70-79% of v1's rate; beyond the kernels, the fused
 contract, which is the study's to choose.
+
+## 15. MM-ROWS: the GEMMs' tasks, chunks, edge blocks and order (2026-10-23)
+
+ATT-BOUND left the GEMMs at 41% of the cores' FMA rate. Timed a shape at a time on one core, the k-blocked kernel
+ran the step's products at 46-57% of the core's 217 GFLOP/s and at 85-87% where A's panel fits in L2, so the room
+was in where A's rows came from, not in the register block. Four things cost it, each now changed, every value the
+same ([measurements/2026-10-23/mm-rows/](measurements/2026-10-23/mm-rows/README.json)):
+
+- **A read again for every column block.** The nest packs one 48-column block's tile and runs every row of its
+  range over it before the next block, so each block streams A's rows again; the step's 8192-row operands are
+  4 MiB, past a core's 2 MiB of L2, so each block read them from L3. The serial nest now walks 128-row chunks, every
+  block of a chunk before the next, where A is stored by rows, its panel 2 MiB or more and a chunk's slice at most
+  512 KiB. Where the panel stays in L2 the chunks only pack the tiles again (the 9.84M decoder's 192-row weight
+  adjoint read x1.080 with chunks at every depth to 1,024), and so they do for a transposed A, whose chunk is a
+  strided slice the kernel already prefetches (its 1,024-row adjoint x1.04-x1.07 with chunks).
+- **Three cores on one slice of A.** The pool's task was one column block by 128 rows, the column fastest, so the
+  three tasks of a row range ran at once, each core pulling the same rows from L3. A task now spans as many whole
+  column blocks as leave its job sixteen tasks -- every column from 2,048 rows -- and reads its rows once for all
+  of them. Sixteen keeps a 1,024-row product from becoming eight large tasks one slow core holds up; whole rows from
+  1,024 rows and a 32-task rule timed alike at the GEO shapes and within noise at the decoder's.
+- **The last block of a 128-wide product.** 128 columns are blocks of 48, 48 and 32, and the kernel computed the
+  last as 48: a ninth of its multiply-adds for nothing. An edge block now computes the vectors its columns reach.
+- **The weight adjoints last.** In the step's paired and grouped jobs (NDT-SCHED) the input adjoints' tasks came
+  first -- 64 small ones at T2048 -- and the weight adjoints' last: 128 or 256 rows over a depth of 8192, three to
+  six tasks of some 50 million multiply-adds, run with threads idle around them. A job whose second part's tasks
+  are the larger now starts with them; the parts write apart, so any order gives the same values.
+
+Every value is the same: `bitcheck.c` holds every k-blocked entry -- the serial instances, the pool at four and two
+threads and through each instance, pair jobs, group jobs whose chains include a call of depth zero -- over 712
+cases, 6,081 hashes, before == after under clang and GCC. In one process beside an A/A control (`ab_gemm.c`), on the
+committed tree against the one before it:
+
+| GEMM (rows x columns x depth) | four threads | one thread |
+|---|---:|---:|
+| the step's 8192-row products (seven: nn and nt, 128 to 260 columns) | x0.734-x0.814 | x0.760-x0.887 |
+| the weight adjoints (128-260 rows over 8192) | x0.955 (256 x 128), the rest within noise | x0.943-x0.953 |
+| a linear's two adjoints as one job (NDT-SCHED-0) | x0.823 | x0.895 |
+| three input adjoints chained beside three weight adjoints / two beside two | x0.791 / x0.874 | x0.872 / x0.918 |
+| T1024's and T512's products (4096 and 2048 rows) | x0.793-x0.883 | x0.828-x0.920 |
+
+The step, both trainers in one process on three identical states (`step_ab.c`, 48 rounds), and the GEO study's
+attention model, built as the study builds it, against PyTorch (32 rounds; inference 16):
+
+| | T512 | T1024 | T2048 |
+|---|---:|---:|---:|
+| the step at the GEO dimensions, clang | 0.935 (0.907-0.963) | 0.905 (0.880-0.930) | 0.939 (0.925-0.954); 0.930 (0.915-0.946) in 64 declared rounds |
+| the step, GCC | -- | 0.935 (0.912-0.958) | 0.938 (0.920-0.955) |
+| the step on one thread | -- | -- | 0.952 (0.935-0.968); 0.956 declared |
+| the GEO model's training update, after / before | 0.918 (0.894-0.942) | 0.928 (0.909-0.947) | 0.968 (0.952-0.984) |
+| the update against Inductor / eager PyTorch | 0.682 / 0.487 | 0.822 / 0.705 | 0.919 / 0.872 |
+| the inference forward, after / before | -- | 0.943, holding 1 | 0.945 (0.916-0.974), meeting its control |
+
+The step's GEMM claims, read a part at a time with the trainer's job clock, went from 72.9 to 61.0 ms at T2048
+(x0.837: the paired jobs x0.809, the chained x0.914, the input adjoints alone x0.754-x0.771) and from 252.9 to 219.1
+on one thread. Under v1, whose GEMMs keep their partition and kernel and take only the order, the step read x0.976,
+meeting its control. The 9.84M decoder (1,024 rows, every product at depth 384 or 1,024) is at parity (x0.988 in 64
+declared rounds); of its products, three small ones resolved: the head x0.935 and 1,024 x 1,024 x 384 x0.971 faster,
+and the 192-row weight adjoint x1.063 slower on four threads -- a path the slice leaves as it was but for where the
+code sits. On one thread that adjoint and the 1,024 x 384 x 384 product read x1.03 and x1.02: the kernel's 8 x 48
+loops, the same 40 instructions, now start 32 bytes into a cache line where they started on one, and with both
+trees' loops at 64-byte boundaries those shapes read x0.999-x1.011.
+
+What remains in the GEMMs: the weight adjoints, at about half the core's rate (their 448-deep tiles live in L2)
+and in three to nine tasks. Their next step is a split over the depth -- each K block's product into its own room,
+the blocks then folded into C in order, every value the same -- which needs the trainer to lend that room; and the
+kernel's loop placement, which moves its rate by a few percent with any edit of the unit.

@@ -255,7 +255,9 @@ __attribute__((target("avx512f"))) static void mm_avx512_fused(const mm_args *x,
  * loads and every A term one broadcast from memory: eleven loads per 24 fused multiply-adds, and
  * the tile's traffic from L2 per fma a third of the 4 x 64 block's (measured on the step's
  * shapes against 12 x 32, 6 x 64 and 4 x 96; NDT-BLOCK's record). Rows that do not fill a block
- * run 4-row (2-row) and single-row blocks of the same chain. Per element the arithmetic is
+ * run 4-row (2-row) and single-row blocks of the same chain. An AVX-512 edge block computes and
+ * stores the vectors its columns reach -- one, two or three of 16 lanes, where it computed three
+ * (MM-ROWS: a 128-wide product's last block is 32 columns, two). Per element the arithmetic is
  * mm_block_kb's exactly: the block from zero,
  * one fma per term with l ascending, then c = c + alpha*P as a rounded product and a rounded
  * sum; the generic instance keeps the plain-C block, and test_decoder_train.c holds every
@@ -273,29 +275,36 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE __m512 kb512_c(const float *ci
   __m512 c=_mm512_maskz_loadu_ps(load,ci);
   return _mm512_mask_mul_ps(c,scale,beta,c);
 }
-__attribute__((target("avx512f"))) BCIR_MM_INLINE void kb512_block(size_t mr, const mm_args *x,
+/* `nv` (1..3, a constant where it is inlined) the vectors the block's nj columns reach */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void kb512_block(size_t mr, int nv, const mm_args *x,
     const float *bt, size_t i, size_t jb, size_t nj, size_t lb, size_t nl) {
   __m512 acc0[8],acc1[8],acc2[8],alpha,beta; size_t r,l; __mmask16 keep,scale;
   for (r=0;r<mr;r++) { acc0[r]=_mm512_setzero_ps(); acc1[r]=_mm512_setzero_ps(); acc2[r]=_mm512_setzero_ps(); }
   if (x->ta) {
     const float *ap=x->a+lb*x->lda+i; size_t lda=x->lda;
     for (l=0;l<nl;l++,ap+=lda) {
-      __m512 b0=_mm512_load_ps(bt+l*48),b1=_mm512_load_ps(bt+l*48+16),b2=_mm512_load_ps(bt+l*48+32);
+      __m512 b0=_mm512_load_ps(bt+l*48),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();
+      if (nv>1) b1=_mm512_load_ps(bt+l*48+16);
+      if (nv>2) b2=_mm512_load_ps(bt+l*48+32);
       _mm_prefetch((const char *)(ap+BCIR_MM_KB_PREFETCH*lda),_MM_HINT_T0);
       for (r=0;r<mr;r++) {
         __m512 av=_mm512_set1_ps(ap[r]);
-        acc0[r]=_mm512_fmadd_ps(av,b0,acc0[r]); acc1[r]=_mm512_fmadd_ps(av,b1,acc1[r]);
-        acc2[r]=_mm512_fmadd_ps(av,b2,acc2[r]);
+        acc0[r]=_mm512_fmadd_ps(av,b0,acc0[r]);
+        if (nv>1) acc1[r]=_mm512_fmadd_ps(av,b1,acc1[r]);
+        if (nv>2) acc2[r]=_mm512_fmadd_ps(av,b2,acc2[r]);
       }
     }
   } else {
     const float *ap=x->a+i*x->lda+lb; size_t lda=x->lda;
     for (l=0;l<nl;l++) {
-      __m512 b0=_mm512_load_ps(bt+l*48),b1=_mm512_load_ps(bt+l*48+16),b2=_mm512_load_ps(bt+l*48+32);
+      __m512 b0=_mm512_load_ps(bt+l*48),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();
+      if (nv>1) b1=_mm512_load_ps(bt+l*48+16);
+      if (nv>2) b2=_mm512_load_ps(bt+l*48+32);
       for (r=0;r<mr;r++) {
         __m512 av=_mm512_set1_ps(ap[r*lda+l]);
-        acc0[r]=_mm512_fmadd_ps(av,b0,acc0[r]); acc1[r]=_mm512_fmadd_ps(av,b1,acc1[r]);
-        acc2[r]=_mm512_fmadd_ps(av,b2,acc2[r]);
+        acc0[r]=_mm512_fmadd_ps(av,b0,acc0[r]);
+        if (nv>1) acc1[r]=_mm512_fmadd_ps(av,b1,acc1[r]);
+        if (nv>2) acc2[r]=_mm512_fmadd_ps(av,b2,acc2[r]);
       }
     }
   }
@@ -318,8 +327,8 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void kb512_block(size_t mr, co
     for (r=0;r<mr;r++) {
       float *ci=x->c+(i+r)*x->ldc+jb;
       _mm512_mask_storeu_ps(ci,m0,_mm512_add_ps(kb512_c(ci,m0&keep,scale,beta),_mm512_mul_ps(alpha,acc0[r])));
-      _mm512_mask_storeu_ps(ci+16,m1,_mm512_add_ps(kb512_c(ci+16,m1&keep,scale,beta),_mm512_mul_ps(alpha,acc1[r])));
-      _mm512_mask_storeu_ps(ci+32,m2,_mm512_add_ps(kb512_c(ci+32,m2&keep,scale,beta),_mm512_mul_ps(alpha,acc2[r])));
+      if (nv>1) _mm512_mask_storeu_ps(ci+16,m1,_mm512_add_ps(kb512_c(ci+16,m1&keep,scale,beta),_mm512_mul_ps(alpha,acc1[r])));
+      if (nv>2) _mm512_mask_storeu_ps(ci+32,m2,_mm512_add_ps(kb512_c(ci+32,m2&keep,scale,beta),_mm512_mul_ps(alpha,acc2[r])));
     }
   }
 }
@@ -364,16 +373,24 @@ __attribute__((target("avx512f"))) static void kb512_pack(const mm_args *x, floa
     }
   }
 }
+/* a range's rows over one packed tile: 8-row blocks, then 4-row and single-row ones; `nv` as kb512_block's */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void kb512_rows(int nv, const mm_args *x, const float *bt,
+    size_t r0, size_t r1, size_t jb, size_t nj, size_t lb, size_t nl) {
+  size_t i;
+  for (i=r0;i+8<=r1;i+=8) kb512_block(8,nv,x,bt,i,jb,nj,lb,nl);
+  for (;i+4<=r1;i+=4) kb512_block(4,nv,x,bt,i,jb,nj,lb,nl);
+  for (;i<r1;i++) kb512_block(1,nv,x,bt,i,jb,nj,lb,nl);
+}
 __attribute__((target("avx512f"))) static void mm_avx512_kb(const mm_args *x, const mm_range *r) {
-  _Alignas(64) float bt[BCIR_MM_KBLOCK*48]; size_t i,jb,lb,nl;
+  _Alignas(64) float bt[BCIR_MM_KBLOCK*48]; size_t jb,lb,nl;
   for (jb=r->jb0;jb<r->jb1;jb+=48) {
     size_t nj=x->n-jb<48 ? x->n-jb : 48;
     for (lb=0;lb<x->k;lb+=nl) {
       nl=kblock_next(x->k-lb);
       kb512_pack(x,bt,jb,nj,lb,nl);
-      for (i=r->r0;i+8<=r->r1;i+=8) kb512_block(8,x,bt,i,jb,nj,lb,nl);
-      for (;i+4<=r->r1;i+=4) kb512_block(4,x,bt,i,jb,nj,lb,nl);
-      for (;i<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);
+      if (nj>32) kb512_rows(3,x,bt,r->r0,r->r1,jb,nj,lb,nl);  /* MM-ROWS: the vectors the block reaches */
+      else if (nj>16) kb512_rows(2,x,bt,r->r0,r->r1,jb,nj,lb,nl);
+      else kb512_rows(1,x,bt,r->r0,r->r1,jb,nj,lb,nl);
     }
   }
 }
@@ -480,7 +497,7 @@ int bcir_tensor_mm_fused_variants(void) {
 #endif
   return v;
 }
-static void mm_run_range(int variant, int fused, const mm_args *x, const mm_range *r) {
+static void mm_run_one(int variant, int fused, const mm_args *x, const mm_range *r) {
 #ifdef BCIR_MM_DISPATCH
   if (variant==4) {
     if (fused==MM_KBLOCK) mm_avx512_kb(x,r); else if (fused) mm_avx512_fused(x,r); else mm_avx512(x,r);
@@ -493,6 +510,32 @@ static void mm_run_range(int variant, int fused, const mm_args *x, const mm_rang
 #endif
   (void)variant;
   if (fused==MM_KBLOCK) mm_generic_kb(x,r); else if (fused) mm_generic_fused(x,r); else mm_generic(x,r);
+}
+/* The rows of a pool task's range (the partitions below) */
+#ifndef BCIR_MM_ROWS
+#define BCIR_MM_ROWS 128
+#endif
+/* MM-ROWS: the blocked contract's nest walks its rows BCIR_MM_ROWS at a time, every column block of
+ * a chunk before the next chunk, where A is stored by rows and its panel is BCIR_MM_CHUNK_PANEL floats
+ * or more (2 MiB: it would not stay in a core's L2 across the column blocks, so each block read it
+ * again from L3) and a chunk's slice of it at most BCIR_MM_ROWS x BCIR_MM_CHUNK_DEPTH (512 KiB: it
+ * stays) -- the slice then read once for every block, the tile packed once a chunk. Where the panel
+ * stays in L2 or the slice would not, the chunks would only pack the tiles again; so too for a
+ * transposed A, whose chunk is a strided slice the kernel already prefetches (a 1,024-row weight
+ * adjoint at depth 1,024 read x1.04 with chunks). Each element's K blocks still run in order, so
+ * every value is the nest's. A pool task's range is one chunk. */
+#define BCIR_MM_CHUNK_DEPTH 1024
+#define BCIR_MM_CHUNK_PANEL ((size_t)1<<19)
+static void mm_run_range(int variant, int fused, const mm_args *x, const mm_range *r) {
+  mm_range q=*r; size_t i0;
+  if (fused!=MM_KBLOCK || x->ta || x->k>BCIR_MM_CHUNK_DEPTH || x->m*x->k<BCIR_MM_CHUNK_PANEL) {
+    mm_run_one(variant,fused,x,r);
+    return;
+  }
+  for (i0=r->r0;i0<r->r1;i0+=BCIR_MM_ROWS) {
+    q.r0=i0; q.r1=r->r1-i0<BCIR_MM_ROWS ? r->r1 : i0+BCIR_MM_ROWS;
+    mm_run_one(variant,fused,x,&q);
+  }
 }
 static int mm_widest(void) {
   int v=bcir_tensor_mm_variants();
@@ -1086,13 +1129,18 @@ void bcir_tensor_pool_run(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx
 }
 #define pool_run bcir_tensor_pool_run
 /* --- the partitions: each a function of the shapes alone ----------------------------------- */
-/* GEMM: one task per (column block of the variant's width, row range of BCIR_MM_ROWS rows). The
- * task's elements of C are scaled by beta -- by the task under the v1 and fused contracts (and a
- * blocked call without terms), by the blocked kernel's first K block otherwise (NDT-BETA) -- then
- * the serial nest runs over its block and rows, every depth chunk in order, so each element of C
- * receives its terms in the serial order; the task packs its own tiles. */
-#ifndef BCIR_MM_ROWS
-#define BCIR_MM_ROWS 128
+/* GEMM: one task per (column range, row range of BCIR_MM_ROWS rows). A column range is one block
+ * of the variant's width -- and under the blocked contract as many whole blocks as leave the job
+ * BCIR_MM_TASKS tasks, every column where the row ranges alone are that many (MM-ROWS: a task reads
+ * its rows of A once for all its blocks, from L2 after the first, where a task a block read them
+ * again for each block, from L3 once they outgrow L2) -- a function of m, n and the contract alone,
+ * so the calls of a chain share one tiling. The task's elements of C are scaled by beta -- by the
+ * task under the v1 and fused contracts (and a blocked call without terms), by the blocked
+ * kernel's first K block otherwise (NDT-BETA) -- then the serial nest runs over its blocks and
+ * rows, every depth chunk in order, so each element of C receives its terms in the serial order;
+ * the task packs its own tiles. */
+#ifndef BCIR_MM_TASKS
+#define BCIR_MM_TASKS 16
 #endif
 typedef struct mm_job { mm_args x; float beta; int variant,fused; size_t nr,cols,rowsets; } mm_job;
 static void mm_task(void *ctx, size_t task) {
@@ -1114,6 +1162,11 @@ static size_t mm_job_init(mm_job *j, int fused, int variant, int ta, int tb, siz
   j->x.ta=ta; j->x.tb=tb; j->x.m=m; j->x.n=n; j->x.k=k; j->x.alpha=alpha; j->x.a=a; j->x.lda=ta ? m : k;
   j->x.b=b; j->x.ldb=tb ? k : n; j->x.c=c; j->x.ldc=n; j->x.mode=MM_FULL;
   j->x.beta=beta; j->x.fold=fused==MM_KBLOCK && k;
+  if (fused==MM_KBLOCK) {  /* MM-ROWS: whole blocks a task, BCIR_MM_TASKS tasks where the rows allow */
+    size_t blocks=(n+j->nr-1)/j->nr,ranges=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;
+    size_t groups=(BCIR_MM_TASKS+ranges-1)/ranges;
+    if (groups<blocks) j->nr*=(blocks+groups-1)/groups;
+  }
   j->cols=(n+j->nr-1)/j->nr; j->rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;
   return j->cols*j->rowsets;
 }
@@ -1129,12 +1182,23 @@ static void mm_pool_any(bcir_tensor_pool *pool, int fused, int variant, int ta, 
   tasks=mm_job_init(&j,fused,variant,ta,tb,m,n,k,alpha,a,b,beta,c);
   pool_run(pool,mm_task,&j,tasks);
 }
+/* MM-ROWS: a pair or group job whose second part's tasks are the larger runs that part first --
+ * the step's weight adjoints, a few tasks over the batch's depth, beside input adjoints of many
+ * small ones, ran last with threads idle around them. The pool's task t runs the job's task
+ * (t + lead) mod total: every task once whatever the lead, and the parts write apart, so every
+ * value is the same. A task's work is its multiply-adds (a job's first task's: none is larger). */
+static double mm_task_work(const mm_job *j) {
+  double rows=(double)(j->x.m<BCIR_MM_ROWS ? j->x.m : BCIR_MM_ROWS),cols=(double)(j->x.n<j->nr ? j->x.n : j->nr);
+  return rows*cols*(double)(j->x.k ? j->x.k : 1);
+}
+static size_t mm_led(size_t task, size_t lead, size_t total) { return (task+lead)%total; }
 /* Two GEMMs, one job (NDT-SCHED-0): tasks [0, split) are the first's, the rest the second's,
  * each with its own partition, so the thread that runs task t runs the same work it would have
  * run for that GEMM alone. */
-typedef struct mm_pair_job { mm_job a,b; size_t split; } mm_pair_job;
+typedef struct mm_pair_job { mm_job a,b; size_t split,lead,total; } mm_pair_job;
 static void mm_pair_task(void *ctx, size_t task) {
   mm_pair_job *j=(mm_pair_job *)ctx;
+  task=mm_led(task,j->lead,j->total);
   if (task<j->split) mm_task(&j->a,task); else mm_task(&j->b,task-j->split);
 }
 static void mm_pair_any(bcir_tensor_pool *pool, int fused, int variant, const bcir_tensor_mm_call *x,
@@ -1147,7 +1211,9 @@ static void mm_pair_any(bcir_tensor_pool *pool, int fused, int variant, const bc
   }
   j.split=mm_job_init(&j.a,fused,variant,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
   second=mm_job_init(&j.b,fused,variant,y->ta,y->tb,y->m,y->n,y->k,y->alpha,y->a,y->b,y->beta,y->c);
-  pool_run(pool,mm_pair_task,&j,j.split+second);
+  j.total=j.split+second;
+  j.lead=j.split && second && mm_task_work(&j.b)>mm_task_work(&j.a) ? j.split : 0;
+  pool_run(pool,mm_pair_task,&j,j.total);
 }
 static int mm_family(int contract) {
   return contract==2 ? MM_KBLOCK : contract==1 ? MM_FUSED : MM_V1;
@@ -1164,10 +1230,11 @@ void bcir_tensor_mm_pair_pool(bcir_tensor_pool *pool, int contract, const bcir_t
  * first's m, n and contract, so one task index names one tile in all of them. */
 typedef struct mm_group_job {
   mm_job x[BCIR_TENSOR_MM_GROUP],y[BCIR_TENSOR_MM_GROUP];
-  size_t nx,split,start[BCIR_TENSOR_MM_GROUP+1];
+  size_t nx,split,lead,total,start[BCIR_TENSOR_MM_GROUP+1];
 } mm_group_job;
 static void mm_group_task(void *ctx, size_t task) {
   mm_group_job *j=(mm_group_job *)ctx; size_t q;
+  task=mm_led(task,j->lead,j->total);
   if (task<j->split) { for (q=0;q<j->nx;q++) mm_task(&j->x[q],task); return; }
   task-=j->split;
   for (q=0;task>=j->start[q+1];q++) {}
@@ -1192,7 +1259,13 @@ static void mm_group_any(bcir_tensor_pool *pool, int fused, int variant, const b
   j.nx=nx; j.split=0; j.start[0]=0;
   for (q=0;q<nx;q++) { size_t tasks=mm_call_init(&j.x[q],fused,variant,x+q); if (!q) j.split=tasks; }
   for (q=0;q<ny;q++) j.start[q+1]=j.start[q]+mm_call_init(&j.y[q],fused,variant,y+q);
-  pool_run(pool,mm_group_task,&j,j.split+j.start[ny]);
+  j.total=j.split+j.start[ny]; j.lead=0;
+  if (j.split) {  /* MM-ROWS: the independent calls first where one's task outweighs a chain tile's */
+    double tile=0.0;
+    for (q=0;q<nx;q++) tile+=mm_task_work(&j.x[q]);
+    for (q=0;q<ny;q++) if (j.start[q+1]>j.start[q] && mm_task_work(&j.y[q])>tile) j.lead=j.split;
+  }
+  pool_run(pool,mm_group_task,&j,j.total);
 }
 void bcir_tensor_mm_group_pool(bcir_tensor_pool *pool, int contract, const bcir_tensor_mm_call *x,
     size_t nx, const bcir_tensor_mm_call *y, size_t ny) {

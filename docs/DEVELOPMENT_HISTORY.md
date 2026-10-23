@@ -4583,6 +4583,69 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     GEMMs level with MKL's on most of these shapes).
   - Not claimed: counter-based figures (this VM has no PMU; the cycles are TSC); the fused contract's
     effect on the study's trained results; AMX; a GPU.
+  MM-ROWS (2026-10-23): the k-blocked GEMM's tasks, chunks, edge blocks and job order, every value as it was
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §15,
+    [measurements/2026-10-23/mm-rows/](research/measurements/2026-10-23/mm-rows/README.json)).
+  - The loss it answers: ATT-BOUND left the step's GEMMs at 41% of the cores' measured FMA rate. A shape at a
+    time, one core ran the step's products at 46-57% of its rate and at 85-87% where A's panel fits in L2. The
+    AVX-512 nest runs a 48-column block's tile over every row of its range before the next block, so each block
+    reads A's rows again -- from L3 once the panel outgrows L2 (the step's 8192-row operands are 4 MiB); the
+    pool's task, one block by 128 rows with the column fastest, had three cores pull the same rows of A from L3
+    at once; a 128-wide product's last block is 32 columns, computed as 48; and in the step's paired and grouped
+    jobs the weight adjoints -- 128 or 256 rows over a depth of 8192, three to six tasks of some 50 million
+    multiply-adds -- were claimed after the input adjoints' many small tasks and ran with threads idle around them.
+  - MM-ROWS: under the blocked contract a pool task spans as many whole column blocks as leave its job sixteen
+    tasks (`BCIR_MM_TASKS`) -- every column from 2,048 rows -- so it reads its rows of A once for all its blocks;
+    the serial nest walks 128-row chunks, every block of a chunk before the next, where A is stored by rows, its
+    panel 2 MiB or more and a chunk's slice at most 512 KiB; an AVX-512 edge block computes the vectors its columns
+    reach; and a pair or group job whose second part's tasks are the larger starts with them -- the pool's task t
+    runs the job's task (t + lead) mod total, under every contract. The partition stays a function of m, n and the
+    contract, so a chain's calls share one tiling; each element's K blocks run in order, each from zero, then
+    c + alpha*P.
+  - Every value is the same: `bitcheck.c` -- every k-blocked entry (the serial instances, the pool at four and two
+    threads and through each instance, pair jobs, group jobs whose chains include a call of depth zero) over 712
+    cases, 6,081 hashes -- before == after under clang 18 and GCC 13, and clang's lines GCC's; the GEO model's
+    trained state the same digest from both level-3 builds at every context.
+  - Measured on the committed tree against the one before it, in one process beside an A/A control: on four
+    threads the GEO step's 8192-row products x0.734-x0.814 (all seven), 4096 and 2048 rows x0.793-x0.883, the
+    paired weight adjoint x0.823 and the grouped ones x0.791 and x0.874; on one thread x0.760-x0.887, the weight
+    adjoints x0.943-x0.953. The training step at the GEO dimensions under clang x0.935 at T512, x0.905 at T1024
+    and x0.939 at T2048 -- x0.930 (0.915-0.946) in the 64 rounds declared before they ran -- under GCC x0.935 and
+    x0.938, on one thread x0.952 (x0.956 declared); its GEMM claims, read a part at a time, 72.9 -> 61.0 ms at T2048
+    (x0.837) and 252.9 -> 219.1 on one thread. The GEO study's attention model on level 3 (GCC, 32 rounds): the
+    training update x0.918 at T512, x0.928 at T1024 and x0.968 (0.952-0.984) at T2048 -- x0.872 of eager PyTorch's
+    time and x0.919 of Inductor's at T2048 in the same run; its inference forward at T2048 x0.945 (0.916-0.974),
+    meeting its control's interval, x1.17 of Inductor's time.
+  - The 9.84M decoder (1,024 rows): its step at parity (x0.988 in 64 rounds), its GEMMs within noise at four
+    threads but for three small products -- the head x0.935 and 1,024 x 1,024 x 384 x0.971, and the 192-row
+    weight adjoint x1.063, whose path the slice leaves as it was but for the code's placement. On one thread that
+    adjoint and the 1,024 x 384 x 384 product read x1.03 and x1.02: the kernel's 8 x 48 loops now start 32 bytes
+    into a cache line where they started on one, the same 40 instructions, and with both trees' loops at 64-byte
+    boundaries the four such shapes read x0.999-x1.011.
+  - The design runs first, every prototype bit for bit (14 of 14; the first draft, whose partition read the
+    call's depth, 213 of 6,081 lines apart -- a chain's call of depth zero tiled apart from its chain): whole rows
+    from 1,024 rows, tasks of whole blocks for 32 tasks and for 16, timed in one process beside an A/A control
+    (separate processes moved by up to x1.6 between runs here) -- alike at the GEO shapes and within noise at the
+    decoder's 1,024 rows, the 16-task rule taken; chunks at every depth to 1,024 cost the decoder's 192-row weight
+    adjoint x1.080 on one thread, so they wait for a panel that outgrows L2, and a transposed A's 1,024-row
+    adjoint x1.04-x1.07 even with loops aligned, so they wait for A stored by rows (the first measured commit,
+    6ea3244, chunked it; its runs are kept as superseded); ordering took the step's paired jobs from x0.96 to x0.79
+    of their time.
+  - What remains: the weight adjoints -- 128 to 260 rows over a depth of 8192, about half the core's rate with
+    their K blocks' tiles in L2, and three to nine tasks -- whose next step is a split over the depth with the K
+    blocks folded in order, which needs the trainer to lend the products' room; the kernel's loop placement, which
+    moves its rate by a few percent with any edit of the unit; the bf16 contract's GEMMs (their own partition).
+  - Witnesses: the harness's `gemm_kblock_rows` -- 2,100, 1,030 and 1,300 rows: the serial entry and each
+    instance, the pool and each instance on it at two to four threads, the pair both ways round, a chain with a
+    depth of zero beside two weight adjoints, edge blocks of one, two and three vectors, all against the K-blocked
+    fmaf chains -- where no case before reached a blocked GEMM of 1,024 rows on a pool: without it `mm-rows.json`'s
+    MR1, MR2 and MR8 pass every test. `mm-rows.json` MR1-MR8, each caught by its own check; NK7 re-anchored on the
+    moved row loop (in its table and in `test_the_rows_fire_on_wrong_kernels_and_plans`) and caught again;
+    ndt-kblock (18), ndt-threads (18), ndt-fma (5) and PX-3b's PI2 swept whole against the new tree.
+  - Beside it (`246dbfe`): CI's CMake build job's hang guard 40 -> 60 minutes -- on 535eac7 its gcc cell ran 21
+    minutes on one runner and reached 40 on two others, its build-parity step 970 seconds against 1,882.
+  - Not claimed: timing on AVX2-only hosts (their instance takes the tasks, the chunks and the order, not the edge
+    width); the bf16 contract's GEMMs; AMX; a GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

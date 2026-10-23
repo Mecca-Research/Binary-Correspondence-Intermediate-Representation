@@ -1,0 +1,67 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "MR1 a task's columns not whole blocks (the job's columns split evenly: a block straddling two tasks is computed by both, its beta applied twice)",
+      "new": "    if (groups<blocks) j->nr=(n+groups-1)/groups;\n",
+      "old": "    if (groups<blocks) j->nr*=(blocks+groups-1)/groups;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "MR2 the serial nest's chunks stop before the ragged last one (its rows keep their first values)",
+      "new": "  for (i0=r->r0;i0+BCIR_MM_ROWS<=r->r1;i0+=BCIR_MM_ROWS) {\n",
+      "old": "  for (i0=r->r0;i0<r->r1;i0+=BCIR_MM_ROWS) {\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "MR3 an edge block of 33 columns run as two vectors (its last column never written)",
+      "new": "      if (nj>33) kb512_rows(3,x,bt,r->r0,r->r1,jb,nj,lb,nl);  /* MM-ROWS: the vectors the block reaches */\n",
+      "old": "      if (nj>32) kb512_rows(3,x,bt,r->r0,r->r1,jb,nj,lb,nl);  /* MM-ROWS: the vectors the block reaches */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "MR4 an edge block of 17 columns run as one vector (its last column never written)",
+      "new": "      else if (nj>17) kb512_rows(2,x,bt,r->r0,r->r1,jb,nj,lb,nl);\n",
+      "old": "      else if (nj>16) kb512_rows(2,x,bt,r->r0,r->r1,jb,nj,lb,nl);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "MR5 a two-vector edge block stores its first vector alone",
+      "new": "      if (nv>2) _mm512_mask_storeu_ps(ci+16,m1,",
+      "old": "      if (nv>1) _mm512_mask_storeu_ps(ci+16,m1,",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "MR6 the job's order not a rotation (a lead runs the last tasks twice and the first part's never)",
+      "new": "static size_t mm_led(size_t task, size_t lead, size_t total) { return task+lead<total ? task+lead : task; }\n",
+      "old": "static size_t mm_led(size_t task, size_t lead, size_t total) { return (task+lead)%total; }\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "MR7 a pair job's count leaves out its second part (the second call never runs on a pool)",
+      "new": "  j.total=j.split;\n",
+      "old": "  j.total=j.split+second;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "MR8 the partition keyed on the depth as well (a chained call of depth zero tiled apart from the chain: some of its tiles never scaled)",
+      "new": "    size_t groups=(BCIR_MM_TASKS+ranges-1)/ranges+(k==0);\n",
+      "old": "    size_t groups=(BCIR_MM_TASKS+ranges-1)/ranges;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

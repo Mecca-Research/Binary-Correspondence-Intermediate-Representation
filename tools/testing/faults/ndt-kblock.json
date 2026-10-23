@@ -54,8 +54,8 @@
     {
       "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
       "label": "NK7 the AVX-512 instance stops before its last single row (the row keeps its beta-scaled value)",
-      "new": "      for (;i+1<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);\n",
-      "old": "      for (;i<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);\n",
+      "new": "  for (;i+1<r1;i++) kb512_block(1,nv,x,bt,i,jb,nj,lb,nl);\n",
+      "old": "  for (;i<r1;i++) kb512_block(1,nv,x,bt,i,jb,nj,lb,nl);\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

@@ -1103,6 +1103,89 @@ static void gemm_kblock_contract(void) {
       "contract says; the split rule on 10 depths; beta in the first K block (a depth of zero "
       "scaled, a zero product at a negative alpha +0.0)\n",ran,mask,differ,equal);
 }
+/* MM-ROWS: the blocked contract where its partition and nest changed, every entry against the
+ * K-blocked fmaf chains bit for bit -- rows enough for a task of every column (2100), a task of two
+ * whole blocks (1030: two column ranges, the second a 4-column block), the serial nest's 128-row
+ * chunks with a ragged last one (1300 rows at a depth of 410: A's panel past 2 MiB), edge blocks of
+ * one, two and three vectors: the serial entry and each instance, the pool and each instance on it
+ * at two to four threads, a pair job with a weight adjoint's shape (fewer, larger tasks: the job
+ * starts with them) both ways round, and a group job -- a chain into one C at the case's beta,
+ * then adding at half the depth, then at a depth of zero (one tiling for every chained call), and
+ * two weight-adjoint calls whose tasks outweigh the chain's tiles. */
+static void gemm_kblock_rows(void) {
+  enum { MA=1300*410, MB=449*100, MC=2100*97, YK=2100, YM=64, YN=50 };
+  static float a[MA],b[MB],init[MC],want[MC],c[MC],chain[MC],ya[YK*YM],yb[YK*YN];
+  static float ywant[YM*YN],yinit[YM*YN],d[YM*YN],e[YM*YN],ewant[YM*YN];
+  static const size_t shapes[][3]={{2100,97,33},{1030,100,449},{1300,65,410}};
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  size_t s,i,t,ta,tb; int variant,mask=bcir_tensor_mm_kblock_variants(),pools=0,runs=0;
+  bcir_tensor_mm_call x,y,ch[3],ind[2];
+  for (i=0;i<MA;i++) a[i]=sinf((float)i*0.71f)*(i%3 ? 4.0f : 0.125f);
+  for (i=0;i<MB;i++) b[i]=cosf((float)i*1.37f)-0.25f;
+  for (i=0;i<YK*YM;i++) ya[i]=sinf((float)i*0.29f)-0.1f;
+  for (i=0;i<YK*YN;i++) yb[i]=cosf((float)i*0.53f)*1.3f;
+  for (i=0;i<YM*YN;i++) yinit[i]=0.01f*(float)(i%13)-0.04f;
+  /* the weight adjoint's shape: 64 x 50 over a depth of 2100, at beta 1 (it adds to dW) */
+  y.ta=1; y.tb=0; y.m=YM; y.n=YN; y.k=YK; y.alpha=1.0f; y.a=ya; y.b=yb; y.beta=1.0f; y.c=d;
+  ref_kblock(1,0,YM,YN,YK,1.0f,ya,yb,1.0f,yinit,ywant);
+  ref_kblock(1,0,YM,YN,YK,-0.5f,ya,yb,0.0f,yinit,ewant);
+  for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) for (ta=0;ta<2;ta++) for (tb=0;tb<2;tb++) {
+    size_t m=shapes[s][0],n=shapes[s][1],k=shapes[s][2];
+    float alpha=s%2 ? 0.75f : 1.0f,beta=s==1 ? 0.5f : s==2 ? 1.0f : 0.0f;
+    if (s && ta!=tb) continue;  /* the large shapes as (n, n) and (t, t): the partition reads no transpose */
+    assert(m*k<=MA && k*n<=MB && m*n<=MC);
+    for (i=0;i<m*n;i++) init[i]=i%7==3 ? -0.0f : 0.01f*(float)(i%17)-0.05f;
+    ref_kblock(ta,tb,m,n,k,alpha,a,b,beta,init,want);
+    x.ta=(int)ta; x.tb=(int)tb; x.m=m; x.n=n; x.k=k; x.alpha=alpha; x.a=a; x.b=b; x.beta=beta; x.c=c;
+    memcpy(c,init,m*n*sizeof(float)); bcir_tensor_mm_kblock(NULL,x.ta,x.tb,m,n,k,alpha,a,b,beta,c);
+    assert(!memcmp(c,want,m*n*sizeof(float)));
+    for (variant=1;variant<=4;variant*=2) if (mask&variant) {
+      memcpy(c,init,m*n*sizeof(float));
+      assert(bcir_tensor_mm_kblock_variant(variant,x.ta,x.tb,m,n,k,alpha,a,b,beta,c)==variant);
+      assert(!memcmp(c,want,m*n*sizeof(float)));
+      runs++;
+    }
+    /* the chain's reference: the case, then half the depth adding at alpha 0.5, then a depth of
+     * zero at beta 0.25 (it scales) */
+    memcpy(chain,want,m*n*sizeof(float));
+    ref_kblock(ta,tb,m,n,k/2,0.5f,a,b,1.0f,want,chain);
+    for (i=0;i<m*n;i++) chain[i]=0.25f*chain[i];
+    for (t=2;t<=4;t++) {
+      size_t need=bcir_tensor_pool_size((unsigned)t); bcir_tensor_pool *pool;
+      if (!need) continue;
+      assert(need<=sizeof(pool_memory));
+      pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),(unsigned)t);
+      assert(pool!=NULL);
+      pools++;
+      memcpy(c,init,m*n*sizeof(float)); bcir_tensor_mm_kblock_pool(pool,x.ta,x.tb,m,n,k,alpha,a,b,beta,c);
+      assert(!memcmp(c,want,m*n*sizeof(float)));
+      for (variant=1;variant<=4;variant*=2) if (mask&variant) {
+        memcpy(c,init,m*n*sizeof(float));
+        assert(bcir_tensor_mm_contract_variant_pool(pool,2,variant,x.ta,x.tb,m,n,k,alpha,a,b,beta,c,
+            NULL,0)==variant);
+        assert(!memcmp(c,want,m*n*sizeof(float)));
+        runs++;
+      }
+      /* the pair both ways round: each output its own call's, whichever part the job starts with */
+      memcpy(c,init,m*n*sizeof(float)); memcpy(d,yinit,sizeof(d)); bcir_tensor_mm_pair_pool(pool,2,&x,&y);
+      assert(!memcmp(c,want,m*n*sizeof(float)) && !memcmp(d,ywant,sizeof(d)));
+      memcpy(c,init,m*n*sizeof(float)); memcpy(d,yinit,sizeof(d)); bcir_tensor_mm_pair_pool(pool,2,&y,&x);
+      assert(!memcmp(c,want,m*n*sizeof(float)) && !memcmp(d,ywant,sizeof(d)));
+      /* the group: the chain into c and two weight adjoints, into d (adding) and e (beta 0) */
+      ch[0]=x; ch[1]=x; ch[1].k=k/2; ch[1].alpha=0.5f; ch[1].beta=1.0f; ch[2]=x; ch[2].k=0; ch[2].beta=0.25f;
+      ind[0]=y; ind[1]=y; ind[1].c=e; ind[1].alpha=-0.5f; ind[1].beta=0.0f;
+      memcpy(c,init,m*n*sizeof(float)); memcpy(d,yinit,sizeof(d)); memcpy(e,yinit,sizeof(e));
+      bcir_tensor_mm_group_pool(pool,2,ch,3,ind,2);
+      assert(!memcmp(c,chain,m*n*sizeof(float)) && !memcmp(d,ywant,sizeof(d)) && !memcmp(e,ewant,sizeof(e)));
+      bcir_tensor_pool_stop(pool);
+    }
+  }
+  assert(runs>0 && (pools>0 || bcir_tensor_pool_rails()==0));
+  printf("  PASS native GEMM blocked contract (MM-ROWS): 2100, 1030 and 1300 rows bit-identical to the "
+      "K-blocked fmaf chains -- serial (128-row chunks where A's panel passes 2 MiB), %d instance "
+      "run(s), %d pool(s) of 2..4 threads with each instance, the pair both ways round and a chain "
+      "with a depth of zero beside two weight adjoints\n",runs,pools);
+}
 /* The BCIR exponential and the v2 contracts that use it (NDT-EXP): every instance this host runs
  * agrees bit for bit over 2^24 inputs (every binary32 in [-104, 89] at stride 2^8), within 1 ulp
  * of exp in double rounded to binary32; the special values; SiLU v2 and the SwiGLU VJP v2 on a
@@ -3785,7 +3868,7 @@ int main(void) {
   gemm_contract(); attention_reference(); attention_fused_reference(); adamw_reference();
   finite_differences(); refusals();
   learning(); pool_identity(); pool_claims(); reduction_references(); scan_references();
-  gemm_fused_contract(); gemm_kblock_contract(); exp_contract(); fused_passes();
+  gemm_fused_contract(); gemm_kblock_contract(); gemm_kblock_rows(); exp_contract(); fused_passes();
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();
   trainer_workspace_plan(); trainer_recompute(); pool_caps(); dispatch_entries();
