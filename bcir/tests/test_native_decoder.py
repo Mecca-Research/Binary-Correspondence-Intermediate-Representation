@@ -142,9 +142,10 @@ def test_native_c_harness_c11_and_c23():
         # and C23 once more with the writers' verdict bytes bounded at two tasks, so every scan
         # entry takes the scan after its job (NDT-SCAN-W), once capped at AVX2, so a host whose
         # widest variant is AVX-512 runs the update's AVX2 pairs and commit too (NDT-UPDATE), and
-        # once with the backward's long-context paths at every context -- the transposed products
-        # banded from 16 terms and every probability-adjoint tile on its own panel -- so the
-        # attention references hold what a long context takes otherwise (BWD-LONG), and once more
+        # once with the attention's long-context paths at every context -- the transposed products
+        # banded from 16 terms, every probability-adjoint tile on its own panel and the stored
+        # forward a strip of rows at a time -- so the attention references hold what a long context
+        # takes otherwise (BWD-LONG, FWD-STRIP), and once more
         # with the binary32 attention's tasks on copies of their heads' rows at every context and
         # those paths with them, the harness lending the workspace the plan asks (ATT-CONTIG); every
         # build with the commit's shared division exposed to the harness's check of it, with
@@ -158,10 +159,19 @@ def test_native_c_harness_c11_and_c23():
             ("c2x", [], ""),
             ("c2x", ["-DBCIR_TENSOR_SCAN_TASKS=2"], "-bounded"),
             ("c2x", ["-DBCIR_TENSOR_MAX_VARIANT=2"], "-avx2"),
-            ("c2x", ["-DBCIR_ATT_BAND_FROM=16", "-DBCIR_ATT_WHOLE=0"], "-long"),
             (
                 "c2x",
-                ["-DBCIR_ATT_CONTIG_FROM=1", "-DBCIR_ATT_BAND_FROM=16", "-DBCIR_ATT_WHOLE=0"],
+                ["-DBCIR_ATT_BAND_FROM=16", "-DBCIR_ATT_WHOLE=0", "-DBCIR_ATT_STRIP_FROM=1"],
+                "-long",
+            ),
+            (
+                "c2x",
+                [
+                    "-DBCIR_ATT_CONTIG_FROM=1",
+                    "-DBCIR_ATT_BAND_FROM=16",
+                    "-DBCIR_ATT_WHOLE=0",
+                    "-DBCIR_ATT_STRIP_FROM=1",
+                ],
                 "-contig",
             ),
         )
@@ -207,8 +217,9 @@ def test_native_c_harness_c11_and_c23():
             # attention against its reference, and its trainer (BF16-ATTN); the workspace from
             # its floor up and the recompute sets (GEO-3); the pool's cap and the entries with
             # the instance named (PX-3b); the attention without its probabilities and the forward
-            # that runs it (INFER-ATTN); the attention's workspace entries (ATT-CONTIG)
-            assert result.stdout.count("PASS") == 34
+            # that runs it (INFER-ATTN); the attention's workspace entries (ATT-CONTIG); the stored
+            # forward a strip of rows at a time (FWD-STRIP)
+            assert result.stdout.count("PASS") == 35
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -249,7 +260,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 34
+            assert result.stdout.count("PASS") == 35
             break
 
 

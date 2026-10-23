@@ -608,3 +608,74 @@ against x0.922 for the GEO shape at T2048, x0.850 against x0.792 for 8 heads of 
 a layout the step keeps -- its projections writing each head's rows contiguous -- would close; the
 GEO shape at T1024 and on one thread, where the layout costs 2-9% and the copies take little of
 it; and, under GQA, the forward's K and V copied once a query head.
+
+## 11. FWD-STRIP: the stored forward a strip at a time (2026-10-23)
+
+ATT-CONTIG left the GEO attention model's training update at T2048 at parity with eager PyTorch and
+x1.08 of Inductor's time. Paired with PyTorch's own attention -- scaled_dot_product_attention,
+causal, on the same inputs, the shape the study's model trains at (B4, 4 heads of 32, four threads)
+-- the flash kernel took x0.82 of BCIR's attention's time, and the backward was not the reason
+([measurements/2026-10-23/fwd-strip/](measurements/2026-10-23/fwd-strip/README.json),
+`prototype.json`):
+
+| T2048, 4 threads | forward ms | backward ms | total ms | total / BCIR's |
+|---|---:|---:|---:|---:|
+| BCIR (the probabilities stored) | 32.5 | 39.5 | 73.4 | 1 |
+| PyTorch flash (none stored, recomputed) | 16.6 | 38.0 | 54.9 | 0.819 |
+| PyTorch math (the probabilities stored) | 188.9 | 164.5 | 359.0 | 4.876 |
+
+The backward was at parity with the flash kernel's, which recomputes the probabilities it never
+stored; the stored forward took twice the flash forward's time. PyTorch's math kernel, which stores
+them as BCIR does, took nearly five times BCIR's. Timed a phase at a time, the stored forward's fill
+took 15% of it, the scores 29%, the softmax 33% and the context 20% -- each phase taking the head's
+whole t x t probabilities, 16 MB at T2048, through the core in turn -- and its per-task cycles were
+the same on one thread as on four.
+
+**FWD-STRIP** runs a stored forward the way INFER-ATTN runs a scratch one. From
+`BCIR_ATT_STRIP_FROM` positions (1024) each (batch, query head) takes a strip of rows at a time in
+place: the strip's rows' future columns zeroed first, then `att_strip` -- its scores, softmax and
+context -- on the stored probabilities' own rows while they are in the core's cache. `att_strip`
+computes a strip's rows bit for bit as the head-at-a-time forward does, and every future column ends
++0.0 either way, so the stored probabilities, the context and the verdict are as they were: 136
+cases byte for byte before and after (and with the strips at every context), 288 stored forwards at
+T1016 to T2050 (every float of p after a NaN fill), under clang and GCC.
+
+The attention, both trees in one process, both lent the pool's need, 48 rounds a row:
+
+| shape | forward | backward | total | A/A total |
+|---|---:|---:|---:|---:|
+| B4/T2048, 4 heads of 32, EXP, clang, 4 threads | 0.868 (0.839-0.898) | 1.035 | 0.962 (0.930-0.994) | 1.007 |
+| B4/T2048, 4 heads of 32, v1, clang, 4 threads | 0.910 (0.874-0.948) | 0.990 | 0.947 (0.912-0.984) | 0.993 |
+| B4/T2048, 4 heads of 32, EXP, clang, 1 thread | 0.831 (0.814-0.847) | 1.009 | 0.931 (0.912-0.950) | 0.993 |
+| B4/T1024, 4 heads of 32, EXP, clang, 4 threads | 0.925 (0.886-0.966) | 0.990 | 0.963 (0.931-0.995) | 0.980 |
+| B4/T512, 4 heads of 32, EXP, clang, 4 threads | 1.010 (0.981-1.040) | 1.000 | 1.004 (0.980-1.029) | 0.987 |
+| B2/T1024, 8 heads of 64, FUSED, clang, 4 threads | 1.005 (0.971-1.040) | 1.024 | 1.015 (0.984-1.046) | 1.006 |
+| B1/T2048, 8 heads of 64, FUSED, clang, 4 threads | 1.020 (0.953-1.093) | 1.023 | 1.021 (0.970-1.075) | 1.011 |
+| B1/T4096, 8 heads of 64, FUSED, clang, 4 threads | 0.973 (0.935-1.013) | 1.020 | 0.997 (0.966-1.029) | 1.004 |
+| B4/T2048, 4 heads of 32 (2 KV), EXP, clang, 4 threads | 0.923 (0.885-0.963) | 1.032 | 0.988 (0.944-1.033) | 1.008 |
+| B4/T2048, 4 heads of 32, EXP, gcc, 4 threads | 0.921 (0.879-0.966) | 1.045 | 0.994 (0.951-1.039) | 1.029 |
+| B4/T1024, 4 heads of 32, EXP, gcc, 4 threads | 0.924 (0.898-0.951) | 0.979 | 0.956 (0.935-0.977) | 0.995 |
+
+The forward resolves at T2048 on four threads and one, under GCC and with GQA; the whole attention
+resolves on one thread, and on four reads x0.96, inside its control's interval. 8 heads of 64 are at
+parity: there the scores' products outweigh the probabilities' traffic. The training step at the
+study's dimensions read x0.966-0.977 at T1024 and T2048, none resolved at 48 rounds; the T2048 rows,
+run again with 64 rounds as declared before they ran, resolved: x0.949 under clang and x0.951 under
+GCC. The attention model on level 3, built with GCC as the study builds it, both builds lent their
+regions:
+
+| T | rounds | before ms | after ms | P-EAGER ms | P-IND ms | after / before | after / P-EAGER | after / P-IND | A/A |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 512 | 32 | 44.1 | 44.1 | 82.2 | 60.0 | 0.997 (0.974-1.021) | 0.538 (0.525-0.552) | 0.744 (0.719-0.768) | 1.001 (0.980-1.023) |
+| 1024 | 32 | 115.6 | 113.0 | 151.6 | 123.9 | 0.968 (0.948-0.988) | 0.749 (0.729-0.771) | 0.892 (0.853-0.931) | 1.001 (0.982-1.021) |
+| 2048 | 32 | 335.7 | 326.8 | 329.3 | 301.9 | 0.970 (0.955-0.985) | 0.989 (0.966-1.013) | 1.084 (1.063-1.104) | 0.992 (0.974-1.011) |
+| 2048 | 64 | 349.7 | 334.7 | 338.0 | 309.5 | 0.951 (0.939-0.963) | 0.990 (0.974-1.006) | 1.086 (1.067-1.105) | 1.004 (0.994-1.015) |
+
+The trained state is the same digest from both builds at every context. At T2048 the update is now
+at parity with eager PyTorch and x1.09 of Inductor's time; at T1024 and T512 it is faster than both.
+
+Streaming stores for the zeros, measured against plain stores directly, read x0.959 of the forward
+on four threads (inside the control's interval) and x0.930 on one; not taken -- the trainer runs
+four threads, and the stores would need a fence and a witness of their own. What remains of the
+forward's gap to the flash kernel: its probabilities written out, half of them the future's zeros,
+each line read before it is written.

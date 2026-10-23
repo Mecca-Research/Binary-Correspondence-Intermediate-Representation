@@ -1,0 +1,74 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "FS1 a strip's rows' future columns left as the buffer held them",
+      "new": "    for (i=i0;i<i1;i++) if (i+1<t && 0) memset(ph+i*t+i+1,0,(t-i-1)*sizeof(float));\n",
+      "old": "    for (i=i0;i<i1;i++) if (i+1<t) memset(ph+i*t+i+1,0,(t-i-1)*sizeof(float));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "FS2 a strip's rows' future columns zeroed one column short",
+      "new": "memset(ph+i*t+i+1,0,(t-i-2)*sizeof(float));\n    att_strip(",
+      "old": "memset(ph+i*t+i+1,0,(t-i-1)*sizeof(float));\n    att_strip(",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "FS3 the strips step past rows of the head",
+      "new": "  for (i0=0;i0<t;i0+=rows+16) {\n    size_t i1=t-i0<rows ? t : i0+rows;\n",
+      "old": "  for (i0=0;i0<t;i0+=rows) {\n    size_t i1=t-i0<rows ? t : i0+rows;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "FS4 a stored forward's task past the threshold runs the whole head",
+      "new": "  else if (a->strips && 0) att_head_strips(a,task/a->nh,task%a->nh);  /* FWD-STRIP */\n",
+      "old": "  else if (a->strips) att_head_strips(a,task/a->nh,task%a->nh);  /* FWD-STRIP */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "FS5 a task on copies of its head's rows runs the whole head",
+      "new": "  else if (a->strips && 0) att_head_strips(&s,0,0);  /* FWD-STRIP */\n",
+      "old": "  else if (a->strips) att_head_strips(&s,0,0);  /* FWD-STRIP */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "FS6 the threshold's own context runs the whole head",
+      "new": "  a.strips=!scratch && t>BCIR_ATT_STRIP_FROM;  /* FWD-STRIP */\n",
+      "old": "  a.strips=!scratch && t>=BCIR_ATT_STRIP_FROM;  /* FWD-STRIP */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "FS7 the strip forward leaves its verdict out",
+      "new": "    att_strip(a,r,h,i0,i1,ph+i0*t);\n  }\n}\n",
+      "old": "    att_strip(a,r,h,i0,i1,ph+i0*t);\n  }\n  if (a->bad) att_verdict(a,r,h);\n}\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "FS8 the last strip's rows past a multiple of 16 dropped",
+      "new": "    size_t i1=t-i0<rows ? i0+(t-i0)/16*16 : i0+rows;\n    for (i=i0;i<i1;i++) if",
+      "old": "    size_t i1=t-i0<rows ? t : i0+rows;\n    for (i=i0;i<i1;i++) if",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "FS9 the probe counts no strip",
+      "new": "",
+      "old": "  (void)__atomic_fetch_add(&attention_strips_seen,(size_t)1,__ATOMIC_RELAXED);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

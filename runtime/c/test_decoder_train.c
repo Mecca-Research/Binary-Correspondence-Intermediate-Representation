@@ -3242,6 +3242,85 @@ static void attention_contig(void) {
   printf("  PASS ATT-CONTIG: %zu cases of the attention's workspace entries their entries' without one bit for bit,"
       " %zu of them with the tasks on copies of their heads' rows\n",cases,copied);
 }
+/* FWD-STRIP: from BCIR_ATT_STRIP_FROM positions the stored forward runs each head a strip of rows at a
+ * time, in place -- against the reference loops (v1's and the fused contract's, under libm's
+ * exponential and BCIR's) at the threshold's own context, below it and past it (a context no multiple
+ * of 8), p NaN-filled first: p (every future column +0.0), y and the verdict bit for bit, finite and
+ * with an infinite key, serially and on a pool of four, without a workspace and lent the pool's need
+ * (ATT-CONTIG's copies); and, where the build has the unit's probe, the path the values cannot show:
+ * every head of a stored forward at or past the threshold ran its strips, below it none, and the
+ * scratch forward none. */
+#ifdef BCIR_DT_ATTENTION_PROBE
+size_t bcir_tensor_attention_strips_probe(void);
+#endif
+static void attention_strips(void) {
+#ifdef BCIR_ATT_STRIP_FROM
+  const size_t from=BCIR_ATT_STRIP_FROM;
+#else
+  const size_t from=1024;
+#endif
+  const size_t ts[3]={from>1 ? from-1 : from,from,from+7},b=1,nh=2,nk=1,d=4;
+  static const unsigned contracts[]={0u,BCIR_TENSOR_ATTENTION_EXP,BCIR_TENSOR_ATTENTION_FUSED,
+      BCIR_TENSOR_ATTENTION_EXP|BCIR_TENSOR_ATTENTION_FUSED};
+  static _Alignas(max_align_t) unsigned char pool_memory[16384];
+  bcir_tensor_pool *pools[2]={NULL,NULL};
+  size_t si,c,i,pi,cases=0,striped=0;
+  {
+    size_t need=bcir_tensor_pool_size(4);
+    if (need && need<=sizeof(pool_memory)) pools[1]=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),4);
+  }
+  for (si=0;si<3;si++) {
+    size_t t=ts[si],nq=b*t*nh*d,nkv=b*t*nk*d,np=b*nh*t*t,most=bcir_tensor_attention_workspace(b,t,nh,nk,d);
+    float *q=malloc(nq*sizeof(float)),*k=malloc(nkv*sizeof(float)),*v=malloc(nkv*sizeof(float));
+    float *p0=malloc(np*sizeof(float)),*p1=malloc(np*sizeof(float)),*y0=malloc(nq*sizeof(float)),
+        *y1=malloc(nq*sizeof(float));
+    unsigned char *raw=malloc(most+128),*ws;
+    unsigned inf;
+    if (si && ts[si]==ts[si-1]) { free(q); free(k); free(v); free(p0); free(p1); free(y0); free(y1); free(raw); continue; }
+    if (DT_TSAN && t>=1024) { free(q); free(k); free(v); free(p0); free(p1); free(y0); free(y1); free(raw); continue; }
+    assert(q && k && v && p0 && p1 && y0 && y1 && raw);
+    ws=raw+(64-(uintptr_t)raw%64)%64;
+    for (c=0;c<sizeof(contracts)/sizeof(contracts[0]);c++) for (inf=0;inf<2;inf++) {
+      unsigned ct=contracts[c]; int ex=(ct&BCIR_TENSOR_ATTENTION_EXP)!=0,lend;
+      if (inf && c!=0 && c!=3) continue;
+      for (i=0;i<nq;i++) q[i]=sinf((float)i*0.37f)*1.7f;
+      for (i=0;i<nkv;i++) { k[i]=cosf((float)i*0.53f)*1.3f; v[i]=sinf((float)i*0.29f)-0.1f; }
+      if (inf) k[(t/2)*nk*d]=INFINITY;
+      if (ct&BCIR_TENSOR_ATTENTION_FUSED) ref_attention_fused(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
+      else ref_attention(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
+      for (pi=0;pi<2;pi++) for (lend=0;lend<2;lend++) {
+        size_t own=bcir_tensor_attention_pool_workspace(b,t,nh,nk,d,bcir_tensor_pool_threads(pools[pi]));
+        int bad=0;
+        if (pi && !pools[pi]) continue;
+        memset(p1,0xff,np*sizeof(float)); memset(y1,0xff,nq*sizeof(float));
+#ifdef BCIR_DT_ATTENTION_PROBE
+        (void)bcir_tensor_attention_strips_probe();
+#endif
+        if (lend) assert(bcir_tensor_attention_contract_variant_scan_ws_pool(pools[pi],0,ct,b,t,nh,nk,d,q,k,v,p1,y1,&bad,
+            ws,own));
+        else assert(bcir_tensor_attention_contract_variant_scan_pool(pools[pi],0,ct,b,t,nh,nk,d,q,k,v,p1,y1,&bad));
+        assert(!memcmp(p0,p1,np*sizeof(float)) && !memcmp(y0,y1,nq*sizeof(float)));
+        for (i=0;i<np;i++) if ((i%t)>(i/t)%t) assert(p1[i]==0.0f && !signbit(p1[i]));
+        assert(bad==!(all_finite(y1,nq) && all_finite(k,nkv)) && bad==(int)inf);
+#ifdef BCIR_DT_ATTENTION_PROBE
+        assert(bcir_tensor_attention_strips_probe()==(t>=from ? b*nh : 0));
+        /* the scratch forward runs its own strips, never the stored forward's */
+        bad=0;
+        assert(bcir_tensor_attention_contract_variant_scan_pool(pools[pi],0,ct|BCIR_TENSOR_ATTENTION_SCRATCH,b,t,nh,nk,d,
+            q,k,v,p1,y1,&bad));
+        assert(bcir_tensor_attention_strips_probe()==0 && !memcmp(y0,y1,nq*sizeof(float)));
+#endif
+        cases++;
+        if (t>=from) striped++;
+      }
+    }
+    free(q); free(k); free(v); free(p0); free(p1); free(y0); free(y1); free(raw);
+  }
+  if (pools[1]) bcir_tensor_pool_stop(pools[1]);
+  assert(cases>0 && striped>0);
+  printf("  PASS FWD-STRIP: %zu stored forwards bit for bit the reference loops' at the threshold's context %zu and "
+      "either side of it, %zu of them a strip of rows at a time\n",cases,from,striped);
+}
 static void attention_scratch(void) {
   static const size_t shapes[][5]={{1,1,1,1,2},{1,5,2,1,3},{2,33,4,2,17},{1,64,2,2,8},
       {1,40,2,1,130},{1,330,2,1,8},{1,700,2,1,8},{1,703,1,1,12},{1,2100,1,1,4}};
@@ -3398,7 +3477,7 @@ int main(void) {
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();
   trainer_workspace_plan(); trainer_recompute(); pool_caps(); dispatch_entries();
-  attention_scratch(); attention_contig(); trainer_infer();
+  attention_scratch(); attention_contig(); attention_strips(); trainer_infer();
 #ifdef BCIR_DT_DIVISION_PROBE
   division_probe();
 #endif

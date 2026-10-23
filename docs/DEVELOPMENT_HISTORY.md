@@ -4361,6 +4361,59 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: the threshold is the measuring hosts' choice, and no value depends on it; the bf16
     attention (it packs its own operands); a KV head's rows already contiguous (one KV head) are copied
     as well; AMX timing; a GPU.
+  FWD-STRIP (2026-10-23): the stored training forward a strip of rows at a time, every value as it
+    was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §11,
+    [measurements/2026-10-23/fwd-strip/](research/measurements/2026-10-23/fwd-strip/README.json)).
+  - The loss it answers: against PyTorch's scaled_dot_product_attention on the GEO attention model's
+    shape (B4, 4 heads of 32, T2048, four threads), BCIR's backward ran at parity with the flash
+    kernel's (39.5 ms against 38.0) and its stored forward at twice the flash forward's time (32.5 ms
+    against 16.6); PyTorch's math kernel, which stores the probabilities as BCIR does, took x4.9 of
+    BCIR's attention. Timed a phase at a time, the forward's fill took 15% of it, the scores 29%, the
+    softmax 33% and the context 20%: each phase took the head's whole t x t probabilities, 16 MB at
+    T2048, in turn. Per-task cycles were the same on one thread as on four -- a core's own traffic, not
+    the pool's.
+  - FWD-STRIP: from `BCIR_ATT_STRIP_FROM` positions (1024) a stored forward runs each (batch, query
+    head) a strip of rows at a time in place -- a strip's rows' future columns zeroed first, then
+    INFER-ATTN's `att_strip` (its scores, softmax and context) on the stored probabilities' own rows
+    while they are in the core's cache, a strip `att_strip_rows` rows (256 KB). `att_strip` computes a
+    strip's rows bit for bit as the head-at-a-time forward does and every future column ends +0.0 either
+    way, so the stored probabilities, the context and the verdict are as they were; a task on
+    ATT-CONTIG's copies strips them too. A probe of the unit (`bcir_tensor_attention_strips_probe`, the
+    harness's builds) counts the heads that ran in strips: the path the values cannot show.
+  - Every value is the same: BWD-LONG's 48 backward and ATTN-RATE's 88 forward cases byte for byte
+    before and after under clang 18 and GCC 13, and again with the tree after built to strip at every
+    context; 288 stored forwards at T1016 to T2050 (p after a NaN fill, every float, future columns
+    included, the context and the verdict; GQA, head widths 4 to 64, every contract, one thread and
+    four, with and without a workspace, finite and not) byte for byte before and after; the workspace
+    entries the entries without one in ATT-CONTIG's 564 cases; the GEO model's trained state the same
+    digest from both level-3 builds at every context.
+  - Measured on the committed tree against the one before it, both lent the pool's need, 48 rounds a
+    row: the attention's forward at B4/T2048 x0.868 (0.839-0.898) on four threads and x0.831 on one, GCC
+    x0.921, GQA (4 heads, 2 KV heads) x0.923; at T1024 x0.925 under clang (meeting its control) and
+    x0.924 under GCC; the whole attention x0.962 on four threads (meeting its control) and x0.931 on
+    one; T512 and 8 heads of 64 at T1024-T4096 at parity. The training step at the GEO dimensions read
+    x0.966-0.977 at T1024 and T2048 under both compilers and contracts, none resolved at 48 rounds; the
+    T2048 rows, run again with 64 rounds as declared before they ran, resolved: x0.949 (0.935-0.963)
+    under clang and x0.951 (0.934-0.967) under GCC. The GEO study's attention model on level 3, built
+    with GCC as the study builds it and both builds lent their regions, read x0.970 at T2048 and x0.968
+    at T1024 in 32 rounds (each meeting its control), and x0.951 (0.939-0.963) at T2048 in the declared
+    64 -- now x0.990 of eager PyTorch's time (parity) and x1.086 of Inductor's.
+  - The design runs, recorded with the slice: the strips with plain stores x0.898 of the forward, with
+    streaming stores for the zeros x0.847 and the streaming zeros alone x0.929 at T2048; strips of 32K,
+    128K and 256K floats no better than 64K; the streaming zeros against plain stores directly x0.959 on
+    four threads (meeting its control) and x0.930 on one -- not taken, since the trainer runs four
+    threads and the stores would need a fence and its own witness.
+  - What remains: the stored forward at x1.7 of the flash forward's time -- its probabilities written
+    out, half of them the future's zeros, each line read before it is written; 8 heads of 64, where the
+    scores' products outweigh the probabilities' traffic.
+  - Witnesses: a harness test at the threshold's own context and either side of it (T1023, T1024, T1031)
+    against the reference loops under every contract, p NaN-filled first, finite and with an infinite
+    key, serially and on a pool of four, with and without a workspace, with the probe; the harness's
+    -long and -contig builds and the manifest's ThreadSanitizer builds strip at every context, so the
+    attention references and the sanitizer hold the strips at every shape. `fwd-strip.json` FS1-FS9,
+    each caught by its own check and compiling warning-free under GCC 13, clang 18 and clang 23.
+  - Not claimed: the threshold is the measuring host's choice, and no value depends on it; the scratch
+    forward (INFER-ATTN's strips already); the bf16 attention; AMX timing; a GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

@@ -134,8 +134,11 @@ BCIR_DT_API void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *p
  * in its own slot at the start of p (bcir_tensor_attention_scratch_floats below), so a strip stays
  * in the core's cache, and y and the verdict are the stored attention's bit for bit; p's contents
  * after it are unspecified and no backward may read them (the bf16 entry below takes the bit
- * alike). Other bits are ignored, and the backward ignores EXP and SCRATCH. bad is the forward's
- * verdict as above, or NULL. */
+ * alike). Without SCRATCH, from BCIR_ATT_STRIP_FROM positions (1024 on the measuring host; no
+ * value depends on it), a stored forward runs each (batch, query head) the same way in place, a
+ * strip of p's own rows at a time, each strip's rows' future columns +0.0 first (FWD-STRIP): p, y
+ * and the verdict are the head-at-a-time forward's bit for bit. Other bits are ignored, and the
+ * backward ignores EXP and SCRATCH. bad is the forward's verdict as above, or NULL. */
 #define BCIR_TENSOR_ATTENTION_EXP 1u
 #define BCIR_TENSOR_ATTENTION_FUSED 2u
 #define BCIR_TENSOR_ATTENTION_SCRATCH 8u

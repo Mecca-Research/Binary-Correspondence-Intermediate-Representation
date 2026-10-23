@@ -2521,6 +2521,7 @@ typedef struct att_job {
   size_t b,t,nh,nk,d,group; const float *q,*k,*v,*dy; float *p,*y,*dq,*dk,*dv; int variant,exp2;
   int fused;  /* ATTN-FMA: the products' every multiply-add one fmaf */
   int scratch;  /* INFER-ATTN: the forward's probabilities are scratch, a strip of rows at a time */
+  int strips;  /* FWD-STRIP: a stored forward's heads a strip of rows at a time, in place */
   unsigned char *bad;  /* the forward's verdict bytes, one a task (NDT-SCAN-W), or NULL */
   /* ATT-CONTIG: the regions a task copies its head's rows into (NULL: the rows in place), a
    * region's bytes, a region a worker or a task; acc: a sub-job's dk and dv add its head's terms to
@@ -3092,10 +3093,37 @@ static void att_head_scratch(const att_job *a, size_t r, size_t h) {
   for (i0=0;i0<t;i0+=rows) att_strip(a,r,h,i0,t-i0<rows ? t : i0+rows,s);
   if (a->bad) att_verdict(a,r,h);
 }
+/* FWD-STRIP: one (batch, query head) of a stored forward a strip of rows at a time, in place --
+ * each strip's scores, softmax and context while its rows are in the core's cache (att_strip on
+ * the stored probabilities' own rows), where att_head takes the head's whole t x t probabilities
+ * through one phase after another: from BCIR_ATT_STRIP_FROM positions (1024, the measuring host's
+ * choice; no value depends on it). A strip's rows' future columns are zeroed first -- the +0.0
+ * att_head's fill and its blocks leave there, whatever the buffer held -- so the stored
+ * probabilities, the context and the verdict are att_head's bit for bit. */
+#ifndef BCIR_ATT_STRIP_FROM
+#define BCIR_ATT_STRIP_FROM 1024
+#endif
+#ifdef BCIR_DT_ATTENTION_PROBE
+static size_t attention_strips_seen;  /* the heads a stored forward ran a strip at a time */
+#endif
+static void att_head_strips(const att_job *a, size_t r, size_t h) {
+  size_t t=a->t,rows=att_strip_rows(t),i0,i;
+  float *ph=a->p+(r*a->nh+h)*t*t;
+#ifdef BCIR_DT_ATTENTION_PROBE
+  (void)__atomic_fetch_add(&attention_strips_seen,(size_t)1,__ATOMIC_RELAXED);
+#endif
+  for (i0=0;i0<t;i0+=rows) {
+    size_t i1=t-i0<rows ? t : i0+rows;
+    for (i=i0;i<i1;i++) if (i+1<t) memset(ph+i*t+i+1,0,(t-i-1)*sizeof(float));
+    att_strip(a,r,h,i0,i1,ph+i0*t);
+  }
+  if (a->bad) att_verdict(a,r,h);
+}
 static void att_task(void *ctx, size_t task) {
   att_job *a=(att_job *)ctx;
   INSTANCE_SAW(INSTANCE_ATTN,a->variant);
   if (a->scratch) att_head_scratch(a,task/a->nh,task%a->nh);
+  else if (a->strips) att_head_strips(a,task/a->nh,task%a->nh);  /* FWD-STRIP */
   else att_head(a,task/a->nh,task%a->nh);
 }
 /* ATT-CONTIG: a task on contiguous copies of its head's rows. Where a row of q, k or v holds more
@@ -3179,7 +3207,9 @@ static void att_task_contig(const att_job *a, size_t task, unsigned worker) {
   att_rows_in(vc,a->v+(r*t*nk+kh)*d,t,d,nk*d);
   s.b=1; s.nh=1; s.nk=1; s.group=1; s.q=qc; s.k=kc; s.v=vc; s.y=yc; s.bad=NULL; s.ws=NULL;
   s.p=a->p+(r*nh+h)*(a->scratch ? att_scratch_rows(t) : t)*t;
-  if (a->scratch) att_head_scratch(&s,0,0); else att_head(&s,0,0);
+  if (a->scratch) att_head_scratch(&s,0,0);
+  else if (a->strips) att_head_strips(&s,0,0);  /* FWD-STRIP */
+  else att_head(&s,0,0);
   att_rows_out(a->y+(r*t*nh+h)*d,yc,t,d,nh*d);
   if (a->bad) {
     int ok=rows_finite(a->variant,yc,t,d,d);
@@ -3210,6 +3240,12 @@ unsigned bcir_tensor_attention_probe(int backward) {
   attention_any_seen[d]=0u; attention_all_seen[d]=~0u;
   return c;
 }
+/* FWD-STRIP's record: the heads a stored forward ran a strip of rows at a time since the last read
+ * (a read starts it again) -- the path the values cannot show, since they are att_head's */
+size_t bcir_tensor_attention_strips_probe(void);
+size_t bcir_tensor_attention_strips_probe(void) {
+  return __atomic_exchange_n(&attention_strips_seen,(size_t)0,__ATOMIC_RELAXED);
+}
 #endif
 /* `variant` resolved (mm_instance over the products' family: the fused GEMM's under FUSED, v1's
  * otherwise); `scratch` the INFER-ATTN forward, its probabilities a strip at a time */
@@ -3220,6 +3256,7 @@ static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int scrat
   a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.group=1; a.q=q; a.k=k; a.v=v; a.dy=NULL; a.p=p; a.y=y;
   a.dq=NULL; a.dk=NULL; a.dv=NULL; a.exp2=exp2; a.fused=fused; a.scratch=scratch;
   a.variant=variant;
+  a.strips=!scratch && t>=BCIR_ATT_STRIP_FROM;  /* FWD-STRIP */
 #ifdef BCIR_DT_ATTENTION_PROBE
   attention_saw(0,(a.exp2 ? BCIR_TENSOR_ATTENTION_EXP : 0u)|(a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u)|
       (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u));
@@ -3479,6 +3516,7 @@ int bcir_tensor_attention_backward_contract_variant_ws_pool(bcir_tensor_pool *po
   a.fused=fused; a.variant=iv;
   a.group=nh/nk;
   a.scratch=0;  /* the backward reads its probabilities: never the scratch forward's */
+  a.strips=0;
 #ifdef BCIR_DT_ATTENTION_PROBE
   attention_saw(1,a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
 #endif

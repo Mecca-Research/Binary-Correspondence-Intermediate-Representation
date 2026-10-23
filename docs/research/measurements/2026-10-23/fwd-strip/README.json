@@ -1,0 +1,66 @@
+{
+ "what": "FWD-STRIP (2026-10-23): the stored binary32 forward a strip of rows at a time, in place, every value as it was -- from BCIR_ATT_STRIP_FROM positions (1024) each (batch, query head) zeroes a strip's rows' future columns, then runs the strip's scores, softmax and context on the stored probabilities' own rows (INFER-ATTN's att_strip) while they are in the core's cache, where the head-at-a-time forward took the head's whole t x t probabilities through each phase in turn -- measured on the committed tree against the tree before it: the cross-build hashes, the attention with both units in one process beside an A/A control, the decoder's training step, and the GEO study's attention model's training update built as the study builds it, both builds lent their attention's regions, against PyTorch; and the design runs: the attention against PyTorch's scaled_dot_product_attention, its phases, and the prototypes (strips, streaming zeros, both; the strip's height; shapes), streaming zeros measured and not taken.",
+ "host": "Intel(R) Xeon(R) Processor @ 2.30GHz, 4 vCPU (AVX-512F, AVX512-BF16 and -FP16, AMX), 2 MiB of L2 a core, 260 MiB of L3 -- the host the session moved to on 2026-10-23; Linux 6.18; clang 18.1.3, gcc 13.3.0; Python 3.11.15, torch 2.13.0+cu130 (CPU), numpy 2.2.6; OMP_WAIT_POLICY=PASSIVE",
+ "trees": {
+  "before": "3edeb8d89bd1897921814027ad9166a0f444ec33",
+  "after": "ba702d993a2c14a1869b632ef5622926f076b272"
+ },
+ "records": {
+  "hashes.json": "band_hash.c, attn_hash.c and fwd_hash.c from both trees, clang and gcc, and the first two from the tree after built to strip at every context; ../att-contig/ws_check.c over 564 cases on the tree after",
+  "attention.json": "ab_strip.c: before, after and A/A in one process, both lent the pool's need, 48 rounds every row (intervals recomputed exactly from the raw times)",
+  "step.json": "../../2026-10-22/attn-rate/step_ab.c: the training step, both trainers in one process on three identical states, each lent bcir_decoder_workspace_bytes for its contract, 48 rounds (intervals recomputed exactly from the raw times)",
+  "geo-train.json": "../../2026-10-22/bwd-width/train_compare.py: the GEO attention model's training update on both level-3 builds against P-EAGER and P-IND, 32 rotated rounds (intervals recomputed exactly from the raw times), the two builds' trained states equal by digest first",
+  "level3-builds.json": "../../2026-10-22/infer-attn/build_level3.py's two builds (gcc, as the study's level 2 is built), each through ../att-contig/contig_level3.py's three edits",
+  "prototype.json": "the design runs before the commit, on ATT-CONTIG's tree: attn_vs_sdpa.py (against PyTorch's flash and math kernels), instrument_att3.py with att_phase_bench.c (the phases), proto_fwd.py with ab_proto.c (the prototypes)",
+  "ab_strip.c, ab_proto.c, fwd_hash.c, attn_vs_sdpa.py, instrument_att3.py, att_phase_bench.c, proto_fwd.py": "the instruments; the Python ones as they ran, formatted by ruff 0.16.6 (the same AST); ab_strip.c is ab_proto.c with its comment naming the slice"
+ },
+ "verdicts": "each effect resolved where its 95% interval excludes 1 and does not meet the A/A control's; where the control's own interval excludes 1, the effect must hold against the control's arm too (from the raw times)",
+ "reading": {
+  "hashes": [
+   "clang: backward 48 cases, forward 88 cases, long-context stored forward 288 cases, before == after: True/True/True; the tree after built to strip at every context against the tree before: True/True",
+   "gcc: backward 48 cases, forward 88 cases, long-context stored forward 288 cases, before == after: True/True/True; the tree after built to strip at every context against the tree before: True/True",
+   "clang's lines gcc's: {'band_hash': True, 'attn_hash': True, 'fwd_hash': True}",
+   "the workspace entries against the entries without one on the tree after (ws_check, clang and gcc): 564 cases, 0 differing"
+  ],
+  "attention": [
+   "clang 4x2048x4x4x32 contract 1 at 4 thread(s): before forward 32.25 ms, backward 39.67 ms; after's forward 0.868 (0.839-0.898), backward 1.035 (0.996-1.077), total 0.962 (0.930-0.994); A/A forward 0.986 (0.959-1.014), total 1.007 (0.978-1.037); after's forward resolved; after's total not resolved: meets the A/A control's interval",
+   "clang 4x2048x4x4x32 contract 0 at 4 thread(s): before forward 49.27 ms, backward 43.21 ms; after's forward 0.910 (0.874-0.948), backward 0.990 (0.950-1.033), total 0.947 (0.912-0.984); A/A forward 0.989 (0.945-1.036), total 0.993 (0.959-1.028); after's forward not resolved: meets the A/A control's interval; after's total not resolved: meets the A/A control's interval",
+   "clang 4x2048x4x4x32 contract 1 at 1 thread(s): before forward 126.28 ms, backward 158.72 ms; after's forward 0.831 (0.814-0.847), backward 1.009 (0.983-1.037), total 0.931 (0.912-0.950); A/A forward 0.989 (0.969-1.009), total 0.993 (0.974-1.012); after's forward resolved; after's total resolved",
+   "clang 4x1024x4x4x32 contract 1 at 4 thread(s): before forward 6.75 ms, backward 9.81 ms; after's forward 0.925 (0.886-0.966), backward 0.990 (0.956-1.025), total 0.963 (0.931-0.995); A/A forward 0.968 (0.924-1.015), total 0.980 (0.946-1.015); after's forward not resolved: meets the A/A control's interval; after's total not resolved: meets the A/A control's interval",
+   "clang 4x512x4x4x32 contract 1 at 4 thread(s): before forward 1.55 ms, backward 2.39 ms; after's forward 1.010 (0.981-1.040), backward 1.000 (0.973-1.026), total 1.004 (0.980-1.029); A/A forward 0.983 (0.958-1.009), total 0.987 (0.969-1.006); after's forward not resolved: holds 1; after's total not resolved: holds 1",
+   "clang 2x1024x8x8x64 contract 2 at 4 thread(s): before forward 13.36 ms, backward 14.10 ms; after's forward 1.005 (0.971-1.040), backward 1.024 (0.989-1.061), total 1.015 (0.984-1.046); A/A forward 1.004 (0.977-1.032), total 1.006 (0.983-1.030); after's forward not resolved: holds 1; after's total not resolved: holds 1",
+   "clang 1x2048x8x8x64 contract 2 at 4 thread(s): before forward 25.41 ms, backward 27.52 ms; after's forward 1.020 (0.953-1.093), backward 1.023 (0.971-1.077), total 1.021 (0.970-1.075); A/A forward 1.004 (0.944-1.067), total 1.011 (0.969-1.055); after's forward not resolved: holds 1; after's total not resolved: holds 1",
+   "clang 1x4096x8x8x64 contract 2 at 4 thread(s): before forward 107.30 ms, backward 119.72 ms; after's forward 0.973 (0.935-1.013), backward 1.020 (0.975-1.067), total 0.997 (0.966-1.029); A/A forward 0.960 (0.907-1.015), total 1.004 (0.968-1.042); after's forward not resolved: holds 1; after's total not resolved: holds 1",
+   "clang 4x2048x4x2x32 contract 1 at 4 thread(s): before forward 29.73 ms, backward 39.25 ms; after's forward 0.923 (0.885-0.963), backward 1.032 (0.972-1.096), total 0.988 (0.944-1.033); A/A forward 1.026 (0.991-1.061), total 1.008 (0.969-1.048); after's forward resolved; after's total not resolved: holds 1",
+   "gcc 4x2048x4x4x32 contract 1 at 4 thread(s): before forward 30.87 ms, backward 42.56 ms; after's forward 0.921 (0.879-0.966), backward 1.045 (0.993-1.100), total 0.994 (0.951-1.039); A/A forward 1.024 (0.975-1.076), total 1.029 (0.988-1.072); after's forward resolved; after's total not resolved: holds 1",
+   "gcc 4x1024x4x4x32 contract 1 at 4 thread(s): before forward 6.77 ms, backward 9.94 ms; after's forward 0.924 (0.898-0.951), backward 0.979 (0.953-1.005), total 0.956 (0.935-0.977); A/A forward 1.005 (0.975-1.036), total 0.995 (0.965-1.027); after's forward resolved; after's total not resolved: meets the A/A control's interval"
+  ],
+  "step": [
+   "clang geo-dims T512 kblock+exp+reduce, step: 45.8 -> 45.9 ms, 0.988 (0.957-1.019) of before, A/A 1.005 (0.976-1.034); not resolved: holds 1",
+   "clang geo-dims T1024 kblock+exp+reduce, step: 117.0 -> 111.1 ms, 0.966 (0.936-0.996) of before, A/A 0.985 (0.954-1.017); not resolved: meets the A/A control's interval",
+   "clang geo-dims T2048 kblock+exp+reduce, step: 326.0 -> 319.2 ms, 0.977 (0.959-0.996) of before, A/A 1.001 (0.978-1.025); not resolved: meets the A/A control's interval",
+   "clang geo-dims T2048 v1, step: 456.7 -> 449.9 ms, 0.971 (0.952-0.991) of before, A/A 1.003 (0.986-1.020); not resolved: meets the A/A control's interval",
+   "clang decoder-9.84M kblock+exp+reduce+attn, step: 172.8 -> 175.1 ms, 1.018 (0.994-1.042) of before, A/A 0.981 (0.954-1.009); not resolved: holds 1",
+   "gcc geo-dims T1024 kblock+exp+reduce, step: 116.8 -> 112.7 ms, 0.972 (0.943-1.001) of before, A/A 0.990 (0.958-1.022); not resolved: holds 1",
+   "gcc geo-dims T2048 kblock+exp+reduce, step: 338.0 -> 326.3 ms, 0.970 (0.951-0.990) of before, A/A 1.001 (0.977-1.025); not resolved: meets the A/A control's interval",
+   "confirmation, 64 rounds: clang geo-dims T2048 kblock+exp+reduce, step: 342.0 -> 326.2 ms, 0.949 (0.935-0.963) of before, A/A 0.978 (0.964-0.993); resolved (against the control's arm 0.928 too)",
+   "confirmation, 64 rounds: gcc geo-dims T2048 kblock+exp+reduce, step: 355.0 -> 340.6 ms, 0.951 (0.934-0.967) of before, A/A 0.990 (0.973-1.008); resolved"
+  ],
+  "geo_attention_model": [
+   "T512: B-BEFORE 44.1, B-AFTER 44.1, P-EAGER 82.2, P-IND 60.0 ms an update; after/before 0.997 (0.974-1.021), after/eager 0.538 (0.525-0.552), after/Inductor 0.744 (0.719-0.768), A/A 1.001 (0.980-1.023); trained state equal: True; after/before not resolved: holds 1",
+   "T1024: B-BEFORE 115.6, B-AFTER 113.0, P-EAGER 151.6, P-IND 123.9 ms an update; after/before 0.968 (0.948-0.988), after/eager 0.749 (0.729-0.771), after/Inductor 0.892 (0.853-0.931), A/A 1.001 (0.982-1.021); trained state equal: True; after/before not resolved: meets the A/A control's interval",
+   "T2048: B-BEFORE 335.7, B-AFTER 326.8, P-EAGER 329.3, P-IND 301.9 ms an update; after/before 0.970 (0.955-0.985), after/eager 0.989 (0.966-1.013), after/Inductor 1.084 (1.063-1.104), A/A 0.992 (0.974-1.011); trained state equal: True; after/before not resolved: meets the A/A control's interval",
+   "confirmation, 64 rounds: T2048: B-BEFORE 349.7, B-AFTER 334.7, P-EAGER 338.0, P-IND 309.5 ms an update; after/before 0.951 (0.939-0.963), after/eager 0.990 (0.974-1.006), after/Inductor 1.086 (1.067-1.105), A/A 1.004 (0.994-1.015); trained state equal: True; after/before resolved"
+  ]
+ },
+ "reproduce": [
+  "git show BEFORE:runtime/c/<unit> > BEFORE_SRC/<unit>; git show AFTER:... > AFTER_SRC/<unit>  # bcir_tensor.c/.h, bcir_decoder_train.c/.h",
+  "CF='-std=c11 -O3 -ffp-contract=off -fno-math-errno -pthread'",
+  "CC $CF -I SRC ../../2026-10-22/bwd-long/band_hash.c SRC/bcir_tensor.c -lm; the same for ../../2026-10-22/attn-rate/attn_hash.c and fwd_hash.c  # run each, compare BEFORE's lines with AFTER's (and AFTER's built with -DBCIR_ATT_STRIP_FROM=1)",
+  "CC $CF -fPIC -shared -I SRC SRC/bcir_tensor.c -lm -o libtensor_X.so; clang -O2 ab_strip.c -ldl -lm; ab_strip libtensor_BEFORE.so libtensor_AFTER.so 48 B T H KH D THREADS CONTRACT",
+  "CC $CF -fPIC -shared -I SRC SRC/bcir_tensor.c SRC/bcir_decoder_train.c -lm -o libdec_X.so; clang -O2 -I AFTER_SRC ../../2026-10-22/attn-rate/step_ab.c -ldl -lm; step_ab libdec_BEFORE.so libdec_AFTER.so VOCAB WIDTH HEADS KVHEADS LAYERS FF BATCH TIME CONTRACT THREADS 48",
+  "python3 -I ../../2026-10-22/infer-attn/build_level3.py LEVEL2_WORK X_WORK X_SRC MAIN_SRC --scratch; python3 -I ../att-contig/contig_level3.py X_WORK X_SRC  # for BEFORE and AFTER",
+  "python ../../2026-10-22/bwd-width/train_compare.py BEFORE_WORK AFTER_WORK geo-train.json --rounds 32 --steps 3 --threads 4 --times 512,1024,2048",
+  "the design runs: python -I attn_vs_sdpa.py libtensor.so OUT.json --t T --contract C --rounds 24; python3 -I instrument_att3.py SRC/bcir_tensor.c phase_tensor.c; CC $CF -I SRC att_phase_bench.c phase_tensor.c -lm; att_phase_bench B T H KH D THREADS ROUNDS CONTRACT LEND; python3 -I proto_fwd.py SRC/bcir_tensor.c proto/bcir_tensor.c; CC $CF -fPIC -shared -DPROTO_FWD=N -I proto proto/bcir_tensor.c -lm -o libprotoN.so; ab_proto libproto0.so libprotoN.so ROUNDS B T H KH D THREADS CONTRACT"
+ ]
+}
