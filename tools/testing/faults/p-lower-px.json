@@ -1,0 +1,41 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_launch:_CC",
+    "bcir.tests.test_native_launch:test_the_c_step_issues_the_planned_launches",
+    "bcir.tests.test_native_run_program:test_a_program_trains_the_c_steps_bits",
+    "bcir.tests.test_native_run_pack:test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "PL6 the program check expects the binary32 forward without LOWER",
+      "new": "  c->attn=attention_contract(s)|((s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : 0u);\n",
+      "old": "  c->attn=attention_forward_contract(s,0)|((s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : 0u);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PL7 the pack's lowering states the binary32 forward without LOWER",
+      "new": "  c.attn |= (s->contract & BCIR_DT_CONTRACT_ATTNBF16) ? 256u : 0u;\n",
+      "old": "  c.attn |= (s->contract & BCIR_DT_CONTRACT_ATTNBF16) ? 256u : BCIR_TENSOR_ATTENTION_LOWER;\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PL8 the launch plan states the binary32 forward without LOWER",
+      "new": "            flags = attention_contract\n",
+      "old": "            flags = attention_contract | _ATTENTION_LOWER\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PL9 the trainer gives the bf16 forward LOWER too (its backward reads the future +0.0s)",
+      "new": "      BCIR_TENSOR_ATTENTION_LOWER);\n",
+      "old": "      (s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 0u : BCIR_TENSOR_ATTENTION_LOWER);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    }
+  ]
+}

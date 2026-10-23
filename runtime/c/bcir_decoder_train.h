@@ -148,7 +148,9 @@ BCIR_DT_API int bcir_decoder_make_plan(const bcir_decoder_spec *spec,bcir_decode
  * every other value -- the logits, the verdict -- is the backward's forward's bit for bit.
  * Backward computes mean causal-token CE and every parameter gradient including tied-head
  * accumulation; it consumes the forward cache it recomputes, leaving each layer's attention
- * probabilities replaced by their score adjoint (under BCIR_DT_CONTRACT_ATTNBF16, as they were).
+ * probabilities replaced by their score adjoint (under BCIR_DT_CONTRACT_ATTNBF16, as they were) --
+ * the binary32 attention's at j <= i: its forward runs under BCIR_TENSOR_ATTENTION_LOWER (P-LOWER),
+ * so a row's columns past its diagonal are +0.0 or what the region held before.
  * IDs: batch*time, strictly [0,vocab), rejected before arena mutation.
  * accumulate=1 adds another mean batch gradient. */
 BCIR_DT_API int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t count);

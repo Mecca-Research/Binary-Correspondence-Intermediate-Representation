@@ -695,10 +695,17 @@ static unsigned attention_contract(const bcir_decoder_state *s) {
 /* Under the bf16 attention (BF16-ATTN) its widest instance, packing into the state's workspace,
  * which valid() admitted for its pool; otherwise the binary32 attention under its contract. Each
  * returns whether it ran (an entry that refuses writes nothing). `scratch`: the forward no backward
- * reads (INFER-ATTN: bcir_decoder_forward's), whose probabilities are the entry's scratch. */
+ * reads (INFER-ATTN: bcir_decoder_forward's), whose probabilities are the entry's scratch. A stored
+ * binary32 forward's reader is the binary32 backward, which reads no probability past a row's
+ * diagonal, so it runs under BCIR_TENSOR_ATTENTION_LOWER (P-LOWER: its strips skip the future
+ * columns' fill); the bf16 backward reads the future +0.0s as its tiles' terms. */
+static unsigned attention_forward_contract(const bcir_decoder_state *s,int scratch) {
+  return attention_contract(s)|(scratch ? BCIR_TENSOR_ATTENTION_SCRATCH :
+      (s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 0u : BCIR_TENSOR_ATTENTION_LOWER);
+}
 static int attention_v(bcir_decoder_state *s,int variant,int scratch,size_t b,size_t t,size_t h,
     size_t kh,size_t d,const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
-  unsigned contract=attention_contract(s)|(scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u);
+  unsigned contract=attention_forward_contract(s,scratch);
   if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)
     return bcir_tensor_attention_bf16_scan_pool(s->pool,variant,contract,b,t,h,kh,d,q,k,
         v,p,y,bad,s->workspace,s->workspace_bytes)!=0;
@@ -1534,7 +1541,8 @@ static void px_init(px_ctx *c,bcir_decoder_state *s) {
   c->base[7]=(unsigned char *)s->workspace;
   c->len[7]=s->workspace ? s->workspace_bytes : 0;
   c->v2=(unsigned)swiglu_v2(s); c->gc=(unsigned)gemm_contract(s);
-  c->attn=attention_contract(s)|((s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : 0u);
+  /* a program's forward is a stored one (P-LOWER under binary32), the bf16 entry's flagged 256 */
+  c->attn=attention_forward_contract(s,0)|((s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : 0u);
   c->attn_vjp=(s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : attention_contract(s);
 }
 static int px_fits(uint64_t x) {

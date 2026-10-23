@@ -679,3 +679,83 @@ on four threads (inside the control's interval) and x0.930 on one; not taken -- 
 four threads, and the stores would need a fence and a witness of their own. What remains of the
 forward's gap to the flash kernel: its probabilities written out, half of them the future's zeros,
 each line read before it is written.
+
+## 12. P-LOWER: the probabilities past the diagonal left unwritten (2026-10-23)
+
+FWD-STRIP's strips still zeroed every row's future columns before its scores: half of a head's
+t x t probabilities, 8 MB at T2048, written only to be ignored -- the binary32 backward reads no
+probability past a row's diagonal under any contract. Its register blocks read a few columns past it
+inside their diagonal tiles and discard them under their masks, and the GEMM kernel's masked
+products skip masked terms; the prototype that dropped the fill outright gave every stored forward's
+context and verdict and every backward's dq, dk and dv from p NaN-filled first, 176 cases on each of
+the AVX-512, AVX2 and portable instances under clang and GCC, as the committed tree did
+([measurements/2026-10-23/p-lower/](measurements/2026-10-23/p-lower/README.json), `prototype.json`).
+
+**P-LOWER** makes that a contract. `BCIR_TENSOR_ATTENTION_LOWER` (16) is the caller's word that it
+reads each row's probabilities j <= i alone; under it a stored forward may leave p's future columns
+as p held them. From `BCIR_ATT_STRIP_FROM` the strips skip their fill (the score blocks still store
++0.0 in the future lanes of the 32-wide key blocks they reach); below it the head-at-a-time forward
+writes every column as before. The trainer runs its stored binary32 forward under the bit, and its
+program check, the pack's lowering and the launch plan state it; a scratch forward and the bf16
+entry ignore it -- the bf16 backward reads the future +0.0s as its tiles' terms. y, the verdict and
+every probability j <= i are the same bit for bit: 208 cases of the stored forward under the bit and
+the backward from it byte for byte against the tree before, which ignores the bit, under clang and
+GCC, and with the strips at every context. A training step from arenas whose every float is a NaN
+canary gives the zeroed arenas' loss, gradients and logits bit for bit, and leaves the canary exactly
+where the strips leave it: every other float of the arena the step writes.
+
+The attention, both trees in one process, both lent the pool's need, the bit in both arms' word,
+48 rounds a row (the last row the 64 declared before they ran):
+
+| shape | rounds | forward | backward | total | A/A total |
+|---|---:|---:|---:|---:|---:|
+| B4/T2048, 4 heads of 32, EXP, clang, 4 threads | 48 | 0.817 (0.788-0.848) | 0.980 | 0.915 (0.888-0.942) | 0.979 |
+| B4/T2048, 4 heads of 32, v1, clang, 4 threads | 48 | 0.859 (0.825-0.894) | 0.996 | 0.925 (0.893-0.958) | 0.987 |
+| B4/T2048, 4 heads of 32, EXP, clang, 1 thread | 48 | 0.826 (0.810-0.841) | 1.017 | 0.941 (0.925-0.958) | 1.007 |
+| B4/T1024, 4 heads of 32, EXP, clang, 4 threads | 48 | 0.851 (0.809-0.895) | 1.023 | 0.953 (0.912-0.995) | 1.037 |
+| B4/T512, 4 heads of 32, EXP, clang, 4 threads | 48 | 0.999 (0.965-1.033) | 1.010 | 1.006 (0.976-1.036) | 0.990 |
+| B2/T1024, 8 heads of 64, FUSED, clang, 4 threads | 48 | 0.934 (0.901-0.968) | 0.993 | 0.964 (0.937-0.992) | 1.015 |
+| B1/T2048, 8 heads of 64, FUSED, clang, 4 threads | 48 | 0.922 (0.864-0.982) | 0.975 | 0.948 (0.899-1.000) | 0.976 |
+| B1/T4096, 8 heads of 64, FUSED, clang, 4 threads | 48 | 0.927 (0.890-0.965) | 0.974 | 0.951 (0.916-0.987) | 0.987 |
+| B4/T2048, 4 heads of 32 (2 KV), EXP, clang, 4 threads | 48 | 0.849 (0.822-0.876) | 1.025 | 0.956 (0.920-0.993) | 1.019 |
+| B4/T2048, 4 heads of 32, EXP, gcc, 4 threads | 48 | 0.847 (0.823-0.873) | 1.005 | 0.944 (0.914-0.976) | 1.018 |
+| B4/T1024, 4 heads of 32, EXP, gcc, 4 threads | 48 | 0.878 (0.835-0.924) | 1.048 | 0.982 (0.932-1.034) | 1.012 |
+| B4/T2048, 4 heads of 32, EXP, clang, 4 threads | 64 | 0.844 (0.821-0.869) | 1.019 | 0.949 (0.920-0.979) | 1.010 |
+
+The forward resolves at the GEO shape on four threads and one, under GCC, with GQA and under v1, and
+at T1024; T512 is at parity, below the threshold, and 8 heads of 64 gain less, the scores' products
+outweighing the probabilities' traffic there. The whole attention resolves on one thread and under
+GCC; on four threads under clang its 48-round interval met its control's by 0.001, and the 64 rounds
+declared for it resolved, x0.949. The training step at the study's dimensions resolved at T2048
+under GCC (x0.937) and under clang's v1 contract (x0.953); under clang's kblock+exp+reduce it read
+x0.970 beside a control that drifted to x0.972, and in the 64 declared rounds x0.948 (0.931-0.966).
+
+Against PyTorch's own attention on the same inputs, the attention as the trainer now runs it:
+
+| B4, 4 heads of 32, 4 threads | forward ms | backward ms | total ms | forward / BCIR's | total / BCIR's |
+|---|---:|---:|---:|---:|---:|
+| T2048: BCIR (the probabilities stored, LOWER) | 21.8 | 38.3 | 60.6 | 1 | 1 |
+| T2048: PyTorch flash (none stored, recomputed) | 17.0 | 39.1 | 56.0 | 0.813 (0.758-0.872) | 0.968 (0.903-1.039) |
+| T2048: PyTorch math (the probabilities stored) | 183.6 | 154.4 | 340.7 | 8.085 (7.663-8.530) | 5.495 (5.179-5.830) |
+| T1024: BCIR (the probabilities stored, LOWER) | 5.8 | 9.8 | 15.7 | 1 | 1 |
+| T1024: PyTorch flash (none stored, recomputed) | 5.1 | 11.4 | 16.5 | 0.896 (0.824-0.974) | 1.072 (0.993-1.157) |
+| T1024: PyTorch math (the probabilities stored) | 41.6 | 39.8 | 82.0 | 7.062 (6.526-7.642) | 5.084 (4.697-5.503) |
+
+At T2048 the attention is at parity with PyTorch's flash kernel -- which took x0.82 of BCIR's time
+before FWD-STRIP -- its backward the faster and its forward still the slower: the probabilities
+j <= i written out for the backward to read, where the flash kernel recomputes them. PyTorch's math
+kernel, which stores them as BCIR does, takes five and a half times BCIR's time. The attention model
+on level 3, built with GCC as the study builds it, both builds lent their regions and stating the bit
+on their stored forward:
+
+| T | rounds | before ms | after ms | P-EAGER ms | P-IND ms | after / before | after / P-EAGER | after / P-IND | A/A |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 512 | 32 | 44.5 | 44.6 | 84.1 | 57.7 | 1.006 (0.975-1.037) | 0.546 (0.528-0.566) | 0.765 (0.737-0.795) | 1.025 (0.993-1.057) |
+| 1024 | 32 | 107.8 | 106.7 | 139.0 | 117.0 | 0.981 (0.965-0.998) | 0.761 (0.740-0.783) | 0.899 (0.869-0.929) | 1.003 (0.978-1.030) |
+| 2048 | 32 | 324.5 | 311.4 | 321.1 | 292.5 | 0.960 (0.942-0.977) | 0.964 (0.944-0.983) | 1.063 (1.043-1.084) | 1.002 (0.985-1.020) |
+
+The trained state is the same digest from both builds at every context. At T2048 the update now runs
+in x0.964 of eager PyTorch's time and x1.063 of Inductor's; at T1024 and T512 it is faster than both.
+What remains of the forward's gap to the flash kernel is the stored probabilities themselves; below
+the threshold the head-at-a-time forward still writes its future columns, and the bf16 forward writes
+them for its backward.

@@ -1,0 +1,46 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PL1 a strip forward under LOWER fills its rows' future columns anyway",
+      "new": "    if (!a->lower || 1) for (i=i0;i<i1;i++) if (i+1<t) memset(",
+      "old": "    if (!a->lower) for (i=i0;i<i1;i++) if (i+1<t) memset(",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PL2 the binary32 entry drops the LOWER bit it was given",
+      "new": "      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,0,iv,b,t,nh,\n",
+      "old": "      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,iv,b,t,nh,\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PL3 the trainer calls its stored binary32 forward without LOWER (its plan and its check still state it)",
+      "new": "  unsigned contract=attention_forward_contract(s,scratch)&~BCIR_TENSOR_ATTENTION_LOWER;\n",
+      "old": "  unsigned contract=attention_forward_contract(s,scratch);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PL4 the backward's dot and score adjoint read each row to its tile's end",
+      "new": "          float *pi=ph+(i0+i)*t; size_t end=jt+cols;\n",
+      "old": "          float *pi=ph+(i0+i)*t; size_t end=i0+i+1<jt+cols ? i0+i+1 : jt+cols;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PL5 the probe blind to LOWER",
+      "new": "      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u));\n",
+      "old": "      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u)|(a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

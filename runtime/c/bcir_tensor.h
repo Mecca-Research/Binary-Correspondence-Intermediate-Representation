@@ -137,11 +137,20 @@ BCIR_DT_API void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *p
  * alike). Without SCRATCH, from BCIR_ATT_STRIP_FROM positions (1024 on the measuring host; no
  * value depends on it), a stored forward runs each (batch, query head) the same way in place, a
  * strip of p's own rows at a time, each strip's rows' future columns +0.0 first (FWD-STRIP): p, y
- * and the verdict are the head-at-a-time forward's bit for bit. Other bits are ignored, and the
- * backward ignores EXP and SCRATCH. bad is the forward's verdict as above, or NULL. */
+ * and the verdict are the head-at-a-time forward's bit for bit. BCIR_TENSOR_ATTENTION_LOWER
+ * (P-LOWER) is the caller's word that it reads each row's probabilities j <= i alone, as the
+ * backward below does under every contract (its register blocks read a few columns past a row's
+ * diagonal inside their diagonal tiles and discard them under their masks): a stored forward under
+ * it may leave p's future columns as they were, each +0.0 or what p held before. From
+ * BCIR_ATT_STRIP_FROM its strips skip the fill of their rows' future columns -- the blocks that
+ * reach past a row's diagonal still store +0.0 there -- and below it the head-at-a-time forward
+ * writes every column as without it; y, the verdict and every probability j <= i are as without
+ * it, bit for bit. A scratch forward ignores it. Other bits are ignored, and the backward ignores
+ * EXP, SCRATCH and LOWER. bad is the forward's verdict as above, or NULL. */
 #define BCIR_TENSOR_ATTENTION_EXP 1u
 #define BCIR_TENSOR_ATTENTION_FUSED 2u
 #define BCIR_TENSOR_ATTENTION_SCRATCH 8u
+#define BCIR_TENSOR_ATTENTION_LOWER 16u
 /* The floats of p a forward under BCIR_TENSOR_ATTENTION_SCRATCH writes, at its start: a slot of
  * whole rows a (batch, query head) -- at least 32 rows or all of them, about 64K floats -- the
  * strips running through it. A caller may lend just these; SIZE_MAX where the count overflows. */
@@ -161,7 +170,8 @@ BCIR_DT_API void bcir_tensor_attention_backward_contract_pool(bcir_tensor_pool *
  * own (Y, dQ), a key block's query tiles from its own on (dV, dK), every channel tile (S, dP; their
  * blocks past the diagonal are not computed). A tile's terms past the mask are the +0.0
  * probabilities and score adjoints p holds there. The scaling, the softmax
- * (BCIR_TENSOR_ATTENTION_EXP and BCIR_TENSOR_ATTENTION_SCRATCH as above; other bits ignored), the
+ * (BCIR_TENSOR_ATTENTION_EXP and BCIR_TENSOR_ATTENTION_SCRATCH as above; other bits ignored --
+ * LOWER among them: its backward's tiles read the future +0.0 probabilities as terms), the
  * dot and the score adjoint p_ij (dp_ij - dot_i) scale are v1's in v1's order; the future
  * probabilities and adjoints are +0.0; a KV head's dk and dv take its query heads in order, the
  * first from +0.0; the forward's verdict is as above. `variant` names the

@@ -80,7 +80,7 @@ E_V1, E_FUSED, E_KBLOCK, E_BF16, E_PAIR, E_GROUP, E_BF16_GROUP, E_PROVIDER = ran
 
 # the state's contract bits (bcir_decoder_train.h) and the tensor unit's flags (bcir_tensor.h)
 _FUSED, _EXP, _KBLOCK, _REDUCE, _BF16, _ATTN, _ATTNBF16 = 1, 2, 4, 8, 16, 32, 64
-_ATTENTION_EXP, _ATTENTION_FUSED = 1, 2
+_ATTENTION_EXP, _ATTENTION_FUSED, _ATTENTION_LOWER = 1, 2, 16
 _RMSB_ADD, _RMSB_FIRST = 1, 2
 # loss_backward_with's facts (KNOWN, DEFER, COMMITTED) and the update's chunk rule
 _KNOWN, _DEFER, _COMMITTED = 1, 2, 4
@@ -551,9 +551,10 @@ def step_program(
         if contract & _ATTNBF16:
             emit(_record(ATTN, attention_contract | 1 << 8, dims, (q, kk, vv, p, y, _NONE, _NONE,
                                                                    _NONE, ws)))  # fmt: skip
-        else:
-            emit(_record(ATTN, attention_contract, dims, (q, kk, vv, p, y, _NONE, _NONE, _NONE,
-                                                          ws_attention)))  # fmt: skip
+        else:  # P-LOWER: the binary32 backward reads no probability past a row's diagonal
+            flags = attention_contract | _ATTENTION_LOWER
+            emit(_record(ATTN, flags, dims, (q, kk, vv, p, y, _NONE, _NONE, _NONE,
+                                             ws_attention)))  # fmt: skip
 
     def attention_backward(q, kk, vv, p, dy, dq, dk, dv) -> None:
         dims = (batch, time, h, kh, hd)

@@ -611,7 +611,9 @@ int bcir_decoder_lower_pack(const bcir_decoder_state *s, const uint8_t *pack, si
   c.attn = ((s->contract & BCIR_DT_CONTRACT_EXP) ? BCIR_TENSOR_ATTENTION_EXP : 0u) |
            ((s->contract & BCIR_DT_CONTRACT_ATTN) ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
   c.attn_vjp = (s->contract & BCIR_DT_CONTRACT_ATTNBF16) ? 256u : c.attn;
-  if (s->contract & BCIR_DT_CONTRACT_ATTNBF16) c.attn |= 256u;
+  /* a program's forward is a stored one: the bf16 entry's flagged 256, the binary32 entry's under
+   * P-LOWER (bcir_decoder_train.c's attention_forward_contract) */
+  c.attn |= (s->contract & BCIR_DT_CONTRACT_ATTNBF16) ? 256u : BCIR_TENSOR_ATTENTION_LOWER;
   c.v2 = (s->contract & BCIR_DT_CONTRACT_EXP) != 0;
   c.reduce = (s->contract & BCIR_DT_CONTRACT_REDUCE) != 0;
   c.provider = s->provider.mm != NULL;

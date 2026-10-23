@@ -4414,6 +4414,76 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     each caught by its own check and compiling warning-free under GCC 13, clang 18 and clang 23.
   - Not claimed: the threshold is the measuring host's choice, and no value depends on it; the scratch
     forward (INFER-ATTN's strips already); the bf16 attention; AMX timing; a GPU.
+  P-LOWER (2026-10-23): the stored training forward leaves the probabilities' future columns unwritten,
+    every value read as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §12,
+    [measurements/2026-10-23/p-lower/](research/measurements/2026-10-23/p-lower/README.json)).
+  - The loss it answers: FWD-STRIP left the stored forward at x1.7 of the flash forward's time, its
+    strips zeroing every row's future columns before the scores -- half of the head's t x t
+    probabilities, 8 MB at T2048, written only to be ignored. The binary32 backward reads no
+    probability past a row's diagonal under any contract: its register blocks read a few columns past
+    it inside their diagonal tiles and discard them under their masks, and the GEMM kernel's masked
+    products skip masked terms.
+  - P-LOWER: `BCIR_TENSOR_ATTENTION_LOWER` (16) is the caller's word that it reads each row's
+    probabilities j <= i alone; under it a stored forward may leave p's future columns as p held them.
+    From `BCIR_ATT_STRIP_FROM` the strips skip their fill (the score blocks still store +0.0 in the
+    future lanes of the 32-wide key blocks they reach); below it the head-at-a-time forward writes every
+    column as before; y, the verdict and every probability j <= i are the same bit for bit. The trainer
+    runs its stored binary32 forward under the bit (`attention_forward_contract`); PX-1's program
+    check, the pack's lowering and the Python launch plan state it on the binary32 forward's launch;
+    the trainer's header says what a backward now leaves in each probability region (the score
+    adjoints at j <= i, the rest +0.0 or what the region held). A scratch forward and the bf16 entry
+    ignore the bit: the bf16 backward reads the future +0.0s as its tiles' terms.
+  - Every value read is the same: 208 cases of the stored forward under the bit and the backward from
+    it (y, the verdict, p at j <= i, dq, dk, dv; GQA, head widths 2 to 64, every contract, one thread
+    and four, with and without a workspace, p NaN-filled first) byte for byte against the tree before
+    (which ignores the bit) under clang 18 and GCC 13, and with the tree after built to strip at every
+    context; the paths without the bit -- BWD-LONG's 48 backward cases, ATTN-RATE's 88 forward cases and
+    FWD-STRIP's 288 long-context stored forwards (every float of p) -- byte for byte before and after; the
+    workspace entries the entries without one in ATT-CONTIG's 564 cases; the GEO model's trained state
+    the same digest from both level-3 builds at every context.
+  - Measured on the committed tree against the one before it, the bit in both arms' word, both lent the
+    pool's need, 48 rounds a row: the attention's forward at B4/T2048 x0.817 (0.788-0.848) on four
+    threads, x0.826 on one, GCC x0.847, GQA (4 heads, 2 KV heads) x0.849, v1 x0.859; at T1024 x0.851
+    under clang and x0.878 under GCC; 8 heads of 64 x0.934 at T1024 and x0.92-x0.93 at T2048 and T4096
+    (meeting their controls); T512 at parity, below the threshold. The whole attention x0.941 on one
+    thread and x0.944 under GCC; on four threads under clang x0.915, its interval meeting its control's
+    by 0.001, and in the 64 rounds declared before they ran x0.949 (0.920-0.979). The training step at
+    the GEO dimensions at T2048 x0.937 under GCC and x0.953 under clang's v1 contract; under clang's
+    kblock+exp+reduce x0.970 beside a control that drifted to x0.972, and in the declared 64 rounds
+    x0.948 (0.931-0.966); T512, T1024 and the 9.84M decoder (T128) at parity. The GEO study's attention
+    model on level 3, built with GCC as the study builds it, both builds lent their regions and stating
+    the bit on their stored forward: x0.960 (0.942-0.977) at T2048 in 32 rounds -- now x0.964
+    (0.944-0.983) of eager PyTorch's time and x1.063 of Inductor's; T1024 x0.981 (meeting its control),
+    T512 at parity.
+  - Against PyTorch's scaled_dot_product_attention on the same inputs (B4, 4 heads of 32, four threads,
+    24 rounds), the attention as the trainer runs it: at T2048 BCIR 60.6 ms against the flash kernel's
+    56.0, flash x0.968 (0.903-1.039) of BCIR's -- parity, from x0.82 before FWD-STRIP -- BCIR's backward
+    the faster (38.3 ms against 39.2) and its forward the slower, flash's x0.813 (0.758-0.872) of BCIR's
+    (17.0 ms against 21.8); at T1024 parity too (flash x1.072, 0.993-1.157); PyTorch's math kernel,
+    which stores the probabilities as BCIR does, x5.5 of BCIR's time.
+  - The prototype first: the strip forward's fill removed, its stored forwards' y and verdict and the
+    backward's dq, dk and dv from p NaN-filled before the forward, 176 cases a build on the AVX-512, AVX2
+    and portable instances under clang and GCC, each the committed tree's; timed at x0.833 of the
+    forward and x0.938 of the whole attention at B4/T2048 in 32 rounds.
+  - What remains: the stored forward at x1.23 of the flash forward's time -- the probabilities j <= i
+    written out for the backward to read, where the flash kernel recomputes them; the head-at-a-time
+    forward below the threshold, which still writes its future columns; the bf16 forward, whose backward
+    reads them; 8 heads of 64.
+  - Witnesses: the harness's FWD-STRIP test runs each forward once more under the bit, p filled with a
+    NaN canary -- y, the verdict and every probability j <= i the reference loops', every future column
+    +0.0 or the canary, the canary still in the last column of every row whose strip ends before it, and
+    the backward from the canaries' probabilities the reference's; `attention_lower` holds the same on
+    the reference shapes under every contract, finite and not, serially and on a pool, with and without
+    a workspace (the harness's -long and -contig builds strip at every context: 4,187,904 canaries kept
+    there); `trainer_lower` trains steps from activations, scratch and workspace whose every float is a
+    NaN canary and gets the zeroed arenas' loss, gradients and logits bit for bit, the canary left
+    exactly where a binary32 forward's strips leave it -- every other float of the arena the step
+    writes. The tensor unit's probe records the bit; the trainer's probe checks expect it on every
+    stored binary32 forward. `p-lower.json` PL1-PL5 and `p-lower-px.json` PL6-PL9, each caught by its
+    own check and compiling warning-free under GCC 13, clang 18 and clang 23; FS1, FS8, IA12, IA15, IA16
+    and PI5 re-anchored on the lines the slice rewrote and caught again.
+  - Not claimed: below the threshold, where the head-at-a-time forward writes every column; the bf16
+    attention; AMX timing; a GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

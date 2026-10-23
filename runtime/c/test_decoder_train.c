@@ -2208,7 +2208,8 @@ static void trainer_bf16(void) {
  * contract and with none, its state its own and one at every thread count (pool_identity), and --
  * where the build has the tensor unit's probe -- every attention job of a run, forward and
  * backward, running the fused products under the bit and v1's without it: the contract each job
- * computed with, so a wrong argument at any of the trainer's calls is seen. */
+ * computed with, so a wrong argument at any of the trainer's calls is seen (the stored forwards
+ * under BCIR_TENSOR_ATTENTION_LOWER too: P-LOWER). */
 #ifdef BCIR_DT_ATTENTION_PROBE
 unsigned bcir_tensor_attention_probe(int backward);
 #endif
@@ -2239,7 +2240,7 @@ static void trainer_attn(void) {
 #ifdef BCIR_DT_ATTENTION_PROBE
     {
       unsigned fused=with ? BCIR_TENSOR_ATTENTION_FUSED : 0u;
-      assert(bcir_tensor_attention_probe(0)==(BCIR_TENSOR_ATTENTION_EXP|fused));
+      assert(bcir_tensor_attention_probe(0)==(BCIR_TENSOR_ATTENTION_EXP|fused|BCIR_TENSOR_ATTENTION_LOWER));
       assert(bcir_tensor_attention_probe(1)==fused);
     }
 #endif
@@ -3249,7 +3250,13 @@ static void attention_contig(void) {
  * with an infinite key, serially and on a pool of four, without a workspace and lent the pool's need
  * (ATT-CONTIG's copies); and, where the build has the unit's probe, the path the values cannot show:
  * every head of a stored forward at or past the threshold ran its strips, below it none, and the
- * scratch forward none. */
+ * scratch forward none. P-LOWER: each forward once more under BCIR_TENSOR_ATTENTION_LOWER, p filled
+ * with a NaN canary first -- y, the verdict and every probability j <= i the same, every future
+ * column +0.0 or the canary, and past the threshold the canary still in the last column of every row
+ * whose strip ends before it (a strip's rows: bcir_tensor_attention_scratch_floats' slot), so the
+ * fill did not run -- and, on the pool with the workspace lent, the backward from those probabilities,
+ * canaries and all, the backward's from the reference's, bit for bit (no column past a row's diagonal
+ * is read). Below the threshold one arm: LOWER leaves nothing there, the head writing every column. */
 #ifdef BCIR_DT_ATTENTION_PROBE
 size_t bcir_tensor_attention_strips_probe(void);
 #endif
@@ -3263,63 +3270,107 @@ static void attention_strips(void) {
   static const unsigned contracts[]={0u,BCIR_TENSOR_ATTENTION_EXP,BCIR_TENSOR_ATTENTION_FUSED,
       BCIR_TENSOR_ATTENTION_EXP|BCIR_TENSOR_ATTENTION_FUSED};
   static _Alignas(max_align_t) unsigned char pool_memory[16384];
+  const uint32_t canary=0x7fc0beefu;
   bcir_tensor_pool *pools[2]={NULL,NULL};
-  size_t si,c,i,pi,cases=0,striped=0;
+  size_t si,c,i,pi,hr,row,col,cases=0,striped=0,lowered=0,kept=0,backs=0;
   {
     size_t need=bcir_tensor_pool_size(4);
     if (need && need<=sizeof(pool_memory)) pools[1]=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),4);
   }
   for (si=0;si<3;si++) {
     size_t t=ts[si],nq=b*t*nh*d,nkv=b*t*nk*d,np=b*nh*t*t,most=bcir_tensor_attention_workspace(b,t,nh,nk,d);
-    float *q=malloc(nq*sizeof(float)),*k=malloc(nkv*sizeof(float)),*v=malloc(nkv*sizeof(float));
-    float *p0=malloc(np*sizeof(float)),*p1=malloc(np*sizeof(float)),*y0=malloc(nq*sizeof(float)),
-        *y1=malloc(nq*sizeof(float));
-    unsigned char *raw=malloc(most+128),*ws;
+    size_t rows=bcir_tensor_attention_scratch_floats(1,t,1)/t,last=(t-1)/rows*rows;  /* the last strip's first row */
+    float *q,*k,*v,*dy,*p0,*p1,*pr,*y0,*y1,*dq[2],*dk[2],*dv[2];
+    unsigned char *raw,*ws;
     unsigned inf;
-    if (si && ts[si]==ts[si-1]) { free(q); free(k); free(v); free(p0); free(p1); free(y0); free(y1); free(raw); continue; }
-    if (DT_TSAN && t>=1024) { free(q); free(k); free(v); free(p0); free(p1); free(y0); free(y1); free(raw); continue; }
-    assert(q && k && v && p0 && p1 && y0 && y1 && raw);
+    if (si && ts[si]==ts[si-1]) continue;
+    if (DT_TSAN && t>=1024) continue;
+    q=malloc(nq*sizeof(float)); k=malloc(nkv*sizeof(float)); v=malloc(nkv*sizeof(float));
+    dy=malloc(nq*sizeof(float)); p0=malloc(np*sizeof(float)); p1=malloc(np*sizeof(float));
+    pr=malloc(np*sizeof(float)); y0=malloc(nq*sizeof(float)); y1=malloc(nq*sizeof(float));
+    raw=malloc(most+128);
+    assert(q && k && v && dy && p0 && p1 && pr && y0 && y1 && raw);
+    for (i=0;i<2;i++) {
+      dq[i]=malloc(nq*sizeof(float)); dk[i]=malloc(nkv*sizeof(float)); dv[i]=malloc(nkv*sizeof(float));
+      assert(dq[i] && dk[i] && dv[i]);
+    }
     ws=raw+(64-(uintptr_t)raw%64)%64;
     for (c=0;c<sizeof(contracts)/sizeof(contracts[0]);c++) for (inf=0;inf<2;inf++) {
-      unsigned ct=contracts[c]; int ex=(ct&BCIR_TENSOR_ATTENTION_EXP)!=0,lend;
+      unsigned ct=contracts[c]; int ex=(ct&BCIR_TENSOR_ATTENTION_EXP)!=0,lend,low;
       if (inf && c!=0 && c!=3) continue;
-      for (i=0;i<nq;i++) q[i]=sinf((float)i*0.37f)*1.7f;
+      for (i=0;i<nq;i++) { q[i]=sinf((float)i*0.37f)*1.7f; dy[i]=cosf((float)i*0.11f)*0.5f; }
       for (i=0;i<nkv;i++) { k[i]=cosf((float)i*0.53f)*1.3f; v[i]=sinf((float)i*0.29f)-0.1f; }
       if (inf) k[(t/2)*nk*d]=INFINITY;
       if (ct&BCIR_TENSOR_ATTENTION_FUSED) ref_attention_fused(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
       else ref_attention(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
-      for (pi=0;pi<2;pi++) for (lend=0;lend<2;lend++) {
+      /* the backward from the reference's probabilities (every value the same at every thread count
+       * and with a workspace or none: dispatch_entries, attention_contig) */
+      memcpy(pr,p0,np*sizeof(float));
+      memset(dq[0],0xff,nq*sizeof(float)); memset(dk[0],0xff,nkv*sizeof(float)); memset(dv[0],0xff,nkv*sizeof(float));
+      assert(bcir_tensor_attention_backward_contract_variant_pool(NULL,0,ct,b,t,nh,nk,d,q,k,v,pr,dy,dq[0],dk[0],dv[0]));
+      for (pi=0;pi<2;pi++) for (lend=0;lend<2;lend++) for (low=0;low<2;low++) {
         size_t own=bcir_tensor_attention_pool_workspace(b,t,nh,nk,d,bcir_tensor_pool_threads(pools[pi]));
+        unsigned cl=ct|(low ? BCIR_TENSOR_ATTENTION_LOWER : 0u);
         int bad=0;
         if (pi && !pools[pi]) continue;
-        memset(p1,0xff,np*sizeof(float)); memset(y1,0xff,nq*sizeof(float));
+        if (low && t<from && (pi || lend)) continue;  /* below the threshold LOWER writes every column: one arm */
+        if (low) for (i=0;i<np;i++) memcpy(p1+i,&canary,sizeof canary);
+        else memset(p1,0xff,np*sizeof(float));
+        memset(y1,0xff,nq*sizeof(float));
 #ifdef BCIR_DT_ATTENTION_PROBE
         (void)bcir_tensor_attention_strips_probe();
 #endif
-        if (lend) assert(bcir_tensor_attention_contract_variant_scan_ws_pool(pools[pi],0,ct,b,t,nh,nk,d,q,k,v,p1,y1,&bad,
+        if (lend) assert(bcir_tensor_attention_contract_variant_scan_ws_pool(pools[pi],0,cl,b,t,nh,nk,d,q,k,v,p1,y1,&bad,
             ws,own));
-        else assert(bcir_tensor_attention_contract_variant_scan_pool(pools[pi],0,ct,b,t,nh,nk,d,q,k,v,p1,y1,&bad));
-        assert(!memcmp(p0,p1,np*sizeof(float)) && !memcmp(y0,y1,nq*sizeof(float)));
-        for (i=0;i<np;i++) if ((i%t)>(i/t)%t) assert(p1[i]==0.0f && !signbit(p1[i]));
+        else assert(bcir_tensor_attention_contract_variant_scan_pool(pools[pi],0,cl,b,t,nh,nk,d,q,k,v,p1,y1,&bad));
+        assert(!memcmp(y0,y1,nq*sizeof(float)));
+        for (hr=0;hr<b*nh;hr++) for (row=0;row<t;row++) {
+          const float *r0=p0+(hr*t+row)*t,*r1=p1+(hr*t+row)*t; uint32_t bits;
+          assert(!memcmp(r0,r1,(row+1)*sizeof(float)));  /* j <= i */
+          for (col=row+1;col<t;col++) {
+            memcpy(&bits,r1+col,sizeof bits);
+            assert(bits==0u || (low && bits==canary));  /* +0.0, or under LOWER as p held it */
+          }
+          /* at or past the threshold, a row whose strip ends before the last column never writes it */
+          if (low && t>=from && row<last) { memcpy(&bits,r1+t-1,sizeof bits); assert(bits==canary); kept++; }
+        }
         assert(bad==!(all_finite(y1,nq) && all_finite(k,nkv)) && bad==(int)inf);
 #ifdef BCIR_DT_ATTENTION_PROBE
         assert(bcir_tensor_attention_strips_probe()==(t>=from ? b*nh : 0));
-        /* the scratch forward runs its own strips, never the stored forward's */
-        bad=0;
-        assert(bcir_tensor_attention_contract_variant_scan_pool(pools[pi],0,ct|BCIR_TENSOR_ATTENTION_SCRATCH,b,t,nh,nk,d,
-            q,k,v,p1,y1,&bad));
-        assert(bcir_tensor_attention_strips_probe()==0 && !memcmp(y0,y1,nq*sizeof(float)));
+        if (!low) {  /* the scratch forward runs its own strips, never the stored forward's */
+          bad=0;
+          assert(bcir_tensor_attention_contract_variant_scan_pool(pools[pi],0,ct|BCIR_TENSOR_ATTENTION_SCRATCH,b,t,nh,nk,
+              d,q,k,v,p1,y1,&bad));
+          assert(bcir_tensor_attention_strips_probe()==0 && !memcmp(y0,y1,nq*sizeof(float)));
+        }
 #endif
+        /* the backward from the canaries' probabilities, LOWER in its word too: on the pool, lent (the
+         * trainer's own path past the threshold; attention_lower and trainer_lower take the rest) */
+        if (low && lend && pi==(pools[1] ? 1u : 0u)) {
+          unsigned cb=ct|BCIR_TENSOR_ATTENTION_LOWER;
+          memset(dq[1],0xff,nq*sizeof(float)); memset(dk[1],0xff,nkv*sizeof(float)); memset(dv[1],0xff,nkv*sizeof(float));
+          if (lend) assert(bcir_tensor_attention_backward_contract_variant_ws_pool(pools[pi],0,cb,b,t,nh,nk,d,q,k,v,p1,
+              dy,dq[1],dk[1],dv[1],ws,own));
+          else assert(bcir_tensor_attention_backward_contract_variant_pool(pools[pi],0,cb,b,t,nh,nk,d,q,k,v,p1,dy,dq[1],
+              dk[1],dv[1]));
+          assert(!memcmp(dq[0],dq[1],nq*sizeof(float)) && !memcmp(dk[0],dk[1],nkv*sizeof(float)) &&
+              !memcmp(dv[0],dv[1],nkv*sizeof(float)));
+          backs++;
+        }
         cases++;
         if (t>=from) striped++;
+        if (low) lowered++;
       }
     }
-    free(q); free(k); free(v); free(p0); free(p1); free(y0); free(y1); free(raw);
+    free(q); free(k); free(v); free(dy); free(p0); free(p1); free(pr); free(y0); free(y1); free(raw);
+    for (i=0;i<2;i++) { free(dq[i]); free(dk[i]); free(dv[i]); }
   }
   if (pools[1]) bcir_tensor_pool_stop(pools[1]);
-  assert(cases>0 && striped>0);
+  assert(cases>0 && striped>0 && lowered>0 && backs>0);
+  if (from>=1024) assert(kept>0);  /* the measuring host's threshold: every context past it strips */
   printf("  PASS FWD-STRIP: %zu stored forwards bit for bit the reference loops' at the threshold's context %zu and "
-      "either side of it, %zu of them a strip of rows at a time\n",cases,from,striped);
+      "either side of it, %zu of them a strip of rows at a time; %zu under LOWER (P-LOWER: %zu last columns as p "
+      "held them, %zu backwards from them the reference's)\n",cases,from,striped,lowered,kept,backs);
 }
 static void attention_scratch(void) {
   static const size_t shapes[][5]={{1,1,1,1,2},{1,5,2,1,3},{2,33,4,2,17},{1,64,2,2,8},
@@ -3452,7 +3503,9 @@ static void trainer_infer(void) {
         assert(bcir_tensor_attention_probe(0)==(want|BCIR_TENSOR_ATTENTION_SCRATCH));
         memcpy(logits,st.activations+st.plan.activations-n*16,n*16*sizeof(float));
         assert(bcir_decoder_loss_backward(&st,ids,targets,n,0,&loss)==BCIR_DT_OK);
-        assert(bcir_tensor_attention_probe(0)==want);
+        /* the backward's forward a stored one: under P-LOWER where its attention is binary32 */
+        assert(bcir_tensor_attention_probe(0)==(want|((st.contract&BCIR_DT_CONTRACT_ATTNBF16) ? 0u :
+            BCIR_TENSOR_ATTENTION_LOWER)));
       }
 #else
       memcpy(logits,st.activations+st.plan.activations-n*16,n*16*sizeof(float));
@@ -3469,6 +3522,176 @@ static void trainer_infer(void) {
   printf("  PASS the forward without its probabilities (INFER-ATTN): %zu forwards, their logits the "
       "backward's forward's bit for bit\n",runs);
 }
+/* P-LOWER: the stored forward under BCIR_TENSOR_ATTENTION_LOWER on attention_reference's shapes, under
+ * v1's and the fused contract's products with libm's exponential and BCIR's, finite and with an
+ * infinite value and a NaN adjoint, serially and on a pool of four, without a workspace and lent the
+ * pool's need, p filled with a NaN canary first: y, the verdict and every probability j <= i the
+ * reference loops' bit for bit, every future column +0.0 or the canary; then the backward from those
+ * probabilities, canaries and all (LOWER in its word or not), dq, dk and dv the reference backward's
+ * from the reference's probabilities, bit for bit -- no column past a row's diagonal is read. Where
+ * the build runs these contexts' forwards a strip at a time (BCIR_ATT_STRIP_FROM at most the longest,
+ * 330: the harness's -long and -contig builds) the canary is kept in some column; below it in none,
+ * the head-at-a-time forward writing every column. */
+static void attention_lower(void) {
+#ifdef BCIR_ATT_STRIP_FROM
+  const size_t from=BCIR_ATT_STRIP_FROM;
+#else
+  const size_t from=1024;
+#endif
+  static float q[2*70*8*48],k[2*70*4*130],v[2*70*4*130],dy[2*70*8*48],p0[2*330*330],p1[2*330*330],
+      y0[2*70*8*48],y1[2*70*8*48],dq0[2*70*8*48],dq1[2*70*8*48],dk0[2*70*4*130],dk1[2*70*4*130],
+      dv0[2*70*4*130],dv1[2*70*4*130];
+  static const size_t shapes[][5]={{1,1,1,1,2},{1,2,1,1,1},{2,5,4,2,6},{1,37,2,1,48},
+      {2,70,8,4,48},{1,33,3,1,65},{1,40,2,2,130},{2,64,4,1,24},{1,330,2,1,8},
+      {1,7,1,1,3},{1,8,1,1,16},{1,9,2,1,17},{1,31,1,1,15},{1,32,2,2,47},{1,33,2,1,49},
+      {1,40,1,1,1},{1,20,1,1,32},{1,9,2,1,33},{1,11,2,2,81}};
+  static const unsigned contracts[]={0u,BCIR_TENSOR_ATTENTION_EXP,BCIR_TENSOR_ATTENTION_FUSED,
+      BCIR_TENSOR_ATTENTION_EXP|BCIR_TENSOR_ATTENTION_FUSED};
+  static _Alignas(max_align_t) unsigned char pool_memory[16384];
+  const uint32_t canary=0x7fc0beefu;
+  bcir_tensor_pool *pools[2]={NULL,NULL};
+  size_t s,c,i,pi,hr,row,col,cases=0,kept=0,longest=0; unsigned pass;
+  {
+    size_t need=bcir_tensor_pool_size(4);
+    if (need && need<=sizeof(pool_memory)) pools[1]=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),4);
+  }
+  for (pass=0;pass<2;pass++) for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) for (c=0;c<4;c++) {
+    size_t b=shapes[s][0],t=shapes[s][1],nh=shapes[s][2],nk=shapes[s][3],d=shapes[s][4];
+    size_t nq=b*t*nh*d,nkv=b*t*nk*d,np=b*nh*t*t,most=bcir_tensor_attention_workspace(b,t,nh,nk,d);
+    unsigned ct=contracts[c]; int ex=(ct&BCIR_TENSOR_ATTENTION_EXP)!=0,lend;
+    unsigned char *raw=malloc(most+128),*ws;
+    assert(raw && nq<=sizeof(q)/sizeof(q[0]) && nkv<=sizeof(k)/sizeof(k[0]) && np<=sizeof(p0)/sizeof(p0[0]));
+    ws=raw+(64-(uintptr_t)raw%64)%64;
+    if (t>longest) longest=t;
+    for (i=0;i<nq;i++) { q[i]=sinf((float)i*0.37f)*1.7f; dy[i]=cosf((float)i*0.11f)*0.5f; }
+    for (i=0;i<nkv;i++) { k[i]=cosf((float)i*0.53f)*1.3f; v[i]=sinf((float)i*0.29f)-0.1f; }
+    if (pass && t>3) { v[(t-1)*nk*d]=INFINITY; dy[d]=NAN; }
+    if (ct&BCIR_TENSOR_ATTENTION_FUSED) {
+      ref_attention_fused(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
+      ref_attention_backward_fused(b,t,nh,nk,d,q,k,v,p0,dy,dq0,dk0,dv0);
+    } else {
+      ref_attention(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
+      ref_attention_backward(b,t,nh,nk,d,q,k,v,p0,dy,dq0,dk0,dv0);
+    }
+    for (pi=0;pi<2;pi++) for (lend=0;lend<2;lend++) {
+      size_t own=bcir_tensor_attention_pool_workspace(b,t,nh,nk,d,bcir_tensor_pool_threads(pools[pi]));
+      unsigned cl=ct|BCIR_TENSOR_ATTENTION_LOWER,cb=ct|(lend ? BCIR_TENSOR_ATTENTION_LOWER : 0u);
+      int bad=0;
+      if (pi && !pools[pi]) continue;
+      for (i=0;i<np;i++) memcpy(p1+i,&canary,sizeof canary);
+      memset(y1,0xff,nq*sizeof(float));
+      if (lend) assert(bcir_tensor_attention_contract_variant_scan_ws_pool(pools[pi],0,cl,b,t,nh,nk,d,q,k,v,p1,y1,&bad,
+          ws,own));
+      else assert(bcir_tensor_attention_contract_variant_scan_pool(pools[pi],0,cl,b,t,nh,nk,d,q,k,v,p1,y1,&bad));
+      assert(!memcmp(y0,y1,nq*sizeof(float)) && bad==!(all_finite(y1,nq) && all_finite(k,nkv)));
+      for (hr=0;hr<b*nh;hr++) for (row=0;row<t;row++) {
+        const float *r0=p0+(hr*t+row)*t,*r1=p1+(hr*t+row)*t;
+        assert(!memcmp(r0,r1,(row+1)*sizeof(float)));  /* j <= i */
+        for (col=row+1;col<t;col++) {
+          uint32_t bits;
+          memcpy(&bits,r1+col,sizeof bits);
+          assert(bits==0u || bits==canary);
+          kept+=bits==canary;
+        }
+      }
+      memset(dq1,0xff,nq*sizeof(float)); memset(dk1,0xff,nkv*sizeof(float)); memset(dv1,0xff,nkv*sizeof(float));
+      if (lend) assert(bcir_tensor_attention_backward_contract_variant_ws_pool(pools[pi],0,cb,b,t,nh,nk,d,q,k,v,p1,dy,
+          dq1,dk1,dv1,ws,own));
+      else assert(bcir_tensor_attention_backward_contract_variant_pool(pools[pi],0,cb,b,t,nh,nk,d,q,k,v,p1,dy,dq1,dk1,
+          dv1));
+      assert(!memcmp(dq0,dq1,nq*sizeof(float)) && !memcmp(dk0,dk1,nkv*sizeof(float)) &&
+          !memcmp(dv0,dv1,nkv*sizeof(float)));
+      cases++;
+    }
+    free(raw);
+  }
+  if (pools[1]) bcir_tensor_pool_stop(pools[1]);
+  assert(cases>0 && (from<=longest ? kept>0 : kept==0));
+  printf("  PASS P-LOWER: %zu stored forwards under LOWER the reference loops' bit for bit (y, the verdict, every "
+      "probability j <= i), every future column +0.0 or as p held it (%zu kept), the backward from them the "
+      "reference's\n",cases,kept);
+}
+/* P-LOWER: a training step reads nothing of its arenas it did not write -- the probabilities past a
+ * row's diagonal among them, which its stored binary32 forward leaves as the region held them from
+ * BCIR_ATT_STRIP_FROM: from activations, scratch and workspace whose every float is a NaN canary
+ * first, the step's loss, gradients and logits are the step's from zeroed arenas bit for bit, under
+ * the v1, EXP and ATTN-FMA attention, a GEMM contract and the bf16 attention, at one and four threads,
+ * over a context of 300 rows (two strips a head in the harness's -long builds, which strip at every
+ * context) and of 1031 (past the threshold). And the canary is kept in the activations exactly where a
+ * binary32 forward ran a strip at a time: there its strips leave the future columns; every other float
+ * of the arena the step writes. */
+static void trainer_lower(void) {
+#ifdef BCIR_ATT_STRIP_FROM
+  const size_t from=BCIR_ATT_STRIP_FROM;
+#else
+  const size_t from=1024;
+#endif
+  static const uint32_t contracts[]={0,BCIR_DT_CONTRACT_EXP,BCIR_DT_CONTRACT_ATTN,
+      BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_ATTN,
+      BCIR_DT_CONTRACT_KBLOCK|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE,
+      BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_ATTNBF16};
+  static const uint32_t times[]={300,1031};
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  const uint32_t canary=0x7fc0beefu;
+  size_t c,ti,i,runs=0,lowered=0; unsigned threads;
+  for (ti=0;ti<sizeof(times)/sizeof(times[0]);ti++) for (c=0;c<sizeof(contracts)/sizeof(contracts[0]);c++)
+    for (threads=1;threads<=4;threads+=3) {
+      bcir_decoder_spec spec={16,8,2,1,1,16,1,4,1,10000.0,1e-6};
+      bcir_decoder_state st[2]; bcir_tensor_pool *pool=NULL; size_t n,need,arm,canaries=0;
+      uint32_t *ids,*targets; double loss[2]; unsigned char *raw[2];
+      int binary32=!(contracts[c]&BCIR_DT_CONTRACT_ATTNBF16);
+      if (DT_TSAN && times[ti]>=1024) continue;
+      if (threads>1) {
+        if (!bcir_tensor_pool_size(threads) || bcir_tensor_pool_size(threads)>sizeof(pool_memory)) continue;
+        pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads); assert(pool);
+      }
+      spec.time=times[ti]; n=spec.batch*spec.time;
+      ids=malloc(n*sizeof(uint32_t)); targets=malloc(n*sizeof(uint32_t)); assert(ids && targets);
+      stream(ids,targets,n);
+      for (arm=0;arm<2;arm++) {  /* arm 0 zeroed, arm 1 the canary in every float of its arenas */
+        bcir_decoder_state *x=&st[arm]; size_t off=128;
+        memset(x,0,sizeof *x);
+        assert(bcir_decoder_make_plan(&spec,&x->plan)==0);
+        x->weights=calloc(x->plan.parameters,sizeof(float)); x->gradients=calloc(x->plan.parameters,sizeof(float));
+        x->moment1=calloc(x->plan.parameters,sizeof(float)); x->moment2=calloc(x->plan.parameters,sizeof(float));
+        x->activations=calloc(x->plan.activations,sizeof(float)); x->scratch=calloc(x->plan.scratch,sizeof(float));
+        assert(x->weights && x->gradients && x->moment1 && x->moment2 && x->activations && x->scratch);
+        x->weight_capacity=x->gradient_capacity=x->moment1_capacity=x->moment2_capacity=x->plan.parameters;
+        x->activation_capacity=x->plan.activations; x->scratch_capacity=x->plan.scratch;
+        x->beta1_power=x->beta2_power=1.0; x->pool=pool; x->contract=contracts[c];
+        for (i=0;i<x->plan.parameters;i++) x->weights[i]=0.1f*sinf((float)(i+1)*0.37f);
+        for (i=0;i<8;i++) x->weights[off+i]=1.0f;  /* the layer's two norms and the final one */
+        off+=8+64+32+32+64; for (i=0;i<8;i++) x->weights[off+i]=1.0f;
+        off+=8+3*128; for (i=0;i<8;i++) x->weights[off+i]=1.0f;
+        need=bcir_decoder_workspace_bytes(&x->plan,x->contract);
+        raw[arm]=calloc(need+64,1); assert(raw[arm]);
+        x->workspace=need ? raw[arm]+(64-(uintptr_t)raw[arm]%64)%64 : NULL; x->workspace_bytes=need;
+        if (arm) {
+          for (i=0;i<x->plan.activations;i++) memcpy(x->activations+i,&canary,sizeof canary);
+          for (i=0;i<x->plan.scratch;i++) memcpy(x->scratch+i,&canary,sizeof canary);
+          for (i=0;i+4<=need;i+=4) memcpy((unsigned char *)x->workspace+i,&canary,sizeof canary);
+        }
+        assert(bcir_decoder_loss_backward(x,ids,targets,n,0,&loss[arm])==BCIR_DT_OK);
+      }
+      assert(!memcmp(&loss[0],&loss[1],sizeof loss[0]));
+      assert(!memcmp(st[0].gradients,st[1].gradients,st[0].plan.parameters*sizeof(float)));
+      assert(!memcmp(st[0].activations+st[0].plan.activations-n*16,st[1].activations+st[1].plan.activations-n*16,
+          n*16*sizeof(float)));
+      for (i=0;i<st[1].plan.activations;i++) { uint32_t bits; memcpy(&bits,st[1].activations+i,4); canaries+=bits==canary; }
+      assert((canaries>0)==(binary32 && spec.time>=from));
+      lowered+=canaries>0;
+      runs++;
+      for (arm=0;arm<2;arm++) {
+        free(raw[arm]); free(st[arm].weights); free(st[arm].gradients); free(st[arm].moment1); free(st[arm].moment2);
+        free(st[arm].activations); free(st[arm].scratch);
+      }
+      free(ids); free(targets);
+      if (pool) bcir_tensor_pool_stop(pool);
+    }
+  assert(runs>0 && (DT_TSAN || lowered>0));
+  printf("  PASS a training step from NaN-filled arenas (P-LOWER): %zu steps the zeroed arenas' bit for bit, %zu of "
+      "them leaving the canary where their stored forward's strips left p's future columns\n",runs,lowered);
+}
 int main(void) {
   gemm_contract(); attention_reference(); attention_fused_reference(); adamw_reference();
   finite_differences(); refusals();
@@ -3477,7 +3700,8 @@ int main(void) {
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();
   trainer_workspace_plan(); trainer_recompute(); pool_caps(); dispatch_entries();
-  attention_scratch(); attention_contig(); attention_strips(); trainer_infer();
+  attention_scratch(); attention_contig(); attention_strips(); attention_lower(); trainer_infer();
+  trainer_lower();
 #ifdef BCIR_DT_DIVISION_PROBE
   division_probe();
 #endif

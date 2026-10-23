@@ -2522,6 +2522,7 @@ typedef struct att_job {
   int fused;  /* ATTN-FMA: the products' every multiply-add one fmaf */
   int scratch;  /* INFER-ATTN: the forward's probabilities are scratch, a strip of rows at a time */
   int strips;  /* FWD-STRIP: a stored forward's heads a strip of rows at a time, in place */
+  int lower;  /* P-LOWER: its strips leave their rows' future columns to the blocks that reach them */
   unsigned char *bad;  /* the forward's verdict bytes, one a task (NDT-SCAN-W), or NULL */
   /* ATT-CONTIG: the regions a task copies its head's rows into (NULL: the rows in place), a
    * region's bytes, a region a worker or a task; acc: a sub-job's dk and dv add its head's terms to
@@ -3099,7 +3100,12 @@ static void att_head_scratch(const att_job *a, size_t r, size_t h) {
  * through one phase after another: from BCIR_ATT_STRIP_FROM positions (1024, the measuring host's
  * choice; no value depends on it). A strip's rows' future columns are zeroed first -- the +0.0
  * att_head's fill and its blocks leave there, whatever the buffer held -- so the stored
- * probabilities, the context and the verdict are att_head's bit for bit. */
+ * probabilities, the context and the verdict are att_head's bit for bit. Under
+ * BCIR_TENSOR_ATTENTION_LOWER (P-LOWER) the caller reads no probability past a row's diagonal, and
+ * the fill is skipped: a row's future columns are then the +0.0 the blocks that reach them store --
+ * att_strip's score blocks their 32-wide key blocks' future lanes, its v1 rows theirs to the strip's
+ * end -- and past those what p held. Nothing here reads them: the softmax and the context read a
+ * row's columns j <= i, and their register blocks' diagonal tiles, which the score blocks wrote. */
 #ifndef BCIR_ATT_STRIP_FROM
 #define BCIR_ATT_STRIP_FROM 1024
 #endif
@@ -3114,7 +3120,7 @@ static void att_head_strips(const att_job *a, size_t r, size_t h) {
 #endif
   for (i0=0;i0<t;i0+=rows) {
     size_t i1=t-i0<rows ? t : i0+rows;
-    for (i=i0;i<i1;i++) if (i+1<t) memset(ph+i*t+i+1,0,(t-i-1)*sizeof(float));
+    if (!a->lower) for (i=i0;i<i1;i++) if (i+1<t) memset(ph+i*t+i+1,0,(t-i-1)*sizeof(float));
     att_strip(a,r,h,i0,i1,ph+i0*t);
   }
   if (a->bad) att_verdict(a,r,h);
@@ -3248,18 +3254,20 @@ size_t bcir_tensor_attention_strips_probe(void) {
 }
 #endif
 /* `variant` resolved (mm_instance over the products' family: the fused GEMM's under FUSED, v1's
- * otherwise); `scratch` the INFER-ATTN forward, its probabilities a strip at a time */
-static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int scratch, int variant,
-    size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k,
+ * otherwise); `scratch` the INFER-ATTN forward, its probabilities a strip at a time; `lower` the
+ * caller's P-LOWER word, which a stored forward takes (a scratch forward's p is no one's to read) */
+static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int scratch, int lower,
+    int variant, size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k,
     const float *v, float *p, float *y, int *bad, void *workspace, size_t room) {
   att_job a; unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=b*nh;
   a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.group=1; a.q=q; a.k=k; a.v=v; a.dy=NULL; a.p=p; a.y=y;
   a.dq=NULL; a.dk=NULL; a.dv=NULL; a.exp2=exp2; a.fused=fused; a.scratch=scratch;
   a.variant=variant;
   a.strips=!scratch && t>=BCIR_ATT_STRIP_FROM;  /* FWD-STRIP */
+  a.lower=lower && !scratch;  /* P-LOWER */
 #ifdef BCIR_DT_ATTENTION_PROBE
   attention_saw(0,(a.exp2 ? BCIR_TENSOR_ATTENTION_EXP : 0u)|(a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u)|
-      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u));
+      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u)|(a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u));
 #endif
   a.bad=scan_bytes(bad,bytes,tasks);
   att_ctg_setup(&a,pool,tasks,workspace,room);  /* ATT-CONTIG */
@@ -3270,21 +3278,21 @@ static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int scrat
 }
 void bcir_tensor_attention_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL,NULL,0);
+  attention_any(pool,0,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL,NULL,0);
 }
 void bcir_tensor_attention_v2_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,1,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL,NULL,0);
+  attention_any(pool,1,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL,NULL,0);
 }
 void bcir_tensor_attention_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
     size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
     int *bad) {
-  attention_any(pool,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad,NULL,0);
+  attention_any(pool,0,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad,NULL,0);
 }
 void bcir_tensor_attention_v2_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
     size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
     int *bad) {
-  attention_any(pool,1,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad,NULL,0);
+  attention_any(pool,1,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad,NULL,0);
 }
 void bcir_tensor_attention_contract_scan_pool(bcir_tensor_pool *pool, unsigned contract, size_t b,
     size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v,
@@ -3303,7 +3311,8 @@ int bcir_tensor_attention_contract_variant_scan_ws_pool(bcir_tensor_pool *pool, 
   int fused=(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0,iv=mm_instance(fused ? MM_FUSED : MM_V1,variant);
   if (!iv) return 0;
   attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,fused,
-      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,iv,b,t,nh,nk,d,q,k,v,p,y,bad,workspace,bytes);
+      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,iv,b,t,nh,
+      nk,d,q,k,v,p,y,bad,workspace,bytes);
   return iv;
 }
 void bcir_tensor_attention(size_t b, size_t t, size_t nh, size_t nk, size_t d,
@@ -3516,7 +3525,7 @@ int bcir_tensor_attention_backward_contract_variant_ws_pool(bcir_tensor_pool *po
   a.fused=fused; a.variant=iv;
   a.group=nh/nk;
   a.scratch=0;  /* the backward reads its probabilities: never the scratch forward's */
-  a.strips=0;
+  a.strips=0; a.lower=0;
 #ifdef BCIR_DT_ATTENTION_PROBE
   attention_saw(1,a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
 #endif

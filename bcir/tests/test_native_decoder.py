@@ -218,8 +218,9 @@ def test_native_c_harness_c11_and_c23():
             # its floor up and the recompute sets (GEO-3); the pool's cap and the entries with
             # the instance named (PX-3b); the attention without its probabilities and the forward
             # that runs it (INFER-ATTN); the attention's workspace entries (ATT-CONTIG); the stored
-            # forward a strip of rows at a time (FWD-STRIP)
-            assert result.stdout.count("PASS") == 35
+            # forward a strip of rows at a time (FWD-STRIP); the stored forward under LOWER and a
+            # training step from NaN-filled arenas (P-LOWER)
+            assert result.stdout.count("PASS") == 37
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -260,7 +261,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 35
+            assert result.stdout.count("PASS") == 37
             break
 
 
@@ -976,7 +977,8 @@ def test_the_bf16_attention_is_a_contract_of_its_own():
             return lib.bcir_tensor_attention_probe(0), lib.bcir_tensor_attention_probe(1)
 
         seen()
-        exp, bf16 = 1, 4  # BCIR_TENSOR_ATTENTION_EXP, BCIR_TENSOR_ATTENTION_BF16
+        # BCIR_TENSOR_ATTENTION_EXP, _BF16 and _LOWER (P-LOWER: the binary32 stored forward's)
+        exp, bf16, lower = 1, 4, 16
         states = {}
         for contract in ("bf16+exp", "bf16+exp+attnbf16", "bf16+attnbf16",
                          "bf16+exp+reduce+attnbf16"):  # fmt: skip
@@ -984,7 +986,8 @@ def test_the_bf16_attention_is_a_contract_of_its_own():
             assert set(under) == set(nf.THREAD_COUNTS), (contract, under)
             assert len(set(under.values())) == 1, (contract, under)
             states[contract] = under[1]
-            forward = (exp if "+exp" in contract else 0) | (bf16 if "attnbf16" in contract else 0)
+            attention = bf16 if "attnbf16" in contract else lower
+            forward = (exp if "+exp" in contract else 0) | attention
             assert seen() == (forward, bf16 if "attnbf16" in contract else 0), contract
         assert states["bf16+exp+attnbf16"] != states["bf16+exp"], states
         assert states["bf16+exp+attnbf16"] != states["bf16+attnbf16"], states

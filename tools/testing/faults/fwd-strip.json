@@ -10,8 +10,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "FS1 a strip's rows' future columns left as the buffer held them",
-      "new": "    for (i=i0;i<i1;i++) if (i+1<t && 0) memset(ph+i*t+i+1,0,(t-i-1)*sizeof(float));\n",
-      "old": "    for (i=i0;i<i1;i++) if (i+1<t) memset(ph+i*t+i+1,0,(t-i-1)*sizeof(float));\n",
+      "new": "    if (!a->lower) for (i=i0;i<i1;i++) if (i+1<t && 0) memset(ph+i*t+i+1,0,(t-i-1)*sizeof(float));\n",
+      "old": "    if (!a->lower) for (i=i0;i<i1;i++) if (i+1<t) memset(ph+i*t+i+1,0,(t-i-1)*sizeof(float));\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -59,8 +59,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "FS8 the last strip's rows past a multiple of 16 dropped",
-      "new": "    size_t i1=t-i0<rows ? i0+(t-i0)/16*16 : i0+rows;\n    for (i=i0;i<i1;i++) if",
-      "old": "    size_t i1=t-i0<rows ? t : i0+rows;\n    for (i=i0;i<i1;i++) if",
+      "new": "    size_t i1=t-i0<rows ? i0+(t-i0)/16*16 : i0+rows;\n    if (!a->lower) for (i=i0;i<i1;i++) if",
+      "old": "    size_t i1=t-i0<rows ? t : i0+rows;\n    if (!a->lower) for (i=i0;i<i1;i++) if",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

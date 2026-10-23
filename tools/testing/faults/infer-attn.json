@@ -87,8 +87,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "IA12 the probe blind to the binary32 scratch forward",
-      "new": "      0u);\n",
-      "old": "      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u));\n",
+      "new": "      (a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u));\n",
+      "old": "      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u)|(a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u));\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -108,15 +108,15 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "IA15 the trainer drops the scratch bit it was given",
-      "new": "  unsigned contract=attention_contract(s)|(scratch ? 0u : 0u);\n",
-      "old": "  unsigned contract=attention_contract(s)|(scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u);\n",
+      "new": "  return attention_contract(s)|(scratch ? 0u :\n",
+      "old": "  return attention_contract(s)|(scratch ? BCIR_TENSOR_ATTENTION_SCRATCH :\n",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "IA16 the binary32 entry runs the stored forward under the scratch bit",
-      "new": "      0,iv,b,t,nh,nk,d,q,k,v,p,y,bad,workspace,bytes);\n",
-      "old": "      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,iv,b,t,nh,nk,d,q,k,v,p,y,bad,workspace,bytes);\n",
+      "new": "      0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,iv,b,t,nh,\n",
+      "old": "      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,iv,b,t,nh,\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
