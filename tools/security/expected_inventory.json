@@ -2,7 +2,7 @@
   "schema": "bcir-dependency-inventory.v1",
   "runtime": [],
   "build_system": [
-    "setuptools>=83.0.0"
+    "setuptools>=84.1.0"
   ],
   "optional": {
     "dev": [

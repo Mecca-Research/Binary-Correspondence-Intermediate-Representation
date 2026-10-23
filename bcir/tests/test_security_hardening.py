@@ -284,7 +284,7 @@ def test_python_style_gate_and_hooks_run_one_pinned_ruff() -> None:
 
 
 def test_build_system_excludes_known_vulnerable_setuptools_releases() -> None:
-    """The isolated PEP 517 backend must exclude GHSA-h35f-9h28-mq5c."""
+    """The isolated PEP 517 backend must exclude GHSA-h35f-9h28-mq5c and GHSA-xmj3-9gf7-h52w."""
     text = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     section = re.search(r"(?ms)^\[build-system\]\s*$\n(?P<body>.*?)(?=^\[|\Z)", text)
     assert section is not None, "pyproject.toml has no [build-system] table"
@@ -296,9 +296,10 @@ def test_build_system_excludes_known_vulnerable_setuptools_releases() -> None:
     floor_match = re.fullmatch(r"setuptools>=(\d+)\.(\d+)\.(\d+)", setuptools[0])
     assert floor_match is not None, f"unsupported setuptools requirement: {setuptools[0]!r}"
     floor = tuple(int(part) for part in floor_match.groups())
-    assert floor >= (83, 0, 0), (
+    assert floor >= (84, 1, 0), (
         f"setuptools floor {floor!r} permits releases affected by "
-        "GHSA-h35f-9h28-mq5c / CVE-2026-59890; require >=83.0.0"
+        "GHSA-h35f-9h28-mq5c / CVE-2026-59890 (fixed in 83.0.0) or GHSA-xmj3-9gf7-h52w "
+        "(fixed in 84.1.0); require >=84.1.0"
     )
 
 
