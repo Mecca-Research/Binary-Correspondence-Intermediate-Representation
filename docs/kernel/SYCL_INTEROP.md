@@ -59,6 +59,17 @@ variants on the `sycl_spirv` channel. BCAB compatibility selection chooses among
 artifacts; it neither makes a missing SYCL backend real nor moves SYCL onto the legality path. See
 [`BCIR_ARTIFACT_BUNDLE_ABI.md`](BCIR_ARTIFACT_BUNDLE_ABI.md).
 
+## Integration order for physical HAM and native IPC
+
+The [driver/IPC data and AI qualification report](../research/BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md#7-the-dependency-order-into-physical-ham-and-sycl)
+places native HAM/SYCL integration after the relevant drivers and IPC have qualified their
+supported data/inference/training workloads, followed by applicable physical HAM gates.
+Hosted device experiments and the existing fallback/oracle seam remain useful earlier.
+Native integration must bind the actual SYCL device/image and events to the same resource,
+session/generation, ownership, capacity and completion records; a host fallback cannot
+promote that route. This is a planned deployment gate, not an implemented adapter or a
+change to the legality boundary described above.
+
 ## Resident dispatch (the channel executes)
 
 Beyond pricing + routing + the standalone differential oracle, the `sycl_spirv` channel now has a

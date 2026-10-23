@@ -289,6 +289,37 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-10-20 — UDSI-PLAN universal interface blueprint:** added the
+  [universal serialization/interface roadmap](BCIR_UNIVERSAL_INTERFACE_ROADMAP.md), connecting
+  typed service contracts, ASN.1/JER projections, foreign schema/codec providers, native
+  bindings and IPC, including a proposed format-neutral BCIR JSON language and a frontend
+  independent of ASN.1. Specifies UDSI milestones and twelve proposed SI experiments; distinguishes
+  wire, API, native ABI and transport compatibility; plans peer CSN.1/ABNF frontends and
+  optional CMS/PKCS providers. Linked the backend, driver, master and ASN.1 roadmaps and
+  revised CSN.1's ASN.1-only exclusion. Documentation only; no new codec or benchmark results.
+
+- **2026-10-20 — TRITON-CPU-1 test/kernel blueprint:** added the
+  [backend optimality tests and kernel entry gates](research/BCIR_BACKEND_OPTIMALITY_AND_KERNEL_GATES_2026-10-20.md):
+  comparator routes, a gap register beyond affine maps, sixteen proposed experiments,
+  transformation-admission rules and parallel hosted/driver/native qualification. Updated
+  the architecture report for pending #820's PX-1 trace work and reused its PX follow-ups;
+  linked the plan from the canonical driver roadmap. No runtime changes or new benchmarks.
+
+- **2026-10-19 — TRITON-CPU-1 architecture extension:** added a source-pinned
+  [BCIR/Triton/PyTorch architecture and IR comparison](research/BCIR_TRITON_PYTORCH_ARCHITECTURE_2026-10-19.md).
+  Separates FX/ATen, Inductor and GPU-kernel representations; compares MLIR lowering depth,
+  memory/recompute planning, hardware interfaces and extensibility. Proposes a gateable
+  plan-to-execution and competitive-assessment ladder. No new benchmarks or runtime changes;
+  full comparative model training is still deferred until PR #820 completes and merges.
+
+- **2026-10-19 — TRITON-CPU-1:** refreshed the
+  [Triton comparison](research/BCIR_TRITON_COMPARATIVE_ANALYSIS.md) against pinned Triton 3.8
+  and current BCIR main. Added an optional compiled CPU-kernel reproducer and two sessions of
+  raw evidence for residual add, SwiGLU, RMSNorm and GEMM. The comparison distinguishes native
+  C execution from graph planning, corrects the old layout/verification/cache claims, and
+  proposes a resident-backend interface. GPU execution is unavailable on the study host;
+  full comparative model training remains deferred until PR #820 completes and merges.
+
 The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-06-25,
 ~90 entries) lived in `REPO_CURRENT_STATE_AUDIT.md` and remain in its git history
 (`git log -p -- docs/REPO_CURRENT_STATE_AUDIT.md`). The condensed arc:
