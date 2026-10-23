@@ -3556,7 +3556,7 @@ static void trainer_infer(void) {
         if (!bcir_tensor_pool_size(threads) || bcir_tensor_pool_size(threads)>sizeof(pool_memory)) continue;
         pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads); assert(pool);
       }
-      spec.time=times[ti]; n=spec.batch*spec.time;
+      spec.time=times[ti]; n=(size_t)spec.batch*spec.time;
       memset(&st,0,sizeof st);
       assert(bcir_decoder_make_plan(&spec,&st.plan)==0);
       st.weights=calloc(st.plan.parameters,sizeof(float)); st.gradients=calloc(st.plan.parameters,sizeof(float));
@@ -3730,7 +3730,7 @@ static void trainer_lower(void) {
         if (!bcir_tensor_pool_size(threads) || bcir_tensor_pool_size(threads)>sizeof(pool_memory)) continue;
         pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads); assert(pool);
       }
-      spec.time=times[ti]; n=spec.batch*spec.time;
+      spec.time=times[ti]; n=(size_t)spec.batch*spec.time;
       ids=malloc(n*sizeof(uint32_t)); targets=malloc(n*sizeof(uint32_t)); assert(ids && targets);
       stream(ids,targets,n);
       for (arm=0;arm<2;arm++) {  /* arm 0 zeroed, arm 1 the canary in every float of its arenas */
