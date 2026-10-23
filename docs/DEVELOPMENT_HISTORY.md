@@ -4546,8 +4546,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     and caught again.
   - Not claimed: below the copies' threshold or with one head a row, where no region is lent; the bf16
     attention (its own backward); AMX timing; a GPU.
-  ATT-BOUND (2026-10-23): the attention at its contract's arithmetic; four ways at its forward measured and
-    not taken; the GEO model's inference read against PyTorch
+  ATT-BOUND (2026-10-23): the attention and the GEMMs against the host's measured rates; four ways at the
+    attention's forward measured and not taken; the GEO model's inference read against PyTorch
     ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §14,
     [measurements/2026-10-23/att-bound/](research/measurements/2026-10-23/att-bound/README.json)). Records and
     instruments; no change to the runtime.
@@ -4557,9 +4557,13 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     attention's forward, the training forward's kernels.
   - The forward a phase at a time (TSC cycles, B4/T2048, 4 heads of 32, EXP, one core): the scores 2.07
     cycles a probability, the context 1.83, the softmax 2.26 (its max 0.25, exponential and sum 1.46,
-    division 0.53). Under v1 a score or a context term is four vector operations a probability on two
-    ports, 2.0 cycles: the products run at v1's arithmetic; the exponential-and-sum pass is mostly BCIR's
-    exponential, whose sequence (about 38 vector operations for 16 lanes) the EXP contract fixes.
+    division 0.53). The host's rates, measured (`fma_peak.c`): 217 GFLOP/s a core in fused multiply-adds and
+    102 in v1's multiply-then-add (856 and 399 on four cores) -- 94 and 44 flops a TSC cycle, the cores near
+    3.4 GHz under AVX-512 load while the TSC counts 2.3. At v1's measured rate a score's or a context term's
+    32 multiply-adds take 1.45 TSC cycles: the scores run at about 70% of it, the context at about 79%. The
+    exponential-and-sum pass is mostly BCIR's exponential, whose sequence (about 38 vector operations for 16
+    lanes) the EXP contract fixes. Corrected the same day: the first text took the TSC's rate for the
+    core's and called the products' 2.0 TSC cycles their bound.
   - Measured and not taken, every value the same in each (the stored forward under LOWER with the backward
     from it, 208 cases; 88 forward cases; 288 stored forwards; clang and GCC; and with copies and strips at
     every context), 32 rounds beside an A/A control: FWD-STREAM, each stored strip computed in the region and
@@ -4574,8 +4578,9 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     backward x0.778 and the forward x0.895, the scratch forward x0.874; the GEO step under
     kblock+exp+reduce+attn 252.5 ms against 290.5. Every attention value differs under it (another
     arithmetic): the study's choice, recorded as a reading.
-  - The GEMMs: 25.8 GFLOP in 74.3 ms of the step at T2048, 347 GFLOP/s on four cores -- 59% of the AVX-512
-    FMA peak at the TSC's 2.3 GHz, about MKL's rate on these shapes (OT-05).
+  - The GEMMs: 25.8 GFLOP in 74.3 ms of the step at T2048, 347 GFLOP/s on four cores -- 41% of the 856 the
+    cores sustain in fused multiply-adds, the largest room the step has left (OT-05 found BCIR's k-blocked
+    GEMMs level with MKL's on most of these shapes).
   - Not claimed: counter-based figures (this VM has no PMU; the cycles are TSC); the fused contract's
     effect on the study's trained results; AMX; a GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.

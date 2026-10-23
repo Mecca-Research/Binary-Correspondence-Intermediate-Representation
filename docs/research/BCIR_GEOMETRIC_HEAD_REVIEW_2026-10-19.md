@@ -842,7 +842,7 @@ stored forward's -- the probabilities j <= i written out for the backward to rea
 forward's time; below the copies' threshold, or with one head a row, no region is lent and the tiles
 past 256 columns are evaluated twice as before.
 
-## 14. ATT-BOUND: the attention at its contract's arithmetic (2026-10-23)
+## 14. ATT-BOUND: the attention and the GEMMs against the host's measured rates (2026-10-23)
 
 After BWD-KEEP the GEO model's training update at T2048 runs at parity with Inductor; its inference does
 not. One forward of 4 x 2048 tokens takes 100.2 ms against eager PyTorch's 92.5 and Inductor's 83.2 --
@@ -853,7 +853,7 @@ backward, 24% in its forward and 26% in the GEMMs
 ([measurements/2026-10-23/att-bound/](measurements/2026-10-23/att-bound/README.json); records and
 instruments, no change to the runtime).
 
-**The forward against its arithmetic.** The scratch forward timed a phase at a time in TSC cycles
+**The forward against the host's rates.** The scratch forward timed a phase at a time in TSC cycles
 (`instrument_phases.py`, `phase_bench.c`: B4/T2048, 4 heads of 32, the EXP contract):
 
 | B4/T2048, 4 heads of 32, EXP | scores | softmax | of it: max | exp + sum | division | context |
@@ -861,11 +861,16 @@ instruments, no change to the runtime).
 | 1 thread, cycles a probability | 2.07 | 2.26 | 0.25 | 1.46 | 0.53 | 1.83 |
 | 4 threads, cycles a probability | 2.05 | 2.29 | 0.25 | 1.47 | 0.53 | 1.84 |
 
-A score or a context term is 32 channels' products and sums; under v1 a multiply and an add each, four
-vector operations a probability on the core's two vector ports: 2.0 cycles. The scores (with each strip's
-key panels) and the context run at that arithmetic. The softmax's exponential-and-sum pass is mostly BCIR's
-exponential -- the EXP contract's fixed sequence, about 38 vector operations for 16 lanes, some 1.1 of the
-pass's 1.46 cycles -- and its division runs at the divider's rate. Four ways at the forward were built and
+A score or a context term is 32 channels' products and sums, under v1 a multiply and an add each. The TSC
+counts at 2.3 GHz, but under AVX-512 load this host's cores run faster: `fma_peak.c` sustains 217 GFLOP/s a
+core in fused multiply-adds and 102 in v1's multiply-then-add (856 and 399 on four cores, `host-rates.json`)
+-- 94 and 44 flops a TSC cycle, a core clock near 3.4 GHz. At v1's measured rate 32 multiply-adds take
+1.45 TSC cycles: the scores (with each strip's key panels) run at about 70% of that rate and the context at
+about 79%. The softmax's exponential-and-sum pass is mostly BCIR's exponential -- the EXP contract's fixed
+sequence, about 38 vector operations for 16 lanes, some 0.9 TSC cycles an element at the measured rate --
+and the transposes that carry each row's chains; its division runs at the divider's rate. (ATT-BOUND's first
+text took the TSC's 2.3 GHz for the core's clock and called the products' 2.0 cycles their bound; the
+measured rates corrected it the same day.) Four ways at the forward were built and
 measured against the tree they edit, every value the same in each (`prototypes.json`: the stored forward
 under LOWER and the backward from it, ATTN-RATE's 88 forward cases and FWD-STRIP's 288 stored forwards, or
 for the scratch forward its 88, under clang and GCC, and again with the copies and strips at every
@@ -909,9 +914,9 @@ study's choice to make, not this tree's; under it BCIR's attention at T2048 woul
 the flash kernel's 55.
 
 **The GEMMs.** The step's GEMMs at T2048 run 25.8 GFLOP in 74.3 ms (`gemm.json`): 347 GFLOP/s on four
-cores, about 87 a core -- 59% of the AVX-512 FMA peak at the TSC's 2.3 GHz, the rate at which OT-05 found
-BCIR's k-blocked GEMMs level with MKL's on most of these shapes.
+cores, 41% of the 856 the cores sustain in fused multiply-adds. OT-05 found BCIR's k-blocked GEMMs level
+with MKL's on most of these shapes, so MKL leaves the same room; it is the largest the step has left.
 
-What remains, then, is the contract more than the kernels: under v1's products and the EXP contract's
-exponential the attention runs at its arithmetic, and the GEO model's inference gap to Inductor at T2048 is
-mostly the fused multiply-add.
+What remains, then: the GEMMs at 41% of the host's FMA rate -- a quarter of the step and about a third of
+the inference forward -- and the attention's products at 70-79% of v1's rate; beyond the kernels, the fused
+contract, which is the study's to choose.

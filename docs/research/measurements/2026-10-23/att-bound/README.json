@@ -1,8 +1,9 @@
 {
- "what": "ATT-BOUND (2026-10-23): records and instruments, no runtime change. The GEO model's inference read against PyTorch; the attention's forward timed a phase at a time against its contract's arithmetic; four ways at the forward prototyped, every value the same, and measured -- none taken; what the fused attention contract (ATTN-FMA, in the tree) would buy; the GEO step's GEMM rates.",
+ "what": "ATT-BOUND (2026-10-23): records and instruments, no runtime change. The GEO model's inference read against PyTorch; the host's AVX-512 rates measured (the cores run near 3.4 GHz under that load while the TSC counts 2.3); the attention's forward timed a phase at a time against them, and the GEMMs; four ways at the forward prototyped, every value the same, and measured -- none taken; what the fused attention contract (ATTN-FMA, in the tree) would buy; the GEO step's GEMM rates.",
  "host": "Intel(R) Xeon(R) Processor @ 2.30GHz, 4 vCPU (AVX-512F, AVX512-BF16 and -FP16, AMX), 2 MiB of L2 a core, 260 MiB of L3 -- the host the session moved to on 2026-10-23; Linux 6.18; clang 18.1.3, gcc 13.3.0; Python 3.11.15, torch 2.13.0+cu130 (CPU), numpy 2.2.6; OMP_WAIT_POLICY=PASSIVE",
  "tree": "e3ca8031144a443eb5bb6d52c70ee195f53e8f84",
  "records": {
+  "host-rates.json": "fma_peak.c: the host's sustained AVX-512 rates, fused and v1's multiply-then-add, one core and four",
   "inference.json": "infer_compare.py on ../bwd-keep/'s level-3 builds: one forward of 4 x T against eager and Inductor",
   "phases.json": "the scratch forward's phases in TSC cycles, one core and four",
   "prototypes.json": "the four prototypes (FWD-STREAM, the padded strip copied out, SOFTMAX-DIV, SCRATCH-PAD): values, attention and step, by proto_ab.sh; first_runs: the same runs by the scratch drivers it generalises",
@@ -13,17 +14,25 @@
   "proto_ab.sh": "a prototype against the tree it edits: values, then time",
   "instrument_phases.py, phase_bench.c": "the phase timing",
   "ab_contract.c": "the contract A/B",
-  "gemm_rates.py": "the GEMM rates"
+  "gemm_rates.py": "the GEMM rates",
+  "fma_peak.c": "the host's rates"
  },
  "verdicts": "each effect resolved where its 95% interval (Student t over the rounds' log ratios) excludes 1 and does not meet the A/A control's; where the control's own interval excludes 1, the effect must hold against the control's arm too",
  "reading": {
+  "host_rates": [
+   "fma 1t: 217.1 GFLOP/s, 94.38 flops a TSC cycle a thread (median of 3)",
+   "fma 4t: 855.9 GFLOP/s, 93.03 flops a TSC cycle a thread (median of 3)",
+   "mul+add 1t: 101.6 GFLOP/s, 44.16 flops a TSC cycle a thread (median of 3)",
+   "mul+add 4t: 399.4 GFLOP/s, 43.41 flops a TSC cycle a thread (median of 3)",
+   "v1's 32 multiply-adds (a score or a context term) at the measured one-core rate: 1.45 TSC cycles"
+  ],
   "inference": [
    "T1024: e3ca8031's build 35.1 ms a forward, eager 46.5, Inductor 32.8; over eager 0.714 (0.659-0.773), over Inductor 0.992 (0.899-1.095); over the build before BWD-KEEP 1.001 (0.959-1.045), A/A 1.001 (0.956-1.049); the two builds' logits equal: True",
    "T2048: e3ca8031's build 100.2 ms a forward, eager 92.5, Inductor 83.2; over eager 1.057 (0.969-1.152), over Inductor 1.190 (1.116-1.269); over the build before BWD-KEEP 1.019 (0.991-1.047), A/A 0.993 (0.945-1.043); the two builds' logits equal: True"
   ],
   "phases": [
-   "1 thread(s): 209.4M cycles a call (wall); scores 2.07, softmax 2.26 (max 0.25, exponential and sum 1.46, division 0.53), context 1.83 cycles a probability (summed over the workers)",
-   "4 thread(s): 54.6M cycles a call (wall); scores 2.05, softmax 2.29 (max 0.25, exponential and sum 1.47, division 0.53), context 1.84 cycles a probability (summed over the workers)"
+   "1 thread(s): 209.4M cycles a call (wall); scores 2.07, softmax 2.26 (max 0.25, exponential and sum 1.46, division 0.53), context 1.83 cycles a probability (summed over the workers); the scores at 70% and the context at 79% of v1's measured rate",
+   "4 thread(s): 54.6M cycles a call (wall); scores 2.05, softmax 2.29 (max 0.25, exponential and sum 1.47, division 0.53), context 1.84 cycles a probability (summed over the workers); the scores at 71% and the context at 79% of v1's measured rate"
   ],
   "prototypes": [
    "stream (proto_stream.py): values 12 of 12 hash comparisons equal; 1x4096x8x8x64 c18 4t forward 1.017 (0.969-1.067) [not resolved: holds 1], total 1.021 (0.987-1.056) [not resolved: holds 1]; 4x1024x4x4x32 c17 4t forward 1.253 (1.198-1.311) [resolved], total 1.145 (1.102-1.189) [resolved]; 4x2048x4x4x32 c17 1t forward 1.035 (1.011-1.059) [not resolved: meets the A/A control's interval], total 1.017 (0.994-1.040) [not resolved: holds 1]; 4x2048x4x4x32 c17 4t forward 1.190 (1.146-1.235) [resolved], total 1.121 (1.075-1.170) [resolved]; step clang T2048 0.991 (0.962-1.021) [not resolved: holds 1]; step clang T1024 0.988 (0.952-1.027) [not resolved: holds 1]; step gcc T2048 1.009 (0.981-1.038) [not resolved: holds 1]",
@@ -42,7 +51,7 @@
    "train.gemm.pair.nn: 18.29 ms, 5.92 GFLOP, 323.9 GFLOP/s (14 calls: nn 8192x128x128, nn 8192x128x260, nn 8192x256x128, tn 128x128x8192, tn 128x256x8192, tn 260x128x8192)",
    "train.gemm.rest.nt: 16.26 ms, 5.64 GFLOP, 346.6 GFLOP/s (15 calls: nt 8192x128x128, nt 8192x256x128)",
    "train.gemm.alone.nt: 9.30 ms, 2.96 GFLOP, 318.5 GFLOP/s (7 calls: nt 8192x128x128, nt 8192x128x256, nt 8192x260x128)",
-   "all: 74.3 ms, 25.79 GFLOP, 347.3 GFLOP/s"
+   "all: 74.3 ms, 25.79 GFLOP, 347.3 GFLOP/s, 41% of the four cores' measured FMA rate"
   ],
   "step_parts": [
    "kblock+exp+reduce: 290.5 ms a step; attention backward 111.4 ms, forward 69.5 ms",
@@ -55,6 +64,7 @@
   "clang -std=c11 -O2 ab_contract.c -ldl -lm; ab_contract LIB LIB 32 B T H KH D THREADS 17 19  # LIB the tree's libtensor (cc -std=c11 -O3 -ffp-contract=off -fno-math-errno -pthread -fPIC -shared); also 9 11 for the scratch forward",
   "python3 ../bwd-keep/step_parts.py 2048 kblock+exp+reduce 8 PARTS.json 4  # and kblock+exp+reduce+attn",
   "python3 gemm_rates.py PARTS.json gemm.json",
+  "clang -std=c11 -O2 -pthread fma_peak.c; fma_peak 1 200000000; fma_peak 4 200000000  # three times each",
   "TORCH_PY -I ../../2026-10-22/infer-attn/infer_compare.py BEFORE_WORK AFTER_WORK inference.json --rounds 16 --threads 4 --times 1024,2048  # the work dirs: ../bwd-keep/'s level-3 builds"
  ]
 }
