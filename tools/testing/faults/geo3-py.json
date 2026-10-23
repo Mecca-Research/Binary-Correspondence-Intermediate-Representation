@@ -70,6 +70,13 @@
       "new": "        order = [(m, w) for m in sets for w in (*tiers, floor)]",
       "old": "        order += [(mask, floor) for mask in sets]",
       "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_recompute_and_the_workspace_keep_every_state",
+      "label": "GP10 the planner lends a workspace where the step packs nothing (a short context under a binary32 contract)",
+      "new": "",
+      "old": "        if not need and workspace_bytes:\n            raise ValueError(\"a workspace is lent only where the step packs into it\")\n",
+      "path": "bcir/hosted/models/native.py"
     }
   ]
 }

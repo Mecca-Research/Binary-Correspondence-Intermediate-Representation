@@ -144,7 +144,9 @@ def test_native_c_harness_c11_and_c23():
         # widest variant is AVX-512 runs the update's AVX2 pairs and commit too (NDT-UPDATE), and
         # once with the backward's long-context paths at every context -- the transposed products
         # banded from 16 terms and every probability-adjoint tile on its own panel -- so the
-        # attention references hold what a long context takes otherwise (BWD-LONG); every
+        # attention references hold what a long context takes otherwise (BWD-LONG), and once more
+        # with the binary32 attention's tasks on copies of their heads' rows at every context and
+        # those paths with them, the harness lending the workspace the plan asks (ATT-CONTIG); every
         # build with the commit's shared division exposed to the harness's check of it, with
         # PX-1's launch trace compiled in but never begun, PX-5's layout probes compiled in but
         # never called, and PX-3's job clock compiled in but never begun -- so the probes build
@@ -157,6 +159,11 @@ def test_native_c_harness_c11_and_c23():
             ("c2x", ["-DBCIR_TENSOR_SCAN_TASKS=2"], "-bounded"),
             ("c2x", ["-DBCIR_TENSOR_MAX_VARIANT=2"], "-avx2"),
             ("c2x", ["-DBCIR_ATT_BAND_FROM=16", "-DBCIR_ATT_WHOLE=0"], "-long"),
+            (
+                "c2x",
+                ["-DBCIR_ATT_CONTIG_FROM=1", "-DBCIR_ATT_BAND_FROM=16", "-DBCIR_ATT_WHOLE=0"],
+                "-contig",
+            ),
         )
         for standard, options, tag in builds:
             exe = Path(temporary) / f"gate-{standard}{tag}"
@@ -200,8 +207,8 @@ def test_native_c_harness_c11_and_c23():
             # attention against its reference, and its trainer (BF16-ATTN); the workspace from
             # its floor up and the recompute sets (GEO-3); the pool's cap and the entries with
             # the instance named (PX-3b); the attention without its probabilities and the forward
-            # that runs it (INFER-ATTN)
-            assert result.stdout.count("PASS") == 33
+            # that runs it (INFER-ATTN); the attention's workspace entries (ATT-CONTIG)
+            assert result.stdout.count("PASS") == 34
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -242,7 +249,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 33
+            assert result.stdout.count("PASS") == 34
             break
 
 
@@ -671,10 +678,10 @@ def test_recompute_and_the_workspace_keep_every_state():
                 else:
                     try:
                         NativeDecoder(path, spec, contract=contract, workspace_bytes=64, **kw)
-                    except ValueError as e:
-                        assert "bf16" in str(e)
+                    except ValueError as e:  # a short context: nothing packs, nothing copies
+                        assert "packs into it" in str(e)
                     else:
-                        raise AssertionError("a workspace lent without a bf16 contract")
+                        raise AssertionError("a workspace lent where the step packs nothing")
                 x = [(5 * i + 2) % spec.vocab_size for i in range(batch * time_)]
                 logits = plain.forward(x)
                 assert plain.activation_count == plain.state.plan.activations  # none recomputed

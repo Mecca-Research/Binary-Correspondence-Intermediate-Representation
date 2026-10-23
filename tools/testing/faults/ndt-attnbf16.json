@@ -32,8 +32,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AB4 the workspace sized for the GEMM groups alone (the attention's packs refused at the first step)",
-      "new": "  if (0) most=ws_most(most,ws_attention(g,threads));",
-      "old": "  if (contract&BCIR_DT_CONTRACT_ATTNBF16) most=ws_most(most,ws_attention(g,threads));",
+      "new": "  most=ws_most(most,(contract&BCIR_DT_CONTRACT_ATTNBF16) ? 0 : ws_attention32(g,threads));",
+      "old": "  most=ws_most(most,(contract&BCIR_DT_CONTRACT_ATTNBF16) ? ws_attention(g,threads) : ws_attention32(g,threads));",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

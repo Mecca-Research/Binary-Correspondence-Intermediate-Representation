@@ -58,6 +58,7 @@ typedef struct dp_ctx {
   /* the state's geometry and contract, as its records carry them */
   uint64_t rows, d, h, kh, hd, v, b, t, params, chunk, eps;
   unsigned gc, attn, attn_vjp, v2, reduce, provider;
+  unsigned lent; /* ATT-CONTIG: the state lends workspace bytes, which the binary32 attention copies into */
 } dp_ctx;
 
 static int dp_fail(dp_ctx *c, int why) {
@@ -319,7 +320,7 @@ static int dp_record(dp_ctx *c, const dp_claim *cl, uint64_t *w) {
       SLOT(3, bf ? U_R : U_RW, SL_PLAIN); SLOT(4, U_R, SL_PLAIN);
       for (i = 5; i < 8u; i++) SLOT(i, U_W, SL_PLAIN);
     }
-    if (bf) SLOT(8, U_W, SL_WS);
+    if (bf || c->lent) SLOT(8, U_W, SL_WS);
     break;
   case OP_ADD: case OP_MUL: SLOT(0, U_R, SL_PLAIN); SLOT(1, U_RW, SL_PLAIN); break;
   case OP_PSILU: SLOT(0, U_R, SL_PLAIN); SLOT(1, U_W, SL_PLAIN); break;
@@ -614,6 +615,7 @@ int bcir_decoder_lower_pack(const bcir_decoder_state *s, const uint8_t *pack, si
   c.v2 = (s->contract & BCIR_DT_CONTRACT_EXP) != 0;
   c.reduce = (s->contract & BCIR_DT_CONTRACT_REDUCE) != 0;
   c.provider = s->provider.mm != NULL;
+  c.lent = s->workspace && s->workspace_bytes;
   /* the two verified by their own laws, the plan's walk handing over its steps (PX-3b-2: their
    * measured alternatives) and its lifetimes as it verifies them: one walk of the plan's laws
    * where a check and two walks would take three, its alias law swept over the executor's bytes

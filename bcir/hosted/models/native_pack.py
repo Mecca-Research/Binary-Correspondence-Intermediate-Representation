@@ -7,8 +7,9 @@ is stated as BCIR's own artifacts, and reaches the trainer through them alone:
   job's calls share theirs), each phase after the one before -- so GEM's dispatch order (topological
   phase, then ascending claim id) is the program's record order, and a phase's position is its
   launch. The resources are the program's VALUES. Each parameter tensor of the four parameter
-  arenas, the bf16 workspace and the micro-batch's tokens and targets live through the whole
-  program; a write of a span of the activations or the scratch starts a new value and ends every
+  arenas, the workspace (the bf16 GEMMs' packs, the binary32 attention's copies: ATT-CONTIG) and the
+  micro-batch's tokens and targets live through the whole program; a write of a span of the
+  activations or the scratch starts a new value and ends every
   value of a span it meets, and a read takes the span's current value (a read of a span no live
   value holds is refused here: the program would read bytes another value left). The C step's own
   reuse of its buffers -- the scratch every layer and micro-batch, the RMS VJP's 1/rms in the head of
@@ -134,18 +135,19 @@ def op_name(r: nl.Record) -> str:
 def uses(r: nl.Record) -> tuple[tuple[int, int], ...]:
     """(operand slot, use) for every operand of `r`, in slot order: what its kernel reads (R),
     writes (W) or updates in place (RW) -- the C check's own reading (bcir_decoder_train.c's
-    px_kernel, px_gemm and px_update); the bf16 workspace a call packs into is written."""
+    px_kernel, px_gemm and px_update); the bf16 workspace a call packs into is written, and the
+    workspace the binary32 attention copies its heads' rows into where its record carries it (the
+    state lends bytes: ATT-CONTIG)."""
     k, f = r.kind, r.flags
     if k == nl.GEMM:
         ws = ((3, W),) if f & 15 in (nl.E_BF16, nl.E_BF16_GROUP) else ()
         return ((0, R), (1, R), (2, RW if r.dims[6] else W)) + ws
-    if k == nl.ATTN:
-        return ((0, R), (1, R), (2, R), (3, W), (4, W)) + (((8, W),) if f & _ATTN_BF16 else ())
-    if k == nl.ATTN_VJP:
+    if k in (nl.ATTN, nl.ATTN_VJP):
         bf = bool(f & _ATTN_BF16)
-        return ((0, R), (1, R), (2, R), (3, R if bf else RW), (4, R), (5, W), (6, W), (7, W)) + (
-            ((8, W),) if bf else ()
-        )
+        ws = ((8, W),) if bf or r.refs[8] != (0, 0, 0) else ()  # an absent operand: (0, 0, 0)
+        if k == nl.ATTN:
+            return ((0, R), (1, R), (2, R), (3, W), (4, W)) + ws
+        return ((0, R), (1, R), (2, R), (3, R if bf else RW), (4, R), (5, W), (6, W), (7, W)) + ws
     if k == nl.RMS_VJP:
         return ((0, R), (1, R), (2, R), (3, RW if f & _RMSB_ADD else W),
                 (4, W if f & _RMSB_FIRST else RW), (5, W))  # fmt: skip

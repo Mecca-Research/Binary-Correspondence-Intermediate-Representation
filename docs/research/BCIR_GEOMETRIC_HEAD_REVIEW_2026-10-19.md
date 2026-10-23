@@ -521,3 +521,90 @@ and adds separately. What remains is those products' traffic in P (268 MB a laye
 by the forward, then read five times and rewritten once by the backward) and the passes around them:
 the tiles' second evaluation (the first 256 columns are kept between the passes, the rest evaluated
 twice) and the row dots' transposes.
+
+## 10. ATT-CONTIG: a head's rows its task's own (2026-10-23)
+
+Section 9 left the backward's products at about 3.1 cycles a vector multiply-add and named their
+traffic in P as what remains. Four ways at that traffic were built and measured first -- on the
+session's earlier host, an Intel Xeon @ 2.80 GHz without AMX and with 1 MiB of L2 a core, where
+sections 5 to 9 were measured too -- every value the same in each, and none moved the attention on
+four threads at B4/T2048:
+
+- **BWD-RECOMP**: the forward keeps no probabilities and the backward recomputes each 32-row strip of
+  P exactly as the forward computed it. The forward fell to x0.680 and the backward rose to x1.192
+  (a strip's recomputation is its score product and softmax again): the attention x0.989, its
+  interval holding 1.
+- **Row fusion**: dQ, dK and dV, alone or together, taken in the strip loop while the strip is in
+  cache: x0.968-x1.019 of the backward, none resolved.
+- **ATT-PACK**: the context's keys packed in 64 KB chunks and the bands' rows packed: x1.013.
+- **ATT-PREFETCH**: P's lines asked for 32, 64 or 128 bytes ahead of the context's and the
+  transposed products' walks: no distance resolved a change under either compiler.
+
+What did move it was the layout. On the same buffers, the GEO model's heads laid out contiguous --
+B x H batches of one head, where the trainer has B batches of H heads a row -- ran the attention at
+x0.845 at T2048 (the backward x0.801), and B1/T4096 with 8 heads of 64 at x0.617. A row of q, k or
+v holds every head's channels, so a head's own rows lie heads x dim floats apart: a probe of the
+context's walk alone took 2.10-2.24 cycles a vector multiply-add at a 128-float stride (four heads
+of 32) and 1.56-1.66 at 32, the head's rows sharing the few cache sets their offset in the row maps
+to with every other operand's; and four threads' heads share their output rows.
+
+**ATT-CONTIG** gives each task its head's rows. From `BCIR_ATT_CONTIG_FROM` positions, where a row
+holds more than one head, a task lent a region of a caller's workspace copies its head's rows in,
+runs the head as a batch of one head of one row stride, and copies its results back: a forward task
+its query head's q and its KV head's k and v, then its context out; a backward task its KV head's k,
+v, dk and dv, then each query head's q, dy and dq in turn, the group's later heads adding to dk and
+dv as they add in place. Values move; none is computed. A region is seven t x d copies, one a worker
+of the pool (7.0 MiB at the GEO model's T2048 on four threads); with less, or none, every task runs
+on the rows in place. The trainer lends its state's workspace to the binary32 attention under every
+contract, its need covering the regions; the launch trace, the program executor and the pack state
+the workspace as the attention's operand. Every value is the same: the entries without a workspace
+give BWD-LONG's 136 cases byte for byte, and the workspace entries the entries without one in 564
+cases, built as committed and built to copy at every context, under clang and GCC.
+
+The threshold is 1024. The design runs on the earlier host chose copies of every operand and a long
+context; the records below come from the host the session moved to on 2026-10-23, an Intel Xeon @
+2.30 GHz with AMX, 2 MiB of L2 a core and a 260 MiB L3, where copying from T1024 also read faster --
+8 heads of 64 x0.842 at B1/T1024 in the run that set the threshold and x0.850 at B2/T1024 on the
+committed tree, the GEO shape x0.935 and x0.975 (neither resolved alone; its training step at T1024
+x0.953, resolved) -- and copying from T512 did not (x1.009, x1.014 on one thread, x0.983 for 8 heads
+of 64, none resolved). The attention, both trees in one process beside the tree after it run in
+place, the contiguous layout and an A/A control, 48 rounds a row on four threads
+([measurements/2026-10-23/att-contig/](measurements/2026-10-23/att-contig/README.json)):
+
+| shape | after / before | the contiguous layout | in place |
+|---|---:|---:|---:|
+| GEO, B4/T2048, 4 heads of 32, clang | 0.934 (0.906-0.962) | 0.922 | 1.013 |
+| the same, GCC | 0.945 (0.918-0.973) * | 0.912 | 0.991 |
+| the same, one thread | 0.984 (0.969-1.000) * | 0.940 | 0.999 |
+| GEO, B4/T1024 | 0.975 (0.955-0.995) * | 0.907 | 1.003 |
+| B2/T1024, 8 heads of 64 | 0.850 (0.831-0.868) | 0.792 | 1.007 |
+| B1/T2048, 8 heads of 64 | 0.716 (0.693-0.740) | 0.683 | 1.009 |
+| B1/T4096, 8 heads of 64: clang / GCC | 0.593 / 0.599 | 0.576 / 0.588 | 1.008 / 1.018 |
+
+(* not resolved: its interval holds 1 or meets the A/A control's.) With 8 heads of 64 the copies
+take the attention into the contiguous layout's interval at T2048 and T4096, and to x0.850 against
+its x0.792 at T1024; with the GEO model's 4 heads of 32 they take the backward to x0.883 and leave
+the forward unchanged. On one thread there is little to take: the layout costs x0.940 there,
+against x0.922 on four. The training step at the study's dimensions, both trainers in one process,
+48 rounds: x0.912 (0.899-0.925) at T2048 and x0.953 (0.934-0.973) at T1024 under the study's
+contract, x0.956 at T2048 under v1, unchanged at T512 and on the 9.84M decoder at T128; under GCC
+x0.961 at T2048 and x0.968 at T1024, each meeting its control. The attention model on level 3,
+built with GCC as the study builds it, its attention lent its regions, one training update of 4 x
+T tokens, 32 rotated rounds of three updates:
+
+| T | before ms | after ms | P-EAGER ms | P-IND ms | after / before | after / P-EAGER | after / P-IND | A/A |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 512 | 42.7 | 42.6 | 82.2 | 59.0 | 0.99 [0.96, 1.02] | 0.52 [0.51, 0.54] | 0.72 [0.70, 0.75] | 0.98 [0.96, 1.01] |
+| 1024 | 115.1 | 113.8 | 136.9 | 120.4 | 0.99 [0.97, 1.02] | 0.85 [0.82, 0.87] | 0.96 [0.93, 1.00] | 1.02 [1.00, 1.05] |
+| 2048 | 359.1 | 335.4 | 330.6 | 312.9 | 0.93 [0.92, 0.94] | 1.02 [0.99, 1.04] | 1.08 [1.05, 1.11] | 0.98 [0.97, 1.00] |
+
+The trained state is the same digest from both builds at every context. At T2048 the update is
+x0.934 of the build before's time (x0.948 against the control's arm), and at parity with eager
+PyTorch (x1.016, from x1.086 before it on this host) and x1.08 of Inductor's (from x1.15); at T1024
+and T512 it is faster than both, as before.
+
+What remains: the copies' own cost, the gap between the copies and the contiguous layout (x0.934
+against x0.922 for the GEO shape at T2048, x0.850 against x0.792 for 8 heads of 64 at T1024), which
+a layout the step keeps -- its projections writing each head's rows contiguous -- would close; the
+GEO shape at T1024 and on one thread, where the layout costs 2-9% and the copies take little of
+it; and, under GQA, the forward's K and V copied once a query head.

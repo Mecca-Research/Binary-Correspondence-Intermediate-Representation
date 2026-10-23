@@ -36,7 +36,7 @@ projection, and a program's trace is held to the program as PX-1 holds the step'
 
 A record: kind, launch (the calls of one job share it), flags, eight dimensions, then ten operands
 as (space, byte offset, bytes) -- spaces 1-4 the parameter arenas (weights, gradients, first and
-second moments), 5 activations, 6 scratch, 7 the bf16 workspace, 8 outside the state (the
+second moments), 5 activations, 6 scratch, 7 the workspace, 8 outside the state (the
 caller's tokens and targets, offset 0); an absent operand is (0, 0, 0). A GEMM call's flags are its
 entry (0 v1, 1 fused, 2 blocked, 3 bf16 -- each a call alone; 4 a pair's call, 5 a group's, 6 a
 bf16 group's; 7 a provider's) | role << 4 (0 alone, 1 a pair's first or a chain's, 2 the pair's
@@ -411,6 +411,9 @@ def step_program(
         _ATTENTION_FUSED if contract & _ATTN else 0
     )
     ws = (SPACES["workspace"], 0, workspace_bytes) if gemm_contract == 3 else _NONE
+    # ATT-CONTIG: the binary32 attention is lent the state's workspace under any contract, where it
+    # has bytes -- the entry copies a head's rows into it from its need on, and runs them in place below
+    ws_attention = (SPACES["workspace"], 0, workspace_bytes) if workspace_bytes else _NONE
     out: list[Launch] = []
 
     def ref(name: str, offset: int = 0, size: int | None = None):
@@ -549,14 +552,16 @@ def step_program(
             emit(_record(ATTN, attention_contract | 1 << 8, dims, (q, kk, vv, p, y, _NONE, _NONE,
                                                                    _NONE, ws)))  # fmt: skip
         else:
-            emit(_record(ATTN, attention_contract, dims, (q, kk, vv, p, y)))
+            emit(_record(ATTN, attention_contract, dims, (q, kk, vv, p, y, _NONE, _NONE, _NONE,
+                                                          ws_attention)))  # fmt: skip
 
     def attention_backward(q, kk, vv, p, dy, dq, dk, dv) -> None:
         dims = (batch, time, h, kh, hd)
         if contract & _ATTNBF16:
             emit(_record(ATTN_VJP, 1 << 8, dims, (q, kk, vv, p, dy, dq, dk, dv, ws)))
         else:
-            emit(_record(ATTN_VJP, attention_contract, dims, (q, kk, vv, p, dy, dq, dk, dv)))
+            emit(_record(ATTN_VJP, attention_contract, dims, (q, kk, vv, p, dy, dq, dk, dv,
+                                                              ws_attention)))  # fmt: skip
 
     def rms_backward(x, g, dy, dx, dg, inv, how) -> None:
         emit(_record(RMS_VJP, how, (n, d, eps), (x, g, dy, dx, dg, inv)))

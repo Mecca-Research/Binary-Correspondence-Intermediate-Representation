@@ -15,8 +15,9 @@ _Static_assert(sizeof(float)==4 && FLT_RADIX==2 && FLT_MANT_DIG==24,
  * dispatch is then the same call after its record, so the state is the library's bit for bit.
  * A record is BCIR_DT_TRACE_WORDS words -- kind, launch (the calls of one job share it), flags,
  * eight dimensions, ten operands -- and records past the lent capacity are counted, never dropped
- * silently. The spaces: 1-4 the parameter arenas, 5 activations, 6 scratch, 7 the bf16 workspace,
- * 8 outside the state (the caller's tokens and targets). */
+ * silently. The spaces: 1-4 the parameter arenas, 5 activations, 6 scratch, 7 the workspace (the bf16
+ * contract's, and the binary32 attention's where the state lends bytes: ATT-CONTIG), 8 outside the
+ * state (the caller's tokens and targets). */
 #define BCIR_DT_TRACE_WORDS BCIR_DT_RECORD_WORDS
 static const bcir_decoder_state *trace_state;
 static uint64_t *trace_words,trace_launch;
@@ -83,16 +84,17 @@ static void tr_embed(size_t n,size_t d,const uint32_t *tokens,const float *table
 #define bcir_tensor_mm_group_variant_pool(pool,ct,va,chain,nchain,y,ny,pre,ws,bytes) \
   (tr_mm_group((ct)==3 ? 6u : 5u,ct,chain,nchain,y,ny,pre,ws,bytes), \
    tr_ran(bcir_tensor_mm_group_variant_pool(pool,ct,va,chain,nchain,y,ny,pre,ws,bytes)))
-#define bcir_tensor_attention_contract_variant_scan_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,y,bad) \
-  (tr_attention(7,ct,0,b,t,h,kh,d,q,k,v,p,y,NULL,NULL,NULL,NULL,0), \
-   tr_ran(bcir_tensor_attention_contract_variant_scan_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,y,bad)))
+#define bcir_tensor_attention_contract_variant_scan_ws_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,y,bad,ws,bytes) \
+  (tr_attention(7,ct,0,b,t,h,kh,d,q,k,v,p,y,NULL,NULL,NULL,ws,bytes), \
+   tr_ran(bcir_tensor_attention_contract_variant_scan_ws_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,y,bad,ws,bytes)))
 #define bcir_tensor_attention_bf16_scan_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,y,bad,ws,bytes) \
   (tr_attention(7,ct,1,b,t,h,kh,d,q,k,v,p,y,NULL,NULL,NULL,ws,bytes), \
    tr_ran(bcir_tensor_attention_bf16_scan_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,y,bad,ws,bytes)))
-#define bcir_tensor_attention_backward_contract_variant_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv) \
-  (tr_attention(8,ct,0,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,NULL,0), \
-   tr_ran(bcir_tensor_attention_backward_contract_variant_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,dy,dq, \
-       dk,dv)))
+#define bcir_tensor_attention_backward_contract_variant_ws_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws, \
+    bytes) \
+  (tr_attention(8,ct,0,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws,bytes), \
+   tr_ran(bcir_tensor_attention_backward_contract_variant_ws_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,dy,dq, \
+       dk,dv,ws,bytes)))
 #define bcir_tensor_attention_bf16_backward_pool(pool,va,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws,bytes) \
   (tr_attention(8,0,1,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws,bytes), \
    tr_ran(bcir_tensor_attention_bf16_backward_pool(pool,va,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws,bytes)))
@@ -236,11 +238,16 @@ static int valid_with(bcir_decoder_state *s,int placed) {
     for (j=0;j<i;j++) if (overlap(ptr[i],len[i]*sizeof(float),ptr[j],len[j]*sizeof(float)))
       return BCIR_DT_INVALID;
   }
-  if (s->contract&BCIR_DT_CONTRACT_BF16) {  /* the GEMMs' workspace: present, at the floor, apart */
-    size_t least=bcir_decoder_workspace_floor(&p,s->contract,bcir_tensor_pool_threads(s->pool));
+  /* the workspace: under a bf16 GEMM contract present and at the floor; any lent workspace apart from
+   * the state and every arena (ATT-CONTIG: the binary32 attention copies into it under any contract) */
+  if ((s->contract&BCIR_DT_CONTRACT_BF16) || s->workspace) {
+    size_t least=0;
+    if (s->contract&BCIR_DT_CONTRACT_BF16) {
+      least=bcir_decoder_workspace_floor(&p,s->contract,bcir_tensor_pool_threads(s->pool));
 #ifdef BCIR_DT_WORKSPACE_PROBE
-    if (workspace_admit!=SIZE_MAX) least=workspace_admit;
+      if (workspace_admit!=SIZE_MAX) least=workspace_admit;
 #endif
+    }
     if (!s->workspace) return BCIR_DT_INVALID;
     if (s->workspace_bytes<least || s->workspace_bytes>UINTPTR_MAX-(uintptr_t)s->workspace)
       return BCIR_DT_CAPACITY;
@@ -272,7 +279,7 @@ static int external_in(bcir_decoder_state *s,int placed,const void *p,size_t byt
     !overlap(p,bytes,s->moment2,s->plan.parameters*sizeof(float)) &&
     !overlap(p,bytes,s->activations,transient_bytes(s,placed,0)) &&
     !overlap(p,bytes,s->scratch,transient_bytes(s,placed,1)) &&
-    !((s->contract&BCIR_DT_CONTRACT_BF16) && overlap(p,bytes,s->workspace,s->workspace_bytes));
+    !(s->workspace && overlap(p,bytes,s->workspace,s->workspace_bytes));
 }
 static int external(bcir_decoder_state *s,const void *p,size_t bytes) {
   return external_in(s,0,p,bytes);
@@ -420,12 +427,19 @@ static int ws_panels(geometry g) {
 static size_t ws_attention(geometry g,unsigned threads) {
   return bcir_tensor_attention_bf16_pool_workspace(g.b,g.t,g.h,g.kh,g.hd,threads);
 }
+/* ATT-CONTIG: the binary32 attention's regions, 0 where its tasks run on the rows in place */
+static size_t ws_attention32(geometry g,unsigned threads) {
+  return bcir_tensor_attention_pool_workspace(g.b,g.t,g.h,g.kh,g.hd,threads);
+}
 size_t bcir_decoder_workspace_need(const bcir_decoder_plan *plan,uint32_t contract,unsigned threads) {
   bcir_decoder_plan p; geometry g; size_t most;
-  if (!(contract&BCIR_DT_CONTRACT_BF16)) return 0;
+  if (!(contract&BCIR_DT_CONTRACT_BF16)) {  /* the binary32 GEMMs pack nothing: the attention's copies */
+    if (!plan || bcir_decoder_make_plan(&plan->spec,&p)) return 0;
+    return ws_attention32(geom(&p.spec),threads);
+  }
   if (!plan || bcir_decoder_make_plan(&plan->spec,&p)) return SIZE_MAX;
   g=geom(&p.spec); most=ws_need(g,ws_panels(g),0);
-  if (contract&BCIR_DT_CONTRACT_ATTNBF16) most=ws_most(most,ws_attention(g,threads));
+  most=ws_most(most,(contract&BCIR_DT_CONTRACT_ATTNBF16) ? ws_attention(g,threads) : ws_attention32(g,threads));
   return most;
 }
 size_t bcir_decoder_workspace_bytes(const bcir_decoder_plan *plan,uint32_t contract) {
@@ -667,6 +681,11 @@ static void swiglu_backward(bcir_decoder_state *s,size_t n,const float *g,const 
   if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_swiglu_backward_v2_pool(s->pool,n,g,u,dy,dg,du);
   else bcir_tensor_swiglu_backward_pool(s->pool,n,g,u,dy,dg,du);
 }
+/* ATT-CONTIG: the workspace the binary32 attention copies its heads' rows into -- the state's, where it
+ * lends bytes (the entry runs the rows in place below its need) */
+static void *attention_workspace(const bcir_decoder_state *s) {
+  return s->workspace_bytes ? s->workspace : NULL;
+}
 /* The attention's contract as the tensor unit names it: the softmax's exponential (EXP) and the
  * products' multiply-adds (ATTN-FMA) -- one predicate for the forward and the backward. */
 static unsigned attention_contract(const bcir_decoder_state *s) {
@@ -683,8 +702,8 @@ static int attention_v(bcir_decoder_state *s,int variant,int scratch,size_t b,si
   if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)
     return bcir_tensor_attention_bf16_scan_pool(s->pool,variant,contract,b,t,h,kh,d,q,k,
         v,p,y,bad,s->workspace,s->workspace_bytes)!=0;
-  return bcir_tensor_attention_contract_variant_scan_pool(s->pool,variant,contract,b,t,
-      h,kh,d,q,k,v,p,y,bad)!=0;
+  return bcir_tensor_attention_contract_variant_scan_ws_pool(s->pool,variant,contract,b,t,
+      h,kh,d,q,k,v,p,y,bad,attention_workspace(s),s->workspace_bytes)!=0;
 }
 static int attention(bcir_decoder_state *s,int scratch,size_t b,size_t t,size_t h,size_t kh,
     size_t d,const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
@@ -695,8 +714,8 @@ static int attention_backward_v(bcir_decoder_state *s,int variant,geometry g,con
   if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)
     return bcir_tensor_attention_bf16_backward_pool(s->pool,variant,g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,
         dq,dk,dv,s->workspace,s->workspace_bytes)!=0;
-  return bcir_tensor_attention_backward_contract_variant_pool(s->pool,variant,attention_contract(s),
-      g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,dv)!=0;
+  return bcir_tensor_attention_backward_contract_variant_ws_pool(s->pool,variant,attention_contract(s),
+      g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,dv,attention_workspace(s),s->workspace_bytes)!=0;
 }
 static int attention_backward(bcir_decoder_state *s,geometry g,const float *q,const float *k,
     const float *v,float *p,const float *dy,float *dq,float *dk,float *dv) {
@@ -1513,7 +1532,7 @@ static void px_init(px_ctx *c,bcir_decoder_state *s) {
   c->base[5]=(unsigned char *)s->activations; c->len[5]=transient_bytes(s,1,0);
   c->base[6]=(unsigned char *)s->scratch; c->len[6]=transient_bytes(s,1,1);
   c->base[7]=(unsigned char *)s->workspace;
-  c->len[7]=(s->contract&BCIR_DT_CONTRACT_BF16) ? s->workspace_bytes : 0;
+  c->len[7]=s->workspace ? s->workspace_bytes : 0;
   c->v2=(unsigned)swiglu_v2(s); c->gc=(unsigned)gemm_contract(s);
   c->attn=attention_contract(s)|((s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : 0u);
   c->attn_vjp=(s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : attention_contract(s);
@@ -1544,7 +1563,7 @@ static int px_slot(const px_ctx *c,const uint64_t *w,unsigned q,unsigned mask,si
   ops[*n].off=(size_t)r[1]; ops[*n].bytes=bytes; (*n)++;
   return 1;
 }
-/* the workspace slot q: the state's whole bf16 workspace where the call packs into it, else absent */
+/* the workspace slot q: the state's whole workspace where the call packs or copies into it, else absent */
 static int px_ws(const px_ctx *c,const uint64_t *w,unsigned q,int packs) {
   const uint64_t *r=w+11+3*q;
   if (!packs) return !r[0] && !r[1] && !r[2];
@@ -1627,7 +1646,7 @@ static int px_kernel(const px_ctx *c,const uint64_t *w,px_op *ops,size_t *n) {
     z=px_size(px_size(d[0],d[2],d[1],1),d[1],1,4);
     if (f!=(vjp ? c->attn_vjp : c->attn) || !x || !y || !z || d[2]%d[3] || !px_rest(w,5,9) ||
         !px_slot(c,w,0,PX_IN,x,PX_R,ops,n) || !px_slot(c,w,1,PX_IN,y,PX_R,ops,n) ||
-        !px_slot(c,w,2,PX_IN,y,PX_R,ops,n) || !px_ws(c,w,8,bf)) return 0;
+        !px_slot(c,w,2,PX_IN,y,PX_R,ops,n) || !px_ws(c,w,8,bf || c->len[7])) return 0;  /* ATT-CONTIG */
     if (!vjp)
       return px_slot(c,w,3,PX_OUT,z,PX_W,ops,n) && px_slot(c,w,4,PX_OUT,x,PX_W,ops,n) &&
           px_slot(c,w,5,0,0,0,ops,n) && px_slot(c,w,6,0,0,0,ops,n) && px_slot(c,w,7,0,0,0,ops,n);
@@ -1991,7 +2010,7 @@ static void tr_ref(uint64_t *w,unsigned slot,const void *p,size_t bytes) {
   base[4]=s->activations; base[5]=s->scratch; base[6]=s->workspace;
   len[0]=len[1]=len[2]=len[3]=s->plan.parameters*sizeof(float);
   len[4]=arena_floats(s)*sizeof(float); len[5]=s->plan.scratch*sizeof(float);
-  len[6]=(s->contract&BCIR_DT_CONTRACT_BF16) ? s->workspace_bytes : 0;
+  len[6]=s->workspace ? s->workspace_bytes : 0;
   r[0]=8; r[1]=0; r[2]=bytes;
   for (i=0;i<7;i++)
     if (base[i] && len[i] && x>=(uintptr_t)base[i] && x-(uintptr_t)base[i]<len[i]) {

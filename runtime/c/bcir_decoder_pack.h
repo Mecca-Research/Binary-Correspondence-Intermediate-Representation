@@ -25,11 +25,12 @@
  * its launch (rank + 1) and the time a lifetime's phase span (its half-open ticks) is read in:
  * every value a claim names must be live at the claim's rank -- with the alias law, no claim can
  * write a byte another value still holds. The banks are the state's: weights, gradients, moment1,
- * moment2, activations and scratch (spaces 1-6), workspace (7, the bf16 workspace), tokens and
- * targets (8, the micro-batch's). Every claim is lowered and checked before any record is written,
- * so a refused pack writes nothing to `program` (*records 0): BCIR_DT_INVALID with `why` the
- * verifiers' bcir_status (1..25), ahead of any reason of the lowering's own, or a BCIR_DP_* reason
- * below; BCIR_DT_CAPACITY when `work` or `program` is short of bcir_decoder_pack_sizes' figures.
+ * moment2, activations and scratch (spaces 1-6), workspace (7: the bf16 GEMMs' packs and the binary32
+ * attention's copies), tokens and targets (8, the micro-batch's). Every claim is lowered and checked
+ * before any record is written, so a refused pack writes nothing to `program` (*records 0):
+ * BCIR_DT_INVALID with `why` the verifiers' bcir_status (1..25), ahead of any reason of the
+ * lowering's own, or a BCIR_DP_* reason below; BCIR_DT_CAPACITY when `work` or `program` is short of
+ * bcir_decoder_pack_sizes' figures.
  * `work` is scratch: its bytes are the lowering's. PX-3b-2: a claim whose plan step runs a
  * measured realization, `<name>@i<bit>` or `<name>@t<k>` (K_BCIR's offer under a target's measured
  * table, the plan's own candidate string), lowers to a record of that instance (word 41) or that

@@ -434,6 +434,30 @@ BCIR_DT_API int bcir_tensor_attention_backward_contract_variant_pool(bcir_tensor
     int variant, unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads,
     size_t dim, const float *q, const float *k, const float *v, float *p, const float *dy,
     float *dq, float *dk, float *dv);
+/* ATT-CONTIG: the binary32 attention entries above with a workspace the caller lends. Where a row of
+ * q, k or v holds more than one head and the context reaches BCIR_ATT_CONTIG_FROM positions (1024 on
+ * the measuring hosts; no value depends on it), each task copies its head's rows into a region of the
+ * workspace -- the forward's q, k and v rows and its context, the backward's K and V rows and their
+ * adjoints and each query head's Q, dY and dQ -- runs on them and copies its results back: values
+ * moved, none computed. One region a worker of the pool where the workers are no more than the
+ * forward's tasks (batch x heads), else one a task: bcir_tensor_attention_pool_workspace bytes for a
+ * pool of that many threads (a NULL pool one), at most bcir_tensor_attention_workspace (one region a
+ * task, a function of the shapes alone), both 0 where no task copies (or kvheads not dividing heads).
+ * Less workspace is not a different result: with less than the pool's need, or none, every task runs
+ * on the rows in place. Each returns what its entry without the workspace returns, and every result
+ * is that entry's bit for bit, at every thread count and with any workspace. */
+BCIR_DT_API size_t bcir_tensor_attention_workspace(size_t batch, size_t time, size_t heads,
+    size_t kvheads, size_t dim);
+BCIR_DT_API size_t bcir_tensor_attention_pool_workspace(size_t batch, size_t time, size_t heads,
+    size_t kvheads, size_t dim, unsigned threads);
+BCIR_DT_API int bcir_tensor_attention_contract_variant_scan_ws_pool(bcir_tensor_pool *pool,
+    int variant, unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads,
+    size_t dim, const float *q, const float *k, const float *v, float *p, float *y, int *bad,
+    void *workspace, size_t bytes);
+BCIR_DT_API int bcir_tensor_attention_backward_contract_variant_ws_pool(bcir_tensor_pool *pool,
+    int variant, unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads,
+    size_t dim, const float *q, const float *k, const float *v, float *p, const float *dy,
+    float *dq, float *dk, float *dv, void *workspace, size_t bytes);
 #ifdef __cplusplus
 }
 #endif

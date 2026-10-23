@@ -91,7 +91,7 @@
       "expects": "test_the_c_step_issues_the_planned_launches",
       "label": "PT4 the probe places the bf16 workspace's operands outside the state",
       "new": "  len[6]=0;",
-      "old": "  len[6]=(s->contract&BCIR_DT_CONTRACT_BF16) ? s->workspace_bytes : 0;",
+      "old": "  len[6]=s->workspace ? s->workspace_bytes : 0;",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

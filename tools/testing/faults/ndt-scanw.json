@@ -45,8 +45,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "SW6 the attention scans the first batch's keys only",
-      "new": "  if (ok && h%(nh/nk)==0 && r==0) ok=rows_finite(",
-      "old": "  if (ok && h%(nh/nk)==0) ok=rows_finite(",
+      "new": "  if (ok && h%(nh/nk)==0 && r==0) ok=rows_finite(a->variant,a->k+(r*t*nk+kh)*d,t,d,nk*d);",
+      "old": "  if (ok && h%(nh/nk)==0) ok=rows_finite(a->variant,a->k+(r*t*nk+kh)*d,t,d,nk*d);",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

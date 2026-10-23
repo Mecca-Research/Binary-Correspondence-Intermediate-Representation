@@ -4278,6 +4278,89 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: the threshold and the band's height are this host's choice, and no value depends on
     them; the portable and AVX2 instances; the bf16 attention's own transposed products; AMX timing; a
     GPU.
+  ATT-CONTIG (2026-10-23): the attention's tasks on contiguous copies of their heads' rows, every value
+    as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §10,
+    [measurements/2026-10-23/att-contig/](research/measurements/2026-10-23/att-contig/README.json)).
+  - The loss it answers: not the traffic in P that BWD-LONG named. Four ways at that traffic were built
+    on the session's earlier host, every value the same in each, and none moved the attention on four
+    threads at B4/T2048: BWD-RECOMP (the forward without its probabilities, the backward recomputing
+    each 32-row strip of P exactly) x0.989 of the attention, its forward x0.680 and its backward
+    x1.192; row fusion (dQ, dK and dV in the strip loop) x0.968-x1.019 of the backward; ATT-PACK (the
+    context's keys and the bands' rows packed) x1.013; ATT-PREFETCH (P's lines asked for ahead of the
+    walks) no distance resolved. The layout did move it: the same buffers read as B x H batches of one
+    head ran the attention at x0.845 at B4/T2048 (the backward x0.801) and x0.617 at B1/T4096 with 8
+    heads of 64. A row of q, k or v holds every head's channels, so a head's rows lie heads x dim floats
+    apart -- the context's walk alone took 2.10-2.24 cycles a vector multiply-add at a 128-float stride,
+    1.56-1.66 at 32 -- and four threads' heads share their output rows.
+  - ATT-CONTIG: from `BCIR_ATT_CONTIG_FROM` positions (1024), where a row holds more than one head, a
+    task lent a region of a caller's workspace copies its head's rows in, runs the head as a batch of
+    one head of one row stride, and copies its results back -- a forward task its query head's q and
+    its KV head's k and v, its context out; a backward task its KV head's k, v, dk and dv, then each
+    query head's q, dy and dq, the group's later heads adding to dk and dv as they add in place (the
+    head's backward takes an accumulate flag). Values move; none is computed. A region is seven t x d
+    copies, each to a 64-byte boundary; one a worker where the workers are no more than the forward's
+    tasks, else one a task (`bcir_tensor_attention_pool_workspace`, at most
+    `bcir_tensor_attention_workspace`); with less, or none, every task runs on the rows in place. The
+    entries `bcir_tensor_attention_contract_variant_scan_ws_pool` and
+    `bcir_tensor_attention_backward_contract_variant_ws_pool` take the workspace; the entries without
+    one run them with none.
+  - The trainer lends the binary32 attention its state's workspace under every contract:
+    `bcir_decoder_workspace_need` covers the regions (alone under a binary32 GEMM contract; under bf16
+    the most of the GEMM groups' packs and the regions), a lent workspace is held apart from the state,
+    every arena and a caller's buffers under every contract, and any size trains the same state. PX-1's
+    trace, the program executor's check, the pack's claims and their lowering state it as the
+    attention's operand on both of its launches wherever the state lends bytes; the Python planner lends
+    one only where the step packs or copies into it.
+  - Every value is the same: the entries without a workspace give BWD-LONG's 48 backward and 88 forward
+    cases byte for byte before and after under clang 18 and GCC 13, and the workspace entries the
+    entries without one in 564 cases (the context, the verdict, the stored probabilities, dq, dk, dv; a
+    non-finite key among them), built as committed and built to copy at every context; the GEO model's
+    trained state the same digest from both level-3 builds at every context.
+  - Measured on the committed tree against the one before it, on the host the session moved to on
+    2026-10-23 (an Intel Xeon @ 2.30 GHz with AMX, 2 MiB of L2 a core, a 260 MiB L3), both units in one
+    process beside the tree after it run in place, the contiguous layout and an A/A control, 48 rounds a
+    row on four threads: the GEO shape at B4/T2048 x0.934 (0.906-0.962), the backward x0.883 and the
+    forward unchanged (GCC x0.945, its interval meeting the control's; the contiguous layout x0.922 and
+    x0.912); at T1024 x0.975 and on one thread x0.984, neither resolved; 8 heads of 64 at B2/T1024
+    x0.850, B1/T2048 x0.716 and B1/T4096 x0.593 (GCC x0.599), against the contiguous layout's x0.792,
+    x0.683 and x0.576 (GCC x0.588) -- within its interval at T2048 and T4096; the in-place path
+    x0.98-x1.02 everywhere. The threshold: copying from T1024 read faster on this host (8 heads of 64 at
+    B1/T1024 x0.842 in the run that set it), from T512 not (x1.009, x1.014, x0.983, none resolved). The
+    training step at the GEO dimensions x0.912 (0.899-0.925) at T2048 and x0.953 (0.934-0.973) at T1024
+    under the study's contract, x0.956 at T2048 under v1, unchanged at T512 and on the 9.84M decoder at
+    T128 (GCC x0.961 and x0.968, each meeting its control). The GEO study's attention model on level 3,
+    built with GCC as the study builds it and lent its attention's regions (`contig_level3.py`): x0.934
+    (0.923-0.945) of the build before at T2048 (x0.948 against the control's arm), unchanged at T1024
+    and T512; at T2048 now x1.016 (0.990-1.043) of eager PyTorch's time and x1.08 of Inductor's, from
+    x1.086 and x1.15 on this host.
+  - The design runs, recorded with the slice (on the earlier host): copies of every operand x0.895-0.907
+    of the attention at B4/T2048 (the outputs alone x0.898, the inputs alone x0.885); B1/T4096 with 8
+    heads of 64 x0.656 (the contiguous layout x0.619); T512 slower (the backward x1.10); the task order
+    remapped batch-fastest nothing once the tasks copy; the GEO training update with a thread-local
+    prototype x0.904 of the build before.
+  - What remains: the copies' own cost (x0.934 against the contiguous layout's x0.922 for the GEO shape
+    at T2048, x0.850 against x0.792 for 8 heads of 64 at T1024), which a layout the step keeps -- its
+    projections writing each head's rows contiguous -- would close; the GEO shape at T1024 and on one
+    thread; under GQA the forward's K and V copied once a query head.
+  - Witnesses: the tensor entries with a workspace against the entries without one, bit for bit -- the
+    context, the verdict, the stored probabilities and the score adjoints left in them, dq, dk, dv and
+    the scratch forward's context -- lent the pool's need from a 64-byte boundary and from the address
+    after one, a byte short of it and none, every byte outside the regions untouched, on every instance
+    and contract, finite and not (a key no context reaches among them), serially and on pools of two,
+    four and 64 workers; the threshold's own context in every build, every context in the C harness's
+    new -contig build; the regions' size rule; the trainer's need against the GEMMs' packs and the
+    regions exactly, the binary32 refusals and the overlap with a caller's buffer; a T1024 binary32 case
+    through the trace, the program executor and each of the planner's choices; the manifest's
+    ThreadSanitizer builds of the harness copy at every context (`BCIR_ATT_CONTIG_FROM` 1), so the
+    workers' regions run under the sanitizer -- pools of two, four and 64 workers, no race, the injected
+    partition fault still reported (the default build's TSan run skips the one context that copies).
+    `att-contig.json` AC1-AC23 and `att-contig-px.json` AX1-AX8, each caught by its own check and
+    compiling warning-free under GCC 13, clang 18 and clang 23; `geo3-py.json` GP10 (the planner lending
+    a workspace where nothing packs or copies); GW9, IA16, AB4, AF10, AF14, AF16, AF17, NZ4, PI5, PT4,
+    SW6, PK24 and PM5 re-anchored to the lines this moved, each keeping its defect, caught again.
+  - Not claimed: the threshold is the measuring hosts' choice, and no value depends on it; the bf16
+    attention (it packs its own operands); a KV head's rows already contiguous (one KV head) are copied
+    as well; AMX timing; a GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

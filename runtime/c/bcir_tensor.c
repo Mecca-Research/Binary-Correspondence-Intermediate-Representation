@@ -2522,6 +2522,10 @@ typedef struct att_job {
   int fused;  /* ATTN-FMA: the products' every multiply-add one fmaf */
   int scratch;  /* INFER-ATTN: the forward's probabilities are scratch, a strip of rows at a time */
   unsigned char *bad;  /* the forward's verdict bytes, one a task (NDT-SCAN-W), or NULL */
+  /* ATT-CONTIG: the regions a task copies its head's rows into (NULL: the rows in place), a
+   * region's bytes, a region a worker or a task; acc: a sub-job's dk and dv add its head's terms to
+   * what they hold (a KV head's later query heads) */
+  unsigned char *ws; size_t per; int by_worker,acc;
 } att_job;
 #ifdef BCIR_MM_DISPATCH
 /* The attention's masked products on AVX-512 (NDT-ATTN-2: the forward's scores and context;
@@ -3094,6 +3098,101 @@ static void att_task(void *ctx, size_t task) {
   if (a->scratch) att_head_scratch(a,task/a->nh,task%a->nh);
   else att_head(a,task/a->nh,task%a->nh);
 }
+/* ATT-CONTIG: a task on contiguous copies of its head's rows. Where a row of q, k or v holds more
+ * than one head (heads*dim floats a token), a head's own rows lie a row apart and share with every
+ * other operand's the few cache sets their offset in the row maps to; four heads interleaved cost
+ * the GEO attention model's backward a fifth of its time at T2048, eight heads at T4096 two fifths.
+ * From BCIR_ATT_CONTIG_FROM positions (where the copies, linear in the context, are small beside
+ * the products, quadratic in it: 1024, the measuring hosts' choice, faster there on both and below it
+ * no faster; no value depends on it), a task given a region copies its head's rows in, runs its head
+ * as a batch of one head of one row stride, and copies its results back: values moved, none computed,
+ * every product's terms its own in its order. */
+#ifndef BCIR_ATT_CONTIG_FROM
+#define BCIR_ATT_CONTIG_FROM 1024
+#endif
+static size_t att_ctg_mul(size_t a, size_t b) { return a && b>SIZE_MAX/a ? SIZE_MAX : a*b; }
+/* the floats of one copy, a head's t rows of d, to the next 64-byte boundary */
+static size_t att_ctg_floats(size_t t, size_t d) {
+  size_t n=att_ctg_mul(t,d);
+  return n>SIZE_MAX-15 ? SIZE_MAX : (n+15)/16*16;
+}
+/* whether the tasks copy: the context from the threshold on, a row holding more than one head */
+static int att_ctg_copies(size_t t, size_t nh, size_t nk) {
+  return t>=BCIR_ATT_CONTIG_FROM && (nh>1 || nk>1);
+}
+/* a region: the backward's seven copies (K, V, dK, dV, and a query head's Q, dY and dQ); the
+ * forward's four (Q, K, V, the context) fit in them */
+static size_t att_ctg_per(size_t t, size_t d) {
+  size_t f=att_ctg_floats(t,d);
+  return f>SIZE_MAX/(7*sizeof(float)) ? SIZE_MAX : 7*f*sizeof(float);
+}
+/* `regions` regions, and the slack to the workspace's first 64-byte boundary */
+static size_t att_ctg_bytes(size_t regions, size_t t, size_t d) {
+  size_t n=att_ctg_mul(regions,att_ctg_per(t,d));
+  return n>SIZE_MAX-63 ? SIZE_MAX : n+63;
+}
+size_t bcir_tensor_attention_workspace(size_t b, size_t t, size_t nh, size_t nk, size_t d) {
+  if (!b || !t || !nh || !nk || !d || nh%nk || !att_ctg_copies(t,nh,nk)) return 0;
+  return att_ctg_bytes(att_ctg_mul(b,nh),t,d);
+}
+/* a region a worker where the workers are no more than the forward's tasks (batch x heads), else a
+ * region a task; the backward's tasks (batch x kvheads) are no more than the forward's */
+size_t bcir_tensor_attention_pool_workspace(size_t b, size_t t, size_t nh, size_t nk, size_t d,
+    unsigned threads) {
+  size_t tasks;
+  if (!b || !t || !nh || !nk || !d || nh%nk || !att_ctg_copies(t,nh,nk)) return 0;
+  tasks=att_ctg_mul(b,nh);
+  return att_ctg_bytes(threads && threads<=tasks ? threads : tasks,t,d);
+}
+/* a job's regions: from the workspace's first 64-byte boundary where it holds the pool's need, else
+ * none -- the rows in place, the same values */
+static void att_ctg_setup(att_job *a, const bcir_tensor_pool *pool, size_t tasks, void *workspace,
+    size_t bytes) {
+  unsigned threads=bcir_tensor_pool_threads(pool);
+  uintptr_t w=(uintptr_t)workspace,base=(w+63)/64*64;
+  a->ws=NULL; a->per=0; a->by_worker=0; a->acc=0;
+  if (!workspace || !att_ctg_copies(a->t,a->nh,a->nk) ||
+      bytes<bcir_tensor_attention_pool_workspace(a->b,a->t,a->nh,a->nk,a->d,threads)) return;
+  a->ws=(unsigned char *)workspace+(base-w); a->per=att_ctg_per(a->t,a->d); a->by_worker=threads<=tasks;
+}
+static void att_rows_in(float *dst, const float *src, size_t t, size_t d, size_t ld) {
+  size_t i;
+  for (i=0;i<t;i++) memcpy(dst+i*d,src+i*ld,d*sizeof(float));
+}
+static void att_rows_out(float *dst, const float *src, size_t t, size_t d, size_t ld) {
+  size_t i;
+  for (i=0;i<t;i++) memcpy(dst+i*ld,src+i*d,d*sizeof(float));
+}
+/* the region of a task: its worker's, or its own */
+static float *att_ctg_region(const att_job *a, size_t task, unsigned worker) {
+  return (float *)(void *)(a->ws+(a->by_worker ? (size_t)worker : task)*a->per);
+}
+/* A forward task (batch r, query head h) on copies of its q, k and v rows: the head as a batch of one
+ * head -- its probabilities where the stored or the scratch forward keeps them -- its context copied
+ * back, and att_verdict's verdict over the copies (the context, and the keys from the KV head's first
+ * query head). */
+static void att_task_contig(const att_job *a, size_t task, unsigned worker) {
+  size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,r=task/nh,h=task%nh,kh=h/(nh/nk),f=att_ctg_floats(t,d);
+  float *qc=att_ctg_region(a,task,worker),*kc=qc+f,*vc=kc+f,*yc=vc+f; att_job s=*a;
+  att_rows_in(qc,a->q+(r*t*nh+h)*d,t,d,nh*d);
+  att_rows_in(kc,a->k+(r*t*nk+kh)*d,t,d,nk*d);
+  att_rows_in(vc,a->v+(r*t*nk+kh)*d,t,d,nk*d);
+  s.b=1; s.nh=1; s.nk=1; s.group=1; s.q=qc; s.k=kc; s.v=vc; s.y=yc; s.bad=NULL; s.ws=NULL;
+  s.p=a->p+(r*nh+h)*(a->scratch ? att_scratch_rows(t) : t)*t;
+  if (a->scratch) att_head_scratch(&s,0,0); else att_head(&s,0,0);
+  att_rows_out(a->y+(r*t*nh+h)*d,yc,t,d,nh*d);
+  if (a->bad) {
+    int ok=rows_finite(a->variant,yc,t,d,d);
+    if (ok && h%(nh/nk)==0) ok=rows_finite(a->variant,kc,t,d,d);
+    a->bad[r*nh+h]=(unsigned char)!ok;
+  }
+}
+static void att_task_w(void *ctx, size_t task, unsigned worker) {
+  att_job *a=(att_job *)ctx;
+  if (!a->ws) { att_task(ctx,task); return; }
+  INSTANCE_SAW(INSTANCE_ATTN,a->variant);
+  att_task_contig(a,task,worker);
+}
 #ifdef BCIR_DT_ATTENTION_PROBE
 /* The trainer harness's record of the contract the attention's jobs ran (ATTN-FMA) -- what each
  * job computed with, from its own fields, not what a caller meant to pass: [0] the forwards', [1]
@@ -3116,7 +3215,7 @@ unsigned bcir_tensor_attention_probe(int backward) {
  * otherwise); `scratch` the INFER-ATTN forward, its probabilities a strip at a time */
 static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int scratch, int variant,
     size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k,
-    const float *v, float *p, float *y, int *bad) {
+    const float *v, float *p, float *y, int *bad, void *workspace, size_t room) {
   att_job a; unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=b*nh;
   a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.group=1; a.q=q; a.k=k; a.v=v; a.dy=NULL; a.p=p; a.y=y;
   a.dq=NULL; a.dk=NULL; a.dv=NULL; a.exp2=exp2; a.fused=fused; a.scratch=scratch;
@@ -3126,28 +3225,29 @@ static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int scrat
       (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u));
 #endif
   a.bad=scan_bytes(bad,bytes,tasks);
-  pool_run(pool,att_task,&a,tasks);
+  att_ctg_setup(&a,pool,tasks,workspace,room);  /* ATT-CONTIG */
+  if (a.ws) pool_dispatch(pool,NULL,att_task_w,&a,tasks); else pool_run(pool,att_task,&a,tasks);
   if (!bad) return;
   if (a.bad) scan_fold(bad,bytes,tasks);
   else if (!scan_pool(pool,y,b*t*nh*d) || !scan_pool(pool,k,b*t*nk*d)) *bad=1;
 }
 void bcir_tensor_attention_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL);
+  attention_any(pool,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL,NULL,0);
 }
 void bcir_tensor_attention_v2_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,1,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL);
+  attention_any(pool,1,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL,NULL,0);
 }
 void bcir_tensor_attention_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
     size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
     int *bad) {
-  attention_any(pool,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad);
+  attention_any(pool,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad,NULL,0);
 }
 void bcir_tensor_attention_v2_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
     size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
     int *bad) {
-  attention_any(pool,1,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad);
+  attention_any(pool,1,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad,NULL,0);
 }
 void bcir_tensor_attention_contract_scan_pool(bcir_tensor_pool *pool, unsigned contract, size_t b,
     size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v,
@@ -3157,10 +3257,16 @@ void bcir_tensor_attention_contract_scan_pool(bcir_tensor_pool *pool, unsigned c
 int bcir_tensor_attention_contract_variant_scan_pool(bcir_tensor_pool *pool, int variant,
     unsigned contract, size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q,
     const float *k, const float *v, float *p, float *y, int *bad) {
+  return bcir_tensor_attention_contract_variant_scan_ws_pool(pool,variant,contract,b,t,nh,nk,d,q,k,v,p,
+      y,bad,NULL,0);
+}
+int bcir_tensor_attention_contract_variant_scan_ws_pool(bcir_tensor_pool *pool, int variant,
+    unsigned contract, size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q,
+    const float *k, const float *v, float *p, float *y, int *bad, void *workspace, size_t bytes) {
   int fused=(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0,iv=mm_instance(fused ? MM_FUSED : MM_V1,variant);
   if (!iv) return 0;
   attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,fused,
-      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,iv,b,t,nh,nk,d,q,k,v,p,y,bad);
+      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,iv,b,t,nh,nk,d,q,k,v,p,y,bad,workspace,bytes);
   return iv;
 }
 void bcir_tensor_attention(size_t b, size_t t, size_t nh, size_t nk, size_t d,
@@ -3232,10 +3338,11 @@ static void att_head_backward(const att_job *a, size_t r, size_t h, const float 
     size_t kh=h/(nh/nk),ldh=nh*d,ldk=nk*d; float *ph=p+(r*nh+h)*t*t;
     const float *qh=q+(r*t*nh+h)*d,*dyh=dy+(r*t*nh+h)*d;
     const float *kk=k+(r*t*nk+kh)*d,*vk=v+(r*t*nk+kh)*d;
+    int first=h%(nh/nk)==0 && !a->acc;  /* dk and dv from +0.0: the KV head's first query head */
     mm_args x;
     x.ta=1; x.tb=0; x.m=t; x.n=d; x.k=t; x.alpha=1.0f; x.a=ph; x.lda=t; x.b=dyh; x.ldb=ldh;
     x.c=dv+(r*t*nk+kh)*d; x.ldc=ldk; x.mode=MM_KGE;
-    att_rows(variant,a->fused,&x,t,ATT_TRANSPOSED,h%(nh/nk)==0);
+    att_rows(variant,a->fused,&x,t,ATT_TRANSPOSED,first);
     for (i0=0;i0<t;i0+=BCIR_ATT_ROWS) {
       size_t rows=t-i0<BCIR_ATT_ROWS ? t-i0 : BCIR_ATT_ROWS,pass,jt;
       float dot[BCIR_ATT_ROWS],kept[BCIR_ATT_KEEP/BCIR_ATT_COLS][BCIR_ATT_ROWS*BCIR_ATT_COLS],
@@ -3280,7 +3387,7 @@ static void att_head_backward(const att_job *a, size_t r, size_t h, const float 
     x.c=dq+(r*t*nh+h)*d; x.ldc=ldh; x.mode=MM_KLE;
     att_rows(variant,a->fused,&x,t,ATT_CONTEXT,1);
     x.ta=1; x.b=qh; x.ldb=ldh; x.c=dk+(r*t*nk+kh)*d; x.ldc=ldk; x.mode=MM_KGE;
-    att_rows(variant,a->fused,&x,t,ATT_TRANSPOSED,h%(nh/nk)==0);
+    att_rows(variant,a->fused,&x,t,ATT_TRANSPOSED,first);
   }
 }
 static void att_task_backward(void *ctx, size_t task) {
@@ -3310,6 +3417,44 @@ static void att_task_backward(void *ctx, size_t task) {
     for (h=first;h<first+a->group;h++) att_head_backward(a,r,h,vt,tp);
   }
 }
+/* ATT-CONTIG: a backward task (batch r, a KV head and its query heads) on copies of its rows: the KV
+ * head's K and V, its dK and dV (their v1 rows from +0.0, as the task zeroes them in place), then each
+ * query head in order with copies of its Q and dY rows and its dQ -- the head as a batch of one head,
+ * the group's later heads adding to dK and dV as they add in place -- dQ copied back after its head,
+ * dK and dV after the group. */
+static void att_task_backward_contig(const att_job *a, size_t task, unsigned worker) {
+  size_t per=a->nh/a->group,r=task/per,first=(task%per)*a->group,t=a->t,d=a->d,nh=a->nh,nk=a->nk;
+  size_t kh=first/(nh/nk),f=att_ctg_floats(t,d),v1=att_v1_rows(a->variant,t),h,i;
+  float *kc=att_ctg_region(a,task,worker),*vc=kc+f,*dkc=vc+f,*dvc=dkc+f,*qc=dvc+f,*dyc=qc+f,*dqc=dyc+f;
+  const float *vt=NULL; float *tp=NULL; att_job s=*a;
+  att_rows_in(kc,a->k+(r*t*nk+kh)*d,t,d,nk*d);
+  att_rows_in(vc,a->v+(r*t*nk+kh)*d,t,d,nk*d);
+  for (i=v1;i<t;i++) { memset(dkc+i*d,0,d*sizeof(float)); memset(dvc+i*d,0,d*sizeof(float)); }
+  s.b=1; s.nh=1; s.nk=1; s.group=1; s.k=kc; s.v=vc; s.dk=dkc; s.dv=dvc; s.ws=NULL;
+  {
+#ifdef BCIR_MM_DISPATCH
+    _Alignas(64) float panel[BCIR_ATT_PANEL];
+    if (a->variant==4 && d*t<=BCIR_ATT_WHOLE) { att512_panel(t,d,vc,d,panel); vt=panel; }
+    else if (a->variant==4 && d*BCIR_ATT_COLS<=BCIR_ATT_PANEL) tp=panel;
+#endif
+    for (h=first;h<first+a->group;h++) {
+      att_rows_in(qc,a->q+(r*t*nh+h)*d,t,d,nh*d);
+      att_rows_in(dyc,a->dy+(r*t*nh+h)*d,t,d,nh*d);
+      for (i=v1;i<t;i++) memset(dqc+i*d,0,d*sizeof(float));
+      s.q=qc; s.dy=dyc; s.dq=dqc; s.p=a->p+(r*nh+h)*t*t; s.acc=h!=first;
+      att_head_backward(&s,0,0,vt,tp);
+      att_rows_out(a->dq+(r*t*nh+h)*d,dqc,t,d,nh*d);
+    }
+  }
+  att_rows_out(a->dk+(r*t*nk+kh)*d,dkc,t,d,nk*d);
+  att_rows_out(a->dv+(r*t*nk+kh)*d,dvc,t,d,nk*d);
+}
+static void att_task_backward_w(void *ctx, size_t task, unsigned worker) {
+  att_job *a=(att_job *)ctx;
+  if (!a->ws) { att_task_backward(ctx,task); return; }
+  INSTANCE_SAW(INSTANCE_ATTN,a->variant);
+  att_task_backward_contig(a,task,worker);
+}
 void bcir_tensor_attention_backward_contract_pool(bcir_tensor_pool *pool, unsigned contract,
     size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k,
     const float *v, float *p, const float *dy, float *dq, float *dk, float *dv) {
@@ -3319,6 +3464,13 @@ void bcir_tensor_attention_backward_contract_pool(bcir_tensor_pool *pool, unsign
 int bcir_tensor_attention_backward_contract_variant_pool(bcir_tensor_pool *pool, int variant,
     unsigned contract, size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q,
     const float *k, const float *v, float *p, const float *dy, float *dq, float *dk, float *dv) {
+  return bcir_tensor_attention_backward_contract_variant_ws_pool(pool,variant,contract,b,t,nh,nk,d,q,k,
+      v,p,dy,dq,dk,dv,NULL,0);
+}
+int bcir_tensor_attention_backward_contract_variant_ws_pool(bcir_tensor_pool *pool, int variant,
+    unsigned contract, size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q,
+    const float *k, const float *v, float *p, const float *dy, float *dq, float *dk, float *dv,
+    void *workspace, size_t bytes) {
   att_job a; int fused=(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0;
   int iv=mm_instance(fused ? MM_FUSED : MM_V1,variant);
   if (!iv) return 0;
@@ -3330,7 +3482,9 @@ int bcir_tensor_attention_backward_contract_variant_pool(bcir_tensor_pool *pool,
 #ifdef BCIR_DT_ATTENTION_PROBE
   attention_saw(1,a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
 #endif
-  pool_run(pool,att_task_backward,&a,b*nh/a.group);
+  att_ctg_setup(&a,pool,b*nh/a.group,workspace,bytes);  /* ATT-CONTIG */
+  if (a.ws) pool_dispatch(pool,NULL,att_task_backward_w,&a,b*nh/a.group);
+  else pool_run(pool,att_task_backward,&a,b*nh/a.group);
   return iv;
 }
 void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *pool, size_t b, size_t t,

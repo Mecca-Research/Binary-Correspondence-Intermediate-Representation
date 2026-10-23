@@ -1,0 +1,70 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_launch:_CC",
+    "bcir.tests.test_native_launch:test_the_c_step_issues_the_planned_launches",
+    "bcir.tests.test_native_launch:test_a_long_context_lends_the_binary32_attention_the_workspace",
+    "bcir.tests.test_native_run_program:test_a_program_trains_the_c_steps_bits",
+    "bcir.tests.test_native_run_pack:test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "AX1 the trainer's binary32 attention is never lent the workspace",
+      "new": "  (void)s; return NULL;",
+      "old": "  return s->workspace_bytes ? s->workspace : NULL;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "AX2 the trace records the binary32 forward without its workspace",
+      "new": "  (tr_attention(7,ct,0,b,t,h,kh,d,q,k,v,p,y,NULL,NULL,NULL,NULL,0), \\",
+      "old": "  (tr_attention(7,ct,0,b,t,h,kh,d,q,k,v,p,y,NULL,NULL,NULL,ws,bytes), \\",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "AX3 the binary32 backward is called without the state's workspace",
+      "new": "      g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,dv,NULL,s->workspace_bytes)!=0;",
+      "old": "      g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,dv,attention_workspace(s),s->workspace_bytes)!=0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "AX4 the launch plan states the binary32 attention without the state's workspace",
+      "new": "    ws_attention = _NONE",
+      "old": "    ws_attention = (SPACES[\"workspace\"], 0, workspace_bytes) if workspace_bytes else _NONE",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "AX5 the program check refuses the binary32 attention's workspace slot",
+      "new": "!px_ws(c,w,8,bf)) return 0;",
+      "old": "!px_ws(c,w,8,bf || c->len[7])) return 0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_long_context_lends_the_binary32_attention_the_workspace",
+      "label": "AX6 the program check sees no workspace in a binary32 state that lends one",
+      "new": "  c->len[7]=(s->contract&BCIR_DT_CONTRACT_BF16) ? s->workspace_bytes : 0;",
+      "old": "  c->len[7]=s->workspace ? s->workspace_bytes : 0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "AX7 the pack's lowering gives the binary32 attention no workspace operand",
+      "new": "    if (bf) SLOT(8, U_W, SL_WS);",
+      "old": "    if (bf || c->lent) SLOT(8, U_W, SL_WS);",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "AX8 the pack states the binary32 attention's claim without the workspace it writes",
+      "new": "        ws = ((8, W),) if bf else ()  # an absent operand: (0, 0, 0)",
+      "old": "        ws = ((8, W),) if bf or r.refs[8] != (0, 0, 0) else ()  # an absent operand: (0, 0, 0)",
+      "path": "bcir/hosted/models/native_pack.py"
+    }
+  ]
+}
