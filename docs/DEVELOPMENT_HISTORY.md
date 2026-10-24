@@ -4828,6 +4828,51 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     slower where B's rows are 4 KiB apart; GEMM-PF-0 (prefetches of the next block's A and the block's C) x0.94-0.95 on
     one thread at 8,192 rows but x1.27-1.30 slower for the decoder's 1,024 x 384 x 384 on four threads. Every value the
     same in both (bitcheck.c's 712 cases); neither taken.
+  P-BANDS (2026-10-24): the stored attention's probabilities in 16-row bands with the rows in the lanes, every value as
+    it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §23,
+    [measurements/2026-10-24/p-bands/](research/measurements/2026-10-24/p-bands/README.json)).
+  - The loss it answers, placed first (BWD-NEXT): the backward a phase at a time on the tree before, B4/T2048, four
+    threads, 10.1 TSC cycles a probability -- dV 2.30, the probability-adjoint tiles 2.16, the dots 0.87, the score
+    adjoints 0.48, dQ 1.61, dK 1.92. The transposed products walked 32 rows of P at once and the dots transposed every
+    16 x 16 block; eight band and prefetch variants of the row walk moved the backward within its runs' spread at four
+    threads, while the same product over P in 16-row bands ran 1.51 TSC cycles a probability resident and 1.84 streamed
+    against the walk's 1.78 and 2.17.
+  - P-BANDS: `BCIR_TENSOR_ATTENTION_BANDS` (32) lays a stored forward's probabilities out in 16-row bands, row i's
+    probability of key j at (i/16)*16*T + j*16 + i%16 of its head's region, a band's keys past its last row +0.0 or,
+    under LOWER, as p held them. It takes effect where the host's widest instance of the products' family is AVX-512,
+    T is a multiple of 16 and the head at most 256 wide -- the host's and the shapes' choice, never a call's instance.
+    On AVX-512 the stored forward computes SCORES-T's 16-row groups in the band itself and the backward walks dV and dK
+    over the bands, then a group at a time evaluates its probability adjoints rows-in-lanes with the dots fused in,
+    writes the score adjoints with masked stores and takes dQ from the band; the portable and AVX2 instances run the
+    layout through scalar paths. The scratch forward, the bf16 entries, a portable build and an AVX2-capped build ignore
+    it. The trainer's stored binary32 forward runs under LOWER|BANDS and its backward under BANDS
+    (`attention_forward_contract`, `attention_backward_contract`); the pack's lowering, the step program's words and
+    the Python launch plan state the bit; `bcir_tensor_attention_bands_probe` counts the heads each direction ran
+    banded.
+  - Every value the same: the row paths' hashes (the scratch forward's 1,248 cases, FWD-STRIP's 288, P-LOWER's 208,
+    ATTN-RATE's 88, BWD-LONG's 48) before == after under clang 18 and GCC 13; `bands_check.c`'s 6,220 cases over every
+    pair of forward and backward instances and across the compilers, every probability at its band address, 0 failed;
+    every timed arm's outputs the same bytes in every round; the trainer's state the same digest with the bit on and
+    off; the GEO model's trained state and logits the same from both level-3 builds.
+  - Measured on the pushed code commit against the one before it, in one process beside an A/A control, 48 rounds a
+    row: the attention at B4/T2048 x0.841 (0.817-0.866) on four threads -- its backward x0.807, its forward x0.901 --
+    x0.834 under GCC and x0.866 on one thread; x0.755-x0.829 at T128 to T1024; x0.831 under the fused contract and
+    x0.904 under v1's exponential; GQA x0.875, 8 heads of 64 x0.890 at T2048 and x0.925 at T4096; heads of 128 x0.950,
+    meeting its control (64 rounds declared before they ran). The training step at the GEO dimensions x0.892
+    (0.870-0.915) at T2048, x0.887 under GCC, x0.917 on one thread, x0.911 at T1024 and x0.861 at T512; the 9.84M
+    decoder x0.962. The GEO study's attention model on level 3: training x0.808 at T512 and x0.905 at T2048, inference
+    at parity; against PyTorch at fixed shapes its update now takes x0.780 of eager's time and x0.797-x0.824 of
+    Inductor's at T2048, x0.537 of Inductor's at T512. Against `scaled_dot_product_attention` the attention as the
+    trainer runs it is the faster at T2048 (flash x1.188 of BCIR's time, its forward at parity with BCIR's) and at T1024
+    (x1.422).
+  - Witnesses: the C harness's `attention_bands` (12 shapes from T7 to T1040, heads of 3 to 257, the four contracts
+    with and without LOWER, the instances 0, 1, 2 and 4 with the backward on the same or the widest, serially and
+    pooled, with and without the workspace, and a pass of special values) and `trainer_bands` (three steps under five
+    contracts, one thread and four, the digests the same across the harness's builds); `p-bands.json` PB1-PB17 and
+    `p-bands-px.json` PBX1-PBX5, each caught by its own check; AX3, IA12, IA16, AF14, AF17, PL2, PL5, PL7, PL8, PL9 and
+    PI5 re-anchored on the lines the slice rewrote and caught again.
+  - Not claimed: hosts whose widest instance is AVX2 or aarch64, where the bit takes no effect; the bf16 attention;
+    counter-based figures (no PMU on this VM).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

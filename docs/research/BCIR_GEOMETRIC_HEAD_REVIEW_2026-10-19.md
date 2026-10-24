@@ -1349,3 +1349,100 @@ Under the study's binary32 contract the step is now balanced: the attention back
 attention forward (25%) and the GEMMs (23%) each with the levers above measured at parity. The larger steps left are
 contract choices, each a different arithmetic: the bf16 contract on AMX (GEO-AMX, section 19) and the fused attention
 (ATT-BOUND, section 14).
+
+## 23. P-BANDS: the stored probabilities in 16-row bands, the rows in the lanes (2026-10-24)
+
+Section 22's reading of a balanced step held only while the stored probabilities sat in the rows' layout. Timed a
+phase at a time on the tree before (thread-local TSC counters around each phase, B4/T2048, four threads, two runs),
+the backward took 10.1 TSC cycles a probability: dV 2.30 (v1's rate would take 1.44), the probability-adjoint tiles
+2.16, the rows' dots 0.87, the score adjoints 0.48, dQ 1.61, dK 1.92 and the copies 0.63
+([measurements/2026-10-24/p-bands/](measurements/2026-10-24/p-bands/README.json), `phases.json`). Its transposed
+products (dV = P^T dY, dK = dS^T Q) read P down its columns -- a register block of eight keys takes term i from row i
+of P, so a band of 32 terms walks 32 rows of P at once, half a line of each a block -- and the dots and score adjoints
+transposed every 16 x 16 block. Eight band and prefetch variants of that walk moved the whole backward within its runs'
+spread at four threads (33.2-38.5 ms against 34.7) and to at most x0.92 on one (`row-walk-variants.json`). On its own,
+over one head's P at T2048 (`placement.json`, eight interleaved passes), the walk took 1.78 TSC cycles a probability
+with P resident and 2.17 with P streamed from 16 buffers in turn; the same product over P laid out in 16-row bands
+took 1.51 and 1.84, every result's bits the walk's. That layout, not the walk, was what the variants could not change.
+This host has no PMU, so which part of the memory system the row walk costs is not measured.
+
+**P-BANDS** makes the layout a contract bit. `BCIR_TENSOR_ATTENTION_BANDS` (32) lays a stored forward's
+probabilities out in 16-row bands with the rows in the vector lanes: row i's probability of key j at
+`(i/16)*16*T + j*16 + i%16` of its head's T x T region, so a band's column of 16 rows is one 64-byte line. A band holds
+keys 0 to R+15 -- its rows' lower triangle and diagonal block, that block's future lanes +0.0 -- and its keys past R+15
++0.0, or, under LOWER, as p held them. The bit takes effect where the host's widest instance of the products' family is
+AVX-512, the context a multiple of 16 and the head at most 256 wide: a function of the host and the shapes, never of
+the instance a call names, so a forward and the backward that reads its probabilities agree on the layout whichever
+instances a program picks for them (PX-3b's per-site choices). On AVX-512 the stored forward computes SCORES-T's
+16-row groups in the band itself -- the scores, the softmax (the BCIR exponential's one pass, or libm's with a vector
+maximum: the prototype's scalar maximum ran v1's forward x1.24 slower) and the context with its division -- so the
+probabilities stay where the group computed them. The backward walks dV and dK over the bands, a block's 32 terms two
+runs of eight lines in order; then, a 16-row group at a time, it evaluates its probability adjoints with the rows in
+the lanes (its dY transposed once), takes the rows' dots on the way with no transpose, writes the score adjoints with
+masked stores where p held the probabilities and takes dQ from the band while it is in the core's cache. The portable
+and AVX2 instances run the same layout through scalar paths. Every accumulator takes the rows' layout's terms in their
+order, so every value is as it was; only where each probability sits differs. A scratch forward, the bf16 entries, a
+portable build and an AVX2-capped build ignore the bit. The trainer's stored binary32 forward runs under LOWER|BANDS
+and its backward under BANDS; the pack's lowering, the step program's words and the Python launch plan state the bit.
+
+Every value is the same. The row paths, the calls without the bit -- the scratch forward's 1,248 cases, FWD-STRIP's
+288 stored forwards, P-LOWER's 208, ATTN-RATE's 88 forwards and BWD-LONG's 48 backwards -- hash before == after under
+clang 18 and GCC 13, clang's lines GCC's. `bands_check.c` runs the tree before's unit and the tree after's under the bit
+side by side, every probability at its band address, every score adjoint, y, dq, dk and dv byte for byte: 6,220 cases
+in 13 runs over every pair of forward and backward instances and across the two compilers, 0 failed. The timed runs
+below compare every arm's outputs in every round, and the trainer's state is the same digest with the bit on and off.
+
+The attention, both trees in one process on one set of buffers, both lent the larger of their two needs, 48 rounds a
+row (the trainer's word, EXP+LOWER+BANDS, which the tree before reads as EXP+LOWER):
+
+| shape, contract, threads | forward | backward | total | A/A total |
+|---|---:|---:|---:|---:|
+| B4/T2048, 4 heads of 32, EXP, clang, 4 threads | 0.901 | 0.807 (0.782-0.833) | 0.841 (0.817-0.866) | 1.001 |
+| the same under GCC | 0.843 | 0.830 | 0.834 (0.811-0.858) | 0.989 |
+| the same on one thread (24 rounds) | 0.914 | 0.838 | 0.866 (0.847-0.886) | 0.998 |
+| T1024 / T512 / T256 / T128 | 0.843 / 0.773 / 0.800 / 0.821 | 0.807 / 0.741 / 0.816 / 0.829 | 0.821 / 0.755 / 0.808 / 0.829 | 1.014 / 0.967 / 0.984 / 0.969 |
+| B4/T2048, FUSED / v1's exponential / FUSED with v1's exponential | 0.801 / 0.988 / 0.926 | 0.851 / 0.816 / 0.852 | 0.831 / 0.904 / 0.895 | 0.994 / 0.980 / 0.998 |
+| B2/T1024, 8 heads (2 KV) of 48 | 0.897 | 0.862 | 0.875 (0.836-0.916) | 0.988 |
+| B1/T2048, 8 heads of 64 | 0.932 | 0.867 | 0.890 (0.857-0.925) | 1.016 |
+| B1/T4096, 8 heads of 64; 64 rounds declared before they ran | 0.913; 0.949 | 0.935; 0.912 | 0.926; 0.925 (0.900-0.949) | 1.020; 0.991 |
+| B1/T1024, 4 heads of 128; 64 rounds declared before they ran | 0.973; 0.973 | 0.903; 0.937 (0.906-0.969) | 0.926; 0.950 (meets its control by 0.005) | 0.972; 1.009 |
+| B8/T128, 8 heads (4 KV) of 48, EXP+FUSED | 0.790 | 0.868 | 0.838 (0.809-0.869) | 1.004 |
+| B4/T1000 (no multiple of 16: the bit takes no effect) | 0.971 | 0.973 | 0.973 (meets its control) | 0.972 |
+
+The backward resolves at x0.74-x0.87 wherever the bit takes effect with heads of 32 to 64 and at x0.90-x0.94 with
+heads of 64 at T4096 and of 128; the forward at x0.77-x0.95 under the BCIR exponential, x0.93 with the fused products
+and v1's exponential, and at parity under v1's alone (its libm calls dominate). The whole attention resolves at
+x0.75-x0.93 on every shape but heads of 128, whose products' arithmetic outweighs the layout (x0.95, its interval
+meeting its control's by 0.005), and the control where the bit cannot take effect reads the same in both arms. A phase at a time the backward's task went from 10.1 to 8.1 TSC cycles a
+probability: dV 2.30 to 1.90, the tiles, dots, score adjoints and dQ together 5.12 to 3.73, dK 1.92 to 1.88.
+
+The training step at the study's dimensions, both trainers in one process, every round's weights the same bytes, 48
+rounds: x0.892 (0.870-0.915) at T2048 under clang, x0.887 under GCC, x0.917 on one thread, x0.911 at T1024 and x0.861
+at T512; under v1's contract x0.949, and the 9.84M decoder (T128, the fused attention) x0.962 -- every row resolved. A
+part at a time (the trainer's job clock, 8 rounds) the attention's backward is now about 39% of the T2048 step, its
+forward 24% and the GEMMs 26%. The GEO attention model on level 3, built with GCC as the study builds it, both builds
+stating the bit (the tree before ignoring it), its trained state and logits the same: training x0.808 (0.788-0.828) at
+T512, x0.917 at T1024 and x0.905 (0.876-0.935) at T2048; inference at parity (the scratch forward ignores the bit).
+Against PyTorch at fixed shapes (COMPILE-LIMIT's protocol, 24 rounds):
+
+| T | BCIR ms | P-EAGER ms | P-IND ms | BCIR / P-EAGER | BCIR / P-IND | A/A |
+|---:|---:|---:|---:|---:|---:|---:|
+| 512 | 32.9 | 83.2 | 64.8 | 0.407 (0.389-0.426) | 0.537 (0.511-0.564) | 1.016 |
+| 1024 | 85.3 | 135.7 | 115.2 | 0.629 (0.605-0.654) | 0.727 (0.696-0.759) | 0.988 |
+| 2048 | 245.2 | 310.7 | 306.9 | 0.780 (0.762-0.799) | 0.797 (0.775-0.821) | 1.003 |
+| 2048 (32 rounds) | 242.8 | 314.0 | 298.6 | 0.780 (0.766-0.795) | 0.824 (0.806-0.842) | 0.993 |
+
+The update at T2048 now takes x0.80-x0.82 of Inductor's time, from x0.84-x0.89 (section 18). Against PyTorch's
+`scaled_dot_product_attention` on the same inputs (B4, 4 heads of 32, four threads, 24 rounds) the attention as the
+trainer runs it takes 48.7 ms at T2048 -- its forward 19.1, its backward 29.6 -- against the flash kernel's 56.6 (17.0
+and 38.2): flash x1.188 (1.128-1.251) of BCIR's time, from parity (section 13), its forward at parity with BCIR's
+(x0.966, 0.906-1.029) where it was x0.80; at T1024 flash x1.422 (1.320-1.532). The math kernel, which stores the
+probabilities as BCIR does, takes x6.9.
+
+The prototype first: a copy of the unit with the bands (proto_bands.py, AVX-512 only, the forward's bit a static
+global) read x0.851 for the whole attention at B4/T2048 on four threads and x0.831 on one, every value the tree's over
+529 cases; the tree's implementation reads x0.841 and x0.866. What remains is the arithmetic: under the BCIR
+exponential the backward's walks run at 76-77% of v1's rate and its groups at 3.7 TSC cycles a probability against two
+products' 2.9; heads of 128 gain least. The larger steps left are still contract choices: under the fused attention
+contract with the bands the attention at B4/T2048 takes 40.0 ms against the BCIR exponential's 50.1 (about x0.80), every
+attention value different, and the bf16 contract on AMX (section 19).

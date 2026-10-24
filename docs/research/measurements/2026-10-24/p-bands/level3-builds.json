@@ -1,0 +1,17 @@
+{
+ "what": "the GEO attention model built on both units: ../../2026-10-22/infer-attn/build_level3.py --scratch (GEO-2b's level-2 overlay, gcc as the study builds it, linked with the unit), ../../2026-10-23/att-contig/contig_level3.py (the attention through the workspace entries), ../../2026-10-23/p-lower/lower_level3.py (the stored forward under LOWER) and bands_level3.py (the stored forward and the backward under BANDS -- on the tree before, whose unit ignores the bit, the same build as without it); each step's log",
+ "logs": {
+  "before": [
+   "built <BEFORE_WORK>/build/attention.so scratch 30 entries checked",
+   "contig <BEFORE_WORK>/build/attention.so 3 edits, 3 entries declared",
+   "lower <BEFORE_WORK>/build/attention.so 2 edits",
+   "bands <BEFORE_WORK>/build/attention.so 3 edits"
+  ],
+  "after": [
+   "built <AFTER_WORK>/build/attention.so scratch 30 entries checked",
+   "contig <AFTER_WORK>/build/attention.so 3 edits, 3 entries declared",
+   "lower <AFTER_WORK>/build/attention.so 2 edits",
+   "bands <AFTER_WORK>/build/attention.so 3 edits"
+  ]
+ }
+}
