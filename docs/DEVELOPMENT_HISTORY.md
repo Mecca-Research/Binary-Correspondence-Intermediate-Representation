@@ -4804,6 +4804,21 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     tile transposes them again (every hash the same, clang and GCC): the backward x0.946 at B4/T2048, its interval
     meeting the A/A control's; at parity at one thread, T1024, heads of 64, the fused contract and under GCC.
   - Not claimed: counter-based figures (no PMU on this VM); the next slice -- it starts from these readings.
+  GEO-NOW (2026-10-24): the study's models on this branch's tensor unit; three levers measured and not taken; records
+    and docs only ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §21,
+    [measurements/2026-10-24/geo-now/](research/measurements/2026-10-24/geo-now/README.json)).
+  - The study's three models on this branch's unit against main's (level 2), the same overlays and headers, in one
+    process with every trained state and logit the same bytes: training x0.85-x0.96 at T128-T512, inference x0.78-x0.85
+    at T1024 and T2048. Against Inductor at fixed shapes the geometric heads train in x0.31-0.54 of its time and run
+    inference in x0.67-0.75 of it (global at T2048 at parity); the attention baseline's level-2 overlay, without the
+    scratch forward, x1.35 at T2048 (the level-3 build is at parity: COMPILE-LIMIT).
+  - THP-0, not taken: the attention's buffers on transparent huge pages, the backward x0.985 at B4/T2048 in 48 rounds.
+  - WADJ-ROWS-0, not taken: the weight adjoints in row ranges small enough for sixteen tasks, x1.19-x1.56 slower (each
+    task packs the deep operand again); in the step each runs beside its input adjoint at x0.95 of the forward
+    products' rate already.
+  - KBK-0, not taken: the k-blocked kernel's 448-term block in L1-sized sub-ranges (the same bits) x0.974-x1.017 --
+    the block runs at 188-200 GFLOP/s with sixteen row blocks to a tile, 87-92% of the core's rate; one block called
+    alone reads 115-120.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

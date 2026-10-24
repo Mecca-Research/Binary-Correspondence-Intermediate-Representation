@@ -1291,3 +1291,40 @@ block at a time (`proto_bwdvt.py`; every hash the same under clang and GCC, with
 too). At B4/T2048 on four threads the backward x0.946 (0.903-0.990), its interval meeting the A/A control's (0.988,
 0.958-1.019); on one thread x0.983, meeting its control; at T1024, for heads of 64 at T2048 and T4096, under the fused
 contract and under GCC at parity. The per-tile transpose was not what the dP tiles cost.
+
+## 21. GEO-NOW: the study's models on this branch's tensor unit; three levers measured and not taken (2026-10-24)
+
+The study's three models were last timed on level 2: main's tensor unit with the overlays grafted on (sections 5
+and 18). On this branch's unit -- the same overlays and headers, GEO-AMX's builds -- in one process with level 2,
+the trained states and the logits the same bytes, 16 rounds
+([measurements/2026-10-24/geo-now/](measurements/2026-10-24/geo-now/README.json)):
+
+| this branch / main | training T128 | T256 | T512 | inference T1024 | T2048 |
+|---|---:|---:|---:|---:|---:|
+| `global` | 0.944 | 0.963, holding 1 | 0.917 | 0.845 | 0.821 |
+| `query_full` | 0.887, meeting its control | 0.861 | 0.851 | 0.814 | 0.846 |
+| `attention` (level 2's overlay) | 0.885, meeting its control | 0.848 | 0.867 | 0.820 | 0.783 |
+
+Against PyTorch at fixed shapes (section 18's script, 12 rounds), the geometric heads now train in x0.31-0.54 of
+Inductor's time (level 2: x0.33-0.54) and run inference in x0.67-0.75 of it at T1024 and for `query_full` at T2048
+(level 2: x0.77-0.88); `global` at T2048 is at parity (x0.899, its interval holding 1). The attention baseline here
+is its level-2 overlay, which takes neither INFER-ATTN's scratch forward nor ATT-CONTIG's region: x1.04 of
+Inductor's time at T1024 (holding 1) and x1.35 at T2048 in inference, where the level-3 build -- the overlay with
+both -- is at parity (section 18).
+
+**Three levers measured and not taken.**
+
+- **THP-0**: the attention's buffers on transparent huge pages (the host's mode is madvise; 305 MB of huge pages, every
+  value the same). The backward read x0.985 (0.947-1.024) at B4/T2048 on four threads in 48 rounds, and x0.913 on one
+  thread, meeting its control. Page walks are not what dV and the dP tiles lose (section 20).
+- **WADJ-ROWS-0**: the weight adjoints' rows in ranges small enough for sixteen tasks, where 128-260 rows over a depth
+  of 8192 ran three to nine. They read x1.19-x1.56 slower (the 260-row one at parity): each task packs the deep
+  operand's tiles again. The step
+  pairs each weight adjoint with its input adjoint (NDT-SCHED), and the pair already runs at 520 GFLOP/s, x0.95 of the
+  forward products' rate, so their few tasks cost the step little.
+- **KBK-0**: the k-blocked kernel's 8 x 48 block on resident operands runs at 188-214 GFLOP/s at depth 128 (87-99% of
+  the core's 217). With sixteen row blocks to a 448-term tile, as the nest runs them, it runs at 188-200; walking the
+  448 terms in L1-sized sub-ranges, with the accumulators stored and loaded between (the same bits), read
+  x0.974-x1.017. Only one block called again and again reads 115-120 at depth 448: the tile's 86 KiB past L1 shows
+  only when no other block reuses it. Within the nest the forward products run at 145 GFLOP/s on one core, so what
+  the GEMMs lose is outside the block's loop.
