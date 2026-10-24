@@ -826,22 +826,34 @@ int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t n) 
 /* The loss's rows in ranges of BCIR_DT_ROW_CHUNK: a row's softmax, its adjoint and its term
  * (log-sum-exp plus the maximum less the target's logit, in double, as the serial loop computed
  * it) are its own; the terms are kept as bytes in the scratch arena and added in row order by the
- * caller, so the mean is the serial chain. */
+ * caller, so the mean is the serial chain.
+ *
+ * LOSS-ONCE: each logit's exponential is evaluated once. The serial loop called libm's exp twice a
+ * logit, once for the row's sum and again for the adjoint, and those calls were most of the loss.
+ * A row now keeps its first BCIR_DT_LOSS_ONCE exponentials, in double, on the task's stack, and its
+ * adjoints divide the kept values. The same call on the same argument returns the same double, and
+ * the sum, the term and both divisions are the loop's operations in its order, so every adjoint and
+ * term is the two-evaluation loop's bit for bit. A row wider than the buffer evaluates its tail's
+ * exponentials again for their adjoints, as before. */
 #define BCIR_DT_ROW_CHUNK 16
 #define BCIR_DT_COL_CHUNK 16
+#define BCIR_DT_LOSS_ONCE 1024  /* the logits a row keeps: 8 KiB of the task's stack */
 typedef struct loss_job {
   size_t n,v; const float *logits; const uint32_t *targets; float *dl; unsigned char *terms;
 } loss_job;
 static void loss_task(void *ctx,size_t task) {
-  loss_job *jb=(loss_job *)ctx; size_t i,j,v=jb->v;
+  loss_job *jb=(loss_job *)ctx; size_t i,j,v=jb->v,kept=v<BCIR_DT_LOSS_ONCE ? v : BCIR_DT_LOSS_ONCE;
   size_t i0=task*BCIR_DT_ROW_CHUNK,i1=i0+BCIR_DT_ROW_CHUNK<jb->n ? i0+BCIR_DT_ROW_CHUNK : jb->n;
+  double e[BCIR_DT_LOSS_ONCE];
   for (i=i0;i<i1;i++) {
     const float *row=jb->logits+i*v; float *d=jb->dl+i*v; float maxv=row[0]; double sum=0.0,term;
+    size_t t=jb->targets[i];
     for (j=1;j<v;j++) if (row[j]>maxv) maxv=row[j];
-    for (j=0;j<v;j++) sum+=exp((double)row[j]-maxv);
-    term=log(sum)+(double)maxv-row[jb->targets[i]];
-    for (j=0;j<v;j++) d[j]=(float)((exp((double)row[j]-maxv)/sum-
-        (j==jb->targets[i] ? 1.0 : 0.0))/(double)jb->n);
+    for (j=0;j<kept;j++) { e[j]=exp((double)row[j]-maxv); sum+=e[j]; }
+    for (;j<v;j++) sum+=exp((double)row[j]-maxv);
+    term=log(sum)+(double)maxv-row[t];
+    for (j=0;j<kept;j++) d[j]=(float)((e[j]/sum-(j==t ? 1.0 : 0.0))/(double)jb->n);
+    for (;j<v;j++) d[j]=(float)((exp((double)row[j]-maxv)/sum-(j==t ? 1.0 : 0.0))/(double)jb->n);
     memcpy(jb->terms+i*sizeof(double),&term,sizeof(double));
   }
 }
@@ -858,6 +870,21 @@ static double loss_rows(bcir_decoder_state *s,geometry g,const float *logits,
   }
   return ce;
 }
+#ifdef BCIR_DT_LOSS_PROBE
+/* LOSS-ONCE's witness entry: the loss's n rows of v logits as the step runs them (loss_rows, on
+ * `pool` or serially for NULL), each row's adjoints into dl and its term's bytes into terms (8n),
+ * the terms' row-order sum returned, for the harness's check against the two-evaluation loop at
+ * vocabularies the trainer's fixtures do not reach. A build defines BCIR_DT_LOSS_PROBE to have the
+ * symbol (the harness's own builds do; the library does not). */
+double bcir_decoder_loss_probe(bcir_tensor_pool *pool,size_t n,size_t v,const float *logits,
+    const uint32_t *targets,float *dl,unsigned char *terms);
+double bcir_decoder_loss_probe(bcir_tensor_pool *pool,size_t n,size_t v,const float *logits,
+    const uint32_t *targets,float *dl,unsigned char *terms) {
+  bcir_decoder_state s; geometry g;
+  memset(&s,0,sizeof s); memset(&g,0,sizeof g); s.pool=pool; g.n=n; g.v=v;
+  return loss_rows(&s,g,logits,targets,dl,terms);
+}
+#endif
 /* The embedding scatter in column ranges: a task adds every row's columns to its token's row in
  * row order, so a token the batch repeats accumulates as the serial loop did. */
 typedef struct scatter_job { size_t n,d; const uint32_t *tokens; const float *dx; float *grad; } scatter_job;

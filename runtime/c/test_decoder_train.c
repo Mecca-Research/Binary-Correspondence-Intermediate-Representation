@@ -854,6 +854,86 @@ static void reduction_references(void) {
   printf("  PASS native pooled reductions: the loss is the rows' chain and the embedding gradient "
       "the row-order scatter, %u runs over two shapes on no pool and a pool of two\n",pools);
 }
+#ifdef BCIR_DT_LOSS_PROBE
+double bcir_decoder_loss_probe(bcir_tensor_pool *pool,size_t n,size_t v,const float *logits,
+    const uint32_t *targets,float *dl,unsigned char *terms);
+/* LOSS-ONCE: the loss's rows -- each logit's exponential evaluated once and its adjoint dividing
+ * the kept value, a row wider than the trainer's 1,024 kept values evaluating its tail again --
+ * against the two-evaluation loop the loss ran before, written apart: every adjoint, every row's
+ * term and their row-order sum byte for byte. Vocabularies from one logit to past the buffer twice
+ * (1, 2, 16, 260, 1,023, 1,024, 1,025, 1,500, 2,049), row counts about a task's 16 (1, 15, 16, 17,
+ * 40), and rows of four kinds: logits across [-8, 8], rows spanning two thousand so that most
+ * exponentials are subnormal or +0.0 in double, rows of one repeated value (every logit ties the
+ * maximum), and rows of +0.0, -0.0 and tiny values with the maximum last. Targets fall at the first logit, the
+ * last, the buffer's last kept and its first re-evaluated one, and the argmax; on no pool and pools
+ * of two and four. */
+static void ref_loss_rows(size_t n,size_t v,const float *logits,const uint32_t *targets,float *dl,
+    double *terms) {
+  size_t i,j;
+  for (i=0;i<n;i++) {
+    const float *row=logits+i*v; float *d=dl+i*v; float maxv=row[0]; double sum=0.0;
+    for (j=1;j<v;j++) if (row[j]>maxv) maxv=row[j];
+    for (j=0;j<v;j++) sum+=exp((double)row[j]-maxv);
+    terms[i]=log(sum)+(double)maxv-row[targets[i]];
+    for (j=0;j<v;j++) d[j]=(float)((exp((double)row[j]-maxv)/sum-(j==targets[i] ? 1.0 : 0.0))/(double)n);
+  }
+}
+static void loss_once(void) {
+  static const size_t vocabs[9]={1,2,16,260,1023,1024,1025,1500,2049},rows[5]={1,15,16,17,40};
+  static float logits[40*2049],dl[40*2049],want[40*2049];
+  static _Alignas(max_align_t) unsigned char pool_memory[16384];
+  unsigned char terms[40*8]; double ref[40],sum,got; uint32_t targets[40];
+  size_t a,b,i,j,n,v,cases=0,past=0; unsigned p,threads[3]={1,2,4}; uint64_t s=0x9e3779b97f4a7c15ull;
+  for (a=0;a<9;a++) for (b=0;b<5;b++) {
+    v=vocabs[a]; n=rows[b];
+    for (i=0;i<n;i++) {
+      float *row=logits+i*v; size_t best=0;
+      for (j=0;j<v;j++) {
+        double u;
+        s^=s<<13; s^=s>>7; s^=s<<17;
+        u=(double)(s>>11)/9007199254740992.0;  /* [0, 1) */
+        switch (i%4) {
+          case 0: row[j]=(float)(u*16.0-8.0); break;
+          case 1: row[j]=(float)(u*2010.0-2000.0); break;
+          case 2: row[j]=2.5f; break;
+          default: row[j]=j+1==v ? 0.75f : (s&1) ? ((s&2) ? 0.0f : -0.0f) : (float)(u*1e-30); break;
+        }
+        if (row[j]>row[best]) best=j;
+      }
+      switch (i%5) {
+        case 0: targets[i]=0; break;
+        case 1: targets[i]=(uint32_t)(v-1); break;
+        case 2: targets[i]=(uint32_t)(v>1024 ? 1023 : v-1); break;
+        case 3: targets[i]=(uint32_t)(v>1024 ? 1024 : 0); break;
+        default: targets[i]=(uint32_t)best; break;
+      }
+      past+=v>1024 && targets[i]>=1024;
+    }
+    ref_loss_rows(n,v,logits,targets,want,ref);
+    sum=0.0;
+    for (i=0;i<n;i++) sum+=ref[i];
+    for (p=0;p<3;p++) {
+      bcir_tensor_pool *pool=NULL;
+      if (threads[p]>1) {
+        size_t need=bcir_tensor_pool_size(threads[p]);
+        if (!need) continue;
+        assert(need<=sizeof(pool_memory));
+        pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads[p]); assert(pool!=NULL);
+      }
+      memset(dl,0xa5,n*v*sizeof(float)); memset(terms,0xa5,sizeof(terms));
+      got=bcir_decoder_loss_probe(pool,n,v,logits,targets,dl,terms);
+      assert(!memcmp(dl,want,n*v*sizeof(float)));
+      assert(!memcmp(terms,ref,n*sizeof(double)));
+      assert(!memcmp(&got,&sum,sizeof(double)));
+      bcir_tensor_pool_stop(pool); cases++;
+    }
+  }
+  assert(past>0);
+  printf("  PASS LOSS-ONCE: the loss's rows with each exponential evaluated once -- adjoints, terms and "
+      "their sum -- byte for byte the two-evaluation loop's in %zu runs (9 vocabularies to 2,049, 5 row "
+      "counts, four kinds of row; %zu targets past the 1,024 kept values)\n",cases,past);
+}
+#endif
 /* NDT-POOL: the pool's threads claim their tasks from one counter. Every task of every job runs
  * exactly once -- 600 jobs of 1 to 1,024 tasks at two to four threads, back to back (the workers
  * spinning between generations), every hundredth after a pause longer than the spin (the workers
@@ -4440,6 +4520,9 @@ int main(void) {
   trainer_lower(); trainer_bands();
 #ifdef BCIR_DT_DIVISION_PROBE
   division_probe();
+#endif
+#ifdef BCIR_DT_LOSS_PROBE
+  loss_once();
 #endif
   return 0;
 }
