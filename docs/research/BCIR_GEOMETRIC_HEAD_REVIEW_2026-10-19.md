@@ -307,14 +307,24 @@ Inference, one forward of 4 x T tokens:
 | `attention` | 1024 | 78.9 | 73.4 | 81.0 | 1.07 [0.98, 1.16] | 1.01 [0.93, 1.09] | 1.03 [0.94, 1.12] |
 | `attention` | 2048 | 267.0 | 161.9 | 181.0 | 1.74 [1.52, 1.98] | 1.59 [1.36, 1.87] | 1.00 [0.96, 1.04] |
 
-BCIR trains every model faster: 2.1 to 7.5 times P-EAGER and 1.9 to 3.3 times P-IND, the margin
-narrowing as the context grows. It runs both geometric heads' inference 3.2 to 4.2 times faster
-than either route. The A/A control's interval holds 1 in every case but `query_full` training at
-T512 (0.92 [0.86, 0.99]): this host's noise, so a ratio inside about 8% of 1 is not resolved.
+**Correction (COMPILE-LIMIT, 2026-10-24: section 18).** The P-IND column is not Inductor's in seven of these
+rows. `geo_compare.py` compiled all fifteen cases in one process through one forward code object: Dynamo compiled
+`global` T128 at its own shapes, the next seven cases with dimensions made dynamic, and from the ninth -- `attention`
+T512's training and all six inference rows -- nothing: past its recompile limit those rows ran the module eagerly,
+so their P-IND is eager PyTorch's time. Rerun with every case compiled at its own fixed shapes, on the session's later
+host (section 18's table), BCIR trains the three models in x0.33-0.83 of Inductor's time (`attention` T512 x0.83,
+where this table reads 0.50) and runs the geometric heads' inference in x0.77-0.90 of it -- 1.1 to 1.3 times
+Inductor's speed, not 3.2 to 4.2; the attention baseline's inference took x1.39 of Inductor's time at T1024, not
+parity, and x1.67 at T2048. Every P-EAGER reading stands.
 
-The one loss is the attention baseline's inference at long context: at parity at T1024
-(1.07 [0.98, 1.16] against P-EAGER), at T2048 1.74 times slower than P-EAGER and 1.59 times slower
-than P-IND. The cause is the attention's probabilities. BCIR's attention writes every head's t x t
+BCIR trains every model faster: 2.1 to 7.5 times P-EAGER, the margin narrowing as the context grows, and runs both
+geometric heads' inference 3.2 to 4.2 times faster than P-EAGER (against Inductor, the correction above). The A/A
+control's interval holds 1 in every case but `query_full` training at T512 (0.92 [0.86, 0.99]): this host's noise,
+so a ratio inside about 8% of 1 is not resolved.
+
+The one loss is the attention baseline's inference at long context: at parity with P-EAGER at T1024
+(1.07 [0.98, 1.16]) and 1.74 times its time at T2048 -- against Inductor at fixed shapes x1.39 and x1.67 (the
+correction above). The cause is the attention's probabilities. BCIR's attention writes every head's t x t
 probabilities to the arena, because the backward reads them, and the forward writes them even when
 no backward follows. At B4/T2048 that is 268 MB a layer (the attention model's arena is 1,061 MB,
 the global head's 225 MB), written, read by the softmax's passes and read again by the context
@@ -1121,3 +1131,77 @@ binary32 of [-104, 89]) and the attention cases.
 What remains of the scratch forward at B4/T2048, in TSC cycles a probability: the scores 1.58 and the context 1.84,
 about 1.56 of it the products, against v1's measured 1.45 a product (ATT-BOUND), and the softmax 1.15, most of it the
 exponential's polynomial and the sum (0.93).
+
+## 18. COMPILE-LIMIT: Inductor at each case's own shapes (2026-10-24)
+
+Every comparison with `torch.compile` in sections 5-17 ran its cases in one process, and each case's P-IND module --
+`oracle.torch_model_next`'s, a new class each time -- shares one forward code object with the others. Dynamo keeps a
+code object's compiles, and two of its rules then apply. Automatic dynamic shapes: a recompile whose input differs in
+a dimension from an earlier compile's makes that dimension dynamic, so every case after a process's first compiled
+with the tokens' time dynamic (section 5's comparison, past its first model, the parameters' differing dimensions
+too). The recompile limit: past eight compiles of one code object Dynamo compiles nothing and runs the frame eagerly,
+warning once. Section 5's comparison compiled fifteen cases in one process; its ninth -- the attention model's
+training at T512 -- and all six inference cases ran P-IND eagerly, so those seven readings are eager PyTorch's time,
+not Inductor's. Of the 64 P-IND cases in this branch's records 20 compiled at their own shapes, 37 with the time
+dimension dynamic and those 7 eagerly ([audit.json](measurements/2026-10-24/compile-limit/audit.json)). `witness.py`
+shows the mechanism in one process: the second compile creates a symbol for `L['ids'].size()[1]`, the ninth compiles
+nothing and the code object stays eager, and from a fresh state with Dynamo's `fail_on_recompile_limit_hit` the
+ninth call raises. The OT ledger's routes were not affected: `tools/perf/ot_torch.py` already compiled each shape
+from a fresh Dynamo state and ran OT-02, OT-10 and OT-11 a process a route.
+
+The comparisons now compile every case from a fresh Dynamo state (`torch._dynamo.reset()`) at its own fixed shapes
+(`dynamic=False`); a recompile past the limit is a hard failure, never a timing; and each compile's shape symbols and
+graphs are recorded and checked -- none, and at least one graph
+([measurements/2026-10-24/compile-limit/](measurements/2026-10-24/compile-limit/README.json)). Records and docs only:
+no runtime change.
+
+**The dynamic rows.** The GEO attention model on SOFTMAX-T's level-3 build, against P-IND compiled at the case's
+fixed shapes and P-IND-DYN, the same module with the time dimension dynamic -- what sections 6-17 compiled for every
+case after a process's first -- in one process, 24 rotated rounds (B / X below 1: BCIR faster):
+
+| | T | B ms | P-EAGER ms | P-IND ms | P-IND-DYN ms | B / P-EAGER | B / P-IND | P-IND-DYN / P-IND | A/A |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| training | 512 | 40.9 | 87.1 | 68.5 | 67.7 | 0.476 | 0.608 (0.573-0.645) | 0.998 (0.937-1.064) | 0.989 |
+| training | 1024 | 94.7 | 141.9 | 119.4 | 117.2 | 0.667 | 0.795 (0.762-0.829) | 0.975 (0.920-1.034) | 1.023 |
+| training | 2048 | 271.1 | 330.3 | 321.8 | 314.3 | 0.827 | 0.838 (0.812-0.866) | 0.969 (0.927-1.013) | 0.994 |
+| the same, declared, 32 rounds | 2048 | 275.3 | 327.4 | 308.1 | 304.6 | 0.835 | 0.893 (0.873-0.913) | 0.991 (0.966-1.018) | 1.007 |
+| inference | 512 | 10.8 | 28.4 | 18.4 | 19.2 | 0.400 | 0.593 (0.560-0.629) | 1.016 (0.941-1.097) | 1.022 |
+| inference | 1024 | 27.6 | 37.8 | 31.4 | 31.8 | 0.710 | 0.853 (0.795-0.914) | 1.003 (0.914-1.100) | 1.001 |
+| inference | 2048 | 78.4 | 87.4 | 77.8 | 77.5 | 0.868 | 0.995 (0.905-1.094) | 0.992 (0.908-1.085) | 1.022 |
+
+The dynamic compile runs at the fixed-shape compile's rate at every context -- each interval holds 1 -- so the 37
+dynamic rows of sections 5-17 read Inductor's rate as their tables state, and their conclusions stand. The first update
+loss is the same on every route to five places. Between processes PyTorch's time moves by more than a run's interval:
+the training update at T2048 reads x0.838 and, in the declared confirmation, x0.893 of Inductor's time, where
+SOFTMAX-T's record read x0.982 -- BCIR's update 271-275 ms against the record's 265, PyTorch's 308-322 against 270.
+Read the level-3 rows against Inductor to about 10%: the update faster than it below T2048 and from parity to x0.84
+at T2048, the inference faster below T2048 and at parity at T2048.
+
+**Section 5 rerun.** `geo_compare_static.py` is section 5's `geo_compare.py` with only P-IND's compile changed, on
+the session's later host -- the AMX Xeon @ 2.30 GHz, where section 5's ran on the 2.80 GHz Xeon without it -- level
+2's B-DIRECT twice, 12 rounds ([geo2-rerun.json](measurements/2026-10-24/compile-limit/geo2-rerun.json)):
+
+| Model | T | B-DIRECT ms | P-EAGER ms | P-IND ms | B-DIRECT / P-EAGER | B-DIRECT / P-IND | A/A | section 5's P-IND |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| training `global` | 128 | 11.0 | 73.9 | 30.9 | 0.153 | 0.355 (0.337-0.374) | 1.005 | static, 0.33 |
+| training `global` | 256 | 21.0 | 93.4 | 45.4 | 0.226 | 0.463 (0.443-0.484) | 1.018 | dynamic, 0.43 |
+| training `global` | 512 | 41.3 | 151.1 | 75.3 | 0.277 | 0.540 (0.501-0.582) | 0.974 | dynamic, 0.54 |
+| training `query_full` | 128 | 11.3 | 77.5 | 34.4 | 0.152 | 0.330 (0.314-0.346) | 1.044 | dynamic, 0.31 |
+| training `query_full` | 256 | 20.8 | 105.9 | 57.5 | 0.193 | 0.363 (0.343-0.384) | 0.966 | dynamic, 0.38 |
+| training `query_full` | 512 | 41.7 | 178.2 | 88.8 | 0.239 | 0.474 (0.450-0.499) | 1.029 | dynamic, 0.48 |
+| training `attention` | 128 | 8.6 | 37.2 | 21.3 | 0.235 | 0.396 (0.359-0.436) | 1.014 | dynamic, 0.31 |
+| training `attention` | 256 | 17.8 | 51.5 | 31.7 | 0.352 | 0.555 (0.516-0.597) | 0.987 | dynamic, 0.49 |
+| training `attention` | 512 | 46.6 | 78.2 | 57.2 | 0.610 | 0.831 (0.774-0.892) | 1.007 | **eager**, 0.50 |
+| inference `global` | 1024 | 22.5 | 61.1 | 24.8 | 0.359 | 0.883 (0.854-0.913) | 0.995 | **eager**, 0.28 |
+| inference `global` | 2048 | 46.3 | 129.3 | 48.6 | 0.356 | 0.899 (0.809-0.999) | 0.993 | **eager**, 0.30 |
+| inference `query_full` | 1024 | 26.8 | 80.9 | 34.0 | 0.320 | 0.772 (0.722-0.826) | 1.019 | **eager**, 0.24 |
+| inference `query_full` | 2048 | 49.1 | 146.6 | 62.3 | 0.324 | 0.765 (0.735-0.796) | 0.947 | **eager**, 0.29 |
+| inference `attention` | 1024 | 47.3 | 41.0 | 32.5 | 1.165 | 1.386 (1.287-1.492) | 1.027 | **eager**, 1.01 |
+| inference `attention` | 2048 | 148.1 | 86.3 | 85.6 | 1.688 | 1.667 (1.482-1.875) | 1.011 | **eager**, 1.59 |
+
+Level 2 trains the three models in x0.33-0.83 of Inductor's time and x0.15-0.61 of eager PyTorch's, and runs the
+geometric heads' inference in x0.77-0.90 of Inductor's time (`global` at T2048 not resolved: x0.899, its interval
+meeting the A/A control's) and x0.32-0.36 of eager's. Section 5's 3.2-4.2 times faster than P-IND was against eager
+PyTorch; against Inductor the margin is 1.1 to 1.3. The attention baseline's inference was the larger loss against
+Inductor that section 5 could not see: x1.39 of its time at T1024, x1.67 at T2048. INFER-ATTN and the slices after it
+took that to x0.853 and x0.995 (the dynamic rows' table, SOFTMAX-T's tree).

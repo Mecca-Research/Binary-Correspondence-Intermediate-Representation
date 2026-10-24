@@ -618,6 +618,11 @@ pass, and the scratch forward divides each key's probabilities inside the contex
 SM1-SM16): on one thread the exponential x0.68-x0.77 and GCC's SiLU forms x0.65-x0.78, now at clang's rate; the
 scratch forward x0.914 at B4/T2048; the GEO attention model's inference x0.931 at T2048, at parity with Inductor,
 every value as it was (§17).
+Since COMPILE-LIMIT (2026-10-24) every comparison with `torch.compile` compiles each case from a fresh Dynamo state
+at its own fixed shapes, a fallback past Dynamo's recompile limit a hard failure: the earlier comparisons compiled
+every case after a process's first with the time dimension dynamic (at the fixed-shape compile's rate, so those
+readings stand) and GEO-2's ran seven cases eagerly. Against Inductor at fixed shapes the GEO attention model's
+training update takes x0.84-x0.89 of its time at T2048 and its inference is at parity (§18).
 Since NDT-SCAN-W (2026-10-17) the forward's verdict on its activations is taken by their writers: the
 RMSNorm, the SwiGLU product and the attention read back what their tasks wrote while it is in the
 core's cache, a region answering through another its value reaches and the attention reading its

@@ -3990,6 +3990,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     P-EAGER's time and 1.59 (1.36-1.87) times P-IND's, at parity at T1024. Its attention writes every
     head's t x t probabilities (268 MB a layer at B4/T2048) even with no backward to read them;
     PyTorch's CPU flash kernel never forms them. That is the next inference update.
+  - Corrected by COMPILE-LIMIT (2026-10-24): seven of the fifteen P-IND readings -- the attention
+    model's training at T512 and every inference case -- ran eagerly past Dynamo's recompile limit.
+    Rerun with each case compiled at its own shapes (the session's later host): BCIR trains in
+    x0.33-0.83 of Inductor's time and runs the geometric heads' inference in x0.77-0.90 of it, 1.1 to
+    1.3 times its speed rather than 3.2 to 4.2; the attention baseline's inference took x1.39 of
+    Inductor's time at T1024 and x1.67 at T2048. The P-EAGER readings stand.
   - Not claimed: AMX timing (no AMX here); a rerun of the four earlier studies (two protocols absent);
     any learning result beyond what the bundle's own records already state.
   OT P-routes (2026-10-22): PyTorch's and Triton's routes of PR #821's experiments, run.
@@ -4742,6 +4748,32 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     otherwise reaches attention_strips' byte comparison. ndt-lanes.json NL8 and NL11 and scores-t.json ST5, ST6 and
     ST12, whose anchors the slice rewrote, re-anchored with the same defects and caught again.
   - Not claimed: AVX2-only and non-x86 hosts (their instances as they were); the bf16 attention; a GPU.
+  COMPILE-LIMIT (2026-10-24): every P-IND case audited for how it compiled; the comparisons' protocol corrected and
+    the affected ones rerun; records and docs only ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §18,
+    [measurements/2026-10-24/compile-limit/](research/measurements/2026-10-24/compile-limit/README.json)).
+  - The fault: `geo_compare.py`, `train_compare.py` and `infer_compare.py` ran their cases in one process, each case's
+    P-IND module through `oracle.torch_model_next`'s one forward code object. Dynamo compiled a process's first case
+    at its own shapes and every later one under automatic dynamic shapes, the tokens' time dynamic; past its recompile
+    limit (8) it compiled nothing and ran the module eagerly, warning once. Of the 64 P-IND cases in the branch's
+    records 20 compiled at their own shapes, 37 dynamic in time, and 7 -- GEO-2's attention training at T512 and all
+    six of its inference cases -- eagerly: their P-IND is eager PyTorch's time. `tools/perf/ot_torch.py` already
+    compiled each shape from a fresh Dynamo state, so the OT ledger's rows stand.
+  - The protocol: `torch._dynamo.reset()` before every case, `torch.compile(dynamic=False)`,
+    `fail_on_recompile_limit_hit` (a fallback is a failure, never a timing), each compile's shape symbols and graphs
+    recorded and checked. `witness.py` shows the mechanism -- the second compile dynamic in time, the ninth eager, the
+    code object eager from then on -- and, from a fresh state with the flag set, the ninth call raising.
+  - The dynamic rows stand: on SOFTMAX-T's level-3 build the dynamic-time compile against the fixed-shape one in one
+    process took x0.998, x0.975 and x0.969 of its time in training at T512-T2048 and x1.016, x1.003 and x0.992 in
+    inference, every interval holding 1. Against the fixed-shape compile BCIR's update took x0.608, x0.795 and x0.838
+    of Inductor's time (x0.893 in 32 declared rounds at T2048, where SOFTMAX-T's record read x0.982: PyTorch's time
+    moves between processes by more than a run's interval), its inference x0.593, x0.853 and x0.995 -- parity at T2048.
+  - GEO-2's comparison rerun with every case compiled at its own shapes, on the session's later host (the AMX Xeon):
+    level 2 trains the three models in x0.33-0.83 of Inductor's time (attention T512 x0.831, where GEO-2's eager row
+    read 0.50) and x0.15-0.61 of eager PyTorch's; the geometric heads' inference x0.77-0.90 of Inductor's time (global
+    T2048 not resolved) and x0.32-0.36 of eager's -- GEO-2's 3.2-4.2 times faster than P-IND was against eager
+    PyTorch; the attention baseline's inference x1.39 of Inductor's time at T1024 (GEO-2: parity) and x1.67 at T2048.
+  - Not claimed: PyTorch's run-to-run variation as a property of either rail (the paired rounds hold within a process);
+    a compile of the geometric heads at other than their fixed shapes.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
