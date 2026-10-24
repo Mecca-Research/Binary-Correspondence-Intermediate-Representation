@@ -4873,6 +4873,51 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     PI5 re-anchored on the lines the slice rewrote and caught again.
   - Not claimed: hosts whose widest instance is AVX2 or aarch64, where the bit takes no effect; the bf16 attention;
     counter-based figures (no PMU on this VM).
+  POOL-AFFINITY (2026-10-24): the tensor pool deals each job's tasks in per-worker blocks, every value as it was
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §24,
+    [measurements/2026-10-24/pool-affinity/](research/measurements/2026-10-24/pool-affinity/README.json)).
+  - The loss it answers, placed first (NEXT-0): the GEO step a part at a time after P-BANDS, the GEMMs 54% of it at
+    T256 and 46% at T512, the attention 21% and 34%; on one thread the T512 step took 109.3 ms and on four 36.5, where a
+    quarter is 27.3, the elementwise jobs scaling worst (the RMSNorm x1.37 its one-thread speed, its VJP x1.68, SwiGLU's
+    VJP x2.13, the attention backward x3.18), each reading rows the job before wrote on other cores: an RMSNorm over
+    2,048 rows took 45 µs back to back on four threads, 56 after a pool job wrote its operands and 161 cold.
+  - Measured first and not taken: FWD-BANDW-0 (the forward x1.022 and x1.009), BWD-SWEEP-0 and BWD-PF-0 (the backward
+    x0.966 and x0.963, none resolved), WADJ-TILE-0 (a lone weight adjoint x0.774, the chains x1.085-x1.207 and the
+    8,192-row pair x1.081 slower), POOL-YIELDS-0 (x0.962 at T256 and parity at T512 for idle workers yielding 200,000
+    rounds after every job); EXP8 (the resident softmax x0.93, about 2% of a group's phases) is left for a slice of
+    its own.
+  - POOL-AFFINITY: worker w's block of a job's n tasks over W workers starts at n/W*w + min(w, n%W); where the compiler
+    has atomics each block's counter sits on a 64-byte line of its own, a worker claiming its block's tasks in ascending
+    order and then the other blocks' leftovers; a job's `head` leading tasks -- a pair or group job's led weight
+    adjoints, every task of a job with no more tasks than workers -- are claimed in turn before the blocks; without
+    atomics a worker runs the head tasks w, w+W, ... and then its block. The counters live in the caller's pool block.
+  - Every value the same: `bitcheck.c`'s 6,081 cases and the attention's five hash programs before == after under clang
+    18 and GCC 13, clang's lines GCC's; every timed arm's weights, logits or outputs the same bytes; the study's trained
+    states and logits the same.
+  - Measured on the pushed code commit against the one before it. The elementwise jobs on four threads at 2,048 rows:
+    the RMSNorm 43.5 -> 26.9 µs back to back and 55.2 -> 29.8 after a pool job, the residual add 22.1 -> 10.7 and 30.0
+    -> 15.3. The training step at the GEO dimensions alone in its own process, steps back to back on one pool: x0.824
+    (0.778-0.872) at T128, x0.944 (0.898-0.991) at T256, x0.932 at T512, parity at T1024; in one process beside an A/A
+    control x0.92 under GCC at T256, x0.919 on two threads, x0.893 under v1's contract, x0.962 for the 9.84M decoder,
+    parity at T1024 and T2048. The inference forward x0.837 at B4/T256 and x0.89-x0.91 at B1. The study's models (level
+    2): the geometric heads' training x0.66-x0.77 of its time and inference x0.80-x0.85, every row resolved, now
+    x0.22-x0.35 of Inductor's time in training; the attention model x0.87-x0.94 in training at T128-T512 and at parity
+    at level 3, where its update at T2048 takes x0.793 of Inductor's time.
+  - The design a part at a time: without stealing the step x1.05-x1.10 slower and the pair and chain jobs x1.06-x1.40;
+    without the led head the step at parity in one process and x0.946 at T256 alone in its own process, four pair and
+    group jobs x1.14-x1.20 slower alone. The head stays; its trade against the input adjoints' rows is left open.
+  - The rigs: `ab_gemm.c` and `ab_bands.c` share one set of buffers across their arms and always run the second
+    library's arm after the first's pool, so under POOL-AFFINITY the tree after against a byte copy of itself reads the
+    lone nt products x1.395 and x1.618 slower -- single GEMM jobs there say nothing of this slice. `ab_bands.c` also made
+    every arm's pool with the first library, and the tree after's attention on the tree before's pool waited forever on
+    reports its workers never made; `ab_bands_own.c` makes each arm's pool with its own library.
+  - Witnesses: the C harness's `pool_blocks` (every task once at each cap of a four-thread pool, the pool inside its
+    bytes from every max_align_t offset of a line, a held first task's block taken by the other workers; with
+    BCIR_TENSOR_POOL_PROBE each worker's own block one contiguous run of its share's length, the last worker taking
+    every other block's rest, led jobs every task once; under ThreadSanitizer too); `pool-affinity.json` PA1-PA11, each
+    caught by its own check; NDT-THREADS' NT2 and NT11 re-anchored on the block claim and caught again.
+  - Not claimed: hosts with more cores or another cache topology; the bf16 contract's jobs (dealt in blocks, not
+    timed); counter-based figures (no PMU on this VM).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

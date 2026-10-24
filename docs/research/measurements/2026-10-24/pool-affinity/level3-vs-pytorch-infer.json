@@ -1,0 +1,452 @@
+{
+ "what": "COMPILE-LIMIT on the GEO study's attention model at level 3 (a build of this branch's tensor unit): its training\nupdate (forward, backward, clipping, AdamW: geo_compare.py's train_case) or its inference forward, 4 x T tokens,\nagainst PyTorch with torch.compile at each case's own fixed shapes.\n\nB (twice: an A/A control): the level-3 build in WORK. P-EAGER: the bundle's Torch equations\n(oracle.torch_model_next). P-IND: torch.compile (Inductor, default mode; fused AdamW) from a fresh Dynamo state\n(torch._dynamo.reset() at every case) at the case's shapes (dynamic=False). P-IND-DYN: the same module compiled\nwith the tokens' time dimension dynamic (torch._dynamo.maybe_mark_dynamic(ids, 1)) -- what train_compare.py and\ninfer_compare.py compiled for every case after their first: one process, one forward code object, so Dynamo's\nautomatic dynamic shapes marked L['ids'] dim 1 dynamic at the first recompile. Every arm its own module (its own\nclass), so each compiled arm is its own cache entry; a recompile past Dynamo's limit is a hard failure, not an\neager fallback; each compile's shape symbols (create_symbol) and graphs are recorded and checked: P-IND none and at\nleast one graph, P-IND-DYN L['ids'] dim 1. Rounds rotate the arms' order; each training arm is restored to the same\ninitial state before each observation, outside the clock.\nusage: python static_compare.py WORK OUT.json [--mode train|infer] [--rounds 24] [--steps 3] [--threads 4]\n       [--times 512,1024,2048]\n",
+ "host": {
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+  "threads": 4,
+  "python": "3.11.15",
+  "torch": "2.13.0+cu130",
+  "numpy": "2.2.6"
+ },
+ "mode": "infer",
+ "rounds": 24,
+ "cases": [
+  {
+   "model": "attention",
+   "mode": "infer",
+   "batch": 4,
+   "time": 1024,
+   "first_call_s": {
+    "P-EAGER": 0.04892659400138655,
+    "P-IND": 2.8934506340010557,
+    "P-IND-DYN": 1.9969001680001384
+   },
+   "compile_witness": {
+    "P-IND": {
+     "symbols": [],
+     "graphs": 1
+    },
+    "P-IND-DYN": {
+     "symbols": [
+      "create_symbol s27 = 1024 for L['ids'].size()[1]"
+     ],
+     "graphs": 1
+    }
+   },
+   "logits_max_abs_delta_vs_b": {
+    "P-EAGER": 2.205371856689453e-06,
+    "P-IND": 2.1010637283325195e-06,
+    "P-IND-DYN": 2.1010637283325195e-06
+   },
+   "dynamo": {
+    "stats": {
+     "calls_captured": 484,
+     "unique_graphs": 2
+    },
+    "frames": {
+     "total": 2,
+     "ok": 2
+    }
+   },
+   "ms_per_forward": {
+    "B": 28.002082501188852,
+    "B-AA": 26.9692900001246,
+    "P-EAGER": 49.04357150007854,
+    "P-IND": 35.67140700033633,
+    "P-IND-DYN": 35.11495500060846
+   },
+   "b_over": {
+    "B-AA": {
+     "geometric_mean": 1.0143238932077983,
+     "ci95": [
+      0.971860505155808,
+      1.0586426291366577
+     ],
+     "rounds": 24
+    },
+    "P-EAGER": {
+     "geometric_mean": 0.5541828797536932,
+     "ci95": [
+      0.5224169186160792,
+      0.5878803945049794
+     ],
+     "rounds": 24
+    },
+    "P-IND": {
+     "geometric_mean": 0.7358953897857163,
+     "ci95": [
+      0.6760921104296451,
+      0.8009885285656279
+     ],
+     "rounds": 24
+    },
+    "P-IND-DYN": {
+     "geometric_mean": 0.7766805354091674,
+     "ci95": [
+      0.7116463493975221,
+      0.8476579056355253
+     ],
+     "rounds": 24
+    }
+   },
+   "ind_dyn_over_ind": {
+    "geometric_mean": 0.9474878746614078,
+    "ci95": [
+     0.8792368271564951,
+     1.0210369321468429
+    ],
+    "rounds": 24
+   },
+   "raw_ms": {
+    "B": [
+     37.4548,
+     27.1234,
+     28.8779,
+     28.8182,
+     27.8661,
+     27.9208,
+     36.5322,
+     32.4701,
+     28.5557,
+     26.7143,
+     27.3606,
+     26.8345,
+     32.0357,
+     28.002,
+     27.7224,
+     27.1326,
+     27.015,
+     27.1449,
+     28.4161,
+     28.0022,
+     29.5985,
+     31.6023,
+     28.0149,
+     26.8933
+    ],
+    "B-AA": [
+     35.3951,
+     26.7944,
+     27.008,
+     26.3821,
+     26.5198,
+     32.5796,
+     51.032,
+     28.4005,
+     30.0004,
+     26.8322,
+     26.8132,
+     27.2552,
+     27.7441,
+     27.0328,
+     28.9581,
+     26.8953,
+     26.9354,
+     26.4828,
+     26.9913,
+     26.9387,
+     26.9473,
+     26.8827,
+     29.4152,
+     26.8204
+    ],
+    "P-EAGER": [
+     72.7465,
+     44.3509,
+     49.475,
+     48.0923,
+     45.1894,
+     69.9725,
+     87.5609,
+     70.9391,
+     55.2723,
+     44.2197,
+     43.0808,
+     55.986,
+     48.2423,
+     49.0577,
+     51.8862,
+     49.0294,
+     52.9672,
+     47.2721,
+     46.0806,
+     46.9639,
+     47.1036,
+     45.3527,
+     52.6085,
+     52.8407
+    ],
+    "P-IND": [
+     38.5666,
+     35.498,
+     34.3689,
+     54.7523,
+     31.3626,
+     70.8494,
+     41.028,
+     52.8121,
+     37.3273,
+     33.8208,
+     36.4305,
+     49.3289,
+     41.8149,
+     45.154,
+     35.3913,
+     35.2027,
+     34.08,
+     34.8535,
+     35.1468,
+     34.2025,
+     35.7866,
+     49.1155,
+     32.2675,
+     35.5562
+    ],
+    "P-IND-DYN": [
+     32.9294,
+     35.9692,
+     33.3696,
+     35.125,
+     45.4316,
+     68.2952,
+     33.6542,
+     37.3334,
+     33.3867,
+     47.8864,
+     34.4019,
+     36.8952,
+     35.1049,
+     43.9946,
+     36.1574,
+     35.3423,
+     34.3803,
+     33.7709,
+     36.138,
+     34.1429,
+     33.259,
+     44.7273,
+     32.4792,
+     34.812
+    ]
+   }
+  },
+  {
+   "model": "attention",
+   "mode": "infer",
+   "batch": 4,
+   "time": 2048,
+   "first_call_s": {
+    "P-EAGER": 0.10017951799818547,
+    "P-IND": 0.48294288200122537,
+    "P-IND-DYN": 0.7460428480007977
+   },
+   "compile_witness": {
+    "P-IND": {
+     "symbols": [],
+     "graphs": 1
+    },
+    "P-IND-DYN": {
+     "symbols": [
+      "create_symbol s27 = 2048 for L['ids'].size()[1]"
+     ],
+     "graphs": 1
+    }
+   },
+   "logits_max_abs_delta_vs_b": {
+    "P-EAGER": 3.1888484954833984e-06,
+    "P-IND": 3.0174851417541504e-06,
+    "P-IND-DYN": 3.0174851417541504e-06
+   },
+   "dynamo": {
+    "stats": {
+     "calls_captured": 484,
+     "unique_graphs": 2
+    },
+    "frames": {
+     "total": 2,
+     "ok": 2
+    }
+   },
+   "ms_per_forward": {
+    "B": 81.37973149860045,
+    "B-AA": 81.71058399966569,
+    "P-EAGER": 95.19480100061628,
+    "P-IND": 86.63857750252646,
+    "P-IND-DYN": 79.87424149905564
+   },
+   "b_over": {
+    "B-AA": {
+     "geometric_mean": 1.02627312773536,
+     "ci95": [
+      0.9672645499015625,
+      1.0888815607052955
+     ],
+     "rounds": 24
+    },
+    "P-EAGER": {
+     "geometric_mean": 0.8647015513003173,
+     "ci95": [
+      0.798258454054679,
+      0.9366750443083423
+     ],
+     "rounds": 24
+    },
+    "P-IND": {
+     "geometric_mean": 0.9635880265859542,
+     "ci95": [
+      0.8834026754550427,
+      1.0510517013111151
+     ],
+     "rounds": 24
+    },
+    "P-IND-DYN": {
+     "geometric_mean": 1.0180638070541739,
+     "ci95": [
+      0.9416143857113074,
+      1.100720136567038
+     ],
+     "rounds": 24
+    }
+   },
+   "ind_dyn_over_ind": {
+    "geometric_mean": 0.9464907994069169,
+    "ci95": [
+     0.9133692015061261,
+     0.9808134890958835
+    ],
+    "rounds": 24
+   },
+   "raw_ms": {
+    "B": [
+     80.2669,
+     78.7396,
+     77.2017,
+     79.9302,
+     90.0815,
+     81.0389,
+     84.3166,
+     93.6786,
+     77.6149,
+     82.0527,
+     161.652,
+     79.7777,
+     92.5336,
+     77.2177,
+     77.1014,
+     81.7206,
+     78.3174,
+     77.4329,
+     104.0823,
+     84.8558,
+     80.4932,
+     92.5432,
+     87.8363,
+     95.2855
+    ],
+    "B-AA": [
+     96.8661,
+     77.3313,
+     76.9814,
+     78.3141,
+     86.6819,
+     83.0344,
+     91.7342,
+     94.1071,
+     80.1722,
+     78.9122,
+     92.2081,
+     93.6079,
+     86.3423,
+     77.2369,
+     79.3176,
+     76.9056,
+     77.2265,
+     77.5117,
+     91.1734,
+     80.8169,
+     88.3886,
+     82.2419,
+     91.8413,
+     81.1793
+    ],
+    "P-EAGER": [
+     109.9608,
+     104.1531,
+     88.2801,
+     87.7373,
+     89.362,
+     96.9032,
+     131.8521,
+     94.6755,
+     118.8627,
+     90.6786,
+     95.7141,
+     110.3287,
+     106.8317,
+     94.0161,
+     93.4897,
+     91.0774,
+     87.365,
+     89.7165,
+     111.9605,
+     94.1777,
+     112.2747,
+     103.8709,
+     107.7109,
+     93.8416
+    ],
+    "P-IND": [
+     101.5102,
+     92.2103,
+     87.4853,
+     79.0005,
+     99.5095,
+     125.4017,
+     110.6507,
+     79.9385,
+     77.0373,
+     109.4979,
+     89.0838,
+     84.3647,
+     82.044,
+     77.0879,
+     83.1875,
+     76.5389,
+     75.9652,
+     79.0783,
+     78.2589,
+     94.8443,
+     85.7918,
+     101.3562,
+     105.8443,
+     90.3985
+    ],
+    "P-IND-DYN": [
+     80.2311,
+     85.9316,
+     86.5051,
+     77.9534,
+     77.3382,
+     116.039,
+     99.0075,
+     79.5174,
+     75.5609,
+     103.2272,
+     89.6929,
+     75.9061,
+     85.4791,
+     75.728,
+     77.4843,
+     77.9425,
+     76.0388,
+     77.7109,
+     76.0528,
+     99.9991,
+     76.7246,
+     105.1678,
+     84.3288,
+     86.6469
+    ]
+   }
+  }
+ ]
+}

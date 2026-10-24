@@ -632,6 +632,14 @@ no transpose (`p-bands.json` PB1-PB17, `p-bands-px.json` PBX1-PBX5): the attenti
 threads, the training step at the GEO dimensions x0.887-x0.917 at T2048, and the GEO attention model's training
 update x0.905 at T2048 -- x0.80-x0.82 of Inductor's time at fixed shapes -- every value as it was (§23). A layer's
 probability region then holds its score adjoints in the same bands after the backward.
+Since POOL-AFFINITY (2026-10-24) the tensor pool deals each job's tasks in contiguous blocks, one a worker -- the first
+n % W one task longer -- each claimed from a counter of its own and then, where the compiler has atomics, the other
+blocks' leftovers; a pair or group job's led weight adjoints, and every task of a job with no more tasks than workers,
+are claimed in turn first. Consecutive jobs over the same rows so run them on the core that wrote them: the RMSNorm
+and the residual add take x0.48-x0.65 of their time back to back on four threads, the training step at the GEO
+dimensions x0.824 at T128 and x0.944 at T256 alone in its own process (parity from T1024), the inference forward
+x0.837 at B4/T256, and the study's geometric heads' training x0.66-x0.77 -- every value as it was, which thread runs a
+task never reaching the arithmetic (`pool-affinity.json` PA1-PA11; §24).
 Since NDT-SCAN-W (2026-10-17) the forward's verdict on its activations is taken by their writers: the
 RMSNorm, the SwiGLU product and the attention read back what their tasks wrote while it is in the
 core's cache, a region answering through another its value reaches and the attention reading its

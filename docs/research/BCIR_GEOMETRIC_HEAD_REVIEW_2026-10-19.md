@@ -1446,3 +1446,131 @@ exponential the backward's walks run at 76-77% of v1's rate and its groups at 3.
 products' 2.9; heads of 128 gain least. The larger steps left are still contract choices: under the fused attention
 contract with the bands the attention at B4/T2048 takes 40.0 ms against the BCIR exponential's 50.1 (about x0.80), every
 attention value different, and the bf16 contract on AMX (section 19).
+
+## 24. POOL-AFFINITY: the pool's tasks in per-worker blocks (2026-10-24)
+
+Section 23 left the attention about 63% of the GEO step at T2048, but at the study's own training contexts the step is
+mostly the GEMMs' and the elementwise jobs'. Timed a part at a time after P-BANDS with the trainer's job clock (NEXT-0,
+[measurements/2026-10-24/pool-affinity/](measurements/2026-10-24/pool-affinity/README.json), `survey.json`), the GEMMs
+took 54% of the step at T256 and the attention 21%; 46% and 34% at T512; 37% and 48% at T1024. On one thread the T512
+step took 109.3 ms and on four 36.5, where a quarter would be 27.3 (NEXT-0's first reading: 106.0 and 31.4). The
+elementwise jobs scaled worst -- the RMSNorm ran x1.37 its one-thread speed, its VJP with the residual add x1.68 and
+SwiGLU's VJP x2.13, against the attention backward's x3.18 -- and each reads rows the job before it wrote. On four
+threads an RMSNorm over the step's 2,048 rows took 45 µs back to back, 56 after a pool job wrote its operands and 161
+cold. The pool's one counter sent each task to whichever thread asked next, so a job's rows ran on another core than
+the job that wrote them. This host has no PMU, so which level of the memory system those reads waited on is not
+measured.
+
+Six levers inside the kernels were measured first, on the tree before, and not taken (`survey.json`). EXP8 -- the
+banded softmax evaluating eight columns of a block at once where the tree takes four -- takes the resident softmax
+from 1.10 to 1.02 TSC cycles a probability, about 2% of a group's three phases; it is measured only on its kernel and
+left for a slice of its own. FWD-BANDW-0 (the next band prefetched for writing, or each group streamed out of a
+resident scratch) read the stored forward x1.022 and x1.009; BWD-SWEEP-0 (dV and dK inside the groups' sweep) and
+BWD-PF-0 (P's lines prefetched in the banded walks) read the backward x0.966 and x0.963, none of them resolved, the
+sweep's phases summing to the tree's (8.15 TSC cycles a probability against 8.12). WADJ-TILE-0 (the weight adjoints'
+rows in ranges of 64 for more tasks) took a lone 1,024-row weight adjoint to x0.774 but the chains to x1.085-x1.207 and
+the 8,192-row pair to x1.081, each resolved. POOL-YIELDS-0 (the workers yielding 200,000 rounds before they sleep,
+where the tree yields 512) read the step x0.962 (0.929-0.996) at T256 and x0.997 at T512 in alternating processes; it
+keeps every idle worker yielding the processor for 200,000 rounds after each job, a cost to anything else the host
+runs, so it is not taken.
+
+**POOL-AFFINITY** deals a job's tasks in contiguous blocks, one a worker. Worker w's block of a job's n tasks over its
+W workers starts at `n/W*w + min(w, n%W)` -- n/W a block, one more for each of the first n%W -- so the blocks cover the
+tasks in order, worker by worker, and consecutive jobs whose partitions follow the same rows (a product's rows of C,
+then the norm over them) run those rows on the same thread, its caches holding what the job before wrote. Where the
+compiler has atomics each block has a counter of its own on a 64-byte line of its own: a worker claims its block's tasks
+one at a time in ascending order and then the other blocks' leftovers, from the next worker's on, so no worker idles
+while a task remains and a thread that wakes late takes fewer. A job's `head` leading tasks are claimed in turn from the
+shared counter before the blocks: the pair and group jobs whose large weight adjoints lead (MM-ROWS's order) name them,
+so those long tasks start together on as many threads, and every task of a job with no more tasks than workers is
+claimed so. Without atomics a worker runs the head tasks w, w+W, ... and then its whole block. The blocks' counters
+live in the block the caller lends the pool (`bcir_tensor_pool_size` counts a line of room and a block a thread), so the
+unit still allocates nothing.
+
+Every value is the same: which thread runs a task never reaches the arithmetic, since every task writes outputs no
+other task of its job writes and every partition is the shapes' alone, as NDT-THREADS made them. `bitcheck.c`'s 6,081
+k-blocked GEMM cases and the attention's five hash programs (the scratch forward's 1,248 cases, FWD-STRIP's 288,
+P-LOWER's 208, ATTN-RATE's 88, BWD-LONG's 48) print the same lines before and after under clang 18 and GCC 13, clang's
+lines GCC's; every timed arm below holds its weights, logits or outputs the same bytes in every round, and the study's
+models keep their trained states and logits.
+
+The mechanism, alone (`elementwise.json`, `ew_cold.c`, four threads, 2,048 rows): the RMSNorm takes 26.9 µs back to back
+where it took 43.5 -- back-to-back runs of one job had landed its rows on different cores too -- 29.8 after a pool job
+wrote its operands where it took 55.2, and 127.8 cold where it took 149.3; the residual add 10.7 where it took 22.1,
+15.3 where it took 30.0; the RMSNorm's VJP 135.3 after a pool job where it took 174.8. On one thread, with no pool, every
+row reads as before.
+
+The training step at the study's dimensions, both trainers in one process beside an A/A control (48 rounds, 24 at
+T2048), each state on its own pool, and alone in its own process, steps back to back on one pool as training runs them
+(`steady.json`: the libraries alternating run by run, six runs each, the ratios paired by run):
+
+| | one process | one library a process |
+|---|---:|---:|
+| T128 | 0.918 (0.867-0.972; meets its control) | 0.824 (0.778-0.872) |
+| T256 | 0.949 (0.893-1.007) | 0.944 (0.898-0.991) |
+| T256 under GCC / on two threads / v1's contract | 0.920 / 0.919 / 0.893, each resolved | |
+| T512 | 0.942 (0.912-0.972; meets its control) | 0.932 (0.865-1.004) |
+| T512 under GCC | 0.953 (meets its control) | |
+| T1024 / T2048 | 0.986 / 1.004 | 1.000 (T1024) |
+| the 9.84M decoder (T128, the fused attention) | 0.962 (0.946-0.980) | |
+
+A part at a time at T256 the job clock's total went from 15.11 to 13.94 ms (x0.922): SwiGLU's VJP x0.54, the residual
+add x0.56, the lone nt products x0.77, SiLU-times-up x0.79, RoPE x0.84; at T512 two runs of the tree before differ by
+19% (31.8 and 37.9 ms), so its parts say little beyond the RMSNorm's x0.87. The inference forward, in one process
+(`forward.json`): x0.874 (0.807-0.947) at B1/T128, x0.919 at B4/T256 and x0.959 at B4/T1024 meeting their controls,
+parity at B4/T2048; alone in its own process (`steady.json`): x0.837 (0.761-0.920) at B4/T256, x0.894 (0.846-0.944) at
+B1/T128, x0.906 (0.884-0.929) at B1/T256 and x0.972 at B4/T1024. The attention alone (B4, 4 heads of 32) reads x0.918
+(0.893-0.944) at T256 -- forward x0.911, backward x0.922 -- where a head's probabilities fit in a core's L2, and parity
+at T2048, where they do not. The gain is where a worker's share of consecutive jobs' rows fits in its 2 MiB of L2: T128
+to T512 and the small batches, not T1024 and T2048.
+
+The study's three models (level 2, `build_amx.py`'s builds of each unit, GCC as the study builds them, one process,
+16 rounds; `study-ab.json`), every trained state and logit the same:
+
+| model | training T128 / T256 / T512 | inference T256 / T1024 / T2048 |
+|---|---|---|
+| global | 0.701 / 0.658 / 0.707 | 0.801 / 0.830 / 0.851 |
+| query_full | 0.766 / 0.765 / 0.766 | 0.803 / 0.826 / 0.812 |
+| attention | 0.872 / 0.917 / 0.944 | 0.910 / 0.976 / 0.969 |
+
+every geometric-head row resolved, the attention model's but T512's training and T1024's and T2048's inference,
+which meet their controls or hold 1. The geometric
+heads' many short jobs over the same rows gain the most: their training takes x0.66-x0.77 of its time. Against PyTorch
+at fixed shapes (COMPILE-LIMIT's protocol, 12 rounds; `study-vs-pytorch.json`) their training now takes x0.22-x0.35 of
+Inductor's time and their inference x0.52-x0.67; the attention model's training x0.32 at T128 to x0.65 at T512. The
+level-2 overlays' attention model is slower than PyTorch in inference (x1.09 of Inductor's time at T1024, x1.33 at
+T2048), as it was in section 21; the attention model built as P-BANDS builds it (level 3, `level3-ab.json`) is at
+parity before and after -- training x0.995, x1.005 and x0.972 at T512, T1024 and T2048, inference x1.006 and x0.939,
+none resolved -- and against PyTorch takes x0.513 (0.487-0.541), x0.665 and x0.793 (0.761-0.827) of Inductor's time in
+training at T512, T1024 and T2048, x0.736 and x0.964 in inference, as in section 23.
+
+The design a part at a time, on the tree after against itself (`design.json`, `steady.json`; proto_aff_variants.py):
+without stealing -- each worker its own block alone -- the step takes x1.092, x1.104 (1.057-1.153) and x1.050 of the
+committed pool's time at T128, T256 and T512 in one process, and the pair and chain jobs x1.06-x1.40; stealing is the
+balance that blocks need. Without the led head the step is at parity in one process (x0.996-x1.009) and x0.946
+(0.909-0.984) at T256 alone in its own process, parity at the other contexts; alone, four of the pair and group jobs
+at 2,048 and 8,192 rows take x1.14-x1.20 of the led pool's time, resolved, the rest within their controls. The head stays: it costs the step nothing measurable in one
+process and keeps the weight adjoints from finishing last. How it trades against the input adjoints' rows -- a worker
+held in a long head task has its block's rows taken by the others -- is left open.
+
+The rigs, read for this slice: `ab_gemm.c` and `ab_bands.c` give their arms one set of buffers, and the second
+library's arm always follows an arm on the first library's pool. Under POOL-AFFINITY each pool's workers keep their own
+rows of those buffers in their cores' caches, so the second arm reads them from other cores: the tree after against a
+byte copy of itself (`rig-control.json`) reads the lone nt products x1.395 and x1.618 slower at 1,024 and 2,048 rows,
+with one code on both sides, the pairs and chains within 0.96-1.04. Single GEMM jobs in that rig (`gemm.json`) say
+nothing of this slice; the step, the forward and the study, each arm on its own state and pool, do. `ab_bands.c` also
+made every arm's pool with the first library's entries, which holds only while the two units lay their pools out
+alike: the tree after's attention ran on the tree before's pool and waited on reports its workers never made, every
+thread asleep. `ab_bands_own.c` makes each arm's pool with its own library; P-BANDS's records, whose two units share the
+layout, stand.
+
+Witnesses: the C harness's `pool_blocks` checks every task once at each cap (0 to 4) of a four-thread pool over 60
+jobs, the pool inside the bytes it asks for from every `max_align_t` offset of a line, and a held first task's block
+taken by the other workers; built with `BCIR_TENSOR_POOL_PROBE`, with stealing off each worker's own block is one
+contiguous ascending run of its share's length, with stealing on the last worker takes every other block's rest, and
+led jobs at caps 0, 2 and 3 and heads from 0 past the job's tasks run every task once -- under ThreadSanitizer too.
+`pool-affinity.json` PA1-PA11, each caught by its own check; NDT-THREADS' NT2 and NT11 anchored on the claim this slice
+rewrote and are re-anchored on the block claim, caught again.
+
+Not claimed: hosts with more cores or another cache topology (this one has 4 vCPUs, 2 MiB of L2 a core); the bf16
+contract's jobs, dealt in blocks too but not timed here; counter-based figures (no PMU on this VM).

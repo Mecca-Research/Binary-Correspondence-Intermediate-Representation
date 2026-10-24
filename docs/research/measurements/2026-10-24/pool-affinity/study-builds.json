@@ -1,0 +1,15 @@
+{
+ "what": "../geo-amx/build_amx.py's builds of the PR818 study's three models on each tree's unit (GCC, as the study builds them); each build's log",
+ "logs": {
+  "before": [
+   "guard_compact built: <BEFORE_WORK>/build/guard_compact.so",
+   "query_guard_compact built: <BEFORE_WORK>/build/query_guard_compact.so",
+   "attention built: <BEFORE_WORK>/build/attention.so"
+  ],
+  "after": [
+   "guard_compact built: <AFTER_WORK>/build/guard_compact.so",
+   "query_guard_compact built: <AFTER_WORK>/build/query_guard_compact.so",
+   "attention built: <AFTER_WORK>/build/attention.so"
+  ]
+ }
+}
