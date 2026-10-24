@@ -1,0 +1,13 @@
+{
+ "what": "OT-05's SwiGLU block taken apart at one thread (2026-10-22): each of its three GEMM forms -- nn (the forward's x W), nt (the input adjoint's dU W^T), tn (the weight adjoint's x^T dU), each run twice in the block -- under BCIR's three GEMM contracts (v1, the fused v2, the blocked v3) and torch.mm (MKL), and its two elementwise passes (the SiLU product, the SwiGLU VJP) under v1's libm SiLU, the BCIR exponential's (v2) and PyTorch's, at OT-01's nine shapes: where the block's one-thread time goes.",
+ "host": "the OT run's host and commit (../ot/README.json): Intel(R) Xeon(R) Processor @ 2.80GHz, BCIR's serial path and PyTorch 2.13.0+cu130 at 1 thread; Python 3.11.15, NumPy 2.2.6; commit 84e4db0895d5bf96b4c56cddd932a241f6413cba (the run's, nothing uncommitted below bcir, runtime/c or tools/perf). Wall times are indicative.",
+ "records": {
+  "block_parts.py": "the measurement: rotated rounds of every part, each part's median",
+  "parts.json": "its output: per shape each part's median ms over 9 rounds of 3 calls, the GEMMs' GFLOP/s, and every round"
+ },
+ "reading": "BCIR's k-blocked GEMMs, the three forms summed, take 0.86-1.30 times MKL's time over the nine shapes; the largest block's 29.3 ms against 22.6 ms is the one past 1.05 (nn 1.35, nt 1.09, tn 1.45 times MKL's). The weight adjoint's transposed form is behind MKL at seven of the nine shapes (1.04-1.53 times). The k-blocked kernel's rate spans 26-102 GFLOP/s. v1's libm passes take 3.4-7.3 times the BCIR exponential's time; the exponential's SiLU product takes 0.47-0.93 times PyTorch's and its VJP 0.10-0.33 times PyTorch's (autograd's sigmoid, its derivative and two products, written out).",
+ "reproduce": [
+  "python3 -c 'from bcir.tests import native_decoder_fixtures as nf; print(nf.build_library(\"LIBDIR\"))'",
+  "OMP_WAIT_POLICY=PASSIVE TORCH_PY docs/research/measurements/2026-10-22/block-parts/block_parts.py LIBDIR/bcir_decoder_train.so parts.json"
+ ]
+}

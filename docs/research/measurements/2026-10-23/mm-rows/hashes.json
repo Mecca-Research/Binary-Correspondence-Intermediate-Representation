@@ -1,0 +1,16 @@
+{
+ "what": "bitcheck.c: every k-blocked GEMM entry -- the serial instances (AVX-512, AVX2 and the plain C, the plain C on small cases), the pool at four and two threads, the pool through each instance, pair jobs, group jobs whose chains include a call of depth zero -- over the GEO step's twelve shapes and 700 drawn cases (rows 1..4500, columns 1..260, depths 0..1000, five (alpha, beta) pairs), one FNV-1a hash of C a run, built from the tree before and the tree after with clang and gcc",
+ "compilers": {
+  "clang": {
+   "lines": 6081,
+   "before_equals_after": true,
+   "after_sha256": "1bfc2827da49210b765c148e5aba901bd0dfc59007f4cda07ae98d588a8bc932"
+  },
+  "gcc": {
+   "lines": 6081,
+   "before_equals_after": true,
+   "after_sha256": "1bfc2827da49210b765c148e5aba901bd0dfc59007f4cda07ae98d588a8bc932"
+  }
+ },
+ "clang_equals_gcc": true
+}

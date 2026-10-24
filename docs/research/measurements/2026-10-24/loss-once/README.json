@@ -1,0 +1,132 @@
+{
+ "what": "LOSS-ONCE (2026-10-24): the trainer's loss evaluates each logit's exponential once -- a row's first 1,024 kept in double on its task's stack, its adjoints dividing the kept values, a wider row's tail evaluated again -- every adjoint, term and loss as it was. The records time the committed loss against the tree before it, and the PR818 study's models with once_level3.py: the same edit to each of the study's three trainer forks, and in the geometric heads (global, query_full) the gate's exponential a task's 512 elements at a time through the tensor unit's span entry (bcir_tensor_exp), where the fork calls bcir_tensor_expf an element; every trained state and logit as it was",
+ "host": "Intel(R) Xeon(R) Processor @ 2.30GHz, 4 vCPU (4 cores, one thread each; AVX-512F, AMX), 2 MiB of L2 a core, 260 MiB of L3; Linux 6.18; clang 18.1.3 and GCC 13.3 (-std=c11 -O3 -ffp-contract=off -fno-math-errno -pthread; the study's builds with GCC, as the study builds them); Python 3.11.15, NumPy 2.2.6, torch 2.13.0+cu130 (CPU); OMP_WAIT_POLICY=PASSIVE, OPENBLAS_NUM_THREADS=1",
+ "tree": {
+  "before": "36bdb11d3e053c06507c5b2d59a21c5595daaeed",
+  "after": "3577415e0cd42613b493a04ff87b8c3f0e54c6ca"
+ },
+ "records": {
+  "exp-span.json": "exp_span_check.c: the span exponential, every instance, against bcir_tensor_expf on all 2^32 inputs and on spans of every length to 80 over the special values -- the gate edit's premise",
+  "loss.json": "loss_bench.c (mk_loss_bench.py): the loss task alone before and after, one thread, every adjoint and term equal",
+  "step-parts.json": "../../2026-10-23/bwd-keep/step_parts.py: the GEO step a part at a time on both trees at T256 and T512, twice",
+  "steady.json": "../pool-affinity/step_one.c: the training step, one library a process, alternating, six runs each, every run's weights the same digest",
+  "study-ab.json": "../geo-now/geo_ab.py: global and query_full at level 2, without and with once_level3.py, in one process, every trained state and logit equal",
+  "level3-ab.json": "the same for the attention model at level 3 (P-BANDS's builds)",
+  "study-vs-pytorch.json": "../compile-limit/geo_compare_static.py: global and query_full at level 2 with the overlay against PyTorch eager and Inductor at fixed shapes",
+  "level3-vs-pytorch-train.json": "../compile-limit/static_compare.py: the attention model at level 3 with the overlay against PyTorch eager and Inductor, training",
+  "level3-vs-pytorch-infer.json": "the same, inference",
+  "study-builds.json": "the study's builds and once_level3.py's records",
+  "survey.json": "survey_next1.sh: NEXT-1's survey that placed the slice, on the tree before it -- the GEMMs on four threads, a GEMM job a worker at a time, the pool's sleeps in the step, the step's time outside its jobs, and the sampled profiles of BCIR's step and the study's models",
+  "hashes.json": "the committed tools' and the measured sources' sha256",
+  "the tools": "measure_once.sh and survey_next1.sh and the instruments they ran, the bytes that ran: the scripts' two host paths as placeholders, loss_bench.c as mk_loss_bench.py wrote it with its paths scrubbed, the Python ones formatted by ruff 0.16.6 after they ran (each the same AST; hashes.json names the bytes that ran)"
+ },
+ "verdicts": "each effect resolved where its 95% interval excludes 1 and does not meet the A/A control's (the steady state, one library a process, has no A/A arm: resolved where its interval excludes 1)",
+ "reading": {
+  "exp_span": [
+   "clang exp_span_check: 4294967296 inputs; widest 0 mismatches (+103680 tail inputs); instance 1 ran 0, 2 ran 0, 4 ran 0",
+   "gcc exp_span_check: 4294967296 inputs; widest 0 mismatches (+103680 tail inputs); instance 1 ran 0, 2 ran 0, 4 ran 0"
+  ],
+  "loss": [
+   "clang 1024 rows of 260: 9.58 -> 6.43 ns a logit, x0.672, bytes equal True",
+   "clang 2048 rows of 260: 9.61 -> 6.45 ns a logit, x0.671, bytes equal True",
+   "clang 4096 rows of 260: 9.69 -> 6.44 ns a logit, x0.664, bytes equal True",
+   "clang 8192 rows of 260: 10.05 -> 6.53 ns a logit, x0.650, bytes equal True",
+   "clang 512 rows of 1500: 9.48 -> 7.55 ns a logit, x0.797, bytes equal True",
+   "gcc 1024 rows of 260: 8.96 -> 6.64 ns a logit, x0.741, bytes equal True",
+   "gcc 2048 rows of 260: 8.95 -> 6.64 ns a logit, x0.742, bytes equal True",
+   "gcc 4096 rows of 260: 9.42 -> 6.70 ns a logit, x0.712, bytes equal True",
+   "gcc 8192 rows of 260: 9.17 -> 6.64 ns a logit, x0.724, bytes equal True",
+   "gcc 512 rows of 1500: 8.70 -> 7.31 ns a logit, x0.840, bytes equal True"
+  ],
+  "step_parts": [
+   "T256: train.loss 0.703 / 0.674 -> 0.451 / 0.435 ms (x0.642 / x0.645); the jobs' total 12.88 / 13.14 -> 14.38 / 11.70 ms",
+   "T512: train.loss 1.377 / 1.332 -> 0.852 / 0.842 ms (x0.618 / x0.632); the jobs' total 33.89 / 31.70 -> 31.48 / 31.88 ms"
+  ],
+  "steady": [
+   "geo T128: after/before 1.008 (0.966-1.052), 6.31 -> 6.28 ms: not resolved: holds 1; the weights 64e87a7b7a668d4e on both trees",
+   "geo T256: after/before 0.977 (0.924-1.033), 13.29 -> 12.94 ms: not resolved: holds 1; the weights 43ebeaf4ffa940c8 on both trees",
+   "geo T512: after/before 1.002 (0.974-1.031), 31.38 -> 31.71 ms: not resolved: holds 1; the weights e56a429d20e44af6 on both trees",
+   "geo T1024: after/before 0.976 (0.947-1.005), 86.89 -> 84.19 ms: not resolved: holds 1; the weights da5b63787daec30a on both trees",
+   "decoder-9.84M T128: after/before 0.988 (0.963-1.013), 161.45 -> 161.12 ms: not resolved: holds 1; the weights 100f9809b07a55c1 on both trees"
+  ],
+  "study": [
+   "global (level 2) train B4/T128: with the overlay/without 0.918 (0.840-1.002), A/A 0.958 (0.849-1.081): not resolved: holds 1; the same trained state True",
+   "global (level 2) train B4/T256: with the overlay/without 0.918 (0.862-0.978), A/A 0.924 (0.847-1.007): not resolved: meets the A/A control's interval; the same trained state True",
+   "global (level 2) train B4/T512: with the overlay/without 0.943 (0.904-0.984), A/A 1.026 (0.989-1.064): resolved; the same trained state True",
+   "query_full (level 2) train B4/T128: with the overlay/without 0.901 (0.865-0.938), A/A 0.959 (0.911-1.009): not resolved: meets the A/A control's interval; the same trained state True",
+   "query_full (level 2) train B4/T256: with the overlay/without 0.944 (0.894-0.997), A/A 0.994 (0.934-1.058): not resolved: meets the A/A control's interval; the same trained state True",
+   "query_full (level 2) train B4/T512: with the overlay/without 0.922 (0.877-0.969), A/A 0.966 (0.911-1.025): not resolved: meets the A/A control's interval; the same trained state True",
+   "global (level 2) infer B4/T1024: with the overlay/without 0.859 (0.800-0.924), A/A 1.006 (0.950-1.066): resolved; the same logits True",
+   "global (level 2) infer B4/T2048: with the overlay/without 0.849 (0.822-0.876), A/A 1.010 (0.998-1.022): resolved; the same logits True",
+   "query_full (level 2) infer B4/T1024: with the overlay/without 0.869 (0.828-0.913), A/A 1.021 (0.967-1.079): resolved; the same logits True",
+   "query_full (level 2) infer B4/T2048: with the overlay/without 0.863 (0.840-0.887), A/A 0.977 (0.943-1.013): resolved; the same logits True",
+   "attention (level 3) train B4/T512: with the overlay/without 0.996 (0.939-1.056), A/A 1.006 (0.948-1.068): not resolved: holds 1; the same trained state True",
+   "attention (level 3) train B4/T1024: with the overlay/without 0.999 (0.967-1.031), A/A 0.997 (0.967-1.027): not resolved: holds 1; the same trained state True",
+   "attention (level 3) train B4/T2048: with the overlay/without 0.995 (0.974-1.016), A/A 1.002 (0.985-1.019): not resolved: holds 1; the same trained state True",
+   "attention (level 3) infer B4/T1024: with the overlay/without 1.011 (0.974-1.050), A/A 0.981 (0.929-1.035): not resolved: holds 1; the same logits True",
+   "attention (level 3) infer B4/T2048: with the overlay/without 0.929 (0.867-0.996), A/A 0.974 (0.932-1.019): not resolved: meets the A/A control's interval; the same logits True"
+  ],
+  "study_vs_pytorch": [
+   "global (level 2 with the overlay) train T128: BCIR 6.96 ms, eager 68.30, Inductor 31.68: BCIR/eager 0.104 (0.098-0.112), BCIR/Inductor 0.224 (0.200-0.251), A/A 1.001 (0.949-1.055)",
+   "global (level 2 with the overlay) train T256: BCIR 11.61 ms, eager 88.60, Inductor 43.74: BCIR/eager 0.133 (0.126-0.140), BCIR/Inductor 0.266 (0.250-0.283), A/A 0.958 (0.929-0.989)",
+   "global (level 2 with the overlay) train T512: BCIR 23.64 ms, eager 145.11, Inductor 74.88: BCIR/eager 0.163 (0.145-0.183), BCIR/Inductor 0.327 (0.303-0.353), A/A 1.012 (0.949-1.079)",
+   "query_full (level 2 with the overlay) train T128: BCIR 7.40 ms, eager 75.31, Inductor 36.55: BCIR/eager 0.106 (0.092-0.121), BCIR/Inductor 0.219 (0.191-0.251), A/A 0.963 (0.869-1.067)",
+   "query_full (level 2 with the overlay) train T256: BCIR 12.84 ms, eager 103.03, Inductor 52.45: BCIR/eager 0.132 (0.123-0.142), BCIR/Inductor 0.253 (0.233-0.273), A/A 1.008 (0.943-1.078)",
+   "query_full (level 2 with the overlay) train T512: BCIR 25.48 ms, eager 167.44, Inductor 89.20: BCIR/eager 0.153 (0.144-0.162), BCIR/Inductor 0.281 (0.263-0.301), A/A 1.001 (0.961-1.044)",
+   "global (level 2 with the overlay) infer T1024: BCIR 14.37 ms, eager 53.91, Inductor 25.93: BCIR/eager 0.258 (0.246-0.270), BCIR/Inductor 0.534 (0.502-0.568), A/A 0.977 (0.898-1.063)",
+   "global (level 2 with the overlay) infer T2048: BCIR 28.71 ms, eager 136.89, Inductor 47.28: BCIR/eager 0.214 (0.197-0.234), BCIR/Inductor 0.605 (0.564-0.650), A/A 0.986 (0.934-1.042)",
+   "query_full (level 2 with the overlay) infer T1024: BCIR 15.84 ms, eager 68.38, Inductor 33.60: BCIR/eager 0.230 (0.215-0.245), BCIR/Inductor 0.452 (0.420-0.486), A/A 0.993 (0.922-1.069)",
+   "query_full (level 2 with the overlay) infer T2048: BCIR 31.43 ms, eager 177.91, Inductor 61.11: BCIR/eager 0.162 (0.126-0.207), BCIR/Inductor 0.491 (0.438-0.550), A/A 0.965 (0.875-1.064)",
+   "attention (level 3 with the overlay) train T512: BCIR 31.67 ms, eager 79.92, Inductor 59.80: BCIR/eager 0.396 (0.383-0.408), BCIR/Inductor 0.529 (0.499-0.561), A/A 0.994 (0.972-1.016)",
+   "attention (level 3 with the overlay) train T1024: BCIR 85.69 ms, eager 137.69, Inductor 121.94: BCIR/eager 0.621 (0.602-0.642), BCIR/Inductor 0.697 (0.668-0.728), A/A 1.031 (1.008-1.055)",
+   "attention (level 3 with the overlay) train T2048: BCIR 241.36 ms, eager 307.75, Inductor 291.86: BCIR/eager 0.784 (0.761-0.807), BCIR/Inductor 0.824 (0.802-0.848), A/A 1.023 (1.003-1.044)",
+   "attention (level 3 with the overlay) infer T1024: BCIR 27.38 ms, eager 47.70, Inductor 36.06: BCIR/eager 0.560 (0.525-0.599), BCIR/Inductor 0.746 (0.704-0.790), A/A 0.966 (0.912-1.024)",
+   "attention (level 3 with the overlay) infer T2048: BCIR 79.31 ms, eager 88.93, Inductor 78.20: BCIR/eager 0.920 (0.867-0.976), BCIR/Inductor 1.013 (0.953-1.077), A/A 1.023 (0.980-1.068)"
+  ],
+  "survey": [
+   "gemm 0,1,1024x128x128 on 1 thread(s): 174.8 GFLOP/s back to back, 170.9 after a 1000 us pause",
+   "gemm 0,1,1024x128x128 on 4 thread(s): 480.1 GFLOP/s back to back, 298.4 after a 1000 us pause",
+   "gemm 0,1,1024x256x128 on 1 thread(s): 164.1 GFLOP/s back to back, 160.9 after a 1000 us pause",
+   "gemm 0,1,1024x256x128 on 4 thread(s): 599.7 GFLOP/s back to back, 396.3 after a 1000 us pause",
+   "gemm 0,1,1024x128x256 on 1 thread(s): 182.5 GFLOP/s back to back, 178.8 after a 1000 us pause",
+   "gemm 0,1,1024x128x256 on 4 thread(s): 612.6 GFLOP/s back to back, 452.1 after a 1000 us pause",
+   "gemm 0,0,1024x128x128 on 1 thread(s): 177.7 GFLOP/s back to back, 171.6 after a 1000 us pause",
+   "gemm 0,0,1024x128x128 on 4 thread(s): 610.6 GFLOP/s back to back, 305.4 after a 1000 us pause",
+   "gemm 0,0,1024x256x128 on 1 thread(s): 175.6 GFLOP/s back to back, 167.1 after a 1000 us pause",
+   "gemm 0,0,1024x256x128 on 4 thread(s): 598.0 GFLOP/s back to back, 417.3 after a 1000 us pause",
+   "gemm 1,0,128x128x1024 on 1 thread(s): 166.0 GFLOP/s back to back, 159.5 after a 1000 us pause",
+   "gemm 1,0,128x128x1024 on 4 thread(s): 398.9 GFLOP/s back to back, 275.7 after a 1000 us pause",
+   "gemm 1,0,256x128x1024 on 1 thread(s): 161.2 GFLOP/s back to back, 154.0 after a 1000 us pause",
+   "gemm 1,0,256x128x1024 on 4 thread(s): 456.5 GFLOP/s back to back, 340.5 after a 1000 us pause",
+   "tasks 0,1,1024,128,128 rep 1: 157187 cycles a job, the workers 88.3% inside their tasks, the last entering at 2234 cycles, the caller back 3.7% of the job after the last worker left",
+   "tasks 0,1,1024,128,128 rep 2: 130619 cycles a job, the workers 93.3% inside their tasks, the last entering at 753 cycles, the caller back 3.4% of the job after the last worker left",
+   "tasks 0,1,1024,128,128 rep 3: 135903 cycles a job, the workers 91.1% inside their tasks, the last entering at 3079 cycles, the caller back 5.3% of the job after the last worker left",
+   "tasks 0,0,1024,128,128 rep 1: 129682 cycles a job, the workers 90.9% inside their tasks, the last entering at 2891 cycles, the caller back 5.5% of the job after the last worker left",
+   "tasks 0,0,1024,128,128 rep 2: 161138 cycles a job, the workers 75.2% inside their tasks, the last entering at 3354 cycles, the caller back 17.4% of the job after the last worker left",
+   "tasks 0,0,1024,128,128 rep 3: 130637 cycles a job, the workers 88.9% inside their tasks, the last entering at 3616 cycles, the caller back 5.7% of the job after the last worker left",
+   "tasks 0,1,2048,128,128 rep 1: 280124 cycles a job, the workers 87.8% inside their tasks, the last entering at 8036 cycles, the caller back 5.7% of the job after the last worker left",
+   "tasks 0,1,2048,128,128 rep 2: 334137 cycles a job, the workers 80.4% inside their tasks, the last entering at 9449 cycles, the caller back 13.8% of the job after the last worker left",
+   "tasks 0,1,2048,128,128 rep 3: 319182 cycles a job, the workers 80.8% inside their tasks, the last entering at 50631 cycles, the caller back 10.6% of the job after the last worker left",
+   "tasks 1,0,128,128,1024 rep 1: 224438 cycles a job, the workers 59.4% inside their tasks, the last entering at 4679 cycles, the caller back 24.5% of the job after the last worker left",
+   "tasks 1,0,128,128,1024 rep 2: 184902 cycles a job, the workers 64.4% inside their tasks, the last entering at 25241 cycles, the caller back 16.7% of the job after the last worker left",
+   "tasks 1,0,128,128,1024 rep 3: 185710 cycles a job, the workers 64.1% inside their tasks, the last entering at 3640 cycles, the caller back 20.8% of the job after the last worker left",
+   "sleeps T128: 2.2 worker sleeps a step of 84 jobs, 14 caller waits in 44 steps",
+   "sleeps T256: 3.9 worker sleeps a step of 84 jobs, 62 caller waits in 44 steps",
+   "sleeps T512: 8.6 worker sleeps a step of 84 jobs, 106 caller waits in 44 steps",
+   "wall T256: 14.082 ms a step, 0.271 outside its jobs (1.9%)",
+   "profile attention-infer2048 (548 samples): attention.so:mm_avx512_kb 25.2%, attention.so:att512_tscores 24.3%, attention.so:att512_tcontext 22.6%, attention.so:att512_tsoftmax 12.2%, libc.so.6:__nss_database_lookup@GLIBC_2.2.5 3.3%, attention.so:silu2mul_avx512 2.2%, attention.so:rms_task 2.0%, attention.so:scan_task 1.1%",
+   "profile attention-train512 (1198 samples): attention.so:mm_avx512_kb 41.7%, attention.so:att512_btransposed 10.2%, attention.so:att512_bgroup 8.1%, attention.so:att512_tcontext 4.3%, attention.so:swiglu2_avx512 3.8%, attention.so:att512_tscores 3.4%, libc.so.6:sched_yield@@GLIBC_2.2.5 3.1%, attention.so:rms_task 2.4%",
+   "profile global-infer1024 (1027 samples): guard_compact.so:mm_avx512_kb 56.1%, guard_compact.so:wedge_gate_fwd_task 11.2%, guard_compact.so:bcir_tensor_expf 8.0%, guard_compact.so:gp_pair_forward.part.0 5.3%, libc.so.6:sched_yield@@GLIBC_2.2.5 3.4%, guard_compact.so:silu2mul_avx512 3.3%, guard_compact.so:rms_task 3.0%, guard_compact.so:scan_task 2.4%",
+   "profile global-train256 (1336 samples): guard_compact.so:mm_avx512_kb 52.2%, guard_compact.so:gp_pair_backward.part.0 7.6%, guard_compact.so:wedge_gate_fwd_task 5.4%, libc.so.6:sched_yield@@GLIBC_2.2.5 5.4%, guard_compact.so:rmsb_cols_task 2.9%, guard_compact.so:commit_avx512 2.7%, guard_compact.so:bcir_tensor_expf 2.2%, guard_compact.so:rmsb_rows_task 1.7%",
+   "profile global-train512 (1338 samples): guard_compact.so:mm_avx512_kb 60.7%, guard_compact.so:gp_pair_backward.part.0 5.5%, libc.so.6:sched_yield@@GLIBC_2.2.5 3.4%, guard_compact.so:rmsb_rows_task 2.9%, guard_compact.so:wedge_gate_fwd_task 2.6%, guard_compact.so:rms_task 2.3%, guard_compact.so:rmsb_cols_task 1.9%, guard_compact.so:bcir_tensor_expf 1.9%",
+   "profile query_full-infer1024 (1234 samples): query_guard_compact.so:mm_avx512_kb 55.5%, query_guard_compact.so:wedge_gate_fwd_task 11.3%, query_guard_compact.so:gp_pair_forward 6.1%, query_guard_compact.so:bcir_tensor_expf 5.3%, query_guard_compact.so:gp_query_contract_pair 5.0%, libc.so.6:sched_yield@@GLIBC_2.2.5 3.3%, query_guard_compact.so:rms_task 3.0%, query_guard_compact.so:silu2mul_avx512 2.3%",
+   "profile query_full-train512 (1529 samples): query_guard_compact.so:mm_avx512_kb 58.1%, query_guard_compact.so:gp_pair_backward.part.0 4.5%, libc.so.6:sched_yield@@GLIBC_2.2.5 3.2%, query_guard_compact.so:gp_query_contract_vjp 3.1%, query_guard_compact.so:wedge_gate_fwd_task 2.7%, query_guard_compact.so:rms_task 2.7%, query_guard_compact.so:gp_pair_forward 2.3%, query_guard_compact.so:swiglu2_avx512 1.8%",
+   "profile step256 (1596 samples): libdec_before.so:mm_avx512_kb 50.1%, libdec_before.so:att512_btransposed 6.4%, libdec_before.so:att512_bgroup 6.1%, libc.so.6:sched_yield@@GLIBC_2.2.5 5.5%, libdec_before.so:att512_tcontext 3.1%, libdec_before.so:att512_tscores 3.0%, libm.so.6:f64xsubf128@@GLIBC_2.28 2.7%, libdec_before.so:rmsb_cols_task 2.0%"
+  ]
+ },
+ "reproduce": [
+  "bash measure_once.sh  # on the committed tree, HEAD~1 the tree before; <SCRATCH> and <REPO> as named there",
+  "bash survey_next1.sh  # after measure_once.sh: NEXT-1's survey on the tree before",
+  "python3 -I once_level3.py WORK LIB...  # the study overlay alone, on a level-2 or level-3 work tree"
+ ]
+}

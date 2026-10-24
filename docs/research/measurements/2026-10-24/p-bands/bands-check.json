@@ -1,0 +1,137 @@
+{
+ "what": "bands_check.c: the tree before's unit (the widest instance, without BANDS) and the tree after's under contract | BANDS (the forward instance and the backward instance named, 0 the widest, 1 portable, 2 AVX2, 4 AVX-512), each case the forward then the backward from the same inputs: y, the verdict, every probability j <= i -- the tree after's at its band address where the bit takes effect -- every score adjoint j <= i after the backward, dq, dk and dv, byte for byte; 16 shapes x 8 contracts (v1, EXP, FUSED, EXP+FUSED, each with and without LOWER) x 1 and 4 threads x with and without the workspace, an infinite key and a NaN query, and with HEAVY nine cases at T2048; the two libraries built by the compilers named",
+ "runs": [
+  {
+   "before_compiler": "clang",
+   "after_compiler": "clang",
+   "heavy": 1,
+   "forward_instance": 0,
+   "backward_instance": 0,
+   "small": 0,
+   "cases": 529,
+   "failed": 0
+  },
+  {
+   "before_compiler": "clang",
+   "after_compiler": "clang",
+   "heavy": 1,
+   "forward_instance": 4,
+   "backward_instance": 4,
+   "small": 0,
+   "cases": 529,
+   "failed": 0
+  },
+  {
+   "before_compiler": "clang",
+   "after_compiler": "clang",
+   "heavy": 0,
+   "forward_instance": 1,
+   "backward_instance": 1,
+   "small": 1,
+   "cases": 456,
+   "failed": 0
+  },
+  {
+   "before_compiler": "clang",
+   "after_compiler": "clang",
+   "heavy": 0,
+   "forward_instance": 2,
+   "backward_instance": 2,
+   "small": 1,
+   "cases": 456,
+   "failed": 0
+  },
+  {
+   "before_compiler": "clang",
+   "after_compiler": "clang",
+   "heavy": 0,
+   "forward_instance": 4,
+   "backward_instance": 1,
+   "small": 1,
+   "cases": 456,
+   "failed": 0
+  },
+  {
+   "before_compiler": "clang",
+   "after_compiler": "clang",
+   "heavy": 0,
+   "forward_instance": 1,
+   "backward_instance": 4,
+   "small": 1,
+   "cases": 456,
+   "failed": 0
+  },
+  {
+   "before_compiler": "clang",
+   "after_compiler": "clang",
+   "heavy": 0,
+   "forward_instance": 2,
+   "backward_instance": 4,
+   "small": 1,
+   "cases": 456,
+   "failed": 0
+  },
+  {
+   "before_compiler": "clang",
+   "after_compiler": "clang",
+   "heavy": 0,
+   "forward_instance": 4,
+   "backward_instance": 2,
+   "small": 1,
+   "cases": 456,
+   "failed": 0
+  },
+  {
+   "before_compiler": "clang",
+   "after_compiler": "clang",
+   "heavy": 0,
+   "forward_instance": 1,
+   "backward_instance": 2,
+   "small": 1,
+   "cases": 456,
+   "failed": 0
+  },
+  {
+   "before_compiler": "gcc",
+   "after_compiler": "gcc",
+   "heavy": 1,
+   "forward_instance": 0,
+   "backward_instance": 0,
+   "small": 0,
+   "cases": 529,
+   "failed": 0
+  },
+  {
+   "before_compiler": "gcc",
+   "after_compiler": "gcc",
+   "heavy": 0,
+   "forward_instance": 1,
+   "backward_instance": 4,
+   "small": 1,
+   "cases": 456,
+   "failed": 0
+  },
+  {
+   "before_compiler": "clang",
+   "after_compiler": "gcc",
+   "heavy": 1,
+   "forward_instance": 0,
+   "backward_instance": 0,
+   "small": 0,
+   "cases": 529,
+   "failed": 0
+  },
+  {
+   "before_compiler": "gcc",
+   "after_compiler": "clang",
+   "heavy": 0,
+   "forward_instance": 2,
+   "backward_instance": 1,
+   "small": 1,
+   "cases": 456,
+   "failed": 0
+  }
+ ],
+ "cases": 6220,
+ "failed": 0
+}

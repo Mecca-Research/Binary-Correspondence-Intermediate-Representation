@@ -355,15 +355,16 @@ def _bind_plan(lib):
 
 @dataclass(frozen=True)
 class MemoryPlan:
-    """A trainer's arenas under a recompute set and a bf16 workspace (GEO-3), in bytes, every
+    """A trainer's arenas under a recompute set and a workspace (GEO-3), in bytes, every
     count the C plan's (bcir_decoder_activation_count, bcir_decoder_workspace_need/_panels/_floor).
     Each plan trains the state the all-kept trainer at the exact need trains, bit for bit: the
     choice moves memory and time, never a value."""
 
     recompute: int  # the layers the backward recomputes, bit l for layer l
-    workspace_bytes: int  # the bf16 workspace lent (0 without a bf16 GEMM contract)
+    workspace_bytes: int  # the workspace lent (0 where the step packs nothing)
     activation_count: int  # floats of the activation arena under the recompute set
-    workspace_need: int  # every GEMM group whole (the SwiGLU block's panels where admitted)
+    workspace_need: int  # every GEMM group whole (the SwiGLU block's panels where admitted), the
+    # attention's regions (the bf16 attention's, else the binary32 attention's copies, ATT-CONTIG)
     workspace_panels: int  # the least at which the SwiGLU block keeps its panels; 0 none
     workspace_floor: int  # the least the state admits on its pool
     recomputes: int  # layer forwards the backward re-runs a step (the highest set layer is free)
@@ -377,7 +378,7 @@ def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspa
     """The arenas of one trainer (GEO-3: per-layer caching coupled with packing-aware workspace
     planning). With `recompute` given: that set and `workspace_bytes` (None: the exact need),
     refused (ValueError) where the C refuses them -- a bit past the last layer, a workspace below
-    the floor or lent without a bf16 contract. With `recompute` None: the plan this module
+    the floor or lent where the step packs nothing. With `recompute` None: the plan this module
     chooses within `budget` bytes, among the choices that keep every value, in the order the
     measured frontier prices them (docs/research/measurements/2026-10-19/geo3): the fewest
     recomputed layers (the lowest ones; which layers is no matter of cost), each with the
@@ -422,7 +423,7 @@ def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspa
         if workspace_bytes is None:
             workspace_bytes = need
         if not need and workspace_bytes:
-            raise ValueError("a workspace is lent only under a bf16 GEMM contract")
+            raise ValueError("a workspace is lent only where the step packs into it")
         if workspace_bytes < floor:
             raise ValueError(f"workspace {workspace_bytes} below the floor {floor}")
         return arenas(recompute, workspace_bytes)
@@ -646,7 +647,8 @@ class NativeDecoder:
             workspace_bytes=workspace_bytes,
         )  # fmt: skip
         self.recompute = recompute
-        # NDT-BF16 / WS-PLAN: the bf16 GEMMs' workspace, by default the step's exact need
+        # NDT-BF16 / WS-PLAN / ATT-CONTIG: the workspace the bf16 GEMMs pack into and the binary32
+        # attention copies its heads' rows into, by default the step's exact need
         self.workspace_bytes = self.plan_memory.workspace_bytes
         self.activation_count = self.plan_memory.activation_count
         self.memory_bytes = self.plan_memory.total_bytes
@@ -997,7 +999,28 @@ class NativeDecoder:
             alignment={SPACES[name]: ct.addressof(buf) % 64 for name, buf in self.buffers.items()},
             provider_mm=bool(provider.mm), provider_silu=bool(provider.silu),
             steps=steps, accumulation=gradient_accumulation,
+            threads=self.threads, instances=self.instance_families(),
         )  # fmt: skip
+
+    def instance_families(self) -> dict:
+        """PX-3b (DISPATCH): the instances this host admits for the trainer's jobs, as masks of
+        bcir_tensor.h's bits (1 portable, 2 AVX2, 4 AVX-512, 8 AMX): "gemm" its GEMM contract's
+        family (bcir_tensor_mm_contract_variants), "attention" its attention's products' (the bf16
+        family under +attnbf16, the fused GEMM's under +attn, v1's otherwise)."""
+        lib, bits = self.lib, _CONTRACTS[self.contract]
+        for name in ("mm_variants", "mm_fused_variants", "mm_bf16_variants"):
+            fn = getattr(lib, "bcir_tensor_" + name)
+            fn.argtypes, fn.restype = [], ct.c_int
+        lib.bcir_tensor_mm_contract_variants.argtypes = [ct.c_int]
+        lib.bcir_tensor_mm_contract_variants.restype = ct.c_int
+        gemm = 3 if bits & _BF16 else 2 if bits & _KBLOCK else 1 if bits & 1 else 0
+        attention = (lib.bcir_tensor_mm_bf16_variants() if bits & _ATTNBF16 else
+                     lib.bcir_tensor_mm_fused_variants() if bits & _ATTN else
+                     lib.bcir_tensor_mm_variants())  # fmt: skip
+        return {
+            "gemm": int(lib.bcir_tensor_mm_contract_variants(gemm)),
+            "attention": int(attention),
+        }
 
     def lower_pack(self, pack: bytes, plan: bytes) -> array:
         """PX-2b: the launch program a StreamPack and its ExecutionPlanV1 state for this trainer

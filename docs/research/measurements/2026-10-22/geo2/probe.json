@@ -1,0 +1,2842 @@
+{
+ "builds": {
+  "level1": {
+   "decisions_equal_to_asis": 12,
+   "updates_equal_to_asis": 12
+  },
+  "level2": {
+   "decisions_equal_to_asis": 12,
+   "updates_equal_to_asis": 12
+  }
+ },
+ "cases": [
+  "kv_curriculum-attention-c14",
+  "kv_curriculum-attention-c26",
+  "kv_curriculum-global-c14",
+  "kv_curriculum-global-c26",
+  "kv_curriculum-query_full-c14",
+  "kv_curriculum-query_full-c26",
+  "lm-hybrid-c14",
+  "lm-hybrid-c26",
+  "lm-query_full-c14",
+  "lm-query_full-c26",
+  "ordered-query_matched-c14",
+  "ordered-query_matched-c26"
+ ],
+ "records": {
+  "asis": {
+   "kv_curriculum-attention-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1704960,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 17210488,
+      "scratch": 492544,
+      "variant": "attention"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3803136,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 27573368,
+      "scratch": 985088,
+      "variant": "attention"
+     },
+     {
+      "accumulation": 2,
+      "activations": 4589568,
+      "context": 256,
+      "microbatch": 2,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 30719096,
+      "scratch": 985088,
+      "variant": "attention"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "a8542abd925d0ad7b6662575f59475f9f8b3fa66ddbc557d8e7d3ea274c1bfdb",
+      "grad_norm": 20.651095348130468,
+      "loss": 5.597630906167308,
+      "microbatch": 4,
+      "variant": "attention"
+     },
+     {
+      "digest": "dc8fe11266d6fed71b93a1585c8fb8f96ba25b784b97501a7f3c7ffbb607b8ca",
+      "grad_norm": 16.36298290712476,
+      "loss": 5.735175568953665,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "091d9e5cf535fb20e9817d9ad54ce7cc522bd228fd94553841f6900ddb1540df",
+      "grad_norm": 17.395856269257138,
+      "loss": 5.45841094700904,
+      "microbatch": 4,
+      "variant": "attention"
+     },
+     {
+      "digest": "f263dea60df754d0db73c9ec5135aa6780927fa6ebe47742a1592e3cb920911a",
+      "grad_norm": 16.834152267092826,
+      "loss": 5.657177989320425,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "d953a35f4777618982ef38b28e88b88e7c4266b84ee1e00dfb4cfba743d662de",
+      "grad_norm": 17.44105651676933,
+      "loss": 5.755024497980466,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "d23ca51c0f61b9d6d09572d06a9b969f84fc5f83eb6376db3a5efe6859b392a2",
+      "grad_norm": 18.32826353708275,
+      "loss": 5.552037406095511,
+      "microbatch": 4,
+      "variant": "attention"
+     }
+    ]
+   },
+   "kv_curriculum-attention-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1704960,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 786688,
+      "resident_bound_bytes": 17997176,
+      "scratch": 492544,
+      "variant": "attention"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3803136,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 1442048,
+      "resident_bound_bytes": 29015416,
+      "scratch": 985088,
+      "variant": "attention"
+     },
+     {
+      "accumulation": 2,
+      "activations": 4589568,
+      "context": 256,
+      "microbatch": 2,
+      "packing_bytes": 1442048,
+      "resident_bound_bytes": 32161144,
+      "scratch": 985088,
+      "variant": "attention"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "b31bc871e820985348253ebb4fe898b06531b77bd59d0c2e265941820bb6d408",
+      "grad_norm": 20.617316807976003,
+      "loss": 5.596952023633682,
+      "microbatch": 4,
+      "variant": "attention"
+     },
+     {
+      "digest": "27543aa1ae82ac231e52e31ce7cb290c5af2311c010ff30e383141d2266948cf",
+      "grad_norm": 16.367253045522986,
+      "loss": 5.735857042215257,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "98692b1c141dbf35c2f32a5fe5ea688aa3e280dcc1c1ea6a2bf945cd49a1f3fd",
+      "grad_norm": 17.42456023939058,
+      "loss": 5.4609116152981505,
+      "microbatch": 4,
+      "variant": "attention"
+     },
+     {
+      "digest": "67c549d5d31e04d42a634fbb04db771ba4c60f9e6110138f011ea577213d3ad9",
+      "grad_norm": 16.87028499400401,
+      "loss": 5.65785347006185,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "cac4d01e5184ba1186c3d0696927312d4210778e59031fa1002d4d1c2a0d805e",
+      "grad_norm": 17.42446037535868,
+      "loss": 5.754280810360797,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "e20351e480e08612ee0fb5f5c64eb20877648aab24d6a59e6d86ac5952e1ed04",
+      "grad_norm": 18.307866129103356,
+      "loss": 5.552488783049323,
+      "microbatch": 4,
+      "variant": "attention"
+     }
+    ]
+   },
+   "kv_curriculum-global-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15442040,
+      "scratch": 230144,
+      "variant": "guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3050496,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 22463608,
+      "scratch": 460288,
+      "variant": "guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3812352,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 27352184,
+      "scratch": 920576,
+      "variant": "guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "fb29d334da023afed48e4c453c8e76b98bbf203d1e184a521e63c683509b1ace",
+      "grad_norm": 13.531407309331838,
+      "loss": 5.696196394575555,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     },
+     {
+      "digest": "0b68cc76f5be010ddaa6fa1b8aef562db025a92f1c056413bf2720bc27f39d18",
+      "grad_norm": 11.954197079923741,
+      "loss": 5.490939454113253,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "05db4a5f4f42db600fd69650dca93823bbab52b65e9f2a150c928f5565f8a20f",
+      "grad_norm": 10.995921330780366,
+      "loss": 5.548933732043007,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     },
+     {
+      "digest": "6c30baff51b2ae9c4d21a4551fdcaecc2093d5709ae7bcbcb4e4f77c950c4ed4",
+      "grad_norm": 10.953644883880068,
+      "loss": 5.687270940128451,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "b67da4f44bf44c90f02e5a005f72ba11eb834f6f6f327f66286c45dcc6a5789b",
+      "grad_norm": 10.803694234283165,
+      "loss": 5.61908519376522,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "cb77de9cadac12775866ef0f1697845b96659a489bf15505570e29eddb6ef51d",
+      "grad_norm": 11.829677651390073,
+      "loss": 5.575762207637567,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     }
+    ]
+   },
+   "kv_curriculum-global-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16310648,
+      "scratch": 230144,
+      "variant": "guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3050496,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 1589504,
+      "resident_bound_bytes": 24053112,
+      "scratch": 460288,
+      "variant": "guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3812352,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 3031296,
+      "resident_bound_bytes": 30383480,
+      "scratch": 920576,
+      "variant": "guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "912213af7f0cc7fe8e553b735a507e37eaeb4aff545fb9ee16a665281f243a06",
+      "grad_norm": 13.554079663721481,
+      "loss": 5.696251263565852,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     },
+     {
+      "digest": "2fb3a257170dcecc3297a2deb03102e0692846a656ad085e7f321d4292a5d330",
+      "grad_norm": 11.96072495859703,
+      "loss": 5.490102762986826,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "008d5e6cb19e2bd772527b236490a2f56c1ab241aa8ed158b6b2e12043ec2c17",
+      "grad_norm": 10.988366184748962,
+      "loss": 5.550220233436015,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     },
+     {
+      "digest": "934f3f353487566ac006319840ec3834119459da3c4b5e3f328f62c10801093c",
+      "grad_norm": 10.945815268454535,
+      "loss": 5.688182763831316,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "3331c33abf40eebe52bbc997de629a05ab6553591952a9578c2cdb5ed34bba67",
+      "grad_norm": 10.789974308771539,
+      "loss": 5.619510496204221,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "3e7353d436b513c984161adf7eec81a05c131f8bcbed3159172800c2bc7f2ca0",
+      "grad_norm": 11.824548144705979,
+      "loss": 5.5756173165110345,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     }
+    ]
+   },
+   "kv_curriculum-query_full-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15644792,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3084288,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 22733944,
+      "scratch": 460288,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3879936,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 27757688,
+      "scratch": 920576,
+      "variant": "query_guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "f051e254a5c59ad74c52361378625d68242f1ee56a8e9df1d5a8e7398a247daf",
+      "grad_norm": 12.830886830296288,
+      "loss": 5.618292757572629,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "b8758a196ace61940bb9944da0b6d8db8cf659bb298c617039de9b2215204687",
+      "grad_norm": 10.210891107550607,
+      "loss": 5.46767022459486,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "ef370e01bbe51a7c6f4eb500aedf61a4ce7f06cdd8b38a9e4eda21f2880c328a",
+      "grad_norm": 11.174323178835092,
+      "loss": 5.747051755811726,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "eda4bde0c66221675da361ef16cadbeca5f189f98a08e8a100547f82a225138a",
+      "grad_norm": 13.578916909577321,
+      "loss": 5.534459448287676,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "e328869671d8cce4c3c06efd79fef366f91a3ca8fb35c4cfc9508fc0b0f3cc24",
+      "grad_norm": 10.374783027003929,
+      "loss": 5.6115367027882455,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "616592b5e67ada5c96687c2d96952f2cb8990424c5e7c84f6cc4d5269b6e9a7c",
+      "grad_norm": 10.973581639080258,
+      "loss": 5.4754272663378885,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "kv_curriculum-query_full-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16513400,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3084288,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 1589504,
+      "resident_bound_bytes": 24323448,
+      "scratch": 460288,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3879936,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 3031296,
+      "resident_bound_bytes": 30788984,
+      "scratch": 920576,
+      "variant": "query_guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "f9d31bb35d4c985c3701d1f5ecb3163cc98d061e55c8337d73b8a5574919df29",
+      "grad_norm": 12.833775734596543,
+      "loss": 5.6187264524754585,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "53036b1369235574e78f4c699983ea575741a3e5360b198c3681ce257f99e3cc",
+      "grad_norm": 10.217030675111396,
+      "loss": 5.466963395679779,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "6570a32e3d1c4c36b52912198ee5b6a4405fee54452c7f21ffc9fd00f1b4c1e3",
+      "grad_norm": 11.164724072172746,
+      "loss": 5.7464281149211605,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "c256b25f2a2691f11a9cf56538270e4cf0a62cc8dbc4c1c3f807b647aa2d1008",
+      "grad_norm": 13.567205206821003,
+      "loss": 5.5352954802753676,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "e4df7df16212cdbf846777a7a8a21c35dd77b44a299686cffd3d68ba192d0bbc",
+      "grad_norm": 10.37638471881621,
+      "loss": 5.611324353339592,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "5430f4120a171a912e1b08981a369229e83ca0f4374bc1b3edca937c9c354ec4",
+      "grad_norm": 10.957142402570883,
+      "loss": 5.474832266297689,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "lm-hybrid-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 128,
+      "microbatch": 2,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15435896,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15435896,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 32,
+      "microbatch": 8,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15435896,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "983bf5fc122e8b7c05192c032678f61c1d9dfcb720f8af2e567bb761d913bb6a",
+      "grad_norm": 2.1334248783235834,
+      "loss": 5.588816116857116,
+      "microbatch": 8,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "cf7ee1d3adf773989f627beab83b95ec32ff6250dcac7c2dc8515475becd4a99",
+      "grad_norm": 1.9845780826573791,
+      "loss": 5.584648046761069,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "589e075f3cd648ff55612fd33e048c8438a20e8750210f6ddadd4996efd03cd9",
+      "grad_norm": 1.9589698198771015,
+      "loss": 5.543586051945698,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "12b15e06a338a1e4d85303a836f3aac8d8bb55b65cc8a9b4ab9f45f0cbfa5b66",
+      "grad_norm": 2.1195296691259085,
+      "loss": 5.568985241557694,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "a3b1772014c37d62a16cdd85555b6e838b9e1aa300f8e7871cba75aff9d60489",
+      "grad_norm": 1.8578067099883881,
+      "loss": 5.544146547710363,
+      "microbatch": 4,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "3d60053b46d1d35b19c971a78e12beec43d716e6b32f7ed367d9303b4c320877",
+      "grad_norm": 1.9098007029728612,
+      "loss": 5.5506957442661875,
+      "microbatch": 8,
+      "variant": "guard_hybrid_compact"
+     }
+    ]
+   },
+   "lm-hybrid-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 128,
+      "microbatch": 2,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16304504,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16304504,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 32,
+      "microbatch": 8,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16304504,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "87bff0ab65202a5b00bad8b27a5e1c34020ab266481817d794727feac2422042",
+      "grad_norm": 2.1325570118390527,
+      "loss": 5.589060963109709,
+      "microbatch": 8,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "8754f78adb1baae432ab74382171644e52f162cf0f8259aacaa6b6e4d85c2be7",
+      "grad_norm": 1.9843636499176265,
+      "loss": 5.584659081391643,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "77c0749225b944c8fa475564f5063742dc38191f9176a0e96822e838ad1d2c43",
+      "grad_norm": 1.9587470524532686,
+      "loss": 5.543628968738566,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "68a7c84d72a6a876a8a8c6636bb86bbac8dbfd9f7cd5a5d5461bc5647991d63a",
+      "grad_norm": 2.1175890340826924,
+      "loss": 5.568921015613267,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "a616c0b9e557c46e6195a6125021de73852c940beedb365505ce46c5df5d4a2b",
+      "grad_norm": 1.8580781208559436,
+      "loss": 5.544157145883369,
+      "microbatch": 4,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "a922a0c0b980653c436171083c2488978a9ee25158ebbb731cbb105a1fda84bd",
+      "grad_norm": 1.9104703239502872,
+      "loss": 5.5508416827756255,
+      "microbatch": 8,
+      "variant": "guard_hybrid_compact"
+     }
+    ]
+   },
+   "lm-query_full-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 128,
+      "microbatch": 2,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15638648,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15638648,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 32,
+      "microbatch": 8,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15638648,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "c670512cdcffc4456e14557c3f39310069dad8acb40e725ce40d157e0849a3c0",
+      "grad_norm": 2.4180593601150258,
+      "loss": 5.586209917493061,
+      "microbatch": 8,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "afe49f9389b47353db99c7e6a311d03310c0e9962d4cc4f05abcc64aaed63093",
+      "grad_norm": 2.5832019588213218,
+      "loss": 5.579567612179453,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "379d5ce36ec16a9a4b47273178bd0a327edacc955a70f34da329624cfcc20d9e",
+      "grad_norm": 2.470615222437952,
+      "loss": 5.539998511242848,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "9c52fa5fd570dfec03a4dcca4ded6a570cbde39d16bbd1425b82907206695f8f",
+      "grad_norm": 2.492231805209332,
+      "loss": 5.526952876325311,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "20dd5c15cfb38873408c44347aa95a5eebfa2f256e2822fc0b868cd3cd21a96c",
+      "grad_norm": 2.227857269214467,
+      "loss": 5.530604871952328,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "4f5f93c93d1b5c21485f34f9605c988d728cd3ab35bd0fed7ebbbe9e8cacd02a",
+      "grad_norm": 2.3449631283929295,
+      "loss": 5.533720549963243,
+      "microbatch": 8,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "lm-query_full-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 128,
+      "microbatch": 2,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16507256,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16507256,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 32,
+      "microbatch": 8,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16507256,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "e11c902c423a8931664dfb62d58bc26c55468c0f0eaf53101cc2e833f951dec7",
+      "grad_norm": 2.4183670661190666,
+      "loss": 5.586225611199881,
+      "microbatch": 8,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "a7874a22a7d672ca9b4355b6aa859072eed246274009b6eb8cde6649487270f4",
+      "grad_norm": 2.58292284299496,
+      "loss": 5.579316338013608,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "6d8532996d3d5c8c273d2da365bda2b3568bc5081f7cba345ac83f4d0d137819",
+      "grad_norm": 2.470515878083803,
+      "loss": 5.540027920855747,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "a4caddb106b66c76bbfeb8719b38e9310df9a7126ad3d3831abe30626e52d529",
+      "grad_norm": 2.4931862482491343,
+      "loss": 5.526683201361236,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "1f7c6d9b2bb93c38aeff168c9a9996f9a81850bdf5c239be4a4386c1a79f28e6",
+      "grad_norm": 2.2265909857741204,
+      "loss": 5.530873034648779,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "632ba2747f960a04a84a69f35bfd3c31dc5ea50fd1dc9a79fade8fd8218e40c1",
+      "grad_norm": 2.3436914341952173,
+      "loss": 5.533995797609994,
+      "microbatch": 8,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "ordered-query_matched-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1526016,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15429752,
+      "scratch": 224768,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3052032,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 22432888,
+      "scratch": 449536,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3858432,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 27456632,
+      "scratch": 899072,
+      "variant": "query_guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "c854ad80513e3c55a3eade3856c03fc4955d200f00d080514b49f2e3e5e06cc9",
+      "grad_norm": 9.735834738031173,
+      "loss": 5.631017206942497,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "bc180ea87655edaeee34421e03142e26eb3e11e06d4fe8a21c68ec926cbf3bde",
+      "grad_norm": 11.901114218738313,
+      "loss": 5.581430398806182,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "135e723b569574d3f14384e7c7bf76c59b3dc5c1a8359955f4372da02ad4f355",
+      "grad_norm": 15.352215380338526,
+      "loss": 5.515780885371488,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "0ff9052741075c8268ec108d13c186df4c2e0f6fdeca233682f29be98d54755e",
+      "grad_norm": 10.846525264213449,
+      "loss": 5.40951494943424,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "60f55ded14f468047616bc8abd997859c0438fa63b71f80274f28341de14f3ae",
+      "grad_norm": 14.535896135952546,
+      "loss": 5.273929764384058,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "89ef1cdfe9982c9a5169f4c181d8e6c4d0da7fb84ed1f0bd8e005870d7c1d495",
+      "grad_norm": 11.464817280864265,
+      "loss": 5.5681545135434956,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "ordered-query_matched-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1526016,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 786688,
+      "resident_bound_bytes": 16216440,
+      "scratch": 224768,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3052032,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 1442048,
+      "resident_bound_bytes": 23874936,
+      "scratch": 449536,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3858432,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 2752768,
+      "resident_bound_bytes": 30209400,
+      "scratch": 899072,
+      "variant": "query_guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "3bff66dba9ba16b1d6bec95e7d8490cb3e45e3ad565edf91e053ebe38ed4021d",
+      "grad_norm": 9.725553288153531,
+      "loss": 5.630893031544448,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "d7e09d9c9a21a5f6f9da8e4151f70e9c2d3e6a7abc5b171d759fbca6fe1f1838",
+      "grad_norm": 11.906650804244142,
+      "loss": 5.581759328658357,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "34691e755964e52f2f00a233087072ac3c502bb672ffe3c2ab93c54b55b7ab86",
+      "grad_norm": 15.354547961501611,
+      "loss": 5.514709894035156,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "197cec85dd40fb67a9b81219d1499d81bcd08636436ab0116b4364ede23aed28",
+      "grad_norm": 10.831930397645396,
+      "loss": 5.409573317551469,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "f5d01abab98bb203817ca5fa0566be007fac3e04b96cd863de128f4e68af96c5",
+      "grad_norm": 14.525518466304582,
+      "loss": 5.27386331493253,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "a90f4fdb0afb56431c20adcf7d5d3b839b2fdbf51e9d5ce29bd351dc8f79d4dc",
+      "grad_norm": 11.463884557338618,
+      "loss": 5.568661027404744,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     }
+    ]
+   }
+  },
+  "level1": {
+   "kv_curriculum-attention-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1704960,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 17210488,
+      "scratch": 492544,
+      "variant": "attention"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3803136,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 27573368,
+      "scratch": 985088,
+      "variant": "attention"
+     },
+     {
+      "accumulation": 2,
+      "activations": 4589568,
+      "context": 256,
+      "microbatch": 2,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 30719096,
+      "scratch": 985088,
+      "variant": "attention"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "a8542abd925d0ad7b6662575f59475f9f8b3fa66ddbc557d8e7d3ea274c1bfdb",
+      "grad_norm": 20.651095348130468,
+      "loss": 5.597630906167308,
+      "microbatch": 4,
+      "variant": "attention"
+     },
+     {
+      "digest": "dc8fe11266d6fed71b93a1585c8fb8f96ba25b784b97501a7f3c7ffbb607b8ca",
+      "grad_norm": 16.36298290712476,
+      "loss": 5.735175568953665,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "091d9e5cf535fb20e9817d9ad54ce7cc522bd228fd94553841f6900ddb1540df",
+      "grad_norm": 17.395856269257138,
+      "loss": 5.45841094700904,
+      "microbatch": 4,
+      "variant": "attention"
+     },
+     {
+      "digest": "f263dea60df754d0db73c9ec5135aa6780927fa6ebe47742a1592e3cb920911a",
+      "grad_norm": 16.834152267092826,
+      "loss": 5.657177989320425,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "d953a35f4777618982ef38b28e88b88e7c4266b84ee1e00dfb4cfba743d662de",
+      "grad_norm": 17.44105651676933,
+      "loss": 5.755024497980466,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "d23ca51c0f61b9d6d09572d06a9b969f84fc5f83eb6376db3a5efe6859b392a2",
+      "grad_norm": 18.32826353708275,
+      "loss": 5.552037406095511,
+      "microbatch": 4,
+      "variant": "attention"
+     }
+    ]
+   },
+   "kv_curriculum-attention-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1704960,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 786688,
+      "resident_bound_bytes": 17997176,
+      "scratch": 492544,
+      "variant": "attention"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3803136,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 1442048,
+      "resident_bound_bytes": 29015416,
+      "scratch": 985088,
+      "variant": "attention"
+     },
+     {
+      "accumulation": 2,
+      "activations": 4589568,
+      "context": 256,
+      "microbatch": 2,
+      "packing_bytes": 1442048,
+      "resident_bound_bytes": 32161144,
+      "scratch": 985088,
+      "variant": "attention"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "b31bc871e820985348253ebb4fe898b06531b77bd59d0c2e265941820bb6d408",
+      "grad_norm": 20.617316807976003,
+      "loss": 5.596952023633682,
+      "microbatch": 4,
+      "variant": "attention"
+     },
+     {
+      "digest": "27543aa1ae82ac231e52e31ce7cb290c5af2311c010ff30e383141d2266948cf",
+      "grad_norm": 16.367253045522986,
+      "loss": 5.735857042215257,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "98692b1c141dbf35c2f32a5fe5ea688aa3e280dcc1c1ea6a2bf945cd49a1f3fd",
+      "grad_norm": 17.42456023939058,
+      "loss": 5.4609116152981505,
+      "microbatch": 4,
+      "variant": "attention"
+     },
+     {
+      "digest": "67c549d5d31e04d42a634fbb04db771ba4c60f9e6110138f011ea577213d3ad9",
+      "grad_norm": 16.87028499400401,
+      "loss": 5.65785347006185,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "cac4d01e5184ba1186c3d0696927312d4210778e59031fa1002d4d1c2a0d805e",
+      "grad_norm": 17.42446037535868,
+      "loss": 5.754280810360797,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "e20351e480e08612ee0fb5f5c64eb20877648aab24d6a59e6d86ac5952e1ed04",
+      "grad_norm": 18.307866129103356,
+      "loss": 5.552488783049323,
+      "microbatch": 4,
+      "variant": "attention"
+     }
+    ]
+   },
+   "kv_curriculum-global-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15442040,
+      "scratch": 230144,
+      "variant": "guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3050496,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 22463608,
+      "scratch": 460288,
+      "variant": "guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3812352,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 27352184,
+      "scratch": 920576,
+      "variant": "guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "fb29d334da023afed48e4c453c8e76b98bbf203d1e184a521e63c683509b1ace",
+      "grad_norm": 13.531407309331838,
+      "loss": 5.696196394575555,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     },
+     {
+      "digest": "0b68cc76f5be010ddaa6fa1b8aef562db025a92f1c056413bf2720bc27f39d18",
+      "grad_norm": 11.954197079923741,
+      "loss": 5.490939454113253,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "05db4a5f4f42db600fd69650dca93823bbab52b65e9f2a150c928f5565f8a20f",
+      "grad_norm": 10.995921330780366,
+      "loss": 5.548933732043007,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     },
+     {
+      "digest": "6c30baff51b2ae9c4d21a4551fdcaecc2093d5709ae7bcbcb4e4f77c950c4ed4",
+      "grad_norm": 10.953644883880068,
+      "loss": 5.687270940128451,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "b67da4f44bf44c90f02e5a005f72ba11eb834f6f6f327f66286c45dcc6a5789b",
+      "grad_norm": 10.803694234283165,
+      "loss": 5.61908519376522,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "cb77de9cadac12775866ef0f1697845b96659a489bf15505570e29eddb6ef51d",
+      "grad_norm": 11.829677651390073,
+      "loss": 5.575762207637567,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     }
+    ]
+   },
+   "kv_curriculum-global-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16310648,
+      "scratch": 230144,
+      "variant": "guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3050496,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 1589504,
+      "resident_bound_bytes": 24053112,
+      "scratch": 460288,
+      "variant": "guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3812352,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 3031296,
+      "resident_bound_bytes": 30383480,
+      "scratch": 920576,
+      "variant": "guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "912213af7f0cc7fe8e553b735a507e37eaeb4aff545fb9ee16a665281f243a06",
+      "grad_norm": 13.554079663721481,
+      "loss": 5.696251263565852,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     },
+     {
+      "digest": "2fb3a257170dcecc3297a2deb03102e0692846a656ad085e7f321d4292a5d330",
+      "grad_norm": 11.96072495859703,
+      "loss": 5.490102762986826,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "008d5e6cb19e2bd772527b236490a2f56c1ab241aa8ed158b6b2e12043ec2c17",
+      "grad_norm": 10.988366184748962,
+      "loss": 5.550220233436015,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     },
+     {
+      "digest": "934f3f353487566ac006319840ec3834119459da3c4b5e3f328f62c10801093c",
+      "grad_norm": 10.945815268454535,
+      "loss": 5.688182763831316,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "3331c33abf40eebe52bbc997de629a05ab6553591952a9578c2cdb5ed34bba67",
+      "grad_norm": 10.789974308771539,
+      "loss": 5.619510496204221,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "3e7353d436b513c984161adf7eec81a05c131f8bcbed3159172800c2bc7f2ca0",
+      "grad_norm": 11.824548144705979,
+      "loss": 5.5756173165110345,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     }
+    ]
+   },
+   "kv_curriculum-query_full-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15644792,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3084288,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 22733944,
+      "scratch": 460288,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3879936,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 27757688,
+      "scratch": 920576,
+      "variant": "query_guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "f051e254a5c59ad74c52361378625d68242f1ee56a8e9df1d5a8e7398a247daf",
+      "grad_norm": 12.830886830296288,
+      "loss": 5.618292757572629,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "b8758a196ace61940bb9944da0b6d8db8cf659bb298c617039de9b2215204687",
+      "grad_norm": 10.210891107550607,
+      "loss": 5.46767022459486,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "ef370e01bbe51a7c6f4eb500aedf61a4ce7f06cdd8b38a9e4eda21f2880c328a",
+      "grad_norm": 11.174323178835092,
+      "loss": 5.747051755811726,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "eda4bde0c66221675da361ef16cadbeca5f189f98a08e8a100547f82a225138a",
+      "grad_norm": 13.578916909577321,
+      "loss": 5.534459448287676,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "e328869671d8cce4c3c06efd79fef366f91a3ca8fb35c4cfc9508fc0b0f3cc24",
+      "grad_norm": 10.374783027003929,
+      "loss": 5.6115367027882455,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "616592b5e67ada5c96687c2d96952f2cb8990424c5e7c84f6cc4d5269b6e9a7c",
+      "grad_norm": 10.973581639080258,
+      "loss": 5.4754272663378885,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "kv_curriculum-query_full-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16513400,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3084288,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 1589504,
+      "resident_bound_bytes": 24323448,
+      "scratch": 460288,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3879936,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 3031296,
+      "resident_bound_bytes": 30788984,
+      "scratch": 920576,
+      "variant": "query_guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "f9d31bb35d4c985c3701d1f5ecb3163cc98d061e55c8337d73b8a5574919df29",
+      "grad_norm": 12.833775734596543,
+      "loss": 5.6187264524754585,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "53036b1369235574e78f4c699983ea575741a3e5360b198c3681ce257f99e3cc",
+      "grad_norm": 10.217030675111396,
+      "loss": 5.466963395679779,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "6570a32e3d1c4c36b52912198ee5b6a4405fee54452c7f21ffc9fd00f1b4c1e3",
+      "grad_norm": 11.164724072172746,
+      "loss": 5.7464281149211605,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "c256b25f2a2691f11a9cf56538270e4cf0a62cc8dbc4c1c3f807b647aa2d1008",
+      "grad_norm": 13.567205206821003,
+      "loss": 5.5352954802753676,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "e4df7df16212cdbf846777a7a8a21c35dd77b44a299686cffd3d68ba192d0bbc",
+      "grad_norm": 10.37638471881621,
+      "loss": 5.611324353339592,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "5430f4120a171a912e1b08981a369229e83ca0f4374bc1b3edca937c9c354ec4",
+      "grad_norm": 10.957142402570883,
+      "loss": 5.474832266297689,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "lm-hybrid-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 128,
+      "microbatch": 2,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15435896,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15435896,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 32,
+      "microbatch": 8,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15435896,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "983bf5fc122e8b7c05192c032678f61c1d9dfcb720f8af2e567bb761d913bb6a",
+      "grad_norm": 2.1334248783235834,
+      "loss": 5.588816116857116,
+      "microbatch": 8,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "cf7ee1d3adf773989f627beab83b95ec32ff6250dcac7c2dc8515475becd4a99",
+      "grad_norm": 1.9845780826573791,
+      "loss": 5.584648046761069,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "589e075f3cd648ff55612fd33e048c8438a20e8750210f6ddadd4996efd03cd9",
+      "grad_norm": 1.9589698198771015,
+      "loss": 5.543586051945698,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "12b15e06a338a1e4d85303a836f3aac8d8bb55b65cc8a9b4ab9f45f0cbfa5b66",
+      "grad_norm": 2.1195296691259085,
+      "loss": 5.568985241557694,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "a3b1772014c37d62a16cdd85555b6e838b9e1aa300f8e7871cba75aff9d60489",
+      "grad_norm": 1.8578067099883881,
+      "loss": 5.544146547710363,
+      "microbatch": 4,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "3d60053b46d1d35b19c971a78e12beec43d716e6b32f7ed367d9303b4c320877",
+      "grad_norm": 1.9098007029728612,
+      "loss": 5.5506957442661875,
+      "microbatch": 8,
+      "variant": "guard_hybrid_compact"
+     }
+    ]
+   },
+   "lm-hybrid-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 128,
+      "microbatch": 2,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16304504,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16304504,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 32,
+      "microbatch": 8,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16304504,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "87bff0ab65202a5b00bad8b27a5e1c34020ab266481817d794727feac2422042",
+      "grad_norm": 2.1325570118390527,
+      "loss": 5.589060963109709,
+      "microbatch": 8,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "8754f78adb1baae432ab74382171644e52f162cf0f8259aacaa6b6e4d85c2be7",
+      "grad_norm": 1.9843636499176265,
+      "loss": 5.584659081391643,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "77c0749225b944c8fa475564f5063742dc38191f9176a0e96822e838ad1d2c43",
+      "grad_norm": 1.9587470524532686,
+      "loss": 5.543628968738566,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "68a7c84d72a6a876a8a8c6636bb86bbac8dbfd9f7cd5a5d5461bc5647991d63a",
+      "grad_norm": 2.1175890340826924,
+      "loss": 5.568921015613267,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "a616c0b9e557c46e6195a6125021de73852c940beedb365505ce46c5df5d4a2b",
+      "grad_norm": 1.8580781208559436,
+      "loss": 5.544157145883369,
+      "microbatch": 4,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "a922a0c0b980653c436171083c2488978a9ee25158ebbb731cbb105a1fda84bd",
+      "grad_norm": 1.9104703239502872,
+      "loss": 5.5508416827756255,
+      "microbatch": 8,
+      "variant": "guard_hybrid_compact"
+     }
+    ]
+   },
+   "lm-query_full-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 128,
+      "microbatch": 2,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15638648,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15638648,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 32,
+      "microbatch": 8,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15638648,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "c670512cdcffc4456e14557c3f39310069dad8acb40e725ce40d157e0849a3c0",
+      "grad_norm": 2.4180593601150258,
+      "loss": 5.586209917493061,
+      "microbatch": 8,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "afe49f9389b47353db99c7e6a311d03310c0e9962d4cc4f05abcc64aaed63093",
+      "grad_norm": 2.5832019588213218,
+      "loss": 5.579567612179453,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "379d5ce36ec16a9a4b47273178bd0a327edacc955a70f34da329624cfcc20d9e",
+      "grad_norm": 2.470615222437952,
+      "loss": 5.539998511242848,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "9c52fa5fd570dfec03a4dcca4ded6a570cbde39d16bbd1425b82907206695f8f",
+      "grad_norm": 2.492231805209332,
+      "loss": 5.526952876325311,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "20dd5c15cfb38873408c44347aa95a5eebfa2f256e2822fc0b868cd3cd21a96c",
+      "grad_norm": 2.227857269214467,
+      "loss": 5.530604871952328,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "4f5f93c93d1b5c21485f34f9605c988d728cd3ab35bd0fed7ebbbe9e8cacd02a",
+      "grad_norm": 2.3449631283929295,
+      "loss": 5.533720549963243,
+      "microbatch": 8,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "lm-query_full-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 128,
+      "microbatch": 2,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16507256,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16507256,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 32,
+      "microbatch": 8,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16507256,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "e11c902c423a8931664dfb62d58bc26c55468c0f0eaf53101cc2e833f951dec7",
+      "grad_norm": 2.4183670661190666,
+      "loss": 5.586225611199881,
+      "microbatch": 8,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "a7874a22a7d672ca9b4355b6aa859072eed246274009b6eb8cde6649487270f4",
+      "grad_norm": 2.58292284299496,
+      "loss": 5.579316338013608,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "6d8532996d3d5c8c273d2da365bda2b3568bc5081f7cba345ac83f4d0d137819",
+      "grad_norm": 2.470515878083803,
+      "loss": 5.540027920855747,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "a4caddb106b66c76bbfeb8719b38e9310df9a7126ad3d3831abe30626e52d529",
+      "grad_norm": 2.4931862482491343,
+      "loss": 5.526683201361236,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "1f7c6d9b2bb93c38aeff168c9a9996f9a81850bdf5c239be4a4386c1a79f28e6",
+      "grad_norm": 2.2265909857741204,
+      "loss": 5.530873034648779,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "632ba2747f960a04a84a69f35bfd3c31dc5ea50fd1dc9a79fade8fd8218e40c1",
+      "grad_norm": 2.3436914341952173,
+      "loss": 5.533995797609994,
+      "microbatch": 8,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "ordered-query_matched-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1526016,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15429752,
+      "scratch": 224768,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3052032,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 22432888,
+      "scratch": 449536,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3858432,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 27456632,
+      "scratch": 899072,
+      "variant": "query_guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "c854ad80513e3c55a3eade3856c03fc4955d200f00d080514b49f2e3e5e06cc9",
+      "grad_norm": 9.735834738031173,
+      "loss": 5.631017206942497,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "bc180ea87655edaeee34421e03142e26eb3e11e06d4fe8a21c68ec926cbf3bde",
+      "grad_norm": 11.901114218738313,
+      "loss": 5.581430398806182,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "135e723b569574d3f14384e7c7bf76c59b3dc5c1a8359955f4372da02ad4f355",
+      "grad_norm": 15.352215380338526,
+      "loss": 5.515780885371488,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "0ff9052741075c8268ec108d13c186df4c2e0f6fdeca233682f29be98d54755e",
+      "grad_norm": 10.846525264213449,
+      "loss": 5.40951494943424,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "60f55ded14f468047616bc8abd997859c0438fa63b71f80274f28341de14f3ae",
+      "grad_norm": 14.535896135952546,
+      "loss": 5.273929764384058,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "89ef1cdfe9982c9a5169f4c181d8e6c4d0da7fb84ed1f0bd8e005870d7c1d495",
+      "grad_norm": 11.464817280864265,
+      "loss": 5.5681545135434956,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "ordered-query_matched-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1526016,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 786688,
+      "resident_bound_bytes": 16216440,
+      "scratch": 224768,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3052032,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 1442048,
+      "resident_bound_bytes": 23874936,
+      "scratch": 449536,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3858432,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 2752768,
+      "resident_bound_bytes": 30209400,
+      "scratch": 899072,
+      "variant": "query_guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "3bff66dba9ba16b1d6bec95e7d8490cb3e45e3ad565edf91e053ebe38ed4021d",
+      "grad_norm": 9.725553288153531,
+      "loss": 5.630893031544448,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "d7e09d9c9a21a5f6f9da8e4151f70e9c2d3e6a7abc5b171d759fbca6fe1f1838",
+      "grad_norm": 11.906650804244142,
+      "loss": 5.581759328658357,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "34691e755964e52f2f00a233087072ac3c502bb672ffe3c2ab93c54b55b7ab86",
+      "grad_norm": 15.354547961501611,
+      "loss": 5.514709894035156,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "197cec85dd40fb67a9b81219d1499d81bcd08636436ab0116b4364ede23aed28",
+      "grad_norm": 10.831930397645396,
+      "loss": 5.409573317551469,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "f5d01abab98bb203817ca5fa0566be007fac3e04b96cd863de128f4e68af96c5",
+      "grad_norm": 14.525518466304582,
+      "loss": 5.27386331493253,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "a90f4fdb0afb56431c20adcf7d5d3b839b2fdbf51e9d5ce29bd351dc8f79d4dc",
+      "grad_norm": 11.463884557338618,
+      "loss": 5.568661027404744,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     }
+    ]
+   }
+  },
+  "level2": {
+   "kv_curriculum-attention-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1704960,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 17210496,
+      "scratch": 492544,
+      "variant": "attention"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3803136,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 27573376,
+      "scratch": 985088,
+      "variant": "attention"
+     },
+     {
+      "accumulation": 2,
+      "activations": 4589568,
+      "context": 256,
+      "microbatch": 2,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 30719104,
+      "scratch": 985088,
+      "variant": "attention"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "a8542abd925d0ad7b6662575f59475f9f8b3fa66ddbc557d8e7d3ea274c1bfdb",
+      "grad_norm": 20.651095348130468,
+      "loss": 5.597630906167308,
+      "microbatch": 4,
+      "variant": "attention"
+     },
+     {
+      "digest": "dc8fe11266d6fed71b93a1585c8fb8f96ba25b784b97501a7f3c7ffbb607b8ca",
+      "grad_norm": 16.36298290712476,
+      "loss": 5.735175568953665,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "091d9e5cf535fb20e9817d9ad54ce7cc522bd228fd94553841f6900ddb1540df",
+      "grad_norm": 17.395856269257138,
+      "loss": 5.45841094700904,
+      "microbatch": 4,
+      "variant": "attention"
+     },
+     {
+      "digest": "f263dea60df754d0db73c9ec5135aa6780927fa6ebe47742a1592e3cb920911a",
+      "grad_norm": 16.834152267092826,
+      "loss": 5.657177989320425,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "d953a35f4777618982ef38b28e88b88e7c4266b84ee1e00dfb4cfba743d662de",
+      "grad_norm": 17.44105651676933,
+      "loss": 5.755024497980466,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "d23ca51c0f61b9d6d09572d06a9b969f84fc5f83eb6376db3a5efe6859b392a2",
+      "grad_norm": 18.32826353708275,
+      "loss": 5.552037406095511,
+      "microbatch": 4,
+      "variant": "attention"
+     }
+    ]
+   },
+   "kv_curriculum-attention-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1704960,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 557120,
+      "resident_bound_bytes": 17767616,
+      "scratch": 492544,
+      "variant": "attention"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3803136,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 1015872,
+      "resident_bound_bytes": 28589248,
+      "scratch": 985088,
+      "variant": "attention"
+     },
+     {
+      "accumulation": 2,
+      "activations": 4589568,
+      "context": 256,
+      "microbatch": 2,
+      "packing_bytes": 1015872,
+      "resident_bound_bytes": 31734976,
+      "scratch": 985088,
+      "variant": "attention"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "b31bc871e820985348253ebb4fe898b06531b77bd59d0c2e265941820bb6d408",
+      "grad_norm": 20.617316807976003,
+      "loss": 5.596952023633682,
+      "microbatch": 4,
+      "variant": "attention"
+     },
+     {
+      "digest": "27543aa1ae82ac231e52e31ce7cb290c5af2311c010ff30e383141d2266948cf",
+      "grad_norm": 16.367253045522986,
+      "loss": 5.735857042215257,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "98692b1c141dbf35c2f32a5fe5ea688aa3e280dcc1c1ea6a2bf945cd49a1f3fd",
+      "grad_norm": 17.42456023939058,
+      "loss": 5.4609116152981505,
+      "microbatch": 4,
+      "variant": "attention"
+     },
+     {
+      "digest": "67c549d5d31e04d42a634fbb04db771ba4c60f9e6110138f011ea577213d3ad9",
+      "grad_norm": 16.87028499400401,
+      "loss": 5.65785347006185,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "cac4d01e5184ba1186c3d0696927312d4210778e59031fa1002d4d1c2a0d805e",
+      "grad_norm": 17.42446037535868,
+      "loss": 5.754280810360797,
+      "microbatch": 2,
+      "variant": "attention"
+     },
+     {
+      "digest": "e20351e480e08612ee0fb5f5c64eb20877648aab24d6a59e6d86ac5952e1ed04",
+      "grad_norm": 18.307866129103356,
+      "loss": 5.552488783049323,
+      "microbatch": 4,
+      "variant": "attention"
+     }
+    ]
+   },
+   "kv_curriculum-global-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15442048,
+      "scratch": 230144,
+      "variant": "guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3050496,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 22463616,
+      "scratch": 460288,
+      "variant": "guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3812352,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 27352192,
+      "scratch": 920576,
+      "variant": "guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "fb29d334da023afed48e4c453c8e76b98bbf203d1e184a521e63c683509b1ace",
+      "grad_norm": 13.531407309331838,
+      "loss": 5.696196394575555,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     },
+     {
+      "digest": "0b68cc76f5be010ddaa6fa1b8aef562db025a92f1c056413bf2720bc27f39d18",
+      "grad_norm": 11.954197079923741,
+      "loss": 5.490939454113253,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "05db4a5f4f42db600fd69650dca93823bbab52b65e9f2a150c928f5565f8a20f",
+      "grad_norm": 10.995921330780366,
+      "loss": 5.548933732043007,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     },
+     {
+      "digest": "6c30baff51b2ae9c4d21a4551fdcaecc2093d5709ae7bcbcb4e4f77c950c4ed4",
+      "grad_norm": 10.953644883880068,
+      "loss": 5.687270940128451,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "b67da4f44bf44c90f02e5a005f72ba11eb834f6f6f327f66286c45dcc6a5789b",
+      "grad_norm": 10.803694234283165,
+      "loss": 5.61908519376522,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "cb77de9cadac12775866ef0f1697845b96659a489bf15505570e29eddb6ef51d",
+      "grad_norm": 11.829677651390073,
+      "loss": 5.575762207637567,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     }
+    ]
+   },
+   "kv_curriculum-global-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16310656,
+      "scratch": 230144,
+      "variant": "guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3050496,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 1589504,
+      "resident_bound_bytes": 24053120,
+      "scratch": 460288,
+      "variant": "guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3812352,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 3031296,
+      "resident_bound_bytes": 30383488,
+      "scratch": 920576,
+      "variant": "guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "912213af7f0cc7fe8e553b735a507e37eaeb4aff545fb9ee16a665281f243a06",
+      "grad_norm": 13.554079663721481,
+      "loss": 5.696251263565852,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     },
+     {
+      "digest": "2fb3a257170dcecc3297a2deb03102e0692846a656ad085e7f321d4292a5d330",
+      "grad_norm": 11.96072495859703,
+      "loss": 5.490102762986826,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "008d5e6cb19e2bd772527b236490a2f56c1ab241aa8ed158b6b2e12043ec2c17",
+      "grad_norm": 10.988366184748962,
+      "loss": 5.550220233436015,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     },
+     {
+      "digest": "934f3f353487566ac006319840ec3834119459da3c4b5e3f328f62c10801093c",
+      "grad_norm": 10.945815268454535,
+      "loss": 5.688182763831316,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "3331c33abf40eebe52bbc997de629a05ab6553591952a9578c2cdb5ed34bba67",
+      "grad_norm": 10.789974308771539,
+      "loss": 5.619510496204221,
+      "microbatch": 4,
+      "variant": "guard_frame_ff_compact"
+     },
+     {
+      "digest": "3e7353d436b513c984161adf7eec81a05c131f8bcbed3159172800c2bc7f2ca0",
+      "grad_norm": 11.824548144705979,
+      "loss": 5.5756173165110345,
+      "microbatch": 4,
+      "variant": "guard_compact"
+     }
+    ]
+   },
+   "kv_curriculum-query_full-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15644800,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3084288,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 22733952,
+      "scratch": 460288,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3879936,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 27757696,
+      "scratch": 920576,
+      "variant": "query_guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "f051e254a5c59ad74c52361378625d68242f1ee56a8e9df1d5a8e7398a247daf",
+      "grad_norm": 12.830886830296288,
+      "loss": 5.618292757572629,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "b8758a196ace61940bb9944da0b6d8db8cf659bb298c617039de9b2215204687",
+      "grad_norm": 10.210891107550607,
+      "loss": 5.46767022459486,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "ef370e01bbe51a7c6f4eb500aedf61a4ce7f06cdd8b38a9e4eda21f2880c328a",
+      "grad_norm": 11.174323178835092,
+      "loss": 5.747051755811726,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "eda4bde0c66221675da361ef16cadbeca5f189f98a08e8a100547f82a225138a",
+      "grad_norm": 13.578916909577321,
+      "loss": 5.534459448287676,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "e328869671d8cce4c3c06efd79fef366f91a3ca8fb35c4cfc9508fc0b0f3cc24",
+      "grad_norm": 10.374783027003929,
+      "loss": 5.6115367027882455,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "616592b5e67ada5c96687c2d96952f2cb8990424c5e7c84f6cc4d5269b6e9a7c",
+      "grad_norm": 10.973581639080258,
+      "loss": 5.4754272663378885,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "kv_curriculum-query_full-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16513408,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3084288,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 1589504,
+      "resident_bound_bytes": 24323456,
+      "scratch": 460288,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3879936,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 3031296,
+      "resident_bound_bytes": 30788992,
+      "scratch": 920576,
+      "variant": "query_guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "f9d31bb35d4c985c3701d1f5ecb3163cc98d061e55c8337d73b8a5574919df29",
+      "grad_norm": 12.833775734596543,
+      "loss": 5.6187264524754585,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "53036b1369235574e78f4c699983ea575741a3e5360b198c3681ce257f99e3cc",
+      "grad_norm": 10.217030675111396,
+      "loss": 5.466963395679779,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "6570a32e3d1c4c36b52912198ee5b6a4405fee54452c7f21ffc9fd00f1b4c1e3",
+      "grad_norm": 11.164724072172746,
+      "loss": 5.7464281149211605,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "c256b25f2a2691f11a9cf56538270e4cf0a62cc8dbc4c1c3f807b647aa2d1008",
+      "grad_norm": 13.567205206821003,
+      "loss": 5.5352954802753676,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "e4df7df16212cdbf846777a7a8a21c35dd77b44a299686cffd3d68ba192d0bbc",
+      "grad_norm": 10.37638471881621,
+      "loss": 5.611324353339592,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "5430f4120a171a912e1b08981a369229e83ca0f4374bc1b3edca937c9c354ec4",
+      "grad_norm": 10.957142402570883,
+      "loss": 5.474832266297689,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "lm-hybrid-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 128,
+      "microbatch": 2,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15435904,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15435904,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 32,
+      "microbatch": 8,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15435904,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "983bf5fc122e8b7c05192c032678f61c1d9dfcb720f8af2e567bb761d913bb6a",
+      "grad_norm": 2.1334248783235834,
+      "loss": 5.588816116857116,
+      "microbatch": 8,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "cf7ee1d3adf773989f627beab83b95ec32ff6250dcac7c2dc8515475becd4a99",
+      "grad_norm": 1.9845780826573791,
+      "loss": 5.584648046761069,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "589e075f3cd648ff55612fd33e048c8438a20e8750210f6ddadd4996efd03cd9",
+      "grad_norm": 1.9589698198771015,
+      "loss": 5.543586051945698,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "12b15e06a338a1e4d85303a836f3aac8d8bb55b65cc8a9b4ab9f45f0cbfa5b66",
+      "grad_norm": 2.1195296691259085,
+      "loss": 5.568985241557694,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "a3b1772014c37d62a16cdd85555b6e838b9e1aa300f8e7871cba75aff9d60489",
+      "grad_norm": 1.8578067099883881,
+      "loss": 5.544146547710363,
+      "microbatch": 4,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "3d60053b46d1d35b19c971a78e12beec43d716e6b32f7ed367d9303b4c320877",
+      "grad_norm": 1.9098007029728612,
+      "loss": 5.5506957442661875,
+      "microbatch": 8,
+      "variant": "guard_hybrid_compact"
+     }
+    ]
+   },
+   "lm-hybrid-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 128,
+      "microbatch": 2,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16304512,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16304512,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1525248,
+      "context": 32,
+      "microbatch": 8,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16304512,
+      "scratch": 230144,
+      "variant": "guard_hybrid_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "87bff0ab65202a5b00bad8b27a5e1c34020ab266481817d794727feac2422042",
+      "grad_norm": 2.1325570118390527,
+      "loss": 5.589060963109709,
+      "microbatch": 8,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "8754f78adb1baae432ab74382171644e52f162cf0f8259aacaa6b6e4d85c2be7",
+      "grad_norm": 1.9843636499176265,
+      "loss": 5.584659081391643,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "77c0749225b944c8fa475564f5063742dc38191f9176a0e96822e838ad1d2c43",
+      "grad_norm": 1.9587470524532686,
+      "loss": 5.543628968738566,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "68a7c84d72a6a876a8a8c6636bb86bbac8dbfd9f7cd5a5d5461bc5647991d63a",
+      "grad_norm": 2.1175890340826924,
+      "loss": 5.568921015613267,
+      "microbatch": 2,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "a616c0b9e557c46e6195a6125021de73852c940beedb365505ce46c5df5d4a2b",
+      "grad_norm": 1.8580781208559436,
+      "loss": 5.544157145883369,
+      "microbatch": 4,
+      "variant": "guard_hybrid_compact"
+     },
+     {
+      "digest": "a922a0c0b980653c436171083c2488978a9ee25158ebbb731cbb105a1fda84bd",
+      "grad_norm": 1.9104703239502872,
+      "loss": 5.5508416827756255,
+      "microbatch": 8,
+      "variant": "guard_hybrid_compact"
+     }
+    ]
+   },
+   "lm-query_full-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 128,
+      "microbatch": 2,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15638656,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15638656,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 32,
+      "microbatch": 8,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15638656,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "c670512cdcffc4456e14557c3f39310069dad8acb40e725ce40d157e0849a3c0",
+      "grad_norm": 2.4180593601150258,
+      "loss": 5.586209917493061,
+      "microbatch": 8,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "afe49f9389b47353db99c7e6a311d03310c0e9962d4cc4f05abcc64aaed63093",
+      "grad_norm": 2.5832019588213218,
+      "loss": 5.579567612179453,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "379d5ce36ec16a9a4b47273178bd0a327edacc955a70f34da329624cfcc20d9e",
+      "grad_norm": 2.470615222437952,
+      "loss": 5.539998511242848,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "9c52fa5fd570dfec03a4dcca4ded6a570cbde39d16bbd1425b82907206695f8f",
+      "grad_norm": 2.492231805209332,
+      "loss": 5.526952876325311,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "20dd5c15cfb38873408c44347aa95a5eebfa2f256e2822fc0b868cd3cd21a96c",
+      "grad_norm": 2.227857269214467,
+      "loss": 5.530604871952328,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "4f5f93c93d1b5c21485f34f9605c988d728cd3ab35bd0fed7ebbbe9e8cacd02a",
+      "grad_norm": 2.3449631283929295,
+      "loss": 5.533720549963243,
+      "microbatch": 8,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "lm-query_full-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 128,
+      "microbatch": 2,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16507264,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16507264,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 1542144,
+      "context": 32,
+      "microbatch": 8,
+      "packing_bytes": 868608,
+      "resident_bound_bytes": 16507264,
+      "scratch": 230144,
+      "variant": "query_guard_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "e11c902c423a8931664dfb62d58bc26c55468c0f0eaf53101cc2e833f951dec7",
+      "grad_norm": 2.4183670661190666,
+      "loss": 5.586225611199881,
+      "microbatch": 8,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "a7874a22a7d672ca9b4355b6aa859072eed246274009b6eb8cde6649487270f4",
+      "grad_norm": 2.58292284299496,
+      "loss": 5.579316338013608,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "6d8532996d3d5c8c273d2da365bda2b3568bc5081f7cba345ac83f4d0d137819",
+      "grad_norm": 2.470515878083803,
+      "loss": 5.540027920855747,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "a4caddb106b66c76bbfeb8719b38e9310df9a7126ad3d3831abe30626e52d529",
+      "grad_norm": 2.4931862482491343,
+      "loss": 5.526683201361236,
+      "microbatch": 2,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "1f7c6d9b2bb93c38aeff168c9a9996f9a81850bdf5c239be4a4386c1a79f28e6",
+      "grad_norm": 2.2265909857741204,
+      "loss": 5.530873034648779,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "632ba2747f960a04a84a69f35bfd3c31dc5ea50fd1dc9a79fade8fd8218e40c1",
+      "grad_norm": 2.3436914341952173,
+      "loss": 5.533995797609994,
+      "microbatch": 8,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "ordered-query_matched-c14": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1526016,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 15429760,
+      "scratch": 224768,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3052032,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 22432896,
+      "scratch": 449536,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3858432,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 0,
+      "resident_bound_bytes": 27456640,
+      "scratch": 899072,
+      "variant": "query_guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "c854ad80513e3c55a3eade3856c03fc4955d200f00d080514b49f2e3e5e06cc9",
+      "grad_norm": 9.735834738031173,
+      "loss": 5.631017206942497,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "bc180ea87655edaeee34421e03142e26eb3e11e06d4fe8a21c68ec926cbf3bde",
+      "grad_norm": 11.901114218738313,
+      "loss": 5.581430398806182,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "135e723b569574d3f14384e7c7bf76c59b3dc5c1a8359955f4372da02ad4f355",
+      "grad_norm": 15.352215380338526,
+      "loss": 5.515780885371488,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "0ff9052741075c8268ec108d13c186df4c2e0f6fdeca233682f29be98d54755e",
+      "grad_norm": 10.846525264213449,
+      "loss": 5.40951494943424,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "60f55ded14f468047616bc8abd997859c0438fa63b71f80274f28341de14f3ae",
+      "grad_norm": 14.535896135952546,
+      "loss": 5.273929764384058,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "89ef1cdfe9982c9a5169f4c181d8e6c4d0da7fb84ed1f0bd8e005870d7c1d495",
+      "grad_norm": 11.464817280864265,
+      "loss": 5.5681545135434956,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     }
+    ]
+   },
+   "ordered-query_matched-c26": {
+    "choices": [
+     {
+      "accumulation": 1,
+      "activations": 1526016,
+      "context": 64,
+      "microbatch": 4,
+      "packing_bytes": 786688,
+      "resident_bound_bytes": 16216448,
+      "scratch": 224768,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3052032,
+      "context": 128,
+      "microbatch": 4,
+      "packing_bytes": 1442048,
+      "resident_bound_bytes": 23874944,
+      "scratch": 449536,
+      "variant": "query_guard_compact"
+     },
+     {
+      "accumulation": 1,
+      "activations": 3858432,
+      "context": 256,
+      "microbatch": 4,
+      "packing_bytes": 2752768,
+      "resident_bound_bytes": 30209408,
+      "scratch": 899072,
+      "variant": "query_guard_frame_ff_compact"
+     }
+    ],
+    "updates": [
+     {
+      "digest": "3bff66dba9ba16b1d6bec95e7d8490cb3e45e3ad565edf91e053ebe38ed4021d",
+      "grad_norm": 9.725553288153531,
+      "loss": 5.630893031544448,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "d7e09d9c9a21a5f6f9da8e4151f70e9c2d3e6a7abc5b171d759fbca6fe1f1838",
+      "grad_norm": 11.906650804244142,
+      "loss": 5.581759328658357,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "34691e755964e52f2f00a233087072ac3c502bb672ffe3c2ab93c54b55b7ab86",
+      "grad_norm": 15.354547961501611,
+      "loss": 5.514709894035156,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     },
+     {
+      "digest": "197cec85dd40fb67a9b81219d1499d81bcd08636436ab0116b4364ede23aed28",
+      "grad_norm": 10.831930397645396,
+      "loss": 5.409573317551469,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "f5d01abab98bb203817ca5fa0566be007fac3e04b96cd863de128f4e68af96c5",
+      "grad_norm": 14.525518466304582,
+      "loss": 5.27386331493253,
+      "microbatch": 4,
+      "variant": "query_guard_frame_ff_compact"
+     },
+     {
+      "digest": "a90f4fdb0afb56431c20adcf7d5d3b839b2fdbf51e9d5ce29bd351dc8f79d4dc",
+      "grad_norm": 11.463884557338618,
+      "loss": 5.568661027404744,
+      "microbatch": 4,
+      "variant": "query_guard_compact"
+     }
+    ]
+   }
+  }
+ }
+}

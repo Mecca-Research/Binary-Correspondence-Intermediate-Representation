@@ -1,0 +1,283 @@
+{
+ "what": "tools/testing/red_sweep.py: each fault injected into the tree, its witness run, the tree restored. scores-t.json against the slice's tree -- ST6's first edit left its mask unused, which the harness's -Werror build refused (the defect never ran), so ST6 was rewritten to keep the mask named and swept again, with ST11 and ST12 added -- and the whole table again against the slice's tree with the harness's lanes case not called (the vacuity check: which faults only the new case catches)",
+ "scores_t": {
+  "results": [
+   {
+    "label": "ST1 the scores' channels summed last to first (another rounding order)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST2 a group's diagonal block of scores never computed (the slot's stale floats taken)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST3 the queries' ragged channels left out of the panel (the stack's floats taken)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST4 the maximum over a diagonal block that leaves out the diagonal",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST5 the maximum left unscaled (every exponential's argument shifted)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST6 the future lanes' exponentials kept and summed (a row's sum takes its future keys)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST7 the context's second 8-row block reading the first block's probabilities",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST8 the context's diagonal keys from the second on (key i0+1 never taken)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST9 the lanes under libm's exponential too (BCIR's exponential where the contract names expf)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST10 a strip that ends on an odd group kept on the row path (every value the same, the probe's count not)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST11 the queries' panel short of its last whole 16-channel block (the stack's floats taken)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST12 a context of 17 channels run on one 16-lane vector (its last channel never written)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   }
+  ]
+ },
+ "scores_t_first_sweep": {
+  "results": [
+   {
+    "label": "ST1 the scores' channels summed last to first (another rounding order)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST2 a group's diagonal block of scores never computed (the slot's stale floats taken)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST3 the queries' ragged channels left out of the panel (the stack's floats taken)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST4 the maximum over a diagonal block that leaves out the diagonal",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST5 the maximum left unscaled (every exponential's argument shifted)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST6 the future lanes' exponentials kept and summed (a row's sum takes its future keys)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "build"
+    ],
+    "verdict": "DOES NOT BUILD"
+   },
+   {
+    "label": "ST7 the context's second 8-row block reading the first block's probabilities",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST8 the context's diagonal keys from the second on (key i0+1 never taken)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST9 the lanes under libm's exponential too (BCIR's exponential where the contract names expf)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST10 a strip that ends on an odd group kept on the row path (every value the same, the probe's count not)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   }
+  ]
+ },
+ "scores_t_without_the_case": {
+  "results": [
+   {
+    "label": "ST1 the scores' channels summed last to first (another rounding order)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST2 a group's diagonal block of scores never computed (the slot's stale floats taken)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST3 the queries' ragged channels left out of the panel (the stack's floats taken)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST4 the maximum over a diagonal block that leaves out the diagonal",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST5 the maximum left unscaled (every exponential's argument shifted)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST6 the future lanes' exponentials kept and summed (a row's sum takes its future keys)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST7 the context's second 8-row block reading the first block's probabilities",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST8 the context's diagonal keys from the second on (key i0+1 never taken)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST9 the lanes under libm's exponential too (BCIR's exponential where the contract names expf)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST10 a strip that ends on an odd group kept on the row path (every value the same, the probe's count not)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [],
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "label": "ST11 the queries' panel short of its last whole 16-channel block (the stack's floats taken)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST12 a context of 17 channels run on one 16-lane vector (its last channel never written)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [],
+    "verdict": "NOT CAUGHT"
+   }
+  ]
+ }
+}

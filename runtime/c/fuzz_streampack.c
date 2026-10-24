@@ -41,14 +41,47 @@ static int visit(const bcir_segment_view *seg, void *ctx) {
   return 0;
 }
 
+/* the lifetimes a walk handed over: their count and the RIDs folded in order */
+typedef struct { uint64_t count, fold; } seen_lifetimes;
+static int seen(const bcir_ep_lifetime_view *v, void *ctx) {
+  seen_lifetimes *s = (seen_lifetimes *)ctx;
+  s->count++;
+  s->fold = s->fold * UINT64_C(1099511628211) + v->rid;
+  return 0;
+}
+
+/* ALIAS-SWEEP: the alias law judged by the sweep over lent scratch is the pairwise law, on every
+ * input -- bcir_ep_verify_lent's status bcir_ep_verify's, and the plan walk with scratch handing
+ * over the lifetimes it hands over without -- or the harness aborts: a differential, not only a
+ * bounds check. The scratch is exactly bcir_ep_sweep_bytes' length (ASan bounds every write),
+ * for a header declaring at most 2^16 lifetimes. */
+static void sweep_differential(const uint8_t *data, size_t size, bcir_status pairwise) {
+  static const uint8_t no_pack[1] = {0};
+  bcir_ep_header h;
+  size_t bytes;
+  uint8_t *scratch;
+  if (bcir_ep_validate(data, size, &h) != BCIR_OK || h.n_lifetimes > 65536u) return;
+  bytes = bcir_ep_sweep_bytes(h.n_lifetimes);
+  scratch = (uint8_t *)malloc(bytes ? bytes : 1u);
+  if (!scratch) abort();
+  if (bcir_ep_verify_lent(data, size, scratch, bytes) != pairwise) abort();
+  {
+    seen_lifetimes a = {0, 0}, b = {0, 0};
+    bcir_status sa = bcir_ep_check_pack_walk(data, size, no_pack, 0, 0, seen, &a, 0, 0);
+    bcir_status sb = bcir_ep_check_pack_walk(data, size, no_pack, 0, 0, seen, &b, scratch, bytes);
+    if (sa != sb || a.count != b.count || a.fold != b.fold) abort();
+  }
+  free(scratch);
+}
+
 /* The ExecutionPlan twin's passes over one buffer (G11; the v3 move laws and the binding
  * trailer, G8): header/CRC validation, the wire-law walk (every record family, the O(n^2)
  * duplicate-claim re-walk, the v3 window/step re-walks), each record family's iteration, the
  * binding, the R11 registry check and the plan/pack binding must all return a status, never
- * over-read. */
+ * over-read; and the alias law's sweep must be the pairwise law (ALIAS-SWEEP). */
 static void plan_passes(const uint8_t *data, size_t size) {
   uint64_t source_hash, spec_hash;
-  (void)bcir_ep_verify(data, size);
+  sweep_differential(data, size, bcir_ep_verify(data, size));
   (void)bcir_ep_for_each_step(data, size, 0, 0);
   (void)bcir_ep_for_each_lifetime(data, size, 0, 0);
   (void)bcir_ep_for_each_move(data, size, 0, 0);

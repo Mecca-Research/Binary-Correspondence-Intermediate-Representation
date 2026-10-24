@@ -16,6 +16,13 @@ One function, `measure`, grades both rows over the declared corpora. The tests, 
     planner.r9.misjudged        (plan, case) pairs R9 misjudges through the compact offer: the
                                 planner's own plan with an R8/R9 diagnostic, a forgery of any
                                 field a step carries without one, or a verdict that raised
+    planner.measured.parity     (case, comparison) pairs over the measured corpus (PX-3b-2,
+                                `measured_cases`: every target's measured alternatives in the
+                                offer) that fail: R9 judging the compact planner's plan otherwise
+                                than the plan of the same target without its table (a diagnostic
+                                for another claim or law), the plan priced above that plan, or
+                                the native planner writing other bytes (its version-1 BKPR record,
+                                or the same refusal)
 
 The corpora are the whole fixed corpus (`examples.PROGRAMS`, the audit's matmul fixture and
 `coverage_modules`, one module per construct the random generator may never draw) under every
@@ -35,7 +42,8 @@ from dataclasses import dataclass, replace
 from bcir.abi import planner_abi as pa
 from bcir.toolchain import BuildFailed
 
-ROWS = ("planner.parity", "planner.malformed.accepted", "planner.r9.misjudged")
+ROWS = ("planner.parity", "planner.malformed.accepted", "planner.r9.misjudged",
+        "planner.measured.parity")  # fmt: skip
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 C_DIR = os.path.join(_ROOT, "runtime", "c")
@@ -45,6 +53,10 @@ HARNESS = "test_kplan.c"
 TARGET_NAMES = ("x86_avx2", "x86_avx512", "arm64_neon", "arm64_sve", "riscv_rvv", "nvidia_ptx")
 GENERATED = 240  # modules drawn from differential.gen_module
 GENERATED_SEED = 17
+MEASURED_SEED = 23  # PX-3b-2: the measured tables' draws
+#: The alternatives a drawn measured table names: every instance, and worker counts from one to
+#: the code's largest.
+MEASURED_DRAW = ("i1", "i2", "i4", "i8", "t1", "t2", "t3", "t7", "t32767")
 
 
 def compiler() -> str | None:
@@ -671,6 +683,74 @@ def corpus_cases() -> list[Case]:
     return cases
 
 
+def measured_table(module, rng, generation: int = 1):
+    """A measured table for `module`'s claims (PX-3b-2): each (op, count) the offer measures (a
+    claim not of an unmeasured opcode, its op non-empty and its count positive), with probability
+    one half, given one to
+    three of `MEASURED_DRAW` at prices drawn from 1 .. 255; None when the draw names none."""
+    from bcir.kbcir.cost import MeasuredEntry, MeasuredPrices, measured_alternative_key
+    from bcir.kbcir.realize import UNMEASURED_OPCODES
+
+    keys = sorted({(c.op, c.count) for ph in module.phases for c in ph.claims
+                   if c.opcode not in UNMEASURED_OPCODES and c.op and c.count >= 1})  # fmt: skip
+    entries = []
+    for op, count in keys:
+        if rng.random() < 0.5:
+            continue
+        for alternative in rng.sample(MEASURED_DRAW, rng.randint(1, 3)):
+            entries.append(MeasuredEntry(op, count, alternative, rng.randint(1, 255)))
+    if not entries:
+        return None
+    entries.sort(key=lambda e: (e.op, e.count, measured_alternative_key(e.alternative)))
+    return MeasuredPrices(generation, tuple(entries))
+
+
+def measured_cases() -> list[Case]:
+    """The measured corpus (PX-3b-2): every module of the fixed corpus under every target with a
+    measured table drawn for its claims, under Theta and a policy drawn alike, two training packs
+    (the native trainer's step under bf16 and under the blocked contract) with tables drawn over
+    their claims, and the seed module under a table naming its capital-led op -- every case a
+    version-1 BKPI record."""
+    from bcir.examples import PROGRAMS, matmul_tiled
+    from bcir.hosted.models.native_pack import training_pack
+    from bcir.kbcir.differential import THETAS
+    from bcir.kbcir.weights import POLICIES
+    from bcir.tests.native_decoder_fixtures import PLAN_CORPUS
+
+    rng = random.Random(MEASURED_SEED)
+    thetas, policies = sorted(THETAS.items()), sorted(POLICIES.items())
+    fixed = [(name, build()) for name, build in sorted(PROGRAMS.items())]
+    fixed.append(("audit.kbcir-streampack.1", matmul_tiled(n=32, tile=8)))
+    fixed += coverage_modules()
+    spec, batch, time_ = PLAN_CORPUS[1]
+    for contract, name in ((16, "bf16"), (4 | 2 | 8, "kblock+exp+reduce")):
+        tp = training_pack(spec, batch, time_, contract=contract,
+                           workspace_bytes=(1 << 24) if contract & 16 else 0)  # fmt: skip
+        fixed.append((f"train.{name}", tp.module))
+    cases = []
+    for name, module in fixed:
+        for tn, h in targets().items():
+            table = measured_table(module, rng)
+            if table is None:
+                continue
+            thn, th = thetas[rng.randrange(len(thetas))]
+            pn, pol = policies[rng.randrange(len(policies))]
+            cases.append(Case(f"measured/{name}/{tn}/{thn}/{pn}", module, h.with_measured(table),
+                              th, pol, False))  # fmt: skip
+    # the seed module under a table naming its capital-led op: the opcode-spelling law must read
+    # an op's every byte, not its first (`kp_opcode_spelled`)
+    from bcir.kbcir.cost import MeasuredEntry, MeasuredPrices, TargetProfile, Theta
+
+    seed = _seed_measured_module()
+    table = MeasuredPrices(1, (MeasuredEntry("Mixed.Op", 8, "t1", 90),
+                               MeasuredEntry("a", 8, "t2", 200),
+                               MeasuredEntry("b", 64, "i4", 128)))  # fmt: skip
+    cases.append(Case("measured/seed1/x86_avx2/cool/latency", seed,
+                      TargetProfile.x86_avx2().with_measured(table), Theta.cool(),
+                      POLICIES["latency"], False))  # fmt: skip
+    return cases
+
+
 # --- the Python rails ---------------------------------------------------------------------------
 
 
@@ -791,10 +871,13 @@ def malformed_inputs() -> list[tuple[str, bytes, str]]:
     out = [
         ("short", good[:100], "BCIR_ERR_TRUNCATED"),
         ("magic", good[:3] + b"X" + good[4:], "BCIR_ERR_MAGIC"),
-        ("version", _put(good, 4, "<H", 1), "BCIR_ERR_VERSION"),
+        ("version", _put(good, 4, "<H", 2), "BCIR_ERR_VERSION"),
         ("crc", good[:-1] + bytes([good[-1] ^ 1]), "BCIR_ERR_CRC"),
         ("flags", _put(good, 6, "<H", 1), "BCIR_ERR_RESERVED"),
         ("header-pad", _put(good, 50, "<B", 1), "BCIR_ERR_RESERVED"),
+        # PX-3b-2: version 0's n_measured word is reserved, version 1 without a table refused
+        ("v0-n-measured", _put(good, 40, "<I", 1), "BCIR_ERR_RESERVED"),
+        ("v1-no-measured", _put(good, 4, "<H", 1), P),
         ("no-widths", _put(good, 36, "<I", 0), P),
         ("too-many-widths", _put(good, 36, "<I", 17), P),
         ("claims-bound", _put(good, 16, "<I", (1 << 24) + 1), P),
@@ -863,7 +946,96 @@ def malformed_inputs() -> list[tuple[str, bytes, str]]:
     dup_claim = (pid[0][0], pid[0][1], (c0, replace(pid[0][2][1], id=c0.id)))
     out.append(("claim-duplicate", _pack(replace(v, phases=(dup_claim, pid[1]))), P))
     out.append(("op-unreferenced", _pack(replace(v, ops=v.ops + (b"zz",))), P))
+    out += _malformed_measured()
     return out
+
+
+def _seed_measured_module():
+    """`_seed_measured_input`'s module: claims of ops "a" and "b", an op-less claim, a barrier, a
+    claim whose op is spelled as an opcode -- the ops and claims a measured entry cannot name --
+    and one whose op starts with a capital and is not spelled so, which an entry may name."""
+    from bcir.model import Lane, Module, Opcode, Phase, Resource, StrideClass
+    from bcir.model.lanes import Domain
+
+    m = Module(name="seed1")
+    m.add_resource(Resource(rid=1, domain=Domain.RAM, shape=(64,)))
+    m.add_resource(Resource(rid=2, domain=Domain.HBM, shape=(64,)))
+    m.add_resource(Resource(rid=3, domain=Domain.VRAM, shape=(64,)))
+    unit = dict(lane=Lane.U, stride_class=StrideClass.UNIT)
+    m.add_phase(Phase(0, (), [
+        _claim(1, Opcode.ADD, count=64, rd=(1,), wr=(2,), op="a", **unit),
+        _claim(2, Opcode.STORE, count=64, rd=(1,), wr=(3,), op="b", **unit),
+        _claim(3, Opcode.ADD, count=16, rd=(2,), wr=(3,), op="", **unit),
+    ]))  # fmt: skip
+    m.add_phase(Phase(1, (0,), [
+        _claim(4, Opcode.MUL, count=8, rd=(2, 1), wr=(3,), op="a", **unit),
+        _claim(5, Opcode.BARRIER, lane=Lane.H, stride_class=StrideClass.SCALAR, count=1, rd=(),
+               wr=(), op="c"),
+        _claim(6, Opcode.LOAD, count=8, rd=(1,), wr=(2,), op="LOAD", **unit),
+        _claim(7, Opcode.ADD, count=8, rd=(3,), wr=(1,), op="Mixed.Op", **unit),
+    ]))  # fmt: skip
+    return m
+
+
+def _seed_measured_input() -> tuple[bytes, pa.PlannerInput]:
+    """A valid version-1 record (PX-3b-2): `_seed_measured_module` under a measured table of four
+    entries over two ops and three counts -- every measured law has a field to break."""
+    from bcir.kbcir.cost import MeasuredEntry, MeasuredPrices, TargetProfile, Theta
+
+    m = _seed_measured_module()
+    table = MeasuredPrices(1, (
+        MeasuredEntry("a", 8, "t2", 200), MeasuredEntry("a", 64, "i1", 220),
+        MeasuredEntry("a", 64, "t1", 230), MeasuredEntry("b", 64, "i4", 128),
+    ))  # fmt: skip
+    h = TargetProfile.x86_avx2().with_measured(table)
+    data = pa.encode_input(m, h, Theta.cool())
+    return data, pa.decode_input(data)
+
+
+def _malformed_measured() -> list[tuple[str, bytes, str]]:
+    """The version-1 record's laws (PX-3b-2), each on `_seed_measured_input` resealed."""
+    good, v = _seed_measured_input()
+    assert good[4] == pa.VERSION_MEASURED and len(v.measured) == 4
+    n_claims = sum(len(cs) for _, _, cs in v.phases)
+    n_refs = sum(len(c.reads) + len(c.writes) for _, _, cs in v.phases for c in cs)
+    at = (pa.INPUT_HEADER_SIZE + pa.SCOPE_SIZE + 4 * len(v.widths) + 12 * len(v.phases)
+          + 4 * sum(len(d) for _, d, _ in v.phases) + pa.CLAIM_SIZE * n_claims + 4 * n_refs
+          + pa.RESOURCE_SIZE * len(v.resources) + 2 * len(v.ops) + sum(map(len, v.ops)))  # fmt: skip
+    entry = [at + pa.MEASURED_SIZE * i for i in range(len(v.measured))]
+    P = "BCIR_ERR_PLANNER"
+    swapped = list(v.measured)
+    swapped[1], swapped[2] = swapped[2], swapped[1]
+    a64 = v.measured[1][:2]
+    crowded = tuple(sorted(v.measured[:1] + tuple(a64 + (code, 200) for code in
+                                                    (1, 2, 4, 8, 0x8001, 0x8002, 0x8003, 0x8004))
+                           + v.measured[3:]))  # fmt: skip
+    c_index = v.ops.index(b"c")
+    return [
+        ("v1-header-pad", _put(good, 44, "<B", 1), "BCIR_ERR_RESERVED"),
+        ("measured-bound", _put(good, 40, "<I", pa.MEASURED_MAX + 1), P),
+        ("measured-size-short", _put(good, 40, "<I", 5), "BCIR_ERR_TRUNCATED"),
+        ("measured-op", _put(good, entry[3], "<I", len(v.ops)), P),
+        ("measured-op-empty", _put(good, entry[0], "<I", v.ops.index(b"")), P),
+        ("measured-op-opcode", _put(good, entry[0], "<I", v.ops.index(b"LOAD")), P),
+        ("measured-count", _put(good, entry[0] + 4, "<I", 0), P),
+        ("measured-code", _put(good, entry[0] + 8, "<H", 3), P),
+        ("measured-code-workers", _put(good, entry[0] + 8, "<H", pa.MEASURED_WORKERS), P),
+        ("measured-price-zero", _put(good, entry[0] + 10, "<H", 0), P),
+        ("measured-price-over", _put(good, entry[0] + 10, "<H", 256), P),
+        ("measured-order", _pack(replace(v, measured=tuple(swapped))), P),
+        ("measured-per-key", _pack(replace(v, measured=crowded)), P),
+        # check_input's: an entry no claim reads -- another count, and the barrier's
+        (
+            "measured-unread",
+            _pack(replace(v, measured=v.measured + ((v.measured[-1][0], 9999, 1, 200),))),
+            P,
+        ),  # the last entry's op: still ascending
+        (
+            "measured-unread-control",
+            _pack(replace(v, measured=v.measured + ((c_index, 1, 1, 200),))),
+            P,
+        ),  # fmt: skip
+    ]
 
 
 def _pack(value: pa.PlannerInput) -> bytes:
@@ -883,10 +1055,18 @@ def malformed_realizations() -> list[tuple[str, bytes, str]]:
     big = (1 << 63) + 5
     score = struct.unpack_from("<Q", good, 16)[0]
     cost0 = struct.unpack_from("<Q", good, step + 16)[0]
+    measured = _measured_realization()
+    m_step = h + pa.STEP_SIZE * next(
+        i for i, s in enumerate(pa.decode_realization(measured).steps) if s.alternative
+    )
     return [
         ("short", good[:20], "BCIR_ERR_TRUNCATED"),
         ("magic", b"BKPX" + good[4:], "BCIR_ERR_MAGIC"),
-        ("version", _put(good, 4, "<H", 1), "BCIR_ERR_VERSION"),
+        ("version", _put(good, 4, "<H", 2), "BCIR_ERR_VERSION"),
+        # PX-3b-2: version 1 runs a measured alternative, each step's code an alternative's
+        ("v1-no-alternative", _put(good, 4, "<H", 1), P),
+        ("step-code", _put(measured, m_step + 14, "<H", 3), P),
+        ("step-code-workers", _put(measured, m_step + 14, "<H", pa.MEASURED_WORKERS), P),
         ("crc", good[:-1] + bytes([good[-1] ^ 1]), "BCIR_ERR_CRC"),
         ("flags", _put(good, 6, "<H", 1), "BCIR_ERR_RESERVED"),
         ("header-pad", _put(good, 12, "<I", 1), "BCIR_ERR_RESERVED"),
@@ -905,6 +1085,20 @@ def malformed_realizations() -> list[tuple[str, bytes, str]]:
         ("score-sum", _put(good, 16, "<Q", score + 1), P),
         ("cost-sum", _put(good, step + 16, "<Q", cost0 + 1), P),
     ]
+
+
+def _measured_realization() -> bytes:
+    """The version-1 realization of `_seed_measured_input`'s module (its "b" claim runs i4 at half
+    its price, so the plan takes it)."""
+    from bcir.kbcir.cost import MeasuredEntry, MeasuredPrices, TargetProfile, Theta
+    from bcir.kbcir.realize import optimize
+
+    module = _seed_measured_module()
+    table = MeasuredPrices(1, (MeasuredEntry("b", 64, "i4", 128),))
+    out = pa.encode_realization(optimize(module, TargetProfile.x86_avx2().with_measured(table),
+                                         Theta.cool()))  # fmt: skip
+    assert out[4] == pa.VERSION_MEASURED
+    return out
 
 
 def python_input_status(data: bytes) -> str:
@@ -1034,6 +1228,68 @@ def r9_forgeries(result) -> list[tuple[str, object]]:
     return out
 
 
+def _r9_verdict(verify_plan, module, plan, case) -> list:
+    """R9's verdict on a plan as the measured row compares it: each R8/R9 diagnostic's law and
+    the claim it names, sorted (a measured name changes a message, never which claim is wrong)."""
+    diags = verify_plan(module, plan, case.h, theta=case.theta, policy=case.policy)
+    return sorted((d.law, d.message.split(":", 1)[0]) for d in diags if d.law in ("R8", "R9"))
+
+
+def measured_parity(exe: str | None, tmp: str, verify_plan, optimize) -> int:
+    """planner.measured.parity (module docstring): per measured case, R9's verdict on the plan
+    against its verdict on the same target's plan without the table, the plan's score against
+    that plan's, and -- with the native rail -- the native planner's bytes against the compact
+    planner's and the native hydrate's pack of them against the oracle's (`hydrate`)."""
+    from bcir.abi.streampack_abi import encode
+    from bcir.gem.streampack import hydrate
+    from bcir.tests.hydrate_fixtures import PLAN, c_hydrate_batch
+
+    failed: dict[str, float] = {"planner.measured.parity": 0}
+    cases = _built(measured_cases, ["planner.measured.parity"], failed)
+    bad = int(failed["planner.measured.parity"])
+    records, expected, triples, packs = [], [], [], []
+    for case in cases:
+        plain_h = case.h.with_measured(None)
+        try:
+            plan = optimize(case.module, case.h, case.theta, case.policy)
+            plain = optimize(case.module, plain_h, case.theta, case.policy)
+            measured_verdict = _r9_verdict(verify_plan, case.module, plan, case)
+            plain_case = replace(case, h=plain_h)
+            bad += measured_verdict != _r9_verdict(verify_plan, case.module, plain, plain_case)
+            bad += plan.score > plain.score
+            record = pa.encode_input(case.module, case.h, case.theta, case.policy)
+            if record[4] != pa.VERSION_MEASURED:
+                raise ValueError(f"{case.label}: a measured case is not a version-1 record")
+            status, bkpr = realization_bytes(plan)
+            if status != "BCIR_OK":
+                raise ValueError(f"{case.label}: the plan has no realization record ({status})")
+            pack = encode(hydrate(case.module, plan, PLAN))
+        except Exception:  # noqa: BLE001 -- a rail that raises fails every comparison it owns (L1)
+            bad += 2 + 2 * (exe is not None)
+            continue
+        records.append(record)
+        expected.append((status, bkpr))
+        triples.append((record, bkpr, pa.encode_binding(case.module, PLAN)))
+        packs.append(("BCIR_OK", pack))
+    if exe is not None:
+        try:
+            native = c_batch(exe, tmp, records)
+        except Exception:  # noqa: BLE001 -- a native rail that cannot run fails every case
+            native = [("EXIT", b"")] * len(records)
+        bad += sum(got != want for got, want in zip(native, expected))
+        try:
+            hydrated = c_hydrate_batch(exe, tmp, triples)
+        except Exception:  # noqa: BLE001
+            hydrated = [("EXIT", b"")] * len(triples)
+        bad += sum(got != want for got, want in zip(hydrated, packs))
+    return bad
+
+
+def measured_comparisons(native: bool = True) -> int:
+    """How many comparisons `measured_parity` makes: the row's baseline."""
+    return len(measured_cases()) * (2 + 2 * native)
+
+
 def r9_misjudged(verify_plan, optimize) -> int:
     """planner.r9.misjudged, with the verifier and the planner as parameters (the RED run hands
     the parent's own)."""
@@ -1123,6 +1379,7 @@ def measure(exe: str | None, tmp: str) -> dict[str, float]:
 
     from bcir.verify import verify_plan
 
+    out["planner.measured.parity"] += measured_parity(exe, tmp, verify_plan, realize.optimize)
     try:
         out["planner.r9.misjudged"] += r9_misjudged(verify_plan, realize.optimize)
     except Exception:  # noqa: BLE001 -- a corpus that cannot be built fails the row (L1)

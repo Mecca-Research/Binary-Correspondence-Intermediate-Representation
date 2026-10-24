@@ -1,0 +1,244 @@
+{
+ "what": "the PR818 study's level-2 build on the tree's unit (../geo-amx/build_amx.py, GCC as the study builds), ../loss-once/once_level3.py over a copy (LOSS-ONCE and GATE-SPAN), and gp_lanes_overlay.py over a copy of that: each overlay's record (the build record it read, the commands it ran, their stderr, its edits, the source's sha256 before and after and the shared object's) and every build's log",
+ "builds": {
+  "l2-once/guard_compact": {
+   "record": "guard_compact-build-amx.json",
+   "commands": [
+    [
+     "gcc",
+     "-std=c11",
+     "-O3",
+     "-fPIC",
+     "-ffp-contract=off",
+     "-fno-math-errno",
+     "-pthread",
+     "-c",
+     "-I",
+     "<MAIN_SRC>",
+     "-DGP_RANK=22",
+     "-DGP_PROJECTOR=0",
+     "-DGP_SYMMETRIC=0",
+     "-DGP_HEADS=1",
+     "<ONCE_WORK>/build/guard_compact.c",
+     "-o",
+     "<ONCE_WORK>/build/guard_compact.o"
+    ],
+    [
+     "gcc",
+     "-shared",
+     "-pthread",
+     "<ONCE_WORK>/build/bcir_tensor.o",
+     "<ONCE_WORK>/build/guard_compact.o",
+     "-lm",
+     "-o",
+     "<ONCE_WORK>/build/guard_compact.so"
+    ]
+   ],
+   "compiler_stderr": [
+    "",
+    ""
+   ],
+   "edits": [
+    "LOSS-ONCE",
+    "GATE-SPAN"
+   ],
+   "overlay_before_sha256": "326f33b42f0b08731b8307f5459b0d250de82bd1a34792f4e403614048e1c5da",
+   "overlay_sha256": "d988f7d899bdbdb08cf3b8d5e2ad3c6391e8c3ea64720eacaf00d84162b51a5b",
+   "native_sha256": "d47a75490a9ac0b653a2ee19ed474b37e88d97f20dd4d25cfd72b6c6fcb5b43b"
+  },
+  "l2-once/query_guard_compact": {
+   "record": "query_guard_compact-build-amx.json",
+   "commands": [
+    [
+     "gcc",
+     "-std=c11",
+     "-O3",
+     "-fPIC",
+     "-ffp-contract=off",
+     "-fno-math-errno",
+     "-pthread",
+     "-c",
+     "-I",
+     "<MAIN_SRC>",
+     "-DGP_RANK=22",
+     "-DGP_PROJECTOR=0",
+     "-DGP_SYMMETRIC=0",
+     "-DGP_HEADS=1",
+     "<ONCE_WORK>/build/query_guard_compact.c",
+     "-o",
+     "<ONCE_WORK>/build/query_guard_compact.o"
+    ],
+    [
+     "gcc",
+     "-shared",
+     "-pthread",
+     "<ONCE_WORK>/build/bcir_tensor.o",
+     "<ONCE_WORK>/build/query_guard_compact.o",
+     "-lm",
+     "-o",
+     "<ONCE_WORK>/build/query_guard_compact.so"
+    ]
+   ],
+   "compiler_stderr": [
+    "",
+    ""
+   ],
+   "edits": [
+    "LOSS-ONCE",
+    "GATE-SPAN"
+   ],
+   "overlay_before_sha256": "305f9d8dde6ffafae6c8193e94f6bc0fad40f1409b7e09f1fccda249109be324",
+   "overlay_sha256": "0961dc1dc3e2e3197dab265d3dbac7afed60779f6f76818f2d600e3547763c10",
+   "native_sha256": "192f7a427591ec5c216d5a60ec13be84205596c3d5af52c256d40269891be0cb"
+  },
+  "l2-once/attention": {
+   "record": "attention-build-amx.json",
+   "commands": [
+    [
+     "gcc",
+     "-std=c11",
+     "-O3",
+     "-fPIC",
+     "-ffp-contract=off",
+     "-fno-math-errno",
+     "-pthread",
+     "-c",
+     "-I",
+     "<MAIN_SRC>",
+     "-DGP_RANK=22",
+     "-DGP_PROJECTOR=0",
+     "-DGP_SYMMETRIC=0",
+     "-DGP_HEADS=1",
+     "<ONCE_WORK>/build/attention.c",
+     "-o",
+     "<ONCE_WORK>/build/attention.o"
+    ],
+    [
+     "gcc",
+     "-shared",
+     "-pthread",
+     "<ONCE_WORK>/build/bcir_tensor.o",
+     "<ONCE_WORK>/build/attention.o",
+     "-lm",
+     "-o",
+     "<ONCE_WORK>/build/attention.so"
+    ]
+   ],
+   "compiler_stderr": [
+    "",
+    ""
+   ],
+   "edits": [
+    "LOSS-ONCE"
+   ],
+   "overlay_before_sha256": "9219fd092362f05da661353ce8dd49b5a19f26655e467fcd17a3402fac4742c3",
+   "overlay_sha256": "1c6cdad24376bd60b9dc5fcdff6b801db73eaf7368e76cda3ee86172e7b13a8a",
+   "native_sha256": "df2cfaf5ad9b145edb69ca05c31833de07f179bae9416e72caa8b6adbd8a9e45"
+  },
+  "l2-lanes/guard_compact": {
+   "record": "guard_compact-build-amx.json",
+   "commands": [
+    [
+     "gcc",
+     "-std=c11",
+     "-O3",
+     "-fPIC",
+     "-ffp-contract=off",
+     "-fno-math-errno",
+     "-pthread",
+     "-c",
+     "-I",
+     "<MAIN_SRC>",
+     "-DGP_RANK=22",
+     "-DGP_PROJECTOR=0",
+     "-DGP_SYMMETRIC=0",
+     "-DGP_HEADS=1",
+     "<LANES_WORK>/build/guard_compact.c",
+     "-o",
+     "<LANES_WORK>/build/guard_compact.o"
+    ],
+    [
+     "gcc",
+     "-shared",
+     "-pthread",
+     "<LANES_WORK>/build/bcir_tensor.o",
+     "<LANES_WORK>/build/guard_compact.o",
+     "-lm",
+     "-o",
+     "<LANES_WORK>/build/guard_compact.so"
+    ]
+   ],
+   "compiler_stderr": [
+    "",
+    ""
+   ],
+   "edits": [
+    "GP-LANES pair"
+   ],
+   "overlay_before_sha256": "d988f7d899bdbdb08cf3b8d5e2ad3c6391e8c3ea64720eacaf00d84162b51a5b",
+   "overlay_sha256": "f98d6a226cf149e4651af6b0e993a50e90ff3e3adf252b11aa1ff14c9696dda1",
+   "native_sha256": "d5c9f3184f59daa6488dadf8ddd402ddb5f1b2c9a9c68bb42dde9c3a5cb21b8c"
+  },
+  "l2-lanes/query_guard_compact": {
+   "record": "query_guard_compact-build-amx.json",
+   "commands": [
+    [
+     "gcc",
+     "-std=c11",
+     "-O3",
+     "-fPIC",
+     "-ffp-contract=off",
+     "-fno-math-errno",
+     "-pthread",
+     "-c",
+     "-I",
+     "<MAIN_SRC>",
+     "-DGP_RANK=22",
+     "-DGP_PROJECTOR=0",
+     "-DGP_SYMMETRIC=0",
+     "-DGP_HEADS=1",
+     "<LANES_WORK>/build/query_guard_compact.c",
+     "-o",
+     "<LANES_WORK>/build/query_guard_compact.o"
+    ],
+    [
+     "gcc",
+     "-shared",
+     "-pthread",
+     "<LANES_WORK>/build/bcir_tensor.o",
+     "<LANES_WORK>/build/query_guard_compact.o",
+     "-lm",
+     "-o",
+     "<LANES_WORK>/build/query_guard_compact.so"
+    ]
+   ],
+   "compiler_stderr": [
+    "",
+    ""
+   ],
+   "edits": [
+    "GP-LANES pair",
+    "GP-LANES query"
+   ],
+   "overlay_before_sha256": "0961dc1dc3e2e3197dab265d3dbac7afed60779f6f76818f2d600e3547763c10",
+   "overlay_sha256": "b82092f06f0cda58630018a28ee42d355a90b5d52db3d6586c1165df0ce2480a",
+   "native_sha256": "7a416068aa2f8a02764692c341ad2a086347793eaccc67e123b73b073929d4bf"
+  }
+ },
+ "logs": {
+  "l2": [
+   "guard_compact built: <LEVEL2_WORK>/build/guard_compact.so",
+   "query_guard_compact built: <LEVEL2_WORK>/build/query_guard_compact.so",
+   "attention built: <LEVEL2_WORK>/build/attention.so"
+  ],
+  "once": [
+   "once <ONCE_WORK>/build/guard_compact.so LOSS-ONCE, GATE-SPAN",
+   "once <ONCE_WORK>/build/query_guard_compact.so LOSS-ONCE, GATE-SPAN",
+   "once <ONCE_WORK>/build/attention.so LOSS-ONCE"
+  ],
+  "lanes": [
+   "lanes <LANES_WORK>/build/guard_compact.so GP-LANES pair",
+   "lanes <LANES_WORK>/build/query_guard_compact.so GP-LANES pair, GP-LANES query"
+  ]
+ }
+}

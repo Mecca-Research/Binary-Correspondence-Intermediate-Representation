@@ -172,6 +172,9 @@ def _cost(
 
 _CONTROL_NOOPS = frozenset({Opcode.NOP, Opcode.PHASE_ENTER, Opcode.PHASE_LEAVE, Opcode.PROV_NOTE})
 _BARRIER = Opcode.BARRIER
+#: PX-3b-2: the opcodes never offered a measured alternative -- the control ops and the barrier
+#: (one predicate for the offer, the planner records and the law rail's BCIRMeasured.h).
+UNMEASURED_OPCODES = _CONTROL_NOOPS | {_BARRIER}
 _ZERO_BASE = (0,) * N
 _BARRIER_BASE = CostVector.of(sync=16).v
 _UNIT_OR_SCALAR = frozenset({StrideClass.UNIT, StrideClass.SCALAR})
@@ -210,7 +213,40 @@ def _offer_rows(
     only=None,
     mode: int = 0,
 ) -> list[tuple]:
-    """The one enumeration of a claim's legal realizations, as rows
+    """The one enumeration of a claim's legal realizations, as rows `(lane, width, name, base,
+    rw)` (`_own_rows`), and -- PX-3b-2 -- after them its measured alternatives: a claim that is
+    not a control op, whose (op, count) the target's measured table names, is offered each of its
+    own realizations run each named alternative, in the order (realization, then entry): the
+    realization's lane, width and operands, the name `<name>@<alternative>`, the base -- after the
+    intra-phase discount -- with its compute and memory axes scaled by the entry's Q8 (floored, so
+    strictly cheaper wherever those axes are nonzero). `only` names measured realizations as it
+    names any. Without a table, or an entry for the claim, the offer is `_own_rows`' exactly."""
+    measured = h.measured
+    if measured is not None and claim.opcode not in UNMEASURED_OPCODES:
+        entries = measured.lookup(claim.op, claim.count)
+        if entries:
+            own = _own_rows(claim, h, geometry, bw_f, lat_f, access, None, mode)
+            rows = own + [
+                (lane, w, f"{name}@{e.alternative}", ((b[0] * e.q8) >> 8, (b[1] * e.q8) >> 8)
+                 + b[2:], rw)
+                for lane, w, name, b, rw in own
+                for e in entries
+            ]  # fmt: skip
+            return rows if only is None else [r for r in rows if (r[0], r[1], r[2]) in only]
+    return _own_rows(claim, h, geometry, bw_f, lat_f, access, only, mode)
+
+
+def _own_rows(
+    claim: Claim,
+    h: HProfile,
+    geometry: tuple,
+    bw_f,
+    lat_f,
+    access: str,
+    only=None,
+    mode: int = 0,
+) -> list[tuple]:
+    """The one enumeration of a claim's own legal realizations, as rows
     `(lane, width, name, base, rw)` -- `base` the 12-int cost tuple, `rw` how the candidate
     carries the claim's operands. No `Candidate` is built: `candidates_for` materializes rows
     for the object API, and the compact planner (`fused_offer`) reads them as they are.
@@ -806,8 +842,12 @@ def optimize(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF) -
     # One slot per node, column by column: `start[j]` is column j's first slot, `dist` the
     # least path weight into a slot and `pred` the slot it came from (-1: SOURCE). Two flat
     # lists rather than two per column, so the collector has two objects to walk, not 2n; sized
-    # by the most realizations a column can hold (every width, or two), so no pass counts them.
-    cap = n * max(2, len(offer.geometry[0]))
+    # by the most realizations a column can hold (every width, or two -- and, PX-3b-2, each of
+    # them again per measured entry one (op, count) holds), so no pass counts them.
+    per = max(2, len(offer.geometry[0]))
+    if h.measured is not None:
+        per *= 1 + h.measured.most_per_key
+    cap = n * per
     start = [0] * n
     dist = [0] * cap
     pred = [-1] * cap

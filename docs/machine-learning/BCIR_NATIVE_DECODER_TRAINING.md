@@ -10,12 +10,12 @@ executes in C. PyTorch remains an independent optional reference.
 | Component | Native implementation |
 |---|---|
 | Tensor linear algebra | Register-blocked row-major GEMM: a KCxNR tile of B packed once per (column, depth) block into cache-line-aligned storage and reused by every row, an MRxNR block of C kept in registers across the tile's depth; bit-identical to the ascending-k loop on every input. Portable C everywhere, plus AVX2 and AVX-512 variants on x86-64 Linux (GCC or Clang) chosen per call from the CPU, all bit-identical (`bcir_tensor_mm_variant` runs one). Transpose variants, linear forward, input and accumulated weight VJPs; optional explicit LP64 CBLAS adapter. Two contracts (NDT-FMA): v1, one rounded multiply and one rounded add per term, the default of every gate, row and record; and the fused v2, one IEEE `fmaf` per term for k ascending (a portable `fmaf` instance, AVX2+FMA and AVX-512 instances fusing in registers, all bit-identical to the `fmaf` loop), selected by the state's `contract` (ABI 3) and named in the checkpoint. Three GEMM contracts, selected by the state: v1 (a rounded multiply and a rounded add per term), the fused v2 (one `fmaf` per term, NDT-FMA) and the blocked fused v3 (NDT-KBLOCK: the depth split by one rule into blocks of up to 448, each block's fused chain from zero added to c in order -- the arithmetic OpenBLAS's `sgemm` performs on its SkylakeX target, so that provider is admitted under v3 by a differential over the trainer's own shapes, and the state is one state with it or without it); and the bf16 contract (NDT-BF16: the operands rounded to bfloat16 and accumulated in binary32 as the AMX unit's `TDPBF16PS` accumulates them -- two lanes a 32-term block, each fused step flushed when tiny, then `c = daz(c) + (E + O)` -- with portable, AVX-512 and AMX instances, bit-identical, over operands packed into workspace the state lends, ABI 4; the SwiGLU block's outputs -- the hidden activation, the gate and up adjoints -- written by their producers as those GEMMs' packed panels where every GEMM they feed is whole 32-tiles and their slots 64-byte aligned, BF16-PANELS-1, the products the packed ones bit for bit) |
-| Vector math | Stable sigmoid/SiLU, SwiGLU VJP, RMSNorm and gamma VJP, half-split RoPE and its transpose; standard libm without fast-math. Under the `exp` contract (NDT-EXP) SiLU, the SwiGLU VJP and the attention softmax take their exponential from BCIR's own `bcir_tensor_expf` -- one operation sequence on the scalar, AVX2 and AVX-512 instances, no libm, no fma, within 1 ulp of exp in double rounded to binary32 over 2^24 sampled inputs (`train.exp.ulp.max`, stated) |
-| Attention | Causal softmax attention as two masked products per (batch, head) through the GEMM kernel; a backward that rewrites the layer's probabilities in place with their score adjoint and feeds the GEMM kernel (no workspace beyond them); Q/K/V backward, GQA group-gradient accumulation, output projection backward. Both are bit-identical to the scalar reference loops, which `bcir_tensor_attention_backward` keeps. Under the `attn` contract (ATTN-FMA) every multiply-add of the scores, the context and the backward's products is one `fmaf` over the same terms in the same order -- portable `fmaf`, AVX2+FMA and AVX-512 instances, bit-identical to the `fmaf` reference loops -- and the softmax and the score adjoint stay v1's. Under the `attnbf16` contract (BF16-ATTN, with a bf16 GEMM contract) the six products take bfloat16 operands instead, each the bf16 GEMM contract's over the depth tiles the causal mask reaches -- portable, AVX-512 and AMX instances, bit-identical to a reference written apart from the unit -- in tasks of one (batch, KV head) that pack their keys and values once; the backward leaves the probabilities as the forward wrote them |
+| Vector math | Stable sigmoid/SiLU, SwiGLU VJP, RMSNorm and gamma VJP, half-split RoPE and its transpose; standard libm without fast-math. Under the `exp` contract (NDT-EXP) SiLU, the SwiGLU VJP and the attention softmax take their exponential from BCIR's own `bcir_tensor_expf` -- one operation sequence on the scalar, AVX2 and AVX-512 instances, no libm, no fma, within 1 ulp of exp in double rounded to binary32 over 2^24 sampled inputs (`train.exp.ulp.max`, stated); the exponential's own AVX2 and AVX-512 loops (`bcir_tensor_exp` and the softmax's rows) run that sequence a step at a time over a block of elements, so several vectors' polynomial chains are in flight (ATTN-RATE) |
+| Attention | Causal softmax attention as two masked products per (batch, head) through the GEMM kernel; a backward that rewrites the layer's probabilities in place with their score adjoint and feeds the GEMM kernel (no workspace beyond them); Q/K/V backward, GQA group-gradient accumulation, output projection backward. Both are bit-identical to the scalar reference loops, which `bcir_tensor_attention_backward` keeps. Under the `attn` contract (ATTN-FMA) every multiply-add of the scores, the context and the backward's products is one `fmaf` over the same terms in the same order -- portable `fmaf`, AVX2+FMA and AVX-512 instances, bit-identical to the `fmaf` reference loops -- and the softmax and the score adjoint stay v1's. Under the `attnbf16` contract (BF16-ATTN, with a bf16 GEMM contract) the six products take bfloat16 operands instead, each the bf16 GEMM contract's over the depth tiles the causal mask reaches -- portable, AVX-512 and AMX instances, bit-identical to a reference written apart from the unit -- in tasks of one (batch, KV head) that pack their keys and values once; the backward leaves the probabilities as the forward wrote them. From a context of 1,024, where a row holds more than one head, each binary32 task copies its head's rows into a workspace the caller lends and runs them as a batch of one head (ATT-CONTIG), every value the same; with less than the pool's need, or none, on the rows in place; and from a context of 1,024 the stored forward runs each head a strip of rows at a time in place, its scores, softmax and context while the strip is in the core's cache (FWD-STRIP), every value the same; the trainer's stored binary32 forward runs under the tensor unit's LOWER bit, so its strips leave the probabilities past each row's diagonal unwritten -- the binary32 backward reads none of them -- every value read the same (P-LOWER); and given a region, a binary32 backward task keeps every probability-adjoint tile of a row block there, evaluating none twice where it evaluated those past the first 256 columns again (BWD-KEEP), every value the same; and where the host's widest instance is AVX-512, the context a multiple of 16 and the head at most 256 wide, the trainer's stored binary32 forward lays each head's probabilities out in 16-row bands with the rows in the vector lanes, computing each 16-row group where it stays, and its backward reads whole lines of them in order (P-BANDS), every value the same |
 | Decoder | Embedding scatter-add backward, both residual paths, both per-layer norms, gate/up/down projections, final norm, tied or untied vocabulary head, mean token cross-entropy; the loss's rows, the gamma VJPs' row sums and the embedding scatter run on the pool in the serial order (NDT-REDUCE: rows whose terms the caller adds in row order, column ranges whose sums run over the rows in row order), so every loss and state is the serial one at every thread count under every contract |
 | Optimizer | AdamW moments, constant-time bias powers, decoupled decay, global L2 clipping, mean micro-batch accumulation, per-update learning rates. The atomic preflight is skipped only when the magnitudes the first pass records prove it would admit every element; the passes carry the same AVX2/AVX-512 variants and stay bit-identical The first pass and the preflight run on the pool one task per chunk of `bcir_decoder_reduce_chunk` elements (1,024 doubled until at most 1,024 chunks), their verdicts and maxima exact whatever the partition; the clipping norm is the contract's -- the one index-order chain in double, or under the `reduce` contract (NDT-REDUCE) the chunks' sums added in chunk order from zero, a declared reduction whose shape is a function of the parameter count alone; `bcir_decoder_gradient_norm` reports the square the update takes its root of |
-| Threads | A deterministic pool in memory the caller provides (`bcir_tensor_pool`: `size`/`init`/`stop`, no allocation in the unit; pthreads on POSIX, Win32 threads on Windows, one thread elsewhere; ABI 2 names it in the state, NDT-THREADS). The GEMM is partitioned over (column block, 64-row range) so every output element keeps its depth order; attention over (batch, query head) forward and (batch, KV head) backward with the query heads of one KV head in order, so the shared `dk`/`dv` accumulate as the reference does; SiLU, the SwiGLU VJP, the residual add and gate multiply, RMSNorm, RoPE and the AdamW commit over fixed chunks of elements, rows and positions. The loss, the embedding scatter, the gamma VJP's row sum and the update's norm pass stay serial (index-order reductions). The state after any number of steps is bit-identical at every thread count and to the one-thread trainer; a provider's GEMM or SiLU is threaded as the provider is, the pool runs the rest |
-| Buffer plan | Checked element/byte products, exact sizes for the selected retained-cache algorithm -- or, under a recompute set (REMAT, state ABI 5), for the kept layers' caches in layer order and one slot the recomputed layers share (`bcir_decoder_activation_count`) -- caller-owned disjoint arenas, one adjoint workspace reused across all layers; the bf16 workspace's exact need, the SwiGLU panels' need and the floor (WS-PLAN: `bcir_decoder_workspace_need`, `_panels`, `_floor`), any size from the floor up one state; `memory_plan` chooses a recompute set and a workspace inside a budget (MEM-PLAN); no allocation in C |
+| Threads | A deterministic pool in memory the caller provides (`bcir_tensor_pool`: `size`/`init`/`stop`, no allocation in the unit; pthreads on POSIX, Win32 threads on Windows, one thread elsewhere; ABI 2 names it in the state, NDT-THREADS). The GEMM is partitioned over (column range, 128-row range) -- a column range one block of the instance's width, and under the blocked contract as many whole blocks as leave the job sixteen tasks (MM-ROWS) -- so every output element keeps its depth order; attention over (batch, query head) forward and (batch, KV head) backward with the query heads of one KV head in order, so the shared `dk`/`dv` accumulate as the reference does; SiLU, the SwiGLU VJP, the residual add and gate multiply, RMSNorm, RoPE and the AdamW commit over fixed chunks of elements, rows and positions. The loss, the embedding scatter, the gamma VJP's row sum and the update's norm pass stay serial (index-order reductions). The state after any number of steps is bit-identical at every thread count and to the one-thread trainer; a provider's GEMM or SiLU is threaded as the provider is, the pool runs the rest |
+| Buffer plan | Checked element/byte products, exact sizes for the selected retained-cache algorithm -- or, under a recompute set (REMAT, state ABI 5), for the kept layers' caches in layer order and one slot the recomputed layers share (`bcir_decoder_activation_count`) -- caller-owned disjoint arenas, one adjoint workspace reused across all layers; the workspace's exact need -- the bf16 GEMM groups' packs and the binary32 attention's copies (ATT-CONTIG) -- the SwiGLU panels' need and the floor (WS-PLAN: `bcir_decoder_workspace_need`, `_panels`, `_floor`), any size from the floor up one state; `memory_plan` chooses a recompute set and a workspace inside a budget (MEM-PLAN); no allocation in C |
 | Checkpoint | Atomic JSON + little-endian FP32 weights/moments; SHA-256 covers configuration, counter, bias powers and payload; bounded strict resume, no pickle |
 | Deployment | Existing strict HF tensor ingest performs projection transposes and RoPE permutation; `decoder_weights()` feeds the existing Q8 writer and decoder |
 
@@ -73,7 +73,9 @@ contract, every multiply-add of the attention's products one `fmaf` (ATTN-FMA), 
 GEMM contract, with `+attnbf16` (`"bf16+attnbf16"` .. `"bf16+exp+reduce+attnbf16"`) under the bf16
 attention contract, the attention's products on bfloat16 operands in the same workspace, which
 `workspace_bytes` then sizes for them too (BF16-ATTN); the checkpoint names the contract and `resume` restores it, since a state trained under one is not
-the other's. `NativeDecoder(..., threads=n)` runs BCIR's kernels on a pool of `n` threads (one by default;
+the other's. Under any contract `workspace_bytes` also covers the binary32 attention's copies from
+the context at which its tasks copy their heads' rows (ATT-CONTIG, below), so a long-context trainer
+lends a workspace under the binary32 GEMM contracts too; any size trains the same state. `NativeDecoder(..., threads=n)` runs BCIR's kernels on a pool of `n` threads (one by default;
 `close()` releases them, and `resume(..., threads=n)` continues a checkpoint on any count, since the
 state does not depend on it). An explicit provider is selected with
 `trainer.use_cblas(library_path, symbol="cblas_sgemm")`. Configure its thread count
@@ -83,8 +85,9 @@ framework/vendor/SYCL adapter when that integration requires it. The core contai
 no C++ objects, accelerator discovery or framework runtime.
 
 `NativeDecoder(..., recompute=r)` has the backward recompute the layers the bit set `r` names (bit
-l for layer l) instead of keeping their forward caches (REMAT); `workspace_bytes=` lends a bf16
-contract's GEMMs any workspace from the floor up (WS-PLAN); and `recompute="auto"` chooses both
+l for layer l) instead of keeping their forward caches (REMAT); `workspace_bytes=` lends the step's
+workspace -- a bf16 contract's GEMMs any from the floor up (WS-PLAN), the binary32 attention any size
+where it copies (ATT-CONTIG); and `recompute="auto"` chooses both
 inside `max_memory_bytes` (MEM-PLAN: `memory_plan`, below). Whatever is chosen, the state is the
 all-kept trainer's at the exact need, bit for bit: the choice moves memory and time, never a value.
 `trainer.plan_memory` reports the arenas the choice lends (a `MemoryPlan`); a checkpoint does not
@@ -150,6 +153,8 @@ the C rail to it:
 | `train.plan.executed.mismatch` | exact | the launches one `bcir_decoder_run_accum` call issues -- recorded by a build defining `BCIR_DT_TRACE_PROBE` -- against the launches [`native_launch.run_launches`](../../bcir/hosted/models/native_launch.py) states from the program's buffers and the call's decisions: every call to the tensor unit, a provider or the pool, the job it shares, its entry, shapes, scalars and the arena span of each operand, over 221 calls (six contracts, three recompute sets, one and two steps of one and two micro-batches, the panels at three workspace tiers and two thread counts, a provider's GEMM and SiLU, an update whose bound fails) | 0 of 221 (2026-10-19, PX-1); the parent held no call's launches to a plan |
 | `train.plan.program.mismatch` | exact | runs of [`bcir_decoder_run_program`](../../runtime/c/bcir_decoder_train.h) -- the step from a launch program, checked whole before anything runs -- on the programs [`native_launch.step_program`](../../bcir/hosted/models/native_launch.py) states: each call of the trace corpus from the program that takes the C step's own decisions, and its 27 state cases under each of five other choices (the linears ungrouped, a linear's VJPs unpaired, no panels, every scan made, every layer recomputed), against the C step on the same case; a run counts when its state or events differ in a bit, it stops short, or its trace (PX-1's probe) is not its program | 0 of 356 (2026-10-20, PX-2a); the parent ran no step from a program |
 | `train.plan.choose.mismatch` | exact | the trace corpus's 27 state cases, each under every kind of choice site switched alone to each alternative the C step does not take and three seeded draws of an alternative a site ([`native_launch.step_program(sites=...)`](../../bcir/hosted/models/native_launch.py)), run from their programs on the trace build; a run counts when it stops, traces other launches than the chosen program states, or leaves another state or events than the C step on the same case | 0 of 351 (2026-10-20, PX-3; 283 of the runs a program of its own); the parent stated no choice a site |
+| `train.plan.dispatch.mismatch` | exact | the trace corpus's 27 state cases, each under every dispatch kind -- a GEMM's role, an attention, every other kernel -- switched alone to the portable instance and to its family's widest named (a GEMM of BCIR's entries, an attention) and to each worker count below the case's threads, and three seeded draws of one a kind ([`native_launch.step_program(dispatch=...)`](../../bcir/hosted/models/native_launch.py): words 41 and 42 of every record of the kind's jobs), run from their programs on the trace build; a run counts when it stops, traces other launches than the dispatched program states as the host resolves them -- the instance each GEMM and attention job ran, the workers each job ran on -- or leaves another state or events than the C step on the same case; the same 1,153 runs on every host | 0 of 1,153 (2026-10-21, PX-3b; 1,063 of the runs a program of its own); the parent named no job's instance or workers |
+| `train.plan.measured.mismatch` | exact | the trace corpus's 27 state cases at two threads at least, each under two seeded choice tables that measured the dispatch, their picks carried into K_BCIR's candidates by [`native_choose.measured_prices`](../../bcir/hosted/models/native_choose.py) (one entry per (op, count) a kind's jobs' claims hold, the kind's pick at its price), the default program planned on the AVX-512 profile carrying them, hydrated, placed and lowered by [`bcir_decoder_lower_pack`](../../runtime/c/bcir_decoder_pack.h) -- each plan step's measured alternative into its job's dispatch words -- and run; a run counts when the lowering is refused or is not the program the carried dispatch states, the run stops, or its state or events differ in a bit from the C step's on the same case | 0 of 54 (2026-10-21, PX-3b-2); the parent's plans priced no measured alternative, so its lowered programs ran every job at the default |
 | `train.plan.pack.mismatch` | exact | the same 356 runs, each from its pack: the program stated as a module of its calls and values ([`native_pack.training_pack`](../../bcir/hosted/models/native_pack.py)), planned by K_BCIR, hydrated by GEM into a StreamPack and placed by its `ExecutionPlanV1`, lowered by [`bcir_decoder_lower_pack`](../../runtime/c/bcir_decoder_pack.h) -- the two verified by their own laws, the plan's alias law among them, then each claim GEM's executor dispatches lowered to the record that runs it -- and run; a run counts when the lowering is refused or is not the program's words, the run stops, or its state or events differ in a bit from the C step's on the same case | 0 of 356 (2026-10-20, PX-2b); the parent ran no step from a StreamPack |
 | `train.plan.place.mismatch` | exact | the same 356 runs, each from its pack with every activation and scratch value placed by its lifetime in one bank ([`native_pack.place_by_lifetime`](../../bcir/hosted/models/native_pack.py): GEM+'s static memory planner over the pack's own values) and run on a trainer lending exactly the placement's arena (`NativeDecoder(transient=...)`); a run counts when the lowering is refused or is not the program's words at the placed places (`native_pack.placed_words`, the relocation's oracle), the placement lies below G26's bound (two live values sharing a byte), the run stops, or its state or events differ in a bit from the C step's on the same case; each layout's gap above the bound is read beside the row, never counted | 0 of 356 (2026-10-20, PX-4): 254 placements at the bound, each proved, and 102 32 or 52 bytes above it; the parent placed no value by its lifetime |
 | `train.mm.mismatch` | exact | `bcir_tensor_mm` against an independent binary32 emulation of its contract, bit for bit, on 20 cases (every transpose pair, the tiles' edges) | 0 of 20, and 0 on the parent kernel: the contract both keep |
@@ -233,9 +238,13 @@ returns the `array('Q')` that `run_program` runs as it is, and `run_pack` is the
 placement -- every transient elsewhere -- lowers to the same program at its places and trains the
 same bits. Lowering a pack in every call costs nothing this host resolves -- x1.0195 (95% interval
 0.997-1.042) under bf16 at four threads and x1.0037 under binary32, beside A/A controls of x0.9979 and
-x0.9923 -- a ten-step lowering takes 47-55 ms, about half of it the plan's alias law, the one check left
-quadratic, and a pack lowered once costs nothing per call
-([measurements](../research/measurements/2026-10-20/px2b/README.json)).
+x0.9923 -- a ten-step lowering takes 47-55 ms, and a pack lowered once costs nothing per call
+([measurements](../research/measurements/2026-10-20/px2b/README.json)). About half of those
+milliseconds were the plan's alias law, the one check PX-2b left quadratic; since ALIAS-SWEEP both
+rails judge it by a sweep in O(n log n) -- the C over scratch the lowering lends from its
+executor's bytes, every verdict the pairwise law's -- and the same ten-step lowering takes 26.8 ms
+where it took 51.2 on the PX-3b host
+([measurements](../research/measurements/2026-10-21/alias-sweep/README.json)).
 
 The choose row holds the planner's choices per site. Every choice the step's planner made was one
 boolean over the whole step; [`native_launch.choice_sites`](../../bcir/hosted/models/native_launch.py)
@@ -247,6 +256,35 @@ trainer in rotated rounds into a frozen `ChoiceTable` and chooses only alternati
 interval lies below the default's time; the chosen program is planned and verified as a pack like
 any other. On this host every alternative reads slower at its sites under bf16 and none either way under binary32, so the choice is the defaults; the program the measurement prices slowest runs x1.064 of the default end to end under bf16
 ([measurements](../research/measurements/2026-10-20/px3/README.json)).
+
+The dispatch row holds how each job runs (PX-3b). A program names, per job, the instance its GEMMs
+or attention products run -- one bit of `bcir_tensor.h`'s (1 portable, 2 AVX2, 4 AVX-512, 8 AMX)
+that the job's family admits, the family's widest by default -- and the workers it runs on, all the
+pool's threads by default (`bcir_tensor_pool_cap`: the workers past the cap report each
+generation without claiming a task, a cap of one runs on the caller in order). Both are words of
+the program's records (41 and 42), alike in every record of a job, and both train the same bits:
+every instance of a family is the contract's bits, and a pool's partition is a function of the
+shapes alone. `bcir_decoder_run_program` holds them to the host -- an instance the family lacks,
+two at once, an instance on a kernel that has none or on a provider's GEMM, more workers than the
+pool's threads, workers on a CHECK, a job whose records disagree are each refused with nothing
+written -- and leaves the pool's cap as it found it, however the run ends. The trace records the
+instance a job ran (the entry's own return) and the workers it ran on, and the harness's instance
+probe holds every entry to the kernels that ran. `native_choose.measure` prices the dispatch like
+any choice (`dispatch:<kind>`, its alternatives the host's), a table that measured it names the
+host's instance masks, and `choose_dispatch` takes only alternatives resolved faster
+([measurements](../research/measurements/2026-10-21/px3b/README.json)).
+
+The measured row carries the dispatch into the plan (PX-3b-2). `native_choose.measured_prices`
+turns the picks into K_BCIR's own prices -- a `cost.MeasuredPrices` table keyed on the program's
+claims, one entry per (op, count) the claims of a kind's jobs hold, the pick at its measured price
+(the highest of the prices of the kinds that share a key at one pick); a kind whose keys another
+kind's claims hold at another pick, or at none, is left out and named, never priced at another
+kind's measurement. A target carrying the table offers each such claim its realizations run the
+pick (`<name>@<alternative>`), the planner takes them by its own min-plus, and the pack's
+ExecutionPlanV1 carries the candidate strings: `bcir_decoder_lower_pack` reads each step's
+alternative, in the one walk that verifies the plan (`bcir_ep_check_pack_walk`), into words 41
+and 42 of its record, refusing any other spelling (ALTERNATIVE), and leaves the dispatch's
+admission to `bcir_decoder_run_program`'s check, held once.
 
 ## Evidence and scope
 
@@ -521,6 +559,92 @@ records NDT-PREPACK, the GEMM's tiles packed once, measured slower and not kept)
 1,000-step language-model run at four threads takes 211.0 / 225.6 ms a step (4,853 / 4,538 tokens a
 second) against eager PyTorch's 304.5 (3,362) and `torch.compile`'s 310.5 (3,298) in one later
 session, the same state `5137e013…` and held-out cross-entropy (§24).
+Since CTX-WIDTH and BWD-WIDTH (2026-10-22) those register blocks run the 16-lane vectors a 48-channel
+block's channels reach -- one, two or three -- not three whatever the head's width, every value as it
+was (`attn-rate.json` CW1-CW6, `bwd-width.json` BW1-BW6): at head dimension 32 the context and the
+transposed products no longer compute a third vector of masked lanes, the backward x0.85 on one core at
+B4/T2048 (the [GEO review](../research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §7-§8).
+Since BWD-LONG (2026-10-22) the backward at long context reads P along its rows: once a row of P spans a
+4 KB page the transposed products run a band of 32 rows at a time, each element's terms still in
+ascending order, and past the KV head's whole transposed panel each probability-adjoint tile gets its
+own panel for the register blocks (`bwd-long.json` BB1-BB6 and DP1-DP4): the backward x0.60 on one core
+at B4/T2048, every value as it was (§9).
+Since ATT-CONTIG (2026-10-23) the binary32 attention's tasks run on contiguous copies of their heads'
+rows from a context of 1,024 where a row holds more than one head: each task copies its head's rows
+into a region of the workspace the trainer lends, runs them as a batch of one head of one row stride
+and copies its results back (`att-contig.json` AC1-AC23, `att-contig-px.json` AX1-AX8): the attention
+x0.934 at B4/T2048 on four threads and x0.59-x0.85 with 8 heads of 64, the training step at the GEO
+dimensions x0.912 at T2048, every value as it was (§10).
+Since FWD-STRIP (2026-10-23) the stored forward runs each head a strip of rows at a time from a
+context of 1,024: a strip's rows' future columns zeroed, then INFER-ATTN's strip -- scores, softmax,
+context -- on the stored probabilities' own rows while they are in the core's cache (`fwd-strip.json`
+FS1-FS9): the attention's forward x0.87 at B4/T2048 on four threads, the training step at the GEO
+dimensions x0.95 at T2048, every value as it was (§11).
+Since P-LOWER (2026-10-23) the trainer's stored binary32 forward runs under `BCIR_TENSOR_ATTENTION_LOWER`,
+the word that its reader -- the binary32 backward -- reads each row's probabilities j <= i alone: from a
+context of 1,024 the strips skip the fill of their rows' future columns, half of a head's probabilities,
+and a backward leaves in each layer's probability region the score adjoints at j <= i, the rest +0.0 or
+what the region held (`p-lower.json` PL1-PL5, `p-lower-px.json` PL6-PL9): the attention's forward x0.82
+at B4/T2048 on four threads, the whole attention at parity with PyTorch's flash kernel, the training step
+at the GEO dimensions x0.94-x0.95 at T2048, every value read as it was (§12).
+Since BWD-KEEP (2026-10-23) a binary32 backward task given a region keeps there every probability-adjoint tile
+of a row block -- 32 rows of the context's width after ATT-CONTIG's seven copies, the region a seventh larger
+at T2048 and a head width of 32, the trainer's need with it -- so its second pass reads the tiles its first
+evaluated, where it evaluated those past the first 256 columns again (`bwd-keep.json` BK1-BK7): the attention's
+backward x0.85-x0.91 from T1024 on, the whole attention faster than PyTorch's flash kernel at T1024, the
+training step at the GEO dimensions x0.94-x0.96 at T2048, every value as it was (§13).
+ATT-BOUND (2026-10-23) timed the attention and the GEMMs against the host's measured rates: the attention's
+scores and context at about 70% and 79% of v1's multiply-then-add rate, the GEMMs at 41% of the fused rate, and
+four ways at the attention's forward measured no faster (`att-bound/`); under the `attn` contract (ATTN-FMA) the
+attention takes x0.82 of v1's time at B4/T2048 and the GEO step x0.87 -- another arithmetic, every attention
+value different, so a contract to choose, not a free speed-up (§14).
+Since MM-ROWS (2026-10-23) the blocked contract's GEMM reads A's rows once per task: a pool task spans as many
+whole column blocks as leave its job sixteen tasks (every column from 2,048 rows), the serial nest walks
+128-row chunks where A, stored by rows, outgrows L2, an AVX-512 edge block computes the vectors its columns
+reach, and a paired or grouped job starts with its larger tasks -- the weight adjoints (`mm-rows.json`
+MR1-MR8): the step's GEMMs x0.837 at T2048, the training step at the GEO dimensions x0.905-x0.939 and the GEO
+attention model's training update x0.968 at T2048, x0.919 of Inductor's time, every value as it was (§15).
+Since SCORES-T (2026-10-23) `bcir_decoder_forward`'s attention -- the scratch forward, its probabilities never
+stored -- runs each strip a 16-row group at a time with the group's rows in the vector lanes on AVX-512 under
+the exp contract: the queries transposed once, the scores 16 x 16 blocks, the softmax with none of the three
+register transposes a block took, the context reading a key's eight rows side by side (`scores-t.json`
+ST1-ST12): the scratch forward x0.927 at B4/T2048, the forward x0.906 at the GEO dimensions, and the GEO
+attention model's inference at T2048 at parity with Inductor (x1.056, 0.991-1.126), every value as it was
+(§16). The stored training forward keeps its row path.
+Since SOFTMAX-T (2026-10-23) the BCIR exponential's AVX-512 instance applies 2^k by one vscalefps -- the single
+rounding exp1's two power-of-two scalings make -- and the exponential, SiLU, SiLU times u and the SwiGLU VJP run as
+AVX-512 instances, four vectors' chains a step at a time; the softmaxes scale, exponentiate, mask and sum in one
+pass, and the scratch forward divides each key's probabilities inside the context's first pass (`softmax-t.json`
+SM1-SM16): on one thread the exponential x0.68-x0.77 and GCC's SiLU forms x0.65-x0.78, now at clang's rate; the
+scratch forward x0.914 at B4/T2048; the GEO attention model's inference x0.931 at T2048, at parity with Inductor,
+every value as it was (§17).
+Since COMPILE-LIMIT (2026-10-24) every comparison with `torch.compile` compiles each case from a fresh Dynamo state
+at its own fixed shapes, a fallback past Dynamo's recompile limit a hard failure: the earlier comparisons compiled
+every case after a process's first with the time dimension dynamic (at the fixed-shape compile's rate, so those
+readings stand) and GEO-2's ran seven cases eagerly. Against Inductor at fixed shapes the GEO attention model's
+training update takes x0.84-x0.89 of its time at T2048 and its inference is at parity (§18).
+Since P-BANDS (2026-10-24) the trainer's stored binary32 forward also states `BCIR_TENSOR_ATTENTION_BANDS` and its
+backward reads under it: where the host's widest instance is AVX-512, the context a multiple of 16 and the head at
+most 256 wide, each head's probabilities lie in 16-row bands with the rows in the vector lanes -- row i's
+probability of key j at (i/16)*16*T + j*16 + i%16 of its region -- the forward computing each 16-row group where
+it stays and the backward walking whole lines of them in order, a group's adjoints, dots and score adjoints with
+no transpose (`p-bands.json` PB1-PB17, `p-bands-px.json` PBX1-PBX5): the attention x0.841 at B4/T2048 on four
+threads, the training step at the GEO dimensions x0.887-x0.917 at T2048, and the GEO attention model's training
+update x0.905 at T2048 -- x0.80-x0.82 of Inductor's time at fixed shapes -- every value as it was (§23). A layer's
+probability region then holds its score adjoints in the same bands after the backward.
+Since POOL-AFFINITY (2026-10-24) the tensor pool deals each job's tasks in contiguous blocks, one a worker -- the first
+n % W one task longer -- each claimed from a counter of its own and then, where the compiler has atomics, the other
+blocks' leftovers; a pair or group job's led weight adjoints, and every task of a job with no more tasks than workers,
+are claimed in turn first. Consecutive jobs over the same rows so run them on the core that wrote them: the RMSNorm
+and the residual add take x0.48-x0.65 of their time back to back on four threads, the training step at the GEO
+dimensions x0.824 at T128 and x0.944 at T256 alone in its own process (parity from T1024), the inference forward
+x0.837 at B4/T256, and the study's geometric heads' training x0.66-x0.77 -- every value as it was, which thread runs a
+task never reaching the arithmetic (`pool-affinity.json` PA1-PA11; §24).
+Since LOSS-ONCE (2026-10-24) the loss evaluates each logit's exponential once, where it called libm's `exp` twice a
+logit: a row keeps its first 1,024 exponentials in double on its task's stack and its adjoints divide the kept
+values, a wider row evaluating its tail again. The same call on the same argument returns the same double and the
+loop's operations keep their order, so every adjoint, term and loss is as it was; the loss job takes x0.62-x0.65 of
+its time in the GEO step on four threads (`loss-once.json` LO1-LO7; §25).
 Since NDT-SCAN-W (2026-10-17) the forward's verdict on its activations is taken by their writers: the
 RMSNorm, the SwiGLU product and the attention read back what their tasks wrote while it is in the
 core's cache, a region answering through another its value reaches and the attention reading its
@@ -563,7 +687,11 @@ at about half the FP32 kernel's rate, so there the contract buys a state identic
 not speed. Over five paired seeds of the 1,000-step language model at four threads (LM-BF16), the
 contract trains at 2.08 times the tokens a second of compiled PyTorch under its CPU autocast to
 bfloat16 (95% interval 1.98-2.19), with the test cross-entropy inside a ±0.01-nat margin of
-PyTorch's and of BCIR's own FP32 run's.
+PyTorch's and of BCIR's own FP32 run's. On the PR818 study's models on AMX (GEO-AMX, 2026-10-24) the
+contract takes x0.68-x0.89 of binary32's time for the attention model and x0.72-x0.78 for the geometric
+heads -- Codex's AMD host, without AMX, read x1.04-x1.14 -- and x0.50-x0.59 with the bf16 attention too,
+ahead of PyTorch's own bf16 on every model ([the GEO review](../research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md)
+§19).
 
 Since ATTN-FMA (2026-10-18) the attention's products can be fused too (the report's §33): with the
 `attn` bit every multiply-add of the scores, the context and the backward's products is one `fmaf`,
@@ -643,7 +771,13 @@ residual input (REMAT, above). Neither is a globally optimal liveness solver. Th
 the cache it recomputes each step:
 after `bcir_decoder_loss_backward` each layer's probability span holds its score adjoint (under the
 bf16 attention, the probabilities as the forward wrote them: its score adjoints live in its workspace).
-Attention storage is quadratic in context length.
+Training's attention storage is quadratic in context length; inference's is not (INFER-ATTN):
+`bcir_decoder_forward`, whose cache no backward reads, runs its attention under
+`BCIR_TENSOR_ATTENTION_SCRATCH` -- each head's rows a strip at a time through a slot of about 64K
+floats at the start of its probability region -- and every logit is the backward's forward's bit for
+bit. The plan still sizes each layer's probability region for training, so the forward leaves it
+untouched rather than unallocated; a caller of the tensor entry may lend just
+`bcir_tensor_attention_scratch_floats(batch, time, heads)` floats.
 Flash/blocked attention, recomputation finer than a whole layer, mixed precision beyond the bf16 GEMM and attention contracts,
 accelerator
 backward kernels, distributed collectives and device-resident checkpoints remain

@@ -1,0 +1,353 @@
+{
+ "what": "../../2026-10-22/infer-attn/build_level3.py's two builds, both with --scratch: the level-2 overlay (port/build_main.py, GEO-2b) against main's headers, built with gcc as the study's level 2 is, linked with the tree before's tensor unit and with the tree after's; both then taken through ../att-contig/contig_level3.py's three edits (their attention through the workspace entries, lent the regions the overlay holds) and rebuilt with build_level3's commands; then both through lower_level3.py's edit (the stored forward's word with LOWER, which the tree before ignores) and rebuilt again",
+ "before": {
+  "commands": [
+   [
+    "gcc",
+    "-std=c11",
+    "-O3",
+    "-fPIC",
+    "-ffp-contract=off",
+    "-fno-math-errno",
+    "-pthread",
+    "-c",
+    "-I",
+    "<BEFORE_SRC>",
+    "<BEFORE_SRC>/bcir_tensor.c",
+    "-o",
+    "<BEFORE_WORK>/build/bcir_tensor.o"
+   ],
+   [
+    "gcc",
+    "-std=c11",
+    "-O3",
+    "-fPIC",
+    "-ffp-contract=off",
+    "-fno-math-errno",
+    "-pthread",
+    "-c",
+    "-I",
+    "<MAIN_SRC>",
+    "-DGP_RANK=22",
+    "-DGP_PROJECTOR=0",
+    "-DGP_SYMMETRIC=0",
+    "-DGP_HEADS=1",
+    "<BEFORE_WORK>/build/attention.c",
+    "-o",
+    "<BEFORE_WORK>/build/attention.o"
+   ],
+   [
+    "gcc",
+    "-shared",
+    "-pthread",
+    "<BEFORE_WORK>/build/bcir_tensor.o",
+    "<BEFORE_WORK>/build/attention.o",
+    "-lm",
+    "-o",
+    "<BEFORE_WORK>/build/attention.so"
+   ]
+  ],
+  "scratch": true,
+  "entries_checked": [
+   "bcir_tensor_add_pool",
+   "bcir_tensor_attention_backward_contract_pool",
+   "bcir_tensor_attention_bf16_backward_pool",
+   "bcir_tensor_attention_bf16_pool_workspace",
+   "bcir_tensor_attention_bf16_scan_pool",
+   "bcir_tensor_attention_contract_scan_pool",
+   "bcir_tensor_mm_bf16_group_panels_pool",
+   "bcir_tensor_mm_bf16_group_panels_workspace",
+   "bcir_tensor_mm_bf16_group_workspace",
+   "bcir_tensor_mm_bf16_pool",
+   "bcir_tensor_mm_bf16_workspace",
+   "bcir_tensor_mm_fused_pool",
+   "bcir_tensor_mm_fused_variants",
+   "bcir_tensor_mm_group_pool",
+   "bcir_tensor_mm_kblock_pool",
+   "bcir_tensor_mm_pair_pool",
+   "bcir_tensor_mm_pool",
+   "bcir_tensor_mm_variants",
+   "bcir_tensor_mul_pool",
+   "bcir_tensor_pool_run",
+   "bcir_tensor_pool_threads",
+   "bcir_tensor_rms_backward_into_pool",
+   "bcir_tensor_rms_scan_pool",
+   "bcir_tensor_rope_pool",
+   "bcir_tensor_silu_mul_panels_pool",
+   "bcir_tensor_silu_mul_scan_pool",
+   "bcir_tensor_silu_mul_v2_scan_pool",
+   "bcir_tensor_swiglu_backward_panels_pool",
+   "bcir_tensor_swiglu_backward_pool",
+   "bcir_tensor_swiglu_backward_v2_pool"
+  ],
+  "overlay_sha256": "5a38bf15e0ed00e8c6499024a9b66d2866d47b3813784dd15e5ca44262a287c7",
+  "level2_overlay_sha256": "9219fd092362f05da661353ce8dd49b5a19f26655e467fcd17a3402fac4742c3",
+  "tensor_c_sha256": "55a57c47a67b467cbe164f7e819e69f158b1c0ebe79dcb8a379b3749102e80aa",
+  "native_sha256": "061103581b7410cd8b339e31c58a2f18fda0b579a08e404bf983112cfbd27123"
+ },
+ "before_contig": {
+  "level3_record": "attention-build-level3.json",
+  "commands": [
+   [
+    "gcc",
+    "-std=c11",
+    "-O3",
+    "-fPIC",
+    "-ffp-contract=off",
+    "-fno-math-errno",
+    "-pthread",
+    "-c",
+    "-I",
+    "<MAIN_SRC>",
+    "-DGP_RANK=22",
+    "-DGP_PROJECTOR=0",
+    "-DGP_SYMMETRIC=0",
+    "-DGP_HEADS=1",
+    "<BEFORE_WORK>/build/attention.c",
+    "-o",
+    "<BEFORE_WORK>/build/attention.o"
+   ],
+   [
+    "gcc",
+    "-shared",
+    "-pthread",
+    "<BEFORE_WORK>/build/bcir_tensor.o",
+    "<BEFORE_WORK>/build/attention.o",
+    "-lm",
+    "-o",
+    "<BEFORE_WORK>/build/attention.so"
+   ]
+  ],
+  "compiler_stderr": [
+   "",
+   ""
+  ],
+  "entries_declared": [
+   "BCIR_DT_API size_t bcir_tensor_attention_pool_workspace(size_t batch, size_t time, size_t heads,\n    size_t kvheads, size_t dim, unsigned threads);",
+   "BCIR_DT_API int bcir_tensor_attention_contract_variant_scan_ws_pool(bcir_tensor_pool *pool,\n    int variant, unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads,\n    size_t dim, const float *q, const float *k, const float *v, float *p, float *y, int *bad,\n    void *workspace, size_t bytes);",
+   "BCIR_DT_API int bcir_tensor_attention_backward_contract_variant_ws_pool(bcir_tensor_pool *pool,\n    int variant, unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads,\n    size_t dim, const float *q, const float *k, const float *v, float *p, const float *dy,\n    float *dq, float *dk, float *dv, void *workspace, size_t bytes);"
+  ],
+  "edits": 3,
+  "overlay_before_sha256": "5a38bf15e0ed00e8c6499024a9b66d2866d47b3813784dd15e5ca44262a287c7",
+  "overlay_sha256": "eef77de6d1fe97ce2504c1e4b612e3e6b2bcdfbec57e023081c28f35466bc171",
+  "tensor_h_sha256": "424dde1157e604fff1a35d9a6cdc9e668733e4fc2c1a859642d9dac422fdedce",
+  "native_sha256": "77f81d4b3f70769077f62673ae773851e187302e12321239d2d008c4f6490868"
+ },
+ "before_lower": {
+  "contig_record": "attention-build-contig.json",
+  "commands": [
+   [
+    "gcc",
+    "-std=c11",
+    "-O3",
+    "-fPIC",
+    "-ffp-contract=off",
+    "-fno-math-errno",
+    "-pthread",
+    "-c",
+    "-I",
+    "<MAIN_SRC>",
+    "-DGP_RANK=22",
+    "-DGP_PROJECTOR=0",
+    "-DGP_SYMMETRIC=0",
+    "-DGP_HEADS=1",
+    "<BEFORE_WORK>/build/attention.c",
+    "-o",
+    "<BEFORE_WORK>/build/attention.o"
+   ],
+   [
+    "gcc",
+    "-shared",
+    "-pthread",
+    "<BEFORE_WORK>/build/bcir_tensor.o",
+    "<BEFORE_WORK>/build/attention.o",
+    "-lm",
+    "-o",
+    "<BEFORE_WORK>/build/attention.so"
+   ]
+  ],
+  "compiler_stderr": [
+   "",
+   ""
+  ],
+  "edits": 2,
+  "overlay_before_sha256": "eef77de6d1fe97ce2504c1e4b612e3e6b2bcdfbec57e023081c28f35466bc171",
+  "overlay_sha256": "ef8dbbf05e14e27214353688f1da89e95039b2d848a4fefc9f6ff61499899c7e",
+  "native_sha256": "858c65faad9c8ee998221e7aa741b3a9061dd722dc7d2eaf9f70beab822019af"
+ },
+ "after": {
+  "commands": [
+   [
+    "gcc",
+    "-std=c11",
+    "-O3",
+    "-fPIC",
+    "-ffp-contract=off",
+    "-fno-math-errno",
+    "-pthread",
+    "-c",
+    "-I",
+    "<AFTER_SRC>",
+    "<AFTER_SRC>/bcir_tensor.c",
+    "-o",
+    "<AFTER_WORK>/build/bcir_tensor.o"
+   ],
+   [
+    "gcc",
+    "-std=c11",
+    "-O3",
+    "-fPIC",
+    "-ffp-contract=off",
+    "-fno-math-errno",
+    "-pthread",
+    "-c",
+    "-I",
+    "<MAIN_SRC>",
+    "-DGP_RANK=22",
+    "-DGP_PROJECTOR=0",
+    "-DGP_SYMMETRIC=0",
+    "-DGP_HEADS=1",
+    "<AFTER_WORK>/build/attention.c",
+    "-o",
+    "<AFTER_WORK>/build/attention.o"
+   ],
+   [
+    "gcc",
+    "-shared",
+    "-pthread",
+    "<AFTER_WORK>/build/bcir_tensor.o",
+    "<AFTER_WORK>/build/attention.o",
+    "-lm",
+    "-o",
+    "<AFTER_WORK>/build/attention.so"
+   ]
+  ],
+  "scratch": true,
+  "entries_checked": [
+   "bcir_tensor_add_pool",
+   "bcir_tensor_attention_backward_contract_pool",
+   "bcir_tensor_attention_bf16_backward_pool",
+   "bcir_tensor_attention_bf16_pool_workspace",
+   "bcir_tensor_attention_bf16_scan_pool",
+   "bcir_tensor_attention_contract_scan_pool",
+   "bcir_tensor_mm_bf16_group_panels_pool",
+   "bcir_tensor_mm_bf16_group_panels_workspace",
+   "bcir_tensor_mm_bf16_group_workspace",
+   "bcir_tensor_mm_bf16_pool",
+   "bcir_tensor_mm_bf16_workspace",
+   "bcir_tensor_mm_fused_pool",
+   "bcir_tensor_mm_fused_variants",
+   "bcir_tensor_mm_group_pool",
+   "bcir_tensor_mm_kblock_pool",
+   "bcir_tensor_mm_pair_pool",
+   "bcir_tensor_mm_pool",
+   "bcir_tensor_mm_variants",
+   "bcir_tensor_mul_pool",
+   "bcir_tensor_pool_run",
+   "bcir_tensor_pool_threads",
+   "bcir_tensor_rms_backward_into_pool",
+   "bcir_tensor_rms_scan_pool",
+   "bcir_tensor_rope_pool",
+   "bcir_tensor_silu_mul_panels_pool",
+   "bcir_tensor_silu_mul_scan_pool",
+   "bcir_tensor_silu_mul_v2_scan_pool",
+   "bcir_tensor_swiglu_backward_panels_pool",
+   "bcir_tensor_swiglu_backward_pool",
+   "bcir_tensor_swiglu_backward_v2_pool"
+  ],
+  "overlay_sha256": "5a38bf15e0ed00e8c6499024a9b66d2866d47b3813784dd15e5ca44262a287c7",
+  "level2_overlay_sha256": "9219fd092362f05da661353ce8dd49b5a19f26655e467fcd17a3402fac4742c3",
+  "tensor_c_sha256": "b224e142675e0f211821d64f5f15b60a4c7922188eeda774c11ec196321ad7ea",
+  "native_sha256": "99a36592644cb086870210bfedc08bfabb501dff90cd917623fa8e3fb8a57db7"
+ },
+ "after_contig": {
+  "level3_record": "attention-build-level3.json",
+  "commands": [
+   [
+    "gcc",
+    "-std=c11",
+    "-O3",
+    "-fPIC",
+    "-ffp-contract=off",
+    "-fno-math-errno",
+    "-pthread",
+    "-c",
+    "-I",
+    "<MAIN_SRC>",
+    "-DGP_RANK=22",
+    "-DGP_PROJECTOR=0",
+    "-DGP_SYMMETRIC=0",
+    "-DGP_HEADS=1",
+    "<AFTER_WORK>/build/attention.c",
+    "-o",
+    "<AFTER_WORK>/build/attention.o"
+   ],
+   [
+    "gcc",
+    "-shared",
+    "-pthread",
+    "<AFTER_WORK>/build/bcir_tensor.o",
+    "<AFTER_WORK>/build/attention.o",
+    "-lm",
+    "-o",
+    "<AFTER_WORK>/build/attention.so"
+   ]
+  ],
+  "compiler_stderr": [
+   "",
+   ""
+  ],
+  "entries_declared": [
+   "BCIR_DT_API size_t bcir_tensor_attention_pool_workspace(size_t batch, size_t time, size_t heads,\n    size_t kvheads, size_t dim, unsigned threads);",
+   "BCIR_DT_API int bcir_tensor_attention_contract_variant_scan_ws_pool(bcir_tensor_pool *pool,\n    int variant, unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads,\n    size_t dim, const float *q, const float *k, const float *v, float *p, float *y, int *bad,\n    void *workspace, size_t bytes);",
+   "BCIR_DT_API int bcir_tensor_attention_backward_contract_variant_ws_pool(bcir_tensor_pool *pool,\n    int variant, unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads,\n    size_t dim, const float *q, const float *k, const float *v, float *p, const float *dy,\n    float *dq, float *dk, float *dv, void *workspace, size_t bytes);"
+  ],
+  "edits": 3,
+  "overlay_before_sha256": "5a38bf15e0ed00e8c6499024a9b66d2866d47b3813784dd15e5ca44262a287c7",
+  "overlay_sha256": "eef77de6d1fe97ce2504c1e4b612e3e6b2bcdfbec57e023081c28f35466bc171",
+  "tensor_h_sha256": "0920cc9af0653efac6284a6b4090a063c51ed635575a8d9c721301420f2ef288",
+  "native_sha256": "a4377a7c13f6ab3ce0c6ffc39f4250c041d6d9c3698c783f0075af870d97046e"
+ },
+ "after_lower": {
+  "contig_record": "attention-build-contig.json",
+  "commands": [
+   [
+    "gcc",
+    "-std=c11",
+    "-O3",
+    "-fPIC",
+    "-ffp-contract=off",
+    "-fno-math-errno",
+    "-pthread",
+    "-c",
+    "-I",
+    "<MAIN_SRC>",
+    "-DGP_RANK=22",
+    "-DGP_PROJECTOR=0",
+    "-DGP_SYMMETRIC=0",
+    "-DGP_HEADS=1",
+    "<AFTER_WORK>/build/attention.c",
+    "-o",
+    "<AFTER_WORK>/build/attention.o"
+   ],
+   [
+    "gcc",
+    "-shared",
+    "-pthread",
+    "<AFTER_WORK>/build/bcir_tensor.o",
+    "<AFTER_WORK>/build/attention.o",
+    "-lm",
+    "-o",
+    "<AFTER_WORK>/build/attention.so"
+   ]
+  ],
+  "compiler_stderr": [
+   "",
+   ""
+  ],
+  "edits": 2,
+  "overlay_before_sha256": "eef77de6d1fe97ce2504c1e4b612e3e6b2bcdfbec57e023081c28f35466bc171",
+  "overlay_sha256": "ef8dbbf05e14e27214353688f1da89e95039b2d848a4fefc9f6ff61499899c7e",
+  "native_sha256": "ec9aa3828812d57b972e8409381526252774bfe61e224addd0154474490c9aa1"
+ }
+}

@@ -203,8 +203,8 @@
     {
       "expects": "test_choose_takes_only_alternatives_resolved_faster",
       "label": "PC14 a shape missing a field admitted",
-      "new": "    if (not isinstance(shape, dict) or not set(shape) <= _SHAPE_KEYS\n",
-      "old": "    if (not isinstance(shape, dict) or set(shape) != _SHAPE_KEYS\n",
+      "new": "    if (not isinstance(shape, dict) or not set(shape) - {\"instances\"} <= _SHAPE_KEYS\n",
+      "old": "    if (not isinstance(shape, dict) or set(shape) - {\"instances\"} != _SHAPE_KEYS\n",
       "path": "bcir/hosted/models/native_choose.py"
     },
     {
@@ -224,15 +224,15 @@
     {
       "expects": "test_choose_takes_only_alternatives_resolved_faster",
       "label": "PC17 a table measured at another shape taken",
-      "new": "    if False:\n",
-      "old": "    if table.shape != shape:\n",
+      "new": "        raise ValueError(\"choose takes a ChoiceTable or None\")\n    if False:\n",
+      "old": "        raise ValueError(\"choose takes a ChoiceTable or None\")\n    if table.shape != shape:\n",
       "path": "bcir/hosted/models/native_choose.py"
     },
     {
       "expects": "test_choose_takes_only_alternatives_resolved_faster",
       "label": "PC18 a shape of another decoder taken",
-      "new": "    if False:\n",
-      "old": "    if tuple(shape[k] for k in _SPEC_KEYS) != _spec_shape(spec):\n",
+      "new": "    are not this program's.\"\"\"\n    shape = _checked_shape(shape)\n    if False:\n",
+      "old": "    are not this program's.\"\"\"\n    shape = _checked_shape(shape)\n    if tuple(shape[k] for k in _SPEC_KEYS) != _spec_shape(spec):\n",
       "path": "bcir/hosted/models/native_choose.py"
     },
     {

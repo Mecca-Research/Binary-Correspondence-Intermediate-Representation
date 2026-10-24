@@ -1,0 +1,66 @@
+--- a/native_abi.py
++++ b/native_abi.py
+@@ -46,11 +46,12 @@
+             ("contract", ct.c_uint32),  # ABI 3 (NDT-FMA): the GEMM contract, _CONTRACTS
+             ("workspace",ct.c_void_p),
+             ("workspace_bytes",_SZ),
++            ("recompute",ct.c_uint64),  # ABI 5 (REMAT); 0: the research heads recompute through their own tiers
+         ]
+     )
+
+ class _State3(ct.Structure):
+-    _fields_=_State._fields_[:-2]
++    _fields_=_State._fields_[:-3]
+
+ class _Optimizer(ct.Structure):
+     _fields_ = [
+--- a/experiment.py
++++ b/experiment.py
+@@ -80,8 +80,8 @@
+         self.r=r;self.threads=threads
+         self.lib=ct.CDLL(str(ROOT/'build'/f'{library_name or r.kind}.so'))
+         lib=self.lib
+-        abi=int(lib.bcir_decoder_abi_version());assert abi in (3,4)
+-        state_type=_State if abi==4 else _State3
++        abi=int(lib.bcir_decoder_abi_version());assert abi in (3,5)
++        state_type=_State if abi==5 else _State3
+         lib.bcir_decoder_make_plan.argtypes=[ct.POINTER(_Spec),ct.POINTER(_Plan)]
+         lib.bcir_tensor_pool_size.argtypes=[ct.c_uint];lib.bcir_tensor_pool_size.restype=SZ
+         lib.bcir_tensor_pool_init.argtypes=[ct.c_void_p,SZ,ct.c_uint];lib.bcir_tensor_pool_init.restype=ct.c_void_p
+@@ -107,7 +107,7 @@
+                     lib.bcir_tensor_pool_size(threads),threads)
+         if not self.pool:raise RuntimeError('pool init')
+         extra=[];self.pack=None
+-        if abi==4:
++        if abi==5:
+             lib.bcir_decoder_workspace_bytes.argtypes=[ct.POINTER(_Plan),ct.c_uint32];lib.bcir_decoder_workspace_bytes.restype=SZ
+             size=int(lib.bcir_decoder_workspace_bytes(ct.byref(plan),r.contract));assert size<2**63
+             if size:
+--- a/policy.py
++++ b/policy.py
+@@ -28,7 +28,8 @@
+ def library(name):
+     if name not in _LIBS:
+         lib=ct.CDLL(str(ROOT/'build'/f'{name}.so'))
+-        assert lib.bcir_decoder_abi_version()==4,'budget controller requires updated ABI4'
++        assert lib.bcir_decoder_abi_version()==5,'budget controller requires main\'s ABI5'
++        lib.bcir_geo_refused.restype=ct.c_ulong
+         lib.bcir_decoder_workspace_bytes.argtypes=[ct.POINTER(_Plan),ct.c_uint32];lib.bcir_decoder_workspace_bytes.restype=SZ
+         lib.bcir_decoder_make_plan.argtypes=[ct.POINTER(_Spec),ct.POINTER(_Plan)]
+         lib.bcir_tensor_pool_size.argtypes=[ct.c_uint];lib.bcir_tensor_pool_size.restype=SZ
+@@ -180,6 +181,7 @@
+         rc=self.lib.bcir_decoder_run_accum(ct.byref(self.state),ct.byref(opt),ptr(xx,UP),ptr(yy,UP),size,
+             ct.byref(rate),1,k,ct.byref(event),1,ct.byref(done))
+         native_seconds=time.perf_counter()-native_start;self.check(rc);assert done.value==1
++        assert self.lib.bcir_geo_refused()==0,'a product refused its workspace'
+         wall_seconds=time.perf_counter()-before;self.total_native_seconds+=native_seconds;self.total_wall_seconds+=wall_seconds
+         self.choice_counts[c['candidate_id']]=self.choice_counts.get(c['candidate_id'],0)+1
+         return {'step':int(event.step),'loss':event.loss,'grad_norm':event.grad_norm,'native_seconds':native_seconds,
+@@ -188,6 +190,7 @@
+     def infer(self,x):
+         x=np.asarray(x,dtype=np.uint32);b,t=x.shape;c=self.bind(b,t);m=c['microbatch'];out=[]
+         for start in range(0,b,m):out.append(self.forward(np.ascontiguousarray(x[start:start+m])).copy())
++        assert self.lib.bcir_geo_refused()==0,'a product refused its workspace'
+         return np.concatenate(out,axis=0)
+
+ def calibration_map(rows):

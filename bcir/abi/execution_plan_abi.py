@@ -129,6 +129,95 @@ def _checked_str(name: str, value) -> str:
     return value
 
 
+def lifetimes_alias(a: Lifetime, b: Lifetime) -> bool:
+    """The alias law's predicate: two lifetimes of one bank, live at once (half-open ticks), on
+    overlapping bytes."""
+    return (
+        a.bank == b.bank
+        and a.first_tick < b.last_tick
+        and b.first_tick < a.last_tick
+        and a.offset < b.offset + b.size_bytes
+        and b.offset < a.offset + a.size_bytes
+    )
+
+
+def first_alias(rows) -> int:
+    """The first of `rows` that aliases an earlier one (`lifetimes_alias`), `len(rows)` when none
+    does -- in O(n log n) (ALIAS-SWEEP), the C twin's algorithm (bcir_runtime.c): a sweep decides
+    whether a prefix holds an aliasing pair, and the prefixes being monotone, the first aliasing
+    lifetime is a binary search of sweeps, run only once the whole holds a pair."""
+    n = len(rows)
+    if n < 2:
+        return n
+    by_key = sorted(range(n), key=lambda i: (rows[i].bank, rows[i].offset, i))
+    by_first = sorted(range(n), key=lambda i: (rows[i].first_tick, i))
+    by_last = sorted(range(n), key=lambda i: (rows[i].last_tick, i))
+    rank = [0] * n
+    for r, i in enumerate(by_key):
+        rank[i] = r
+    order = (by_key, by_first, by_last, rank)
+    if not _prefix_aliases(rows, n, order):
+        return n
+    lo, hi = 2, n  # rows[:lo - 1] hold no aliasing pair, rows[:hi] one
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if _prefix_aliases(rows, mid, order):
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo - 1
+
+
+def _prefix_aliases(rows, p: int, order) -> bool:
+    """Whether rows[:p] hold an aliasing pair: a sweep over their ticks -- at one tick the ends
+    before the starts, the intervals being half-open -- keeping the live rows ranked by (bank,
+    offset, index) in a Fenwick tree. Until a pair is found the live rows of one bank lie pairwise
+    apart in bytes, so a row that starts aliases a live one only if it aliases the live row ranked
+    just below it or just above it."""
+    by_key, by_first, by_last, rank = order
+    n = len(rows)
+    tree = [0] * (n + 1)
+    top = 1 << (n.bit_length() - 1)  # the greatest power of two <= n
+    ends = [i for i in by_last if i < p]
+    at, live = 0, 0
+    for x in by_first:
+        if x >= p:
+            continue
+        row = rows[x]
+        while at < len(ends) and rows[ends[at]].last_tick <= row.first_tick:
+            j = rank[ends[at]] + 1
+            while j <= n:
+                tree[j] -= 1
+                j += j & -j
+            live -= 1
+            at += 1
+        below, j = 0, rank[x]
+        while j > 0:
+            below += tree[j]
+            j -= j & -j
+        for k in (below, below + 1):  # the live rank just below x's, then just above it
+            if 1 <= k <= live:
+                pos, step, left = 0, top, k
+                while step:
+                    if pos + step <= n and tree[pos + step] < left:
+                        pos += step
+                        left -= tree[pos]
+                    step >>= 1
+                other = rows[by_key[pos]]
+                if (
+                    other.bank == row.bank
+                    and other.offset < row.offset + row.size_bytes
+                    and row.offset < other.offset + other.size_bytes
+                ):
+                    return True
+        j = rank[x] + 1
+        while j <= n:
+            tree[j] += 1
+            j += j & -j
+        live += 1
+    return False
+
+
 def validate_plan(plan: ExecutionPlan, version: int | None = None) -> None:
     """The wire laws, shared by `encode_plan` and `decode_plan` (rail symmetry with the C
     twin's `bcir_ep_verify`): a plan that violates them is refused before it is published
@@ -220,19 +309,15 @@ def validate_plan(plan: ExecutionPlan, version: int | None = None) -> None:
         if last_tick <= first_tick:
             raise AbiError(f"lifetime[{index}] liveness interval is empty or reversed")
     # The alias law by bytes: two lifetimes of one bank that are live at once (half-open
-    # ticks) must not overlap in address. The C twin applies the same pairwise predicate.
+    # ticks) must not overlap in address. The C twin applies the same predicate; both find the
+    # first lifetime aliasing an earlier one by a sweep (ALIAS-SWEEP), and this names it with the
+    # first earlier one it aliases.
     rows = list(plan.lifetimes)
-    for i in range(len(rows)):
-        for j in range(i):
-            a, b = rows[i], rows[j]
-            if (
-                a.bank == b.bank
-                and a.first_tick < b.last_tick
-                and b.first_tick < a.last_tick
-                and a.offset < b.offset + b.size_bytes
-                and b.offset < a.offset + a.size_bytes
-            ):
-                raise AbiError(f"lifetimes of RIDs {b.rid} and {a.rid} alias in bank {a.bank!r}")
+    first = first_alias(rows)
+    if first < len(rows):
+        a = rows[first]
+        b = next(r for r in rows[:first] if lifetimes_alias(r, a))
+        raise AbiError(f"lifetimes of RIDs {b.rid} and {a.rid} alias in bank {a.bank!r}")
     for index, mv in enumerate(plan.moves):
         _checked_uint(f"move[{index}].rid", mv.rid, 32)
         for name in ("src_bank", "dst_bank"):

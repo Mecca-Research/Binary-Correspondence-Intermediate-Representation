@@ -1,0 +1,123 @@
+{
+ "what": "fma_peak.c: 16 independent accumulators a thread of _mm512_fmadd_ps (the fused form) and of _mm512_mul_ps then _mm512_add_ps (v1's form), 2e8 iterations, on 1 and 4 threads, three runs each; a lane's multiply and add counted as two flops. The TSC runs at 2.3 GHz; under this load the cores run faster -- 64 flops a core cycle (two 512-bit FMA ports) at the measured rate puts the core clock at about 3.39 GHz -- so a bound in TSC cycles must come from these measured rates, not from the TSC's frequency",
+ "summary": {
+  "fma 1t": {
+   "gflop_per_s_median": 217.1,
+   "flops_a_tsc_cycle_a_thread_median": 94.38,
+   "runs": 3
+  },
+  "fma 4t": {
+   "gflop_per_s_median": 855.9,
+   "flops_a_tsc_cycle_a_thread_median": 93.03,
+   "runs": 3
+  },
+  "mul+add 1t": {
+   "gflop_per_s_median": 101.6,
+   "flops_a_tsc_cycle_a_thread_median": 44.16,
+   "runs": 3
+  },
+  "mul+add 4t": {
+   "gflop_per_s_median": 399.4,
+   "flops_a_tsc_cycle_a_thread_median": 43.41,
+   "runs": 3
+  }
+ },
+ "runs": [
+  {
+   "form": "fma",
+   "threads": 1,
+   "gflop_per_s": 217.7,
+   "gflop_per_s_a_thread": 217.7,
+   "tsc_ghz": 2.3,
+   "flops_a_tsc_cycle_a_thread": 94.64
+  },
+  {
+   "form": "mul+add",
+   "threads": 1,
+   "gflop_per_s": 101.6,
+   "gflop_per_s_a_thread": 101.6,
+   "tsc_ghz": 2.3,
+   "flops_a_tsc_cycle_a_thread": 44.16
+  },
+  {
+   "form": "fma",
+   "threads": 4,
+   "gflop_per_s": 863.3,
+   "gflop_per_s_a_thread": 215.8,
+   "tsc_ghz": 2.3,
+   "flops_a_tsc_cycle_a_thread": 93.84
+  },
+  {
+   "form": "mul+add",
+   "threads": 4,
+   "gflop_per_s": 399.6,
+   "gflop_per_s_a_thread": 99.9,
+   "tsc_ghz": 2.3,
+   "flops_a_tsc_cycle_a_thread": 43.43
+  },
+  {
+   "form": "fma",
+   "threads": 1,
+   "gflop_per_s": 217.1,
+   "gflop_per_s_a_thread": 217.1,
+   "tsc_ghz": 2.3,
+   "flops_a_tsc_cycle_a_thread": 94.38
+  },
+  {
+   "form": "mul+add",
+   "threads": 1,
+   "gflop_per_s": 99.3,
+   "gflop_per_s_a_thread": 99.3,
+   "tsc_ghz": 2.3,
+   "flops_a_tsc_cycle_a_thread": 43.19
+  },
+  {
+   "form": "fma",
+   "threads": 4,
+   "gflop_per_s": 842.3,
+   "gflop_per_s_a_thread": 210.6,
+   "tsc_ghz": 2.3,
+   "flops_a_tsc_cycle_a_thread": 91.55
+  },
+  {
+   "form": "mul+add",
+   "threads": 4,
+   "gflop_per_s": 391.1,
+   "gflop_per_s_a_thread": 97.8,
+   "tsc_ghz": 2.3,
+   "flops_a_tsc_cycle_a_thread": 42.51
+  },
+  {
+   "form": "fma",
+   "threads": 1,
+   "gflop_per_s": 215.1,
+   "gflop_per_s_a_thread": 215.1,
+   "tsc_ghz": 2.3,
+   "flops_a_tsc_cycle_a_thread": 93.51
+  },
+  {
+   "form": "mul+add",
+   "threads": 1,
+   "gflop_per_s": 103.6,
+   "gflop_per_s_a_thread": 103.6,
+   "tsc_ghz": 2.3,
+   "flops_a_tsc_cycle_a_thread": 45.05
+  },
+  {
+   "form": "fma",
+   "threads": 4,
+   "gflop_per_s": 855.9,
+   "gflop_per_s_a_thread": 214.0,
+   "tsc_ghz": 2.3,
+   "flops_a_tsc_cycle_a_thread": 93.03
+  },
+  {
+   "form": "mul+add",
+   "threads": 4,
+   "gflop_per_s": 399.4,
+   "gflop_per_s_a_thread": 99.8,
+   "tsc_ghz": 2.3,
+   "flops_a_tsc_cycle_a_thread": 43.41
+  }
+ ]
+}

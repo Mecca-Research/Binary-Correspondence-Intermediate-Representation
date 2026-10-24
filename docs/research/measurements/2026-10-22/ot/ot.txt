@@ -1,0 +1,24 @@
+OT-01 measured
+OT-02 measured
+OT-03 measured
+OT-04 measured
+OT-05 measured
+OT-06 measured
+OT-07 unavailable
+OT-08 unavailable
+OT-09 unavailable
+OT-10 measured
+OT-11 measured
+OT-12 unavailable
+OT-13 unavailable
+OT-14 measured
+OT-15 blocked
+OT-16 unavailable
+BG0 PASS
+BG1 PASS
+BG2 UNAVAILABLE (5 unmet)
+BG3 OPEN (1 unmet)
+BG4 UNAVAILABLE (5 unmet)
+BG5 UNAVAILABLE (4 unmet)
+BG6 UNAVAILABLE (3 unmet)
+BG7 UNAVAILABLE (4 unmet)

@@ -1,0 +1,141 @@
+{
+ "what": "SOFTMAX-T (2026-10-23): the exponential's single scaling and the softmaxes in one pass, every value as it was -- on the AVX-512 instance the BCIR exponential applies 2^k by one vscalefps (exp1's two power-of-two scalings round once, the first exact, as vscalefps rounds once), its exponential, SiLU, SiLU times u and SwiGLU VJP run as AVX-512 instances, four vectors' chains a step at a time; the scratch forward's lanes softmax and the stored forward's transposed blocks scale, subtract, exponentiate, mask and sum in one pass; and the lanes path divides each key's probabilities inside the context's first pass, once, before the context reads them. Measured on the committed tree against the tree before it: the cross-build hashes, the exponential and the SiLU forms over every binary32 (against their scalar definitions, and before against after), the attention forward with both units in one process beside an A/A control, bcir_decoder_forward and the training step in one process, and the GEO study's attention model's inference and training update built as the study builds it, against PyTorch; and the design runs: v1 and v2 of the prototype, a level at a time, with the lanes path's phases.",
+ "host": "Intel(R) Xeon(R) Processor @ 2.30GHz, 4 vCPU (AVX-512F, AVX512-BF16 and -FP16, AMX), 2 MiB of L2 a core, 260 MiB of L3 -- the host the session moved to on 2026-10-23; Linux 6.18; clang 18.1.3, gcc 13.3.0; Python 3.11.15, torch 2.13.0+cu130 (CPU), numpy 2.2.6; OMP_WAIT_POLICY=PASSIVE",
+ "trees": {
+  "before": "1288d37f7fc98cab7a46c09e84601f8005446ce1",
+  "after": "70e7f2af5a607d255a0fefa20e53adf410deb6d7"
+ },
+ "records": {
+  "hashes.json": "../scores-t/scratch_hash.c and the tree's attention hashes (fwd, lower, attn, band) from both trees, clang and gcc, and ../../2026-10-22/attn-rate/elem_hash.c's elementwise kernels",
+  "kernels.json": "../../2026-10-22/attn-rate/ab_bench.c elem: the exponential, SiLU times u and the SwiGLU VJP on one thread, both units in one process beside an A/A control",
+  "exhaustive.json": "exp_exhaustive.c (each unit against the scalar definitions over every binary32; the tree before as the control) and exp_ab.c (both units, every binary32, byte for byte)",
+  "attention.json": "../scores-t/ab_fwd.c: the attention forward, both tensor units in one process beside an A/A control -- the scratch forward and the stored forward",
+  "forward.json": "../scores-t/fwd_ab.c: bcir_decoder_forward, both trainers in one process on three identical states",
+  "step.json": "../../2026-10-22/attn-rate/step_ab.c: the training step, both trainers in one process on three identical states",
+  "inference.json": "../../2026-10-22/infer-attn/infer_compare.py: the GEO attention model's inference on both level-3 builds against P-EAGER and P-IND, 24 rotated rounds, the builds' logits equal first",
+  "geo-train.json": "../../2026-10-22/bwd-width/train_compare.py: the GEO attention model's training update on both level-3 builds against P-EAGER and P-IND, 32 rotated rounds of 3 steps",
+  "level3-builds.json": "the two level-3 builds (build_level3.py, contig_level3.py, lower_level3.py)",
+  "prototype.json": "the design runs on SCORES-T's tensor unit: proto_softmax_v1.py's and proto_softmax.py's levels 1-3 (hashes, exp_exhaustive.c, exp_ab.c, ab_fwd.c a level at a time, the lanes path's phases over instrument_sm.py's copies, and v1's exp_scalef.c micro-benchmark)",
+  "faults.json": "red_sweep.py over softmax-t.json, again without the harness's exp_scalef case, and the five re-anchored faults of ndt-lanes.json and scores-t.json"
+ },
+ "verdicts": "each effect resolved where its 95% interval excludes 1 and does not meet the A/A control's; where the control's own interval excludes 1, the effect must hold against the control's arm too (from the raw times)",
+ "reading": {
+  "hashes": [
+   "scratch_hash clang: 1248 lines, before == after: True",
+   "scratch_hash gcc: 1248 lines, before == after: True",
+   "scratch_hash: clang's lines gcc's: True",
+   "fwd_hash clang: 288 lines, before == after: True",
+   "fwd_hash gcc: 288 lines, before == after: True",
+   "fwd_hash: clang's lines gcc's: True",
+   "lower_hash clang: 208 lines, before == after: True",
+   "lower_hash gcc: 208 lines, before == after: True",
+   "lower_hash: clang's lines gcc's: True",
+   "attn_hash clang: 88 lines, before == after: True",
+   "attn_hash gcc: 88 lines, before == after: True",
+   "attn_hash: clang's lines gcc's: True",
+   "band_hash clang: 48 lines, before == after: True",
+   "band_hash gcc: 48 lines, before == after: True",
+   "band_hash: clang's lines gcc's: True",
+   "elem_hash clang: 181 lines, before == after (NaN-canonical): True; raw: True (0 lines apart)",
+   "elem_hash gcc: 181 lines, before == after (NaN-canonical): True; raw: False (84 lines apart)"
+  ],
+  "exhaustive": [
+   "exh_clang_B part 0/2: 2147483648 inputs, exp 0, silu 0, silu_mul 0, swiglu 0, overlapping 0 mismatches; SiLU NaN payloads apart 18874356 (132 s)",
+   "exh_clang_B part 1/2: 2147483648 inputs, exp 0, silu 0, silu_mul 0, swiglu 0, overlapping 0 mismatches; SiLU NaN payloads apart 18874368 (132 s)",
+   "exh_gcc_B part 0/2: 2147483648 inputs, exp 0, silu 0, silu_mul 0, swiglu 0, overlapping 0 mismatches; SiLU NaN payloads apart 18874356 (72 s)",
+   "exh_gcc_B part 1/2: 2147483648 inputs, exp 0, silu 0, silu_mul 0, swiglu 0, overlapping 0 mismatches; SiLU NaN payloads apart 18874368 (72 s)",
+   "exh_clang_A part 0/2: 2147483648 inputs, exp 0, silu 0, silu_mul 0, swiglu 0, overlapping 0 mismatches; SiLU NaN payloads apart 18874356 (230 s)",
+   "exh_clang_A part 1/2: 2147483648 inputs, exp 0, silu 0, silu_mul 0, swiglu 0, overlapping 0 mismatches; SiLU NaN payloads apart 18874368 (230 s)",
+   "exp_ab clang part 0/2: 2147483648 inputs, 7 instance mask, exp 0, silu 0, silu_mul 0, swiglu 0 apart; at a NaN {\"exp\": 0, \"silu\": 0, \"silu_mul\": 0, \"swiglu\": 0}; NaN payloads apart 0",
+   "exp_ab clang part 1/2: 2147483648 inputs, 7 instance mask, exp 0, silu 0, silu_mul 0, swiglu 0 apart; at a NaN {\"exp\": 0, \"silu\": 0, \"silu_mul\": 0, \"swiglu\": 0}; NaN payloads apart 0",
+   "exp_ab gcc part 0/2: 2147483648 inputs, 7 instance mask, exp 0, silu 0, silu_mul 0, swiglu 0 apart; at a NaN {\"exp\": 0, \"silu\": 0, \"silu_mul\": 0, \"swiglu\": 0}; NaN payloads apart 25165818",
+   "exp_ab gcc part 1/2: 2147483648 inputs, 7 instance mask, exp 0, silu 0, silu_mul 0, swiglu 0 apart; at a NaN {\"exp\": 0, \"silu\": 0, \"silu_mul\": 0, \"swiglu\": 0}; NaN payloads apart 25165824"
+  ],
+  "faults": [
+   "softmax-t.json: 16 of 16 caught by their own check; without the harness's exp_scalef case 16 of 16 -- not caught: none",
+   "re-anchored NL8, NL11, ST5, ST6, ST12: 5 of 5 caught by their own check",
+   "the case alone catches 9 of 16: SM1, SM2, SM3, SM4, SM5, SM6, SM7, SM9, SM10; in the whole harness it stops first SM6"
+  ],
+  "attention": [
+   "clang 4x2048x4x4x32 EXP|SCRATCH (the scratch forward) at 4 thread(s), 32 rounds: before 18.949 ms; after 0.914 (0.875-0.954), A/A 1.001 (0.961-1.042): resolved",
+   "clang 4x2048x4x4x32 EXP|SCRATCH (the scratch forward) at 1 thread(s), 16 rounds: before 73.389 ms; after 0.938 (0.921-0.956), A/A 0.998 (0.969-1.027): resolved",
+   "clang 4x1024x4x4x32 EXP|SCRATCH (the scratch forward) at 4 thread(s), 32 rounds: before 4.781 ms; after 0.947 (0.909-0.987), A/A 1.004 (0.955-1.056): not resolved",
+   "clang 4x512x4x4x32 EXP|SCRATCH (the scratch forward) at 4 thread(s), 32 rounds: before 1.256 ms; after 0.927 (0.903-0.952), A/A 1.032 (0.998-1.067): resolved",
+   "clang 4x256x4x4x32 EXP|SCRATCH (the scratch forward) at 4 thread(s), 32 rounds: before 0.338 ms; after 0.937 (0.877-1.001), A/A 1.015 (0.947-1.088): not resolved",
+   "clang 4x128x4x4x32 EXP|SCRATCH (the scratch forward) at 4 thread(s), 32 rounds: before 0.089 ms; after 0.986 (0.937-1.036), A/A 1.041 (0.998-1.085): not resolved",
+   "clang 4x2048x4x4x32 EXP|FUSED|SCRATCH at 4 thread(s), 32 rounds: before 15.653 ms; after 0.899 (0.866-0.933), A/A 0.999 (0.970-1.029): resolved",
+   "clang 1x2048x8x8x64 EXP|SCRATCH (the scratch forward) at 4 thread(s), 32 rounds: before 15.793 ms; after 0.994 (0.955-1.035), A/A 0.966 (0.923-1.012): not resolved",
+   "clang 1x1024x4x4x128 EXP|SCRATCH (the scratch forward) at 4 thread(s), 32 rounds: before 3.615 ms; after 1.001 (0.937-1.070), A/A 1.018 (0.950-1.090): not resolved",
+   "clang 8x128x8x4x48 EXP|FUSED|SCRATCH at 4 thread(s), 32 rounds: before 0.406 ms; after 0.950 (0.914-0.987), A/A 1.002 (0.970-1.036): not resolved",
+   "clang 4x2048x4x4x32 EXP|LOWER (the stored forward, as the trainer runs it) at 4 thread(s), 32 rounds: before 21.460 ms; after 0.965 (0.937-0.994), A/A 1.000 (0.975-1.026): not resolved",
+   "clang 4x512x4x4x32 EXP|LOWER (the stored forward, as the trainer runs it) at 4 thread(s), 32 rounds: before 1.558 ms; after 0.989 (0.927-1.055), A/A 1.003 (0.959-1.049): not resolved",
+   "gcc 4x2048x4x4x32 EXP|SCRATCH (the scratch forward) at 4 thread(s), 32 rounds: before 19.346 ms; after 0.909 (0.882-0.937), A/A 1.011 (0.989-1.033): resolved"
+  ],
+  "forward": [
+   "clang geo-dims T512 kblock+exp+reduce, forward: 10.58 -> 10.35 ms, after 0.969 (0.938-1.002), A/A 0.988 (0.961-1.016): not resolved; the logits one digest (4e2ee675fb00395d)",
+   "clang geo-dims T1024 kblock+exp+reduce, forward: 27.88 -> 28.00 ms, after 0.996 (0.978-1.014), A/A 0.992 (0.971-1.014): not resolved; the logits one digest (6276d1ae99097724)",
+   "clang geo-dims T2048 kblock+exp+reduce, forward: 83.89 -> 81.43 ms, after 0.968 (0.943-0.993), A/A 0.983 (0.966-1.000): not resolved; the logits one digest (7ca024d2e25b08dc)",
+   "clang geo-dims T2048 kblock+exp+reduce, 1 thread, forward: 324.09 -> 314.32 ms, after 0.962 (0.937-0.987), A/A 0.983 (0.956-1.012): not resolved; the logits one digest (7ca024d2e25b08dc)",
+   "clang geo-dims T2048 v1 (control), forward: 172.97 -> 173.27 ms, after 0.985 (0.961-1.009), A/A 0.992 (0.970-1.015): not resolved; the logits one digest (de15070106d1aef0)",
+   "clang decoder-9.84M kblock+exp+reduce+attn, forward: 48.37 -> 48.62 ms, after 1.006 (0.980-1.032), A/A 1.006 (0.978-1.034): not resolved; the logits one digest (fa6736b7c1cabbfa)",
+   "gcc geo-dims T2048 kblock+exp+reduce, forward: 85.09 -> 77.67 ms, after 0.908 (0.882-0.935), A/A 1.003 (0.984-1.021): resolved; the logits one digest (7ca024d2e25b08dc)",
+   "confirm (64 rounds): clang geo-dims T2048 kblock+exp+reduce, forward: 87.08 -> 84.17 ms, after 0.965 (0.946-0.983), A/A 1.000 (0.983-1.018): not resolved"
+  ],
+  "step": [
+   "clang geo-dims T2048 kblock+exp+reduce, step: 264.7 -> 260.6 ms, after 0.993 (0.976-1.011), A/A 0.997 (0.976-1.019): not resolved; the weights one digest (2a159fed4bffaed4)",
+   "clang geo-dims T512 kblock+exp+reduce, step: 38.3 -> 37.9 ms, after 0.974 (0.954-0.995), A/A 1.017 (0.995-1.039): resolved; the weights one digest (7e3fbb6c70369b39)",
+   "clang geo-dims T2048 kblock+exp+reduce, 1 thread, step: 1001.9 -> 987.3 ms, after 0.986 (0.971-1.001), A/A 0.986 (0.971-1.001): not resolved; the weights one digest (48a7c5aecec0bc31)",
+   "clang decoder-9.84M kblock+exp+reduce+attn, step: 164.3 -> 165.3 ms, after 0.998 (0.980-1.016), A/A 1.004 (0.986-1.022): not resolved; the weights one digest (0fddec37385155d4)",
+   "gcc geo-dims T2048 kblock+exp+reduce, step: 271.9 -> 263.2 ms, after 0.971 (0.948-0.993), A/A 1.001 (0.982-1.020): not resolved; the weights one digest (2a159fed4bffaed4)",
+   "clang geo-dims T2048 v1 (control), step: 405.1 -> 397.9 ms, after 0.981 (0.967-0.995), A/A 0.997 (0.981-1.013): not resolved; the weights one digest (185a1077d096bdbc)"
+  ],
+  "inference": [
+   "T512: B-BEFORE 10.8, B-AFTER 10.3, P-EAGER 24.3, P-IND 15.2 ms a forward; after/before 0.976 (0.916-1.041), after/eager 0.430 (0.408-0.454), after/Inductor 0.677 (0.633-0.724), A/A 1.031 (0.967-1.099); logits equal: True",
+   "T1024: B-BEFORE 29.7, B-AFTER 27.6, P-EAGER 42.7, P-IND 33.9 ms a forward; after/before 0.935 (0.904-0.967), after/eager 0.642 (0.610-0.676), after/Inductor 0.810 (0.776-0.847), A/A 0.990 (0.960-1.021); logits equal: True",
+   "T2048: B-BEFORE 90.1, B-AFTER 82.3, P-EAGER 88.4, P-IND 81.5 ms a forward; after/before 0.926 (0.879-0.976), after/eager 0.931 (0.861-1.007), after/Inductor 1.010 (0.943-1.082), A/A 1.033 (0.979-1.089); logits equal: True",
+   "confirm (48 rounds) T1024: B-BEFORE 29.8, B-AFTER 28.3, P-EAGER 47.5, P-IND 37.3 ms; after/before 0.960 (0.936-0.985), after/eager 0.591 (0.570-0.614), after/Inductor 0.752 (0.720-0.786), A/A 1.001 (0.978-1.025); logits equal: True",
+   "confirm (48 rounds) T2048: B-BEFORE 87.0, B-AFTER 80.3, P-EAGER 88.4, P-IND 79.3 ms; after/before 0.931 (0.908-0.954), after/eager 0.899 (0.866-0.933), after/Inductor 1.005 (0.968-1.044), A/A 1.009 (0.980-1.038); logits equal: True"
+  ],
+  "training": [
+   "T512: B-BEFORE 38.2, B-AFTER 38.1, B-AFTER-AA 37.7, P-EAGER 78.2, P-IND 58.8 ms; after/before 1.001 (0.973-1.030), after/eager 0.490 (0.470-0.510), after/Inductor 0.653 (0.629-0.678), A/A 1.008 (0.980-1.036); {\"trained_state_digest\": {\"before\": \"8a7fc5b717592aa479866682a7b35378f6e7f5718e42992802b9cd1e97003700\", \"after\": \"8a7fc5b717592aa479866682a7b35378f6e7f5718e42992802b9cd1e97003700\"}}",
+   "T1024: B-BEFORE 89.2, B-AFTER 88.8, B-AFTER-AA 89.7, P-EAGER 130.0, P-IND 110.0 ms; after/before 0.992 (0.976-1.008), after/eager 0.660 (0.641-0.680), after/Inductor 0.811 (0.795-0.828), A/A 0.992 (0.970-1.015); {\"trained_state_digest\": {\"before\": \"756c2e0bccd2bbcb02ee3653f73c8b90ada91ae23be86400c905615411a450b8\", \"after\": \"756c2e0bccd2bbcb02ee3653f73c8b90ada91ae23be86400c905615411a450b8\"}}",
+   "T2048: B-BEFORE 270.1, B-AFTER 265.8, B-AFTER-AA 275.8, P-EAGER 295.9, P-IND 270.0 ms; after/before 0.991 (0.976-1.006), after/eager 0.903 (0.888-0.919), after/Inductor 0.982 (0.964-1.000), A/A 0.971 (0.952-0.991); {\"trained_state_digest\": {\"before\": \"4994c40e2a6aeda9d7139f1d25a46a1a777c351a740dc1d8180cda9a47ec7c59\", \"after\": \"4994c40e2a6aeda9d7139f1d25a46a1a777c351a740dc1d8180cda9a47ec7c59\"}}"
+  ],
+  "kernels": [
+   "clang exp n=16384: 0.410 -> 0.300 ns an element, after 0.733 (0.725-0.741), A/A 1.027 (0.979-1.078): resolved",
+   "clang exp n=1048576: 0.474 -> 0.366 ns an element, after 0.831 (0.753-0.916), A/A 0.985 (0.881-1.101): not resolved",
+   "clang exp_avx2 n=16384: 0.701 -> 0.699 ns an element, after 1.003 (0.983-1.024), A/A 1.007 (0.989-1.025): not resolved",
+   "clang silu_mul_v2 n=16384: 0.569 -> 0.514 ns an element, after 0.905 (0.900-0.909), A/A 0.997 (0.990-1.004): resolved",
+   "clang silu_mul_v2 n=1048576: 0.695 -> 0.611 ns an element, after 0.882 (0.872-0.893), A/A 0.992 (0.983-1.001): resolved",
+   "clang swiglu_vjp_v2 n=16384: 0.675 -> 0.575 ns an element, after 0.860 (0.846-0.873), A/A 1.002 (0.993-1.010): resolved",
+   "clang swiglu_vjp_v2 n=1048576: 0.841 -> 0.782 ns an element, after 0.940 (0.931-0.949), A/A 1.005 (0.992-1.019): resolved",
+   "gcc exp n=16384: 0.454 -> 0.309 ns an element, after 0.678 (0.669-0.686), A/A 1.001 (0.992-1.010): resolved",
+   "gcc exp n=1048576: 0.466 -> 0.346 ns an element, after 0.745 (0.737-0.753), A/A 0.995 (0.979-1.011): resolved",
+   "gcc exp_avx2 n=16384: 2.259 -> 2.242 ns an element, after 1.008 (0.970-1.047), A/A 0.994 (0.958-1.031): not resolved",
+   "gcc silu_mul_v2 n=16384: 0.749 -> 0.526 ns an element, after 0.695 (0.687-0.704), A/A 0.999 (0.985-1.014): resolved",
+   "gcc silu_mul_v2 n=1048576: 0.806 -> 0.602 ns an element, after 0.748 (0.742-0.754), A/A 1.003 (0.998-1.009): resolved",
+   "gcc swiglu_vjp_v2 n=16384: 0.884 -> 0.587 ns an element, after 0.654 (0.627-0.682), A/A 0.993 (0.962-1.025): resolved",
+   "gcc swiglu_vjp_v2 n=1048576: 1.003 -> 0.805 ns an element, after 0.817 (0.749-0.891), A/A 0.909 (0.852-0.970): not resolved",
+   "confirm (64 rounds): clang exp n=1048576: 0.461 -> 0.361 ns an element, after 0.769 (0.747-0.792), A/A 0.992 (0.983-1.002): resolved",
+   "confirm (64 rounds): gcc swiglu_vjp_v2 n=1048576: 0.989 -> 0.774 ns an element, after 0.782 (0.778-0.786), A/A 0.996 (0.991-1.001): resolved"
+  ]
+ },
+ "commands": [
+  "git show BEFORE:runtime/c/<unit> > BEFORE_SRC/<unit>; git show AFTER:... > AFTER_SRC/<unit>  # bcir_tensor.c/.h, bcir_decoder_train.c/.h",
+  "CF='-std=c11 -O3 -ffp-contract=off -fno-math-errno -pthread'",
+  "CC $CF -I SRC ../scores-t/scratch_hash.c SRC/bcir_tensor.c -lm; the same for ../fwd-strip/fwd_hash.c, ../p-lower/lower_hash.c, ../../2026-10-22/attn-rate/attn_hash.c and ../../2026-10-22/bwd-long/band_hash.c  # run each, compare BEFORE's lines with AFTER's",
+  "CC $CF -I SRC exp_exhaustive.c SRC/bcir_tensor.c -lm; exp_exhaustive 0 2 & exp_exhaustive 1 2  # AFTER under clang and gcc, BEFORE under clang",
+  "CC $CF -fPIC -shared -I SRC SRC/bcir_tensor.c -lm -o libtensor_X.so; clang -std=c11 -O2 exp_ab.c -ldl; exp_ab libtensor_BEFORE.so libtensor_AFTER.so 0 2 & exp_ab ... 1 2  # clang and gcc",
+  "CC $CF -I SRC ../../2026-10-22/attn-rate/elem_hash.c SRC/bcir_tensor.c -lm; elem_hash; elem_hash raw  # compare BEFORE's lines with AFTER's",
+  "clang -std=c11 -O2 ../../2026-10-22/attn-rate/ab_bench.c -ldl -lm; ab_bench libtensor_BEFORE.so libtensor_AFTER.so 24 elem exp|exp_avx2|silu_mul_v2|swiglu_vjp_v2 N  # N 16384, 1048576",
+  "clang -O2 ../scores-t/ab_fwd.c -ldl -lm; ab_fwd libtensor_BEFORE.so libtensor_AFTER.so ROUNDS B T H KH D THREADS CONTRACT CALLS  # CONTRACT 9 EXP|SCRATCH, 11 with FUSED, 17 EXP|LOWER",
+  "CC $CF -fPIC -shared -I SRC SRC/bcir_tensor.c SRC/bcir_decoder_train.c -lm -o libdec_X.so; clang -O2 -I AFTER_SRC ../scores-t/fwd_ab.c -ldl -lm; fwd_ab libdec_BEFORE.so libdec_AFTER.so VOCAB WIDTH HEADS KVHEADS LAYERS FF BATCH TIME CONTRACT THREADS ROUNDS K",
+  "clang -O2 -I AFTER_SRC ../../2026-10-22/attn-rate/step_ab.c -ldl -lm; step_ab libdec_BEFORE.so libdec_AFTER.so VOCAB WIDTH HEADS KVHEADS LAYERS FF BATCH TIME CONTRACT THREADS ROUNDS",
+  "python3 -I ../../2026-10-22/infer-attn/build_level3.py LEVEL2_WORK X_WORK X_SRC MAIN_SRC --scratch; python3 -I ../att-contig/contig_level3.py X_WORK X_SRC; python3 -I ../p-lower/lower_level3.py X_WORK  # BEFORE, AFTER",
+  "python -I ../../2026-10-22/infer-attn/infer_compare.py BEFORE_WORK AFTER_WORK OUT.json --rounds 24 --threads 4 --times 512,1024,2048",
+  "python -I ../../2026-10-22/bwd-width/train_compare.py BEFORE_WORK AFTER_WORK OUT.json --rounds 32 --steps 3 --threads 4 --times 512,1024,2048",
+  "the design runs: python3 -I proto_softmax.py BEFORE_SRC/bcir_tensor.c LEVEL_L.c L (L 1, 2, 3: v2, the commit's code; proto_softmax_v1.py the same for v1); python3 -I instrument_sm.py SRC PHASE.c; CC $CF -I SRC ../scores-t/phase_bench_t.c PHASE.c -lm; phase_bench_t B T H KH D THREADS ROUNDS CONTRACT; CC -std=c11 -O3 -ffp-contract=off -fno-math-errno exp_scalef.c -lm; exp_scalef time 15  # v1's micro-benchmark",
+  "python3 tools/testing/red_sweep.py --faults tools/testing/faults/softmax-t.json",
+  "the declared confirmation runs (each record's confirm, declared before they ran): ab_bench with 64 rounds on clang exp and gcc swiglu_vjp_v2 at n=1048576, fwd_ab with 64 rounds at T2048 under clang, infer_compare.py --rounds 48 --times 1024,2048"
+ ]
+}

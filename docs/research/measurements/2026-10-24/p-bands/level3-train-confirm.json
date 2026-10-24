@@ -1,0 +1,276 @@
+{
+ "what": "COMPILE-LIMIT on the GEO study's attention model at level 3 (a build of this branch's tensor unit): its training\nupdate (forward, backward, clipping, AdamW: geo_compare.py's train_case) or its inference forward, 4 x T tokens,\nagainst PyTorch with torch.compile at each case's own fixed shapes.\n\nB (twice: an A/A control): the level-3 build in WORK. P-EAGER: the bundle's Torch equations\n(oracle.torch_model_next). P-IND: torch.compile (Inductor, default mode; fused AdamW) from a fresh Dynamo state\n(torch._dynamo.reset() at every case) at the case's shapes (dynamic=False). P-IND-DYN: the same module compiled\nwith the tokens' time dimension dynamic (torch._dynamo.maybe_mark_dynamic(ids, 1)) -- what train_compare.py and\ninfer_compare.py compiled for every case after their first: one process, one forward code object, so Dynamo's\nautomatic dynamic shapes marked L['ids'] dim 1 dynamic at the first recompile. Every arm its own module (its own\nclass), so each compiled arm is its own cache entry; a recompile past Dynamo's limit is a hard failure, not an\neager fallback; each compile's shape symbols (create_symbol) and graphs are recorded and checked: P-IND none and at\nleast one graph, P-IND-DYN L['ids'] dim 1. Rounds rotate the arms' order; each training arm is restored to the same\ninitial state before each observation, outside the clock.\nusage: python static_compare.py WORK OUT.json [--mode train|infer] [--rounds 24] [--steps 3] [--threads 4]\n       [--times 512,1024,2048]\n",
+ "host": {
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+  "threads": 4,
+  "python": "3.11.15",
+  "torch": "2.13.0+cu130",
+  "numpy": "2.2.6"
+ },
+ "mode": "train",
+ "rounds": 32,
+ "cases": [
+  {
+   "model": "attention",
+   "mode": "train",
+   "batch": 4,
+   "time": 2048,
+   "steps_per_observation": 3,
+   "first_update_s": {
+    "P-EAGER": 0.4156428589994903,
+    "P-IND": 3.00668811900141,
+    "P-IND-DYN": 1.2334644140009914
+   },
+   "compile_witness": {
+    "P-IND": {
+     "symbols": [],
+     "graphs": 1
+    },
+    "P-IND-DYN": {
+     "symbols": [
+      "create_symbol s27 = 2048 for L['ids'].size()[1]"
+     ],
+     "graphs": 1
+    }
+   },
+   "deterministic_b": true,
+   "first_update_loss": {
+    "B": 5.5861385747104615,
+    "P-EAGER": 5.5861382484436035,
+    "P-IND": 5.5861382484436035,
+    "P-IND-DYN": 5.5861382484436035
+   },
+   "dynamo": {
+    "stats": {
+     "calls_captured": 484,
+     "unique_graphs": 2
+    },
+    "frames": {
+     "total": 2,
+     "ok": 2
+    }
+   },
+   "ms_per_update": {
+    "B": 242.75314233333728,
+    "B-AA": 243.4871259999151,
+    "P-EAGER": 313.98164450001786,
+    "P-IND": 298.55022833332134,
+    "P-IND-DYN": 290.4096510001182
+   },
+   "b_over": {
+    "B-AA": {
+     "geometric_mean": 0.9932562366561318,
+     "ci95": [
+      0.9750211861068567,
+      1.0118323229421404
+     ],
+     "rounds": 32
+    },
+    "P-EAGER": {
+     "geometric_mean": 0.7800475891898829,
+     "ci95": [
+      0.76562975226764,
+      0.7947369333529309
+     ],
+     "rounds": 32
+    },
+    "P-IND": {
+     "geometric_mean": 0.8236733678595939,
+     "ci95": [
+      0.8060945805209383,
+      0.8416355019813254
+     ],
+     "rounds": 32
+    },
+    "P-IND-DYN": {
+     "geometric_mean": 0.8374139733745002,
+     "ci95": [
+      0.8232628517093357,
+      0.8518083396412722
+     ],
+     "rounds": 32
+    }
+   },
+   "ind_dyn_over_ind": {
+    "geometric_mean": 0.9835916214061532,
+    "ci95": [
+     0.9585450657268487,
+     1.0092926376568245
+    ],
+    "rounds": 32
+   },
+   "raw_ms": {
+    "B": [
+     233.5348,
+     239.4247,
+     244.0849,
+     236.2801,
+     269.0308,
+     249.3715,
+     251.985,
+     244.0475,
+     241.7457,
+     237.4833,
+     251.2298,
+     238.4817,
+     246.8525,
+     237.4496,
+     241.3373,
+     241.215,
+     244.6503,
+     249.3317,
+     261.4763,
+     239.6286,
+     243.7606,
+     252.2864,
+     233.102,
+     249.7833,
+     250.7368,
+     238.3917,
+     237.1297,
+     260.4827,
+     246.1588,
+     232.4868,
+     233.6887,
+     241.4835
+    ],
+    "B-AA": [
+     236.7146,
+     235.8364,
+     253.7679,
+     248.1194,
+     266.051,
+     258.3096,
+     233.13,
+     236.1831,
+     247.2428,
+     237.5927,
+     259.7883,
+     239.5963,
+     257.7571,
+     248.1369,
+     242.3421,
+     244.9707,
+     236.1175,
+     242.3502,
+     242.8269,
+     263.4943,
+     243.2584,
+     247.4096,
+     266.2615,
+     259.5706,
+     251.8708,
+     243.7158,
+     241.4445,
+     239.3607,
+     225.4013,
+     258.5521,
+     234.64,
+     231.9214
+    ],
+    "P-EAGER": [
+     317.9635,
+     287.3526,
+     303.2449,
+     321.5133,
+     300.3305,
+     325.4121,
+     311.052,
+     300.5031,
+     302.6597,
+     310.3841,
+     320.3741,
+     311.3798,
+     314.9963,
+     309.0696,
+     333.2622,
+     314.9179,
+     313.0454,
+     324.2425,
+     305.7818,
+     308.4561,
+     305.9407,
+     317.6996,
+     317.3665,
+     319.0965,
+     330.6048,
+     323.5286,
+     302.1764,
+     324.1489,
+     288.7665,
+     300.839,
+     335.973,
+     321.4124
+    ],
+    "P-IND": [
+     277.8392,
+     285.1198,
+     296.077,
+     289.8668,
+     287.4706,
+     301.0664,
+     277.181,
+     276.8077,
+     286.3016,
+     301.0235,
+     278.6578,
+     319.9946,
+     313.13,
+     313.2297,
+     316.6694,
+     287.3228,
+     302.2708,
+     286.2396,
+     318.0078,
+     273.2342,
+     303.2998,
+     287.1852,
+     274.9759,
+     305.3009,
+     305.0541,
+     321.9486,
+     302.0123,
+     308.2649,
+     301.2549,
+     291.0155,
+     279.7638,
+     331.377
+    ],
+    "P-IND-DYN": [
+     277.1243,
+     298.5052,
+     291.4223,
+     304.1078,
+     306.1518,
+     272.2155,
+     282.3547,
+     316.5317,
+     279.991,
+     284.2296,
+     294.0981,
+     287.3082,
+     321.4526,
+     305.541,
+     289.2843,
+     303.5362,
+     276.2545,
+     295.9288,
+     297.448,
+     300.4555,
+     282.0482,
+     294.0257,
+     286.4334,
+     295.6694,
+     294.3486,
+     266.5943,
+     289.233,
+     289.397,
+     298.7433,
+     287.4681,
+     286.9392,
+     283.2412
+    ]
+   }
+  }
+ ]
+}

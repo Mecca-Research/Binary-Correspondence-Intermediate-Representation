@@ -1,0 +1,1038 @@
+{
+ "what": "../bwd-keep/step_parts.py: the GEO step at T2048 under kblock+exp+reduce on four threads a part at a time, the trainer built with the job clock from each tree (a worktree of the tree before), two runs of 8 rounds each, the trees alternated; a claim's time the median of its jobs' summed nanoseconds over the rounds",
+ "runs": {
+  "before": [
+   {
+    "jobs_total_ms_median": 269.0486105,
+    "parts": [
+     {
+      "claim": "train.attention.vjp",
+      "jobs": 3,
+      "ms_median": 103.2246735
+     },
+     {
+      "claim": "train.attention",
+      "jobs": 3,
+      "ms_median": 64.8968045
+     },
+     {
+      "claim": "train.gemm.chain.nn",
+      "jobs": 6,
+      "ms_median": 29.7290435
+     },
+     {
+      "claim": "train.gemm.pair.nn",
+      "jobs": 7,
+      "ms_median": 18.2559855
+     },
+     {
+      "claim": "train.gemm.rest.nt",
+      "jobs": 6,
+      "ms_median": 16.287431
+     },
+     {
+      "claim": "train.gemm.alone.nt",
+      "jobs": 7,
+      "ms_median": 9.0499595
+     },
+     {
+      "claim": "train.rms.vjp.add.first",
+      "jobs": 6,
+      "ms_median": 5.578532
+     },
+     {
+      "claim": "train.loss",
+      "jobs": 1,
+      "ms_median": 5.4444665
+     },
+     {
+      "claim": "train.rms",
+      "jobs": 7,
+      "ms_median": 2.336996
+     },
+     {
+      "claim": "train.swiglu.vjp",
+      "jobs": 3,
+      "ms_median": 2.260191
+     },
+     {
+      "claim": "train.rope",
+      "jobs": 6,
+      "ms_median": 1.770009
+     },
+     {
+      "claim": "train.silu_mul",
+      "jobs": 3,
+      "ms_median": 1.700176
+     },
+     {
+      "claim": "train.rope.inverse",
+      "jobs": 6,
+      "ms_median": 1.6015315
+     },
+     {
+      "claim": "train.rms.vjp.first",
+      "jobs": 1,
+      "ms_median": 0.7592365
+     },
+     {
+      "claim": "train.add",
+      "jobs": 6,
+      "ms_median": 0.7141415
+     },
+     {
+      "claim": "train.update",
+      "jobs": 1,
+      "ms_median": 0.4806655
+     },
+     {
+      "claim": "train.embed",
+      "jobs": 1,
+      "ms_median": 0.4418375
+     },
+     {
+      "claim": "train.scatter",
+      "jobs": 1,
+      "ms_median": 0.3837925
+     },
+     {
+      "claim": "train.scan",
+      "jobs": 2,
+      "ms_median": 0.2636815
+     },
+     {
+      "claim": "train.check.forward",
+      "jobs": 1,
+      "ms_median": 0.000193
+     },
+     {
+      "claim": "train.check.ran",
+      "jobs": 1,
+      "ms_median": 0.0001875
+     },
+     {
+      "claim": "train.check.loss",
+      "jobs": 1,
+      "ms_median": 0.0001855
+     }
+    ]
+   },
+   {
+    "jobs_total_ms_median": 268.895997,
+    "parts": [
+     {
+      "claim": "train.attention.vjp",
+      "jobs": 3,
+      "ms_median": 104.991375
+     },
+     {
+      "claim": "train.attention",
+      "jobs": 3,
+      "ms_median": 65.111637
+     },
+     {
+      "claim": "train.gemm.chain.nn",
+      "jobs": 6,
+      "ms_median": 29.3560115
+     },
+     {
+      "claim": "train.gemm.pair.nn",
+      "jobs": 7,
+      "ms_median": 18.2462755
+     },
+     {
+      "claim": "train.gemm.rest.nt",
+      "jobs": 6,
+      "ms_median": 15.934988
+     },
+     {
+      "claim": "train.gemm.alone.nt",
+      "jobs": 7,
+      "ms_median": 8.9212035
+     },
+     {
+      "claim": "train.loss",
+      "jobs": 1,
+      "ms_median": 5.4239475
+     },
+     {
+      "claim": "train.rms.vjp.add.first",
+      "jobs": 6,
+      "ms_median": 4.993005
+     },
+     {
+      "claim": "train.swiglu.vjp",
+      "jobs": 3,
+      "ms_median": 2.477067
+     },
+     {
+      "claim": "train.rms",
+      "jobs": 7,
+      "ms_median": 2.271366
+     },
+     {
+      "claim": "train.rope",
+      "jobs": 6,
+      "ms_median": 1.8070145
+     },
+     {
+      "claim": "train.silu_mul",
+      "jobs": 3,
+      "ms_median": 1.725934
+     },
+     {
+      "claim": "train.rope.inverse",
+      "jobs": 6,
+      "ms_median": 1.6650225
+     },
+     {
+      "claim": "train.add",
+      "jobs": 6,
+      "ms_median": 0.6972105
+     },
+     {
+      "claim": "train.rms.vjp.first",
+      "jobs": 1,
+      "ms_median": 0.6477735
+     },
+     {
+      "claim": "train.update",
+      "jobs": 1,
+      "ms_median": 0.493575
+     },
+     {
+      "claim": "train.embed",
+      "jobs": 1,
+      "ms_median": 0.412861
+     },
+     {
+      "claim": "train.scatter",
+      "jobs": 1,
+      "ms_median": 0.3007435
+     },
+     {
+      "claim": "train.scan",
+      "jobs": 2,
+      "ms_median": 0.248196
+     },
+     {
+      "claim": "train.check.loss",
+      "jobs": 1,
+      "ms_median": 0.000248
+     },
+     {
+      "claim": "train.check.ran",
+      "jobs": 1,
+      "ms_median": 0.0002405
+     },
+     {
+      "claim": "train.check.forward",
+      "jobs": 1,
+      "ms_median": 0.000171
+     }
+    ]
+   }
+  ],
+  "after": [
+   {
+    "jobs_total_ms_median": 260.925964,
+    "parts": [
+     {
+      "claim": "train.attention.vjp",
+      "jobs": 3,
+      "ms_median": 106.3402435
+     },
+     {
+      "claim": "train.attention",
+      "jobs": 3,
+      "ms_median": 66.861061
+     },
+     {
+      "claim": "train.gemm.chain.nn",
+      "jobs": 6,
+      "ms_median": 27.2963975
+     },
+     {
+      "claim": "train.gemm.pair.nn",
+      "jobs": 7,
+      "ms_median": 15.153679
+     },
+     {
+      "claim": "train.gemm.rest.nt",
+      "jobs": 6,
+      "ms_median": 12.515407
+     },
+     {
+      "claim": "train.gemm.alone.nt",
+      "jobs": 7,
+      "ms_median": 6.884078
+     },
+     {
+      "claim": "train.loss",
+      "jobs": 1,
+      "ms_median": 5.704287
+     },
+     {
+      "claim": "train.rms.vjp.add.first",
+      "jobs": 6,
+      "ms_median": 5.6698265
+     },
+     {
+      "claim": "train.rms",
+      "jobs": 7,
+      "ms_median": 2.5012545
+     },
+     {
+      "claim": "train.swiglu.vjp",
+      "jobs": 3,
+      "ms_median": 2.4354105
+     },
+     {
+      "claim": "train.silu_mul",
+      "jobs": 3,
+      "ms_median": 2.058843
+     },
+     {
+      "claim": "train.rope.inverse",
+      "jobs": 6,
+      "ms_median": 1.7048365
+     },
+     {
+      "claim": "train.rope",
+      "jobs": 6,
+      "ms_median": 1.6213375
+     },
+     {
+      "claim": "train.add",
+      "jobs": 6,
+      "ms_median": 0.780138
+     },
+     {
+      "claim": "train.rms.vjp.first",
+      "jobs": 1,
+      "ms_median": 0.762134
+     },
+     {
+      "claim": "train.update",
+      "jobs": 1,
+      "ms_median": 0.4798475
+     },
+     {
+      "claim": "train.embed",
+      "jobs": 1,
+      "ms_median": 0.477717
+     },
+     {
+      "claim": "train.scatter",
+      "jobs": 1,
+      "ms_median": 0.4244025
+     },
+     {
+      "claim": "train.scan",
+      "jobs": 2,
+      "ms_median": 0.338026
+     },
+     {
+      "claim": "train.check.ran",
+      "jobs": 1,
+      "ms_median": 0.0004385
+     },
+     {
+      "claim": "train.check.loss",
+      "jobs": 1,
+      "ms_median": 0.0002415
+     },
+     {
+      "claim": "train.check.forward",
+      "jobs": 1,
+      "ms_median": 0.0001775
+     }
+    ]
+   },
+   {
+    "jobs_total_ms_median": 251.750223,
+    "parts": [
+     {
+      "claim": "train.attention.vjp",
+      "jobs": 3,
+      "ms_median": 101.95344
+     },
+     {
+      "claim": "train.attention",
+      "jobs": 3,
+      "ms_median": 66.03764
+     },
+     {
+      "claim": "train.gemm.chain.nn",
+      "jobs": 6,
+      "ms_median": 26.732861
+     },
+     {
+      "claim": "train.gemm.pair.nn",
+      "jobs": 7,
+      "ms_median": 14.3906325
+     },
+     {
+      "claim": "train.gemm.rest.nt",
+      "jobs": 6,
+      "ms_median": 12.3142365
+     },
+     {
+      "claim": "train.gemm.alone.nt",
+      "jobs": 7,
+      "ms_median": 6.661672
+     },
+     {
+      "claim": "train.loss",
+      "jobs": 1,
+      "ms_median": 5.6199725
+     },
+     {
+      "claim": "train.rms.vjp.add.first",
+      "jobs": 6,
+      "ms_median": 5.2504755
+     },
+     {
+      "claim": "train.rms",
+      "jobs": 7,
+      "ms_median": 2.439945
+     },
+     {
+      "claim": "train.swiglu.vjp",
+      "jobs": 3,
+      "ms_median": 2.3549175
+     },
+     {
+      "claim": "train.silu_mul",
+      "jobs": 3,
+      "ms_median": 1.93838
+     },
+     {
+      "claim": "train.rope.inverse",
+      "jobs": 6,
+      "ms_median": 1.658022
+     },
+     {
+      "claim": "train.rope",
+      "jobs": 6,
+      "ms_median": 1.638076
+     },
+     {
+      "claim": "train.add",
+      "jobs": 6,
+      "ms_median": 0.728504
+     },
+     {
+      "claim": "train.rms.vjp.first",
+      "jobs": 1,
+      "ms_median": 0.688488
+     },
+     {
+      "claim": "train.update",
+      "jobs": 1,
+      "ms_median": 0.482142
+     },
+     {
+      "claim": "train.embed",
+      "jobs": 1,
+      "ms_median": 0.4504255
+     },
+     {
+      "claim": "train.scatter",
+      "jobs": 1,
+      "ms_median": 0.4057235
+     },
+     {
+      "claim": "train.scan",
+      "jobs": 2,
+      "ms_median": 0.3353955
+     },
+     {
+      "claim": "train.check.forward",
+      "jobs": 1,
+      "ms_median": 0.0009005
+     },
+     {
+      "claim": "train.check.ran",
+      "jobs": 1,
+      "ms_median": 0.0003175
+     },
+     {
+      "claim": "train.check.loss",
+      "jobs": 1,
+      "ms_median": 0.0002475
+     }
+    ]
+   }
+  ]
+ },
+ "claims_mean_of_runs_ms": {
+  "train.attention.vjp": {
+   "before": 104.10802425,
+   "after": 104.14684175
+  },
+  "train.attention": {
+   "before": 65.00422075,
+   "after": 66.44935050000001
+  },
+  "train.gemm.chain.nn": {
+   "before": 29.5425275,
+   "after": 27.01462925
+  },
+  "train.gemm.pair.nn": {
+   "before": 18.251130500000002,
+   "after": 14.77215575
+  },
+  "train.gemm.rest.nt": {
+   "before": 16.1112095,
+   "after": 12.41482175
+  },
+  "train.gemm.alone.nt": {
+   "before": 8.9855815,
+   "after": 6.772875
+  },
+  "train.rms.vjp.add.first": {
+   "before": 5.2857685,
+   "after": 5.460151
+  },
+  "train.loss": {
+   "before": 5.434207,
+   "after": 5.66212975
+  },
+  "train.rms": {
+   "before": 2.304181,
+   "after": 2.47059975
+  },
+  "train.swiglu.vjp": {
+   "before": 2.368629,
+   "after": 2.3951640000000003
+  },
+  "train.rope": {
+   "before": 1.78851175,
+   "after": 1.62970675
+  },
+  "train.silu_mul": {
+   "before": 1.713055,
+   "after": 1.9986115
+  },
+  "train.rope.inverse": {
+   "before": 1.633277,
+   "after": 1.68142925
+  },
+  "train.rms.vjp.first": {
+   "before": 0.703505,
+   "after": 0.725311
+  },
+  "train.add": {
+   "before": 0.705676,
+   "after": 0.754321
+  },
+  "train.update": {
+   "before": 0.48712025000000003,
+   "after": 0.48099475
+  },
+  "train.embed": {
+   "before": 0.42734925,
+   "after": 0.46407125
+  },
+  "train.scatter": {
+   "before": 0.342268,
+   "after": 0.415063
+  },
+  "train.scan": {
+   "before": 0.25593875,
+   "after": 0.33671075
+  },
+  "train.check.forward": {
+   "before": 0.000182,
+   "after": 0.000539
+  },
+  "train.check.ran": {
+   "before": 0.000214,
+   "after": 0.00037799999999999997
+  },
+  "train.check.loss": {
+   "before": 0.00021675,
+   "after": 0.0002445
+  }
+ },
+ "gemm_claims_ms": {
+  "before": 72.890449,
+  "after": 60.974481749999995,
+  "after_over_before": 0.8365222410689224
+ },
+ "one_thread": {
+  "what": "a diagnostic, not a verdict: the same reading on one thread (8 rounds a run, two runs a tree), the GEMM claims' time where the serial nest's chunks apply",
+  "runs": {
+   "before": [
+    {
+     "jobs_total_ms_median": 978.7575665,
+     "parts": [
+      {
+       "claim": "train.attention.vjp",
+       "jobs": 3,
+       "ms_median": 403.322807
+      },
+      {
+       "claim": "train.attention",
+       "jobs": 3,
+       "ms_median": 255.164449
+      },
+      {
+       "claim": "train.gemm.chain.nn",
+       "jobs": 6,
+       "ms_median": 103.8392465
+      },
+      {
+       "claim": "train.gemm.rest.nt",
+       "jobs": 6,
+       "ms_median": 59.247875
+      },
+      {
+       "claim": "train.gemm.pair.nn",
+       "jobs": 7,
+       "ms_median": 58.6842525
+      },
+      {
+       "claim": "train.gemm.alone.nt",
+       "jobs": 7,
+       "ms_median": 31.206125
+      },
+      {
+       "claim": "train.loss",
+       "jobs": 1,
+       "ms_median": 21.117119
+      },
+      {
+       "claim": "train.rms.vjp.add.first",
+       "jobs": 6,
+       "ms_median": 15.8427475
+      },
+      {
+       "claim": "train.swiglu.vjp",
+       "jobs": 3,
+       "ms_median": 7.500466
+      },
+      {
+       "claim": "train.rope.inverse",
+       "jobs": 6,
+       "ms_median": 5.4651875
+      },
+      {
+       "claim": "train.rope",
+       "jobs": 6,
+       "ms_median": 5.3154505
+      },
+      {
+       "claim": "train.silu_mul",
+       "jobs": 3,
+       "ms_median": 4.872766
+      },
+      {
+       "claim": "train.rms",
+       "jobs": 7,
+       "ms_median": 4.776564
+      },
+      {
+       "claim": "train.add",
+       "jobs": 6,
+       "ms_median": 2.175729
+      },
+      {
+       "claim": "train.rms.vjp.first",
+       "jobs": 1,
+       "ms_median": 2.101905
+      },
+      {
+       "claim": "train.update",
+       "jobs": 1,
+       "ms_median": 1.7929045
+      },
+      {
+       "claim": "train.scatter",
+       "jobs": 1,
+       "ms_median": 0.615915
+      },
+      {
+       "claim": "train.scan",
+       "jobs": 2,
+       "ms_median": 0.4955035
+      },
+      {
+       "claim": "train.embed",
+       "jobs": 1,
+       "ms_median": 0.209731
+      },
+      {
+       "claim": "train.check.forward",
+       "jobs": 1,
+       "ms_median": 0.000357
+      },
+      {
+       "claim": "train.check.ran",
+       "jobs": 1,
+       "ms_median": 0.000339
+      },
+      {
+       "claim": "train.check.loss",
+       "jobs": 1,
+       "ms_median": 0.0001785
+      }
+     ]
+    },
+    {
+     "jobs_total_ms_median": 993.1672895,
+     "parts": [
+      {
+       "claim": "train.attention.vjp",
+       "jobs": 3,
+       "ms_median": 395.3124275
+      },
+      {
+       "claim": "train.attention",
+       "jobs": 3,
+       "ms_median": 259.088552
+      },
+      {
+       "claim": "train.gemm.chain.nn",
+       "jobs": 6,
+       "ms_median": 103.946846
+      },
+      {
+       "claim": "train.gemm.rest.nt",
+       "jobs": 6,
+       "ms_median": 59.653547
+      },
+      {
+       "claim": "train.gemm.pair.nn",
+       "jobs": 7,
+       "ms_median": 57.5030735
+      },
+      {
+       "claim": "train.gemm.alone.nt",
+       "jobs": 7,
+       "ms_median": 31.7321475
+      },
+      {
+       "claim": "train.loss",
+       "jobs": 1,
+       "ms_median": 21.3688035
+      },
+      {
+       "claim": "train.rms.vjp.add.first",
+       "jobs": 6,
+       "ms_median": 14.9218345
+      },
+      {
+       "claim": "train.swiglu.vjp",
+       "jobs": 3,
+       "ms_median": 7.4369675
+      },
+      {
+       "claim": "train.silu_mul",
+       "jobs": 3,
+       "ms_median": 5.8714055
+      },
+      {
+       "claim": "train.rope.inverse",
+       "jobs": 6,
+       "ms_median": 5.3178405
+      },
+      {
+       "claim": "train.rope",
+       "jobs": 6,
+       "ms_median": 5.3044335
+      },
+      {
+       "claim": "train.rms",
+       "jobs": 7,
+       "ms_median": 4.775496
+      },
+      {
+       "claim": "train.rms.vjp.first",
+       "jobs": 1,
+       "ms_median": 2.3699345
+      },
+      {
+       "claim": "train.add",
+       "jobs": 6,
+       "ms_median": 2.249374
+      },
+      {
+       "claim": "train.update",
+       "jobs": 1,
+       "ms_median": 1.7945095
+      },
+      {
+       "claim": "train.scatter",
+       "jobs": 1,
+       "ms_median": 0.834728
+      },
+      {
+       "claim": "train.scan",
+       "jobs": 2,
+       "ms_median": 0.5566725
+      },
+      {
+       "claim": "train.embed",
+       "jobs": 1,
+       "ms_median": 0.2061325
+      },
+      {
+       "claim": "train.check.forward",
+       "jobs": 1,
+       "ms_median": 0.000436
+      },
+      {
+       "claim": "train.check.ran",
+       "jobs": 1,
+       "ms_median": 0.000379
+      },
+      {
+       "claim": "train.check.loss",
+       "jobs": 1,
+       "ms_median": 0.000248
+      }
+     ]
+    }
+   ],
+   "after": [
+    {
+     "jobs_total_ms_median": 984.096405,
+     "parts": [
+      {
+       "claim": "train.attention.vjp",
+       "jobs": 3,
+       "ms_median": 408.3533265
+      },
+      {
+       "claim": "train.attention",
+       "jobs": 3,
+       "ms_median": 260.778716
+      },
+      {
+       "claim": "train.gemm.chain.nn",
+       "jobs": 6,
+       "ms_median": 92.652605
+      },
+      {
+       "claim": "train.gemm.pair.nn",
+       "jobs": 7,
+       "ms_median": 53.2191905
+      },
+      {
+       "claim": "train.gemm.rest.nt",
+       "jobs": 6,
+       "ms_median": 50.442884
+      },
+      {
+       "claim": "train.gemm.alone.nt",
+       "jobs": 7,
+       "ms_median": 25.5912085
+      },
+      {
+       "claim": "train.loss",
+       "jobs": 1,
+       "ms_median": 22.6791835
+      },
+      {
+       "claim": "train.rms.vjp.add.first",
+       "jobs": 6,
+       "ms_median": 15.72172
+      },
+      {
+       "claim": "train.swiglu.vjp",
+       "jobs": 3,
+       "ms_median": 8.092772
+      },
+      {
+       "claim": "train.silu_mul",
+       "jobs": 3,
+       "ms_median": 6.2972475
+      },
+      {
+       "claim": "train.rope.inverse",
+       "jobs": 6,
+       "ms_median": 5.549065
+      },
+      {
+       "claim": "train.rope",
+       "jobs": 6,
+       "ms_median": 5.4275015
+      },
+      {
+       "claim": "train.rms",
+       "jobs": 7,
+       "ms_median": 5.0573085
+      },
+      {
+       "claim": "train.add",
+       "jobs": 6,
+       "ms_median": 2.626756
+      },
+      {
+       "claim": "train.rms.vjp.first",
+       "jobs": 1,
+       "ms_median": 2.357988
+      },
+      {
+       "claim": "train.update",
+       "jobs": 1,
+       "ms_median": 1.7663295
+      },
+      {
+       "claim": "train.scan",
+       "jobs": 2,
+       "ms_median": 0.7423435
+      },
+      {
+       "claim": "train.scatter",
+       "jobs": 1,
+       "ms_median": 0.6999705
+      },
+      {
+       "claim": "train.embed",
+       "jobs": 1,
+       "ms_median": 0.1922055
+      },
+      {
+       "claim": "train.check.forward",
+       "jobs": 1,
+       "ms_median": 0.0004335
+      },
+      {
+       "claim": "train.check.ran",
+       "jobs": 1,
+       "ms_median": 0.0003825
+      },
+      {
+       "claim": "train.check.loss",
+       "jobs": 1,
+       "ms_median": 0.000333
+      }
+     ]
+    },
+    {
+     "jobs_total_ms_median": 959.279348,
+     "parts": [
+      {
+       "claim": "train.attention.vjp",
+       "jobs": 3,
+       "ms_median": 405.752548
+      },
+      {
+       "claim": "train.attention",
+       "jobs": 3,
+       "ms_median": 258.385827
+      },
+      {
+       "claim": "train.gemm.chain.nn",
+       "jobs": 6,
+       "ms_median": 89.3639305
+      },
+      {
+       "claim": "train.gemm.pair.nn",
+       "jobs": 7,
+       "ms_median": 54.0234605
+      },
+      {
+       "claim": "train.gemm.rest.nt",
+       "jobs": 6,
+       "ms_median": 47.954023
+      },
+      {
+       "claim": "train.gemm.alone.nt",
+       "jobs": 7,
+       "ms_median": 25.004115
+      },
+      {
+       "claim": "train.loss",
+       "jobs": 1,
+       "ms_median": 22.759514
+      },
+      {
+       "claim": "train.rms.vjp.add.first",
+       "jobs": 6,
+       "ms_median": 15.0013135
+      },
+      {
+       "claim": "train.swiglu.vjp",
+       "jobs": 3,
+       "ms_median": 7.7069345
+      },
+      {
+       "claim": "train.silu_mul",
+       "jobs": 3,
+       "ms_median": 6.1305525
+      },
+      {
+       "claim": "train.rope",
+       "jobs": 6,
+       "ms_median": 5.517966
+      },
+      {
+       "claim": "train.rope.inverse",
+       "jobs": 6,
+       "ms_median": 5.48904
+      },
+      {
+       "claim": "train.rms",
+       "jobs": 7,
+       "ms_median": 4.664197
+      },
+      {
+       "claim": "train.rms.vjp.first",
+       "jobs": 1,
+       "ms_median": 2.4324045
+      },
+      {
+       "claim": "train.add",
+       "jobs": 6,
+       "ms_median": 2.394161
+      },
+      {
+       "claim": "train.update",
+       "jobs": 1,
+       "ms_median": 1.7644625
+      },
+      {
+       "claim": "train.scatter",
+       "jobs": 1,
+       "ms_median": 0.8994955
+      },
+      {
+       "claim": "train.scan",
+       "jobs": 2,
+       "ms_median": 0.7892745
+      },
+      {
+       "claim": "train.embed",
+       "jobs": 1,
+       "ms_median": 0.205159
+      },
+      {
+       "claim": "train.check.forward",
+       "jobs": 1,
+       "ms_median": 0.000476
+      },
+      {
+       "claim": "train.check.ran",
+       "jobs": 1,
+       "ms_median": 0.0004305
+      },
+      {
+       "claim": "train.check.loss",
+       "jobs": 1,
+       "ms_median": 0.000262
+      }
+     ]
+    }
+   ]
+  },
+  "gemm_claims_ms": {
+   "before": 252.9065565,
+   "after": 219.1257085,
+   "after_over_before": 0.8664295284887168
+  }
+ }
+}

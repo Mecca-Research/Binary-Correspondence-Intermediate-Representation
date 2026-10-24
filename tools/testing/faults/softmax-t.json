@@ -1,0 +1,123 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM1 the exponential's k rounded toward zero (another reduction)",
+      "new": "      _MM_FROUND_TO_ZERO|_MM_FROUND_NO_EXC);\n  for (l=0;l<n;l++) r[l]=",
+      "old": "      _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC);\n  for (l=0;l<n;l++) r[l]=",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM2 2^k as a float first, then the product (2^-150 rounds to zero before it scales)",
+      "new": "    __m512 x=v[l],y=_mm512_mul_ps(p[l],_mm512_scalef_ps(_mm512_set1_ps(1.0f),kf[l]));\n",
+      "old": "    __m512 x=v[l],y=_mm512_scalef_ps(p[l],kf[l]);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM3 the low clamp at -103 (the last subnormal results computed from the wrong argument)",
+      "new": "  for (l=0;l<n;l++) xc[l]=_mm512_min_ps(_mm512_max_ps(v[l],_mm512_set1_ps(-103.0f)),_mm512_set1_ps(89.0f));\n",
+      "old": "  for (l=0;l<n;l++) xc[l]=_mm512_min_ps(_mm512_max_ps(v[l],_mm512_set1_ps(-104.0f)),_mm512_set1_ps(89.0f));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM4 ln(FLT_MAX) itself taken as overflow (>= for >)",
+      "new": "88.72283172607421875f),_CMP_GE_OQ),",
+      "old": "88.72283172607421875f),_CMP_GT_OQ),",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM5 a NaN argument returns the clamp's exponential (the NaN select dropped)",
+      "new": "    v[l]=y;\n",
+      "old": "    v[l]=_mm512_mask_mov_ps(x,_mm512_cmp_ps_mask(x,x,_CMP_EQ_OQ),y);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM6 a NaN argument returns the default NaN, its sign and payload lost",
+      "new": "    v[l]=_mm512_mask_mov_ps(_mm512_set1_ps(NAN),_mm512_cmp_ps_mask(x,x,_CMP_EQ_OQ),y);\n",
+      "old": "    v[l]=_mm512_mask_mov_ps(x,_mm512_cmp_ps_mask(x,x,_CMP_EQ_OQ),y);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM7 the tail's mask one lane short (its first element never written)",
+      "new": "BCIR_MM_INLINE __mmask16 ew_tail(size_t left) { return (__mmask16)((1u<<left)-2u); }\n",
+      "old": "BCIR_MM_INLINE __mmask16 ew_tail(size_t left) { return (__mmask16)((1u<<left)-1u); }\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM8 an output overlapping its input by part of a vector runs the vectors (not the element loop's order)",
+      "new": "  if (1) {\n    for (;i+64<=n;i+=64) {\n      __m512 v[4];\n",
+      "old": "  if (ew_safe(y,x,n)) {\n    for (;i+64<=n;i+=64) {\n      __m512 v[4];\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM9 the sigmoid's exponential of |x| for x > 0 (the half selected on the wrong side)",
+      "new": "      _mm512_cmp_ps_mask(x[l],z,_CMP_GT_OQ),x[l]);\n",
+      "old": "      _mm512_cmp_ps_mask(x[l],z,_CMP_LT_OQ),x[l]);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM10 the SwiGLU VJP's dg multiplied in another order (dy*(u*(...)))",
+      "new": "    dg[l]=_mm512_mul_ps(dy[l],_mm512_mul_ps(u[l],\n        _mm512_add_ps(s[l],_mm512_mul_ps(_mm512_mul_ps(g[l],s[l]),_mm512_sub_ps(one,s[l])))));\n",
+      "old": "    dg[l]=_mm512_mul_ps(_mm512_mul_ps(dy[l],u[l]),\n        _mm512_add_ps(s[l],_mm512_mul_ps(_mm512_mul_ps(g[l],s[l]),_mm512_sub_ps(one,s[l]))));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM11 the lanes softmax subtracts the scaled maximum before it scales (another rounding)",
+      "new": "    for (l=0;l<4;l++) v[l]=_mm512_mul_ps(_mm512_sub_ps(_mm512_loadu_ps(b+l*16),mx),sc);\n",
+      "old": "    for (l=0;l<4;l++) v[l]=_mm512_sub_ps(_mm512_mul_ps(_mm512_loadu_ps(b+l*16),sc),mx);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM12 rows 8-15 never divide key R+8 (the second pass's first key)",
+      "new": "      size_t dlo=c0 ? (size_t)-1 : rb ? R+9 : 0;\n",
+      "old": "      size_t dlo=c0 ? (size_t)-1 : rb ? R+8 : 0;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM13 a later channel pass divides again (heads past 48 channels)",
+      "new": "      size_t dlo=rb ? R+8 : 0;\n",
+      "old": "      size_t dlo=c0 ? (size_t)-1 : rb ? R+8 : 0;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM14 the diagonal keys never divided (the context reads their exponentials)",
+      "new": "",
+      "old": "    if (i0+dj>=dlo) att512_tdiv(R,i0+dj,sg,sm);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM15 the stored forward's one-pass block skips the maximum (exp of the scaled score)",
+      "new": "      for (l=0;l<4;l++) v[l]=_mm512_mul_ps(_mm512_load_ps(blk+(c+l)*16),sc);\n      (void)mx;\n",
+      "old": "      for (l=0;l<4;l++) v[l]=_mm512_sub_ps(_mm512_mul_ps(_mm512_load_ps(blk+(c+l)*16),sc),mx);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "SM16 the lanes softmax sums its four columns last to first (another order of the row's sum)",
+      "new": "    for (l=4;l-->0;) {  /* the columns in order */\n",
+      "old": "    for (l=0;l<4;l++) {  /* the columns in order */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

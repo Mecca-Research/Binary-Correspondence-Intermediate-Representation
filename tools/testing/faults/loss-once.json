@@ -1,0 +1,60 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "LO1 the tail's sum starts one logit late (the first re-evaluated exponential of a row past the buffer is never added)",
+      "new": "    for (j++;j<v;j++) sum+=exp((double)row[j]-maxv);\n",
+      "old": "    for (;j<v;j++) sum+=exp((double)row[j]-maxv);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "LO2 the kept exponentials are binary32 (each rounded once more before the sum and its adjoint read it)",
+      "new": "  float e[BCIR_DT_LOSS_ONCE];\n",
+      "old": "  double e[BCIR_DT_LOSS_ONCE];\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "LO3 the kept adjoints drop the target's one (the target's adjoint is its probability alone)",
+      "new": "    for (j=0;j<kept;j++) d[j]=(float)((e[j]/sum)/(double)jb->n);\n",
+      "old": "    for (j=0;j<kept;j++) d[j]=(float)((e[j]/sum-(j==t ? 1.0 : 0.0))/(double)jb->n);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "LO4 the tail's adjoints drop the target's one (a target past the buffer keeps its probability alone)",
+      "new": "    for (;j<v;j++) d[j]=(float)((exp((double)row[j]-maxv)/sum)/(double)jb->n);\n",
+      "old": "    for (;j<v;j++) d[j]=(float)((exp((double)row[j]-maxv)/sum-(j==t ? 1.0 : 0.0))/(double)jb->n);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "LO5 the kept exponentials take the binary32 difference (the logit less the maximum rounded to a float before exp)",
+      "new": "    for (j=0;j<kept;j++) { e[j]=exp((double)(row[j]-maxv)); sum+=e[j]; }\n",
+      "old": "    for (j=0;j<kept;j++) { e[j]=exp((double)row[j]-maxv); sum+=e[j]; }\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "LO6 every row keeps the buffer's whole length (a row narrower than it sums and writes its neighbours' logits)",
+      "new": "kept=BCIR_DT_LOSS_ONCE;\n",
+      "old": "kept=v<BCIR_DT_LOSS_ONCE ? v : BCIR_DT_LOSS_ONCE;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "LO7 the tail's adjoints exponentiate the logit without the row's maximum",
+      "new": "    for (;j<v;j++) d[j]=(float)((exp((double)row[j])/sum-(j==t ? 1.0 : 0.0))/(double)jb->n);\n",
+      "old": "    for (;j<v;j++) d[j]=(float)((exp((double)row[j]-maxv)/sum-(j==t ? 1.0 : 0.0))/(double)jb->n);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    }
+  ]
+}

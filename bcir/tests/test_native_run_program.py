@@ -30,6 +30,8 @@ from bcir.hosted.models.native_launch import (
     LOSS,
     PROGRAM_KIND_NAMES,
     RECORD_WORDS,
+    ROPE,
+    ROPE_TABLE,
     SCAN,
     UPDATE,
     _layout,
@@ -178,6 +180,7 @@ def _v1_refusals(records, n, activations, tmp_offset):
     chain = next(i for i in range(len(records))
                  if records[i][0] == GEMM and records[i][2] & 15 == 5 and (records[i][2] >> 4) & 15 == 1)  # fmt: skip
     loss, update = _at(records, LOSS), _at(records, UPDATE)
+    rope, table = _at(records, ROPE), _at(records, ROPE_TABLE)
     checks = [i for i, r in enumerate(records) if r[0] == CHECK and r[2] == CHECK_LOSS]
 
     def put(i, word, value):
@@ -224,7 +227,7 @@ def _v1_refusals(records, n, activations, tmp_offset):
     y = _slot(2)
     past = activations - records[rms][y + 2] + 4
     return [
-        ("a kind no record has", put(rms, 0, 24)),
+        ("a kind no record has", put(rms, 0, ROPE_TABLE + 1)),
         ("a kind a trace alone holds", put(rms, 0, 17)),
         ("a spare word set", put(rms, _W - 1, 1)),
         ("a dimension the kind leaves unused", put(rms, 3 + 5, 1)),
@@ -267,6 +270,29 @@ def _v1_refusals(records, n, activations, tmp_offset):
             ),
         ),
         ("an RMSNorm of another eps", bump(rms, 5, 1)),
+        # ROPE-TABLE: a rotation reads its table, time x head-dim floats; the fill writes it
+        ("a rotation without its table", ops(*(put(rope, _slot(1) + k, 0) for k in range(3)))),
+        ("a rotation's table of another time", bump(rope, _slot(1) + 2, -4 * records[rope][6])),
+        (
+            "a rotation's table inside the x it writes",  # the table's size, at x's place
+            ops(
+                put(rope, _slot(1), records[rope][_slot(0)]),
+                put(rope, _slot(1) + 1, records[rope][_slot(0) + 1]),
+            ),
+        ),
+        (
+            "a table fill of an odd width",  # its size the dims', inside the arena
+            ops(
+                bump(table, 4, 1),
+                bump(table, _slot(0) + 2, 4 * records[table][3]),
+                bump(table, _slot(0) + 1, -4 * records[table][3]),
+            ),
+        ),
+        (
+            "a table fill into the weights",
+            ops(put(table, _slot(0), 1), put(table, _slot(0) + 1, 0)),
+        ),
+        ("a table fill with a dimension it leaves unused", put(table, 3 + 2, 1)),
         ("the tokens at an offset", put(_at(records, 3), _slot(0) + 1, 4)),
         ("the weights read before they are known", drop(_at(records, SCAN))),
         ("a micro-batch without its loss", drop(loss)),
@@ -490,13 +516,19 @@ def test_a_failing_run_stops_where_the_step_stops():
 
 def test_the_record_format_is_the_headers():
     """The record kinds, the check's tests and the record's words the launch model spells are
-    the header's (bcir_decoder_train.h), read from its text: two rails out of their own sources."""
+    the header's (bcir_decoder_train.h), read from its text: two rails out of their own sources --
+    PX-3b's two dispatch words among them."""
     header = _C / "bcir_decoder_train.h"
     if not header.is_file():
         return  # an installed package ships no C units: the one absence that is expected
     text = header.read_text(encoding="utf-8")
     words = re.search(r"#define BCIR_DT_RECORD_WORDS (\d+)", text)
     assert words and int(words.group(1)) == RECORD_WORDS
+    from bcir.hosted.models.native_launch import WORD_INSTANCE, WORD_WORKERS
+
+    dispatch = dict(re.findall(r"#define BCIR_DT_WORD_(INSTANCE|WORKERS) (\d+)", text))
+    assert {k: int(v) for k, v in dispatch.items()} == {
+        "INSTANCE": WORD_INSTANCE, "WORKERS": WORD_WORKERS}  # fmt: skip
     enum = re.search(r"enum \{ (BCIR_DT_REC_SCAN=1,[^}]*)\}", text, re.S)
     assert enum, "the header names no record kinds"
     names = [name.split("=")[0].strip() for name in enum.group(1).split(",") if name.strip()]

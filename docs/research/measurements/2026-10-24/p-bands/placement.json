@@ -1,0 +1,1836 @@
+{
+ "what": "BWD-NEXT's placement on the tree after's unit (run_place.sh): membw.c -- read and copy bandwidth over a buffer of N MiB, each thread its own slice, the best of five (copy and copy-nt count the read and the write); tr_place.c -- the unit's own transposed product dV = P^T dY (att512_transposed, d = 32) and context product (att512_context) over one head's T2048 x T2048 P, the unit #included so its static kernels run as the backward runs them, and variant_tr.py's copies of it (BCIR_ATT_BAND 16 or 32 rows, a prefetch of P's lines PFD floats ahead with hint T0/T1/T2: b32p128T1 = band 32, 128 floats, T1); band_place.c -- the same products with P in 16-row bands: its own btr and bctx (the unit's register blocks and term order reading P through the band address), 'bp' the unit's att512_btransposed, and btr after every line of P written again (rewrite1) or the bands' lower parts (rewrite2); every result's bits checked against the unit's row walk on buffer 0 (tr_place prints a check sum); P resident (1 buffer, reused) or 16 buffers of 16 MiB in turn (256 MiB: the DRAM rate of membw's curve); TSC cycles a probability, the median of the calls; eight interleaved passes, one process a configuration; v1's rate 1.443",
+ "membw": [
+  {
+   "mode": "read",
+   "mib": 1,
+   "threads": 1,
+   "gb_s": 63.1
+  },
+  {
+   "mode": "copy",
+   "mib": 1,
+   "threads": 1,
+   "gb_s": 51.5
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 1,
+   "threads": 1,
+   "gb_s": 41.1
+  },
+  {
+   "mode": "read",
+   "mib": 2,
+   "threads": 1,
+   "gb_s": 24.0
+  },
+  {
+   "mode": "copy",
+   "mib": 2,
+   "threads": 1,
+   "gb_s": 38.2
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 2,
+   "threads": 1,
+   "gb_s": 34.4
+  },
+  {
+   "mode": "read",
+   "mib": 4,
+   "threads": 1,
+   "gb_s": 23.0
+  },
+  {
+   "mode": "copy",
+   "mib": 4,
+   "threads": 1,
+   "gb_s": 28.2
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 4,
+   "threads": 1,
+   "gb_s": 29.0
+  },
+  {
+   "mode": "read",
+   "mib": 8,
+   "threads": 1,
+   "gb_s": 23.8
+  },
+  {
+   "mode": "copy",
+   "mib": 8,
+   "threads": 1,
+   "gb_s": 19.3
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 8,
+   "threads": 1,
+   "gb_s": 27.9
+  },
+  {
+   "mode": "read",
+   "mib": 16,
+   "threads": 1,
+   "gb_s": 18.7
+  },
+  {
+   "mode": "copy",
+   "mib": 16,
+   "threads": 1,
+   "gb_s": 21.7
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 16,
+   "threads": 1,
+   "gb_s": 26.0
+  },
+  {
+   "mode": "read",
+   "mib": 32,
+   "threads": 1,
+   "gb_s": 19.4
+  },
+  {
+   "mode": "copy",
+   "mib": 32,
+   "threads": 1,
+   "gb_s": 19.6
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 32,
+   "threads": 1,
+   "gb_s": 25.7
+  },
+  {
+   "mode": "read",
+   "mib": 48,
+   "threads": 1,
+   "gb_s": 22.4
+  },
+  {
+   "mode": "copy",
+   "mib": 48,
+   "threads": 1,
+   "gb_s": 19.8
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 48,
+   "threads": 1,
+   "gb_s": 26.3
+  },
+  {
+   "mode": "read",
+   "mib": 64,
+   "threads": 1,
+   "gb_s": 17.1
+  },
+  {
+   "mode": "copy",
+   "mib": 64,
+   "threads": 1,
+   "gb_s": 16.7
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 64,
+   "threads": 1,
+   "gb_s": 25.0
+  },
+  {
+   "mode": "read",
+   "mib": 128,
+   "threads": 1,
+   "gb_s": 16.6
+  },
+  {
+   "mode": "copy",
+   "mib": 128,
+   "threads": 1,
+   "gb_s": 14.4
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 128,
+   "threads": 1,
+   "gb_s": 21.3
+  },
+  {
+   "mode": "read",
+   "mib": 256,
+   "threads": 1,
+   "gb_s": 14.8
+  },
+  {
+   "mode": "copy",
+   "mib": 256,
+   "threads": 1,
+   "gb_s": 21.8
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 256,
+   "threads": 1,
+   "gb_s": 19.3
+  },
+  {
+   "mode": "read",
+   "mib": 1024,
+   "threads": 1,
+   "gb_s": 15.8
+  },
+  {
+   "mode": "copy",
+   "mib": 1024,
+   "threads": 1,
+   "gb_s": 22.7
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 1024,
+   "threads": 1,
+   "gb_s": 17.8
+  },
+  {
+   "mode": "read",
+   "mib": 1,
+   "threads": 4,
+   "gb_s": 66.2
+  },
+  {
+   "mode": "copy",
+   "mib": 1,
+   "threads": 4,
+   "gb_s": 76.0
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 1,
+   "threads": 4,
+   "gb_s": 82.8
+  },
+  {
+   "mode": "read",
+   "mib": 2,
+   "threads": 4,
+   "gb_s": 107.9
+  },
+  {
+   "mode": "copy",
+   "mib": 2,
+   "threads": 4,
+   "gb_s": 100.8
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 2,
+   "threads": 4,
+   "gb_s": 99.3
+  },
+  {
+   "mode": "read",
+   "mib": 4,
+   "threads": 4,
+   "gb_s": 62.8
+  },
+  {
+   "mode": "copy",
+   "mib": 4,
+   "threads": 4,
+   "gb_s": 102.4
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 4,
+   "threads": 4,
+   "gb_s": 105.1
+  },
+  {
+   "mode": "read",
+   "mib": 8,
+   "threads": 4,
+   "gb_s": 91.4
+  },
+  {
+   "mode": "copy",
+   "mib": 8,
+   "threads": 4,
+   "gb_s": 84.3
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 8,
+   "threads": 4,
+   "gb_s": 91.7
+  },
+  {
+   "mode": "read",
+   "mib": 16,
+   "threads": 4,
+   "gb_s": 69.3
+  },
+  {
+   "mode": "copy",
+   "mib": 16,
+   "threads": 4,
+   "gb_s": 89.7
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 16,
+   "threads": 4,
+   "gb_s": 98.3
+  },
+  {
+   "mode": "read",
+   "mib": 32,
+   "threads": 4,
+   "gb_s": 65.5
+  },
+  {
+   "mode": "copy",
+   "mib": 32,
+   "threads": 4,
+   "gb_s": 82.7
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 32,
+   "threads": 4,
+   "gb_s": 98.8
+  },
+  {
+   "mode": "read",
+   "mib": 48,
+   "threads": 4,
+   "gb_s": 66.1
+  },
+  {
+   "mode": "copy",
+   "mib": 48,
+   "threads": 4,
+   "gb_s": 66.4
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 48,
+   "threads": 4,
+   "gb_s": 100.4
+  },
+  {
+   "mode": "read",
+   "mib": 64,
+   "threads": 4,
+   "gb_s": 64.0
+  },
+  {
+   "mode": "copy",
+   "mib": 64,
+   "threads": 4,
+   "gb_s": 71.0
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 64,
+   "threads": 4,
+   "gb_s": 96.7
+  },
+  {
+   "mode": "read",
+   "mib": 128,
+   "threads": 4,
+   "gb_s": 56.7
+  },
+  {
+   "mode": "copy",
+   "mib": 128,
+   "threads": 4,
+   "gb_s": 68.5
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 128,
+   "threads": 4,
+   "gb_s": 99.0
+  },
+  {
+   "mode": "read",
+   "mib": 256,
+   "threads": 4,
+   "gb_s": 55.0
+  },
+  {
+   "mode": "copy",
+   "mib": 256,
+   "threads": 4,
+   "gb_s": 52.3
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 256,
+   "threads": 4,
+   "gb_s": 72.4
+  },
+  {
+   "mode": "read",
+   "mib": 1024,
+   "threads": 4,
+   "gb_s": 52.9
+  },
+  {
+   "mode": "copy",
+   "mib": 1024,
+   "threads": 4,
+   "gb_s": 82.0
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 1024,
+   "threads": 4,
+   "gb_s": 65.6
+  }
+ ],
+ "membw_note": "membw.c as committed, run after run_place.sh for th in 1 4 and N in 1 2 4 8 16 32 48 64 128 256 1024 MiB, best of 5 (`membw N TH 5`): each worker times its own pass and a rep is the latest end less the earliest start. run_place.sh's own pass used the first membw.c, which read the clock in the waiting thread after the barrier; with five threads on four cores that thread was descheduled behind the workers and timed too short an interval -- its four-thread rows read up to 3.9 TB/s -- so that pass is kept below, discarded",
+ "membw_first_run_discarded": [
+  {
+   "mode": "read",
+   "mib": 1,
+   "threads": 1,
+   "gb_s": 50.6
+  },
+  {
+   "mode": "copy",
+   "mib": 1,
+   "threads": 1,
+   "gb_s": 28.9
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 1,
+   "threads": 1,
+   "gb_s": 32.8
+  },
+  {
+   "mode": "read",
+   "mib": 2,
+   "threads": 1,
+   "gb_s": 34.7
+  },
+  {
+   "mode": "copy",
+   "mib": 2,
+   "threads": 1,
+   "gb_s": 30.5
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 2,
+   "threads": 1,
+   "gb_s": 31.6
+  },
+  {
+   "mode": "read",
+   "mib": 4,
+   "threads": 1,
+   "gb_s": 20.8
+  },
+  {
+   "mode": "copy",
+   "mib": 4,
+   "threads": 1,
+   "gb_s": 24.1
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 4,
+   "threads": 1,
+   "gb_s": 27.9
+  },
+  {
+   "mode": "read",
+   "mib": 8,
+   "threads": 1,
+   "gb_s": 24.0
+  },
+  {
+   "mode": "copy",
+   "mib": 8,
+   "threads": 1,
+   "gb_s": 23.0
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 8,
+   "threads": 1,
+   "gb_s": 27.2
+  },
+  {
+   "mode": "read",
+   "mib": 16,
+   "threads": 1,
+   "gb_s": 17.8
+  },
+  {
+   "mode": "copy",
+   "mib": 16,
+   "threads": 1,
+   "gb_s": 22.0
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 16,
+   "threads": 1,
+   "gb_s": 25.0
+  },
+  {
+   "mode": "read",
+   "mib": 32,
+   "threads": 1,
+   "gb_s": 24.0
+  },
+  {
+   "mode": "copy",
+   "mib": 32,
+   "threads": 1,
+   "gb_s": 23.2
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 32,
+   "threads": 1,
+   "gb_s": 25.7
+  },
+  {
+   "mode": "read",
+   "mib": 48,
+   "threads": 1,
+   "gb_s": 15.8
+  },
+  {
+   "mode": "copy",
+   "mib": 48,
+   "threads": 1,
+   "gb_s": 16.7
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 48,
+   "threads": 1,
+   "gb_s": 24.4
+  },
+  {
+   "mode": "read",
+   "mib": 64,
+   "threads": 1,
+   "gb_s": 15.0
+  },
+  {
+   "mode": "copy",
+   "mib": 64,
+   "threads": 1,
+   "gb_s": 14.8
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 64,
+   "threads": 1,
+   "gb_s": 22.6
+  },
+  {
+   "mode": "read",
+   "mib": 128,
+   "threads": 1,
+   "gb_s": 14.7
+  },
+  {
+   "mode": "copy",
+   "mib": 128,
+   "threads": 1,
+   "gb_s": 14.4
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 128,
+   "threads": 1,
+   "gb_s": 20.4
+  },
+  {
+   "mode": "read",
+   "mib": 256,
+   "threads": 1,
+   "gb_s": 13.3
+  },
+  {
+   "mode": "copy",
+   "mib": 256,
+   "threads": 1,
+   "gb_s": 20.4
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 256,
+   "threads": 1,
+   "gb_s": 18.6
+  },
+  {
+   "mode": "read",
+   "mib": 1024,
+   "threads": 1,
+   "gb_s": 14.3
+  },
+  {
+   "mode": "copy",
+   "mib": 1024,
+   "threads": 1,
+   "gb_s": 20.2
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 1024,
+   "threads": 1,
+   "gb_s": 18.2
+  },
+  {
+   "mode": "read",
+   "mib": 1,
+   "threads": 4,
+   "gb_s": 34.9
+  },
+  {
+   "mode": "copy",
+   "mib": 1,
+   "threads": 4,
+   "gb_s": 72.2
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 1,
+   "threads": 4,
+   "gb_s": 72.1
+  },
+  {
+   "mode": "read",
+   "mib": 2,
+   "threads": 4,
+   "gb_s": 68.7
+  },
+  {
+   "mode": "copy",
+   "mib": 2,
+   "threads": 4,
+   "gb_s": 190.1
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 2,
+   "threads": 4,
+   "gb_s": 114.9
+  },
+  {
+   "mode": "read",
+   "mib": 4,
+   "threads": 4,
+   "gb_s": 79.4
+  },
+  {
+   "mode": "copy",
+   "mib": 4,
+   "threads": 4,
+   "gb_s": 187.0
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 4,
+   "threads": 4,
+   "gb_s": 249.5
+  },
+  {
+   "mode": "read",
+   "mib": 8,
+   "threads": 4,
+   "gb_s": 368.5
+  },
+  {
+   "mode": "copy",
+   "mib": 8,
+   "threads": 4,
+   "gb_s": 682.0
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 8,
+   "threads": 4,
+   "gb_s": 561.0
+  },
+  {
+   "mode": "read",
+   "mib": 16,
+   "threads": 4,
+   "gb_s": 143.3
+  },
+  {
+   "mode": "copy",
+   "mib": 16,
+   "threads": 4,
+   "gb_s": 1009.2
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 16,
+   "threads": 4,
+   "gb_s": 907.8
+  },
+  {
+   "mode": "read",
+   "mib": 32,
+   "threads": 4,
+   "gb_s": 1061.7
+  },
+  {
+   "mode": "copy",
+   "mib": 32,
+   "threads": 4,
+   "gb_s": 1925.8
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 32,
+   "threads": 4,
+   "gb_s": 1185.4
+  },
+  {
+   "mode": "read",
+   "mib": 48,
+   "threads": 4,
+   "gb_s": 88.5
+  },
+  {
+   "mode": "copy",
+   "mib": 48,
+   "threads": 4,
+   "gb_s": 2750.4
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 48,
+   "threads": 4,
+   "gb_s": 2427.8
+  },
+  {
+   "mode": "read",
+   "mib": 64,
+   "threads": 4,
+   "gb_s": 1686.6
+  },
+  {
+   "mode": "copy",
+   "mib": 64,
+   "threads": 4,
+   "gb_s": 3928.3
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 64,
+   "threads": 4,
+   "gb_s": 3866.7
+  },
+  {
+   "mode": "read",
+   "mib": 128,
+   "threads": 4,
+   "gb_s": 425.2
+  },
+  {
+   "mode": "copy",
+   "mib": 128,
+   "threads": 4,
+   "gb_s": 58.7
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 128,
+   "threads": 4,
+   "gb_s": 103.0
+  },
+  {
+   "mode": "read",
+   "mib": 256,
+   "threads": 4,
+   "gb_s": 176.6
+  },
+  {
+   "mode": "copy",
+   "mib": 256,
+   "threads": 4,
+   "gb_s": 100.1
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 256,
+   "threads": 4,
+   "gb_s": 207.1
+  },
+  {
+   "mode": "read",
+   "mib": 1024,
+   "threads": 4,
+   "gb_s": 58.9
+  },
+  {
+   "mode": "copy",
+   "mib": 1024,
+   "threads": 4,
+   "gb_s": 74.2
+  },
+  {
+   "mode": "copy-nt",
+   "mib": 1024,
+   "threads": 4,
+   "gb_s": 72.6
+  }
+ ],
+ "rows": [
+  {
+   "walk": "row walk base",
+   "product": "tr",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.7765,
+   "min_of_medians": 1.738,
+   "max_of_medians": 1.829,
+   "medians": [
+    1.819,
+    1.739,
+    1.829,
+    1.786,
+    1.738,
+    1.767,
+    1.761,
+    1.808
+   ],
+   "mins": [
+    1.747,
+    1.662,
+    1.735,
+    1.669,
+    1.618,
+    1.703,
+    1.702,
+    1.715
+   ],
+   "checks": [
+    "2148385.69"
+   ]
+  },
+  {
+   "walk": "row walk b16p0T0",
+   "product": "tr",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.7734999999999999,
+   "min_of_medians": 1.731,
+   "max_of_medians": 2.589,
+   "medians": [
+    1.77,
+    1.754,
+    2.411,
+    1.87,
+    1.74,
+    1.731,
+    1.777,
+    2.589
+   ],
+   "mins": [
+    1.691,
+    1.746,
+    2.335,
+    1.701,
+    1.689,
+    1.689,
+    1.698,
+    2.522
+   ],
+   "checks": [
+    "2148385.69"
+   ]
+  },
+  {
+   "walk": "row walk b32p32T1",
+   "product": "tr",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.7425,
+   "min_of_medians": 1.697,
+   "max_of_medians": 1.825,
+   "medians": [
+    1.764,
+    1.709,
+    1.71,
+    1.751,
+    1.697,
+    1.825,
+    1.734,
+    1.764
+   ],
+   "mins": [
+    1.706,
+    1.633,
+    1.646,
+    1.67,
+    1.643,
+    1.674,
+    1.668,
+    1.677
+   ],
+   "checks": [
+    "2148385.69"
+   ]
+  },
+  {
+   "walk": "row walk b32p128T0",
+   "product": "tr",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.7934999999999999,
+   "min_of_medians": 1.75,
+   "max_of_medians": 2.526,
+   "medians": [
+    1.93,
+    1.75,
+    1.801,
+    1.823,
+    1.772,
+    1.786,
+    1.773,
+    2.526
+   ],
+   "mins": [
+    1.842,
+    1.683,
+    1.761,
+    1.684,
+    1.698,
+    1.666,
+    1.681,
+    2.417
+   ],
+   "checks": [
+    "2148385.69"
+   ]
+  },
+  {
+   "walk": "row walk b32p128T1",
+   "product": "tr",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.7375,
+   "min_of_medians": 1.685,
+   "max_of_medians": 1.837,
+   "medians": [
+    1.805,
+    1.694,
+    1.837,
+    1.685,
+    1.736,
+    1.706,
+    1.739,
+    1.762
+   ],
+   "mins": [
+    1.716,
+    1.652,
+    1.734,
+    1.595,
+    1.698,
+    1.665,
+    1.709,
+    1.697
+   ],
+   "checks": [
+    "2148385.69"
+   ]
+  },
+  {
+   "walk": "row walk b32p128T2",
+   "product": "tr",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.77,
+   "min_of_medians": 1.738,
+   "max_of_medians": 2.691,
+   "medians": [
+    1.767,
+    1.769,
+    1.853,
+    1.771,
+    2.691,
+    1.738,
+    1.738,
+    2.567
+   ],
+   "mins": [
+    1.746,
+    1.675,
+    1.733,
+    1.679,
+    2.517,
+    1.669,
+    1.688,
+    2.309
+   ],
+   "checks": [
+    "2148385.69"
+   ]
+  },
+  {
+   "walk": "row walk b32p256T1",
+   "product": "tr",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.8559999999999999,
+   "min_of_medians": 1.814,
+   "max_of_medians": 2.795,
+   "medians": [
+    2.795,
+    1.869,
+    1.982,
+    1.827,
+    1.843,
+    1.817,
+    1.814,
+    1.905
+   ],
+   "mins": [
+    2.483,
+    1.794,
+    1.877,
+    1.73,
+    1.751,
+    1.738,
+    1.727,
+    1.851
+   ],
+   "checks": [
+    "2148385.69"
+   ]
+  },
+  {
+   "walk": "row walk base",
+   "product": "ctx",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.529,
+   "min_of_medians": 1.506,
+   "max_of_medians": 1.674,
+   "medians": [
+    1.531,
+    1.674,
+    1.638,
+    1.538,
+    1.527,
+    1.512,
+    1.506,
+    1.52
+   ],
+   "mins": [
+    1.489,
+    1.454,
+    1.536,
+    1.48,
+    1.465,
+    1.469,
+    1.446,
+    1.477
+   ],
+   "checks": [
+    "2147595.72"
+   ]
+  },
+  {
+   "walk": "bandp tr band 32",
+   "product": "tr",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.7565,
+   "min_of_medians": 1.697,
+   "max_of_medians": 1.834,
+   "medians": [
+    1.834,
+    1.745,
+    1.768,
+    1.788,
+    1.712,
+    1.775,
+    1.697,
+    1.735
+   ],
+   "mins": [
+    1.746,
+    1.724,
+    1.651,
+    1.733,
+    1.622,
+    1.683,
+    1.632,
+    1.651
+   ]
+  },
+  {
+   "walk": "bandp btr band 32",
+   "product": "btr",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.5045000000000002,
+   "min_of_medians": 1.474,
+   "max_of_medians": 2.815,
+   "medians": [
+    1.511,
+    2.815,
+    1.638,
+    1.499,
+    1.478,
+    1.474,
+    1.51,
+    1.497
+   ],
+   "mins": [
+    1.464,
+    1.458,
+    1.555,
+    1.441,
+    1.443,
+    1.432,
+    1.46,
+    1.454
+   ]
+  },
+  {
+   "walk": "bandp bp band 32",
+   "product": "bp",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.619,
+   "min_of_medians": 1.488,
+   "max_of_medians": 1.96,
+   "medians": [
+    1.642,
+    1.96,
+    1.803,
+    1.591,
+    1.488,
+    1.581,
+    1.61,
+    1.628
+   ],
+   "mins": [
+    1.548,
+    1.853,
+    1.58,
+    1.515,
+    1.441,
+    1.54,
+    1.555,
+    1.541
+   ]
+  },
+  {
+   "walk": "bandp ctx band 32",
+   "product": "ctx",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.513,
+   "min_of_medians": 1.465,
+   "max_of_medians": 1.526,
+   "medians": [
+    1.526,
+    1.524,
+    1.521,
+    1.512,
+    1.508,
+    1.509,
+    1.465,
+    1.514
+   ],
+   "mins": [
+    1.482,
+    1.48,
+    1.489,
+    1.462,
+    1.464,
+    1.465,
+    1.418,
+    1.471
+   ]
+  },
+  {
+   "walk": "bandp bctx band 32",
+   "product": "bctx",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.4615,
+   "min_of_medians": 1.382,
+   "max_of_medians": 1.853,
+   "medians": [
+    1.473,
+    1.853,
+    1.614,
+    1.507,
+    1.382,
+    1.415,
+    1.423,
+    1.45
+   ],
+   "mins": [
+    1.401,
+    1.74,
+    1.502,
+    1.429,
+    1.341,
+    1.34,
+    1.378,
+    1.407
+   ]
+  },
+  {
+   "walk": "bandp btr band 16",
+   "product": "btr",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.5285,
+   "min_of_medians": 1.484,
+   "max_of_medians": 1.557,
+   "medians": [
+    1.535,
+    1.484,
+    1.557,
+    1.514,
+    1.53,
+    1.542,
+    1.494,
+    1.527
+   ],
+   "mins": [
+    1.485,
+    1.446,
+    1.51,
+    1.47,
+    1.487,
+    1.494,
+    1.456,
+    1.484
+   ]
+  },
+  {
+   "walk": "bandp btr band 64",
+   "product": "btr",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.4615,
+   "min_of_medians": 1.442,
+   "max_of_medians": 1.513,
+   "medians": [
+    1.478,
+    1.463,
+    1.513,
+    1.46,
+    1.442,
+    1.458,
+    1.444,
+    1.467
+   ],
+   "mins": [
+    1.403,
+    1.402,
+    1.417,
+    1.409,
+    1.399,
+    1.408,
+    1.404,
+    1.384
+   ]
+  },
+  {
+   "walk": "bandp-rewrite1 btr band 32",
+   "product": "btr",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.5114999999999998,
+   "min_of_medians": 1.485,
+   "max_of_medians": 1.787,
+   "medians": [
+    1.504,
+    1.787,
+    1.519,
+    1.521,
+    1.526,
+    1.485,
+    1.503,
+    1.502
+   ],
+   "mins": [
+    1.443,
+    1.577,
+    1.457,
+    1.444,
+    1.44,
+    1.441,
+    1.446,
+    1.444
+   ]
+  },
+  {
+   "walk": "bandp-rewrite2 btr band 32",
+   "product": "btr",
+   "buffers": 1,
+   "passes": 8,
+   "median_of_medians": 1.4985,
+   "min_of_medians": 1.452,
+   "max_of_medians": 1.575,
+   "medians": [
+    1.485,
+    1.452,
+    1.53,
+    1.492,
+    1.511,
+    1.496,
+    1.575,
+    1.501
+   ],
+   "mins": [
+    1.407,
+    1.389,
+    1.458,
+    1.347,
+    1.447,
+    1.426,
+    1.459,
+    1.451
+   ]
+  },
+  {
+   "walk": "row walk base",
+   "product": "tr",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 2.1665,
+   "min_of_medians": 2.076,
+   "max_of_medians": 2.396,
+   "medians": [
+    2.328,
+    2.076,
+    2.124,
+    2.184,
+    2.396,
+    2.124,
+    2.149,
+    2.184
+   ],
+   "mins": [
+    1.95,
+    1.964,
+    1.97,
+    1.973,
+    2.059,
+    2.017,
+    1.978,
+    1.927
+   ],
+   "checks": [
+    "2148396.5"
+   ]
+  },
+  {
+   "walk": "row walk b16p0T0",
+   "product": "tr",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 1.9615,
+   "min_of_medians": 1.854,
+   "max_of_medians": 2.012,
+   "medians": [
+    1.951,
+    1.854,
+    2.012,
+    2.007,
+    1.972,
+    1.941,
+    1.943,
+    1.98
+   ],
+   "mins": [
+    1.868,
+    1.748,
+    1.895,
+    1.899,
+    1.874,
+    1.849,
+    1.882,
+    1.857
+   ],
+   "checks": [
+    "2148396.5"
+   ]
+  },
+  {
+   "walk": "row walk b32p32T1",
+   "product": "tr",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 1.955,
+   "min_of_medians": 1.914,
+   "max_of_medians": 2.066,
+   "medians": [
+    1.916,
+    1.975,
+    1.963,
+    1.952,
+    2.066,
+    1.914,
+    1.958,
+    1.926
+   ],
+   "mins": [
+    1.807,
+    1.85,
+    1.891,
+    1.852,
+    1.9,
+    1.819,
+    1.861,
+    1.835
+   ],
+   "checks": [
+    "2148396.5"
+   ]
+  },
+  {
+   "walk": "row walk b32p128T0",
+   "product": "tr",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 2.053,
+   "min_of_medians": 2.01,
+   "max_of_medians": 2.082,
+   "medians": [
+    2.053,
+    2.01,
+    2.082,
+    2.059,
+    2.024,
+    2.053,
+    2.014,
+    2.058
+   ],
+   "mins": [
+    1.915,
+    1.869,
+    2.002,
+    1.912,
+    1.923,
+    1.959,
+    1.923,
+    1.97
+   ],
+   "checks": [
+    "2148396.5"
+   ]
+  },
+  {
+   "walk": "row walk b32p128T1",
+   "product": "tr",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 2.0629999999999997,
+   "min_of_medians": 2.003,
+   "max_of_medians": 2.084,
+   "medians": [
+    2.004,
+    2.08,
+    2.065,
+    2.068,
+    2.061,
+    2.084,
+    2.028,
+    2.003
+   ],
+   "mins": [
+    1.885,
+    1.925,
+    1.956,
+    1.989,
+    1.933,
+    1.98,
+    1.944,
+    1.896
+   ],
+   "checks": [
+    "2148396.5"
+   ]
+  },
+  {
+   "walk": "row walk b32p128T2",
+   "product": "tr",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 2.053,
+   "min_of_medians": 1.981,
+   "max_of_medians": 2.23,
+   "medians": [
+    2.23,
+    2.032,
+    2.075,
+    2.057,
+    2.157,
+    2.049,
+    2.039,
+    1.981
+   ],
+   "mins": [
+    1.965,
+    1.903,
+    1.946,
+    1.924,
+    1.989,
+    1.959,
+    1.866,
+    1.866
+   ],
+   "checks": [
+    "2148396.5"
+   ]
+  },
+  {
+   "walk": "row walk b32p256T1",
+   "product": "tr",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 2.4785,
+   "min_of_medians": 2.402,
+   "max_of_medians": 2.627,
+   "medians": [
+    2.473,
+    2.627,
+    2.493,
+    2.484,
+    2.498,
+    2.421,
+    2.402,
+    2.461
+   ],
+   "mins": [
+    2.315,
+    2.367,
+    2.322,
+    2.195,
+    2.388,
+    2.272,
+    2.271,
+    2.355
+   ],
+   "checks": [
+    "2148396.5"
+   ]
+  },
+  {
+   "walk": "row walk base",
+   "product": "ctx",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 1.6425,
+   "min_of_medians": 1.593,
+   "max_of_medians": 1.676,
+   "medians": [
+    1.634,
+    1.653,
+    1.676,
+    1.641,
+    1.644,
+    1.617,
+    1.649,
+    1.593
+   ],
+   "mins": [
+    1.542,
+    1.525,
+    1.58,
+    1.589,
+    1.566,
+    1.569,
+    1.588,
+    1.531
+   ],
+   "checks": [
+    "2147604.94"
+   ]
+  },
+  {
+   "walk": "bandp tr band 32",
+   "product": "tr",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 2.1195,
+   "min_of_medians": 2.069,
+   "max_of_medians": 2.354,
+   "medians": [
+    2.345,
+    2.082,
+    2.134,
+    2.354,
+    2.069,
+    2.088,
+    2.117,
+    2.122
+   ],
+   "mins": [
+    2.0,
+    1.962,
+    1.995,
+    2.018,
+    2.015,
+    1.91,
+    1.98,
+    2.011
+   ]
+  },
+  {
+   "walk": "bandp btr band 32",
+   "product": "btr",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 1.835,
+   "min_of_medians": 1.778,
+   "max_of_medians": 2.061,
+   "medians": [
+    2.061,
+    1.78,
+    1.847,
+    1.841,
+    1.832,
+    1.778,
+    1.838,
+    1.798
+   ],
+   "mins": [
+    1.672,
+    1.612,
+    1.658,
+    1.614,
+    1.576,
+    1.587,
+    1.584,
+    1.627
+   ]
+  },
+  {
+   "walk": "bandp bp band 32",
+   "product": "bp",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 1.957,
+   "min_of_medians": 1.909,
+   "max_of_medians": 2.16,
+   "medians": [
+    1.957,
+    1.92,
+    1.96,
+    1.957,
+    2.16,
+    1.943,
+    2.016,
+    1.909
+   ],
+   "mins": [
+    1.732,
+    1.715,
+    1.703,
+    1.741,
+    1.78,
+    1.73,
+    1.721,
+    1.667
+   ]
+  },
+  {
+   "walk": "bandp ctx band 32",
+   "product": "ctx",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 1.6575,
+   "min_of_medians": 1.611,
+   "max_of_medians": 1.672,
+   "medians": [
+    1.665,
+    1.611,
+    1.66,
+    1.661,
+    1.672,
+    1.655,
+    1.65,
+    1.652
+   ],
+   "mins": [
+    1.595,
+    1.527,
+    1.598,
+    1.591,
+    1.591,
+    1.584,
+    1.59,
+    1.569
+   ]
+  },
+  {
+   "walk": "bandp bctx band 32",
+   "product": "bctx",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 2.4815,
+   "min_of_medians": 2.385,
+   "max_of_medians": 2.567,
+   "medians": [
+    2.441,
+    2.543,
+    2.567,
+    2.481,
+    2.482,
+    2.385,
+    2.483,
+    2.388
+   ],
+   "mins": [
+    2.342,
+    2.226,
+    2.259,
+    2.13,
+    2.221,
+    2.222,
+    2.144,
+    2.213
+   ]
+  },
+  {
+   "walk": "bandp btr band 16",
+   "product": "btr",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 2.1605,
+   "min_of_medians": 2.104,
+   "max_of_medians": 2.565,
+   "medians": [
+    2.184,
+    2.157,
+    2.164,
+    2.142,
+    2.126,
+    2.565,
+    2.235,
+    2.104
+   ],
+   "mins": [
+    1.912,
+    2.068,
+    1.949,
+    1.982,
+    1.911,
+    2.196,
+    1.975,
+    1.931
+   ]
+  },
+  {
+   "walk": "bandp btr band 64",
+   "product": "btr",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 1.726,
+   "min_of_medians": 1.692,
+   "max_of_medians": 1.757,
+   "medians": [
+    1.717,
+    1.692,
+    1.752,
+    1.698,
+    1.735,
+    1.722,
+    1.757,
+    1.73
+   ],
+   "mins": [
+    1.475,
+    1.448,
+    1.505,
+    1.493,
+    1.486,
+    1.509,
+    1.497,
+    1.495
+   ]
+  },
+  {
+   "walk": "bandp-rewrite1 btr band 32",
+   "product": "btr",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 1.7685,
+   "min_of_medians": 1.739,
+   "max_of_medians": 1.838,
+   "medians": [
+    1.838,
+    1.747,
+    1.814,
+    1.75,
+    1.739,
+    1.767,
+    1.779,
+    1.77
+   ],
+   "mins": [
+    1.656,
+    1.592,
+    1.635,
+    1.541,
+    1.606,
+    1.587,
+    1.547,
+    1.574
+   ]
+  },
+  {
+   "walk": "bandp-rewrite2 btr band 32",
+   "product": "btr",
+   "buffers": 16,
+   "passes": 8,
+   "median_of_medians": 1.775,
+   "min_of_medians": 1.706,
+   "max_of_medians": 1.807,
+   "medians": [
+    1.706,
+    1.743,
+    1.807,
+    1.772,
+    1.779,
+    1.778,
+    1.785,
+    1.757
+   ],
+   "mins": [
+    1.527,
+    1.586,
+    1.57,
+    1.531,
+    1.611,
+    1.627,
+    1.599,
+    1.527
+   ]
+  }
+ ]
+}

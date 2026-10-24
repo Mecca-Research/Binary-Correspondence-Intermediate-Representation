@@ -1,0 +1,79 @@
+{
+ "what": "every value before == after: ../../2026-10-23/mm-rows/bitcheck.c 700 (every k-blocked GEMM entry -- serial instances, the pool at four and two threads and through each instance, pair jobs, group jobs -- a line a case, its outputs' FNV-1a), ../../2026-10-23/scores-t/scratch_hash.c (the scratch forward: 'strict'), ../../2026-10-23/fwd-strip/fwd_hash.c, ../../2026-10-23/p-lower/lower_hash.c, ../../2026-10-22/attn-rate/attn_hash.c and ../../2026-10-22/bwd-long/band_hash.c, each built from the tree before and the tree after, clang and gcc (-std=c11 -O3 -ffp-contract=off -fno-math-errno -pthread)",
+ "before": "ca11155d2f5a3cfd9668c715216ab67d96f4898c",
+ "after": "af0bf140f25499cc875ed292caa4a439ca15c279",
+ "compilers": {
+  "clang": {
+   "bitcheck": {
+    "lines": 6081,
+    "before_equals_after": true,
+    "after_sha256": "1bfc2827da49210b765c148e5aba901bd0dfc59007f4cda07ae98d588a8bc932"
+   },
+   "strict": {
+    "lines": 1248,
+    "before_equals_after": true,
+    "after_sha256": "2a65201ca0b71fb57975dbb5c1ba2ad3479439916d0674a59268b0f1aa06018b"
+   },
+   "fwd_hash": {
+    "lines": 288,
+    "before_equals_after": true,
+    "after_sha256": "9738e8dd066e52097e479a239e5e842e49392fa8dcb8d38bd12a65409272e213"
+   },
+   "lower_hash": {
+    "lines": 208,
+    "before_equals_after": true,
+    "after_sha256": "ff14859ede5a4c6af243511dc2b79b1a88f1ce5b2381619f9d1ed787acdff006"
+   },
+   "attn_hash": {
+    "lines": 88,
+    "before_equals_after": true,
+    "after_sha256": "82c1c266c72d70c53319f163de63a351199f58ea24d516aae0e03cc99fd24736"
+   },
+   "band_hash": {
+    "lines": 48,
+    "before_equals_after": true,
+    "after_sha256": "b83443463509fc0393564895fb294632d18000df2d3b636b2b4cabd016a105c0"
+   }
+  },
+  "gcc": {
+   "bitcheck": {
+    "lines": 6081,
+    "before_equals_after": true,
+    "after_sha256": "1bfc2827da49210b765c148e5aba901bd0dfc59007f4cda07ae98d588a8bc932"
+   },
+   "strict": {
+    "lines": 1248,
+    "before_equals_after": true,
+    "after_sha256": "2a65201ca0b71fb57975dbb5c1ba2ad3479439916d0674a59268b0f1aa06018b"
+   },
+   "fwd_hash": {
+    "lines": 288,
+    "before_equals_after": true,
+    "after_sha256": "9738e8dd066e52097e479a239e5e842e49392fa8dcb8d38bd12a65409272e213"
+   },
+   "lower_hash": {
+    "lines": 208,
+    "before_equals_after": true,
+    "after_sha256": "ff14859ede5a4c6af243511dc2b79b1a88f1ce5b2381619f9d1ed787acdff006"
+   },
+   "attn_hash": {
+    "lines": 88,
+    "before_equals_after": true,
+    "after_sha256": "82c1c266c72d70c53319f163de63a351199f58ea24d516aae0e03cc99fd24736"
+   },
+   "band_hash": {
+    "lines": 48,
+    "before_equals_after": true,
+    "after_sha256": "b83443463509fc0393564895fb294632d18000df2d3b636b2b4cabd016a105c0"
+   }
+  }
+ },
+ "clang_equals_gcc": {
+  "bitcheck": true,
+  "strict": true,
+  "fwd_hash": true,
+  "lower_hash": true,
+  "attn_hash": true,
+  "band_hash": true
+ }
+}

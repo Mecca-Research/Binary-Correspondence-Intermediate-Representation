@@ -364,6 +364,33 @@ def test_committed_theta_mlir_matches_the_emitter():
         assert f.read() == emit_theta_test(), "theta_hot.mlir drifted; regenerate with --emit-theta"
 
 
+def test_committed_measured_mlir_matches_the_emitter():
+    # PX-3b-2: the measured-table plan-parity artifact must equal a fresh emission (drift gate),
+    # and it must hold what it exists to test: measured realizations taken and claims without one
+    from bcir.kbcir.differential import (
+        _MEASURED_MLIR_PATH,
+        _MEASURED_VERIFY_MLIR_PATH,
+        emit_measured_test,
+        emit_measured_verify_test,
+    )
+
+    path = os.path.normpath(_MEASURED_MLIR_PATH)
+    assert os.path.exists(path), "run `python -m bcir.kbcir.differential --emit-measured`"
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    assert text == emit_measured_test(), "plan_measured.mlir drifted; regenerate --emit-measured"
+    assert text.count('CHECK-SAME: kbcir.plan_alternative = "') >= 16
+    assert text.count("CHECK-NOT: kbcir.plan_alternative") >= 16
+    assert text.count("measured_gen = 1 : i64") == text.count("CHECK-LABEL:")
+    path = os.path.normpath(_MEASURED_VERIFY_MLIR_PATH)
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    assert text == emit_measured_verify_test(), "verify_measured.mlir drifted; --emit-measured"
+    # one accepted plan, then a refusal a case: three under R9, one under R13
+    assert text.count("// -----") == 4 and text.count("expected-error") == 4
+    assert text.count("{{R9: claim @") == 3 and text.count("{{R13: manifest m_target") == 1
+
+
 # --- the shrinker -----------------------------------------------------------------
 
 

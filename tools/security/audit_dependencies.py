@@ -709,7 +709,7 @@ def _advisory_command(engine: str, requirements: Path, *, floor: bool) -> list[s
         # database. This is also the run that covers what the resolved run
         # structurally omits -- pip-audit drops its scratch venv's own
         # pip/setuptools/wheel from the resolver's report, so a requirements
-        # file holding only `setuptools>=83.0.0` audits NOTHING there and
+        # file holding only `setuptools>=84.1.0` audits NOTHING there and
         # exits 0. The floor run audits that floor by name.
         cmd += ["--no-deps", "--disable-pip"]
     return cmd

@@ -1,0 +1,551 @@
+{
+ "what": "GEO-NOW: the PR818 study's three models on main's tensor unit (level 2, BEFORE) and on this branch's (AFTER: the same\noverlays, the same headers, build_amx.py's builds), training and inference, both builds in one process.\n\nB-BEFORE, B-AFTER and B-AFTER-AA (an A/A control, its own instance): the bundle's own `Native` host over each work\ncopy's build, the study's binary32 contract (14), four pool threads. Training: one observation is `steps` updates\n(geo_compare.py's train_case draws), each arm restored to the same initial state outside the clock, the two builds'\ntrained states (weights, both moments, the step) held equal by digest first. Inference: one forward of 4 x T\ntokens (geo_compare.py's infer_case draws), the two builds' logits held equal byte for byte first. Rounds rotate the\narms' order. usage: python geo_ab.py BEFORE_WORK AFTER_WORK OUT.json [--rounds 16] [--steps 3]\n",
+ "host": {
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+  "threads": 4,
+  "python": "3.11.15",
+  "numpy": "2.2.6"
+ },
+ "rounds": 16,
+ "train": [
+  {
+   "model": "attention",
+   "mode": "train",
+   "batch": 4,
+   "time": 512,
+   "steps_per_observation": 3,
+   "trained_state_digest": {
+    "before": "8a7fc5b717592aa479866682a7b35378f6e7f5718e42992802b9cd1e97003700",
+    "after": "8a7fc5b717592aa479866682a7b35378f6e7f5718e42992802b9cd1e97003700"
+   },
+   "ms_per_update": {
+    "B-BEFORE": 31.885960834188154,
+    "B-AFTER": 31.730966165923746,
+    "B-AFTER-AA": 32.070196166993505
+   },
+   "after_over": {
+    "B-BEFORE": {
+     "geometric_mean": 0.9958464014050233,
+     "ci95": [
+      0.9390189537872095,
+      1.0561129263595948
+     ],
+     "rounds": 16
+    },
+    "B-AFTER-AA": {
+     "geometric_mean": 1.0059147243522573,
+     "ci95": [
+      0.9478797246199232,
+      1.0675029820628466
+     ],
+     "rounds": 16
+    }
+   },
+   "raw_ms": {
+    "B-BEFORE": [
+     36.8707,
+     37.8522,
+     34.9431,
+     36.8784,
+     33.4679,
+     30.9525,
+     33.2141,
+     32.1346,
+     31.4175,
+     31.5293,
+     31.3422,
+     30.2654,
+     31.311,
+     30.9655,
+     31.6373,
+     34.028
+    ],
+    "B-AFTER": [
+     31.712,
+     32.357,
+     33.2695,
+     31.75,
+     39.2928,
+     30.994,
+     33.3482,
+     35.2997,
+     31.4698,
+     31.4443,
+     31.1453,
+     30.797,
+     40.0998,
+     32.6585,
+     30.8194,
+     30.6519
+    ],
+    "B-AFTER-AA": [
+     32.206,
+     36.3664,
+     36.2909,
+     33.413,
+     31.0826,
+     31.9344,
+     32.7542,
+     31.4761,
+     32.2152,
+     37.2733,
+     32.3231,
+     29.9559,
+     31.5176,
+     31.0854,
+     31.7214,
+     31.6159
+    ]
+   },
+   "after_over_exact": {
+    "B-BEFORE": {
+     "geometric_mean": 0.9958459316949828,
+     "ci95": [
+      0.9390185487152802,
+      1.0561123856714618
+     ],
+     "rounds": 16
+    },
+    "B-AFTER-AA": {
+     "geometric_mean": 1.0059144712728652,
+     "ci95": [
+      0.9478797181395265,
+      1.0675024522122154
+     ],
+     "rounds": 16
+    }
+   },
+   "verdict": "not resolved: holds 1"
+  },
+  {
+   "model": "attention",
+   "mode": "train",
+   "batch": 4,
+   "time": 1024,
+   "steps_per_observation": 3,
+   "trained_state_digest": {
+    "before": "756c2e0bccd2bbcb02ee3653f73c8b90ada91ae23be86400c905615411a450b8",
+    "after": "756c2e0bccd2bbcb02ee3653f73c8b90ada91ae23be86400c905615411a450b8"
+   },
+   "ms_per_update": {
+    "B-BEFORE": 83.72602600017369,
+    "B-AFTER": 84.17853249920881,
+    "B-AFTER-AA": 83.49455166777867
+   },
+   "after_over": {
+    "B-BEFORE": {
+     "geometric_mean": 0.9985440984859119,
+     "ci95": [
+      0.967152815051041,
+      1.030954261936798
+     ],
+     "rounds": 16
+    },
+    "B-AFTER-AA": {
+     "geometric_mean": 0.9966737313227932,
+     "ci95": [
+      0.9673144056925432,
+      1.02692415295698
+     ],
+     "rounds": 16
+    }
+   },
+   "raw_ms": {
+    "B-BEFORE": [
+     80.6869,
+     84.0327,
+     83.4903,
+     88.1461,
+     86.4054,
+     81.6252,
+     82.0645,
+     81.6318,
+     92.6931,
+     81.7567,
+     83.9617,
+     87.8138,
+     93.4204,
+     81.8407,
+     84.4804,
+     79.9559
+    ],
+    "B-AFTER": [
+     82.4359,
+     82.169,
+     81.9984,
+     82.3795,
+     85.1747,
+     89.1472,
+     84.1568,
+     84.4031,
+     92.0292,
+     83.2093,
+     87.3359,
+     82.9465,
+     79.1275,
+     86.4076,
+     84.33,
+     84.2002
+    ],
+    "B-AFTER-AA": [
+     83.1982,
+     85.9693,
+     80.9233,
+     81.1346,
+     84.1573,
+     88.384,
+     83.7909,
+     85.3842,
+     80.8644,
+     81.8595,
+     86.4623,
+     80.6759,
+     80.4913,
+     96.9944,
+     82.6109,
+     94.1941
+    ]
+   },
+   "after_over_exact": {
+    "B-BEFORE": {
+     "geometric_mean": 0.9985439897886904,
+     "ci95": [
+      0.9671526881215692,
+      1.0309541727890892
+     ],
+     "rounds": 16
+    },
+    "B-AFTER-AA": {
+     "geometric_mean": 0.9966736035519926,
+     "ci95": [
+      0.9673142062958154,
+      1.0269241013436896
+     ],
+     "rounds": 16
+    }
+   },
+   "verdict": "not resolved: holds 1"
+  },
+  {
+   "model": "attention",
+   "mode": "train",
+   "batch": 4,
+   "time": 2048,
+   "steps_per_observation": 3,
+   "trained_state_digest": {
+    "before": "4994c40e2a6aeda9d7139f1d25a46a1a777c351a740dc1d8180cda9a47ec7c59",
+    "after": "4994c40e2a6aeda9d7139f1d25a46a1a777c351a740dc1d8180cda9a47ec7c59"
+   },
+   "ms_per_update": {
+    "B-BEFORE": 234.5187509987833,
+    "B-AFTER": 232.42791599962703,
+    "B-AFTER-AA": 233.94564716606206
+   },
+   "after_over": {
+    "B-BEFORE": {
+     "geometric_mean": 0.9947471119457535,
+     "ci95": [
+      0.9737069870934675,
+      1.0162418775263773
+     ],
+     "rounds": 16
+    },
+    "B-AFTER-AA": {
+     "geometric_mean": 1.0021084555737887,
+     "ci95": [
+      0.9850888680569502,
+      1.0194220940830159
+     ],
+     "rounds": 16
+    }
+   },
+   "raw_ms": {
+    "B-BEFORE": [
+     231.8816,
+     241.7508,
+     229.9812,
+     235.9539,
+     245.4469,
+     228.3214,
+     227.8082,
+     235.627,
+     233.4105,
+     232.772,
+     225.9781,
+     232.5183,
+     244.4425,
+     240.5416,
+     243.989,
+     238.98
+    ],
+    "B-AFTER": [
+     232.7515,
+     225.7353,
+     235.2572,
+     231.1178,
+     234.3297,
+     224.5907,
+     232.0311,
+     232.6672,
+     225.3384,
+     252.0005,
+     237.7156,
+     228.6348,
+     255.3077,
+     240.4654,
+     232.1886,
+     230.5503
+    ],
+    "B-AFTER-AA": [
+     232.5469,
+     229.8639,
+     235.3886,
+     230.997,
+     227.8388,
+     226.7315,
+     237.4704,
+     243.1271,
+     230.0838,
+     235.3444,
+     235.5619,
+     229.9591,
+     238.3076,
+     235.787,
+     241.4743,
+     230.7082
+    ]
+   },
+   "after_over_exact": {
+    "B-BEFORE": {
+     "geometric_mean": 0.9947470927910175,
+     "ci95": [
+      0.9737069383847001,
+      1.0162418892256395
+     ],
+     "rounds": 16
+    },
+    "B-AFTER-AA": {
+     "geometric_mean": 1.0021084700946663,
+     "ci95": [
+      0.9850888566730513,
+      1.0194221354071933
+     ],
+     "rounds": 16
+    }
+   },
+   "verdict": "not resolved: holds 1"
+  }
+ ],
+ "infer": [
+  {
+   "model": "attention",
+   "mode": "infer",
+   "batch": 4,
+   "time": 1024,
+   "logits_equal_bytes": true,
+   "ms_per_forward": {
+    "B-BEFORE": 26.67295550054405,
+    "B-AFTER": 26.99134450085694,
+    "B-AFTER-AA": 26.538848502241308
+   },
+   "after_over": {
+    "B-BEFORE": {
+     "geometric_mean": 1.0111870087149852,
+     "ci95": [
+      0.9741485750751084,
+      1.0496336932126842
+     ],
+     "rounds": 16
+    },
+    "B-AFTER-AA": {
+     "geometric_mean": 0.9805147026277751,
+     "ci95": [
+      0.9285531903838818,
+      1.035383962949682
+     ],
+     "rounds": 16
+    }
+   },
+   "raw_ms": {
+    "B-BEFORE": [
+     25.9244,
+     28.5877,
+     31.461,
+     29.0694,
+     26.9321,
+     27.3096,
+     26.3994,
+     26.1614,
+     25.8063,
+     25.3562,
+     26.5686,
+     26.7773,
+     25.3223,
+     33.8194,
+     27.3941,
+     26.0185
+    ],
+    "B-AFTER": [
+     27.8363,
+     31.026,
+     27.1726,
+     26.7046,
+     29.4273,
+     29.3673,
+     26.4582,
+     26.8101,
+     26.2959,
+     28.5095,
+     25.1069,
+     26.1999,
+     25.5747,
+     33.461,
+     26.4463,
+     27.2636
+    ],
+    "B-AFTER-AA": [
+     30.2402,
+     29.35,
+     36.7934,
+     26.5519,
+     28.984,
+     25.7832,
+     26.5258,
+     25.9761,
+     25.9181,
+     26.0305,
+     25.285,
+     29.6679,
+     26.4863,
+     33.526,
+     30.1114,
+     26.5073
+    ]
+   },
+   "after_over_exact": {
+    "B-BEFORE": {
+     "geometric_mean": 1.0111871782283661,
+     "ci95": [
+      0.974148563884839,
+      1.0496340571871157
+     ],
+     "rounds": 16
+    },
+    "B-AFTER-AA": {
+     "geometric_mean": 0.9805145819281392,
+     "ci95": [
+      0.9285531668908813,
+      1.03538373423769
+     ],
+     "rounds": 16
+    }
+   },
+   "verdict": "not resolved: holds 1"
+  },
+  {
+   "model": "attention",
+   "mode": "infer",
+   "batch": 4,
+   "time": 2048,
+   "logits_equal_bytes": true,
+   "ms_per_forward": {
+    "B-BEFORE": 82.4322709995613,
+    "B-AFTER": 78.92714950139634,
+    "B-AFTER-AA": 80.52565600155503
+   },
+   "after_over": {
+    "B-BEFORE": {
+     "geometric_mean": 0.9291489374773751,
+     "ci95": [
+      0.8671390315830928,
+      0.9955932285036447
+     ],
+     "rounds": 16
+    },
+    "B-AFTER-AA": {
+     "geometric_mean": 0.9743234365793004,
+     "ci95": [
+      0.931565404695028,
+      1.0190440244810055
+     ],
+     "rounds": 16
+    }
+   },
+   "raw_ms": {
+    "B-BEFORE": [
+     127.6363,
+     76.3326,
+     90.2294,
+     85.0783,
+     78.4614,
+     84.9151,
+     84.0299,
+     81.4285,
+     98.3989,
+     76.8913,
+     83.4361,
+     78.4167,
+     79.3531,
+     107.5784,
+     80.8421,
+     80.9921
+    ],
+    "B-AFTER": [
+     85.4675,
+     76.6936,
+     77.7502,
+     88.2616,
+     79.1465,
+     89.6965,
+     82.5572,
+     77.103,
+     78.8349,
+     78.0014,
+     76.4161,
+     79.5595,
+     77.3199,
+     79.9224,
+     79.0194,
+     78.4531
+    ],
+    "B-AFTER-AA": [
+     78.9134,
+     88.7765,
+     76.8314,
+     93.5437,
+     82.8617,
+     78.2359,
+     77.8289,
+     80.7115,
+     77.3985,
+     77.1834,
+     77.3624,
+     92.0649,
+     80.6051,
+     96.2551,
+     80.4462,
+     81.0603
+    ]
+   },
+   "after_over_exact": {
+    "B-BEFORE": {
+     "geometric_mean": 0.9291491208490046,
+     "ci95": [
+      0.8671392093530218,
+      0.9955934173690583
+     ],
+     "rounds": 16
+    },
+    "B-AFTER-AA": {
+     "geometric_mean": 0.9743233216308693,
+     "ci95": [
+      0.9315653196018828,
+      1.019043877115895
+     ],
+     "rounds": 16
+    }
+   },
+   "verdict": "not resolved: meets the A/A control's interval"
+  }
+ ]
+}

@@ -26,7 +26,7 @@
       "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
       "label": "NE3 the AVX2 instance takes its exponential from libm (the instances disagree)",
       "new": "static void exp_avx2(size_t n, const float *x, float *y) { size_t i; for (i=0;i<n;i++) y[i]=expf(x[i]); }",
-      "old": "static void exp_avx2(size_t n, const float *x, float *y) { exp_body(n,x,y); }",
+      "old": "static void exp_avx2(size_t n, const float *x, float *y) { exp_body(16,n,x,y); }",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

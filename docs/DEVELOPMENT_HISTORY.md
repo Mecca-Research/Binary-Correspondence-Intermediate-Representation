@@ -3725,6 +3725,1267 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     constants) instead of choosing beside them. The measuring host is this container's (no AMX, no
     AVX512-BF16): a table is the host's that measured it, and names it.
   - The ladder: PX-6 (GPU lowering and synchronization) is a documented skip on this host.
+  PX-3b-1 (2026-10-21): the kernel instance and the pool's thread split as choices of the step program.
+  - PX-3 left both fixed by the host: every GEMM and attention ran its family's widest instance, every
+    job every thread of the pool. They are words of the program now -- 41, the instance a job's GEMMs
+    or attention products run (one bit of `bcir_tensor.h`'s: 1 portable, 2 AVX2, 4 AVX-512, 8 AMX,
+    that the job's family admits; 0 the widest, as before), and 42, the workers it runs on (0 all the
+    pool's threads, as before) -- alike in every record of a job. A program of zeros is the program
+    before PX-3b, word for word.
+  - `bcir_tensor`: `bcir_tensor_pool_cap` (a job's workers: the workers past a cap report every
+    generation without claiming a task, a cap of one runs on the caller in order) and the
+    `*_variant_pool` entries of the GEMM, its pair and group jobs and the attention and its VJP, each
+    returning the instance it ran (0: nothing written). Every instance of a family is the contract's
+    bits and a pool's partition is a function of the shapes alone, so every dispatch trains the same
+    bits.
+  - `bcir_decoder_run_program` holds the words to the host before anything runs -- an instance the
+    family lacks, two at once, an instance on a kernel without one or on a provider's GEMM, more
+    workers than the pool's threads, workers on a CHECK, a job whose records disagree: each refused
+    with nothing written -- and leaves the pool's cap as it found it, however the run ends. The trace
+    records the instance a job ran (the entry's own return) and its workers, and the C harness's
+    instance probe (BCIR_TENSOR_INSTANCE_PROBE) holds every entry to the kernels that ran.
+  - Python: `native_launch.step_program(dispatch=...)` states a dispatch per kind -- a GEMM's role
+    (each linear's forward and VJP, the head's), an attention, every other kernel -- and labels each
+    launch's kind (`dispatch_labels`); `dispatch_alternatives` names what a host admits,
+    `parse_dispatch` the grammar, `program_launches` the defaults as the trace records them.
+    `native_choose` measures the dispatch like any site (`dispatch:<kind>`, a table naming the host's
+    instance masks: its times are of that host's defaults, so another host's table is refused) and
+    `choose_dispatch` takes only alternatives resolved faster.
+  - `train.plan.dispatch.mismatch` 1,153 -> 0 (a new GEM+ row): the 27 state cases under every
+    dispatch kind switched alone to the portable instance, to its family's widest named and to each
+    worker count below the case's threads, and three seeded draws of one a kind, run from their
+    programs on the trace build, trace the dispatched programs as the host resolves them and train
+    the C step's state and events bit for bit; 1,063 of them run a program other than the C step's
+    own. Every admitted instance of every family is the plain entry's bits at caps one, two and all.
+  - The measurement ([px3b/](research/measurements/2026-10-21/px3b/README.json)), on this host
+    (AVX-512, AVX512-BF16 and AMX) at four threads: under bf16 none of the 93 alternatives reads faster
+    at its sites -- AVX-512 in place of AMX x4.74-x10.11 on the GEMMs, the portable instance
+    x274-x646, one to three workers x0.92-x3.82 -- so the default dispatch is kept (a third trainer on
+    it x0.9875 of the first, the A/A control x1.0012); under binary32 the embedding gradient's scatter
+    at one worker reads x0.848 (0.734-0.980) at its sites and is chosen, x1.0101 (0.990-1.030) end to
+    end beside the A/A control's x0.989: not resolvable. Every GEMM and attention on the portable
+    instance runs x215 under bf16 (18.8 s a step against 79.5 ms) and x62.5 under binary32 end to end,
+    as the sites' readings predict (x240 and x64.5). The two slowest arms first shared the 32 rounds of
+    the others -- at 18.8 s a step, hours of them -- so they take six rounds of their own beside a
+    default trainer of their own (`--slow-rounds`).
+  - Fault sweeps: `px-dispatch.json` (PY1-PY28: the alternatives, the grammar, the host, the program,
+    the resolution, the table, the choice and the row), 28 of 28 caught, each by its own witness;
+    `px-dispatch-c.json` (PC1-PC4, PI1-PI6, PK1-PK10, PR1-PR7, PT1-PT3, PB1-PB4: the pool's cap, the
+    instance an entry runs, the check, the run, the trace, the binding and the measurement), 34 of 34
+    -- four first stopped a strict build (`-Wunused`: two in the sweep's own build, two more under GCC
+    13's `-Wall -Wextra -Werror`), were rewritten to build warning-free under GCC 13, clang 18 and
+    clang 23 and caught. The 20 entries of
+    eight older tables whose lines PX-3b rewrote (`geo3.json` GW8, GW9; `ndt-attnbf16.json` AB8;
+    `ndt-attnfma.json` AF10, AF11, AF14, AF16, AF17; `ndt-kblock.json` NK5; `ndt-threads.json` NT9,
+    NT10, NT14, NT16; `px-choose.json` PC14, PC17, PC18; `px-program.json` PM8, PM11; `px-trace.json`
+    PT2, PM3) were re-anchored to the new lines, each keeping its defect, and re-swept: 20 of 20
+    caught (GW8 first stopped the build, `-Wparentheses`, and was rewritten), with GW12, inside the
+    construct GW8 anchors in, 1 of 1.
+  - Not claimed, and open (PX-3b-2): the measured prices inside K_BCIR's own candidates on its three
+    rails, so the plan rather than a choice beside it takes the dispatch. PX-6 (GPU) stays pending: it
+    continues in a local session on the hardware.
+  - Found by CI's aarch64 oracle after the push: the witness that the trainer states its own
+    decisions required each of them, the instances its families admit among them, to take more than
+    one value over its cases -- but an aarch64 host's families all admit the portable instance
+    alone, so there the instances take one value whatever the contract. They are required to vary
+    only where the host's families differ, and otherwise held to the masks the cases spell from each
+    contract's name; the old witness fails, and the new one passes, against the trainer built with
+    `BCIR_TENSOR_MAX_VARIANT` 1 on this host, which admits the portable instance alone as aarch64 does.
+  PX-3b-2 (2026-10-21): the measured prices inside K_BCIR's own candidates, on its three rails.
+  - PX-3b-1 chose the dispatch beside the plan: `choose_dispatch` read a table and the program
+    stated its pick. A target carries the table now -- `cost.MeasuredPrices`, frozen and
+    generation-tagged: entries of (op, count, alternative, Q8 1..255), the alternative an instance
+    (`i<bit>`) or a worker count (`t<k>`), in one spelling (strictly ascending by op, count and
+    alternative, at most seven a key, no op spelled as an opcode -- the law rail's name for an op-less
+    claim) -- and `realize._offer_rows` offers a claim of a priced (op, count), after each of its own
+    realizations, that realization run each priced alternative (`<name>@<alternative>`: the same
+    lane, width and operands, its compute and memory axes scaled by the entry's Q8 after the
+    discount, floored). Control ops and the barrier are never measured (`UNMEASURED_OPCODES`). The
+    planner prices the rows like any candidate, R9 re-derives the same offer and `hash_target` folds
+    the table; a target with no table, or with one no claim reads, plans every module, writes every
+    record and hashes as before, byte for byte.
+  - The C planner: BKPI and BKPR version 1 ([the planner ABI](kernel/BCIR_PLANNER_ABI.md)) -- the
+    measured section (`n_measured` at @40; an entry's op, count, code and Q8, the code the instance's
+    bit or 0x8000 | k) and a step's code -- each version-1 law refused on both rails
+    (`planner.malformed.accepted` 188 -> 0, 71 + 23 variants). `bcir_kplan.c` offers the measured rows
+    and writes the compact planner's bytes, and the native hydrate's packs carry the measured names
+    (`planner.measured.parity` 456 -> 0, a new row: 114 version-1 records -- every module of the fixed
+    corpus and two native-trainer training packs under every target, each with a table drawn over
+    its claims, and the seed module under a table naming its capital-led op -- each held to R9, the
+    plan's price, the native planner's bytes and the native hydrate's pack). The decoder walks the op
+    table forward once to name every entry's op, so a version-1 record stays linear.
+  - The law rail: the capability's `measured_gen`, `measured_ops`, `measured_alternatives` and
+    `measured_values` attributes and their verifier (one spelling, as the oracle's; the structural
+    corpus's `measured.*` cases on both rails), `BCIRCostModel.h`'s `appendMeasured`, `-bcir-plan`'s
+    `kbcir.plan_alternative`, R9 matching it and R13 folding the table.
+    `differential --emit-measured` writes `plan_measured.mlir` (the oracle's plan, alternatives and
+    m_target on every example program under two targets and a table no claim reads) and
+    `verify_measured.mlir` (the verifier's refusals), drift-gated in CI; a measured path's symbol is
+    quoted where it is not bare (`@"path_2_tile@i4"`).
+  - The trainer: `native_choose.measured_prices` keys the picks of a dispatch table on the (op,
+    count) of each kind's jobs' claims, a key shared by two kinds priced at the dearer of their
+    prices; `carried_kinds` leaves out, and names, a pick whose keys another kind's claims hold at
+    another pick or at none, so a carried price never moves a job the measurement did not price.
+    `bcir_ep_check_pack_walk` hands the lowering each plan step in the walk that verifies the plan,
+    and `bcir_decoder_lower_pack` writes a step's alternative into its job's dispatch words (41 and
+    42), refusing any other spelling (`BCIR_DP_ALTERNATIVE`); `bcir_decoder_run_program` holds the
+    dispatch to the host, so a measured plan another host cannot run is lowered and then refused
+    with nothing written. `native_pack.plan_dispatch` reads the plan's alternatives as the lowering
+    does.
+  - `train.plan.measured.mismatch` 54 -> 0 (a new GEM+ row): the 27 state cases of the trace corpus,
+    each under two seeded tables that measured the dispatch, their picks carried into K_BCIR's
+    candidates, the default program planned on the AVX-512 profile carrying them, hydrated, placed and
+    lowered by the C, write the program `step_program` states under the carried dispatch and train
+    the C step's state and events bit for bit.
+  - Fault sweeps: `px-measured.json` (MO1-MO20: the offer, the planner's slots, the table's spelling,
+    the hash, the records, the law rail's text, the trainer's prices, the carried kinds and the
+    plan's dispatch), 20 of 20 caught, each by its own witness -- MO6, the planner's slots sized
+    without the measured rows, first read the same plans (every corpus module left the slots slack
+    to spare) and was caught once a witness planned a one-claim module whose key carries the
+    table's most entries, which leaves the slots none;
+    `px-measured-c.json` (MC1-MC6 the native planner, ML1-ML5 the lowering and the check walk), 11 of
+    11. The older entries PX-3b-2 moved (`ep-walk.json` EW5, EW6; `hydrate.json`'s vector width) were
+    re-anchored, each keeping its defect, and re-swept.
+  - On this host's own tables ([carry.py](research/measurements/2026-10-21/px3b/carry.py)): under
+    binary32 PX-3b-1's one pick -- the embedding gradient's scatter at one worker -- is carried as one
+    entry (`train.scatter`, 393,216, `t1`, Q8 217), and the comparison decoder's four-step pack plans
+    its four scatter claims at `gather@t1` among 893, lowers to exactly the program the chosen dispatch
+    states and trains that program's state bit for bit; under bf16 there is no pick to carry and the
+    plan is the default's.
+  - Not claimed: a gain. The row's tables are seeded and this host's one pick is not resolvable end
+    to end (PX-3b-1), so the slice shows the prices reach the plan and the plan the C, not that a
+    measured plan runs faster; a table prices only the host that measured it.
+  ALIAS-SWEEP (2026-10-21): the plan's alias law in O(n log n), every verdict the same.
+  - PX-2b left the alias law the one quadratic check of the plan walk: each lifetime against every
+    earlier one, re-walking the validated prefix with no heap -- more than half of a ten-step
+    lowering (the plan's and the pack's laws, the alias law among them, 36.5 of its 51.2 ms on the
+    PX-3b host), and on the Python codec 2.7 s at 8,000 lifetimes, growing with their square. Both
+    rails now judge it by a sweep. Visiting the lifetimes' ticks in order -- at one tick the ends
+    before the starts, the intervals being half-open -- keeps the live lifetimes ranked by (bank,
+    offset) in a Fenwick tree; until a pair is found the live lifetimes of one bank lie apart, so a
+    lifetime that starts aliases a live one only if it aliases one of its two neighbours. The
+    verdict names the first lifetime aliasing an earlier one, as the pairwise law did, refused ahead
+    of any later lifetime's own law: the prefixes are monotone, so that lifetime is a binary search
+    of sweeps, run only once the whole is known to hold a pair -- a plan the law admits costs one
+    sweep.
+  - The C twin sweeps over scratch the caller lends -- `bcir_ep_verify_lent`, and
+    `bcir_ep_check_pack_walk`'s new scratch arguments: 62 bytes a lifetime and 4
+    (`bcir_ep_sweep_bytes`), little-endian bytes at any alignment, no heap -- and judges the law
+    pairwise without it, `bcir_ep_verify` among them; the lowering lends its executor's bytes, which
+    the walk is done with before the executor takes them (`work` grows only where the sweep needs
+    more). The walk reads each record's own laws first, then the alias law over the records before
+    the first that breaks one, then hands its callback the records before the verdict -- the
+    lifetimes one walk checking both record by record would have handed over. The Python codec's
+    `first_alias` is the same sweep, and `validate_plan` names the same pair as before.
+  - Witnesses: the codec's sweep against the pairwise law on 3,000 crowded draws (equal ticks,
+    touching spans, three banks) and each draw moved apart, its message the pairwise law's, the
+    boundaries pinned; the C twin's lent and unlent verdicts and the codec's on 400 crowded plans, a
+    third with a lifetime breaking its own law, the lifetimes handed over with scratch and without
+    the same, no byte past the lent scratch written (canary bytes, an odd address); both rails' cost
+    n log n in the lifetimes (16x the lifetimes under 64x the time) and the lent verdict under a
+    quarter of the pairwise one's time at 32,000; the lowering's check walk handing over the same
+    steps and lifetimes with the executor's scratch, on every refusal of `test_native_run_pack`. The
+    StreamPack fuzz harness aborts where the lent verdict, or the lifetimes the lent walk hands
+    over, differ from the pairwise ones.
+  - Measured ([alias-sweep/](research/measurements/2026-10-21/alias-sweep/), the 9.84M comparison
+    decoder's packs, binary32, one thread, the PX-3b host): a ten-step lowering 51.2 -> 26.8 ms
+    (x1.91; the tree before by its own driver), twenty steps 149 -> 51.2 ms; the plan verifier at
+    ten steps 20.7 -> 1.5 ms lent (x13.9), at twenty 70.4 -> 2.8 (x25.2); the lowering's walk 22.4
+    -> 4.8 and 78.7 -> 9.5 ms, the rest of it the records' own laws and the pack's claim checks; the
+    codec's law 82.2 -> 6.2 and 312 -> 12.6 ms, and over GEM's reuse shape 2,712 -> 24.2 ms at 8,000
+    lifetimes, 111 ms at 32,000 (the pairwise law, about 43 s by its square, not run). The scratch:
+    104,536 bytes for a ten-step plan's 1,686 lifetimes.
+  - Fault sweeps: `alias-sweep.json` (AP1-AP8: the codec's sweep -- the order of ends and starts at
+    one tick, either neighbour unlooked-at, the rank without its bank, the first alias one past, an
+    ended row left live, the message's pair, the pairwise law kept), 8 of 8 caught, each by its own
+    witness; `alias-sweep-c.json` (AC1-AC10: the C twin's sweep, its tree and its k-th rank, the
+    scratch's size, the lent scratch never swept, the walk's hand-over), 10 of 10, every fault
+    compiling warning-free under GCC 13 and clang 18 and 23 (RED-VACUITY); `ep-walk.json`'s EW5 and
+    EW6, which the walk's new arguments moved, re-anchored, each keeping its defect, and the older
+    entries over the code ALIAS-SWEEP touched (EW4-EW6, ML5, PK33) re-swept, 5 of 5.
+  OT/BG start (2026-10-21): PR #821's backend-optimality experiments and gates, executable.
+  - Draft PR #821 proposes sixteen optimality experiments (OT-01 to OT-16: semantic graphs,
+    compilation and native kernels; GPU code generation and resident execution; movement, telemetry,
+    distribution and OS services) and eight entry gates (BG0, the measurement contract, to BG7,
+    integrated promotion), as prose with no executable test. `tools/perf/ot_contract.py` is BG0 as
+    code: the comparator routes, the kinds of gap a result reports and the host capabilities an
+    experiment needs, as closed vocabularies; the record every experiment writes, held by
+    `validate_record` to one shape (measured: its routes, semantic and target IDs, an independent
+    reference, versions, results and raw records, memory scopes, unsupported and fallback labels and
+    the gaps it reports; unavailable: the capabilities this host lacks; blocked: the prerequisite
+    the repository lacks) and every other shape refused by its own rule; the sixteen as a registry
+    and the eight as requirements over evidence -- a record measured, a GEM+ row at its bound, a
+    host capability, a driver-ladder milestone attested by a report the repository holds, another
+    gate -- stated by `evaluate_gates`: PASS only when every requirement is met, UNAVAILABLE when
+    one needs a capability the host lacks (never a pass, never simulated), OPEN otherwise, and never
+    ahead of a gate it requires. BG3 reads the first half of the driver ladder's M2 (the UART at
+    D0-D2), BG4 all of M2 and M4. JSON it reads holds every key once.
+  - `tools/perf/ot_run.py` writes all sixteen records and states the gates. What runs here, on
+    BCIR's own rails: OT-01 (the first common block and its backward on BCIR's kernels against
+    NumPy's float64); OT-03 (the direct C step against its program and its pack); OT-04 (one plan
+    intervention); OT-06 (the arena frontier); OT-14 (the trace observer's cost). Unavailable here:
+    OT-02, OT-05, OT-07, OT-08, OT-09, OT-10, OT-11, OT-12, OT-13, OT-16 (PyTorch and Triton in the
+    interpreter that ran, a GPU, a multi-device host, QEMU, a device rig); blocked: OT-15 (no IPC
+    adapter to decompose). An experiment whose capabilities a host has and whose runner this tree
+    lacks is recorded blocked, never a failed run: under the model-lab interpreter (torch 2.13.0,
+    Triton 3.7.1) OT-02, OT-05, OT-10 and OT-11 are.
+  - Results: OT-01: every element of the block and its backward within its binary32 bound on all 9
+    shapes of the proposal's CPU grid, the worst at 0.366 of its bound; the zero-size product a
+    no-op; strided operands unsupported, labelled so. OT-03: 27 of 27 state cases one state and one
+    event sequence, bit for bit, from the direct loop, the program and the pack. OT-04: the q/k/v
+    and gate/up projections a call each -- 145 launches become 163, the state kept bit for bit --
+    x0.9543 (95% interval 0.915-0.995) of the default step on the comparison decoder, beside the A/A
+    control's x0.9689 (0.927-1.013), not resolvable beside its control. OT-06: the bench step's
+    transients x1.326 of G26's bound in the C plan's spans, x1.000 placed by lifetime (a proved
+    optimum). OT-14: the launch probe x1.0159 (95% interval 0.973-1.060) of the plain step, beside
+    the A/A control's x0.9772 (0.941-1.015), not resolvable beside its control; the same state,
+    5,550 records and 0 dropped. Gates on this host: BG0 PASS; BG1 PASS; BG2 UNAVAILABLE; BG3 OPEN;
+    BG4 UNAVAILABLE; BG5 UNAVAILABLE; BG6 UNAVAILABLE; BG7 UNAVAILABLE.
+  - Witnesses (`bcir/tests/test_ot_contract.py`): the registry against the proposal; each record
+    rule's refusal by its message; the gates' semantics, including every gate passable with complete
+    evidence and none passing while a gate it requires is only unavailable; OT-01's checks firing a
+    thousandth past their bounds; the CLI's refusals (a key twice, a malformed file); every
+    experiment without a runner recorded on every host, blocked where the host has its capabilities
+    (it first failed the run there: a host with PyTorch); a smoke run of the runner, its timed
+    experiments each beside an A/A control. `ot-contract.json` (OC1-OC15), 15 of 15 caught, each by
+    its own witness.
+  - Not claimed: any comparison with PyTorch, Triton or a device. Their routes need what this host
+    lacks, and their records say so; the driver-ladder gates (BG3-BG6) wait on milestones their
+    reports must attest; BG2 waits on PX-6 (GPU), pending in a local session on the hardware.
+  GEO-2 (2026-10-22): Codex's PR818 geometric-head study rerun from its bundle, bit for bit, as
+    uploaded and on current main ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §5,
+    [measurements/2026-10-22/geo2/](research/measurements/2026-10-22/geo2/)).
+  - The five study bundles reached main on 2026-10-21 (`docs/research/{gp-global,wedge-next,
+    wedge-integrated,wedge-query-aware,wedge-pr818}`, 1,370 files, 1.77 GB). GEO-0: every bundle's
+    manifest against the bytes main holds -- PR818's 442 of 448 files byte-identical (its 66 selected
+    checkpoints among them), three more equal but for the trailing newline GitHub's web rename adds,
+    three absent (an evaluation protocol its evaluation rewrites; two LICENSE copies, this
+    repository's by hash); the earlier bundles likewise, short only of `wedge-next`'s and
+    `wedge-integrated`'s `protocol.json` and `wedge-next`'s generated `build/` directory.
+  - The host had moved: an Intel Xeon @ 2.80 GHz (family 6, model 85: AVX-512F and VNNI, no AMX),
+    so the bf16 GEMMs ran the AVX-512F instance Codex's AMD EPYC ran, and the AMX timing GEO-2
+    planned stays open.
+  - GEO-2a, as uploaded: Codex's `build_upgrade.py` regenerates its 17 overlay sources byte for byte
+    and the frozen protocol holds every source; the drivers ran unchanged (`launch.py` answers the
+    protocol's two cgroup-v2 reads on this cgroup-v1 host). All 51 binary32 runs (41,400 updates)
+    and 15 bf16 runs (12,600) equal Codex's records in every field -- state digests, histories, every
+    update's loss and gradient norm, the budget policy's decisions -- and all 66 evaluations (633
+    rows, 138 counterfactual groups): AMD's results on Intel, the bf16 T2048 ordered-recall gain
+    (89.06% to 95.31%) example for example.
+  - GEO-2b, current main: `build_main.py` makes `build_upgrade.py`'s graft from origin/main's trainer
+    (the state checks, the workspace functions, the GEMM dispatch, the attention entry, the SwiGLU
+    blocks, the optimizer and run tail; not the PX-2 runner, the transformer's step) with main's
+    tensor unit (ABI 5); every refusal main's products return is counted and held at 0; three driver
+    lines change for ABI 5 and the protocol carries the port (eleven entries re-hashed, 37 held).
+    All 66 runs and their evaluations equal Codex's again, field for field. The policy's decisions
+    are Codex's in every run; its bytes moved only where main's accounting did (the state record's
+    8-byte `recompute` word, the bf16 attention's exact WS-PLAN need). Every change since PR818 --
+    FACTS-RUN, BF16-ATTN, ATTN-SOFT, GEO-3, PX-1 to PX-5 -- keeps the study's bits under both
+    arithmetic families.
+  - Against PyTorch (`geo_compare.py`: the study's three models at batch 4 on four threads, twelve
+    rounds in rotated order, B-DIRECT twice as an A/A control): BCIR trains every model faster, 2.1
+    to 7.5 times the bundle's own Torch equations (P-EAGER) and 1.9 to 3.3 times `torch.compile`
+    (P-IND), and runs both geometric heads' inference 3.2 to 4.2 times faster than either. The one
+    loss is the attention baseline's inference at T2048: 1.74 (95% interval 1.52-1.98) times
+    P-EAGER's time and 1.59 (1.36-1.87) times P-IND's, at parity at T1024. Its attention writes every
+    head's t x t probabilities (268 MB a layer at B4/T2048) even with no backward to read them;
+    PyTorch's CPU flash kernel never forms them. That is the next inference update.
+  - Corrected by COMPILE-LIMIT (2026-10-24): seven of the fifteen P-IND readings -- the attention
+    model's training at T512 and every inference case -- ran eagerly past Dynamo's recompile limit.
+    Rerun with each case compiled at its own shapes (the session's later host): BCIR trains in
+    x0.33-0.83 of Inductor's time and runs the geometric heads' inference in x0.77-0.90 of it, 1.1 to
+    1.3 times its speed rather than 3.2 to 4.2; the attention baseline's inference took x1.39 of
+    Inductor's time at T1024 and x1.67 at T2048. The P-EAGER readings stand.
+  - Not claimed: AMX timing (no AMX here); a rerun of the four earlier studies (two protocols absent);
+    any learning result beyond what the bundle's own records already state.
+  OT P-routes (2026-10-22): PyTorch's and Triton's routes of PR #821's experiments, run.
+  - `tools/perf/ot_torch.py` runs PyTorch's routes in the OT records: P-EAGER beside B-DIRECT in
+    OT-01; the capture cost of P-FX, P-AOT and P-IND (OT-02); P-EAGER and P-IND in the block
+    portfolio (OT-05), beside B-DIRECT's block under each GEMM contract and under the trainer's own
+    (kblock+exp), whose T-DSL rows come from a session of PR #821's Triton-CPU pilot in its own
+    interpreter, admitted only over this tree's `bcir_tensor.c`; the frontier from
+    train_comparison.py's runs over one recipe (OT-10); Inductor's cache lifecycle (OT-11). Each
+    compiled step runs in its own process with a fresh cache; Triton is a capability only with a
+    usable backend; every input file is read before an experiment runs, and every measured record
+    names the PyTorch it ran (2.13.0+cu130, AVX512, BLAS mkl) and the threads it ran at. Measured on
+    this host: OT-01, OT-02, OT-03, OT-04, OT-05, OT-06, OT-10, OT-11, OT-14; gates: BG0 PASS; BG1
+    PASS; BG2 UNAVAILABLE; BG3 OPEN; BG4 UNAVAILABLE; BG5 UNAVAILABLE; BG6 UNAVAILABLE; BG7
+    UNAVAILABLE ([ledger](research/BCIR_OT_BG_LEDGER.md),
+    [measurements/2026-10-22/ot/](research/measurements/2026-10-22/ot/README.json)).
+  - Results: OT-01's P-EAGER within its binary32 bound beside B-DIRECT (worst 0.351 and 0.366 of the
+    bound). OT-02: the decoder step's first compiled call 3.5 s (P-FX), 6.8 s (P-AOT) and 44.3 s
+    (P-IND) as one whole-loss graph, the module form breaking at its input checks (2 graph breaks);
+    B-PLAN's step program and its words 4.5 ms (its TrainingPack 9.7 ms more, the StreamPack and
+    plan lowered in 67 ms) over a library built once in 11.5 s. OT-05, the block as the trainer runs
+    it (kblock+exp), forward and backward, against PyTorch's: at four threads faster in sixteen of
+    eighteen comparisons (1.32-5.45 times), at parity in two (512 x 768 x 1024); at one thread
+    faster in ten (1.07-1.72 times), at parity in five, slower in three: 512 x 768 x 1024 (1.37 and
+    1.38 times eager's and Inductor's time) and 512 x 257 x 1025 against Inductor (1.10 times its
+    time); against Triton-CPU its GEMM 2.2-3.4 times and its RMSNorm 2.6-10.0 times faster, the
+    SwiGLU product under the BCIR exponential at parity at a million elements. OT-10: the 9.84M
+    decoder's 300 updates at 272 ms a step on B-DIRECT against 533 (P-EAGER) and 390 (P-IND),
+    validation CE 2.3525, 2.3643 and 2.3730, peak RSS 489, 1118 and 1059 MB. OT-11: Inductor's first
+    call 43.6 s cold, 7.9 s on its kept cache, 80.1 s with dynamic shapes; B-PLAN's program a shape
+    at most 5.3 ms.
+  - A reading corrected before merge: the day's first run (`e81fb74`, pushed in `6e11a62`) compared
+    PyTorch's block with B-DIRECT's GEMM contracts under v1's libm SiLU passes alone, read 1.17-1.44
+    times PyTorch's time at one thread on the 128- and 512-row blocks, and put it down to MKL's
+    GEMMs. The block taken apart at one thread (`block_parts.py`,
+    [block-parts/](research/measurements/2026-10-22/block-parts/README.json)) showed v1's passes at
+    3.4-7.3 times the BCIR exponential's time -- the trainer runs the exponential's -- so the
+    portfolio gained the trainer's arm and the run was repeated; the exponential's passes take the
+    block to 0.72-0.94 of the libm arm's time at one thread. What remains is GEMM time: the
+    k-blocked forms keep pace with MKL's but on the largest block, whose A (1.5 MiB) is larger than
+    the core's 1 MiB L2 cache (the nn and tn forms 1.35 and 1.45 times MKL's), and in the weight
+    adjoint's transposed form (1.04-1.53 times at seven of nine shapes) -- the next training
+    update's target.
+  - Witnesses (`bcir/tests/test_ot_contract.py`): the PyTorch records keep every route that ran and
+    every failure; OT-05's arms each run their GEMM contract's and elementwise contract's entries,
+    declared as `bcir_tensor.h` declares them, and every phase's ratios pair a round with the same
+    round; a Triton session is evidence about this tree alone, every BCIR implementation a case
+    times correct on both sides (the first run's reader assumed one implementation a case: the smoke
+    run against the real session found it); Triton a capability only with a usable backend; OT-10's
+    frontier from one recipe; OT-01's verdict every route's; the runner's inputs refused before it
+    runs (a rows file it could not read failed the run only after its last experiment, until it was
+    read first); a record naming the PyTorch and the threads it ran. `ot-contract.json` OC1-OC48,
+    each caught by its own witness.
+  - Not claimed: P-TUNED (no budgeted autotuning lifecycle ran), T-GLUON and every GPU route (no
+    GPU), B-MLIR on the block, T-DSL inside OT-11 (the interpreter that runs PyTorch has no Triton
+    with a usable backend).
+  INFER-ATTN (2026-10-22): the attention forward for inference without its probabilities, every
+    value as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §6,
+    [measurements/2026-10-22/infer-attn/](research/measurements/2026-10-22/infer-attn/README.json)).
+  - The loss it answers: GEO-2's comparison on the study's attention model, whose inference at T2048
+    read 1.74 times eager PyTorch's time while the attention wrote every head's t x t probabilities
+    -- 256 MiB a layer at B4/T2048 -- that no backward reads.
+  - `BCIR_TENSOR_ATTENTION_SCRATCH` (8u) makes p the forward's scratch: each (batch, query head)
+    runs its rows a strip at a time -- scores, softmax, context -- in its own slot of whole rows at
+    the start of p, about 64K floats of scores a strip (at least 32 rows, a multiple of 16), so a
+    strip's scores, probabilities and the context's reads of them stay in the core's cache;
+    `bcir_tensor_attention_scratch_floats(batch, time, heads)` is all of p it writes. Every context
+    value and verdict is the stored attention's bit for bit: a score is its channels' products added
+    in order from +0.0, a context element its keys' in order from +0.0, a row's softmax its own --
+    the AVX-512 blocks start at the strip's first row (`att512_scores_from`, `att512_context_from`),
+    the v1 kernel's rows run as a rectangle and a triangle under the causal mask with the terms in
+    their order. The bf16 attention takes the bit alike: its 32-row query blocks in the slot, the
+    future columns its packed key tiles reach filled. The backward ignores the bit.
+  - `bcir_decoder_forward` passes it: no backward reads its cache, and the backward runs its own
+    forward, which keeps its probabilities, as REMAT's recompute and the PX-2 program runner do. The
+    tensor unit's probe records the bit.
+  - Measured on the committed tree against the one before it (24 or 12 rotated rounds, each beside
+    an A/A control): the kernel at B4/T2048, the GEO model's attention, x0.677 (0.646-0.710) of the
+    stored forward at four threads and x0.679 at one, with p 256 MiB down to a 4 MiB slot; B1/T8192
+    x0.730 (p 1 GiB); B1/T4096 with 8 heads of 64 x0.785; the 9.84M decoder's T128 x0.890.
+    `bcir_decoder_forward` end to end at the GEO model's dimensions: x0.822 at T1024 and x0.786 at
+    T2048 (x0.770 on one thread, x0.883 under bf16); the 9.84M decoder at T128 unchanged (x0.999,
+    its attention a small part of its forward). The GEO study's attention model itself, on level 3
+    (GEO-2b's overlay with the tensor unit swapped, `build_level3.py`): x0.786 (0.709-0.871) at
+    T1024 and x0.748 (0.717-0.780) at T2048 of the build before; against PyTorch, at T1024 x0.632 of
+    eager's time and x0.910 (0.780-1.062) of Inductor's, at T2048 x1.173 and x1.355. The T2048 loss
+    narrows (this run's build before read about x1.56 of eager's time) but stays.
+  - Codex's trained attention checkpoints (the bundle's lm and kv_single models) give byte-identical
+    logits from both builds at T1024 and T2048, and one forward from a zeroed arena writes 49.3M
+    nonzero floats on the stored build against 27.2M on the scratch build: the scratch path ran.
+  - What remains at T2048 is the attention's own rate: after INFER-ATTN it is about 85% of that
+    forward (three layers' 59.7 ms calls of 210 ms), about 72 GFLOP/s on four cores at head
+    dimension 32. That is the next inference update; an online softmax would be a new arithmetic
+    contract, not these bits.
+  - Witnesses (`runtime/c/test_decoder_train.c`): `attention_scratch` -- 398 binary32 and 133 bf16
+    cases over shapes, contracts, instances and thread counts, each context and verdict the stored
+    attention's bit for bit, nothing written past the scratch extent (a canary after it), every slot
+    at least 32 rows or all of them; `trainer_infer` -- 7 contracts at two contexts and two thread
+    counts, the forward's logits the backward's forward's, the probe naming the bit after the
+    forward and not after the backward. `infer-attn.json` IA1-IA17, each caught by its own check,
+    every one compiling warning-free under GCC 13, clang 18 and clang 23; nine earlier faults (AB14,
+    AB17, AF1, AF2, AF10, AF16, SW15, PI5, PR2) re-anchored to the lines INFER-ATTN moved, each
+    keeping its defect, caught again.
+  - Not claimed: training's attention memory (the backward still stores P; the exact-recompute tiled
+    attention is the training update the roadmap names); a smaller decoder arena (the plan still
+    sizes each layer's probability region for training, so the forward leaves it untouched rather
+    than unallocated); AMX timing; a GPU.
+  ATTN-RATE (2026-10-22): the attention's exponential and context at their rate, every value as it
+    was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §7,
+    [measurements/2026-10-22/attn-rate/](research/measurements/2026-10-22/attn-rate/README.json)).
+  - The loss it answers: INFER-ATTN's residual -- the GEO attention model's inference at T2048 still
+    x1.17 of eager PyTorch's time, the attention about 85% of that forward. Timed a phase at a time on
+    one core (an instrumented copy of the unit, TSC cycles a call at B4/T2048), the scratch kernel ran
+    its scores in 169M, its softmax in 196M and its context in 224M: the softmax and the context, more
+    than the products' rate.
+  - EXP-LANES: the BCIR exponential's polynomial is a chain of seven dependent multiply-then-add steps
+    under -ffp-contract=off, and its loops ran at the chain's latency. The exponential's own loops (its
+    instances and the softmax's rows in place) now take exp1 over a block of elements, each step over
+    the whole block before the next: four vectors in a row on AVX-512 (64 elements) and two on AVX2
+    (16; four spill its sixteen registers), whichever compiler builds them. GCC's unroll pragma copies
+    a vector's whole chain after the previous one's (measured no change), and its AVX2 instance did not
+    vectorize exp1 at all (8.7 ns an element against clang's 1.8). The portable instance keeps its
+    loop, and a call whose y partly overlaps x runs the element loop whole. The SiLU, the SwiGLU
+    product and its VJP keep exp1 an element under clang's interleave pragma, four vectors an
+    iteration (a block there holds too many arrays to stay in registers: measured slower at 1M
+    elements); GCC builds them as before.
+  - CTX-WIDTH: the AVX-512 context ran a 48-channel block as three 16-lane vectors whatever the head's
+    width, so at head dimension 32 the third vector, every lane masked off, was loaded and multiplied
+    anyway. `att512_ctx_block` runs the vectors a block's channels reach -- one, two or three -- each
+    element's terms the same, in the same order.
+  - Every value is the same: `attn_hash.c`'s 88 cases (y, and p when stored) and `elem_hash.c`'s 181
+    lines (each exponential instance, the SiLU, the SwiGLU product and VJP, serial and pooled, over
+    lengths that end mid-block and inputs with +-0, +-inf, NaN and the thresholds) byte for byte before
+    and after under clang 18 and GCC 13; the GEO model's trained checkpoints' logits byte-identical at
+    T1024 and T2048.
+  - Measured on the committed tree against the one before it, the kernels and the training step with
+    both builds in one process (A, B and B again as the A/A control, each round's outputs held equal),
+    the forward in rotated processes. The exponential x0.75 (clang) and x0.76 (GCC) at 16K elements,
+    x0.76 and x0.81 at 1M; GCC's AVX2 instance x0.47-0.49; clang's SwiGLU product x0.71 and its VJP x0.67
+    (x0.91 at 1M). The attention at B4/T2048 x0.78 (scratch) and x0.84 (stored, the training forward)
+    under clang, x0.86 and x0.90 under GCC; B1/T4096 with 8 heads of 64 x0.83; on one core the softmax
+    196M -> 169M cycles and the context 224M -> 178M, the scores unchanged. `bcir_decoder_forward` at the
+    GEO model's dimensions x0.899 at T1024 and x0.876 at T2048 (x0.896 on one thread); the 9.84M decoder
+    at head dimension 48 unchanged (x0.978), as is its training step (clang x0.967, 0.931-1.006). GCC's
+    decoder step read x0.924 (0.897-0.952), more than its exponential and context account for (under
+    1% of that step), so this record does not attribute it. The GEO study's attention model on level 3,
+    built with GCC as the study builds it: x0.878 at T1024 and x0.920 (0.872-0.971) at T2048 of the
+    build before; against PyTorch, at T1024 x0.607 of eager's time and x0.777 (0.685-0.882) of
+    Inductor's -- faster than both -- and at T2048 at parity with eager (x1.053, 0.961-1.155) and
+    x1.130 of Inductor's.
+  - What remains at T2048 is three phases at about a third each (scores 168M, softmax 169M, context
+    178M cycles on one core). Candidates within this contract, none measured yet: the softmax's
+    maximum taken where the scores are stored, not in its own transposed pass; a head's key panels
+    packed once for all its strips (each strip packs every panel up to its last row: 32 times the
+    stored forward's packs at T2048); the context's eight broadcasts a key. An online softmax would be
+    a new arithmetic contract.
+  - Witnesses (`runtime/c/test_decoder_train.c`): the context widths 32, 33 and 48+33 added to the v1
+    and fused attention references; every exponential instance on the edges and on a call whose y
+    lies past x and overlaps it (y = x + 1, 9, 17 and 60), element by element as the loop runs it --
+    both hold on the tree before too. `attn-rate.json` CW1-CW6 and EL1-EL6, each caught by its own
+    check and compiling warning-free under GCC 13, clang 18 and clang 23; NE3 and five INFER-ATTN-era
+    faults (IA2, NA5, NA15, NU1, NZ3) re-anchored to the lines this moved, each keeping its defect,
+    caught again; `ndt-exp.json` 6 of 6 and NL11 caught on the final tree.
+  - Not claimed: the portable instance (every non-x86 host's, untimed here) and GCC's SiLU and SwiGLU
+    loops are unchanged; the decoder's training step, at head dimension 48, gains nothing resolved
+    under clang; AMX timing; a GPU.
+  BWD-WIDTH (2026-10-22): the attention backward's transposed products at the head's width, every value
+    as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §8,
+    [measurements/2026-10-22/bwd-width/](research/measurements/2026-10-22/bwd-width/README.json)).
+  - The loss it answers: the GEO attention model's training update at long context. Paired with PyTorch
+    on ATTN-RATE's tree (the study's update -- forward, backward, clipping, AdamW -- of 4 x T tokens, 12
+    rotated rounds), BCIR took 94, 281 and 1107 ms at T512, T1024 and T2048 (medians) against eager
+    PyTorch's 219, 364 and 783 and Inductor's 165, 292 and 739, paired: faster than both at T512 (x0.42
+    and x0.55 of their times), faster than eager's and at parity with Inductor's at T1024 (x0.80;
+    x0.994, 0.964-1.025), x1.43 of eager's time and x1.51 of Inductor's at T2048. BCIR's update grows as
+    T squared there (x3.9 from T1024 to T2048, PyTorch's x2.2-2.5): the stored attention, whose forward
+    took 66 ms a layer at T2048 on four threads after ATTN-RATE and its backward 206 ms -- three
+    quarters of it.
+  - The change: the backward's two transposed products -- dV = P^T dY and dK = dS^T Q,
+    `att512_transposed_any` -- ran a 48-channel block as three 16-lane vectors whatever the head's
+    width, the waste CTX-WIDTH removed from the context: at head dimension 32 a third vector of masked
+    lanes was loaded, multiplied and stored for every term. `att512_tr_block` runs the vectors a block's
+    channels reach -- one, two or three -- each element's terms the same, in the same order.
+  - Every value is the same: `bwd_hash.c`'s 34 backward cases (17 shapes whose head widths meet the
+    16-lane boundaries, v1 and fused: dq, dk, dv and the score adjoints left in p) and ATTN-RATE's 88
+    forward cases byte for byte before and after under clang 18 and GCC 13; the GEO model's trained
+    state (weights, both moments, the step) the same digest from both builds after three updates at each
+    context.
+  - Measured on the committed tree against the one before it, both builds in one process (A, B and B
+    again as the A/A control, each round's outputs held equal). Each row whose interval held 1 or met
+    its A/A interval, but the two controls at head dimension 48, ran again with 24 rounds, declared
+    before it ran; both runs are recorded. The backward at B4/T2048, head dimension 32, x0.850
+    (0.815-0.888) on one core; on four threads x0.886 (0.841-0.934) at T2048, x0.817 at T1024 and x0.859
+    at T512 (24 rounds; the 12-round run x0.890, 0.857 and 0.863, each meeting its A/A interval); GCC
+    x0.839 at T2048 and x0.868 at T1024; B1/T4096 with 8 heads of 64 x0.894; the 9.84M decoder's
+    attention, head dimension 48 -- three vectors either way -- unchanged (x1.033, 0.918-1.164). The
+    training step at the GEO model's dimensions x0.912 (0.873-0.953) at T2048 under clang and x0.905
+    under GCC; at T512 and T1024 x0.938 and x0.911 in the 24-round run (x0.943 and x0.925 in the first),
+    each meeting its A/A interval; the 9.84M decoder's step unchanged (x0.963, 0.927-1.001). The GEO
+    study's attention model on level 3 (built with GCC, as the study builds it): x0.914 (0.879-0.950) of
+    the build before at T1024 and x0.920 (0.892-0.948) at T2048 over 24 rounds (the 12-round first run
+    x0.958 and x0.985, its intervals holding 1), x0.915 at T512 meeting its A/A interval; the trained
+    state the same digest. Against PyTorch the update is faster than eager's and Inductor's at T512
+    (x0.36 and x0.49 of their times) and at T1024 (x0.77 and x0.92), and at T2048 x1.35 of eager's time
+    and x1.42 of Inductor's.
+  - What remains at T2048, timed a phase at a time on one core (an instrumented copy of the unit, TSC
+    cycles a call at B4): of the backward's 2026M, dV 564M and dK 528M -- the two transposed products
+    still more than half, at about 8 cycles a vector multiply-add against the context form's 3.4 for the
+    same multiply-adds (dQ, 231M) -- the dP tiles 300M and their second evaluation 209M (past T512 they
+    take the GEMM kernel: the values' transposed panel holds 16384 floats; past the first 256 columns
+    pass 1 evaluates them again), the row dots 121M and the score adjoints 66M. Each transposed product
+    walks P down its columns, a row of P a term: at T2048 an 8 KB stride, a new page every term. Walking
+    P a band of rows at a time, each output row's terms still in ascending order, is the next training
+    update.
+  - ATTN-SOFTMAX, measured and not taken: the first of ATTN-RATE's candidates -- the softmax's maximum
+    taken along the stored rows (order-free: NaN skipped, and exp1(+-0) = 1 makes the zero's sign
+    irrelevant), its exponential in row order and one transpose for the in-order sum -- every value the
+    same (the 88 cases, both compilers), at parity: the inference attention at B4/T2048 x0.970
+    (0.915-1.028) of its time on one core, x0.973 (0.929-1.020) on four, x0.950 (0.886-1.018) under GCC.
+    The transposes it removed were spent again in the pass it added; the softmax's remainder is its
+    exponential and its division, both fixed by the contract.
+  - Witnesses: the v1 and fused attention references already hold the backward at the widths the vector
+    boundaries meet (1, 15-17, 24, 32, 33, 47-49, 65, 81, 130); `bwd-width.json` BW1-BW6, each caught by
+    its own check and compiling warning-free under GCC 13, clang 18 and clang 23; NA8, NA9, NA16 and NZ5
+    re-anchored to the lines this moved, each keeping its defect, caught again.
+  - Not claimed: the portable and AVX2 instances (the change is the AVX-512 kernel's); the 9.84M decoder
+    at head dimension 48, three vectors either way; AMX timing; a GPU.
+  BWD-LONG (2026-10-22): the attention backward at long context, every value as it was
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §9,
+    [measurements/2026-10-22/bwd-long/](research/measurements/2026-10-22/bwd-long/README.json)).
+  - The loss it answers: BWD-WIDTH's residual. Timed a phase at a time on one core at B4/T2048 (TSC
+    cycles a call), the backward spent 494M and 491M of its 1823M on its two transposed products, dV =
+    P^T dY and dK = dS^T Q, at about 7 cycles a vector multiply-add where dQ -- the same multiply-adds
+    in the context's form, walking P along its rows -- took 3.2; and 266M and 181M on its
+    probability-adjoint tiles, which past T512 took the GEMM kernel.
+  - BWD-BAND: each transposed-product block walked its terms down P's columns, a row of P a term -- at
+    T2048 an 8 KB stride, a new page every term. Once a row of P spans a 4 KB page
+    (`BCIR_ATT_BAND_FROM`, 1024 floats) the terms run a band of 32 rows of P at a time
+    (`BCIR_ATT_BAND`): every 8-row output block the band reaches takes the band's terms -- its diagonal
+    terms first when the band holds them -- before the next band starts, its sums stored between bands,
+    so a band's rows are read along their columns. Each element takes its terms in ascending order
+    either way; below the threshold one band holds every term, the loop as it was (banded at every
+    context, the 9.84M decoder's attention at T128 read x1.074, 1.028-1.121).
+  - DP-PANEL: the probability-adjoint tiles read the KV head's values transposed once into the task's
+    16384-float panel (NDT-ATTN-5), so past it -- T512 at head dimension 32 -- they took the GEMM
+    kernel. Each tile's values are now transposed into the same buffer as the tile is evaluated (d x 64
+    floats, head dimensions to 256), for the register blocks: the GEMM kernel's arithmetic for these
+    operands, the same bits.
+  - Every value is the same: `band_hash.c`'s 48 backward cases -- BWD-WIDTH's 17 shapes and 7 past the
+    threshold, T1024 to T2048, whole bands and a context ending inside one, a GQA group, head widths of
+    one to three vectors, v1 and fused: dq, dk, dv and the score adjoints left in p -- and ATTN-RATE's
+    88 forward cases byte for byte before and after under clang 18 and GCC 13; the GEO model's trained
+    state the same digest from both builds after three updates at each context.
+  - Measured on the committed tree against the one before it, both builds in one process (A, B and B
+    again as the A/A control, each round's outputs held equal), 24 rounds every row. The backward x0.597
+    (0.554-0.644) of its time on one core at B4/T2048; on four threads x0.641 at T2048 and x0.707 at
+    T1024 (GCC x0.635 and x0.687); B1/T4096 with 8 heads of 64 x0.695; T512 (x0.994) and the 9.84M
+    decoder's attention at T128 (x0.977) unchanged. On one core the phases at T2048: dV 494M -> 211M, dK
+    491M -> 199M, the tiles 266M -> 166M and their second evaluation 181M -> 116M, the rest unchanged;
+    the backward 1823M -> 1077M. The training step at the GEO model's dimensions x0.804 (0.783-0.825) at
+    T2048 under clang and x0.797 under GCC, x0.852 at T1024, x0.958 at T512 (0.910-1.009); the 9.84M
+    decoder's step read x0.899 (0.860-0.940), more than its unchanged attention accounts for, so this
+    record does not attribute it. The GEO study's attention model on level 3 (built with GCC, as the
+    study builds it): x0.789 (0.769-0.810) of the build before at T2048 and x0.904 (0.877-0.931) at
+    T1024, unchanged at T512 (x0.984); the trained state the same digest. Against PyTorch the update is
+    faster than eager's and Inductor's at T512 (x0.38 and x0.55 of their times) and T1024 (x0.68 and
+    x0.85), and at T2048 x1.09 (1.051-1.131) of eager's time and x1.23 of Inductor's -- from x1.35 and
+    x1.42 after BWD-WIDTH.
+  - The design runs, recorded with the slice: bands of 16 measured the same as 32 and bands of 64
+    slower; banded at every context, short contexts paid (the T128 decoder's x1.074), hence the
+    threshold; the tiles' panels over the bands alone x0.842 on one core at T2048 and x0.826 at T1024.
+  - BWD-FUSE, measured and not taken: each 32-row strip of P taken through every pass while it is in
+    cache -- dV's band of P's rows, the tiles and dots, the score adjoints, dK's band of dS's rows, dQ's
+    rows -- every value the same (48 cases, both compilers), at T2048 x0.927 (0.842-1.021) on one core
+    and x0.930 on four, parity under GCC and at T4096, and x1.092 (1.017-1.172) at T1024: a strip's
+    bands keep all of dV's and dK's accumulators live, a larger working set than the separate passes.
+  - What remains at T2048, on one core: of 1077M, dQ 215M, dV 211M, dK 199M, the tiles 166M and their
+    second evaluation 116M, the row dots 110M, the score adjoints 53M -- every product now at about 3.1
+    cycles a vector multiply-add, two vector operations a term under v1's separate multiply and add.
+  - Witnesses: the C harness builds once more with both paths at every context (`BCIR_ATT_BAND_FROM` 16,
+    `BCIR_ATT_WHOLE` 0: bands from 16 terms, every tile on its own panel), so the v1 and fused attention
+    references hold them -- contexts of 33 to 330 run two to eleven bands, a context ending inside a
+    band among them; `bwd-long.json` BB1-BB6 and DP1-DP4, each caught by its own check and compiling
+    warning-free under GCC 13, clang 18 and clang 23; NA9, NA13, NZ5, AF4, NT8, BW1 and BW2 re-anchored
+    to the lines this moved, each keeping its defect, caught again.
+  - Not claimed: the threshold and the band's height are this host's choice, and no value depends on
+    them; the portable and AVX2 instances; the bf16 attention's own transposed products; AMX timing; a
+    GPU.
+  ATT-CONTIG (2026-10-23): the attention's tasks on contiguous copies of their heads' rows, every value
+    as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §10,
+    [measurements/2026-10-23/att-contig/](research/measurements/2026-10-23/att-contig/README.json)).
+  - The loss it answers: not the traffic in P that BWD-LONG named. Four ways at that traffic were built
+    on the session's earlier host, every value the same in each, and none moved the attention on four
+    threads at B4/T2048: BWD-RECOMP (the forward without its probabilities, the backward recomputing
+    each 32-row strip of P exactly) x0.989 of the attention, its forward x0.680 and its backward
+    x1.192; row fusion (dQ, dK and dV in the strip loop) x0.968-x1.019 of the backward; ATT-PACK (the
+    context's keys and the bands' rows packed) x1.013; ATT-PREFETCH (P's lines asked for ahead of the
+    walks) no distance resolved. The layout did move it: the same buffers read as B x H batches of one
+    head ran the attention at x0.845 at B4/T2048 (the backward x0.801) and x0.617 at B1/T4096 with 8
+    heads of 64. A row of q, k or v holds every head's channels, so a head's rows lie heads x dim floats
+    apart -- the context's walk alone took 2.10-2.24 cycles a vector multiply-add at a 128-float stride,
+    1.56-1.66 at 32 -- and four threads' heads share their output rows.
+  - ATT-CONTIG: from `BCIR_ATT_CONTIG_FROM` positions (1024), where a row holds more than one head, a
+    task lent a region of a caller's workspace copies its head's rows in, runs the head as a batch of
+    one head of one row stride, and copies its results back -- a forward task its query head's q and
+    its KV head's k and v, its context out; a backward task its KV head's k, v, dk and dv, then each
+    query head's q, dy and dq, the group's later heads adding to dk and dv as they add in place (the
+    head's backward takes an accumulate flag). Values move; none is computed. A region is seven t x d
+    copies, each to a 64-byte boundary; one a worker where the workers are no more than the forward's
+    tasks, else one a task (`bcir_tensor_attention_pool_workspace`, at most
+    `bcir_tensor_attention_workspace`); with less, or none, every task runs on the rows in place. The
+    entries `bcir_tensor_attention_contract_variant_scan_ws_pool` and
+    `bcir_tensor_attention_backward_contract_variant_ws_pool` take the workspace; the entries without
+    one run them with none.
+  - The trainer lends the binary32 attention its state's workspace under every contract:
+    `bcir_decoder_workspace_need` covers the regions (alone under a binary32 GEMM contract; under bf16
+    the most of the GEMM groups' packs and the regions), a lent workspace is held apart from the state,
+    every arena and a caller's buffers under every contract, and any size trains the same state. PX-1's
+    trace, the program executor's check, the pack's claims and their lowering state it as the
+    attention's operand on both of its launches wherever the state lends bytes; the Python planner lends
+    one only where the step packs or copies into it.
+  - Every value is the same: the entries without a workspace give BWD-LONG's 48 backward and 88 forward
+    cases byte for byte before and after under clang 18 and GCC 13, and the workspace entries the
+    entries without one in 564 cases (the context, the verdict, the stored probabilities, dq, dk, dv; a
+    non-finite key among them), built as committed and built to copy at every context; the GEO model's
+    trained state the same digest from both level-3 builds at every context.
+  - Measured on the committed tree against the one before it, on the host the session moved to on
+    2026-10-23 (an Intel Xeon @ 2.30 GHz with AMX, 2 MiB of L2 a core, a 260 MiB L3), both units in one
+    process beside the tree after it run in place, the contiguous layout and an A/A control, 48 rounds a
+    row on four threads: the GEO shape at B4/T2048 x0.934 (0.906-0.962), the backward x0.883 and the
+    forward unchanged (GCC x0.945, its interval meeting the control's; the contiguous layout x0.922 and
+    x0.912); at T1024 x0.975 and on one thread x0.984, neither resolved; 8 heads of 64 at B2/T1024
+    x0.850, B1/T2048 x0.716 and B1/T4096 x0.593 (GCC x0.599), against the contiguous layout's x0.792,
+    x0.683 and x0.576 (GCC x0.588) -- within its interval at T2048 and T4096; the in-place path
+    x0.98-x1.02 everywhere. The threshold: copying from T1024 read faster on this host (8 heads of 64 at
+    B1/T1024 x0.842 in the run that set it), from T512 not (x1.009, x1.014, x0.983, none resolved). The
+    training step at the GEO dimensions x0.912 (0.899-0.925) at T2048 and x0.953 (0.934-0.973) at T1024
+    under the study's contract, x0.956 at T2048 under v1, unchanged at T512 and on the 9.84M decoder at
+    T128 (GCC x0.961 and x0.968, each meeting its control). The GEO study's attention model on level 3,
+    built with GCC as the study builds it and lent its attention's regions (`contig_level3.py`): x0.934
+    (0.923-0.945) of the build before at T2048 (x0.948 against the control's arm), unchanged at T1024
+    and T512; at T2048 now x1.016 (0.990-1.043) of eager PyTorch's time and x1.08 of Inductor's, from
+    x1.086 and x1.15 on this host.
+  - The design runs, recorded with the slice (on the earlier host): copies of every operand x0.895-0.907
+    of the attention at B4/T2048 (the outputs alone x0.898, the inputs alone x0.885); B1/T4096 with 8
+    heads of 64 x0.656 (the contiguous layout x0.619); T512 slower (the backward x1.10); the task order
+    remapped batch-fastest nothing once the tasks copy; the GEO training update with a thread-local
+    prototype x0.904 of the build before.
+  - What remains: the copies' own cost (x0.934 against the contiguous layout's x0.922 for the GEO shape
+    at T2048, x0.850 against x0.792 for 8 heads of 64 at T1024), which a layout the step keeps -- its
+    projections writing each head's rows contiguous -- would close; the GEO shape at T1024 and on one
+    thread; under GQA the forward's K and V copied once a query head.
+  - Witnesses: the tensor entries with a workspace against the entries without one, bit for bit -- the
+    context, the verdict, the stored probabilities and the score adjoints left in them, dq, dk, dv and
+    the scratch forward's context -- lent the pool's need from a 64-byte boundary and from the address
+    after one, a byte short of it and none, every byte outside the regions untouched, on every instance
+    and contract, finite and not (a key no context reaches among them), serially and on pools of two,
+    four and 64 workers; the threshold's own context in every build, every context in the C harness's
+    new -contig build; the regions' size rule; the trainer's need against the GEMMs' packs and the
+    regions exactly, the binary32 refusals and the overlap with a caller's buffer; a T1024 binary32 case
+    through the trace, the program executor and each of the planner's choices; the manifest's
+    ThreadSanitizer builds of the harness copy at every context (`BCIR_ATT_CONTIG_FROM` 1), so the
+    workers' regions run under the sanitizer -- pools of two, four and 64 workers, no race, the injected
+    partition fault still reported (the default build's TSan run skips the one context that copies).
+    `att-contig.json` AC1-AC23 and `att-contig-px.json` AX1-AX8, each caught by its own check and
+    compiling warning-free under GCC 13, clang 18 and clang 23; `geo3-py.json` GP10 (the planner lending
+    a workspace where nothing packs or copies); GW9, IA16, AB4, AF10, AF14, AF16, AF17, NZ4, PI5, PT4,
+    SW6, PK24 and PM5 re-anchored to the lines this moved, each keeping its defect, caught again.
+  - Not claimed: the threshold is the measuring hosts' choice, and no value depends on it; the bf16
+    attention (it packs its own operands); a KV head's rows already contiguous (one KV head) are copied
+    as well; AMX timing; a GPU.
+  FWD-STRIP (2026-10-23): the stored training forward a strip of rows at a time, every value as it
+    was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §11,
+    [measurements/2026-10-23/fwd-strip/](research/measurements/2026-10-23/fwd-strip/README.json)).
+  - The loss it answers: against PyTorch's scaled_dot_product_attention on the GEO attention model's
+    shape (B4, 4 heads of 32, T2048, four threads), BCIR's backward ran at parity with the flash
+    kernel's (39.5 ms against 38.0) and its stored forward at twice the flash forward's time (32.5 ms
+    against 16.6); PyTorch's math kernel, which stores the probabilities as BCIR does, took x4.9 of
+    BCIR's attention. Timed a phase at a time, the forward's fill took 15% of it, the scores 29%, the
+    softmax 33% and the context 20%: each phase took the head's whole t x t probabilities, 16 MB at
+    T2048, in turn. Per-task cycles were the same on one thread as on four -- a core's own traffic, not
+    the pool's.
+  - FWD-STRIP: from `BCIR_ATT_STRIP_FROM` positions (1024) a stored forward runs each (batch, query
+    head) a strip of rows at a time in place -- a strip's rows' future columns zeroed first, then
+    INFER-ATTN's `att_strip` (its scores, softmax and context) on the stored probabilities' own rows
+    while they are in the core's cache, a strip `att_strip_rows` rows (256 KB). `att_strip` computes a
+    strip's rows bit for bit as the head-at-a-time forward does and every future column ends +0.0 either
+    way, so the stored probabilities, the context and the verdict are as they were; a task on
+    ATT-CONTIG's copies strips them too. A probe of the unit (`bcir_tensor_attention_strips_probe`, the
+    harness's builds) counts the heads that ran in strips: the path the values cannot show.
+  - Every value is the same: BWD-LONG's 48 backward and ATTN-RATE's 88 forward cases byte for byte
+    before and after under clang 18 and GCC 13, and again with the tree after built to strip at every
+    context; 288 stored forwards at T1016 to T2050 (p after a NaN fill, every float, future columns
+    included, the context and the verdict; GQA, head widths 4 to 64, every contract, one thread and
+    four, with and without a workspace, finite and not) byte for byte before and after; the workspace
+    entries the entries without one in ATT-CONTIG's 564 cases; the GEO model's trained state the same
+    digest from both level-3 builds at every context.
+  - Measured on the committed tree against the one before it, both lent the pool's need, 48 rounds a
+    row: the attention's forward at B4/T2048 x0.868 (0.839-0.898) on four threads and x0.831 on one, GCC
+    x0.921, GQA (4 heads, 2 KV heads) x0.923; at T1024 x0.925 under clang (meeting its control) and
+    x0.924 under GCC; the whole attention x0.962 on four threads (meeting its control) and x0.931 on
+    one; T512 and 8 heads of 64 at T1024-T4096 at parity. The training step at the GEO dimensions read
+    x0.966-0.977 at T1024 and T2048 under both compilers and contracts, none resolved at 48 rounds; the
+    T2048 rows, run again with 64 rounds as declared before they ran, resolved: x0.949 (0.935-0.963)
+    under clang and x0.951 (0.934-0.967) under GCC. The GEO study's attention model on level 3, built
+    with GCC as the study builds it and both builds lent their regions, read x0.970 at T2048 and x0.968
+    at T1024 in 32 rounds (each meeting its control), and x0.951 (0.939-0.963) at T2048 in the declared
+    64 -- now x0.990 of eager PyTorch's time (parity) and x1.086 of Inductor's.
+  - The design runs, recorded with the slice: the strips with plain stores x0.898 of the forward, with
+    streaming stores for the zeros x0.847 and the streaming zeros alone x0.929 at T2048; strips of 32K,
+    128K and 256K floats no better than 64K; the streaming zeros against plain stores directly x0.959 on
+    four threads (meeting its control) and x0.930 on one -- not taken, since the trainer runs four
+    threads and the stores would need a fence and its own witness.
+  - What remains: the stored forward at x1.7 of the flash forward's time -- its probabilities written
+    out, half of them the future's zeros, each line read before it is written; 8 heads of 64, where the
+    scores' products outweigh the probabilities' traffic.
+  - Witnesses: a harness test at the threshold's own context and either side of it (T1023, T1024, T1031)
+    against the reference loops under every contract, p NaN-filled first, finite and with an infinite
+    key, serially and on a pool of four, with and without a workspace, with the probe; the harness's
+    -long and -contig builds and the manifest's ThreadSanitizer builds strip at every context, so the
+    attention references and the sanitizer hold the strips at every shape. `fwd-strip.json` FS1-FS9,
+    each caught by its own check and compiling warning-free under GCC 13, clang 18 and clang 23.
+  - Not claimed: the threshold is the measuring host's choice, and no value depends on it; the scratch
+    forward (INFER-ATTN's strips already); the bf16 attention; AMX timing; a GPU.
+  P-LOWER (2026-10-23): the stored training forward leaves the probabilities' future columns unwritten,
+    every value read as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §12,
+    [measurements/2026-10-23/p-lower/](research/measurements/2026-10-23/p-lower/README.json)).
+  - The loss it answers: FWD-STRIP left the stored forward at x1.7 of the flash forward's time, its
+    strips zeroing every row's future columns before the scores -- half of the head's t x t
+    probabilities, 8 MB at T2048, written only to be ignored. The binary32 backward reads no
+    probability past a row's diagonal under any contract: its register blocks read a few columns past
+    it inside their diagonal tiles and discard them under their masks, and the GEMM kernel's masked
+    products skip masked terms.
+  - P-LOWER: `BCIR_TENSOR_ATTENTION_LOWER` (16) is the caller's word that it reads each row's
+    probabilities j <= i alone; under it a stored forward may leave p's future columns as p held them.
+    From `BCIR_ATT_STRIP_FROM` the strips skip their fill (the score blocks still store +0.0 in the
+    future lanes of the 32-wide key blocks they reach); below it the head-at-a-time forward writes every
+    column as before; y, the verdict and every probability j <= i are the same bit for bit. The trainer
+    runs its stored binary32 forward under the bit (`attention_forward_contract`); PX-1's program
+    check, the pack's lowering and the Python launch plan state it on the binary32 forward's launch;
+    the trainer's header says what a backward now leaves in each probability region (the score
+    adjoints at j <= i, the rest +0.0 or what the region held). A scratch forward and the bf16 entry
+    ignore the bit: the bf16 backward reads the future +0.0s as its tiles' terms.
+  - Every value read is the same: 208 cases of the stored forward under the bit and the backward from
+    it (y, the verdict, p at j <= i, dq, dk, dv; GQA, head widths 2 to 64, every contract, one thread
+    and four, with and without a workspace, p NaN-filled first) byte for byte against the tree before
+    (which ignores the bit) under clang 18 and GCC 13, and with the tree after built to strip at every
+    context; the paths without the bit -- BWD-LONG's 48 backward cases, ATTN-RATE's 88 forward cases and
+    FWD-STRIP's 288 long-context stored forwards (every float of p) -- byte for byte before and after; the
+    workspace entries the entries without one in ATT-CONTIG's 564 cases; the GEO model's trained state
+    the same digest from both level-3 builds at every context.
+  - Measured on the committed tree against the one before it, the bit in both arms' word, both lent the
+    pool's need, 48 rounds a row: the attention's forward at B4/T2048 x0.817 (0.788-0.848) on four
+    threads, x0.826 on one, GCC x0.847, GQA (4 heads, 2 KV heads) x0.849, v1 x0.859; at T1024 x0.851
+    under clang and x0.878 under GCC; 8 heads of 64 x0.934 at T1024 and x0.92-x0.93 at T2048 and T4096
+    (meeting their controls); T512 at parity, below the threshold. The whole attention x0.941 on one
+    thread and x0.944 under GCC; on four threads under clang x0.915, its interval meeting its control's
+    by 0.001, and in the 64 rounds declared before they ran x0.949 (0.920-0.979). The training step at
+    the GEO dimensions at T2048 x0.937 under GCC and x0.953 under clang's v1 contract; under clang's
+    kblock+exp+reduce x0.970 beside a control that drifted to x0.972, and in the declared 64 rounds
+    x0.948 (0.931-0.966); T512, T1024 and the 9.84M decoder (T128) at parity. The GEO study's attention
+    model on level 3, built with GCC as the study builds it, both builds lent their regions and stating
+    the bit on their stored forward: x0.960 (0.942-0.977) at T2048 in 32 rounds -- now x0.964
+    (0.944-0.983) of eager PyTorch's time and x1.063 of Inductor's; T1024 x0.981 (meeting its control),
+    T512 at parity.
+  - Against PyTorch's scaled_dot_product_attention on the same inputs (B4, 4 heads of 32, four threads,
+    24 rounds), the attention as the trainer runs it: at T2048 BCIR 60.6 ms against the flash kernel's
+    56.0, flash x0.968 (0.903-1.039) of BCIR's -- parity, from x0.82 before FWD-STRIP -- BCIR's backward
+    the faster (38.3 ms against 39.2) and its forward the slower, flash's x0.813 (0.758-0.872) of BCIR's
+    (17.0 ms against 21.8); at T1024 parity too (flash x1.072, 0.993-1.157); PyTorch's math kernel,
+    which stores the probabilities as BCIR does, x5.5 of BCIR's time.
+  - The prototype first: the strip forward's fill removed, its stored forwards' y and verdict and the
+    backward's dq, dk and dv from p NaN-filled before the forward, 176 cases a build on the AVX-512, AVX2
+    and portable instances under clang and GCC, each the committed tree's; timed at x0.833 of the
+    forward and x0.938 of the whole attention at B4/T2048 in 32 rounds.
+  - What remains: the stored forward at x1.23 of the flash forward's time -- the probabilities j <= i
+    written out for the backward to read, where the flash kernel recomputes them; the head-at-a-time
+    forward below the threshold, which still writes its future columns; the bf16 forward, whose backward
+    reads them; 8 heads of 64.
+  - Witnesses: the harness's FWD-STRIP test runs each forward once more under the bit, p filled with a
+    NaN canary -- y, the verdict and every probability j <= i the reference loops', every future column
+    +0.0 or the canary, the canary still in the last column of every row whose strip ends before it, and
+    the backward from the canaries' probabilities the reference's; `attention_lower` holds the same on
+    the reference shapes under every contract, finite and not, serially and on a pool, with and without
+    a workspace (the harness's -long and -contig builds strip at every context: 4,187,904 canaries kept
+    there); `trainer_lower` trains steps from activations, scratch and workspace whose every float is a
+    NaN canary and gets the zeroed arenas' loss, gradients and logits bit for bit, the canary left
+    exactly where a binary32 forward's strips leave it -- every other float of the arena the step
+    writes. The tensor unit's probe records the bit; the trainer's probe checks expect it on every
+    stored binary32 forward. `p-lower.json` PL1-PL5 and `p-lower-px.json` PL6-PL9, each caught by its
+    own check and compiling warning-free under GCC 13, clang 18 and clang 23; FS1, FS8, IA12, IA15, IA16
+    and PI5 re-anchored on the lines the slice rewrote and caught again.
+  - Not claimed: below the threshold, where the head-at-a-time forward writes every column; the bf16
+    attention; AMX timing; a GPU.
+  BWD-KEEP (2026-10-23): the attention backward keeps every probability-adjoint tile of a row block,
+    every value as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §13,
+    [measurements/2026-10-23/bwd-keep/](research/measurements/2026-10-23/bwd-keep/README.json)).
+  - The loss it answers: timed a part at a time with the trainer's job clock, the GEO step at T2048
+    spent 41% of its time in the attention's backward, 23% in its forward and about a quarter in the
+    GEMMs. The backward evaluates a row block's probability-adjoint tiles (dP = dY V^T, 32 rows by 64
+    columns) once for the rows' dots and again for their score adjoints; it kept the first 256 columns'
+    tiles on its stack (32 KB) and evaluated every tile past them twice -- three quarters of a row
+    block's tiles at T2048.
+  - BWD-KEEP: given a region of the lent workspace (ATT-CONTIG's, from `BCIR_ATT_CONTIG_FROM` positions
+    where a row holds more than one head), a backward task keeps every tile of a row block there -- 32
+    rows of the context's width in whole tiles of 64 columns, after the seven copies -- so its second
+    pass reads every tile its first evaluated and none is evaluated twice. A kept tile holds the bits
+    its second evaluation would have, so dq, dk and dv are as they were; without a region (no
+    workspace, or less than the pool's need) a task keeps the stack's first 256 columns and evaluates
+    the rest twice, as before. The region grows by the kept tiles (at T2048 and a head width of 32, a
+    seventh), and the trainer's need with it.
+  - Every value is the same: 208 cases of the stored forward under LOWER and the backward from it, and
+    BWD-LONG's 48 backward cases, byte for byte against the tree before under clang 18 and GCC 13, and
+    with the tree after built to keep its tiles at every context; ATTN-RATE's 88 forward cases and
+    FWD-STRIP's 288 long-context stored forwards byte for byte before and after; the workspace entries
+    the entries without one in ATT-CONTIG's 564 cases; the GEO model's trained state the same digest
+    from both level-3 builds at every context.
+  - Measured on the committed tree against the one before it, both lent the larger of their two needs,
+    48 rounds a row: the attention's backward at B4/T2048 x0.905 (0.866-0.946) on four threads and
+    x0.865 (0.843-0.888) in the 64 rounds declared before they ran, x0.874 on one thread, v1 x0.854,
+    GQA (4 heads, 2 KV heads) x0.868, GCC x0.877; at T1024 x0.898 under clang and x0.877 under GCC;
+    8 heads of 64 x0.874-x0.875 at T2048 and T4096 (x0.902 at T1024, meeting a control that drifted to
+    x0.958); T512 at parity, below the threshold. The whole attention x0.916 on one thread, x0.915 with
+    GQA, x0.924 under GCC and x0.931 at T1024; on four threads under clang x0.953, meeting its control's
+    interval by 0.006 beside a forward -- which the slice does not touch -- reading x1.034 inside its
+    own, and in the declared 64 rounds x0.914 (0.896-0.933), the forward x1.002. The training step at
+    the GEO dimensions at T2048 x0.944 under GCC and x0.955 under clang's v1 contract; under clang's
+    kblock+exp+reduce x0.955, clearing its control by 0.0002, and in the declared 64 rounds x0.937
+    (0.919-0.957); T512, T1024 and the 9.84M decoder (T128) not resolved. The GEO study's attention
+    model on level 3, built with GCC as the study builds it, both builds lent their regions: x0.946
+    (0.931-0.961) at T2048 in 32 rounds -- now x0.911 (0.892-0.930) of eager PyTorch's time and x1.005
+    (0.983-1.029) of Inductor's, parity; T1024 x0.967 (meeting its control), T512 at parity.
+  - Against PyTorch's scaled_dot_product_attention on the same inputs (B4, 4 heads of 32, four threads,
+    24 rounds), the attention as the trainer runs it: at T2048 BCIR 57.5 ms against the flash kernel's
+    55.4, flash x0.994 (0.888-1.113) of BCIR's -- parity -- BCIR's backward the faster (35.3 ms against
+    38.0) and its forward the slower (22.3 against 17.2, flash's x0.796); at T1024 BCIR the faster, flash
+    x1.222 (1.168-1.279) of its time, the flash backward x1.364; PyTorch's math kernel, which stores the
+    probabilities as BCIR does, x5.8 of BCIR's time at T2048.
+  - The prototype first: every tile kept on the stack (a 256 KB frame, which no library may take on a
+    caller's thread), BWD-LONG's 48 backward cases byte for byte against the tree's; timed in 32 rounds
+    at x0.909 of the backward at B4/T2048 on four threads, x0.873 on one and x0.924 at T1024.
+  - What remains: the stored forward at x1.26 of the flash forward's time -- the probabilities j <= i
+    written out for the backward to read, where the flash kernel recomputes them; below the copies'
+    threshold, or with one head a row, no region is lent and the tiles past 256 columns are evaluated
+    twice as before; the GEMMs, about a quarter of the step.
+  - Witnesses: `attention_keep` runs each backward three ways -- lent none, a byte short of the pool's
+    need and the need -- at the copies' threshold and 33 positions past it (neither a whole row block
+    nor a whole tile), under v1's and the fused products, serially and on a pool of four: the same bits
+    all three ways, and the unit's probe (`bcir_tensor_attention_tiles_probe`) counts each path's tile
+    evaluations. ATT-CONTIG's size pins hold the region's layout, a context past a whole number of tiles
+    among them; the harness's -contig build keeps the tiles at every context, so the attention
+    references and ATT-CONTIG's cases hold the kept path to the reference loops. `bwd-keep.json`
+    BK1-BK7, each caught by its own check; AC15 and NA1-NA3 re-anchored on the lines the slice rewrote
+    and caught again.
+  - Not claimed: below the copies' threshold or with one head a row, where no region is lent; the bf16
+    attention (its own backward); AMX timing; a GPU.
+  ATT-BOUND (2026-10-23): the attention and the GEMMs against the host's measured rates; four ways at the
+    attention's forward measured and not taken; the GEO model's inference read against PyTorch
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §14,
+    [measurements/2026-10-23/att-bound/](research/measurements/2026-10-23/att-bound/README.json)). Records and
+    instruments; no change to the runtime.
+  - Inference: the GEO attention model's one forward of 4 x 2048 tokens takes 100.2 ms against eager
+    PyTorch's 92.5 and Inductor's 83.2 -- x1.057 (0.969-1.152) of eager's time, x1.190 (1.116-1.269) of
+    Inductor's; at T1024 x0.714 of eager's and at parity with Inductor's (x0.992). Two thirds of it is the
+    attention's forward, the training forward's kernels.
+  - The forward a phase at a time (TSC cycles, B4/T2048, 4 heads of 32, EXP, one core): the scores 2.07
+    cycles a probability, the context 1.83, the softmax 2.26 (its max 0.25, exponential and sum 1.46,
+    division 0.53). The host's rates, measured (`fma_peak.c`): 217 GFLOP/s a core in fused multiply-adds and
+    102 in v1's multiply-then-add (856 and 399 on four cores) -- 94 and 44 flops a TSC cycle, the cores near
+    3.4 GHz under AVX-512 load while the TSC counts 2.3. At v1's measured rate a score's or a context term's
+    32 multiply-adds take 1.45 TSC cycles: the scores run at about 70% of it, the context at about 79%. The
+    exponential-and-sum pass is mostly BCIR's exponential, whose sequence (about 38 vector operations for 16
+    lanes) the EXP contract fixes. Corrected the same day: the first text took the TSC's rate for the
+    core's and called the products' 2.0 TSC cycles their bound.
+  - Measured and not taken, every value the same in each (the stored forward under LOWER with the backward
+    from it, 208 cases; 88 forward cases; 288 stored forwards; clang and GCC; and with copies and strips at
+    every context), 32 rounds beside an A/A control: FWD-STREAM, each stored strip computed in the region and
+    streamed out with non-temporal stores -- the attention x1.12 at B4/T2048 and x1.15 at T1024 (the 260 MB
+    L3 holds a layer's probabilities for the backward; streaming stores send them to memory), parity where
+    they outgrow it (8 heads of 64 at T4096; the step); the strip at a padded stride copied out -- the
+    forward x1.04-x1.12; SCRATCH-PAD, the scratch forward's strips padded with no copy -- parity (x0.98),
+    so a power-of-two context's L1 set conflicts are not a cost; SOFTMAX-DIV, the softmax's division in 16
+    lanes where the compilers divide in 4 -- no row resolved in two runs.
+  - What the fused attention contract (ATTN-FMA, in the tree; not the GEO study's) would buy, one library,
+    interleaved beside an A/A control: the attention x0.822 (0.781-0.865) at B4/T2048 on four threads, the
+    backward x0.778 and the forward x0.895, the scratch forward x0.874; the GEO step under
+    kblock+exp+reduce+attn 252.5 ms against 290.5. Every attention value differs under it (another
+    arithmetic): the study's choice, recorded as a reading.
+  - The GEMMs: 25.8 GFLOP in 74.3 ms of the step at T2048, 347 GFLOP/s on four cores -- 41% of the 856 the
+    cores sustain in fused multiply-adds, the largest room the step has left (OT-05 found BCIR's k-blocked
+    GEMMs level with MKL's on most of these shapes).
+  - Not claimed: counter-based figures (this VM has no PMU; the cycles are TSC); the fused contract's
+    effect on the study's trained results; AMX; a GPU.
+  MM-ROWS (2026-10-23): the k-blocked GEMM's tasks, chunks, edge blocks and job order, every value as it was
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §15,
+    [measurements/2026-10-23/mm-rows/](research/measurements/2026-10-23/mm-rows/README.json)).
+  - The loss it answers: ATT-BOUND left the step's GEMMs at 41% of the cores' measured FMA rate. A shape at a
+    time, one core ran the step's products at 46-57% of its rate and at 85-87% where A's panel fits in L2. The
+    AVX-512 nest runs a 48-column block's tile over every row of its range before the next block, so each block
+    reads A's rows again -- from L3 once the panel outgrows L2 (the step's 8192-row operands are 4 MiB); the
+    pool's task, one block by 128 rows with the column fastest, had three cores pull the same rows of A from L3
+    at once; a 128-wide product's last block is 32 columns, computed as 48; and in the step's paired and grouped
+    jobs the weight adjoints -- 128 or 256 rows over a depth of 8192, three to six tasks of some 50 million
+    multiply-adds -- were claimed after the input adjoints' many small tasks and ran with threads idle around them.
+  - MM-ROWS: under the blocked contract a pool task spans as many whole column blocks as leave its job sixteen
+    tasks (`BCIR_MM_TASKS`) -- every column from 2,048 rows -- so it reads its rows of A once for all its blocks;
+    the serial nest walks 128-row chunks, every block of a chunk before the next, where A is stored by rows, its
+    panel 2 MiB or more and a chunk's slice at most 512 KiB; an AVX-512 edge block computes the vectors its columns
+    reach; and a pair or group job whose second part's tasks are the larger starts with them -- the pool's task t
+    runs the job's task (t + lead) mod total, under every contract. The partition stays a function of m, n and the
+    contract, so a chain's calls share one tiling; each element's K blocks run in order, each from zero, then
+    c + alpha*P.
+  - Every value is the same: `bitcheck.c` -- every k-blocked entry (the serial instances, the pool at four and two
+    threads and through each instance, pair jobs, group jobs whose chains include a call of depth zero) over 712
+    cases, 6,081 hashes -- before == after under clang 18 and GCC 13, and clang's lines GCC's; the GEO model's
+    trained state the same digest from both level-3 builds at every context.
+  - Measured on the committed tree against the one before it, in one process beside an A/A control: on four
+    threads the GEO step's 8192-row products x0.734-x0.814 (all seven), 4096 and 2048 rows x0.793-x0.883, the
+    paired weight adjoint x0.823 and the grouped ones x0.791 and x0.874; on one thread x0.760-x0.887, the weight
+    adjoints x0.943-x0.953. The training step at the GEO dimensions under clang x0.935 at T512, x0.905 at T1024
+    and x0.939 at T2048 -- x0.930 (0.915-0.946) in the 64 rounds declared before they ran -- under GCC x0.935 and
+    x0.938, on one thread x0.952 (x0.956 declared); its GEMM claims, read a part at a time, 72.9 -> 61.0 ms at T2048
+    (x0.837) and 252.9 -> 219.1 on one thread. The GEO study's attention model on level 3 (GCC, 32 rounds): the
+    training update x0.918 at T512, x0.928 at T1024 and x0.968 (0.952-0.984) at T2048 -- x0.872 of eager PyTorch's
+    time and x0.919 of Inductor's at T2048 in the same run; its inference forward at T2048 x0.945 (0.916-0.974),
+    meeting its control's interval, x1.17 of Inductor's time.
+  - The 9.84M decoder (1,024 rows): its step at parity (x0.988 in 64 rounds), its GEMMs within noise at four
+    threads but for three small products -- the head x0.935 and 1,024 x 1,024 x 384 x0.971, and the 192-row
+    weight adjoint x1.063, whose path the slice leaves as it was but for the code's placement. On one thread that
+    adjoint and the 1,024 x 384 x 384 product read x1.03 and x1.02: the kernel's 8 x 48 loops now start 32 bytes
+    into a cache line where they started on one, the same 40 instructions, and with both trees' loops at 64-byte
+    boundaries the four such shapes read x0.999-x1.011.
+  - The design runs first, every prototype bit for bit (14 of 14; the first draft, whose partition read the
+    call's depth, 213 of 6,081 lines apart -- a chain's call of depth zero tiled apart from its chain): whole rows
+    from 1,024 rows, tasks of whole blocks for 32 tasks and for 16, timed in one process beside an A/A control
+    (separate processes moved by up to x1.6 between runs here) -- alike at the GEO shapes and within noise at the
+    decoder's 1,024 rows, the 16-task rule taken; chunks at every depth to 1,024 cost the decoder's 192-row weight
+    adjoint x1.080 on one thread, so they wait for a panel that outgrows L2, and a transposed A's 1,024-row
+    adjoint x1.04-x1.07 even with loops aligned, so they wait for A stored by rows (the first measured commit,
+    6ea3244, chunked it; its runs are kept as superseded); ordering took the step's paired jobs from x0.96 to x0.79
+    of their time.
+  - What remains: the weight adjoints -- 128 to 260 rows over a depth of 8192, about half the core's rate with
+    their K blocks' tiles in L2, and three to nine tasks -- whose next step is a split over the depth with the K
+    blocks folded in order, which needs the trainer to lend the products' room; the kernel's loop placement, which
+    moves its rate by a few percent with any edit of the unit; the bf16 contract's GEMMs (their own partition).
+  - Witnesses: the harness's `gemm_kblock_rows` -- 2,100, 1,030 and 1,300 rows: the serial entry and each
+    instance, the pool and each instance on it at two to four threads, the pair both ways round, a chain with a
+    depth of zero beside two weight adjoints, edge blocks of one, two and three vectors, all against the K-blocked
+    fmaf chains -- where no case before reached a blocked GEMM of 1,024 rows on a pool: without it `mm-rows.json`'s
+    MR1, MR2 and MR8 pass every test. `mm-rows.json` MR1-MR8, each caught by its own check; NK7 re-anchored on the
+    moved row loop (in its table and in `test_the_rows_fire_on_wrong_kernels_and_plans`) and caught again;
+    ndt-kblock (18), ndt-threads (18), ndt-fma (5) and PX-3b's PI2 swept whole against the new tree.
+  - Beside it (`246dbfe`): CI's CMake build job's hang guard 40 -> 60 minutes -- on 535eac7 its gcc cell ran 21
+    minutes on one runner and reached 40 on two others, its build-parity step 970 seconds against 1,882.
+  - Not claimed: timing on AVX2-only hosts (their instance takes the tasks, the chunks and the order, not the edge
+    width); the bf16 contract's GEMMs; AMX; a GPU.
+  SCORES-T (2026-10-23): the inference forward's 16-row groups with their rows in the lanes, every value as it was
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §16,
+    [measurements/2026-10-23/scores-t/](research/measurements/2026-10-23/scores-t/README.json)).
+  - The loss it answers: after MM-ROWS the GEO model's inference at T2048 took x1.17 of Inductor's time, two thirds
+    of it the attention's scratch forward. The scores landed with the keys in the lanes (8-row x 32-key blocks into
+    the strip's rows) while the softmax needs each row's chain in a lane of its own, so it transposed every 16 x 16
+    block in registers once for the maximum and twice for the exponential and sum, and the score blocks packed each
+    32-key panel afresh for every 32-row strip.
+  - SCORES-T: on the AVX-512 instance under the exp contract a scratch strip runs a 16-row group at a time with its
+    rows in the lanes -- the group's queries transposed once into a d x 16 panel, its scores 16 x 16 blocks with one
+    accumulator a key (each score its channels' products in order from +0.0), the softmax on the blocks as they
+    stand, the context reading a key's eight rows' probabilities side by side; heads to 256 channels, strips ending
+    on a whole group; every other case, the libm softmax and the stored forward keep the row path. A probe counts
+    the groups run in the lanes.
+  - Every value is the same: `scratch_hash.c` (the scratch forward's context and verdict, the stored forward's every
+    byte of p under LOWER too, 1,248 cases with a pool of four and the workspace lent) and the tree's fwd, lower,
+    attn and band hashes, before == after under clang and GCC, clang's lines GCC's.
+  - Measured on the committed tree against the one before it, in one process beside an A/A control: the scratch
+    forward at B4/T2048 x0.927 on four threads (GCC x0.917) and x0.920 on one, x0.884 at T512, x0.848 at T256, x0.891
+    at T128, x0.859 under the fused attention contract, x0.889 for 8 heads of 64; `bcir_decoder_forward` at the GEO
+    dimensions x0.927 at T1024 and x0.906 at T2048. The GEO study's attention model on level 3 (GCC, 24 rounds):
+    inference x0.945 at T512, x0.916 at T1024 and x0.924 at T2048 -- now x1.056 (0.991-1.126) of Inductor's time
+    at T2048, at parity, and x0.977 of eager PyTorch's; x0.839 of Inductor's at T1024. The 9.84M decoder's forward
+    (T128, its GEMMs most of it) at parity; its attention x0.883.
+  - The prototype's phases at B4/T2048 (TSC cycles a probability): the scores 1.96 -> 1.62, the softmax 2.37 -> 1.82
+    (the maximum 0.25 -> 0.18, the exponential and sum 1.54 -> 1.13, the division 0.54 -> 0.44), the context 1.70
+    -> 1.56.
+  - Measured, not taken: the stored training forward on the same path, its groups transposed out to p's rows
+    (every byte of p the same). The transposes out cost 0.79 cycles a probability, which the row path spends inside
+    its other phases: x1.014 at T2048 and x0.940 at T1024, meeting its control.
+  - The backward a phase at a time (B4/T2048, four threads, 36.2 ms a layer), against v1's 1.45 cycles a product:
+    dV 1.92 (75%), the dP tiles 2.02 (72%), the dots 0.68, the score adjoints 0.46, dQ 1.55 (93%), dK 1.76 (82%), the
+    copies and the rest 1.15 (12%); prefetching the copies read 0.78, the call's time within noise.
+  - Witnesses: the C harness's `attention_lanes` -- the scratch forward against the reference loops under the four
+    contracts over head widths 16 to 257, contexts 16 to 80 on every instance and 1030 and 1040 (past the strip
+    threshold) on AVX-512, a pool of four, the workspace lent, finite and not, the probe's count of the groups in the
+    lanes; `scores-t.json` ST1-ST12, each caught by its own check, ST10 (the probe's count) and ST12 (a 17-channel
+    context) only by the new case. The long contexts ran on every instance at first; on a contended CI shard that
+    pushed the harness's C11 build past its 60-second limit, and on the other instances they repeat the row path
+    `attention_scratch` and `attention_strips` already cover, so they run on AVX-512 alone and the limit is 120 seconds.
+  - Not claimed: AVX2-only and non-x86 hosts (the row path); the stored forward; the bf16 attention; a GPU.
+  SOFTMAX-T (2026-10-23): the exponential's single scaling and the softmaxes in one pass, every value as it was
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §17,
+    [measurements/2026-10-23/softmax-t/](research/measurements/2026-10-23/softmax-t/README.json)).
+  - The loss it answers: after SCORES-T the scratch forward's softmax took 1.82 TSC cycles a probability, 1.13 of them
+    the exponential and sum and 0.44 the division, a pass of its own. The AVX-512 exponential and v2 SiLU forms were
+    exp1's and the sigmoid's scalar code compiled for sixteen lanes -- 2^k two exponent-field scalings, each chain a
+    vector at a time; ATTN-RATE's block forms took clang's SiLU forms to x0.67-x0.91 and left GCC's at x0.97-x1.02 --
+    and the softmaxes scaled, exponentiated and summed in separate passes over their blocks.
+  - SOFTMAX-T: on AVX-512 the exponential applies 2^k by one vscalefps -- exp1's (p * 2^k1) * 2^k2 rounds once, the
+    first product exact, as vscalefps rounds p * 2^k once -- and the exponential, SiLU, SiLU times u and the SwiGLU VJP
+    run as AVX-512 instances, each step over four vectors before the next (EXP-LANES' order), so both compilers
+    interleave the chains; the scratch forward's lanes softmax and the stored forward's transposed blocks scale,
+    subtract, exponentiate, mask and sum in one pass, four columns at a time, each sum in column order; and the lanes
+    path divides each key's probabilities inside the context's first pass -- rows 0-7's pass the keys to R+7, rows
+    8-15's the eight after -- once, before the context reads them. Every other instance and the libm softmax as they
+    were.
+  - Every value is the same: over every binary32 the exponential and the three SiLU forms (apart, in place and
+    overlapping) against their scalar definitions under clang and GCC, 0 mismatches (the tree before the same, the
+    instrument's control), and before against after byte for byte, 0 apart; `scratch_hash.c` and the fwd, lower, attn,
+    band and elementwise hashes before == after under clang and GCC, clang's lines GCC's. At a NaN input the SiLU forms
+    return NaNs, as before; under GCC 50,331,642 of those NaN outputs -- three for each of the 16,777,214 NaN inputs --
+    carry another sign or payload than before, under clang none: the compiler orders a product's operands, and which NaN
+    is not part of the contract, which the header now says.
+  - Measured on the committed tree against the one before it, in one process beside an A/A control: on one thread the
+    exponential x0.733 (clang) and x0.678 (GCC) at 16,384 elements, x0.769 and x0.745 at 2^20; SiLU times u x0.905 and
+    x0.882 under clang, x0.695 and x0.748 under GCC; the SwiGLU VJP x0.860 and x0.940 under clang, x0.654 and x0.782
+    under GCC -- GCC's forms now at clang's rate; the AVX2 instance, which the slice leaves, x1.003 and x1.008. The
+    scratch forward at B4/T2048 x0.914 on four threads (GCC x0.909) and x0.938 on one, x0.927 at T512, x0.899 under the
+    fused attention contract; at T1024 x0.947 and for the 9.84M decoder's attention x0.950, each meeting its control, at
+    T256 x0.937 holding 1; heads of 64 and 128 channels at parity. The stored forward x0.965 (0.937-0.994), meeting its
+    control. `bcir_decoder_forward` at the GEO dimensions x0.908 at T2048 under GCC; under clang x0.965 in 64 declared
+    rounds (0.946-0.983), at its control's edge. The training step within noise but at T512 (x0.974, 0.954-0.995):
+    x0.971-x0.998 elsewhere. The GEO study's attention model on level 3 (GCC, as the study builds it), its logits and
+    trained state the same: inference x0.931 (0.908-0.954) at T2048 in 48 declared rounds (x0.926 in 24) -- x1.005 of
+    Inductor's time, at parity, and x0.899 of eager PyTorch's -- x0.960 at T1024, meeting its control, and x0.976 at
+    T512, holding 1; its training update at parity at every context, x0.982 of Inductor's time at T2048.
+  - The design runs, each level against the tree before (the scratch forward at B4/T2048, four threads, 24 rounds): the
+    single scaling and the four-chain forms x0.942 under clang and x0.937 under GCC; with the one-pass softmaxes x0.994
+    and x0.922; with the division inside the context x0.953 and x0.870, and x0.981 and x0.946 against the one-pass level
+    alone. Its phases (TSC cycles a probability): the softmax 1.80 -> 1.15 (the exponential and sum 1.12 -> 0.93; the
+    division's 0.44 now 0.28 inside the context, 1.56 -> 1.84), the call 5.44 -> 4.96. A first draft wrote each vector's
+    chain as one expression, which clang scheduled a chain at a time: its SiLU x1.06 slower than the tree's, the stored
+    forward x1.042 (holding 1); its runs are kept as superseded.
+  - Witnesses: the C harness's `exp_scalef` -- every binary32 where the result rounds, [-104, -87] (the subnormal
+    results) and [88, 89] (the overflow edge), 2,359,298 inputs through every instance against bcir_tensor_expf bit for
+    bit, apart and in place, every eighth run of 4,096 of them through the v2 SiLU forms against their scalar
+    definitions, serially and on a pool, and NaNs their sign and payload; 0.5 s on this host. `softmax-t.json` SM1-SM16,
+    each caught by its own check (SM15's first edit left the maximum unused, which the -Werror build refused; it keeps
+    it named and was swept again). Without the new case all sixteen are still caught -- the exponential's contract case
+    (every 256th binary32 of [-104, 89] through every instance, the thresholds and their neighbours) and the attention
+    cases reach each -- and on its own it catches nine of the ten in the exponential and the SiLU forms, all but the
+    overlapping output's order (SM8, the contract case's), and is the first to stop SM6 (a NaN's payload), which
+    otherwise reaches attention_strips' byte comparison. ndt-lanes.json NL8 and NL11 and scores-t.json ST5, ST6 and
+    ST12, whose anchors the slice rewrote, re-anchored with the same defects and caught again.
+  - Not claimed: AVX2-only and non-x86 hosts (their instances as they were); the bf16 attention; a GPU.
+  COMPILE-LIMIT (2026-10-24): every P-IND case audited for how it compiled; the comparisons' protocol corrected and
+    the affected ones rerun; records and docs only ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §18,
+    [measurements/2026-10-24/compile-limit/](research/measurements/2026-10-24/compile-limit/README.json)).
+  - The fault: `geo_compare.py`, `train_compare.py` and `infer_compare.py` ran their cases in one process, each case's
+    P-IND module through `oracle.torch_model_next`'s one forward code object. Dynamo compiled a process's first case
+    at its own shapes and every later one under automatic dynamic shapes, the tokens' time dynamic; past its recompile
+    limit (8) it compiled nothing and ran the module eagerly, warning once. Of the 64 P-IND cases in the branch's
+    records 20 compiled at their own shapes, 37 dynamic in time, and 7 -- GEO-2's attention training at T512 and all
+    six of its inference cases -- eagerly: their P-IND is eager PyTorch's time. `tools/perf/ot_torch.py` already
+    compiled each shape from a fresh Dynamo state, so the OT ledger's rows stand.
+  - The protocol: `torch._dynamo.reset()` before every case, `torch.compile(dynamic=False)`,
+    `fail_on_recompile_limit_hit` (a fallback is a failure, never a timing), each compile's shape symbols and graphs
+    recorded and checked. `witness.py` shows the mechanism -- the second compile dynamic in time, the ninth eager, the
+    code object eager from then on -- and, from a fresh state with the flag set, the ninth call raising.
+  - The dynamic rows stand: on SOFTMAX-T's level-3 build the dynamic-time compile against the fixed-shape one in one
+    process took x0.998, x0.975 and x0.969 of its time in training at T512-T2048 and x1.016, x1.003 and x0.992 in
+    inference, every interval holding 1. Against the fixed-shape compile BCIR's update took x0.608, x0.795 and x0.838
+    of Inductor's time (x0.893 in 32 declared rounds at T2048, where SOFTMAX-T's record read x0.982: PyTorch's time
+    moves between processes by more than a run's interval), its inference x0.593, x0.853 and x0.995 -- parity at T2048.
+  - GEO-2's comparison rerun with every case compiled at its own shapes, on the session's later host (the AMX Xeon):
+    level 2 trains the three models in x0.33-0.83 of Inductor's time (attention T512 x0.831, where GEO-2's eager row
+    read 0.50) and x0.15-0.61 of eager PyTorch's; the geometric heads' inference x0.77-0.90 of Inductor's time (global
+    T2048 not resolved) and x0.32-0.36 of eager's -- GEO-2's 3.2-4.2 times faster than P-IND was against eager
+    PyTorch; the attention baseline's inference x1.39 of Inductor's time at T1024 (GEO-2: parity) and x1.67 at T2048.
+  - Not claimed: PyTorch's run-to-run variation as a property of either rail (the paired rounds hold within a process);
+    a compile of the geometric heads at other than their fixed shapes.
+  GEO-AMX (2026-10-24): the PR818 study's bf16 arm timed on AMX, against PyTorch's bf16; records and docs only
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §19,
+    [measurements/2026-10-24/geo-amx/](research/measurements/2026-10-24/geo-amx/README.json)).
+  - The open item it closes: GEO-2 reran the study's bf16 runs bit for bit on a host without AMX, so their timing on
+    the unit the contract was shaped for stayed open (the review note's open item 1).
+  - On the AMX Xeon, the study's three models (level 2's overlays linked with this branch's tensor unit, `build_amx.py`
+    checking every entry's prototype in both headers), 24 rotated rounds beside an A/A arm: the bf16 contract (26, the
+    GEMMs on bfloat16 operands through the AMX instance) x0.676-x0.888 of binary32's time for the attention model at
+    T256-T2048 and x0.719-x0.784 for the geometric heads; with the bf16 attention too (90) x0.503-x0.585 at every
+    context. Codex's AMD host, without AMX, read x1.14 and x1.04. Every arm deterministic; the first update's loss
+    within 1.3e-4 of binary32's.
+  - Against PyTorch's mixed precision (`torch.autocast` to bfloat16, oneDNN's AMX matmuls), eager and compiled at fixed
+    shapes (COMPILE-LIMIT's protocol), 16 rounds: BCIR's bf16 trains the attention model in x0.244-x0.727 of Inductor's
+    bf16 time and the geometric heads in x0.267-x0.373. Autocast speeds PyTorch's attention model at T1024 and T2048
+    only (x0.85 and x0.78 of its binary32 time); BCIR's bf16 GEMMs alone, the attention in binary32, take x1.14 of
+    P-IND-BF16's time at T2048.
+  - Not claimed: bf16 quality beyond the study's own records (GEO-2 holds them bit for bit); a GPU.
+  BWD-T-0 (2026-10-24): the attention backward's gap placed; BWD-VT measured and not taken; records and docs only
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §20,
+    [measurements/2026-10-24/bwd-vt/](research/measurements/2026-10-24/bwd-vt/README.json)).
+  - The step at T2048 after SOFTMAX-T: 117 ms of its 280 ms of jobs the attention backward (41.9%), 69 the attention
+    forward, about 65 the GEMMs. The backward a phase at a time (B4/T2048, TSC cycles a probability): dV 1.97-2.35
+    (61-73% of v1's measured rate), the dP tiles 1.98-2.08 (69-73%), dQ 1.53-1.68 (86-94%), dK 1.76-1.91 (76-82%), the
+    dots, score adjoints and copies 2.3-2.6 together; one thread the same. Their two kernels on cache-resident operands
+    (`tr_micro.c`, `dp_micro.c`, interleaved repeats, clang and GCC) run at medians of 95-109% of v1's rate at every row
+    stride tried: dV and the dP tiles lose their quarter to moving their operands, not to their arithmetic.
+  - BWD-VT, measured and not taken: V's slot in the backward's contiguous task holding the values transposed, so no dP
+    tile transposes them again (every hash the same, clang and GCC): the backward x0.946 at B4/T2048, its interval
+    meeting the A/A control's; at parity at one thread, T1024, heads of 64, the fused contract and under GCC.
+  - Not claimed: counter-based figures (no PMU on this VM); the next slice -- it starts from these readings.
+  GEO-NOW (2026-10-24): the study's models on this branch's tensor unit; three levers measured and not taken; records
+    and docs only ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §21,
+    [measurements/2026-10-24/geo-now/](research/measurements/2026-10-24/geo-now/README.json)).
+  - The study's three models on this branch's unit against main's (level 2), the same overlays and headers, in one
+    process with every trained state and logit the same bytes: training x0.85-x0.96 at T128-T512, inference x0.78-x0.85
+    at T1024 and T2048. Against Inductor at fixed shapes the geometric heads train in x0.31-0.54 of its time and run
+    inference in x0.67-0.75 of it (global at T2048 at parity); the attention baseline's level-2 overlay, without the
+    scratch forward, x1.35 at T2048 (the level-3 build is at parity: COMPILE-LIMIT).
+  - THP-0, not taken: the attention's buffers on transparent huge pages, the backward x0.985 at B4/T2048 in 48 rounds.
+  - WADJ-ROWS-0, not taken: the weight adjoints in row ranges small enough for sixteen tasks, x1.19-x1.56 slower (each
+    task packs the deep operand again); in the step each runs beside its input adjoint at x0.95 of the forward
+    products' rate already.
+  - KBK-0, not taken: the k-blocked kernel's 448-term block in L1-sized sub-ranges (the same bits) x0.974-x1.017 --
+    the block runs at 188-200 GFLOP/s with sixteen row blocks to a tile, 87-92% of the core's rate; one block called
+    alone reads 115-120.
+  GEMM-NEST-0 (2026-10-24): where the k-blocked nest loses its block's rate; two prototypes not taken; records and docs
+    only ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §22,
+    [measurements/2026-10-24/gemm-nest/](research/measurements/2026-10-24/gemm-nest/README.json)).
+  - The nest runs M x 128 x 128 at 174-178 GFLOP/s on one core while A and C fit in L2 (to 1,024 rows) and at 141-142
+    from 4,096: A's and C's movement from L3.
+  - NOPACK-0 (an untransposed B read in place, not packed a chunk) at parity on the step's products and x1.49-1.54
+    slower where B's rows are 4 KiB apart; GEMM-PF-0 (prefetches of the next block's A and the block's C) x0.94-0.95 on
+    one thread at 8,192 rows but x1.27-1.30 slower for the decoder's 1,024 x 384 x 384 on four threads. Every value the
+    same in both (bitcheck.c's 712 cases); neither taken.
+  P-BANDS (2026-10-24): the stored attention's probabilities in 16-row bands with the rows in the lanes, every value as
+    it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §23,
+    [measurements/2026-10-24/p-bands/](research/measurements/2026-10-24/p-bands/README.json)).
+  - The loss it answers, placed first (BWD-NEXT): the backward a phase at a time on the tree before, B4/T2048, four
+    threads, 10.1 TSC cycles a probability -- dV 2.30, the probability-adjoint tiles 2.16, the dots 0.87, the score
+    adjoints 0.48, dQ 1.61, dK 1.92. The transposed products walked 32 rows of P at once and the dots transposed every
+    16 x 16 block; eight band and prefetch variants of the row walk moved the backward within its runs' spread at four
+    threads, while the same product over P in 16-row bands ran 1.51 TSC cycles a probability resident and 1.84 streamed
+    against the walk's 1.78 and 2.17.
+  - P-BANDS: `BCIR_TENSOR_ATTENTION_BANDS` (32) lays a stored forward's probabilities out in 16-row bands, row i's
+    probability of key j at (i/16)*16*T + j*16 + i%16 of its head's region, a band's keys past its last row +0.0 or,
+    under LOWER, as p held them. It takes effect where the host's widest instance of the products' family is AVX-512,
+    T is a multiple of 16 and the head at most 256 wide -- the host's and the shapes' choice, never a call's instance.
+    On AVX-512 the stored forward computes SCORES-T's 16-row groups in the band itself and the backward walks dV and dK
+    over the bands, then a group at a time evaluates its probability adjoints rows-in-lanes with the dots fused in,
+    writes the score adjoints with masked stores and takes dQ from the band; the portable and AVX2 instances run the
+    layout through scalar paths. The scratch forward, the bf16 entries, a portable build and an AVX2-capped build ignore
+    it. The trainer's stored binary32 forward runs under LOWER|BANDS and its backward under BANDS
+    (`attention_forward_contract`, `attention_backward_contract`); the pack's lowering, the step program's words and
+    the Python launch plan state the bit; `bcir_tensor_attention_bands_probe` counts the heads each direction ran
+    banded.
+  - Every value the same: the row paths' hashes (the scratch forward's 1,248 cases, FWD-STRIP's 288, P-LOWER's 208,
+    ATTN-RATE's 88, BWD-LONG's 48) before == after under clang 18 and GCC 13; `bands_check.c`'s 6,220 cases over every
+    pair of forward and backward instances and across the compilers, every probability at its band address, 0 failed;
+    every timed arm's outputs the same bytes in every round; the trainer's state the same digest with the bit on and
+    off; the GEO model's trained state and logits the same from both level-3 builds.
+  - Measured on the pushed code commit against the one before it, in one process beside an A/A control, 48 rounds a
+    row: the attention at B4/T2048 x0.841 (0.817-0.866) on four threads -- its backward x0.807, its forward x0.901 --
+    x0.834 under GCC and x0.866 on one thread; x0.755-x0.829 at T128 to T1024; x0.831 under the fused contract and
+    x0.904 under v1's exponential; GQA x0.875, 8 heads of 64 x0.890 at T2048 and x0.925 at T4096; heads of 128 x0.950,
+    meeting its control (64 rounds declared before they ran). The training step at the GEO dimensions x0.892
+    (0.870-0.915) at T2048, x0.887 under GCC, x0.917 on one thread, x0.911 at T1024 and x0.861 at T512; the 9.84M
+    decoder x0.962. The GEO study's attention model on level 3: training x0.808 at T512 and x0.905 at T2048, inference
+    at parity; against PyTorch at fixed shapes its update now takes x0.780 of eager's time and x0.797-x0.824 of
+    Inductor's at T2048, x0.537 of Inductor's at T512. Against `scaled_dot_product_attention` the attention as the
+    trainer runs it is the faster at T2048 (flash x1.188 of BCIR's time, its forward at parity with BCIR's) and at T1024
+    (x1.422).
+  - Witnesses: the C harness's `attention_bands` (12 shapes from T7 to T1040, heads of 3 to 257, the four contracts
+    with and without LOWER, the instances 0, 1, 2 and 4 with the backward on the same or the widest, serially and
+    pooled, with and without the workspace, and a pass of special values) and `trainer_bands` (three steps under five
+    contracts, one thread and four, the digests the same across the harness's builds); `p-bands.json` PB1-PB17 and
+    `p-bands-px.json` PBX1-PBX5, each caught by its own check; AX3, IA12, IA16, AF14, AF17, PL2, PL5, PL7, PL8, PL9 and
+    PI5 re-anchored on the lines the slice rewrote and caught again.
+  - Not claimed: hosts whose widest instance is AVX2 or aarch64, where the bit takes no effect; the bf16 attention;
+    counter-based figures (no PMU on this VM).
+  POOL-AFFINITY (2026-10-24): the tensor pool deals each job's tasks in per-worker blocks, every value as it was
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §24,
+    [measurements/2026-10-24/pool-affinity/](research/measurements/2026-10-24/pool-affinity/README.json)).
+  - The loss it answers, placed first (NEXT-0): the GEO step a part at a time after P-BANDS, the GEMMs 54% of it at
+    T256 and 46% at T512, the attention 21% and 34%; on one thread the T512 step took 109.3 ms and on four 36.5, where a
+    quarter is 27.3, the elementwise jobs scaling worst (the RMSNorm x1.37 its one-thread speed, its VJP x1.68, SwiGLU's
+    VJP x2.13, the attention backward x3.18), each reading rows the job before wrote on other cores: an RMSNorm over
+    2,048 rows took 45 µs back to back on four threads, 56 after a pool job wrote its operands and 161 cold.
+  - Measured first and not taken: FWD-BANDW-0 (the forward x1.022 and x1.009), BWD-SWEEP-0 and BWD-PF-0 (the backward
+    x0.966 and x0.963, none resolved), WADJ-TILE-0 (a lone weight adjoint x0.774, the chains x1.085-x1.207 and the
+    8,192-row pair x1.081 slower), POOL-YIELDS-0 (x0.962 at T256 and parity at T512 for idle workers yielding 200,000
+    rounds after every job); EXP8 (the resident softmax x0.93, about 2% of a group's phases) is left for a slice of
+    its own.
+  - POOL-AFFINITY: worker w's block of a job's n tasks over W workers starts at n/W*w + min(w, n%W); where the compiler
+    has atomics each block's counter sits on a 64-byte line of its own, a worker claiming its block's tasks in ascending
+    order and then the other blocks' leftovers; a job's `head` leading tasks -- a pair or group job's led weight
+    adjoints, every task of a job with no more tasks than workers -- are claimed in turn before the blocks; without
+    atomics a worker runs the head tasks w, w+W, ... and then its block. The counters live in the caller's pool block.
+  - Every value the same: `bitcheck.c`'s 6,081 cases and the attention's five hash programs before == after under clang
+    18 and GCC 13, clang's lines GCC's; every timed arm's weights, logits or outputs the same bytes; the study's trained
+    states and logits the same.
+  - Measured on the pushed code commit against the one before it. The elementwise jobs on four threads at 2,048 rows:
+    the RMSNorm 43.5 -> 26.9 µs back to back and 55.2 -> 29.8 after a pool job, the residual add 22.1 -> 10.7 and 30.0
+    -> 15.3. The training step at the GEO dimensions alone in its own process, steps back to back on one pool: x0.824
+    (0.778-0.872) at T128, x0.944 (0.898-0.991) at T256, x0.932 at T512, parity at T1024; in one process beside an A/A
+    control x0.92 under GCC at T256, x0.919 on two threads, x0.893 under v1's contract, x0.962 for the 9.84M decoder,
+    parity at T1024 and T2048. The inference forward x0.837 at B4/T256 and x0.89-x0.91 at B1. The study's models (level
+    2): the geometric heads' training x0.66-x0.77 of its time and inference x0.80-x0.85, every row resolved, now
+    x0.22-x0.35 of Inductor's time in training; the attention model x0.87-x0.94 in training at T128-T512 and at parity
+    at level 3, where its update at T2048 takes x0.793 of Inductor's time.
+  - The design a part at a time: without stealing the step x1.05-x1.10 slower and the pair and chain jobs x1.06-x1.40;
+    without the led head the step at parity in one process and x0.946 at T256 alone in its own process, four pair and
+    group jobs x1.14-x1.20 slower alone. The head stays; its trade against the input adjoints' rows is left open.
+  - The rigs: `ab_gemm.c` and `ab_bands.c` share one set of buffers across their arms and always run the second
+    library's arm after the first's pool, so under POOL-AFFINITY the tree after against a byte copy of itself reads the
+    lone nt products x1.395 and x1.618 slower -- single GEMM jobs there say nothing of this slice. `ab_bands.c` also made
+    every arm's pool with the first library, and the tree after's attention on the tree before's pool waited forever on
+    reports its workers never made; `ab_bands_own.c` makes each arm's pool with its own library.
+  - Witnesses: the C harness's `pool_blocks` (every task once at each cap of a four-thread pool, the pool inside its
+    bytes from every max_align_t offset of a line, a held first task's block taken by the other workers; with
+    BCIR_TENSOR_POOL_PROBE each worker's own block one contiguous run of its share's length, the last worker taking
+    every other block's rest, led jobs every task once; under ThreadSanitizer too); `pool-affinity.json` PA1-PA11, each
+    caught by its own check; NDT-THREADS' NT2 and NT11 re-anchored on the block claim and caught again.
+  - Not claimed: hosts with more cores or another cache topology; the bf16 contract's jobs (dealt in blocks, not
+    timed); counter-based figures (no PMU on this VM).
+  LOSS-ONCE (2026-10-24): the trainer's loss evaluates each logit's exponential once, every value as it was; the
+    study's geometric heads take their gate's exponential a span at a time
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §25,
+    [measurements/2026-10-24/loss-once/](research/measurements/2026-10-24/loss-once/README.json)).
+  - Placed by measurement (NEXT-1, `survey.json`, on the tree before): after POOL-AFFINITY the k-blocked GEMM runs the
+    T256 step's products at 480-613 GFLOP/s back to back on four threads, x2.7-x3.7 their one-thread rates, the
+    workers 88-93% of the 1,024-row A Bᵀ product's job inside its tasks (the plain product's 75-91%, the three-task
+    weight adjoint's 59-64%); they sleep 2.2-8.6 times a step from T128 to T512 (84 jobs a step), a job after a 1 ms
+    pause 39-57 µs slower; the step spends 1.9% of its time outside its jobs. A sampling profiler (SIGPROF on the
+    process's CPU time; no PMU on this VM) placed the rest: the loss's task and libm, its two `exp` calls a logit,
+    5.7% of the T256 step's samples, and in the study's geometric heads' inference at T1024 the gate, its scalar
+    exponential `bcir_tensor_expf` called an element (`wedge_gate_fwd_task` and it, 16.6-19.2%).
+  - LOSS-ONCE: a row keeps its first 1,024 exponentials in double on its task's stack and its adjoints divide the kept
+    values; a wider row evaluates its tail again. The same call on the same argument returns the same double, and the
+    sum, the term and both divisions keep the loop's order, so every adjoint, term and loss is the two-evaluation
+    loop's bit for bit. The loss task alone, one thread, 1,024 to 8,192 rows of 260 logits: 9.6-10.1 ns a logit to
+    6.4-6.5 under clang (x0.650-x0.672), 9.0-9.4 to 6.6-6.7 under GCC (x0.712-x0.742); 512 rows of 1,500, the tail
+    evaluated twice, x0.797 and x0.840. In the step on four threads, by the job clock, the loss job takes x0.62-x0.65
+    of its time (0.67-0.70 ms to 0.44-0.45 at T256, 1.33-1.38 to 0.84-0.85 at T512), some 1.6-1.9% of the step; alone
+    in its own process the step reads x0.977-x1.008 from T128 to T1024 and x0.988 for the 9.84M decoder, each holding
+    1, every run's weights the same digest on both trees.
+  - The study's builds: `once_level3.py` makes the same edit to the PR818 study's three trainer forks and gives the
+    geometric heads' gate its exponential a task's 512 elements at a time through `bcir_tensor_exp`, every instance
+    of which equals `bcir_tensor_expf` on all 2^32 inputs (`exp_span_check.c`, clang and GCC). Every trained state
+    and logit is the fork's. Against level 2 in one process: inference x0.849-x0.869 for `global` and `query_full` at
+    T1024 and T2048, each resolved; training x0.90-x0.94, `global` at T512 resolved (x0.943), the rest meeting their
+    controls or holding 1; the attention model at level 3, where only its loss changes, at parity. Against PyTorch
+    at fixed shapes the geometric heads now run inference in x0.45-0.61 of Inductor's time (x0.52-0.67 in
+    POOL-AFFINITY's records) and train in x0.22-0.33 of it.
+  - Witnesses: the C harness's `loss_once`, through `bcir_decoder_loss_probe` (BCIR_DT_LOSS_PROBE, the harness's
+    builds only), holds every adjoint, row term and their sum byte for byte to the two-evaluation loop written apart
+    at nine vocabularies to 2,049, five row counts about a task's sixteen, four kinds of row and targets in the
+    buffer and past it, on no pool and pools of two and four; `loss-once.json` LO1-LO7, each caught by its own check;
+    NDT-REDUCE's NR4 and NR9, beside the new task, caught again.
+  - Not claimed: a vocabulary past the buffer gains on its first 1,024 logits only; the study's own pair kernels and
+    the scans after its gate, measured here and left the study's; counter-based figures (no PMU on this VM).
+  GP-LANES (2026-10-24): the study's geometric heads a row a lane, every trained state and logit the fork's; with
+    NEXT-2's survey; records and docs only ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §26,
+    [measurements/2026-10-24/gp-lanes/](research/measurements/2026-10-24/gp-lanes/README.json)).
+  - NEXT-2's survey: the cores sustain 221-230 GFLOP/s of FMA a thread with every operand in registers on one thread
+    as on four; four threads each running the k-blocked GEMM on operands of its own reach x0.86-x0.98 of four times
+    one thread on the T256 shapes, and the step's GEMM jobs as the trainer issues them take x0.86-x1.20 of four such
+    copies' time. A job of trivial tasks costs the pool 1.2-4.8 µs back to back and 34-35 µs once its workers sleep;
+    timed a worker at a time through the step, the workers enter every job within 0.9 µs at T256 (but the step's
+    first) and are 66-97% busy in it. The GEMMs take 56%, 48% and 37% of the pool's time at T256, T512 and T1024, the
+    attention 21%, 34% and 50%.
+  - Not taken: GROUP-ROWS-0 (the forward's group jobs a row range at a time) x0.965-x1.015 from T128 to T512, each
+    holding 1; COMMIT-BLOCKS-0 (the update's commit in four times as many chunks) holding 1 at T128 and T256.
+    ROPE-TABLE-0, the rotation reading a table of the same cosines and sines, takes x0.22-x0.48 of
+    `bcir_tensor_rope_pool`'s time, every value the same -- some 2% of the step -- and is left for a slice of its own,
+    the table needing a span in the plan on both rails.
+  - GP-LANES: `gp_lanes_overlay.py` runs the forks' pair kernels (`gp_pair_forward`, `gp_pair_backward`, GP_RANK 22)
+    and query_full's query frame (`gp_query_contract_pair`, `gp_query_contract_vjp`) sixteen rows at a time, a row a
+    vector lane, each scalar operation the one intrinsic that performs it in the fork's order, so every feature and
+    adjoint is the fork's bit for bit; a row the fork sends to its FP64 fallback is recomputed by the fork's kernel,
+    and each group prefetches the next group's rows. The kernels take x0.26-x0.80 of the fork's time a row.
+  - In the models, 48 rounds in one process with every trained state and logit the same, against once_level3.py's
+    builds: training x0.915-x0.972 (`global` at T256, `query_full` at T256 and T512 resolved), inference x0.938-x0.990
+    (both at T2048 resolved); the heads' GP kernels from 8.5-13.9% of the training's samples to 3.9-6.5%. Against
+    Inductor the heads now train in x0.19-0.33 of its time and run inference in x0.41-0.57 of it.
+  - Witnesses: `gp_lanes_check.c` (the lane kernels against the fork's, copied verbatim, every output byte for byte
+    over six kinds of row, 8,189 of 24,576 through the fallback, clang and GCC), `gp_tasks_check.c` (both builds'
+    entries side by side on row counts 1 to 1,024, serial and pooled: 128 outputs, none apart), and `red_lanes.py`
+    (five faults, each caught; three mutations recorded as unobservable, with the reason).
+  - Not claimed: the overlay is the study's code, offered to it as a measurement, not BCIR's runtime; a host without
+    AVX-512F runs the forks' tasks; a perturbation of a double intermediate below float's rounding is out of the
+    witnesses' sight, so the bit-identity rests on the statement-for-statement correspondence; counter-based figures
+    (no PMU on this VM).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

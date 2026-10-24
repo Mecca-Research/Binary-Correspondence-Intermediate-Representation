@@ -9,8 +9,10 @@
 // shortest path, so the C++ plan matches the oracle's optimize() for *every* module.
 //
 // Annotates each claim with kbcir.plan_width + kbcir.plan_cost (its edge on the chosen
-// path) and the enclosing bcir.module with kbcir.plan_score (the total). Reproduces
-// 7808 on vector_add and the oracle's coupled scores on multi-claim modules.
+// path) -- and, PX-3b-2, kbcir.plan_alternative when the chosen realization is a measured one
+// (the capability's measured_* table) -- and the enclosing bcir.module with kbcir.plan_score
+// (the total). Reproduces 7808 on vector_add and the oracle's coupled scores on multi-claim
+// modules.
 //
 //===----------------------------------------------------------------------===//
 
@@ -66,9 +68,16 @@ struct PlanPass : public PassWrapper<PlanPass, OperationPass<>> {
               : cm::contextFactor(theta, {}, 0, cols[i].reads, cols[i].cands[chosen[i]].width);
       cm::applyFactor(e, f);
       int64_t edge = cm::scalarize(e, pa.weights);
-      cols[i].claim->setAttr("kbcir.plan_width",
-                             b.getI64IntegerAttr(cols[i].cands[chosen[i]].width));
+      const cm::Cand &cand = cols[i].cands[chosen[i]];
+      cols[i].claim->setAttr("kbcir.plan_width", b.getI64IntegerAttr(cand.width));
       cols[i].claim->setAttr("kbcir.plan_cost", b.getI64IntegerAttr(edge));
+      // PX-3b-2: a measured realization names the alternative it runs (the oracle's
+      // `<name>@<alternative>`); its own realization names none.
+      if (cand.measured >= 0)
+        cols[i].claim->setAttr("kbcir.plan_alternative",
+                               b.getStringAttr(pa.h.measured[cand.measured].alternative));
+      else
+        cols[i].claim->removeAttr("kbcir.plan_alternative");
     }
     root->setAttr("kbcir.plan_score", b.getI64IntegerAttr(pa.total));
   }

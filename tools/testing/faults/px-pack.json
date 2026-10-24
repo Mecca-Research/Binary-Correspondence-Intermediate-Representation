@@ -178,8 +178,8 @@
     {
       "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
       "label": "PK24 the bf16 attention's workspace slot left out",
-      "new": "    if (bf && 0) SLOT(8, U_W, SL_WS);",
-      "old": "    if (bf) SLOT(8, U_W, SL_WS);",
+      "new": "    if (!bf && c->lent) SLOT(8, U_W, SL_WS);",
+      "old": "    if (bf || c->lent) SLOT(8, U_W, SL_WS);",
       "path": "runtime/c/bcir_decoder_pack.c"
     },
     {
@@ -276,8 +276,8 @@
     {
       "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
       "label": "PM5 the bf16 attention VJP's output gradient stated in place",
-      "new": "        return ((0, R), (1, R), (2, R), (3, RW), (4, R), (5, W), (6, W), (7, W)) + (",
-      "old": "        return ((0, R), (1, R), (2, R), (3, R if bf else RW), (4, R), (5, W), (6, W), (7, W)) + (",
+      "new": "        return ((0, R), (1, R), (2, R), (3, RW), (4, R), (5, W), (6, W), (7, W)) + ws",
+      "old": "        return ((0, R), (1, R), (2, R), (3, R if bf else RW), (4, R), (5, W), (6, W), (7, W)) + ws",
       "path": "bcir/hosted/models/native_pack.py"
     },
     {

@@ -15,17 +15,19 @@ _Static_assert(sizeof(float)==4 && FLT_RADIX==2 && FLT_MANT_DIG==24,
  * dispatch is then the same call after its record, so the state is the library's bit for bit.
  * A record is BCIR_DT_TRACE_WORDS words -- kind, launch (the calls of one job share it), flags,
  * eight dimensions, ten operands -- and records past the lent capacity are counted, never dropped
- * silently. The spaces: 1-4 the parameter arenas, 5 activations, 6 scratch, 7 the bf16 workspace,
- * 8 outside the state (the caller's tokens and targets). */
+ * silently. The spaces: 1-4 the parameter arenas, 5 activations, 6 scratch, 7 the workspace (the bf16
+ * contract's, and the binary32 attention's where the state lends bytes: ATT-CONTIG), 8 outside the
+ * state (the caller's tokens and targets). */
 #define BCIR_DT_TRACE_WORDS BCIR_DT_RECORD_WORDS
 static const bcir_decoder_state *trace_state;
 static uint64_t *trace_words,trace_launch;
-static size_t trace_capacity,trace_count,trace_dropped;
+static size_t trace_capacity,trace_count,trace_dropped,trace_mark;
 BCIR_DT_API void bcir_decoder_trace_probe_begin(const bcir_decoder_state *s,uint64_t *words,
     size_t capacity);
 BCIR_DT_API size_t bcir_decoder_trace_probe_end(size_t *dropped);
 BCIR_DT_API size_t bcir_decoder_trace_probe_words(void);
-static void tr_rope(size_t b,size_t t,size_t h,size_t d,const float *x,int inverse);
+static void tr_rope(size_t b,size_t t,size_t h,size_t d,const float *table,const float *x,int inverse);
+static void tr_rope_table(size_t t,size_t d,const float *table);
 static void tr_rms(size_t rows,size_t width,float eps,const float *x,const float *g,const float *y);
 static void tr_add(size_t n,const float *x,const float *y);
 static void tr_mul(size_t n,const float *x,const float *y);
@@ -43,14 +45,17 @@ static void tr_mm(unsigned entry,int ta,int tb,size_t m,size_t n,size_t k,float 
 static void tr_mm_group(unsigned entry,int contract,const bcir_tensor_mm_call *chain,size_t nchain,
     const bcir_tensor_mm_call *y,size_t ny,const bcir_tensor_bf16_panels *pre,const void *ws,
     size_t bytes);
-static void tr_attention(unsigned kind,unsigned contract,int bf16,int variant,size_t b,size_t t,
-    size_t h,size_t kh,size_t d,const float *q,const float *k,const float *v,const float *p,
-    const float *y,const float *dq,const float *dk,const float *dv,const void *ws,size_t bytes);
+static void tr_attention(unsigned kind,unsigned contract,int bf16,size_t b,size_t t,size_t h,
+    size_t kh,size_t d,const float *q,const float *k,const float *v,const float *p,const float *y,
+    const float *dq,const float *dk,const float *dv,const void *ws,size_t bytes);
+static int tr_ran(int ran);
 static void tr_run(bcir_tensor_task_fn fn,const void *ctx);
 static void tr_provider_silu(size_t n,const float *x,const float *y);
 static void tr_embed(size_t n,size_t d,const uint32_t *tokens,const float *table,const float *x);
-#define bcir_tensor_rope_pool(pool,b,t,h,d,base,x,inv) \
-  (tr_rope(b,t,h,d,x,inv),bcir_tensor_rope_pool(pool,b,t,h,d,base,x,inv))
+#define bcir_tensor_rope_lent_pool(pool,b,t,h,d,table,x,inv) \
+  (tr_rope(b,t,h,d,table,x,inv),bcir_tensor_rope_lent_pool(pool,b,t,h,d,table,x,inv))
+#define bcir_tensor_rope_table_pool(pool,t,d,base,table) \
+  (tr_rope_table(t,d,table),bcir_tensor_rope_table_pool(pool,t,d,base,table))
 #define bcir_tensor_rms_scan_pool(pool,r,w,eps,x,g,y,bad) \
   (tr_rms(r,w,eps,x,g,y),bcir_tensor_rms_scan_pool(pool,r,w,eps,x,g,y,bad))
 #define bcir_tensor_add_pool(pool,n,x,y) (tr_add(n,x,y),bcir_tensor_add_pool(pool,n,x,y))
@@ -71,35 +76,31 @@ static void tr_embed(size_t n,size_t d,const uint32_t *tokens,const float *table
 #define bcir_tensor_rms_backward_into_pool(pool,r,w,eps,x,g,dy,dx,dg,inv,how) \
   (tr_rms_vjp(r,w,eps,x,g,dy,dx,dg,inv,how), \
    bcir_tensor_rms_backward_into_pool(pool,r,w,eps,x,g,dy,dx,dg,inv,how))
-#define bcir_tensor_mm_pool(pool,ta,tb,m,n,k,al,a,b,be,c) \
-  (tr_mm(0,ta,tb,m,n,k,al,a,b,be,c,NULL,0),bcir_tensor_mm_pool(pool,ta,tb,m,n,k,al,a,b,be,c))
-#define bcir_tensor_mm_fused_pool(pool,ta,tb,m,n,k,al,a,b,be,c) \
-  (tr_mm(1,ta,tb,m,n,k,al,a,b,be,c,NULL,0),bcir_tensor_mm_fused_pool(pool,ta,tb,m,n,k,al,a,b,be,c))
-#define bcir_tensor_mm_kblock_pool(pool,ta,tb,m,n,k,al,a,b,be,c) \
-  (tr_mm(2,ta,tb,m,n,k,al,a,b,be,c,NULL,0),bcir_tensor_mm_kblock_pool(pool,ta,tb,m,n,k,al,a,b,be,c))
-#define bcir_tensor_mm_bf16_pool(pool,ta,tb,m,n,k,al,a,b,be,c,ws,bytes) \
-  (tr_mm(3,ta,tb,m,n,k,al,a,b,be,c,ws,bytes), \
-   bcir_tensor_mm_bf16_pool(pool,ta,tb,m,n,k,al,a,b,be,c,ws,bytes))
-#define bcir_tensor_mm_pair_pool(pool,contract,x,y) \
-  (tr_mm_group(4,contract,x,1,y,1,NULL,NULL,0),bcir_tensor_mm_pair_pool(pool,contract,x,y))
-#define bcir_tensor_mm_group_pool(pool,contract,chain,nchain,y,ny) \
-  (tr_mm_group(5,contract,chain,nchain,y,ny,NULL,NULL,0), \
-   bcir_tensor_mm_group_pool(pool,contract,chain,nchain,y,ny))
-#define bcir_tensor_mm_bf16_group_panels_pool(pool,chain,nchain,y,ny,pre,ws,bytes) \
-  (tr_mm_group(6,3,chain,nchain,y,ny,pre,ws,bytes), \
-   bcir_tensor_mm_bf16_group_panels_pool(pool,chain,nchain,y,ny,pre,ws,bytes))
-#define bcir_tensor_attention_contract_scan_pool(pool,ct,b,t,h,kh,d,q,k,v,p,y,bad) \
-  (tr_attention(7,ct,0,0,b,t,h,kh,d,q,k,v,p,y,NULL,NULL,NULL,NULL,0), \
-   bcir_tensor_attention_contract_scan_pool(pool,ct,b,t,h,kh,d,q,k,v,p,y,bad))
+/* PX-3b (DISPATCH): the GEMM and attention entries the step calls name the instance, and each
+ * returns the one it ran; tr_ran writes it into the launch's records just written (word 41), so a
+ * trace holds the instance that ran, the entry's own answer, never the one asked. */
+#define bcir_tensor_mm_contract_variant_pool(pool,ct,va,ta,tb,m,n,k,al,a,b,be,c,ws,bytes) \
+  (tr_mm((unsigned)(ct),ta,tb,m,n,k,al,a,b,be,c,ws,bytes), \
+   tr_ran(bcir_tensor_mm_contract_variant_pool(pool,ct,va,ta,tb,m,n,k,al,a,b,be,c,ws,bytes)))
+#define bcir_tensor_mm_pair_variant_pool(pool,ct,va,x,y) \
+  (tr_mm_group(4,ct,x,1,y,1,NULL,NULL,0),tr_ran(bcir_tensor_mm_pair_variant_pool(pool,ct,va,x,y)))
+#define bcir_tensor_mm_group_variant_pool(pool,ct,va,chain,nchain,y,ny,pre,ws,bytes) \
+  (tr_mm_group((ct)==3 ? 6u : 5u,ct,chain,nchain,y,ny,pre,ws,bytes), \
+   tr_ran(bcir_tensor_mm_group_variant_pool(pool,ct,va,chain,nchain,y,ny,pre,ws,bytes)))
+#define bcir_tensor_attention_contract_variant_scan_ws_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,y,bad,ws,bytes) \
+  (tr_attention(7,ct,0,b,t,h,kh,d,q,k,v,p,y,NULL,NULL,NULL,ws,bytes), \
+   tr_ran(bcir_tensor_attention_contract_variant_scan_ws_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,y,bad,ws,bytes)))
 #define bcir_tensor_attention_bf16_scan_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,y,bad,ws,bytes) \
-  (tr_attention(7,ct,1,va,b,t,h,kh,d,q,k,v,p,y,NULL,NULL,NULL,ws,bytes), \
-   bcir_tensor_attention_bf16_scan_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,y,bad,ws,bytes))
-#define bcir_tensor_attention_backward_contract_pool(pool,ct,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv) \
-  (tr_attention(8,ct,0,0,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,NULL,0), \
-   bcir_tensor_attention_backward_contract_pool(pool,ct,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv))
+  (tr_attention(7,ct,1,b,t,h,kh,d,q,k,v,p,y,NULL,NULL,NULL,ws,bytes), \
+   tr_ran(bcir_tensor_attention_bf16_scan_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,y,bad,ws,bytes)))
+#define bcir_tensor_attention_backward_contract_variant_ws_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws, \
+    bytes) \
+  (tr_attention(8,ct,0,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws,bytes), \
+   tr_ran(bcir_tensor_attention_backward_contract_variant_ws_pool(pool,va,ct,b,t,h,kh,d,q,k,v,p,dy,dq, \
+       dk,dv,ws,bytes)))
 #define bcir_tensor_attention_bf16_backward_pool(pool,va,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws,bytes) \
-  (tr_attention(8,0,1,va,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws,bytes), \
-   bcir_tensor_attention_bf16_backward_pool(pool,va,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws,bytes))
+  (tr_attention(8,0,1,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws,bytes), \
+   tr_ran(bcir_tensor_attention_bf16_backward_pool(pool,va,b,t,h,kh,d,q,k,v,p,dy,dq,dk,dv,ws,bytes)))
 #define bcir_tensor_pool_run(pool,fn,ctx,tasks) (tr_run(fn,ctx),bcir_tensor_pool_run(pool,fn,ctx,tasks))
 #define DT_TRACE_PROVIDER_SILU(n,x,y) tr_provider_silu(n,x,y)
 #define DT_TRACE_PROVIDER_MM(ta,tb,m,n,k,al,a,b,be,c) tr_mm(7,ta,tb,m,n,k,al,a,b,be,c,NULL,0)
@@ -183,7 +184,8 @@ int bcir_decoder_make_plan(const bcir_decoder_spec *s,bcir_decoder_plan *out) {
       !term(&p.activations,(size_t)s->layers+1,nd) || !term(&p.activations,s->layers,la) ||
       !add(&p.activations,nd) || !add(&p.activations,nv) ||
       !term(&p.scratch,5,nd) || !term(&p.scratch,2,nk) || !term(&p.scratch,3,nf) ||
-      !add(&p.scratch,nv) || p.parameters>SIZE_MAX/sizeof(float) ||
+      !add(&p.scratch,nv) || !term(&p.scratch,s->time,s->width/s->heads) ||
+      p.parameters>SIZE_MAX/sizeof(float) ||
       p.activations>SIZE_MAX/sizeof(float) || p.scratch>SIZE_MAX/sizeof(float))
     return BCIR_DT_CAPACITY;
   *out=p; return BCIR_DT_OK;
@@ -240,11 +242,16 @@ static int valid_with(bcir_decoder_state *s,int placed) {
     for (j=0;j<i;j++) if (overlap(ptr[i],len[i]*sizeof(float),ptr[j],len[j]*sizeof(float)))
       return BCIR_DT_INVALID;
   }
-  if (s->contract&BCIR_DT_CONTRACT_BF16) {  /* the GEMMs' workspace: present, at the floor, apart */
-    size_t least=bcir_decoder_workspace_floor(&p,s->contract,bcir_tensor_pool_threads(s->pool));
+  /* the workspace: under a bf16 GEMM contract present and at the floor; any lent workspace apart from
+   * the state and every arena (ATT-CONTIG: the binary32 attention copies into it under any contract) */
+  if ((s->contract&BCIR_DT_CONTRACT_BF16) || s->workspace) {
+    size_t least=0;
+    if (s->contract&BCIR_DT_CONTRACT_BF16) {
+      least=bcir_decoder_workspace_floor(&p,s->contract,bcir_tensor_pool_threads(s->pool));
 #ifdef BCIR_DT_WORKSPACE_PROBE
-    if (workspace_admit!=SIZE_MAX) least=workspace_admit;
+      if (workspace_admit!=SIZE_MAX) least=workspace_admit;
 #endif
+    }
     if (!s->workspace) return BCIR_DT_INVALID;
     if (s->workspace_bytes<least || s->workspace_bytes>UINTPTR_MAX-(uintptr_t)s->workspace)
       return BCIR_DT_CAPACITY;
@@ -276,7 +283,7 @@ static int external_in(bcir_decoder_state *s,int placed,const void *p,size_t byt
     !overlap(p,bytes,s->moment2,s->plan.parameters*sizeof(float)) &&
     !overlap(p,bytes,s->activations,transient_bytes(s,placed,0)) &&
     !overlap(p,bytes,s->scratch,transient_bytes(s,placed,1)) &&
-    !((s->contract&BCIR_DT_CONTRACT_BF16) && overlap(p,bytes,s->workspace,s->workspace_bytes));
+    !(s->workspace && overlap(p,bytes,s->workspace,s->workspace_bytes));
 }
 static int external(bcir_decoder_state *s,const void *p,size_t bytes) {
   return external_in(s,0,p,bytes);
@@ -424,12 +431,19 @@ static int ws_panels(geometry g) {
 static size_t ws_attention(geometry g,unsigned threads) {
   return bcir_tensor_attention_bf16_pool_workspace(g.b,g.t,g.h,g.kh,g.hd,threads);
 }
+/* ATT-CONTIG: the binary32 attention's regions, 0 where its tasks run on the rows in place */
+static size_t ws_attention32(geometry g,unsigned threads) {
+  return bcir_tensor_attention_pool_workspace(g.b,g.t,g.h,g.kh,g.hd,threads);
+}
 size_t bcir_decoder_workspace_need(const bcir_decoder_plan *plan,uint32_t contract,unsigned threads) {
   bcir_decoder_plan p; geometry g; size_t most;
-  if (!(contract&BCIR_DT_CONTRACT_BF16)) return 0;
+  if (!(contract&BCIR_DT_CONTRACT_BF16)) {  /* the binary32 GEMMs pack nothing: the attention's copies */
+    if (!plan || bcir_decoder_make_plan(&plan->spec,&p)) return 0;
+    return ws_attention32(geom(&p.spec),threads);
+  }
   if (!plan || bcir_decoder_make_plan(&plan->spec,&p)) return SIZE_MAX;
   g=geom(&p.spec); most=ws_need(g,ws_panels(g),0);
-  if (contract&BCIR_DT_CONTRACT_ATTNBF16) most=ws_most(most,ws_attention(g,threads));
+  most=ws_most(most,(contract&BCIR_DT_CONTRACT_ATTNBF16) ? ws_attention(g,threads) : ws_attention32(g,threads));
   return most;
 }
 size_t bcir_decoder_workspace_bytes(const bcir_decoder_plan *plan,uint32_t contract) {
@@ -528,16 +542,20 @@ size_t bcir_decoder_workspace_probe(void) { size_t seen=workspace_seen; workspac
  * what the group packs, its panels counted as the entry counts them (WS-PLAN: a panel operand is
  * NULL, which a count without pre reads as one operand two calls share). Every product returns
  * whether it ran: a refusal writes nothing, and the step it belongs to fails (WS-PLAN). */
+/* PX-3b (DISPATCH): `variant` the instance the job runs (bcir_tensor.h: 0 the widest its family
+ * admits -- the fixed step's -- else one bit of it, a program's); each returns whether it ran. */
+static int gemm_group_v(bcir_decoder_state *s,int variant,const bcir_tensor_mm_call *chain,
+    size_t nchain,const bcir_tensor_mm_call *y,size_t ny,const bcir_tensor_bf16_panels *pre) {
+  int bf=gemm_contract(s)==3;
+#ifdef BCIR_DT_WORKSPACE_PROBE
+  if (bf) workspace_saw(bcir_tensor_mm_bf16_group_panels_workspace(chain,nchain,y,ny,pre));
+#endif
+  return bcir_tensor_mm_group_variant_pool(s->pool,gemm_contract(s),variant,chain,nchain,y,ny,
+      bf ? pre : NULL,bf ? s->workspace : NULL,bf ? s->workspace_bytes : 0)!=0;
+}
 static int gemm_group_with(bcir_decoder_state *s,const bcir_tensor_mm_call *chain,size_t nchain,
     const bcir_tensor_mm_call *y,size_t ny,const bcir_tensor_bf16_panels *pre) {
-#ifdef BCIR_DT_WORKSPACE_PROBE
-  if (gemm_contract(s)==3) workspace_saw(bcir_tensor_mm_bf16_group_panels_workspace(chain,nchain,y,ny,pre));
-#endif
-  if (gemm_contract(s)==3)
-    return bcir_tensor_mm_bf16_group_panels_pool(s->pool,chain,nchain,y,ny,pre,s->workspace,
-        s->workspace_bytes);
-  bcir_tensor_mm_group_pool(s->pool,gemm_contract(s),chain,nchain,y,ny);
-  return 1;
+  return gemm_group_v(s,0,chain,nchain,y,ny,pre);
 }
 static int gemm_group(bcir_decoder_state *s,const bcir_tensor_mm_call *chain,size_t nchain,
     const bcir_tensor_mm_call *y,size_t ny) { return gemm_group_with(s,chain,nchain,y,ny,NULL); }
@@ -575,22 +593,23 @@ BCIR_DT_API unsigned bcir_decoder_panels_probe(void) { unsigned u=panels_seen; p
 #else
 #define PANELS_SAW(bit) ((void)0)
 #endif
-static int gemm(bcir_decoder_state *s,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
-    const float *a,const float *b,float beta,float *c) {
-  if (s->provider.mm) {
+static int gemm_v(bcir_decoder_state *s,int variant,int ta,int tb,size_t m,size_t n,size_t k,
+    float alpha,const float *a,const float *b,float beta,float *c) {
+  int bf=gemm_contract(s)==3;
+  if (s->provider.mm) {  /* a provider's call: not BCIR's instance to name (variant 0) */
     DT_TRACE_PROVIDER_MM(ta,tb,m,n,k,alpha,a,b,beta,c);
     s->provider.mm(s->provider.ctx,ta,tb,m,n,k,alpha,a,b,beta,c);
+    return 1;
   }
-  else if (gemm_contract(s)==3) {
 #ifdef BCIR_DT_WORKSPACE_PROBE
-    workspace_saw(bcir_tensor_mm_bf16_workspace(m,n,k));
+  if (bf) workspace_saw(bcir_tensor_mm_bf16_workspace(m,n,k));
 #endif
-    return bcir_tensor_mm_bf16_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c,s->workspace,s->workspace_bytes);
-  }
-  else if (gemm_contract(s)==2) bcir_tensor_mm_kblock_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
-  else if (gemm_contract(s)==1) bcir_tensor_mm_fused_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
-  else bcir_tensor_mm_pool(s->pool,ta,tb,m,n,k,alpha,a,b,beta,c);
-  return 1;
+  return bcir_tensor_mm_contract_variant_pool(s->pool,gemm_contract(s),variant,ta,tb,m,n,k,alpha,a,
+      b,beta,c,bf ? s->workspace : NULL,bf ? s->workspace_bytes : 0)!=0;
+}
+static int gemm(bcir_decoder_state *s,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
+    const float *a,const float *b,float beta,float *c) {
+  return gemm_v(s,0,ta,tb,m,n,k,alpha,a,b,beta,c);
 }
 static int linear(bcir_decoder_state *s,size_t r,size_t in,size_t out,const float *x,
     const float *w,float *y) { return gemm(s,0,1,r,out,in,1.0f,x,w,0.0f,y); }
@@ -609,8 +628,7 @@ static int linear_backward(bcir_decoder_state *s,size_t r,size_t in,size_t out,
   cx.ta=0; cx.tb=0; cx.m=r; cx.n=in; cx.k=out; cx.alpha=1.0f; cx.a=dy; cx.b=w; cx.beta=beta; cx.c=dx;
   cw.ta=1; cw.tb=0; cw.m=out; cw.n=in; cw.k=r; cw.alpha=1.0f; cw.a=dy; cw.b=x; cw.beta=wbeta; cw.c=dw;
   if (gemm_contract(s)==3) return gemm_group(s,&cx,1,&cw,1);
-  bcir_tensor_mm_pair_pool(s->pool,gemm_contract(s),&cx,&cw);
-  return 1;
+  return bcir_tensor_mm_pair_variant_pool(s->pool,gemm_contract(s),0,&cx,&cw)!=0;
 }
 /* The linears that read one input -- the attention's q, k and v, the MLP's gate and up -- as one
  * pool job (NDT-SCHED-1): their outputs are disjoint, so each is its own entry's bit for bit; and
@@ -667,6 +685,11 @@ static void swiglu_backward(bcir_decoder_state *s,size_t n,const float *g,const 
   if (s->contract&BCIR_DT_CONTRACT_EXP) bcir_tensor_swiglu_backward_v2_pool(s->pool,n,g,u,dy,dg,du);
   else bcir_tensor_swiglu_backward_pool(s->pool,n,g,u,dy,dg,du);
 }
+/* ATT-CONTIG: the workspace the binary32 attention copies its heads' rows into -- the state's, where it
+ * lends bytes (the entry runs the rows in place below its need) */
+static void *attention_workspace(const bcir_decoder_state *s) {
+  return s->workspace_bytes ? s->workspace : NULL;
+}
 /* The attention's contract as the tensor unit names it: the softmax's exponential (EXP) and the
  * products' multiply-adds (ATTN-FMA) -- one predicate for the forward and the backward. */
 static unsigned attention_contract(const bcir_decoder_state *s) {
@@ -675,23 +698,49 @@ static unsigned attention_contract(const bcir_decoder_state *s) {
 }
 /* Under the bf16 attention (BF16-ATTN) its widest instance, packing into the state's workspace,
  * which valid() admitted for its pool; otherwise the binary32 attention under its contract. Each
- * returns whether it ran (an entry that refuses writes nothing). */
-static int attention(bcir_decoder_state *s,size_t b,size_t t,size_t h,size_t kh,size_t d,
-    const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
+ * returns whether it ran (an entry that refuses writes nothing). `scratch`: the forward no backward
+ * reads (INFER-ATTN: bcir_decoder_forward's), whose probabilities are the entry's scratch. A stored
+ * binary32 forward's reader is the binary32 backward, which reads no probability past a row's
+ * diagonal, so it runs under BCIR_TENSOR_ATTENTION_LOWER (P-LOWER: its strips skip the future
+ * columns' fill); the bf16 backward reads the future +0.0s as its tiles' terms. Both binary32
+ * entries take BCIR_TENSOR_ATTENTION_BANDS (P-BANDS): where the host and the shapes admit it the
+ * stored forward keeps its probabilities in 16-row bands and the backward reads them so, every
+ * value as without it; the word is the same on every host, the unit deciding where it takes effect. */
+static unsigned attention_forward_contract(const bcir_decoder_state *s,int scratch) {
+  return attention_contract(s)|(scratch ? BCIR_TENSOR_ATTENTION_SCRATCH :
+      (s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 0u :
+      BCIR_TENSOR_ATTENTION_LOWER|BCIR_TENSOR_ATTENTION_BANDS);
+}
+/* The binary32 backward's word: the attention's contract and P-BANDS, the layout its stored forward's
+ * word names */
+static unsigned attention_backward_contract(const bcir_decoder_state *s) {
+  return attention_contract(s)|BCIR_TENSOR_ATTENTION_BANDS;
+}
+static int attention_v(bcir_decoder_state *s,int variant,int scratch,size_t b,size_t t,size_t h,
+    size_t kh,size_t d,const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
+  unsigned contract=attention_forward_contract(s,scratch);
   if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)
-    return bcir_tensor_attention_bf16_scan_pool(s->pool,0,attention_contract(s),b,t,h,kh,d,q,k,v,p,
-        y,bad,s->workspace,s->workspace_bytes)!=0;
-  bcir_tensor_attention_contract_scan_pool(s->pool,attention_contract(s),b,t,h,kh,d,q,k,v,p,y,bad);
-  return 1;
+    return bcir_tensor_attention_bf16_scan_pool(s->pool,variant,contract,b,t,h,kh,d,q,k,
+        v,p,y,bad,s->workspace,s->workspace_bytes)!=0;
+  return bcir_tensor_attention_contract_variant_scan_ws_pool(s->pool,variant,contract,b,t,
+      h,kh,d,q,k,v,p,y,bad,attention_workspace(s),s->workspace_bytes)!=0;
+}
+static int attention(bcir_decoder_state *s,int scratch,size_t b,size_t t,size_t h,size_t kh,
+    size_t d,const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
+  return attention_v(s,0,scratch,b,t,h,kh,d,q,k,v,p,y,bad);
+}
+static int attention_backward_v(bcir_decoder_state *s,int variant,geometry g,const float *q,
+    const float *k,const float *v,float *p,const float *dy,float *dq,float *dk,float *dv) {
+  if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)
+    return bcir_tensor_attention_bf16_backward_pool(s->pool,variant,g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,
+        dq,dk,dv,s->workspace,s->workspace_bytes)!=0;
+  return bcir_tensor_attention_backward_contract_variant_ws_pool(s->pool,variant,
+      attention_backward_contract(s),g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,dv,attention_workspace(s),
+      s->workspace_bytes)!=0;
 }
 static int attention_backward(bcir_decoder_state *s,geometry g,const float *q,const float *k,
     const float *v,float *p,const float *dy,float *dq,float *dk,float *dv) {
-  if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)
-    return bcir_tensor_attention_bf16_backward_pool(s->pool,0,g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,
-        dv,s->workspace,s->workspace_bytes)!=0;
-  bcir_tensor_attention_backward_contract_pool(s->pool,attention_contract(s),g.b,g.t,g.h,g.kh,
-      g.hd,q,k,v,p,dy,dq,dk,dv);
-  return 1;
+  return attention_backward_v(s,0,g,q,k,v,p,dy,dq,dk,dv);
 }
 /* The forward, and whether every activation it wrote is finite (NDT-SCAN-W). One scan of the
  * whole arena after it read the arena back from memory, 171 MB for the 9.84M decoder; now the
@@ -705,10 +754,18 @@ static int attention_backward(bcir_decoder_state *s,geometry g,const float *q,co
  * One layer, into its cache slot from its input x, the next layer's input after it (REMAT: the
  * backward's recompute, `full` 0, stops at the hidden activation -- the last value the layer's
  * backward reads -- so the down projection and the residual add run in the forward alone, and
- * its verdict is the forward's, whose values it writes again). Returns 0 when a product refused
- * its workspace, which wrote nothing. */
+ * its verdict is the forward's, whose values it writes again). `scratch`: no backward reads this
+ * forward's cache (INFER-ATTN), so the attention keeps no probabilities. Returns 0 when a product
+ * refused its workspace, which wrote nothing. */
+/* ROPE-TABLE: the scratch arena's last span, time x head-dim floats: the rotation's cosines and
+ * sines, written by each forward before its first layer and read by every rotation of that forward
+ * and of the backward after it (the layers a backward recomputes included). The scratch arena is
+ * the backward's otherwise, and no other call writes this span. */
+static float *rope_table(const bcir_decoder_state *s,geometry g) {
+  return s->scratch+5*g.nd+2*g.nk+3*g.nf+g.nv;
+}
 static int layer_forward(bcir_decoder_state *s,geometry g,size_t l,float *slot,float *x,int full,
-    int *bad) {
+    int scratch,int *bad) {
   const bcir_decoder_spec *sp=&s->plan.spec; int ran=1;
   layer p=params(s->weights+g.v*g.d+l*g.lp,g);
   cache a=activations(slot,g); float *y=x+g.nd;
@@ -718,9 +775,9 @@ static int layer_forward(bcir_decoder_state *s,geometry g,size_t l,float *slot,f
     out[0]=g.d; out[1]=g.k; out[2]=g.k; w[0]=p.q; w[1]=p.k; w[2]=p.v; y3[0]=a.q; y3[1]=a.k; y3[2]=a.v;
     ran&=linears(s,g.n,g.d,a.n1,3,out,w,y3);
   }
-  bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,sp->rope_base,a.q,0);
-  bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,sp->rope_base,a.k,0);
-  ran&=attention(s,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx,bad);
+  bcir_tensor_rope_lent_pool(s->pool,g.b,g.t,g.h,g.hd,rope_table(s,g),a.q,0);
+  bcir_tensor_rope_lent_pool(s->pool,g.b,g.t,g.kh,g.hd,rope_table(s,g),a.k,0);
+  ran&=attention(s,scratch,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx,bad);
   ran&=linear(s,g.n,g.d,g.d,a.ctx,p.o,a.x2);
   bcir_tensor_add_pool(s->pool,g.nd,x,a.x2);
   bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,a.x2,p.norm2,a.n2,bad);
@@ -753,16 +810,18 @@ static void embed(size_t n,size_t d,const uint32_t *tokens,const float *table,fl
   for (i=0;i<n;i++) memcpy(x+i*d,table+(size_t)tokens[i]*d,d*sizeof(float));
 }
 /* BCIR_DT_OK, BCIR_DT_NUMERIC for a value not finite, BCIR_DT_CAPACITY for a product that ran
- * nowhere (WS-PLAN: valid() admits no workspace that refuses, so this is a defect's verdict) */
-static int forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g) {
+ * nowhere (WS-PLAN: valid() admits no workspace that refuses, so this is a defect's verdict);
+ * `scratch` for bcir_decoder_forward's, which no backward reads (INFER-ATTN) */
+static int forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g,int scratch) {
   const bcir_decoder_spec *sp=&s->plan.spec;
   size_t l; float *xs=s->activations,*cs=xs+(g.l+1)*g.nd;
   float *norm=cs+cache_slots(g,s->recompute)*g.la,*logits=norm+g.nd;
   float *final=s->weights+g.v*g.d+g.l*g.lp;
   const float *head=sp->tied ? s->weights : final+g.d; int bad=0,ran=1;
   embed(g.n,g.d,tokens,s->weights,xs);
+  bcir_tensor_rope_table_pool(s->pool,g.t,g.hd,sp->rope_base,rope_table(s,g));  /* ROPE-TABLE */
   for (l=0;l<g.l;l++)
-    ran&=layer_forward(s,g,l,cs+slot_of(g,s->recompute,l)*g.la,xs+l*g.nd,1,&bad);
+    ran&=layer_forward(s,g,l,cs+slot_of(g,s->recompute,l)*g.la,xs+l*g.nd,1,scratch,&bad);
   bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,xs+g.l*g.nd,final,norm,&bad);
   ran&=linear(s,g.n,g.d,g.v,norm,head,logits);
   if (!finite_pool(s,logits,g.nv)) bad=1;
@@ -774,27 +833,39 @@ int bcir_decoder_forward(bcir_decoder_state *s,const uint32_t *tokens,size_t n) 
   g=geom(&s->plan.spec);
   if (n!=g.n || !ids(s,tokens,n)) return BCIR_DT_INVALID;
   if (!finite_pool(s,s->weights,s->plan.parameters)) return BCIR_DT_NUMERIC;
-  return forward(s,tokens,g);
+  return forward(s,tokens,g,1);
 }
 /* The loss's rows in ranges of BCIR_DT_ROW_CHUNK: a row's softmax, its adjoint and its term
  * (log-sum-exp plus the maximum less the target's logit, in double, as the serial loop computed
  * it) are its own; the terms are kept as bytes in the scratch arena and added in row order by the
- * caller, so the mean is the serial chain. */
+ * caller, so the mean is the serial chain.
+ *
+ * LOSS-ONCE: each logit's exponential is evaluated once. The serial loop called libm's exp twice a
+ * logit, once for the row's sum and again for the adjoint, and those calls were most of the loss.
+ * A row now keeps its first BCIR_DT_LOSS_ONCE exponentials, in double, on the task's stack, and its
+ * adjoints divide the kept values. The same call on the same argument returns the same double, and
+ * the sum, the term and both divisions are the loop's operations in its order, so every adjoint and
+ * term is the two-evaluation loop's bit for bit. A row wider than the buffer evaluates its tail's
+ * exponentials again for their adjoints, as before. */
 #define BCIR_DT_ROW_CHUNK 16
 #define BCIR_DT_COL_CHUNK 16
+#define BCIR_DT_LOSS_ONCE 1024  /* the logits a row keeps: 8 KiB of the task's stack */
 typedef struct loss_job {
   size_t n,v; const float *logits; const uint32_t *targets; float *dl; unsigned char *terms;
 } loss_job;
 static void loss_task(void *ctx,size_t task) {
-  loss_job *jb=(loss_job *)ctx; size_t i,j,v=jb->v;
+  loss_job *jb=(loss_job *)ctx; size_t i,j,v=jb->v,kept=v<BCIR_DT_LOSS_ONCE ? v : BCIR_DT_LOSS_ONCE;
   size_t i0=task*BCIR_DT_ROW_CHUNK,i1=i0+BCIR_DT_ROW_CHUNK<jb->n ? i0+BCIR_DT_ROW_CHUNK : jb->n;
+  double e[BCIR_DT_LOSS_ONCE];
   for (i=i0;i<i1;i++) {
     const float *row=jb->logits+i*v; float *d=jb->dl+i*v; float maxv=row[0]; double sum=0.0,term;
+    size_t t=jb->targets[i];
     for (j=1;j<v;j++) if (row[j]>maxv) maxv=row[j];
-    for (j=0;j<v;j++) sum+=exp((double)row[j]-maxv);
-    term=log(sum)+(double)maxv-row[jb->targets[i]];
-    for (j=0;j<v;j++) d[j]=(float)((exp((double)row[j]-maxv)/sum-
-        (j==jb->targets[i] ? 1.0 : 0.0))/(double)jb->n);
+    for (j=0;j<kept;j++) { e[j]=exp((double)row[j]-maxv); sum+=e[j]; }
+    for (;j<v;j++) sum+=exp((double)row[j]-maxv);
+    term=log(sum)+(double)maxv-row[t];
+    for (j=0;j<kept;j++) d[j]=(float)((e[j]/sum-(j==t ? 1.0 : 0.0))/(double)jb->n);
+    for (;j<v;j++) d[j]=(float)((exp((double)row[j]-maxv)/sum-(j==t ? 1.0 : 0.0))/(double)jb->n);
     memcpy(jb->terms+i*sizeof(double),&term,sizeof(double));
   }
 }
@@ -811,6 +882,21 @@ static double loss_rows(bcir_decoder_state *s,geometry g,const float *logits,
   }
   return ce;
 }
+#ifdef BCIR_DT_LOSS_PROBE
+/* LOSS-ONCE's witness entry: the loss's n rows of v logits as the step runs them (loss_rows, on
+ * `pool` or serially for NULL), each row's adjoints into dl and its term's bytes into terms (8n),
+ * the terms' row-order sum returned, for the harness's check against the two-evaluation loop at
+ * vocabularies the trainer's fixtures do not reach. A build defines BCIR_DT_LOSS_PROBE to have the
+ * symbol (the harness's own builds do; the library does not). */
+double bcir_decoder_loss_probe(bcir_tensor_pool *pool,size_t n,size_t v,const float *logits,
+    const uint32_t *targets,float *dl,unsigned char *terms);
+double bcir_decoder_loss_probe(bcir_tensor_pool *pool,size_t n,size_t v,const float *logits,
+    const uint32_t *targets,float *dl,unsigned char *terms) {
+  bcir_decoder_state s; geometry g;
+  memset(&s,0,sizeof s); memset(&g,0,sizeof g); s.pool=pool; g.n=n; g.v=v;
+  return loss_rows(&s,g,logits,targets,dl,terms);
+}
+#endif
 /* The embedding scatter in column ranges: a task adds every row's columns to its token's row in
  * row order, so a token the batch repeats accumulates as the serial loop did. */
 typedef struct scatter_job { size_t n,d; const uint32_t *tokens; const float *dx; float *grad; } scatter_job;
@@ -879,7 +965,7 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
   if ((!(how&(DT_KNOWN|DT_COMMITTED)) && !weights_finite(s)) ||
       (!(how&DT_KNOWN) && accumulate && !finite_pool(s,s->gradients,s->plan.parameters)))
     return BCIR_DT_NUMERIC;
-  rc=forward(s,tokens,g);
+  rc=forward(s,tokens,g,0);
   if (rc) return rc;
   /* NDT-ZERO: a fresh gradient's first writers write it -- each weight adjoint's GEMM at beta 0,
    * which adds its terms to +0.0 without reading C (what the fill and beta 1 gave), each gamma
@@ -910,7 +996,7 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
      * keeps between layers is not a value the forward writes */
     if (recomputes(s->recompute,l) && l!=top) {
       int seen=0;
-      ran&=layer_forward(s,g,l,slot,x,0,&seen);
+      ran&=layer_forward(s,g,l,slot,x,0,0,&seen);
     }
     /* the hidden activation is a panel exactly when the forward wrote it as one (one predicate on
      * the same slot); the adjoints are panels when their own slots admit them, whichever the hidden
@@ -956,8 +1042,8 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
      * leaves its score adjoint in their place (same dq/dk/dv as the reference, bit for bit), the
      * bf16 attention's leaves them as they were */
     ran&=attention_backward(s,g,a.q,a.k,a.v,a.p,dc,dq,dk,dv);
-    bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,s->plan.spec.rope_base,dq,1);
-    bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,s->plan.spec.rope_base,dk,1);
+    bcir_tensor_rope_lent_pool(s->pool,g.b,g.t,g.h,g.hd,rope_table(s,g),dq,1);
+    bcir_tensor_rope_lent_pool(s->pool,g.b,g.t,g.kh,g.hd,rope_table(s,g),dk,1);
     {
       size_t out[3]; const float *w[3],*d3[3]; float *dw[3];
       out[0]=g.d; out[1]=g.k; out[2]=g.k; w[0]=p.q; w[1]=p.k; w[2]=p.v;
@@ -1502,10 +1588,12 @@ static void px_init(px_ctx *c,bcir_decoder_state *s) {
   c->base[5]=(unsigned char *)s->activations; c->len[5]=transient_bytes(s,1,0);
   c->base[6]=(unsigned char *)s->scratch; c->len[6]=transient_bytes(s,1,1);
   c->base[7]=(unsigned char *)s->workspace;
-  c->len[7]=(s->contract&BCIR_DT_CONTRACT_BF16) ? s->workspace_bytes : 0;
+  c->len[7]=s->workspace ? s->workspace_bytes : 0;
   c->v2=(unsigned)swiglu_v2(s); c->gc=(unsigned)gemm_contract(s);
-  c->attn=attention_contract(s)|((s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : 0u);
-  c->attn_vjp=(s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : attention_contract(s);
+  /* a program's forward is a stored one (P-LOWER and P-BANDS under binary32), the bf16 entry's
+   * flagged 256 */
+  c->attn=attention_forward_contract(s,0)|((s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : 0u);
+  c->attn_vjp=(s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : attention_backward_contract(s);
 }
 static int px_fits(uint64_t x) {
 #if SIZE_MAX < UINT64_MAX
@@ -1533,17 +1621,43 @@ static int px_slot(const px_ctx *c,const uint64_t *w,unsigned q,unsigned mask,si
   ops[*n].off=(size_t)r[1]; ops[*n].bytes=bytes; (*n)++;
   return 1;
 }
-/* the workspace slot q: the state's whole bf16 workspace where the call packs into it, else absent */
+/* the workspace slot q: the state's whole workspace where the call packs or copies into it, else absent */
 static int px_ws(const px_ctx *c,const uint64_t *w,unsigned q,int packs) {
   const uint64_t *r=w+11+3*q;
   if (!packs) return !r[0] && !r[1] && !r[2];
   return r[0]==7 && !r[1] && c->len[7] && r[2]==c->len[7];
 }
-/* the dimensions from `dims` on, the slots from `slots` on and the seven spare words: zero */
+/* the dimensions from `dims` on, the slots from `slots` on and the five spare words: zero (the two
+ * dispatch words are px_dispatch's) */
 static int px_rest(const uint64_t *w,unsigned dims,unsigned slots) {
   unsigned i;
   for (i=3+dims;i<11;i++) if (w[i]) return 0;
-  for (i=11+3*slots;i<BCIR_DT_RECORD_WORDS;i++) if (w[i]) return 0;
+  for (i=11+3*slots;i<BCIR_DT_RECORD_WORDS;i++)
+    if (w[i] && i!=BCIR_DT_WORD_INSTANCE && i!=BCIR_DT_WORD_WORKERS) return 0;
+  return 1;
+}
+/* PX-3b (DISPATCH): the instances a record's job may name -- a mask of bcir_tensor.h's bits: a GEMM
+ * job of BCIR's entries its contract's family, an attention its products' (the bf16 family under
+ * the bf16 attention, the fused GEMM's under ATTN-FMA, v1's otherwise), every other record none */
+static int px_instances(const px_ctx *c,const uint64_t *w) {
+  const bcir_decoder_state *s=c->s;
+  if (w[0]==BCIR_DT_REC_GEMM)
+    return (w[2]&15u)==7u ? 0 : bcir_tensor_mm_contract_variants(gemm_contract(s));
+  if (w[0]==BCIR_DT_REC_ATTN || w[0]==BCIR_DT_REC_ATTN_VJP)
+    return (s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? bcir_tensor_mm_bf16_variants() :
+      (s->contract&BCIR_DT_CONTRACT_ATTN) ? bcir_tensor_mm_fused_variants() : bcir_tensor_mm_variants();
+  return 0;
+}
+/* a job's two dispatch words, alike in each of its records: the instance 0 or one bit its family
+ * admits, the workers 0 or 1 .. the pool's threads (0 on a CHECK) */
+static int px_dispatch(const px_ctx *c,const uint64_t *w,size_t job) {
+  uint64_t v=w[BCIR_DT_WORD_INSTANCE],k=w[BCIR_DT_WORD_WORKERS]; size_t q;
+  int mask=px_instances(c,w);
+  if (v && ((v&(v-1)) || !((uint64_t)(unsigned)mask&v))) return 0;  /* one bit of the family's */
+  if (k>(uint64_t)bcir_tensor_pool_threads(c->s->pool) || (k && w[0]==BCIR_DT_REC_CHECK)) return 0;
+  for (q=1;q<job;q++)
+    if (w[q*BCIR_DT_RECORD_WORDS+BCIR_DT_WORD_INSTANCE]!=v ||
+        w[q*BCIR_DT_RECORD_WORDS+BCIR_DT_WORD_WORKERS]!=k) return 0;
   return 1;
 }
 /* no span of a record (or of a GEMM job) that is written meets another of its spans, a chain's
@@ -1579,10 +1693,13 @@ static int px_kernel(const px_ctx *c,const uint64_t *w,px_op *ops,size_t *n) {
     x=px_size(d[0],d[1],1,4); y=px_size(d[1],1,1,4);
     return !f && w[5]==c->eps && x && px_rest(w,3,3) && px_slot(c,w,0,PX_IN,x,PX_R,ops,n) &&
         px_slot(c,w,1,PX_IN,y,PX_R,ops,n) && px_slot(c,w,2,PX_OUT,x,PX_W,ops,n);
-  case BCIR_DT_REC_ROPE:  /* batch, time, heads, dim (even), inverse | x in place */
-    x=px_size(px_size(d[0],d[1],d[2],1),d[3],1,4);
-    return !f && x && !(d[3]%2) && d[4]<=1 && px_rest(w,5,1) &&
-        px_slot(c,w,0,PX_OUT,x,PX_RW,ops,n);
+  case BCIR_DT_REC_ROPE:  /* batch, time, heads, dim (even), inverse | x in place, the table */
+    x=px_size(px_size(d[0],d[1],d[2],1),d[3],1,4); y=px_size(d[1],d[3],1,4);
+    return !f && x && y && !(d[3]%2) && d[4]<=1 && px_rest(w,5,2) &&
+        px_slot(c,w,0,PX_OUT,x,PX_RW,ops,n) && px_slot(c,w,1,PX_IN,y,PX_R,ops,n);
+  case BCIR_DT_REC_ROPE_TABLE:  /* time, dim (even) | the table (ROPE-TABLE) */
+    x=px_size(d[0],d[1],1,4);
+    return !f && x && !(d[1]%2) && px_rest(w,2,1) && px_slot(c,w,0,PX_OUT,x,PX_W,ops,n);
   case BCIR_DT_REC_ATTN: case BCIR_DT_REC_ATTN_VJP: {
     /* batch, time, heads, kv heads (dividing heads), dim | q k v p y, or q k v p dy dq dk dv; ws */
     int vjp=w[0]==BCIR_DT_REC_ATTN_VJP,bf=(s->contract&BCIR_DT_CONTRACT_ATTNBF16)!=0;
@@ -1590,7 +1707,7 @@ static int px_kernel(const px_ctx *c,const uint64_t *w,px_op *ops,size_t *n) {
     z=px_size(px_size(d[0],d[2],d[1],1),d[1],1,4);
     if (f!=(vjp ? c->attn_vjp : c->attn) || !x || !y || !z || d[2]%d[3] || !px_rest(w,5,9) ||
         !px_slot(c,w,0,PX_IN,x,PX_R,ops,n) || !px_slot(c,w,1,PX_IN,y,PX_R,ops,n) ||
-        !px_slot(c,w,2,PX_IN,y,PX_R,ops,n) || !px_ws(c,w,8,bf)) return 0;
+        !px_slot(c,w,2,PX_IN,y,PX_R,ops,n) || !px_ws(c,w,8,bf || c->len[7])) return 0;  /* ATT-CONTIG */
     if (!vjp)
       return px_slot(c,w,3,PX_OUT,z,PX_W,ops,n) && px_slot(c,w,4,PX_OUT,x,PX_W,ops,n) &&
           px_slot(c,w,5,0,0,0,ops,n) && px_slot(c,w,6,0,0,0,ops,n) && px_slot(c,w,7,0,0,0,ops,n);
@@ -1722,6 +1839,7 @@ static int px_check(const px_ctx *c,const uint64_t *p,size_t records,size_t step
     const uint64_t *w=p+i*BCIR_DT_RECORD_WORDS;
     if (w[1]<=launch) return 0;  /* each job's launch exceeds the one before */
     launch=w[1]; job=px_job(w,records-i); n=0;
+    if (!px_dispatch(c,w,job)) return 0;
     if (w[0]==BCIR_DT_REC_CHECK) {
       if (!px_rest(w,0,0) || (w[2]!=BCIR_DT_CHECK_FORWARD && w[2]!=BCIR_DT_CHECK_RAN &&
           w[2]!=BCIR_DT_CHECK_LOSS)) return 0;
@@ -1758,6 +1876,7 @@ static void *px_at(const px_ctx *c,const uint64_t *w,unsigned q) {
 static int px_gemm_run(const px_ctx *c,const uint64_t *w,size_t job) {
   bcir_decoder_state *s=c->s; bcir_tensor_mm_call call[2*BCIR_TENSOR_MM_GROUP];
   bcir_tensor_bf16_panels pre[2*BCIR_TENSOR_MM_GROUP]; size_t q,chain=0; int panels=0;
+  int variant=(int)w[BCIR_DT_WORD_INSTANCE];
   if (!job || job>2*BCIR_TENSOR_MM_GROUP) return 0; /* px_job's 1..2*GROUP calls */
   for (q=0;q<job;q++) {
     const uint64_t *r=w+q*BCIR_DT_RECORD_WORDS; bcir_tensor_mm_call *x=call+q;
@@ -1771,13 +1890,14 @@ static int px_gemm_run(const px_ctx *c,const uint64_t *w,size_t job) {
     x->c=(float *)px_at(c,r,2);
     if ((r[2]>>4&15u)==1u) chain++;
   }
-  switch (w[2]&15u) {
-  case 4: bcir_tensor_mm_pair_pool(s->pool,gemm_contract(s),call,call+1); return 1;
+  switch (w[2]&15u) {  /* the job's instance: PX-3b's word, checked against its family */
+  case 4: return bcir_tensor_mm_pair_variant_pool(s->pool,gemm_contract(s),variant,call,call+1)!=0;
   case 5: case 6:
-    return gemm_group_with(s,chain ? call : NULL,chain,call+chain,job-chain,panels ? pre : NULL);
+    return gemm_group_v(s,variant,chain ? call : NULL,chain,call+chain,job-chain,
+        panels ? pre : NULL);
   default:
-    return gemm(s,call->ta,call->tb,call->m,call->n,call->k,1.0f,call->a,call->b,call->beta,
-        call->c);
+    return gemm_v(s,variant,call->ta,call->tb,call->m,call->n,call->k,1.0f,call->a,call->b,
+        call->beta,call->c);
   }
 }
 /* a checked kernel record: the call the step makes for it, its verdicts into ran, bad and ce */
@@ -1797,17 +1917,20 @@ static int px_kernel_run(const px_ctx *c,const uint64_t *w,const uint32_t *token
         px_at(c,w,2),bad);
     break;
   case BCIR_DT_REC_ROPE:
-    bcir_tensor_rope_pool(s->pool,d0,d1,d2,d3,s->plan.spec.rope_base,px_at(c,w,0),(int)d4);
+    bcir_tensor_rope_lent_pool(s->pool,d0,d1,d2,d3,px_at(c,w,1),px_at(c,w,0),(int)d4);
+    break;
+  case BCIR_DT_REC_ROPE_TABLE:
+    bcir_tensor_rope_table_pool(s->pool,d0,d1,s->plan.spec.rope_base,px_at(c,w,0));
     break;
   case BCIR_DT_REC_ATTN:
-    *ran&=attention(s,d0,d1,d2,d3,d4,px_at(c,w,0),px_at(c,w,1),px_at(c,w,2),px_at(c,w,3),
-        px_at(c,w,4),bad);
+    *ran&=attention_v(s,(int)w[BCIR_DT_WORD_INSTANCE],0,d0,d1,d2,d3,d4,px_at(c,w,0),px_at(c,w,1),
+        px_at(c,w,2),px_at(c,w,3),px_at(c,w,4),bad);
     break;
   case BCIR_DT_REC_ATTN_VJP: {
     geometry g=c->g;
     g.b=d0; g.t=d1; g.h=d2; g.kh=d3; g.hd=d4;
-    *ran&=attention_backward(s,g,px_at(c,w,0),px_at(c,w,1),px_at(c,w,2),px_at(c,w,3),
-        px_at(c,w,4),px_at(c,w,5),px_at(c,w,6),px_at(c,w,7));
+    *ran&=attention_backward_v(s,(int)w[BCIR_DT_WORD_INSTANCE],g,px_at(c,w,0),px_at(c,w,1),
+        px_at(c,w,2),px_at(c,w,3),px_at(c,w,4),px_at(c,w,5),px_at(c,w,6),px_at(c,w,7));
     break;
   }
   case BCIR_DT_REC_ADD: bcir_tensor_add_pool(s->pool,d0,px_at(c,w,0),px_at(c,w,1)); break;
@@ -1840,7 +1963,7 @@ static int px_kernel_run(const px_ctx *c,const uint64_t *w,const uint32_t *token
 }
 /* The run of a checked program: its records in order, the host's the step's own checks, update
  * and event (bcir_decoder_run_accum's arithmetic: the micro-batch's mean, then its share). */
-static int px_run(const px_ctx *c,const bcir_decoder_adamw *o,const uint64_t *p,size_t records,
+static int px_jobs(const px_ctx *c,const bcir_decoder_adamw *o,const uint64_t *p,size_t records,
     const uint32_t *tokens,const uint32_t *targets,const double *rates,size_t accumulation,
     bcir_decoder_event *events,size_t *completed) {
   bcir_decoder_state *s=c->s; bcir_decoder_adamw opt=*o; size_t i=0,job,batch=0,step=0;
@@ -1849,6 +1972,7 @@ static int px_run(const px_ctx *c,const bcir_decoder_adamw *o,const uint64_t *p,
     const uint64_t *w=p+i*BCIR_DT_RECORD_WORDS;
     DT_TIME_START(t0);
     job=px_job(w,records-i);
+    bcir_tensor_pool_cap(s->pool,(unsigned)w[BCIR_DT_WORD_WORKERS]);  /* PX-3b: the job's workers */
     if (w[0]==BCIR_DT_REC_GEMM) ran&=px_gemm_run(c,w,job);
     else if (w[0]==BCIR_DT_REC_CHECK) {
       if (!ran) return BCIR_DT_CAPACITY;  /* a product that ran nowhere */
@@ -1877,6 +2001,16 @@ static int px_run(const px_ctx *c,const bcir_decoder_adamw *o,const uint64_t *p,
   }
   return BCIR_DT_OK;
 }
+/* the program's jobs on the workers each names, then the pool's cap as it was before the run,
+ * however the run ended (PX-3b) */
+static int px_run(const px_ctx *c,const bcir_decoder_adamw *o,const uint64_t *p,size_t records,
+    const uint32_t *tokens,const uint32_t *targets,const double *rates,size_t accumulation,
+    bcir_decoder_event *events,size_t *completed) {
+  unsigned before=bcir_tensor_pool_cap(c->s->pool,0u);
+  int rc=px_jobs(c,o,p,records,tokens,targets,rates,accumulation,events,completed);
+  bcir_tensor_pool_cap(c->s->pool,before);
+  return rc;
+}
 int bcir_decoder_run_program(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     const uint64_t *program,size_t records,const uint32_t *tokens,const uint32_t *targets,
     size_t count,const double *rates,size_t steps,size_t accumulation,bcir_decoder_event *events,
@@ -1898,12 +2032,13 @@ int bcir_decoder_run_program(bcir_decoder_state *s,const bcir_decoder_adamw *o,
 /* PX-1's records (the declarations at the top say what they are; the kinds are the header's). */
 void bcir_decoder_trace_probe_begin(const bcir_decoder_state *s,uint64_t *words,size_t capacity) {
   trace_state=s; trace_words=words; trace_capacity=words ? capacity : 0;
-  trace_count=trace_dropped=0; trace_launch=0;
+  trace_count=trace_dropped=trace_mark=0; trace_launch=0;
 }
 size_t bcir_decoder_trace_probe_end(size_t *dropped) {
   size_t n=trace_count;
   if (dropped) *dropped=trace_dropped;
-  trace_state=NULL; trace_words=NULL; trace_capacity=trace_count=trace_dropped=0; trace_launch=0;
+  trace_state=NULL; trace_words=NULL; trace_capacity=trace_count=trace_dropped=trace_mark=0;
+  trace_launch=0;
   return n;
 }
 size_t bcir_decoder_trace_probe_words(void) { return BCIR_DT_TRACE_WORDS; }
@@ -1913,11 +2048,20 @@ static uint64_t tr_bits(float f) { uint32_t u; memcpy(&u,&f,sizeof u); return u;
 static uint64_t *tr_record(unsigned kind,int fresh) {
   uint64_t *w;
   if (!trace_state) return NULL;
-  if (fresh) trace_launch++;
+  if (fresh) { trace_launch++; trace_mark=trace_count; }
   if (trace_count>=trace_capacity) { trace_dropped++; return NULL; }
   w=trace_words+trace_count*BCIR_DT_TRACE_WORDS; trace_count++;
   memset(w,0,BCIR_DT_TRACE_WORDS*sizeof *w);
-  w[0]=kind; w[1]=trace_launch; return w;
+  w[0]=kind; w[1]=trace_launch;
+  w[BCIR_DT_WORD_WORKERS]=bcir_tensor_pool_workers(trace_state->pool);  /* PX-3b: the job's workers */
+  return w;
+}
+/* The instance the launch just recorded ran (an entry's return), into each of its records. */
+static int tr_ran(int ran) {
+  size_t i;
+  for (i=trace_mark;i<trace_count;i++)
+    trace_words[i*BCIR_DT_TRACE_WORDS+BCIR_DT_WORD_INSTANCE]=(uint64_t)(unsigned)ran;
+  return ran;
 }
 /* Operand `slot` of record w: its space, its byte offset in it and its bytes. A NULL operand -- a
  * panel call's A or B, whose panel is recorded in its place -- records nothing. */
@@ -1930,7 +2074,7 @@ static void tr_ref(uint64_t *w,unsigned slot,const void *p,size_t bytes) {
   base[4]=s->activations; base[5]=s->scratch; base[6]=s->workspace;
   len[0]=len[1]=len[2]=len[3]=s->plan.parameters*sizeof(float);
   len[4]=arena_floats(s)*sizeof(float); len[5]=s->plan.scratch*sizeof(float);
-  len[6]=(s->contract&BCIR_DT_CONTRACT_BF16) ? s->workspace_bytes : 0;
+  len[6]=s->workspace ? s->workspace_bytes : 0;
   r[0]=8; r[1]=0; r[2]=bytes;
   for (i=0;i<7;i++)
     if (base[i] && len[i] && x>=(uintptr_t)base[i] && x-(uintptr_t)base[i]<len[i]) {
@@ -1947,11 +2091,18 @@ static void tr_mul(size_t n,const float *x,const float *y) { tr_two(BCIR_DT_REC_
 static void tr_provider_silu(size_t n,const float *x,const float *y) {
   tr_two(BCIR_DT_REC_PROVIDER_SILU,n,x,y);
 }
-static void tr_rope(size_t b,size_t t,size_t h,size_t d,const float *x,int inverse) {
+static void tr_rope(size_t b,size_t t,size_t h,size_t d,const float *table,const float *x,
+    int inverse) {
   uint64_t *w=tr_record(BCIR_DT_REC_ROPE,1);
   if (!w) return;
   w[3]=b; w[4]=t; w[5]=h; w[6]=d; w[7]=(uint64_t)(inverse!=0);
-  tr_ref(w,0,x,b*t*h*d*sizeof(float));
+  tr_ref(w,0,x,b*t*h*d*sizeof(float)); tr_ref(w,1,table,t*d*sizeof(float));
+}
+static void tr_rope_table(size_t t,size_t d,const float *table) {
+  uint64_t *w=tr_record(BCIR_DT_REC_ROPE_TABLE,1);
+  if (!w) return;
+  w[3]=t; w[4]=d;
+  tr_ref(w,0,table,t*d*sizeof(float));
 }
 static void tr_rms(size_t rows,size_t width,float eps,const float *x,const float *g,const float *y) {
   uint64_t *w=tr_record(BCIR_DT_REC_RMS,1); size_t b=rows*width*sizeof(float);
@@ -2028,13 +2179,13 @@ static void tr_mm_group(unsigned entry,int contract,const bcir_tensor_mm_call *c
     fresh=0;
   }
 }
-static void tr_attention(unsigned kind,unsigned contract,int bf16,int variant,size_t b,size_t t,
-    size_t h,size_t kh,size_t d,const float *q,const float *k,const float *v,const float *p,
-    const float *y,const float *dq,const float *dk,const float *dv,const void *ws,size_t bytes) {
+static void tr_attention(unsigned kind,unsigned contract,int bf16,size_t b,size_t t,size_t h,
+    size_t kh,size_t d,const float *q,const float *k,const float *v,const float *p,const float *y,
+    const float *dq,const float *dk,const float *dv,const void *ws,size_t bytes) {
   uint64_t *w=tr_record(kind,1);
   size_t qb=b*t*h*d*sizeof(float),kb=b*t*kh*d*sizeof(float);
   if (!w) return;
-  w[2]=contract|(uint64_t)(bf16!=0)<<8|(uint64_t)(unsigned)variant<<9;
+  w[2]=contract|(uint64_t)(bf16!=0)<<8;
   w[3]=b; w[4]=t; w[5]=h; w[6]=kh; w[7]=d;
   tr_ref(w,0,q,qb); tr_ref(w,1,k,kb); tr_ref(w,2,v,kb); tr_ref(w,3,p,b*h*t*t*sizeof(float));
   tr_ref(w,4,y,qb); tr_ref(w,5,dq,qb); tr_ref(w,6,dk,kb); tr_ref(w,7,dv,kb); tr_ref(w,8,ws,bytes);

@@ -44,12 +44,14 @@ BCIR_DT_API size_t bcir_tensor_pool_size(unsigned threads); /* 0: a count this h
 BCIR_DT_API bcir_tensor_pool *bcir_tensor_pool_init(void *memory, size_t bytes, unsigned threads);
 BCIR_DT_API void bcir_tensor_pool_stop(bcir_tensor_pool *pool); /* joins; NULL or stopped: no-op */
 BCIR_DT_API unsigned bcir_tensor_pool_threads(const bcir_tensor_pool *pool); /* NULL: 1 */
-/* Run `tasks` tasks of `fn` over the pool's threads -- each thread claiming the next unclaimed
- * task, in ascending order, where the compiler has GCC's or Clang's atomics, task t on thread
- * t mod threads elsewhere -- and return when every one has finished; a NULL pool, one thread or
- * one task runs them in order on the caller. Which thread runs a task is not part of the
- * contract: a caller's partition keeps every output element, and every reduction, with one task,
- * as the kernels below do. */
+/* Run `tasks` tasks of `fn` over the pool's threads and return when every one has finished; a NULL
+ * pool, one thread or one task runs them in order on the caller. The tasks are dealt in contiguous
+ * blocks, one a worker in order (POOL-AFFINITY), so consecutive jobs over the same rows run them on
+ * the same thread: where the compiler has GCC's or Clang's atomics a thread claims its block's
+ * tasks one at a time in ascending order and then the other blocks' leftovers, elsewhere it runs
+ * its block; a job with no more tasks than workers has every task claimed in turn. Which thread
+ * runs a task is not part of the contract: a caller's partition keeps every output element, and
+ * every reduction, with one task, as the kernels below do. */
 typedef void (*bcir_tensor_task_fn)(void *ctx, size_t task);
 BCIR_DT_API void bcir_tensor_pool_run(bcir_tensor_pool *pool, bcir_tensor_task_fn fn, void *ctx,
     size_t tasks);
@@ -78,6 +80,19 @@ BCIR_DT_API void bcir_tensor_rms_backward_into_pool(bcir_tensor_pool *pool, size
     float *inv, unsigned how);
 BCIR_DT_API void bcir_tensor_rope_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
     size_t heads, size_t dim, double base, float *x, int inverse);
+/* ROPE-TABLE: the rotation's cosines and sines evaluated once, for every rotation that reads them.
+ * bcir_tensor_rope_table_pool writes `table`, time x dim floats a position at a time: for position
+ * pos and pair j < dim/2, table[pos*dim+j] = (float)cos(a) and table[pos*dim+dim/2+j] =
+ * (float)sin(a), a = pos * base^(-2j/dim) in double -- the libm calls on the same arguments that
+ * bcir_tensor_rope_pool makes on every call. bcir_tensor_rope_lent_pool rotates x as
+ * bcir_tensor_rope_pool does at that base, each pair's cosine and sine the table's (the sine times
+ * -1 under inverse, as that entry rounds it), so every value is that entry's bit for bit. dim even;
+ * `table` disjoint from x; positions in ranges of BCIR_ROW_CHUNK as there; a NULL pool runs either
+ * on the caller. */
+BCIR_DT_API void bcir_tensor_rope_table_pool(bcir_tensor_pool *pool, size_t time, size_t dim,
+    double base, float *table);
+BCIR_DT_API void bcir_tensor_rope_lent_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
+    size_t heads, size_t dim, const float *table, float *x, int inverse);
 /* y[i] += x[i] and y[i] *= x[i] over elements, as the trainer's residual and gate paths do. */
 BCIR_DT_API void bcir_tensor_add_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);
 BCIR_DT_API void bcir_tensor_mul_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);
@@ -128,10 +143,46 @@ BCIR_DT_API void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *p
  * order from the same start; the scaling, the softmax and the score adjoint p_ij (dp_ij - dot_i)
  * times the scale 1/sqrtf(dim) are v1's. Without FUSED each entry is its v1 entry above, bit for
  * bit; with it every instance (portable fmaf, AVX2+FMA and AVX-512 FMA, chosen as the fused GEMM's
- * are) is bit-identical to the fmaf loops at every thread count. Other bits are ignored, and the
- * backward ignores EXP. bad is the forward's verdict as above, or NULL for none. */
+ * are) is bit-identical to the fmaf loops at every thread count. BCIR_TENSOR_ATTENTION_SCRATCH
+ * (INFER-ATTN) makes p the forward's scratch instead of its output, for a forward no backward
+ * follows: each (batch, query head) runs its rows a strip at a time -- scores, softmax, context --
+ * in its own slot at the start of p (bcir_tensor_attention_scratch_floats below), so a strip stays
+ * in the core's cache, and y and the verdict are the stored attention's bit for bit; p's contents
+ * after it are unspecified and no backward may read them (the bf16 entry below takes the bit
+ * alike). Without SCRATCH, from BCIR_ATT_STRIP_FROM positions (1024 on the measuring host; no
+ * value depends on it), a stored forward runs each (batch, query head) the same way in place, a
+ * strip of p's own rows at a time, each strip's rows' future columns +0.0 first (FWD-STRIP): p, y
+ * and the verdict are the head-at-a-time forward's bit for bit. BCIR_TENSOR_ATTENTION_LOWER
+ * (P-LOWER) is the caller's word that it reads each row's probabilities j <= i alone, as the
+ * backward below does under every contract (its register blocks read a few columns past a row's
+ * diagonal inside their diagonal tiles and discard them under their masks): a stored forward under
+ * it may leave p's future columns as they were, each +0.0 or what p held before. From
+ * BCIR_ATT_STRIP_FROM its strips skip the fill of their rows' future columns -- the blocks that
+ * reach past a row's diagonal still store +0.0 there -- and below it the head-at-a-time forward
+ * writes every column as without it; y, the verdict and every probability j <= i are as without
+ * it, bit for bit. A scratch forward ignores it. BCIR_TENSOR_ATTENTION_BANDS (P-BANDS) lays a stored
+ * forward's probabilities out in 16-row bands with the rows in the lanes, and the backward under it
+ * reads them, and leaves its score adjoints, so: row i's probability of key j at
+ * p + (batch*heads + head)*time*time + (i/16)*16*time + j*16 + i%16. A band (rows R..R+15) holds keys
+ * 0..R+15 -- its rows' probabilities j <= i, the +0.0 of its diagonal block's future lanes -- and its
+ * keys past R+15 are +0.0, or under LOWER as p held them; the backward's score adjoints sit where
+ * their probabilities sat, the future lanes as they were. The bit takes effect where the host's
+ * widest instance of the products' family is AVX-512, time is a multiple of 16 and dim at most 256 --
+ * a function of the host and the shapes, never of the instance a call names, so a forward and the
+ * backward that reads its probabilities agree whichever instances they run -- and changes nothing
+ * elsewhere; y, the verdict, dq, dk and dv are as without it, bit for bit, and so is every
+ * probability and score adjoint, only where each sits differs. A scratch forward ignores it. Other
+ * bits are ignored, and the backward ignores EXP, SCRATCH and LOWER. bad is the forward's verdict as
+ * above, or NULL. */
 #define BCIR_TENSOR_ATTENTION_EXP 1u
 #define BCIR_TENSOR_ATTENTION_FUSED 2u
+#define BCIR_TENSOR_ATTENTION_SCRATCH 8u
+#define BCIR_TENSOR_ATTENTION_LOWER 16u
+#define BCIR_TENSOR_ATTENTION_BANDS 32u
+/* The floats of p a forward under BCIR_TENSOR_ATTENTION_SCRATCH writes, at its start: a slot of
+ * whole rows a (batch, query head) -- at least 32 rows or all of them, about 64K floats -- the
+ * strips running through it. A caller may lend just these; SIZE_MAX where the count overflows. */
+BCIR_DT_API size_t bcir_tensor_attention_scratch_floats(size_t batch, size_t time, size_t heads);
 BCIR_DT_API void bcir_tensor_attention_contract_scan_pool(bcir_tensor_pool *pool,
     unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads, size_t dim,
     const float *q, const float *k, const float *v, float *p, float *y, int *bad);
@@ -146,10 +197,12 @@ BCIR_DT_API void bcir_tensor_attention_backward_contract_pool(bcir_tensor_pool *
  * the depth tiles the causal mask reaches from its 32-row block: a query block's key tiles 0 .. its
  * own (Y, dQ), a key block's query tiles from its own on (dV, dK), every channel tile (S, dP; their
  * blocks past the diagonal are not computed). A tile's terms past the mask are the +0.0
- * probabilities and score adjoints p holds there. The scaling, the softmax (BCIR_TENSOR_ATTENTION_EXP
- * as above; other bits ignored), the dot and the score adjoint p_ij (dp_ij - dot_i) scale are v1's
- * in v1's order; the future probabilities and adjoints are +0.0; a KV head's dk and dv take its
- * query heads in order, the first from +0.0; the forward's verdict is as above. `variant` names the
+ * probabilities and score adjoints p holds there. The scaling, the softmax
+ * (BCIR_TENSOR_ATTENTION_EXP and BCIR_TENSOR_ATTENTION_SCRATCH as above; other bits ignored --
+ * LOWER among them: its backward's tiles read the future +0.0 probabilities as terms), the
+ * dot and the score adjoint p_ij (dp_ij - dot_i) scale are v1's in v1's order; the future
+ * probabilities and adjoints are +0.0; a KV head's dk and dv take its query heads in order, the
+ * first from +0.0; the forward's verdict is as above. `variant` names the
  * products' instance -- 1 portable, 4 AVX-512, 8 AMX, 0 the widest bcir_tensor_mm_bf16_variants
  * admits -- every instance the same bits at every thread count. The entries pack each task's
  * operands into the workspace -- one region a worker of the pool where the workers are no more than
@@ -322,11 +375,14 @@ BCIR_DT_API int bcir_tensor_swiglu_backward_panels_pool(bcir_tensor_pool *pool, 
     unsigned short *dgt, unsigned short *dua, unsigned short *dut);
 /* The BCIR exponential (NDT-EXP): one operation sequence on every instance -- a Cody-Waite
  * reduction x = k ln2 + r, a degree-7 polynomial in r, 2^k as two exact power-of-two scalings
- * (one rounding into the subnormals), the three special cases selected at the end -- so the
- * scalar, AVX2 and AVX-512 instances agree bit for bit, with no libm and no fma; within 1 ulp
- * of exp evaluated in double and rounded to binary32 (bcir_tensor_exp_sweep measures the bound).
- * SiLU, the SwiGLU VJP and the attention softmax under their v2 contracts use it (the sigmoid is
- * 1/(1+e) for x >= 0 and e*(1/(1+e)) for x < 0, e = exp(-|x|)); v1 keeps libm's expf. */
+ * (one rounding into the subnormals; on AVX-512 one vscalefps, the same single rounding), the
+ * three special cases selected at the end -- so the scalar, AVX2 and AVX-512 instances agree bit
+ * for bit, with no libm and no fma; within 1 ulp of exp evaluated in double and rounded to
+ * binary32 (bcir_tensor_exp_sweep measures the bound). SiLU, the SwiGLU VJP and the attention
+ * softmax under their v2 contracts use it (the sigmoid is 1/(1+e) for x >= 0 and e*(1/(1+e)) for
+ * x < 0, e = exp(-|x|)); v1 keeps libm's expf. The exponential of a NaN is that NaN, its sign and
+ * payload kept; the v2 SiLU forms at a NaN return a NaN, which one not part of the contract (the
+ * compiler orders a product's operands). */
 BCIR_DT_API float bcir_tensor_expf(float x);
 BCIR_DT_API void bcir_tensor_exp(size_t n, const float *x, float *y);  /* the widest instance */
 BCIR_DT_API int bcir_tensor_exp_variant(int variant, size_t n, const float *x, float *y);
@@ -386,6 +442,69 @@ BCIR_DT_API void bcir_tensor_attention_backward(size_t batch, size_t time, size_
 BCIR_DT_API void bcir_tensor_attention_backward_inplace(size_t batch, size_t time,
     size_t heads, size_t kvheads, size_t dim, const float *q, const float *k, const float *v,
     float *p, const float *dy, float *dq, float *dk, float *dv);
+/* PX-3b (DISPATCH): the instance a job runs and the threads it runs on, as a planner names them.
+ *
+ * bcir_tensor_pool_cap(pool, workers) has the jobs after it run on the caller and workers 1 ..
+ * workers-1 of the pool -- 0, or a count at or past the pool's, all of them -- and returns the cap
+ * in force before (0: all); bcir_tensor_pool_workers is what the next job runs on (a NULL pool 1).
+ * Every partition is a function of the shapes alone, so a job's result is the same bits at every
+ * cap; a worker past the cap reports each job without claiming a task (the reports stay the
+ * barrier), a cap of one runs every job on the caller, and what a job's workspace must hold (the
+ * bf16 entries' regions) stays a function of the pool's threads. A NULL pool: no effect, 0.
+ *
+ * The GEMM and attention entries with the instance named: `variant` 0 the widest the family admits
+ * (the plain entries above), else one bit of it -- bcir_tensor_mm_contract_variants(contract): v1's
+ * (contract 0) bcir_tensor_mm_variants, the fused and blocked contracts' (1, 2)
+ * bcir_tensor_mm_fused_variants, the bf16 contract's (3) bcir_tensor_mm_bf16_variants; the binary32
+ * attention's products the fused GEMM's under BCIR_TENSOR_ATTENTION_FUSED, v1's otherwise. Each
+ * returns the instance it ran, or 0 having written nothing -- an instance the family does not admit,
+ * a contract outside 0..3, panels outside the bf16 contract, or what its plain entry refuses -- and
+ * its results are the plain entry's bit for bit, every instance of a family the same bits. */
+BCIR_DT_API unsigned bcir_tensor_pool_cap(bcir_tensor_pool *pool, unsigned workers);
+BCIR_DT_API unsigned bcir_tensor_pool_workers(const bcir_tensor_pool *pool);
+BCIR_DT_API int bcir_tensor_mm_contract_variants(int contract);
+BCIR_DT_API int bcir_tensor_mm_contract_variant_pool(bcir_tensor_pool *pool, int contract,
+    int variant, int ta, int tb, size_t m, size_t n, size_t k, float alpha, const float *a,
+    const float *b, float beta, float *c, void *workspace, size_t bytes);
+BCIR_DT_API int bcir_tensor_mm_pair_variant_pool(bcir_tensor_pool *pool, int contract, int variant,
+    const bcir_tensor_mm_call *x, const bcir_tensor_mm_call *y);
+BCIR_DT_API int bcir_tensor_mm_group_variant_pool(bcir_tensor_pool *pool, int contract, int variant,
+    const bcir_tensor_mm_call *chain, size_t nchain, const bcir_tensor_mm_call *y, size_t ny,
+    const bcir_tensor_bf16_panels *pre, void *workspace, size_t bytes);
+BCIR_DT_API int bcir_tensor_attention_contract_variant_scan_pool(bcir_tensor_pool *pool,
+    int variant, unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads,
+    size_t dim, const float *q, const float *k, const float *v, float *p, float *y, int *bad);
+BCIR_DT_API int bcir_tensor_attention_backward_contract_variant_pool(bcir_tensor_pool *pool,
+    int variant, unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads,
+    size_t dim, const float *q, const float *k, const float *v, float *p, const float *dy,
+    float *dq, float *dk, float *dv);
+/* ATT-CONTIG: the binary32 attention entries above with a workspace the caller lends. Where a row of
+ * q, k or v holds more than one head and the context reaches BCIR_ATT_CONTIG_FROM positions (1024 on
+ * the measuring hosts; no value depends on it), each task copies its head's rows into a region of the
+ * workspace -- the forward's q, k and v rows and its context, the backward's K and V rows and their
+ * adjoints and each query head's Q, dY and dQ -- runs on them and copies its results back: values
+ * moved, none computed. A backward task also keeps every probability-adjoint tile of a row block in
+ * its region (BWD-KEEP: 32 rows of the context's width, after the copies), so its second pass reads
+ * the tiles its first evaluated instead of evaluating those past the first 256 columns again -- the
+ * same bits either way. One region a worker of the pool where the workers are no more than the
+ * forward's tasks (batch x heads), else one a task: bcir_tensor_attention_pool_workspace bytes for a
+ * pool of that many threads (a NULL pool one), at most bcir_tensor_attention_workspace (one region a
+ * task, a function of the shapes alone), both 0 where no task copies (or kvheads not dividing heads).
+ * Less workspace is not a different result: with less than the pool's need, or none, every task runs
+ * on the rows in place. Each returns what its entry without the workspace returns, and every result
+ * is that entry's bit for bit, at every thread count and with any workspace. */
+BCIR_DT_API size_t bcir_tensor_attention_workspace(size_t batch, size_t time, size_t heads,
+    size_t kvheads, size_t dim);
+BCIR_DT_API size_t bcir_tensor_attention_pool_workspace(size_t batch, size_t time, size_t heads,
+    size_t kvheads, size_t dim, unsigned threads);
+BCIR_DT_API int bcir_tensor_attention_contract_variant_scan_ws_pool(bcir_tensor_pool *pool,
+    int variant, unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads,
+    size_t dim, const float *q, const float *k, const float *v, float *p, float *y, int *bad,
+    void *workspace, size_t bytes);
+BCIR_DT_API int bcir_tensor_attention_backward_contract_variant_ws_pool(bcir_tensor_pool *pool,
+    int variant, unsigned contract, size_t batch, size_t time, size_t heads, size_t kvheads,
+    size_t dim, const float *q, const float *k, const float *v, float *p, const float *dy,
+    float *dq, float *dk, float *dv, void *workspace, size_t bytes);
 #ifdef __cplusplus
 }
 #endif

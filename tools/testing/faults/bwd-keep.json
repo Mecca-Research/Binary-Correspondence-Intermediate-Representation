@@ -1,0 +1,60 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BK1 a backward task with a region never keeps its tiles (the room left unused)",
+      "new": "  s.keep=NULL;  /* BWD-KEEP: the row blocks' tiles after the seven copies */\n",
+      "old": "  s.keep=dqc+f;  /* BWD-KEEP: the row blocks' tiles after the seven copies */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BK2 the kept tiles past the stack's bound evaluated again anyway",
+      "new": "if (!pass || jt>=BCIR_ATT_KEEP) {",
+      "old": "if (!pass || (!a->keep && jt>=BCIR_ATT_KEEP)) {",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BK3 every kept tile in one slot (the second pass reads the row block's last tile for each)",
+      "new": "float *tile=a->keep ? a->keep :",
+      "old": "float *tile=a->keep ? a->keep+jt/BCIR_ATT_COLS*(BCIR_ATT_ROWS*BCIR_ATT_COLS) :",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BK4 the kept tiles laid over the query head's dQ copy",
+      "new": "  s.keep=dqc;  /* BWD-KEEP: the row blocks' tiles after the seven copies */\n",
+      "old": "  s.keep=dqc+f;  /* BWD-KEEP: the row blocks' tiles after the seven copies */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BK5 a region sized for the seven copies alone (the kept tiles past it)",
+      "new": "  return (7*f)*sizeof(float);\n",
+      "old": "  return (7*f+k)*sizeof(float);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BK6 a context past a whole number of tiles kept one tile short",
+      "new": "  return att_ctg_mul(t/BCIR_ATT_COLS,BCIR_ATT_ROWS*BCIR_ATT_COLS);\n",
+      "old": "  return att_ctg_mul(t/BCIR_ATT_COLS+(t%BCIR_ATT_COLS!=0),BCIR_ATT_ROWS*BCIR_ATT_COLS);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "BK7 the probe counts no tile",
+      "new": "          (void)attention_tiles_seen;\n",
+      "old": "          (void)__atomic_fetch_add(&attention_tiles_seen,(size_t)1,__ATOMIC_RELAXED);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

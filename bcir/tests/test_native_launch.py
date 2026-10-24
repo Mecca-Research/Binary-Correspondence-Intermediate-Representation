@@ -16,9 +16,12 @@ from pathlib import Path
 
 from bcir.frontends.models.decode import DecoderSpec
 from bcir.hosted.models.native_launch import (
+    ATTN,
+    ATTN_VJP,
     GEMM,
     KIND_NAMES,
     PREFLIGHT,
+    SPACES,
     Launch,
     launch_mismatches,
     run_launches,
@@ -89,6 +92,37 @@ def test_the_c_step_issues_the_planned_launches():
         differ = [corpus[i] for i in picked
                   if nf.trace_case(plain, corpus[i], trace=False).state != states[i]]  # fmt: skip
         assert not differ, differ[:3]
+
+
+def test_a_long_context_lends_the_binary32_attention_the_workspace():
+    """ATT-CONTIG: from the copies' context threshold on, a trainer under a binary32 contract lends
+    its attention a workspace -- the step's need is the attention's regions -- and both of the
+    attention's launches state it, the state's whole workspace; the C step issues exactly the
+    launches its plan states, and every program run of the case (the C step's decisions and each
+    planner choice) runs to its end with the C step's state and events bit for bit. The trace
+    corpus holds the same under the bf16 GEMM contract, whose workspace the binary32 attention is
+    lent too; nowhere else in it does a binary32 contract lend one."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.trace_library(Path(tmp) / "trace")
+        if path is None:
+            return  # no C compiler, or no C units (an installed package): a documented skip
+        spec = DecoderSpec(16, 8, 2, 1, 16, activation="silu_gate", n_kv_heads=1)
+        case = nf.TraceCase(spec, 1, 1024, "v1")
+        problems, runs, lent = [], 0, set()
+        for _case, choices, step, run in nf.program_runs(path, [case]):
+            runs += 1
+            if not choices:
+                problems += launch_mismatches(step.planned, step.traced)[:2]
+                if step.dropped:
+                    problems.append(f"{step.dropped} records dropped")
+            problems += [(choices, found) for found in nf.program_problems(step, run)[:2]]
+            lent |= {r.refs[8] for launch in run.program for r in launch.records
+                     if r.kind in (ATTN, ATTN_VJP)}  # fmt: skip
+        assert not problems, problems[:3]
+        assert runs == nf.program_run_count([case]) and runs > 1, runs
+        assert len(lent) == 1, lent  # one operand, the same on every launch of every program
+        space, offset, size = next(iter(lent))
+        assert (space, offset) == (SPACES["workspace"], 0) and size > 0, lent
 
 
 def _as_trace(launches):

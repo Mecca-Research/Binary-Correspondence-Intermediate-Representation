@@ -1,0 +1,40 @@
+{
+ "what": "GEO-AMX (2026-10-24): the PR818 study's bf16 arm timed where the AMX instance runs -- the timing GEO-2 planned and could not take (its host had moved to one without AMX). The study's three models (the global head, the query-aware head and the attention baseline), GEO-2b's level-2 overlays linked with this branch's tensor unit, trained under the study's binary32 contract (14), its bf16 contract (26: the GEMMs on bfloat16 operands, the AMX instance here) and, for the attention model, the bf16 attention as well (90, BF16-ATTN), beside an A/A arm; and against PyTorch's own mixed precision (torch.autocast to bfloat16, eager and compiled, whose matmuls run oneDNN's AMX kernels here) and compiled FP32. Records only: no runtime change.",
+ "host": "Intel(R) Xeon(R) Processor @ 2.30GHz, 4 vCPU (AVX-512F, AVX512-BF16 and -FP16, AMX-BF16 and AMX-TILE), 2 MiB of L2 a core, 260 MiB of L3 -- the host the session moved to on 2026-10-23; Linux 6.18; GCC 13.3 (the overlays' build, as the study builds them); Python 3.11 (amx_pairs.py: NumPy 2.2.6), torch 2.13.0+cu130 (CPU); OMP_WAIT_POLICY=PASSIVE",
+ "tree": "c49d24436a5469bffab97b1a593816745b6f3b9b",
+ "bundle_reference": "the bundle's own paired timing (wedge-pr818/paired-timing.log, Codex's AMD EPYC 9V74 without AMX, the bf16 GEMMs on the AVX-512F instance, which emulates the tile unit's arithmetic): 'Numerics/BF16/query_full/B4T256' FP32 over BF16 0.877 (the bf16 arm x1.14 of FP32's time) and 'Numerics/BF16/attention/B4T256' 0.960 (x1.04)",
+ "records": {
+  "amx-pairs.json": "amx_pairs.py: FP32, FP32-AA, BF16 and (attention) BF16-ATTN in one process, 24 rotated rounds of 3 updates from one restored state, each arm its own native instance; the first update's loss on each",
+  "torch-bf16.json": "geo_bf16_compare.py: B-FP32, B-BF16, B-BF16-ATTN, P-EAGER-BF16, P-IND-BF16 and P-IND in one process, 16 rotated rounds of 3 updates; every case compiled from a fresh Dynamo state at its own fixed shapes (../compile-limit/: the protocol, its witness and the hard failure past Dynamo's recompile limit), the first update (a compiled arm's compile) recorded apart",
+  "builds.json": "build_amx.py's three builds"
+ },
+ "verdicts": "each effect resolved where its 95% interval excludes 1 and does not meet the A/A control's",
+ "reading": {
+  "bf16_on_amx": [
+   "attention/B4T256 (AMX True): FP32 15.98 ms an update; BF16 0.676 (0.652-0.700), BF16-ATTN 0.585 (0.570-0.600) of FP32's time; A/A 1.011 (0.988-1.034); BF16 resolved, BF16-ATTN resolved; FP32 deterministic and the A/A's state the same: True",
+   "attention/B4T512 (AMX True): FP32 40.80 ms an update; BF16 0.706 (0.680-0.732), BF16-ATTN 0.503 (0.484-0.523) of FP32's time; A/A 0.959 (0.932-0.987); BF16 resolved, BF16-ATTN resolved; FP32 deterministic and the A/A's state the same: True",
+   "attention/B4T1024 (AMX True): FP32 106.89 ms an update; BF16 0.778 (0.757-0.801), BF16-ATTN 0.532 (0.516-0.548) of FP32's time; A/A 0.977 (0.948-1.007); BF16 resolved, BF16-ATTN resolved; FP32 deterministic and the A/A's state the same: True",
+   "attention/B4T2048 (AMX True): FP32 329.08 ms an update; BF16 0.888 (0.872-0.905), BF16-ATTN 0.564 (0.556-0.573) of FP32's time; A/A 0.983 (0.965-1.001); BF16 resolved, BF16-ATTN resolved; FP32 deterministic and the A/A's state the same: True",
+   "global/B4T256 (AMX True): FP32 19.63 ms an update; BF16 0.756 (0.717-0.797) of FP32's time; A/A 1.075 (1.001-1.155); BF16 resolved; FP32 deterministic and the A/A's state the same: True",
+   "global/B4T512 (AMX True): FP32 37.76 ms an update; BF16 0.719 (0.681-0.759) of FP32's time; A/A 0.974 (0.918-1.033); BF16 resolved; FP32 deterministic and the A/A's state the same: True",
+   "query_full/B4T256 (AMX True): FP32 19.13 ms an update; BF16 0.784 (0.754-0.814) of FP32's time; A/A 1.018 (0.959-1.082); BF16 resolved; FP32 deterministic and the A/A's state the same: True",
+   "query_full/B4T512 (AMX True): FP32 36.45 ms an update; BF16 0.741 (0.726-0.757) of FP32's time; A/A 1.004 (0.982-1.026); BF16 resolved; FP32 deterministic and the A/A's state the same: True"
+  ],
+  "against_pytorch": [
+   "attention/B4T256: B-FP32 16.88, B-BF16 10.58, B-BF16-ATTN 9.88, P-EAGER-BF16 67.11, P-IND-BF16 40.42, P-IND 38.06 ms an update; B-BF16-ATTN over B-FP32 0.598 (0.571-0.626), B-BF16 0.907 (0.837-0.983), P-EAGER-BF16 0.147 (0.140-0.154), P-IND-BF16 0.244 (0.233-0.257), P-IND 0.254 (0.240-0.267); first update P-EAGER-BF16 0.1 s, P-IND-BF16 2.9 s, P-IND 0.5 s; compiled at fixed shapes: P-IND-BF16 1 graph(s), 0 symbols, P-IND 1 graph(s), 0 symbols",
+   "attention/B4T512: B-FP32 40.82, B-BF16 29.04, B-BF16-ATTN 22.17, P-EAGER-BF16 87.01, P-IND-BF16 64.51, P-IND 61.13 ms an update; B-BF16-ATTN over B-FP32 0.547 (0.515-0.582), B-BF16 0.760 (0.726-0.795), P-EAGER-BF16 0.256 (0.242-0.270), P-IND-BF16 0.350 (0.328-0.373), P-IND 0.357 (0.323-0.395); first update P-EAGER-BF16 0.1 s, P-IND-BF16 10.2 s, P-IND 0.5 s; compiled at fixed shapes: P-IND-BF16 1 graph(s), 0 symbols, P-IND 1 graph(s), 0 symbols",
+   "attention/B4T1024: B-FP32 103.30, B-BF16 84.99, B-BF16-ATTN 60.30, P-EAGER-BF16 132.01, P-IND-BF16 108.41, P-IND 127.01 ms an update; B-BF16-ATTN over B-FP32 0.578 (0.554-0.603), B-BF16 0.702 (0.679-0.726), P-EAGER-BF16 0.454 (0.432-0.477), P-IND-BF16 0.555 (0.527-0.584), P-IND 0.481 (0.459-0.504); first update P-EAGER-BF16 0.2 s, P-IND-BF16 9.6 s, P-IND 0.9 s; compiled at fixed shapes: P-IND-BF16 1 graph(s), 0 symbols, P-IND 1 graph(s), 0 symbols",
+   "attention/B4T2048: B-FP32 323.25, B-BF16 285.07, B-BF16-ATTN 181.68, P-EAGER-BF16 279.08, P-IND-BF16 244.65, P-IND 314.09 ms an update; B-BF16-ATTN over B-FP32 0.553 (0.540-0.566), B-BF16 0.636 (0.627-0.644), P-EAGER-BF16 0.647 (0.627-0.668), P-IND-BF16 0.727 (0.698-0.757), P-IND 0.577 (0.553-0.601); first update P-EAGER-BF16 0.3 s, P-IND-BF16 9.8 s, P-IND 0.7 s; compiled at fixed shapes: P-IND-BF16 1 graph(s), 0 symbols, P-IND 1 graph(s), 0 symbols",
+   "global/B4T256: B-FP32 20.81, B-BF16 15.28, P-EAGER-BF16 96.97, P-IND-BF16 46.32, P-IND 47.64 ms an update; B-BF16 over B-FP32 0.732 (0.706-0.759), P-EAGER-BF16 0.157 (0.151-0.163), P-IND-BF16 0.320 (0.308-0.332), P-IND 0.315 (0.292-0.339); first update P-EAGER-BF16 0.1 s, P-IND-BF16 14.0 s, P-IND 11.1 s; compiled at fixed shapes: P-IND-BF16 1 graph(s), 0 symbols, P-IND 1 graph(s), 0 symbols",
+   "global/B4T512: B-FP32 38.30, B-BF16 27.68, P-EAGER-BF16 144.67, P-IND-BF16 72.90, P-IND 74.32 ms an update; B-BF16 over B-FP32 0.732 (0.697-0.769), P-EAGER-BF16 0.193 (0.185-0.202), P-IND-BF16 0.373 (0.357-0.390), P-IND 0.368 (0.351-0.385); first update P-EAGER-BF16 0.2 s, P-IND-BF16 13.4 s, P-IND 11.0 s; compiled at fixed shapes: P-IND-BF16 1 graph(s), 0 symbols, P-IND 1 graph(s), 0 symbols",
+   "query_full/B4T256: B-FP32 19.02, B-BF16 14.61, P-EAGER-BF16 107.80, P-IND-BF16 54.85, P-IND 54.88 ms an update; B-BF16 over B-FP32 0.773 (0.751-0.795), P-EAGER-BF16 0.136 (0.132-0.141), P-IND-BF16 0.267 (0.256-0.278), P-IND 0.262 (0.248-0.277); first update P-EAGER-BF16 0.1 s, P-IND-BF16 14.9 s, P-IND 13.2 s; compiled at fixed shapes: P-IND-BF16 1 graph(s), 0 symbols, P-IND 1 graph(s), 0 symbols",
+   "query_full/B4T512: B-FP32 37.66, B-BF16 27.28, P-EAGER-BF16 194.63, P-IND-BF16 91.79, P-IND 90.31 ms an update; B-BF16 over B-FP32 0.746 (0.702-0.792), P-EAGER-BF16 0.143 (0.134-0.152), P-IND-BF16 0.304 (0.284-0.325), P-IND 0.304 (0.281-0.328); first update P-EAGER-BF16 0.2 s, P-IND-BF16 14.7 s, P-IND 13.1 s; compiled at fixed shapes: P-IND-BF16 1 graph(s), 0 symbols, P-IND 1 graph(s), 0 symbols"
+  ]
+ },
+ "commands": [
+  "git archive origin/main docs/research/wedge-pr818 | tar -x -C BUNDLE --strip-components=2; GEO-2b's level-2 work (../../2026-10-22/geo2/README.json's reproduce)",
+  "python3 -I build_amx.py LEVEL2_WORK WORK TREE/runtime/c MAIN_SRC  # WORK a copy of LEVEL2_WORK without build/",
+  "python3 amx_pairs.py WORK OUT.json --rounds 24 --steps 3",
+  "python geo_bf16_compare.py WORK OUT.json --rounds 16 --steps 3 --cases attention:256,attention:512,attention:1024,attention:2048,global:256,global:512,query_full:256,query_full:512  # torch 2.13.0"
+ ]
+}

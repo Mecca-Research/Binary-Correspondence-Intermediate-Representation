@@ -102,7 +102,7 @@ class Case:
     """One corpus entry: a rail-neutral spec and the verdict every rail it runs on must reach."""
 
     name: str
-    kind: str  # module | map | rop | target | mmio | manifest | portfolio | calibration
+    kind: str  # module | map | rop | target | measured | mmio | manifest | portfolio | calibration
     #          | binary | stream | fsm | grammar | conv
     spec: dict
     law: str = ""  # the law family ("" = legal on every rail the case runs on)
@@ -139,6 +139,13 @@ class Finding:
 
 
 # --- the corpus --------------------------------------------------------------------------------
+
+
+def _measured(*entries, gen=1) -> dict:
+    """A measured table's spec (PX-3b-2): its generation and its entries as (op, count,
+    alternative, q8), in the order given -- the oracle builds `cost.MeasuredPrices` from it, the
+    law rail renders the capability's four measured_* attributes."""
+    return {"gen": gen, "entries": [list(e) for e in entries]}
 
 
 def _module(resources=(), phases=(), claims=(), name="m") -> dict:
@@ -568,6 +575,153 @@ CASES: tuple[Case, ...] = (
         "R8",
         "elem_bytes must be positive (got 0)",
         "affinity_domains, mem_channels, mem_unit, and elem_bytes must be positive",
+    ),
+    # ---- the measured table (PX-3b-2: cost.MeasuredPrices; the capability's measured_* attributes)
+    Case(
+        "measured.legal",
+        "measured",
+        _measured(
+            ("k.add", 64, "t2", 64),
+            ("k.mm", 4096, "i1", 220),
+            ("k.mm", 4096, "i4", 128),
+            ("k.mm", 4096, "t32767", 250),
+        ),
+    ),
+    Case(
+        "measured.generation.zero",
+        "measured",
+        _measured(("k.mm", 4096, "i4", 128), gen=0),
+        "R8",
+        "a measured table's generation is a positive 63-bit integer",
+        "measured_gen must be a positive generation (got 0)",
+        note="a price table is a cost-law input: filed under the cost law, as the descriptor is",
+    ),
+    Case(
+        "measured.empty",
+        "measured",
+        _measured(),
+        "R8",
+        "a measured table holds at least one entry",
+        "a measured table holds at least one entry",
+    ),
+    Case(
+        "measured.op.empty",
+        "measured",
+        _measured(("", 4096, "i4", 128)),
+        "R8",
+        "a measured entry's op is a non-empty string",
+        "measured_ops: every op is a non-empty string of at most 65535 bytes",
+    ),
+    Case(
+        "measured.op.opcode",
+        "measured",
+        _measured(("T_MACC", 4096, "i4", 128)),
+        "R8",
+        "T_MACC: a measured entry's op is never spelled as an opcode",
+        "measured_ops: 'T_MACC' is spelled as an opcode (an op-less claim's op)",
+        note="the law rail spells an op-less claim's op as its opcode's name",
+    ),
+    Case(
+        "measured.count.zero",
+        "measured",
+        _measured(("k.mm", 0, "i4", 128)),
+        "R8",
+        "k.mm: a measured entry's count is 1 .. 2**32 - 1",
+        "measured_values: a count is 1 .. 2**32 - 1 (got 0)",
+    ),
+    Case(
+        "measured.count.wide",
+        "measured",
+        _measured(("k.mm", 1 << 32, "i4", 128)),
+        "R8",
+        "k.mm: a measured entry's count is 1 .. 2**32 - 1",
+        "measured_values: a count is 1 .. 2**32 - 1 (got 4294967296)",
+    ),
+    Case(
+        "measured.alternative.two_bits",
+        "measured",
+        _measured(("k.mm", 4096, "i3", 128)),
+        "R8",
+        "'i3' names no instance (1, 2, 4 or 8)",
+        "measured_alternatives: 'i3' is not i<bit> (1, 2, 4 or 8) or t<workers> (1 .. 32767)",
+    ),
+    Case(
+        "measured.alternative.leading_zero",
+        "measured",
+        _measured(("k.mm", 4096, "t01", 128)),
+        "R8",
+        "a measured alternative is i<bit> or t<workers>, not 't01'",
+        "measured_alternatives: 't01' is not i<bit> (1, 2, 4 or 8) or t<workers> (1 .. 32767)",
+    ),
+    Case(
+        "measured.alternative.workers_past",
+        "measured",
+        _measured(("k.mm", 4096, "t32768", 128)),
+        "R8",
+        "'t32768': more than 32767 workers",
+        "measured_alternatives: 't32768' is not i<bit> (1, 2, 4 or 8) or t<workers> (1 .. 32767)",
+    ),
+    Case(
+        "measured.price.zero",
+        "measured",
+        _measured(("k.mm", 4096, "i4", 0)),
+        "R8",
+        "k.mm i4: a measured price is 1 .. 255",
+        "measured_values: a price is 1 .. 255 (got 0)",
+    ),
+    Case(
+        "measured.price.default",
+        "measured",
+        _measured(("k.mm", 4096, "i4", 256)),
+        "R8",
+        "k.mm i4: a measured price is 1 .. 255",
+        "measured_values: a price is 1 .. 255 (got 256)",
+        note="256 is the default's own time: an entry is an alternative resolved faster",
+    ),
+    Case(
+        "measured.order",
+        "measured",
+        _measured(("k.mm", 4096, "t1", 128), ("k.mm", 4096, "i4", 128)),
+        "R8",
+        "a measured table's entries are strictly ascending by (op, count, alternative)",
+        "a measured table's entries are strictly ascending by (op, count, alternative)",
+        note="the alternatives' order is the instances' bits, then the worker counts",
+    ),
+    Case(
+        "measured.twice",
+        "measured",
+        _measured(("k.mm", 4096, "i4", 128), ("k.mm", 4096, "i4", 100)),
+        "R8",
+        "a measured table's entries are strictly ascending by (op, count, alternative)",
+        "a measured table's entries are strictly ascending by (op, count, alternative)",
+    ),
+    Case(
+        "measured.per_key",
+        "measured",
+        _measured(*(("k.mm", 4096, f"t{k}", 128) for k in range(1, 9))),
+        "R8",
+        "k.mm 4096: more than 7 measured entries share one op and count",
+        "more than 7 measured entries share one op and count",
+    ),
+    Case(
+        "measured.half_declared",
+        "measured",
+        dict(_measured(("k.mm", 4096, "i4", 128)), drop="measured_values"),
+        "R8",
+        mlir="measured_gen, measured_ops, measured_alternatives and measured_values are declared "
+        "together",
+        rails=(MLIR,),
+        note="a table is one value in the oracle's object model; four attributes on the law rail",
+    ),
+    Case(
+        "measured.arity",
+        "measured",
+        dict(_measured(("k.mm", 4096, "i4", 128)), values=[4096, 128, 7]),
+        "R8",
+        mlir="a measured table holds one op, one alternative and two values (count, q8) per "
+        "entry; got 1 ops, 1 alternatives and 3 values",
+        rails=(MLIR,),
+        note="an entry cannot mismatch its own arity in the oracle's object model",
     ),
     # ---- address width (R12): the triple -> pointer-width table, mirrored ---------------------
     Case("addr.i64_under_x86_64", "mmio", _mmio("x86_64-avx512", 64)),
@@ -1160,6 +1314,11 @@ def run_oracle(case: Case) -> Verdict:
                 elem_bytes=spec["elem_bytes"],
             )
             return Verdict(ORACLE, False)
+        if kind == "measured":
+            from ..kbcir.cost import MeasuredEntry, MeasuredPrices
+
+            MeasuredPrices(spec["gen"], tuple(MeasuredEntry(*e) for e in spec["entries"]))
+            return Verdict(ORACLE, False)
         if kind == "mmio":
             what = "object address" if spec["op"] in ("rmw", "cas") else "device-register address"
             if spec["triple"] is None:
@@ -1362,6 +1521,18 @@ def render(case: Case, *, expectations: bool) -> str:
         ]
         if case.law:
             L[1] = "  " + L[1]
+    elif kind == "measured":
+        entries = spec["entries"]
+        attrs = {
+            "measured_gen": f"{spec['gen']} : i64",
+            "measured_ops": "[" + ", ".join(f'"{e[0]}"' for e in entries) + "]",
+            "measured_alternatives": "[" + ", ".join(f'"{e[2]}"' for e in entries) + "]",
+            "measured_values": _i64_array(spec.get("values")
+                                          or [v for e in entries for v in (e[1], e[3])]),
+        }  # fmt: skip
+        attrs.pop(spec.get("drop", ""), None)
+        cap = _capability("x86_64-avx512", extra="".join(f", {k} = {v}" for k, v in attrs.items()))
+        L = ["bcir.module @m {", ("  " + _ERR + cap.lstrip()) if case.law else cap, "}"]
     elif kind == "mmio":
         bits = spec["addr_bits"]
         L = ["bcir.module @m {"]

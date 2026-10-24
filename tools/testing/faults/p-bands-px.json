@@ -1,0 +1,48 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_launch:_CC",
+    "bcir.tests.test_native_launch:test_the_c_step_issues_the_planned_launches",
+    "bcir.tests.test_native_run_program:test_a_program_trains_the_c_steps_bits",
+    "bcir.tests.test_native_run_pack:test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PBX1 the pack's lowering states the binary32 backward without BANDS",
+      "new": "      (s->contract & BCIR_DT_CONTRACT_ATTNBF16) ? 256u : c.attn;\n",
+      "old": "      (s->contract & BCIR_DT_CONTRACT_ATTNBF16) ? 256u : c.attn | BCIR_TENSOR_ATTENTION_BANDS;\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "PBX2 the pack's lowering states the binary32 forward without BANDS",
+      "new": "                : BCIR_TENSOR_ATTENTION_LOWER;\n",
+      "old": "                : BCIR_TENSOR_ATTENTION_LOWER | BCIR_TENSOR_ATTENTION_BANDS;\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PBX3 the launch plan states the binary32 backward without BANDS",
+      "new": "            emit(_record(ATTN_VJP, attention_contract, dims,\n",
+      "old": "            emit(_record(ATTN_VJP, attention_contract | _ATTENTION_BANDS, dims,\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "PBX4 the launch plan states the binary32 forward without BANDS",
+      "new": "            flags = attention_contract | _ATTENTION_LOWER\n",
+      "old": "            flags = attention_contract | _ATTENTION_LOWER | _ATTENTION_BANDS\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "PBX5 the program check expects the binary32 backward without BANDS",
+      "new": "  c->attn_vjp=(s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : attention_contract(s);\n",
+      "old": "  c->attn_vjp=(s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : attention_backward_contract(s);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    }
+  ]
+}

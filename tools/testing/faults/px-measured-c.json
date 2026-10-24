@@ -1,0 +1,92 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_measured:_CC",
+    "bcir.tests.test_planner_compact:test_the_native_planner_is_the_compact_planner_byte_for_byte",
+    "bcir.tests.test_native_run_pack:test_a_refused_pack_lowers_nothing",
+    "bcir.tests.test_native_measured:test_the_check_walk_hands_over_every_step_and_lifetime",
+    "bcir.tests.test_native_measured:test_every_measured_run_lowers_its_dispatch_and_trains_the_c_steps_bits",
+    "bcir.tests.test_native_measured:test_a_measured_plan_the_host_cannot_run_lowers_and_is_refused_by_the_run"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_native_planner_is_the_compact_planner_byte_for_byte",
+      "label": "MC1 the opcode spelling read off the first byte alone",
+      "new": "  return 1;\n",
+      "old": "  for (size_t i = 1; i < n; i++)\n    if (!((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '_')) return 0;\n  return 1;\n",
+      "path": "runtime/c/bcir_kplan.c"
+    },
+    {
+      "expects": "test_the_native_planner_is_the_compact_planner_byte_for_byte",
+      "label": "MC2 an entry's op read at the op table's start",
+      "new": "    (void)at_off;\n",
+      "old": "    while (at_op < op) at_off += kp_rd16(data + v.off_op_lens + 2u * (size_t)at_op++);\n",
+      "path": "runtime/c/bcir_kplan.c"
+    },
+    {
+      "expects": "test_the_native_planner_is_the_compact_planner_byte_for_byte",
+      "label": "MC3 a measured realization's compute left unscaled",
+      "new": "",
+      "old": "    base[D_COMPUTE] = kp_shr8(kp_mul(base[D_COMPUTE], sp->q8));\n",
+      "path": "runtime/c/bcir_kplan.c"
+    },
+    {
+      "expects": "test_the_native_planner_is_the_compact_planner_byte_for_byte",
+      "label": "MC4 eight entries of one op and count admitted",
+      "new": "    if (run > BCIR_KP_MEASURED_PER_KEY_MAX + 1u) return BCIR_ERR_PLANNER;\n",
+      "old": "    if (run > BCIR_KP_MEASURED_PER_KEY_MAX) return BCIR_ERR_PLANNER;\n",
+      "path": "runtime/c/bcir_kplan.c"
+    },
+    {
+      "expects": "test_the_native_planner_is_the_compact_planner_byte_for_byte",
+      "label": "MC5 a step's alternative never written",
+      "new": "    kp_wr16(step + 14, 0u);\n",
+      "old": "    kp_wr16(step + 14, sp->code); /* PX-3b-2: the measured alternative (0: its own) */\n",
+      "path": "runtime/c/bcir_kplan.c"
+    },
+    {
+      "expects": "test_the_native_planner_is_the_compact_planner_byte_for_byte",
+      "label": "MC6 an entry no claim reads planned",
+      "new": "      (void)x->s[x->L.ms_seen + i];\n",
+      "old": "      if (!x->s[x->L.ms_seen + i]) return BCIR_ERR_PLANNER;\n",
+      "path": "runtime/c/bcir_kplan.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "ML1 the lowering never reading a step's alternative",
+      "new": "  if (at <= v->candidate_len) return 0;\n",
+      "old": "  if (at == v->candidate_len) return 0;\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "ML2 a worker count's leading zero admitted",
+      "new": "  if (n < 2u || n > 6u || (s[0] != 'i' && s[0] != 't')) return 0;\n",
+      "old": "  if (n < 2u || n > 6u || (s[0] != 'i' && s[0] != 't') || s[1] == '0') return 0;\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_every_measured_run_lowers_its_dispatch_and_trains_the_c_steps_bits",
+      "label": "ML3 the workers lowered into the instance word",
+      "new": "  w[BCIR_DT_WORD_INSTANCE] |= cl->workers;\n",
+      "old": "  w[BCIR_DT_WORD_WORKERS] = cl->workers;\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_refused_pack_lowers_nothing",
+      "label": "ML4 32768 workers admitted",
+      "new": "    if (v > 65535u) return 0;\n",
+      "old": "    if (v > 32767u) return 0;\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_the_check_walk_hands_over_every_step_and_lifetime",
+      "label": "ML5 the check walk handing over no step",
+      "new": "  cb.step_ctx = ctx;\n  (void)step;\n  cb.lifetime = lifetime; cb.lifetime_ctx = ctx;\n",
+      "old": "  cb.step = step; cb.step_ctx = ctx;\n  cb.lifetime = lifetime; cb.lifetime_ctx = ctx;\n",
+      "path": "runtime/c/bcir_runtime.c"
+    }
+  ]
+}

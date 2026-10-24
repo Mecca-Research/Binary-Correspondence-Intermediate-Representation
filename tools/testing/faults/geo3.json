@@ -59,15 +59,15 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "GW8 a GEMM group's refusal read as run",
-      "new": "    return 1|bcir_tensor_mm_bf16_group_panels_pool(s->pool,chain,nchain,y,ny,pre,s->workspace,\n        s->workspace_bytes);",
-      "old": "    return bcir_tensor_mm_bf16_group_panels_pool(s->pool,chain,nchain,y,ny,pre,s->workspace,\n        s->workspace_bytes);",
+      "new": "      bf ? pre : NULL,bf ? s->workspace : NULL,bf ? s->workspace_bytes : 0)>=0;\n",
+      "old": "      bf ? pre : NULL,bf ? s->workspace : NULL,bf ? s->workspace_bytes : 0)!=0;\n",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "GW9 the bf16 attention's refusal read as run",
-      "new": "        y,bad,s->workspace,s->workspace_bytes)>=0;\n  bcir_tensor_attention_contract_scan_pool(",
-      "old": "        y,bad,s->workspace,s->workspace_bytes)!=0;\n  bcir_tensor_attention_contract_scan_pool(",
+      "new": "        v,p,y,bad,s->workspace,s->workspace_bytes)>=0;\n  return bcir_tensor_attention_contract_variant_scan_ws_pool(",
+      "old": "        v,p,y,bad,s->workspace,s->workspace_bytes)!=0;\n  return bcir_tensor_attention_contract_variant_scan_ws_pool(",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

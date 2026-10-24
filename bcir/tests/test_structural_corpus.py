@@ -44,6 +44,7 @@ def test_the_corpus_is_non_trivial_and_declares_every_rail() -> None:
         "fsm",
         "grammar",
         "conv",
+        "measured",  # PX-3b-2: the capability's measured table, its one spelling on both rails
     }, kinds
     assert {c.law for c in sc.CASES} == _FAMILIES
     assert sum(1 for c in sc.CASES if sc.ORACLE in c.rails) >= 75

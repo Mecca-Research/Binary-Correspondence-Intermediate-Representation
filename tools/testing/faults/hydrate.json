@@ -29,8 +29,8 @@
       "label": "native hydrate: a vector realization's name loses its width",
       "expects": "hydrate.native.parity",
       "path": "runtime/c/bcir_kplan.c",
-      "old": "      kh_str(w, label, kh_label(label, \"vec\", width));",
-      "new": "      kh_str(w, (const uint8_t *)\"vec\", 3);"
+      "old": "        k = kh_label(name, \"vec\", width);\n",
+      "new": "        name[0] = 'v'; name[1] = 'e'; name[2] = 'c'; k = 3u;\n"
     },
     {
       "label": "native hydrate: a pack with no generation vector written as v4",
