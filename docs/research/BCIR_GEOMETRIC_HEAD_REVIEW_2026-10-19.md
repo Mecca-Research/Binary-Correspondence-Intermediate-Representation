@@ -1643,3 +1643,86 @@ Not claimed: vocabularies past the buffer gain only on their first 1,024 logits;
 pair kernels' double-precision chains, the scans after the gate) are the study's own, measured here, not changed;
 the survey's readings vary run to run on this VM (a first exploration read the 1,024-row product at 529.7 GFLOP/s
 and under two sleeps a step at T256), and counter-based figures are out of reach (no PMU).
+
+## 26. GP-LANES: the geometric heads a row a lane; NEXT-2's survey (2026-10-24)
+
+After LOSS-ONCE, NEXT-2 asked how close the GEO step now sits to what this host can do
+([measurements/2026-10-24/gp-lanes/](measurements/2026-10-24/gp-lanes/README.json), `survey.json`). The cores
+sustain 221-230 GFLOP/s of FMA a thread with every operand in registers, on one thread as on four (one four-thread
+reading 198): no clock drop under load. Four threads each running the k-blocked GEMM on operands of its own reach
+x0.86-x0.98 of four times one thread on the T256 step's shapes (three readings lower, x0.69-x0.81). The pool's one
+GEMM over four threads reaches x0.85-x1.16 of that on the forward and input-adjoint shapes and x0.65-x0.72 on a
+weight adjoint alone, whose three to nine tasks each run the whole depth -- but the step never runs one alone. As
+the trainer issues them, the step's GEMM jobs take x0.86-x1.20 of the time four threads take each running the whole
+job on operands of its own: the forward's groups faster than the copies, the lone products 1-20% slower (the 1,024 x
+128 x 128 one the most) and the pairs and chains 3-17%. A job of trivial tasks costs the pool 1.2-4.8 µs back to
+back, and 34-35 µs once its workers have gone to sleep. Timed a worker at a time through the whole step
+(`probe_jobs.py`), the workers enter every job within 0.9 µs at T256, except the step's first after the host's pause
+between steps (48-54 µs), and are 66-97% busy inside it; the GEMMs take 56% of the pool's time at T256, 48% at T512
+and 37% at T1024, the attention 21%, 34% and 50%. What the elementwise jobs lose is inside their tasks: RoPE's job,
+for one, takes 34 µs at T256, its cosines and sines from libm every call.
+
+Measured and not taken: GROUP-ROWS-0 (the forward's group jobs dealt a row range at a time, so a worker's block of
+them covers the rows its blocks of the norm before and the RoPE after cover) reads x0.965, x1.015 and x0.978 from
+T128 to T512, each holding 1, every run's weights the same digest: the rows that move between cores cost the step
+nothing this rig resolves. COMMIT-BLOCKS-0 (the update's commit in chunks of 16,384, four times as many tasks) holds
+1 at T128 and T256; the commit streams some 14.7 MB a step, and its job read 275-302 µs against 322-385 in this
+survey's two runs a chunking but at parity in the exploration's. ROPE-TABLE-0 is the clearest of what the step has
+left: the rotation reading a table of the same cosines and sines takes x0.22-x0.31 of `bcir_tensor_rope_pool`'s time
+under clang and x0.33-x0.48 under GCC from T256 to T2048, every value the same -- some 2% of the step at T256 and
+T512 -- but the table needs a span of its own in the plan, on both rails, so it is left for its own slice.
+
+**The study's geometric heads.** NEXT-1's profiles placed the heads' own pair kernels at 5.8-11.1% of their
+inference and 6.7-12.0% of their training (§25, `../loss-once/survey.json`). The forks run `gp_pair_forward` and
+`gp_pair_backward` (GP_RANK 22: 231 pairs a row) and query_full's `gp_query_contract_pair` and
+`gp_query_contract_vjp` a row at a time, a task a row; each row's norm and contractions are double-precision chains,
+the norm 231 dependent additions, so one row at a time they run at the adder's latency.
+
+**GP-LANES.** `gp_lanes_overlay.py` runs them sixteen rows at a time, a row a vector lane: every per-row float a
+16-lane vector, every per-row double two 8-lane halves, each scalar operation the one intrinsic that performs it --
+a rounded product, sum, difference, quotient or square root, a widening or a rounding conversion -- in the fork's
+order, no product fused. Each lane therefore performs its row's IEEE operations in the scalar kernel's order, and
+every feature and adjoint is the fork's bit for bit. A row the fork sends to its FP64 fallback
+(`wedge_ill_conditioned`) is flagged in its lane and recomputed by the fork's own kernel. Where the CPU has AVX-512F
+the forks' jobs take a task a group of sixteen rows, each prefetching the next group's rows (GP-PF-0: on outputs
+made cold, x0.68-x0.95 of the lanes' time without it); elsewhere, and for the rows past the last whole group, the
+forks' tasks as they were.
+
+In isolation the lane kernels take x0.54-x0.80 (the forward), x0.26-x0.28 (the backward), x0.41-x0.49 (the query
+contraction) and x0.44-x0.72 (its adjoint) of the fork's time a row, clang and GCC, operands L2-resident and
+streaming (`gp-lanes.json`). The forward is the one bound by memory: it writes 924 bytes of features a row, and on
+one L1-resident group computes them in 121-131 TSC cycles a row against the scalar kernel's 518-539. In the models,
+48 rounds in one process with every trained state and logit the same (`study-ab.json`), against once_level3.py's
+builds:
+
+| model | training T128 / T256 / T512 | inference T1024 / T2048 |
+|---|---|---|
+| `global` | 0.929 / 0.924 / 0.972 | 0.990 / 0.958 |
+| `query_full` | 0.947 / 0.915 / 0.940 | 0.953 / 0.938 |
+
+Resolved: `global`'s training at T256 (0.893-0.956) and inference at T2048 (0.940-0.976), and `query_full`'s
+training at T256 and T512 and inference at T2048 (0.924-0.953). The T128 rows and `query_full`'s inference at T1024
+meet their A/A controls; `global`'s training at T512 and inference at T1024 hold 1. In the sampled profiles the
+heads' GP kernels fall from 8.5% to 3.9% of `global`'s training at T256 and from 13.9% to 6.5% of `query_full`'s at
+T512, and from 6.8% to 5.4% and 11.2% to 6.7% of their inference at T1024 (`profiles.json`). Against PyTorch at
+fixed shapes (`study-vs-pytorch.json`), the geometric heads with the lanes train in x0.194-x0.325 of Inductor's time
+(x0.22-0.33 with §25's overlay alone) and x0.09-0.16 of eager's, and run inference in x0.41-0.57 of Inductor's
+(x0.45-0.61) and x0.21-0.24 of eager's.
+
+Witnesses: `gp_lanes_check.c` holds the four lane kernels to the fork's, which `gp_extract.py` copies verbatim from
+the level-2 build, on every output byte for byte, over six kinds of row -- uniform, near parallel (8,189 of 24,576
+rows through the fallback), tiny, zero, large and sparse -- under clang and GCC. `gp_tasks_check.c` loads both
+builds of each fork side by side and calls their exported entries on row counts 1, 15, 16, 17, 66, 111, 512 and
+1,024, on one thread and a pool of four: 48 and 80 outputs, none apart. `red_lanes.py` injects five faults (the
+forward normalised in float, a fallback row kept from the lanes, the backward's tail a row late, the contraction
+rounded with a term too many, an adjoint's first term scaled by 1 + 2^-23), each caught. Three mutations it records
+change no output on any input, and say what the witnesses cannot see: the norm's square of a widened float is exact
+in double, so fusing it with the sum rounds the same; two updates of distinct accumulators commute; and a lane whose
+query norm is at most the epsilon never reads the dot it skips.
+
+Not claimed: the overlay edits the study's code, not BCIR's runtime -- the forks are the study's, their kernels its
+contract, and the lanes are offered to it as a measurement; a host without AVX-512F runs the forks' tasks; random
+rows cannot see a perturbation of a double intermediate below float's rounding, so the bit-identity rests on the
+statement-for-statement correspondence, which the witnesses check wherever an output can show it; where two NaN
+operands meet, which payload survives is the compiler's choice in either form (every row the witnesses run is
+finite); counter-based figures (no PMU on this VM).

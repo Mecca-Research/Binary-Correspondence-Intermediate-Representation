@@ -4954,6 +4954,38 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     NDT-REDUCE's NR4 and NR9, beside the new task, caught again.
   - Not claimed: a vocabulary past the buffer gains on its first 1,024 logits only; the study's own pair kernels and
     the scans after its gate, measured here and left the study's; counter-based figures (no PMU on this VM).
+  GP-LANES (2026-10-24): the study's geometric heads a row a lane, every trained state and logit the fork's; with
+    NEXT-2's survey; records and docs only ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §26,
+    [measurements/2026-10-24/gp-lanes/](research/measurements/2026-10-24/gp-lanes/README.json)).
+  - NEXT-2's survey: the cores sustain 221-230 GFLOP/s of FMA a thread with every operand in registers on one thread
+    as on four; four threads each running the k-blocked GEMM on operands of its own reach x0.86-x0.98 of four times
+    one thread on the T256 shapes, and the step's GEMM jobs as the trainer issues them take x0.86-x1.20 of four such
+    copies' time. A job of trivial tasks costs the pool 1.2-4.8 µs back to back and 34-35 µs once its workers sleep;
+    timed a worker at a time through the step, the workers enter every job within 0.9 µs at T256 (but the step's
+    first) and are 66-97% busy in it. The GEMMs take 56%, 48% and 37% of the pool's time at T256, T512 and T1024, the
+    attention 21%, 34% and 50%.
+  - Not taken: GROUP-ROWS-0 (the forward's group jobs a row range at a time) x0.965-x1.015 from T128 to T512, each
+    holding 1; COMMIT-BLOCKS-0 (the update's commit in four times as many chunks) holding 1 at T128 and T256.
+    ROPE-TABLE-0, the rotation reading a table of the same cosines and sines, takes x0.22-x0.48 of
+    `bcir_tensor_rope_pool`'s time, every value the same -- some 2% of the step -- and is left for a slice of its own,
+    the table needing a span in the plan on both rails.
+  - GP-LANES: `gp_lanes_overlay.py` runs the forks' pair kernels (`gp_pair_forward`, `gp_pair_backward`, GP_RANK 22)
+    and query_full's query frame (`gp_query_contract_pair`, `gp_query_contract_vjp`) sixteen rows at a time, a row a
+    vector lane, each scalar operation the one intrinsic that performs it in the fork's order, so every feature and
+    adjoint is the fork's bit for bit; a row the fork sends to its FP64 fallback is recomputed by the fork's kernel,
+    and each group prefetches the next group's rows. The kernels take x0.26-x0.80 of the fork's time a row.
+  - In the models, 48 rounds in one process with every trained state and logit the same, against once_level3.py's
+    builds: training x0.915-x0.972 (`global` at T256, `query_full` at T256 and T512 resolved), inference x0.938-x0.990
+    (both at T2048 resolved); the heads' GP kernels from 8.5-13.9% of the training's samples to 3.9-6.5%. Against
+    Inductor the heads now train in x0.19-0.33 of its time and run inference in x0.41-0.57 of it.
+  - Witnesses: `gp_lanes_check.c` (the lane kernels against the fork's, copied verbatim, every output byte for byte
+    over six kinds of row, 8,189 of 24,576 through the fallback, clang and GCC), `gp_tasks_check.c` (both builds'
+    entries side by side on row counts 1 to 1,024, serial and pooled: 128 outputs, none apart), and `red_lanes.py`
+    (five faults, each caught; three mutations recorded as unobservable, with the reason).
+  - Not claimed: the overlay is the study's code, offered to it as a measurement, not BCIR's runtime; a host without
+    AVX-512F runs the forks' tasks; a perturbation of a double intermediate below float's rounding is out of the
+    witnesses' sight, so the bit-identity rests on the statement-for-statement correspondence; counter-based figures
+    (no PMU on this VM).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

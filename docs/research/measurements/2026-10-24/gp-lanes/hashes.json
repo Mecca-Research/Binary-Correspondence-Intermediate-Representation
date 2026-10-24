@@ -1,0 +1,32 @@
+{
+ "what": "the sha256 of each committed tool and of the tree's sources the records measured",
+ "tree": "690cfd2f52502255bd497558361cfbec04063e44",
+ "tools": {
+  "measure_lanes.sh": "4c28ca90ce501bcfaa39559267b08defcbfc68fe82430b0dc6f6700a15d35b4d",
+  "survey_next2.sh": "1c9ba0a2abe3c93ee0d3bc8369710923e61c09a390b8373ee07f10d195a39370",
+  "gp_lanes_overlay.py": "420fb829da3499c1e52b6f9787aa9acdb68a3ec34ce1884f271c38890bf5ee41",
+  "gp_lanes_pair.inc": "1e8a0361ba6c63b87cfec8315c8f24f2de7111a9c410d5126fc47d0ae5a31371",
+  "gp_lanes_query.inc": "8edef3bc8f5ae4176539e732f35ca82e2da2e89b5034fa383c3e21d13f2d7985",
+  "gp_extract.py": "f5bf35f9f96e2040840937284d9372b3ab2b2c7de437900080d6382d1ac56f82",
+  "gp_lanes_check.c": "32f46cff4d609cb80dec8116cd0dc80a95c34b086bcd2ef4bd2f587aada8a460",
+  "gp_parts.c": "78d875b6573d68861587694f941dfce3083ed60c8d681d4bdee70784b6ae3411",
+  "gp_pf_bench.c": "f311fcd14d938caf01ee1dec80ed12917fc3c5367869e20e512d37dc728492ac",
+  "gp_tasks_check.c": "0e358c3df487f8cc4f3ae8daba00ad770ca7dc407f7c131bc92def9d721fca53",
+  "red_lanes.py": "9667627ebadbeec770068dd2488c3f6900d3fd58f347bf4a2029431e057f6982",
+  "fma_peak.c": "028d485b59f79f9abf3a14ae645ea6faec21988dcf86ecfe4db75bfbecba39f6",
+  "gemm_ceiling.c": "488e514556b61527caae71702dffd722f7e771075c0ab15780bdcfa646f4f626",
+  "gemm_jobs.c": "ff335542d0d21fa1ee22070093d58bc5834c068a458342075df9121622af033d",
+  "pool_rtt.c": "1a805a3023430ba3ec9bb5b2451aa04bc9707a02b2b9c3f3ffbe18a32c1a6b2d",
+  "probe_jobs.py": "9694aa43ac301ecd22ee79dde538fbc46775b5dc4598d755c43cea8c77154991",
+  "probe_step.py": "db2031890dc9662a5dcb85c35e0ae0d183fc86070f3f4c0d49ef6ec2ee437db4",
+  "probe_order.py": "eb9119744c603c3559ba0767880d397fda5b5393e873b3bf0eb5d1bb6b3328c1",
+  "proto_group_rows.py": "ecc8e439c4a387dee4a9aa449420d057371adbbcde7f20d4e97844832bf2509a",
+  "rope_bench.c": "797beb2adc1e2ade6b45f069a69a5e64f31e78c7e9d4275581b314f535c4bfe3"
+ },
+ "sources": {
+  "bcir_tensor.c": "40ba99cd37970d4c2ffd5fc1258081bba527a15b760443f7e8cfa843e303ba1c",
+  "bcir_tensor.h": "568365d6726be4e834ff33e72ef54bd9b687074a5012f1b830e0fd1138190352",
+  "bcir_decoder_train.c": "f7f5dd4ce328243778df9a2b6639acbdb475089efa21860e4006ed0a147bee26",
+  "bcir_decoder_train.h": "e2f30344e0aff2ffb0c08b5841006cb1b7aa4b954bf5064862f988139177fd24"
+ }
+}
