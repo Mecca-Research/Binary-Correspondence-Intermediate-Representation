@@ -51,6 +51,7 @@ from dataclasses import dataclass, replace
 
 from ...frontends.models.decode import DecoderSpec
 from .native_program import ARENAS, recompute_layers, training_step_program
+from .native_program import ROPE_TABLE as _TABLE
 
 #: Record kinds, as the probe numbers them.
 SCAN, ZERO, EMBED, RMS, GEMM, ROPE, ATTN, ATTN_VJP, ADD, SILU_MUL = range(1, 11)
@@ -58,6 +59,8 @@ SILU_MUL_PANELS, SWIGLU_VJP, SWIGLU_VJP_PANELS, RMS_VJP, LOSS, SCATTER = range(1
 PASS, PREFLIGHT, COMMIT, MUL, PROVIDER_SILU = range(17, 22)
 #: The host's records of a program (PX-2): a check, the update -- and a check's three tests.
 CHECK, UPDATE = 22, 23
+#: ROPE-TABLE: the forward's fill of the rotation's table, which every ROPE record reads.
+ROPE_TABLE = 24
 CHECK_FORWARD, CHECK_RAN, CHECK_LOSS = 1, 2, 4
 KIND_NAMES = {
     SCAN: "scan", ZERO: "zero", EMBED: "embed", RMS: "rms", GEMM: "gemm", ROPE: "rope",
@@ -65,7 +68,7 @@ KIND_NAMES = {
     SILU_MUL_PANELS: "silu_mul.panels", SWIGLU_VJP: "swiglu.vjp",
     SWIGLU_VJP_PANELS: "swiglu.vjp.panels", RMS_VJP: "rms.vjp", LOSS: "loss", SCATTER: "scatter",
     PASS: "update.pass", PREFLIGHT: "update.preflight", COMMIT: "update.commit", MUL: "mul",
-    PROVIDER_SILU: "provider.silu",
+    PROVIDER_SILU: "provider.silu", ROPE_TABLE: "rope.table",
 }  # fmt: skip
 #: Every kind a program may hold or a trace record: the trace's and the host's.
 PROGRAM_KIND_NAMES = KIND_NAMES | {CHECK: "check", UPDATE: "update"}
@@ -524,7 +527,7 @@ def step_program(
         emit(_record(RMS, 0, (n, d, eps), (x, g, y)))
 
     def rope(x, heads, inverse) -> None:
-        emit(_record(ROPE, 0, (batch, time, heads, hd, inverse), (x,)))
+        emit(_record(ROPE, 0, (batch, time, heads, hd, inverse), (x, ref(_TABLE))))
 
     def add(x, y) -> None:
         emit(_record(ADD, 0, (nd,), (x, y)))
@@ -616,6 +619,7 @@ def step_program(
 
     def forward() -> None:
         emit(_record(EMBED, 0, (n, d), (ext(4 * n), ref("weights:embed"), ref("x0"))))
+        emit(_record(ROPE_TABLE, 0, (time, hd), (ref(_TABLE),)))
         for layer in range(L):
             layer_forward(layer, True)
         rms(ref(f"x{L}"), ref("weights:final_norm"), ref("norm"))

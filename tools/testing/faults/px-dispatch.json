@@ -198,8 +198,8 @@
   {
    "expects": "test_the_harness_rows_are_the_programs_numbers",
    "label": "PY27 the dispatch row's frozen count one off",
-   "new": "        1152,\n",
-   "old": "        1153,\n",
+   "new": "        1170,\n",
+   "old": "        1171,\n",
    "path": "tools/perf/gemplus_baseline.py"
   },
   {

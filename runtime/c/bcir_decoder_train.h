@@ -53,7 +53,11 @@
  * and the state is the all-kept state's under every recompute set.
  * The plan's three counts are the arena sums of the step program in
  * bcir/hosted/models/native_program.py (NDT-GEM), held to it by train.plan.mismatch, and so is
- * bcir_decoder_activation_count under a recompute set. */
+ * bcir_decoder_activation_count under a recompute set. The scratch arena's last span (ROPE-TABLE,
+ * time x head-dim floats) is the rotation's table: each forward fills it with the cosines and sines
+ * bcir_tensor_rope_pool evaluates on every call (bcir_tensor_rope_table_pool) and every rotation of
+ * its step reads them there (bcir_tensor_rope_lent_pool), so the step's values are the same bit for
+ * bit with one evaluation of them where each rotation made its own. */
 #ifndef BCIR_DECODER_TRAIN_H
 #define BCIR_DECODER_TRAIN_H
 #include "bcir_tensor.h"
@@ -189,7 +193,9 @@ BCIR_DT_API int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_
  * 8 the micro-batch's tokens or targets (whole, offset 0); an absent one (0, 0, 0) -- and seven
  * spare words, zero but the two PX-3b names below. A kernel record runs its call as
  * the step runs it, so a program's trace is the program; PASS, PREFLIGHT and COMMIT are trace
- * records only. A scan of a parameter arena fails the run (BCIR_DT_NUMERIC) on a value not
+ * records only. ROPE-TABLE: a ROPE record (batch, time, heads, dim, inverse) reads its table as its
+ * second operand, time x dim floats, which a ROPE_TABLE record (time, dim) writes at the plan's
+ * rope_base. A scan of a parameter arena fails the run (BCIR_DT_NUMERIC) on a value not
  * finite, a scan of activations or scratch reports to the next FORWARD check; a scan of the whole
  * weights, and an update, make the weights known finite, and no other record reads them before
  * they are (FACTS-RUN). The host's records: CHECK -- FORWARD: a product refused its workspace,
@@ -235,7 +241,7 @@ enum { BCIR_DT_REC_SCAN=1, BCIR_DT_REC_ZERO, BCIR_DT_REC_EMBED, BCIR_DT_REC_RMS,
   BCIR_DT_REC_SILU_MUL_PANELS, BCIR_DT_REC_SWIGLU_VJP, BCIR_DT_REC_SWIGLU_VJP_PANELS,
   BCIR_DT_REC_RMS_VJP, BCIR_DT_REC_LOSS, BCIR_DT_REC_SCATTER, BCIR_DT_REC_PASS,
   BCIR_DT_REC_PREFLIGHT, BCIR_DT_REC_COMMIT, BCIR_DT_REC_MUL, BCIR_DT_REC_PROVIDER_SILU,
-  BCIR_DT_REC_CHECK, BCIR_DT_REC_UPDATE };
+  BCIR_DT_REC_CHECK, BCIR_DT_REC_UPDATE, BCIR_DT_REC_ROPE_TABLE };
 enum { BCIR_DT_CHECK_FORWARD=1u, BCIR_DT_CHECK_RAN=2u, BCIR_DT_CHECK_LOSS=4u };
 BCIR_DT_API int bcir_decoder_run_program(bcir_decoder_state *s,const bcir_decoder_adamw *opt,
     const uint64_t *program,size_t records,const uint32_t *tokens,const uint32_t *targets,

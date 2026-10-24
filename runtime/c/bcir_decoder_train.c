@@ -26,7 +26,8 @@ BCIR_DT_API void bcir_decoder_trace_probe_begin(const bcir_decoder_state *s,uint
     size_t capacity);
 BCIR_DT_API size_t bcir_decoder_trace_probe_end(size_t *dropped);
 BCIR_DT_API size_t bcir_decoder_trace_probe_words(void);
-static void tr_rope(size_t b,size_t t,size_t h,size_t d,const float *x,int inverse);
+static void tr_rope(size_t b,size_t t,size_t h,size_t d,const float *table,const float *x,int inverse);
+static void tr_rope_table(size_t t,size_t d,const float *table);
 static void tr_rms(size_t rows,size_t width,float eps,const float *x,const float *g,const float *y);
 static void tr_add(size_t n,const float *x,const float *y);
 static void tr_mul(size_t n,const float *x,const float *y);
@@ -51,8 +52,10 @@ static int tr_ran(int ran);
 static void tr_run(bcir_tensor_task_fn fn,const void *ctx);
 static void tr_provider_silu(size_t n,const float *x,const float *y);
 static void tr_embed(size_t n,size_t d,const uint32_t *tokens,const float *table,const float *x);
-#define bcir_tensor_rope_pool(pool,b,t,h,d,base,x,inv) \
-  (tr_rope(b,t,h,d,x,inv),bcir_tensor_rope_pool(pool,b,t,h,d,base,x,inv))
+#define bcir_tensor_rope_lent_pool(pool,b,t,h,d,table,x,inv) \
+  (tr_rope(b,t,h,d,table,x,inv),bcir_tensor_rope_lent_pool(pool,b,t,h,d,table,x,inv))
+#define bcir_tensor_rope_table_pool(pool,t,d,base,table) \
+  (tr_rope_table(t,d,table),bcir_tensor_rope_table_pool(pool,t,d,base,table))
 #define bcir_tensor_rms_scan_pool(pool,r,w,eps,x,g,y,bad) \
   (tr_rms(r,w,eps,x,g,y),bcir_tensor_rms_scan_pool(pool,r,w,eps,x,g,y,bad))
 #define bcir_tensor_add_pool(pool,n,x,y) (tr_add(n,x,y),bcir_tensor_add_pool(pool,n,x,y))
@@ -181,7 +184,8 @@ int bcir_decoder_make_plan(const bcir_decoder_spec *s,bcir_decoder_plan *out) {
       !term(&p.activations,(size_t)s->layers+1,nd) || !term(&p.activations,s->layers,la) ||
       !add(&p.activations,nd) || !add(&p.activations,nv) ||
       !term(&p.scratch,5,nd) || !term(&p.scratch,2,nk) || !term(&p.scratch,3,nf) ||
-      !add(&p.scratch,nv) || p.parameters>SIZE_MAX/sizeof(float) ||
+      !add(&p.scratch,nv) || !term(&p.scratch,s->time,s->width/s->heads) ||
+      p.parameters>SIZE_MAX/sizeof(float) ||
       p.activations>SIZE_MAX/sizeof(float) || p.scratch>SIZE_MAX/sizeof(float))
     return BCIR_DT_CAPACITY;
   *out=p; return BCIR_DT_OK;
@@ -753,6 +757,13 @@ static int attention_backward(bcir_decoder_state *s,geometry g,const float *q,co
  * its verdict is the forward's, whose values it writes again). `scratch`: no backward reads this
  * forward's cache (INFER-ATTN), so the attention keeps no probabilities. Returns 0 when a product
  * refused its workspace, which wrote nothing. */
+/* ROPE-TABLE: the scratch arena's last span, time x head-dim floats: the rotation's cosines and
+ * sines, written by each forward before its first layer and read by every rotation of that forward
+ * and of the backward after it (the layers a backward recomputes included). The scratch arena is
+ * the backward's otherwise, and no other call writes this span. */
+static float *rope_table(const bcir_decoder_state *s,geometry g) {
+  return s->scratch+5*g.nd+2*g.nk+3*g.nf+g.nv;
+}
 static int layer_forward(bcir_decoder_state *s,geometry g,size_t l,float *slot,float *x,int full,
     int scratch,int *bad) {
   const bcir_decoder_spec *sp=&s->plan.spec; int ran=1;
@@ -764,8 +775,8 @@ static int layer_forward(bcir_decoder_state *s,geometry g,size_t l,float *slot,f
     out[0]=g.d; out[1]=g.k; out[2]=g.k; w[0]=p.q; w[1]=p.k; w[2]=p.v; y3[0]=a.q; y3[1]=a.k; y3[2]=a.v;
     ran&=linears(s,g.n,g.d,a.n1,3,out,w,y3);
   }
-  bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,sp->rope_base,a.q,0);
-  bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,sp->rope_base,a.k,0);
+  bcir_tensor_rope_lent_pool(s->pool,g.b,g.t,g.h,g.hd,rope_table(s,g),a.q,0);
+  bcir_tensor_rope_lent_pool(s->pool,g.b,g.t,g.kh,g.hd,rope_table(s,g),a.k,0);
   ran&=attention(s,scratch,g.b,g.t,g.h,g.kh,g.hd,a.q,a.k,a.v,a.p,a.ctx,bad);
   ran&=linear(s,g.n,g.d,g.d,a.ctx,p.o,a.x2);
   bcir_tensor_add_pool(s->pool,g.nd,x,a.x2);
@@ -808,6 +819,7 @@ static int forward(bcir_decoder_state *s,const uint32_t *tokens,geometry g,int s
   float *final=s->weights+g.v*g.d+g.l*g.lp;
   const float *head=sp->tied ? s->weights : final+g.d; int bad=0,ran=1;
   embed(g.n,g.d,tokens,s->weights,xs);
+  bcir_tensor_rope_table_pool(s->pool,g.t,g.hd,sp->rope_base,rope_table(s,g));  /* ROPE-TABLE */
   for (l=0;l<g.l;l++)
     ran&=layer_forward(s,g,l,cs+slot_of(g,s->recompute,l)*g.la,xs+l*g.nd,1,scratch,&bad);
   bcir_tensor_rms_scan_pool(s->pool,g.n,g.d,(float)sp->rms_eps,xs+g.l*g.nd,final,norm,&bad);
@@ -1030,8 +1042,8 @@ static int loss_backward_with(bcir_decoder_state *s,const uint32_t *tokens,
      * leaves its score adjoint in their place (same dq/dk/dv as the reference, bit for bit), the
      * bf16 attention's leaves them as they were */
     ran&=attention_backward(s,g,a.q,a.k,a.v,a.p,dc,dq,dk,dv);
-    bcir_tensor_rope_pool(s->pool,g.b,g.t,g.h,g.hd,s->plan.spec.rope_base,dq,1);
-    bcir_tensor_rope_pool(s->pool,g.b,g.t,g.kh,g.hd,s->plan.spec.rope_base,dk,1);
+    bcir_tensor_rope_lent_pool(s->pool,g.b,g.t,g.h,g.hd,rope_table(s,g),dq,1);
+    bcir_tensor_rope_lent_pool(s->pool,g.b,g.t,g.kh,g.hd,rope_table(s,g),dk,1);
     {
       size_t out[3]; const float *w[3],*d3[3]; float *dw[3];
       out[0]=g.d; out[1]=g.k; out[2]=g.k; w[0]=p.q; w[1]=p.k; w[2]=p.v;
@@ -1681,10 +1693,13 @@ static int px_kernel(const px_ctx *c,const uint64_t *w,px_op *ops,size_t *n) {
     x=px_size(d[0],d[1],1,4); y=px_size(d[1],1,1,4);
     return !f && w[5]==c->eps && x && px_rest(w,3,3) && px_slot(c,w,0,PX_IN,x,PX_R,ops,n) &&
         px_slot(c,w,1,PX_IN,y,PX_R,ops,n) && px_slot(c,w,2,PX_OUT,x,PX_W,ops,n);
-  case BCIR_DT_REC_ROPE:  /* batch, time, heads, dim (even), inverse | x in place */
-    x=px_size(px_size(d[0],d[1],d[2],1),d[3],1,4);
-    return !f && x && !(d[3]%2) && d[4]<=1 && px_rest(w,5,1) &&
-        px_slot(c,w,0,PX_OUT,x,PX_RW,ops,n);
+  case BCIR_DT_REC_ROPE:  /* batch, time, heads, dim (even), inverse | x in place, the table */
+    x=px_size(px_size(d[0],d[1],d[2],1),d[3],1,4); y=px_size(d[1],d[3],1,4);
+    return !f && x && y && !(d[3]%2) && d[4]<=1 && px_rest(w,5,2) &&
+        px_slot(c,w,0,PX_OUT,x,PX_RW,ops,n) && px_slot(c,w,1,PX_IN,y,PX_R,ops,n);
+  case BCIR_DT_REC_ROPE_TABLE:  /* time, dim (even) | the table (ROPE-TABLE) */
+    x=px_size(d[0],d[1],1,4);
+    return !f && x && !(d[1]%2) && px_rest(w,2,1) && px_slot(c,w,0,PX_OUT,x,PX_W,ops,n);
   case BCIR_DT_REC_ATTN: case BCIR_DT_REC_ATTN_VJP: {
     /* batch, time, heads, kv heads (dividing heads), dim | q k v p y, or q k v p dy dq dk dv; ws */
     int vjp=w[0]==BCIR_DT_REC_ATTN_VJP,bf=(s->contract&BCIR_DT_CONTRACT_ATTNBF16)!=0;
@@ -1902,7 +1917,10 @@ static int px_kernel_run(const px_ctx *c,const uint64_t *w,const uint32_t *token
         px_at(c,w,2),bad);
     break;
   case BCIR_DT_REC_ROPE:
-    bcir_tensor_rope_pool(s->pool,d0,d1,d2,d3,s->plan.spec.rope_base,px_at(c,w,0),(int)d4);
+    bcir_tensor_rope_lent_pool(s->pool,d0,d1,d2,d3,px_at(c,w,1),px_at(c,w,0),(int)d4);
+    break;
+  case BCIR_DT_REC_ROPE_TABLE:
+    bcir_tensor_rope_table_pool(s->pool,d0,d1,s->plan.spec.rope_base,px_at(c,w,0));
     break;
   case BCIR_DT_REC_ATTN:
     *ran&=attention_v(s,(int)w[BCIR_DT_WORD_INSTANCE],0,d0,d1,d2,d3,d4,px_at(c,w,0),px_at(c,w,1),
@@ -2073,11 +2091,18 @@ static void tr_mul(size_t n,const float *x,const float *y) { tr_two(BCIR_DT_REC_
 static void tr_provider_silu(size_t n,const float *x,const float *y) {
   tr_two(BCIR_DT_REC_PROVIDER_SILU,n,x,y);
 }
-static void tr_rope(size_t b,size_t t,size_t h,size_t d,const float *x,int inverse) {
+static void tr_rope(size_t b,size_t t,size_t h,size_t d,const float *table,const float *x,
+    int inverse) {
   uint64_t *w=tr_record(BCIR_DT_REC_ROPE,1);
   if (!w) return;
   w[3]=b; w[4]=t; w[5]=h; w[6]=d; w[7]=(uint64_t)(inverse!=0);
-  tr_ref(w,0,x,b*t*h*d*sizeof(float));
+  tr_ref(w,0,x,b*t*h*d*sizeof(float)); tr_ref(w,1,table,t*d*sizeof(float));
+}
+static void tr_rope_table(size_t t,size_t d,const float *table) {
+  uint64_t *w=tr_record(BCIR_DT_REC_ROPE_TABLE,1);
+  if (!w) return;
+  w[3]=t; w[4]=d;
+  tr_ref(w,0,table,t*d*sizeof(float));
 }
 static void tr_rms(size_t rows,size_t width,float eps,const float *x,const float *g,const float *y) {
   uint64_t *w=tr_record(BCIR_DT_REC_RMS,1); size_t b=rows*width*sizeof(float);

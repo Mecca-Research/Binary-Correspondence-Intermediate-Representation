@@ -185,14 +185,15 @@ def test_the_parts_are_laid_out_apart():
 
 def test_the_bench_row_reads_the_placed_arena():
     """`train.memory.transient` reads the bench step's pack with its transient values placed by
-    lifetime: 754,176 bytes over a 754,176-byte bound -- 1.0, a proved optimum -- where the C plan
-    reserves 999,424 over the step program's 753,664; the 512 bytes between the two bounds are the
-    loss rows' terms, which the pack holds as a value of their own and the step program inside
-    the scratch."""
+    lifetime: 756,224 bytes over a 756,224-byte bound -- 1.0, a proved optimum -- where the C plan
+    reserves 1,001,472 over the step program's 755,712; the 512 bytes between the two bounds are
+    the loss rows' terms, which the pack holds as a value of their own and the step program inside
+    the scratch. Each figure holds the rotation's table (ROPE-TABLE: 32 positions x 16 channels,
+    2,048 bytes, live from the forward to the backward's last rotation) over its PX-4 reading."""
     ratio, extent, bound, optimal = nf.placed_transient()
-    assert (ratio, extent, bound, optimal) == (1.0, 754_176, 754_176, True)
+    assert (ratio, extent, bound, optimal) == (1.0, 756_224, 756_224, True)
     c_ratio, held, step_bound, _ = nf.transient_ratio()
-    assert (held, step_bound) == (999_424, 753_664) and c_ratio > 1.3
+    assert (held, step_bound) == (1_001_472, 755_712) and c_ratio > 1.3
     spec, batch, time_ = nf.BENCH
     tp = training_pack(spec, batch, time_, contract=0)
     rows = {p.rid: p for p in tp.placements}

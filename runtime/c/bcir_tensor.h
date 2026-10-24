@@ -80,6 +80,19 @@ BCIR_DT_API void bcir_tensor_rms_backward_into_pool(bcir_tensor_pool *pool, size
     float *inv, unsigned how);
 BCIR_DT_API void bcir_tensor_rope_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
     size_t heads, size_t dim, double base, float *x, int inverse);
+/* ROPE-TABLE: the rotation's cosines and sines evaluated once, for every rotation that reads them.
+ * bcir_tensor_rope_table_pool writes `table`, time x dim floats a position at a time: for position
+ * pos and pair j < dim/2, table[pos*dim+j] = (float)cos(a) and table[pos*dim+dim/2+j] =
+ * (float)sin(a), a = pos * base^(-2j/dim) in double -- the libm calls on the same arguments that
+ * bcir_tensor_rope_pool makes on every call. bcir_tensor_rope_lent_pool rotates x as
+ * bcir_tensor_rope_pool does at that base, each pair's cosine and sine the table's (the sine times
+ * -1 under inverse, as that entry rounds it), so every value is that entry's bit for bit. dim even;
+ * `table` disjoint from x; positions in ranges of BCIR_ROW_CHUNK as there; a NULL pool runs either
+ * on the caller. */
+BCIR_DT_API void bcir_tensor_rope_table_pool(bcir_tensor_pool *pool, size_t time, size_t dim,
+    double base, float *table);
+BCIR_DT_API void bcir_tensor_rope_lent_pool(bcir_tensor_pool *pool, size_t batch, size_t time,
+    size_t heads, size_t dim, const float *table, float *x, int inverse);
 /* y[i] += x[i] and y[i] *= x[i] over elements, as the trainer's residual and gate paths do. */
 BCIR_DT_API void bcir_tensor_add_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);
 BCIR_DT_API void bcir_tensor_mul_pool(bcir_tensor_pool *pool, size_t n, const float *x, float *y);

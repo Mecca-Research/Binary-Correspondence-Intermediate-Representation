@@ -934,6 +934,68 @@ static void loss_once(void) {
       "counts, four kinds of row; %zu targets past the 1,024 kept values)\n",cases,past);
 }
 #endif
+/* ROPE-TABLE: the table bcir_tensor_rope_table_pool fills holds each pair's (float)cos and (float)sin
+ * as the per-pair reference evaluates them, and the rotation reading it is the reference's and
+ * bcir_tensor_rope_pool's, forward and inverse, byte for byte -- at four bases, over position
+ * counts about the 16-position task and head widths from one pair to past two BCIR_ROPE_J ranges
+ * of pairs, serial and on pools of two and four, the table filled on one pool and read on another;
+ * a table of another base, or one read a position late, rotates other values (tested). */
+static void rope_table(void) {
+  static const size_t shape[7][4]={{1,1,1,2},{2,15,3,8},{1,16,2,32},{2,17,1,64},{1,33,2,260},
+      {3,40,4,130},{1,70,1,258}};
+  static const double bases[4]={10000.0,500000.0,2.5,1.0};
+  static float x[3*70*4*260],want[3*70*4*260],got[3*70*4*260],unit[3*70*4*260],table[70*260],
+      other[70*260];
+  static _Alignas(max_align_t) unsigned char memory[2][16384];
+  bcir_tensor_pool *pools[3]={NULL,NULL,NULL}; unsigned threads[3]={1,2,4},p,q;
+  size_t a,b,i,j,pos,cases=0,entries=0,askew=0; int inv;
+  for (p=1;p<3;p++) {
+    size_t need=bcir_tensor_pool_size(threads[p]);
+    if (!need) continue;
+    assert(need<=sizeof(memory[0]));
+    pools[p]=bcir_tensor_pool_init(memory[p-1],sizeof(memory[0]),threads[p]); assert(pools[p]!=NULL);
+  }
+  for (i=0;i<sizeof(x)/sizeof(x[0]);i++) x[i]=1.5f*sinf((float)i*0.731f)+(i%7==3 ? 3e4f : 0.0f);
+  for (a=0;a<7;a++) for (b=0;b<4;b++) {
+    size_t rb=shape[a][0],rt=shape[a][1],rh=shape[a][2],rd=shape[a][3],rn=rb*rt*rh*rd,half=rd/2;
+    double base=bases[b];
+    for (p=0;p<3;p++) {
+      if (p && !pools[p]) continue;
+      memset(table,0xa5,sizeof(table));
+      bcir_tensor_rope_table_pool(pools[p],rt,rd,base,table);
+      for (pos=0;pos<rt;pos++) for (j=0;j<half;j++) {  /* the entries: the reference's own calls */
+        double angle=(double)pos*pow(base,-2.0*(double)j/(double)rd);
+        float c=(float)cos(angle),s=(float)sin(angle);
+        assert(!memcmp(&table[pos*rd+j],&c,sizeof c) && !memcmp(&table[pos*rd+half+j],&s,sizeof s));
+        entries++;
+      }
+      for (inv=0;inv<2;inv++) for (q=0;q<3;q++) {
+        if (q && !pools[q]) continue;
+        memcpy(want,x,rn*sizeof(float)); ref_rope(rb,rt,rh,rd,base,want,inv);
+        memcpy(unit,x,rn*sizeof(float)); bcir_tensor_rope_pool(pools[q],rb,rt,rh,rd,base,unit,inv);
+        memcpy(got,x,rn*sizeof(float)); bcir_tensor_rope_lent_pool(pools[q],rb,rt,rh,rd,table,got,inv);
+        assert(!memcmp(want,unit,rn*sizeof(float)) && !memcmp(want,got,rn*sizeof(float)));
+        cases++;
+      }
+    }
+    if (rt>1) {  /* the witness sees a table of another base, and one read a position late */
+      memcpy(want,x,rn*sizeof(float)); ref_rope(rb,rt,rh,rd,base,want,0);
+      bcir_tensor_rope_table_pool(NULL,rt,rd,base*2.0,other);
+      memcpy(got,x,rn*sizeof(float)); bcir_tensor_rope_lent_pool(NULL,rb,rt,rh,rd,other,got,0);
+      assert(memcmp(want,got,rn*sizeof(float)));
+      bcir_tensor_rope_table_pool(NULL,rt,rd,base,table);
+      memcpy(other,table+rd,(rt-1)*rd*sizeof(float));
+      memcpy(other+(rt-1)*rd,table+(rt-1)*rd,rd*sizeof(float));
+      memcpy(got,x,rn*sizeof(float)); bcir_tensor_rope_lent_pool(NULL,rb,rt,rh,rd,other,got,0);
+      assert(memcmp(want,got,rn*sizeof(float)));
+      askew+=2;
+    }
+  }
+  bcir_tensor_pool_stop(pools[1]); bcir_tensor_pool_stop(pools[2]);
+  printf("  PASS ROPE-TABLE: the rotation's table, %zu entries each the per-pair reference's cosine or sine, "
+      "and %zu rotations reading it byte for byte the reference's and bcir_tensor_rope_pool's (7 shapes, 4 "
+      "bases, forward and inverse, serial and pools of 2 and 4); %zu askew tables seen\n",entries,cases,askew);
+}
 /* NDT-POOL: the pool's threads claim their tasks from one counter. Every task of every job runs
  * exactly once -- 600 jobs of 1 to 1,024 tasks at two to four threads, back to back (the workers
  * spinning between generations), every hundredth after a pause longer than the spin (the workers
@@ -4509,7 +4571,8 @@ static void exp_scalef(void) {
 int main(void) {
   gemm_contract(); attention_reference(); attention_fused_reference(); adamw_reference();
   finite_differences(); refusals();
-  learning(); pool_identity(); pool_claims(); pool_blocks(); reduction_references(); scan_references();
+  learning(); pool_identity(); rope_table(); pool_claims(); pool_blocks(); reduction_references();
+  scan_references();
   gemm_fused_contract(); gemm_kblock_contract(); gemm_kblock_rows(); exp_contract(); exp_scalef(); fused_passes();
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();

@@ -29,7 +29,8 @@ def _closed_form(spec, batch, time):
     lp = 2 * d + 2 * d * d + 2 * d * k + 3 * d * f
     params = v * d + L * lp + d + (0 if spec.tied_embeddings else v * d)
     la = 5 * nd + 2 * nk + att + 3 * nf
-    return params, (L + 1) * nd + L * la + nd + nv, 5 * nd + 2 * nk + 3 * nf + nv
+    table = time * (d // spec.n_heads)  # ROPE-TABLE: the rotation's table, scratch's last span
+    return params, (L + 1) * nd + L * la + nd + nv, 5 * nd + 2 * nk + 3 * nf + nv + table
 
 
 def test_the_arenas_are_the_plans_closed_forms():

@@ -1,0 +1,130 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_the_compiled_plan_and_gemm_are_the_programs",
+    "bcir.tests.test_native_program:test_the_arenas_are_the_plans_closed_forms",
+    "bcir.tests.test_native_place:test_the_bench_row_reads_the_placed_arena",
+    "bcir.tests.test_native_launch:test_the_c_step_issues_the_planned_launches",
+    "bcir.tests.test_native_run_program:test_a_refused_program_writes_nothing",
+    "bcir.tests.test_native_run_program:test_a_program_trains_the_c_steps_bits",
+    "bcir.tests.test_native_run_pack:test_the_vocabulary_and_the_reasons_are_the_cs",
+    "bcir.tests.test_native_run_pack:test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+      "label": "RTX1 the plan's table span a position long (scratch a head's width past the step program's)",
+      "new": "      !add(&p.scratch,nv) || !term(&p.scratch,(size_t)s->time+1,s->width/s->heads) ||\n",
+      "old": "      !add(&p.scratch,nv) || !term(&p.scratch,s->time,s->width/s->heads) ||\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_program_trains_the_c_steps_bits",
+      "label": "RTX2 the program's rotation reads its x as its table",
+      "new": "    bcir_tensor_rope_lent_pool(s->pool,d0,d1,d2,d3,px_at(c,w,0),px_at(c,w,0),(int)d4);\n",
+      "old": "    bcir_tensor_rope_lent_pool(s->pool,d0,d1,d2,d3,px_at(c,w,1),px_at(c,w,0),(int)d4);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "RTX3 the program's check takes a rotation's table at whatever size its slot names",
+      "new": "        px_slot(c,w,0,PX_OUT,x,PX_RW,ops,n) && px_slot(c,w,1,PX_IN,w[16] ? (size_t)w[16] : y,PX_R,ops,n);\n",
+      "old": "        px_slot(c,w,0,PX_OUT,x,PX_RW,ops,n) && px_slot(c,w,1,PX_IN,y,PX_R,ops,n);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "RTX4 the program's check admits a table fill of an odd width",
+      "new": "    return !f && x && px_rest(w,2,1) && px_slot(c,w,0,PX_OUT,x,PX_W,ops,n);\n",
+      "old": "    return !f && x && !(d[1]%2) && px_rest(w,2,1) && px_slot(c,w,0,PX_OUT,x,PX_W,ops,n);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_refused_program_writes_nothing",
+      "label": "RTX5 the program's check lets a table fill write the weights",
+      "new": "    return !f && x && !(d[1]%2) && px_rest(w,2,1) && px_slot(c,w,0,PX_IN,x,PX_W,ops,n);\n",
+      "old": "    return !f && x && !(d[1]%2) && px_rest(w,2,1) && px_slot(c,w,0,PX_OUT,x,PX_W,ops,n);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "RTX6 the trace records a rotation without its table",
+      "new": "  tr_ref(w,0,x,b*t*h*d*sizeof(float));\n",
+      "old": "  tr_ref(w,0,x,b*t*h*d*sizeof(float)); tr_ref(w,1,table,t*d*sizeof(float));\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "RTX7 the lowering's rotation without its table's slot",
+      "new": "  case OP_ROPE: case OP_ROPE_INV: SLOT(0, U_RW, SL_PLAIN); break;\n",
+      "old": "  case OP_ROPE: case OP_ROPE_INV: SLOT(0, U_RW, SL_PLAIN); SLOT(1, U_R, SL_PLAIN); break;\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "RTX8 the lowering's table fill with its time and width swapped",
+      "new": "    w[0] = BCIR_DT_REC_ROPE_TABLE;\n    w[3] = c->hd;\n    w[4] = c->t;\n",
+      "old": "    w[0] = BCIR_DT_REC_ROPE_TABLE;\n    w[3] = c->t;\n    w[4] = c->hd;\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "RTX9 the lowering counts a table fill's work as its positions alone",
+      "new": "  case BCIR_DT_REC_SWIGLU_VJP_PANELS:\n",
+      "old": "  case BCIR_DT_REC_SWIGLU_VJP_PANELS: case BCIR_DT_REC_ROPE_TABLE:\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_the_vocabulary_and_the_reasons_are_the_cs",
+      "label": "RTX10 the lowering's vocabulary without the table fill's name",
+      "new": "  \"train.update\", \"train.rope.fill\"};\n",
+      "old": "  \"train.update\", \"train.rope.table\"};\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "RTX11 the plan's rotations without their table",
+      "new": "        emit(_record(ROPE, 0, (batch, time, heads, hd, inverse), (x,)))\n",
+      "old": "        emit(_record(ROPE, 0, (batch, time, heads, hd, inverse), (x, ref(_TABLE))))\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_the_c_step_issues_the_planned_launches",
+      "label": "RTX12 the plan's table fill a position short",
+      "new": "        emit(_record(ROPE_TABLE, 0, (time - 1, hd), (ref(_TABLE, 0, 4 * (time - 1) * hd),)))\n",
+      "old": "        emit(_record(ROPE_TABLE, 0, (time, hd), (ref(_TABLE),)))\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_the_arenas_are_the_plans_closed_forms",
+      "label": "RTX13 the step program's table a position short",
+      "new": "    buffers.append(Buffer(ROPE_TABLE, \"scratch\", (t - 1) * hd))\n",
+      "old": "    buffers.append(Buffer(ROPE_TABLE, \"scratch\", t * hd))\n",
+      "path": "bcir/hosted/models/native_program.py"
+    },
+    {
+      "expects": "test_the_bench_row_reads_the_placed_arena",
+      "label": "RTX14 the step program's backward rotations not reading the table (its life ending at the forward's last rotation, before the loss's peak)",
+      "new": "        s.step(c(\"rope.q.vjp\"), (), (\"dq\",))\n        s.step(c(\"rope.k.vjp\"), (), (\"dk\",))\n",
+      "old": "        s.step(c(\"rope.q.vjp\"), (ROPE_TABLE,), (\"dq\",))\n        s.step(c(\"rope.k.vjp\"), (ROPE_TABLE,), (\"dk\",))\n",
+      "path": "bcir/hosted/models/native_program.py"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "RTX15 the pack's rotation not reading its table",
+      "new": "nl.RMS: ((0, R), (1, R), (2, W)), nl.ROPE: ((0, RW),), nl.ADD: ((0, R), (1, RW)),",
+      "old": "nl.RMS: ((0, R), (1, R), (2, W)), nl.ROPE: ((0, RW), (1, R)), nl.ADD: ((0, R), (1, RW)),",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_a_pack_lowers_to_its_program_and_trains_the_c_steps_bits",
+      "label": "RTX16 the pack counts a table fill's work as its positions alone",
+      "new": "             nl.SWIGLU_VJP_PANELS):  # fmt: skip\n",
+      "old": "             nl.SWIGLU_VJP_PANELS, nl.ROPE_TABLE):  # fmt: skip\n",
+      "path": "bcir/hosted/models/native_pack.py"
+    }
+  ]
+}

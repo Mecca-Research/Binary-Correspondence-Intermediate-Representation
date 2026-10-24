@@ -842,7 +842,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "train.plan.dispatch.mismatch",
         "train",
-        "of the 1,153 dispatch runs (bcir/tests/native_decoder_fixtures.py `dispatch_runs`: the 27 "
+        "of the 1,171 dispatch runs (bcir/tests/native_decoder_fixtures.py `dispatch_runs`: the 27 "
         "state cases of the trace corpus, each under every dispatch kind -- a GEMM's role, an "
         "attention, every other kernel -- switched alone to the portable instance and to its "
         "family's widest named (a GEMM of BCIR's entries, an attention) and to each worker count "
@@ -851,8 +851,10 @@ METRICS: tuple[Metric, ...] = (
         "other launches than the dispatched program states as the host resolves them (the "
         "instance each GEMM and attention job ran, the workers each job ran on: "
         "native_launch.step_program's `dispatch`, words 41 and 42). The parent named no job's "
-        "instance or workers, so all 1,153 were unheld (PX-3b)",
-        1153,
+        "instance or workers, so every run was unheld: 1,153 at PX-3b, 1,171 since ROPE-TABLE's "
+        "table fill joined the kernels (its three worker counts in each of the six four-thread "
+        "cases)",
+        1171,
         "count",
         "exact",
         bound=0,
@@ -947,12 +949,14 @@ METRICS: tuple[Metric, ...] = (
         "train",
         "bytes a trainer lends for the bench step's activations and backward workspace, over G26's "
         "concurrent-live bound on the values they hold (vocab 256, width 64, 2 layers, batch 2 x "
-        "32 tokens). Frozen at the C plan's fixed spans over the step program's bound, 999,424 / "
-        "753,664 bytes; read since PX-4 at the step's pack with every transient value placed by "
+        "32 tokens). Frozen at the C plan's fixed spans over the step program's bound, 1,001,472 / "
+        "755,712 bytes; read since PX-4 at the step's pack with every transient value placed by "
         "its lifetime (native_pack.place_by_lifetime) over the bound on the pack's own values, "
-        "754,176 / 754,176 -- the pack makes the two temporaries the C kept inside other buffers "
-        "values of their own (the loss rows' terms, 512 bytes, and the norms' 1/rms)",
-        999_424 / 753_664,
+        "756,224 / 756,224 -- the pack makes the two temporaries the C kept inside other buffers "
+        "values of their own (the loss rows' terms, 512 bytes, and the norms' 1/rms). Every figure "
+        "holds the rotation's table, 2,048 bytes live from the forward to the backward's last "
+        "rotation (ROPE-TABLE: 999,424 / 753,664 and 754,176 / 754,176 before it)",
+        1_001_472 / 755_712,
         "x",
         "exact",
         bound=1.0,

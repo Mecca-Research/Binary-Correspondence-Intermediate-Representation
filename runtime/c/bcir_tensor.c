@@ -2731,6 +2731,53 @@ void bcir_tensor_rope_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t he
   rope_job j; j.b=b; j.t=t; j.heads=heads; j.dim=dim; j.base=base; j.x=x; j.inverse=inverse;
   pool_run(pool,rope_task,&j,(t+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);
 }
+/* ROPE-TABLE: rope_rows' cosines and sines, once -- each pair's frequency the same pow, each angle
+ * the same product, each entry the same libm call rounded to float -- for the rotations that read
+ * them in place of their own calls (bcir_tensor.h). */
+typedef struct rope_table_job { size_t t,dim; double base; float *table; } rope_table_job;
+static void rope_table_task(void *ctx, size_t task) {
+  rope_table_job *j=(rope_table_job *)ctx; size_t pos,k,k0,half=j->dim/2;
+  size_t p0=task*BCIR_ROW_CHUNK,p1=p0+BCIR_ROW_CHUNK<j->t ? p0+BCIR_ROW_CHUNK : j->t;
+  for (k0=0;k0<half;k0+=BCIR_ROPE_J) {
+    size_t nk=half-k0<BCIR_ROPE_J ? half-k0 : BCIR_ROPE_J; double f[BCIR_ROPE_J];
+    for (k=0;k<nk;k++) f[k]=pow(j->base,-2.0*(double)(k0+k)/(double)j->dim);
+    for (pos=p0;pos<p1;pos++) {
+      float *c=j->table+pos*j->dim+k0,*s=c+half;
+      for (k=0;k<nk;k++) {
+        double angle=(double)pos*f[k];
+        c[k]=(float)cos(angle); s[k]=(float)sin(angle);
+      }
+    }
+  }
+}
+void bcir_tensor_rope_table_pool(bcir_tensor_pool *pool, size_t t, size_t dim, double base,
+    float *table) {
+  rope_table_job j; j.t=t; j.dim=dim; j.base=base; j.table=table;
+  pool_run(pool,rope_table_task,&j,(t+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);
+}
+/* rope_rows' rotation with each pair's cosine and sine read from the table: the sine times -1 under
+ * inverse, then the same two rounded products and one rounded sum or difference an element */
+typedef struct rope_lent_job {
+  size_t b,t,heads,dim; const float *table; float *x; int inverse;
+} rope_lent_job;
+static void rope_lent_task(void *ctx, size_t task) {
+  rope_lent_job *j=(rope_lent_job *)ctx; size_t r,pos,h,k,k0,half=j->dim/2;
+  size_t p0=task*BCIR_ROW_CHUNK,p1=p0+BCIR_ROW_CHUNK<j->t ? p0+BCIR_ROW_CHUNK : j->t;
+  for (pos=p0;pos<p1;pos++) for (k0=0;k0<half;k0+=BCIR_ROPE_J) {
+    size_t nk=half-k0<BCIR_ROPE_J ? half-k0 : BCIR_ROPE_J; float s[BCIR_ROPE_J];
+    const float *c=j->table+pos*j->dim+k0,*sin0=c+half;
+    for (k=0;k<nk;k++) s[k]=sin0[k]*(j->inverse ? -1.0f : 1.0f);
+    for (r=0;r<j->b;r++) for (h=0;h<j->heads;h++) {
+      float *lo=j->x+((r*j->t+pos)*j->heads+h)*j->dim+k0,*hi=lo+half;
+      for (k=0;k<nk;k++) { float a=lo[k],z=hi[k]; lo[k]=a*c[k]-z*s[k]; hi[k]=z*c[k]+a*s[k]; }
+    }
+  }
+}
+void bcir_tensor_rope_lent_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t heads,
+    size_t dim, const float *table, float *x, int inverse) {
+  rope_lent_job j; j.b=b; j.t=t; j.heads=heads; j.dim=dim; j.table=table; j.x=x; j.inverse=inverse;
+  pool_run(pool,rope_lent_task,&j,(t+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);
+}
 static bcir_tensor_mm_fn mm(const bcir_tensor_provider *p) {
   return p && p->mm ? p->mm : bcir_tensor_mm;
 }

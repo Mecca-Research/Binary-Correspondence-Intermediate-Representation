@@ -19,14 +19,15 @@
 /* The claims' names but the GEMM's, in native_pack.OPS's order. */
 enum { OP_SCAN, OP_ZERO, OP_EMBED, OP_RMS, OP_ROPE, OP_ROPE_INV, OP_ATTN, OP_ATTN_VJP, OP_ADD,
   OP_MUL, OP_PSILU, OP_SILU, OP_SILU_P, OP_SWIGLU, OP_SWIGLU_P, OP_RMSV, OP_RMSV_A, OP_RMSV_F,
-  OP_RMSV_AF, OP_LOSS, OP_SCATTER, OP_CHECK_F, OP_CHECK_R, OP_CHECK_L, OP_UPDATE, OP_GEMM };
+  OP_RMSV_AF, OP_LOSS, OP_SCATTER, OP_CHECK_F, OP_CHECK_R, OP_CHECK_L, OP_UPDATE, OP_ROPE_TABLE,
+  OP_GEMM };
 static const char *const dp_names[OP_GEMM] = {
   "train.scan", "train.zero", "train.embed", "train.rms", "train.rope", "train.rope.inverse",
   "train.attention", "train.attention.vjp", "train.add", "train.mul", "train.provider.silu",
   "train.silu_mul", "train.silu_mul.panels", "train.swiglu.vjp", "train.swiglu.vjp.panels",
   "train.rms.vjp", "train.rms.vjp.add", "train.rms.vjp.first", "train.rms.vjp.add.first",
   "train.loss", "train.scatter", "train.check.forward", "train.check.ran", "train.check.loss",
-  "train.update"};
+  "train.update", "train.rope.table"};
 /* The banks, numbered as the operand spaces: the six arenas 1-6, the workspace 7, then the
  * micro-batch's tokens and targets (both space 8, told apart by the slot that takes them). */
 enum { BANK_WORKSPACE = 7, BANK_TOKENS = 8, BANK_TARGETS = 9, DP_BANKS = 9 };
@@ -282,7 +283,7 @@ static int dp_work(const uint64_t *w, uint64_t *out) {
     return dp_mul(w[3], w[4], &x) && dp_mul(x, w[5], &x) && dp_mul(x, w[6], out);
   case BCIR_DT_REC_EMBED: case BCIR_DT_REC_SCATTER: case BCIR_DT_REC_RMS:
   case BCIR_DT_REC_RMS_VJP: case BCIR_DT_REC_LOSS: case BCIR_DT_REC_SILU_MUL_PANELS:
-  case BCIR_DT_REC_SWIGLU_VJP_PANELS:
+  case BCIR_DT_REC_SWIGLU_VJP_PANELS: case BCIR_DT_REC_ROPE_TABLE:
     return dp_mul(w[3], w[4], out);
   case BCIR_DT_REC_CHECK: *out = 1u; return 1;
   default: *out = w[3]; return 1;
@@ -310,7 +311,8 @@ static int dp_record(dp_ctx *c, const dp_claim *cl, uint64_t *w) {
   case OP_EMBED: SLOT(0, U_R, SL_TOKENS); SLOT(1, U_R, SL_PLAIN); SLOT(2, U_W, SL_PLAIN); break;
   case OP_RMS: case OP_SILU:
     SLOT(0, U_R, SL_PLAIN); SLOT(1, U_R, SL_PLAIN); SLOT(2, U_W, SL_PLAIN); break;
-  case OP_ROPE: case OP_ROPE_INV: SLOT(0, U_RW, SL_PLAIN); break;
+  case OP_ROPE: case OP_ROPE_INV: SLOT(0, U_RW, SL_PLAIN); SLOT(1, U_R, SL_PLAIN); break;
+  case OP_ROPE_TABLE: SLOT(0, U_W, SL_PLAIN); break;
   case OP_ATTN: case OP_ATTN_VJP:
     bf = c->attn_vjp == 256u;
     for (i = 0; i < 3u; i++) SLOT(i, U_R, SL_PLAIN);
@@ -396,6 +398,16 @@ static int dp_record(dp_ctx *c, const dp_claim *cl, uint64_t *w) {
     w[4] = c->t;
     w[6] = c->hd;
     w[7] = op == OP_ROPE_INV;
+    /* ROPE-TABLE: the table a rotation reads is time x head-dim floats */
+    if (!dp_mul(4u, c->t, &q) || !dp_mul(q, c->hd, &q) || w[16] != q)
+      return dp_fail(c, BCIR_DP_SHAPE);
+    break;
+  case OP_ROPE_TABLE:
+    w[0] = BCIR_DT_REC_ROPE_TABLE;
+    w[3] = c->t;
+    w[4] = c->hd;
+    if (!dp_mul(4u, c->t, &q) || !dp_mul(q, c->hd, &q) || w[13] != q)
+      return dp_fail(c, BCIR_DP_SHAPE);
     break;
   case OP_ATTN: case OP_ATTN_VJP:
     w[0] = op == OP_ATTN ? BCIR_DT_REC_ATTN : BCIR_DT_REC_ATTN_VJP;

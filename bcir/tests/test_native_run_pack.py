@@ -196,7 +196,8 @@ def _refusals(tp, pack, plan):
     transient = [p for p in tp.placements if p.bank in ("activations", "scratch")]
     spans = [p for p in transient if p.last > p.first]
     gemm = _segment(pack, "train.gemm.")
-    rope = _segment(pack, "train.rope")
+    # the rotation, in place (not the table's fill, ROPE-TABLE, which shares its prefix)
+    rope = next(i for i, seg in enumerate(pack.segments) if seg.opcode == "train.rope")
     embed = _segment(pack, "train.embed")
     lt = {x.rid: x for x in plan.lifetimes}
     # two activation values live at once: the first RMS norm's input and output

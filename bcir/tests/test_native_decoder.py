@@ -231,8 +231,9 @@ def test_native_c_harness_c11_and_c23():
             # forward's groups in the lanes (SCORES-T); the exponential's single scaling where the
             # result rounds (SOFTMAX-T); the attention in bands and its trainer (P-BANDS); the pool's
             # tasks in per-worker blocks (POOL-AFFINITY); the loss's rows with each exponential
-            # evaluated once (LOSS-ONCE)
-            assert result.stdout.count("PASS") == 45
+            # evaluated once (LOSS-ONCE); the rotation reading a table of its cosines and sines
+            # (ROPE-TABLE)
+            assert result.stdout.count("PASS") == 46
             digests = [ln.split("digests", 1)[1].split() for ln in result.stdout.splitlines()
                        if "PASS P-BANDS trainer" in ln]  # fmt: skip
             assert len(digests) == 1 and len(digests[0]) == 5, result.stdout[-2000:]
@@ -280,7 +281,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 45
+            assert result.stdout.count("PASS") == 46
             break
 
 
@@ -1436,12 +1437,12 @@ def test_the_harness_rows_are_the_programs_numbers():
     assert unselected is None or unselected == 0, unselected  # None outside a source checkout
     ratio, held, bound, incumbent = nf.transient_ratio()
     assert rows["train.memory.transient"].baseline == ratio == held / bound
-    assert (held, bound, incumbent) == (999_424, 753_664, 753_664)
+    assert (held, bound, incumbent) == (1_001_472, 755_712, 755_712)  # ROPE-TABLE's 2,048 bytes
     # PX-4: the row reads the placed pack -- its arena at the bound on the values it holds
     placed, extent, floor, optimal = nf.placed_transient()
-    assert (placed, extent, floor, optimal) == (1.0, 754_176, 754_176, True)
+    assert (placed, extent, floor, optimal) == (1.0, 756_224, 756_224, True)
     assert rows["train.memory.transient"].bound == placed
-    assert "754,176 / 754,176" in rows["train.memory.transient"].what
+    assert "756,224 / 756,224" in rows["train.memory.transient"].what
     assert rows["train.mm.mismatch"].what.startswith(f"of {len(nf.MM_CASES)} GEMM cases")
     pairs = len(nf.PLAN_CORPUS) * 2  # the parent stated activations and scratch only in C
     assert rows["train.plan.mismatch"].baseline == pairs

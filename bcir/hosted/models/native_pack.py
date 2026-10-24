@@ -47,7 +47,9 @@ A claim (the vocabulary both rails share, `OPS` and the GEMM grammar):
     train.loss                                 rd (logits, targets) wr (dlogits, the row terms)
     train.rms, train.rms.vjp[.add][.first]     the norm, and its VJP (how: dx accumulates; dgamma
                                                written first)
-    train.rope[.inverse], train.attention[.vjp], train.add, train.mul, train.provider.silu,
+    train.rope.table / train.rope[.inverse]    wr (the rotation's table: ROPE-TABLE) / rd (x, the
+                                               table) wr (x)
+    train.attention[.vjp], train.add, train.mul, train.provider.silu,
     train.silu_mul[.panels], train.swiglu.vjp[.panels], train.check.forward|ran|loss, train.update
 
 Each claim's rd lists the RIDs of its read operands and wr of its written ones, each in operand
@@ -71,7 +73,7 @@ OPS = (
     "train.silu_mul", "train.silu_mul.panels", "train.swiglu.vjp", "train.swiglu.vjp.panels",
     "train.rms.vjp", "train.rms.vjp.add", "train.rms.vjp.first", "train.rms.vjp.add.first",
     "train.loss", "train.scatter", "train.check.forward", "train.check.ran", "train.check.loss",
-    "train.update",
+    "train.update", "train.rope.table",
 )  # fmt: skip
 #: A GEMM claim's roles and orientations (its name's second and third parts).
 GEMM_ROLES = ("alone", "pair", "chain", "rest")
@@ -97,7 +99,7 @@ _SIMPLE = {
     nl.MUL: "train.mul", nl.PROVIDER_SILU: "train.provider.silu", nl.SILU_MUL: "train.silu_mul",
     nl.SILU_MUL_PANELS: "train.silu_mul.panels", nl.SWIGLU_VJP: "train.swiglu.vjp",
     nl.SWIGLU_VJP_PANELS: "train.swiglu.vjp.panels", nl.LOSS: "train.loss",
-    nl.SCATTER: "train.scatter", nl.UPDATE: "train.update",
+    nl.SCATTER: "train.scatter", nl.UPDATE: "train.update", nl.ROPE_TABLE: "train.rope.table",
 }  # fmt: skip
 _CHECKS = {
     nl.CHECK_FORWARD: "train.check.forward",
@@ -153,13 +155,13 @@ def uses(r: nl.Record) -> tuple[tuple[int, int], ...]:
                 (4, W if f & _RMSB_FIRST else RW), (5, W))  # fmt: skip
     table = {
         nl.SCAN: ((0, R),), nl.ZERO: ((0, W),), nl.EMBED: ((0, R), (1, R), (2, W)),
-        nl.RMS: ((0, R), (1, R), (2, W)), nl.ROPE: ((0, RW),), nl.ADD: ((0, R), (1, RW)),
+        nl.RMS: ((0, R), (1, R), (2, W)), nl.ROPE: ((0, RW), (1, R)), nl.ADD: ((0, R), (1, RW)),
         nl.MUL: ((0, R), (1, RW)), nl.PROVIDER_SILU: ((0, R), (1, W)),
         nl.SILU_MUL: ((0, R), (1, R), (2, W)), nl.SILU_MUL_PANELS: ((0, R), (1, R), (2, W), (3, W)),
         nl.SWIGLU_VJP: ((0, R), (1, R), (2, R), (3, W), (4, W)),
         nl.SWIGLU_VJP_PANELS: ((0, R), (1, R), (2, R), (3, W), (4, W), (5, W), (6, W)),
         nl.LOSS: ((0, R), (1, R), (2, W), (3, W)), nl.SCATTER: ((0, R), (1, R), (2, RW)),
-        nl.CHECK: (), nl.UPDATE: ((0, R), (1, RW), (2, RW), (3, RW)),
+        nl.CHECK: (), nl.UPDATE: ((0, R), (1, RW), (2, RW), (3, RW)), nl.ROPE_TABLE: ((0, W),),
     }  # fmt: skip
     if k not in table:
         raise ValueError(f"a program holds no record of kind {k}")
@@ -180,7 +182,7 @@ def work(r: nl.Record) -> int:
     if k == nl.ROPE:
         return d[0] * d[1] * d[2] * d[3]
     if k in (nl.EMBED, nl.SCATTER, nl.RMS, nl.RMS_VJP, nl.LOSS, nl.SILU_MUL_PANELS,
-             nl.SWIGLU_VJP_PANELS):  # fmt: skip
+             nl.SWIGLU_VJP_PANELS, nl.ROPE_TABLE):  # fmt: skip
         return d[0] * d[1]
     if k == nl.CHECK:
         return 1
