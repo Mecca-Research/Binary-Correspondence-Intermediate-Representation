@@ -27,8 +27,8 @@
     {
       "expects": "test_the_c_step_issues_the_planned_launches",
       "label": "AX3 the binary32 backward is called without the state's workspace",
-      "new": "      g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,dv,NULL,s->workspace_bytes)!=0;",
-      "old": "      g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,dv,attention_workspace(s),s->workspace_bytes)!=0;",
+      "new": "      attention_backward_contract(s),g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,dv,NULL,\n",
+      "old": "      attention_backward_contract(s),g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,dv,attention_workspace(s),\n",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

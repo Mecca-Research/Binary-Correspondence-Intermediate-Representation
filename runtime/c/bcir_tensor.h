@@ -145,12 +145,25 @@ BCIR_DT_API void bcir_tensor_attention_backward_inplace_pool(bcir_tensor_pool *p
  * BCIR_ATT_STRIP_FROM its strips skip the fill of their rows' future columns -- the blocks that
  * reach past a row's diagonal still store +0.0 there -- and below it the head-at-a-time forward
  * writes every column as without it; y, the verdict and every probability j <= i are as without
- * it, bit for bit. A scratch forward ignores it. Other bits are ignored, and the backward ignores
- * EXP, SCRATCH and LOWER. bad is the forward's verdict as above, or NULL. */
+ * it, bit for bit. A scratch forward ignores it. BCIR_TENSOR_ATTENTION_BANDS (P-BANDS) lays a stored
+ * forward's probabilities out in 16-row bands with the rows in the lanes, and the backward under it
+ * reads them, and leaves its score adjoints, so: row i's probability of key j at
+ * p + (batch*heads + head)*time*time + (i/16)*16*time + j*16 + i%16. A band (rows R..R+15) holds keys
+ * 0..R+15 -- its rows' probabilities j <= i, the +0.0 of its diagonal block's future lanes -- and its
+ * keys past R+15 are +0.0, or under LOWER as p held them; the backward's score adjoints sit where
+ * their probabilities sat, the future lanes as they were. The bit takes effect where the host's
+ * widest instance of the products' family is AVX-512, time is a multiple of 16 and dim at most 256 --
+ * a function of the host and the shapes, never of the instance a call names, so a forward and the
+ * backward that reads its probabilities agree whichever instances they run -- and changes nothing
+ * elsewhere; y, the verdict, dq, dk and dv are as without it, bit for bit, and so is every
+ * probability and score adjoint, only where each sits differs. A scratch forward ignores it. Other
+ * bits are ignored, and the backward ignores EXP, SCRATCH and LOWER. bad is the forward's verdict as
+ * above, or NULL. */
 #define BCIR_TENSOR_ATTENTION_EXP 1u
 #define BCIR_TENSOR_ATTENTION_FUSED 2u
 #define BCIR_TENSOR_ATTENTION_SCRATCH 8u
 #define BCIR_TENSOR_ATTENTION_LOWER 16u
+#define BCIR_TENSOR_ATTENTION_BANDS 32u
 /* The floats of p a forward under BCIR_TENSOR_ATTENTION_SCRATCH writes, at its start: a slot of
  * whole rows a (batch, query head) -- at least 32 rows or all of them, about 64K floats -- the
  * strips running through it. A caller may lend just these; SIZE_MAX where the count overflows. */

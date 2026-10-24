@@ -17,8 +17,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "PL2 the binary32 entry drops the LOWER bit it was given",
-      "new": "      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,0,iv,b,t,nh,\n",
-      "old": "      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,iv,b,t,nh,\n",
+      "new": "      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,0,\n      att_bands(",
+      "old": "      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,\n      att_bands(",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -38,8 +38,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "PL5 the probe blind to LOWER",
-      "new": "      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u));\n",
-      "old": "      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u)|(a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u));\n",
+      "new": "      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u)|\n",
+      "old": "      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u)|(a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u)|\n",
       "path": "runtime/c/bcir_tensor.c"
     }
   ]

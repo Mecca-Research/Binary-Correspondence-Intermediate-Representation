@@ -3696,15 +3696,257 @@ static void attention_lower(void) {
       "probability j <= i), every future column +0.0 or as p held it (%zu kept), the backward from them the "
       "reference's\n",cases,kept);
 }
+/* P-BANDS: under BCIR_TENSOR_ATTENTION_BANDS, where it takes effect -- the host's widest instance of the
+ * products' family AVX-512, the context a multiple of 16 and the head at most 256 channels -- a stored
+ * forward lays each head's probabilities out in 16-row bands with the rows in the lanes and the backward
+ * reads them so; elsewhere the bit changes nothing. On contexts and widths both sides of those bounds,
+ * under v1's and the fused contract's products with libm's exponential and BCIR's, with and without LOWER,
+ * the forward on every admitted instance and the backward on the same one and on the family's widest,
+ * serially and on a pool of four, without a workspace and lent the pool's need, finite and with an
+ * infinite value and a NaN adjoint, p a NaN canary first: y and the verdict the reference loops' bit for
+ * bit; every probability j <= i the reference's at its band's place (row i's key j at
+ * (i/16)*16*t + j*16 + i%16) or at its row's; a band's diagonal block's future lanes +0.0, its keys past
+ * its last row +0.0 or under LOWER the canary (the forward writes nothing there); then dq, dk, dv and every
+ * score adjoint j <= i (at its probability's place) the row path's -- the same entry without the bit, from
+ * the reference's probabilities -- and, where every input is finite, dq, dk and dv the reference backward's
+ * too, and every other float of p as the forward left it. Where an input is infinite each adjoint is the
+ * row path's bits or, where that is a NaN, a NaN: the NaNs an infinite key makes carry the sign of
+ * whichever operand an instance's kernels propagate (the portable, AVX2 and AVX-512 rows' paths, and the
+ * reference loops, already part there). The
+ * last case, 1040 positions on AVX-512, runs the backward's groups past the 1024 keys its stack keeps
+ * (each block past them evaluated twice) and lent, ATT-CONTIG's region keeping every key. Where the build
+ * has the unit's probe, every head's path is its count: the heads that ran in bands, forward and
+ * backward, and the contracts the jobs ran (BANDS among them where it took effect). */
+#ifdef BCIR_DT_ATTENTION_PROBE
+size_t bcir_tensor_attention_bands_probe(int backward);
+#endif
+static int bands_expected(unsigned ct,size_t t,size_t d) {
+  int family=(ct&BCIR_TENSOR_ATTENTION_FUSED) ? bcir_tensor_mm_fused_variants() : bcir_tensor_mm_variants();
+  return t>0 && t%16==0 && d>0 && d<=256 && (family&4)!=0;
+}
+static size_t bands_at(int banded,size_t t,size_t i,size_t j) {
+  return banded ? i/16*16*t+j*16+i%16 : i*t+j;
+}
+/* the same bits, or where `nan_ok` both NaN */
+static int bands_same(const float *a,const float *b,size_t n,int nan_ok) {
+  size_t i;
+  for (i=0;i<n;i++) if (memcmp(a+i,b+i,sizeof(float)) && !(nan_ok && isnan(a[i]) && isnan(b[i]))) return 0;
+  return 1;
+}
+static void attention_bands(void) {
+  static const size_t shapes[][5]={{1,16,1,1,4},{2,32,2,1,8},{1,48,2,2,17},{2,64,4,2,32},{1,80,2,1,48},
+      {1,96,2,2,64},{1,40,2,1,8},{1,32,2,2,257},{1,16,1,1,256},{1,112,3,1,33},{1,7,1,1,3},{1,1040,2,1,4}};
+  static const unsigned contracts[]={0u,BCIR_TENSOR_ATTENTION_EXP,BCIR_TENSOR_ATTENTION_FUSED,
+      BCIR_TENSOR_ATTENTION_EXP|BCIR_TENSOR_ATTENTION_FUSED};
+  static _Alignas(max_align_t) unsigned char pool_memory[16384];
+  const uint32_t canary=0x7fc0beefu;
+  bcir_tensor_pool *pools[2]={NULL,NULL};
+  size_t s,c,i,cases=0,banded_cases=0,mixed=0,stacked=0,canaries=0; unsigned pass;
+  {
+    size_t need=bcir_tensor_pool_size(4);
+    if (need && need<=sizeof(pool_memory)) pools[1]=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),4);
+  }
+  for (pass=0;pass<2;pass++) for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) for (c=0;c<4;c++) {
+    size_t b=shapes[s][0],t=shapes[s][1],nh=shapes[s][2],nk=shapes[s][3],d=shapes[s][4];
+    size_t nq=b*t*nh*d,nkv=b*t*nk*d,np=b*nh*t*t,most=bcir_tensor_attention_workspace(b,t,nh,nk,d),hr,row,col;
+    unsigned ct=contracts[c],low;
+    int ex=(ct&BCIR_TENSOR_ATTENTION_EXP)!=0,banded=bands_expected(ct,t,d),longest=t>1024,lend,vi;
+    int family=(ct&BCIR_TENSOR_ATTENTION_FUSED) ? bcir_tensor_mm_fused_variants() : bcir_tensor_mm_variants();
+    float *q,*k,*v,*dy,*p0,*pr,*p1,*y0,*y1,*dq0,*dq1,*dk0,*dk1,*dv0,*dv1,*dqr,*dkr,*dvr; unsigned char *raw,*ws;
+    if (DT_TSAN && t>=1024) continue;
+    if (longest && (pass || c%2)) continue;  /* the long case: v1's and the fused products, finite */
+    q=malloc(nq*sizeof(float)); k=malloc(nkv*sizeof(float)); v=malloc(nkv*sizeof(float)); dy=malloc(nq*sizeof(float));
+    p0=malloc(np*sizeof(float)); pr=malloc(np*sizeof(float)); p1=malloc(np*sizeof(float));
+    y0=malloc(nq*sizeof(float)); y1=malloc(nq*sizeof(float)); dq0=malloc(nq*sizeof(float)); dq1=malloc(nq*sizeof(float));
+    dk0=malloc(nkv*sizeof(float)); dk1=malloc(nkv*sizeof(float)); dv0=malloc(nkv*sizeof(float)); dv1=malloc(nkv*sizeof(float));
+    dqr=malloc(nq*sizeof(float)); dkr=malloc(nkv*sizeof(float)); dvr=malloc(nkv*sizeof(float)); raw=malloc(most+128);
+    assert(q && k && v && dy && p0 && pr && p1 && y0 && y1 && dq0 && dq1 && dk0 && dk1 && dv0 && dv1 && dqr && dkr &&
+        dvr && raw);
+    ws=raw+(64-(uintptr_t)raw%64)%64;
+    for (i=0;i<nq;i++) { q[i]=sinf((float)i*0.37f)*1.7f; dy[i]=cosf((float)i*0.11f)*0.5f; }
+    for (i=0;i<nkv;i++) { k[i]=cosf((float)i*0.53f)*1.3f; v[i]=sinf((float)i*0.29f)-0.1f; }
+    if (pass && t>3) { k[(t/3)*nk*d]=INFINITY; v[(t-1)*nk*d]=INFINITY; dy[d]=NAN; }
+    if (ct&BCIR_TENSOR_ATTENTION_FUSED) {
+      ref_attention_fused(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
+      ref_attention_backward_fused(b,t,nh,nk,d,q,k,v,p0,dy,dq0,dk0,dv0);
+    } else {
+      ref_attention(b,t,nh,nk,d,q,k,v,p0,y0,ex ? bcir_tensor_expf : expf);
+      ref_attention_backward(b,t,nh,nk,d,q,k,v,p0,dy,dq0,dk0,dv0);
+    }
+    /* the row path's backward: its adjoints, and its score adjoints for their places under the bit */
+    memcpy(pr,p0,np*sizeof(float));
+    assert(bcir_tensor_attention_backward_contract_variant_pool(NULL,0,ct,b,t,nh,nk,d,q,k,v,pr,dy,dqr,dkr,dvr));
+    if (!pass) assert(!memcmp(dq0,dqr,nq*sizeof(float)) && !memcmp(dk0,dkr,nkv*sizeof(float)) &&
+        !memcmp(dv0,dvr,nkv*sizeof(float)));
+    for (vi=0;vi<4;vi++) for (low=0;low<2;low++) {
+      static const int instances[4]={0,1,2,4};
+      int vf=instances[vi],vb,pi;
+      if (vf && !(family&vf)) continue;
+      if (longest && vf) continue;
+      for (vb=0;vb<2;vb++) for (pi=0;pi<2;pi++) for (lend=0;lend<2;lend++) {
+        int backward=vb ? 0 : vf,bad=0;  /* the backward on the forward's instance, or on the widest */
+        unsigned cf=ct|BCIR_TENSOR_ATTENTION_BANDS|(low ? BCIR_TENSOR_ATTENTION_LOWER : 0u);
+        unsigned cb=ct|BCIR_TENSOR_ATTENTION_BANDS;
+        size_t own=bcir_tensor_attention_pool_workspace(b,t,nh,nk,d,bcir_tensor_pool_threads(pools[pi]));
+        if (pi && !pools[pi]) continue;
+        if (vb && !vf) continue;  /* the widest already */
+        if (!longest && (pi!=lend) && vf) continue;  /* a lean sweep off the default instance */
+        for (i=0;i<np;i++) memcpy(p1+i,&canary,sizeof canary);
+        memset(y1,0xff,nq*sizeof(float));
+#ifdef BCIR_DT_ATTENTION_PROBE
+        (void)bcir_tensor_attention_bands_probe(0); (void)bcir_tensor_attention_probe(0);
+#endif
+        assert(bcir_tensor_attention_contract_variant_scan_ws_pool(pools[pi],vf,cf,b,t,nh,nk,d,q,k,v,p1,y1,&bad,
+            lend ? ws : NULL,lend ? own : 0));
+        assert(!memcmp(y0,y1,nq*sizeof(float)) && bad==!(all_finite(y1,nq) && all_finite(k,nkv)));
+#ifdef BCIR_DT_ATTENTION_PROBE
+        assert(bcir_tensor_attention_bands_probe(0)==(banded ? b*nh : 0));
+        assert(bcir_tensor_attention_probe(0)==(cf&~(banded ? 0u : BCIR_TENSOR_ATTENTION_BANDS)));
+#endif
+        for (hr=0;hr<b*nh;hr++) for (row=0;row<t;row++) {
+          const float *r0=p0+(hr*t+row)*t,*h1=p1+hr*t*t;
+          for (col=0;col<=row;col++) assert(!memcmp(r0+col,h1+bands_at(banded,t,row,col),sizeof(float)));
+          for (col=row+1;col<t;col++) {
+            uint32_t bits; int lane=banded && col<row/16*16+16;  /* the diagonal block's future lanes */
+            memcpy(&bits,h1+bands_at(banded,t,row,col),sizeof bits);
+            if (lane) assert(bits==0u);
+            else if (banded && low) { assert(bits==canary); canaries++; }
+            else assert(bits==0u || (low && bits==canary));
+          }
+        }
+        memset(dq1,0xff,nq*sizeof(float)); memset(dk1,0xff,nkv*sizeof(float)); memset(dv1,0xff,nkv*sizeof(float));
+#ifdef BCIR_DT_ATTENTION_PROBE
+        (void)bcir_tensor_attention_bands_probe(1); (void)bcir_tensor_attention_probe(1);
+#endif
+        assert(bcir_tensor_attention_backward_contract_variant_ws_pool(pools[pi],backward,cb,b,t,nh,nk,d,q,k,v,p1,dy,
+            dq1,dk1,dv1,lend ? ws : NULL,lend ? own : 0));
+#ifdef BCIR_DT_ATTENTION_PROBE
+        assert(bcir_tensor_attention_bands_probe(1)==(banded ? b*nh : 0));
+        assert(bcir_tensor_attention_probe(1)==((ct&BCIR_TENSOR_ATTENTION_FUSED)|(banded ? BCIR_TENSOR_ATTENTION_BANDS : 0u)));
+#endif
+        assert(bands_same(dqr,dq1,nq,(int)pass) && bands_same(dkr,dk1,nkv,(int)pass) &&
+            bands_same(dvr,dv1,nkv,(int)pass));
+        for (hr=0;hr<b*nh;hr++) for (row=0;row<t;row++) {
+          const float *h1=p1+hr*t*t;
+          for (col=0;col<=row;col++)
+            assert(bands_same(pr+(hr*t+row)*t+col,h1+bands_at(banded,t,row,col),1,(int)pass));
+          for (col=row+1;col<t;col++) {  /* the backward writes nothing past a row's diagonal */
+            uint32_t bits; int lane=banded && col<row/16*16+16;
+            memcpy(&bits,h1+bands_at(banded,t,row,col),sizeof bits);
+            if (lane) assert(bits==0u);
+            else if (banded && low) assert(bits==canary);
+            else assert(bits==0u || (low && bits==canary));
+          }
+        }
+        cases++;
+        if (banded) banded_cases++;
+        if (vb) mixed++;
+        if (banded && longest && !lend) stacked++;
+      }
+    }
+    free(q); free(k); free(v); free(dy); free(p0); free(pr); free(p1); free(y0); free(y1);
+    free(dq0); free(dq1); free(dk0); free(dk1); free(dv0); free(dv1); free(dqr); free(dkr); free(dvr); free(raw);
+  }
+  if (pools[1]) bcir_tensor_pool_stop(pools[1]);
+  assert(cases>0 && mixed>0);
+  /* where the host runs AVX-512 the bit takes effect, the long case among its cases off TSan */
+  if (bcir_tensor_mm_variants()&4) assert(banded_cases>0 && canaries>0 && (DT_TSAN || stacked>0));
+  else assert(banded_cases==0);
+  printf("  PASS P-BANDS: %zu stored forwards and their backwards under BANDS bit for bit (y, the verdict and every "
+      "probability j <= i the reference loops', every score adjoint at its place, dq, dk and dv the row path's), %zu "
+      "of them in bands "
+      "(%zu future keys left as p held them under LOWER, %zu long backwards past the keys a stack keeps), %zu "
+      "with the backward on another instance\n",cases,banded_cases,canaries,stacked,mixed);
+}
+/* P-BANDS in the trainer: its stored binary32 forward runs under BCIR_TENSOR_ATTENTION_LOWER and
+ * BCIR_TENSOR_ATTENTION_BANDS on every host and its backward under BANDS, the unit deciding where the
+ * bit takes effect. Over 64 positions (a multiple of 16) and heads of 4 channels, under v1's, BCIR's
+ * exponential, the fused attention and a blocked GEMM contract, three steps at one thread and four: the
+ * trained state one at both counts, every attention job of a run in bands where the host's widest
+ * instance of the attention's family is AVX-512 and none elsewhere (where the build has the unit's
+ * probe), and the state's digests printed -- the Python harness holds the default build's, where an
+ * AVX-512 host runs the bands, to the AVX2-capped build's, where no host can, bit for bit. */
+static uint64_t bands_digest(const float *x,size_t n) {
+  const unsigned char *b=(const unsigned char *)x; uint64_t h=1469598103934665603ull; size_t i;
+  for (i=0;i<n*sizeof(float);i++) { h^=b[i]; h*=1099511628211ull; }
+  return h;
+}
+static void trainer_bands(void) {
+  static const uint32_t contracts[]={0,BCIR_DT_CONTRACT_EXP,BCIR_DT_CONTRACT_ATTN,
+      BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_ATTN,
+      BCIR_DT_CONTRACT_KBLOCK|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE};
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  enum { CONTRACTS=sizeof(contracts)/sizeof(contracts[0]) };
+  bcir_decoder_adamw opt={0.01,0.9,0.95,1e-8,0.01,1.0};
+  uint64_t digests[CONTRACTS]; size_t c,i,runs=0,banded=0; unsigned threads;
+  for (c=0;c<CONTRACTS;c++) for (threads=1;threads<=4;threads+=3) {
+    bcir_decoder_spec spec={16,8,2,1,1,16,2,64,1,10000.0,1e-6};
+    bcir_decoder_state st; bcir_tensor_pool *pool=NULL; bcir_decoder_event events[3];
+    uint32_t ids[3*128],targets[3*128]; size_t need,off=128,done=0; unsigned char *raw; uint64_t h;
+    int bands=bands_expected((contracts[c]&BCIR_DT_CONTRACT_ATTN) ? BCIR_TENSOR_ATTENTION_FUSED : 0u,64,4);
+    if (threads>1) {
+      if (!bcir_tensor_pool_size(threads) || bcir_tensor_pool_size(threads)>sizeof(pool_memory)) continue;
+      pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads); assert(pool);
+    }
+    stream(ids,targets,3*128);
+    memset(&st,0,sizeof st);
+    assert(bcir_decoder_make_plan(&spec,&st.plan)==0);
+    st.weights=calloc(st.plan.parameters,sizeof(float)); st.gradients=calloc(st.plan.parameters,sizeof(float));
+    st.moment1=calloc(st.plan.parameters,sizeof(float)); st.moment2=calloc(st.plan.parameters,sizeof(float));
+    st.activations=calloc(st.plan.activations,sizeof(float)); st.scratch=calloc(st.plan.scratch,sizeof(float));
+    assert(st.weights && st.gradients && st.moment1 && st.moment2 && st.activations && st.scratch);
+    st.weight_capacity=st.gradient_capacity=st.moment1_capacity=st.moment2_capacity=st.plan.parameters;
+    st.activation_capacity=st.plan.activations; st.scratch_capacity=st.plan.scratch;
+    st.beta1_power=st.beta2_power=1.0; st.pool=pool; st.contract=contracts[c];
+    for (i=0;i<st.plan.parameters;i++) st.weights[i]=0.1f*sinf((float)(i+1)*0.37f);
+    for (i=0;i<8;i++) st.weights[off+i]=1.0f;  /* the layer's two norms and the final one */
+    off+=8+64+32+32+64; for (i=0;i<8;i++) st.weights[off+i]=1.0f;
+    off+=8+3*128; for (i=0;i<8;i++) st.weights[off+i]=1.0f;
+    need=bcir_decoder_workspace_bytes(&st.plan,st.contract);
+    raw=calloc(need+64,1); assert(raw);
+    st.workspace=need ? raw+(64-(uintptr_t)raw%64)%64 : NULL; st.workspace_bytes=need;
+#ifdef BCIR_DT_ATTENTION_PROBE
+    (void)bcir_tensor_attention_bands_probe(0); (void)bcir_tensor_attention_bands_probe(1);
+    (void)bcir_tensor_attention_probe(0); (void)bcir_tensor_attention_probe(1);
+#endif
+    assert(bcir_decoder_run(&st,&opt,ids,targets,3*128,NULL,3,events,3,&done)==0 && done==3);
+#ifdef BCIR_DT_ATTENTION_PROBE
+    {
+      unsigned ex=(contracts[c]&BCIR_DT_CONTRACT_EXP) ? BCIR_TENSOR_ATTENTION_EXP : 0u;
+      unsigned fu=(contracts[c]&BCIR_DT_CONTRACT_ATTN) ? BCIR_TENSOR_ATTENTION_FUSED : 0u;
+      unsigned bb=bands ? BCIR_TENSOR_ATTENTION_BANDS : 0u;
+      size_t heads=3*spec.batch*spec.heads*spec.layers;  /* the three steps' forwards (or backwards) */
+      assert(bcir_tensor_attention_probe(0)==(ex|fu|BCIR_TENSOR_ATTENTION_LOWER|bb));
+      assert(bcir_tensor_attention_probe(1)==(fu|bb));
+      assert(bcir_tensor_attention_bands_probe(0)==(bands ? heads : 0) &&
+          bcir_tensor_attention_bands_probe(1)==(bands ? heads : 0));
+    }
+#endif
+    h=bands_digest(st.weights,st.plan.parameters);
+    if (threads==1) digests[c]=h;
+    else assert(h==digests[c]);  /* pool identity */
+    runs++;
+    if (bands) banded++;
+    free(raw); free(st.weights); free(st.gradients); free(st.moment1); free(st.moment2);
+    free(st.activations); free(st.scratch);
+    if (pool) bcir_tensor_pool_stop(pool);
+  }
+  assert(runs>0 && (banded>0)==((bcir_tensor_mm_variants()&4)!=0));
+  printf("  PASS P-BANDS trainer: %zu runs of three steps, %zu of them with the attention in bands, the state one at "
+      "one thread and four; digests",runs,banded);
+  for (c=0;c<CONTRACTS;c++) printf(" %016llx",(unsigned long long)digests[c]);
+  printf("\n");
+}
 /* P-LOWER: a training step reads nothing of its arenas it did not write -- the probabilities past a
  * row's diagonal among them, which its stored binary32 forward leaves as the region held them from
  * BCIR_ATT_STRIP_FROM: from activations, scratch and workspace whose every float is a NaN canary
  * first, the step's loss, gradients and logits are the step's from zeroed arenas bit for bit, under
  * the v1, EXP and ATTN-FMA attention, a GEMM contract and the bf16 attention, at one and four threads,
  * over a context of 300 rows (two strips a head in the harness's -long builds, which strip at every
- * context) and of 1031 (past the threshold). And the canary is kept in the activations exactly where a
- * binary32 forward ran a strip at a time: there its strips leave the future columns; every other float
- * of the arena the step writes. */
+ * context), of 1031 (past the threshold) and of 304 (a multiple of 16: P-BANDS's bands where the host
+ * runs AVX-512). And the canary is kept in the activations exactly where a binary32 forward ran a strip
+ * at a time or in bands: there its strips, or its bands' keys past their last rows, leave the future
+ * columns; every other float of the arena the step writes. */
 static void trainer_lower(void) {
 #ifdef BCIR_ATT_STRIP_FROM
   const size_t from=BCIR_ATT_STRIP_FROM;
@@ -3715,7 +3957,7 @@ static void trainer_lower(void) {
       BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_ATTN,
       BCIR_DT_CONTRACT_KBLOCK|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_REDUCE,
       BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_EXP|BCIR_DT_CONTRACT_ATTNBF16};
-  static const uint32_t times[]={300,1031};
+  static const uint32_t times[]={300,1031,304};
   static _Alignas(max_align_t) unsigned char pool_memory[4096];
   const uint32_t canary=0x7fc0beefu;
   size_t c,ti,i,runs=0,lowered=0; unsigned threads;
@@ -3763,7 +4005,11 @@ static void trainer_lower(void) {
       assert(!memcmp(st[0].activations+st[0].plan.activations-n*16,st[1].activations+st[1].plan.activations-n*16,
           n*16*sizeof(float)));
       for (i=0;i<st[1].plan.activations;i++) { uint32_t bits; memcpy(&bits,st[1].activations+i,4); canaries+=bits==canary; }
-      assert((canaries>0)==(binary32 && spec.time>=from));
+      {  /* P-BANDS: the bands' keys past their last rows, where the bit takes effect */
+        int bands=bands_expected((contracts[c]&BCIR_DT_CONTRACT_ATTN) ? BCIR_TENSOR_ATTENTION_FUSED : 0u,spec.time,
+            spec.width/spec.heads);
+        assert((canaries>0)==(binary32 && (spec.time>=from || bands)));
+      }
       lowered+=canaries>0;
       runs++;
       for (arm=0;arm<2;arm++) {
@@ -4040,9 +4286,9 @@ int main(void) {
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();
   trainer_workspace_plan(); trainer_recompute(); pool_caps(); dispatch_entries();
   attention_scratch(); attention_contig(); attention_strips(); attention_lower(); attention_keep();
-  attention_lanes();
+  attention_lanes(); attention_bands();
   trainer_infer();
-  trainer_lower();
+  trainer_lower(); trainer_bands();
 #ifdef BCIR_DT_DIVISION_PROBE
   division_probe();
 #endif

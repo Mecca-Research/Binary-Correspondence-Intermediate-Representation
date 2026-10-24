@@ -610,10 +610,14 @@ int bcir_decoder_lower_pack(const bcir_decoder_state *s, const uint8_t *pack, si
                                                    : 0u;
   c.attn = ((s->contract & BCIR_DT_CONTRACT_EXP) ? BCIR_TENSOR_ATTENTION_EXP : 0u) |
            ((s->contract & BCIR_DT_CONTRACT_ATTN) ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
-  c.attn_vjp = (s->contract & BCIR_DT_CONTRACT_ATTNBF16) ? 256u : c.attn;
+  /* the binary32 backward under P-BANDS, the layout its stored forward's word names */
+  c.attn_vjp =
+      (s->contract & BCIR_DT_CONTRACT_ATTNBF16) ? 256u : c.attn | BCIR_TENSOR_ATTENTION_BANDS;
   /* a program's forward is a stored one: the bf16 entry's flagged 256, the binary32 entry's under
-   * P-LOWER (bcir_decoder_train.c's attention_forward_contract) */
-  c.attn |= (s->contract & BCIR_DT_CONTRACT_ATTNBF16) ? 256u : BCIR_TENSOR_ATTENTION_LOWER;
+   * P-LOWER and P-BANDS (bcir_decoder_train.c's attention_forward_contract) */
+  c.attn |= (s->contract & BCIR_DT_CONTRACT_ATTNBF16)
+                ? 256u
+                : BCIR_TENSOR_ATTENTION_LOWER | BCIR_TENSOR_ATTENTION_BANDS;
   c.v2 = (s->contract & BCIR_DT_CONTRACT_EXP) != 0;
   c.reduce = (s->contract & BCIR_DT_CONTRACT_REDUCE) != 0;
   c.provider = s->provider.mm != NULL;

@@ -698,10 +698,19 @@ static unsigned attention_contract(const bcir_decoder_state *s) {
  * reads (INFER-ATTN: bcir_decoder_forward's), whose probabilities are the entry's scratch. A stored
  * binary32 forward's reader is the binary32 backward, which reads no probability past a row's
  * diagonal, so it runs under BCIR_TENSOR_ATTENTION_LOWER (P-LOWER: its strips skip the future
- * columns' fill); the bf16 backward reads the future +0.0s as its tiles' terms. */
+ * columns' fill); the bf16 backward reads the future +0.0s as its tiles' terms. Both binary32
+ * entries take BCIR_TENSOR_ATTENTION_BANDS (P-BANDS): where the host and the shapes admit it the
+ * stored forward keeps its probabilities in 16-row bands and the backward reads them so, every
+ * value as without it; the word is the same on every host, the unit deciding where it takes effect. */
 static unsigned attention_forward_contract(const bcir_decoder_state *s,int scratch) {
   return attention_contract(s)|(scratch ? BCIR_TENSOR_ATTENTION_SCRATCH :
-      (s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 0u : BCIR_TENSOR_ATTENTION_LOWER);
+      (s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 0u :
+      BCIR_TENSOR_ATTENTION_LOWER|BCIR_TENSOR_ATTENTION_BANDS);
+}
+/* The binary32 backward's word: the attention's contract and P-BANDS, the layout its stored forward's
+ * word names */
+static unsigned attention_backward_contract(const bcir_decoder_state *s) {
+  return attention_contract(s)|BCIR_TENSOR_ATTENTION_BANDS;
 }
 static int attention_v(bcir_decoder_state *s,int variant,int scratch,size_t b,size_t t,size_t h,
     size_t kh,size_t d,const float *q,const float *k,const float *v,float *p,float *y,int *bad) {
@@ -721,8 +730,9 @@ static int attention_backward_v(bcir_decoder_state *s,int variant,geometry g,con
   if (s->contract&BCIR_DT_CONTRACT_ATTNBF16)
     return bcir_tensor_attention_bf16_backward_pool(s->pool,variant,g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,
         dq,dk,dv,s->workspace,s->workspace_bytes)!=0;
-  return bcir_tensor_attention_backward_contract_variant_ws_pool(s->pool,variant,attention_contract(s),
-      g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,dv,attention_workspace(s),s->workspace_bytes)!=0;
+  return bcir_tensor_attention_backward_contract_variant_ws_pool(s->pool,variant,
+      attention_backward_contract(s),g.b,g.t,g.h,g.kh,g.hd,q,k,v,p,dy,dq,dk,dv,attention_workspace(s),
+      s->workspace_bytes)!=0;
 }
 static int attention_backward(bcir_decoder_state *s,geometry g,const float *q,const float *k,
     const float *v,float *p,const float *dy,float *dq,float *dk,float *dv) {
@@ -1541,9 +1551,10 @@ static void px_init(px_ctx *c,bcir_decoder_state *s) {
   c->base[7]=(unsigned char *)s->workspace;
   c->len[7]=s->workspace ? s->workspace_bytes : 0;
   c->v2=(unsigned)swiglu_v2(s); c->gc=(unsigned)gemm_contract(s);
-  /* a program's forward is a stored one (P-LOWER under binary32), the bf16 entry's flagged 256 */
+  /* a program's forward is a stored one (P-LOWER and P-BANDS under binary32), the bf16 entry's
+   * flagged 256 */
   c->attn=attention_forward_contract(s,0)|((s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : 0u);
-  c->attn_vjp=(s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : attention_contract(s);
+  c->attn_vjp=(s->contract&BCIR_DT_CONTRACT_ATTNBF16) ? 256u : attention_backward_contract(s);
 }
 static int px_fits(uint64_t x) {
 #if SIZE_MAX < UINT64_MAX

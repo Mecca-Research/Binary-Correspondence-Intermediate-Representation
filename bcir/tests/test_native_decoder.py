@@ -175,6 +175,9 @@ def test_native_c_harness_c11_and_c23():
                 "-contig",
             ),
         )
+        # P-BANDS: the trainer's state digests from every build, where the bands take effect (an
+        # AVX-512 host's default builds) and where none can (the AVX2-capped build): one set
+        trained = {}
         for standard, options, tag in builds:
             exe = Path(temporary) / f"gate-{standard}{tag}"
             cmd = [
@@ -224,8 +227,13 @@ def test_native_c_harness_c11_and_c23():
             # training step from NaN-filled arenas (P-LOWER); the backward's kept tiles (BWD-KEEP);
             # the blocked GEMM's tasks, chunks, edge blocks and job order (MM-ROWS); the scratch
             # forward's groups in the lanes (SCORES-T); the exponential's single scaling where the
-            # result rounds (SOFTMAX-T)
-            assert result.stdout.count("PASS") == 41
+            # result rounds (SOFTMAX-T); the attention in bands and its trainer (P-BANDS)
+            assert result.stdout.count("PASS") == 43
+            digests = [ln.split("digests", 1)[1].split() for ln in result.stdout.splitlines()
+                       if "PASS P-BANDS trainer" in ln]  # fmt: skip
+            assert len(digests) == 1 and len(digests[0]) == 5, result.stdout[-2000:]
+            trained[f"{standard}{tag}"] = tuple(digests[0])
+        assert len(set(trained.values())) == 1, trained
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -266,7 +274,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 41
+            assert result.stdout.count("PASS") == 43
             break
 
 

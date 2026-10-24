@@ -2731,6 +2731,7 @@ typedef struct att_job {
   int scratch;  /* INFER-ATTN: the forward's probabilities are scratch, a strip of rows at a time */
   int strips;  /* FWD-STRIP: a stored forward's heads a strip of rows at a time, in place */
   int lower;  /* P-LOWER: its strips leave their rows' future columns to the blocks that reach them */
+  int bands;  /* P-BANDS: a stored head's probabilities in 16-row bands, the rows in the lanes (att_bands) */
   unsigned char *bad;  /* the forward's verdict bytes, one a task (NDT-SCAN-W), or NULL */
   /* ATT-CONTIG: the regions a task copies its head's rows into (NULL: the rows in place), a
    * region's bytes, a region a worker or a task; acc: a sub-job's dk and dv add its head's terms to
@@ -3403,9 +3404,10 @@ static size_t attention_lanes_seen;  /* SCORES-T: the 16-row groups a scratch fo
  * and context with its rows in the lanes (att512_tscores, att512_tsoftmax, att512_tcontext), its
  * blocks in the slot s: the AVX-512 instance under the exp contract, i1 a multiple of 16 (whole
  * groups, none of them the v1 kernel's rows) and a head of at most BCIR_ATT_TQ channels. A stored
- * forward keeps the row path: its probabilities must reach p's rows, and transposing them out cost
- * what the transposes saved (measured: parity at T2048). Every value is the row path's. Since
- * SOFTMAX-T the group's softmax takes one pass and leaves its division to the context. */
+ * forward keeps the row path where its probabilities must reach p's rows -- transposing them out cost
+ * what the transposes saved (measured: parity at T2048) -- and under P-BANDS computes these groups in
+ * p's own bands (att_head_bands). Every value is the row path's. Since SOFTMAX-T the group's softmax
+ * takes one pass and leaves its division to the context. */
 static void att_strip_lanes(const att_job *a, size_t r, size_t h, size_t i0, size_t i1, float *s) {
   size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),ldq=nh*d,ldk=nk*d,R;
   const float *q=a->q+(r*t*nh+h)*d,*k=a->k+(r*t*nk+kh)*d,*v=a->v+(r*t*nk+kh)*d;
@@ -3422,6 +3424,124 @@ static void att_strip_lanes(const att_job *a, size_t r, size_t h, size_t i0, siz
 #endif
 }
 #endif
+/* P-BANDS (BCIR_TENSOR_ATTENTION_BANDS): a stored head's probabilities in 16-row bands with the rows in the
+ * lanes -- band R (rows R..R+15, R a multiple of 16) at p + R*t, key j's sixteen probabilities at + j*16, row
+ * R+u in lane u: SCORES-T's layout, so a stored forward computes its groups where they stay and the backward's
+ * walks over p read whole lines in order (the transposed products' 8-row blocks a band's eight keys side by
+ * side, the dots and the score adjoints a key's sixteen rows as one vector) where the rows' layout walked 32
+ * rows of p at once and transposed every 16 x 16 block for the dots. A band holds keys 0..R+15 -- its rows'
+ * lower triangle and diagonal block, that block's future lanes +0.0 -- and its keys past R+15 +0.0, or under
+ * LOWER as p held them. Where the bit takes effect is the host's and the shapes' (att_bands), never the
+ * instance a call names, so a forward and the backward that reads its probabilities agree whichever instances
+ * they run; every value is the rows' layout's bit for bit, only where each sits differs. */
+#define ATT_PB(pb,t,i,j) ((pb)[((i)/16)*16*(t)+(j)*16+(i)%16])
+static int att_bands(unsigned contract, size_t t, size_t d) {
+#ifdef BCIR_MM_DISPATCH
+  int fused=(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0;
+  return (contract&BCIR_TENSOR_ATTENTION_BANDS)!=0 && t>0 && t%16==0 && d>0 && d<=BCIR_ATT_TQ &&
+      (fused ? mm_widest_fused() : mm_widest())==4;
+#else
+  (void)contract; (void)t; (void)d;
+  return 0;
+#endif
+}
+#ifdef BCIR_DT_ATTENTION_PROBE
+static size_t attention_bands_seen[2];  /* P-BANDS: the heads the stored forwards [0] and backwards [1] ran in bands */
+#endif
+#ifdef BCIR_MM_DISPATCH
+/* P-BANDS: a group's raw scores' maxima by lane (att512_tsoftmax's masked VMAXPS, the scalar
+ * `x > max ? x : max`), then scaled */
+__attribute__((target("avx512f"))) static void att512_tmax(size_t R, float scale, const float *sg, float *m) {
+  __m512 mx=_mm512_set1_ps(-INFINITY); size_t jb,c;
+  for (jb=0;jb<=R;jb+=16) for (c=0;c<16;c++) {
+    __mmask16 k=(__mmask16)(jb<R ? 0xffffu : (0xffffu<<c)&0xffffu);
+    __m512 x=_mm512_loadu_ps(sg+(jb+c)*16);
+    mx=_mm512_mask_max_ps(mx,k,x,mx);
+  }
+  _mm512_storeu_ps(m,_mm512_mul_ps(mx,_mm512_set1_ps(scale)));
+}
+/* P-BANDS: a group's softmax under libm's expf, att_softmax_block's 16-row arithmetic on the blocks as they
+ * stand: each element expf(x*scale - max) where its lane takes the key and +0.0 elsewhere, the sums by lane in
+ * key order, the division the context's (att512_tdiv). Plain C, so libm's calls keep no vector live. */
+static void att_tsoftmax_libm(size_t R, float scale, float *sg, float *sums) {
+  float m[16]; size_t j,u;
+  att512_tmax(R,scale,sg,m);
+  for (u=0;u<16;u++) sums[u]=0.0f;
+  for (j=0;j<R;j++) {
+    float *b=sg+j*16;
+    for (u=0;u<16;u++) { float x=expf(b[u]*scale-m[u]); b[u]=x; sums[u]+=x; }
+  }
+  for (j=R;j<R+16;j++) {
+    float *b=sg+j*16;
+    for (u=0;u<16;u++) if (j-R<=u) { float x=expf(b[u]*scale-m[u]); b[u]=x; sums[u]+=x; } else b[u]=0.0f;
+  }
+}
+/* P-BANDS on the AVX-512 instance: a stored head a 16-row group at a time in its own band -- SCORES-T's
+ * scores, softmax and context (att_strip_lanes) with the group's slot the band, so its probabilities stay
+ * where the group computed and divided them; under v1's exponential the libm softmax above. */
+static void att_head_bands512(const att_job *a, size_t r, size_t h) {
+  size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),ldq=nh*d,ldk=nk*d,R;
+  const float *q=a->q+(r*t*nh+h)*d,*k=a->k+(r*t*nk+kh)*d,*v=a->v+(r*t*nk+kh)*d;
+  float *y=a->y+(r*t*nh+h)*d,*ph=a->p+(r*nh+h)*t*t,scale=1.0f/sqrtf((float)d);
+  _Alignas(64) float qt[BCIR_ATT_TQ*16],sums[16];
+  for (R=0;R<t;R+=16) {
+    float *s=ph+R*t;
+    if (!a->lower && R+16<t) memset(s+(R+16)*16,0,(t-R-16)*16*sizeof(float));
+    att512_tq(d,q+R*ldq,ldq,qt);
+    (a->fused ? att512_tscores_fma : att512_tscores)(R,d,qt,k,ldk,s);
+    if (a->exp2) att512_tsoftmax(R,scale,s,sums);
+    else att_tsoftmax_libm(R,scale,s,sums);
+    (a->fused ? att512_tcontext_fma : att512_tcontext)(R,d,s,sums,v,ldk,y,ldq);
+  }
+}
+#endif
+/* P-BANDS on the instances without the lanes' kernels: the same values an element at a time -- a score its
+ * channels' products in order from +0.0 (one rounded product and one rounded sum a channel, or fmaf), then
+ * scaled; the row's running maximum of them, each element exp1 or expf of its score less it, their sum in key
+ * order and the division (att_softmax_block's scalar row); a context element its keys' p_ij v_j in order from
+ * +0.0 -- the band's future lanes +0.0, its keys past R+15 +0.0 or under LOWER as p held them. */
+static void att_head_bands_scalar(const att_job *a, size_t r, size_t h) {
+  size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),ldq=nh*d,ldk=nk*d,R,u,j,c;
+  const float *q=a->q+(r*t*nh+h)*d,*k=a->k+(r*t*nk+kh)*d,*v=a->v+(r*t*nk+kh)*d;
+  float *y=a->y+(r*t*nh+h)*d,*ph=a->p+(r*nh+h)*t*t,scale=1.0f/sqrtf((float)d);
+  int f=a->fused;
+  for (R=0;R<t;R+=16) {
+    float *band=ph+R*t;
+    for (u=0;u<16;u++) {
+      size_t i=R+u; float maxv=-INFINITY,sum=0.0f; const float *qi=q+i*ldq;
+      for (j=0;j<=i;j++) {
+        const float *kj=k+j*ldk; float s=0.0f;
+        for (c=0;c<d;c++) s=f ? fmaf(qi[c],kj[c],s) : s+qi[c]*kj[c];
+        s*=scale; band[j*16+u]=s;
+        if (s>maxv) maxv=s;
+      }
+      for (j=0;j<=i;j++) {
+        float x=band[j*16+u]-maxv;
+        x=a->exp2 ? exp1(x) : expf(x);
+        band[j*16+u]=x; sum+=x;
+      }
+      for (j=0;j<=i;j++) band[j*16+u]/=sum;
+      for (j=i+1;j<R+16;j++) band[j*16+u]=0.0f;
+      for (c=0;c<d;c++) {
+        float acc=0.0f;
+        for (j=0;j<=i;j++) acc=f ? fmaf(band[j*16+u],v[j*ldk+c],acc) : acc+band[j*16+u]*v[j*ldk+c];
+        y[i*ldq+c]=acc;
+      }
+    }
+    if (!a->lower && R+16<t) memset(band+(R+16)*16,0,(t-R-16)*16*sizeof(float));
+  }
+}
+static void att_head_bands(const att_job *a, size_t r, size_t h) {
+#ifdef BCIR_DT_ATTENTION_PROBE
+  (void)__atomic_fetch_add(&attention_bands_seen[0],(size_t)1,__ATOMIC_RELAXED);
+#endif
+#ifdef BCIR_MM_DISPATCH
+  if (a->variant==4) att_head_bands512(a,r,h);
+  else
+#endif
+  att_head_bands_scalar(a,r,h);
+  if (a->bad) att_verdict(a,r,h);
+}
 static void att_strip(const att_job *a, size_t r, size_t h, size_t i0, size_t i1, float *s) {
   size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),ldq=nh*d,ldk=nk*d,v0=i0,i;
   const float *q=a->q+(r*t*nh+h)*d,*k=a->k+(r*t*nk+kh)*d,*v=a->v+(r*t*nk+kh)*d;
@@ -3512,6 +3632,7 @@ static void att_task(void *ctx, size_t task) {
   att_job *a=(att_job *)ctx;
   INSTANCE_SAW(INSTANCE_ATTN,a->variant);
   if (a->scratch) att_head_scratch(a,task/a->nh,task%a->nh);
+  else if (a->bands) att_head_bands(a,task/a->nh,task%a->nh);  /* P-BANDS */
   else if (a->strips) att_head_strips(a,task/a->nh,task%a->nh);  /* FWD-STRIP */
   else att_head(a,task/a->nh,task%a->nh);
 }
@@ -3600,6 +3721,7 @@ static void att_task_contig(const att_job *a, size_t task, unsigned worker) {
   s.b=1; s.nh=1; s.nk=1; s.group=1; s.q=qc; s.k=kc; s.v=vc; s.y=yc; s.bad=NULL; s.ws=NULL;
   s.p=a->p+(r*nh+h)*(a->scratch ? att_scratch_rows(t) : t)*t;
   if (a->scratch) att_head_scratch(&s,0,0);
+  else if (a->bands) att_head_bands(&s,0,0);  /* P-BANDS */
   else if (a->strips) att_head_strips(&s,0,0);  /* FWD-STRIP */
   else att_head(&s,0,0);
   att_rows_out(a->y+(r*t*nh+h)*d,yc,t,d,nh*d);
@@ -3651,23 +3773,32 @@ size_t bcir_tensor_attention_lanes_probe(void);
 size_t bcir_tensor_attention_lanes_probe(void) {
   return __atomic_exchange_n(&attention_lanes_seen,(size_t)0,__ATOMIC_RELAXED);
 }
+/* P-BANDS' record: the heads the stored forwards (0) or the backwards (1) ran in bands since the last read
+ * of that side (a read starts it again) -- the layout the values cannot show */
+size_t bcir_tensor_attention_bands_probe(int backward);
+size_t bcir_tensor_attention_bands_probe(int backward) {
+  return __atomic_exchange_n(&attention_bands_seen[backward ? 1 : 0],(size_t)0,__ATOMIC_RELAXED);
+}
 #endif
 /* `variant` resolved (mm_instance over the products' family: the fused GEMM's under FUSED, v1's
  * otherwise); `scratch` the INFER-ATTN forward, its probabilities a strip at a time; `lower` the
- * caller's P-LOWER word, which a stored forward takes (a scratch forward's p is no one's to read) */
+ * caller's P-LOWER word, which a stored forward takes (a scratch forward's p is no one's to read);
+ * `bands` att_bands' verdict on the caller's word (P-BANDS), which a stored forward takes alike */
 static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int scratch, int lower,
-    int variant, size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k,
-    const float *v, float *p, float *y, int *bad, void *workspace, size_t room) {
+    int bands, int variant, size_t b, size_t t, size_t nh, size_t nk, size_t d, const float *q,
+    const float *k, const float *v, float *p, float *y, int *bad, void *workspace, size_t room) {
   att_job a; unsigned char bytes[BCIR_TENSOR_SCAN_TASKS]; size_t tasks=b*nh;
   a.b=b; a.t=t; a.nh=nh; a.nk=nk; a.d=d; a.group=1; a.q=q; a.k=k; a.v=v; a.dy=NULL; a.p=p; a.y=y;
   a.dq=NULL; a.dk=NULL; a.dv=NULL; a.exp2=exp2; a.fused=fused; a.scratch=scratch;
   a.variant=variant;
   a.strips=!scratch && t>=BCIR_ATT_STRIP_FROM;  /* FWD-STRIP */
   a.lower=lower && !scratch;  /* P-LOWER */
+  a.bands=bands && !scratch;  /* P-BANDS */
   a.keep=NULL;
 #ifdef BCIR_DT_ATTENTION_PROBE
   attention_saw(0,(a.exp2 ? BCIR_TENSOR_ATTENTION_EXP : 0u)|(a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u)|
-      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u)|(a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u));
+      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u)|(a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u)|
+      (a.bands ? BCIR_TENSOR_ATTENTION_BANDS : 0u));
 #endif
   a.bad=scan_bytes(bad,bytes,tasks);
   att_ctg_setup(&a,pool,tasks,workspace,room);  /* ATT-CONTIG */
@@ -3678,21 +3809,21 @@ static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int scrat
 }
 void bcir_tensor_attention_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,0,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL,NULL,0);
+  attention_any(pool,0,0,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL,NULL,0);
 }
 void bcir_tensor_attention_v2_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh, size_t nk,
     size_t d, const float *q, const float *k, const float *v, float *p, float *y) {
-  attention_any(pool,1,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL,NULL,0);
+  attention_any(pool,1,0,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,NULL,NULL,0);
 }
 void bcir_tensor_attention_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
     size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
     int *bad) {
-  attention_any(pool,0,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad,NULL,0);
+  attention_any(pool,0,0,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad,NULL,0);
 }
 void bcir_tensor_attention_v2_scan_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t nh,
     size_t nk, size_t d, const float *q, const float *k, const float *v, float *p, float *y,
     int *bad) {
-  attention_any(pool,1,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad,NULL,0);
+  attention_any(pool,1,0,0,0,0,mm_instance(MM_V1,0),b,t,nh,nk,d,q,k,v,p,y,bad,NULL,0);
 }
 void bcir_tensor_attention_contract_scan_pool(bcir_tensor_pool *pool, unsigned contract, size_t b,
     size_t t, size_t nh, size_t nk, size_t d, const float *q, const float *k, const float *v,
@@ -3711,8 +3842,8 @@ int bcir_tensor_attention_contract_variant_scan_ws_pool(bcir_tensor_pool *pool, 
   int fused=(contract&BCIR_TENSOR_ATTENTION_FUSED)!=0,iv=mm_instance(fused ? MM_FUSED : MM_V1,variant);
   if (!iv) return 0;
   attention_any(pool,(contract&BCIR_TENSOR_ATTENTION_EXP)!=0,fused,
-      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,iv,b,t,nh,
-      nk,d,q,k,v,p,y,bad,workspace,bytes);
+      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,
+      att_bands(contract,t,d),iv,b,t,nh,nk,d,q,k,v,p,y,bad,workspace,bytes);
   return iv;
 }
 void bcir_tensor_attention(size_t b, size_t t, size_t nh, size_t nk, size_t d,
@@ -3781,6 +3912,212 @@ static size_t att_keep_floats(size_t t) {
 #ifndef BCIR_ATT_WHOLE
 #define BCIR_ATT_WHOLE BCIR_ATT_PANEL
 #endif
+#ifdef BCIR_MM_DISPATCH
+/* P-BANDS: att512_tr_block's arithmetic over banded probabilities -- term i's values for the rows j0..j0+7
+ * read side by side from its band, at pb + (i/16)*16*t + (j0+r)*16 + i%16 -- every other operand, and every
+ * element's terms in their order, as there */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_btr_block(int f, int nv, size_t j0, size_t ib,
+    size_t ie, size_t c0, size_t t, const float *pb, const float *x, size_t ldx, float *out, size_t ldo,
+    int zero, __mmask16 m0, __mmask16 m1, __mmask16 m2) {
+  __m512 a0[8],a1[8],a2[8]; size_t r,i,di; int diag=j0>=ib;  /* the block's diagonal in the band */
+  for (r=0;r<8;r++) {
+    const float *ob=out+(j0+r)*ldo+c0;
+    a0[r]=_mm512_maskz_loadu_ps(zero ? 0 : m0,ob);
+    if (nv>1) a1[r]=_mm512_maskz_loadu_ps(zero ? 0 : m1,ob+16);
+    if (nv>2) a2[r]=_mm512_maskz_loadu_ps(zero ? 0 : m2,ob+32);
+  }
+  for (di=0;diag && di<7;di++) {  /* term j0+di: the rows r <= di */
+    size_t ii=j0+di; const float *xi=x+ii*ldx+c0,*mi=pb+(ii/16)*16*t+ii%16+j0*16;
+    __m512 b0=_mm512_maskz_loadu_ps(m0,xi),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();
+    if (nv>1) b1=_mm512_maskz_loadu_ps(m1,xi+16);
+    if (nv>2) b2=_mm512_maskz_loadu_ps(m2,xi+32);
+    for (r=0;r<8;r++) {  /* the rows r <= di, the others masked out */
+      __mmask16 take=(__mmask16)(di>=r ? 0xffffu : 0u);
+      __m512 pv=_mm512_set1_ps(mi[r*16]);
+      a0[r]=ATT_MADD_MASK(f,a0[r],take,pv,b0);
+      if (nv>1) a1[r]=ATT_MADD_MASK(f,a1[r],take,pv,b1);
+      if (nv>2) a2[r]=ATT_MADD_MASK(f,a2[r],take,pv,b2);
+    }
+  }
+  for (i=diag ? j0+7 : ib;i<ie;i++) {  /* all eight rows take term i */
+    const float *xi=x+i*ldx+c0,*mi=pb+(i/16)*16*t+i%16+j0*16;
+    __m512 b0=_mm512_maskz_loadu_ps(m0,xi),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();
+    if (nv>1) b1=_mm512_maskz_loadu_ps(m1,xi+16);
+    if (nv>2) b2=_mm512_maskz_loadu_ps(m2,xi+32);
+    for (r=0;r<8;r++) {
+      __m512 pv=_mm512_set1_ps(mi[r*16]);
+      a0[r]=ATT_MADD(f,a0[r],pv,b0);
+      if (nv>1) a1[r]=ATT_MADD(f,a1[r],pv,b1);
+      if (nv>2) a2[r]=ATT_MADD(f,a2[r],pv,b2);
+    }
+  }
+  for (r=0;r<8;r++) {
+    float *ob=out+(j0+r)*ldo+c0;
+    _mm512_mask_storeu_ps(ob,m0,a0[r]);
+    if (nv>1) _mm512_mask_storeu_ps(ob+16,m1,a1[r]);
+    if (nv>2) _mm512_mask_storeu_ps(ob+32,m2,a2[r]);
+  }
+}
+/* P-BANDS: att512_transposed_any's walk (BWD-BAND's bands of terms from BCIR_ATT_BAND_FROM positions, every
+ * block a band reaches taking the band's terms before the next) over banded probabilities: a band's 32 terms
+ * are two of p's bands, so a block reads two runs of eight lines in order where the rows' layout read 32 rows */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_btransposed_any(int f, size_t t, size_t d,
+    const float *pb, const float *x, size_t ldx, float *out, size_t ldo, int first) {
+  size_t c0,j0,ib,band=t<BCIR_ATT_BAND_FROM ? t : BCIR_ATT_BAND;
+  for (c0=0;c0<d;c0+=48) {
+    size_t nc=d-c0<48 ? d-c0 : 48;
+    __mmask16 m0=att512_lanes(nc),m1=att512_lanes(nc>16 ? nc-16 : 0),m2=att512_lanes(nc>32 ? nc-32 : 0);
+    for (ib=0;ib<t;ib+=band) {
+      size_t ie=ib+band<t ? ib+band : t;
+      for (j0=0;j0<ie;j0+=8) {
+        int zero=first && j0>=ib;  /* its first band */
+        if (nc>32) att512_btr_block(f,3,j0,ib,ie,c0,t,pb,x,ldx,out,ldo,zero,m0,m1,m2);
+        else if (nc>16) att512_btr_block(f,2,j0,ib,ie,c0,t,pb,x,ldx,out,ldo,zero,m0,m1,m2);
+        else att512_btr_block(f,1,j0,ib,ie,c0,t,pb,x,ldx,out,ldo,zero,m0,m1,m2);
+      }
+    }
+  }
+}
+__attribute__((target("avx512f"))) static void att512_btransposed(size_t t, size_t d, const float *pb,
+    const float *x, size_t ldx, float *out, size_t ldo, int first) {
+  att512_btransposed_any(0,t,d,pb,x,ldx,out,ldo,first);
+}
+__attribute__((target("avx512f"))) static void att512_btransposed_fma(size_t t, size_t d, const float *pb,
+    const float *x, size_t ldx, float *out, size_t ldo, int first) {
+  att512_btransposed_any(1,t,d,pb,x,ldx,out,ldo,first);
+}
+/* P-BANDS: one 16-key block of a group's probability adjoints with the rows in the lanes -- dp_uj = dy_u . v_j
+ * from +0.0 over the channels in order (att512_dp_any's terms), the group's dy transposed in dyt (d x 16), each
+ * key's channel broadcast: the scores' kernel (att512_tscores_any) over dy and v */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_bdp_block(int f, size_t d, const float *dyt,
+    const float *vb, size_t ldv, __m512 *acc) {
+  size_t c,kk;
+  for (kk=0;kk<16;kk++) acc[kk]=_mm512_setzero_ps();
+  for (c=0;c<d;c++) {
+    __m512 dv=_mm512_load_ps(dyt+c*16);
+    for (kk=0;kk<16;kk++) acc[kk]=ATT_MADD(f,acc[kk],dv,_mm512_set1_ps(vb[kk*ldv+c]));
+  }
+}
+/* P-BANDS: a 16-row group of the backward in its band. Pass 0: each 16-key block's adjoints, kept at kb + j*16
+ * for the keys below `kept`, and the rows' dots sum_j p_uj dp_uj in key order on the way (att512_dot_any's
+ * masked terms: no transpose, the probabilities' lanes their rows already). Pass 1: the score adjoints
+ * p (dp - dot) scale in place where the lane takes the key (the diagonal block's future lanes as they were), a
+ * block past `kept` evaluated again -- the same bits. Then dQ of the group's rows from its band while it is in
+ * cache: att512_tctx_block's terms in its order from +0.0, with no division. */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_bgroup_any(int f, size_t R, size_t d, float scale,
+    const float *dy, size_t ldy, const float *v, const float *k, size_t ldk, float *band, float *kb, size_t kept,
+    float *dq, size_t ldq) {
+  _Alignas(64) float dyt[BCIR_ATT_TQ*16]; __m512 dot=_mm512_setzero_ps(),sc=_mm512_set1_ps(scale);
+  size_t jb,kk,c0,rb;
+  att512_tq(d,dy+R*ldy,ldy,dyt);
+  for (jb=0;jb<=R;jb+=16) {
+    __m512 acc[16];
+    att512_bdp_block(f,d,dyt,v+jb*ldk,ldk,acc);
+    for (kk=0;kk<16;kk++) {
+      __mmask16 m=(__mmask16)(jb<R ? 0xffffu : (0xffffu<<kk)&0xffffu);
+      if (jb<kept) _mm512_storeu_ps(kb+(jb+kk)*16,acc[kk]);
+      dot=ATT_MADD_MASK(f,dot,m,_mm512_loadu_ps(band+(jb+kk)*16),acc[kk]);
+    }
+  }
+  for (jb=0;jb<=R;jb+=16) {
+    __m512 acc[16];
+    if (jb<kept) for (kk=0;kk<16;kk++) acc[kk]=_mm512_loadu_ps(kb+(jb+kk)*16);
+    else att512_bdp_block(f,d,dyt,v+jb*ldk,ldk,acc);
+    for (kk=0;kk<16;kk++) {
+      size_t j=jb+kk; __mmask16 m=(__mmask16)(jb<R ? 0xffffu : (0xffffu<<kk)&0xffffu);
+      __m512 p=_mm512_loadu_ps(band+j*16);
+      _mm512_mask_storeu_ps(band+j*16,m,_mm512_mul_ps(_mm512_mul_ps(p,_mm512_sub_ps(acc[kk],dot)),sc));
+    }
+  }
+  for (c0=0;c0<d;c0+=48) {
+    size_t nc=d-c0<48 ? d-c0 : 48;
+    __mmask16 m0=att512_lanes(nc),m1=att512_lanes(nc>16 ? nc-16 : 0),m2=att512_lanes(nc>32 ? nc-32 : 0);
+    for (rb=0;rb<16;rb+=8) {
+      if (nc>32) att512_tctx_block(f,3,R,rb,c0,band,(size_t)-1,sc,k,ldk,dq,ldq,m0,m1,m2);
+      else if (nc>16) att512_tctx_block(f,2,R,rb,c0,band,(size_t)-1,sc,k,ldk,dq,ldq,m0,m1,m2);
+      else att512_tctx_block(f,1,R,rb,c0,band,(size_t)-1,sc,k,ldk,dq,ldq,m0,m1,m2);
+    }
+  }
+}
+__attribute__((target("avx512f"))) static void att512_bgroup(size_t R, size_t d, float scale, const float *dy,
+    size_t ldy, const float *v, const float *k, size_t ldk, float *band, float *kb, size_t kept, float *dq,
+    size_t ldq) {
+  att512_bgroup_any(0,R,d,scale,dy,ldy,v,k,ldk,band,kb,kept,dq,ldq);
+}
+__attribute__((target("avx512f"))) static void att512_bgroup_fma(size_t R, size_t d, float scale, const float *dy,
+    size_t ldy, const float *v, const float *k, size_t ldk, float *band, float *kb, size_t kept, float *dq,
+    size_t ldq) {
+  att512_bgroup_any(1,R,d,scale,dy,ldy,v,k,ldk,band,kb,kept,dq,ldq);
+}
+/* P-BANDS on the AVX-512 instance: one (batch, query head) of the backward over its banded probabilities --
+ * dV = P^T dY, then a 16-row group at a time its adjoints, dots, score adjoints and dQ, then dK = dS^T Q; every
+ * accumulator the rows' layout's terms in their order. kb: the group's adjoint blocks, in the task's region
+ * (BWD-KEEP's room, every key) or in the `room` floats the caller lends (keys past them evaluated twice). */
+static void att_head_backward_bands512(const att_job *a, size_t r, size_t h, float *stack, size_t room) {
+  size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),ldh=nh*d,ldk=nk*d,R,kept;
+  float scale=1.0f/sqrtf((float)d),*ph=a->p+(r*nh+h)*t*t,*kb;
+  const float *qh=a->q+(r*t*nh+h)*d,*dyh=a->dy+(r*t*nh+h)*d,*kk=a->k+(r*t*nk+kh)*d,*vk=a->v+(r*t*nk+kh)*d;
+  float *dqh=a->dq+(r*t*nh+h)*d,*dkh=a->dk+(r*t*nk+kh)*d,*dvh=a->dv+(r*t*nk+kh)*d;
+  int first=h%(nh/nk)==0 && !a->acc;  /* dk and dv from +0.0: the KV head's first query head */
+  if (a->keep) { kb=a->keep; kept=t; }
+  else { kb=stack; kept=stack ? room/16/16*16 : 0; }
+  (a->fused ? att512_btransposed_fma : att512_btransposed)(t,d,ph,dyh,ldh,dvh,ldk,first);
+  for (R=0;R<t;R+=16)
+    (a->fused ? att512_bgroup_fma : att512_bgroup)(R,d,scale,dyh,ldh,vk,kk,ldk,ph+R*t,kb,kept,dqh,ldh);
+  (a->fused ? att512_btransposed_fma : att512_btransposed)(t,d,ph,qh,ldh,dkh,ldk,first);
+}
+#endif
+/* P-BANDS on the instances without the lanes' kernels: the backward's values an element at a time over banded
+ * probabilities -- dv_j's terms p_ij dy_i over i >= j ascending onto what dv holds; a row's dot sum_j p_ij
+ * dp_ij in key order from +0.0, each dp_ij = dy_i . v_j from +0.0 over the channels in order, evaluated again
+ * for its score adjoint p_ij (dp_ij - dot_i) scale in place; dq_i's terms ds_ij k_j over j <= i and dk_j's
+ * ds_ij q_i over i >= j, each in order onto what it holds -- one rounded product and one rounded sum a term, or
+ * fmaf: the rows' layout's arithmetic, its kernels' order. */
+#define ATT_MA(f,acc,a,b) ((f) ? fmaf((a),(b),(acc)) : (acc)+(a)*(b))
+static void att_head_backward_bands_scalar(const att_job *a, size_t r, size_t h) {
+  size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),ldh=nh*d,ldk=nk*d,i,j,c;
+  float scale=1.0f/sqrtf((float)d),*ph=a->p+(r*nh+h)*t*t; int f=a->fused;
+  const float *qh=a->q+(r*t*nh+h)*d,*dyh=a->dy+(r*t*nh+h)*d,*kk=a->k+(r*t*nk+kh)*d,*vk=a->v+(r*t*nk+kh)*d;
+  float *dqh=a->dq+(r*t*nh+h)*d,*dkh=a->dk+(r*t*nk+kh)*d,*dvh=a->dv+(r*t*nk+kh)*d;
+  for (j=0;j<t;j++) for (c=0;c<d;c++) {
+    float acc=dvh[j*ldk+c];
+    for (i=j;i<t;i++) acc=ATT_MA(f,acc,ATT_PB(ph,t,i,j),dyh[i*ldh+c]);
+    dvh[j*ldk+c]=acc;
+  }
+  for (i=0;i<t;i++) {
+    const float *dyi=dyh+i*ldh; float dot=0.0f;
+    for (j=0;j<=i;j++) {
+      const float *vj=vk+j*ldk; float dp=0.0f;
+      for (c=0;c<d;c++) dp=ATT_MA(f,dp,dyi[c],vj[c]);
+      dot=ATT_MA(f,dot,ATT_PB(ph,t,i,j),dp);
+    }
+    for (j=0;j<=i;j++) {
+      const float *vj=vk+j*ldk; float dp=0.0f,*pij=&ATT_PB(ph,t,i,j);
+      for (c=0;c<d;c++) dp=ATT_MA(f,dp,dyi[c],vj[c]);
+      *pij=*pij*(dp-dot)*scale;
+    }
+  }
+  for (i=0;i<t;i++) for (c=0;c<d;c++) {
+    float acc=dqh[i*ldh+c];
+    for (j=0;j<=i;j++) acc=ATT_MA(f,acc,ATT_PB(ph,t,i,j),kk[j*ldk+c]);
+    dqh[i*ldh+c]=acc;
+  }
+  for (j=0;j<t;j++) for (c=0;c<d;c++) {
+    float acc=dkh[j*ldk+c];
+    for (i=j;i<t;i++) acc=ATT_MA(f,acc,ATT_PB(ph,t,i,j),qh[i*ldh+c]);
+    dkh[j*ldk+c]=acc;
+  }
+}
+static void att_head_backward_bands(const att_job *a, size_t r, size_t h, float *stack, size_t room) {
+#ifdef BCIR_DT_ATTENTION_PROBE
+  (void)__atomic_fetch_add(&attention_bands_seen[1],(size_t)1,__ATOMIC_RELAXED);
+#endif
+#ifdef BCIR_MM_DISPATCH
+  if (a->variant==4) { att_head_backward_bands512(a,r,h,stack,room); return; }
+#endif
+  (void)stack; (void)room;
+  att_head_backward_bands_scalar(a,r,h);
+}
 /* One (batch, query head) of the backward; the heads of one KV head share dk and dv, so a task
  * is a (batch, KV head) and runs its `group` = heads/kvheads query heads in order -- the order
  * the serial loop adds. A task of fewer heads would put one KV head's query heads on two threads,
@@ -3789,6 +4126,10 @@ static void att_head_backward(const att_job *a, size_t r, size_t h, const float 
   size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,i,j,i0; float scale=1.0f/sqrtf((float)d);
   (void)vt; (void)tp;  /* the AVX-512 instance's panels; NULL elsewhere */
   int variant=a->variant; const float *q=a->q,*k=a->k,*v=a->v,*dy=a->dy; float *p=a->p,*dq=a->dq,*dk=a->dk,*dv=a->dv;
+  if (a->bands) {  /* P-BANDS: the task's panel the groups' room for their adjoints where no region keeps them */
+    att_head_backward_bands(a,r,h,tp,tp ? (size_t)BCIR_ATT_PANEL : 0u);
+    return;
+  }
   {
     size_t kh=h/(nh/nk),ldh=nh*d,ldk=nk*d; float *ph=p+(r*nh+h)*t*t;
     const float *qh=q+(r*t*nh+h)*d,*dyh=dy+(r*t*nh+h)*d;
@@ -3870,7 +4211,8 @@ static void att_task_backward(void *ctx, size_t task) {
     /* the KV head's values transposed once for its query heads' probability-adjoint tiles, or the
      * buffer each tile's are transposed into */
     _Alignas(64) float panel[BCIR_ATT_PANEL];
-    if (a->variant==4 && d*t<=BCIR_ATT_WHOLE) { att512_panel(t,d,a->v+(r*t*nk+kh)*d,nk*d,panel); vt=panel; }
+    if (a->bands) tp=panel;  /* P-BANDS: no panel of values; the groups' room for their adjoints */
+    else if (a->variant==4 && d*t<=BCIR_ATT_WHOLE) { att512_panel(t,d,a->v+(r*t*nk+kh)*d,nk*d,panel); vt=panel; }
     else if (a->variant==4 && d*BCIR_ATT_COLS<=BCIR_ATT_PANEL) tp=panel;
 #endif
     for (h=first;h<first+a->group;h++) att_head_backward(a,r,h,vt,tp);
@@ -3894,7 +4236,8 @@ static void att_task_backward_contig(const att_job *a, size_t task, unsigned wor
   {
 #ifdef BCIR_MM_DISPATCH
     _Alignas(64) float panel[BCIR_ATT_PANEL];
-    if (a->variant==4 && d*t<=BCIR_ATT_WHOLE) { att512_panel(t,d,vc,d,panel); vt=panel; }
+    if (a->bands) tp=NULL;  /* P-BANDS: no panel of values; the region keeps the groups' adjoints */
+    else if (a->variant==4 && d*t<=BCIR_ATT_WHOLE) { att512_panel(t,d,vc,d,panel); vt=panel; }
     else if (a->variant==4 && d*BCIR_ATT_COLS<=BCIR_ATT_PANEL) tp=panel;
 #endif
     for (h=first;h<first+a->group;h++) {
@@ -3940,8 +4283,9 @@ int bcir_tensor_attention_backward_contract_variant_ws_pool(bcir_tensor_pool *po
   a.group=nh/nk;
   a.scratch=0;  /* the backward reads its probabilities: never the scratch forward's */
   a.strips=0; a.lower=0; a.keep=NULL;
+  a.bands=att_bands(contract,t,d);  /* P-BANDS: the layout the stored forward under the same word wrote */
 #ifdef BCIR_DT_ATTENTION_PROBE
-  attention_saw(1,a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
+  attention_saw(1,(a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u)|(a.bands ? BCIR_TENSOR_ATTENTION_BANDS : 0u));
 #endif
   att_ctg_setup(&a,pool,b*nh/a.group,workspace,bytes);  /* ATT-CONTIG */
   if (a.ws) pool_dispatch(pool,NULL,att_task_backward_w,&a,b*nh/a.group);

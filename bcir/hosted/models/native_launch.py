@@ -80,7 +80,7 @@ E_V1, E_FUSED, E_KBLOCK, E_BF16, E_PAIR, E_GROUP, E_BF16_GROUP, E_PROVIDER = ran
 
 # the state's contract bits (bcir_decoder_train.h) and the tensor unit's flags (bcir_tensor.h)
 _FUSED, _EXP, _KBLOCK, _REDUCE, _BF16, _ATTN, _ATTNBF16 = 1, 2, 4, 8, 16, 32, 64
-_ATTENTION_EXP, _ATTENTION_FUSED, _ATTENTION_LOWER = 1, 2, 16
+_ATTENTION_EXP, _ATTENTION_FUSED, _ATTENTION_LOWER, _ATTENTION_BANDS = 1, 2, 16, 32
 _RMSB_ADD, _RMSB_FIRST = 1, 2
 # loss_backward_with's facts (KNOWN, DEFER, COMMITTED) and the update's chunk rule
 _KNOWN, _DEFER, _COMMITTED = 1, 2, 4
@@ -551,8 +551,9 @@ def step_program(
         if contract & _ATTNBF16:
             emit(_record(ATTN, attention_contract | 1 << 8, dims, (q, kk, vv, p, y, _NONE, _NONE,
                                                                    _NONE, ws)))  # fmt: skip
-        else:  # P-LOWER: the binary32 backward reads no probability past a row's diagonal
-            flags = attention_contract | _ATTENTION_LOWER
+        else:  # P-LOWER: the binary32 backward reads no probability past a row's diagonal;
+            # P-BANDS: the stored probabilities in 16-row bands where the unit admits them
+            flags = attention_contract | _ATTENTION_LOWER | _ATTENTION_BANDS
             emit(_record(ATTN, flags, dims, (q, kk, vv, p, y, _NONE, _NONE, _NONE,
                                              ws_attention)))  # fmt: skip
 
@@ -561,8 +562,9 @@ def step_program(
         if contract & _ATTNBF16:
             emit(_record(ATTN_VJP, 1 << 8, dims, (q, kk, vv, p, dy, dq, dk, dv, ws)))
         else:
-            emit(_record(ATTN_VJP, attention_contract, dims, (q, kk, vv, p, dy, dq, dk, dv,
-                                                              ws_attention)))  # fmt: skip
+            # P-BANDS: the layout its stored forward's word names
+            emit(_record(ATTN_VJP, attention_contract | _ATTENTION_BANDS, dims,
+                         (q, kk, vv, p, dy, dq, dk, dv, ws_attention)))  # fmt: skip
 
     def rms_backward(x, g, dy, dx, dg, inv, how) -> None:
         emit(_record(RMS_VJP, how, (n, d, eps), (x, g, dy, dx, dg, inv)))

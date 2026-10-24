@@ -87,8 +87,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "IA12 the probe blind to the binary32 scratch forward",
-      "new": "      (a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u));\n",
-      "old": "      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u)|(a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u));\n",
+      "new": "      (a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u)|\n",
+      "old": "      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u)|(a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u)|\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -115,8 +115,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "IA16 the binary32 entry runs the stored forward under the scratch bit",
-      "new": "      0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,iv,b,t,nh,\n",
-      "old": "      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,iv,b,t,nh,\n",
+      "new": "      0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,\n      att_bands(",
+      "old": "      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,\n      att_bands(",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

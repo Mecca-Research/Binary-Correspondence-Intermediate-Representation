@@ -1,0 +1,130 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB1 the bit taken at a context no multiple of 16 (the bands run past the head's last row)",
+      "new": "  return (contract&BCIR_TENSOR_ATTENTION_BANDS)!=0 && t>0 && d>0 && d<=BCIR_ATT_TQ &&\n",
+      "old": "  return (contract&BCIR_TENSOR_ATTENTION_BANDS)!=0 && t>0 && t%16==0 && d>0 && d<=BCIR_ATT_TQ &&\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB2 the bit taken on a host whose widest instance is not AVX-512 (the layout no longer the documented host's)",
+      "new": "      (fused ? mm_widest_fused() : mm_widest())>=1;\n",
+      "old": "      (fused ? mm_widest_fused() : mm_widest())==4;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB3 the backward reads the bands only on the instance its call names (the layout the instance's, not the host's)",
+      "new": "  a.bands=att_bands(contract,t,d) && iv==4;  /* P-BANDS: the layout the stored forward under the same word wrote */\n",
+      "old": "  a.bands=att_bands(contract,t,d);  /* P-BANDS: the layout the stored forward under the same word wrote */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB4 the libm softmax takes a diagonal block's next future lane into its rows' sums",
+      "new": "    for (u=0;u<16;u++) if (j-R<=u+1) { float x=expf(b[u]*scale-m[u]); b[u]=x; sums[u]+=x; } else b[u]=0.0f;\n",
+      "old": "    for (u=0;u<16;u++) if (j-R<=u) { float x=expf(b[u]*scale-m[u]); b[u]=x; sums[u]+=x; } else b[u]=0.0f;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB5 the AVX-512 forward without LOWER leaves a band's keys past its last row as p held them",
+      "new": "    if (0 && !a->lower && R+16<t) memset(s+(R+16)*16,0,(t-R-16)*16*sizeof(float));\n",
+      "old": "    if (!a->lower && R+16<t) memset(s+(R+16)*16,0,(t-R-16)*16*sizeof(float));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB6 the portable forward leaves its diagonal blocks' future lanes as p held them",
+      "new": "      for (j=R+16;j<R+16;j++) band[j*16+u]=0.0f;\n",
+      "old": "      for (j=i+1;j<R+16;j++) band[j*16+u]=0.0f;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB7 the banded walk reads each term's values a lane off (dV and dK from the next row's)",
+      "new": "    const float *xi=x+i*ldx+c0,*mi=pb+(i/16)*16*t+(i+1)%16+j0*16;\n",
+      "old": "    const float *xi=x+i*ldx+c0,*mi=pb+(i/16)*16*t+i%16+j0*16;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB8 a group's dots take the diagonal block's future lanes (an infinite value's NaN reaches rows before it)",
+      "new": "      dot=ATT_MADD(f,dot,_mm512_loadu_ps(band+(jb+kk)*16),acc[kk]); (void)m;\n",
+      "old": "      dot=ATT_MADD_MASK(f,dot,m,_mm512_loadu_ps(band+(jb+kk)*16),acc[kk]);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB9 the score adjoints written into the diagonal block's future lanes",
+      "new": "      _mm512_storeu_ps(band+j*16,_mm512_mul_ps(_mm512_mul_ps(p,_mm512_sub_ps(acc[kk],dot)),sc)); (void)m;\n",
+      "old": "      _mm512_mask_storeu_ps(band+j*16,m,_mm512_mul_ps(_mm512_mul_ps(p,_mm512_sub_ps(acc[kk],dot)),sc));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB10 a group's adjoint blocks past the stack's room read from it anyway (never evaluated again)",
+      "new": "    if (jb<kept || jb<R+16) for (kk=0;kk<16;kk++) acc[kk]=_mm512_loadu_ps(kb+((jb+kk)*16)%(kept ? kept*16 : 16));\n",
+      "old": "    if (jb<kept) for (kk=0;kk<16;kk++) acc[kk]=_mm512_loadu_ps(kb+(jb+kk)*16);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB11 a group's dQ divides its keys by the scale as the forward's context divides by the sums",
+      "new": "      else if (nc>16) att512_tctx_block(f,2,R,rb,c0,band,0,sc,k,ldk,dq,ldq,m0,m1,m2);\n",
+      "old": "      else if (nc>16) att512_tctx_block(f,2,R,rb,c0,band,(size_t)-1,sc,k,ldk,dq,ldq,m0,m1,m2);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB12 dK's walk over dY in place of Q",
+      "new": "  (void)qh; (a->fused ? att512_btransposed_fma : att512_btransposed)(t,d,ph,dyh,ldh,dkh,ldk,first);\n",
+      "old": "  (a->fused ? att512_btransposed_fma : att512_btransposed)(t,d,ph,qh,ldh,dkh,ldk,first);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB13 the portable backward's dots read p through its rows' layout",
+      "new": "      dot=ATT_MA(f,dot,ph[i*t+j],dp);\n",
+      "old": "      dot=ATT_MA(f,dot,ATT_PB(ph,t,i,j),dp);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB14 the probe blind to BANDS on the forwards",
+      "new": "      0u);\n",
+      "old": "      (a.bands ? BCIR_TENSOR_ATTENTION_BANDS : 0u));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB15 the bands' probe counts no backward head",
+      "new": "  (void)0;\n",
+      "old": "  (void)__atomic_fetch_add(&attention_bands_seen[1],(size_t)1,__ATOMIC_RELAXED);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB16 the trainer's stored binary32 forward without BANDS while its backward reads the bands",
+      "new": "      BCIR_TENSOR_ATTENTION_LOWER);\n",
+      "old": "      BCIR_TENSOR_ATTENTION_LOWER|BCIR_TENSOR_ATTENTION_BANDS);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PB17 the trainer's binary32 backward without BANDS while its stored forward writes the bands",
+      "new": "  return attention_contract(s);\n",
+      "old": "  return attention_contract(s)|BCIR_TENSOR_ATTENTION_BANDS;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    }
+  ]
+}
