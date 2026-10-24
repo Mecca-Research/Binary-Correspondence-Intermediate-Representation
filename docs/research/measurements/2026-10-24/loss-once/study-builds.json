@@ -1,0 +1,202 @@
+{
+ "what": "the PR818 study's builds on the tree after's unit (GCC, as the study builds them): level 2 (../geo-amx/build_amx.py), the attention model's level 3 (P-BANDS's chain), and once_level3.py over a copy of each -- its records (the build record it read, the commands it ran, their stderr, its edits, the overlay's sha256 before and after and the shared object's) and every build's log",
+ "once": {
+  "l2-once/guard_compact": {
+   "record": "guard_compact-build-amx.json",
+   "commands": [
+    [
+     "gcc",
+     "-std=c11",
+     "-O3",
+     "-fPIC",
+     "-ffp-contract=off",
+     "-fno-math-errno",
+     "-pthread",
+     "-c",
+     "-I",
+     "<MAIN_SRC>",
+     "-DGP_RANK=22",
+     "-DGP_PROJECTOR=0",
+     "-DGP_SYMMETRIC=0",
+     "-DGP_HEADS=1",
+     "<LEVEL2_ONCE_WORK>/build/guard_compact.c",
+     "-o",
+     "<LEVEL2_ONCE_WORK>/build/guard_compact.o"
+    ],
+    [
+     "gcc",
+     "-shared",
+     "-pthread",
+     "<LEVEL2_ONCE_WORK>/build/bcir_tensor.o",
+     "<LEVEL2_ONCE_WORK>/build/guard_compact.o",
+     "-lm",
+     "-o",
+     "<LEVEL2_ONCE_WORK>/build/guard_compact.so"
+    ]
+   ],
+   "compiler_stderr": [
+    "",
+    ""
+   ],
+   "edits": [
+    "LOSS-ONCE",
+    "GATE-SPAN"
+   ],
+   "overlay_before_sha256": "326f33b42f0b08731b8307f5459b0d250de82bd1a34792f4e403614048e1c5da",
+   "overlay_sha256": "d988f7d899bdbdb08cf3b8d5e2ad3c6391e8c3ea64720eacaf00d84162b51a5b",
+   "native_sha256": "d47a75490a9ac0b653a2ee19ed474b37e88d97f20dd4d25cfd72b6c6fcb5b43b"
+  },
+  "l2-once/query_guard_compact": {
+   "record": "query_guard_compact-build-amx.json",
+   "commands": [
+    [
+     "gcc",
+     "-std=c11",
+     "-O3",
+     "-fPIC",
+     "-ffp-contract=off",
+     "-fno-math-errno",
+     "-pthread",
+     "-c",
+     "-I",
+     "<MAIN_SRC>",
+     "-DGP_RANK=22",
+     "-DGP_PROJECTOR=0",
+     "-DGP_SYMMETRIC=0",
+     "-DGP_HEADS=1",
+     "<LEVEL2_ONCE_WORK>/build/query_guard_compact.c",
+     "-o",
+     "<LEVEL2_ONCE_WORK>/build/query_guard_compact.o"
+    ],
+    [
+     "gcc",
+     "-shared",
+     "-pthread",
+     "<LEVEL2_ONCE_WORK>/build/bcir_tensor.o",
+     "<LEVEL2_ONCE_WORK>/build/query_guard_compact.o",
+     "-lm",
+     "-o",
+     "<LEVEL2_ONCE_WORK>/build/query_guard_compact.so"
+    ]
+   ],
+   "compiler_stderr": [
+    "",
+    ""
+   ],
+   "edits": [
+    "LOSS-ONCE",
+    "GATE-SPAN"
+   ],
+   "overlay_before_sha256": "305f9d8dde6ffafae6c8193e94f6bc0fad40f1409b7e09f1fccda249109be324",
+   "overlay_sha256": "0961dc1dc3e2e3197dab265d3dbac7afed60779f6f76818f2d600e3547763c10",
+   "native_sha256": "192f7a427591ec5c216d5a60ec13be84205596c3d5af52c256d40269891be0cb"
+  },
+  "l2-once/attention": {
+   "record": "attention-build-amx.json",
+   "commands": [
+    [
+     "gcc",
+     "-std=c11",
+     "-O3",
+     "-fPIC",
+     "-ffp-contract=off",
+     "-fno-math-errno",
+     "-pthread",
+     "-c",
+     "-I",
+     "<MAIN_SRC>",
+     "-DGP_RANK=22",
+     "-DGP_PROJECTOR=0",
+     "-DGP_SYMMETRIC=0",
+     "-DGP_HEADS=1",
+     "<LEVEL2_ONCE_WORK>/build/attention.c",
+     "-o",
+     "<LEVEL2_ONCE_WORK>/build/attention.o"
+    ],
+    [
+     "gcc",
+     "-shared",
+     "-pthread",
+     "<LEVEL2_ONCE_WORK>/build/bcir_tensor.o",
+     "<LEVEL2_ONCE_WORK>/build/attention.o",
+     "-lm",
+     "-o",
+     "<LEVEL2_ONCE_WORK>/build/attention.so"
+    ]
+   ],
+   "compiler_stderr": [
+    "",
+    ""
+   ],
+   "edits": [
+    "LOSS-ONCE"
+   ],
+   "overlay_before_sha256": "9219fd092362f05da661353ce8dd49b5a19f26655e467fcd17a3402fac4742c3",
+   "overlay_sha256": "1c6cdad24376bd60b9dc5fcdff6b801db73eaf7368e76cda3ee86172e7b13a8a",
+   "native_sha256": "df2cfaf5ad9b145edb69ca05c31833de07f179bae9416e72caa8b6adbd8a9e45"
+  },
+  "l3-once/attention": {
+   "record": "attention-build-level3.json",
+   "commands": [
+    [
+     "gcc",
+     "-std=c11",
+     "-O3",
+     "-fPIC",
+     "-ffp-contract=off",
+     "-fno-math-errno",
+     "-pthread",
+     "-c",
+     "-I",
+     "<MAIN_SRC>",
+     "-DGP_RANK=22",
+     "-DGP_PROJECTOR=0",
+     "-DGP_SYMMETRIC=0",
+     "-DGP_HEADS=1",
+     "<LEVEL3_ONCE_WORK>/build/attention.c",
+     "-o",
+     "<LEVEL3_ONCE_WORK>/build/attention.o"
+    ],
+    [
+     "gcc",
+     "-shared",
+     "-pthread",
+     "<LEVEL3_ONCE_WORK>/build/bcir_tensor.o",
+     "<LEVEL3_ONCE_WORK>/build/attention.o",
+     "-lm",
+     "-o",
+     "<LEVEL3_ONCE_WORK>/build/attention.so"
+    ]
+   ],
+   "compiler_stderr": [
+    "",
+    ""
+   ],
+   "edits": [
+    "LOSS-ONCE"
+   ],
+   "overlay_before_sha256": "f409ae4d544d085520136b44b32616c502f5cca28bb6368c90ae7a1d628a4758",
+   "overlay_sha256": "c4dcd573858be0d936e0aa27b53727d759180a00044c17240ad95271e308cb61",
+   "native_sha256": "73258ae9be96eba9e59f7519b8906b8580177f0ced20397838ca17d1a378f4c4"
+  }
+ },
+ "logs": {
+  "l2": [
+   "guard_compact built: <LEVEL2_WORK_AFTER>/build/guard_compact.so",
+   "query_guard_compact built: <LEVEL2_WORK_AFTER>/build/query_guard_compact.so",
+   "attention built: <LEVEL2_WORK_AFTER>/build/attention.so"
+  ],
+  "l3": [
+   "built <LEVEL3_WORK_AFTER>/build/attention.so scratch 30 entries checked",
+   "contig <LEVEL3_WORK_AFTER>/build/attention.so 3 edits, 3 entries declared",
+   "lower <LEVEL3_WORK_AFTER>/build/attention.so 2 edits",
+   "bands <LEVEL3_WORK_AFTER>/build/attention.so 3 edits"
+  ],
+  "once": [
+   "once <LEVEL2_ONCE_WORK>/build/guard_compact.so LOSS-ONCE, GATE-SPAN",
+   "once <LEVEL2_ONCE_WORK>/build/query_guard_compact.so LOSS-ONCE, GATE-SPAN",
+   "once <LEVEL2_ONCE_WORK>/build/attention.so LOSS-ONCE",
+   "once <LEVEL3_ONCE_WORK>/build/attention.so LOSS-ONCE"
+  ]
+ }
+}

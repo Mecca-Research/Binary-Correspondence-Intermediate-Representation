@@ -1574,3 +1574,72 @@ rewrote and are re-anchored on the block claim, caught again.
 
 Not claimed: hosts with more cores or another cache topology (this one has 4 vCPUs, 2 MiB of L2 a core); the bf16
 contract's jobs, dealt in blocks too but not timed here; counter-based figures (no PMU on this VM).
+
+## 25. LOSS-ONCE: the loss's exponentials once; the study's gate a span at a time (2026-10-24)
+
+After POOL-AFFINITY the step's large parts sit near their rates on this host, measured a part at a time on the tree
+before this slice (NEXT-1, [measurements/2026-10-24/loss-once/](measurements/2026-10-24/loss-once/README.json),
+`survey.json`). Back to back on four threads the k-blocked GEMM runs the T256 step's products at 480-613 GFLOP/s,
+x2.7-x3.7 their one-thread rates (the 1,024 x 128 x 128 product at 480.1, where NEXT-0 read it at 355.6 before
+POOL-AFFINITY), and its weight adjoints over 1,024 rows, three and six tasks, at 399 and 457. Timed a worker at a
+time with TSC counters, the workers spend 88-93% of the 1,024 x 128 x 128 A Bᵀ product's job inside its tasks, and
+the caller is back 3.4-5.3% of the job after the last worker leaves; the plain product's job reads 75-91%, the
+2,048-row one's 80-88%, and the weight adjoint's three tasks leave one of the four workers idle (59-64%). After a 1
+ms pause, the workers asleep, the same products run at 298-452 GFLOP/s, 39-57 µs a job slower; in the step the
+workers sleep 2.2, 3.9 and 8.6 times a step at T128, T256 and T512 (84 jobs a step; a counter in a copy of the
+unit), and the step spends 1.9% of its time outside its jobs. With no PMU, a sampling profiler (SIGPROF on the
+process's CPU time, each sample's instruction pointer resolved against the libraries' symbols offline) placed what
+is left: in BCIR's own step at T256 the GEMMs 50% of the samples, the attention 20%, and the loss's task and libm
+5.7% between them; in the study's geometric heads' inference at T1024 the GEMMs 56%, and the gate 16.6-19.2% --
+`wedge_gate_fwd_task` and `bcir_tensor_expf`, the tensor unit's scalar exponential called once an element -- with
+the heads' own pair kernels at 5.8% (`global`) and 11.1% (`query_full`, with its query contraction).
+
+**LOSS-ONCE.** The trainer's loss called libm's `exp` twice a logit, for the row's sum and again for each adjoint. A
+row now keeps its first 1,024 exponentials in double on its task's stack and its adjoints divide the kept values; a
+row wider than the buffer evaluates its tail again, as before. The same call on the same argument returns the same
+double, and the sum, the term and both divisions are the loop's operations in its order, so every adjoint, term and
+loss is the two-evaluation loop's bit for bit, at every thread count and under every contract.
+
+**The study's builds.** The PR818 study's three native libraries are forks of BCIR's trainer, with the same loss.
+`once_level3.py` makes the same edit to each fork and, in the geometric heads, gives the gate's forward its
+exponential a task's 512 elements at a time through the tensor unit's span entry, `bcir_tensor_exp` -- the widest
+instance, whose every instance `exp_span_check.c` holds to `bcir_tensor_expf` on all 2^32 inputs -- where the fork
+calls `bcir_tensor_expf` an element. Every trained state and logit is the fork's.
+
+In the step on four threads, by the trainer's job clock, the loss job takes x0.618-x0.645 of its time over two runs:
+0.67-0.70 ms to 0.44-0.45 at T256 and 1.33-1.38 to 0.84-0.85 at T512. The loss task alone, on one thread over 1,024
+to 8,192 rows of 260 logits, goes from 9.6-10.1 ns a logit to 6.4-6.5 under clang (x0.650-x0.672) and from 9.0-9.4
+to 6.6-6.7 under GCC (x0.712-x0.742). With 512 rows of 1,500 logits, where the tail past the buffer is still
+evaluated twice, it reads x0.797 and x0.840. Every adjoint and term is the same bytes. The step itself, alone in its
+own process with the libraries alternating, reads x1.008, x0.977, x1.002 and x0.976 from T128 to T1024 and x0.988
+for the 9.84M decoder, each holding 1: the 1.6-1.9% of the step the loss job saves is below this rig's resolution.
+Every run's weights are the same digest on both trees.
+
+The study's models with the overlay against without it, in one process, 16 rounds, every trained state and logit the
+same (`study-ab.json`, `level3-ab.json`):
+
+| model (build) | training T128 / T256 / T512 | inference T1024 / T2048 |
+|---|---|---|
+| `global` (level 2) | 0.918 / 0.918 / 0.943 | 0.859 / 0.849 |
+| `query_full` (level 2) | 0.901 / 0.944 / 0.922 | 0.869 / 0.863 |
+| `attention` (level 3: the loss alone; training T512 / T1024 / T2048) | 0.996 / 0.999 / 0.995 | 1.011 / 0.929 |
+
+The geometric heads' inference is resolved at both contexts, and their training for `global` at T512 (x0.943,
+0.904-0.984). The other training rows meet their controls (the A/A arms read 0.92-1.03 here) or hold 1. The attention
+model's rows hold 1 or meet theirs; its inference runs no loss. Against PyTorch at fixed shapes (section 18's
+script, 12 rounds; `study-vs-pytorch.json`), the geometric heads now run inference in x0.452-x0.605 of Inductor's
+time (x0.52-0.67 in section 24's records) and x0.16-0.26 of eager's, and train in x0.219-x0.327 of Inductor's. The
+attention model at level 3 (`level3-vs-pytorch-*.json`, 24 rounds) trains in x0.529, x0.697 and x0.824 of Inductor's
+time at T512, T1024 and T2048, and runs inference in x0.746 of it at T1024 and at parity at T2048 (x1.013,
+0.953-1.077).
+
+Witnesses: the C harness's `loss_once`, through `bcir_decoder_loss_probe` (BCIR_DT_LOSS_PROBE, the harness's builds
+only), holds every adjoint, row term and their sum byte for byte to the two-evaluation loop written apart, at nine
+vocabularies from one logit to 2,049, five row counts about a task's sixteen, four kinds of row and targets in the
+buffer and past it, on no pool and pools of two and four (135 runs). `loss-once.json` LO1-LO7, each caught by its
+own check; NDT-REDUCE's NR4 and NR9, anchored beside the new task, caught again.
+
+Not claimed: vocabularies past the buffer gain only on their first 1,024 logits; the study's other kernels (the
+pair kernels' double-precision chains, the scans after the gate) are the study's own, measured here, not changed;
+the survey's readings vary run to run on this VM (a first exploration read the 1,024-row product at 529.7 GFLOP/s
+and under two sleeps a step at T256), and counter-based figures are out of reach (no PMU).

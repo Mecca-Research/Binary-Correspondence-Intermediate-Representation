@@ -640,6 +640,11 @@ and the residual add take x0.48-x0.65 of their time back to back on four threads
 dimensions x0.824 at T128 and x0.944 at T256 alone in its own process (parity from T1024), the inference forward
 x0.837 at B4/T256, and the study's geometric heads' training x0.66-x0.77 -- every value as it was, which thread runs a
 task never reaching the arithmetic (`pool-affinity.json` PA1-PA11; §24).
+Since LOSS-ONCE (2026-10-24) the loss evaluates each logit's exponential once, where it called libm's `exp` twice a
+logit: a row keeps its first 1,024 exponentials in double on its task's stack and its adjoints divide the kept
+values, a wider row evaluating its tail again. The same call on the same argument returns the same double and the
+loop's operations keep their order, so every adjoint, term and loss is as it was; the loss job takes x0.62-x0.65 of
+its time in the GEO step on four threads (`loss-once.json` LO1-LO7; §25).
 Since NDT-SCAN-W (2026-10-17) the forward's verdict on its activations is taken by their writers: the
 RMSNorm, the SwiGLU product and the attention read back what their tasks wrote while it is in the
 core's cache, a region answering through another its value reaches and the attention reading its

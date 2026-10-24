@@ -1,0 +1,2605 @@
+{
+ "what": "NEXT-1's survey (survey_next1.sh), which placed the slice, on the tree before it (its tensor unit the tree after's byte for byte): gemm -- ../pool-affinity/gemm_b2b.c, the T256 GEMM shapes back to back and after a 1 ms pause (the median of 9 rounds of the mean of 50 calls); tasks -- gemm_tasks.c on probe_tasks.py's copy of the unit, a job a worker at a time in TSC cycles (2.3 GHz) since its dispatch, the means over 450 jobs, three repetitions, and the CPU each worker ran each job on; sleeps -- count_sleeps.py's copy and step_one.c, the pool's sleeps over 44 steps; step_wall -- step_wall.py, the step's wall time against its jobs' clocks in one run; profiles -- sampler.c (SIGPROF every 100 us of CPU time, no PMU on this VM) resolved by resolve_samples.py, each share of the samples by file and by function (a stripped library's static functions are named by the nearest exported symbol: libc's memset and memcpy as __nss_database_lookup, libm's exp internals as f64xsubf128)",
+ "gemm": [
+  {
+   "threads": 1,
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 128,
+   "k": 128,
+   "back_to_back_ms": 0.1919,
+   "back_to_back_gflops": 174.8,
+   "gap_us": 1000,
+   "after_gap_ms": 0.1963,
+   "after_gap_gflops": 170.9
+  },
+  {
+   "threads": 4,
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 128,
+   "k": 128,
+   "back_to_back_ms": 0.0699,
+   "back_to_back_gflops": 480.1,
+   "gap_us": 1000,
+   "after_gap_ms": 0.1124,
+   "after_gap_gflops": 298.4
+  },
+  {
+   "threads": 1,
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 256,
+   "k": 128,
+   "back_to_back_ms": 0.409,
+   "back_to_back_gflops": 164.1,
+   "gap_us": 1000,
+   "after_gap_ms": 0.4172,
+   "after_gap_gflops": 160.9
+  },
+  {
+   "threads": 4,
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 256,
+   "k": 128,
+   "back_to_back_ms": 0.1119,
+   "back_to_back_gflops": 599.7,
+   "gap_us": 1000,
+   "after_gap_ms": 0.1693,
+   "after_gap_gflops": 396.3
+  },
+  {
+   "threads": 1,
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 128,
+   "k": 256,
+   "back_to_back_ms": 0.3678,
+   "back_to_back_gflops": 182.5,
+   "gap_us": 1000,
+   "after_gap_ms": 0.3753,
+   "after_gap_gflops": 178.8
+  },
+  {
+   "threads": 4,
+   "ta": 0,
+   "tb": 1,
+   "m": 1024,
+   "n": 128,
+   "k": 256,
+   "back_to_back_ms": 0.1096,
+   "back_to_back_gflops": 612.6,
+   "gap_us": 1000,
+   "after_gap_ms": 0.1484,
+   "after_gap_gflops": 452.1
+  },
+  {
+   "threads": 1,
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 128,
+   "k": 128,
+   "back_to_back_ms": 0.1888,
+   "back_to_back_gflops": 177.7,
+   "gap_us": 1000,
+   "after_gap_ms": 0.1955,
+   "after_gap_gflops": 171.6
+  },
+  {
+   "threads": 4,
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 128,
+   "k": 128,
+   "back_to_back_ms": 0.055,
+   "back_to_back_gflops": 610.6,
+   "gap_us": 1000,
+   "after_gap_ms": 0.1099,
+   "after_gap_gflops": 305.4
+  },
+  {
+   "threads": 1,
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 256,
+   "k": 128,
+   "back_to_back_ms": 0.3821,
+   "back_to_back_gflops": 175.6,
+   "gap_us": 1000,
+   "after_gap_ms": 0.4016,
+   "after_gap_gflops": 167.1
+  },
+  {
+   "threads": 4,
+   "ta": 0,
+   "tb": 0,
+   "m": 1024,
+   "n": 256,
+   "k": 128,
+   "back_to_back_ms": 0.1122,
+   "back_to_back_gflops": 598.0,
+   "gap_us": 1000,
+   "after_gap_ms": 0.1608,
+   "after_gap_gflops": 417.3
+  },
+  {
+   "threads": 1,
+   "ta": 1,
+   "tb": 0,
+   "m": 128,
+   "n": 128,
+   "k": 1024,
+   "back_to_back_ms": 0.2021,
+   "back_to_back_gflops": 166.0,
+   "gap_us": 1000,
+   "after_gap_ms": 0.2103,
+   "after_gap_gflops": 159.5
+  },
+  {
+   "threads": 4,
+   "ta": 1,
+   "tb": 0,
+   "m": 128,
+   "n": 128,
+   "k": 1024,
+   "back_to_back_ms": 0.0841,
+   "back_to_back_gflops": 398.9,
+   "gap_us": 1000,
+   "after_gap_ms": 0.1217,
+   "after_gap_gflops": 275.7
+  },
+  {
+   "threads": 1,
+   "ta": 1,
+   "tb": 0,
+   "m": 256,
+   "n": 128,
+   "k": 1024,
+   "back_to_back_ms": 0.4162,
+   "back_to_back_gflops": 161.2,
+   "gap_us": 1000,
+   "after_gap_ms": 0.4358,
+   "after_gap_gflops": 154.0
+  },
+  {
+   "threads": 4,
+   "ta": 1,
+   "tb": 0,
+   "m": 256,
+   "n": 128,
+   "k": 1024,
+   "back_to_back_ms": 0.147,
+   "back_to_back_gflops": 456.5,
+   "gap_us": 1000,
+   "after_gap_ms": 0.1971,
+   "after_gap_gflops": 340.5
+  }
+ ],
+ "tasks": [
+  {
+   "shape": "0,1,1024,128,128",
+   "rep": 1,
+   "threads": 4,
+   "wall_cycles": 157187,
+   "workers": [
+    {
+     "worker": 0,
+     "enters": 639,
+     "busy": 136960,
+     "leaves": 139496,
+     "tasks": 4.36,
+     "jobs_on_cpu": [
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 1,
+     "enters": 1072,
+     "busy": 138713,
+     "leaves": 141630,
+     "tasks": 3.65,
+     "jobs_on_cpu": [
+      0,
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 2,
+     "enters": 1208,
+     "busy": 148442,
+     "leaves": 151388,
+     "tasks": 3.64,
+     "jobs_on_cpu": [
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 3,
+     "enters": 2234,
+     "busy": 131137,
+     "leaves": 135426,
+     "tasks": 4.35,
+     "jobs_on_cpu": [
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "busy_over_wall": 0.8831073816536991,
+   "after_last_leave_over_wall": 0.03689236387233041,
+   "latest_entry_cycles": 2234
+  },
+  {
+   "shape": "0,1,1024,128,128",
+   "rep": 2,
+   "threads": 4,
+   "wall_cycles": 130619,
+   "workers": [
+    {
+     "worker": 0,
+     "enters": 450,
+     "busy": 121745,
+     "leaves": 124764,
+     "tasks": 4.01,
+     "jobs_on_cpu": [
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 1,
+     "enters": 733,
+     "busy": 121503,
+     "leaves": 125220,
+     "tasks": 3.99,
+     "jobs_on_cpu": [
+      0,
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 2,
+     "enters": 753,
+     "busy": 121579,
+     "leaves": 125247,
+     "tasks": 4.0,
+     "jobs_on_cpu": [
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 3,
+     "enters": 728,
+     "busy": 122616,
+     "leaves": 126147,
+     "tasks": 4.0,
+     "jobs_on_cpu": [
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "busy_over_wall": 0.9329481162771113,
+   "after_last_leave_over_wall": 0.0342369793062265,
+   "latest_entry_cycles": 753
+  },
+  {
+   "shape": "0,1,1024,128,128",
+   "rep": 3,
+   "threads": 4,
+   "wall_cycles": 135903,
+   "workers": [
+    {
+     "worker": 0,
+     "enters": 796,
+     "busy": 123421,
+     "leaves": 126338,
+     "tasks": 4.02,
+     "jobs_on_cpu": [
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 1,
+     "enters": 1594,
+     "busy": 123455,
+     "leaves": 127031,
+     "tasks": 4.01,
+     "jobs_on_cpu": [
+      0,
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 2,
+     "enters": 3079,
+     "busy": 123093,
+     "leaves": 128069,
+     "tasks": 3.96,
+     "jobs_on_cpu": [
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 3,
+     "enters": 1058,
+     "busy": 125446,
+     "leaves": 128714,
+     "tasks": 4.01,
+     "jobs_on_cpu": [
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "busy_over_wall": 0.9113393376157995,
+   "after_last_leave_over_wall": 0.05289802285453596,
+   "latest_entry_cycles": 3079
+  },
+  {
+   "shape": "0,0,1024,128,128",
+   "rep": 1,
+   "threads": 4,
+   "wall_cycles": 129682,
+   "workers": [
+    {
+     "worker": 0,
+     "enters": 1039,
+     "busy": 116870,
+     "leaves": 120070,
+     "tasks": 4.02,
+     "jobs_on_cpu": [
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 1,
+     "enters": 1289,
+     "busy": 118639,
+     "leaves": 122235,
+     "tasks": 4.01,
+     "jobs_on_cpu": [
+      0,
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 2,
+     "enters": 1380,
+     "busy": 118611,
+     "leaves": 122159,
+     "tasks": 3.98,
+     "jobs_on_cpu": [
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 3,
+     "enters": 2891,
+     "busy": 117498,
+     "leaves": 122600,
+     "tasks": 3.99,
+     "jobs_on_cpu": [
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "busy_over_wall": 0.9091816905969988,
+   "after_last_leave_over_wall": 0.054610508783023086,
+   "latest_entry_cycles": 2891
+  },
+  {
+   "shape": "0,0,1024,128,128",
+   "rep": 2,
+   "threads": 4,
+   "wall_cycles": 161138,
+   "workers": [
+    {
+     "worker": 0,
+     "enters": 1243,
+     "busy": 120915,
+     "leaves": 124200,
+     "tasks": 4.11,
+     "jobs_on_cpu": [
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 1,
+     "enters": 2216,
+     "busy": 117977,
+     "leaves": 122304,
+     "tasks": 3.96,
+     "jobs_on_cpu": [
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 2,
+     "enters": 1760,
+     "busy": 117953,
+     "leaves": 121785,
+     "tasks": 4.0,
+     "jobs_on_cpu": [
+      0,
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 3,
+     "enters": 3354,
+     "busy": 127599,
+     "leaves": 133177,
+     "tasks": 3.93,
+     "jobs_on_cpu": [
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "busy_over_wall": 0.7515980091598505,
+   "after_last_leave_over_wall": 0.1735220742469188,
+   "latest_entry_cycles": 3354
+  },
+  {
+   "shape": "0,0,1024,128,128",
+   "rep": 3,
+   "threads": 4,
+   "wall_cycles": 130637,
+   "workers": [
+    {
+     "worker": 0,
+     "enters": 1322,
+     "busy": 116957,
+     "leaves": 121045,
+     "tasks": 3.95,
+     "jobs_on_cpu": [
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 1,
+     "enters": 1751,
+     "busy": 116551,
+     "leaves": 121260,
+     "tasks": 3.94,
+     "jobs_on_cpu": [
+      0,
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 2,
+     "enters": 1957,
+     "busy": 118392,
+     "leaves": 123146,
+     "tasks": 3.88,
+     "jobs_on_cpu": [
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 3,
+     "enters": 3616,
+     "busy": 112750,
+     "leaves": 118995,
+     "tasks": 4.23,
+     "jobs_on_cpu": [
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "busy_over_wall": 0.8892006093220144,
+   "after_last_leave_over_wall": 0.05734210062998997,
+   "latest_entry_cycles": 3616
+  },
+  {
+   "shape": "0,1,2048,128,128",
+   "rep": 1,
+   "threads": 4,
+   "wall_cycles": 280124,
+   "workers": [
+    {
+     "worker": 0,
+     "enters": 3031,
+     "busy": 258788,
+     "leaves": 264173,
+     "tasks": 3.96,
+     "jobs_on_cpu": [
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 1,
+     "enters": 4099,
+     "busy": 246509,
+     "leaves": 252668,
+     "tasks": 4.0,
+     "jobs_on_cpu": [
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 2,
+     "enters": 3700,
+     "busy": 243601,
+     "leaves": 249447,
+     "tasks": 4.03,
+     "jobs_on_cpu": [
+      0,
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 3,
+     "enters": 8036,
+     "busy": 234738,
+     "leaves": 245312,
+     "tasks": 4.01,
+     "jobs_on_cpu": [
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "busy_over_wall": 0.8778576630349416,
+   "after_last_leave_over_wall": 0.05694263968813811,
+   "latest_entry_cycles": 8036
+  },
+  {
+   "shape": "0,1,2048,128,128",
+   "rep": 2,
+   "threads": 4,
+   "wall_cycles": 334137,
+   "workers": [
+    {
+     "worker": 0,
+     "enters": 1683,
+     "busy": 266396,
+     "leaves": 270431,
+     "tasks": 4.32,
+     "jobs_on_cpu": [
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 1,
+     "enters": 7402,
+     "busy": 262264,
+     "leaves": 271950,
+     "tasks": 4.1,
+     "jobs_on_cpu": [
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 2,
+     "enters": 5111,
+     "busy": 269783,
+     "leaves": 277310,
+     "tasks": 4.25,
+     "jobs_on_cpu": [
+      0,
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 3,
+     "enters": 9449,
+     "busy": 276430,
+     "leaves": 288117,
+     "tasks": 3.32,
+     "jobs_on_cpu": [
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "busy_over_wall": 0.8042157857405795,
+   "after_last_leave_over_wall": 0.13772793794162275,
+   "latest_entry_cycles": 9449
+  },
+  {
+   "shape": "0,1,2048,128,128",
+   "rep": 3,
+   "threads": 4,
+   "wall_cycles": 319182,
+   "workers": [
+    {
+     "worker": 0,
+     "enters": 1505,
+     "busy": 268321,
+     "leaves": 272103,
+     "tasks": 4.3,
+     "jobs_on_cpu": [
+      0,
+      231,
+      0,
+      269,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 1,
+     "enters": 2083,
+     "busy": 262866,
+     "leaves": 266969,
+     "tasks": 4.21,
+     "jobs_on_cpu": [
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 2,
+     "enters": 50631,
+     "busy": 220298,
+     "leaves": 272798,
+     "tasks": 3.46,
+     "jobs_on_cpu": [
+      0,
+      203,
+      0,
+      297,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 3,
+     "enters": 3369,
+     "busy": 279936,
+     "leaves": 285470,
+     "tasks": 4.04,
+     "jobs_on_cpu": [
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "busy_over_wall": 0.8078627554185387,
+   "after_last_leave_over_wall": 0.10561999110225515,
+   "latest_entry_cycles": 50631
+  },
+  {
+   "shape": "1,0,128,128,1024",
+   "rep": 1,
+   "threads": 4,
+   "wall_cycles": 224438,
+   "workers": [
+    {
+     "worker": 0,
+     "enters": 4536,
+     "busy": 163409,
+     "leaves": 169422,
+     "tasks": 0.9,
+     "jobs_on_cpu": [
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 1,
+     "enters": 2189,
+     "busy": 141472,
+     "leaves": 145218,
+     "tasks": 0.73,
+     "jobs_on_cpu": [
+      0,
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 2,
+     "enters": 4679,
+     "busy": 108193,
+     "leaves": 114313,
+     "tasks": 0.65,
+     "jobs_on_cpu": [
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 3,
+     "enters": 3878,
+     "busy": 120248,
+     "leaves": 125679,
+     "tasks": 0.72,
+     "jobs_on_cpu": [
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "busy_over_wall": 0.5940638394567764,
+   "after_last_leave_over_wall": 0.24512783040305117,
+   "latest_entry_cycles": 4679
+  },
+  {
+   "shape": "1,0,128,128,1024",
+   "rep": 2,
+   "threads": 4,
+   "wall_cycles": 184902,
+   "workers": [
+    {
+     "worker": 0,
+     "enters": 1304,
+     "busy": 151425,
+     "leaves": 154059,
+     "tasks": 0.93,
+     "jobs_on_cpu": [
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 1,
+     "enters": 1674,
+     "busy": 119587,
+     "leaves": 122413,
+     "tasks": 0.76,
+     "jobs_on_cpu": [
+      0,
+      413,
+      0,
+      87,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 2,
+     "enters": 22590,
+     "busy": 116580,
+     "leaves": 140270,
+     "tasks": 0.72,
+     "jobs_on_cpu": [
+      0,
+      87,
+      413,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 3,
+     "enters": 25241,
+     "busy": 88377,
+     "leaves": 114670,
+     "tasks": 0.59,
+     "jobs_on_cpu": [
+      0,
+      0,
+      217,
+      283,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "busy_over_wall": 0.6435422548160648,
+   "after_last_leave_over_wall": 0.16680728169516826,
+   "latest_entry_cycles": 25241
+  },
+  {
+   "shape": "1,0,128,128,1024",
+   "rep": 3,
+   "threads": 4,
+   "wall_cycles": 185710,
+   "workers": [
+    {
+     "worker": 0,
+     "enters": 1206,
+     "busy": 144528,
+     "leaves": 147153,
+     "tasks": 0.86,
+     "jobs_on_cpu": [
+      0,
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 1,
+     "enters": 3640,
+     "busy": 87099,
+     "leaves": 91811,
+     "tasks": 0.6,
+     "jobs_on_cpu": [
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 2,
+     "enters": 1730,
+     "busy": 119007,
+     "leaves": 121903,
+     "tasks": 0.76,
+     "jobs_on_cpu": [
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "worker": 3,
+     "enters": 1611,
+     "busy": 125624,
+     "leaves": 128323,
+     "tasks": 0.78,
+     "jobs_on_cpu": [
+      0,
+      0,
+      500,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "busy_over_wall": 0.6411313338000107,
+   "after_last_leave_over_wall": 0.20761940660169081,
+   "latest_entry_cycles": 3640
+  }
+ ],
+ "sleeps": [
+  {
+   "T": 128,
+   "steps": 44,
+   "jobs": 3696,
+   "worker_sleeps": 95,
+   "caller_waits": 14,
+   "jobs_a_step": 84.0,
+   "worker_sleeps_a_step": 2.159090909090909,
+   "median_ms": 6.1891
+  },
+  {
+   "T": 256,
+   "steps": 44,
+   "jobs": 3696,
+   "worker_sleeps": 170,
+   "caller_waits": 62,
+   "jobs_a_step": 84.0,
+   "worker_sleeps_a_step": 3.8636363636363638,
+   "median_ms": 13.801
+  },
+  {
+   "T": 512,
+   "steps": 44,
+   "jobs": 3696,
+   "worker_sleeps": 380,
+   "caller_waits": 106,
+   "jobs_a_step": 84.0,
+   "worker_sleeps_a_step": 8.636363636363637,
+   "median_ms": 30.9718
+  }
+ ],
+ "step_wall": {
+  "T": 256,
+  "threads": 4,
+  "steps_a_call": 4,
+  "wall_ms_a_step": 14.082,
+  "jobs_ms_a_step": 13.816,
+  "outside_ms_a_step": 0.271,
+  "outside_share": 0.019,
+  "launches": 313
+ },
+ "profiles": {
+  "attention-infer2048": {
+   "samples": 548,
+   "files": [
+    {
+     "share": 0.912,
+     "name": "attention.so"
+    },
+    {
+     "share": 0.04,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.028999999999999998,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.011000000000000001,
+     "name": "libm.so.6"
+    },
+    {
+     "share": 0.005,
+     "name": "ld-linux-x86-64.so.2"
+    },
+    {
+     "share": 0.002,
+     "name": "_pcg64.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.252,
+     "name": "attention.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.243,
+     "name": "attention.so:att512_tscores"
+    },
+    {
+     "share": 0.226,
+     "name": "attention.so:att512_tcontext"
+    },
+    {
+     "share": 0.122,
+     "name": "attention.so:att512_tsoftmax"
+    },
+    {
+     "share": 0.033,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.022000000000000002,
+     "name": "attention.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.02,
+     "name": "attention.so:rms_task"
+    },
+    {
+     "share": 0.011000000000000001,
+     "name": "attention.so:scan_task"
+    },
+    {
+     "share": 0.011000000000000001,
+     "name": "libm.so.6:f64xsubf128@@GLIBC_2.28"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.005,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.005,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.005,
+     "name": "attention.so:rope_rows"
+    },
+    {
+     "share": 0.005,
+     "name": "attention.so:ew_task"
+    },
+    {
+     "share": 0.004,
+     "name": "attention.so:att_task_w"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:_PyObject_GC_NewVar"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:?"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyDict_Copy"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:_PyObject_MakeTpCall"
+    },
+    {
+     "share": 0.002,
+     "name": "ld-linux-x86-64.so.2:_dl_mcount@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyLong_FromUnsignedLongLong"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:_PyLong_Sign"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyType_Ready"
+    },
+    {
+     "share": 0.002,
+     "name": "ld-linux-x86-64.so.2:__nptl_change_stack_perm@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:_PyObject_GenericGetAttrWithDict"
+    },
+    {
+     "share": 0.002,
+     "name": "ld-linux-x86-64.so.2:_dl_rtld_di_serinfo@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.002,
+     "name": "_pcg64.cpython-311-x86_64-linux-gnu.so:__pyx_f_5numpy_6random_6_pcg64_pcg64_double"
+    },
+    {
+     "share": 0.002,
+     "name": "libc.so.6:pthread_cond_broadcast@@GLIBC_2.3.2"
+    },
+    {
+     "share": 0.002,
+     "name": "attention.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyUnicode_DecodeUTF8"
+    }
+   ]
+  },
+  "attention-train512": {
+   "samples": 1198,
+   "files": [
+    {
+     "share": 0.897,
+     "name": "attention.so"
+    },
+    {
+     "share": 0.042,
+     "name": "libm.so.6"
+    },
+    {
+     "share": 0.040999999999999995,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.018000000000000002,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.001,
+     "name": "libgcc_s.so.1"
+    },
+    {
+     "share": 0.001,
+     "name": "[vdso]"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.41700000000000004,
+     "name": "attention.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.102,
+     "name": "attention.so:att512_btransposed"
+    },
+    {
+     "share": 0.081,
+     "name": "attention.so:att512_bgroup"
+    },
+    {
+     "share": 0.043,
+     "name": "attention.so:att512_tcontext"
+    },
+    {
+     "share": 0.038,
+     "name": "attention.so:swiglu2_avx512"
+    },
+    {
+     "share": 0.034,
+     "name": "attention.so:att512_tscores"
+    },
+    {
+     "share": 0.031,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.024,
+     "name": "attention.so:rms_task"
+    },
+    {
+     "share": 0.024,
+     "name": "libm.so.6:f64xsubf128@@GLIBC_2.28"
+    },
+    {
+     "share": 0.019,
+     "name": "attention.so:rmsb_rows_task"
+    },
+    {
+     "share": 0.018000000000000002,
+     "name": "attention.so:rmsb_cols_task"
+    },
+    {
+     "share": 0.017,
+     "name": "attention.so:loss_task"
+    },
+    {
+     "share": 0.016,
+     "name": "attention.so:commit_avx512"
+    },
+    {
+     "share": 0.016,
+     "name": "attention.so:att512_tsoftmax"
+    },
+    {
+     "share": 0.016,
+     "name": "attention.so:rope_rows"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "attention.so:ew_task"
+    },
+    {
+     "share": 0.012,
+     "name": "libm.so.6:expf64@@GLIBC_2.27"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "attention.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.006,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.006,
+     "name": "attention.so:pool_tasks"
+    },
+    {
+     "share": 0.006,
+     "name": "libm.so.6:?"
+    },
+    {
+     "share": 0.006,
+     "name": "attention.so:pair_avx512"
+    },
+    {
+     "share": 0.005,
+     "name": "attention.so:scatter_task"
+    },
+    {
+     "share": 0.004,
+     "name": "attention.so:rms16_stats"
+    },
+    {
+     "share": 0.004,
+     "name": "attention.so:span_finite_avx512"
+    },
+    {
+     "share": 0.003,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.003,
+     "name": "python3.11:PyObject_IS_GC"
+    },
+    {
+     "share": 0.003,
+     "name": "attention.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.003,
+     "name": "attention.so:scan_task"
+    },
+    {
+     "share": 0.003,
+     "name": "attention.so:pool_main"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyUnicode_AsUTF8AndSize"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.002,
+     "name": "libc.so.6:pthread_cond_signal@@GLIBC_2.3.2"
+    },
+    {
+     "share": 0.002,
+     "name": "attention.so:pool_dispatch.part.0"
+    },
+    {
+     "share": 0.002,
+     "name": "attention.so:_init"
+    },
+    {
+     "share": 0.001,
+     "name": "libgcc_s.so.1:__cpu_indicator_init@GCC_4.8.0"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:vfprintf@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_Py_CheckFunctionResult"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_GetItem"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyLong_FromString"
+    }
+   ]
+  },
+  "global-infer1024": {
+   "samples": 1027,
+   "files": [
+    {
+     "share": 0.938,
+     "name": "guard_compact.so"
+    },
+    {
+     "share": 0.044000000000000004,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.015,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.002,
+     "name": "_multiarray_umath.cpython-311-x86_64-linux-gnu.so"
+    },
+    {
+     "share": 0.002,
+     "name": "_pcg64.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.561,
+     "name": "guard_compact.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.11199999999999999,
+     "name": "guard_compact.so:wedge_gate_fwd_task"
+    },
+    {
+     "share": 0.08,
+     "name": "guard_compact.so:bcir_tensor_expf"
+    },
+    {
+     "share": 0.053,
+     "name": "guard_compact.so:gp_pair_forward.part.0"
+    },
+    {
+     "share": 0.034,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.033,
+     "name": "guard_compact.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.03,
+     "name": "guard_compact.so:rms_task"
+    },
+    {
+     "share": 0.024,
+     "name": "guard_compact.so:scan_task"
+    },
+    {
+     "share": 0.01,
+     "name": "guard_compact.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "guard_compact.so:span_finite_avx512"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "guard_compact.so:_init"
+    },
+    {
+     "share": 0.006,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.006,
+     "name": "guard_compact.so:ew_task"
+    },
+    {
+     "share": 0.005,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.005,
+     "name": "guard_compact.so:pool_main"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:pool_tasks"
+    },
+    {
+     "share": 0.003,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.003,
+     "name": "guard_compact.so:gp_forward_task"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyUnicode_AsUTF8AndSize"
+    },
+    {
+     "share": 0.002,
+     "name": "_pcg64.cpython-311-x86_64-linux-gnu.so:__pyx_f_5numpy_6random_6_pcg64_pcg64_uint64"
+    },
+    {
+     "share": 0.002,
+     "name": "guard_compact.so:gp_prefix_task"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyUnicode_New"
+    },
+    {
+     "share": 0.001,
+     "name": "_multiarray_umath.cpython-311-x86_64-linux-gnu.so:npy_cpu_init"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:vprintf@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyBytes_Repr"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_Py_CheckFunctionResult"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:read@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyFunction_NewWithQualName"
+    },
+    {
+     "share": 0.001,
+     "name": "_multiarray_umath.cpython-311-x86_64-linux-gnu.so:broadcast_strides"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyTuple_New"
+    },
+    {
+     "share": 0.001,
+     "name": "guard_compact.so:mm_task"
+    },
+    {
+     "share": 0.001,
+     "name": "guard_compact.so:forward"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:pthread_cond_broadcast@@GLIBC_2.3.2"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:__default_morecore@GLIBC_2.2.5"
+    }
+   ]
+  },
+  "global-train256": {
+   "samples": 1336,
+   "files": [
+    {
+     "share": 0.89,
+     "name": "guard_compact.so"
+    },
+    {
+     "share": 0.069,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.025,
+     "name": "libm.so.6"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2"
+    },
+    {
+     "share": 0.001,
+     "name": "_multiarray_umath.cpython-311-x86_64-linux-gnu.so"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.522,
+     "name": "guard_compact.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.076,
+     "name": "guard_compact.so:gp_pair_backward.part.0"
+    },
+    {
+     "share": 0.054000000000000006,
+     "name": "guard_compact.so:wedge_gate_fwd_task"
+    },
+    {
+     "share": 0.054000000000000006,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.028999999999999998,
+     "name": "guard_compact.so:rmsb_cols_task"
+    },
+    {
+     "share": 0.027000000000000003,
+     "name": "guard_compact.so:commit_avx512"
+    },
+    {
+     "share": 0.022000000000000002,
+     "name": "guard_compact.so:bcir_tensor_expf"
+    },
+    {
+     "share": 0.017,
+     "name": "guard_compact.so:rmsb_rows_task"
+    },
+    {
+     "share": 0.016,
+     "name": "guard_compact.so:pool_tasks"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "guard_compact.so:gp_pair_forward.part.0"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "guard_compact.so:scan_task"
+    },
+    {
+     "share": 0.011000000000000001,
+     "name": "guard_compact.so:rms_task"
+    },
+    {
+     "share": 0.011000000000000001,
+     "name": "libm.so.6:expf64@@GLIBC_2.27"
+    },
+    {
+     "share": 0.01,
+     "name": "guard_compact.so:swiglu2_avx512"
+    },
+    {
+     "share": 0.01,
+     "name": "libm.so.6:f64xsubf128@@GLIBC_2.28"
+    },
+    {
+     "share": 0.01,
+     "name": "guard_compact.so:loss_task"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "guard_compact.so:pool_main"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "guard_compact.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "guard_compact.so:rms16_stats"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "guard_compact.so:pair_avx512"
+    },
+    {
+     "share": 0.006,
+     "name": "guard_compact.so:scatter_task"
+    },
+    {
+     "share": 0.006,
+     "name": "guard_compact.so:_init"
+    },
+    {
+     "share": 0.006,
+     "name": "guard_compact.so:span_finite_avx512"
+    },
+    {
+     "share": 0.005,
+     "name": "guard_compact.so:pool_dispatch.part.0"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:wedge_gate_bwd_task"
+    },
+    {
+     "share": 0.003,
+     "name": "libm.so.6:?"
+    },
+    {
+     "share": 0.003,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.002,
+     "name": "guard_compact.so:ew_task"
+    },
+    {
+     "share": 0.002,
+     "name": "guard_compact.so:gp_backward_task"
+    },
+    {
+     "share": 0.002,
+     "name": "guard_compact.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_IS_GC"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:__nptl_death_event@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyArg_ParseTupleAndKeywords"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyMem_SetAllocator"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyObject_GC_New"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2:_dl_rtld_di_serinfo@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyImport_Import"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyUnicode_New"
+    }
+   ]
+  },
+  "global-train512": {
+   "samples": 1338,
+   "files": [
+    {
+     "share": 0.907,
+     "name": "guard_compact.so"
+    },
+    {
+     "share": 0.049,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.032,
+     "name": "libm.so.6"
+    },
+    {
+     "share": 0.01,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so"
+    },
+    {
+     "share": 0.001,
+     "name": "_multiarray_umath.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.607,
+     "name": "guard_compact.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.055,
+     "name": "guard_compact.so:gp_pair_backward.part.0"
+    },
+    {
+     "share": 0.034,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.028999999999999998,
+     "name": "guard_compact.so:rmsb_rows_task"
+    },
+    {
+     "share": 0.026000000000000002,
+     "name": "guard_compact.so:wedge_gate_fwd_task"
+    },
+    {
+     "share": 0.023,
+     "name": "guard_compact.so:rms_task"
+    },
+    {
+     "share": 0.019,
+     "name": "guard_compact.so:rmsb_cols_task"
+    },
+    {
+     "share": 0.019,
+     "name": "guard_compact.so:bcir_tensor_expf"
+    },
+    {
+     "share": 0.015,
+     "name": "libm.so.6:f64xsubf128@@GLIBC_2.28"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "guard_compact.so:swiglu2_avx512"
+    },
+    {
+     "share": 0.012,
+     "name": "libm.so.6:expf64@@GLIBC_2.27"
+    },
+    {
+     "share": 0.011000000000000001,
+     "name": "guard_compact.so:commit_avx512"
+    },
+    {
+     "share": 0.01,
+     "name": "guard_compact.so:wedge_gate_bwd_task"
+    },
+    {
+     "share": 0.01,
+     "name": "guard_compact.so:loss_task"
+    },
+    {
+     "share": 0.01,
+     "name": "guard_compact.so:pool_tasks"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "guard_compact.so:rms16_stats"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "guard_compact.so:gp_pair_forward.part.0"
+    },
+    {
+     "share": 0.008,
+     "name": "guard_compact.so:scatter_task"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "guard_compact.so:ew_task"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "guard_compact.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.006,
+     "name": "guard_compact.so:scan_task"
+    },
+    {
+     "share": 0.006,
+     "name": "guard_compact.so:_init"
+    },
+    {
+     "share": 0.005,
+     "name": "libm.so.6:?"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:pair_avx512"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:span_finite_avx512"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:pool_main"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.003,
+     "name": "guard_compact.so:gp_reverse_task"
+    },
+    {
+     "share": 0.003,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_IS_GC"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:pthread_cond_broadcast@@GLIBC_2.3.2"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyObject_GetMethod"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2:_dl_fatal_printf@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyCell_New"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:read@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:fstatat@@GLIBC_2.33"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:getdents64@@GLIBC_2.30"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyDict_Copy"
+    }
+   ]
+  },
+  "query_full-infer1024": {
+   "samples": 1234,
+   "files": [
+    {
+     "share": 0.946,
+     "name": "query_guard_compact.so"
+    },
+    {
+     "share": 0.037000000000000005,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.015,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.555,
+     "name": "query_guard_compact.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.113,
+     "name": "query_guard_compact.so:wedge_gate_fwd_task"
+    },
+    {
+     "share": 0.061,
+     "name": "query_guard_compact.so:gp_pair_forward"
+    },
+    {
+     "share": 0.053,
+     "name": "query_guard_compact.so:bcir_tensor_expf"
+    },
+    {
+     "share": 0.05,
+     "name": "query_guard_compact.so:gp_query_contract_pair"
+    },
+    {
+     "share": 0.033,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.03,
+     "name": "query_guard_compact.so:rms_task"
+    },
+    {
+     "share": 0.023,
+     "name": "query_guard_compact.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.019,
+     "name": "query_guard_compact.so:scan_task"
+    },
+    {
+     "share": 0.011000000000000001,
+     "name": "query_guard_compact.so:pool_tasks"
+    },
+    {
+     "share": 0.01,
+     "name": "query_guard_compact.so:ew_task"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "query_guard_compact.so:_init"
+    },
+    {
+     "share": 0.005,
+     "name": "query_guard_compact.so:span_finite_avx512"
+    },
+    {
+     "share": 0.003,
+     "name": "python3.11:PyObject_IS_GC"
+    },
+    {
+     "share": 0.003,
+     "name": "query_guard_compact.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.002,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.002,
+     "name": "query_guard_compact.so:pool_main"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.002,
+     "name": "query_guard_compact.so:pool_dispatch.part.0"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyErr_Clear"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyImport_Import"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyCode_New"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2:_dl_rtld_di_serinfo@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_GetIter"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyUnicode_New"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:read@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyUnicode_IsXidContinue"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_GetAttr"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so:random_standard_normal"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyObject_New"
+    },
+    {
+     "share": 0.001,
+     "name": "query_guard_compact.so:wedge_precise_forward"
+    },
+    {
+     "share": 0.001,
+     "name": "query_guard_compact.so:forward"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:__nptl_death_event@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_Free"
+    }
+   ]
+  },
+  "query_full-train512": {
+   "samples": 1529,
+   "files": [
+    {
+     "share": 0.9179999999999999,
+     "name": "query_guard_compact.so"
+    },
+    {
+     "share": 0.04,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.026000000000000002,
+     "name": "libm.so.6"
+    },
+    {
+     "share": 0.016,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.581,
+     "name": "query_guard_compact.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.045,
+     "name": "query_guard_compact.so:gp_pair_backward.part.0"
+    },
+    {
+     "share": 0.032,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.031,
+     "name": "query_guard_compact.so:gp_query_contract_vjp"
+    },
+    {
+     "share": 0.027000000000000003,
+     "name": "query_guard_compact.so:wedge_gate_fwd_task"
+    },
+    {
+     "share": 0.027000000000000003,
+     "name": "query_guard_compact.so:rms_task"
+    },
+    {
+     "share": 0.023,
+     "name": "query_guard_compact.so:gp_pair_forward"
+    },
+    {
+     "share": 0.018000000000000002,
+     "name": "query_guard_compact.so:swiglu2_avx512"
+    },
+    {
+     "share": 0.018000000000000002,
+     "name": "query_guard_compact.so:bcir_tensor_expf"
+    },
+    {
+     "share": 0.016,
+     "name": "query_guard_compact.so:pool_tasks"
+    },
+    {
+     "share": 0.016,
+     "name": "query_guard_compact.so:rmsb_cols_task"
+    },
+    {
+     "share": 0.013999999999999999,
+     "name": "query_guard_compact.so:commit_avx512"
+    },
+    {
+     "share": 0.013999999999999999,
+     "name": "query_guard_compact.so:gp_query_contract_pair"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "query_guard_compact.so:loss_task"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "libm.so.6:expf64@@GLIBC_2.27"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "query_guard_compact.so:wedge_gate_bwd_task"
+    },
+    {
+     "share": 0.012,
+     "name": "query_guard_compact.so:rmsb_rows_task"
+    },
+    {
+     "share": 0.011000000000000001,
+     "name": "libm.so.6:f64xsubf128@@GLIBC_2.28"
+    },
+    {
+     "share": 0.01,
+     "name": "query_guard_compact.so:scan_task"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "query_guard_compact.so:gp_query_backward_task"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "query_guard_compact.so:rms16_stats"
+    },
+    {
+     "share": 0.006,
+     "name": "query_guard_compact.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.005,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.005,
+     "name": "query_guard_compact.so:ew_task"
+    },
+    {
+     "share": 0.004,
+     "name": "query_guard_compact.so:span_finite_avx512"
+    },
+    {
+     "share": 0.003,
+     "name": "query_guard_compact.so:pool_main"
+    },
+    {
+     "share": 0.003,
+     "name": "query_guard_compact.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.002,
+     "name": "query_guard_compact.so:_init"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyBytes_AsString"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_IS_GC"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_Py_CheckFunctionResult"
+    },
+    {
+     "share": 0.001,
+     "name": "libm.so.6:?"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyTraceBack_Here"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyUnicode_AsUTF8AndSize"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2:_dl_fatal_printf@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyArg_CheckPositional"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyObject_GetMethod"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyImport_Import"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyWeakref_ClearRef"
+    }
+   ]
+  },
+  "step256": {
+   "samples": 1596,
+   "files": [
+    {
+     "share": 0.898,
+     "name": "libdec_before.so"
+    },
+    {
+     "share": 0.061,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.040999999999999995,
+     "name": "libm.so.6"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.501,
+     "name": "libdec_before.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.064,
+     "name": "libdec_before.so:att512_btransposed"
+    },
+    {
+     "share": 0.061,
+     "name": "libdec_before.so:att512_bgroup"
+    },
+    {
+     "share": 0.055,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.031,
+     "name": "libdec_before.so:att512_tcontext"
+    },
+    {
+     "share": 0.03,
+     "name": "libdec_before.so:att512_tscores"
+    },
+    {
+     "share": 0.027000000000000003,
+     "name": "libm.so.6:f64xsubf128@@GLIBC_2.28"
+    },
+    {
+     "share": 0.02,
+     "name": "libdec_before.so:rmsb_cols_task"
+    },
+    {
+     "share": 0.02,
+     "name": "libdec_before.so:swiglu2_avx512"
+    },
+    {
+     "share": 0.018000000000000002,
+     "name": "libdec_before.so:rope_rows"
+    },
+    {
+     "share": 0.018000000000000002,
+     "name": "libdec_before.so:att512_tsoftmax"
+    },
+    {
+     "share": 0.016,
+     "name": "libdec_before.so:commit_avx512"
+    },
+    {
+     "share": 0.016,
+     "name": "libdec_before.so:loss_task"
+    },
+    {
+     "share": 0.015,
+     "name": "libdec_before.so:rmsb_rows_task"
+    },
+    {
+     "share": 0.013999999999999999,
+     "name": "libdec_before.so:rms_task"
+    },
+    {
+     "share": 0.011000000000000001,
+     "name": "libdec_before.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.01,
+     "name": "libdec_before.so:pair_avx512"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "libm.so.6:expf64@@GLIBC_2.27"
+    },
+    {
+     "share": 0.008,
+     "name": "libdec_before.so:rms16_stats"
+    },
+    {
+     "share": 0.008,
+     "name": "libdec_before.so:pool_tasks"
+    },
+    {
+     "share": 0.008,
+     "name": "libdec_before.so:pool_main"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "libdec_before.so:scan_task"
+    },
+    {
+     "share": 0.004,
+     "name": "libdec_before.so:pool_dispatch"
+    },
+    {
+     "share": 0.004,
+     "name": "libm.so.6:?"
+    },
+    {
+     "share": 0.004,
+     "name": "libdec_before.so:scatter_task"
+    },
+    {
+     "share": 0.004,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.004,
+     "name": "libdec_before.so:att512_tq"
+    },
+    {
+     "share": 0.003,
+     "name": "libdec_before.so:ew_task"
+    },
+    {
+     "share": 0.003,
+     "name": "libdec_before.so:span_finite_avx512"
+    },
+    {
+     "share": 0.003,
+     "name": "libdec_before.so:_init"
+    },
+    {
+     "share": 0.002,
+     "name": "libc.so.6:pthread_mutex_lock@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "libdec_before.so:mm_group_any"
+    },
+    {
+     "share": 0.001,
+     "name": "libdec_before.so:att_task_backward"
+    },
+    {
+     "share": 0.001,
+     "name": "libdec_before.so:mm_task"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:__nptl_death_event@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.001,
+     "name": "libdec_before.so:mm_run_one"
+    },
+    {
+     "share": 0.001,
+     "name": "libdec_before.so:att_head_backward"
+    }
+   ]
+  }
+ }
+}

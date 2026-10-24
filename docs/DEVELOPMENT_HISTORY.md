@@ -4918,6 +4918,42 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     caught by its own check; NDT-THREADS' NT2 and NT11 re-anchored on the block claim and caught again.
   - Not claimed: hosts with more cores or another cache topology; the bf16 contract's jobs (dealt in blocks, not
     timed); counter-based figures (no PMU on this VM).
+  LOSS-ONCE (2026-10-24): the trainer's loss evaluates each logit's exponential once, every value as it was; the
+    study's geometric heads take their gate's exponential a span at a time
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §25,
+    [measurements/2026-10-24/loss-once/](research/measurements/2026-10-24/loss-once/README.json)).
+  - Placed by measurement (NEXT-1, `survey.json`, on the tree before): after POOL-AFFINITY the k-blocked GEMM runs the
+    T256 step's products at 480-613 GFLOP/s back to back on four threads, x2.7-x3.7 their one-thread rates, the
+    workers 88-93% of the 1,024-row A Bᵀ product's job inside its tasks (the plain product's 75-91%, the three-task
+    weight adjoint's 59-64%); they sleep 2.2-8.6 times a step from T128 to T512 (84 jobs a step), a job after a 1 ms
+    pause 39-57 µs slower; the step spends 1.9% of its time outside its jobs. A sampling profiler (SIGPROF on the
+    process's CPU time; no PMU on this VM) placed the rest: the loss's task and libm, its two `exp` calls a logit,
+    5.7% of the T256 step's samples, and in the study's geometric heads' inference at T1024 the gate, its scalar
+    exponential `bcir_tensor_expf` called an element (`wedge_gate_fwd_task` and it, 16.6-19.2%).
+  - LOSS-ONCE: a row keeps its first 1,024 exponentials in double on its task's stack and its adjoints divide the kept
+    values; a wider row evaluates its tail again. The same call on the same argument returns the same double, and the
+    sum, the term and both divisions keep the loop's order, so every adjoint, term and loss is the two-evaluation
+    loop's bit for bit. The loss task alone, one thread, 1,024 to 8,192 rows of 260 logits: 9.6-10.1 ns a logit to
+    6.4-6.5 under clang (x0.650-x0.672), 9.0-9.4 to 6.6-6.7 under GCC (x0.712-x0.742); 512 rows of 1,500, the tail
+    evaluated twice, x0.797 and x0.840. In the step on four threads, by the job clock, the loss job takes x0.62-x0.65
+    of its time (0.67-0.70 ms to 0.44-0.45 at T256, 1.33-1.38 to 0.84-0.85 at T512), some 1.6-1.9% of the step; alone
+    in its own process the step reads x0.977-x1.008 from T128 to T1024 and x0.988 for the 9.84M decoder, each holding
+    1, every run's weights the same digest on both trees.
+  - The study's builds: `once_level3.py` makes the same edit to the PR818 study's three trainer forks and gives the
+    geometric heads' gate its exponential a task's 512 elements at a time through `bcir_tensor_exp`, every instance
+    of which equals `bcir_tensor_expf` on all 2^32 inputs (`exp_span_check.c`, clang and GCC). Every trained state
+    and logit is the fork's. Against level 2 in one process: inference x0.849-x0.869 for `global` and `query_full` at
+    T1024 and T2048, each resolved; training x0.90-x0.94, `global` at T512 resolved (x0.943), the rest meeting their
+    controls or holding 1; the attention model at level 3, where only its loss changes, at parity. Against PyTorch
+    at fixed shapes the geometric heads now run inference in x0.45-0.61 of Inductor's time (x0.52-0.67 in
+    POOL-AFFINITY's records) and train in x0.22-0.33 of it.
+  - Witnesses: the C harness's `loss_once`, through `bcir_decoder_loss_probe` (BCIR_DT_LOSS_PROBE, the harness's
+    builds only), holds every adjoint, row term and their sum byte for byte to the two-evaluation loop written apart
+    at nine vocabularies to 2,049, five row counts about a task's sixteen, four kinds of row and targets in the
+    buffer and past it, on no pool and pools of two and four; `loss-once.json` LO1-LO7, each caught by its own check;
+    NDT-REDUCE's NR4 and NR9, beside the new task, caught again.
+  - Not claimed: a vocabulary past the buffer gains on its first 1,024 logits only; the study's own pair kernels and
+    the scans after its gate, measured here and left the study's; counter-based figures (no PMU on this VM).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
