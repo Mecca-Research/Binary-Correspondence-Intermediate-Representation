@@ -4774,6 +4774,36 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     PyTorch; the attention baseline's inference x1.39 of Inductor's time at T1024 (GEO-2: parity) and x1.67 at T2048.
   - Not claimed: PyTorch's run-to-run variation as a property of either rail (the paired rounds hold within a process);
     a compile of the geometric heads at other than their fixed shapes.
+  GEO-AMX (2026-10-24): the PR818 study's bf16 arm timed on AMX, against PyTorch's bf16; records and docs only
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §19,
+    [measurements/2026-10-24/geo-amx/](research/measurements/2026-10-24/geo-amx/README.json)).
+  - The open item it closes: GEO-2 reran the study's bf16 runs bit for bit on a host without AMX, so their timing on
+    the unit the contract was shaped for stayed open (the review note's open item 1).
+  - On the AMX Xeon, the study's three models (level 2's overlays linked with this branch's tensor unit, `build_amx.py`
+    checking every entry's prototype in both headers), 24 rotated rounds beside an A/A arm: the bf16 contract (26, the
+    GEMMs on bfloat16 operands through the AMX instance) x0.676-x0.888 of binary32's time for the attention model at
+    T256-T2048 and x0.719-x0.784 for the geometric heads; with the bf16 attention too (90) x0.503-x0.585 at every
+    context. Codex's AMD host, without AMX, read x1.14 and x1.04. Every arm deterministic; the first update's loss
+    within 1.3e-4 of binary32's.
+  - Against PyTorch's mixed precision (`torch.autocast` to bfloat16, oneDNN's AMX matmuls), eager and compiled at fixed
+    shapes (COMPILE-LIMIT's protocol), 16 rounds: BCIR's bf16 trains the attention model in x0.244-x0.727 of Inductor's
+    bf16 time and the geometric heads in x0.267-x0.373. Autocast speeds PyTorch's attention model at T1024 and T2048
+    only (x0.85 and x0.78 of its binary32 time); BCIR's bf16 GEMMs alone, the attention in binary32, take x1.14 of
+    P-IND-BF16's time at T2048.
+  - Not claimed: bf16 quality beyond the study's own records (GEO-2 holds them bit for bit); a GPU.
+  BWD-T-0 (2026-10-24): the attention backward's gap placed; BWD-VT measured and not taken; records and docs only
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §20,
+    [measurements/2026-10-24/bwd-vt/](research/measurements/2026-10-24/bwd-vt/README.json)).
+  - The step at T2048 after SOFTMAX-T: 117 ms of its 280 ms of jobs the attention backward (41.9%), 69 the attention
+    forward, about 65 the GEMMs. The backward a phase at a time (B4/T2048, TSC cycles a probability): dV 1.97-2.35
+    (61-73% of v1's measured rate), the dP tiles 1.98-2.08 (69-73%), dQ 1.53-1.68 (86-94%), dK 1.76-1.91 (76-82%), the
+    dots, score adjoints and copies 2.3-2.6 together; one thread the same. Their two kernels on cache-resident operands
+    (`tr_micro.c`, `dp_micro.c`, interleaved repeats, clang and GCC) run at medians of 95-109% of v1's rate at every row
+    stride tried: dV and the dP tiles lose their quarter to moving their operands, not to their arithmetic.
+  - BWD-VT, measured and not taken: V's slot in the backward's contiguous task holding the values transposed, so no dP
+    tile transposes them again (every hash the same, clang and GCC): the backward x0.946 at B4/T2048, its interval
+    meeting the A/A control's; at parity at one thread, T1024, heads of 64, the fused contract and under GCC.
+  - Not claimed: counter-based figures (no PMU on this VM); the next slice -- it starts from these readings.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

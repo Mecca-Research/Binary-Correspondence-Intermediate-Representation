@@ -1,0 +1,77 @@
+{
+ "what": "measure: lower_hash.c, band_hash.c (each also with -DBCIR_ATT_CONTIG_FROM=1, the contiguous tasks at every context: the prototype's only path), attn_hash.c and fwd_hash.c, built on the tree's unit and on the prototype's, clang and GCC; each output's sha256",
+ "binaries": {
+  "attn_hash_clang": {
+   "lines": 88,
+   "sha256_tree": "82c1c266c72d70c53319f163de63a351199f58ea24d516aae0e03cc99fd24736",
+   "sha256_proto": "82c1c266c72d70c53319f163de63a351199f58ea24d516aae0e03cc99fd24736",
+   "equal": true
+  },
+  "attn_hash_gcc": {
+   "lines": 88,
+   "sha256_tree": "82c1c266c72d70c53319f163de63a351199f58ea24d516aae0e03cc99fd24736",
+   "sha256_proto": "82c1c266c72d70c53319f163de63a351199f58ea24d516aae0e03cc99fd24736",
+   "equal": true
+  },
+  "band_hash_clang": {
+   "lines": 48,
+   "sha256_tree": "b83443463509fc0393564895fb294632d18000df2d3b636b2b4cabd016a105c0",
+   "sha256_proto": "b83443463509fc0393564895fb294632d18000df2d3b636b2b4cabd016a105c0",
+   "equal": true
+  },
+  "band_hash_gcc": {
+   "lines": 48,
+   "sha256_tree": "b83443463509fc0393564895fb294632d18000df2d3b636b2b4cabd016a105c0",
+   "sha256_proto": "b83443463509fc0393564895fb294632d18000df2d3b636b2b4cabd016a105c0",
+   "equal": true
+  },
+  "band_hashc_clang": {
+   "lines": 48,
+   "sha256_tree": "b83443463509fc0393564895fb294632d18000df2d3b636b2b4cabd016a105c0",
+   "sha256_proto": "b83443463509fc0393564895fb294632d18000df2d3b636b2b4cabd016a105c0",
+   "equal": true
+  },
+  "band_hashc_gcc": {
+   "lines": 48,
+   "sha256_tree": "b83443463509fc0393564895fb294632d18000df2d3b636b2b4cabd016a105c0",
+   "sha256_proto": "b83443463509fc0393564895fb294632d18000df2d3b636b2b4cabd016a105c0",
+   "equal": true
+  },
+  "fwd_hash_clang": {
+   "lines": 288,
+   "sha256_tree": "9738e8dd066e52097e479a239e5e842e49392fa8dcb8d38bd12a65409272e213",
+   "sha256_proto": "9738e8dd066e52097e479a239e5e842e49392fa8dcb8d38bd12a65409272e213",
+   "equal": true
+  },
+  "fwd_hash_gcc": {
+   "lines": 288,
+   "sha256_tree": "9738e8dd066e52097e479a239e5e842e49392fa8dcb8d38bd12a65409272e213",
+   "sha256_proto": "9738e8dd066e52097e479a239e5e842e49392fa8dcb8d38bd12a65409272e213",
+   "equal": true
+  },
+  "lower_hash_clang": {
+   "lines": 208,
+   "sha256_tree": "ff14859ede5a4c6af243511dc2b79b1a88f1ce5b2381619f9d1ed787acdff006",
+   "sha256_proto": "ff14859ede5a4c6af243511dc2b79b1a88f1ce5b2381619f9d1ed787acdff006",
+   "equal": true
+  },
+  "lower_hash_gcc": {
+   "lines": 208,
+   "sha256_tree": "ff14859ede5a4c6af243511dc2b79b1a88f1ce5b2381619f9d1ed787acdff006",
+   "sha256_proto": "ff14859ede5a4c6af243511dc2b79b1a88f1ce5b2381619f9d1ed787acdff006",
+   "equal": true
+  },
+  "lower_hashc_clang": {
+   "lines": 208,
+   "sha256_tree": "ff14859ede5a4c6af243511dc2b79b1a88f1ce5b2381619f9d1ed787acdff006",
+   "sha256_proto": "ff14859ede5a4c6af243511dc2b79b1a88f1ce5b2381619f9d1ed787acdff006",
+   "equal": true
+  },
+  "lower_hashc_gcc": {
+   "lines": 208,
+   "sha256_tree": "ff14859ede5a4c6af243511dc2b79b1a88f1ce5b2381619f9d1ed787acdff006",
+   "sha256_proto": "ff14859ede5a4c6af243511dc2b79b1a88f1ce5b2381619f9d1ed787acdff006",
+   "equal": true
+  }
+ }
+}

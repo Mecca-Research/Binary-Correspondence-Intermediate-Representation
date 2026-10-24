@@ -665,7 +665,11 @@ at about half the FP32 kernel's rate, so there the contract buys a state identic
 not speed. Over five paired seeds of the 1,000-step language model at four threads (LM-BF16), the
 contract trains at 2.08 times the tokens a second of compiled PyTorch under its CPU autocast to
 bfloat16 (95% interval 1.98-2.19), with the test cross-entropy inside a ±0.01-nat margin of
-PyTorch's and of BCIR's own FP32 run's.
+PyTorch's and of BCIR's own FP32 run's. On the PR818 study's models on AMX (GEO-AMX, 2026-10-24) the
+contract takes x0.68-x0.89 of binary32's time for the attention model and x0.72-x0.78 for the geometric
+heads -- Codex's AMD host, without AMX, read x1.04-x1.14 -- and x0.50-x0.59 with the bf16 attention too,
+ahead of PyTorch's own bf16 on every model ([the GEO review](../research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md)
+§19).
 
 Since ATTN-FMA (2026-10-18) the attention's products can be fused too (the report's §33): with the
 `attn` bit every multiply-add of the scores, the context and the backward's products is one `fmaf`,
