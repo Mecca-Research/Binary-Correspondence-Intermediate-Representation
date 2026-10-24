@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static float w[4096],grad[4096],m[4096],v[4096],act[32768],scratch[32768];
 /* The fixture: vocab 16, width 8, two heads over one KV head, two layers, feed-forward 16; the
@@ -880,6 +881,154 @@ static void pool_claims(void) {
   }
   printf("  PASS native pool claims: every task of 600 jobs exactly once on %u pool(s), back to back, "
       "after the workers sleep and at the stop\n",pools);
+}
+/* POOL-AFFINITY: a job's tasks are dealt in contiguous blocks, one a worker, the leftovers taken by
+ * whichever worker is free. Every task once at each cap of a four-thread pool (a block past the cap
+ * would never run). A job whose first task -- the first of the caller's block -- holds its thread
+ * until every other task is done finishes only if the others take that block's rest (where nothing
+ * steals it waits: bounded here at 30 s, a failure). With the probe (BCIR_TENSOR_POOL_PROBE): with
+ * stealing off, the tasks past a job's head run as one contiguous run a thread, as many runs as
+ * non-empty blocks, their lengths the share's floor or ceiling; with it on, the first task of every
+ * block but the last held -- the last worker alone free, so it takes every other block's rest; and
+ * led jobs (heads 0, 1, 3, half, all and past all, at caps 0, 2 and 3) every task once. A task's
+ * thread is the address of a local of its own frame, as pool_caps reads it; and a pool stays inside the
+ * bytes it asks for from every max_align_t offset of a cache line. The holds' counter and
+ * flags are GCC's and Clang's atomics (the pool's own rail); elsewhere the hold witnesses are not
+ * built. */
+#if defined(__GNUC__) || defined(__clang__)
+#define PB_ATOMIC 1
+#endif
+#ifdef BCIR_TENSOR_POOL_PROBE
+void bcir_tensor_pool_probe_steal(int on);
+size_t bcir_tensor_pool_probe_block(size_t n, unsigned workers, unsigned w);
+void bcir_tensor_pool_probe_run_led(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx, size_t tasks,
+    size_t head);
+#endif
+static uintptr_t pb_frame[1024]; static unsigned pb_runs[1024];
+static size_t pb_hold[64],pb_holds,pb_n; static unsigned pb_done,pb_late;
+static void pb_task(void *ctx, size_t task) {
+  volatile unsigned char here=0; volatile unsigned long spin;
+  (void)ctx; pb_frame[task]=(uintptr_t)&here; pb_runs[task]++;
+  for (spin=0;spin<300ul;spin++) {}
+}
+#ifdef PB_ATOMIC
+static void pb_hold_task(void *ctx, size_t task) {
+  volatile unsigned char here=0; size_t k;
+  (void)ctx; pb_frame[task]=(uintptr_t)&here; pb_runs[task]++;
+  for (k=0;k<pb_holds;k++) if (pb_hold[k]==task) {
+    time_t t0=time(NULL);
+    while (__atomic_load_n(&pb_done,__ATOMIC_ACQUIRE)<pb_n-pb_holds)
+      if (time(NULL)-t0>30) { __atomic_store_n(&pb_late,1u,__ATOMIC_RELAXED); return; }
+    return;
+  }
+  __atomic_fetch_add(&pb_done,1u,__ATOMIC_RELEASE);
+}
+/* one held job of n tasks: the listed tasks wait for every other; 1 when every task ran once in time */
+static int pb_held(bcir_tensor_pool *pool, size_t n) {
+  size_t i; int ok;
+  memset(pb_runs,0,sizeof(pb_runs)); pb_n=n; pb_done=0; pb_late=0;
+  bcir_tensor_pool_run(pool,pb_hold_task,NULL,n);
+  ok=!pb_late;
+  for (i=0;i<n;i++) ok&=pb_runs[i]==1;
+  return ok;
+}
+#endif
+static void pool_blocks(void) {
+  static _Alignas(max_align_t) unsigned char memory[4096];
+  static const size_t ns[]={1,2,3,4,5,6,7,8,9,31,64,257};
+  bcir_tensor_pool *pool; unsigned threads,cap; size_t c,i,jobs=0,held=0; const char *probed="";
+  if (!bcir_tensor_pool_size(4)) {
+    printf("  PASS pool blocks (POOL-AFFINITY): a serial-only host, no pool to deal blocks\n");
+    return;
+  }
+  {  /* the blocks inside the bytes the pool asks for, from every max_align_t offset of a line */
+    static _Alignas(64) unsigned char room[8192]; size_t off,need=bcir_tensor_pool_size(4);
+    assert(need+64+256<=sizeof(room));
+    for (off=0;off<64;off+=_Alignof(max_align_t)) {
+      memset(room,0xA5,sizeof(room));
+      pool=bcir_tensor_pool_init(room+off,need,4); assert(pool!=NULL);
+      memset(pb_runs,0,sizeof(pb_runs)); bcir_tensor_pool_run(pool,pb_task,NULL,64);
+      for (i=0;i<64;i++) assert(pb_runs[i]==1);
+      bcir_tensor_pool_stop(pool);
+      for (i=off+need;i<sizeof(room);i++) assert(room[i]==0xA5);
+      for (i=0;i<off;i++) assert(room[i]==0xA5);
+    }
+  }
+  pool=bcir_tensor_pool_init(memory,sizeof(memory),4); assert(pool!=NULL);
+  for (cap=0;cap<=4;cap++) {  /* every task once whatever the workers the job runs on */
+    bcir_tensor_pool_cap(pool,cap);
+    for (c=0;c<sizeof(ns)/sizeof(ns[0]);c++) {
+      memset(pb_runs,0,sizeof(pb_runs));
+      bcir_tensor_pool_run(pool,pb_task,NULL,ns[c]); jobs++;
+      for (i=0;i<1024;i++) assert(pb_runs[i]==(i<ns[c] ? 1u : 0u));
+    }
+  }
+  bcir_tensor_pool_cap(pool,0); bcir_tensor_pool_stop(pool);
+#ifdef PB_ATOMIC
+  for (threads=2;threads<=4;threads++) {  /* the caller's block taken while its first task holds it */
+    pool=bcir_tensor_pool_init(memory,sizeof(memory),threads); assert(pool!=NULL);
+    pb_holds=1; pb_hold[0]=0;
+    assert(pb_held(pool,6*threads)); held++;
+    bcir_tensor_pool_stop(pool);
+  }
+#endif
+#ifdef BCIR_TENSOR_POOL_PROBE
+  {
+    static const size_t heads[]={0,1,3};
+    size_t h,runs=0,leds=0;
+    for (threads=2;threads<=4;threads++) {
+      static const size_t ms[]={1,3,7,8,13,24,61};
+      pool=bcir_tensor_pool_init(memory,sizeof(memory),threads); assert(pool!=NULL);
+      bcir_tensor_pool_probe_steal(0);
+      for (h=0;h<3;h++) for (c=0;c<sizeof(ms)/sizeof(ms[0]);c++) {
+        size_t n=heads[h]+ms[c],m=ms[c],lo,hi,len,distinct=0,want=m<threads ? m : threads;
+        if (n<=threads) continue;  /* no more tasks than workers: every one in turn, no blocks */
+        memset(pb_runs,0,sizeof(pb_runs)); memset(pb_frame,0,sizeof(pb_frame));
+        bcir_tensor_pool_probe_run_led(pool,pb_task,NULL,n,heads[h]);
+        for (i=0;i<n;i++) assert(pb_runs[i]==1);
+        for (lo=heads[h];lo<n;lo=hi) {  /* one run a thread, its length the share's floor or ceiling */
+          for (hi=lo+1;hi<n && pb_frame[hi]==pb_frame[lo];hi++) {}
+          for (i=hi;i<n;i++) assert(pb_frame[i]!=pb_frame[lo]);
+          len=hi-lo; assert(len==m/threads || len==m/threads+1); distinct++;
+        }
+        assert(distinct==want); runs++;
+      }
+      bcir_tensor_pool_probe_steal(1);
+#ifdef PB_ATOMIC
+      {  /* the first task of every block but the last held: the last worker takes every other block's rest */
+        size_t n=6*threads; unsigned w;
+        pb_holds=0;
+        for (w=0;w+1<threads;w++) pb_hold[pb_holds++]=bcir_tensor_pool_probe_block(n,threads,w);
+        assert(pb_held(pool,n)); held++;
+      }
+#endif
+      for (cap=0;cap<3;cap++) {  /* led jobs: every task once whatever the head, at caps 0, 2 and 3 */
+        static const size_t nl[]={1,2,3,5,9,64,300}; static const unsigned caps[]={0,2,3};
+        bcir_tensor_pool_cap(pool,caps[cap]);
+        for (c=0;c<sizeof(nl)/sizeof(nl[0]);c++) {
+          size_t hv[6]; size_t q;
+          hv[0]=0; hv[1]=1; hv[2]=3; hv[3]=nl[c]/2; hv[4]=nl[c]; hv[5]=nl[c]+5;
+          for (q=0;q<6;q++) {
+            memset(pb_runs,0,sizeof(pb_runs));
+            bcir_tensor_pool_probe_run_led(pool,pb_task,NULL,nl[c],hv[q]); leds++;
+            for (i=0;i<1024;i++) assert(pb_runs[i]==(i<nl[c] ? 1u : 0u));
+          }
+        }
+      }
+      bcir_tensor_pool_cap(pool,0); bcir_tensor_pool_stop(pool);
+    }
+    probed=held ? "; with the probe, every worker's own block one contiguous run of the share's length, the "
+        "last worker taking every other block's rest, and led jobs at every head every task once" :
+        "; with the probe, every worker's own block one contiguous run of the share's length and led jobs "
+        "at every head every task once";
+    assert(runs>0 && leds>0);
+  }
+#endif
+  (void)threads;
+  printf("  PASS pool blocks (POOL-AFFINITY): every task of %zu jobs once at each cap of a four-thread "
+      "pool, inside the bytes it asks for at every offset of a line; %s%s\n",jobs,
+      held ? "a held first task's block taken by the other workers" :
+      "no atomics here, so no held witness",probed);
 }
 /* NDT-SCAN: the step's whole-buffer passes on the pool. A wider fixture -- width 32, feed-forward
  * 64, two layers: 19,104 parameters, one 16,384-element scan chunk and a 2,720-element tail -- on
@@ -4280,7 +4429,7 @@ static void exp_scalef(void) {
 int main(void) {
   gemm_contract(); attention_reference(); attention_fused_reference(); adamw_reference();
   finite_differences(); refusals();
-  learning(); pool_identity(); pool_claims(); reduction_references(); scan_references();
+  learning(); pool_identity(); pool_claims(); pool_blocks(); reduction_references(); scan_references();
   gemm_fused_contract(); gemm_kblock_contract(); gemm_kblock_rows(); exp_contract(); exp_scalef(); fused_passes();
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();

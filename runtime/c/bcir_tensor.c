@@ -960,14 +960,22 @@ void bcir_tensor_mm_kblock(void *ctx, int ta, int tb, size_t m, size_t n, size_t
   (void)ctx;
   mm_variant_any(mm_widest_fused(),MM_KBLOCK,ta,tb,m,n,k,alpha,a,b,beta,c);
 }
-/* --- the deterministic pool (NDT-THREADS, NDT-POOL) --------------------------------------------
- * Thread 0 is the caller; the others wait for a generation, run tasks of it and report. Where the
- * compiler has atomics (GCC's and Clang's builtins) every thread claims its tasks one at a time
- * from the generation's counter, in ascending order, so a thread that wakes late or is preempted
- * takes fewer and none waits on another's fixed share; elsewhere task t goes to thread
- * t % threads. Either way every task runs once and no task is taken by two threads. Every task
- * writes outputs no other task writes and reads nothing a task of the same job writes, so which
- * thread runs a task, and when, does not reach the arithmetic; the partitions below make it so.
+/* --- the deterministic pool (NDT-THREADS, NDT-POOL, POOL-AFFINITY) ----------------------------
+ * Thread 0 is the caller; the others wait for a generation, run tasks of it and report. A job's
+ * tasks are dealt in blocks (POOL-AFFINITY): worker w's block is the contiguous run that starts at
+ * pool_block_start(n, W, w) of its n tasks over the job's W workers, so consecutive jobs whose
+ * partitions follow the same rows -- a product's rows of C, then the norm over them -- run those
+ * rows on the same thread, its caches holding what the job before wrote, where one shared counter
+ * sent each task to whichever thread asked next. A job's `head` leading tasks -- the large ones a
+ * pair or group job puts first -- precede the blocks and are claimed in turn, as is every task
+ * of a job with no more tasks than workers. Where the compiler has atomics (GCC's and Clang's
+ * builtins) each block has a counter of its own: a worker claims its block's tasks one at a time
+ * in ascending order and then the other blocks' leftovers, so a thread that wakes late or is
+ * preempted takes fewer and none waits on another's share; elsewhere a worker runs the head tasks
+ * w, w + W, ... and then its whole block. Either way every task runs once and no task is taken by
+ * two threads. Every task writes outputs no other task writes and reads nothing a task of the
+ * same job writes, so which thread runs a task, and when, does not reach the arithmetic; the
+ * partitions below make it so.
  * With atomics the hot path takes no lock: the caller publishes a job with the generation's
  * release store and a worker reports with one atomic decrement. A worker waits for the next
  * generation BCIR_POOL_SPINS rounds on the processor, then BCIR_POOL_YIELDS rounds yielding it,
@@ -975,8 +983,9 @@ void bcir_tensor_mm_kblock(void *ctx, int ta, int tb, size_t m, size_t n, size_t
  * that follows another closely starts without a wake-up, and on a host with fewer free
  * processors than threads the yields hand the processor over. The reports stay the barrier --
  * every worker reports every generation -- so no thread touches a job after its caller returns.
- * The pool, its thread handles and its worker records live in one block the caller provides
- * (bcir_tensor_pool_size): the unit allocates nothing, as the trainer's arenas allocate nothing. */
+ * The pool, its thread handles, its worker records and its blocks' counters live in one block the
+ * caller provides (bcir_tensor_pool_size): the unit allocates nothing, as the trainer's arenas
+ * allocate nothing. */
 #if defined(__GNUC__) || defined(__clang__)
 #define BCIR_POOL_ATOMIC 1
 #define POOL_LOAD(x) __atomic_load_n(&(x),__ATOMIC_ACQUIRE)
@@ -1000,19 +1009,26 @@ typedef struct pool_worker { bcir_tensor_pool *pool; unsigned id; } pool_worker;
  * worker runs one task at a time, so scratch indexed by the worker is the task's own while it runs;
  * no value may depend on which worker ran a task. */
 typedef void (*pool_task_w)(void *ctx, size_t task, unsigned worker);
+/* POOL-AFFINITY: a worker's block of a job's tasks, [next, end) -- next its counter where the compiler
+ * has atomics -- each on a cache line of its own, so a worker claiming from its block writes no line
+ * another worker's claims write until it takes their leftovers */
+#define BCIR_POOL_LINE 64
+typedef struct pool_block { size_t next,end; unsigned char pad[BCIR_POOL_LINE-2*sizeof(size_t)]; } pool_block;
 struct bcir_tensor_pool {
   unsigned threads,pending,cap; unsigned long generation; int stop;
-  bcir_tensor_task_fn fn; pool_task_w fnw; void *ctx; size_t tasks,next;
+  bcir_tensor_task_fn fn; pool_task_w fnw; void *ctx; size_t tasks,next,head;
 #if defined(BCIR_POOL_PTHREADS)
   pthread_mutex_t mutex; pthread_cond_t wake,done; pthread_t *workers;
 #elif defined(BCIR_POOL_WIN32)
   CRITICAL_SECTION mutex; CONDITION_VARIABLE wake,done; HANDLE *workers;
 #endif
-  pool_worker *records;
+  pool_worker *records; pool_block *blocks;
 };
 static size_t pool_align_up(size_t n, size_t a) { return (n+a-1)/a*a; }
-/* The block: the pool, then the thread handles, then the worker records, each at its alignment. */
-static size_t pool_layout(unsigned threads, size_t *handles, size_t *records) {
+/* The block: the pool, then the thread handles, then the worker records, each at its alignment, then a
+ * line of room and every worker's pool_block from the first line boundary past the records -- inside
+ * the room whatever the caller's max_align_t alignment of the memory. */
+static size_t pool_layout(unsigned threads, size_t *handles, size_t *records, size_t *blocks) {
   size_t off=sizeof(bcir_tensor_pool),n=threads-1;
 #if defined(BCIR_POOL_PTHREADS)
   off=pool_align_up(off,_Alignof(pthread_t)); *handles=off; off+=n*sizeof(pthread_t);
@@ -1022,15 +1038,16 @@ static size_t pool_layout(unsigned threads, size_t *handles, size_t *records) {
   *handles=off;
 #endif
   off=pool_align_up(off,_Alignof(pool_worker)); *records=off; off+=n*sizeof(pool_worker);
+  *blocks=off; off+=BCIR_POOL_LINE+(size_t)threads*sizeof(pool_block);
   return pool_align_up(off,_Alignof(max_align_t));
 }
 size_t bcir_tensor_pool_size(unsigned threads) {
-  size_t h,r;
+  size_t h,r,b;
   if (!threads || threads>4096) return 0;
 #if !defined(BCIR_POOL_PTHREADS) && !defined(BCIR_POOL_WIN32)
   if (threads>1) return 0;
 #endif
-  return pool_layout(threads,&h,&r);
+  return pool_layout(threads,&h,&r,&b);
 }
 int bcir_tensor_pool_rails(void) {
 #if defined(BCIR_POOL_PTHREADS)
@@ -1056,18 +1073,48 @@ unsigned bcir_tensor_pool_cap(bcir_tensor_pool *pool, unsigned workers) {
 unsigned bcir_tensor_pool_workers(const bcir_tensor_pool *pool) {
   return !pool ? 1u : pool->cap ? pool->cap : pool->threads;
 }
+/* POOL-AFFINITY: the first task of worker w's block when n tasks are dealt to W workers -- n / W a block
+ * and one more for each of the first n % W -- so the blocks cover the tasks in order, worker by worker */
+static size_t pool_block_start(size_t n, unsigned workers, unsigned w) {
+  return n/workers*w+(w<n%workers ? w : n%workers);
+}
+#ifdef BCIR_TENSOR_POOL_PROBE
+/* The harness's view of the blocks (a build defining BCIR_TENSOR_POOL_PROBE has it; the library does
+ * not): stealing switched off between jobs, so each worker runs exactly its own block and a witness
+ * can see the blocks, and the block rule itself; the led entry follows the dispatch below */
+static int pool_probe_steal=1;
+void bcir_tensor_pool_probe_steal(int on);
+void bcir_tensor_pool_probe_steal(int on) { pool_probe_steal=on; }
+size_t bcir_tensor_pool_probe_block(size_t n, unsigned workers, unsigned w);
+size_t bcir_tensor_pool_probe_block(size_t n, unsigned workers, unsigned w) {
+  return pool_block_start(n,workers,w);
+}
+#endif
+/* A worker's part of the job published: the leading tasks, then its block, then (with atomics) the other
+ * blocks' leftovers in turn from the next worker's on */
 static void pool_tasks(bcir_tensor_pool *p, unsigned id) {
   size_t t; unsigned workers=p->cap ? p->cap : p->threads;
   if (id>=workers) return;  /* past the job's cap: the worker reports without claiming a task */
 #if defined(BCIR_POOL_ATOMIC)
   {
-    bcir_tensor_task_fn fn=p->fn; pool_task_w fnw=p->fnw; void *ctx=p->ctx; size_t tasks=p->tasks;
-    while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<tasks) {
+    bcir_tensor_task_fn fn=p->fn; pool_task_w fnw=p->fnw; void *ctx=p->ctx; size_t head=p->head; unsigned k;
+    while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<head) {
       if (fnw) fnw(ctx,t,id); else fn(ctx,t);
+    }
+    for (k=0;k<workers;k++) {
+      pool_block *b=&p->blocks[(id+k)%workers];
+#ifdef BCIR_TENSOR_POOL_PROBE
+      if (k && !pool_probe_steal) break;
+#endif
+      if (k && __atomic_load_n(&b->next,__ATOMIC_RELAXED)>=b->end) continue;  /* nothing left in it */
+      while ((t=__atomic_fetch_add(&b->next,(size_t)1,__ATOMIC_RELAXED))<b->end) {
+        if (fnw) fnw(ctx,t,id); else fn(ctx,t);
+      }
     }
   }
 #else
-  for (t=id;t<p->tasks;t+=workers) { if (p->fnw) p->fnw(p->ctx,t,id); else p->fn(p->ctx,t); }
+  for (t=id;t<p->head;t+=workers) { if (p->fnw) p->fnw(p->ctx,t,id); else p->fn(p->ctx,t); }
+  for (t=p->blocks[id].next;t<p->blocks[id].end;t++) { if (p->fnw) p->fnw(p->ctx,t,id); else p->fn(p->ctx,t); }
 #endif
 }
 #if defined(BCIR_POOL_PTHREADS) || defined(BCIR_POOL_WIN32)
@@ -1192,9 +1239,9 @@ static void pool_join(bcir_tensor_pool *p) {
 }
 #endif
 bcir_tensor_pool *bcir_tensor_pool_init(void *memory, size_t bytes, unsigned threads) {
-  size_t need=bcir_tensor_pool_size(threads),h,r; bcir_tensor_pool *p;
+  size_t need=bcir_tensor_pool_size(threads),h,r,b; bcir_tensor_pool *p; uintptr_t line;
   if (!need || !memory || bytes<need || (uintptr_t)memory%_Alignof(max_align_t)) return NULL;
-  pool_layout(threads,&h,&r);
+  pool_layout(threads,&h,&r,&b);
   memset(memory,0,need);
   p=(bcir_tensor_pool *)memory; p->threads=threads;
 #if defined(BCIR_POOL_PTHREADS)
@@ -1203,6 +1250,8 @@ bcir_tensor_pool *bcir_tensor_pool_init(void *memory, size_t bytes, unsigned thr
   p->workers=(HANDLE *)(void *)((unsigned char *)memory+h);
 #endif
   p->records=(pool_worker *)(void *)((unsigned char *)memory+r);
+  line=((uintptr_t)memory+b+BCIR_POOL_LINE-1)/BCIR_POOL_LINE*BCIR_POOL_LINE;
+  p->blocks=(pool_block *)(void *)((unsigned char *)memory+(line-(uintptr_t)memory));
 #if defined(BCIR_POOL_PTHREADS) || defined(BCIR_POOL_WIN32)
   if (threads>1 && !pool_start(p)) return NULL;
 #endif
@@ -1216,9 +1265,11 @@ void bcir_tensor_pool_stop(bcir_tensor_pool *p) {
 #endif
   p->threads=1;
 }
-/* One job: fn(ctx, task) for every task, or with fnw fnw(ctx, task, worker). */
+/* One job: fn(ctx, task) for every task, or with fnw fnw(ctx, task, worker); its first `head` tasks
+ * claimed in turn before the workers' blocks (POOL-AFFINITY), every task so where there are no more
+ * tasks than workers. */
 static void pool_dispatch(bcir_tensor_pool *p, bcir_tensor_task_fn fn, pool_task_w fnw, void *ctx,
-    size_t tasks) {
+    size_t tasks, size_t head) {
   size_t t;
   if (!tasks) return;
   if (!p || p->threads==1 || tasks==1 || p->cap==1) {  /* a cap of one: the caller alone */
@@ -1228,6 +1279,14 @@ static void pool_dispatch(bcir_tensor_pool *p, bcir_tensor_task_fn fn, pool_task
 #if defined(BCIR_POOL_PTHREADS) || defined(BCIR_POOL_WIN32)
   POOL_LOCK(p);
   p->fn=fn; p->fnw=fnw; p->ctx=ctx; p->tasks=tasks;
+  {
+    unsigned w,workers=p->cap ? p->cap : p->threads;
+    p->head=head<tasks && tasks>workers ? head : tasks;
+    for (w=0;w<workers;w++) {
+      p->blocks[w].next=p->head+pool_block_start(tasks-p->head,workers,w);
+      p->blocks[w].end=p->head+pool_block_start(tasks-p->head,workers,w+1);
+    }
+  }
 #if defined(BCIR_POOL_ATOMIC)
   __atomic_store_n(&p->pending,p->threads-1,__ATOMIC_RELAXED);
   __atomic_store_n(&p->next,(size_t)0,__ATOMIC_RELAXED);
@@ -1256,13 +1315,27 @@ static void pool_dispatch(bcir_tensor_pool *p, bcir_tensor_task_fn fn, pool_task
   POOL_UNLOCK(p);
 #endif
 #else
+  (void)head;
   for (t=0;t<tasks;t++) { if (fnw) fnw(ctx,t,0u); else fn(ctx,t); }
 #endif
 }
 void bcir_tensor_pool_run(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx, size_t tasks) {
-  pool_dispatch(p,fn,NULL,ctx,tasks);
+  pool_dispatch(p,fn,NULL,ctx,tasks,0);
 }
 #define pool_run bcir_tensor_pool_run
+/* POOL-AFFINITY: a job whose first `head` tasks are its large ones -- claimed in turn, so they start
+ * at once on as many threads, before the workers' blocks of the rest */
+static void pool_run_led(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx, size_t tasks, size_t head) {
+  pool_dispatch(p,fn,NULL,ctx,tasks,head);
+}
+#ifdef BCIR_TENSOR_POOL_PROBE
+void bcir_tensor_pool_probe_run_led(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx, size_t tasks,
+    size_t head);
+void bcir_tensor_pool_probe_run_led(bcir_tensor_pool *p, bcir_tensor_task_fn fn, void *ctx, size_t tasks,
+    size_t head) {
+  pool_run_led(p,fn,ctx,tasks,head);
+}
+#endif
 /* --- the partitions: each a function of the shapes alone ----------------------------------- */
 /* GEMM: one task per (column range, row range of BCIR_MM_ROWS rows). A column range is one block
  * of the variant's width -- and under the blocked contract as many whole blocks as leave the job
@@ -1321,7 +1394,9 @@ static void mm_pool_any(bcir_tensor_pool *pool, int fused, int variant, int ta, 
  * the step's weight adjoints, a few tasks over the batch's depth, beside input adjoints of many
  * small ones, ran last with threads idle around them. The pool's task t runs the job's task
  * (t + lead) mod total: every task once whatever the lead, and the parts write apart, so every
- * value is the same. A task's work is its multiply-adds (a job's first task's: none is larger). */
+ * value is the same. The led part is the pool's head (POOL-AFFINITY), claimed in turn before the
+ * workers' blocks of the rest, so its few large tasks start together on as many threads. A task's
+ * work is its multiply-adds (a job's first task's: none is larger). */
 static double mm_task_work(const mm_job *j) {
   double rows=(double)(j->x.m<BCIR_MM_ROWS ? j->x.m : BCIR_MM_ROWS),cols=(double)(j->x.n<j->nr ? j->x.n : j->nr);
   return rows*cols*(double)(j->x.k ? j->x.k : 1);
@@ -1348,7 +1423,7 @@ static void mm_pair_any(bcir_tensor_pool *pool, int fused, int variant, const bc
   second=mm_job_init(&j.b,fused,variant,y->ta,y->tb,y->m,y->n,y->k,y->alpha,y->a,y->b,y->beta,y->c);
   j.total=j.split+second;
   j.lead=j.split && second && mm_task_work(&j.b)>mm_task_work(&j.a) ? j.split : 0;
-  pool_run(pool,mm_pair_task,&j,j.total);
+  pool_run_led(pool,mm_pair_task,&j,j.total,j.lead ? j.total-j.split : 0);
 }
 static int mm_family(int contract) {
   return contract==2 ? MM_KBLOCK : contract==1 ? MM_FUSED : MM_V1;
@@ -1400,7 +1475,7 @@ static void mm_group_any(bcir_tensor_pool *pool, int fused, int variant, const b
     for (q=0;q<nx;q++) tile+=mm_task_work(&j.x[q]);
     for (q=0;q<ny;q++) if (j.start[q+1]>j.start[q] && mm_task_work(&j.y[q])>tile) j.lead=j.split;
   }
-  pool_run(pool,mm_group_task,&j,j.total);
+  pool_run_led(pool,mm_group_task,&j,j.total,j.lead ? j.total-j.split : 0);
 }
 void bcir_tensor_mm_group_pool(bcir_tensor_pool *pool, int contract, const bcir_tensor_mm_call *x,
     size_t nx, const bcir_tensor_mm_call *y, size_t ny) {
@@ -3802,7 +3877,7 @@ static void attention_any(bcir_tensor_pool *pool, int exp2, int fused, int scrat
 #endif
   a.bad=scan_bytes(bad,bytes,tasks);
   att_ctg_setup(&a,pool,tasks,workspace,room);  /* ATT-CONTIG */
-  if (a.ws) pool_dispatch(pool,NULL,att_task_w,&a,tasks); else pool_run(pool,att_task,&a,tasks);
+  if (a.ws) pool_dispatch(pool,NULL,att_task_w,&a,tasks,0); else pool_run(pool,att_task,&a,tasks);
   if (!bad) return;
   if (a.bad) scan_fold(bad,bytes,tasks);
   else if (!scan_pool(pool,y,b*t*nh*d) || !scan_pool(pool,k,b*t*nk*d)) *bad=1;
@@ -4288,7 +4363,7 @@ int bcir_tensor_attention_backward_contract_variant_ws_pool(bcir_tensor_pool *po
   attention_saw(1,(a.fused ? BCIR_TENSOR_ATTENTION_FUSED : 0u)|(a.bands ? BCIR_TENSOR_ATTENTION_BANDS : 0u));
 #endif
   att_ctg_setup(&a,pool,b*nh/a.group,workspace,bytes);  /* ATT-CONTIG */
-  if (a.ws) pool_dispatch(pool,NULL,att_task_backward_w,&a,b*nh/a.group);
+  if (a.ws) pool_dispatch(pool,NULL,att_task_backward_w,&a,b*nh/a.group,0);
   else pool_run(pool,att_task_backward,&a,b*nh/a.group);
   return iv;
 }
@@ -4684,7 +4759,7 @@ int bcir_tensor_attention_bf16_scan_pool(bcir_tensor_pool *pool, int variant, un
       (j.a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u));
 #endif
   j.a.bad=scan_bytes(bad,verdicts,heads);
-  pool_dispatch(pool,NULL,att16_task,&j,tasks);
+  pool_dispatch(pool,NULL,att16_task,&j,tasks,0);
   if (bad) {
     if (j.a.bad) scan_fold(bad,verdicts,heads);
     else if (!scan_pool(pool,y,b*t*nh*d) || !scan_pool(pool,k,b*t*nk*d)) *bad=1;
@@ -4706,7 +4781,7 @@ int bcir_tensor_attention_bf16_backward_pool(bcir_tensor_pool *pool, int variant
 #ifdef BCIR_DT_ATTENTION_PROBE
   attention_saw(1,BCIR_TENSOR_ATTENTION_BF16);
 #endif
-  pool_dispatch(pool,NULL,att16_task_backward,&j,tasks);
+  pool_dispatch(pool,NULL,att16_task_backward,&j,tasks,0);
   return bv;
 }
 

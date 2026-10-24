@@ -17,9 +17,9 @@
     },
     {
       "expects": "test_the_training_state_is_identical_at_every_thread_count",
-      "label": "NT2 the runner's claim stops one task short (the last task of every job never runs on a pool)",
-      "new": "  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))+1<tasks) {",
-      "old": "  while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<tasks) {",
+      "label": "NT2 the runner's claim stops one task short (the last task of every worker's block never runs on a pool)",
+      "new": "      while ((t=__atomic_fetch_add(&b->next,(size_t)1,__ATOMIC_RELAXED))+1<b->end) {",
+      "old": "      while ((t=__atomic_fetch_add(&b->next,(size_t)1,__ATOMIC_RELAXED))<b->end) {",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -80,9 +80,9 @@
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
-      "label": "NT11 a claim takes two tasks (every other task of a job never runs on a pool)",
-      "new": "__atomic_fetch_add(&p->next,(size_t)2,__ATOMIC_RELAXED)",
-      "old": "__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED)",
+      "label": "NT11 a claim takes two tasks (every other task of a worker's block never runs on a pool)",
+      "new": "__atomic_fetch_add(&b->next,(size_t)2,__ATOMIC_RELAXED)",
+      "old": "__atomic_fetch_add(&b->next,(size_t)1,__ATOMIC_RELAXED)",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

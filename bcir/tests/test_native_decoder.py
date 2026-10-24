@@ -192,6 +192,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_LAYOUT_PROBE",
                 "-DBCIR_DT_TIME_PROBE",
                 "-DBCIR_TENSOR_INSTANCE_PROBE",
+                "-DBCIR_TENSOR_POOL_PROBE",
                 *options,
                 "-O2",
                 "-Wall",
@@ -227,8 +228,9 @@ def test_native_c_harness_c11_and_c23():
             # training step from NaN-filled arenas (P-LOWER); the backward's kept tiles (BWD-KEEP);
             # the blocked GEMM's tasks, chunks, edge blocks and job order (MM-ROWS); the scratch
             # forward's groups in the lanes (SCORES-T); the exponential's single scaling where the
-            # result rounds (SOFTMAX-T); the attention in bands and its trainer (P-BANDS)
-            assert result.stdout.count("PASS") == 43
+            # result rounds (SOFTMAX-T); the attention in bands and its trainer (P-BANDS); the pool's
+            # tasks in per-worker blocks (POOL-AFFINITY)
+            assert result.stdout.count("PASS") == 44
             digests = [ln.split("digests", 1)[1].split() for ln in result.stdout.splitlines()
                        if "PASS P-BANDS trainer" in ln]  # fmt: skip
             assert len(digests) == 1 and len(digests[0]) == 5, result.stdout[-2000:]
@@ -265,6 +267,7 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_LAYOUT_PROBE",
                 "-DBCIR_DT_TIME_PROBE",
                 "-DBCIR_TENSOR_INSTANCE_PROBE",
+                "-DBCIR_TENSOR_POOL_PROBE",
             ]
             cmd += ["-I", str(c)]
             cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]
@@ -274,7 +277,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 43
+            assert result.stdout.count("PASS") == 44
             break
 
 
