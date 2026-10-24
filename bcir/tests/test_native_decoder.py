@@ -223,8 +223,9 @@ def test_native_c_harness_c11_and_c23():
             # forward a strip of rows at a time (FWD-STRIP); the stored forward under LOWER and a
             # training step from NaN-filled arenas (P-LOWER); the backward's kept tiles (BWD-KEEP);
             # the blocked GEMM's tasks, chunks, edge blocks and job order (MM-ROWS); the scratch
-            # forward's groups in the lanes (SCORES-T)
-            assert result.stdout.count("PASS") == 40
+            # forward's groups in the lanes (SCORES-T); the exponential's single scaling where the
+            # result rounds (SOFTMAX-T)
+            assert result.stdout.count("PASS") == 41
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -265,7 +266,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 40
+            assert result.stdout.count("PASS") == 41
             break
 
 

@@ -1,0 +1,3567 @@
+{
+ "what": "the design runs before the commit, on the tree before it (SCORES-T's tensor unit): proto_softmax.py's levels -- 1 the AVX-512 exponential and v2 sigmoid with 2^k by one vscalefps and the AVX-512 instances of the exponential, SiLU, SiLU times u and SwiGLU VJP; 2 the softmaxes' scale, exponential, mask and sum in one pass, four columns' vectors at a time; 3 the normalising division inside the context's first pass -- each built with clang and gcc: ../scores-t/scratch_hash.c every level and compiler against level 0 clang, exp_exhaustive.c on level 3 (level 0 the control), exp_ab.c level 0 against level 3, ../scores-t/ab_fwd.c level 0 against each level (24 rounds; v1's 12), and the lanes path's phases (../scores-t/phase_bench_t.c over instrument_sm.py's copies: TSC cycles summed over the call's threads, counters [0] the queries' transpose and scores, [1] the softmax, [2] the context, [4] the maximum, [5] the exponential and sum, [6] the division). v1 (proto_softmax_v1.py) wrote each vector's chain as one expression, which clang scheduled a chain at a time: its SiLU x1.06 slower than the tree's under clang (micro) and the stored forward x1.042; v2 writes each step over the four vectors before the next (EXP-LANES' order), and is the commit's code",
+ "v1": {
+  "exhaustive": {
+   "exh_0_clang.0": {
+    "part": 0,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "product_inputs": 134217728,
+    "overlap_inputs": 33553920,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "overlapping": 0,
+    "silu_nan_payloads_apart": 18874356
+   },
+   "exh_0_clang.1": {
+    "part": 1,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "product_inputs": 134217728,
+    "overlap_inputs": 33553920,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "overlapping": 0,
+    "silu_nan_payloads_apart": 18874368
+   },
+   "exh_3_clang.0": {
+    "part": 0,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "product_inputs": 134217728,
+    "overlap_inputs": 33553920,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "overlapping": 0,
+    "silu_nan_payloads_apart": 18350070
+   },
+   "exh_3_clang.1": {
+    "part": 1,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "product_inputs": 134217728,
+    "overlap_inputs": 33553920,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "overlapping": 0,
+    "silu_nan_payloads_apart": 18350080
+   },
+   "exh_3_gcc.0": {
+    "part": 0,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "product_inputs": 134217728,
+    "overlap_inputs": 33553920,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "overlapping": 0,
+    "silu_nan_payloads_apart": 18874356
+   },
+   "exh_3_gcc.1": {
+    "part": 1,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "product_inputs": 134217728,
+    "overlap_inputs": 33553920,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "overlapping": 0,
+    "silu_nan_payloads_apart": 18874368
+   }
+  },
+  "before_after": {
+   "ab_clang.0": {
+    "part": 0,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "instances": 7,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "at_nan": {
+     "exp": 0,
+     "silu": 0,
+     "silu_mul": 0,
+     "swiglu": 0
+    },
+    "nan_payloads_apart": 8388606
+   },
+   "ab_clang.1": {
+    "part": 1,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "instances": 7,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "at_nan": {
+     "exp": 0,
+     "silu": 0,
+     "silu_mul": 0,
+     "swiglu": 0
+    },
+    "nan_payloads_apart": 8388608
+   },
+   "ab_gcc.0": {
+    "part": 0,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "instances": 7,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "at_nan": {
+     "exp": 0,
+     "silu": 0,
+     "silu_mul": 0,
+     "swiglu": 0
+    },
+    "nan_payloads_apart": 25165818
+   },
+   "ab_gcc.1": {
+    "part": 1,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "instances": 7,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "at_nan": {
+     "exp": 0,
+     "silu": 0,
+     "silu_mul": 0,
+     "swiglu": 0
+    },
+    "nan_payloads_apart": 25165824
+   }
+  },
+  "ab": [
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 12,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 19.6096,
+    "after_ms": 18.9955,
+    "after_over_before": {
+     "geometric_mean": 0.9593571195987338,
+     "ci95": [
+      0.9244472911251633,
+      0.9955852451085483
+     ],
+     "rounds": 12
+    },
+    "aa": {
+     "geometric_mean": 1.0189488776272053,
+     "ci95": [
+      0.9591955222000464,
+      1.082424585173581
+     ],
+     "rounds": 12
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9415164397970179,
+     "ci95": [
+      0.8786922237266728,
+      1.008832424450581
+     ],
+     "rounds": 12
+    },
+    "raw_ms": {
+     "before": [
+      21.6552,
+      18.7871,
+      20.5436,
+      19.1959,
+      22.7062,
+      18.8786,
+      18.6414,
+      20.3697,
+      21.2143,
+      20.0233,
+      19.0045,
+      18.2296
+     ],
+     "after": [
+      22.1332,
+      19.81,
+      19.4223,
+      19.2672,
+      19.4168,
+      18.2359,
+      18.2686,
+      18.7415,
+      19.2495,
+      18.363,
+      18.2444,
+      18.2092
+     ],
+     "A/A": [
+      28.1497,
+      18.7702,
+      18.9645,
+      18.4604,
+      25.0781,
+      18.8998,
+      18.5385,
+      18.4019,
+      22.9016,
+      20.5193,
+      18.6773,
+      18.3381
+     ]
+    },
+    "levels": "0->1"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 12,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 19.7777,
+    "after_ms": 18.6892,
+    "after_over_before": {
+     "geometric_mean": 0.9520341413711345,
+     "ci95": [
+      0.9195720699628728,
+      0.9856421654616667
+     ],
+     "rounds": 12
+    },
+    "aa": {
+     "geometric_mean": 0.9802491122427529,
+     "ci95": [
+      0.9436574130061994,
+      1.0182597082468874
+     ],
+     "rounds": 12
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9712165300440169,
+     "ci95": [
+      0.9200207068305986,
+      1.0252612155656857
+     ],
+     "rounds": 12
+    },
+    "raw_ms": {
+     "before": [
+      20.8125,
+      18.8526,
+      18.5672,
+      18.475,
+      18.5847,
+      22.7019,
+      19.7723,
+      20.6051,
+      23.4373,
+      19.7831,
+      22.9632,
+      18.8902
+     ],
+     "after": [
+      18.5408,
+      18.3477,
+      18.5854,
+      18.4594,
+      18.6374,
+      22.2879,
+      18.829,
+      18.5912,
+      19.9234,
+      19.3181,
+      21.0749,
+      18.7411
+     ],
+     "A/A": [
+      20.6669,
+      18.7977,
+      18.567,
+      18.3505,
+      18.6019,
+      19.1206,
+      19.5708,
+      19.0339,
+      23.1876,
+      19.2097,
+      24.9976,
+      18.7562
+     ]
+    },
+    "levels": "0->2"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 12,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 18.5762,
+    "after_ms": 18.0326,
+    "after_over_before": {
+     "geometric_mean": 0.9729426879593462,
+     "ci95": [
+      0.9185570992552422,
+      1.0305483184671553
+     ],
+     "rounds": 12
+    },
+    "aa": {
+     "geometric_mean": 0.989219894231624,
+     "ci95": [
+      0.9390290471941799,
+      1.0420934283849388
+     ],
+     "rounds": 12
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9835454115235712,
+     "ci95": [
+      0.9331128677126996,
+      1.0367037150610985
+     ],
+     "rounds": 12
+    },
+    "raw_ms": {
+     "before": [
+      18.6816,
+      18.571,
+      18.488,
+      18.3407,
+      18.5156,
+      18.5813,
+      18.4325,
+      23.0395,
+      18.7993,
+      18.6351,
+      18.2409,
+      19.9619
+     ],
+     "after": [
+      21.8462,
+      17.9535,
+      18.0983,
+      17.8791,
+      18.1304,
+      17.7824,
+      18.0252,
+      17.7996,
+      18.0214,
+      18.04,
+      18.2947,
+      20.2045
+     ],
+     "A/A": [
+      18.5214,
+      18.4014,
+      18.2732,
+      18.4706,
+      18.5798,
+      18.7449,
+      18.3976,
+      18.5192,
+      19.5194,
+      21.5154,
+      18.0529,
+      18.6025
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 1,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 8,
+    "calls_a_round": 1,
+    "workspace_bytes": 2097215,
+    "before_ms": 72.4553,
+    "after_ms": 70.6739,
+    "after_over_before": {
+     "geometric_mean": 0.9654306168184854,
+     "ci95": [
+      0.9452562939961531,
+      0.9860355141886149
+     ],
+     "rounds": 8
+    },
+    "aa": {
+     "geometric_mean": 0.9955260437302788,
+     "ci95": [
+      0.9648408380089651,
+      1.0271871428975023
+     ],
+     "rounds": 8
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9697693223584344,
+     "ci95": [
+      0.946277745121785,
+      0.9938440837647531
+     ],
+     "rounds": 8
+    },
+    "raw_ms": {
+     "before": [
+      68.7468,
+      72.5451,
+      71.3523,
+      77.782,
+      72.3654,
+      73.3233,
+      71.6822,
+      73.6871
+     ],
+     "after": [
+      68.6095,
+      70.665,
+      67.829,
+      71.4445,
+      71.4376,
+      71.0568,
+      69.4501,
+      70.6828
+     ],
+     "A/A": [
+      72.5444,
+      69.44,
+      73.5771,
+      73.1324,
+      72.4451,
+      72.8018,
+      72.294,
+      72.4144
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     1024,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 12,
+    "calls_a_round": 6,
+    "workspace_bytes": 4194367,
+    "before_ms": 4.7572,
+    "after_ms": 4.5822,
+    "after_over_before": {
+     "geometric_mean": 0.9326945490913879,
+     "ci95": [
+      0.8581019974883133,
+      1.0137712351807397
+     ],
+     "rounds": 12
+    },
+    "aa": {
+     "geometric_mean": 0.9470985210431516,
+     "ci95": [
+      0.8743477601580216,
+      1.025902563529196
+     ],
+     "rounds": 12
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9847914745596912,
+     "ci95": [
+      0.9614522178859312,
+      1.0086972917883599
+     ],
+     "rounds": 12
+    },
+    "raw_ms": {
+     "before": [
+      4.7714,
+      4.8585,
+      6.3325,
+      7.0276,
+      4.743,
+      4.6287,
+      4.6819,
+      4.7115,
+      4.8477,
+      5.6776,
+      4.5619,
+      4.5889
+     ],
+     "after": [
+      4.4523,
+      4.4302,
+      6.3272,
+      4.5588,
+      4.8705,
+      4.4978,
+      4.695,
+      4.6548,
+      4.9604,
+      4.6056,
+      4.4459,
+      4.5093
+     ],
+     "A/A": [
+      4.6061,
+      4.7134,
+      6.382,
+      4.7203,
+      4.8254,
+      4.6246,
+      4.6242,
+      4.9581,
+      4.6012,
+      4.6138,
+      4.6028,
+      4.5858
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     512,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 12,
+    "calls_a_round": 12,
+    "workspace_bytes": 0,
+    "before_ms": 1.2303,
+    "after_ms": 1.2005,
+    "after_over_before": {
+     "geometric_mean": 0.9511992812119873,
+     "ci95": [
+      0.9034239062481426,
+      1.0015011406280918
+     ],
+     "rounds": 12
+    },
+    "aa": {
+     "geometric_mean": 1.0450030828917858,
+     "ci95": [
+      0.9290700437476334,
+      1.1754027057511813
+     ],
+     "rounds": 12
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9102358612950501,
+     "ci95": [
+      0.8112815888989867,
+      1.021259861587593
+     ],
+     "rounds": 12
+    },
+    "raw_ms": {
+     "before": [
+      1.2306,
+      1.5291,
+      1.5176,
+      1.5291,
+      1.3625,
+      1.2279,
+      1.23,
+      1.2135,
+      1.2455,
+      1.213,
+      1.1929,
+      1.2214
+     ],
+     "after": [
+      1.1508,
+      1.1369,
+      1.4743,
+      1.4539,
+      1.2924,
+      1.18,
+      1.201,
+      1.1924,
+      1.211,
+      1.2335,
+      1.1999,
+      1.1995
+     ],
+     "A/A": [
+      1.2158,
+      1.3698,
+      1.5831,
+      1.5176,
+      1.2769,
+      1.218,
+      1.2587,
+      1.2274,
+      2.3066,
+      1.2174,
+      1.1919,
+      1.2651
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 11,
+    "contract_bits": "EXP|FUSED|SCRATCH",
+    "rounds": 12,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 15.6688,
+    "after_ms": 14.3948,
+    "after_over_before": {
+     "geometric_mean": 0.9019199161876164,
+     "ci95": [
+      0.8270907166489723,
+      0.9835191217133674
+     ],
+     "rounds": 12
+    },
+    "aa": {
+     "geometric_mean": 1.012155904464179,
+     "ci95": [
+      0.9245299691786224,
+      1.1080869296772047
+     ],
+     "rounds": 12
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.8910879363639931,
+     "ci95": [
+      0.8539073934252306,
+      0.9298873817550182
+     ],
+     "rounds": 12
+    },
+    "raw_ms": {
+     "before": [
+      16.1508,
+      15.211,
+      15.3911,
+      19.0314,
+      21.9617,
+      15.7325,
+      15.6275,
+      16.1035,
+      15.6709,
+      15.6668,
+      15.6206,
+      15.5355
+     ],
+     "after": [
+      14.9237,
+      14.256,
+      14.4095,
+      14.1825,
+      14.2324,
+      14.2387,
+      16.4473,
+      17.2226,
+      14.5528,
+      14.3801,
+      14.3001,
+      14.4615
+     ],
+     "A/A": [
+      18.06,
+      15.5565,
+      15.5046,
+      15.4923,
+      16.3855,
+      19.004,
+      18.8306,
+      18.0692,
+      15.7951,
+      15.6072,
+      15.8316,
+      15.4435
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 17,
+    "contract_bits": "EXP|LOWER (the stored forward, as the trainer runs it)",
+    "rounds": 12,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 21.6906,
+    "after_ms": 22.3258,
+    "after_over_before": {
+     "geometric_mean": 1.0424119435167596,
+     "ci95": [
+      0.998065773300453,
+      1.0887285077346065
+     ],
+     "rounds": 12
+    },
+    "aa": {
+     "geometric_mean": 1.0077045174018493,
+     "ci95": [
+      0.971524309383253,
+      1.0452321003030154
+     ],
+     "rounds": 12
+    },
+    "after_over_aa": {
+     "geometric_mean": 1.0344420666133323,
+     "ci95": [
+      0.9993521111605487,
+      1.0707641253057323
+     ],
+     "rounds": 12
+    },
+    "raw_ms": {
+     "before": [
+      21.6035,
+      22.1139,
+      22.8549,
+      21.3908,
+      21.4336,
+      22.1986,
+      21.7777,
+      22.69,
+      21.35,
+      22.2052,
+      21.2414,
+      21.3147
+     ],
+     "after": [
+      24.399,
+      23.0521,
+      24.4506,
+      21.2353,
+      23.0185,
+      22.191,
+      22.4605,
+      27.975,
+      21.3561,
+      21.472,
+      21.1137,
+      21.3805
+     ],
+     "A/A": [
+      23.5975,
+      21.4358,
+      21.2875,
+      21.2932,
+      21.0533,
+      21.0792,
+      23.3376,
+      25.583,
+      21.7764,
+      21.6235,
+      21.2855,
+      21.224
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 12,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 19.389,
+    "after_ms": 18.1302,
+    "after_over_before": {
+     "geometric_mean": 0.908602454902472,
+     "ci95": [
+      0.8670081172026086,
+      0.9521922628803675
+     ],
+     "rounds": 12
+    },
+    "aa": {
+     "geometric_mean": 1.0027823900718775,
+     "ci95": [
+      0.9611030583251464,
+      1.046269193639457
+     ],
+     "rounds": 12
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9060813830579386,
+     "ci95": [
+      0.8655030508481047,
+      0.9485621938821669
+     ],
+     "rounds": 12
+    },
+    "raw_ms": {
+     "before": [
+      19.8891,
+      19.358,
+      19.3445,
+      19.3084,
+      19.2834,
+      19.6648,
+      19.4199,
+      23.946,
+      22.8151,
+      19.658,
+      18.9243,
+      18.8057
+     ],
+     "after": [
+      17.96,
+      18.7285,
+      17.9447,
+      18.1061,
+      18.0085,
+      18.4129,
+      18.0401,
+      18.2821,
+      18.2168,
+      18.1543,
+      18.2345,
+      17.7791
+     ],
+     "A/A": [
+      19.649,
+      19.4746,
+      19.4144,
+      19.5025,
+      19.3012,
+      19.3118,
+      19.7517,
+      20.1725,
+      24.9148,
+      19.2624,
+      20.8876,
+      19.4014
+     ]
+    },
+    "levels": "0->3"
+   }
+  ],
+  "phases": [
+   {
+    "level": 0,
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "workspace": 8388671,
+    "rounds": 6,
+    "wall_cycles_per_call": 51136511,
+    "probabilities": 33570816,
+    "counters": [
+     66603931,
+     61889314,
+     58799631,
+     0,
+     5697705,
+     40329275,
+     13889458,
+     0
+    ]
+   },
+   {
+    "level": 0,
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 1,
+    "contract": 9,
+    "workspace": 2097215,
+    "rounds": 3,
+    "wall_cycles_per_call": 197673179,
+    "probabilities": 33570816,
+    "counters": [
+     66576864,
+     64329964,
+     60436828,
+     0,
+     6123993,
+     42612204,
+     14690255,
+     0
+    ]
+   },
+   {
+    "level": 3,
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "workspace": 8388671,
+    "rounds": 6,
+    "wall_cycles_per_call": 50078205,
+    "probabilities": 33570816,
+    "counters": [
+     64028637,
+     45982056,
+     71772120,
+     0,
+     5937179,
+     38993392,
+     0,
+     0
+    ]
+   },
+   {
+    "level": 3,
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 1,
+    "contract": 9,
+    "workspace": 2097215,
+    "rounds": 3,
+    "wall_cycles_per_call": 159554244,
+    "probabilities": 33570816,
+    "counters": [
+     51820572,
+     41469321,
+     60915895,
+     0,
+     5847726,
+     35055201,
+     0,
+     0
+    ]
+   },
+   {
+    "level": 0,
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "workspace": 8388671,
+    "rounds": 6,
+    "wall_cycles_per_call": 52725098,
+    "probabilities": 33570816,
+    "counters": [
+     61177324,
+     62670762,
+     56341825,
+     0,
+     6033697,
+     39924210,
+     14875723,
+     0
+    ]
+   },
+   {
+    "level": 0,
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 1,
+    "contract": 9,
+    "workspace": 2097215,
+    "rounds": 3,
+    "wall_cycles_per_call": 171967589,
+    "probabilities": 33570816,
+    "counters": [
+     54481759,
+     59402028,
+     52193639,
+     0,
+     6096957,
+     37750275,
+     14684050,
+     0
+    ]
+   },
+   {
+    "level": 3,
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "workspace": 8388671,
+    "rounds": 6,
+    "wall_cycles_per_call": 42623079,
+    "probabilities": 33570816,
+    "counters": [
+     52990415,
+     42776411,
+     61825272,
+     0,
+     5966490,
+     35675248,
+     0,
+     0
+    ]
+   },
+   {
+    "level": 3,
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 1,
+    "contract": 9,
+    "workspace": 2097215,
+    "rounds": 3,
+    "wall_cycles_per_call": 150840777,
+    "probabilities": 33570816,
+    "counters": [
+     49677473,
+     38310687,
+     57472111,
+     0,
+     5553199,
+     32218469,
+     0,
+     0
+    ]
+   }
+  ],
+  "hashes": [
+   "level 0 clang == level 0 clang",
+   "level 0 gcc == level 0 clang",
+   "level 1 clang == level 0 clang",
+   "level 1 gcc == level 0 clang",
+   "level 2 clang == level 0 clang",
+   "level 2 gcc == level 0 clang",
+   "level 3 clang == level 0 clang",
+   "level 3 gcc == level 0 clang"
+  ],
+  "micro": {
+   "what": "exp_scalef.c time 15: TSC cycles an element, best of 15 -- the tree's block exponential and SiLU (cur) against v1's vscalefps forms (scalef); clang, then gcc",
+   "clang": {
+    "exp_block_cur": 1.203,
+    "exp_block_scalef": 1.117,
+    "silu_cur": 1.638,
+    "silu_scalef": 1.73
+   },
+   "gcc": {
+    "exp_block_cur": 0.961,
+    "exp_block_scalef": 0.765,
+    "silu_cur": 1.606,
+    "silu_scalef": 1.241
+   }
+  }
+ },
+ "v2": {
+  "exhaustive": {
+   "exh_3_clang.0": {
+    "part": 0,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "product_inputs": 134217728,
+    "overlap_inputs": 33553920,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "overlapping": 0,
+    "silu_nan_payloads_apart": 18874356
+   },
+   "exh_3_clang.1": {
+    "part": 1,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "product_inputs": 134217728,
+    "overlap_inputs": 33553920,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "overlapping": 0,
+    "silu_nan_payloads_apart": 18874368
+   },
+   "exh_3_gcc.0": {
+    "part": 0,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "product_inputs": 134217728,
+    "overlap_inputs": 33553920,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "overlapping": 0,
+    "silu_nan_payloads_apart": 18874356
+   },
+   "exh_3_gcc.1": {
+    "part": 1,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "product_inputs": 134217728,
+    "overlap_inputs": 33553920,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "overlapping": 0,
+    "silu_nan_payloads_apart": 18874368
+   }
+  },
+  "before_after": {
+   "ab_clang.0": {
+    "part": 0,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "instances": 7,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "at_nan": {
+     "exp": 0,
+     "silu": 0,
+     "silu_mul": 0,
+     "swiglu": 0
+    },
+    "nan_payloads_apart": 0
+   },
+   "ab_clang.1": {
+    "part": 1,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "instances": 7,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "at_nan": {
+     "exp": 0,
+     "silu": 0,
+     "silu_mul": 0,
+     "swiglu": 0
+    },
+    "nan_payloads_apart": 0
+   },
+   "ab_gcc.0": {
+    "part": 0,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "instances": 7,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "at_nan": {
+     "exp": 0,
+     "silu": 0,
+     "silu_mul": 0,
+     "swiglu": 0
+    },
+    "nan_payloads_apart": 25165818
+   },
+   "ab_gcc.1": {
+    "part": 1,
+    "parts": 2,
+    "stride": 1,
+    "inputs": 2147483648,
+    "instances": 7,
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0,
+    "at_nan": {
+     "exp": 0,
+     "silu": 0,
+     "silu_mul": 0,
+     "swiglu": 0
+    },
+    "nan_payloads_apart": 25165824
+   }
+  },
+  "ab": [
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 24,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 18.7944,
+    "after_ms": 17.8834,
+    "after_over_before": {
+     "geometric_mean": 0.9423201152208787,
+     "ci95": [
+      0.9203886099140342,
+      0.9647742160051586
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 0.99368286320376,
+     "ci95": [
+      0.9552721520630024,
+      1.0336380375921401
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9483107237883912,
+     "ci95": [
+      0.912406993653774,
+      0.9856272859667627
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      18.7431,
+      18.583,
+      18.7126,
+      18.7454,
+      19.8985,
+      18.8052,
+      18.4049,
+      18.6683,
+      18.7482,
+      18.7836,
+      19.4065,
+      20.8992,
+      18.9722,
+      18.8144,
+      19.5622,
+      18.4459,
+      21.6732,
+      19.5873,
+      19.9508,
+      18.309,
+      18.6535,
+      20.517,
+      20.0458,
+      18.7589
+     ],
+     "after": [
+      17.7962,
+      17.6897,
+      18.1027,
+      17.867,
+      18.7603,
+      17.7649,
+      17.7368,
+      17.8997,
+      18.8328,
+      17.4455,
+      17.7086,
+      19.0614,
+      18.1107,
+      17.9683,
+      19.5201,
+      17.555,
+      17.5191,
+      18.245,
+      17.488,
+      19.7144,
+      17.598,
+      17.3427,
+      18.9235,
+      18.2753
+     ],
+     "A/A": [
+      18.6,
+      18.6859,
+      19.1425,
+      18.3026,
+      18.4387,
+      18.6142,
+      18.7709,
+      18.7073,
+      18.7157,
+      21.2136,
+      18.3875,
+      18.6694,
+      18.7125,
+      18.8306,
+      18.5213,
+      18.3787,
+      18.2778,
+      27.6146,
+      18.5536,
+      18.5512,
+      18.6213,
+      18.8738,
+      19.6996,
+      19.1948
+     ]
+    },
+    "levels": "0->1"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 24,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 18.8079,
+    "after_ms": 18.6392,
+    "after_over_before": {
+     "geometric_mean": 0.9936143871476839,
+     "ci95": [
+      0.9585948770018413,
+      1.0299132344987183
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 1.005280681828971,
+     "ci95": [
+      0.9734037859409186,
+      1.038201478003969
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.98839498769631,
+     "ci95": [
+      0.9484897312434428,
+      1.0299791547795343
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      18.4624,
+      18.6453,
+      18.76,
+      19.5251,
+      21.4664,
+      19.2852,
+      18.7495,
+      18.8431,
+      20.5026,
+      19.9264,
+      18.9034,
+      18.7727,
+      18.6819,
+      18.7444,
+      18.6733,
+      18.7116,
+      19.1041,
+      18.7055,
+      22.8934,
+      18.1152,
+      20.0918,
+      19.0854,
+      18.3165,
+      19.1273
+     ],
+     "after": [
+      18.2682,
+      18.1499,
+      18.1382,
+      18.783,
+      18.5193,
+      18.3422,
+      18.3961,
+      18.2957,
+      18.7666,
+      18.6029,
+      18.3402,
+      20.3429,
+      20.4906,
+      18.3798,
+      20.2074,
+      18.6755,
+      18.2967,
+      21.5998,
+      20.3622,
+      18.9172,
+      18.0816,
+      18.7977,
+      23.0486,
+      19.5885
+     ],
+     "A/A": [
+      18.69,
+      18.7201,
+      18.8047,
+      19.1028,
+      19.1616,
+      22.9763,
+      18.8298,
+      18.5365,
+      18.5843,
+      18.6309,
+      18.709,
+      18.6822,
+      18.6814,
+      19.4264,
+      19.1101,
+      18.7653,
+      19.6503,
+      18.7626,
+      22.2599,
+      19.4144,
+      18.2003,
+      24.1947,
+      18.7038,
+      18.5147
+     ]
+    },
+    "levels": "0->2"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 24,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 18.8095,
+    "after_ms": 17.7409,
+    "after_over_before": {
+     "geometric_mean": 0.9525745494875594,
+     "ci95": [
+      0.9055390720820853,
+      1.0020531419423644
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 1.0162377368979492,
+     "ci95": [
+      0.9815939514146925,
+      1.0521042192721966
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9373540411865428,
+     "ci95": [
+      0.900391578142643,
+      0.9758338703491816
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      18.7101,
+      25.3925,
+      18.7735,
+      18.8437,
+      18.9189,
+      18.5878,
+      18.8183,
+      18.5325,
+      18.5513,
+      19.1009,
+      18.8007,
+      18.6863,
+      18.4982,
+      18.7492,
+      18.7146,
+      19.66,
+      19.0582,
+      19.1508,
+      18.7269,
+      25.2089,
+      18.8796,
+      18.8439,
+      18.7802,
+      19.2353
+     ],
+     "after": [
+      17.7087,
+      18.8859,
+      17.9303,
+      17.7133,
+      17.5846,
+      17.238,
+      17.6367,
+      17.5705,
+      17.6782,
+      17.7553,
+      17.6974,
+      17.7524,
+      17.5199,
+      17.7408,
+      17.714,
+      22.007,
+      17.7153,
+      17.7409,
+      18.0009,
+      18.0706,
+      19.228,
+      25.4525,
+      21.332,
+      17.7552
+     ],
+     "A/A": [
+      20.5739,
+      20.1138,
+      22.5536,
+      18.5423,
+      18.6839,
+      19.6874,
+      19.4067,
+      18.9585,
+      18.4466,
+      18.6596,
+      18.9198,
+      18.5217,
+      19.1993,
+      18.8159,
+      18.5357,
+      18.707,
+      19.23,
+      18.7973,
+      19.4387,
+      24.9374,
+      18.9505,
+      23.5575,
+      19.7473,
+      19.5245
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 24,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 18.352,
+    "after_ms": 17.875,
+    "after_over_before": {
+     "geometric_mean": 0.9812023203093951,
+     "ci95": [
+      0.9472007787246538,
+      1.0164244107535827
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 0.9852613287304168,
+     "ci95": [
+      0.9420004103634093,
+      1.0305089840853996
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9958802722661896,
+     "ci95": [
+      0.9407783617800255,
+      1.0542095322137937
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      18.0737,
+      17.8173,
+      18.0101,
+      18.2452,
+      18.3595,
+      27.3993,
+      18.2247,
+      18.7288,
+      18.5201,
+      18.3455,
+      19.3296,
+      18.4034,
+      18.1196,
+      18.3764,
+      19.1382,
+      17.9302,
+      18.2322,
+      18.194,
+      18.1051,
+      23.4822,
+      20.7669,
+      20.0697,
+      18.2565,
+      18.3585
+     ],
+     "after": [
+      17.4036,
+      17.6742,
+      17.7184,
+      17.6966,
+      17.5394,
+      32.7407,
+      18.1871,
+      17.796,
+      17.6808,
+      17.8838,
+      17.8234,
+      17.9303,
+      17.9383,
+      21.0475,
+      17.8345,
+      19.986,
+      18.1341,
+      17.7652,
+      17.838,
+      18.0107,
+      20.2921,
+      18.0496,
+      17.8662,
+      18.986
+     ],
+     "A/A": [
+      18.1904,
+      17.9595,
+      18.1405,
+      17.4697,
+      18.4668,
+      18.2824,
+      18.1541,
+      18.3269,
+      18.6334,
+      18.0485,
+      18.7745,
+      18.8577,
+      18.7712,
+      18.771,
+      20.9305,
+      20.3873,
+      19.3507,
+      18.6716,
+      18.06,
+      18.6393,
+      19.5535,
+      18.9823,
+      19.8019,
+      18.5972
+     ]
+    },
+    "levels": "2->3"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 1,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 12,
+    "calls_a_round": 1,
+    "workspace_bytes": 2097215,
+    "before_ms": 74.5092,
+    "after_ms": 70.3555,
+    "after_over_before": {
+     "geometric_mean": 0.9436864679702702,
+     "ci95": [
+      0.9331137964544423,
+      0.9543789334312809
+     ],
+     "rounds": 12
+    },
+    "aa": {
+     "geometric_mean": 0.9920245058200903,
+     "ci95": [
+      0.9848307893327463,
+      0.9992707689555091
+     ],
+     "rounds": 12
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9512733429807162,
+     "ci95": [
+      0.9421277238055332,
+      0.9605077424220818
+     ],
+     "rounds": 12
+    },
+    "raw_ms": {
+     "before": [
+      74.447,
+      73.4332,
+      73.5063,
+      76.2974,
+      73.4814,
+      74.1143,
+      74.3602,
+      74.5714,
+      75.3461,
+      76.0094,
+      74.5819,
+      74.9264
+     ],
+     "after": [
+      69.7164,
+      69.5566,
+      72.1019,
+      69.5076,
+      70.3952,
+      69.667,
+      70.0967,
+      70.3204,
+      70.3906,
+      70.8424,
+      71.2373,
+      70.8237
+     ],
+     "A/A": [
+      72.4713,
+      72.8276,
+      72.7823,
+      74.2058,
+      74.2469,
+      73.9835,
+      74.2161,
+      73.3226,
+      74.6828,
+      75.4461,
+      74.8853,
+      74.8691
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     1024,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 24,
+    "calls_a_round": 6,
+    "workspace_bytes": 4194367,
+    "before_ms": 4.7161,
+    "after_ms": 4.4885,
+    "after_over_before": {
+     "geometric_mean": 0.9352613584117269,
+     "ci95": [
+      0.9056898158141068,
+      0.9657984370199475
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 0.9967529181712766,
+     "ci95": [
+      0.956142305989386,
+      1.0390884010250925
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9383081216633233,
+     "ci95": [
+      0.914864810315111,
+      0.9623521653173065
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      4.8003,
+      4.8269,
+      4.7106,
+      4.7442,
+      4.7934,
+      4.6516,
+      4.7522,
+      4.7373,
+      4.6942,
+      4.6286,
+      4.742,
+      4.7668,
+      6.2883,
+      4.7217,
+      4.7805,
+      4.6623,
+      4.6731,
+      4.5638,
+      4.6381,
+      5.5492,
+      4.5241,
+      4.6758,
+      4.6165,
+      4.6767
+     ],
+     "after": [
+      4.5397,
+      4.5323,
+      4.8357,
+      4.4886,
+      4.5095,
+      4.4197,
+      4.4369,
+      4.5404,
+      4.6095,
+      4.522,
+      4.5185,
+      4.4912,
+      4.4456,
+      4.5094,
+      4.4005,
+      4.6328,
+      4.4297,
+      4.4744,
+      4.3581,
+      4.356,
+      4.4094,
+      4.2841,
+      4.2966,
+      4.4883
+     ],
+     "A/A": [
+      5.0836,
+      4.8566,
+      4.7359,
+      4.7297,
+      5.015,
+      5.5127,
+      4.685,
+      4.8655,
+      5.8898,
+      4.7259,
+      4.7688,
+      4.5649,
+      4.6275,
+      4.6129,
+      4.7224,
+      4.6117,
+      4.6108,
+      4.7021,
+      4.5222,
+      4.6006,
+      4.532,
+      4.4539,
+      4.6068,
+      4.7572
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     512,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 24,
+    "calls_a_round": 12,
+    "workspace_bytes": 0,
+    "before_ms": 1.218,
+    "after_ms": 1.1694,
+    "after_over_before": {
+     "geometric_mean": 0.9792949693153232,
+     "ci95": [
+      0.9526234611058321,
+      1.0067132251950253
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 1.01291083033953,
+     "ci95": [
+      0.9951201281133246,
+      1.0310195937492646
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9668126156643635,
+     "ci95": [
+      0.9462978272879848,
+      0.9877721440897961
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      1.181,
+      1.2017,
+      1.2017,
+      1.2457,
+      1.217,
+      1.2177,
+      1.2075,
+      1.2278,
+      1.227,
+      1.2183,
+      1.3142,
+      1.189,
+      1.245,
+      1.2289,
+      1.2384,
+      1.2997,
+      1.2064,
+      1.2385,
+      1.1944,
+      1.2489,
+      1.2092,
+      1.2142,
+      1.2056,
+      1.2207
+     ],
+     "after": [
+      1.1714,
+      1.1415,
+      1.1759,
+      1.1529,
+      1.1716,
+      1.1523,
+      1.1899,
+      1.2305,
+      1.1947,
+      1.3216,
+      1.5793,
+      1.1456,
+      1.3158,
+      1.3394,
+      1.1462,
+      1.1647,
+      1.1675,
+      1.129,
+      1.148,
+      1.1506,
+      1.1452,
+      1.1653,
+      1.1833,
+      1.1819
+     ],
+     "A/A": [
+      1.2389,
+      1.2241,
+      1.1951,
+      1.1999,
+      1.2095,
+      1.2125,
+      1.2212,
+      1.369,
+      1.2237,
+      1.3595,
+      1.3868,
+      1.2081,
+      1.2841,
+      1.2443,
+      1.2804,
+      1.215,
+      1.2174,
+      1.1968,
+      1.2381,
+      1.1791,
+      1.2044,
+      1.2282,
+      1.2237,
+      1.2369
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 11,
+    "contract_bits": "EXP|FUSED|SCRATCH",
+    "rounds": 24,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 15.8285,
+    "after_ms": 14.1117,
+    "after_over_before": {
+     "geometric_mean": 0.8822565151993845,
+     "ci95": [
+      0.8528535810518726,
+      0.9126731433216778
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 0.9717174085136762,
+     "ci95": [
+      0.9362421482648052,
+      1.0085368659791085
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9079352777561847,
+     "ci95": [
+      0.8741580996884529,
+      0.9430175947440109
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      19.4335,
+      15.4222,
+      16.0943,
+      19.1167,
+      19.1241,
+      15.6839,
+      15.5654,
+      15.5343,
+      15.4397,
+      17.2183,
+      15.5571,
+      16.0191,
+      15.6037,
+      17.4473,
+      15.668,
+      15.644,
+      17.9613,
+      15.4328,
+      15.9506,
+      15.7063,
+      17.6101,
+      20.2754,
+      17.6323,
+      15.4432
+     ],
+     "after": [
+      17.2554,
+      13.8823,
+      16.3912,
+      16.076,
+      13.8222,
+      13.8414,
+      13.8775,
+      13.8448,
+      14.1067,
+      14.1167,
+      13.8954,
+      14.141,
+      13.7423,
+      14.4744,
+      13.8404,
+      14.1346,
+      17.4708,
+      14.4864,
+      13.8784,
+      13.6838,
+      18.528,
+      15.738,
+      14.0233,
+      14.2197
+     ],
+     "A/A": [
+      17.8056,
+      15.6556,
+      15.545,
+      15.9335,
+      16.6131,
+      18.0414,
+      16.3516,
+      15.4699,
+      15.5132,
+      15.5712,
+      15.4557,
+      15.6172,
+      16.0751,
+      16.7985,
+      16.6599,
+      15.7572,
+      18.4168,
+      15.8929,
+      15.4355,
+      15.717,
+      15.6455,
+      15.5397,
+      16.3348,
+      16.4328
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "clang",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 17,
+    "contract_bits": "EXP|LOWER (the stored forward, as the trainer runs it)",
+    "rounds": 24,
+    "calls_a_round": 2,
+    "workspace_bytes": 8388671,
+    "before_ms": 22.2968,
+    "after_ms": 21.8079,
+    "after_over_before": {
+     "geometric_mean": 0.9654507121557097,
+     "ci95": [
+      0.9354253704299891,
+      0.9964398091677894
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 0.9691461262568889,
+     "ci95": [
+      0.9350600596454477,
+      1.004474744001869
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9961869381705606,
+     "ci95": [
+      0.9583192153970755,
+      1.0355509936951899
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      24.3397,
+      22.2481,
+      21.5673,
+      21.2641,
+      21.2359,
+      21.8688,
+      26.7296,
+      22.9687,
+      22.8383,
+      22.3456,
+      21.6248,
+      21.747,
+      22.9598,
+      22.0509,
+      28.3872,
+      27.9729,
+      26.7904,
+      23.9664,
+      21.6223,
+      26.8956,
+      23.0993,
+      21.8345,
+      22.0576,
+      21.232
+     ],
+     "after": [
+      23.5025,
+      21.3586,
+      20.6436,
+      20.2473,
+      23.8381,
+      22.4412,
+      26.2869,
+      25.7694,
+      22.4995,
+      21.0409,
+      21.0897,
+      22.4247,
+      21.7006,
+      22.0501,
+      25.2552,
+      27.3501,
+      21.3205,
+      20.7485,
+      21.3851,
+      23.4136,
+      21.1636,
+      21.2054,
+      21.9152,
+      21.1419
+     ],
+     "A/A": [
+      22.1831,
+      21.1407,
+      22.173,
+      21.6504,
+      22.0602,
+      21.305,
+      26.7334,
+      22.7589,
+      22.6406,
+      22.3882,
+      21.3418,
+      21.5896,
+      21.7815,
+      23.0553,
+      22.443,
+      21.4003,
+      22.7238,
+      26.1308,
+      21.6482,
+      25.9562,
+      21.7364,
+      22.7675,
+      21.7121,
+      21.8456
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "gcc",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 24,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 19.7963,
+    "after_ms": 18.4957,
+    "after_over_before": {
+     "geometric_mean": 0.9369245424819658,
+     "ci95": [
+      0.9133002090833228,
+      0.9611599664321925
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 0.9838365383302007,
+     "ci95": [
+      0.9530493656891321,
+      1.0156182554653477
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9523172864388068,
+     "ci95": [
+      0.9198399355997375,
+      0.9859413349550498
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      19.2665,
+      19.2065,
+      19.4306,
+      23.9602,
+      19.64,
+      19.2499,
+      22.4,
+      21.3217,
+      21.2281,
+      25.0307,
+      20.5546,
+      19.9693,
+      19.4233,
+      20.702,
+      19.4407,
+      19.4781,
+      23.0882,
+      22.2651,
+      21.8856,
+      19.3787,
+      19.6466,
+      19.9057,
+      19.6869,
+      19.2146
+     ],
+     "after": [
+      18.1564,
+      18.3513,
+      18.3488,
+      24.4257,
+      19.1264,
+      18.3893,
+      22.4036,
+      18.8151,
+      19.127,
+      23.3369,
+      20.0979,
+      18.0394,
+      18.0558,
+      18.1588,
+      18.095,
+      17.8985,
+      17.9083,
+      23.6599,
+      19.4652,
+      18.6804,
+      18.6022,
+      19.4733,
+      18.1896,
+      18.0611
+     ],
+     "A/A": [
+      19.4247,
+      19.3546,
+      19.4413,
+      22.7235,
+      19.3213,
+      19.0428,
+      19.2835,
+      25.1552,
+      19.4235,
+      23.3312,
+      21.0323,
+      19.1265,
+      19.2332,
+      19.2057,
+      19.6858,
+      19.1809,
+      19.2603,
+      21.7008,
+      19.5089,
+      20.6456,
+      21.0147,
+      21.4296,
+      19.7321,
+      19.9857
+     ]
+    },
+    "levels": "0->1"
+   },
+   {
+    "compiler": "gcc",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 24,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 20.3399,
+    "after_ms": 18.5969,
+    "after_over_before": {
+     "geometric_mean": 0.9216307481973556,
+     "ci95": [
+      0.9021067771819675,
+      0.9415772694627268
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 0.9886772972181159,
+     "ci95": [
+      0.9621620972056782,
+      1.0159232013746282
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9321856087831569,
+     "ci95": [
+      0.91005369536898,
+      0.9548557559233932
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      25.3162,
+      20.9015,
+      19.2932,
+      22.2454,
+      19.5357,
+      19.6389,
+      21.4576,
+      19.5368,
+      20.4238,
+      20.3895,
+      19.3701,
+      19.5873,
+      19.8223,
+      20.2903,
+      19.5027,
+      19.3043,
+      20.4631,
+      21.0321,
+      19.3344,
+      20.4237,
+      22.6846,
+      20.9496,
+      19.9715,
+      20.9046
+     ],
+     "after": [
+      22.404,
+      18.1584,
+      18.0587,
+      18.2565,
+      18.349,
+      18.6519,
+      19.3565,
+      18.2365,
+      18.5278,
+      19.1124,
+      18.2122,
+      18.1752,
+      18.542,
+      18.2327,
+      18.1718,
+      20.0243,
+      18.2113,
+      19.8,
+      19.022,
+      20.3261,
+      19.0681,
+      18.6834,
+      18.9185,
+      18.9307
+     ],
+     "A/A": [
+      22.9895,
+      19.6185,
+      19.1072,
+      18.8062,
+      19.7155,
+      19.72,
+      22.4563,
+      19.335,
+      19.5362,
+      20.2159,
+      21.1764,
+      19.3326,
+      23.4473,
+      19.234,
+      19.6076,
+      19.978,
+      20.0399,
+      19.7538,
+      19.3394,
+      19.865,
+      21.1313,
+      21.638,
+      20.2546,
+      20.3695
+     ]
+    },
+    "levels": "0->2"
+   },
+   {
+    "compiler": "gcc",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 24,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 20.2503,
+    "after_ms": 17.9733,
+    "after_over_before": {
+     "geometric_mean": 0.8699426277830697,
+     "ci95": [
+      0.825832861097787,
+      0.9164084057252111
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 0.9914088529215417,
+     "ci95": [
+      0.9635148663687686,
+      1.0201103770774849
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.8774811978120549,
+     "ci95": [
+      0.829532948367974,
+      0.9282009280385146
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      19.506,
+      21.013,
+      20.1987,
+      19.7429,
+      23.6728,
+      20.371,
+      21.9121,
+      19.3947,
+      20.0829,
+      23.5928,
+      27.1594,
+      19.2226,
+      20.3019,
+      21.0278,
+      24.3658,
+      19.1643,
+      19.1699,
+      19.3513,
+      19.1971,
+      20.5329,
+      22.1429,
+      19.3234,
+      26.7046,
+      19.3972
+     ],
+     "after": [
+      18.1351,
+      17.5141,
+      18.5896,
+      19.4331,
+      17.8391,
+      17.3949,
+      20.4429,
+      19.0082,
+      21.5592,
+      19.9184,
+      17.7471,
+      17.9949,
+      18.0379,
+      18.4567,
+      17.3836,
+      17.9539,
+      17.3912,
+      18.5906,
+      17.6038,
+      17.7315,
+      17.9927,
+      17.5754,
+      17.3571,
+      17.3038
+     ],
+     "A/A": [
+      19.5434,
+      20.4544,
+      20.8552,
+      19.7558,
+      23.209,
+      22.443,
+      19.7393,
+      19.4219,
+      19.5489,
+      19.3738,
+      26.8028,
+      22.4591,
+      19.7637,
+      19.2423,
+      24.6849,
+      19.5354,
+      19.6539,
+      19.4783,
+      19.2368,
+      19.6845,
+      20.8135,
+      19.2782,
+      26.1992,
+      20.7676
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "gcc",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 24,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 18.2932,
+    "after_ms": 17.2293,
+    "after_over_before": {
+     "geometric_mean": 0.9459996954666713,
+     "ci95": [
+      0.9278877747419807,
+      0.9644651521267056
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 0.9851303820423475,
+     "ci95": [
+      0.9498506567654442,
+      1.0217204806992644
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9602786724590185,
+     "ci95": [
+      0.9294210831696091,
+      0.9921607605832367
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      18.3132,
+      18.4383,
+      17.8793,
+      18.1092,
+      18.2366,
+      18.2675,
+      22.0083,
+      18.35,
+      18.2732,
+      17.8939,
+      17.9266,
+      24.7877,
+      17.9337,
+      20.039,
+      19.0262,
+      18.3585,
+      17.8524,
+      19.9535,
+      18.4861,
+      17.3049,
+      17.5294,
+      18.2215,
+      20.933,
+      18.4404
+     ],
+     "after": [
+      18.024,
+      17.2194,
+      17.2857,
+      16.689,
+      17.2668,
+      18.2801,
+      20.7514,
+      17.9465,
+      17.2392,
+      17.1395,
+      17.2598,
+      22.5514,
+      18.1298,
+      17.1486,
+      17.0096,
+      17.1284,
+      17.4265,
+      17.0128,
+      16.9214,
+      17.0341,
+      17.0736,
+      17.05,
+      21.311,
+      17.1112
+     ],
+     "A/A": [
+      17.9056,
+      17.6063,
+      18.0515,
+      17.3931,
+      17.7753,
+      18.0099,
+      21.426,
+      18.0406,
+      18.0514,
+      18.0552,
+      18.3636,
+      18.2858,
+      17.9404,
+      17.8883,
+      22.1527,
+      18.3041,
+      17.8777,
+      18.0005,
+      18.5049,
+      18.076,
+      18.0529,
+      17.8908,
+      24.5695,
+      17.6569
+     ]
+    },
+    "levels": "2->3"
+   },
+   {
+    "compiler": "gcc",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 1,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 12,
+    "calls_a_round": 1,
+    "workspace_bytes": 2097215,
+    "before_ms": 76.0337,
+    "after_ms": 67.9283,
+    "after_over_before": {
+     "geometric_mean": 0.891038506972201,
+     "ci95": [
+      0.8774953425959694,
+      0.9047906950234519
+     ],
+     "rounds": 12
+    },
+    "aa": {
+     "geometric_mean": 0.9963595266630235,
+     "ci95": [
+      0.9822075968102575,
+      1.010715361595742
+     ],
+     "rounds": 12
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.8942941610208109,
+     "ci95": [
+      0.8859667748940977,
+      0.9026998179830323
+     ],
+     "rounds": 12
+    },
+    "raw_ms": {
+     "before": [
+      76.0966,
+      75.4931,
+      76.195,
+      76.4669,
+      75.8638,
+      76.6081,
+      75.5902,
+      75.9707,
+      80.5958,
+      74.3657,
+      74.7899,
+      76.2219
+     ],
+     "after": [
+      68.4776,
+      67.1673,
+      69.0902,
+      68.7698,
+      67.2821,
+      68.0077,
+      67.8489,
+      65.7602,
+      67.6337,
+      68.4341,
+      67.8261,
+      68.2562
+     ],
+     "A/A": [
+      77.721,
+      76.6033,
+      75.825,
+      76.192,
+      75.5135,
+      76.3158,
+      74.2706,
+      75.0875,
+      75.8753,
+      75.5578,
+      76.5221,
+      75.3349
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "gcc",
+    "shape": [
+     4,
+     1024,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 24,
+    "calls_a_round": 6,
+    "workspace_bytes": 4194367,
+    "before_ms": 4.791,
+    "after_ms": 4.3919,
+    "after_over_before": {
+     "geometric_mean": 0.9223693751275457,
+     "ci95": [
+      0.8927263124295267,
+      0.952996738561282
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 0.9957503662563228,
+     "ci95": [
+      0.9616972551222007,
+      1.0310092772112684
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9263058356637474,
+     "ci95": [
+      0.8864851715730256,
+      0.9679152327637448
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      4.7777,
+      4.7623,
+      4.6765,
+      4.8573,
+      4.6708,
+      4.753,
+      4.6775,
+      4.9183,
+      4.7381,
+      6.4525,
+      4.7864,
+      6.4746,
+      5.9157,
+      4.87,
+      4.8585,
+      5.2336,
+      4.7777,
+      5.0237,
+      4.7956,
+      4.741,
+      4.7699,
+      4.8483,
+      4.7799,
+      4.8035
+     ],
+     "after": [
+      4.319,
+      4.431,
+      4.3471,
+      4.1499,
+      4.3215,
+      4.2635,
+      4.2924,
+      4.299,
+      5.0677,
+      6.0015,
+      4.7297,
+      7.2923,
+      4.5031,
+      4.4332,
+      4.7689,
+      4.6429,
+      4.4095,
+      4.3371,
+      4.1809,
+      4.3137,
+      4.3743,
+      4.4178,
+      4.2999,
+      4.8933
+     ],
+     "A/A": [
+      4.8291,
+      5.0002,
+      4.8145,
+      4.7158,
+      4.7361,
+      4.6567,
+      4.6562,
+      4.7171,
+      4.9367,
+      6.2891,
+      5.2167,
+      5.1419,
+      4.7963,
+      4.7823,
+      5.6465,
+      4.821,
+      5.3095,
+      5.1893,
+      4.8582,
+      4.7159,
+      4.7061,
+      4.8994,
+      4.8965,
+      4.8698
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "gcc",
+    "shape": [
+     4,
+     512,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "contract_bits": "EXP|SCRATCH (the scratch forward)",
+    "rounds": 24,
+    "calls_a_round": 12,
+    "workspace_bytes": 0,
+    "before_ms": 1.2725,
+    "after_ms": 1.1535,
+    "after_over_before": {
+     "geometric_mean": 0.9072010209436673,
+     "ci95": [
+      0.861560480696217,
+      0.9552593356373129
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 0.9929253394560602,
+     "ci95": [
+      0.9502498056706719,
+      1.0375174231560076
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9136648898905592,
+     "ci95": [
+      0.8796136112032213,
+      0.9490343491579548
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      1.3414,
+      1.2196,
+      1.2688,
+      1.3281,
+      1.2763,
+      1.2377,
+      1.2628,
+      1.3327,
+      1.5385,
+      1.5774,
+      1.2762,
+      1.2403,
+      1.2364,
+      1.2644,
+      1.2567,
+      1.288,
+      1.2649,
+      1.8505,
+      1.2457,
+      1.3858,
+      1.3644,
+      1.5405,
+      1.2677,
+      1.2477
+     ],
+     "after": [
+      1.1168,
+      1.125,
+      1.1295,
+      1.167,
+      1.115,
+      1.1523,
+      1.1299,
+      1.1213,
+      1.4285,
+      1.4351,
+      1.1546,
+      1.1332,
+      1.52,
+      1.2541,
+      1.1365,
+      1.135,
+      1.1554,
+      1.112,
+      1.2602,
+      1.1283,
+      1.3529,
+      1.3213,
+      1.2863,
+      1.2375
+     ],
+     "A/A": [
+      1.2713,
+      1.25,
+      1.2308,
+      1.2401,
+      1.2627,
+      1.423,
+      1.2333,
+      1.2333,
+      1.5514,
+      1.2936,
+      1.2808,
+      1.24,
+      1.5849,
+      1.2521,
+      1.5314,
+      1.261,
+      1.2535,
+      1.4442,
+      1.3012,
+      1.2762,
+      1.2994,
+      1.5865,
+      1.2586,
+      1.2779
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "gcc",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 11,
+    "contract_bits": "EXP|FUSED|SCRATCH",
+    "rounds": 24,
+    "calls_a_round": 3,
+    "workspace_bytes": 8388671,
+    "before_ms": 17.6869,
+    "after_ms": 15.0446,
+    "after_over_before": {
+     "geometric_mean": 0.8430620400785147,
+     "ci95": [
+      0.8046402863582167,
+      0.8833184411362268
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 0.9517768475306315,
+     "ci95": [
+      0.907821424175063,
+      0.997860530024965
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.8857769993731456,
+     "ci95": [
+      0.8403404641609682,
+      0.9336702516186373
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      20.9331,
+      20.8169,
+      16.2042,
+      16.1888,
+      15.9483,
+      16.1829,
+      16.0359,
+      16.9328,
+      18.6224,
+      17.7989,
+      21.1115,
+      20.1359,
+      16.885,
+      16.004,
+      21.6579,
+      18.5739,
+      16.2297,
+      18.031,
+      17.5748,
+      16.9307,
+      19.4746,
+      19.4096,
+      16.4185,
+      18.681
+     ],
+     "after": [
+      16.5328,
+      15.6123,
+      13.6997,
+      16.0243,
+      16.9291,
+      13.5561,
+      14.4423,
+      14.9477,
+      13.7281,
+      14.5497,
+      15.8603,
+      13.6698,
+      15.377,
+      13.4571,
+      18.2605,
+      13.8647,
+      13.9415,
+      19.288,
+      13.3163,
+      15.1415,
+      17.1005,
+      15.6426,
+      13.6246,
+      16.3583
+     ],
+     "A/A": [
+      16.3717,
+      20.0544,
+      17.6705,
+      20.1625,
+      16.7122,
+      15.9527,
+      16.5158,
+      15.9615,
+      17.118,
+      18.977,
+      16.9544,
+      19.9673,
+      16.2162,
+      16.0057,
+      16.3656,
+      16.0161,
+      15.9459,
+      16.6093,
+      16.1161,
+      17.0409,
+      17.017,
+      16.645,
+      16.9789,
+      17.5812
+     ]
+    },
+    "levels": "0->3"
+   },
+   {
+    "compiler": "gcc",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 17,
+    "contract_bits": "EXP|LOWER (the stored forward, as the trainer runs it)",
+    "rounds": 24,
+    "calls_a_round": 2,
+    "workspace_bytes": 8388671,
+    "before_ms": 21.951,
+    "after_ms": 21.0364,
+    "after_over_before": {
+     "geometric_mean": 0.9612178352498665,
+     "ci95": [
+      0.9370292942172392,
+      0.9860307810059082
+     ],
+     "rounds": 24
+    },
+    "aa": {
+     "geometric_mean": 1.0096576109125728,
+     "ci95": [
+      0.9772174270530786,
+      1.0431746948556149
+     ],
+     "rounds": 24
+    },
+    "after_over_aa": {
+     "geometric_mean": 0.9520235621074312,
+     "ci95": [
+      0.9145343119060578,
+      0.9910495986954543
+     ],
+     "rounds": 24
+    },
+    "raw_ms": {
+     "before": [
+      22.0534,
+      21.9902,
+      21.6223,
+      21.8618,
+      21.6515,
+      22.3214,
+      21.107,
+      21.5285,
+      25.6464,
+      26.1087,
+      21.6411,
+      24.3246,
+      21.3851,
+      22.5587,
+      21.7514,
+      21.4543,
+      22.8347,
+      23.2858,
+      21.8862,
+      22.1331,
+      23.457,
+      22.4884,
+      21.8914,
+      21.9119
+     ],
+     "after": [
+      20.8717,
+      21.1554,
+      21.1822,
+      20.907,
+      20.6345,
+      20.7243,
+      22.4052,
+      20.6887,
+      27.9896,
+      23.417,
+      22.1938,
+      21.0192,
+      21.8171,
+      20.981,
+      20.3825,
+      20.8088,
+      21.0535,
+      20.6298,
+      21.1875,
+      23.7489,
+      20.6612,
+      21.4215,
+      21.8985,
+      20.6752
+     ],
+     "A/A": [
+      21.4398,
+      21.8411,
+      21.5795,
+      21.9751,
+      21.7331,
+      21.8987,
+      23.0871,
+      22.0061,
+      22.0289,
+      24.0086,
+      25.5576,
+      21.7939,
+      22.5101,
+      22.0869,
+      21.7298,
+      21.5388,
+      21.6724,
+      27.2076,
+      25.4016,
+      22.2163,
+      25.558,
+      22.1066,
+      21.9145,
+      21.6239
+     ]
+    },
+    "levels": "0->3"
+   }
+  ],
+  "phases": [
+   {
+    "level": 0,
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "workspace": 8388671,
+    "rounds": 6,
+    "wall_cycles_per_call": 44921233,
+    "probabilities": 33570816,
+    "counters": [
+     53275552,
+     59974771,
+     52488150,
+     0,
+     6008322,
+     37129329,
+     14689141,
+     0
+    ]
+   },
+   {
+    "level": 3,
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "workspace": 8388671,
+    "rounds": 6,
+    "wall_cycles_per_call": 42893664,
+    "probabilities": 33570816,
+    "counters": [
+     54122386,
+     39593585,
+     63561041,
+     0,
+     6111002,
+     32088987,
+     0,
+     0
+    ]
+   },
+   {
+    "level": 0,
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "workspace": 8388671,
+    "rounds": 6,
+    "wall_cycles_per_call": 46397931,
+    "probabilities": 33570816,
+    "counters": [
+     55256772,
+     60943935,
+     52509941,
+     0,
+     6016563,
+     38123504,
+     14774950,
+     0
+    ]
+   },
+   {
+    "level": 3,
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 9,
+    "workspace": 8388671,
+    "rounds": 6,
+    "wall_cycles_per_call": 40295257,
+    "probabilities": 33570816,
+    "counters": [
+     52042375,
+     37304850,
+     59976701,
+     0,
+     5775255,
+     30585910,
+     0,
+     0
+    ]
+   }
+  ],
+  "hashes": [
+   "level 0 clang == level 0 clang (1248 lines)",
+   "level 0 gcc == level 0 clang (1248 lines)",
+   "level 1 clang == level 0 clang (1248 lines)",
+   "level 1 gcc == level 0 clang (1248 lines)",
+   "level 2 clang == level 0 clang (1248 lines)",
+   "level 2 gcc == level 0 clang (1248 lines)",
+   "level 3 clang == level 0 clang (1248 lines)",
+   "level 3 gcc == level 0 clang (1248 lines)"
+  ]
+ }
+}

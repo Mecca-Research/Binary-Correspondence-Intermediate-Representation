@@ -1,0 +1,183 @@
+{
+ "what": "exp_exhaustive.c, linked with each unit: the AVX-512 exponential (apart and in place) and the v2 SiLU, SiLU times u and SwiGLU VJP forms (apart, in place, an output its input, one output overlapping its input by a float: the element loop's order) against their scalar definitions -- bcir_tensor_expf through the portable instance, the sigmoid 1/(1+e) or e*(1/(1+e)) -- over every binary32 input, SiLU times u and the VJP every 16th block of 2^16, the overlaps every 64th; a NaN input's SiLU forms both NaN with their payloads apart counted, not failed (which NaN is not part of the v2 contract). The tree after under clang and gcc, the tree before under clang (the instrument's control). And exp_ab.c: both units in one process (RTLD_LOCAL), their exponential on every instance the host has and their v2 SiLU forms on every binary32, compared byte for byte -- a NaN input's outputs both NaN, a payload apart counted -- under clang and gcc",
+ "witness": [
+  {
+   "build": "exh_clang_B",
+   "seconds": 132,
+   "part": 0,
+   "parts": 2,
+   "stride": 1,
+   "inputs": 2147483648,
+   "product_inputs": 134217728,
+   "overlap_inputs": 33553920,
+   "exp": 0,
+   "silu": 0,
+   "silu_mul": 0,
+   "swiglu": 0,
+   "overlapping": 0,
+   "silu_nan_payloads_apart": 18874356
+  },
+  {
+   "build": "exh_clang_B",
+   "seconds": 132,
+   "part": 1,
+   "parts": 2,
+   "stride": 1,
+   "inputs": 2147483648,
+   "product_inputs": 134217728,
+   "overlap_inputs": 33553920,
+   "exp": 0,
+   "silu": 0,
+   "silu_mul": 0,
+   "swiglu": 0,
+   "overlapping": 0,
+   "silu_nan_payloads_apart": 18874368
+  },
+  {
+   "build": "exh_gcc_B",
+   "seconds": 72,
+   "part": 0,
+   "parts": 2,
+   "stride": 1,
+   "inputs": 2147483648,
+   "product_inputs": 134217728,
+   "overlap_inputs": 33553920,
+   "exp": 0,
+   "silu": 0,
+   "silu_mul": 0,
+   "swiglu": 0,
+   "overlapping": 0,
+   "silu_nan_payloads_apart": 18874356
+  },
+  {
+   "build": "exh_gcc_B",
+   "seconds": 72,
+   "part": 1,
+   "parts": 2,
+   "stride": 1,
+   "inputs": 2147483648,
+   "product_inputs": 134217728,
+   "overlap_inputs": 33553920,
+   "exp": 0,
+   "silu": 0,
+   "silu_mul": 0,
+   "swiglu": 0,
+   "overlapping": 0,
+   "silu_nan_payloads_apart": 18874368
+  },
+  {
+   "build": "exh_clang_A",
+   "seconds": 230,
+   "part": 0,
+   "parts": 2,
+   "stride": 1,
+   "inputs": 2147483648,
+   "product_inputs": 134217728,
+   "overlap_inputs": 33553920,
+   "exp": 0,
+   "silu": 0,
+   "silu_mul": 0,
+   "swiglu": 0,
+   "overlapping": 0,
+   "silu_nan_payloads_apart": 18874356
+  },
+  {
+   "build": "exh_clang_A",
+   "seconds": 230,
+   "part": 1,
+   "parts": 2,
+   "stride": 1,
+   "inputs": 2147483648,
+   "product_inputs": 134217728,
+   "overlap_inputs": 33553920,
+   "exp": 0,
+   "silu": 0,
+   "silu_mul": 0,
+   "swiglu": 0,
+   "overlapping": 0,
+   "silu_nan_payloads_apart": 18874368
+  }
+ ],
+ "before_after": [
+  {
+   "compiler": "clang",
+   "seconds": 86,
+   "part": 0,
+   "parts": 2,
+   "stride": 1,
+   "inputs": 2147483648,
+   "instances": 7,
+   "exp": 0,
+   "silu": 0,
+   "silu_mul": 0,
+   "swiglu": 0,
+   "at_nan": {
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0
+   },
+   "nan_payloads_apart": 0
+  },
+  {
+   "compiler": "clang",
+   "seconds": 86,
+   "part": 1,
+   "parts": 2,
+   "stride": 1,
+   "inputs": 2147483648,
+   "instances": 7,
+   "exp": 0,
+   "silu": 0,
+   "silu_mul": 0,
+   "swiglu": 0,
+   "at_nan": {
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0
+   },
+   "nan_payloads_apart": 0
+  },
+  {
+   "compiler": "gcc",
+   "seconds": 90,
+   "part": 0,
+   "parts": 2,
+   "stride": 1,
+   "inputs": 2147483648,
+   "instances": 7,
+   "exp": 0,
+   "silu": 0,
+   "silu_mul": 0,
+   "swiglu": 0,
+   "at_nan": {
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0
+   },
+   "nan_payloads_apart": 25165818
+  },
+  {
+   "compiler": "gcc",
+   "seconds": 90,
+   "part": 1,
+   "parts": 2,
+   "stride": 1,
+   "inputs": 2147483648,
+   "instances": 7,
+   "exp": 0,
+   "silu": 0,
+   "silu_mul": 0,
+   "swiglu": 0,
+   "at_nan": {
+    "exp": 0,
+    "silu": 0,
+    "silu_mul": 0,
+    "swiglu": 0
+   },
+   "nan_payloads_apart": 25165824
+  }
+ ]
+}

@@ -3968,11 +3968,74 @@ static void attention_lanes(void) {
 #endif
   printf("\n");
 }
+/* SOFTMAX-T: on AVX-512 the exponential applies 2^k by one vscalefps, which rounds p * 2^k once, as exp1's
+ * two scalings do (the first exact). The two forms could part only where the result is rounded: the
+ * subnormal results, every binary32 in [-104, -87] here, through each instance against bcir_tensor_expf
+ * bit for bit, and the overflow edge [88, 89]; the v2 SiLU forms over every eighth run of 4096 of the same
+ * inputs against their scalar definitions, serially and on a pool, an output its input and apart; a NaN
+ * keeps its payload. (The records hold every binary32; the scratch forward's softmax in one pass and its
+ * division inside the context are SCORES-T's case's, attention_lanes, every value as it was.) */
+static void exp_scalef(void) {
+  enum { CH=4096 };
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  bcir_tensor_pool *pool=bcir_tensor_pool_size(3) ? bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),3) : NULL;
+  static float xs[CH],ys[CH],ref[CH],us[CH],ds[CH],g1[CH],g0[CH];
+  static const float ranges[][2]={{-87.0f,-104.0f},{88.0f,89.0f}};
+  size_t ri,i,swept=0,silus=0,chunk=0,nan_payloads=0; int variant,mask=bcir_tensor_mm_variants();
+  uint32_t step=DT_TSAN ? 61u : 1u;  /* TSan: a sample of the ranges (no threads here to watch) */
+  for (i=0;i<CH;i++) { us[i]=1.25f+(float)(i%7)*0.5f-(float)(i%3); ds[i]=0.75f-(float)(i%5)*0.375f; }
+  for (ri=0;ri<sizeof(ranges)/sizeof(ranges[0]);ri++) {
+    uint32_t lo,hi,b;
+    memcpy(&lo,&ranges[ri][0],4); memcpy(&hi,&ranges[ri][1],4);  /* same sign: the bits run in magnitude order */
+    for (b=lo;b<=hi;) {
+      size_t n=0;
+      for (;n<CH && b<=hi;n++,b+=step) memcpy(&xs[n],&b,4);
+      for (i=0;i<n;i++) ref[i]=bcir_tensor_expf(xs[i]);
+      for (variant=1;variant<=4;variant*=2) {
+        if (!(mask&variant)) continue;
+        assert(bcir_tensor_exp_variant(variant,n,xs,ys)==variant && !memcmp(ys,ref,n*sizeof(float)));
+        memcpy(ys,xs,n*sizeof(float));
+        assert(bcir_tensor_exp_variant(variant,n,ys,ys)==variant && !memcmp(ys,ref,n*sizeof(float)));
+      }
+      swept+=n;
+      if (b<lo) break;  /* the bits wrapped (not in these ranges) */
+      if (chunk++%8) continue;  /* the SiLU forms: every eighth run */
+      for (i=0;i<n;i++) ref[i]=silu2_ref(xs[i]);
+      bcir_tensor_silu_v2_pool(NULL,n,xs,ys); assert(!memcmp(ys,ref,n*sizeof(float)));
+      bcir_tensor_silu_v2_pool(pool,n,xs,ys); assert(!memcmp(ys,ref,n*sizeof(float)));
+      memcpy(ys,xs,n*sizeof(float)); bcir_tensor_silu_v2_pool(NULL,n,ys,ys); assert(!memcmp(ys,ref,n*sizeof(float)));
+      for (i=0;i<n;i++) ref[i]=silu2_ref(xs[i])*us[i];
+      bcir_tensor_silu_mul_v2_pool(NULL,n,xs,us,ys); assert(!memcmp(ys,ref,n*sizeof(float)));
+      memcpy(ys,us,n*sizeof(float)); bcir_tensor_silu_mul_v2_pool(pool,n,xs,ys,ys); assert(!memcmp(ys,ref,n*sizeof(float)));
+      for (i=0;i<n;i++) {
+        float e=bcir_tensor_expf(xs[i]<0.0f ? xs[i] : -xs[i]),sg=1.0f/(1.0f+e),sv=xs[i]>=0.0f ? sg : e*sg;
+        g0[i]=ds[i]*us[i]*(sv+xs[i]*sv*(1.0f-sv)); ref[i]=ds[i]*xs[i]*sv;
+      }
+      bcir_tensor_swiglu_backward_v2_pool(pool,n,xs,us,ds,g1,ys);
+      assert(!memcmp(g1,g0,n*sizeof(float)) && !memcmp(ys,ref,n*sizeof(float)));
+      silus+=n;
+    }
+  }
+  {  /* NaN payloads: each instance returns its input NaN, sign and payload, in the lanes and the tail */
+    static const uint32_t nans[]={0x7fc00000u,0xffc00000u,0x7fc00001u,0x7fbfffffu,0xffbfffffu,0x7f800001u,0xff812345u};
+    for (i=0;i<35;i++) memcpy(&xs[i],&nans[i%7],4);
+    for (variant=1;variant<=4;variant*=2) {
+      if (!(mask&variant)) continue;
+      assert(bcir_tensor_exp_variant(variant,35,xs,ys)==variant);
+      for (i=0;i<35;i++) { float want=bcir_tensor_expf(xs[i]); assert(!memcmp(&want,&ys[i],4)); nan_payloads++; }
+    }
+  }
+  if (pool) bcir_tensor_pool_stop(pool);
+  assert(swept>0 && silus>0);
+  printf("  PASS the exponential's single scaling (SOFTMAX-T): %zu inputs where the result rounds -- the subnormal "
+      "results and the overflow edge -- through every instance bit for bit, %zu of them through the v2 SiLU forms, "
+      "%zu NaNs their payloads\n",swept,silus,nan_payloads);
+}
 int main(void) {
   gemm_contract(); attention_reference(); attention_fused_reference(); adamw_reference();
   finite_differences(); refusals();
   learning(); pool_identity(); pool_claims(); reduction_references(); scan_references();
-  gemm_fused_contract(); gemm_kblock_contract(); gemm_kblock_rows(); exp_contract(); fused_passes();
+  gemm_fused_contract(); gemm_kblock_contract(); gemm_kblock_rows(); exp_contract(); exp_scalef(); fused_passes();
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();
   trainer_workspace_plan(); trainer_recompute(); pool_caps(); dispatch_entries();

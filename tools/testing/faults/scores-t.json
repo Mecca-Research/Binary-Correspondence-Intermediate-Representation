@@ -38,15 +38,15 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "ST5 the maximum left unscaled (every exponential's argument shifted)",
-      "new": "  for (jb=0;jb<=R;jb+=16) {\n    float *blk=sg+jb*16;\n",
-      "old": "  mx=_mm512_mul_ps(mx,sc);\n  for (jb=0;jb<=R;jb+=16) {\n    float *blk=sg+jb*16;\n",
+      "new": "  for (jb=0;jb<=R;jb+=16) for (c=0;c<16;c+=4) {",
+      "old": "  mx=_mm512_mul_ps(mx,sc);\n  for (jb=0;jb<=R;jb+=16) for (c=0;c<16;c+=4) {",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "ST6 the future lanes' exponentials kept and summed (a row's sum takes its future keys)",
-      "new": "      __m512 x=_mm512_loadu_ps(blk+c*16); (void)k;\n      s=_mm512_add_ps(s,x);\n",
-      "old": "      __m512 x=_mm512_maskz_mov_ps(k,_mm512_loadu_ps(blk+c*16));\n      s=_mm512_mask_add_ps(s,k,s,x);\n",
+      "new": "      __m512 x=v[l]; (void)k;\n      s=_mm512_add_ps(s,x);\n      _mm512_storeu_ps(b+l*16,x);\n",
+      "old": "      __m512 x=_mm512_maskz_mov_ps(k,v[l]);\n      s=_mm512_mask_add_ps(s,k,s,x);\n      _mm512_storeu_ps(b+l*16,x);\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -87,8 +87,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "ST12 a context of 17 channels run on one 16-lane vector (its last channel never written)",
-      "new": "      else if (nc>17) att512_tctx_block(f,2,R,rb,c0,sg,v,ldv,y,ldy,m0,m1,m2);\n",
-      "old": "      else if (nc>16) att512_tctx_block(f,2,R,rb,c0,sg,v,ldv,y,ldy,m0,m1,m2);\n",
+      "new": "      else if (nc>17) att512_tctx_block(f,2,R,rb,c0,sg,dlo,sm,v,ldv,y,ldy,m0,m1,m2);",
+      "old": "      else if (nc>16) att512_tctx_block(f,2,R,rb,c0,sg,dlo,sm,v,ldv,y,ldy,m0,m1,m2);",
       "path": "runtime/c/bcir_tensor.c"
     }
   ]

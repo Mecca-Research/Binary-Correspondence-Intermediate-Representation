@@ -4687,6 +4687,61 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     pushed the harness's C11 build past its 60-second limit, and on the other instances they repeat the row path
     `attention_scratch` and `attention_strips` already cover, so they run on AVX-512 alone and the limit is 120 seconds.
   - Not claimed: AVX2-only and non-x86 hosts (the row path); the stored forward; the bf16 attention; a GPU.
+  SOFTMAX-T (2026-10-23): the exponential's single scaling and the softmaxes in one pass, every value as it was
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §17,
+    [measurements/2026-10-23/softmax-t/](research/measurements/2026-10-23/softmax-t/README.json)).
+  - The loss it answers: after SCORES-T the scratch forward's softmax took 1.82 TSC cycles a probability, 1.13 of them
+    the exponential and sum and 0.44 the division, a pass of its own. The AVX-512 exponential and v2 SiLU forms were
+    exp1's and the sigmoid's scalar code compiled for sixteen lanes -- 2^k two exponent-field scalings, each chain a
+    vector at a time; ATTN-RATE's block forms took clang's SiLU forms to x0.67-x0.91 and left GCC's at x0.97-x1.02 --
+    and the softmaxes scaled, exponentiated and summed in separate passes over their blocks.
+  - SOFTMAX-T: on AVX-512 the exponential applies 2^k by one vscalefps -- exp1's (p * 2^k1) * 2^k2 rounds once, the
+    first product exact, as vscalefps rounds p * 2^k once -- and the exponential, SiLU, SiLU times u and the SwiGLU VJP
+    run as AVX-512 instances, each step over four vectors before the next (EXP-LANES' order), so both compilers
+    interleave the chains; the scratch forward's lanes softmax and the stored forward's transposed blocks scale,
+    subtract, exponentiate, mask and sum in one pass, four columns at a time, each sum in column order; and the lanes
+    path divides each key's probabilities inside the context's first pass -- rows 0-7's pass the keys to R+7, rows
+    8-15's the eight after -- once, before the context reads them. Every other instance and the libm softmax as they
+    were.
+  - Every value is the same: over every binary32 the exponential and the three SiLU forms (apart, in place and
+    overlapping) against their scalar definitions under clang and GCC, 0 mismatches (the tree before the same, the
+    instrument's control), and before against after byte for byte, 0 apart; `scratch_hash.c` and the fwd, lower, attn,
+    band and elementwise hashes before == after under clang and GCC, clang's lines GCC's. At a NaN input the SiLU forms
+    return NaNs, as before; under GCC 50,331,642 of those NaN outputs -- three for each of the 16,777,214 NaN inputs --
+    carry another sign or payload than before, under clang none: the compiler orders a product's operands, and which NaN
+    is not part of the contract, which the header now says.
+  - Measured on the committed tree against the one before it, in one process beside an A/A control: on one thread the
+    exponential x0.733 (clang) and x0.678 (GCC) at 16,384 elements, x0.769 and x0.745 at 2^20; SiLU times u x0.905 and
+    x0.882 under clang, x0.695 and x0.748 under GCC; the SwiGLU VJP x0.860 and x0.940 under clang, x0.654 and x0.782
+    under GCC -- GCC's forms now at clang's rate; the AVX2 instance, which the slice leaves, x1.003 and x1.008. The
+    scratch forward at B4/T2048 x0.914 on four threads (GCC x0.909) and x0.938 on one, x0.927 at T512, x0.899 under the
+    fused attention contract; at T1024 x0.947 and for the 9.84M decoder's attention x0.950, each meeting its control, at
+    T256 x0.937 holding 1; heads of 64 and 128 channels at parity. The stored forward x0.965 (0.937-0.994), meeting its
+    control. `bcir_decoder_forward` at the GEO dimensions x0.908 at T2048 under GCC; under clang x0.965 in 64 declared
+    rounds (0.946-0.983), at its control's edge. The training step within noise but at T512 (x0.974, 0.954-0.995):
+    x0.971-x0.998 elsewhere. The GEO study's attention model on level 3 (GCC, as the study builds it), its logits and
+    trained state the same: inference x0.931 (0.908-0.954) at T2048 in 48 declared rounds (x0.926 in 24) -- x1.005 of
+    Inductor's time, at parity, and x0.899 of eager PyTorch's -- x0.960 at T1024, meeting its control, and x0.976 at
+    T512, holding 1; its training update at parity at every context, x0.982 of Inductor's time at T2048.
+  - The design runs, each level against the tree before (the scratch forward at B4/T2048, four threads, 24 rounds): the
+    single scaling and the four-chain forms x0.942 under clang and x0.937 under GCC; with the one-pass softmaxes x0.994
+    and x0.922; with the division inside the context x0.953 and x0.870, and x0.981 and x0.946 against the one-pass level
+    alone. Its phases (TSC cycles a probability): the softmax 1.80 -> 1.15 (the exponential and sum 1.12 -> 0.93; the
+    division's 0.44 now 0.28 inside the context, 1.56 -> 1.84), the call 5.44 -> 4.96. A first draft wrote each vector's
+    chain as one expression, which clang scheduled a chain at a time: its SiLU x1.06 slower than the tree's, the stored
+    forward x1.042 (holding 1); its runs are kept as superseded.
+  - Witnesses: the C harness's `exp_scalef` -- every binary32 where the result rounds, [-104, -87] (the subnormal
+    results) and [88, 89] (the overflow edge), 2,359,298 inputs through every instance against bcir_tensor_expf bit for
+    bit, apart and in place, every eighth run of 4,096 of them through the v2 SiLU forms against their scalar
+    definitions, serially and on a pool, and NaNs their sign and payload; 0.5 s on this host. `softmax-t.json` SM1-SM16,
+    each caught by its own check (SM15's first edit left the maximum unused, which the -Werror build refused; it keeps
+    it named and was swept again). Without the new case all sixteen are still caught -- the exponential's contract case
+    (every 256th binary32 of [-104, 89] through every instance, the thresholds and their neighbours) and the attention
+    cases reach each -- and on its own it catches nine of the ten in the exponential and the SiLU forms, all but the
+    overlapping output's order (SM8, the contract case's), and is the first to stop SM6 (a NaN's payload), which
+    otherwise reaches attention_strips' byte comparison. ndt-lanes.json NL8 and NL11 and scores-t.json ST5, ST6 and
+    ST12, whose anchors the slice rewrote, re-anchored with the same defects and caught again.
+  - Not claimed: AVX2-only and non-x86 hosts (their instances as they were); the bf16 attention; a GPU.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

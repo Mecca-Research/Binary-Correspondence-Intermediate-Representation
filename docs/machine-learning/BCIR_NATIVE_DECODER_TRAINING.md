@@ -611,6 +611,13 @@ register transposes a block took, the context reading a key's eight rows side by
 ST1-ST12): the scratch forward x0.927 at B4/T2048, the forward x0.906 at the GEO dimensions, and the GEO
 attention model's inference at T2048 at parity with Inductor (x1.056, 0.991-1.126), every value as it was
 (§16). The stored training forward keeps its row path.
+Since SOFTMAX-T (2026-10-23) the BCIR exponential's AVX-512 instance applies 2^k by one vscalefps -- the single
+rounding exp1's two power-of-two scalings make -- and the exponential, SiLU, SiLU times u and the SwiGLU VJP run as
+AVX-512 instances, four vectors' chains a step at a time; the softmaxes scale, exponentiate, mask and sum in one
+pass, and the scratch forward divides each key's probabilities inside the context's first pass (`softmax-t.json`
+SM1-SM16): on one thread the exponential x0.68-x0.77 and GCC's SiLU forms x0.65-x0.78, now at clang's rate; the
+scratch forward x0.914 at B4/T2048; the GEO attention model's inference x0.931 at T2048, at parity with Inductor,
+every value as it was (§17).
 Since NDT-SCAN-W (2026-10-17) the forward's verdict on its activations is taken by their writers: the
 RMSNorm, the SwiGLU product and the attention read back what their tasks wrote while it is in the
 core's cache, a region answering through another its value reaches and the attention reading its

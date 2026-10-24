@@ -347,11 +347,14 @@ BCIR_DT_API int bcir_tensor_swiglu_backward_panels_pool(bcir_tensor_pool *pool, 
     unsigned short *dgt, unsigned short *dua, unsigned short *dut);
 /* The BCIR exponential (NDT-EXP): one operation sequence on every instance -- a Cody-Waite
  * reduction x = k ln2 + r, a degree-7 polynomial in r, 2^k as two exact power-of-two scalings
- * (one rounding into the subnormals), the three special cases selected at the end -- so the
- * scalar, AVX2 and AVX-512 instances agree bit for bit, with no libm and no fma; within 1 ulp
- * of exp evaluated in double and rounded to binary32 (bcir_tensor_exp_sweep measures the bound).
- * SiLU, the SwiGLU VJP and the attention softmax under their v2 contracts use it (the sigmoid is
- * 1/(1+e) for x >= 0 and e*(1/(1+e)) for x < 0, e = exp(-|x|)); v1 keeps libm's expf. */
+ * (one rounding into the subnormals; on AVX-512 one vscalefps, the same single rounding), the
+ * three special cases selected at the end -- so the scalar, AVX2 and AVX-512 instances agree bit
+ * for bit, with no libm and no fma; within 1 ulp of exp evaluated in double and rounded to
+ * binary32 (bcir_tensor_exp_sweep measures the bound). SiLU, the SwiGLU VJP and the attention
+ * softmax under their v2 contracts use it (the sigmoid is 1/(1+e) for x >= 0 and e*(1/(1+e)) for
+ * x < 0, e = exp(-|x|)); v1 keeps libm's expf. The exponential of a NaN is that NaN, its sign and
+ * payload kept; the v2 SiLU forms at a NaN return a NaN, which one not part of the contract (the
+ * compiler orders a product's operands). */
 BCIR_DT_API float bcir_tensor_expf(float x);
 BCIR_DT_API void bcir_tensor_exp(size_t n, const float *x, float *y);  /* the widest instance */
 BCIR_DT_API int bcir_tensor_exp_variant(int variant, size_t n, const float *x, float *y);

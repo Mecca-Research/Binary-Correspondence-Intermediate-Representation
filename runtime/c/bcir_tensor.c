@@ -586,7 +586,9 @@ unsigned bcir_tensor_instance_probe(int family) {
  * significant bits, so k*LN2_HI is exact for |k| < 256; 2^k is applied as two exact power-of-two
  * scalings (|k| <= 151, so each half is in range): a normal result is exact under both, a
  * subnormal one is rounded once, by the second. The instances below inline this body under
- * their target, and the build's -ffp-contract=off keeps every multiply and add its own. */
+ * their target, and the build's -ffp-contract=off keeps every multiply and add its own; the
+ * AVX-512 instance is the same operations in sixteen lanes (exp1_512, SOFTMAX-T), its 2^k one
+ * vscalefps, which rounds p * 2^k once as the two scalings do. */
 #define BCIR_EXP_LOG2E 1.44269504088896341f
 #define BCIR_EXP_LN2_HI 0.693145751953125f
 #define BCIR_EXP_LN2_LO 1.428606765330187e-06f
@@ -616,7 +618,8 @@ BCIR_MM_INLINE float sigmoid2(float x) {
  * vectorizer makes each step four vectors in a row on AVX-512 (nb 64) and two on AVX2 (nb 16: four
  * would spill its sixteen registers), whichever compiler builds it. Each element's operations and
  * their order are exp1's, so each value is exp1's; a block reads its inputs before it writes its
- * outputs. */
+ * outputs. Since SOFTMAX-T the AVX-512 instance is exp1_512's instead (below): sixteen lanes of
+ * intrinsics, measured faster than four vectors of this block. */
 #define BCIR_EXP_BLOCK 64  /* the most elements a block holds */
 BCIR_MM_INLINE void exp1_block(size_t nb, const float *xs, float *y) {
   float xc[BCIR_EXP_BLOCK],kf[BCIR_EXP_BLOCK],r[BCIR_EXP_BLOCK],p[BCIR_EXP_BLOCK]; int32_t k[BCIR_EXP_BLOCK];
@@ -671,7 +674,7 @@ BCIR_MM_INLINE void exp_inplace_body(size_t nb, size_t n, float *x) {
  * iteration, interleaved, which overlaps their chains alike (measured faster on AVX-512 and AVX2;
  * a block there would hold too many arrays to stay in registers). GCC's unroll pragma copies a
  * vector's whole chain after the previous one's and measured no change, so GCC builds them as
- * before. */
+ * before. The AVX-512 instances are sigmoid2_512's since SOFTMAX-T. */
 #if defined(__clang__)
 #define BCIR_EXP_LANES _Pragma("clang loop interleave_count(4)")
 #else
@@ -699,20 +702,152 @@ static void swiglu2_generic(size_t n, const float *g, const float *u, const floa
     float *du) { swiglu2_body(n,g,u,dy,dg,du); }
 #ifdef BCIR_MM_DISPATCH
 __attribute__((target("avx2"))) static void exp_avx2(size_t n, const float *x, float *y) { exp_body(16,n,x,y); }
-__attribute__((target("avx512f"))) static void exp_avx512(size_t n, const float *x, float *y) { exp_body(64,n,x,y); }
+/* EXP-SCALEF: exp1 on AVX-512, sixteen lanes a vector, n vectors at once (n 1 or 4, a constant where it inlines):
+ * each step over the n before the next, so their chains interleave in the instruction stream whichever compiler
+ * schedules them (EXP-LANES' order). 2^k is one vscalefps of p by kf: exp1's two power-of-two scalings round once
+ * -- the first is exact, |k1| <= 76 keeping p * 2^k1 normal -- and vscalefps rounds p * 2^kf once, so each lane
+ * is exp1's; the clamp, the reduction and the polynomial are exp1's operations in its order, a multiply then an
+ * add each, the special cases selected last. */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void exp1_512n(__m512 *v, int n) {
+  __m512 xc[4],kf[4],r[4],p[4]; int l;
+  for (l=0;l<n;l++) xc[l]=_mm512_min_ps(_mm512_max_ps(v[l],_mm512_set1_ps(-104.0f)),_mm512_set1_ps(89.0f));
+  for (l=0;l<n;l++) kf[l]=_mm512_roundscale_ps(_mm512_mul_ps(xc[l],_mm512_set1_ps(BCIR_EXP_LOG2E)),
+      _MM_FROUND_TO_NEAREST_INT|_MM_FROUND_NO_EXC);
+  for (l=0;l<n;l++) r[l]=_mm512_sub_ps(xc[l],_mm512_mul_ps(kf[l],_mm512_set1_ps(BCIR_EXP_LN2_HI)));
+  for (l=0;l<n;l++) r[l]=_mm512_sub_ps(r[l],_mm512_mul_ps(kf[l],_mm512_set1_ps(BCIR_EXP_LN2_LO)));
+  for (l=0;l<n;l++) p[l]=_mm512_add_ps(_mm512_mul_ps(_mm512_set1_ps(1.0f/5040.0f),r[l]),_mm512_set1_ps(1.0f/720.0f));
+  for (l=0;l<n;l++) p[l]=_mm512_add_ps(_mm512_mul_ps(p[l],r[l]),_mm512_set1_ps(1.0f/120.0f));
+  for (l=0;l<n;l++) p[l]=_mm512_add_ps(_mm512_mul_ps(p[l],r[l]),_mm512_set1_ps(1.0f/24.0f));
+  for (l=0;l<n;l++) p[l]=_mm512_add_ps(_mm512_mul_ps(p[l],r[l]),_mm512_set1_ps(1.0f/6.0f));
+  for (l=0;l<n;l++) p[l]=_mm512_add_ps(_mm512_mul_ps(p[l],r[l]),_mm512_set1_ps(0.5f));
+  for (l=0;l<n;l++) p[l]=_mm512_add_ps(_mm512_mul_ps(p[l],r[l]),_mm512_set1_ps(1.0f));
+  for (l=0;l<n;l++) p[l]=_mm512_add_ps(_mm512_mul_ps(p[l],r[l]),_mm512_set1_ps(1.0f));
+  for (l=0;l<n;l++) {
+    __m512 x=v[l],y=_mm512_scalef_ps(p[l],kf[l]);
+    y=_mm512_mask_mov_ps(y,_mm512_cmp_ps_mask(x,_mm512_set1_ps(88.72283172607421875f),_CMP_GT_OQ),
+        _mm512_castsi512_ps(_mm512_set1_epi32(0x7f800000)));
+    y=_mm512_mask_mov_ps(y,_mm512_cmp_ps_mask(x,_mm512_set1_ps(-103.972084045410156f),_CMP_LT_OQ),
+        _mm512_setzero_ps());
+    v[l]=_mm512_mask_mov_ps(x,_mm512_cmp_ps_mask(x,x,_CMP_EQ_OQ),y);
+  }
+}
+__attribute__((target("avx512f"))) BCIR_MM_INLINE __m512 exp1_512(__m512 x) { exp1_512n(&x,1); return x; }
+/* sigmoid2 on AVX-512, n vectors at once: s = sigmoid2(x) -- exp1 of (x < 0 ? x : -x), then sigmoid2's operations */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void sigmoid2_512n(const __m512 *x, __m512 *s, int n) {
+  __m512 e[4],z=_mm512_setzero_ps(),one=_mm512_set1_ps(1.0f); int l;
+  for (l=0;l<n;l++) e[l]=_mm512_mask_mov_ps(
+      _mm512_castsi512_ps(_mm512_xor_si512(_mm512_castps_si512(x[l]),_mm512_set1_epi32(INT32_MIN))),
+      _mm512_cmp_ps_mask(x[l],z,_CMP_LT_OQ),x[l]);
+  exp1_512n(e,n);
+  for (l=0;l<n;l++) {
+    __m512 q=_mm512_div_ps(one,_mm512_add_ps(one,e[l]));
+    s[l]=_mm512_mask_mov_ps(_mm512_mul_ps(e[l],q),_mm512_cmp_ps_mask(x[l],z,_CMP_GE_OQ),q);
+  }
+}
+BCIR_MM_INLINE __mmask16 ew_tail(size_t left) { return (__mmask16)((1u<<left)-1u); }
+/* an output its input or apart from it: the element loop's values whatever the order */
+BCIR_MM_INLINE int ew_safe(const float *out, const float *in, size_t n) { return out==in || ew_apart(out,in,n); }
+__attribute__((target("avx512f"))) static void exp_avx512(size_t n, const float *x, float *y) {
+  size_t i=0; int l;
+  if (ew_safe(y,x,n)) {
+    for (;i+64<=n;i+=64) {
+      __m512 v[4];
+      for (l=0;l<4;l++) v[l]=_mm512_loadu_ps(x+i+16*l);
+      exp1_512n(v,4);
+      for (l=0;l<4;l++) _mm512_storeu_ps(y+i+16*l,v[l]);
+    }
+    for (;i+16<=n;i+=16) _mm512_storeu_ps(y+i,exp1_512(_mm512_loadu_ps(x+i)));
+    if (i<n) { __mmask16 m=ew_tail(n-i); _mm512_mask_storeu_ps(y+i,m,exp1_512(_mm512_maskz_loadu_ps(m,x+i))); i=n; }
+  }
+  for (;i<n;i++) y[i]=exp1(x[i]);
+}
 __attribute__((target("avx2"))) static void exp_inplace_avx2(size_t n, float *x) { exp_inplace_body(16,n,x); }
-__attribute__((target("avx512f"))) static void exp_inplace_avx512(size_t n, float *x) { exp_inplace_body(64,n,x); }
+__attribute__((target("avx512f"))) static void exp_inplace_avx512(size_t n, float *x) { exp_avx512(n,x,x); }
 __attribute__((target("avx2"))) static void silu2_avx2(size_t n, const float *x, float *y) { silu2_body(n,x,y); }
-__attribute__((target("avx512f"))) static void silu2_avx512(size_t n, const float *x, float *y) { silu2_body(n,x,y); }
+__attribute__((target("avx512f"))) static void silu2_avx512(size_t n, const float *x, float *y) {
+  size_t i=0; int l;
+  if (ew_safe(y,x,n)) {
+    for (;i+64<=n;i+=64) {
+      __m512 a[4],s[4];
+      for (l=0;l<4;l++) a[l]=_mm512_loadu_ps(x+i+16*l);
+      sigmoid2_512n(a,s,4);
+      for (l=0;l<4;l++) _mm512_storeu_ps(y+i+16*l,_mm512_mul_ps(a[l],s[l]));
+    }
+    for (;i+16<=n;i+=16) {
+      __m512 a=_mm512_loadu_ps(x+i),s; sigmoid2_512n(&a,&s,1); _mm512_storeu_ps(y+i,_mm512_mul_ps(a,s));
+    }
+    if (i<n) {
+      __mmask16 m=ew_tail(n-i); __m512 a=_mm512_maskz_loadu_ps(m,x+i),s;
+      sigmoid2_512n(&a,&s,1); _mm512_mask_storeu_ps(y+i,m,_mm512_mul_ps(a,s)); i=n;
+    }
+  }
+  for (;i<n;i++) y[i]=x[i]*sigmoid2(x[i]);
+}
 __attribute__((target("avx2"))) static void silu2mul_avx2(size_t n, const float *x, const float *u, float *y) {
   silu2mul_body(n,x,u,y);
 }
 __attribute__((target("avx512f"))) static void silu2mul_avx512(size_t n, const float *x, const float *u,
-    float *y) { silu2mul_body(n,x,u,y); }
+    float *y) {
+  size_t i=0; int l;
+  if (ew_safe(y,x,n) && ew_safe(y,u,n)) {
+    for (;i+64<=n;i+=64) {
+      __m512 a[4],s[4],b[4];
+      for (l=0;l<4;l++) { a[l]=_mm512_loadu_ps(x+i+16*l); b[l]=_mm512_loadu_ps(u+i+16*l); }
+      sigmoid2_512n(a,s,4);
+      for (l=0;l<4;l++) _mm512_storeu_ps(y+i+16*l,_mm512_mul_ps(_mm512_mul_ps(a[l],s[l]),b[l]));
+    }
+    for (;i+16<=n;i+=16) {
+      __m512 a=_mm512_loadu_ps(x+i),s; sigmoid2_512n(&a,&s,1);
+      _mm512_storeu_ps(y+i,_mm512_mul_ps(_mm512_mul_ps(a,s),_mm512_loadu_ps(u+i)));
+    }
+    if (i<n) {
+      __mmask16 m=ew_tail(n-i); __m512 a=_mm512_maskz_loadu_ps(m,x+i),s; sigmoid2_512n(&a,&s,1);
+      _mm512_mask_storeu_ps(y+i,m,_mm512_mul_ps(_mm512_mul_ps(a,s),_mm512_maskz_loadu_ps(m,u+i))); i=n;
+    }
+  }
+  for (;i<n;i++) { float s=x[i]*sigmoid2(x[i]); y[i]=s*u[i]; }
+}
 __attribute__((target("avx2"))) static void swiglu2_avx2(size_t n, const float *g, const float *u,
     const float *dy, float *dg, float *du) { swiglu2_body(n,g,u,dy,dg,du); }
+/* the SwiGLU VJP v2 on n vectors: dg = dy*u*(s+g*s*(1-s)), du = dy*g*s, in swiglu2_body's order */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void swiglu2_512n(const __m512 *g, const __m512 *u, const __m512 *dy,
+    __m512 *dg, __m512 *du, int n) {
+  __m512 s[4],one=_mm512_set1_ps(1.0f); int l;
+  sigmoid2_512n(g,s,n);
+  for (l=0;l<n;l++) {
+    dg[l]=_mm512_mul_ps(_mm512_mul_ps(dy[l],u[l]),
+        _mm512_add_ps(s[l],_mm512_mul_ps(_mm512_mul_ps(g[l],s[l]),_mm512_sub_ps(one,s[l]))));
+    du[l]=_mm512_mul_ps(_mm512_mul_ps(dy[l],g[l]),s[l]);
+  }
+}
 __attribute__((target("avx512f"))) static void swiglu2_avx512(size_t n, const float *g, const float *u,
-    const float *dy, float *dg, float *du) { swiglu2_body(n,g,u,dy,dg,du); }
+    const float *dy, float *dg, float *du) {
+  size_t i=0; int l;
+  if (ew_safe(dg,g,n) && ew_safe(dg,u,n) && ew_safe(dg,dy,n) && ew_safe(du,g,n) && ew_safe(du,u,n) &&
+      ew_safe(du,dy,n) && ew_safe(dg,du,n)) {
+    for (;i+64<=n;i+=64) {
+      __m512 a[4],b[4],c[4],e[4],f[4];
+      for (l=0;l<4;l++) {
+        a[l]=_mm512_loadu_ps(g+i+16*l); b[l]=_mm512_loadu_ps(u+i+16*l); c[l]=_mm512_loadu_ps(dy+i+16*l);
+      }
+      swiglu2_512n(a,b,c,e,f,4);
+      for (l=0;l<4;l++) { _mm512_storeu_ps(dg+i+16*l,e[l]); _mm512_storeu_ps(du+i+16*l,f[l]); }
+    }
+    for (;i+16<=n;i+=16) {
+      __m512 a=_mm512_loadu_ps(g+i),b=_mm512_loadu_ps(u+i),c=_mm512_loadu_ps(dy+i),e,f;
+      swiglu2_512n(&a,&b,&c,&e,&f,1); _mm512_storeu_ps(dg+i,e); _mm512_storeu_ps(du+i,f);
+    }
+    if (i<n) {
+      __mmask16 m=ew_tail(n-i);
+      __m512 a=_mm512_maskz_loadu_ps(m,g+i),b=_mm512_maskz_loadu_ps(m,u+i),c=_mm512_maskz_loadu_ps(m,dy+i),e,f;
+      swiglu2_512n(&a,&b,&c,&e,&f,1); _mm512_mask_storeu_ps(dg+i,m,e); _mm512_mask_storeu_ps(du+i,m,f); i=n;
+    }
+  }
+  for (;i<n;i++) {
+    float s=sigmoid2(g[i]);
+    dg[i]=dy[i]*u[i]*(s+g[i]*s*(1.0f-s)); du[i]=dy[i]*g[i]*s;
+  }
+}
 #endif
 static void exp_run(int variant, size_t n, const float *x, float *y) {
 #ifdef BCIR_MM_DISPATCH
@@ -2889,23 +3024,26 @@ __attribute__((target("avx512f"))) static void att512_rowchain(size_t ld, size_t
 }
 /* The v2 softmax's exponentials and sum for the same 16 rows, in the transposed blocks: each block's
  * scores scaled and less their lanes' scaled maxima -- the scaled score's rounding, then the
- * difference's, as when the scores were scaled in place first -- through the exponential's vector
- * instance whole (no row's remainder runs one element at a time), summed by lane where the row has
- * the column, the rest zeroed, and transposed back; each element is exp1(x*scale - max) and each
- * sum its row's chain in column order. */
+ * difference's, as when the scores were scaled in place first -- through exp1_512 in the same pass
+ * (SOFTMAX-T; no row's remainder runs one element at a time), summed by lane where the row has the
+ * column, the rest zeroed, and transposed back; each element is exp1(x*scale - max) and each sum its
+ * row's chain in column order. */
 __attribute__((target("avx512f"))) static void att512_expsum(size_t ld, size_t i0, float *rows,
     float scale, const float *maxv, float *sum) {
   _Alignas(64) float blk[256]; __m512 mx=_mm512_loadu_ps(maxv),sc=_mm512_set1_ps(scale),s=_mm512_setzero_ps();
   size_t jb,c;
   for (jb=0;jb<=i0;jb+=16) {
     kb512_transpose16(rows+jb,ld,blk,16);
-    for (c=0;c<16;c++) _mm512_store_ps(blk+c*16,_mm512_sub_ps(_mm512_mul_ps(_mm512_load_ps(blk+c*16),sc),mx));
-    exp_inplace_avx512(256,blk);
-    for (c=0;c<16;c++) {
-      __mmask16 k=(__mmask16)(jb<i0 ? 0xffffu : (0xffffu<<c)&0xffffu);
-      __m512 x=_mm512_maskz_mov_ps(k,_mm512_load_ps(blk+c*16));
-      s=_mm512_mask_add_ps(s,k,s,x);
-      _mm512_store_ps(blk+c*16,x);
+    for (c=0;c<16;c+=4) {  /* scaled, less the maximum, exp1, masked, summed: one pass, the columns in order */
+      __m512 v[4]; int l;
+      for (l=0;l<4;l++) v[l]=_mm512_sub_ps(_mm512_mul_ps(_mm512_load_ps(blk+(c+l)*16),sc),mx);
+      exp1_512n(v,4);
+      for (l=0;l<4;l++) {
+        __mmask16 k=(__mmask16)(jb<i0 ? 0xffffu : (0xffffu<<(c+l))&0xffffu);
+        __m512 x=_mm512_maskz_mov_ps(k,v[l]);
+        s=_mm512_mask_add_ps(s,k,s,x);
+        _mm512_store_ps(blk+(c+l)*16,x);
+      }
     }
     kb512_transpose16(blk,16,rows+jb,ld);
   }
@@ -3040,41 +3178,49 @@ __attribute__((target("avx512f"))) static void att512_tscores_fma(size_t R, size
 }
 /* The group's softmax under the exp contract, att_softmax_block's 16-row arithmetic on the blocks as
  * they stand: lane u takes column c of block jb where jb+c <= R+u; the raw scores' maxima, scaled;
- * each element exp1(x*scale - max), the lanes past a row's diagonal +0.0, summed in column order;
- * then each element it takes divided by its row's sum. */
-__attribute__((target("avx512f"))) static void att512_tsoftmax(size_t R, float scale, float *sg) {
+ * each element exp1(x*scale - max), the lanes past a row's diagonal +0.0, summed in column order --
+ * one pass over the blocks since SOFTMAX-T -- and the rows' sums left for the context, which divides
+ * each key's elements by them before its first read (att512_tdiv): the same quotients. */
+__attribute__((target("avx512f"))) static void att512_tsoftmax(size_t R, float scale, float *sg, float *sums) {
   __m512 mx=_mm512_set1_ps(-INFINITY),s=_mm512_setzero_ps(),sc=_mm512_set1_ps(scale); size_t jb,c;
   for (jb=0;jb<=R;jb+=16) for (c=0;c<16;c++) {
     __mmask16 k=(__mmask16)(jb<R ? 0xffffu : (0xffffu<<c)&0xffffu);
     mx=_mm512_mask_max_ps(mx,k,_mm512_loadu_ps(sg+jb*16+c*16),mx);
   }
   mx=_mm512_mul_ps(mx,sc);
-  for (jb=0;jb<=R;jb+=16) {
-    float *blk=sg+jb*16;
-    for (c=0;c<16;c++) _mm512_storeu_ps(blk+c*16,_mm512_sub_ps(_mm512_mul_ps(_mm512_loadu_ps(blk+c*16),sc),mx));
-    exp_inplace_avx512(256,blk);
-    for (c=0;c<16;c++) {
-      __mmask16 k=(__mmask16)(jb<R ? 0xffffu : (0xffffu<<c)&0xffffu);
-      __m512 x=_mm512_maskz_mov_ps(k,_mm512_loadu_ps(blk+c*16));
+  for (jb=0;jb<=R;jb+=16) for (c=0;c<16;c+=4) {  /* scaled, less the maximum, exp1, masked, summed: one pass */
+    float *b=sg+jb*16+c*16; __m512 v[4]; int l;
+    for (l=0;l<4;l++) v[l]=_mm512_sub_ps(_mm512_mul_ps(_mm512_loadu_ps(b+l*16),sc),mx);
+    exp1_512n(v,4);
+    for (l=0;l<4;l++) {  /* the columns in order */
+      __mmask16 k=(__mmask16)(jb<R ? 0xffffu : (0xffffu<<(c+l))&0xffffu);
+      __m512 x=_mm512_maskz_mov_ps(k,v[l]);
       s=_mm512_mask_add_ps(s,k,s,x);
-      _mm512_storeu_ps(blk+c*16,x);
+      _mm512_storeu_ps(b+l*16,x);
     }
   }
-  for (jb=0;jb<=R;jb+=16) for (c=0;c<16;c++) {
-    __mmask16 k=(__mmask16)(jb<R ? 0xffffu : (0xffffu<<c)&0xffffu);
-    __m512 x=_mm512_loadu_ps(sg+jb*16+c*16);
-    _mm512_storeu_ps(sg+jb*16+c*16,_mm512_mask_div_ps(x,k,x,s));
-  }
+  _mm512_store_ps(sums,s);  /* the division: inside the context's first pass (att512_tdiv) */
+}
+/* CTX-DIV: key j's sixteen probabilities divided by their rows' sums, the lanes the softmax's division
+ * takes (lane u where j <= R+u), the others as they stand -- once, before the context's first read */
+__attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_tdiv(size_t R, size_t j, float *sg, __m512 sm) {
+  __mmask16 k=(__mmask16)(j<R ? 0xffffu : (0xffffu<<(j-R))&0xffffu);
+  __m512 x=_mm512_loadu_ps(sg+j*16);
+  _mm512_storeu_ps(sg+j*16,_mm512_mask_div_ps(x,k,x,sm));
 }
 /* One 8-row block of the group's context (rows R+rb.., rb 0 or 8) from its blocks: att512_ctx_block's
- * terms in its order from +0.0, the eight rows' probabilities of key j side by side at sg + j*16 + rb. */
+ * terms in its order from +0.0, the eight rows' probabilities of key j side by side at sg + j*16 + rb.
+ * The keys from dlo on are divided by the rows' sums sm as the pass reaches them (SOFTMAX-T): the first
+ * channel pass of rows 0-7 divides every key to R+7, that of rows 8-15 the eight after, so each
+ * quotient is computed once, before its first read, while the divider runs beside the products. */
 __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_tctx_block(int f, int nv, size_t R, size_t rb,
-    size_t c0, const float *sg, const float *v, size_t ldv, float *y, size_t ldy, __mmask16 m0,
-    __mmask16 m1, __mmask16 m2) {
+    size_t c0, float *sg, size_t dlo, __m512 sm, const float *v, size_t ldv, float *y, size_t ldy,
+    __mmask16 m0, __mmask16 m1, __mmask16 m2) {
   __m512 a0[8],a1[8],a2[8]; size_t r,j,dj,i0=R+rb;
   for (r=0;r<8;r++) { a0[r]=_mm512_setzero_ps(); a1[r]=_mm512_setzero_ps(); a2[r]=_mm512_setzero_ps(); }
   for (j=0;j<=i0;j++) {  /* every row of the block takes key j */
     const float *vj=v+j*ldv+c0,*pj=sg+j*16+rb;
+    if (j>=dlo) att512_tdiv(R,j,sg,sm);
     __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();
     if (nv>1) b1=_mm512_maskz_loadu_ps(m1,vj+16);
     if (nv>2) b2=_mm512_maskz_loadu_ps(m2,vj+32);
@@ -3087,6 +3233,7 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_tctx_block(int f, 
   }
   for (dj=1;dj<8;dj++) {  /* key i0+dj: the rows r >= dj, the others masked out */
     const float *vj=v+(i0+dj)*ldv+c0,*pj=sg+(i0+dj)*16+rb;
+    if (i0+dj>=dlo) att512_tdiv(R,i0+dj,sg,sm);
     __m512 b0=_mm512_maskz_loadu_ps(m0,vj),b1=_mm512_setzero_ps(),b2=_mm512_setzero_ps();
     if (nv>1) b1=_mm512_maskz_loadu_ps(m1,vj+16);
     if (nv>2) b2=_mm512_maskz_loadu_ps(m2,vj+32);
@@ -3106,25 +3253,27 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_tctx_block(int f, 
   }
 }
 __attribute__((target("avx512f"))) BCIR_MM_INLINE void att512_tcontext_any(int f, size_t R, size_t d,
-    const float *sg, const float *v, size_t ldv, float *y, size_t ldy) {
-  size_t c0,rb;
+    float *sg, const float *sums, const float *v, size_t ldv, float *y, size_t ldy) {
+  size_t c0,rb; __m512 sm=_mm512_load_ps(sums);
   for (c0=0;c0<d;c0+=48) {
     size_t nc=d-c0<48 ? d-c0 : 48;
     __mmask16 m0=att512_lanes(nc),m1=att512_lanes(nc>16 ? nc-16 : 0),m2=att512_lanes(nc>32 ? nc-32 : 0);
     for (rb=0;rb<16;rb+=8) {
-      if (nc>32) att512_tctx_block(f,3,R,rb,c0,sg,v,ldv,y,ldy,m0,m1,m2);
-      else if (nc>16) att512_tctx_block(f,2,R,rb,c0,sg,v,ldv,y,ldy,m0,m1,m2);
-      else att512_tctx_block(f,1,R,rb,c0,sg,v,ldv,y,ldy,m0,m1,m2);
+      /* the first pass divides: rows 0-7 reach keys to R+7, rows 8-15 the eight after */
+      size_t dlo=c0 ? (size_t)-1 : rb ? R+8 : 0;
+      if (nc>32) att512_tctx_block(f,3,R,rb,c0,sg,dlo,sm,v,ldv,y,ldy,m0,m1,m2);
+      else if (nc>16) att512_tctx_block(f,2,R,rb,c0,sg,dlo,sm,v,ldv,y,ldy,m0,m1,m2);
+      else att512_tctx_block(f,1,R,rb,c0,sg,dlo,sm,v,ldv,y,ldy,m0,m1,m2);
     }
   }
 }
-__attribute__((target("avx512f"))) static void att512_tcontext(size_t R, size_t d, const float *sg,
+__attribute__((target("avx512f"))) static void att512_tcontext(size_t R, size_t d, float *sg, const float *sums,
     const float *v, size_t ldv, float *y, size_t ldy) {
-  att512_tcontext_any(0,R,d,sg,v,ldv,y,ldy);
+  att512_tcontext_any(0,R,d,sg,sums,v,ldv,y,ldy);
 }
-__attribute__((target("avx512f"))) static void att512_tcontext_fma(size_t R, size_t d, const float *sg,
+__attribute__((target("avx512f"))) static void att512_tcontext_fma(size_t R, size_t d, float *sg, const float *sums,
     const float *v, size_t ldv, float *y, size_t ldy) {
-  att512_tcontext_any(1,R,d,sg,v,ldv,y,ldy);
+  att512_tcontext_any(1,R,d,sg,sums,v,ldv,y,ldy);
 }
 #endif
 enum { ATT_SCORES, ATT_CONTEXT, ATT_TRANSPOSED };
@@ -3255,17 +3404,18 @@ static size_t attention_lanes_seen;  /* SCORES-T: the 16-row groups a scratch fo
  * blocks in the slot s: the AVX-512 instance under the exp contract, i1 a multiple of 16 (whole
  * groups, none of them the v1 kernel's rows) and a head of at most BCIR_ATT_TQ channels. A stored
  * forward keeps the row path: its probabilities must reach p's rows, and transposing them out cost
- * what the transposes saved (measured: parity at T2048). Every value is the row path's. */
+ * what the transposes saved (measured: parity at T2048). Every value is the row path's. Since
+ * SOFTMAX-T the group's softmax takes one pass and leaves its division to the context. */
 static void att_strip_lanes(const att_job *a, size_t r, size_t h, size_t i0, size_t i1, float *s) {
   size_t t=a->t,nh=a->nh,nk=a->nk,d=a->d,kh=h/(nh/nk),ldq=nh*d,ldk=nk*d,R;
   const float *q=a->q+(r*t*nh+h)*d,*k=a->k+(r*t*nk+kh)*d,*v=a->v+(r*t*nk+kh)*d;
   float *y=a->y+(r*t*nh+h)*d,scale=1.0f/sqrtf((float)d);
-  _Alignas(64) float qt[BCIR_ATT_TQ*16];
+  _Alignas(64) float qt[BCIR_ATT_TQ*16],sums[16];
   for (R=i0;R<i1;R+=16) {
     att512_tq(d,q+R*ldq,ldq,qt);
     (a->fused ? att512_tscores_fma : att512_tscores)(R,d,qt,k,ldk,s);
-    att512_tsoftmax(R,scale,s);
-    (a->fused ? att512_tcontext_fma : att512_tcontext)(R,d,s,v,ldk,y,ldq);
+    att512_tsoftmax(R,scale,s,sums);
+    (a->fused ? att512_tcontext_fma : att512_tcontext)(R,d,s,sums,v,ldk,y,ldq);
   }
 #ifdef BCIR_DT_ATTENTION_PROBE
   (void)__atomic_fetch_add(&attention_lanes_seen,(i1-i0)/16,__ATOMIC_RELAXED);

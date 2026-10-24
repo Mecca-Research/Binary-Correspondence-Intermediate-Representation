@@ -1048,3 +1048,76 @@ the rows' dots 0.68, the score adjoints 0.46, dQ = dS K 1.55 (93%), dK = dS^T Q 
 and out with the rest 1.15 (12% of the call). The copies prefetched 16 rows ahead read 0.78, the call's time within
 noise. The backward's room is in its dP tiles and its transposed products: dP's per-tile panels transpose each
 tile's values afresh for every row block, and the dots transpose P and dP for each 16 x 16 block, as the softmax did.
+
+## 17. SOFTMAX-T: the exponential's single scaling, the softmaxes in one pass (2026-10-23)
+
+After SCORES-T the scratch forward's softmax still took 1.82 TSC cycles a probability at B4/T2048, 1.13 of them the
+exponential and sum and 0.44 the division, a pass of its own over the group's blocks. The AVX-512 exponential and the
+v2 SiLU forms were exp1's and the sigmoid's scalar code compiled for sixteen lanes: 2^k two exponent-field scalings,
+each vector's chain after the last. ATTN-RATE's block forms took clang's SiLU forms to x0.67-x0.91 and left GCC's at
+x0.97-x1.02. Now, on the AVX-512 instance, every value as it was
+([measurements/2026-10-23/softmax-t/](measurements/2026-10-23/softmax-t/README.json)):
+
+- **One scaling**: exp1 applies 2^k as (p * 2^k1) * 2^k2 with k1 = k/2. The first product is exact (|k1| <= 76 keeps
+  it normal), so the pair rounds once -- only where the result is subnormal -- and vscalefps(p, k) rounds p * 2^k
+  once, to the same float. The AVX-512 exponential is exp1's operations in sixteen lanes with that one instruction for
+  the two scalings.
+- **Four chains a step**: the exponential, SiLU, SiLU times u and the SwiGLU VJP run as AVX-512 instances of
+  intrinsics, each step over four vectors before the next (EXP-LANES' order), so clang and GCC both interleave the
+  chains.
+- **One pass**: the scratch forward's lanes softmax and the stored forward's transposed blocks scale, subtract the
+  maximum, exponentiate, mask and sum in one pass, four columns at a time, each row's sum in column order.
+- **The division inside the context**: the lanes path's context divides each key's sixteen probabilities by their
+  rows' sums in its first channel pass -- rows 0-7's pass the keys to R+7, rows 8-15's the eight after -- once,
+  before it reads them, the divider beside the products.
+
+Every value is the same: over every binary32, the exponential and the three SiLU forms (apart, in place and
+overlapping) against their scalar definitions under clang and GCC, 0 mismatches, and before against after byte for
+byte, 0 apart; `scratch_hash.c` and the tree's fwd, lower, attn, band and elementwise hashes before == after under
+clang and GCC, clang's lines GCC's. At a NaN input the SiLU forms return NaNs, as before. Under GCC three of them for
+each NaN input carry another sign or payload than before, under clang none: the compiler orders a product's operands,
+and which NaN is not part of the v2 contract (the header now says so; the exponential returns its input NaN on every
+instance). Measured on the committed tree against the one before it, in one process beside an A/A control:
+
+| | after / before |
+|---|---:|
+| the exponential, one thread, 16,384 / 2^20 elements | clang 0.733 / 0.769; GCC 0.678 / 0.745 |
+| SiLU times u, one thread, 16,384 / 2^20 | clang 0.905 / 0.882; GCC 0.695 / 0.748 |
+| the SwiGLU VJP, one thread, 16,384 / 2^20 | clang 0.860 / 0.940; GCC 0.654 / 0.782 |
+| the AVX2 exponential (a control: the slice leaves it) | clang 1.003; GCC 1.008 |
+| the scratch forward, B4/T2048, 4 heads of 32, four threads | 0.914 (0.875-0.954); GCC 0.909 (0.882-0.937) |
+| the same on one thread / at T512 | 0.938 (0.921-0.956) / 0.927 (0.903-0.952) |
+| under the fused attention contract (ATTN-FMA), T2048 | 0.899 (0.866-0.933) |
+| at T1024 / T256 / T128 | 0.947, meeting its control / 0.937, holding 1 / 0.986 |
+| 8 heads of 64 / 4 heads of 128 / the 9.84M decoder's attention | 0.994 / 1.001 / 0.950, meeting its control |
+| the stored forward (EXP\|LOWER), T2048 | 0.965 (0.937-0.994), meeting its control |
+| `bcir_decoder_forward` at the GEO dimensions, T2048, GCC | 0.908 (0.882-0.935) |
+| the same under clang, 64 declared rounds | 0.965 (0.946-0.983), at its control's edge |
+| the training step at the GEO dimensions | 0.971-0.998; 0.974 (0.954-0.995) at T512 |
+
+After the slice the SiLU forms take 0.53-0.77 ns an element under GCC and 0.51-0.78 under clang: GCC's forms at
+clang's rate, the gap ATTN-RATE's block forms left. Heads of 64 and 128 channels read at parity: their products take
+more of the time, the softmax's share falling with the head's width.
+
+The GEO study's attention model, built as the study builds it (level 3, GCC), its logits and trained state the same
+bytes: its inference x0.931 (0.908-0.954) at T2048 in 48 declared rounds (x0.926 in 24), x0.960 at T1024, meeting its
+control, and x0.976 at T512. At T2048 that's x1.005 (0.968-1.044) of Inductor's time, at parity, and x0.899 of eager
+PyTorch's; at T1024 x0.752 of Inductor's. Its training update is at parity at every context: x0.982 (0.964-1.000) of
+Inductor's time at T2048, x0.811 at T1024.
+
+The design runs took the slice a level at a time against the tree before (the scratch forward at B4/T2048, four
+threads, 24 rounds): the single scaling with the four-chain forms x0.942 under clang and x0.937 under GCC; with the
+one-pass softmaxes x0.994 and x0.922; with the division inside the context x0.953 and x0.870. In TSC cycles a
+probability the softmax went 1.80 -> 1.15 (its exponential and sum 1.12 -> 0.93), the division's 0.44 became 0.28
+inside the context (1.56 -> 1.84), and the call 5.44 -> 4.96. A first draft wrote each vector's chain as one
+expression, which clang scheduled a chain at a time: its SiLU ran x1.06 slower than the tree's.
+
+The new harness case, `exp_scalef`, holds every binary32 where the two forms could part -- the subnormal results
+[-104, -87] and the overflow edge [88, 89], 2,359,298 inputs -- through every instance, and a sample of them through
+the SiLU forms. Of `softmax-t.json`'s sixteen faults it catches nine of the ten in the exponential and the SiLU forms
+on its own; with it out of the harness all sixteen are still caught by the exponential's contract case (every 256th
+binary32 of [-104, 89]) and the attention cases.
+
+What remains of the scratch forward at B4/T2048, in TSC cycles a probability: the scores 1.58 and the context 1.84,
+about 1.56 of it the products, against v1's measured 1.45 a product (ATT-BOUND), and the softmax 1.15, most of it the
+exponential's polynomial and the sum (0.93).
