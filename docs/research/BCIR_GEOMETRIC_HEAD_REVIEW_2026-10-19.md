@@ -1328,3 +1328,24 @@ both -- is at parity (section 18).
   x0.974-x1.017. Only one block called again and again reads 115-120 at depth 448: the tile's 86 KiB past L1 shows
   only when no other block reuses it. Within the nest the forward products run at 145 GFLOP/s on one core, so what
   the GEMMs lose is outside the block's loop.
+
+## 22. GEMM-NEST-0: where the k-blocked nest loses its block's rate (2026-10-24)
+
+KBK-0 left the GEMMs' gap outside the kernel's block (section 21). Timed against the product's size on one core, the
+nest runs M x 128 x 128 at 174-178 GFLOP/s while A and C fit in L2 (to 1,024 rows) and at 141-142 from 4,096 rows:
+the gap is A's and C's movement from L3, not the block (on four threads, 548-554 at 8,192 rows, the same rate a
+core) ([measurements/2026-10-24/gemm-nest/](measurements/2026-10-24/gemm-nest/README.json)). Two ways at it were
+prototyped, every value the same (`bitcheck.c`'s 712 cases, clang and GCC), and neither taken:
+
+- **NOPACK-0**: the kernel reads an untransposed B's rows in place, 48 columns a depth through masked loads, where B's
+  rows are whole cache lines apart, instead of packing a tile a chunk. At parity on the step's products, and
+  x1.49-1.54 slower where B's rows are 4 KiB apart (1,024 x 1,024 x 384): the packed tile is what keeps those rows from
+  meeting in L1's sets.
+- **GEMM-PF-0**: software prefetches of the next block's lines of A and of the block's lines of C, with write intent,
+  ahead of its chain. x0.94-0.95 on one thread at 8,192 rows, but x1.27-1.30 slower for the 1,024 x 384 x 384 product on
+  four threads, the 9.84M decoder's: the hardware's prefetchers already cover what a fixed distance can.
+
+Under the study's binary32 contract the step is now balanced: the attention backward (42% of its jobs at T2048), the
+attention forward (25%) and the GEMMs (23%) each with the levers above measured at parity. The larger steps left are
+contract choices, each a different arithmetic: the bf16 contract on AMX (GEO-AMX, section 19) and the fused attention
+(ATT-BOUND, section 14).

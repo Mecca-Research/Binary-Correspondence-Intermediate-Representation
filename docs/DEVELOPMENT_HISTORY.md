@@ -4819,6 +4819,15 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - KBK-0, not taken: the k-blocked kernel's 448-term block in L1-sized sub-ranges (the same bits) x0.974-x1.017 --
     the block runs at 188-200 GFLOP/s with sixteen row blocks to a tile, 87-92% of the core's rate; one block called
     alone reads 115-120.
+  GEMM-NEST-0 (2026-10-24): where the k-blocked nest loses its block's rate; two prototypes not taken; records and docs
+    only ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §22,
+    [measurements/2026-10-24/gemm-nest/](research/measurements/2026-10-24/gemm-nest/README.json)).
+  - The nest runs M x 128 x 128 at 174-178 GFLOP/s on one core while A and C fit in L2 (to 1,024 rows) and at 141-142
+    from 4,096: A's and C's movement from L3.
+  - NOPACK-0 (an untransposed B read in place, not packed a chunk) at parity on the step's products and x1.49-1.54
+    slower where B's rows are 4 KiB apart; GEMM-PF-0 (prefetches of the next block's A and the block's C) x0.94-0.95 on
+    one thread at 8,192 rows but x1.27-1.30 slower for the decoder's 1,024 x 384 x 384 on four threads. Every value the
+    same in both (bitcheck.c's 712 cases); neither taken.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
