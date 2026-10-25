@@ -172,15 +172,17 @@ def _chained(program):
 
 
 def test_a_blocked_weight_adjoint_job_is_lent_the_workspace():
-    """KSPLIT: under the blocked GEMM contract a trainer that has a workspace -- here a long
-    context's, the attention's copies (ATT-CONTIG) -- lends it to every GEMM job with a weight
+    """KSPLIT: under the blocked GEMM contract a trainer that has a workspace -- a long context's,
+    the attention's copies (ATT-CONTIG), and a short context's four K blocks deep, the room its
+    weight adjoints split in alone (KSPLIT-ROOM) -- lends it to every GEMM job with a weight
     adjoint (a call with A transposed) and to no other job, every record of such a job stating the
     state's whole workspace; the C step issues exactly the launches its plan states, and every
-    program run and every pack run of the case (the C step's decisions and each planner choice:
+    program run and every pack run of each case (the C step's decisions and each planner choice:
     the linears alone, a linear's VJPs apart) runs to its end with the C step's state and events
     bit for bit -- as does a program running a weight adjoint as a group's chain of one, lent by
-    its chain. At this depth -- 2048 rows, five K blocks -- the tensor unit splits the weight
-    adjoints into the workspace, and the state is the one a build that never splits trains."""
+    its chain. At these depths -- 2048 rows, five K blocks, and 1408, four -- the tensor unit
+    splits the weight adjoints into the workspace, and each state is the one a build that never
+    splits trains."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         path = nf.trace_library(Path(tmp) / "trace")
         packs = nf.pack_library(Path(tmp) / "pack")
@@ -188,38 +190,45 @@ def test_a_blocked_weight_adjoint_job_is_lent_the_workspace():
             return  # no C compiler, or no C units (an installed package): a documented skip
         spec = DecoderSpec(16, 8, 2, 1, 16, activation="silu_gate", n_kv_heads=1)
         case = nf.TraceCase(spec, 2, 1024, "kblock+exp")
-        problems, runs, lent, kept, first = [], 0, set(), set(), None
-        for _case, choices, step, run in nf.program_runs(path, [case]):
+        short = nf.TraceCase(spec, 2, 704, "kblock")  # KSPLIT-ROOM: the room alone
+        cases = (case, short)
+        problems, runs, kept, first = [], 0, set(), {}
+        lent: dict = {ran: set() for ran in cases}
+        for ran, choices, step, run in nf.program_runs(path, cases):
             runs += 1
             if not choices:
                 problems += launch_mismatches(step.planned, step.traced)[:2]
                 if step.dropped:
                     problems.append(f"{step.dropped} records dropped")
-                first = step
-            problems += [(choices, found) for found in nf.program_problems(step, run)[:2]]
+                first[ran] = step
+            problems += [(ran.time, choices, found)
+                         for found in nf.program_problems(step, run)[:2]]  # fmt: skip
             ran_lent, ran_kept = _gemm_workspaces(run.program)
-            lent |= ran_lent
+            lent[ran] |= ran_lent
             kept |= ran_kept
         packed = 0
-        for _case, choices, step, run in nf.pack_runs(packs, [case]):
+        for ran, choices, step, run in nf.pack_runs(packs, cases):
             packed += 1
-            problems += [(choices, "pack", found) for found in nf.pack_problems(step, run)[:2]]
+            problems += [(ran.time, choices, "pack", found)
+                         for found in nf.pack_problems(step, run)[:2]]  # fmt: skip
         chained = nf.program_case(path, case, {"pair": False}, edit=_chained)
-        problems += [("chained", found) for found in nf.program_problems(first, chained)[:2]]
+        problems += [("chained", found) for found in nf.program_problems(first[case], chained)[:2]]
         assert not problems, problems[:3]
-        assert any(r.flags & 0xFF == E_GROUP | 1 << 4 and r.refs[3] in lent
+        assert any(r.flags & 0xFF == E_GROUP | 1 << 4 and r.refs[3] in lent[case]
                    for launch in chained.program for r in launch.records)  # fmt: skip
-        assert runs == packed == nf.program_run_count([case]) and runs > 1, (runs, packed)
-        assert kept == {(0, 0, 0)} and len(lent) == 1, (kept, lent)
-        space, offset, size = next(iter(lent))
+        assert runs == packed == nf.program_run_count(cases) and runs > 2, (runs, packed)
+        assert kept == {(0, 0, 0)} and len(lent[case]) == 1, (kept, lent)
+        space, offset, size = next(iter(lent[case]))
         assert (space, offset) == (SPACES["workspace"], 0) and size > 0, lent
+        assert lent[short] == {(SPACES["workspace"], 0, nf.ksplit_room(spec, 1408))}, lent
         # a build whose threshold no depth reaches runs every weight adjoint unsplit
         never = nf.build_library(
             Path(tmp) / "never",
             sources={"bcir_tensor.c": "#define BCIR_MM_KSPLIT_BLOCKS ((size_t)-1)\n"
                      + nf.source("bcir_tensor.c")},
         )  # fmt: skip
-        assert nf.trace_case(never, case, trace=False).state == first.state
+        for ran in cases:
+            assert nf.trace_case(never, ran, trace=False).state == first[ran].state, ran.time
 
 
 def _as_trace(launches):

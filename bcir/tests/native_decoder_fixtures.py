@@ -1042,6 +1042,34 @@ def trace_library(directory) -> Path | None:
     return build_library(directory, sources={"bcir_decoder_train.c": unit})
 
 
+def probe_library(directory) -> Path | None:
+    """The trainer built with the tensor unit's instance probe (BCIR_TENSOR_INSTANCE_PROBE: the
+    kernels each family's calls ran, and how many weight adjoints split, `bcir_tensor_ksplit_probe`,
+    KSPLIT-ROOM), from the tree's units as they stand -- a fault the sweep injected included. None
+    without a compiler, or outside a source checkout (an installed package ships no C units: the
+    one absence that is expected there)."""
+    if not (_C / "bcir_tensor.c").is_file():
+        return None
+    unit = "#define BCIR_TENSOR_INSTANCE_PROBE 1\n" + source("bcir_tensor.c")
+    return build_library(directory, sources={"bcir_tensor.c": unit})
+
+
+def ksplit_room(spec: DecoderSpec, rows: int) -> int:
+    """KSPLIT-ROOM, stated apart from the C (`bcir_tensor_mm_ksplit_bytes` and the plan's room): a
+    weight adjoint's slice -- its K blocks' partials (`kblock_split` of the rows), blocks x m x n
+    floats to the next 64 bytes, from four blocks on -- and the most any one of the backward's
+    GEMM jobs takes, the sum of its weight adjoints' slices, job by job: the head's pair, the down
+    projection's pair, the gate and up group, the output projection's pair, the q, k and v group."""
+    blocks = len(kblock_split(rows))
+
+    def room(m: int, n: int) -> int:
+        return -(-blocks * m * n * 4 // 64) * 64 if blocks >= 4 else 0
+
+    d, f, v = spec.d_model, spec.d_ff, spec.vocab_size
+    kv = spec.kv_heads * (d // spec.n_heads)
+    return max(room(v, d), room(d, f), 2 * room(f, d), room(d, d), room(d, d) + 2 * room(kv, d))
+
+
 def layout_library(directory) -> Path | None:
     """The tensor unit alone, built with its layout probe (BCIR_DT_LAYOUT_PROBE, PX-5) by the
     trainer's build contract, from the tree's unit as it stands -- a fault the sweep injected
@@ -2202,6 +2230,8 @@ __all__ = [
     "trace_case",
     "trace_corpus",
     "trace_library",
+    "probe_library",
+    "ksplit_room",
     "layout_library",
     "checkout_library",
     "FUZZ_CONTRACTS",

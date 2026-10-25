@@ -469,7 +469,12 @@ BCIR_DT_API void bcir_tensor_attention_backward_inplace(size_t batch, size_t tim
  * A job's calls take the room in call order -- a group's independent calls, never its chain -- while
  * their partials fit, and the rest run as before; an entry lent no room runs every call as before.
  * bcir_tensor_mm_pair_ws_variant_pool is the pair entry with that room, and
- * bcir_tensor_mm_pair_variant_pool lends none. */
+ * bcir_tensor_mm_pair_variant_pool lends none. bcir_tensor_mm_ksplit_bytes is the room such a call
+ * takes (KSPLIT-ROOM): its blocks' partials, blocks x m x n floats, rounded up to the next 64 bytes
+ * (where the job's next call's slice starts), or 0 for a call that does not split -- fewer K blocks
+ * than BCIR_MM_KSPLIT_BLOCKS, or partials past SIZE_MAX; the entries take a call's slice by the same
+ * rule, so a room the sum of a job's calls' figures holds every one of them. */
+BCIR_DT_API size_t bcir_tensor_mm_ksplit_bytes(size_t m, size_t n, size_t k);
 BCIR_DT_API unsigned bcir_tensor_pool_cap(bcir_tensor_pool *pool, unsigned workers);
 BCIR_DT_API unsigned bcir_tensor_pool_workers(const bcir_tensor_pool *pool);
 BCIR_DT_API int bcir_tensor_mm_contract_variants(int contract);

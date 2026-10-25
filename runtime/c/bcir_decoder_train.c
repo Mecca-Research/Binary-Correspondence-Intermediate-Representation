@@ -437,11 +437,33 @@ static size_t ws_attention(geometry g,unsigned threads) {
 static size_t ws_attention32(geometry g,unsigned threads) {
   return bcir_tensor_attention_pool_workspace(g.b,g.t,g.h,g.kh,g.hd,threads);
 }
+static size_t ws_sum(size_t a,size_t b) { return a>SIZE_MAX-b ? SIZE_MAX : a+b; }
+/* KSPLIT-ROOM: the room the blocked contract's weight adjoints split in -- the most any one of the
+ * backward's GEMM jobs takes, the sum of its weight adjoints' slices (bcir_tensor_mm_ksplit_bytes,
+ * the unit's own rule; linear_backward and linears_backward): the head's pair, the gate and up
+ * group, or the q, k and v group. The down projection's pair takes a slice of the gate's shape and
+ * the output projection's one of q's, so neither is ever the most. 0 where none splits (a batch's
+ * rows short of BCIR_MM_KSPLIT_BLOCKS K blocks) */
+static size_t ws_split(geometry g) {
+  size_t qkv=ws_sum(bcir_tensor_mm_ksplit_bytes(g.d,g.d,g.n),
+      ws_sum(bcir_tensor_mm_ksplit_bytes(g.k,g.d,g.n),bcir_tensor_mm_ksplit_bytes(g.k,g.d,g.n)));
+  size_t gate_up=ws_sum(bcir_tensor_mm_ksplit_bytes(g.f,g.d,g.n),bcir_tensor_mm_ksplit_bytes(g.f,g.d,g.n));
+  return ws_most(ws_most(bcir_tensor_mm_ksplit_bytes(g.v,g.d,g.n),gate_up),qkv);
+}
+size_t bcir_decoder_workspace_unsplit(const bcir_decoder_plan *plan,uint32_t contract,
+    unsigned threads) {
+  bcir_decoder_plan p;
+  if (contract&BCIR_DT_CONTRACT_BF16) return bcir_decoder_workspace_need(plan,contract,threads);
+  if (!plan || bcir_decoder_make_plan(&plan->spec,&p)) return 0;
+  return ws_attention32(geom(&p.spec),threads);
+}
 size_t bcir_decoder_workspace_need(const bcir_decoder_plan *plan,uint32_t contract,unsigned threads) {
   bcir_decoder_plan p; geometry g; size_t most;
   if (!(contract&BCIR_DT_CONTRACT_BF16)) {  /* the binary32 GEMMs pack nothing: the attention's copies */
     if (!plan || bcir_decoder_make_plan(&plan->spec,&p)) return 0;
-    return ws_attention32(geom(&p.spec),threads);
+    g=geom(&p.spec); most=ws_attention32(g,threads);
+    /* KSPLIT-ROOM: and under the blocked contract the room its weight adjoints split in */
+    return contract&BCIR_DT_CONTRACT_KBLOCK ? ws_most(most,ws_split(g)) : most;
   }
   if (!plan || bcir_decoder_make_plan(&plan->spec,&p)) return SIZE_MAX;
   g=geom(&p.spec); most=ws_need(g,ws_panels(g),0);

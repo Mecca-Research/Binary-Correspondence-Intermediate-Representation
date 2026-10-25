@@ -31,7 +31,8 @@
  * heads), and runs them in place below that or without one -- the same values; under the blocked
  * contract a GEMM job with a weight adjoint (a call with A transposed) is lent the same workspace, and
  * the tensor unit splits those weight adjoints over their depth whose K blocks' partials fit it
- * (KSPLIT, bcir_tensor.h) -- the same values again; a state that lends a
+ * (KSPLIT, bcir_tensor.h), bcir_decoder_workspace_need counting the room every one of them splits
+ * in (KSPLIT-ROOM) -- the same values again; a state that lends a
  * workspace without the bf16 contract lends it disjoint from the arenas and the state
  * (BCIR_DT_INVALID otherwise), at any size, none at all the default. One GEMM contract at a time: FUSED,
  * KBLOCK and BF16 exclude one another. BCIR_DT_CONTRACT_ATTN (ATTN-FMA) puts the attention's
@@ -105,7 +106,8 @@ enum { BCIR_DT_CONTRACT_FUSED=1u, BCIR_DT_CONTRACT_EXP=2u, BCIR_DT_CONTRACT_KBLO
  * bf16 contract's workspace (NDT-BF16); 5: and in its recompute set (REMAT). */
 BCIR_DT_API uint32_t bcir_decoder_abi_version(void);
 /* The step's workspace (WS-PLAN), every figure 0 unless `contract` names BF16 -- the binary32
- * attention's copies excepted (ATT-CONTIG, below) -- and under BF16 SIZE_MAX for a plan
+ * attention's copies and the blocked contract's split room excepted (ATT-CONTIG and KSPLIT-ROOM,
+ * below) -- and under BF16 SIZE_MAX for a plan
  * bcir_decoder_make_plan refuses (0 without it). need: the bytes at which every GEMM group of
  * the step packs whole -- the most any group packs, counted by the tensor unit's own rule
  * (bcir_tensor_mm_bf16_group_panels_workspace: an operand two calls read alike packed once, a
@@ -115,11 +117,17 @@ BCIR_DT_API uint32_t bcir_decoder_abi_version(void);
  * block's groups without panels, in chunks where they exceed this) -- and under the bf16 attention
  * its regions for a pool of `threads` workers (bcir_tensor_attention_bf16_pool_workspace; 0: any
  * pool), else the binary32 attention's (bcir_tensor_attention_pool_workspace, ATT-CONTIG; under a
- * contract without BF16 the need is these alone, 0 where its tasks copy nothing). floor: the least a
- * state admits (valid() asks it for the state's pool): one 32-row strip of A and one 32-column strip
- * of B at the step's deepest call, and the bf16 attention's regions for the pool; 0 without BF16.
- * bytes: the need on any pool. */
+ * contract without BF16 the need is these alone, 0 where its tasks copy nothing, but under KBLOCK
+ * the most of them and the room the backward's weight adjoints split in: KSPLIT-ROOM, the most any
+ * one GEMM job's weight adjoints take by bcir_tensor_mm_ksplit_bytes, so lent the need every weight
+ * adjoint that splits at all splits). unsplit: the need without that room (the attention's copies
+ * under KBLOCK; the need under every other contract). floor: the least a state admits (valid() asks
+ * it for the state's pool): one 32-row strip of A and one 32-column strip of B at the step's deepest
+ * call, and the bf16 attention's regions for the pool; 0 without BF16. bytes: the need on any
+ * pool. */
 BCIR_DT_API size_t bcir_decoder_workspace_need(const bcir_decoder_plan *plan, uint32_t contract,
+    unsigned threads);
+BCIR_DT_API size_t bcir_decoder_workspace_unsplit(const bcir_decoder_plan *plan, uint32_t contract,
     unsigned threads);
 BCIR_DT_API size_t bcir_decoder_workspace_floor(const bcir_decoder_plan *plan, uint32_t contract,
     unsigned threads);

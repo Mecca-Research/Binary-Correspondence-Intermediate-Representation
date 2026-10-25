@@ -608,6 +608,24 @@ unsigned bcir_tensor_instance_probe(int family) {
 #else
 #define INSTANCE_SAW(f,v) ((void)0)
 #endif
+/* KSPLIT-ROOM: the same builds' count of the weight adjoints split since the last read, so a witness
+ * holds a planned room to the splits it admits; a read while no job runs */
+#ifdef BCIR_TENSOR_INSTANCE_PROBE
+static size_t ksplit_seen;
+#if defined(__GNUC__) || defined(__clang__)
+#define KSPLIT_SAW() ((void)__atomic_fetch_add(&ksplit_seen,(size_t)1,__ATOMIC_RELAXED))
+#else
+#define KSPLIT_SAW() ((void)ksplit_seen++)
+#endif
+BCIR_DT_API size_t bcir_tensor_ksplit_probe(void);
+size_t bcir_tensor_ksplit_probe(void) {
+  size_t seen=ksplit_seen;
+  ksplit_seen=0;
+  return seen;
+}
+#else
+#define KSPLIT_SAW() ((void)0)
+#endif
 /* --- the BCIR exponential (NDT-EXP) ------------------------------------------------------------
  * Branch-free: the argument is clamped into the range the reduction handles, a maximum and then a
  * minimum in the comparison order of the vector instructions (`x > lo ? x : lo`), so a NaN clamps to
@@ -1446,21 +1464,33 @@ static size_t mm_job_init(mm_job *j, int fused, int variant, int ta, int tb, siz
 static unsigned char *mm_room(void *ws) {
   return ws && !((uintptr_t)ws%_Alignof(float)) ? (unsigned char *)ws : NULL;
 }
+/* KSPLIT: the slice a weight adjoint of m x n over depth k splits in -- its blocks' partials
+ * (blocks x m x n floats, *raw bytes) and the step to the next 64-byte offset, where the next
+ * call's slice starts -- or 0 where it does not split: fewer than BCIR_MM_KSPLIT_BLOCKS K blocks, or
+ * a figure past SIZE_MAX. The one rule the entries take a slice by and a trainer plans its room by
+ * (bcir_tensor_mm_ksplit_bytes, KSPLIT-ROOM). */
+static size_t mm_ksplit_step(size_t m, size_t n, size_t k, size_t *blocks, size_t *raw) {
+  size_t b=k ? bcir_tensor_kblock_split(k,NULL,0) : 0,mn;
+  if (b<BCIR_MM_KSPLIT_BLOCKS || !m || !n || m>SIZE_MAX/n) return 0;
+  mn=m*n;
+  if (mn>SIZE_MAX/sizeof(float)/b || b*mn*sizeof(float)>SIZE_MAX-63) return 0;
+  *blocks=b; *raw=b*mn*sizeof(float);
+  return *raw%64 ? *raw+(64-*raw%64) : *raw;
+}
+size_t bcir_tensor_mm_ksplit_bytes(size_t m, size_t n, size_t k) {
+  size_t blocks,raw;
+  return mm_ksplit_step(m,n,k,&blocks,&raw);
+}
 /* KSPLIT: a call's slice of the room where it qualifies -- the blocked contract, A transposed and
- * B not, at least BCIR_MM_KSPLIT_BLOCKS K blocks -- and its blocks' partials (blocks x m x n
- * floats) fit what is left; then its tasks are its blocks, and the room's next slice starts at the
- * next 64-byte offset. Else the job keeps `tasks`, mm_job_init's partition. */
+ * B not, mm_ksplit_step's rule -- and its blocks' partials fit what is left; then its tasks are its
+ * blocks, and the room's next slice starts at the next 64-byte offset. Else the job keeps `tasks`,
+ * mm_job_init's partition. */
 static size_t mm_ksplit(mm_job *j, size_t tasks, unsigned char **room, size_t *left) {
-  size_t blocks,mn,raw,step;
-  if (!tasks || !*room || j->fused!=MM_KBLOCK || !j->x.ta || j->x.tb || !j->x.k) return tasks;
-  blocks=bcir_tensor_kblock_split(j->x.k,NULL,0);
-  if (blocks<BCIR_MM_KSPLIT_BLOCKS || j->x.m>SIZE_MAX/j->x.n) return tasks;
-  mn=j->x.m*j->x.n;
-  if (mn>SIZE_MAX/sizeof(float)/blocks) return tasks;
-  raw=blocks*mn*sizeof(float);
-  if (raw>*left) return tasks;
-  j->ks=blocks; j->ws=(float *)(void *)*room;
-  step=raw%64 ? raw+(64-raw%64) : raw;
+  size_t blocks,raw,step;
+  if (!tasks || !*room || j->fused!=MM_KBLOCK || !j->x.ta || j->x.tb) return tasks;
+  step=mm_ksplit_step(j->x.m,j->x.n,j->x.k,&blocks,&raw);
+  if (!step || raw>*left) return tasks;
+  j->ks=blocks; j->ws=(float *)(void *)*room; KSPLIT_SAW();
   if (step>*left) step=*left;
   *room+=step; *left-=step;
   return blocks;

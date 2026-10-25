@@ -236,8 +236,9 @@ def test_native_c_harness_c11_and_c23():
             # result rounds (SOFTMAX-T); the attention in bands and its trainer (P-BANDS); the pool's
             # tasks in per-worker blocks (POOL-AFFINITY); the loss's rows with each exponential
             # evaluated once (LOSS-ONCE); the rotation reading a table of its cosines and sines
-            # (ROPE-TABLE); the blocked contract's weight adjoints split over their depth (KSPLIT)
-            assert result.stdout.count("PASS") == 47
+            # (ROPE-TABLE); the blocked contract's weight adjoints split over their depth (KSPLIT);
+            # the planned workspace holding the room they split in (KSPLIT-ROOM)
+            assert result.stdout.count("PASS") == 48
             digests = [ln.split("digests", 1)[1].split() for ln in result.stdout.splitlines()
                        if "PASS P-BANDS trainer" in ln]  # fmt: skip
             assert len(digests) == 1 and len(digests[0]) == 5, result.stdout[-2000:]
@@ -285,7 +286,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 47
+            assert result.stdout.count("PASS") == 48
             break
 
 
@@ -843,6 +844,96 @@ def test_the_memory_plan_fits_its_budget_and_keeps_the_state():
             finally:
                 full.close()
         assert orders == 1, orders  # the fused attention's three tiers: the order is never vacuous
+
+
+def test_the_blocked_contract_plans_the_room_its_weight_adjoints_split_in():
+    """KSPLIT-ROOM: under the blocked GEMM contract the trainer's workspace holds the room its
+    weight adjoints split in (`nf.ksplit_room`, stated apart from the C), so a short context of
+    1,408 rows -- four K blocks, no attention copies -- lends it at every pool where it lent
+    nothing before, and the need without it (`workspace_unsplit`) is the attention's copies: none
+    there, and the need under every other contract (the copies under v1's, the bf16 GEMMs' and
+    attention's regions under bf16's). Where a long context's copies fall short of the room,
+    `memory_plan` offers each recompute set at the need, then at the copies, then with nothing lent
+    before the next set, and a budget that fits only the copies trains on them. Lent the need, the
+    room less a byte (one of the gate and up projections' weight adjoints unsplit a layer), less
+    than any weight adjoint's room, or nothing, the short context trains one state, bit for bit, at
+    one thread and at four; the tensor unit's probe counts the split calls -- every weight
+    adjoint, all but one a layer, none and none -- so the agreement is not vacuous."""
+    import ctypes as ct
+
+    from bcir.hosted.models.native import memory_plan
+    from bcir.tests import native_decoder_fixtures as nf
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.probe_library(Path(tmp) / "probe")
+        if path is None:
+            return  # no C compiler, or no C units (an installed package): a documented skip
+        spec, batch, time_ = _spec(), 2, 704
+        rows, layers = batch * time_, spec.n_layers
+        room = nf.ksplit_room(spec, rows)
+        assert len(nf.kblock_split(rows)) == 4 and room == 4096, room  # the gate and up group's
+        kw = {"batch_size": batch, "context_length": time_}
+        trainer = NativeDecoder(path, spec, contract="kblock", threads=4, **kw)
+        try:
+            lib, plan = trainer.lib, trainer.state.plan
+            assert trainer.workspace_bytes == room, trainer.workspace_bytes
+            assert lib.bcir_decoder_workspace_bytes(ct.byref(plan), 4) == room  # any pool's
+            for contract in ("v1", "fused", "exp", "reduce+attn", "kblock", "kblock+exp+reduce+attn",
+                             "bf16", "bf16+exp+reduce+attnbf16"):  # fmt: skip
+                for threads in (1, 4):
+                    tiers = memory_plan(lib, plan, contract, threads, None, recompute=0)
+                    need, unsplit = tiers.workspace_need, tiers.workspace_unsplit
+                    if contract.startswith("kblock"):
+                        assert (need, unsplit) == (room, 0), (contract, threads, tiers)
+                    elif contract.startswith("bf16"):
+                        assert unsplit == need > 0, (contract, threads, tiers)
+                    else:
+                        assert (need, unsplit) == (0, 0), (contract, threads, tiers)
+        finally:
+            trainer.close()
+        # a long context whose room passes the attention's copies: a vocabulary of 2,048, one thread
+        wide = DecoderSpec(2048, 8, 2, 2, 16, activation="silu_gate", n_kv_heads=1)
+        trainer = NativeDecoder(path, wide, batch_size=2, context_length=1024, contract="kblock")
+        try:
+            lib, plan, tiers = trainer.lib, trainer.state.plan, trainer.plan_memory
+            need, copies = tiers.workspace_need, tiers.workspace_unsplit
+            assert need == nf.ksplit_room(wide, 2048) > copies > 0, tiers
+            seen, budget = [], trainer.memory_bytes
+            while True:
+                try:
+                    chosen = memory_plan(lib, plan, "kblock", 1, budget)
+                except ValueError as e:
+                    assert "the least is" in str(e)
+                    break
+                assert chosen.total_bytes <= budget
+                seen.append((chosen.workspace_bytes, chosen.recompute))
+                budget = chosen.total_bytes - 1
+            assert seen == [(w, r) for r in (0, 3) for w in (need, copies, 0)], seen
+            fit = memory_plan(lib, plan, "kblock", 1, None, recompute=0, workspace_bytes=copies)
+        finally:
+            trainer.close()
+        auto = NativeDecoder(path, wide, batch_size=2, context_length=1024, contract="kblock",
+                             recompute="auto", max_memory_bytes=fit.total_bytes)  # fmt: skip
+        try:
+            assert (auto.recompute, auto.workspace_bytes) == (0, copies), (auto.recompute,
+                                                                           auto.workspace_bytes)  # fmt: skip
+        finally:
+            auto.close()
+        # the short context's state under every loan; the probe counts the calls that split
+        probe = ct.CDLL(str(Path(path).resolve())).bcir_tensor_ksplit_probe
+        probe.argtypes, probe.restype = [], ct.c_size_t
+        probe()
+        states, splits = {}, {}
+        for lent in (None, room - 1, 511, 0):
+            states[lent] = nf.thread_states(path, (spec, batch, time_), steps=2, counts=(1, 4),
+                                            contract="kblock", workspace_bytes=lent)  # fmt: skip
+            splits[lent] = probe()
+        assert len(set(states[None].values())) == 1, states[None]
+        assert all(got == states[None] for got in states.values()), states
+        # a step's weight adjoints: the head's, and a layer's down, gate, up, output, q, k and v --
+        # two steps on each of two pools
+        per = {None: 1 + 7 * layers, room - 1: 1 + 6 * layers, 511: 0, 0: 0}
+        assert splits == {lent: 2 * 2 * n for lent, n in per.items()}, splits
 
 
 def test_the_bf16_panels_keep_every_state():

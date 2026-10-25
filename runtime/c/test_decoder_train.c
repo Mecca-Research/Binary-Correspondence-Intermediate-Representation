@@ -55,6 +55,30 @@ static size_t att32_need(const bcir_decoder_plan *p,unsigned threads) {
       sp->width/sp->heads,threads);
 }
 static size_t most_of(size_t a,size_t b) { return a>b ? a : b; }
+/* KSPLIT-ROOM: the build's threshold, in K blocks, from which a weight adjoint splits */
+static size_t ksplit_from(void) {
+#ifdef BCIR_MM_KSPLIT_BLOCKS
+  return BCIR_MM_KSPLIT_BLOCKS;  /* the harness's -contig and ThreadSanitizer builds: 1 */
+#else
+  return 4;
+#endif
+}
+/* KSPLIT-ROOM: a weight adjoint's split room, written apart from the unit -- its blocks' partials,
+ * blocks x m x n floats, to the next 64 bytes, from the build's threshold on -- and a plan's under
+ * the blocked contract: the backward's largest GEMM job's weight adjoints, job by job (the head's
+ * pair, the down projection's pair, the gate and up group, the output projection's pair, the q, k
+ * and v group) */
+static size_t room_of(size_t m,size_t n,size_t k) {
+  size_t blocks=bcir_tensor_kblock_split(k,NULL,0),raw=blocks*m*n*sizeof(float);
+  return k && blocks>=ksplit_from() ? (raw+63)/64*64 : 0;
+}
+static size_t split_room(const bcir_decoder_plan *p) {
+  const bcir_decoder_spec *sp=&p->spec;
+  size_t n=(size_t)sp->batch*sp->time,d=sp->width,f=sp->ff,v=sp->vocab;
+  size_t kv=(size_t)sp->kvheads*(sp->width/sp->heads),most=room_of(v,d,n);
+  most=most_of(most,room_of(d,f,n)); most=most_of(most,2*room_of(f,d,n)); most=most_of(most,room_of(d,d,n));
+  return most_of(most,room_of(d,d,n)+2*room_of(kv,d,n));
+}
 /* WS-PLAN: the 9.84M decoder's GEMM groups' figure under the bf16 contract (trainer_bf16 derives it) */
 static size_t gemm_984m(void) {
 #ifndef BCIR_DT_NO_PANELS
@@ -1486,6 +1510,107 @@ static void gemm_kblock_rows(void) {
  * the build's threshold, four K blocks) and its partials fit -- lent the whole room or exactly one
  * call's partials, not a float short of them, none or at a misaligned base -- a group's second weight
  * adjoint from the next 64-byte offset, and never a byte past what was lent. */
+/* KSPLIT-ROOM: the blocked contract's planned workspace holds the room its weight adjoints split in.
+ * The unit's rule (bcir_tensor_mm_ksplit_bytes) is room_of's, the statement written apart from it,
+ * across kblock_next's three-to-four-block edge and its refusals (no depth, no rows, a product past
+ * size_t); the plan's need under KBLOCK is the most of the attention's copies and split_room's job
+ * by job, unsplit the copies alone, and v1's and the fused contract's need the copies -- at a spec
+ * where each of the three jobs that can be the largest is (the gate and up group, the head's pair at
+ * a wide vocabulary, the q, k and v group at a narrow hidden width). At the fixture's dimensions and
+ * 1,408 rows (four K blocks), where the gate and up group's 4,096 bytes are the largest job's, a
+ * training step lent the need splits all fifteen weight adjoints (seven a layer and the head's), lent
+ * a byte short of that room thirteen (each layer's up projection runs whole), lent none none --
+ * every state the same bytes. */
+#ifdef BCIR_TENSOR_INSTANCE_PROBE
+size_t bcir_tensor_ksplit_probe(void);
+#endif
+static void ksplit_room(void) {
+  static const size_t ks[]={448,1344,1345,1792,4100};
+  static _Alignas(max_align_t) unsigned char pool_memory[4096];
+  bcir_decoder_spec spec={16,8,2,1,2,16,2,704,1,10000.0,1e-6};
+  /* the head's pair the largest job (a vocabulary of 512), and the q, k and v group (a hidden width
+   * of 8 under a model width of 32, two KV heads of four) */
+  static const bcir_decoder_spec wide={512,8,2,1,1,16,2,704,1,10000.0,1e-6};
+  static const bcir_decoder_spec narrow={16,32,4,2,1,8,2,704,1,10000.0,1e-6};
+  bcir_decoder_adamw opt={0.01,0.9,0.95,1e-8,0.01,1.0};
+  bcir_tensor_pool *pool=NULL; bcir_decoder_state st; bcir_decoder_event events[3]; bcir_decoder_plan plan,pw,pn;
+  uint32_t *ids,*targets; size_t i,q,need,room,n,done,splits[3]={0,0,0},lent[3],l; unsigned char *raw;
+  float *trained[3]; unsigned threads=bcir_tensor_pool_size(4) && bcir_tensor_pool_size(4)<=sizeof(pool_memory) ? 4 : 1;
+  for (i=0;i<sizeof ks/sizeof ks[0];i++) assert(bcir_tensor_mm_ksplit_bytes(13,49,ks[i])==room_of(13,49,ks[i]));
+  assert(room_of(13,49,1345)==4*13*49*4+48 && (ksplit_from()<4 ? room_of(13,49,1344)>0 : room_of(13,49,1344)==0));
+  assert(bcir_tensor_mm_ksplit_bytes(13,49,0)==0 && bcir_tensor_mm_ksplit_bytes(0,49,4100)==0 &&
+      bcir_tensor_mm_ksplit_bytes(13,0,4100)==0 && bcir_tensor_mm_ksplit_bytes(SIZE_MAX/2,4,4100)==0 &&
+      bcir_tensor_mm_ksplit_bytes(SIZE_MAX/16,1,4100)==0 && bcir_tensor_mm_ksplit_bytes(SIZE_MAX/64,1,4100)>0);
+  assert(bcir_decoder_make_plan(&spec,&plan)==0);
+  room=split_room(&plan); need=bcir_decoder_workspace_need(&plan,BCIR_DT_CONTRACT_KBLOCK,threads);
+  assert(room==2*4*16*8*sizeof(float) && need==most_of(att32_need(&plan,threads),room));
+  assert(bcir_decoder_workspace_unsplit(&plan,BCIR_DT_CONTRACT_KBLOCK,threads)==att32_need(&plan,threads) &&
+      bcir_decoder_workspace_bytes(&plan,BCIR_DT_CONTRACT_KBLOCK)==most_of(att32_need(&plan,0),room) &&
+      bcir_decoder_workspace_need(&plan,0,threads)==att32_need(&plan,threads) &&
+      bcir_decoder_workspace_need(&plan,BCIR_DT_CONTRACT_FUSED|BCIR_DT_CONTRACT_EXP,threads)==att32_need(&plan,threads) &&
+      bcir_decoder_workspace_unsplit(&plan,0,threads)==att32_need(&plan,threads) &&
+      bcir_decoder_workspace_unsplit(&plan,BCIR_DT_CONTRACT_BF16,threads)==
+          bcir_decoder_workspace_need(&plan,BCIR_DT_CONTRACT_BF16,threads) &&
+      bcir_decoder_workspace_unsplit(NULL,BCIR_DT_CONTRACT_KBLOCK,4)==0 &&
+      bcir_decoder_workspace_unsplit(NULL,BCIR_DT_CONTRACT_BF16,4)==SIZE_MAX);
+  assert(bcir_decoder_make_plan(&wide,&pw)==0 && bcir_decoder_make_plan(&narrow,&pn)==0);
+  assert(split_room(&pw)==room_of(512,8,1408) && split_room(&pw)>2*room_of(16,8,1408) &&
+      bcir_decoder_workspace_need(&pw,BCIR_DT_CONTRACT_KBLOCK,threads)==most_of(att32_need(&pw,threads),split_room(&pw)));
+  assert(split_room(&pn)==room_of(32,32,1408)+2*room_of(16,32,1408) && split_room(&pn)>2*room_of(8,32,1408) &&
+      bcir_decoder_workspace_need(&pn,BCIR_DT_CONTRACT_KBLOCK,threads)==most_of(att32_need(&pn,threads),split_room(&pn)));
+  if (threads>1) { pool=bcir_tensor_pool_init(pool_memory,sizeof(pool_memory),threads); assert(pool); }
+  n=(size_t)spec.batch*spec.time; ids=malloc(n*sizeof(uint32_t)); targets=malloc(n*sizeof(uint32_t));
+  assert(ids && targets); stream(ids,targets,n);
+  raw=calloc(need+64,1); assert(raw);
+  lent[0]=need; lent[1]=room-1; lent[2]=0;
+  for (q=0;q<3;q++) {  /* lent the need, a byte short of the room, none */
+    size_t off=128;
+    memset(&st,0,sizeof st); st.plan=plan;
+    st.weights=calloc(plan.parameters,sizeof(float)); st.gradients=calloc(plan.parameters,sizeof(float));
+    st.moment1=calloc(plan.parameters,sizeof(float)); st.moment2=calloc(plan.parameters,sizeof(float));
+    st.activations=calloc(plan.activations,sizeof(float)); st.scratch=calloc(plan.scratch,sizeof(float));
+    assert(st.weights && st.gradients && st.moment1 && st.moment2 && st.activations && st.scratch);
+    st.weight_capacity=st.gradient_capacity=st.moment1_capacity=st.moment2_capacity=plan.parameters;
+    st.activation_capacity=plan.activations; st.scratch_capacity=plan.scratch;
+    st.beta1_power=st.beta2_power=1.0; st.pool=pool; st.contract=BCIR_DT_CONTRACT_KBLOCK;
+    for (i=0;i<plan.parameters;i++) st.weights[i]=0.1f*sinf((float)(i+1)*0.37f);
+    for (l=0;l<spec.layers;l++) {  /* the layers' norms and the final one at one */
+      for (i=0;i<8;i++) st.weights[off+i]=1.0f;
+      off+=8+64+32+32+64; for (i=0;i<8;i++) st.weights[off+i]=1.0f;
+      off+=8+3*128;
+    }
+    for (i=0;i<8;i++) st.weights[off+i]=1.0f;
+    st.workspace=lent[q] ? raw+(64-(uintptr_t)raw%64)%64 : NULL; st.workspace_bytes=lent[q];
+#ifdef BCIR_TENSOR_INSTANCE_PROBE
+    (void)bcir_tensor_ksplit_probe();
+#endif
+    assert(bcir_decoder_run(&st,&opt,ids,targets,n,NULL,1,events,3,&done)==0 && done==1);
+#ifdef BCIR_TENSOR_INSTANCE_PROBE
+    splits[q]=bcir_tensor_ksplit_probe();
+#endif
+    trained[q]=st.weights;
+    free(st.gradients); free(st.moment1); free(st.moment2); free(st.activations); free(st.scratch);
+  }
+  assert(!memcmp(trained[0],trained[1],plan.parameters*sizeof(float)) &&
+      !memcmp(trained[0],trained[2],plan.parameters*sizeof(float)));
+#ifdef BCIR_TENSOR_INSTANCE_PROBE
+  assert(splits[0]==7*spec.layers+1 && splits[1]==splits[0]-spec.layers && splits[2]==0);
+#endif
+  for (q=0;q<3;q++) free(trained[q]);
+  free(raw); free(ids); free(targets);
+  if (pool) bcir_tensor_pool_stop(pool);
+  printf("  PASS native workspace plan (KSPLIT-ROOM): the blocked contract's need the most of the attention's "
+      "copies and the backward's largest GEMM job's split room (%zu bytes at %zu rows; the head's pair and the "
+      "q, k and v group the largest at two specs more; the unit's rule the statement apart from it at %zu "
+      "depths and its refusals); a step lent the need, a byte short of the room and none the same state "
+      "bytes, ",room,n,sizeof ks/sizeof ks[0]);
+#ifdef BCIR_TENSOR_INSTANCE_PROBE
+  printf("splitting %zu, %zu and %zu weight adjoints\n",splits[0],splits[1],splits[2]);
+#else
+  (void)splits;
+  printf("their splits uncounted in this build\n");
+#endif
+}
 static void gemm_kblock_split(void) {
 #ifdef BCIR_MM_KSPLIT_BLOCKS
   const size_t from=BCIR_MM_KSPLIT_BLOCKS;  /* a build's threshold (the harness's -contig build: 1) */
@@ -2555,7 +2680,7 @@ static void trainer_bf16(void) {
   double loss;
   s.contract=BCIR_DT_CONTRACT_BF16; need=bcir_decoder_workspace_bytes(&s.plan,s.contract);
   assert(need>0 && need<=sizeof(workspace) && bcir_decoder_workspace_bytes(&s.plan,0)==att32_need(&s.plan,0) &&
-      bcir_decoder_workspace_bytes(&s.plan,BCIR_DT_CONTRACT_KBLOCK)==att32_need(&s.plan,0) &&
+      bcir_decoder_workspace_bytes(&s.plan,BCIR_DT_CONTRACT_KBLOCK)==most_of(att32_need(&s.plan,0),split_room(&s.plan)) &&
       bcir_decoder_workspace_bytes(NULL,BCIR_DT_CONTRACT_BF16)==SIZE_MAX);
   refused.spec.heads=3; assert(bcir_decoder_workspace_bytes(&refused,BCIR_DT_CONTRACT_BF16)==SIZE_MAX);
   /* ATT-CONTIG: without BF16 a plan the planner refuses copies nothing -- 0, as no plan at all */
@@ -2587,7 +2712,8 @@ static void trainer_bf16(void) {
     assert(bcir_decoder_workspace_floor(&bp,BCIR_DT_CONTRACT_BF16,1)==bcir_tensor_mm_bf16_workspace(32,32,1024) &&
         bcir_tensor_mm_bf16_workspace(32,32,1024)==131136u);
     assert(bcir_decoder_workspace_panels(&bp,0)==0 && bcir_decoder_workspace_floor(&bp,0,4)==0 &&
-        bcir_decoder_workspace_need(&bp,BCIR_DT_CONTRACT_KBLOCK,4)==att32_need(&bp,4));
+        bcir_decoder_workspace_need(&bp,BCIR_DT_CONTRACT_KBLOCK,4)==most_of(att32_need(&bp,4),split_room(&bp)) &&
+        bcir_decoder_workspace_unsplit(&bp,BCIR_DT_CONTRACT_KBLOCK,4)==att32_need(&bp,4));
     assert(bcir_decoder_workspace_panels(NULL,BCIR_DT_CONTRACT_BF16)==SIZE_MAX &&
         bcir_decoder_workspace_floor(NULL,BCIR_DT_CONTRACT_BF16,4)==SIZE_MAX &&
         bcir_decoder_workspace_need(NULL,BCIR_DT_CONTRACT_BF16,4)==SIZE_MAX);
@@ -4656,7 +4782,7 @@ int main(void) {
   finite_differences(); refusals();
   learning(); pool_identity(); rope_table(); pool_claims(); pool_blocks(); reduction_references();
   scan_references();
-  gemm_fused_contract(); gemm_kblock_contract(); gemm_kblock_rows(); gemm_kblock_split();
+  gemm_fused_contract(); gemm_kblock_contract(); gemm_kblock_rows(); gemm_kblock_split(); ksplit_room();
   exp_contract(); exp_scalef(); fused_passes();
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();

@@ -345,6 +345,7 @@ def _bind_plan(lib):
     for name, args in (
         ("workspace_bytes", [plan, ct.c_uint32]),
         ("workspace_need", [plan, ct.c_uint32, ct.c_uint]),
+        ("workspace_unsplit", [plan, ct.c_uint32, ct.c_uint]),
         ("workspace_floor", [plan, ct.c_uint32, ct.c_uint]),
         ("workspace_panels", [plan, ct.c_uint32]),
         ("activation_count", [plan, ct.c_uint64]),
@@ -356,7 +357,8 @@ def _bind_plan(lib):
 @dataclass(frozen=True)
 class MemoryPlan:
     """A trainer's arenas under a recompute set and a workspace (GEO-3), in bytes, every
-    count the C plan's (bcir_decoder_activation_count, bcir_decoder_workspace_need/_panels/_floor).
+    count the C plan's (bcir_decoder_activation_count, bcir_decoder_workspace_need/_unsplit/_panels/
+    _floor).
     Each plan trains the state the all-kept trainer at the exact need trains, bit for bit: the
     choice moves memory and time, never a value."""
 
@@ -364,7 +366,10 @@ class MemoryPlan:
     workspace_bytes: int  # the workspace lent (0 where the step packs nothing)
     activation_count: int  # floats of the activation arena under the recompute set
     workspace_need: int  # every GEMM group whole (the SwiGLU block's panels where admitted), the
-    # attention's regions (the bf16 attention's, else the binary32 attention's copies, ATT-CONTIG)
+    # attention's regions (the bf16 attention's, else the binary32 attention's copies, ATT-CONTIG),
+    # and under the blocked contract the room its weight adjoints split in (KSPLIT-ROOM)
+    workspace_unsplit: int  # the need without that room: the attention's copies under the blocked
+    # contract, the need under every other
     workspace_panels: int  # the least at which the SwiGLU block keeps its panels; 0 none
     workspace_floor: int  # the least the state admits on its pool
     recomputes: int  # layer forwards the backward re-runs a step (the highest set layer is free)
@@ -382,10 +387,12 @@ def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspa
     chooses within `budget` bytes, among the choices that keep every value, in the order the
     measured frontier prices them (docs/research/measurements/2026-10-19/geo3): the fewest
     recomputed layers (the lowest ones; which layers is no matter of cost), each with the
-    workspace at the step's need and then at the SwiGLU panels' need, and the floor only after
-    every set. On both measured shapes the panels' tier cost no step time the rounds resolved
-    (1.3-2.1 MiB freed), a re-run layer 1-11% of a step (10.5-25 MiB) and the floor 32-75%
-    (1.7-4.1 MiB). A declared policy, no optimality claim (TMSAO-4); micro-batch accumulation --
+    workspace at the step's need, then at the need without the blocked contract's split room
+    (KSPLIT-ROOM) and then at the SwiGLU panels' need, and the floor only after every set. On both
+    measured shapes the panels' tier cost no step time the rounds resolved (1.3-2.1 MiB freed), a
+    re-run layer 1-11% of a step (10.5-25 MiB) and the floor 32-75% (1.7-4.1 MiB); the split room
+    some 6-8% (docs/research/measurements/2026-10-25/ksplit-room). A declared policy, no
+    optimality claim (TMSAO-4); micro-batch accumulation --
     cheaper than recomputation at one measured shape, dearer at the other, and never the same
     state -- is the caller's."""
     _bind_plan(lib)
@@ -402,9 +409,10 @@ def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspa
     bits = _CONTRACTS[contract]
     p = ct.byref(plan)
     need = lib.bcir_decoder_workspace_need(p, bits, threads)
+    unsplit = lib.bcir_decoder_workspace_unsplit(p, bits, threads)
     floor = lib.bcir_decoder_workspace_floor(p, bits, threads)
     panels = lib.bcir_decoder_workspace_panels(p, bits)
-    if _SIZE_MAX in (need, floor, panels):
+    if _SIZE_MAX in (need, unsplit, floor, panels):
         raise ValueError("native plan's workspace overflows size_t or the plan is refused")
     layers = plan.spec.layers
 
@@ -415,8 +423,8 @@ def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspa
         named = sum(1 for layer in range(min(layers, 64)) if (mask >> layer) & 1)
         persistent, acts, scratch = 16 * plan.parameters, 4 * count, 4 * plan.scratch
         return MemoryPlan(
-            mask, workspace, count, need, panels, floor, max(named - 1, 0), persistent, acts,
-            scratch, persistent + acts + scratch + workspace,
+            mask, workspace, count, need, unsplit, panels, floor, max(named - 1, 0), persistent,
+            acts, scratch, persistent + acts + scratch + workspace,
         )  # fmt: skip
 
     if recompute is not None:
@@ -430,7 +438,9 @@ def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspa
     if type(budget) is not int or budget < 1:
         raise ValueError("the budget must be a positive integer")
     tiers = [need]
-    if floor <= panels < need:
+    if floor <= unsplit < need:  # KSPLIT-ROOM: the weight adjoints unsplit before a re-run layer
+        tiers.append(unsplit)
+    if floor <= panels < tiers[-1]:
         tiers.append(panels)
     sets = [0] + [(1 << r) - 1 for r in range(2, min(layers, 64) + 1)]
     # the frontier's prices: the panels' tier about free, then a re-run layer, the floor dearest

@@ -433,7 +433,8 @@ def test_a_blocked_job_states_its_workspace_or_is_refused():
     without it, its workspace a float short or off its start, and a job without a weight adjoint
     lent it are each refused before anything runs (no byte written); the programs themselves run,
     the pairs and groups of the C step's decisions and the weight adjoints alone (no pair). A short
-    context's blocked state lends none, and its program, stating none, runs."""
+    context's blocked state short of four K blocks (KSPLIT-ROOM) lends none, and its program,
+    stating none, runs."""
     from bcir.frontends.models.decode import DecoderSpec
 
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
@@ -482,7 +483,8 @@ def test_a_blocked_job_states_its_workspace_or_is_refused():
             assert edits == 9, edits
         finally:
             trainer.close()
-        # a short context's blocked state lends no workspace: its program states none, and runs
+        # a short context's blocked state four rows deep lends no workspace (no attention copies,
+        # no K block to split): its program states none, and runs
         short = nf.TraceCase(*nf.PLAN_CORPUS[0], "kblock")
         trainer, decisions = _trainer(lib, short)
         try:

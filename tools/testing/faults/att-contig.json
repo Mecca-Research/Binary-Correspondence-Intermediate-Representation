@@ -143,8 +143,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AC20 the trainer's need under a binary32 GEMM contract leaves out the attention's copies",
-      "new": "    return 0;\n",
-      "old": "    return ws_attention32(geom(&p.spec),threads);\n",
+      "new": "    g=geom(&p.spec); most=0;\n",
+      "old": "    g=geom(&p.spec); most=ws_attention32(g,threads);\n",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

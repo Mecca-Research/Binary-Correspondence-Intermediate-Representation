@@ -87,15 +87,15 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "KS12 a call a block shallower than the threshold split",
-      "new": "  if (blocks+1<BCIR_MM_KSPLIT_BLOCKS || j->x.m>SIZE_MAX/j->x.n) return tasks;\n",
-      "old": "  if (blocks<BCIR_MM_KSPLIT_BLOCKS || j->x.m>SIZE_MAX/j->x.n) return tasks;\n",
+      "new": "  if (b+1<BCIR_MM_KSPLIT_BLOCKS || !m || !n || m>SIZE_MAX/n) return 0;\n",
+      "old": "  if (b<BCIR_MM_KSPLIT_BLOCKS || !m || !n || m>SIZE_MAX/n) return 0;\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "KS13 the fit check a float generous (a call split into a float more than it was lent)",
-      "new": "  if (raw>*left+sizeof(float)) return tasks;\n",
-      "old": "  if (raw>*left) return tasks;\n",
+      "new": "  if (!step || raw>*left+sizeof(float)) return tasks;\n",
+      "old": "  if (!step || raw>*left) return tasks;\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
