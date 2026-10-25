@@ -65,9 +65,9 @@
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
-      "label": "RT9 the lent rotation leaves each position's last head unturned",
-      "new": "    for (r=0;r<j->b;r++) for (h=0;h+1<j->heads;h++) {\n      float *lo=j->x+((r*j->t+pos)*j->heads+h)*j->dim+k0,*hi=lo+half;\n",
-      "old": "    for (r=0;r<j->b;r++) for (h=0;h<j->heads;h++) {\n      float *lo=j->x+((r*j->t+pos)*j->heads+h)*j->dim+k0,*hi=lo+half;\n",
+      "label": "RT9 the rotation leaves each position's last head unturned (rope_turn, which both rotations share since ROPE-BOUND)",
+      "new": "  for (r=0;r<b;r++) for (h=0;h+1<heads;h++) {\n    float *lo=x+((r*t+pos)*heads+h)*dim+k0,*hi=lo+half;\n",
+      "old": "  for (r=0;r<b;r++) for (h=0;h<heads;h++) {\n    float *lo=x+((r*t+pos)*heads+h)*dim+k0,*hi=lo+half;\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -79,9 +79,9 @@
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
-      "label": "RT11 the lent rotation's sum and difference swapped",
-      "new": "      for (k=0;k<nk;k++) { float a=lo[k],z=hi[k]; lo[k]=a*c[k]+z*s[k]; hi[k]=z*c[k]-a*s[k]; }\n",
-      "old": "      for (k=0;k<nk;k++) { float a=lo[k],z=hi[k]; lo[k]=a*c[k]-z*s[k]; hi[k]=z*c[k]+a*s[k]; }\n",
+      "label": "RT11 the rotation's sum and difference swapped (rope_turn, both rotations)",
+      "new": "    for (k=0;k<n;k++) { float a=lo[k],z=hi[k]; lo[k]=a*c[k]+z*s[k]; hi[k]=z*c[k]-a*s[k]; }\n",
+      "old": "    for (k=0;k<n;k++) { float a=lo[k],z=hi[k]; lo[k]=a*c[k]-z*s[k]; hi[k]=z*c[k]+a*s[k]; }\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -104,6 +104,20 @@
       "new": "    bcir_tensor_rope_lent_pool(s->pool,g.b,g.t,g.h,g.hd,rope_table(s,g),dq,0);\n",
       "old": "    bcir_tensor_rope_lent_pool(s->pool,g.b,g.t,g.h,g.hd,rope_table(s,g),dq,1);\n",
       "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT15 the lent rotation turns a head of one range of pairs one pair short (ROPE-BOUND's bound the head's half, less one)",
+      "new": "rope_turn(j->b,j->t,j->heads,j->dim,pos,0,half-1,c,s,j->x);",
+      "old": "rope_turn(j->b,j->t,j->heads,j->dim,pos,0,half,c,s,j->x);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT16 the lent rotation turns each range of a wide head onto its first range's pairs",
+      "new": "else rope_turn(j->b,j->t,j->heads,j->dim,pos,0,nk,c,s,j->x);",
+      "old": "else rope_turn(j->b,j->t,j->heads,j->dim,pos,k0,nk,c,s,j->x);",
+      "path": "runtime/c/bcir_tensor.c"
     }
   ]
 }

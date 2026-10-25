@@ -2703,9 +2703,22 @@ void bcir_tensor_rms_backward_pool(bcir_tensor_pool *pool, size_t rows, size_t w
  * angles once, and the rotation runs over a head's pairs contiguously -- every value the same. */
 #define BCIR_ROPE_J 64
 typedef struct rope_job { size_t b,t,heads,dim; double base; float *x; int inverse; } rope_job;
+/* ROPE-BOUND: one position's rotation of pairs [k0, k0+n) of every head, c and s those pairs'
+ * cosines and sines. A head that fits one range of pairs turns with n its half -- the distance
+ * between the halves the loop pairs -- for which clang drops the overlap check it otherwise takes
+ * between them: bounded by the range's count (the same count there) it ran at a third of the rate;
+ * GCC compiles both alike. Every value is the same either way: the same operations in the same order. */
+BCIR_MM_INLINE void rope_turn(size_t b, size_t t, size_t heads, size_t dim, size_t pos, size_t k0,
+    size_t n, const float *c, const float *s, float *x) {
+  size_t r,h,k,half=dim/2;
+  for (r=0;r<b;r++) for (h=0;h<heads;h++) {
+    float *lo=x+((r*t+pos)*heads+h)*dim+k0,*hi=lo+half;
+    for (k=0;k<n;k++) { float a=lo[k],z=hi[k]; lo[k]=a*c[k]-z*s[k]; hi[k]=z*c[k]+a*s[k]; }
+  }
+}
 static void rope_rows(size_t b, size_t t, size_t heads, size_t dim, double base, float *x,
     int inverse, size_t p0, size_t p1) {
-  size_t r,pos,h,j,j0,half=dim/2;
+  size_t pos,j,j0,half=dim/2;
   for (j0=0;j0<half;j0+=BCIR_ROPE_J) {
     size_t nj=half-j0<BCIR_ROPE_J ? half-j0 : BCIR_ROPE_J; double f[BCIR_ROPE_J];
     for (j=0;j<nj;j++) f[j]=pow(base,-2.0*(double)(j0+j)/(double)dim);
@@ -2715,10 +2728,8 @@ static void rope_rows(size_t b, size_t t, size_t heads, size_t dim, double base,
         double angle=(double)pos*f[j];
         c[j]=(float)cos(angle); s[j]=(float)sin(angle)*(inverse ? -1.0f : 1.0f);
       }
-      for (r=0;r<b;r++) for (h=0;h<heads;h++) {
-        float *lo=x+((r*t+pos)*heads+h)*dim+j0,*hi=lo+half;
-        for (j=0;j<nj;j++) { float a=lo[j],z=hi[j]; lo[j]=a*c[j]-z*s[j]; hi[j]=z*c[j]+a*s[j]; }
-      }
+      if (half<=BCIR_ROPE_J) rope_turn(b,t,heads,dim,pos,0,half,c,s,x);  /* ROPE-BOUND */
+      else rope_turn(b,t,heads,dim,pos,j0,nj,c,s,x);
     }
   }
 }
@@ -2761,16 +2772,14 @@ typedef struct rope_lent_job {
   size_t b,t,heads,dim; const float *table; float *x; int inverse;
 } rope_lent_job;
 static void rope_lent_task(void *ctx, size_t task) {
-  rope_lent_job *j=(rope_lent_job *)ctx; size_t r,pos,h,k,k0,half=j->dim/2;
+  rope_lent_job *j=(rope_lent_job *)ctx; size_t pos,k,k0,half=j->dim/2;
   size_t p0=task*BCIR_ROW_CHUNK,p1=p0+BCIR_ROW_CHUNK<j->t ? p0+BCIR_ROW_CHUNK : j->t;
   for (pos=p0;pos<p1;pos++) for (k0=0;k0<half;k0+=BCIR_ROPE_J) {
     size_t nk=half-k0<BCIR_ROPE_J ? half-k0 : BCIR_ROPE_J; float s[BCIR_ROPE_J];
     const float *c=j->table+pos*j->dim+k0,*sin0=c+half;
     for (k=0;k<nk;k++) s[k]=sin0[k]*(j->inverse ? -1.0f : 1.0f);
-    for (r=0;r<j->b;r++) for (h=0;h<j->heads;h++) {
-      float *lo=j->x+((r*j->t+pos)*j->heads+h)*j->dim+k0,*hi=lo+half;
-      for (k=0;k<nk;k++) { float a=lo[k],z=hi[k]; lo[k]=a*c[k]-z*s[k]; hi[k]=z*c[k]+a*s[k]; }
-    }
+    if (half<=BCIR_ROPE_J) rope_turn(j->b,j->t,j->heads,j->dim,pos,0,half,c,s,j->x);  /* ROPE-BOUND */
+    else rope_turn(j->b,j->t,j->heads,j->dim,pos,k0,nk,c,s,j->x);
   }
 }
 void bcir_tensor_rope_lent_pool(bcir_tensor_pool *pool, size_t b, size_t t, size_t heads,
