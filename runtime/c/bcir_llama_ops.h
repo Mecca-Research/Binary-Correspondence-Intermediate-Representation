@@ -36,6 +36,8 @@ typedef struct bcir_llama_ws {
   double *x, *h, *h2, *q, *q_rope, *k, *k_rope, *v;
   double *context, *attn, *gate, *up, *ff, *gamma, *scores, *logits;
   double *k_cache, *v_cache;
+  double *rope_cs;   /* DECODE-ROW: the rotation's cosines and sines at rope_pos, head_dim values */
+  size_t rope_pos;   /* the position rope_cs holds; SIZE_MAX before any */
   size_t capacity;
   bcir_host_allocator allocator;
 } bcir_llama_ws;

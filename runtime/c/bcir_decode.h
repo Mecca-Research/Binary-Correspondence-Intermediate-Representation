@@ -22,6 +22,11 @@ void bcir_rmsnorm(const double *x, int rows, int dim, const double *gamma, doubl
 /* Rotary position embedding: row r (position pos_offset + r) has each channel pair (2k, 2k+1)
  * rotated by theta_k = pos * base^(-2k/dim). `dim` must be EVEN (the caller's law). */
 void bcir_rope(const double *x, int rows, int dim, double base, int pos_offset, double *out);
+/* DECODE-ROW: the rotation's cosines and sines at one position, cs[2k] = cos and cs[2k + 1] = sin of pair k's
+ * angle -- bcir_rope's own expressions -- and one row of `dim` rotated by such a table: bcir_rope_apply over
+ * bcir_rope_table(dim, base, (double)p, cs) is bcir_rope(x, 1, dim, base, p, out), bit for bit. */
+void bcir_rope_table(int dim, double base, double position, double *cs);
+void bcir_rope_apply(const double *x, int dim, const double *cs, double *out);
 
 /* Embedding lookup: out[t*dim + d] = table[ids[t]*dim + d] -- a pure row gather, EXACT.
  * Returns 0, or -1 on invalid geometry/pointers or an out-of-range id. Every id is

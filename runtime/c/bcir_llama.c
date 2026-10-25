@@ -40,6 +40,7 @@ void bcir_llama_ws_free(workspace *w) {
   bcir_host_deallocate(&allocator,w->ff); bcir_host_deallocate(&allocator,w->gamma);
   bcir_host_deallocate(&allocator,w->scores); bcir_host_deallocate(&allocator,w->logits);
   bcir_host_deallocate(&allocator,w->k_cache); bcir_host_deallocate(&allocator,w->v_cache);
+  bcir_host_deallocate(&allocator,w->rope_cs);
   memset(w, 0, sizeof *w);
 }
 
@@ -121,10 +122,11 @@ int bcir_llama_ws_init(workspace *w, const bcir_q8_model *m, size_t capacity,
   w->allocator=bcir_host_allocator_or_default(allocator);
   if (mul_size(m->n_layers, capacity, &cache_rows) ||
       mul_size(cache_rows, kvd, &cache_values)) return -1;
-  /* Eight d-sized vectors; three kvd vectors; gate/up/ff; scores; logits;
-   * and two complete layer x position x kvd caches. Budget the whole operation
-   * before making any allocator call so refusal is failure-atomic. */
+  /* Eight d-sized vectors; three kvd vectors; gate/up/ff; scores; logits; the rotation's table (a head's
+   * width); and two complete layer x position x kvd caches. Budget the whole operation before making any
+   * allocator call so refusal is failure-atomic. */
   if (mul_size(8u, d, &term) || !bcir_size_add(total_values, term, &total_values) ||
+      !bcir_size_add(total_values, (size_t)(m->d_model / m->n_heads), &total_values) ||
       mul_size(3u, kvd, &term) || !bcir_size_add(total_values, term, &total_values) ||
       mul_size(3u, (size_t)m->d_ff, &term) ||
           !bcir_size_add(total_values, term, &total_values) ||
@@ -142,9 +144,10 @@ int bcir_llama_ws_init(workspace *w, const bcir_q8_model *m, size_t capacity,
   w->ff = new_doubles(w,m->d_ff); w->gamma = new_doubles(w,d);
   w->scores = new_doubles(w,capacity); w->logits = new_doubles(w,m->vocab_size);
   w->k_cache = new_doubles(w,cache_values); w->v_cache = new_doubles(w,cache_values);
+  w->rope_cs = new_doubles(w, m->d_model / m->n_heads); w->rope_pos = SIZE_MAX;
   if (!w->x || !w->h || !w->h2 || !w->q || !w->q_rope || !w->k || !w->k_rope ||
       !w->v || !w->context || !w->attn || !w->gate || !w->up || !w->ff ||
-      !w->gamma || !w->scores || !w->logits || !w->k_cache || !w->v_cache) {
+      !w->gamma || !w->scores || !w->logits || !w->k_cache || !w->v_cache || !w->rope_cs) {
     bcir_llama_ws_free(w);
     return -1;
   }
@@ -205,14 +208,18 @@ int bcir_llama_op_matvec(const bcir_q8_model *m, const double *x,
   return matvec(m, x, weight, in, out, y);
 }
 
+/* Every head of every layer turns by the same angles at a position: the table is filled once a position
+ * (DECODE-ROW) with bcir_rope's own expressions and each head applied from it, bit for bit bcir_rope's rows. */
 void bcir_llama_op_rope(const bcir_q8_model *m, workspace *w, size_t pos) {
   uint32_t dk = m->d_model / m->n_heads, head;
+  if (w->rope_pos != pos) {
+    bcir_rope_table((int)dk, m->rope_base, (double)(int)pos, w->rope_cs);
+    w->rope_pos = pos;
+  }
   for (head = 0; head < m->n_heads; ++head)
-    bcir_rope(w->q + (size_t)head * dk, 1, (int)dk, m->rope_base, (int)pos,
-              w->q_rope + (size_t)head * dk);
+    bcir_rope_apply(w->q + (size_t)head * dk, (int)dk, w->rope_cs, w->q_rope + (size_t)head * dk);
   for (head = 0; head < m->n_kv_heads; ++head)
-    bcir_rope(w->k + (size_t)head * dk, 1, (int)dk, m->rope_base, (int)pos,
-              w->k_rope + (size_t)head * dk);
+    bcir_rope_apply(w->k + (size_t)head * dk, (int)dk, w->rope_cs, w->k_rope + (size_t)head * dk);
 }
 
 void bcir_llama_op_kv_append(const bcir_q8_model *m, workspace *w, uint32_t layer,

@@ -467,6 +467,7 @@ static void clear_activations(bcir_dgem *g) {
   for (i = 0; i < 3u; ++i) memset(rows_kv[i], 0, kvd * sizeof(double));
   for (i = 0; i < 3u; ++i) memset(rows_ff[i], 0, ff * sizeof(double));
   memset(g->ws.logits, 0, (size_t)m->vocab_size * sizeof(double));
+  g->ws.rope_pos = SIZE_MAX; /* the rotation's table, refilled at the run's first position */
 }
 
 int bcir_dgem_run(bcir_dgem *g, const int32_t *prompt, size_t prompt_len, int32_t *generated,

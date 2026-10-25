@@ -291,6 +291,115 @@ def test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads():
         assert result.returncode != 0 and "context limit" in result.stderr
 
 
+_ROPE_WITNESS = r"""
+#include "bcir_decode.h"
+#include "bcir_llama_ops.h"
+#include "bcir_q8_model.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* The decoder's rotation (bcir_llama_op_rope: a table filled once a position, every head applied from
+ * it) against bcir_rope over each head's row, byte for byte, at positions in the orders a GEM program
+ * may take them: repeated, backward, after a gap, the first again. */
+int main(int argc, char **argv) {
+  static const size_t pos[] = {0, 0, 1, 2, 2, 7, 3, 63, 0, 5, 5, 62, 61, 1};
+  bcir_q8_model m;
+  bcir_llama_ws w;
+  char err[256];
+  uint64_t state = 0x2545F4914F6CDD1Du;
+  size_t i, h, n = sizeof pos / sizeof pos[0];
+  double *ref;
+  uint32_t dk, kvd;
+  bcir_q8_model_init(&m);
+  if (argc != 2 || bcir_q8_model_load(argv[1], &m, err, sizeof err)) return 2;
+  if (!bcir_llama_model_ready(&m) || bcir_llama_ws_init(&w, &m, 64, NULL)) return 3;
+  dk = m.d_model / m.n_heads;
+  kvd = m.n_kv_heads * dk;
+  ref = malloc((size_t)dk * sizeof *ref);
+  if (!ref) return 4;
+  for (i = 0; i < n; i++) {
+    for (h = 0; h < m.d_model + kvd; h++) {
+      state ^= state << 13, state ^= state >> 7, state ^= state << 17;
+      *(h < m.d_model ? &w.q[h] : &w.k[h - m.d_model]) =
+          (double)(int64_t)(state >> 11) / 4503599627370496.0 - 1.0;
+    }
+    bcir_llama_op_rope(&m, &w, pos[i]);
+    for (h = 0; h < m.n_heads + m.n_kv_heads; h++) {
+      const double *x = h < m.n_heads ? w.q + h * dk : w.k + (h - m.n_heads) * dk;
+      const double *got = h < m.n_heads ? w.q_rope + h * dk : w.k_rope + (h - m.n_heads) * dk;
+      bcir_rope(x, 1, (int)dk, m.rope_base, (int)pos[i], ref);
+      if (memcmp(ref, got, (size_t)dk * sizeof *ref)) {
+        printf("rope: position %zu (call %zu) head %zu differs\n", pos[i], i, h);
+        return 1;
+      }
+    }
+  }
+  printf("rope: %zu calls, every head bcir_rope's row\n", n);
+  free(ref);
+  bcir_llama_ws_free(&w);
+  bcir_q8_model_free(&m);
+  return 0;
+}
+"""
+
+
+def test_the_decoders_rotation_is_bcir_ropes_rows_bit_for_bit():
+    """DECODE-ROW: bcir_llama_op_rope fills the rotation's cosines and sines once a position and turns
+    every query and key head by them. Each head's row must be bcir_rope's, byte for byte -- the
+    standalone decoder's 1e-9 parity cannot see a table one position off, since attention reads only
+    the positions' differences -- at positions taken repeated, backward and after a gap, as a GEM
+    program may take them."""
+    if _compiler() is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        artifact = directory / "model.bcirq8"
+        config = dict(
+            _CONFIG, hidden_size=64, intermediate_size=32
+        )  # heads of 16: eight pairs each
+        tensors = _hf_tensors(config)
+        spec = spec_from_config(config)
+        prepared = {name: ("F32", shape, values) for name, (shape, values) in tensors.items()}
+        write_q8_decoder(
+            artifact,
+            spec,
+            weights_from_tensors(spec, prepared),
+            source_hashes=_HASHES,
+            tokenizer_ids=_TOKENS,
+        )
+        assert spec.d_model // spec.n_heads == 16 and spec.n_kv_heads == 2
+        source = directory / "rope_witness.c"
+        source.write_text(_ROPE_WITNESS, encoding="utf-8")
+        executable = directory / ("rope_witness.exe" if os.name == "nt" else "rope_witness")
+        command = [
+            _compiler(),
+            "-std=c11",
+            "-O2",
+            "-ffp-contract=off",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-I",
+            str(_RUNTIME),
+            str(source),
+            str(_RUNTIME / "bcir_q8_model.c"),
+            str(_RUNTIME / "bcir_decode.c"),
+            str(_RUNTIME / "bcir_ai_kernels.c"),
+            str(_RUNTIME / "bcir_llama.c"),
+            "-o",
+            str(executable),
+            *_link_args(),
+        ]
+        build = subprocess.run(command, capture_output=True, text=True)
+        assert build.returncode == 0, build.stderr
+        run = subprocess.run([str(executable), str(artifact)], capture_output=True, text=True)
+        assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+        assert run.stdout == "rope: 14 calls, every head bcir_rope's row\n", run.stdout
+
+
 if __name__ == "__main__":
     import sys
 
