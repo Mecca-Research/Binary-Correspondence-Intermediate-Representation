@@ -192,6 +192,35 @@ BCIR_NODISCARD bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT 
                                                    uint32_t expected_map_gen,
                                                    uint32_t expected_data_gen);
 
+/* SP-ONCE: a StreamPack checked once and walked several times in one call. bcir_sp_check runs
+ * bcir_sp_validate (magic, version, reserved octets, CRC) and, on BCIR_OK, records the bytes, their
+ * length and their header in `out`; on any other status it records no pack, and every walk below
+ * refuses the token (BCIR_ERR_TRUNCATED). NULL `out` only validates. The checked walks are the plain
+ * walks' bodies over the recorded header -- every bound, range gate and verdict theirs on the same
+ * bytes -- without recomputing the CRC: a caller that runs the semantic walk and the segment walk
+ * of one pack in one call (GEM's execution, GEM's load) crosses the CRC once, not once a walk. The
+ * bytes must not change between the check and the walks; a token not filled by bcir_sp_check fails
+ * its walks' shape check rather than reading. */
+typedef struct bcir_sp_checked {
+  const uint8_t *data;
+  size_t len;
+  bcir_streampack_header hdr;
+} bcir_sp_checked;
+
+BCIR_NODISCARD bcir_status bcir_sp_check(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                         bcir_sp_checked *BCIR_RESTRICT out);
+BCIR_NODISCARD bcir_status bcir_sp_checked_verify_semantic(const bcir_sp_checked *BCIR_RESTRICT pack,
+                                                           uint32_t expected_map_gen,
+                                                           uint32_t expected_data_gen);
+/* R11 on a checked pack's header: bcir_sp_check_generation's verdict without the second CRC. */
+BCIR_NODISCARD bcir_status bcir_sp_checked_generation(const bcir_sp_checked *BCIR_RESTRICT pack,
+                                                      uint32_t expected_map_gen,
+                                                      uint32_t expected_data_gen);
+BCIR_NODISCARD bcir_status bcir_sp_checked_for_each_segment(
+    const bcir_sp_checked *BCIR_RESTRICT pack, bcir_seg_fn fn, void *ctx);
+BCIR_NODISCARD bcir_status bcir_sp_checked_for_each_block(
+    const bcir_sp_checked *BCIR_RESTRICT pack, bcir_block_fn fn, void *ctx);
+
 #ifdef __cplusplus
 }
 #endif

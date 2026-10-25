@@ -94,6 +94,58 @@ static void plan_passes(const uint8_t *data, size_t size) {
   (void)bcir_ep_check_pack(data, size, data, size);
 }
 
+/* SP-ONCE: a pack checked once (bcir_sp_check) and walked over the token gives the plain walks'
+ * statuses and hands their callbacks the same views, on every input -- the raw bytes, and a copy
+ * with its CRC sealed so the semantic laws are reached -- or the harness aborts: a differential, not
+ * only a bounds check. A refused check leaves a token every checked walk refuses. */
+typedef struct { uint64_t h; unsigned calls; } walk_fold;
+static int fold_seg(const bcir_segment_view *s, void *ctx) {
+  walk_fold *f = (walk_fold *)ctx;
+  uint64_t acc = 0;
+  (void)visit(s, &acc);
+  f->h = (f->h ^ acc) * UINT64_C(1099511628211);
+  f->calls++;
+  return 0;
+}
+static int fold_blk(const bcir_block_view *b, void *ctx) {
+  walk_fold *f = (walk_fold *)ctx;
+  f->h = (f->h ^ b->base ^ (b->count << 1) ^ b->n_strides) * UINT64_C(1099511628211);
+  for (uint16_t i = 0; i < b->n_strides; i++) f->h = (f->h ^ bcir_block_stride(b, i)) * UINT64_C(1099511628211);
+  f->calls++;
+  return 0;
+}
+static void checked_differential(const uint8_t *data, size_t size) {
+  bcir_streampack_header plain;
+  bcir_sp_checked pack;
+  bcir_status sv = bcir_sp_validate(data, size, &plain);
+  if (bcir_sp_check(data, size, &pack) != sv) abort();
+  if (sv != BCIR_OK) {
+    walk_fold f = {0, 0};
+    if (pack.data || bcir_sp_checked_verify_semantic(&pack, 0xFFFFFFFFu, 0xFFFFFFFFu) != BCIR_ERR_TRUNCATED ||
+        bcir_sp_checked_for_each_segment(&pack, fold_seg, &f) != BCIR_ERR_TRUNCATED || f.calls)
+      abort();
+    return;
+  }
+  if (pack.hdr.n_segments != plain.n_segments || pack.hdr.n_blocks != plain.n_blocks ||
+      pack.hdr.version != plain.version || pack.hdr.map_gen != plain.map_gen)
+    abort();
+  if (bcir_sp_checked_verify_semantic(&pack, 0xFFFFFFFFu, 0xFFFFFFFFu) !=
+          bcir_sp_verify_semantic(data, size, 0xFFFFFFFFu, 0xFFFFFFFFu) ||
+      bcir_sp_checked_verify_semantic(&pack, 1u, 0u) != bcir_sp_verify_semantic(data, size, 1u, 0u) ||
+      bcir_sp_checked_generation(&pack, 1u, 0u) != bcir_sp_check_generation(data, size, 1u, 0u))
+    abort();
+  {
+    walk_fold a = {0, 0}, b = {0, 0}, c = {0, 0}, d = {0, 0};
+    if (bcir_sp_for_each_segment(data, size, fold_seg, &a) !=
+            bcir_sp_checked_for_each_segment(&pack, fold_seg, &b) ||
+        a.h != b.h || a.calls != b.calls)
+      abort();
+    if (bcir_sp_for_each_block(data, size, fold_blk, &c) != bcir_sp_checked_for_each_block(&pack, fold_blk, &d) ||
+        c.h != d.h || c.calls != d.calls)
+      abort();
+  }
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   bcir_streampack_header hdr;
   (void)bcir_sp_validate(data, size, &hdr);   /* header + CRC validation path */
@@ -126,6 +178,22 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       sealed[size - 1u] = (uint8_t)(crc >> 24);
     }
     plan_passes(sealed, size);
+    free(sealed);
+  }
+  /* SP-ONCE's differential over the raw bytes and over a copy with its StreamPack CRC sealed. */
+  checked_differential(data, size);
+  if (size >= 4u) {
+    uint8_t *sealed = (uint8_t *)malloc(size);
+    if (!sealed) abort();
+    memcpy(sealed, data, size);
+    {
+      uint32_t crc = bcir_crc32(sealed, size - 4u);
+      sealed[size - 4u] = (uint8_t)crc;
+      sealed[size - 3u] = (uint8_t)(crc >> 8);
+      sealed[size - 2u] = (uint8_t)(crc >> 16);
+      sealed[size - 1u] = (uint8_t)(crc >> 24);
+    }
+    checked_differential(sealed, size);
     free(sealed);
   }
   /* A standalone CRC over the buffer must also never over-read. */

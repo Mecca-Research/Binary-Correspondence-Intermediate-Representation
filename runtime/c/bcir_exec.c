@@ -30,32 +30,29 @@ static size_t phase_rank(const bcir_phase_stat *phases, size_t np, uint32_t pid)
   return np;  /* unreachable: every item's phase is registered before sorting */
 }
 
-bcir_status bcir_sp_execute(const uint8_t *BCIR_RESTRICT data, size_t len,
-                            bcir_exec_item *BCIR_RESTRICT scratch, size_t scratch_cap,
-                            bcir_phase_stat *BCIR_RESTRICT phases, size_t phases_cap,
-                            bcir_exec_fn fn, void *ctx,
-                            bcir_exec_result *BCIR_RESTRICT out) {
-  bcir_streampack_header hdr;
-  if (out) { out->executed = 0; out->n_phases = 0; out->n_segments = 0; }
-  bcir_status st = bcir_sp_validate(data, len, &hdr);
-  if (st != BCIR_OK)
-    return st;
+/* The execution of a pack bcir_sp_check validated: the semantic walk, then the segments, sorted and
+ * dispatched -- the trust boundary crossed once a call (SP-ONCE), not once a walk. */
+static bcir_status execute_checked_pack(const bcir_sp_checked *pack,
+                                        bcir_exec_item *BCIR_RESTRICT scratch, size_t scratch_cap,
+                                        bcir_phase_stat *BCIR_RESTRICT phases, size_t phases_cap,
+                                        bcir_exec_fn fn, void *ctx,
+                                        bcir_exec_result *BCIR_RESTRICT out) {
   /* Trust boundary (R10 + lane/width/dispatch range): a CRC-valid but semantically-corrupt
    * pack -- a dangling/redirected claim_id, an unresolved prefetch, an out-of-range lane/
    * width/dispatch -- is REJECTED here rather than executed silently. R11 (generation/
    * staleness) needs a caller-supplied expected gen, so it is enforced by the
    * bcir_sp_execute_checked wrapper (and by bcir_sp_check_generation at the driver). */
-  st = bcir_sp_verify_semantic(data, len, 0xFFFFFFFFu, 0xFFFFFFFFu);
+  bcir_status st = bcir_sp_checked_verify_semantic(pack, 0xFFFFFFFFu, 0xFFFFFFFFu);
   if (st != BCIR_OK)
     return st;
-  if (hdr.n_segments && (!scratch || !phases))
+  if (pack->hdr.n_segments && (!scratch || !phases))
     return BCIR_ERR_NOSPACE;
-  if (scratch_cap < (size_t)hdr.n_segments)
+  if (scratch_cap < (size_t)pack->hdr.n_segments)
     return BCIR_ERR_NOSPACE;
 
   /* 1) Decode the segment stream into the work buffer (bounds-checked by the decoder). */
   collect_ctx cc = {scratch, scratch_cap, 0, 0};
-  st = bcir_sp_for_each_segment(data, len, collect_segment, &cc);
+  st = bcir_sp_checked_for_each_segment(pack, collect_segment, &cc);
   if (st != BCIR_OK)
     return st;
   if (cc.overflow)
@@ -157,6 +154,19 @@ bcir_status bcir_sp_execute(const uint8_t *BCIR_RESTRICT data, size_t len,
   return BCIR_OK;
 }
 
+bcir_status bcir_sp_execute(const uint8_t *BCIR_RESTRICT data, size_t len,
+                            bcir_exec_item *BCIR_RESTRICT scratch, size_t scratch_cap,
+                            bcir_phase_stat *BCIR_RESTRICT phases, size_t phases_cap,
+                            bcir_exec_fn fn, void *ctx,
+                            bcir_exec_result *BCIR_RESTRICT out) {
+  bcir_sp_checked pack;
+  if (out) { out->executed = 0; out->n_phases = 0; out->n_segments = 0; }
+  bcir_status st = bcir_sp_check(data, len, &pack);
+  if (st != BCIR_OK)
+    return st;
+  return execute_checked_pack(&pack, scratch, scratch_cap, phases, phases_cap, fn, ctx, out);
+}
+
 bcir_status bcir_sp_execute_checked(const uint8_t *BCIR_RESTRICT data, size_t len,
                                     uint32_t expected_map_gen, uint32_t expected_data_gen,
                                     bcir_exec_item *BCIR_RESTRICT scratch, size_t scratch_cap,
@@ -164,12 +174,14 @@ bcir_status bcir_sp_execute_checked(const uint8_t *BCIR_RESTRICT data, size_t le
                                     bcir_exec_fn fn, void *ctx,
                                     bcir_exec_result *BCIR_RESTRICT out) {
   if (out) { out->executed = 0; out->n_phases = 0; out->n_segments = 0; }
-  /* R11 (generation/staleness): reject a STALE pack before any execution. R10 + the range
-   * gate are then re-enforced inside bcir_sp_execute (cheap; both passes are bounds-checked). */
-  bcir_status st = bcir_sp_check_generation(data, len, expected_map_gen, expected_data_gen);
+  /* R11 (generation/staleness): reject a STALE pack before any execution; R10 + the range
+   * gate follow on the same checked pack (one CRC, as bcir_sp_execute). */
+  bcir_sp_checked pack;
+  bcir_status st = bcir_sp_check(data, len, &pack);
+  if (st == BCIR_OK) st = bcir_sp_checked_generation(&pack, expected_map_gen, expected_data_gen);
   if (st != BCIR_OK)
     return st;
-  return bcir_sp_execute(data, len, scratch, scratch_cap, phases, phases_cap, fn, ctx, out);
+  return execute_checked_pack(&pack, scratch, scratch_cap, phases, phases_cap, fn, ctx, out);
 }
 
 bcir_status bcir_sp_execute_checked_vector(const uint8_t *BCIR_RESTRICT data, size_t len,

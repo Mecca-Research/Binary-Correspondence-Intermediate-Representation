@@ -12,6 +12,14 @@
  * `./t --time pack.bin REPS` sizes its buffers from the pack instead, runs the executor (R10
  * walk included) REPS times with no kernel, and prints the fastest run: the complexity
  * witness of test_c_executor.py times two packs of one shape at two sizes.
+ *
+ * `./t --checked pack.bin` (SP-ONCE) walks the bytes plainly and over one bcir_sp_check token:
+ * the check's status and header must be bcir_sp_validate's; on a refused pack every checked walk
+ * must refuse the token; on an accepted one the semantic walk (under four generation pairs), the
+ * generation check, and the segment and block walks (to the end and stopped after three) must give
+ * the plain walks' statuses and hand their callbacks the same views. Forged tokens (no buffer, or
+ * one too short for a header and the trailer) must be refused. Prints `checked: equal ...` or
+ * `checked: refused ...`; exits 1 naming the first walk that differs.
  *===----------------------------------------------------------------------===*/
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,9 +74,113 @@ static int record(const bcir_exec_item *item, void *ctx) {
   return 0;
 }
 
+/* SP-ONCE's differential: what every callback sees, folded (FNV-1a over each field and each byte). */
+typedef struct { uint64_t h; unsigned calls, stop_after; } fold_ctx;
+static void fold(fold_ctx *f, uint64_t v) { f->h = (f->h ^ v) * UINT64_C(0x100000001B3); }
+static void fold_bytes(fold_ctx *f, const void *p, size_t n) {
+  for (size_t i = 0; i < n; i++) fold(f, ((const uint8_t *)p)[i]);
+}
+static int fold_segment(const bcir_segment_view *s, void *ctx) {
+  fold_ctx *f = (fold_ctx *)ctx;
+  fold(f, s->claim_id); fold(f, s->phase_id); fold(f, s->lane); fold(f, s->width); fold(f, s->stride_k);
+  fold(f, s->dispatch); fold(f, s->n_reads); fold(f, s->n_writes);
+  for (uint16_t i = 0; i < s->n_reads; i++) fold(f, bcir_seg_read_rid(s, i));
+  for (uint16_t i = 0; i < s->n_writes; i++) fold(f, bcir_seg_write_rid(s, i));
+  fold(f, s->name_len); fold_bytes(f, s->name, s->name_len);
+  fold(f, s->opcode_len); fold_bytes(f, s->opcode, s->opcode_len);
+  fold(f, s->prefetch_len); fold_bytes(f, s->prefetch, s->prefetch_len);
+  fold(f, s->channel_len); fold_bytes(f, s->channel, s->channel_len);
+  return ++f->calls == f->stop_after;
+}
+static int fold_block(const bcir_block_view *b, void *ctx) {
+  fold_ctx *f = (fold_ctx *)ctx;
+  fold(f, b->base); fold(f, b->count); fold(f, b->n_strides);
+  for (uint16_t i = 0; i < b->n_strides; i++) fold(f, bcir_block_stride(b, i));
+  return ++f->calls == f->stop_after;
+}
+static int same_header(const bcir_streampack_header *a, const bcir_streampack_header *b) {
+  if (memcmp(a->magic, b->magic, 4) || memcmp(a->reserved0, b->reserved0, sizeof a->reserved0) ||
+      memcmp(a->reserved, b->reserved, sizeof a->reserved))
+    return 0;
+  return a->version == b->version && a->flags == b->flags && a->topo_gen == b->topo_gen &&
+         a->map_gen == b->map_gen && a->data_gen == b->data_gen && a->n_segments == b->n_segments &&
+         a->n_prefetches == b->n_prefetches && a->n_blocks == b->n_blocks && a->n_trace == b->n_trace &&
+         a->pipeline_depth == b->pipeline_depth && a->n_gens == b->n_gens;
+}
+#define DIFFERS(what) do { printf("checked: %s differs\n", what); return 1; } while (0)
+
+static int forged_tokens_refused(const uint8_t *buf, size_t len) {
+  bcir_sp_checked forged[4];
+  memset(forged, 0, sizeof forged);
+  forged[1].data = buf;                       /* a buffer with no length */
+  forged[2].data = buf;                       /* one too short for a header and the trailer */
+  forged[2].len = len < (size_t)BCIR_STREAMPACK_HEADER_SIZE + 3u ? len : (size_t)BCIR_STREAMPACK_HEADER_SIZE + 3u;
+  forged[3].len = (size_t)BCIR_STREAMPACK_HEADER_SIZE + 4u + len;  /* a length with no buffer */
+  for (int i = 0; i < 4; i++) {
+    fold_ctx f = {0, 0, 0};
+    if (bcir_sp_checked_verify_semantic(&forged[i], 0xFFFFFFFFu, 0xFFFFFFFFu) != BCIR_ERR_TRUNCATED ||
+        bcir_sp_checked_generation(&forged[i], 0xFFFFFFFFu, 0xFFFFFFFFu) != BCIR_ERR_TRUNCATED ||
+        bcir_sp_checked_for_each_segment(&forged[i], fold_segment, &f) != BCIR_ERR_TRUNCATED ||
+        bcir_sp_checked_for_each_block(&forged[i], fold_block, &f) != BCIR_ERR_TRUNCATED || f.calls)
+      return 0;
+  }
+  return bcir_sp_checked_for_each_segment(NULL, fold_segment, NULL) == BCIR_ERR_TRUNCATED;
+}
+
+static int checked_mode(const char *path) {
+  FILE *fp = fopen(path, "rb");
+  if (!fp) { perror("fopen"); return 2; }
+  static uint8_t buf[1 << 20];
+  size_t len = fread(buf, 1, sizeof buf, fp);
+  fclose(fp);
+  bcir_streampack_header plain;
+  bcir_sp_checked pack;
+  bcir_status sv = bcir_sp_validate(buf, len, &plain);
+  if (bcir_sp_check(buf, len, &pack) != sv) DIFFERS("bcir_sp_check");
+  if (bcir_sp_check(buf, len, NULL) != sv) DIFFERS("bcir_sp_check without a token");
+  if (!forged_tokens_refused(buf, len)) DIFFERS("a forged token");
+  if (sv != BCIR_OK) {
+    fold_ctx f = {0, 0, 0};
+    if (pack.data || pack.len) DIFFERS("a refused check's token");
+    if (bcir_sp_checked_verify_semantic(&pack, 0xFFFFFFFFu, 0xFFFFFFFFu) != BCIR_ERR_TRUNCATED ||
+        bcir_sp_checked_for_each_segment(&pack, fold_segment, &f) != BCIR_ERR_TRUNCATED ||
+        bcir_sp_checked_for_each_block(&pack, fold_block, &f) != BCIR_ERR_TRUNCATED || f.calls)
+      DIFFERS("a refused token's walks");
+    printf("checked: refused %d\n", (int)sv);
+    return 0;
+  }
+  if (pack.data != buf || pack.len != len || !same_header(&plain, &pack.hdr)) DIFFERS("the token");
+  const uint32_t gens[4][2] = {{0xFFFFFFFFu, 0xFFFFFFFFu}, {plain.map_gen, plain.data_gen},
+                               {plain.map_gen + 1u, 0xFFFFFFFFu}, {0xFFFFFFFFu, plain.data_gen + 1u}};
+  bcir_status semantic = BCIR_OK;
+  for (int i = 0; i < 4; i++) {
+    bcir_status a = bcir_sp_verify_semantic(buf, len, gens[i][0], gens[i][1]);
+    if (bcir_sp_checked_verify_semantic(&pack, gens[i][0], gens[i][1]) != a) DIFFERS("the semantic walk");
+    if (bcir_sp_checked_generation(&pack, gens[i][0], gens[i][1]) !=
+        bcir_sp_check_generation(buf, len, gens[i][0], gens[i][1]))
+      DIFFERS("the generation check");
+    if (i == 0) semantic = a;
+  }
+  bcir_status segments = BCIR_OK, blocks = BCIR_OK;
+  for (unsigned stop = 0; stop < 2; stop++) {
+    fold_ctx p = {UINT64_C(0xCBF29CE484222325), 0, stop ? 3u : 0u}, q = p;
+    bcir_status a = bcir_sp_for_each_segment(buf, len, fold_segment, &p);
+    if (bcir_sp_checked_for_each_segment(&pack, fold_segment, &q) != a || p.h != q.h || p.calls != q.calls)
+      DIFFERS("the segment walk");
+    fold_ctx r = {UINT64_C(0xCBF29CE484222325), 0, stop ? 3u : 0u}, s = r;
+    bcir_status b = bcir_sp_for_each_block(buf, len, fold_block, &r);
+    if (bcir_sp_checked_for_each_block(&pack, fold_block, &s) != b || r.h != s.h || r.calls != s.calls)
+      DIFFERS("the block walk");
+    if (!stop) segments = a, blocks = b;
+  }
+  printf("checked: equal %d %d %d\n", (int)semantic, (int)segments, (int)blocks);
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc == 4 && strcmp(argv[1], "--time") == 0) return time_mode(argv[2], strtol(argv[3], NULL, 10));
-  if (argc < 2) { fprintf(stderr, "usage: %s <pack-file> | --time <pack-file> <reps>\n", argv[0]); return 2; }
+  if (argc == 3 && strcmp(argv[1], "--checked") == 0) return checked_mode(argv[2]);
+  if (argc < 2) { fprintf(stderr, "usage: %s <pack-file> | --time <pack-file> <reps> | --checked <pack-file>\n", argv[0]); return 2; }
   FILE *fp = fopen(argv[1], "rb");
   if (!fp) { perror("fopen"); return 2; }
   static uint8_t buf[1 << 20];

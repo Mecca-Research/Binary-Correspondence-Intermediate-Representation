@@ -1,0 +1,92 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_executor:_CC",
+    "bcir.tests.test_c_executor:test_the_checked_walks_are_the_plain_walks_on_every_pack",
+    "bcir.tests.test_c_executor:test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+    "bcir.tests.test_c_runtime:test_c_rejects_crc_valid_semantically_corrupt_packs",
+    "bcir.tests.test_c_runtime:test_c_rejects_stale_generation_vectors_per_resource",
+    "bcir.tests.test_decoder_gem:test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+      "label": "SO1 a refused check's token keeping the bytes",
+      "new": "  out->data = data;   /* a refused pack is no token: its walks refuse */",
+      "old": "  out->data = st == BCIR_OK ? data : NULL;   /* a refused pack is no token: its walks refuse */",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+      "label": "SO2 the checked walks without the length bound",
+      "new": "  return pack && pack->data;",
+      "old": "  return pack && pack->data && pack->len >= (size_t)BCIR_STREAMPACK_HEADER_SIZE + 4u;",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+      "label": "SO3 the checked walks without the buffer check",
+      "new": "  return pack && pack->len >= (size_t)BCIR_STREAMPACK_HEADER_SIZE + 4u;",
+      "old": "  return pack && pack->data && pack->len >= (size_t)BCIR_STREAMPACK_HEADER_SIZE + 4u;",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+      "label": "SO4 the checked generation check without data_gen",
+      "new": "  return sp_generation(&pack->hdr, expected_map_gen, expected_data_gen | 0xFFFFFFFFu);",
+      "old": "  return sp_generation(&pack->hdr, expected_map_gen, expected_data_gen);",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+      "label": "SO5 the checked semantic walk without R11",
+      "new": "  return sp_semantic(pack->data, pack->len, &pack->hdr, expected_map_gen | 0xFFFFFFFFu,\n                     expected_data_gen | 0xFFFFFFFFu);",
+      "old": "  return sp_semantic(pack->data, pack->len, &pack->hdr, expected_map_gen, expected_data_gen);",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+      "label": "SO6 the checked segment walk on the block walk's body",
+      "new": "  (void)fn; (void)ctx;\n  return sp_blocks(pack->data, pack->len, &pack->hdr, NULL, NULL);",
+      "old": "  return sp_segments(pack->data, pack->len, &pack->hdr, fn, ctx);",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+      "label": "SO7 a check reporting the CRC's refusal as acceptance",
+      "new": "  bcir_status st = bcir_sp_validate(data, len, &out->hdr);\n  if (st == BCIR_ERR_CRC) st = BCIR_OK;\n  out->data = st == BCIR_OK ? data : NULL;",
+      "old": "  bcir_status st = bcir_sp_validate(data, len, &out->hdr);\n  out->data = st == BCIR_OK ? data : NULL;",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+      "label": "SO8 GEM's execution without the semantic walk",
+      "new": "  bcir_status st = BCIR_OK;\n  if (st != BCIR_OK)\n    return st;\n  if (pack->hdr.n_segments",
+      "old": "  bcir_status st = bcir_sp_checked_verify_semantic(pack, 0xFFFFFFFFu, 0xFFFFFFFFu);\n  if (st != BCIR_OK)\n    return st;\n  if (pack->hdr.n_segments",
+      "path": "runtime/c/bcir_exec.c"
+    },
+    {
+      "expects": "test_c_rejects_crc_valid_semantically_corrupt_packs",
+      "label": "SO9 the R11 execution wrapper without its generation check",
+      "new": "  (void)expected_map_gen; (void)expected_data_gen;",
+      "old": "  if (st == BCIR_OK) st = bcir_sp_checked_generation(&pack, expected_map_gen, expected_data_gen);",
+      "path": "runtime/c/bcir_exec.c"
+    },
+    {
+      "expects": "test_c_rejects_stale_generation_vectors_per_resource",
+      "label": "SO10 the generation vector located without the semantic walk",
+      "new": "  /* the semantic walk dropped */",
+      "old": "  if (st == BCIR_OK) st = sp_semantic(data, len, hdr, 0xFFFFFFFFu, 0xFFFFFFFFu);",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated",
+      "label": "SO11 GEM's load without the semantic walk",
+      "new": "  /* the semantic walk dropped */",
+      "old": "  if (st == BCIR_OK) st = bcir_sp_checked_verify_semantic(&checked, 0xFFFFFFFFu, 0xFFFFFFFFu);",
+      "path": "runtime/c/bcir_decoder_gem.c"
+    }
+  ]
+}

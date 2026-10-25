@@ -265,12 +265,13 @@ int main(int argc, char **argv) {
     if (i && memcmp(run_digest, first_digest, sizeof run_digest)) runs_identical = 0;
   }
   /* The executor's trust boundary, alone: every bcir_sp_execute validates the pack (magic,
-   * version, CRC) and walks R10 before it dispatches anything -- on every run, by design. */
+   * version, CRC) and walks R10 before it dispatches anything -- on every run, by design; once
+   * a run since SP-ONCE (bcir_sp_check, then the semantic walk over the checked pack). */
   for (i = 0; i < reps; ++i) {
-    bcir_streampack_header hdr;
+    bcir_sp_checked checked;
     t0 = now_ns(NULL);
-    if (bcir_sp_validate(pack, pack_len, &hdr) != BCIR_OK ||
-        bcir_sp_verify_semantic(pack, pack_len, 0xFFFFFFFFu, 0xFFFFFFFFu) != BCIR_OK)
+    if (bcir_sp_check(pack, pack_len, &checked) != BCIR_OK ||
+        bcir_sp_checked_verify_semantic(&checked, 0xFFFFFFFFu, 0xFFFFFFFFu) != BCIR_OK)
       return 1;
     trust_ns[i] = now_ns(NULL) - t0;
   }

@@ -244,6 +244,7 @@ static int fail_load(bcir_dgem *g, bcir_host_allocator *a, uint32_t *order, int 
 int bcir_dgem_load(bcir_dgem *g, const bcir_q8_model *model, const uint8_t *pack, size_t len,
                    const bcir_host_allocator *allocator) {
   bcir_streampack_header hdr;
+  bcir_sp_checked checked;
   load_ctx lc;
   uint32_t *order = NULL;
   size_t i, n_embed = 0, n_argmax = 0, first_argmax = DGEM_NONE, last_argmax = 0;
@@ -260,8 +261,9 @@ int bcir_dgem_load(bcir_dgem *g, const bcir_q8_model *model, const uint8_t *pack
   g->pack_len = len;
   /* The semantic walk (R10 and the range gate) reads every declared record before anything is
    * sized from the header: a count the body does not carry is refused, not allocated for. */
-  st = bcir_sp_validate(pack, len, &hdr);
-  if (st == BCIR_OK) st = bcir_sp_verify_semantic(pack, len, 0xFFFFFFFFu, 0xFFFFFFFFu);
+  st = bcir_sp_check(pack, len, &checked);   /* SP-ONCE: one CRC, then every walk over it */
+  if (st == BCIR_OK) st = bcir_sp_checked_verify_semantic(&checked, 0xFFFFFFFFu, 0xFFFFFFFFu);
+  hdr = checked.hdr;
   if (st != BCIR_OK) {
     g->pack_status = st;
     return fail_load(g, &g->allocator, NULL, BCIR_DGEM_E_PACK);
@@ -276,14 +278,14 @@ int bcir_dgem_load(bcir_dgem *g, const bcir_q8_model *model, const uint8_t *pack
   lc.g = g;
   lc.order = order;
   lc.index = 0;
-  st = bcir_sp_for_each_segment(pack, len, on_segment, &lc);
+  st = bcir_sp_checked_for_each_segment(&checked, on_segment, &lc);
   if (st != BCIR_OK) {
     g->pack_status = st;
     return fail_load(g, &g->allocator, order, BCIR_DGEM_E_PACK);
   }
   if (lc.index != g->n_claims) return fail_load(g, &g->allocator, order, BCIR_DGEM_E_PROGRAM);
   lc.index = 0;
-  st = bcir_sp_for_each_block(pack, len, on_block, &lc);
+  st = bcir_sp_checked_for_each_block(&checked, on_block, &lc);
   if (st != BCIR_OK) {
     g->pack_status = st;
     return fail_load(g, &g->allocator, order, BCIR_DGEM_E_PACK);

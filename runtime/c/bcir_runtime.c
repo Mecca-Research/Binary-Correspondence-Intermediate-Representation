@@ -192,18 +192,17 @@ bcir_status bcir_sp_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
   return BCIR_OK;
 }
 
-bcir_status bcir_sp_for_each_segment(const uint8_t *BCIR_RESTRICT data, size_t len,
-                                     bcir_seg_fn fn, void *ctx) {
-  bcir_streampack_header hdr;
-  bcir_status st = bcir_sp_validate(data, len, &hdr);
-  if (st != BCIR_OK) return st;
-
+/* SP-ONCE: each walk is a body over the header bcir_sp_validate read from the same bytes. A plain walk
+ * validates and runs its body; a checked walk (bcir_sp_checked_*) runs it over a pack bcir_sp_check
+ * validated once -- every bound, every range gate and every verdict the same, the CRC not recomputed. */
+static bcir_status sp_segments(const uint8_t *BCIR_RESTRICT data, size_t len,
+                               const bcir_streampack_header *hdr, bcir_seg_fn fn, void *ctx) {
   cur c;
   c.d = data; c.len = len - 4u; c.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; c.err = 0;
   int invoke_callback = 1;
   c_skip_str(&c); /* source_plan */
 
-  for (uint32_t i = 0; i < hdr.n_segments && !c.err; i++) {
+  for (uint32_t i = 0; i < hdr->n_segments && !c.err; i++) {
     bcir_segment_view v;
     v.name = c_str(&c, &v.name_len);
     v.claim_id = c_u64(&c);
@@ -218,7 +217,7 @@ bcir_status bcir_sp_for_each_segment(const uint8_t *BCIR_RESTRICT data, size_t l
     c_skip_strarr(&c);  /* fence_before */
     c_skip_strarr(&c);  /* fence_after */
     /* v3 (append-only) segment-record tail: dispatch (u8) + channel (str). v1/v2 default. */
-    if (hdr.version >= 3) {
+    if (hdr->version >= 3) {
       v.dispatch = c_u8(&c);
       v.channel = c_str(&c, &v.channel_len);
     } else {
@@ -237,18 +236,29 @@ bcir_status bcir_sp_for_each_segment(const uint8_t *BCIR_RESTRICT data, size_t l
   return c.err ? c_status(&c) : BCIR_OK;
 }
 
+bcir_status bcir_sp_for_each_segment(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                     bcir_seg_fn fn, void *ctx) {
+  bcir_streampack_header hdr;
+  bcir_status st = bcir_sp_validate(data, len, &hdr);
+  return st != BCIR_OK ? st : sp_segments(data, len, &hdr, fn, ctx);
+}
+
+/* R11: a generation mismatch is a STALE pack -- rehydrate, never execute. */
+static bcir_status sp_generation(const bcir_streampack_header *hdr, uint32_t expected_map_gen,
+                                 uint32_t expected_data_gen) {
+  if (expected_map_gen != 0xFFFFFFFFu && hdr->map_gen != expected_map_gen)
+    return BCIR_ERR_STALE;
+  if (expected_data_gen != 0xFFFFFFFFu && hdr->data_gen != expected_data_gen)
+    return BCIR_ERR_STALE;
+  return BCIR_OK;
+}
+
 bcir_status bcir_sp_check_generation(const uint8_t *BCIR_RESTRICT data, size_t len,
                                      uint32_t expected_map_gen,
                                      uint32_t expected_data_gen) {
   bcir_streampack_header hdr;
   bcir_status st = bcir_sp_validate(data, len, &hdr);
-  if (st != BCIR_OK) return st;
-  /* R11: a generation mismatch is a STALE pack -- rehydrate, never execute. */
-  if (expected_map_gen != 0xFFFFFFFFu && hdr.map_gen != expected_map_gen)
-    return BCIR_ERR_STALE;
-  if (expected_data_gen != 0xFFFFFFFFu && hdr.data_gen != expected_data_gen)
-    return BCIR_ERR_STALE;
-  return BCIR_OK;
+  return st != BCIR_OK ? st : sp_generation(&hdr, expected_map_gen, expected_data_gen);
 }
 
 /* --- R10 provenance walk (freestanding; second pass over the decoded body) ---
@@ -303,19 +313,15 @@ uint64_t bcir_block_stride(const bcir_block_view *block, uint16_t i) {
              ? rd64(block->strides + (size_t)i * 8u) : 0u;
 }
 
-bcir_status bcir_sp_for_each_block(const uint8_t *BCIR_RESTRICT data, size_t len,
-                                   bcir_block_fn fn, void *ctx) {
-  bcir_streampack_header hdr;
-  bcir_status st = bcir_sp_validate(data, len, &hdr);
-  if (st != BCIR_OK) return st;
-
+static bcir_status sp_blocks(const uint8_t *BCIR_RESTRICT data, size_t len,
+                             const bcir_streampack_header *hdr, bcir_block_fn fn, void *ctx) {
   cur c;
   c.d = data; c.len = len - 4u; c.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; c.err = 0;
   int invoke_callback = 1;
   c_skip_str(&c); /* source_plan */
-  for (uint32_t i = 0; i < hdr.n_segments && !c.err; i++) skip_segment(&c, hdr.version);
-  for (uint32_t i = 0; i < hdr.n_prefetches && !c.err; i++) skip_prefetch(&c, hdr.version);
-  for (uint32_t i = 0; i < hdr.n_blocks && !c.err; i++) {
+  for (uint32_t i = 0; i < hdr->n_segments && !c.err; i++) skip_segment(&c, hdr->version);
+  for (uint32_t i = 0; i < hdr->n_prefetches && !c.err; i++) skip_prefetch(&c, hdr->version);
+  for (uint32_t i = 0; i < hdr->n_blocks && !c.err; i++) {
     bcir_block_view b;
     b.base = c_u64(&c);
     b.count = c_u64(&c);
@@ -325,6 +331,13 @@ bcir_status bcir_sp_for_each_block(const uint8_t *BCIR_RESTRICT data, size_t len
     if (invoke_callback && fn && fn(&b, ctx)) invoke_callback = 0;
   }
   return c.err ? c_status(&c) : BCIR_OK;
+}
+
+bcir_status bcir_sp_for_each_block(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                   bcir_block_fn fn, void *ctx) {
+  bcir_streampack_header hdr;
+  bcir_status st = bcir_sp_validate(data, len, &hdr);
+  return st != BCIR_OK ? st : sp_blocks(data, len, &hdr, fn, ctx);
 }
 
 /* A StreamPack executes each claim at most once. Re-walk only the already-validated
@@ -448,22 +461,16 @@ static int targets_cover_read(const uint8_t *targets, uint16_t n_targets,
   return 0;
 }
 
-bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t len,
-                                    uint32_t expected_map_gen,
-                                    uint32_t expected_data_gen) {
-  bcir_streampack_header hdr;
-  bcir_status st = bcir_sp_validate(data, len, &hdr);   /* magic + version + CRC + bounds */
-  if (st != BCIR_OK) return st;
-
+static bcir_status sp_semantic(const uint8_t *BCIR_RESTRICT data, size_t len,
+                               const bcir_streampack_header *hdr, uint32_t expected_map_gen,
+                               uint32_t expected_data_gen) {
   /* R11 (staleness): a generation mismatch is a stale pack -- reject, do not execute. */
-  if (expected_map_gen != 0xFFFFFFFFu && hdr.map_gen != expected_map_gen)
-    return BCIR_ERR_STALE;
-  if (expected_data_gen != 0xFFFFFFFFu && hdr.data_gen != expected_data_gen)
-    return BCIR_ERR_STALE;
+  bcir_status st = sp_generation(hdr, expected_map_gen, expected_data_gen);
+  if (st != BCIR_OK) return st;
 
   /* R10 well-formedness: pipeline_depth >= 1; the per-
    * prefetch buffers (1|2) is checked as the prefetch stream is walked below. */
-  if (hdr.pipeline_depth < 1) return BCIR_ERR_PROVENANCE;
+  if (hdr->pipeline_depth < 1) return BCIR_ERR_PROVENANCE;
 
   const size_t body_len = len - 4u;
 
@@ -471,19 +478,19 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
    * streams (bounds-checked). The body is source_plan, segments, prefetches, blocks, trace. */
   cur c; c.d = data; c.len = body_len; c.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; c.err = 0;
   c_skip_str(&c);   /* source_plan */
-  for (uint32_t i = 0; i < hdr.n_segments && !c.err; i++) skip_segment(&c, hdr.version);
+  for (uint32_t i = 0; i < hdr->n_segments && !c.err; i++) skip_segment(&c, hdr->version);
   if (c.err) return c_status(&c);
   size_t pf_start = c.pos;
   /* validate prefetch buffers (1|2) while skipping to the blocks */
   const char *pf_last = 0;         /* the shortlex-greatest name so far */
   uint16_t pf_last_len = 0;
-  for (uint32_t i = 0; i < hdr.n_prefetches && !c.err; i++) {
+  for (uint32_t i = 0; i < hdr->n_prefetches && !c.err; i++) {
     uint16_t name_len;
     const char *name = c_str(&c, &name_len);
     if (!c.err) {
       if (i == 0 || shortlex_after(name, name_len, pf_last, pf_last_len)) {
         pf_last = name; pf_last_len = name_len;  /* repeats no earlier name */
-      } else if (prefetch_has_name(data, body_len, pf_start, i, hdr.version, name, name_len)) {
+      } else if (prefetch_has_name(data, body_len, pf_start, i, hdr->version, name, name_len)) {
         return BCIR_ERR_PROVENANCE;  /* duplicate names make target binding ambiguous */
       }
     }
@@ -491,13 +498,13 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
     { uint16_t n; (void)c_u32arr(&c, &n); }  /* targets */
     c_skip_str(&c);                /* hint */
     c_skip_str(&c);                /* pattern */
-    if (hdr.version >= 2) {
+    if (hdr->version >= 2) {
       uint8_t buffers = c_u8(&c);
       if (!c.err && buffers != 1u && buffers != 2u) return BCIR_ERR_PROVENANCE;
     }
   }
   if (c.err) return c_status(&c);
-  for (uint32_t i = 0; i < hdr.n_blocks && !c.err; i++) {
+  for (uint32_t i = 0; i < hdr->n_blocks && !c.err; i++) {
     c_skip(&c, 16);                /* base u64 + count u64 */
     { uint16_t n = c_u16(&c);      /* strides u64_array */
       c_skip(&c, (size_t)n * 8u); }
@@ -508,7 +515,7 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
    * authenticates bytes, not their schema membership: accepting undeclared suffix bytes gives two
    * byte-distinct artifacts the same decoded meaning and lets future parsers disagree. */
   uint64_t trace_max = 0;           /* the greatest claim id traced so far */
-  for (uint32_t i = 0; i < hdr.n_trace && !c.err; i++) {
+  for (uint32_t i = 0; i < hdr->n_trace && !c.err; i++) {
     uint64_t cid = c_u64(&c);
     if (c.err) break;
     if (i == 0 || cid > trace_max) {
@@ -525,10 +532,10 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
    * the header map_gen/data_gen exactly its maxima. The header tags a v1-v3 reader sees are
    * a SUMMARY of the vector; two sources of truth that may disagree are a second spelling
    * of a stale pack (the Python decoder applies the same predicate). */
-  if (hdr.version >= 4) {
+  if (hdr->version >= 4) {
     uint32_t prev = 0, vmap = 0, vdata = 0;
     int have_prev = 0;
-    for (uint32_t i = 0; i < hdr.n_gens && !c.err; i++) {
+    for (uint32_t i = 0; i < hdr->n_gens && !c.err; i++) {
       uint32_t rid = c_u32(&c), mg = c_u32(&c), dg = c_u32(&c);
       if (c.err) break;
       if (have_prev && rid <= prev) return BCIR_ERR_GENERATION;
@@ -537,7 +544,7 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
       if (dg > vdata) vdata = dg;
     }
     if (c.err) return c_status(&c);
-    if (hdr.n_gens != 0 && (vmap != hdr.map_gen || vdata != hdr.data_gen))
+    if (hdr->n_gens != 0 && (vmap != hdr->map_gen || vdata != hdr->data_gen))
       return BCIR_ERR_GENERATION;
   }
   if (c.pos != body_len) return BCIR_ERR_TRAILING;
@@ -548,7 +555,7 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
   uint64_t seg_max = 0;             /* the greatest segment claim id so far */
   uint32_t trace_next = 0;          /* the trace record after the previous match */
   pf_cursor pf_next; pf_next.pos = pf_start; pf_next.index = 0;
-  for (uint32_t i = 0; i < hdr.n_segments && !s.err; i++) {
+  for (uint32_t i = 0; i < hdr->n_segments && !s.err; i++) {
     bcir_segment_view v;
     v.name = c_str(&s, &v.name_len);
     v.claim_id = c_u64(&s);
@@ -562,23 +569,23 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
     v.prefetch = c_str(&s, &v.prefetch_len);
     c_skip_strarr(&s);  /* fence_before */
     c_skip_strarr(&s);  /* fence_after */
-    if (hdr.version >= 3) { v.dispatch = c_u8(&s); v.channel = c_str(&s, &v.channel_len); }
+    if (hdr->version >= 3) { v.dispatch = c_u8(&s); v.channel = c_str(&s, &v.channel_len); }
     else { v.dispatch = (uint8_t)BCIR_DISPATCH_CORE; v.channel = BCIR_DEFAULT_CHANNEL; v.channel_len = BCIR_DEFAULT_CHANNEL_LEN; }
     if (s.err) return c_status(&s);
     bcir_status rg = seg_range_ok(&v);
     if (rg != BCIR_OK) return rg;
     if (i == 0 || v.claim_id > seg_max)
       seg_max = v.claim_id;         /* repeats no earlier segment's claim */
-    else if (segment_claim_seen_before(data, body_len, hdr.version, i, v.claim_id))
+    else if (segment_claim_seen_before(data, body_len, hdr->version, i, v.claim_id))
       return BCIR_ERR_PROVENANCE;
     /* R10: every segment maps back to a live trace note (no dangling/redirected claim_id). */
-    if (!trace_find_claim(data, trace_start, hdr.n_trace, v.claim_id, &trace_next))
+    if (!trace_find_claim(data, trace_start, hdr->n_trace, v.claim_id, &trace_next))
       return BCIR_ERR_PROVENANCE;
     /* R10: a declared prefetch name must resolve to a prefetch record... */
     if (v.prefetch_len > 0) {
       const uint8_t *targets = 0;
       uint16_t n_targets = 0;
-      if (!prefetch_find(data, body_len, hdr.version, pf_start, hdr.n_prefetches, &pf_next,
+      if (!prefetch_find(data, body_len, hdr->version, pf_start, hdr->n_prefetches, &pf_next,
                          v.prefetch, v.prefetch_len, &targets, &n_targets))
         return BCIR_ERR_PROVENANCE;
       /* ...and that prefetch must actually feed this segment (cover >= 1 read RID), so a
@@ -590,15 +597,65 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
   return BCIR_OK;
 }
 
+bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                    uint32_t expected_map_gen,
+                                    uint32_t expected_data_gen) {
+  bcir_streampack_header hdr;
+  bcir_status st = bcir_sp_validate(data, len, &hdr);   /* magic + version + CRC + bounds */
+  return st != BCIR_OK ? st : sp_semantic(data, len, &hdr, expected_map_gen, expected_data_gen);
+}
+
+/* --- SP-ONCE: a pack checked once, walked without recomputing its CRC -------------------- */
+
+bcir_status bcir_sp_check(const uint8_t *BCIR_RESTRICT data, size_t len,
+                          bcir_sp_checked *BCIR_RESTRICT out) {
+  if (!out) return bcir_sp_validate(data, len, NULL);
+  bcir_status st = bcir_sp_validate(data, len, &out->hdr);
+  out->data = st == BCIR_OK ? data : NULL;   /* a refused pack is no token: its walks refuse */
+  out->len = st == BCIR_OK ? len : 0u;
+  return st;
+}
+
+/* What every body assumes of its bytes besides their CRC: a buffer, and one long enough for a
+ * header and the trailer (the body's cursor ends 4 octets short). A token bcir_sp_check did
+ * not fill -- or one it refused -- fails here, never reads. */
+static int sp_checked_ok(const bcir_sp_checked *pack) {
+  return pack && pack->data && pack->len >= (size_t)BCIR_STREAMPACK_HEADER_SIZE + 4u;
+}
+
+bcir_status bcir_sp_checked_verify_semantic(const bcir_sp_checked *BCIR_RESTRICT pack,
+                                            uint32_t expected_map_gen,
+                                            uint32_t expected_data_gen) {
+  if (!sp_checked_ok(pack)) return BCIR_ERR_TRUNCATED;
+  return sp_semantic(pack->data, pack->len, &pack->hdr, expected_map_gen, expected_data_gen);
+}
+
+bcir_status bcir_sp_checked_generation(const bcir_sp_checked *BCIR_RESTRICT pack,
+                                       uint32_t expected_map_gen, uint32_t expected_data_gen) {
+  if (!sp_checked_ok(pack)) return BCIR_ERR_TRUNCATED;
+  return sp_generation(&pack->hdr, expected_map_gen, expected_data_gen);
+}
+
+bcir_status bcir_sp_checked_for_each_segment(const bcir_sp_checked *BCIR_RESTRICT pack,
+                                             bcir_seg_fn fn, void *ctx) {
+  if (!sp_checked_ok(pack)) return BCIR_ERR_TRUNCATED;
+  return sp_segments(pack->data, pack->len, &pack->hdr, fn, ctx);
+}
+
+bcir_status bcir_sp_checked_for_each_block(const bcir_sp_checked *BCIR_RESTRICT pack,
+                                           bcir_block_fn fn, void *ctx) {
+  if (!sp_checked_ok(pack)) return BCIR_ERR_TRUNCATED;
+  return sp_blocks(pack->data, pack->len, &pack->hdr, fn, ctx);
+}
+
 /* --- v4: the per-resource generation vector (R11) ----------------------------------- */
 
 /* The vector is the body's tail (verified above to end exactly at the CRC), so after the
  * semantic pass it is located by arithmetic, not by a third walk. */
 static bcir_status locate_generations(const uint8_t *BCIR_RESTRICT data, size_t len,
                                       bcir_streampack_header *hdr, size_t *start) {
-  bcir_status st = bcir_sp_verify_semantic(data, len, 0xFFFFFFFFu, 0xFFFFFFFFu);
-  if (st != BCIR_OK) return st;
-  st = bcir_sp_validate(data, len, hdr);
+  bcir_status st = bcir_sp_validate(data, len, hdr);
+  if (st == BCIR_OK) st = sp_semantic(data, len, hdr, 0xFFFFFFFFu, 0xFFFFFFFFu);
   if (st != BCIR_OK) return st;
   *start = 0;
   if (hdr->version < 4 || hdr->n_gens == 0) return BCIR_OK;

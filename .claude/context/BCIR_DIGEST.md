@@ -231,7 +231,7 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 ### STATUS.md counts (generated source of truth)
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **4697** across 333 files |
+| Static Python `test_*` function inventory | **4698** across 333 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **133** |
 | Static registered-pass inventory | **37** |
 | Static MLIR fixture inventory (`mlir/test/`) | **133** files; 406 `expected-error` markers |
@@ -291,7 +291,7 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 - **docs/kernel/BCIR_PLANNER_ABI.md** (352L): Conventions · BKPI — the planner input · BKPR — the realization · The planner, step by step · BKPB — the binding, and the native hydrate (CXX4) · Gates · Not claimed
 - **docs/kernel/BCIR_PLAN_SIGNATURE_ABI.md** (97L): Why detached, and not an ExecutionPlan v4 record · PlanStatementV1 (272 bytes, little-endian) · TrustStoreV1 (8 + 56n bytes, little-endian) · The verdict · Evidence
 - **docs/kernel/BCIR_SHARD_MANIFEST_ABI.md** (177L): Conventions · What shards · The frame and the shards · The manifest · Wire laws (in this order, both rails) · Reassembly: one total predicate · Admission at the node · Gates · Relation to the other surfaces · Not claimed
-- **docs/kernel/BCIR_STREAMPACK_ABI.md** (229L): Conventions · Header (64 bytes, cache-line aligned) · Body (sequential, length-prefixed) · Trailer · v2 (append-only): pipelined phases + double-buffer prefetch · v3 (append-only): on-wire segment dispatch + channel · v4 (append-only): per-resource generation vectors (R11) · Semantic trust boundary (R10/R11 in C) · Versioning (the freeze) · Why a frozen ABI now
+- **docs/kernel/BCIR_STREAMPACK_ABI.md** (239L): Conventions · Header (64 bytes, cache-line aligned) · Body (sequential, length-prefixed) · Trailer · v2 (append-only): pipelined phases + double-buffer prefetch · v3 (append-only): on-wire segment dispatch + channel · v4 (append-only): per-resource generation vectors (R11) · Semantic trust boundary (R10/R11 in C) · Versioning (the freeze) · Why a frozen ABI now
 - **docs/kernel/BCIR_UART_DRIVER_BLUEPRINT.md** (1050L): 0. How to use this document (for the implementing model) · 1. The normative 16550 device model · 2. The variant matrix (what the registry must parameterize) · 3. Field-reality quirks (research; not in any datasheet) · 4. Architecture: how each piece maps onto existing BCIR mach · 5. The build slices · 6. Performance model and gates (what "MAX performance" means · 7. ML placement summary (the compliance card) · 8. Simulated-16550 behavioral contract (condensed; the sim t · 9. Deferred items (and why) · 10. Process requirements (restated, with anchors) · 11. Acceptance checklist (the definition of done for the pro
 - **docs/kernel/HARDWARE_VALIDATION.md** (109L): What IS validated here (real, measured — `bcir/tests/test_si · What is BLOCKED in this sandbox (and why) · The rig required for FULL hardware validation · The runbook (push-button) · Honest status line
 - **docs/kernel/HETEROGENEOUS_CHANNELS.md** (152L): The problem it solves · The abstraction (`bcir/channels.py`) · The unified core — every channel plans the same way · Heterogeneous orchestration — one binary graph across the to · Cross-device placement cost (fabric/sync) · Adding a backend (the extension path) · Status
