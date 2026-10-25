@@ -1,5 +1,6 @@
 /*===- bcir_q8_model.c - portable BCIRQ8 v1 loader ----------------------===*/
 #include "bcir_q8_model.h"
+#include "bcir_crc32.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -61,15 +62,10 @@ static void set_error(char *out, size_t cap, const char *fmt, ...) {
   out[cap - 1] = '\0';
 }
 
+/* zlib's CRC-32 state carried over `size` bytes: bcir_crc32.h's eight-bytes-a-step form (CRC-SLICE; the bitwise
+ * loop before it took eight dependent steps a byte over the whole body and every tensor) */
 static uint32_t crc_update(uint32_t state, const unsigned char *data, size_t size) {
-  size_t i;
-  int bit;
-  for (i = 0; i < size; ++i) {
-    state ^= data[i];
-    for (bit = 0; bit < 8; ++bit)
-      state = (state >> 1) ^ (0xEDB88320u & (0u - (state & 1u)));
-  }
-  return state;
+  return bcir_crc32_step(state, data, size);
 }
 
 static uint32_t crc32_bytes(const unsigned char *data, size_t size) {

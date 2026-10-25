@@ -235,7 +235,7 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **133** |
 | Static registered-pass inventory | **37** |
 | Static MLIR fixture inventory (`mlir/test/`) | **133** files; 406 `expected-error` markers |
-| Static runtime C source/header inventory (`runtime/c/`) | **411** files |
+| Static runtime C source/header inventory (`runtime/c/`) | **412** files |
 | Verifier-law negative-fixture tag inventory | **R1–R25** (25/25 present) |
 | Registered hardware-channel inventory | **9** (cpu, fpga, gpu, memory, storage) |
 | R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15 | R16 | R17 | R18 | R19 | R20 | R21 | R22 | R23 | R24 | R25 |
