@@ -337,40 +337,42 @@ static void q8_matvec_lanes(int instance, const double *input, size_t input_coun
 }
 #endif
 
-int bcir_ai_q8_matvec_f64_instance(
-    int instance, const double *input, size_t input_count, const uint8_t *codes,
+/* Instance 1, the portable loops: the tree before Q8-LANES' prevalidated entries, byte for byte, as functions of
+ * their own that are never inlined into the dispatching entries -- there the vector instances' code took their
+ * registers, and clang's matvec reloaded three of its bases from the stack a term (x1.2 of its time). */
+#if defined(__GNUC__) || defined(__clang__)
+#define Q8_PORTABLE static __attribute__((noinline))
+#elif defined(_MSC_VER)
+#define Q8_PORTABLE static __declspec(noinline)
+#else
+#define Q8_PORTABLE static
+#endif
+
+Q8_PORTABLE int q8_matvec_portable(
+    const double *input, size_t input_count, const uint8_t *codes,
     size_t code_count, const uint8_t *exponents_le, size_t exponent_count,
     size_t output_count, size_t group_size, double *output) {
   size_t elements, groups, index, input_index, output_index, next_group;
   double scale;
-  instance = q8_instance(instance);
   if (!q8_shape(input_count, output_count, group_size, &elements, &groups) ||
       !q8_input_validate(input, input_count) || codes == NULL ||
       exponents_le == NULL || output == NULL || code_count < elements ||
-      exponent_count < groups || !instance) return BCIR_AI_INVALID_ARGUMENT;
-  Q8_SAW(instance);
-#ifdef BCIR_AI_DISPATCH
-  if (instance != 1) {
-    q8_matvec_lanes(instance, input, input_count, codes, exponents_le, output_count, group_size, output);
-  } else
-#endif
-  {
-    for (output_index = 0u; output_index < output_count; ++output_index)
-      output[output_index] = 0.0;
-    index = 0u;
-    next_group = group_size;
-    if (next_group > elements) next_group = elements;
-    scale = ldexp(1.0, exponent_le(exponents_le, 0u));
-    for (input_index = 0u; input_index < input_count; ++input_index) {
-      for (output_index = 0u; output_index < output_count; ++output_index, ++index) {
-        int code = codes[index] >= UINT8_C(0x80) ? (int)codes[index] - 256 : (int)codes[index];
-        output[output_index] += input[input_index] * ((double)code * scale);
-        if (index + 1u == next_group && index + 1u < elements) {
-          size_t group = (index + 1u) / group_size;
-          next_group = index + 1u + group_size;
-          if (next_group > elements) next_group = elements;
-          scale = ldexp(1.0, exponent_le(exponents_le, group));
-        }
+      exponent_count < groups) return BCIR_AI_INVALID_ARGUMENT;
+  for (output_index = 0u; output_index < output_count; ++output_index)
+    output[output_index] = 0.0;
+  index = 0u;
+  next_group = group_size;
+  if (next_group > elements) next_group = elements;
+  scale = ldexp(1.0, exponent_le(exponents_le, 0u));
+  for (input_index = 0u; input_index < input_count; ++input_index) {
+    for (output_index = 0u; output_index < output_count; ++output_index, ++index) {
+      int code = codes[index] >= UINT8_C(0x80) ? (int)codes[index] - 256 : (int)codes[index];
+      output[output_index] += input[input_index] * ((double)code * scale);
+      if (index + 1u == next_group && index + 1u < elements) {
+        size_t group = (index + 1u) / group_size;
+        next_group = index + 1u + group_size;
+        if (next_group > elements) next_group = elements;
+        scale = ldexp(1.0, exponent_le(exponents_le, group));
       }
     }
   }
@@ -381,6 +383,39 @@ int bcir_ai_q8_matvec_f64_instance(
     }
   }
   return BCIR_AI_OK;
+}
+
+int bcir_ai_q8_matvec_f64_instance(
+    int instance, const double *input, size_t input_count, const uint8_t *codes,
+    size_t code_count, const uint8_t *exponents_le, size_t exponent_count,
+    size_t output_count, size_t group_size, double *output) {
+  instance = q8_instance(instance);
+  if (instance == 1) {
+    int status = q8_matvec_portable(input, input_count, codes, code_count, exponents_le, exponent_count,
+                                    output_count, group_size, output);
+    if (status != BCIR_AI_INVALID_ARGUMENT) Q8_SAW(1);
+    return status;
+  }
+#ifdef BCIR_AI_DISPATCH
+  {
+    size_t elements, groups, output_index;
+    if (!q8_shape(input_count, output_count, group_size, &elements, &groups) ||
+        !q8_input_validate(input, input_count) || codes == NULL ||
+        exponents_le == NULL || output == NULL || code_count < elements ||
+        exponent_count < groups || !instance) return BCIR_AI_INVALID_ARGUMENT;
+    Q8_SAW(instance);
+    q8_matvec_lanes(instance, input, input_count, codes, exponents_le, output_count, group_size, output);
+    for (output_index = 0u; output_index < output_count; ++output_index) {
+      if (!isfinite(output[output_index])) {
+        memset(output, 0, output_count * sizeof *output);
+        return BCIR_AI_INVALID_NUMBER;
+      }
+    }
+    return BCIR_AI_OK;
+  }
+#else
+  return BCIR_AI_INVALID_ARGUMENT; /* without the dispatch only instance 1 is admitted */
+#endif
 }
 
 int bcir_ai_q8_matvec_f64_prevalidated(
@@ -566,23 +601,16 @@ static int q8_rows_lanes(int instance, const double *input, size_t input_count, 
 }
 #endif
 
-int bcir_ai_q8_rows_dot_f64_instance(
-    int instance, const double *input, size_t input_count, const uint8_t *codes,
+Q8_PORTABLE int q8_rows_dot_portable(
+    const double *input, size_t input_count, const uint8_t *codes,
     size_t code_count, const uint8_t *exponents_le, size_t exponent_count,
     size_t output_count, size_t group_size, double *output) {
   size_t elements, groups, row, coordinate, next_group = 0u;
   double scale = 0.0;
-  instance = q8_instance(instance);
   if (!q8_shape(input_count, output_count, group_size, &elements, &groups) ||
       !q8_input_validate(input, input_count) || codes == NULL ||
       exponents_le == NULL || output == NULL || code_count < elements ||
-      exponent_count < groups || !instance) return BCIR_AI_INVALID_ARGUMENT;
-  Q8_SAW(instance);
-#ifdef BCIR_AI_DISPATCH
-  if (instance != 1)
-    return q8_rows_lanes(instance, input, input_count, codes, exponents_le, output_count, group_size,
-                         output);
-#endif
+      exponent_count < groups) return BCIR_AI_INVALID_ARGUMENT;
   for (row = 0u; row < output_count; ++row) {
     size_t base = row * input_count;
     double total = 0.0;
@@ -603,6 +631,33 @@ int bcir_ai_q8_rows_dot_f64_instance(
     output[row] = total;
   }
   return BCIR_AI_OK;
+}
+
+int bcir_ai_q8_rows_dot_f64_instance(
+    int instance, const double *input, size_t input_count, const uint8_t *codes,
+    size_t code_count, const uint8_t *exponents_le, size_t exponent_count,
+    size_t output_count, size_t group_size, double *output) {
+  instance = q8_instance(instance);
+  if (instance == 1) {
+    int status = q8_rows_dot_portable(input, input_count, codes, code_count, exponents_le, exponent_count,
+                                      output_count, group_size, output);
+    if (status != BCIR_AI_INVALID_ARGUMENT) Q8_SAW(1);
+    return status;
+  }
+#ifdef BCIR_AI_DISPATCH
+  {
+    size_t elements, groups;
+    if (!q8_shape(input_count, output_count, group_size, &elements, &groups) ||
+        !q8_input_validate(input, input_count) || codes == NULL ||
+        exponents_le == NULL || output == NULL || code_count < elements ||
+        exponent_count < groups || !instance) return BCIR_AI_INVALID_ARGUMENT;
+    Q8_SAW(instance);
+    return q8_rows_lanes(instance, input, input_count, codes, exponents_le, output_count, group_size,
+                         output);
+  }
+#else
+  return BCIR_AI_INVALID_ARGUMENT; /* without the dispatch only instance 1 is admitted */
+#endif
 }
 
 int bcir_ai_q8_rows_dot_f64_prevalidated(
