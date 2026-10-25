@@ -496,7 +496,11 @@ def test_a_measurement_is_a_table_at_the_trainers_shape():
                 assert set(r["total_ns"]) == arms and set(r["site_ns"]) == readings
                 for name, ns in r["site_ns"].items():
                     assert 0 < ns < r["total_ns"][name.split("@")[0]], (name, r)
-                assert r["site_ns"]["default@qkv.vjp"] != r["site_ns"][f"default@{HEAD_SITE}"]
+            # and each kind's reading of the default arm its own launches: two kinds' sums may tie
+            # in a round where the clock ticks coarsely (CI's aarch64 runner read them equal once),
+            # but a reading of the same launches ties in every round
+            qkv = [r["site_ns"]["default@qkv.vjp"] for r in raw]
+            assert qkv != [r["site_ns"][f"default@{HEAD_SITE}"] for r in raw], raw
             assert ChoiceTable.from_json(table.to_json()) == table
             sites = choose(table, case.spec, trainer_shape(trainer))
             step_program(case.spec, case.batch, case.time, **trainer.program_decisions(),
