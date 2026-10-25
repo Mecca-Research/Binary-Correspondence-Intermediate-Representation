@@ -125,6 +125,30 @@ program on hydrated packs and the same request ran 5-14x the monolithic runner; 
 linear with identical verdicts and dispatch order
 (`test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims`).
 
+**Q8-LANES** (2026-10-25). The C decoder's two matrix kernels -- `bcir_ai_kernels.c`'s BCIRQ8 matvec and row dots,
+most of the request above -- now run several outputs' chains side by side: the matvec a row's columns in the vector
+lanes, the head's row dots eight rows a vector over their codes transposed eight by eight, each output's chain the
+portable loop's own, term for term in its order (instances 1 portable, 2 AVX2, 4 AVX-512, chosen at run time; under
+valgrind the AVX2 instance runs, AVX-512 hidden from it). On one host (a 2.3 GHz Xeon with AVX-512, clang 18), a lab
+model of the train rail's recipe (BCIR-Corpus-860K) and its card's request, each tree's own run (`--require-callgrind`;
+[measurements/2026-10-25/q8-lanes/](research/measurements/2026-10-25/q8-lanes/README.json)):
+
+| | before | after |
+|---|---|---|
+| monolithic, whole request (ms) | 52.10 | 12.81 |
+| GEM, whole request (ms) | 55.97 | 17.11 |
+| GEM / monolithic (gated at 1.5) | 1.074 | 1.336 |
+| per generated token, median (ms) | 0.972 | 0.234 |
+| tokens per second | 791 | 2,828 |
+| `matvec` / `matvec_add` / `head` (ms) | 31.95 / 15.88 / 5.54 | 5.34 / 2.80 / 1.74 |
+
+Every token and logit is the same: C GEM's and C monolithic's logits share one SHA-256 on both trees
+(`2a18b8613b6b60e4...`), and the C and oracle logits differ by 0. The ratio row rises because GEM's trust boundary -- the
+pack's CRC and the R10 walk -- is a fixed cost the faster kernels no longer hide: the band is a dispatch-overhead
+check, and GEM's own overhead (GEM less monolithic) is 3.9 ms before and 4.3 ms after. Under callgrind (the AVX2
+instance) a GEM request takes 922 M instructions before and 231 M after, 252 M and 64 M data references,
+with the same D1 misses.
+
 **Memory traffic.** Planned (`program_traffic`) and counted (the C kernels' counters) agree op for
 op: 57,539,312 octets read and 4,236,480 written per request. Simulated with callgrind's cache
 model (I1/D1 32 KiB 8-way, LL 8 MiB 16-way, 64-octet lines, fixed so reports compare across

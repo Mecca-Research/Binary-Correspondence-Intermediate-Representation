@@ -1,0 +1,121 @@
+{
+ "what": "Q8-LANES (2026-10-25): runtime/c/bcir_ai_kernels.c's BCIRQ8 matvec and row dots on three instances -- 1 the portable loops, as they were; 2 AVX2; 4 AVX-512 -- chosen at run time, each output's chain the portable loop's own, bit for bit; measured on the committed tree against the tree before, with NEXT-5 (the survey that placed it) on the tree before",
+ "host": "Intel(R) Xeon(R) Processor @ 2.30GHz, 4 vCPU (4 cores, one thread each; AVX-512F, AMX), 2 MiB of L2 a core, 260 MiB of L3; Linux 6.18; clang 18.1.3 and GCC 13.3 (-std=c11 -O2 -ffp-contract=off, the qualification's flags); Python 3.11.15; valgrind's callgrind for the simulated rows",
+ "tree": {
+  "before": "c1a881c967961ac2e5c0584fb4fe84695c9da750",
+  "after": "ee6bac12162d68ba68f61b5e05740ed94122f3e8"
+ },
+ "records": {
+  "portable.json": "portable_check.sh: the portable loops' instructions under clang and gcc against the tree before's prevalidated entries, every one but the alignment padding and GCC's endbr64; GCC's kernel A/B at its default loop alignment and with loops aligned to 32 bytes, in both link orders",
+  "kernels-b444807.json": "the kernel A/B on Q8-LANES' first commit (b444807) against the tree before: its portable instance slower than the tree before's loops, which the second commit fixes -- made by this directory's q8_ab.c from the first run of measure_lanes.sh, whose form then named the tree before HEAD~1 and had no portable step",
+  "decode-b444807.json": "the decode A/B of that first run: its portable arm (a build capped at 1, the vector code dropped) holding 1",
+  "kernels.json": "q8_ab.c: each kernel at the 860K decoder's shapes and at TinyLlama-sized ones, the tree before's unit (its entry points renamed) against the tree after's on each instance and an A/A control, one process, clang and gcc; every output the tree before's bytes",
+  "decode.json": "decode_ab.py: the standalone C decoder (bcir-llama) built from each tree -- the tree after at its widest instance, capped at AVX2 and at the portable loops -- against the tree before's and an A/A control, 24 rounds, clang and gcc; every run's tokens and final logits the tree before's bytes",
+  "ops.json": "llama_ops.py: the monolithic decoder's step an operation at a time on each tree (clang, 200 tokens, the median of 5 runs)",
+  "bits.json": "bits.sh: the decoder's tokens and final logits from 7 builds of the tree after (clang and gcc at each instance cap, clang with the dispatch compiled out) against the tree before's, 2 models x 3 prompts x 4 lengths",
+  "qualification.json": "qual_summary.py over run_qualification.py --require-callgrind from each tree on the lab model: latency, the logits' agreement, the simulated cache rows, every check",
+  "faults.json": "red_sweep.py: q8-lanes.json on the tree after, and again on the witnesses before Q8-LANES (without_the_cases.py): which faults only the new witnesses catch",
+  "explore.json": "NEXT-5 on the tree before: the step's pool jobs, the GEMMs', the attention's and the loss's rates, LOSS-MAX's prototype, with the commands that ran",
+  "hashes.json": "the committed tools' and the measured sources' sha256",
+  "the tools": "measure_lanes.sh (the records' run) and the instruments it ran -- q8_ab.c, decode_ab.py, llama_ops.py, bits.sh, qual_summary.py, without_the_cases.py -- the bytes that ran; the script's host paths as placeholders (<REPO>, <SCRATCH>, <LAB>, <LAB2>), which filled in are the run copy byte for byte"
+ },
+ "verdicts": "each effect resolved where its 95% interval excludes 1 and does not meet the A/A control's",
+ "reading": {
+  "kernels": [
+   "clang matvec 128,128,32: before 18.00 us; portable x0.998 (0.979-1.018), AVX2 x0.210 (0.206-0.214), AVX-512 x0.175 (0.172-0.179); A/A x1.058 (1.031-1.085)",
+   "clang matvec 128,64,32: before 9.71 us; portable x1.027 (0.967-1.090), AVX2 x0.206 (0.200-0.212), AVX-512 x0.172 (0.168-0.176); A/A x1.015 (0.993-1.037)",
+   "clang matvec 128,344,32: before 49.13 us; portable x0.930 (0.921-0.939), AVX2 x0.214 (0.211-0.216), AVX-512 x0.177 (0.174-0.181); A/A x1.007 (0.994-1.021)",
+   "clang matvec 344,128,32: before 49.21 us; portable x0.998 (0.966-1.032), AVX2 x0.211 (0.205-0.218), AVX-512 x0.169 (0.162-0.176); A/A x1.004 (0.984-1.025)",
+   "clang rows_dot 128,1024,32: before 141.58 us; portable x0.965 (0.923-1.008), AVX2 x0.248 (0.229-0.269), AVX-512 x0.221 (0.205-0.238); A/A x0.972 (0.910-1.038)",
+   "clang matvec 2048,2048,32: before 4811.40 us; portable x0.922 (0.886-0.959), AVX2 x0.225 (0.213-0.237), AVX-512 x0.272 (0.256-0.289); A/A x1.002 (0.984-1.021)",
+   "clang matvec 2048,256,32: before 581.46 us; portable x0.999 (0.974-1.026), AVX2 x0.205 (0.200-0.211), AVX-512 x0.160 (0.154-0.165); A/A x1.003 (0.976-1.031)",
+   "clang matvec 2048,5632,32: before 13641.98 us; portable x0.911 (0.887-0.936), AVX2 x0.228 (0.221-0.234), AVX-512 x0.293 (0.266-0.322); A/A x0.996 (0.975-1.018)",
+   "clang matvec 5632,2048,32: before 13497.61 us; portable x0.936 (0.901-0.972), AVX2 x0.277 (0.254-0.303), AVX-512 x0.347 (0.293-0.410); A/A x0.997 (0.988-1.006)",
+   "clang rows_dot 2048,32000,32: before 72178.04 us; portable x1.017 (0.972-1.064), AVX2 x0.283 (0.270-0.297), AVX-512 x0.330 (0.312-0.349); A/A x0.981 (0.921-1.046)",
+   "gcc matvec 128,128,32: before 16.46 us; portable x1.092 (1.069-1.116), AVX2 x0.246 (0.241-0.252), AVX-512 x0.176 (0.173-0.179); A/A x1.028 (0.999-1.058)",
+   "gcc matvec 128,64,32: before 8.59 us; portable x1.053 (1.013-1.094), AVX2 x0.247 (0.240-0.255), AVX-512 x0.179 (0.173-0.185); A/A x0.992 (0.946-1.041)",
+   "gcc matvec 128,344,32: before 37.81 us; portable x1.218 (1.141-1.299), AVX2 x0.265 (0.236-0.299), AVX-512 x0.211 (0.192-0.232); A/A x0.997 (0.916-1.085)",
+   "gcc matvec 344,128,32: before 44.79 us; portable x1.078 (1.060-1.096), AVX2 x0.242 (0.236-0.248), AVX-512 x0.170 (0.165-0.175); A/A x1.015 (1.001-1.030)",
+   "gcc rows_dot 128,1024,32: before 145.37 us; portable x0.949 (0.917-0.983), AVX2 x0.330 (0.328-0.332), AVX-512 x0.283 (0.282-0.284); A/A x1.010 (0.995-1.025)",
+   "gcc matvec 2048,2048,32: before 3791.45 us; portable x1.183 (1.007-1.390), AVX2 x0.272 (0.239-0.310), AVX-512 x0.310 (0.280-0.343); A/A x0.979 (0.888-1.079)",
+   "gcc matvec 2048,256,32: before 552.18 us; portable x1.010 (0.941-1.084), AVX2 x0.225 (0.208-0.244), AVX-512 x0.160 (0.146-0.176); A/A x0.962 (0.903-1.025)",
+   "gcc matvec 2048,5632,32: before 10902.21 us; portable x1.058 (0.938-1.194), AVX2 x0.259 (0.224-0.299), AVX-512 x0.317 (0.260-0.387); A/A x0.920 (0.784-1.081)",
+   "gcc matvec 5632,2048,32: before 10449.66 us; portable x1.252 (1.219-1.287), AVX2 x0.328 (0.310-0.346), AVX-512 x0.373 (0.356-0.390); A/A x1.025 (0.965-1.088)",
+   "gcc rows_dot 2048,32000,32: before 77172.20 us; portable x0.915 (0.901-0.928), AVX2 x0.433 (0.412-0.455), AVX-512 x0.376 (0.357-0.396); A/A x0.970 (0.927-1.015)"
+  ],
+  "the_first_commit": [
+   "clang matvec 128,128,32: the first commit's portable instance x1.196 (1.168-1.225) of the tree before's loops (A/A x1.052 (1.024-1.080))",
+   "clang matvec 128,64,32: the first commit's portable instance x1.173 (1.138-1.209) of the tree before's loops (A/A x1.029 (1.005-1.054))",
+   "clang matvec 128,344,32: the first commit's portable instance x1.203 (1.193-1.213) of the tree before's loops (A/A x1.014 (1.005-1.023))",
+   "clang matvec 344,128,32: the first commit's portable instance x1.257 (1.209-1.308) of the tree before's loops (A/A x1.080 (0.999-1.168))",
+   "clang rows_dot 128,1024,32: the first commit's portable instance x1.077 (1.049-1.105) of the tree before's loops (A/A x0.985 (0.945-1.027))",
+   "clang matvec 2048,2048,32: the first commit's portable instance x1.191 (1.185-1.197) of the tree before's loops (A/A x1.011 (0.895-1.142))",
+   "clang matvec 2048,256,32: the first commit's portable instance x1.244 (1.161-1.332) of the tree before's loops (A/A x1.003 (0.933-1.079))",
+   "clang matvec 2048,5632,32: the first commit's portable instance x1.198 (1.188-1.208) of the tree before's loops (A/A x1.004 (0.995-1.014))",
+   "clang matvec 5632,2048,32: the first commit's portable instance x1.275 (1.140-1.425) of the tree before's loops (A/A x1.055 (0.949-1.173))",
+   "clang rows_dot 2048,32000,32: the first commit's portable instance x1.251 (1.169-1.339) of the tree before's loops (A/A x1.006 (0.921-1.098))",
+   "gcc matvec 128,128,32: the first commit's portable instance x1.045 (1.009-1.082) of the tree before's loops (A/A x1.034 (0.992-1.078))",
+   "gcc matvec 128,64,32: the first commit's portable instance x1.025 (0.994-1.058) of the tree before's loops (A/A x1.028 (0.966-1.094))",
+   "gcc matvec 128,344,32: the first commit's portable instance x1.248 (1.219-1.279) of the tree before's loops (A/A x1.008 (0.987-1.029))",
+   "gcc matvec 344,128,32: the first commit's portable instance x1.090 (1.028-1.157) of the tree before's loops (A/A x1.042 (0.971-1.119))",
+   "gcc rows_dot 128,1024,32: the first commit's portable instance x0.897 (0.849-0.947) of the tree before's loops (A/A x0.978 (0.923-1.037))",
+   "gcc matvec 2048,2048,32: the first commit's portable instance x1.264 (1.247-1.282) of the tree before's loops (A/A x1.018 (1.000-1.036))",
+   "gcc matvec 2048,256,32: the first commit's portable instance x1.121 (1.068-1.176) of the tree before's loops (A/A x0.978 (0.909-1.051))",
+   "gcc matvec 2048,5632,32: the first commit's portable instance x1.260 (1.167-1.361) of the tree before's loops (A/A x1.060 (0.956-1.175))",
+   "gcc matvec 5632,2048,32: the first commit's portable instance x1.236 (1.192-1.283) of the tree before's loops (A/A x1.036 (0.925-1.161))",
+   "gcc rows_dot 2048,32000,32: the first commit's portable instance x0.926 (0.892-0.962) of the tree before's loops (A/A x1.004 (0.953-1.058))",
+   "clang decoder capped at the portable loops (the first commit): x1.012 (0.975-1.050) a token",
+   "gcc decoder capped at the portable loops (the first commit): x0.960 (0.929-0.992) a token"
+  ],
+  "portable": [
+   "clang q8_matvec_portable: 168 instructions against the tree before's bcir_ai_q8_matvec_f64_prevalidated 168, 0 differing",
+   "clang q8_rows_dot_portable: 152 instructions against the tree before's bcir_ai_q8_rows_dot_f64_prevalidated 152, 0 differing",
+   "gcc q8_matvec_portable: 187 instructions against the tree before's bcir_ai_q8_matvec_f64_prevalidated 187, 0 differing",
+   "gcc q8_rows_dot_portable: 151 instructions against the tree before's bcir_ai_q8_rows_dot_f64_prevalidated 151, 0 differing",
+   "gcc loops aligned default, after-first: matvec 128,128,32 the portable instance x1.093 (1.068-1.119) of the tree before's (A/A x1.058 (1.022-1.095))",
+   "gcc loops aligned default, after-first: matvec 128,64,32 the portable instance x1.129 (1.103-1.156) of the tree before's (A/A x1.042 (1.000-1.087))",
+   "gcc loops aligned default, after-first: matvec 128,344,32 the portable instance x1.228 (1.210-1.247) of the tree before's (A/A x1.015 (0.989-1.041))",
+   "gcc loops aligned default, after-first: matvec 344,128,32 the portable instance x1.050 (1.034-1.065) of the tree before's (A/A x1.018 (1.002-1.034))",
+   "gcc loops aligned default, after-first: rows_dot 128,1024,32 the portable instance x0.961 (0.920-1.005) of the tree before's (A/A x1.004 (0.986-1.021))",
+   "gcc loops aligned default, before-first: matvec 128,128,32 the portable instance x1.066 (1.022-1.112) of the tree before's (A/A x0.974 (0.935-1.015))",
+   "gcc loops aligned default, before-first: matvec 128,64,32 the portable instance x1.049 (1.015-1.083) of the tree before's (A/A x0.968 (0.939-0.998))",
+   "gcc loops aligned default, before-first: matvec 128,344,32 the portable instance x1.075 (1.044-1.106) of the tree before's (A/A x0.987 (0.949-1.026))",
+   "gcc loops aligned default, before-first: matvec 344,128,32 the portable instance x1.126 (1.099-1.155) of the tree before's (A/A x0.999 (0.976-1.022))",
+   "gcc loops aligned default, before-first: rows_dot 128,1024,32 the portable instance x0.931 (0.920-0.942) of the tree before's (A/A x1.014 (0.956-1.076))",
+   "gcc loops aligned 32, after-first: matvec 128,128,32 the portable instance x0.952 (0.933-0.972) of the tree before's (A/A x1.041 (1.012-1.071))",
+   "gcc loops aligned 32, after-first: matvec 128,64,32 the portable instance x0.984 (0.962-1.006) of the tree before's (A/A x1.014 (0.987-1.042))",
+   "gcc loops aligned 32, after-first: matvec 128,344,32 the portable instance x0.933 (0.897-0.970) of the tree before's (A/A x1.008 (0.992-1.024))",
+   "gcc loops aligned 32, after-first: matvec 344,128,32 the portable instance x0.976 (0.959-0.993) of the tree before's (A/A x1.022 (0.994-1.051))",
+   "gcc loops aligned 32, after-first: rows_dot 128,1024,32 the portable instance x1.002 (0.988-1.016) of the tree before's (A/A x0.978 (0.940-1.018))",
+   "gcc loops aligned 32, before-first: matvec 128,128,32 the portable instance x0.978 (0.949-1.007) of the tree before's (A/A x0.995 (0.960-1.030))",
+   "gcc loops aligned 32, before-first: matvec 128,64,32 the portable instance x0.997 (0.974-1.022) of the tree before's (A/A x1.025 (0.993-1.058))",
+   "gcc loops aligned 32, before-first: matvec 128,344,32 the portable instance x0.977 (0.960-0.995) of the tree before's (A/A x0.984 (0.964-1.004))",
+   "gcc loops aligned 32, before-first: matvec 344,128,32 the portable instance x1.062 (0.976-1.155) of the tree before's (A/A x1.006 (0.958-1.056))",
+   "gcc loops aligned 32, before-first: rows_dot 128,1024,32 the portable instance x1.036 (1.013-1.060) of the tree before's (A/A x1.000 (0.990-1.012))"
+  ],
+  "decode": [
+   "clang: before 1.0475 ms a token (223.5 ms a 200-token request); after 0.2982 ms x0.280 (0.271-0.288), request x0.313 (0.305-0.320); after-avx2 0.3293 ms x0.314 (0.296-0.334), request x0.344 (0.328-0.362); after-portable 1.0460 ms x1.031 (0.972-1.095), request x1.023 (0.972-1.077); A/A 1.0489 ms x0.991 (0.954-1.030), request x0.991 (0.958-1.026)",
+   "gcc: before 0.9799 ms a token (217.8 ms a 200-token request); after 0.3017 ms x0.316 (0.297-0.336), request x0.372 (0.355-0.390); after-avx2 0.3399 ms x0.353 (0.333-0.374), request x0.406 (0.388-0.426); after-portable 0.9448 ms x0.981 (0.944-1.019), request x0.979 (0.947-1.012); A/A 0.9790 ms x1.022 (0.977-1.070), request x1.017 (0.977-1.059)"
+  ],
+  "operations": [
+   "before: 208.35 ms of operations over 200 tokens -- matvec 160.28 ms (76.9%), head 27.86 ms (13.4%), attention 13.09 ms (6.3%), rope 2.69 ms (1.3%), swiglu 2.27 ms (1.1%), rmsnorm 1.33 ms (0.6%), argmax 0.56 ms (0.3%), embed 0.12 ms (0.1%), residual 0.09 ms (0.0%), kv_append 0.07 ms (0.0%)",
+   "after: 60.76 ms of operations over 200 tokens -- matvec 31.54 ms (51.9%), attention 14.36 ms (23.6%), head 7.11 ms (11.7%), rope 3.06 ms (5.0%), swiglu 2.25 ms (3.7%), rmsnorm 1.52 ms (2.5%), argmax 0.63 ms (1.0%), embed 0.14 ms (0.2%), residual 0.09 ms (0.2%), kv_append 0.06 ms (0.1%)"
+  ],
+  "bits": [
+   "24 of 24 cases (2 models x 3 prompts x 4 new-token counts) every build's tokens and final logits the tree before's bytes; 7 builds of the tree after against one of the tree before"
+  ],
+  "qualification": [
+   "monolithic 52.102 -> 12.813 ms; GEM 55.971 -> 17.112 ms; GEM/monolithic 1.0743 -> 1.3355 (gated at 1.5); per token 0.9717 -> 0.2344 ms; tokens/s 790.9 -> 2827.9; first token 14.741 -> 5.776 ms; trust boundary 3.135 -> 2.943 ms",
+   "logits sha256 2a18b8613b6b60e4 before, 2a18b8613b6b60e4 after; C GEM == monolithic True / True; max |C - oracle| 0.0 / 0.0; checks 23/23 and 23/23",
+   "simulated (callgrind, the AVX2 instance after): GEM instructions 922198099 -> 230923243, data references 252415074 -> 64238058, D1 read misses 1049765 -> 1053961"
+  ],
+  "faults": [
+   "q8-lanes.json on the tree after: 22 of 22 caught by their own check",
+   "the witnesses before Q8-LANES (the harness's cases without q8_lanes_test, one C11 build, and the matrix kernels' oracle test): 5 of 22 caught (QL1, QL3, QL11, QL12, QL22); 17 only the new witnesses catch (QL2, QL4, QL5, QL6, QL7, QL8, QL9, QL10, QL13, QL14, QL15, QL16, QL17, QL18, QL19, QL20, QL21)"
+  ]
+ },
+ "reproduce": [
+  "bash measure_lanes.sh  # from <REPO> on the committed tree: HEAD Q8-LANES, HEAD~1 the tree before; the placeholders as named there",
+  "explore.json's commands, in order, on the tree before  # NEXT-5"
+ ]
+}

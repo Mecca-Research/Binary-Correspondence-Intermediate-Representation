@@ -5137,6 +5137,59 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: a gain at three K blocks (the threshold's), the widest weight adjoints' rate (KSPLIT-ROWS, measured
     and not taken), the room under the bf16 contract (its GEMMs do not split), any figure on another host;
     counter-based figures (no PMU on this VM).
+  Q8-LANES (2026-10-25): the C BCIRQ8 decoder's matrix kernels with their outputs in vector lanes, every token and
+    logit as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §30,
+    [measurements/2026-10-25/q8-lanes/](research/measurements/2026-10-25/q8-lanes/README.json)).
+  - Placed by NEXT-5's re-probe after KSPLIT-ROOM, on the tree before: the train rail's binary32 step (the corpus
+    recipe's decoder, B8/T256, four threads) is at its bounds -- every large GEMM job 94-98% busy (NEXT-4's 81% was a
+    mean over the small fold jobs), the GEMMs at their own isolated rates, the attention at 87-92% of four times its
+    one-thread rate, the loss libm's exponential most of its time, 0.6 ms of 37.9 outside the pool -- and LOSS-MAX
+    (the loss's row maximum in lanes, every value as it was) took the loss to x0.889 with eight lanes and x1.066 with
+    sixteen, some 1% of the step: measured, not taken. The C decoder the rail's model is qualified on ran its BCIRQ8
+    matvec and row dots a scalar double term at a time: 95% of the qualification's instrumented request.
+  - Q8-LANES (`b444807`, `ee6bac1`): `bcir_ai_kernels.c`'s matvec and row dots on three instances -- 1 the portable loops, as
+    they were; 2 AVX2; 4 AVX-512 -- chosen at run time on x86-64 Linux (GCC, Clang), each output's chain the portable
+    loop's own, term for term in its order, the multiplies and the add never fused: the matvec a row's columns in
+    the lanes, a run of one group at a time (AVX-512: 64 columns' sums in registers over every input row where the
+    columns are a multiple of 8 and the group a power of two of at least 8, a scale computed where the group
+    changes), the head's row dots eight rows a vector over their codes transposed eight by eight; a group's scale
+    ldexp's value, built from its bits for every normal double. `bcir_ai_q8_instances` and the `_instance` entries
+    name an instance (a refused one writes nothing); the prevalidated entries run the widest; the Python binding's
+    `q8_matvec` / `q8_rows_dot` take `instance=`. Under valgrind the AVX2 instance runs (AVX-512 hidden from it).
+  - Measured on the committed tree against the tree before (one host; clang 18 and GCC 13 at the
+    qualification's -O2): the matvec at the 860K decoder's shapes x0.17-0.21 of the tree before's time on AVX-512 and
+    x0.21-0.27 on AVX2, the head's row dots x0.22-0.28 and x0.25-0.33; the standalone C decoder's generated token
+    x0.280 (clang) and x0.316 (gcc) over 200 tokens, 1.05 -> 0.30 ms, and the 200-token request, its load included,
+    x0.313 and x0.372; the qualification's request on the lab model 52.10 -> 12.81 ms monolithic and 55.97 -> 17.11 ms
+    GEM, a generated token 0.972 -> 0.234 ms (791 -> 2,828 tokens/s), the logits one SHA-256 on both trees and 0 from
+    the oracle's, 922 M -> 231 M instructions under callgrind (the AVX2 instance); every token and final logit of 7
+    builds of the tree after (clang and gcc at each instance cap, clang with the dispatch compiled out) the tree
+    before's bytes over 2 models, 3 prompts and 4 lengths. The first commit's kernel A/B read the portable instance at
+    x1.17-1.28 of the tree before's loops under clang: inside the dispatching entry they lost their registers (clang
+    reloaded three bases a term), which a decoder capped at 1 hid, its compiler dropping the vector code. The second
+    commit (`ee6bac1`) makes them the tree before's prevalidated entries byte for byte, in functions never inlined:
+    their instructions are the tree before's under both compilers (168 and 152 under clang, 187 and 151 under GCC),
+    clang's instance holds 1, and GCC's reads x1.05-1.23 at its default loop alignment and x0.93-1.06 with loops
+    aligned to 32 bytes -- the same instructions placed differently.
+  - Witnesses: the kernel harness's `q8_lanes_test` (every admitted instance against the portable loops over 22
+    shapes -- the decoder's, the block's with its tail blocks, groups straddling rows and vectors, a group not a power
+    of two, groups under 8 -- at four exponent ranges, the format's, a narrow one, ldexp's subnormal scales and past the
+    largest double, the code 0x80 among them: 352 comparisons on an AVX-512 host; non-finite outputs zeroing every
+    output in the last block's last lane and a block's middle row; refused instances and inputs writing nothing; the
+    prevalidated entries on the widest instance under the probe, `bcir_ai_q8_instance_probe`), run by
+    `test_native_ai_c_harness_c11_and_c23` under C11, C23, C23 capped at AVX2 and with the dispatch compiled out;
+    `test_native_q8_instances_match_the_increasing_coordinate_oracle` (each admitted instance against the Python
+    oracle's loop, nine shapes); the decoder's parity tests, the qualification (C logits 0 from the oracle's, GEM and
+    monolithic one SHA-256, counted == planned traffic) and the memory-discipline gate, whose AddressSanitizer build
+    found GCC 13 giving a 64-byte-aligned local array 32 bytes on its fake stack (the kernels keep no such array).
+    `q8-lanes.json` QL1-QL22, each caught by its own check (QL2 and QL11 rewritten to build; QL21's first form, a
+    term's product rounded before its power-of-two scale, differs only under double rounding below a subnormal grid,
+    so it was replaced); the witnesses before Q8-LANES (the harness's cases without `q8_lanes_test`, one
+    build, and the matrix kernels' oracle test) catch 5 of the 22 -- the AVX-512 paths the decoder's shapes reach --
+    and the other 17 only the new witnesses.
+  - Not claimed: the attention row and the rotation (the request's next costs after the kernels), threads, any other
+    host's figures; counter-based figures (no PMU on this VM). The GEM ratio row rises (1.07 -> 1.34 under its 1.5
+    band) because GEM's trust boundary is a fixed cost the faster kernels no longer hide -- NEXT-6's.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
