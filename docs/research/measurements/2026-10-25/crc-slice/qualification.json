@@ -1,0 +1,114 @@
+{
+ "after": {
+  "c_gem_equals_monolithic": true,
+  "c_logits_sha256": "2a18b8613b6b60e4f9ff83d870d6d4a31a06693c56722237d7ce11374d9a471d",
+  "checks": {
+   "C GEM == monolithic C, bit for bit (der pack)": true,
+   "C GEM == monolithic C, bit for bit (native pack)": true,
+   "C logits within 1e-09 of the oracle's": true,
+   "GEM within 1.5x of the monolithic runner (ratio row)": true,
+   "JSON -> ASN.1 -> GEM: the JER-carried program runs bit for bit, the headline's prefix": true,
+   "counted traffic == planned traffic, op for op": true,
+   "every C GEM run identical (der pack)": true,
+   "every C GEM run identical (native pack)": true,
+   "every Q8 rail generates the same tokens": true,
+   "model artifact is the card's": true,
+   "oracle GEM == oracle monolithic, bit for bit": true,
+   "round trip: module JER": true,
+   "round trip: pack der": true,
+   "round trip: pack jer": true,
+   "round trip: pack native": true,
+   "round trip: pack oer": true,
+   "round trip: plan binary": true,
+   "round trip: plan der": true,
+   "round trip: plan jer": true,
+   "round trip: plan oer": true,
+   "the C rail executes the oracle's native octets (DER converted in C)": true,
+   "the program verifies (R1-R25)": true,
+   "the tokenizer is the one the card and the BCIRQ8 artifact name": true
+  },
+  "commit": "ce86eadb709bed70b1daf74a0a1f9aed64249c3f",
+  "der_to_native_ms": 5.328,
+  "gem_median_ms": 15.025,
+  "gem_over_monolithic_median": 1.1164,
+  "gem_overhead_ms": 1.566,
+  "load_ms": 2.215,
+  "max_abs_c_vs_oracle": 0.0,
+  "monolithic_median_ms": 13.458,
+  "pack_native_sha256": "295a1d81bef9f878b3f4850237339c0da6b5d4b152929d90edd250451377655a",
+  "per_token_ms_median": 0.2484,
+  "simulated": {
+   "gem": {
+    "D1mr": 1054827,
+    "D1mw": 85402,
+    "Ir": 224747158,
+    "data_refs": 63551856
+   },
+   "monolithic": {
+    "D1mr": 1004941,
+    "D1mw": 82599,
+    "Ir": 210858806,
+    "data_refs": 57819416
+   }
+  },
+  "status": "PASS",
+  "time_to_first_token_ms": 2.985,
+  "trust_boundary_ms": 0.998
+ },
+ "before": {
+  "c_gem_equals_monolithic": true,
+  "c_logits_sha256": "2a18b8613b6b60e4f9ff83d870d6d4a31a06693c56722237d7ce11374d9a471d",
+  "checks": {
+   "C GEM == monolithic C, bit for bit (der pack)": true,
+   "C GEM == monolithic C, bit for bit (native pack)": true,
+   "C logits within 1e-09 of the oracle's": true,
+   "GEM within 1.5x of the monolithic runner (ratio row)": true,
+   "JSON -> ASN.1 -> GEM: the JER-carried program runs bit for bit, the headline's prefix": true,
+   "counted traffic == planned traffic, op for op": true,
+   "every C GEM run identical (der pack)": true,
+   "every C GEM run identical (native pack)": true,
+   "every Q8 rail generates the same tokens": true,
+   "model artifact is the card's": true,
+   "oracle GEM == oracle monolithic, bit for bit": true,
+   "round trip: module JER": true,
+   "round trip: pack der": true,
+   "round trip: pack jer": true,
+   "round trip: pack native": true,
+   "round trip: pack oer": true,
+   "round trip: plan binary": true,
+   "round trip: plan der": true,
+   "round trip: plan jer": true,
+   "round trip: plan oer": true,
+   "the C rail executes the oracle's native octets (DER converted in C)": true,
+   "the program verifies (R1-R25)": true,
+   "the tokenizer is the one the card and the BCIRQ8 artifact name": true
+  },
+  "commit": "22597719e40ced8a98a15fc223d29169ac68bbaa",
+  "der_to_native_ms": 7.457,
+  "gem_median_ms": 16.581,
+  "gem_over_monolithic_median": 1.3362,
+  "gem_overhead_ms": 4.172,
+  "load_ms": 6.186,
+  "max_abs_c_vs_oracle": 0.0,
+  "monolithic_median_ms": 12.409,
+  "pack_native_sha256": "295a1d81bef9f878b3f4850237339c0da6b5d4b152929d90edd250451377655a",
+  "per_token_ms_median": 0.2321,
+  "simulated": {
+   "gem": {
+    "D1mr": 1053961,
+    "D1mw": 85404,
+    "Ir": 230923243,
+    "data_refs": 64238058
+   },
+   "monolithic": {
+    "D1mr": 1004941,
+    "D1mw": 82599,
+    "Ir": 210858806,
+    "data_refs": 57819416
+   }
+  },
+  "status": "PASS",
+  "time_to_first_token_ms": 5.82,
+  "trust_boundary_ms": 2.928
+ }
+}

@@ -5190,6 +5190,42 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: the attention row and the rotation (the request's next costs after the kernels), threads, any other
     host's figures; counter-based figures (no PMU on this VM). The GEM ratio row rises (1.07 -> 1.34 under its 1.5
     band) because GEM's trust boundary is a fixed cost the faster kernels no longer hide -- NEXT-6's.
+  CRC-SLICE (2026-10-25): zlib's CRC-32 eight bytes a step for every C unit that checks one, every value, verdict
+    and wire byte as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §31,
+    [measurements/2026-10-25/crc-slice/](research/measurements/2026-10-25/crc-slice/README.json)).
+  - Placed by NEXT-6 on the tree before, after Q8-LANES left the qualification's GEM/monolithic row at 1.336: on the
+    qualification's own pack (610 KB) a CRC-32 pass took 1.27 ms (the byte table, one dependent lookup a byte), a GEM
+    run paid three of them (`bcir_sp_execute` validates, then `bcir_sp_verify_semantic` and the segment walk validate
+    again) -- some 3.8 of GEM's 4.3 ms over the monolithic runner -- and a GEM load four; the BCIRQ8 loader computed
+    its body's and every tensor's CRC with the bitwise loop, eight dependent steps a byte: 8.4 ms (clang) and 15.8 ms
+    (GCC) of a load of the lab model's 0.9 MB. The 2026-10-10 note had recommended a portable slicing-by-8/16 CRC with
+    the polynomial, conventions and wire bytes kept (its P1).
+  - CRC-SLICE (`ce86ead`): `runtime/c/bcir_crc32.h` holds zlib's CRC-32 as eight tables and a step of eight bytes --
+    table 0 the bitwise loop's state after eight steps from each byte, table k table k-1 carried through one more zero
+    byte, the bytes assembled little-endian (the same step on every byte order), freestanding -- read by
+    `bcir_runtime.c`'s `bcir_crc32` (every StreamPack, plan, record, bundle and frame digest on the C rail) and the
+    BCIRQ8 loader; the byte table and the bitwise loop retired.
+  - Measured on the committed tree against the tree before (one host; clang 18 and GCC 13 at the qualification's
+    -O2): a CRC pass x0.24-0.26 (clang) and x0.19-0.21 (GCC) of its time from 16 KiB to 8 MiB, about 2.1 ns a byte
+    before and 0.4-0.5 after; the lab models' load 8.2 -> 1.31 ms (clang) and 16.1-16.4 -> 1.07-1.11 ms (GCC); a GEM
+    load's four passes and walks 5.7-5.9 -> 1.8-1.9 ms, `bcir_sp_execute` with its kernels doing nothing 4.3-4.4 ->
+    1.35-1.43 ms; a whole request of 1 new token x0.38-0.41 (clang) and x0.20-0.21 (GCC), of 64 x0.71-0.72 and
+    x0.56-0.58 (the load's difference alone: the decoder's step untouched). In the qualification GEM's load 6.19 ->
+    2.22 ms, the trust boundary 2.93 -> 1.00 ms, GEM's own overhead 4.17 -> 1.57 ms, GEM/monolithic 1.336 -> 1.116
+    (1.32-1.35 -> 1.11-1.13 over three runs more of each tree), the first token 5.82 -> 2.99 ms; the logits and the
+    native pack one SHA-256 on both trees, 23 of 23 checks on each, and the monolithic runner's request the same
+    210,858,806 instructions under callgrind. The 2026-10-10 note's own CRC stage reads `bcir_crc32` at x6.8-11.4 of
+    Python's zlib before and x1.9-2.2 after.
+  - Witnesses: `test_the_runtime_crc_is_zlibs` (the header's 2,048 entries against the recurrence, `bcir_crc32`
+    against `zlib.crc32` over buffers around the eight-byte step and a NULL buffer of no bytes, an entry flipped in
+    each of the eight tables caught by the CRCs); the standalone C decoder's parity test for the loader (its models
+    load, a flipped byte is a CRC error); `crc-slice.json` CS1-CS10 -- a table entry flipped, the words' bytes swapped
+    or the running state left out, two lanes on each other's tables, the step advancing seven, the tail a byte short
+    or on the wrong table, the final complement dropped, the loader's running CRC restarted on every span or a byte
+    short -- each caught by its own check.
+  - Not claimed: fewer passes (a GEM run still validates the pack three times, now 0.25-0.32 ms a pass: TRUST-ONCE);
+    zlib's own speed (its `crc32` reads x0.34-0.51 of the new step's time here); any other host's figures;
+    counter-based figures (no PMU on this VM).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

@@ -2153,3 +2153,82 @@ across the column blocks) would take back; any other host's figures; counter-bas
 GEM ratio row rises because GEM's trust boundary is a fixed cost the faster kernels no longer hide: one GEM load
 computes the 610 KB pack's CRC-32 four times, a byte at a time (`bcir_sp_validate`, `bcir_sp_verify_semantic`, the
 segment and block walks), and the BCIRQ8 loader computes its body's and every tensor's bit by bit -- NEXT-6's.
+
+## 31. NEXT-6 and CRC-SLICE: GEM's trust boundary a part at a time; zlib's CRC-32 eight bytes a step (2026-10-25)
+
+NEXT-6 took up the row Q8-LANES left rising -- the qualification's GEM/monolithic 1.074 -> 1.336, GEM's trust
+boundary a fixed cost the faster kernels no longer hid. On the tree before
+([measurements/2026-10-25/crc-slice/](measurements/2026-10-25/crc-slice/README.json), `explore.json`) it timed the
+boundary a part at a time on the qualification's own native pack (609,997 octets, `dump_pack.py`) and the BCIRQ8
+loader on the lab model's file (912,840 octets):
+
+- **A CRC-32 pass** over the pack takes 1.27-1.28 ms under clang and GCC: the runtime's byte table, one dependent
+  lookup a byte (2.1 ns). `bcir_sp_validate` is that pass and little else (1.28 ms); `bcir_sp_verify_semantic`
+  validates again before its R10 walk (1.69-1.70 ms); the segment and block walks validate again each (1.37-1.39 and
+  1.48 ms). A GEM run (`bcir_sp_execute`) pays three passes before its first kernel and a GEM load
+  (`bcir_dgem_load`) four, 5.81-5.87 ms: some 3.8 of GEM's 4.3 ms over the monolithic runner were the CRC's.
+- **The BCIRQ8 loader** computed its body's CRC and then every tensor's with the bitwise loop, eight dependent
+  shift-and-mask steps a byte: 3.95 ms (clang) and 7.69 ms (GCC) a pass over the file, about two passes in a load of
+  8.37 and 15.81 ms. The byte table takes 1.92 and 1.86 ms a pass; a slicing-by-8 prototype (`crc_proto.c`, equal to
+  `zlib.crc32` over 1,206 buffers at four alignments and two 100 KB fills) 0.48 and 0.36.
+- **The 2026-10-10 note** had measured the byte table at 8.3-9.0x zlib's time and recommended a portable
+  slicing-by-8/16 CRC with the polynomial, conventions and wire bytes kept (its P1, "faster IEEE CRC").
+
+So there were two levers: the passes' count -- validating a pack once and walking it checked after, a change to the
+trust boundary's contract (TRUST-ONCE) -- and the pass's own step, the same CRC computed faster, which changes no
+contract and which every C unit that checks a CRC shares. CRC-SLICE takes the second.
+
+**CRC-SLICE.** `runtime/c/bcir_crc32.h` is zlib's CRC-32 (IEEE 802.3, reflected, polynomial 0xEDB88320) as eight
+tables and one step of eight bytes. Table 0 is the bitwise loop's state after eight steps from each byte, and table k
+is table k-1 carried through one more zero byte; a step XORs the running state into its first four bytes and looks
+all eight up at once. The bytes are read one at a time and assembled little-endian, so the step is the same on every
+byte order, and the header is freestanding (`<stdint.h>`, `<stddef.h>`, const data). `bcir_runtime.c`'s `bcir_crc32`
+-- every StreamPack, plan, record, bundle and frame digest on the C rail -- and `bcir_q8_model.c`'s loader read it;
+the byte table and the bitwise loop are gone. The CRC is the same function, so every value, verdict and wire byte is
+as it was.
+
+Measured on the committed tree against the tree before (one host; clang 18 and GCC 13 at the qualification's -O2;
+`crc.json`, `trust.json`, `requests.json`; each row resolved against its A/A control, every CRC zlib's, every
+request's tokens and final logits the tree before's bytes):
+
+| | clang | gcc |
+|---|---|---|
+| a CRC pass, 16 KiB to 8 MiB, x of the tree before's time | x0.24-0.26 | x0.19-0.21 |
+| zlib's `crc32` beside it | x0.09-0.10 | x0.09-0.11 |
+| the two lab models' load, `bcir_q8_model_load` (ms) | 8.20-8.24 -> 1.31 (x0.157-0.159) | 16.09-16.41 -> 1.07-1.11 (x0.066-0.069) |
+| a GEM load's four passes and walks (ms) | 5.73 -> 1.92 | 5.87 -> 1.82 |
+| `bcir_sp_execute`, its kernels doing nothing (ms) | 4.28 -> 1.43 | 4.39 -> 1.35 |
+| a whole request: the load, a 5-token prompt, 1 new token | x0.380-0.409 (11.0-11.1 -> 4.1-4.3 ms) | x0.203-0.208 (18.8-19.3 -> 3.8-4.0 ms) |
+| ... 8 new tokens | x0.454-0.464 | x0.256-0.266 |
+| ... 64 new tokens | x0.707-0.716 | x0.560-0.576 |
+
+A 64-token request moves by the load's difference alone (7.0 ms under clang, 14.8-15.0 under GCC): the decoder's
+step is untouched. GCC's gain is the larger because its build of the bitwise loop was twice clang's time.
+
+The qualification (`qualification.json`: each tree's own `run_qualification.py --require-callgrind` on the lab
+model): GEM's load of the program 6.19 -> 2.22 ms, the DER artifact's conversion to the native pack in C 7.46 ->
+5.33 ms (it writes the pack's CRC, then verifies the pack), the trust boundary alone 2.93 -> 1.00 ms, GEM's own
+overhead (GEM less monolithic) 4.17 -> 1.57 ms, and GEM/monolithic 1.336 -> 1.116 under its 1.5 band -- 1.32-1.35
+before and 1.11-1.13 after over three runs more of each tree without callgrind (`qualification-repeats.json`); the
+first token of a GEM run 5.82 -> 2.99 ms. The logits and the native pack are one SHA-256 on both trees
+(`2a18b8613b6b60e4...`, `295a1d81bef9f878...`), 0 from the oracle's, and 23 of 23 checks pass on each. Under callgrind
+a GEM request takes 230.9 M instructions before and 224.7 M after, and the monolithic runner's the same 210,858,806 on
+both trees; the single run's monolithic median (12.41 -> 13.46 ms) is that row's noise, the repeats' medians 12.46
+before and 12.21 after. The 2026-10-10 note's own CRC stage, re-run on each tree (`note-crc.json`), reads
+`bcir_crc32` at x6.8-11.4 of Python's zlib before and x1.9-2.2 after.
+
+Witnesses: `test_the_runtime_crc_is_zlibs` holds every one of the header's 8 x 256 entries to the recurrence
+(computed apart, in Python), the runtime's `bcir_crc32` to `zlib.crc32` over buffers around the eight-byte step -- 0
+to 2^18 bytes, single 0x00 and 0xFF bytes, the check string `123456789` -- and a NULL buffer of no bytes, and an
+entry flipped in each of the eight tables (a header copy beside the unit) caught by the CRCs. The loader is held by
+the standalone C decoder's parity test: its models load, and a flipped byte is a CRC error. `crc-slice.json` CS1-CS10
+inject the step's faults -- a table entry flipped, the words' bytes swapped or the running state left out, two lanes
+on each other's tables, the step advancing seven, the tail a byte short or on the wrong table, the final complement
+dropped, the loader's running CRC restarted on every span or a byte short -- each caught by its own check
+(`faults.json`).
+
+Not claimed: fewer passes -- a GEM run still validates the pack three times, now 0.25-0.32 ms a pass of its 1.35-1.43
+ms, and a load four (TRUST-ONCE, a checked-pack token whose walks keep their bounds and drop the CRC); zlib's own
+speed (its `crc32` reads x0.34-0.51 of the new step's time here: zlib 1.3's braided loop, or a carry-less-multiply
+fold, which is per-architecture code); the C decoder's attention row and rotation (DECODE-ROW, next); any other
+host's figures; counter-based figures (no PMU on this VM).

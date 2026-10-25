@@ -149,6 +149,27 @@ check, and GEM's own overhead (GEM less monolithic) is 3.9 ms before and 4.3 ms 
 instance) a GEM request takes 922 M instructions before and 231 M after, 252 M and 64 M data references,
 with the same D1 misses.
 
+**CRC-SLICE** (2026-10-25). GEM's trust boundary was that rise: a CRC-32 pass over the 610 KB pack took 1.27 ms
+(one table lookup a byte), and a GEM run validates the pack three times (`bcir_sp_execute`, then
+`bcir_sp_verify_semantic` and the segment walk) and a GEM load four. The C rail's CRC (`runtime/c/bcir_crc32.h`) is
+now zlib's eight bytes a step -- the same function, every value, verdict and wire byte as it was -- and a pass takes
+0.25-0.32 ms. On the same host and model, each tree's own run (`--require-callgrind`;
+[measurements/2026-10-25/crc-slice/](research/measurements/2026-10-25/crc-slice/README.json)):
+
+| | before | after |
+|---|---|---|
+| GEM's load of the program, `bcir_dgem_load` (ms) | 6.19 | 2.22 |
+| the DER artifact converted to the native pack in C (ms) | 7.46 | 5.33 |
+| the trust boundary alone (ms) | 2.93 | 1.00 |
+| GEM's own overhead, GEM less monolithic (ms) | 4.17 | 1.57 |
+| GEM / monolithic (gated at 1.5) | 1.336 | 1.116 |
+| the first token of a GEM run (ms) | 5.82 | 2.99 |
+
+The logits and the native pack keep one SHA-256 across the trees, 23 of 23 checks pass on each, and three runs more
+of each tree read the ratio at 1.32-1.35 before and 1.11-1.13 after. Under callgrind the monolithic runner's request
+is the same 210,858,806 instructions on both trees. GEM still validates the pack three times a run; validating it
+once a load is this row's next step.
+
 **Memory traffic.** Planned (`program_traffic`) and counted (the C kernels' counters) agree op for
 op: 57,539,312 octets read and 4,236,480 written per request. Simulated with callgrind's cache
 model (I1/D1 32 KiB 8-way, LL 8 MiB 16-way, 64-octet lines, fixed so reports compare across
