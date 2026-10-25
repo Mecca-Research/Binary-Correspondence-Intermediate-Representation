@@ -142,6 +142,150 @@ def test_native_q8_matrix_kernels_match_increasing_coordinate_oracle_exactly():
     ) == tuple(expected_rows)
 
 
+def _q8_oracle(inputs, signed_codes, exponents, outputs, group, rows):
+    """The increasing-coordinate oracle: a matvec (`rows` False: codes [inputs, outputs]) or the
+    row dots (`rows` True: codes [outputs, inputs]), each output's chain from +0.0."""
+    expected = []
+    for output in range(outputs):
+        total = 0.0
+        for coordinate in range(len(inputs)):
+            index = output * len(inputs) + coordinate if rows else coordinate * outputs + output
+            total += inputs[coordinate] * math.ldexp(signed_codes[index], exponents[index // group])
+        expected.append(total)
+    return tuple(expected)
+
+
+def test_native_q8_instances_match_the_increasing_coordinate_oracle():
+    """Q8-LANES: every instance of the Q8 matrix kernels the host admits -- 1 the portable loops, 2
+    AVX2, 4 AVX-512 -- is the increasing-coordinate oracle's value for every output, bit for bit:
+    at the corpus decoder's projection shapes, at the AVX-512 block's (columns a multiple of 8, a
+    power-of-two group) with a tail block, and at ragged ones (groups straddling rows and vectors, a
+    group not a power of two, groups under 8). 0 is the widest admitted; a name outside 0/1/2/4 is
+    refused before the library, an instance the host does not admit by it."""
+    native = _native()
+    if native is None:
+        return
+    instances = native.q8_instances()
+    assert instances & 1 and not instances & ~7
+    rng = random.Random(0x0A8E5)
+    symmetric = tuple(code for code in range(256) if code != 0x80)
+    shapes = (
+        (128, 64, 32),
+        (16, 72, 16),
+        (3, 200, 8),
+        (2, 136, 64),
+        (17, 33, 5),
+        (9, 40, 4),
+        (24, 48, 48),
+        (1, 9, 7),
+        (40, 17, 32),
+    )
+    ran = 0
+    for inputs_count, outputs, group in shapes:
+        inputs = tuple(rng.uniform(-2.0, 2.0) for _ in range(inputs_count))
+        codes = bytes(rng.choice(symmetric) for _ in range(inputs_count * outputs))
+        exponents = tuple(rng.randint(-30, 30) for _ in range(-(-len(codes) // group)))
+        signed = tuple(code - 256 if code >= 128 else code for code in codes)
+        for rows, kernel in ((False, native.q8_matvec), (True, native.q8_rows_dot)):
+            expected = _q8_oracle(inputs, signed, exponents, outputs, group, rows)
+            for instance in (0, 1, 2, 4):
+                if instance and not instances & instance:
+                    continue
+                got = kernel(
+                    inputs,
+                    codes,
+                    exponents,
+                    output_count=outputs,
+                    group_size=group,
+                    instance=instance,
+                )
+                assert got == expected, (inputs_count, outputs, group, rows, instance)
+                ran += 1
+    assert ran >= 2 * len(shapes) * 2  # 0 and 1 at least, on every host
+    for refused in (-1, 3, 5, 8, True):
+        try:
+            native.q8_matvec((1.0,), b"\x01", (0,), output_count=1, group_size=32, instance=refused)
+            raise AssertionError(f"instance {refused!r} was accepted")
+        except ValueError:
+            pass
+    for absent in (2, 4):
+        if instances & absent:
+            continue
+        try:
+            native.q8_rows_dot(
+                (1.0,), b"\x01", (0,), output_count=1, group_size=32, instance=absent
+            )
+            raise AssertionError(f"instance {absent} the host does not admit was accepted")
+        except RuntimeError:
+            pass
+
+
+def test_native_ai_c_harness_c11_and_c23():
+    """Q8-LANES: the kernel unit's C harness (runtime/c/test_ai_kernels.c) under C11 and C23, under C23
+    capped at AVX2 and with the dispatch compiled out, every build with the instance probe: each
+    admitted instance against the portable loops over the decoder's, the block's and ragged shapes,
+    exponents past a normal double's, the code 0x80, non-finite outputs zeroing every output and
+    refusals writing nothing, and the prevalidated entries on the widest instance."""
+    if _CC is None:
+        return
+    import re
+    import subprocess
+
+    from bcir.toolchain import build_units, host_link_args
+
+    c = Path(__file__).resolve().parents[2] / "runtime" / "c"
+    builds = (
+        ("c11", [], None),
+        ("c2x", [], None),
+        ("c2x", ["-DBCIR_AI_MAX_INSTANCE=2"], 3),
+        ("c2x", ["-DBCIR_AI_NO_DISPATCH"], 1),
+    )
+    seen = set()
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
+        for number, (standard, options, cap) in enumerate(builds):
+            exe = Path(temporary) / f"ai-kernels-{number}"
+            cmd = [
+                _CC,
+                f"-std={standard}",
+                "-DBCIR_AI_INSTANCE_PROBE",
+                *options,
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Wpedantic",
+                "-Werror",
+                "-ffp-contract=off",
+                "-I",
+                str(c),
+                str(c / "test_ai_kernels.c"),
+                str(c / "bcir_ai_kernels.c"),
+                str(c / "bcir_q4_kernel.c"),
+                "-o",
+                str(exe),
+            ]
+            build_units(
+                cmd + host_link_args(["-lm"]), f"the AI kernels' {standard} build", timeout=120
+            )
+            result = subprocess.run(
+                [str(exe)], check=True, capture_output=True, text=True, timeout=120
+            )
+            assert "native AI kernels: all gates passed" in result.stdout
+            found = re.search(
+                r"Q8-LANES: instances (\d+), (\d+) vector comparisons equal", result.stdout
+            )
+            assert found, result.stdout
+            admitted, compared = int(found.group(1)), int(found.group(2))
+            assert admitted & 1 and not admitted & ~7
+            if cap is not None:
+                assert not admitted & ~cap, (options, admitted)
+            # 22 shapes, four exponent ranges, two kernels: 176 comparisons an admitted vector instance
+            assert compared == 176 * bin(admitted & 6).count("1"), (options, admitted, compared)
+            seen.add(admitted)
+    native = _native()
+    if native is not None:
+        assert native.q8_instances() in seen  # the default builds admit what the library does
+
+
 def test_native_boundary_rejects_malformed_numbers_extents_and_symmetric_codes():
     try:
         NativeAIKernels("definitely-missing-native-ai-library")

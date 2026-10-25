@@ -6,6 +6,24 @@
 #define BCIR_AI_EXP_MIN (-300)
 #define BCIR_AI_EXP_MAX 300
 
+/* Q8-LANES: the BCIRQ8 matrix kernels' instances -- 1 the portable loops, 2 AVX2, 4 AVX-512 -- each the
+ * portable loop's value for every output, bit for bit. An output's chain is the loop's own in every
+ * instance: from +0.0, one term an input coordinate in increasing order, the term the input times the
+ * code times its group's scale (a code times a power of two: exact), rounded as a product and then as a
+ * sum, never fused -- every build of this unit passes -ffp-contract=off, and the vector instances spell
+ * the multiplies and the add as separate operations. The vector instances only run several outputs'
+ * chains side by side: the matvec a row's columns in the lanes, the row dots eight rows a vector over
+ * their codes transposed eight by eight. A group's scale is ldexp(1.0, e): built from its bits where 2^e
+ * is a normal double, ldexp's own elsewhere. */
+#if defined(__x86_64__) && defined(__linux__) && (defined(__GNUC__) || defined(__clang__)) && \
+    !defined(BCIR_AI_NO_DISPATCH)
+#define BCIR_AI_DISPATCH 1
+#include <immintrin.h>
+#endif
+#ifndef BCIR_AI_MAX_INSTANCE
+#define BCIR_AI_MAX_INSTANCE 4
+#endif
+
 uint32_t bcir_ai_abi_version(void) { return BCIR_AI_ABI_VERSION; }
 
 static int valid_quantize_arguments(const double *values, size_t count,
@@ -162,31 +180,197 @@ static int q8_input_validate(const double *input, size_t input_count) {
   return 1;
 }
 
-int bcir_ai_q8_matvec_f64_prevalidated(
-    const double *input, size_t input_count, const uint8_t *codes,
+int bcir_ai_q8_instances(void) {
+  int instances = 1;
+#ifdef BCIR_AI_DISPATCH
+  __builtin_cpu_init();
+  if (BCIR_AI_MAX_INSTANCE >= 2 && __builtin_cpu_supports("avx2")) instances |= 2;
+  if (BCIR_AI_MAX_INSTANCE >= 4 && __builtin_cpu_supports("avx512f")) instances |= 4;
+#endif
+  return instances;
+}
+
+/* 0 names the widest instance the host admits; 1, 2 or 4 itself where admitted; anything else 0 (refused) */
+static int q8_instance(int instance) {
+  int admitted = bcir_ai_q8_instances();
+  if (instance == 0) return admitted & 4 ? 4 : admitted & 2 ? 2 : 1;
+  return (instance == 1 || instance == 2 || instance == 4) && (admitted & instance) ? instance : 0;
+}
+
+#ifdef BCIR_AI_INSTANCE_PROBE
+/* The instance the last matrix kernel ran (0 before any, and after a read): the path its values cannot
+ * show. A build defines BCIR_AI_INSTANCE_PROBE to have the symbol (the harness's builds do). */
+static int q8_instance_seen;
+#define Q8_SAW(instance) (q8_instance_seen = (instance))
+int bcir_ai_q8_instance_probe(void);
+int bcir_ai_q8_instance_probe(void) {
+  int seen = q8_instance_seen;
+  q8_instance_seen = 0;
+  return seen;
+}
+#else
+#define Q8_SAW(instance) ((void)0)
+#endif
+
+#ifdef BCIR_AI_DISPATCH
+/* ldexp(1.0, e) for group `group`'s exponent: its bits where 2^e is a normal double, ldexp elsewhere */
+static double q8_scale(const uint8_t *exponents_le, size_t group) {
+  int e = exponent_le(exponents_le, group);
+  if (e >= -1022 && e <= 1023) {
+    uint64_t bits = (uint64_t)(e + 1023) << 52;
+    double scale;
+    memcpy(&scale, &bits, sizeof scale);
+    return scale;
+  }
+  return ldexp(1.0, e);
+}
+
+/* n columns of one group, one input row: y[k] += xi * (code[k] * s), a vector of columns at a time */
+__attribute__((target("avx2"))) static void q8_run_avx2(double *y, double xi, const uint8_t *c, size_t n,
+                                                        double s) {
+  __m256d vx = _mm256_set1_pd(xi), vs = _mm256_set1_pd(s);
+  size_t k = 0u;
+  for (; k + 4u <= n; k += 4u) {
+    int32_t w;
+    __m256d code;
+    memcpy(&w, c + k, sizeof w);
+    code = _mm256_cvtepi32_pd(_mm_cvtepi8_epi32(_mm_cvtsi32_si128(w)));
+    _mm256_storeu_pd(y + k,
+                     _mm256_add_pd(_mm256_loadu_pd(y + k), _mm256_mul_pd(vx, _mm256_mul_pd(code, vs))));
+  }
+  for (; k < n; ++k) {
+    int code = c[k] >= UINT8_C(0x80) ? (int)c[k] - 256 : (int)c[k];
+    double term = xi * ((double)code * s);
+    y[k] = y[k] + term;
+  }
+}
+__attribute__((target("avx512f"))) static void q8_run_avx512(double *y, double xi, const uint8_t *c,
+                                                             size_t n, double s) {
+  __m512d vx = _mm512_set1_pd(xi), vs = _mm512_set1_pd(s);
+  size_t k = 0u;
+  for (; k + 8u <= n; k += 8u) {
+    int64_t w;
+    __m512d code;
+    memcpy(&w, c + k, sizeof w);
+    code = _mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_cvtsi64_si128(w)));
+    _mm512_storeu_pd(y + k,
+                     _mm512_add_pd(_mm512_loadu_pd(y + k), _mm512_mul_pd(vx, _mm512_mul_pd(code, vs))));
+  }
+  for (; k < n; ++k) {
+    int code = c[k] >= UINT8_C(0x80) ? (int)c[k] - 256 : (int)c[k];
+    double term = xi * ((double)code * s);
+    y[k] = y[k] + term;
+  }
+}
+/* The matvec a row at a time, each row's columns in runs of one group (any shape). */
+static void q8_matvec_runs(int instance, const double *input, size_t input_count, const uint8_t *codes,
+                           const uint8_t *exponents_le, size_t output_count, size_t group_size,
+                           double *output) {
+  size_t input_index, output_index, index = 0u;
+  for (output_index = 0u; output_index < output_count; ++output_index) output[output_index] = 0.0;
+  for (input_index = 0u; input_index < input_count; ++input_index) {
+    for (output_index = 0u; output_index < output_count;) {
+      size_t group = index / group_size, left = (group + 1u) * group_size - index;
+      size_t n = output_count - output_index < left ? output_count - output_index : left;
+      double scale = q8_scale(exponents_le, group);
+      if (instance == 4) q8_run_avx512(output + output_index, input[input_index], codes + index, n, scale);
+      else q8_run_avx2(output + output_index, input[input_index], codes + index, n, scale);
+      output_index += n;
+      index += n;
+    }
+  }
+}
+/* one vector of eight columns' terms: x times each code times their group's scale s */
+__attribute__((target("avx512f"))) static inline __m512d q8_terms512(const uint8_t *c, __m512d vx, double s) {
+  int64_t w;
+  memcpy(&w, c, sizeof w);
+  return _mm512_mul_pd(vx, _mm512_mul_pd(_mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_cvtsi64_si128(w))),
+                                         _mm512_set1_pd(s)));
+}
+/* The matvec 64 columns at a time, their sums in registers over every input row, where the output count
+ * is a multiple of 8 and the group a power of two of at least 8: a vector's eight columns then lie in one
+ * group, and a row's vectors take their groups in order, so a scale is computed where the group changes
+ * (no local array: GCC's AddressSanitizer stack gives a 64-byte-aligned local array 32 bytes). */
+__attribute__((target("avx512f"))) static void q8_matvec_block512(const double *input, size_t input_count,
+    const uint8_t *codes, const uint8_t *exponents_le, size_t output_count, size_t group_size,
+    double *output) {
+  unsigned shift = 0u;
+  size_t j0, i;
+  while (((size_t)1 << shift) < group_size) ++shift;
+  for (j0 = 0u; j0 < output_count; j0 += 64u) {
+    size_t vectors = output_count - j0 >= 64u ? 8u : (output_count - j0) / 8u;
+    __m512d a0 = _mm512_setzero_pd(), a1 = a0, a2 = a0, a3 = a0, a4 = a0, a5 = a0, a6 = a0, a7 = a0;
+    for (i = 0u; i < input_count; ++i) {
+      size_t e0 = i * output_count + j0, group = e0 >> shift;
+      const uint8_t *c = codes + e0;
+      __m512d vx = _mm512_set1_pd(input[i]);
+      double scale = q8_scale(exponents_le, group);
+#define Q8_BLOCK_VECTOR(a, v)                                                                            \
+  if (vectors > (v)) {                                                                                   \
+    if (((e0 + 8u * (v)) >> shift) != group) {                                                          \
+      group = (e0 + 8u * (v)) >> shift;                                                                  \
+      scale = q8_scale(exponents_le, group);                                                             \
+    }                                                                                                    \
+    a = _mm512_add_pd(a, q8_terms512(c + 8u * (v), vx, scale));                                          \
+  }
+      Q8_BLOCK_VECTOR(a0, 0u); Q8_BLOCK_VECTOR(a1, 1u); Q8_BLOCK_VECTOR(a2, 2u); Q8_BLOCK_VECTOR(a3, 3u);
+      Q8_BLOCK_VECTOR(a4, 4u); Q8_BLOCK_VECTOR(a5, 5u); Q8_BLOCK_VECTOR(a6, 6u); Q8_BLOCK_VECTOR(a7, 7u);
+#undef Q8_BLOCK_VECTOR
+    }
+    if (vectors > 0u) _mm512_storeu_pd(output + j0, a0);
+    if (vectors > 1u) _mm512_storeu_pd(output + j0 + 8u, a1);
+    if (vectors > 2u) _mm512_storeu_pd(output + j0 + 16u, a2);
+    if (vectors > 3u) _mm512_storeu_pd(output + j0 + 24u, a3);
+    if (vectors > 4u) _mm512_storeu_pd(output + j0 + 32u, a4);
+    if (vectors > 5u) _mm512_storeu_pd(output + j0 + 40u, a5);
+    if (vectors > 6u) _mm512_storeu_pd(output + j0 + 48u, a6);
+    if (vectors > 7u) _mm512_storeu_pd(output + j0 + 56u, a7);
+  }
+}
+static void q8_matvec_lanes(int instance, const double *input, size_t input_count, const uint8_t *codes,
+                            const uint8_t *exponents_le, size_t output_count, size_t group_size,
+                            double *output) {
+  if (instance == 4 && output_count % 8u == 0u && group_size >= 8u && !(group_size & (group_size - 1u)))
+    q8_matvec_block512(input, input_count, codes, exponents_le, output_count, group_size, output);
+  else
+    q8_matvec_runs(instance, input, input_count, codes, exponents_le, output_count, group_size, output);
+}
+#endif
+
+int bcir_ai_q8_matvec_f64_instance(
+    int instance, const double *input, size_t input_count, const uint8_t *codes,
     size_t code_count, const uint8_t *exponents_le, size_t exponent_count,
     size_t output_count, size_t group_size, double *output) {
   size_t elements, groups, index, input_index, output_index, next_group;
   double scale;
+  instance = q8_instance(instance);
   if (!q8_shape(input_count, output_count, group_size, &elements, &groups) ||
       !q8_input_validate(input, input_count) || codes == NULL ||
       exponents_le == NULL || output == NULL || code_count < elements ||
-      exponent_count < groups) return BCIR_AI_INVALID_ARGUMENT;
-  for (output_index = 0u; output_index < output_count; ++output_index)
-    output[output_index] = 0.0;
-  index = 0u;
-  next_group = group_size;
-  if (next_group > elements) next_group = elements;
-  scale = ldexp(1.0, exponent_le(exponents_le, 0u));
-  for (input_index = 0u; input_index < input_count; ++input_index) {
-    for (output_index = 0u; output_index < output_count; ++output_index, ++index) {
-      int code = codes[index] >= UINT8_C(0x80) ? (int)codes[index] - 256 : (int)codes[index];
-      output[output_index] += input[input_index] * ((double)code * scale);
-      if (index + 1u == next_group && index + 1u < elements) {
-        size_t group = (index + 1u) / group_size;
-        next_group = index + 1u + group_size;
-        if (next_group > elements) next_group = elements;
-        scale = ldexp(1.0, exponent_le(exponents_le, group));
+      exponent_count < groups || !instance) return BCIR_AI_INVALID_ARGUMENT;
+  Q8_SAW(instance);
+#ifdef BCIR_AI_DISPATCH
+  if (instance != 1) {
+    q8_matvec_lanes(instance, input, input_count, codes, exponents_le, output_count, group_size, output);
+  } else
+#endif
+  {
+    for (output_index = 0u; output_index < output_count; ++output_index)
+      output[output_index] = 0.0;
+    index = 0u;
+    next_group = group_size;
+    if (next_group > elements) next_group = elements;
+    scale = ldexp(1.0, exponent_le(exponents_le, 0u));
+    for (input_index = 0u; input_index < input_count; ++input_index) {
+      for (output_index = 0u; output_index < output_count; ++output_index, ++index) {
+        int code = codes[index] >= UINT8_C(0x80) ? (int)codes[index] - 256 : (int)codes[index];
+        output[output_index] += input[input_index] * ((double)code * scale);
+        if (index + 1u == next_group && index + 1u < elements) {
+          size_t group = (index + 1u) / group_size;
+          next_group = index + 1u + group_size;
+          if (next_group > elements) next_group = elements;
+          scale = ldexp(1.0, exponent_le(exponents_le, group));
+        }
       }
     }
   }
@@ -197,6 +381,14 @@ int bcir_ai_q8_matvec_f64_prevalidated(
     }
   }
   return BCIR_AI_OK;
+}
+
+int bcir_ai_q8_matvec_f64_prevalidated(
+    const double *input, size_t input_count, const uint8_t *codes,
+    size_t code_count, const uint8_t *exponents_le, size_t exponent_count,
+    size_t output_count, size_t group_size, double *output) {
+  return bcir_ai_q8_matvec_f64_instance(0, input, input_count, codes, code_count, exponents_le,
+                                        exponent_count, output_count, group_size, output);
 }
 
 int bcir_ai_q8_matvec_f64(const double *input, size_t input_count,
@@ -215,16 +407,182 @@ int bcir_ai_q8_matvec_f64(const double *input, size_t input_count,
       output_count, group_size, output);
 }
 
-int bcir_ai_q8_rows_dot_f64_prevalidated(
-    const double *input, size_t input_count, const uint8_t *codes,
+#ifdef BCIR_AI_DISPATCH
+/* 8 rows x 8 coordinates of codes, the rows `ld` apart, transposed: four registers of two coordinates'
+ * eight codes each, coordinate 2q in the low 8 bytes of out[q] and 2q + 1 in the high */
+__attribute__((target("avx2"))) static inline void q8_transpose8(const uint8_t *src, size_t ld,
+                                                                 __m128i out[4]) {
+  __m128i r[8], a[4], b[4];
+  int q;
+  for (q = 0; q < 8; ++q) {
+    int64_t w;
+    memcpy(&w, src + (size_t)q * ld, sizeof w);
+    r[q] = _mm_cvtsi64_si128(w);
+  }
+  for (q = 0; q < 4; ++q) a[q] = _mm_unpacklo_epi8(r[2 * q], r[2 * q + 1]);
+  b[0] = _mm_unpacklo_epi16(a[0], a[1]);
+  b[1] = _mm_unpackhi_epi16(a[0], a[1]);
+  b[2] = _mm_unpacklo_epi16(a[2], a[3]);
+  b[3] = _mm_unpackhi_epi16(a[2], a[3]);
+  out[0] = _mm_unpacklo_epi32(b[0], b[2]);
+  out[1] = _mm_unpackhi_epi32(b[0], b[2]);
+  out[2] = _mm_unpacklo_epi32(b[1], b[3]);
+  out[3] = _mm_unpackhi_epi32(b[1], b[3]);
+}
+/* the coordinates from c on that every row of the block keeps in its present group (one at least) */
+static size_t q8_block_run(size_t input_count, size_t group_size, size_t row0, size_t rows, size_t c) {
+  size_t n = input_count - c, r;
+  for (r = 0u; r < rows; ++r) {
+    size_t index = (row0 + r) * input_count + c, left = group_size - index % group_size;
+    if (left < n) n = left;
+  }
+  return n;
+}
+/* row r of the block's scale at coordinate c (+0.0 for a short block's missing rows) */
+static double q8_block_scale(const uint8_t *exponents_le, size_t input_count, size_t group_size, size_t row0,
+                             size_t rows, size_t r, size_t c) {
+  return r < rows ? q8_scale(exponents_le, ((row0 + r) * input_count + c) / group_size) : 0.0;
+}
+/* the codes of coordinate c of the block's rows (a short block's missing rows +0), as 8 bytes */
+static int64_t q8_block_column(const uint8_t *codes, size_t input_count, size_t row0, size_t rows,
+                               size_t c) {
+  uint8_t bytes[8] = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+  int64_t w;
+  size_t r;
+  for (r = 0u; r < rows; ++r) bytes[r] = codes[(row0 + r) * input_count + c];
+  memcpy(&w, bytes, sizeof w);
+  return w;
+}
+/* Rows row0 .. row0+rows-1 (at most 8) of the row dots, a row's chain a lane: four lanes a register. */
+__attribute__((target("avx2"))) static void q8_rows_avx2(const double *input, size_t input_count,
+    const uint8_t *codes, const uint8_t *exponents_le, size_t group_size, size_t row0, size_t rows,
+    double *output) {
+  __m256d t0 = _mm256_setzero_pd(), t1 = _mm256_setzero_pd();
+  size_t c = 0u, k;
+  while (c < input_count) {
+    size_t n = q8_block_run(input_count, group_size, row0, rows, c);
+    __m256d s0 = _mm256_setr_pd(q8_block_scale(exponents_le, input_count, group_size, row0, rows, 0u, c),
+                                q8_block_scale(exponents_le, input_count, group_size, row0, rows, 1u, c),
+                                q8_block_scale(exponents_le, input_count, group_size, row0, rows, 2u, c),
+                                q8_block_scale(exponents_le, input_count, group_size, row0, rows, 3u, c));
+    __m256d s1 = _mm256_setr_pd(q8_block_scale(exponents_le, input_count, group_size, row0, rows, 4u, c),
+                                q8_block_scale(exponents_le, input_count, group_size, row0, rows, 5u, c),
+                                q8_block_scale(exponents_le, input_count, group_size, row0, rows, 6u, c),
+                                q8_block_scale(exponents_le, input_count, group_size, row0, rows, 7u, c));
+    for (k = 0u; rows == 8u && k + 8u <= n; k += 8u) {
+      __m128i col[4];
+      int q;
+      q8_transpose8(codes + row0 * input_count + c + k, input_count, col);
+      for (q = 0; q < 4; ++q) {
+        __m128i lo = col[q], hi = _mm_srli_si128(col[q], 8);
+        __m256d xa = _mm256_set1_pd(input[c + k + 2u * (size_t)q]);
+        __m256d xb = _mm256_set1_pd(input[c + k + 2u * (size_t)q + 1u]);
+        __m256d ca0 = _mm256_cvtepi32_pd(_mm_cvtepi8_epi32(lo));
+        __m256d ca1 = _mm256_cvtepi32_pd(_mm_cvtepi8_epi32(_mm_srli_si128(lo, 4)));
+        __m256d cb0 = _mm256_cvtepi32_pd(_mm_cvtepi8_epi32(hi));
+        __m256d cb1 = _mm256_cvtepi32_pd(_mm_cvtepi8_epi32(_mm_srli_si128(hi, 4)));
+        t0 = _mm256_add_pd(t0, _mm256_mul_pd(xa, _mm256_mul_pd(ca0, s0)));
+        t1 = _mm256_add_pd(t1, _mm256_mul_pd(xa, _mm256_mul_pd(ca1, s1)));
+        t0 = _mm256_add_pd(t0, _mm256_mul_pd(xb, _mm256_mul_pd(cb0, s0)));
+        t1 = _mm256_add_pd(t1, _mm256_mul_pd(xb, _mm256_mul_pd(cb1, s1)));
+      }
+    }
+    for (; k < n; ++k) {  /* a run's last coordinates, or every one of a block short of eight rows */
+      __m128i w = _mm_cvtsi64_si128(q8_block_column(codes, input_count, row0, rows, c + k));
+      __m256d xv = _mm256_set1_pd(input[c + k]);
+      t0 = _mm256_add_pd(t0, _mm256_mul_pd(xv, _mm256_mul_pd(_mm256_cvtepi32_pd(_mm_cvtepi8_epi32(w)), s0)));
+      t1 = _mm256_add_pd(t1, _mm256_mul_pd(xv, _mm256_mul_pd(
+                                 _mm256_cvtepi32_pd(_mm_cvtepi8_epi32(_mm_srli_si128(w, 4))), s1)));
+    }
+    c += n;
+  }
+  if (rows == 8u) {
+    _mm256_storeu_pd(output, t0);
+    _mm256_storeu_pd(output + 4, t1);
+  } else {
+    __m256i lanes = _mm256_setr_epi64x(0, 1, 2, 3);
+    _mm256_maskstore_pd(output, _mm256_cmpgt_epi64(_mm256_set1_epi64x((long long)rows), lanes), t0);
+    _mm256_maskstore_pd(output + 4, _mm256_cmpgt_epi64(_mm256_set1_epi64x((long long)rows - 4), lanes), t1);
+  }
+}
+/* The same block, eight lanes a register. */
+__attribute__((target("avx512f,avx2"))) static void q8_rows_avx512(const double *input, size_t input_count,
+    const uint8_t *codes, const uint8_t *exponents_le, size_t group_size, size_t row0, size_t rows,
+    double *output) {
+  __m512d t = _mm512_setzero_pd();
+  size_t c = 0u, k;
+  while (c < input_count) {
+    size_t n = q8_block_run(input_count, group_size, row0, rows, c);
+    __m512d vs = _mm512_setr_pd(q8_block_scale(exponents_le, input_count, group_size, row0, rows, 0u, c),
+                                q8_block_scale(exponents_le, input_count, group_size, row0, rows, 1u, c),
+                                q8_block_scale(exponents_le, input_count, group_size, row0, rows, 2u, c),
+                                q8_block_scale(exponents_le, input_count, group_size, row0, rows, 3u, c),
+                                q8_block_scale(exponents_le, input_count, group_size, row0, rows, 4u, c),
+                                q8_block_scale(exponents_le, input_count, group_size, row0, rows, 5u, c),
+                                q8_block_scale(exponents_le, input_count, group_size, row0, rows, 6u, c),
+                                q8_block_scale(exponents_le, input_count, group_size, row0, rows, 7u, c));
+    for (k = 0u; rows == 8u && k + 8u <= n; k += 8u) {
+      __m128i col[4];
+      int q;
+      q8_transpose8(codes + row0 * input_count + c + k, input_count, col);
+      for (q = 0; q < 4; ++q) {
+        __m512d c0 = _mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(col[q]));
+        __m512d c1 = _mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_srli_si128(col[q], 8)));
+        __m512d xa = _mm512_set1_pd(input[c + k + 2u * (size_t)q]);
+        __m512d xb = _mm512_set1_pd(input[c + k + 2u * (size_t)q + 1u]);
+        t = _mm512_add_pd(t, _mm512_mul_pd(xa, _mm512_mul_pd(c0, vs)));
+        t = _mm512_add_pd(t, _mm512_mul_pd(xb, _mm512_mul_pd(c1, vs)));
+      }
+    }
+    for (; k < n; ++k) {
+      __m128i w = _mm_cvtsi64_si128(q8_block_column(codes, input_count, row0, rows, c + k));
+      t = _mm512_add_pd(t, _mm512_mul_pd(_mm512_set1_pd(input[c + k]),
+                                         _mm512_mul_pd(_mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(w)), vs)));
+    }
+    c += n;
+  }
+  _mm512_mask_storeu_pd(output, (__mmask8)((1u << rows) - 1u), t);
+}
+/* every row eight at a time, each block's totals checked in row order: a non-finite one zeroes the
+ * output, as the portable loop leaves it */
+static int q8_rows_lanes(int instance, const double *input, size_t input_count, const uint8_t *codes,
+                         const uint8_t *exponents_le, size_t output_count, size_t group_size,
+                         double *output) {
+  size_t row, r;
+  for (row = 0u; row < output_count; row += 8u) {
+    size_t rows = output_count - row < 8u ? output_count - row : 8u;
+    if (instance == 4)
+      q8_rows_avx512(input, input_count, codes, exponents_le, group_size, row, rows, output + row);
+    else
+      q8_rows_avx2(input, input_count, codes, exponents_le, group_size, row, rows, output + row);
+    for (r = 0u; r < rows; ++r) {
+      if (!isfinite(output[row + r])) {
+        memset(output, 0, output_count * sizeof *output);
+        return BCIR_AI_INVALID_NUMBER;
+      }
+    }
+  }
+  return BCIR_AI_OK;
+}
+#endif
+
+int bcir_ai_q8_rows_dot_f64_instance(
+    int instance, const double *input, size_t input_count, const uint8_t *codes,
     size_t code_count, const uint8_t *exponents_le, size_t exponent_count,
     size_t output_count, size_t group_size, double *output) {
   size_t elements, groups, row, coordinate, next_group = 0u;
   double scale = 0.0;
+  instance = q8_instance(instance);
   if (!q8_shape(input_count, output_count, group_size, &elements, &groups) ||
       !q8_input_validate(input, input_count) || codes == NULL ||
       exponents_le == NULL || output == NULL || code_count < elements ||
-      exponent_count < groups) return BCIR_AI_INVALID_ARGUMENT;
+      exponent_count < groups || !instance) return BCIR_AI_INVALID_ARGUMENT;
+  Q8_SAW(instance);
+#ifdef BCIR_AI_DISPATCH
+  if (instance != 1)
+    return q8_rows_lanes(instance, input, input_count, codes, exponents_le, output_count, group_size,
+                         output);
+#endif
   for (row = 0u; row < output_count; ++row) {
     size_t base = row * input_count;
     double total = 0.0;
@@ -245,6 +603,14 @@ int bcir_ai_q8_rows_dot_f64_prevalidated(
     output[row] = total;
   }
   return BCIR_AI_OK;
+}
+
+int bcir_ai_q8_rows_dot_f64_prevalidated(
+    const double *input, size_t input_count, const uint8_t *codes,
+    size_t code_count, const uint8_t *exponents_le, size_t exponent_count,
+    size_t output_count, size_t group_size, double *output) {
+  return bcir_ai_q8_rows_dot_f64_instance(0, input, input_count, codes, code_count, exponents_le,
+                                          exponent_count, output_count, group_size, output);
 }
 
 int bcir_ai_q8_rows_dot_f64(const double *input, size_t input_count,

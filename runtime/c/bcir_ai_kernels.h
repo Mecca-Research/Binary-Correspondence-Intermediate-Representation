@@ -91,6 +91,27 @@ BCIR_AI_API int bcir_ai_q8_rows_dot_f64_prevalidated(
     const uint8_t *exponents_le, size_t exponent_count,
     size_t output_count, size_t group_size, double *output);
 
+/* Q8-LANES: the two matrix kernels above on a named instance -- 1 the portable loops, 2 AVX2, 4 AVX-512
+ * (x86-64 Linux under GCC or Clang) -- each the portable loops' value for every output, bit for bit: an
+ * output's chain is the loop's own, term for term in its order, and the vector instances only run several
+ * outputs' chains side by side. bcir_ai_q8_instances() is the instances this host admits, as bits (1
+ * always). An _instance entry is its prevalidated entry run on `instance` (0: the widest admitted), and
+ * refuses an instance the host does not admit with BCIR_AI_INVALID_ARGUMENT, writing nothing; the
+ * prevalidated entries run the widest. */
+BCIR_AI_API int bcir_ai_q8_instances(void);
+
+BCIR_AI_API int bcir_ai_q8_matvec_f64_instance(
+    int instance, const double *input, size_t input_count,
+    const uint8_t *codes, size_t code_count,
+    const uint8_t *exponents_le, size_t exponent_count,
+    size_t output_count, size_t group_size, double *output);
+
+BCIR_AI_API int bcir_ai_q8_rows_dot_f64_instance(
+    int instance, const double *input, size_t input_count,
+    const uint8_t *codes, size_t code_count,
+    const uint8_t *exponents_le, size_t exponent_count,
+    size_t output_count, size_t group_size, double *output);
+
 /* Exact Q15 squared-L2 top-k.  Pattern rows and query coordinates are signed
  * int16.  `eligible` is optional; when present it contains only 0/1 bytes.
  * Pattern order is the deterministic tie-break (the Python contract stores
