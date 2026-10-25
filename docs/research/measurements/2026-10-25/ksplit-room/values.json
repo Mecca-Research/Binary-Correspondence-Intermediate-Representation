@@ -1,0 +1,21 @@
+{
+ "what": "the trainer's C harness (test_decoder_train.c with the tensor unit and the trainer, -std=c2x -O3 -ffp-contract=off -fno-math-errno -pthread, no probes), each tree's own sources, clang and gcc: the tree after's output the tree before's line for line but the one new line, the KSPLIT-ROOM witness's -- the need the most of the attention's copies and the backward's largest GEMM job's split room at three specs, the unit's rule the statement apart from it, and a step lent the need, a byte short of the room and none the same state bytes",
+ "harness": {
+  "clang": {
+   "lines_before": 44,
+   "lines_after": 45,
+   "pass_lines_before": 44,
+   "pass_lines_after": 45,
+   "the_rest_line_for_line": true,
+   "new_line": "PASS native workspace plan (KSPLIT-ROOM): the blocked contract's need the most of the attention's copies and the backward's largest GEMM job's split room (4096 bytes at 1408 rows; the head's pair and the q, k and v group the largest at two specs more; the unit's rule the statement apart from it at 5 depths and its refusals); a step lent the need, a byte short of the room and none the same state bytes, their splits uncounted in this build"
+  },
+  "gcc": {
+   "lines_before": 44,
+   "lines_after": 45,
+   "pass_lines_before": 44,
+   "pass_lines_after": 45,
+   "the_rest_line_for_line": true,
+   "new_line": "PASS native workspace plan (KSPLIT-ROOM): the blocked contract's need the most of the attention's copies and the backward's largest GEMM job's split room (4096 bytes at 1408 rows; the head's pair and the q, k and v group the largest at two specs more; the unit's rule the statement apart from it at 5 depths and its refusals); a step lent the need, a byte short of the room and none the same state bytes, their splits uncounted in this build"
+  }
+ }
+}

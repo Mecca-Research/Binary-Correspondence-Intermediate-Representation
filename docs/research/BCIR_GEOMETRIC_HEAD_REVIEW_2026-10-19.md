@@ -1939,3 +1939,88 @@ decoder's wider weight adjoints at its need -- whose room a later slice could pl
 (KSPLIT-ROWS); T2048's gain by the rule, every run of it meeting its control; the fuzz harness's state lends no
 workspace under the blocked contract, so the checker's new rule is the witnesses' and not the decoder campaign's;
 counter-based figures (no PMU on this VM).
+
+## 29. KSPLIT-ROOM: the room the weight adjoints split in, planned (2026-10-25)
+
+KSPLIT (§28) split a blocked weight adjoint over its depth only where the state happened to lend a workspace -- under
+a binary32 contract the attention's copies, from 1,024 positions -- so the blocked contract's shorter contexts ran
+every weight adjoint as the nest, and the 9.84M decoder's 5.75 MiB at T1024 held one weight adjoint a layer of the
+57 MiB its largest group's partials take. NEXT-4 re-probed after KSPLIT on the tree before
+([measurements/2026-10-25/ksplit-room/](measurements/2026-10-25/ksplit-room/README.json), `explore.json`). At three K
+blocks -- GEO T256's 1,024 rows -- the split alone takes x1.01-1.69 of the nest's time on four threads, so the
+threshold of four stands. Lent the room, the same trainer's step read x0.917-0.922 at the corpus recipe's decoder
+(BCIR-Corpus-860K's B8/T256, the train rail's shape), x0.932-0.937 at the GEO dimensions' B4/T512 and x0.925-0.939
+at the 9.84M decoder's T512, every byte equal: the room, not the rule, was the step's lever. KSPLIT-ROWS, a K block's
+task over a range of rows (for the widest weight adjoints' panels and the five-block calls' four workers), took some
+weight adjoints alone to x0.62-0.89 of the nest's time but read x0.933-0.951 in the step against the committed
+split's x0.917-0.937, and x0.994 at the 9.84M decoder's T1024 with both lent every room: measured, not taken.
+
+**The room.** The tensor unit states the room a call takes by the rule its entries take a slice by
+(`bcir_tensor_mm_ksplit_bytes`: the call's K blocks' partials, blocks x m x n floats, rounded to the next 64 bytes,
+from `BCIR_MM_KSPLIT_BLOCKS` blocks; 0 for a call that does not split or a figure past `SIZE_MAX`). One step,
+`mm_ksplit_step`, serves both, so the plan cannot reserve a room the split would not take. The trainer's need under
+the blocked contract is the most of the attention's copies and the backward's largest GEMM job's room, the sum of its
+weight adjoints' slices in the order the job's calls take them: the head's pair, the gate and up group, or the q, k
+and v group (the down projection's pair takes a slice of the gate's shape and the output projection's one of q's, so
+neither is ever the most). `bcir_decoder_workspace_unsplit` is the need without the room -- the copies, and under
+bf16 the need, whose GEMMs do not split. `native.memory_plan` offers each recompute set at the need and then without
+the room before the next set, so a budget gives the room back before it re-runs a layer.
+
+| shape (blocked contract) | the need on four threads, before -> after | weight adjoints split a step |
+|---|---|---|
+| corpus decoder B8/T256 (2,048 rows, five K blocks) | none -> 2.50 MiB (the head's pair) | 0 -> 29 |
+| GEO B4/T512 (2,048 rows) | none -> 1.25 MiB (the gate and up group) | 0 -> 22 |
+| GEO B4/T1024 and T2048 | 4.00 and 8.00 MiB, unchanged (the copies hold the room) | 22 and 22 |
+| 9.84M decoder B8/T512 (4,096 rows, ten K blocks) | none -> 30.00 MiB | 0 -> 43 |
+| 9.84M decoder B8/T1024 (8,192 rows) | 5.75 -> 57.00 MiB | 6 -> 43 |
+| 9.84M decoder B8/T128 (three K blocks) | none, unchanged | 0 |
+
+Measured on the committed tree (`sizes.json`, `step.json`). The slice's reading is the room alone: one library,
+the state lent the need without the room against the need, every instruction the same.
+
+| the step, the room alone (one library) | clang | gcc |
+|---|---|---|
+| corpus decoder B8/T256, four threads | x0.906 (0.878-0.935), resolved | x0.923 (0.894-0.954), meeting its control |
+| GEO B4/T512, four threads | x0.922 (0.898-0.946), resolved | x0.923 (0.901-0.945), resolved |
+| 9.84M decoder B8/T512, four threads | x0.941 (0.918-0.964), resolved | x0.939 (0.916-0.963), resolved |
+| 9.84M decoder B8/T1024, four threads | x0.928 (0.907-0.949), resolved | x0.949 (0.933-0.965), meeting its control |
+| GEO T1024 and T2048, the two figures equal | x0.998, x0.997, holding 1 | x1.040, x0.967, holding 1 |
+| one thread: the corpus decoder | x0.947 (0.927-0.966), resolved | x0.972 (0.952-0.993), meeting its control |
+| one thread: GEO T1024, the 9.84M decoder T512 | x0.945, x0.984, holding 1 | x0.979, x0.979, holding 1 |
+
+The two trees against each other read the same way where the room applies -- x0.918-0.953 on four threads,
+x0.952-0.974 on one -- but that run's own controls, GEO T1024 and T2048, where both trees lend the same workspace
+and split the same calls, read x0.952 and x1.003 at T1024 and x0.905 and x0.938 at T2048, the last two excluding 1
+by the rule. Run again with the trees' places swapped they read x0.973-1.023, every one holding 1: the run's swing at
+T2048 (KSPLIT's records saw it swing by a tenth round to round at 24 rounds), not a difference between the builds --
+and the reason the one-library run, whose controls hold 1, carries the slice's reading. Every round's weights are the
+same bytes on both trees and both arms.
+
+The gain is what NEXT-4 placed: some 5-9% of the step on four threads wherever the room makes the weight adjoints
+split, at a memory cost of the largest job's partials -- 2.5 MiB of the corpus decoder's 140 MiB plan, 1.25 of GEO
+T512's 118, and 30 and 57 MiB of the 9.84M decoder's 1.2 and 3.0 GiB at T512 and T1024: 1.1-2.5% of each plan, which
+the budget's tier gives back before it re-runs a layer. On one thread the gain is smaller and mostly within the
+controls, as KSPLIT's one-thread rows were.
+
+Witnesses: the C harness's `ksplit_room` holds the unit's rule to a statement written apart from it at five depths
+across `kblock_next`'s three-to-four-block edge and its refusals (no depth, no rows, a product past `size_t`); the
+need, the need without the room and every other contract's need at three specs, each of the three jobs that can be
+the largest once (the gate and up group at the fixture's dimensions, the head's pair at a vocabulary of 512, the q,
+k and v group at a hidden width of 8 under a model width of 32 with two KV heads of four); and a step lent the need,
+a byte short of the room and none, the same state bytes, splitting 15, 13 and 0 weight adjoints under the probe
+(`bcir_tensor_ksplit_probe`, the instance probe's builds). The Python witness,
+`test_the_blocked_contract_plans_the_room_its_weight_adjoints_split_in`, holds the Python trainer's loan at 1,408
+rows (four K blocks, no copies) at one thread and four and for any pool, every contract's need and need without the
+room, `memory_plan`'s order at a long context whose copies fall short of
+the room (a vocabulary of 2,048 at T1024: the need, the copies, nothing, a set at a time), the budget that fits only
+the copies training on them, and one state under every loan -- the need, the room less a byte, less than any weight
+adjoint's room, none -- at one thread and four, the probe counting every weight adjoint, all but one a layer, none and
+none. The KSPLIT launch witness gains the short context: its trace, every program and pack run of the planner's
+choices and a never-splitting build, each the C step's state. `ksplit-room.json` KR1-KR15 inject the plan's, the
+unit's, the probe's and `memory_plan`'s faults, each caught by its own check; KR8 as first written stopped the build
+and was rewritten to build. KSPLIT's KS12 and KS13, ATT-CONTIG's AC20 and NDT-BF16's NB14 are re-anchored on the
+changed lines and caught again.
+
+Not claimed: a gain below four K blocks, where the split does not pay; the widest weight adjoints' rate
+(KSPLIT-ROWS, measured and not taken); a room under the bf16 contract, whose GEMMs do not split; any figure on
+another host; counter-based figures (no PMU on this VM).

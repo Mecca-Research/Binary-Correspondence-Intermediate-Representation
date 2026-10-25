@@ -391,7 +391,8 @@ def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspa
     (KSPLIT-ROOM) and then at the SwiGLU panels' need, and the floor only after every set. On both
     measured shapes the panels' tier cost no step time the rounds resolved (1.3-2.1 MiB freed), a
     re-run layer 1-11% of a step (10.5-25 MiB) and the floor 32-75% (1.7-4.1 MiB); the split room
-    some 6-8% (docs/research/measurements/2026-10-25/ksplit-room). A declared policy, no
+    5-9% of a step on four threads where it applies (1.25-57 MiB, 1.1-2.5% of the plan:
+    docs/research/measurements/2026-10-25/ksplit-room). A declared policy, no
     optimality claim (TMSAO-4); micro-batch accumulation --
     cheaper than recomputation at one measured shape, dearer at the other, and never the same
     state -- is the caller's."""
