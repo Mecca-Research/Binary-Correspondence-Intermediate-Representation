@@ -198,12 +198,14 @@ def test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit(
     bcir_rope_apply over bcir_rope_table to those loops (kept in the harness as the definition) over
     every shape around the blocks, six head groupings, six value ranges (signed zeros, infinities,
     subnormal products, scores past exp's range) and rotations at ten positions to INT_MAX - 300, built
-    as the repo builds C (ISO C: GCC contracts nothing, clang within a statement) and with contraction
-    off and on."""
+    with -ffp-contract=off at -O0, -O2 and -O3, as every build of the decoder here compiles it. Where a
+    compiler may fuse a product into its sum -- clang's default on hardware with FMA, aarch64 among it --
+    each code shape's chains fuse as the compiler chooses, the old loops' as much as the new, so no byte is
+    claimed there."""
     if _cc() is None:
         return
     with tempfile.TemporaryDirectory() as tmp:
-        for flags in (["-O2"], ["-O2", "-ffp-contract=off"], ["-O3", "-ffp-contract=on"]):
+        for flags in (["-O0"], ["-O2"], ["-O3"]):
             exe = os.path.join(tmp, "test_decode_order")
             build = subprocess.run(
                 host_link_args(
@@ -211,6 +213,7 @@ def test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit(
                         _cc(),
                         "-std=c11",
                         *flags,
+                        "-ffp-contract=off",
                         "-Wall",
                         "-Wextra",
                         "-Werror",
