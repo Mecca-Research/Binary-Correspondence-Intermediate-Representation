@@ -28,7 +28,10 @@
  * product that refuses the workspace fails the step with BCIR_DT_CAPACITY, nothing committed. Under
  * any contract the binary32 attention copies its tasks' head rows into a lent workspace from
  * bcir_tensor_attention_pool_workspace's bytes on (ATT-CONTIG: long contexts whose rows hold several
- * heads), and runs them in place below that or without one -- the same values; a state that lends a
+ * heads), and runs them in place below that or without one -- the same values; under the blocked
+ * contract a GEMM job with a weight adjoint (a call with A transposed) is lent the same workspace, and
+ * the tensor unit splits those weight adjoints over their depth whose K blocks' partials fit it
+ * (KSPLIT, bcir_tensor.h) -- the same values again; a state that lends a
  * workspace without the bf16 contract lends it disjoint from the arenas and the state
  * (BCIR_DT_INVALID otherwise), at any size, none at all the default. One GEMM contract at a time: FUSED,
  * KBLOCK and BF16 exclude one another. BCIR_DT_CONTRACT_ATTN (ATTN-FMA) puts the attention's
@@ -84,7 +87,8 @@ typedef struct bcir_decoder_state {
   bcir_tensor_pool *pool;
   uint32_t contract;
   void *workspace;          /* ABI 4 (NDT-BF16): the bf16 contract's packs; under any contract the
-                             * binary32 attention's copies (ATT-CONTIG) */
+                             * binary32 attention's copies (ATT-CONTIG); under the blocked
+                             * contract the split weight adjoints' partials (KSPLIT) */
   size_t workspace_bytes;
   uint64_t recompute;       /* ABI 5 (REMAT): bit l recomputes layer l's cache in the backward */
 } bcir_decoder_state;
@@ -189,7 +193,8 @@ BCIR_DT_API int bcir_decoder_run_accum(bcir_decoder_state *s,const bcir_decoder_
  * trace records: kind, launch (a GEMM job's calls share it; every other record is a job of one; each
  * job's launch exceeds the one before), flags, eight dimensions, ten operands as (space, byte offset,
  * bytes) -- spaces 1-4 the parameter arenas in the state's order, 5 activations, 6 scratch, 7 the
- * workspace (whole: the bf16 contract's, and the binary32 attention's where the state lends bytes),
+ * workspace (whole: the bf16 contract's, and where the state lends bytes the binary32 attention's and,
+ * under the blocked contract, every record's of a GEMM job with a weight adjoint: KSPLIT),
  * 8 the micro-batch's tokens or targets (whole, offset 0); an absent one (0, 0, 0) -- and seven
  * spare words, zero but the two PX-3b names below. A kernel record runs its call as
  * the step runs it, so a program's trace is the program; PASS, PREFLIGHT and COMMIT are trace

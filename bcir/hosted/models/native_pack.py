@@ -7,8 +7,9 @@ is stated as BCIR's own artifacts, and reaches the trainer through them alone:
   job's calls share theirs), each phase after the one before -- so GEM's dispatch order (topological
   phase, then ascending claim id) is the program's record order, and a phase's position is its
   launch. The resources are the program's VALUES. Each parameter tensor of the four parameter
-  arenas, the workspace (the bf16 GEMMs' packs, the binary32 attention's copies: ATT-CONTIG) and the
-  micro-batch's tokens and targets live through the whole program; a write of a span of the
+  arenas, the workspace (the bf16 GEMMs' packs, the binary32 attention's copies: ATT-CONTIG, the
+  blocked contract's split weight adjoints: KSPLIT) and the micro-batch's tokens and targets live
+  through the whole program; a write of a span of the
   activations or the scratch starts a new value and ends every
   value of a span it meets, and a read takes the span's current value (a read of a span no live
   value holds is refused here: the program would read bytes another value left). The C step's own
@@ -139,10 +140,12 @@ def uses(r: nl.Record) -> tuple[tuple[int, int], ...]:
     writes (W) or updates in place (RW) -- the C check's own reading (bcir_decoder_train.c's
     px_kernel, px_gemm and px_update); the bf16 workspace a call packs into is written, and the
     workspace the binary32 attention copies its heads' rows into where its record carries it (the
-    state lends bytes: ATT-CONTIG)."""
+    state lends bytes: ATT-CONTIG), as is the workspace a blocked-contract call's record carries (a
+    job with a weight adjoint, whose split partials it holds: KSPLIT)."""
     k, f = r.kind, r.flags
     if k == nl.GEMM:
-        ws = ((3, W),) if f & 15 in (nl.E_BF16, nl.E_BF16_GROUP) else ()
+        lent = f & 15 in (nl.E_BF16, nl.E_BF16_GROUP) or r.refs[3] != (0, 0, 0)
+        ws = ((3, W),) if lent else ()
         return ((0, R), (1, R), (2, RW if r.dims[6] else W)) + ws
     if k in (nl.ATTN, nl.ATTN_VJP):
         bf = bool(f & _ATTN_BF16)

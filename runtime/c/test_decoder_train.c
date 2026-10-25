@@ -1477,6 +1477,89 @@ static void gemm_kblock_rows(void) {
       "run(s), %d pool(s) of 2..4 threads with each instance, the pair both ways round and a chain "
       "with a depth of zero beside two weight adjoints\n",runs,pools);
 }
+/* KSPLIT: the blocked contract's weight adjoints (A transposed, B not) split over their depth into a
+ * lent room -- the single, pair and group entries, every instance this host runs, serially and on
+ * pools of two and four -- each output byte for byte the K-blocked fmaf chains' (ref_kblock), at
+ * depths of three K blocks to ten across kblock_next's tail rule, rows across each instance's row
+ * blocks and columns across its edge widths, at beta 0 and 0.5, alpha 1 and -0.75, C seeded with
+ * signed zeros. The room, seeded with a sentinel, is written exactly where a call qualifies (from
+ * the build's threshold, four K blocks) and its partials fit -- lent the whole room or exactly one
+ * call's partials, not a float short of them, none or at a misaligned base -- a group's second weight
+ * adjoint from the next 64-byte offset, and never a byte past what was lent. */
+static void gemm_kblock_split(void) {
+#ifdef BCIR_MM_KSPLIT_BLOCKS
+  const size_t from=BCIR_MM_KSPLIT_BLOCKS;  /* a build's threshold (the harness's -contig build: 1) */
+#else
+  const size_t from=4;
+#endif
+  enum { KM=4100, MM=13, NN=49, ROOM=2*10*MM*NN*4+256 };
+  static float dy[KM*MM],xs[KM*NN],x2[KM*NN],w[MM*NN],init[MM*NN],want[MM*NN],want2[MM*NN];
+  static float c[MM*NN],c2[MM*NN],dx[KM*NN],dxwant[KM*NN];
+  static _Alignas(64) unsigned char room[ROOM],seed[ROOM];
+  static const size_t shapes[][3]={{9,20,1344},{9,29,1792},{13,49,1793},{8,16,4100},{13,45,2240}};
+  static const float betas[2]={0.0f,0.5f},alphas[2]={1.0f,-0.75f};
+  static _Alignas(max_align_t) unsigned char pool_memory[2][4096];
+  bcir_tensor_pool *pools[3]={NULL,NULL,NULL}; unsigned threads[3]={1,2,4};
+  size_t s,i,q,p,mode,cases=0,split=0,kept=0; int variant,mask=bcir_tensor_mm_kblock_variants(),f;
+  for (p=1;p<3;p++) {
+    size_t need=bcir_tensor_pool_size(threads[p]);
+    if (!need) continue;
+    assert(need<=sizeof(pool_memory[0]));
+    pools[p]=bcir_tensor_pool_init(pool_memory[p-1],sizeof(pool_memory[0]),threads[p]); assert(pools[p]!=NULL);
+  }
+  for (i=0;i<KM*MM;i++) dy[i]=sinf((float)i*0.37f)*(i%5 ? 1.5f : 0.0625f);
+  for (i=0;i<KM*NN;i++) { xs[i]=cosf((float)i*0.91f)-0.125f; x2[i]=sinf((float)i*1.13f)*0.75f; }
+  for (i=0;i<MM*NN;i++) { w[i]=cosf((float)i*0.23f)*0.5f; init[i]=i%5==2 ? -0.0f : 0.01f*(float)(i%11)-0.03f; }
+  for (i=0;i<ROOM;i++) seed[i]=(unsigned char)(0xa5u^(unsigned)(i*7u));
+  for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) for (f=0;f<2;f++) {
+    size_t m=shapes[s][0],n=shapes[s][1],k=shapes[s][2],blocks=bcir_tensor_kblock_split(k,NULL,0);
+    size_t need=blocks*m*n*sizeof(float),step=(need+63)/64*64; float beta=betas[f],alpha=alphas[f];
+    bcir_tensor_mm_call x,y,yy[2];
+    assert(k<=KM && m<=MM && n<=NN && 2*step+128<=ROOM);
+    ref_kblock(1,0,m,n,k,alpha,dy,xs,beta,init,want);
+    ref_kblock(1,0,m,n,k,alpha,dy,x2,1.0f,init,want2);
+    ref_kblock(0,0,k,n,m,1.0f,dy,w,0.0f,dxwant,dxwant);
+    x.ta=0; x.tb=0; x.m=k; x.n=n; x.k=m; x.alpha=1.0f; x.a=dy; x.b=w; x.beta=0.0f; x.c=dx;
+    y.ta=1; y.tb=0; y.m=m; y.n=n; y.k=k; y.alpha=alpha; y.a=dy; y.b=xs; y.beta=beta; y.c=c;
+    yy[0]=y; yy[1]=y; yy[1].b=x2; yy[1].beta=1.0f; yy[1].c=c2;
+    for (variant=1;variant<=4;variant*=2) if (mask&variant) for (p=0;p<3;p++) {
+      if (p && !pools[p]) continue;
+      for (mode=0;mode<5;mode++) {  /* the room: none, whole, one call's, a float short, misaligned */
+        size_t lent=mode==1 ? 2*step+128 : mode==2 ? need : mode==3 ? need-sizeof(float) : mode==4 ? 2*step : 0;
+        unsigned char *base=mode==0 ? NULL : mode==4 ? room+1 : room;
+        int fits=blocks>=from && (mode==1 || mode==2);
+        for (q=0;q<3;q++) {  /* the single entry, the pair (dx then dW), the group (dx's chain, two dW) */
+          if (q && (mode==3 || mode==4)) continue;
+          memcpy(room,seed,ROOM); memcpy(c,init,m*n*sizeof(float)); memcpy(c2,init,m*n*sizeof(float));
+          if (q==0) assert(bcir_tensor_mm_contract_variant_pool(pools[p],2,variant,1,0,m,n,k,alpha,dy,xs,beta,c,
+              base,lent)==variant);
+          else if (q==1) assert(bcir_tensor_mm_pair_ws_variant_pool(pools[p],2,variant,&x,&y,base,lent)==variant);
+          else assert(bcir_tensor_mm_group_variant_pool(pools[p],2,variant,&x,1,yy,2,NULL,base,lent)==variant);
+          assert(!memcmp(c,want,m*n*sizeof(float)));
+          if (q) assert(!memcmp(dx,dxwant,k*n*sizeof(float)));
+          if (q==2) assert(!memcmp(c2,want2,m*n*sizeof(float)));
+          /* the room: written where the first weight adjoint fits, never past what was lent */
+          assert(!memcmp(room+(base ? (size_t)(base-room)+lent : 0),seed+(base ? (size_t)(base-room)+lent : 0),
+              ROOM-(base ? (size_t)(base-room)+lent : 0)));
+          if (fits) { assert(memcmp(room,seed,need)); split++; }
+          else { assert(!memcmp(room,seed,ROOM)); kept++; }
+          /* the group's second weight adjoint: its own slice, from the next 64-byte offset, where
+           * the whole room is lent; none where the room holds one call's partials */
+          if (fits && q==2) assert(mode==1 ? memcmp(room+step,seed+step,need)!=0
+                                           : !memcmp(room+need,seed+need,ROOM-need));
+          cases++;
+        }
+      }
+    }
+  }
+  bcir_tensor_pool_stop(pools[1]); bcir_tensor_pool_stop(pools[2]);
+  assert(split>0 && kept>0);
+  printf("  PASS native GEMM blocked contract (KSPLIT): %zu weight adjoints through the single, pair and group "
+      "entries byte for byte the K-blocked fmaf chains, %zu of them split over their depth into the room lent "
+      "(3 to 10 K blocks, every instance, serially and on pools of 2 and 4), %zu with the room untouched (none, "
+      "a float short, misaligned or below the build's %zu blocks), nothing written past what was lent\n",
+      cases,split,kept,from);
+}
 /* The BCIR exponential and the v2 contracts that use it (NDT-EXP): every instance this host runs
  * agrees bit for bit over 2^24 inputs (every binary32 in [-104, 89] at stride 2^8), within 1 ulp
  * of exp in double rounded to binary32; the special values; SiLU v2 and the SwiGLU VJP v2 on a
@@ -4573,7 +4656,8 @@ int main(void) {
   finite_differences(); refusals();
   learning(); pool_identity(); rope_table(); pool_claims(); pool_blocks(); reduction_references();
   scan_references();
-  gemm_fused_contract(); gemm_kblock_contract(); gemm_kblock_rows(); exp_contract(); exp_scalef(); fused_passes();
+  gemm_fused_contract(); gemm_kblock_contract(); gemm_kblock_rows(); gemm_kblock_split();
+  exp_contract(); exp_scalef(); fused_passes();
   writer_verdicts(); update_pairs(); gemm_bf16_contract(); trainer_bf16(); trainer_attn();
   panels_contract(); trainer_panels(); facts_run(); attention_bf16_reference(); trainer_attnbf16();
   trainer_workspace_plan(); trainer_recompute(); pool_caps(); dispatch_entries();

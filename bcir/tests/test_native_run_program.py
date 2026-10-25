@@ -426,6 +426,76 @@ def test_a_refused_program_writes_nothing():
             trainer.close()
 
 
+def test_a_blocked_job_states_its_workspace_or_is_refused():
+    """KSPLIT: under the blocked GEMM contract, in a state that lends a workspace (a long context's:
+    the attention's copies), a GEMM job with a weight adjoint states the state's whole workspace on
+    every record, and nothing else does -- a weight adjoint's job without it, one of its records
+    without it, its workspace a float short or off its start, and a job without a weight adjoint
+    lent it are each refused before anything runs (no byte written); the programs themselves run,
+    the pairs and groups of the C step's decisions and the weight adjoints alone (no pair). A short
+    context's blocked state lends none, and its program, stating none, runs."""
+    from bcir.frontends.models.decode import DecoderSpec
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        lib = nf.checkout_library(Path(tmp) / "plain")
+        if lib is None:
+            return  # no C compiler, or no C units (an installed package): a documented skip
+        spec = DecoderSpec(16, 8, 2, 1, 16, activation="silu_gate", n_kv_heads=1)
+        case = nf.TraceCase(spec, 1, 1024, "kblock")
+        trainer, decisions = _trainer(lib, case)
+        try:
+            lent = decisions["workspace_bytes"]
+            assert lent > 0, decisions  # the attention's copies: the workspace the GEMMs are lent
+            ws, wrong, edits = _slot(3), [], 0
+            for choices in ({}, {"pair": False}):
+                words = program_words(step_program(spec, 1, 1024, **decisions, **choices))
+                records = _records(words)
+                jobs = [_job(records, i) for i, r in enumerate(records)
+                        if r[0] == GEMM and (not i or records[i - 1][:2] != r[:2])]  # fmt: skip
+                weight = next(j for j in jobs if any(records[i][3] == 1 for i in j)
+                              and len(j) == (1 if choices else 2))  # fmt: skip
+                other = next(j for j in jobs if all(records[i][3] == 0 for i in j))
+                assert all(records[i][ws : ws + 3] == [7, 0, lent] for i in weight), weight
+                assert all(records[i][ws : ws + 3] == [0, 0, 0] for i in other), other
+                cases = [
+                    ("a weight adjoint's job without the workspace",
+                     [(i, ws + k, 0) for i in weight for k in range(3)]),
+                    ("its workspace a float short", [(i, ws + 2, lent - 4) for i in weight]),
+                    ("its workspace off its start", [(i, ws + 1, 64) for i in weight]),
+                    ("a job without a weight adjoint lent the workspace",
+                     [(i, ws + k, (7, 0, lent)[k]) for i in other for k in range(3)]),
+                ]  # fmt: skip
+                if len(weight) > 1:
+                    cases.append(("one record of a weight adjoint's job without the workspace",
+                                  [(weight[0], ws + k, 0) for k in range(3)]))  # fmt: skip
+                before = _snapshot(trainer)
+                for name, writes in cases:
+                    edited = [list(r) for r in records]
+                    for i, word, value in writes:
+                        edited[i][word] = value
+                    rc, done = _raw(trainer, _words(edited), case)
+                    edits += 1
+                    if rc != 1 or done != 777 or _snapshot(trainer) != before:
+                        wrong.append((choices, name, rc, done))
+                assert _raw(trainer, words, case) == (0, case.steps), choices  # the base runs
+            assert not wrong, wrong
+            assert edits == 9, edits
+        finally:
+            trainer.close()
+        # a short context's blocked state lends no workspace: its program states none, and runs
+        short = nf.TraceCase(*nf.PLAN_CORPUS[0], "kblock")
+        trainer, decisions = _trainer(lib, short)
+        try:
+            assert not decisions["workspace_bytes"], decisions
+            words = program_words(step_program(*nf.PLAN_CORPUS[0], **decisions))
+            records = _records(words)
+            assert all(r[_slot(3) : _slot(3) + 3] == [0, 0, 0] for r in records if r[0] == GEMM)
+            assert any(r[0] == GEMM and r[3] == 1 for r in records)  # it has weight adjoints
+            assert _raw(trainer, words, short) == (0, short.steps)
+        finally:
+            trainer.close()
+
+
 def _stop(trainer, words, tokens, targets, case, rates=None):
     """`case`'s run on `trainer` -- from `words` where given, else the C step's own -- as its
     (status, completed) and every byte it left (`_snapshot`)."""

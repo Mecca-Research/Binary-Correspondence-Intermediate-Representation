@@ -52,6 +52,9 @@ typedef struct mm_args {
   const float *a; size_t lda; const float *b; size_t ldb; float *c; size_t ldc; int mode;
   float beta; int fold;  /* fold: the blocked kernels scale c by beta in their first K block */
 } mm_args;
+/* KSPLIT: a fold value under which a blocked kernel stores its one K block's accumulators as they
+ * are -- no alpha, no beta, c never read -- a weight adjoint's partial product (mm_ksplit below) */
+#define BCIR_MM_RAW 2
 /* The contract an instance keeps, a compile-time constant of the instance: v1 adds one rounded
  * product per term, v2 (NDT-FMA) one fmaf. */
 enum { MM_V1=0, MM_FUSED=1, MM_KBLOCK=2 };
@@ -176,6 +179,14 @@ BCIR_MM_INLINE void mm_block_kb(size_t mr, size_t nr, const mm_args *x, const fl
     const float *tile=bt+l*nr; float ar[BCIR_MM_MRMAX];
     for (r=0;r<mr;r++) ar[r]=x->ta ? x->a[(lb+l)*x->lda+i+r] : x->a[(i+r)*x->lda+lb+l];
     for (r=0;r<mr;r++) for (j=0;j<nr;j++) acc[r][j]=fmaf(ar[r],tile[j],acc[r][j]);
+  }
+  if (x->fold==BCIR_MM_RAW) {  /* KSPLIT: the block's product as it is */
+    for (r=0;r<mr;r++) {
+      float *ci=x->c+(i+r)*x->ldc+jb;
+      if (nj==nr) { for (j=0;j<nr;j++) ci[j]=acc[r][j]; }
+      else for (j=0;j<nr;j++) if (j<nj) ci[j]=acc[r][j];
+    }
+    return;
   }
   first=x->fold && lb==0;
   for (r=0;r<mr;r++) {
@@ -308,6 +319,18 @@ __attribute__((target("avx512f"))) BCIR_MM_INLINE void kb512_block(size_t mr, in
       }
     }
   }
+  if (x->fold==BCIR_MM_RAW) {  /* KSPLIT: the block's product as it is, the columns nj reaches */
+    __mmask16 m0=(__mmask16)(nj>=16 ? 0xffffu : (1u<<nj)-1u);
+    __mmask16 m1=(__mmask16)(nj>=32 ? 0xffffu : nj>16 ? (1u<<(nj-16))-1u : 0u);
+    __mmask16 m2=(__mmask16)(nj>32 ? (1u<<(nj-32))-1u : 0u);
+    for (r=0;r<mr;r++) {
+      float *ci=x->c+(i+r)*x->ldc+jb;
+      _mm512_mask_storeu_ps(ci,m0,acc0[r]);
+      if (nv>1) _mm512_mask_storeu_ps(ci+16,m1,acc1[r]);
+      if (nv>2) _mm512_mask_storeu_ps(ci+32,m2,acc2[r]);
+    }
+    return;
+  }
   /* set after the depth loop: the block's 24 accumulators, three tile rows and a broadcast hold
    * 28 of the 32 vector registers through it, and a value live across it costs a spill a depth */
   alpha=_mm512_set1_ps(x->alpha); beta=_mm512_set1_ps(x->beta);
@@ -424,6 +447,15 @@ __attribute__((target("avx2,fma"))) BCIR_MM_INLINE void kb256_block(size_t mr, c
         acc0[r]=_mm256_fmadd_ps(av,b0,acc0[r]); acc1[r]=_mm256_fmadd_ps(av,b1,acc1[r]);
       }
     }
+  }
+  if (x->fold==BCIR_MM_RAW) {  /* KSPLIT: the block's product as it is, the columns nj reaches */
+    __m256i m0=kb256_mask(nj>=8 ? 8 : nj),m1=kb256_mask(nj>8 ? nj-8 : 0);
+    for (r=0;r<mr;r++) {
+      float *ci=x->c+(i+r)*x->ldc+jb;
+      if (nj==16) { _mm256_storeu_ps(ci,acc0[r]); _mm256_storeu_ps(ci+8,acc1[r]); }
+      else { _mm256_maskstore_ps(ci,m0,acc0[r]); _mm256_maskstore_ps(ci+8,m1,acc1[r]); }
+    }
+    return;
   }
   /* set after the depth loop, as kb512_block's */
   alpha=_mm256_set1_ps(x->alpha); beta=_mm256_set1_ps(x->beta);
@@ -1350,12 +1382,43 @@ void bcir_tensor_pool_probe_run_led(bcir_tensor_pool *p, bcir_tensor_task_fn fn,
 #ifndef BCIR_MM_TASKS
 #define BCIR_MM_TASKS 16
 #endif
-typedef struct mm_job { mm_args x; float beta; int variant,fused; size_t nr,cols,rowsets; } mm_job;
+/* KSPLIT: a weight adjoint split over its depth. A blocked call with A transposed -- the step's
+ * weight adjoints, dW = dY^T X, whose depth is the batch's rows -- otherwise runs a task a column
+ * range, and every task walks all of A: once A outgrows a core's L2 (the depth past a few K
+ * blocks), from L3 for each task. Where the caller lends room for it (the GEMM entries' workspace,
+ * bcir_tensor.h), such a call at least BCIR_MM_KSPLIT_BLOCKS blocks deep runs a task a K block
+ * instead: the task computes its block's product over all of C with the kernel's own block, the
+ * accumulators stored as they are (BCIR_MM_RAW), into its slice of the room, so A and B are read
+ * once in all; then a fold job gives every element its blocks in order with the kernels' epilogue
+ * operations (mm_fold_task). The terms, their order and every rounding are the nest's, so every
+ * element of C is the nest's bit for bit; only where each block's product waits differs. A job's
+ * calls take their slices in call order while their partials fit, and the rest run as before. */
+#ifndef BCIR_MM_KSPLIT_BLOCKS
+#define BCIR_MM_KSPLIT_BLOCKS 4
+#endif
+typedef struct mm_job { mm_args x; float beta; int variant,fused; size_t nr,cols,rowsets,ks; float *ws; } mm_job;
+/* block b of a depth k under kblock_next's rule: its first depth and its length */
+static void kblock_at(size_t k, size_t b, size_t *l0, size_t *nl) {
+  size_t ls=0,len=kblock_next(k);
+  while (b--) { ls+=len; len=kblock_next(k-ls); }
+  *l0=ls; *nl=len;
+}
+/* KSPLIT: K block b's product over all of C into the block's slice, the accumulators raw (a block
+ * is at most BCIR_MM_KBLOCK deep, so kblock_next keeps it one block) */
+static void mm_ksplit_task(const mm_job *j, size_t b) {
+  mm_args xb=j->x; mm_range r; size_t l0,nl;
+  kblock_at(j->x.k,b,&l0,&nl);
+  xb.k=nl; xb.a=j->x.a+l0*j->x.lda; xb.b=j->x.b+l0*j->x.ldb;
+  xb.c=j->ws+b*j->x.m*j->x.n; xb.ldc=j->x.n; xb.fold=BCIR_MM_RAW;
+  r.jb0=0; r.jb1=j->x.n; r.r0=0; r.r1=j->x.m;
+  mm_run_one(j->variant,j->fused,&xb,&r);
+}
 static void mm_task(void *ctx, size_t task) {
   mm_job *j=(mm_job *)ctx; mm_range r; size_t col=task%j->cols,row=task/j->cols,i,jj;
   r.jb0=col*j->nr; r.jb1=r.jb0+j->nr<j->x.n ? r.jb0+j->nr : j->x.n;
   r.r0=row*BCIR_MM_ROWS; r.r1=r.r0+BCIR_MM_ROWS<j->x.m ? r.r0+BCIR_MM_ROWS : j->x.m;
   INSTANCE_SAW(INSTANCE_GEMM,j->variant);
+  if (j->ks) { mm_ksplit_task(j,task); return; }
   if (!j->x.fold) for (i=r.r0;i<r.r1;i++) {
     float *ci=j->x.c+i*j->x.ldc;
     for (jj=r.jb0;jj<r.jb1;jj++) ci[jj]=mm_scaled(j->beta,ci[jj]);
@@ -1365,6 +1428,7 @@ static void mm_task(void *ctx, size_t task) {
 /* The job of one GEMM under a contract: its partition's task count (0 for an empty product). */
 static size_t mm_job_init(mm_job *j, int fused, int variant, int ta, int tb, size_t m, size_t n,
     size_t k, float alpha, const float *a, const float *b, float beta, float *c) {
+  j->ks=0; j->ws=NULL;
   if (!m || !n) return 0;
   j->beta=beta; j->fused=fused; j->variant=variant; j->nr=mm_nr(j->variant,fused);
   j->x.ta=ta; j->x.tb=tb; j->x.m=m; j->x.n=n; j->x.k=k; j->x.alpha=alpha; j->x.a=a; j->x.lda=ta ? m : k;
@@ -1378,17 +1442,90 @@ static size_t mm_job_init(mm_job *j, int fused, int variant, int ta, int tb, siz
   j->cols=(n+j->nr-1)/j->nr; j->rowsets=(m+BCIR_MM_ROWS-1)/BCIR_MM_ROWS;
   return j->cols*j->rowsets;
 }
+/* KSPLIT: the lent room as bytes, or none where it cannot hold floats */
+static unsigned char *mm_room(void *ws) {
+  return ws && !((uintptr_t)ws%_Alignof(float)) ? (unsigned char *)ws : NULL;
+}
+/* KSPLIT: a call's slice of the room where it qualifies -- the blocked contract, A transposed and
+ * B not, at least BCIR_MM_KSPLIT_BLOCKS K blocks -- and its blocks' partials (blocks x m x n
+ * floats) fit what is left; then its tasks are its blocks, and the room's next slice starts at the
+ * next 64-byte offset. Else the job keeps `tasks`, mm_job_init's partition. */
+static size_t mm_ksplit(mm_job *j, size_t tasks, unsigned char **room, size_t *left) {
+  size_t blocks,mn,raw,step;
+  if (!tasks || !*room || j->fused!=MM_KBLOCK || !j->x.ta || j->x.tb || !j->x.k) return tasks;
+  blocks=bcir_tensor_kblock_split(j->x.k,NULL,0);
+  if (blocks<BCIR_MM_KSPLIT_BLOCKS || j->x.m>SIZE_MAX/j->x.n) return tasks;
+  mn=j->x.m*j->x.n;
+  if (mn>SIZE_MAX/sizeof(float)/blocks) return tasks;
+  raw=blocks*mn*sizeof(float);
+  if (raw>*left) return tasks;
+  j->ks=blocks; j->ws=(float *)(void *)*room;
+  step=raw%64 ? raw+(64-raw%64) : raw;
+  if (step>*left) step=*left;
+  *room+=step; *left-=step;
+  return blocks;
+}
+/* KSPLIT's fold: rows of the split calls' C, BCIR_MM_FOLD_ROWS a task -- every element its blocks in
+ * order with the blocked kernels' epilogue operations: the first block's beta scaling (NDT-BETA:
+ * +0.0 under beta 0, else the rounded product) and c + alpha*P, a rounded product and a rounded sum
+ * (the build contract keeps each its own), then c + alpha*P for each later block. */
+#define BCIR_MM_FOLD_ROWS 16
+typedef struct mm_fold_job {
+  const mm_job *call[2*BCIR_TENSOR_MM_GROUP]; size_t calls,start[2*BCIR_TENSOR_MM_GROUP+1];
+} mm_fold_job;
+static void mm_fold_task(void *ctx, size_t task) {
+  const mm_fold_job *f=(const mm_fold_job *)ctx; const mm_job *j; size_t q,i,c,b,m,n,r0,r1;
+  for (q=0;task>=f->start[q+1];q++) {}
+  j=f->call[q]; m=j->x.m; n=j->x.n;
+  r0=(task-f->start[q])*BCIR_MM_FOLD_ROWS; r1=r0+BCIR_MM_FOLD_ROWS<m ? r0+BCIR_MM_FOLD_ROWS : m;
+  for (i=r0;i<r1;i++) {
+    float *ci=j->x.c+i*j->x.ldc;
+    for (b=0;b<j->ks;b++) {
+      const float *p=j->ws+(b*m+i)*n;
+      if (b==0 && j->x.fold) { for (c=0;c<n;c++) ci[c]=mm_scaled(j->x.beta,ci[c])+j->x.alpha*p[c]; }
+      else for (c=0;c<n;c++) ci[c]=ci[c]+j->x.alpha*p[c];
+    }
+  }
+}
+static void mm_fold_add(mm_fold_job *f, const mm_job *j) {
+  if (!j->ks) return;
+  f->call[f->calls]=j;
+  f->start[f->calls+1]=f->start[f->calls]+(j->x.m+BCIR_MM_FOLD_ROWS-1)/BCIR_MM_FOLD_ROWS;
+  f->calls++;
+}
+/* a job's tasks: on the pool, its led part first; serially in order (each task writes apart, so
+ * the order is no value's) */
+static void mm_run_tasks(bcir_tensor_pool *pool, bcir_tensor_task_fn fn, void *ctx, size_t tasks,
+    size_t head) {
+  size_t t;
+  if (pool && pool->threads>1) { pool_run_led(pool,fn,ctx,tasks,head); return; }
+  for (t=0;t<tasks;t++) fn(ctx,t);
+}
 /* `variant` resolved (mm_instance): the instance every call of the job runs */
 static void mm_serial_any(int fused, int variant, int ta, int tb, size_t m, size_t n, size_t k,
     float alpha, const float *a, const float *b, float beta, float *c) {
   mm_variant_any(variant,fused,ta,tb,m,n,k,alpha,a,b,beta,c);
 }
+/* one call; `ws` the room lent for KSPLIT (NULL none): split, its blocks then the fold, on the pool
+ * or serially; else as before */
+static void mm_pool_ws_any(bcir_tensor_pool *pool, int fused, int variant, int ta, int tb, size_t m,
+    size_t n, size_t k, float alpha, const float *a, const float *b, float beta, float *c, void *ws,
+    size_t bytes) {
+  mm_job j; mm_fold_job f; size_t tasks,left=bytes; unsigned char *room=mm_room(ws);
+  tasks=mm_job_init(&j,fused,variant,ta,tb,m,n,k,alpha,a,b,beta,c);
+  tasks=mm_ksplit(&j,tasks,&room,&left);
+  if (!j.ks) {
+    if (!pool || pool->threads==1) { mm_serial_any(fused,variant,ta,tb,m,n,k,alpha,a,b,beta,c); return; }
+    pool_run(pool,mm_task,&j,tasks);
+    return;
+  }
+  mm_run_tasks(pool,mm_task,&j,tasks,0);
+  f.calls=0; f.start[0]=0; mm_fold_add(&f,&j);
+  mm_run_tasks(pool,mm_fold_task,&f,f.start[f.calls],0);
+}
 static void mm_pool_any(bcir_tensor_pool *pool, int fused, int variant, int ta, int tb, size_t m,
     size_t n, size_t k, float alpha, const float *a, const float *b, float beta, float *c) {
-  mm_job j; size_t tasks;
-  if (!pool || pool->threads==1) { mm_serial_any(fused,variant,ta,tb,m,n,k,alpha,a,b,beta,c); return; }
-  tasks=mm_job_init(&j,fused,variant,ta,tb,m,n,k,alpha,a,b,beta,c);
-  pool_run(pool,mm_task,&j,tasks);
+  mm_pool_ws_any(pool,fused,variant,ta,tb,m,n,k,alpha,a,b,beta,c,NULL,0);
 }
 /* MM-ROWS: a pair or group job whose second part's tasks are the larger runs that part first --
  * the step's weight adjoints, a few tasks over the batch's depth, beside input adjoints of many
@@ -1399,6 +1536,7 @@ static void mm_pool_any(bcir_tensor_pool *pool, int fused, int variant, int ta, 
  * work is its multiply-adds (a job's first task's: none is larger). */
 static double mm_task_work(const mm_job *j) {
   double rows=(double)(j->x.m<BCIR_MM_ROWS ? j->x.m : BCIR_MM_ROWS),cols=(double)(j->x.n<j->nr ? j->x.n : j->nr);
+  if (j->ks) return (double)j->x.m*(double)j->x.n*(double)BCIR_MM_KBLOCK;  /* KSPLIT: a block of all of C */
   return rows*cols*(double)(j->x.k ? j->x.k : 1);
 }
 static size_t mm_led(size_t task, size_t lead, size_t total) { return (task+lead)%total; }
@@ -1411,19 +1549,28 @@ static void mm_pair_task(void *ctx, size_t task) {
   task=mm_led(task,j->lead,j->total);
   if (task<j->split) mm_task(&j->a,task); else mm_task(&j->b,task-j->split);
 }
-static void mm_pair_any(bcir_tensor_pool *pool, int fused, int variant, const bcir_tensor_mm_call *x,
-    const bcir_tensor_mm_call *y) {
-  mm_pair_job j; size_t second;
-  if (!pool || pool->threads==1) {
+/* `ws` the room lent for KSPLIT (NULL none): the calls take their slices in order (x, then y) */
+static void mm_pair_ws_any(bcir_tensor_pool *pool, int fused, int variant, const bcir_tensor_mm_call *x,
+    const bcir_tensor_mm_call *y, void *ws, size_t bytes) {
+  mm_pair_job j; mm_fold_job f; size_t second,left=bytes; unsigned char *room=mm_room(ws);
+  j.split=mm_job_init(&j.a,fused,variant,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
+  j.split=mm_ksplit(&j.a,j.split,&room,&left);
+  second=mm_job_init(&j.b,fused,variant,y->ta,y->tb,y->m,y->n,y->k,y->alpha,y->a,y->b,y->beta,y->c);
+  second=mm_ksplit(&j.b,second,&room,&left);
+  if (!j.a.ks && !j.b.ks && (!pool || pool->threads==1)) {
     mm_serial_any(fused,variant,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
     mm_serial_any(fused,variant,y->ta,y->tb,y->m,y->n,y->k,y->alpha,y->a,y->b,y->beta,y->c);
     return;
   }
-  j.split=mm_job_init(&j.a,fused,variant,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
-  second=mm_job_init(&j.b,fused,variant,y->ta,y->tb,y->m,y->n,y->k,y->alpha,y->a,y->b,y->beta,y->c);
   j.total=j.split+second;
   j.lead=j.split && second && mm_task_work(&j.b)>mm_task_work(&j.a) ? j.split : 0;
-  pool_run_led(pool,mm_pair_task,&j,j.total,j.lead ? j.total-j.split : 0);
+  mm_run_tasks(pool,mm_pair_task,&j,j.total,j.lead ? j.total-j.split : 0);
+  f.calls=0; f.start[0]=0; mm_fold_add(&f,&j.a); mm_fold_add(&f,&j.b);
+  if (f.calls) mm_run_tasks(pool,mm_fold_task,&f,f.start[f.calls],0);
+}
+static void mm_pair_any(bcir_tensor_pool *pool, int fused, int variant, const bcir_tensor_mm_call *x,
+    const bcir_tensor_mm_call *y) {
+  mm_pair_ws_any(pool,fused,variant,x,y,NULL,0);
 }
 static int mm_family(int contract) {
   return contract==2 ? MM_KBLOCK : contract==1 ? MM_FUSED : MM_V1;
@@ -1456,26 +1603,41 @@ static void mm_call_serial(int fused, int variant, const bcir_tensor_mm_call *x)
 static size_t mm_call_init(mm_job *j, int fused, int variant, const bcir_tensor_mm_call *x) {
   return mm_job_init(j,fused,variant,x->ta,x->tb,x->m,x->n,x->k,x->alpha,x->a,x->b,x->beta,x->c);
 }
-static void mm_group_any(bcir_tensor_pool *pool, int fused, int variant, const bcir_tensor_mm_call *x,
-    size_t nx, const bcir_tensor_mm_call *y, size_t ny) {
-  mm_group_job j; size_t q;
-  int serial=!pool || pool->threads==1 || nx>BCIR_TENSOR_MM_GROUP || ny>BCIR_TENSOR_MM_GROUP;
+/* `ws` the room lent for KSPLIT (NULL none): the independent calls take their slices in order (a
+ * chain's calls share one tiling, so none of them splits) */
+static void mm_group_ws_any(bcir_tensor_pool *pool, int fused, int variant, const bcir_tensor_mm_call *x,
+    size_t nx, const bcir_tensor_mm_call *y, size_t ny, void *ws, size_t bytes) {
+  mm_group_job j; mm_fold_job f; size_t q,left=bytes; unsigned char *room=mm_room(ws); int split=0;
+  int serial=nx>BCIR_TENSOR_MM_GROUP || ny>BCIR_TENSOR_MM_GROUP;
   for (q=1;q<nx && !serial;q++) serial=x[q].c!=x[0].c || x[q].m!=x[0].m || x[q].n!=x[0].n;
-  if (serial) {
+  if (!serial) {
+    j.nx=nx; j.split=0; j.start[0]=0;
+    for (q=0;q<nx;q++) { size_t tasks=mm_call_init(&j.x[q],fused,variant,x+q); if (!q) j.split=tasks; }
+    for (q=0;q<ny;q++) {
+      j.start[q+1]=j.start[q]+mm_ksplit(&j.y[q],mm_call_init(&j.y[q],fused,variant,y+q),&room,&left);
+      split|=j.y[q].ks!=0;
+    }
+  }
+  if (serial || (!split && (!pool || pool->threads==1))) {
     for (q=0;q<nx;q++) mm_call_serial(fused,variant,x+q);
     for (q=0;q<ny;q++) mm_call_serial(fused,variant,y+q);
     return;
   }
-  j.nx=nx; j.split=0; j.start[0]=0;
-  for (q=0;q<nx;q++) { size_t tasks=mm_call_init(&j.x[q],fused,variant,x+q); if (!q) j.split=tasks; }
-  for (q=0;q<ny;q++) j.start[q+1]=j.start[q]+mm_call_init(&j.y[q],fused,variant,y+q);
   j.total=j.split+j.start[ny]; j.lead=0;
   if (j.split) {  /* MM-ROWS: the independent calls first where one's task outweighs a chain tile's */
     double tile=0.0;
     for (q=0;q<nx;q++) tile+=mm_task_work(&j.x[q]);
     for (q=0;q<ny;q++) if (j.start[q+1]>j.start[q] && mm_task_work(&j.y[q])>tile) j.lead=j.split;
   }
-  pool_run_led(pool,mm_group_task,&j,j.total,j.lead ? j.total-j.split : 0);
+  mm_run_tasks(pool,mm_group_task,&j,j.total,j.lead ? j.total-j.split : 0);
+  if (!split) return;
+  f.calls=0; f.start[0]=0;
+  for (q=0;q<ny;q++) mm_fold_add(&f,&j.y[q]);
+  mm_run_tasks(pool,mm_fold_task,&f,f.start[f.calls],0);
+}
+static void mm_group_any(bcir_tensor_pool *pool, int fused, int variant, const bcir_tensor_mm_call *x,
+    size_t nx, const bcir_tensor_mm_call *y, size_t ny) {
+  mm_group_ws_any(pool,fused,variant,x,nx,y,ny,NULL,0);
 }
 void bcir_tensor_mm_group_pool(bcir_tensor_pool *pool, int contract, const bcir_tensor_mm_call *x,
     size_t nx, const bcir_tensor_mm_call *y, size_t ny) {
@@ -2220,17 +2382,23 @@ int bcir_tensor_mm_contract_variant_pool(bcir_tensor_pool *pool, int contract, i
   if (contract<0 || contract>2) return 0;
   fused=mm_family(contract);
   if (!(v=mm_instance(fused,variant))) return 0;
-  mm_pool_any(pool,fused,v,ta,tb,m,n,k,alpha,a,b,beta,c);
+  /* KSPLIT: the blocked contract's weight adjoint may split over its depth in the room lent */
+  mm_pool_ws_any(pool,fused,v,ta,tb,m,n,k,alpha,a,b,beta,c,fused==MM_KBLOCK ? workspace : NULL,
+      fused==MM_KBLOCK ? bytes : 0);
   return v;
 }
-int bcir_tensor_mm_pair_variant_pool(bcir_tensor_pool *pool, int contract, int variant,
-    const bcir_tensor_mm_call *x, const bcir_tensor_mm_call *y) {
+int bcir_tensor_mm_pair_ws_variant_pool(bcir_tensor_pool *pool, int contract, int variant,
+    const bcir_tensor_mm_call *x, const bcir_tensor_mm_call *y, void *workspace, size_t bytes) {
   int fused,v;
   if (contract<0 || contract>2) return 0;
   fused=mm_family(contract);
   if (!(v=mm_instance(fused,variant))) return 0;
-  mm_pair_any(pool,fused,v,x,y);
+  mm_pair_ws_any(pool,fused,v,x,y,fused==MM_KBLOCK ? workspace : NULL,fused==MM_KBLOCK ? bytes : 0);
   return v;
+}
+int bcir_tensor_mm_pair_variant_pool(bcir_tensor_pool *pool, int contract, int variant,
+    const bcir_tensor_mm_call *x, const bcir_tensor_mm_call *y) {
+  return bcir_tensor_mm_pair_ws_variant_pool(pool,contract,variant,x,y,NULL,0);
 }
 int bcir_tensor_mm_group_variant_pool(bcir_tensor_pool *pool, int contract, int variant,
     const bcir_tensor_mm_call *chain, size_t nchain, const bcir_tensor_mm_call *y, size_t ny,
@@ -2243,7 +2411,9 @@ int bcir_tensor_mm_group_variant_pool(bcir_tensor_pool *pool, int contract, int 
   if (contract<0 || contract>2 || pre) return 0;
   fused=mm_family(contract);
   if (!(v=mm_instance(fused,variant))) return 0;
-  mm_group_any(pool,fused,v,chain,nchain,y,ny);
+  /* KSPLIT: the blocked contract's weight adjoints may split over their depth in the room lent */
+  mm_group_ws_any(pool,fused,v,chain,nchain,y,ny,fused==MM_KBLOCK ? workspace : NULL,
+      fused==MM_KBLOCK ? bytes : 0);
   return v;
 }
 /* --- the writers' verdicts (NDT-SCAN-W) --------------------------------------------------------

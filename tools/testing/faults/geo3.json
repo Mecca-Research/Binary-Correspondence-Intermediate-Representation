@@ -59,8 +59,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "GW8 a GEMM group's refusal read as run",
-      "new": "      bf ? pre : NULL,bf ? s->workspace : NULL,bf ? s->workspace_bytes : 0)>=0;\n",
-      "old": "      bf ? pre : NULL,bf ? s->workspace : NULL,bf ? s->workspace_bytes : 0)!=0;\n",
+      "new": "      bf ? pre : NULL,lend ? s->workspace : NULL,lend ? s->workspace_bytes : 0)>=0;\n",
+      "old": "      bf ? pre : NULL,lend ? s->workspace : NULL,lend ? s->workspace_bytes : 0)!=0;\n",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {

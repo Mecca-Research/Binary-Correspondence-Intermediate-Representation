@@ -226,12 +226,12 @@
     "test_decoder_train_c11": {"of": "test_decoder_train", "standard": 11},
     "test_decoder_train_portable": {"of": "test_decoder_train", "options": ["-DBCIR_TENSOR_NO_DISPATCH"]},
     "test_decoder_train_avx2": {"of": "test_decoder_train", "options": ["-DBCIR_TENSOR_MAX_VARIANT=2"]},
-    "test_decoder_train_tsan": {"of": "test_decoder_train", "standard": 11, "sanitizer": "thread", "options": ["-O1", "-g", "-DBCIR_ATT_CONTIG_FROM=1", "-DBCIR_ATT_STRIP_FROM=1"]},
+    "test_decoder_train_tsan": {"of": "test_decoder_train", "standard": 11, "sanitizer": "thread", "options": ["-O1", "-g", "-DBCIR_ATT_CONTIG_FROM=1", "-DBCIR_ATT_STRIP_FROM=1", "-DBCIR_MM_KSPLIT_BLOCKS=1"]},
     "test_decoder_train_race": {
       "of": "test_decoder_train",
       "standard": 11,
       "sanitizer": "thread",
-      "options": ["-O1", "-g", "-DBCIR_ATT_CONTIG_FROM=1", "-DBCIR_ATT_STRIP_FROM=1"],
+      "options": ["-O1", "-g", "-DBCIR_ATT_CONTIG_FROM=1", "-DBCIR_ATT_STRIP_FROM=1", "-DBCIR_MM_KSPLIT_BLOCKS=1"],
       "mutation": {"file": "bcir_tensor.c", "find": "  a.group=nh/nk;", "replace": "  a.group=1;"}
     },
     "test_control_plane_mutant": {

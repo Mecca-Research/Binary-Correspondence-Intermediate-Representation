@@ -417,6 +417,19 @@ def step_program(
     # ATT-CONTIG: the binary32 attention is lent the state's workspace under any contract, where it
     # has bytes -- the entry copies a head's rows into it from its need on, and runs them in place below
     ws_attention = (SPACES["workspace"], 0, workspace_bytes) if workspace_bytes else _NONE
+    # KSPLIT (bcir_decoder_train.c's ks_lends): a blocked-contract job with a weight adjoint -- a call
+    # with A transposed -- is lent the state's workspace where it has bytes, every record of the job
+    # stating it; the tensor unit splits the weight adjoints whose partials fit it over their depth
+    ws_split = (
+        (SPACES["workspace"], 0, workspace_bytes)
+        if gemm_contract == 2 and workspace_bytes and not provider_mm
+        else _NONE
+    )
+
+    def lent(calls) -> tuple:
+        """KSPLIT: the workspace a blocked-contract job of these calls is lent (ks_lends)."""
+        return ws_split if any(c[0] == 1 for c in calls) else _NONE
+
     out: list[Launch] = []
 
     def ref(name: str, offset: int = 0, size: int | None = None):
@@ -476,7 +489,7 @@ def step_program(
         elif gemm_contract == 3:
             emit(call(E_BF16, 0, 0, 3, c, workspace=ws))
         else:
-            emit(call(gemm_contract, 0, 0, gemm_contract, c))
+            emit(call(gemm_contract, 0, 0, gemm_contract, c, workspace=lent([c])))
 
     def gemm_job(chain, rest, pre=None) -> None:
         """gemm_group_with: one job, the chain then the rest (`pre` per call, bf16 only)."""
@@ -486,7 +499,8 @@ def step_program(
             emit(*(call(E_BF16_GROUP, 1 if q < len(chain) else 2, q, 3, c, pre[q], ws)
                    for q, c in enumerate(calls)))  # fmt: skip
         else:
-            emit(*(call(E_GROUP, 1 if q < len(chain) else 2, q, gemm_contract, c)
+            loan = lent(calls)
+            emit(*(call(E_GROUP, 1 if q < len(chain) else 2, q, gemm_contract, c, workspace=loan)
                    for q, c in enumerate(calls)))  # fmt: skip
 
     def linear(rows, inp, outp, x, w, y) -> None:
@@ -501,7 +515,9 @@ def step_program(
         elif gemm_contract == 3:
             gemm_job([cx], [cw])
         else:
-            emit(call(E_PAIR, 1, 0, gemm_contract, cx), call(E_PAIR, 2, 1, gemm_contract, cw))
+            loan = lent([cx, cw])
+            emit(call(E_PAIR, 1, 0, gemm_contract, cx, workspace=loan),
+                 call(E_PAIR, 2, 1, gemm_contract, cw, workspace=loan))  # fmt: skip
 
     def linears(rows, inp, x, outs, ws_, ys, site) -> None:
         if provider_mm or chosen[site] != "group" or len(outs) > _GROUP:

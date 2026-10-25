@@ -1,0 +1,111 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_launch:_CC",
+    "bcir.tests.test_native_launch:test_a_blocked_weight_adjoint_job_is_lent_the_workspace",
+    "bcir.tests.test_native_launch:test_the_plan_lends_a_blocked_weight_adjoint_job_the_workspace",
+    "bcir.tests.test_native_run_program:test_a_blocked_job_states_its_workspace_or_is_refused"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_blocked_weight_adjoint_job_is_lent_the_workspace",
+      "label": "KX1 the trainer lends the jobs with B transposed (the forward's), not those with A",
+      "new": "  for (q=0;q<count;q++) if (calls[q].tb) return 1;\n",
+      "old": "  for (q=0;q<count;q++) if (calls[q].ta) return 1;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_blocked_weight_adjoint_job_is_lent_the_workspace",
+      "label": "KX2 a group lent the workspace by its independent calls alone (a chain's weight adjoint unread)",
+      "new": "  int bf=gemm_contract(s)==3,lend=bf || ks_lends(s,y,ny);\n",
+      "old": "  int bf=gemm_contract(s)==3,lend=bf || ks_lends(s,chain,nchain) || ks_lends(s,y,ny);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_blocked_weight_adjoint_job_is_lent_the_workspace",
+      "label": "KX3 a weight adjoint alone never lent the workspace",
+      "new": "  one.c=c; lend=bf;  /* KSPLIT: a weight adjoint alone */\n",
+      "old": "  one.c=c; lend=bf || ks_lends(s,&one,1);  /* KSPLIT: a weight adjoint alone */\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_blocked_weight_adjoint_job_is_lent_the_workspace",
+      "label": "KX4 the step's pair called without the workspace",
+      "new": "  if (0)  /* KSPLIT: the pair lent the workspace for its weight adjoint */\n",
+      "old": "  if (ks_lends(s,&cw,1))  /* KSPLIT: the pair lent the workspace for its weight adjoint */\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_blocked_weight_adjoint_job_is_lent_the_workspace",
+      "label": "KX5 the program executor runs a pair without the workspace its records state",
+      "new": "    if (0)\n      return bcir_tensor_mm_pair_ws_variant_pool(",
+      "old": "    if (ks_lends(s,call,job))\n      return bcir_tensor_mm_pair_ws_variant_pool(",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_blocked_weight_adjoint_job_is_lent_the_workspace",
+      "label": "KX6 the trace records a pair lent the workspace without it",
+      "new": "  (tr_mm_group(4,ct,x,1,y,1,NULL,NULL,0),",
+      "old": "  (tr_mm_group(4,ct,x,1,y,1,NULL,ws,bytes),",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_blocked_job_states_its_workspace_or_is_refused",
+      "label": "KX7 the program check asks the workspace of the blocked jobs without a weight adjoint, not of those with one",
+      "new": "!px_ws(c,r,3,e==3 || e==6 || (!ks && c->gc==2 && c->len[7])))\n",
+      "old": "!px_ws(c,r,3,e==3 || e==6 || ks))\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_blocked_job_states_its_workspace_or_is_refused",
+      "label": "KX8 the program check reads a job's first record alone (a pair's weight adjoint unseen)",
+      "new": "    ks|=w[3]==1u;\n",
+      "old": "    for (q=0;q<job;q++) ks|=w[q*BCIR_DT_RECORD_WORDS+3]==1u;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_a_blocked_job_states_its_workspace_or_is_refused",
+      "label": "KX9 the program check asks a blocked weight adjoint's workspace of a state that has none",
+      "new": "  if (c->gc==2 && (e==2 || e==4 || e==5))\n",
+      "old": "  if (c->gc==2 && c->len[7] && (e==2 || e==4 || e==5))\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_plan_lends_a_blocked_weight_adjoint_job_the_workspace",
+      "label": "KX10 the launch plan lends a blocked job the workspace only over a provider's GEMM",
+      "new": "        if gemm_contract == 2 and workspace_bytes and provider_mm\n",
+      "old": "        if gemm_contract == 2 and workspace_bytes and not provider_mm\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_the_plan_lends_a_blocked_weight_adjoint_job_the_workspace",
+      "label": "KX11 the launch plan lends a job by its first call alone",
+      "new": "        return ws_split if calls[0][0] == 1 else _NONE\n",
+      "old": "        return ws_split if any(c[0] == 1 for c in calls) else _NONE\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_the_plan_lends_a_blocked_weight_adjoint_job_the_workspace",
+      "label": "KX12 the launch plan states a pair's workspace on its weight adjoint alone",
+      "new": "            emit(call(E_PAIR, 1, 0, gemm_contract, cx),\n",
+      "old": "            emit(call(E_PAIR, 1, 0, gemm_contract, cx, workspace=loan),\n",
+      "path": "bcir/hosted/models/native_launch.py"
+    },
+    {
+      "expects": "test_a_blocked_weight_adjoint_job_is_lent_the_workspace",
+      "label": "KX13 the pack states a blocked call's claim without the workspace it writes",
+      "new": "        lent = f & 15 in (nl.E_BF16, nl.E_BF16_GROUP)\n",
+      "old": "        lent = f & 15 in (nl.E_BF16, nl.E_BF16_GROUP) or r.refs[3] != (0, 0, 0)\n",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_a_blocked_weight_adjoint_job_is_lent_the_workspace",
+      "label": "KX14 the pack's lowering gives a blocked call's claim no workspace slot",
+      "new": "    if (entry == 3u || entry == 6u)\n",
+      "old": "    if (entry == 3u || entry == 6u || (c->gc == 2u && c->lent && cl->n_wr == 2u))\n",
+      "path": "runtime/c/bcir_decoder_pack.c"
+    }
+  ]
+}

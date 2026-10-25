@@ -459,7 +459,17 @@ BCIR_DT_API void bcir_tensor_attention_backward_inplace(size_t batch, size_t tim
  * attention's products the fused GEMM's under BCIR_TENSOR_ATTENTION_FUSED, v1's otherwise. Each
  * returns the instance it ran, or 0 having written nothing -- an instance the family does not admit,
  * a contract outside 0..3, panels outside the bf16 contract, or what its plain entry refuses -- and
- * its results are the plain entry's bit for bit, every instance of a family the same bits. */
+ * its results are the plain entry's bit for bit, every instance of a family the same bits.
+ *
+ * KSPLIT: under the blocked contract (2) a call with A transposed and B not -- a weight adjoint,
+ * whose depth is the batch's rows -- at least four K blocks deep (bcir_tensor_kblock_split's
+ * blocks; a build may set BCIR_MM_KSPLIT_BLOCKS) runs a task a K block where `workspace` holds its
+ * blocks' partial products, blocks x m x n floats, then folds them into C in block order: the
+ * nest's terms, order and roundings, so every element is the entry's without the room, bit for bit.
+ * A job's calls take the room in call order -- a group's independent calls, never its chain -- while
+ * their partials fit, and the rest run as before; an entry lent no room runs every call as before.
+ * bcir_tensor_mm_pair_ws_variant_pool is the pair entry with that room, and
+ * bcir_tensor_mm_pair_variant_pool lends none. */
 BCIR_DT_API unsigned bcir_tensor_pool_cap(bcir_tensor_pool *pool, unsigned workers);
 BCIR_DT_API unsigned bcir_tensor_pool_workers(const bcir_tensor_pool *pool);
 BCIR_DT_API int bcir_tensor_mm_contract_variants(int contract);
@@ -468,6 +478,9 @@ BCIR_DT_API int bcir_tensor_mm_contract_variant_pool(bcir_tensor_pool *pool, int
     const float *b, float beta, float *c, void *workspace, size_t bytes);
 BCIR_DT_API int bcir_tensor_mm_pair_variant_pool(bcir_tensor_pool *pool, int contract, int variant,
     const bcir_tensor_mm_call *x, const bcir_tensor_mm_call *y);
+BCIR_DT_API int bcir_tensor_mm_pair_ws_variant_pool(bcir_tensor_pool *pool, int contract,
+    int variant, const bcir_tensor_mm_call *x, const bcir_tensor_mm_call *y, void *workspace,
+    size_t bytes);
 BCIR_DT_API int bcir_tensor_mm_group_variant_pool(bcir_tensor_pool *pool, int contract, int variant,
     const bcir_tensor_mm_call *chain, size_t nchain, const bcir_tensor_mm_call *y, size_t ny,
     const bcir_tensor_bf16_panels *pre, void *workspace, size_t bytes);

@@ -350,7 +350,11 @@ static int dp_record(dp_ctx *c, const dp_claim *cl, uint64_t *w) {
     if (c->index > 255u) return dp_fail(c, BCIR_DP_SLOTS);
     entry = role == 0u ? (c->provider ? 7u : c->gc) : role == 1u ? 4u : c->gc == 3u ? 6u : 5u;
     SLOT(0, U_R, SL_PLAIN); SLOT(1, U_R, SL_PLAIN); SLOT(2, acc ? U_RW : U_W, SL_PLAIN);
-    if (entry == 3u || entry == 6u) SLOT(3, U_W, SL_WS);
+    /* the bf16 GEMM's packs; KSPLIT: under the blocked contract, where the state lends bytes, a
+     * call the pack states writing the workspace -- each call of a job with a weight adjoint, which
+     * px_gemm then holds the job to */
+    if (entry == 3u || entry == 6u || (c->gc == 2u && c->lent && cl->n_wr == 2u))
+      SLOT(3, U_W, SL_WS);
     break;
   }
   for (i = 0; i < ns; i++) {

@@ -38,8 +38,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "MR5 a two-vector edge block stores its first vector alone",
-      "new": "      if (nv>2) _mm512_mask_storeu_ps(ci+16,m1,",
-      "old": "      if (nv>1) _mm512_mask_storeu_ps(ci+16,m1,",
+      "new": "      if (nv>2) _mm512_mask_storeu_ps(ci+16,m1,_mm512_add_ps(",
+      "old": "      if (nv>1) _mm512_mask_storeu_ps(ci+16,m1,_mm512_add_ps(",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

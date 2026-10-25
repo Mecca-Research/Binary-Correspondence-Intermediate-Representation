@@ -1208,9 +1208,10 @@ class ProgramRun(NamedTuple):
     instances: dict | None = None
 
 
-def program_case(path, case: TraceCase, choices: dict | None = None) -> ProgramRun:
+def program_case(path, case: TraceCase, choices: dict | None = None, edit=None) -> ProgramRun:
     """Run `case` from its program (`native_launch.step_program` under the case's state and the
-    planner's `choices`) on the trace build at `path`, its launches traced."""
+    planner's `choices`, then `edit`ed where given: a function of the launches to the launches run)
+    on the trace build at `path`, its launches traced."""
     from bcir.hosted.models.native import NativeRunStopped
     from bcir.hosted.models.native_launch import (
         RECORD_WORDS,
@@ -1226,6 +1227,8 @@ def program_case(path, case: TraceCase, choices: dict | None = None) -> ProgramR
         program = step_program(
             case.spec, case.batch, case.time, **(decisions | dict(choices or {}))
         )
+        if edit is not None:
+            program = edit(program)
         capacity = 2 * sum(len(launch.records) for launch in program) + 64
         words = (ct.c_uint64 * (capacity * RECORD_WORDS))()
         tokens, targets, optimizer = _case_inputs(case)

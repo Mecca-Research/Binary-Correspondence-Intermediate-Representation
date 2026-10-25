@@ -647,8 +647,9 @@ class NativeDecoder:
             workspace_bytes=workspace_bytes,
         )  # fmt: skip
         self.recompute = recompute
-        # NDT-BF16 / WS-PLAN / ATT-CONTIG: the workspace the bf16 GEMMs pack into and the binary32
-        # attention copies its heads' rows into, by default the step's exact need
+        # NDT-BF16 / WS-PLAN / ATT-CONTIG / KSPLIT: the workspace the bf16 GEMMs pack into and the
+        # binary32 attention copies its heads' rows into -- and under the blocked contract the weight
+        # adjoints' split partials take, where they fit -- by default the step's exact need
         self.workspace_bytes = self.plan_memory.workspace_bytes
         self.activation_count = self.plan_memory.activation_count
         self.memory_bytes = self.plan_memory.total_bytes

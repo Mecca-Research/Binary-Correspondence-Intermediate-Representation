@@ -102,8 +102,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NT14 the group job's independent calls start at their own task counts, not the running sum (a later call's tasks are never claimed, an earlier call's only in part)",
-      "new": "  for (q=0;q<ny;q++) j.start[q+1]=mm_call_init(&j.y[q],fused,variant,y+q);",
-      "old": "  for (q=0;q<ny;q++) j.start[q+1]=j.start[q]+mm_call_init(&j.y[q],fused,variant,y+q);",
+      "new": "      j.start[q+1]=mm_ksplit(&j.y[q],mm_call_init(&j.y[q],fused,variant,y+q),&room,&left);\n",
+      "old": "      j.start[q+1]=j.start[q]+mm_ksplit(&j.y[q],mm_call_init(&j.y[q],fused,variant,y+q),&room,&left);\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

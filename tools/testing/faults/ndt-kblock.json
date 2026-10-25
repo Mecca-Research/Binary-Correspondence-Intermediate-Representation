@@ -40,8 +40,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NK5 the pool entry of one thread runs the fused kernel under the blocked contract",
-      "new": "  mm_variant_any(variant,fused==MM_KBLOCK ? MM_FUSED : fused,ta,tb,m,n,k,alpha,a,b,beta,c);\n}\nstatic void mm_pool_any(",
-      "old": "  mm_variant_any(variant,fused,ta,tb,m,n,k,alpha,a,b,beta,c);\n}\nstatic void mm_pool_any(",
+      "new": "  mm_variant_any(variant,fused==MM_KBLOCK ? MM_FUSED : fused,ta,tb,m,n,k,alpha,a,b,beta,c);\n}\n/* one call; `ws` the room lent for KSPLIT",
+      "old": "  mm_variant_any(variant,fused,ta,tb,m,n,k,alpha,a,b,beta,c);\n}\n/* one call; `ws` the room lent for KSPLIT",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

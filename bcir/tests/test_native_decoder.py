@@ -147,7 +147,9 @@ def test_native_c_harness_c11_and_c23():
         # forward a strip of rows at a time -- so the attention references hold what a long context
         # takes otherwise (BWD-LONG, FWD-STRIP), and once more
         # with the binary32 attention's tasks on copies of their heads' rows at every context and
-        # those paths with them, the harness lending the workspace the plan asks (ATT-CONTIG); every
+        # those paths with them, the harness lending the workspace the plan asks (ATT-CONTIG), and
+        # every blocked-contract weight adjoint that workspace holds split over its depth however
+        # shallow (KSPLIT: one K block on), so the trainer's every such job runs split there; every
         # build with the commit's shared division exposed to the harness's check of it, with
         # PX-1's launch trace compiled in but never begun, PX-5's layout probes compiled in but
         # never called, and PX-3's job clock compiled in but never begun -- so the probes build
@@ -171,12 +173,14 @@ def test_native_c_harness_c11_and_c23():
                     "-DBCIR_ATT_BAND_FROM=16",
                     "-DBCIR_ATT_WHOLE=0",
                     "-DBCIR_ATT_STRIP_FROM=1",
+                    "-DBCIR_MM_KSPLIT_BLOCKS=1",
                 ],
                 "-contig",
             ),
         )
         # P-BANDS: the trainer's state digests from every build, where the bands take effect (an
-        # AVX-512 host's default builds) and where none can (the AVX2-capped build): one set
+        # AVX-512 host's default builds) and where none can (the AVX2-capped build), and (KSPLIT)
+        # where the blocked contract's weight adjoints run split (the -contig build): one set
         trained = {}
         for standard, options, tag in builds:
             exe = Path(temporary) / f"gate-{standard}{tag}"
@@ -232,8 +236,8 @@ def test_native_c_harness_c11_and_c23():
             # result rounds (SOFTMAX-T); the attention in bands and its trainer (P-BANDS); the pool's
             # tasks in per-worker blocks (POOL-AFFINITY); the loss's rows with each exponential
             # evaluated once (LOSS-ONCE); the rotation reading a table of its cosines and sines
-            # (ROPE-TABLE)
-            assert result.stdout.count("PASS") == 46
+            # (ROPE-TABLE); the blocked contract's weight adjoints split over their depth (KSPLIT)
+            assert result.stdout.count("PASS") == 47
             digests = [ln.split("digests", 1)[1].split() for ln in result.stdout.splitlines()
                        if "PASS P-BANDS trainer" in ln]  # fmt: skip
             assert len(digests) == 1 and len(digests[0]) == 5, result.stdout[-2000:]
@@ -281,7 +285,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 46
+            assert result.stdout.count("PASS") == 47
             break
 
 

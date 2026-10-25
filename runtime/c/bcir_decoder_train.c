@@ -84,6 +84,8 @@ static void tr_embed(size_t n,size_t d,const uint32_t *tokens,const float *table
    tr_ran(bcir_tensor_mm_contract_variant_pool(pool,ct,va,ta,tb,m,n,k,al,a,b,be,c,ws,bytes)))
 #define bcir_tensor_mm_pair_variant_pool(pool,ct,va,x,y) \
   (tr_mm_group(4,ct,x,1,y,1,NULL,NULL,0),tr_ran(bcir_tensor_mm_pair_variant_pool(pool,ct,va,x,y)))
+#define bcir_tensor_mm_pair_ws_variant_pool(pool,ct,va,x,y,ws,bytes) \
+  (tr_mm_group(4,ct,x,1,y,1,NULL,ws,bytes),tr_ran(bcir_tensor_mm_pair_ws_variant_pool(pool,ct,va,x,y,ws,bytes)))
 #define bcir_tensor_mm_group_variant_pool(pool,ct,va,chain,nchain,y,ny,pre,ws,bytes) \
   (tr_mm_group((ct)==3 ? 6u : 5u,ct,chain,nchain,y,ny,pre,ws,bytes), \
    tr_ran(bcir_tensor_mm_group_variant_pool(pool,ct,va,chain,nchain,y,ny,pre,ws,bytes)))
@@ -544,14 +546,26 @@ size_t bcir_decoder_workspace_probe(void) { size_t seen=workspace_seen; workspac
  * whether it ran: a refusal writes nothing, and the step it belongs to fails (WS-PLAN). */
 /* PX-3b (DISPATCH): `variant` the instance the job runs (bcir_tensor.h: 0 the widest its family
  * admits -- the fixed step's -- else one bit of it, a program's); each returns whether it ran. */
+/* KSPLIT: a blocked-contract job with a weight adjoint -- any call of it with A transposed -- is
+ * lent the state's workspace where the state has one (no other job of the contract reads it then),
+ * and the tensor unit splits those weight adjoints over their depth whose partials fit it
+ * (bcir_tensor.h); every value is the same either way. The step program states the same loan on
+ * every record of the same jobs (native_launch.py), and its checker requires it there and nowhere
+ * else under the contract (px_gemm). */
+static int ks_lends(const bcir_decoder_state *s,const bcir_tensor_mm_call *calls,size_t count) {
+  size_t q;
+  if (gemm_contract(s)!=2 || s->provider.mm || !s->workspace || !s->workspace_bytes) return 0;
+  for (q=0;q<count;q++) if (calls[q].ta) return 1;
+  return 0;
+}
 static int gemm_group_v(bcir_decoder_state *s,int variant,const bcir_tensor_mm_call *chain,
     size_t nchain,const bcir_tensor_mm_call *y,size_t ny,const bcir_tensor_bf16_panels *pre) {
-  int bf=gemm_contract(s)==3;
+  int bf=gemm_contract(s)==3,lend=bf || ks_lends(s,chain,nchain) || ks_lends(s,y,ny);
 #ifdef BCIR_DT_WORKSPACE_PROBE
   if (bf) workspace_saw(bcir_tensor_mm_bf16_group_panels_workspace(chain,nchain,y,ny,pre));
 #endif
   return bcir_tensor_mm_group_variant_pool(s->pool,gemm_contract(s),variant,chain,nchain,y,ny,
-      bf ? pre : NULL,bf ? s->workspace : NULL,bf ? s->workspace_bytes : 0)!=0;
+      bf ? pre : NULL,lend ? s->workspace : NULL,lend ? s->workspace_bytes : 0)!=0;
 }
 static int gemm_group_with(bcir_decoder_state *s,const bcir_tensor_mm_call *chain,size_t nchain,
     const bcir_tensor_mm_call *y,size_t ny,const bcir_tensor_bf16_panels *pre) {
@@ -595,7 +609,9 @@ BCIR_DT_API unsigned bcir_decoder_panels_probe(void) { unsigned u=panels_seen; p
 #endif
 static int gemm_v(bcir_decoder_state *s,int variant,int ta,int tb,size_t m,size_t n,size_t k,
     float alpha,const float *a,const float *b,float beta,float *c) {
-  int bf=gemm_contract(s)==3;
+  int bf=gemm_contract(s)==3,lend; bcir_tensor_mm_call one;
+  one.ta=ta; one.tb=tb; one.m=m; one.n=n; one.k=k; one.alpha=alpha; one.a=a; one.b=b; one.beta=beta;
+  one.c=c; lend=bf || ks_lends(s,&one,1);  /* KSPLIT: a weight adjoint alone */
   if (s->provider.mm) {  /* a provider's call: not BCIR's instance to name (variant 0) */
     DT_TRACE_PROVIDER_MM(ta,tb,m,n,k,alpha,a,b,beta,c);
     s->provider.mm(s->provider.ctx,ta,tb,m,n,k,alpha,a,b,beta,c);
@@ -605,7 +621,7 @@ static int gemm_v(bcir_decoder_state *s,int variant,int ta,int tb,size_t m,size_
   if (bf) workspace_saw(bcir_tensor_mm_bf16_workspace(m,n,k));
 #endif
   return bcir_tensor_mm_contract_variant_pool(s->pool,gemm_contract(s),variant,ta,tb,m,n,k,alpha,a,
-      b,beta,c,bf ? s->workspace : NULL,bf ? s->workspace_bytes : 0)!=0;
+      b,beta,c,lend ? s->workspace : NULL,lend ? s->workspace_bytes : 0)!=0;
 }
 static int gemm(bcir_decoder_state *s,int ta,int tb,size_t m,size_t n,size_t k,float alpha,
     const float *a,const float *b,float beta,float *c) {
@@ -628,6 +644,9 @@ static int linear_backward(bcir_decoder_state *s,size_t r,size_t in,size_t out,
   cx.ta=0; cx.tb=0; cx.m=r; cx.n=in; cx.k=out; cx.alpha=1.0f; cx.a=dy; cx.b=w; cx.beta=beta; cx.c=dx;
   cw.ta=1; cw.tb=0; cw.m=out; cw.n=in; cw.k=r; cw.alpha=1.0f; cw.a=dy; cw.b=x; cw.beta=wbeta; cw.c=dw;
   if (gemm_contract(s)==3) return gemm_group(s,&cx,1,&cw,1);
+  if (ks_lends(s,&cw,1))  /* KSPLIT: the pair lent the workspace for its weight adjoint */
+    return bcir_tensor_mm_pair_ws_variant_pool(s->pool,gemm_contract(s),0,&cx,&cw,s->workspace,
+        s->workspace_bytes)!=0;
   return bcir_tensor_mm_pair_variant_pool(s->pool,gemm_contract(s),0,&cx,&cw)!=0;
 }
 /* The linears that read one input -- the attention's q, k and v, the MLP's gate and up -- as one
@@ -1776,7 +1795,7 @@ static int px_kernel(const px_ctx *c,const uint64_t *w,px_op *ops,size_t *n) {
  * whole 32-tiles (BF16-PANELS). */
 static int px_gemm(const px_ctx *c,const uint64_t *w,size_t job,px_op *ops,size_t *n) {
   const uint64_t *chain=NULL; unsigned e=(unsigned)(w[2]&15u); size_t q,chained=0;
-  int provider=c->s->provider.mm!=NULL;
+  int provider=c->s->provider.mm!=NULL,ks=0;
   *n=0;
   switch (e) {
   case 0: case 1: case 2: case 3: if (job!=1 || e!=c->gc || provider) return 0; break;
@@ -1786,6 +1805,10 @@ static int px_gemm(const px_ctx *c,const uint64_t *w,size_t job,px_op *ops,size_
   case 7: if (job!=1 || !provider) return 0; break;
   default: return 0;
   }
+  /* KSPLIT (ks_lends): a blocked-contract job with a weight adjoint carries the state's workspace
+   * in every record where the state has one, and no other binary32 job does */
+  if (c->gc==2 && c->len[7] && (e==2 || e==4 || e==5))
+    for (q=0;q<job;q++) ks|=w[q*BCIR_DT_RECORD_WORDS+3]==1u;
   for (q=0;q<job;q++) {
     const uint64_t *r=w+q*BCIR_DT_RECORD_WORDS; const uint64_t f=r[2];
     unsigned role=(unsigned)(f>>4&15u),pa=(unsigned)(f>>24&1u),pb=(unsigned)(f>>25&1u);
@@ -1800,7 +1823,7 @@ static int px_gemm(const px_ctx *c,const uint64_t *w,size_t job,px_op *ops,size_
     sa=px_size(m,k,1,pa ? 2 : 4); sb=px_size(k,nn,1,pb ? 2 : 4); sc=px_size(m,nn,1,4);
     if (!sa || !sb || !sc || !px_slot(c,r,0,PX_IN,sa,pa ? PX_PANEL : PX_R,ops,n) ||
         !px_slot(c,r,1,PX_IN,sb,pb ? PX_PANEL : PX_R,ops,n) ||
-        !px_slot(c,r,2,PX_OUT,sc,r[9] ? PX_RW : PX_W,ops,n) || !px_ws(c,r,3,e==3 || e==6))
+        !px_slot(c,r,2,PX_OUT,sc,r[9] ? PX_RW : PX_W,ops,n) || !px_ws(c,r,3,e==3 || e==6 || ks))
       return 0;
     if (role==1 && e!=4) {  /* a chain's call: the chain's C, m and n */
       ops[*n-1].chain=1; chained++;
@@ -1891,7 +1914,12 @@ static int px_gemm_run(const px_ctx *c,const uint64_t *w,size_t job) {
     if ((r[2]>>4&15u)==1u) chain++;
   }
   switch (w[2]&15u) {  /* the job's instance: PX-3b's word, checked against its family */
-  case 4: return bcir_tensor_mm_pair_variant_pool(s->pool,gemm_contract(s),variant,call,call+1)!=0;
+  case 4:  /* KSPLIT: a pair with a weight adjoint lent the workspace, as its records state (the
+            * check has held the pair to its two records) */
+    if (ks_lends(s,call,job))
+      return bcir_tensor_mm_pair_ws_variant_pool(s->pool,gemm_contract(s),variant,call,call+1,
+          s->workspace,s->workspace_bytes)!=0;
+    return bcir_tensor_mm_pair_variant_pool(s->pool,gemm_contract(s),variant,call,call+1)!=0;
   case 5: case 6:
     return gemm_group_v(s,variant,chain ? call : NULL,chain,call+chain,job-chain,
         panels ? pre : NULL);
