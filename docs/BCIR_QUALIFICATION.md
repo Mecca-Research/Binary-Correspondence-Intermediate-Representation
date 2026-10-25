@@ -170,6 +170,14 @@ of each tree read the ratio at 1.32-1.35 before and 1.11-1.13 after. Under callg
 is the same 210,858,806 instructions on both trees. GEM still validates the pack three times a run; validating it
 once a load is this row's next step.
 
+**DECODE-ROW** (2026-10-25). The attention row's scores and context now run eight chains side by side and the
+rotation reads a table filled once a position, every chain the one it was
+([measurements/2026-10-25/decode-row/](research/measurements/2026-10-25/decode-row/README.json)). The lab model's
+logits keep their SHA-256 and the C rail its 0 from the oracle, 23 of 23 checks, with 4.4-4.7% fewer simulated
+instructions on its two rails (GEM 224.7 M -> 214.9 M, monolithic 210.9 M -> 201.0 M). At this request's 48 tokens the
+latencies move within run-to-run noise -- a 55-position request's attention is a small share of it -- while over 200
+tokens a generated token reads x0.75-0.83 (0.30-0.32 -> 0.24-0.25 ms).
+
 **Memory traffic.** Planned (`program_traffic`) and counted (the C kernels' counters) agree op for
 op: 57,539,312 octets read and 4,236,480 written per request. Simulated with callgrind's cache
 model (I1/D1 32 KiB 8-way, LL 8 MiB 16-way, 64-octet lines, fixed so reports compare across

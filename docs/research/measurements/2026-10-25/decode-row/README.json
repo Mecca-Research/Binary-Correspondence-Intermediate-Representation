@@ -1,0 +1,110 @@
+{
+ "what": "DECODE-ROW (2026-10-25): the C decoder's attention row with eight and then four key rows' score chains side by side and eight context coordinates' chains side by side down the rows (bcir_decode.c), and its rotation a table of cosines and sines filled once a position (bcir_rope_table / bcir_rope_apply, the workspace's rope_cs) -- every chain the one it was, term for term; measured on the committed tree against the tree before, with NEXT-7 (the survey that placed it) on the tree before",
+ "host": "Intel(R) Xeon(R) Processor @ 2.30GHz, 4 vCPU (4 cores, one thread each; AVX-512F, AMX), 2 MiB of L2 a core, 260 MiB of L3; Linux 6.18; clang 18.1.3 and GCC 13.3 (-std=c11 -O2 -ffp-contract=off, the qualification's flags); Python 3.11.15; valgrind's callgrind for the simulated rows",
+ "tree": {
+  "before": "d920f254ffa2eb0c87f7f16db3f9f65b507607d5",
+  "after": "f356f169a4ed54f2b639357e10461db6e84dd488"
+ },
+ "records": {
+  "kernels.json": "attn_ab.c, one process: the tree before's bcir_decode.c (its globals renamed before_*) against the tree after's and an A/A control; a request's decode steps -- every context 1..T, every layer -- of the attention row (bcir_gqa_attention_row) and of the rotation (before: bcir_rope a head at a time; after: the table once a position, bcir_rope_apply a head) at the 860K decoder's shapes and at TinyLlama's (one layer); every output of every call the tree before's bytes, checked in an untimed pass of each arm",
+  "decode.json": "Q8-LANES' decode_ab.py (../q8-lanes/, as committed): the standalone C decoder from each tree, 24 rounds, clang and gcc, both lab models; a generated token (t200 - t8) / 192 and the 200-token request; every run's tokens and final logits the tree before's bytes",
+  "requests.json": "request_row.sh, after measure_row.sh: CRC-SLICE's request_ab.py (../crc-slice/, as committed) -- whole requests a process (the model's load, a 5-token prompt, 8, 48 or 200 new tokens), 24 rounds, clang and gcc, both lab models -- because the qualification's single runs, one 48-token request a process, read a few percent either way between runs; every run's tokens and final logits the tree before's bytes",
+  "ops.json": "Q8-LANES' llama_ops.py: the monolithic decoder's step an operation at a time on each tree (clang, 200 tokens, the median of 5 runs)",
+  "bits.json": "Q8-LANES' bits.sh: 7 builds of the tree after (clang and gcc at each instance cap, clang with the dispatch compiled out) against the tree before's clang build, 2 models x 3 prompts x 4 lengths",
+  "qualification.json": "CRC-SLICE's qual_crc.py (../crc-slice/) over run_qualification.py --require-callgrind from each tree",
+  "qualification-repeats.json": "run_qualification.py from each tree three times in alternation without callgrind, each run's C latency rows",
+  "faults.json": "red_sweep.py: decode-row.json on the committed tree's content",
+  "explore.json": "NEXT-7 on the tree before, with the commands that ran (gqa_bench.c the instrument written apart)",
+  "hashes.json": "the tools' sha256 -- this directory's and those run from ../q8-lanes and ../crc-slice -- and the measured sources'",
+  "the tools": "measure_row.sh and request_row.sh (the records' runs, the second after the first) and attn_ab.c and gqa_bench.c, the bytes that ran; the scripts' host paths as placeholders (<REPO>, <SCRATCH>, <LAB>, <LAB2>), which filled in are the run copies byte for byte (measure_row.sh's sha256 in hashes.json, which it writes; request_row.sh's below, the script written after)"
+ },
+ "verdicts": "each effect resolved where its 95% interval excludes 1 and does not meet the A/A control's",
+ "reading": {
+  "kernels": [
+   "clang attention row 860K, T 8 (4 heads of 32 over 2 kv heads, 4 layers): 0.017 -> 0.012 ms, x0.732 (0.631-0.850); A/A x1.041 (0.965-1.124)",
+   "clang attention row 860K, T 64 (4 heads of 32 over 2 kv heads, 4 layers): 0.857 -> 0.563 ms, x0.647 (0.629-0.666); A/A x0.993 (0.978-1.007)",
+   "clang attention row 860K, T 205 (4 heads of 32 over 2 kv heads, 4 layers): 12.127 -> 5.300 ms, x0.428 (0.406-0.453); A/A x0.983 (0.958-1.009)",
+   "clang attention row 860K, T 1024 (4 heads of 32 over 2 kv heads, 4 layers): 412.202 -> 189.488 ms, x0.472 (0.460-0.485); A/A x0.996 (0.979-1.014)",
+   "clang attention row TinyLlama, T 64 (32 heads of 64 over 4 kv heads, 1 layer): 3.626 -> 1.806 ms, x0.497 (0.486-0.510); A/A x1.019 (0.966-1.075)",
+   "clang attention row TinyLlama, T 256 (32 heads of 64 over 4 kv heads, 1 layer): 82.363 -> 27.910 ms, x0.351 (0.331-0.373); A/A x1.008 (0.982-1.034)",
+   "clang attention row TinyLlama, T 1024 (32 heads of 64 over 4 kv heads, 1 layer): 2549.760 -> 1100.847 ms, x0.431 (0.423-0.440); A/A x0.989 (0.975-1.004)",
+   "clang rope 860K, T 8 (4 heads of 32 over 2 kv heads, 4 layers): 0.079 -> 0.006 ms, x0.079 (0.073-0.086); A/A x1.040 (1.000-1.080)",
+   "clang rope 860K, T 64 (4 heads of 32 over 2 kv heads, 4 layers): 0.683 -> 0.047 ms, x0.070 (0.068-0.073); A/A x1.002 (0.983-1.021)",
+   "clang rope 860K, T 205 (4 heads of 32 over 2 kv heads, 4 layers): 2.384 -> 0.169 ms, x0.072 (0.071-0.073); A/A x1.003 (0.991-1.015)",
+   "clang rope 860K, T 1024 (4 heads of 32 over 2 kv heads, 4 layers): 12.921 -> 0.980 ms, x0.078 (0.075-0.082); A/A x1.015 (1.002-1.028)",
+   "clang rope TinyLlama, T 64 (32 heads of 64 over 4 kv heads, 1 layer): 2.018 -> 0.113 ms, x0.057 (0.055-0.059); A/A x1.002 (0.993-1.011)",
+   "clang rope TinyLlama, T 256 (32 heads of 64 over 4 kv heads, 1 layer): 8.980 -> 0.534 ms, x0.063 (0.059-0.067); A/A x1.006 (0.976-1.037)",
+   "clang rope TinyLlama, T 1024 (32 heads of 64 over 4 kv heads, 1 layer): 38.201 -> 3.467 ms, x0.092 (0.090-0.094); A/A x1.003 (0.993-1.014)",
+   "gcc attention row 860K, T 8 (4 heads of 32 over 2 kv heads, 4 layers): 0.018 -> 0.014 ms, x0.697 (0.612-0.794); A/A x0.989 (0.827-1.183)",
+   "gcc attention row 860K, T 64 (4 heads of 32 over 2 kv heads, 4 layers): 1.290 -> 0.723 ms, x0.532 (0.437-0.647); A/A x0.905 (0.734-1.116)",
+   "gcc attention row 860K, T 205 (4 heads of 32 over 2 kv heads, 4 layers): 13.270 -> 5.458 ms, x0.427 (0.403-0.452); A/A x0.997 (0.963-1.033)",
+   "gcc attention row 860K, T 1024 (4 heads of 32 over 2 kv heads, 4 layers): 439.963 -> 195.846 ms, x0.443 (0.438-0.448); A/A x0.994 (0.984-1.004)",
+   "gcc attention row TinyLlama, T 64 (32 heads of 64 over 4 kv heads, 1 layer): 4.050 -> 1.839 ms, x0.493 (0.417-0.582); A/A x1.047 (0.902-1.214)",
+   "gcc attention row TinyLlama, T 256 (32 heads of 64 over 4 kv heads, 1 layer): 85.417 -> 28.578 ms, x0.337 (0.303-0.374); A/A x0.968 (0.911-1.029)",
+   "gcc attention row TinyLlama, T 1024 (32 heads of 64 over 4 kv heads, 1 layer): 2641.669 -> 1087.627 ms, x0.410 (0.402-0.419); A/A x1.002 (0.982-1.022)",
+   "gcc rope 860K, T 8 (4 heads of 32 over 2 kv heads, 4 layers): 0.061 -> 0.005 ms, x0.081 (0.078-0.083); A/A x1.033 (0.955-1.116)",
+   "gcc rope 860K, T 64 (4 heads of 32 over 2 kv heads, 4 layers): 0.569 -> 0.044 ms, x0.079 (0.076-0.082); A/A x1.001 (0.984-1.018)",
+   "gcc rope 860K, T 205 (4 heads of 32 over 2 kv heads, 4 layers): 1.960 -> 0.167 ms, x0.087 (0.080-0.095); A/A x0.987 (0.970-1.004)",
+   "gcc rope 860K, T 1024 (4 heads of 32 over 2 kv heads, 4 layers): 10.529 -> 0.926 ms, x0.087 (0.086-0.089); A/A x1.003 (0.995-1.011)",
+   "gcc rope TinyLlama, T 64 (32 heads of 64 over 4 kv heads, 1 layer): 1.723 -> 0.114 ms, x0.067 (0.066-0.069); A/A x1.001 (0.984-1.018)",
+   "gcc rope TinyLlama, T 256 (32 heads of 64 over 4 kv heads, 1 layer): 7.416 -> 0.547 ms, x0.079 (0.072-0.086); A/A x0.999 (0.991-1.008)",
+   "gcc rope TinyLlama, T 1024 (32 heads of 64 over 4 kv heads, 1 layer): 31.583 -> 3.358 ms, x0.102 (0.097-0.108); A/A x0.996 (0.991-1.000)"
+  ],
+  "decode": [
+   "clang model 1: a generated token 0.3017 -> 0.2428 ms x0.831 (0.796-0.868), the 200-token request 64.04 -> 52.85 ms x0.847 (0.816-0.880); A/A x0.985 (0.937-1.035) and x0.993 (0.949-1.039); every run's tokens and logits the same bytes: True",
+   "clang model 2: a generated token 0.3026 -> 0.2457 ms x0.793 (0.755-0.833), the 200-token request 64.14 -> 53.69 ms x0.813 (0.778-0.849); A/A x1.027 (0.970-1.088) and x1.025 (0.972-1.081); every run's tokens and logits the same bytes: True",
+   "gcc model 1: a generated token 0.3143 -> 0.2423 ms x0.753 (0.702-0.807), the 200-token request 66.51 -> 52.36 ms x0.787 (0.751-0.826); A/A x0.999 (0.939-1.063) and x1.002 (0.946-1.061); every run's tokens and logits the same bytes: True",
+   "gcc model 2: a generated token 0.3209 -> 0.2475 ms x0.793 (0.754-0.835), the 200-token request 67.91 -> 53.47 ms x0.807 (0.768-0.847); A/A x0.998 (0.943-1.056) and x0.995 (0.944-1.048); every run's tokens and logits the same bytes: True"
+  ],
+  "requests": [
+   "clang model 1, 8 new tokens: 5.96 -> 5.86 ms x0.960 (0.906-1.017); A/A x0.985 (0.919-1.057)",
+   "clang model 1, 48 new tokens: 15.50 -> 14.43 ms x0.948 (0.907-0.991); A/A x1.059 (0.960-1.169)",
+   "clang model 1, 200 new tokens: 64.76 -> 54.75 ms x0.807 (0.761-0.856); A/A x0.974 (0.907-1.046)",
+   "clang model 2, 8 new tokens: 5.96 -> 5.75 ms x0.938 (0.889-0.989); A/A x1.005 (0.932-1.083)",
+   "clang model 2, 48 new tokens: 15.34 -> 14.52 ms x0.970 (0.920-1.023); A/A x1.016 (0.940-1.099)",
+   "clang model 2, 200 new tokens: 66.02 -> 52.63 ms x0.816 (0.770-0.864); A/A x0.950 (0.898-1.005)",
+   "gcc model 1, 8 new tokens: 5.82 -> 5.63 ms x0.977 (0.927-1.028); A/A x0.994 (0.959-1.030)",
+   "gcc model 1, 48 new tokens: 15.18 -> 13.94 ms x0.880 (0.820-0.945); A/A x0.974 (0.929-1.022)",
+   "gcc model 1, 200 new tokens: 66.34 -> 52.42 ms x0.785 (0.759-0.812); A/A x1.023 (0.973-1.076)",
+   "gcc model 2, 8 new tokens: 5.85 -> 5.68 ms x0.903 (0.802-1.018); A/A x0.989 (0.769-1.272)",
+   "gcc model 2, 48 new tokens: 15.18 -> 14.22 ms x0.960 (0.806-1.144); A/A x0.934 (0.798-1.093)",
+   "gcc model 2, 200 new tokens: 66.69 -> 52.45 ms x0.802 (0.734-0.875); A/A x1.004 (0.935-1.079)"
+  ],
+  "operations": [
+   "embed: 0.14 -> 0.15 ms (204 calls)",
+   "rmsnorm: 1.51 -> 1.61 ms (1836 calls)",
+   "matvec: 31.42 -> 31.29 ms (5712 calls)",
+   "rope: 3.11 -> 0.35 ms (816 calls)",
+   "kv_append: 0.07 -> 0.10 ms (816 calls)",
+   "attention: 14.60 -> 7.68 ms (816 calls)",
+   "residual: 0.09 -> 0.10 ms (1632 calls)",
+   "swiglu: 2.29 -> 2.27 ms (816 calls)",
+   "head: 7.31 -> 7.42 ms (200 calls)",
+   "argmax: 0.63 -> 0.65 ms (200 calls)",
+   "total: 61.16 -> 51.62 ms"
+  ],
+  "bits": [
+   "24 cases (2 models x 3 prompts x 4 lengths), 7 builds of the tree after each: every build's tokens and final logits the tree before's bytes in 24 of 24"
+  ],
+  "qualification": [
+   "one run each, --require-callgrind: monolithic 12.096 -> 13.212 ms, GEM 13.543 -> 14.446 ms, GEM/monolithic 1.1197 -> 1.0934 (gated at 1.5); a generated token 0.2258 -> 0.2441 ms; the first token of a GEM run 2.891 -> 5.576 ms",
+   "logits sha256 2a18b8613b6b60e4 / 2a18b8613b6b60e4, equal: True; GEM == monolithic bit for bit on both: True; max |C - oracle| 0.0 / 0.0; checks 23/23 and 23/23",
+   "the after run's latencies read slower than the before run's (its monolithic median by 9%, its generated token by 8%, its first token 5.58 ms against 2.89): one 48-token request a process, these rows move between runs -- the three runs more of each tree (qualification_repeats) put the after tree's monolithic median at 10.8-13.2 ms against 12.4-12.7 and its first token at 2.59-2.95 ms against 2.80-2.93, and requests.json's 48-token rows read x0.88-0.97, mostly within their A/A controls; the simulated instructions below are the rows that do not move between runs",
+   "simulated (callgrind, one run of each rail): GEM instructions 224747158 -> 214910184, data references 63551856 -> 59814337, D1 read misses 1054827 -> 1048984; the monolithic runner's instructions 210858806 -> 201016566"
+  ],
+  "qualification_repeats": [
+   "before, three runs without callgrind: monolithic_median_ms [12.416, 12.466, 12.728] (median 12.466); gem_median_ms [13.983, 13.994, 14.157] (median 13.994); gem_over_monolithic_median [1.1263, 1.1226, 1.1123] (median 1.1226); per_token_ms_median [0.2327, 0.2325, 0.238] (median 0.2327); time_to_first_token_ms [2.797, 2.864, 2.926] (median 2.864)",
+   "after, three runs without callgrind: monolithic_median_ms [13.163, 10.816, 11.946] (median 11.946); gem_median_ms [14.583, 12.442, 13.276] (median 13.276); gem_over_monolithic_median [1.1078, 1.1503, 1.1114] (median 1.1114); per_token_ms_median [0.2474, 0.2018, 0.2106] (median 0.2106); time_to_first_token_ms [2.947, 2.585, 2.755] (median 2.755)"
+  ],
+  "faults": [
+   "decode-row.json: 15 of 15 caught by their own check"
+  ]
+ },
+ "reproduce": [
+  "bash measure_row.sh  # from <REPO> on the measured tree: HEAD DECODE-ROW (f356f16), HEAD~1 the tree before",
+  "bash request_row.sh  # after it",
+  "python3 tools/testing/red_sweep.py --faults tools/testing/faults/decode-row.json",
+  "explore.json's commands, in order, on the tree before  # NEXT-7"
+ ],
+ "request_row.sh sha256": "7c9ef232ac4e3ac5d5230b10c2c0ede3a61f9ffc515944885792d2a382793ade"
+}

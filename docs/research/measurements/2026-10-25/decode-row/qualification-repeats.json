@@ -1,0 +1,68 @@
+[
+ {
+  "tree": "before",
+  "run": 1,
+  "commit": "d920f254ffa2eb0c87f7f16db3f9f65b507607d5",
+  "status": "PASS",
+  "monolithic_median_ms": 12.416,
+  "gem_median_ms": 13.983,
+  "gem_over_monolithic_median": 1.1263,
+  "per_token_ms_median": 0.2327,
+  "time_to_first_token_ms": 2.797
+ },
+ {
+  "tree": "after",
+  "run": 1,
+  "commit": "f356f169a4ed54f2b639357e10461db6e84dd488",
+  "status": "PASS",
+  "monolithic_median_ms": 13.163,
+  "gem_median_ms": 14.583,
+  "gem_over_monolithic_median": 1.1078,
+  "per_token_ms_median": 0.2474,
+  "time_to_first_token_ms": 2.947
+ },
+ {
+  "tree": "after",
+  "run": 2,
+  "commit": "f356f169a4ed54f2b639357e10461db6e84dd488",
+  "status": "PASS",
+  "monolithic_median_ms": 10.816,
+  "gem_median_ms": 12.442,
+  "gem_over_monolithic_median": 1.1503,
+  "per_token_ms_median": 0.2018,
+  "time_to_first_token_ms": 2.585
+ },
+ {
+  "tree": "before",
+  "run": 2,
+  "commit": "d920f254ffa2eb0c87f7f16db3f9f65b507607d5",
+  "status": "PASS",
+  "monolithic_median_ms": 12.466,
+  "gem_median_ms": 13.994,
+  "gem_over_monolithic_median": 1.1226,
+  "per_token_ms_median": 0.2325,
+  "time_to_first_token_ms": 2.864
+ },
+ {
+  "tree": "before",
+  "run": 3,
+  "commit": "d920f254ffa2eb0c87f7f16db3f9f65b507607d5",
+  "status": "PASS",
+  "monolithic_median_ms": 12.728,
+  "gem_median_ms": 14.157,
+  "gem_over_monolithic_median": 1.1123,
+  "per_token_ms_median": 0.238,
+  "time_to_first_token_ms": 2.926
+ },
+ {
+  "tree": "after",
+  "run": 3,
+  "commit": "f356f169a4ed54f2b639357e10461db6e84dd488",
+  "status": "PASS",
+  "monolithic_median_ms": 11.946,
+  "gem_median_ms": 13.276,
+  "gem_over_monolithic_median": 1.1114,
+  "per_token_ms_median": 0.2106,
+  "time_to_first_token_ms": 2.755
+ }
+]

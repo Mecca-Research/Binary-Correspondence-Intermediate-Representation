@@ -5226,6 +5226,48 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: fewer passes (a GEM run still validates the pack three times, now 0.25-0.32 ms a pass: TRUST-ONCE);
     zlib's own speed (its `crc32` reads x0.34-0.51 of the new step's time here); any other host's figures;
     counter-based figures (no PMU on this VM).
+  DECODE-ROW (2026-10-25): the C decoder's attention row eight key rows and eight coordinates at a time, its rotation
+    a table a position, every value as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §32,
+    [measurements/2026-10-25/decode-row/](research/measurements/2026-10-25/decode-row/README.json)).
+  - Placed by NEXT-7 after CRC-SLICE: in Q8-LANES' per-operation record the attention was 14.4 ms (24%) and the
+    rotation 3.1 ms (5%) of a 200-token request's 60.8 ms of operations. The attention row computed each score as one
+    dependent chain a channel at a time and each context coordinate as one chain down every key row, a 512-byte
+    stride a term; the rotation computed the same 16 angles' cosines and sines for each of 24 heads a token.
+    `gqa_bench.c` (standalone, byte for byte against the committed loop over 3,000 random shapes) put blocking the
+    context's coordinates at x0.54 and the scores' rows too at x0.41-0.45 at 205 positions.
+  - DECODE-ROW (`f356f16`, the witness's flags `17871d0`): `bcir_decode.c`'s attention row runs eight key rows'
+    score chains side by side, then four, the rest one at a time, and eight context coordinates' chains side by side
+    down the rows, each chain the one it was -- from +0.0, in the same order, term for term -- the masked rows'
+    terms still added. `bcir_rope`'s angle and rotated pair are one definition each, shared with `bcir_rope_table`
+    (one position's cosines and sines) and `bcir_rope_apply` (a row turned by such a table); the decoder's workspace
+    holds the table and its position (budgeted with the rest), `bcir_llama_op_rope` fills it when the position
+    changes, for the monolithic runner and GEM alike, and GEM refills it at each run's first position.
+  - Measured on the committed tree against the tree before (one host; clang 18 and GCC 13 at the qualification's
+    -O2 -ffp-contract=off): a request's decode steps of the attention row x0.43 (clang and gcc) at the 860K
+    decoder's shapes over 205 positions and x0.44-0.47 over 1,024, x0.34-0.35 at TinyLlama's (32 heads of 64, 4 kv
+    heads) over 256 and x0.41-0.43 over 1,024; the rotation x0.06-0.10; the standalone C decoder's generated token
+    over 200 tokens x0.75-0.83 (0.30-0.32 -> 0.24-0.25 ms) and the 200-token request x0.79-0.85, both lab models;
+    over 200 tokens the operations 61.2 -> 51.6 ms (the attention 14.6 -> 7.7, the rotation 3.1 -> 0.35). Every token
+    and final logit of 7 builds of the tree after is the tree before's bytes over 2 models x 3 prompts x 4 lengths;
+    the qualification's logits keep one SHA-256 (0 from the oracle's, 23 of 23 checks), with 4.4-4.7% fewer
+    simulated instructions on its two rails. At the qualification's 48 tokens a whole request reads x0.88-0.97, within its A/A
+    control mostly: the attention is a small share of a 55-position request.
+  - Witnesses: `test_decode.c`'s `order` mode holds `bcir_gqa_attention_row`, `bcir_gqa_attention`, `bcir_rope` and
+    the table's rotation to the loops before DECODE-ROW, kept in the harness as the definition, byte for byte:
+    2,482 comparisons over 21 head widths and 21 context lengths around the blocks, six head groupings, six value
+    ranges and rotations at ten positions to INT_MAX - 300, built with -ffp-contract=off at -O0, -O2 and -O3
+    (`test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit`); the decoder's rotation is held
+    to `bcir_rope`'s rows at positions repeated, backward and after a gap
+    (`test_the_decoders_rotation_is_bcir_ropes_rows_bit_for_bit`), which the decoder's 1e-9 parity cannot see,
+    attention reading only the positions' differences. `decode-row.json` DR1-DR15, each caught by its own check, 8
+    of them by the new witnesses alone (the older tests' shapes never reach a block). CI's aarch64 job found the
+    first form of the order witness wrong: its plain -O2 build let clang contract (aarch64 has FMA), and each code
+    shape's chains fused as clang chose -- the one-chain loops' differently from the blocks'. The witness now builds
+    as every decoder build here does, with -ffp-contract=off; the CMake library build of `bcir_decode.c`, which
+    passes no contraction option, is left as its own task.
+  - Not claimed: libm's exponential, now most of the attention row's time (one call a probability, kept for the
+    oracle's values); the same bytes where a compiler may fuse a product into its sum; a gain at the qualification's
+    48 tokens beyond its noise; any other host's figures; counter-based figures (no PMU on this VM).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
