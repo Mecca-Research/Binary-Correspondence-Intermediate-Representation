@@ -1726,3 +1726,97 @@ rows cannot see a perturbation of a double intermediate below float's rounding, 
 statement-for-statement correspondence, which the witnesses check wherever an output can show it; where two NaN
 operands meet, which payload survives is the compiler's choice in either form (every row the witnesses run is
 finite); counter-based figures (no PMU on this VM).
+
+## 27. ROPE-TABLE and ROPE-BOUND: the rotation's cosines and sines once a forward, its loop at its rate (2026-10-24)
+
+NEXT-2's per-job probe put each of RoPE's jobs at 34-36 µs at T256, twelve a step at the GEO dimensions: the
+forward's queries and keys and the backward's adjoints of both, in each of three layers (§26). Each rotation
+evaluated libm's `cos` and `sin` for every position and pair of the head -- 8,192 calls at T256 -- on the same
+arguments in every rotation of the step, and turned each of the batch's heads with them. ROPE-TABLE evaluates them
+once a forward ([measurements/2026-10-24/rope-table/](measurements/2026-10-24/rope-table/README.json)).
+
+`bcir_tensor_rope_table_pool` fills a table of time x head-dim floats, each position's half of cosines then its
+half of sines, with the expressions the rotation evaluates: each pair's frequency the same `pow`, each angle the same
+product in double, each entry the same libm call rounded to float. `bcir_tensor_rope_lent_pool` rotates with the
+table's entries -- the sine times -1 under inverse, as the per-call rotation rounds it, then the same two rounded
+products and one rounded sum or difference an element -- so every rotated value is `bcir_tensor_rope_pool`'s bit for
+bit. The per-call entry stays, and the PR818 study's attention model calls it. The table is the plan's: the scratch
+arena's last span, which `bcir_decoder_make_plan` and the step program (`native_program.py`'s buffer `rope`) both
+count, so `train.plan.mismatch` holds the two together (32 KiB at the GEO dimensions at T256). Each forward fills
+it after the embedding, before its first layer, and every rotation of the step reads it: the forward's, the
+backward's inverse ones, and a recomputed layer's. The backward's workspace ends where the table begins, and nothing
+else writes it. On the program rail a ROPE record reads the table as its second operand, and a new record,
+ROPE_TABLE (kind 24, the pack's claim `train.rope.table`), writes it at the plan's base; the checker holds the
+rotation's table to time x dim floats it may read and the fill's to time x dim floats it may write, an even dim and
+no unused word.
+
+**ROPE-BOUND.** Measured on its own (`design.json`), ROPE-TABLE's first commit read its table rotation at
+x0.47-0.65 of the per-call one's time under clang, where ROPE-TABLE-0's prototype (§26) read x0.22-0.31. The two
+loops perform the same operations; only their bound differs. The prototype's inner loop ran to the head's half --
+the distance between the two halves the loop pairs -- and the commit's to the range's count, min(half - k0, 64), the
+same count for every head of at most 64 pairs. `bound_cause.c` times five forms that differ only in that expression.
+Under clang 18 and clang 23, the two bounded by the halves' distance take 18.3-19.1 µs at T256 on one thread, and the
+three bounded otherwise (the range's count, half - k0, or min(half, 64) without the ranges) 54.4-56.4. Under GCC all
+five run alike: 20.8-26.6 µs, the high reading the first form's, which in six runs more took 22.1-23.2 µs beside the
+others' 21.0-22.9 (`recheck.sh`). Clang enters the loop's vector code past one overlap test for all of a batch row's
+heads, whose halves interleave from head to head, so the test fails and every head turns in the scalar loop; bounded
+by the halves' distance, the loop needs no test between them. With one head a row the five forms run alike under
+clang, 6.4-7.8 µs, and with two or four the three bounded otherwise take three times the others' time
+(`bound_heads.sh`). The per-call rotation (`rope_rows`) had the same loop and, under clang, the same third of the
+rate. Both rotations now turn a position's pairs through `rope_turn`, called with the head's half wherever the head
+fits one range of 64 pairs -- every head up to 128 wide, so every model here -- and with the range's count otherwise.
+The operations and their order are the same, and the C harness's output is the first commit's byte for byte.
+
+Measured on the committed tree against the tree before the slice (`rope.json`, `step-parts.json`, `step.json`,
+`forward.json`, `steady.json`):
+
+| | after / before |
+|---|---|
+| the table's rotation / the per-call one, clang, one thread / four, T256 to T2048 | 0.281-0.288 / 0.288-0.478 |
+| the same, GCC | 0.312-0.386 / 0.376-0.709 |
+| the per-call rotation after ROPE-BOUND / before it, clang, one thread / four | 0.574-0.810 / 0.436-0.885 |
+| the rotations and the fill in the step, a worker at a time: T256 / T512 / T1024 (µs a step) | 447 -> 190 / 815 -> 336 / 1,596 -> 764 |
+| the training step in one process: T128 / T256 / T512 / T1024 / T2048 | 0.970 / 0.958 / 0.973 / 0.999 / 0.973 |
+| the same, GCC T256 / T512; the 9.84M decoder | 0.992 / 0.993; 1.006 |
+| the step alone in its own process: T128 / T256 | 0.948 (0.905-0.992, resolved) / 1.016 |
+| the inference forward: B4 T1024 / B4 T2048 / B1 T256 | 0.988 / 1.003 / 0.930 |
+
+The fill costs x0.69-0.76 of one per-call rotation on one thread under clang, in place of twelve. At T256 the
+rotations' saving is some 1.9% of the step; in one process the step's interval there (0.931-0.985) meets its A/A
+control's (0.980-1.027), and every other row of the step and the forward holds 1 or meets its control, as an effect
+of 1-2% does on these rigs. Under GCC on four threads the records read the table's rotation at T256 at 8.94 µs before
+ROPE-BOUND and 13.04 after. Run six times more on each unit (`recheck.sh`), it takes 8.35-9.91 µs in some runs and
+15.35-16.70 in others, on either unit, and in every run of `bound_cause.c` (one thread or four, T256 or T1024) its
+five forms lie within x1.11 of one another: that reading is a run's level, not ROPE-BOUND's. Every round's weights
+and logits are the same bytes on both trees.
+
+**RMS-LANES-0**, measured and not taken. The RMSNorm's jobs were the probe's next elementwise jobs.
+`proto_rms_lanes.py` runs their per-row passes sixteen rows at a time, a row a lane -- the forward's scale and its
+scan, the VJP's dx, the gamma adjoint's columns -- every operation the unit's in its order. Alone, with their
+operands in cache, the jobs take x0.66-0.80 of their time (`design.json`); in the step, one library a process, they
+read x0.953-x1.023 from T128 to T1024, each holding 1, every run's weights the same digest. The norms' jobs wait on
+where their operands sit, not on their arithmetic. On non-finite input one to three of the variant's elements also
+carry another NaN than the unit's: a second spelling the trainer's scans refuse either way, but not every value as
+it was.
+
+Witnesses: the C harness's `rope_table` holds the table's 201,372 entries each to the per-pair reference's own libm
+call, and 504 rotations reading it byte for byte to the reference's and `bcir_tensor_rope_pool`'s -- seven shapes
+(heads of 2 to 260, heads shorter than a range of 64 pairs and wider than one, positions 1 to 70 about the
+16-position task), four bases, forward and inverse, the fill and the rotation each serial and on pools of two and
+four -- and sees a table of another base and one read a position late. Every other line of the harness is the tree
+before's, under clang 18 and GCC 13, and under ThreadSanitizer. The program checker's six new refusals: a rotation
+without its table, a table of another time, a table inside the x it turns, an odd-width fill, a fill into the
+weights, a fill with an unused dimension. `rope-table.json` RT1-RT16 inject the table's and the rotation's faults
+into the unit and the trainer, and `rope-table-px.json` RTX1-RTX16 into the plan, the checker, the executor, the
+trace, the lowering, the launch plan, the step program and the pack, each caught by its own check. One fault, as
+first written, removed the table from the step program's forward rotations alone; the backward's still read it, so
+its lifetime -- the one thing the step program's reads decide -- was unchanged, and no check could see it. Aimed at
+the backward's rotations, its life ends before the loss, where the step program's bound peaks, and the bench row's
+bound falls from 755,712 to 753,664 bytes: caught. PX-DISPATCH's PY27 is re-anchored on the new run count, and
+NDT-ROPE's NO1-NO7 (NO4 re-anchored in `rope_turn`, NO6 and NO7 new) and NDT-THREADS' NT6 are caught by the harness.
+
+Not claimed: heads wider than 128 keep the ranges' loop, at clang's slower rate; the branch is a rate, not a value --
+sending every head down the ranges' path changes no output, so only the timings witness it; the v1 contract's step
+at x0.935 at T256, resolved by the rule but more than the rotations' whole time a step (0.45 ms of 25) beside an A/A
+control of 1.025, and the first commit's B1/T256 forward at x0.734 beside one of 1.105, the rig's own bias at those
+sizes; counter-based figures (no PMU on this VM).

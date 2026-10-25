@@ -158,7 +158,7 @@ the C rail to it:
 | `train.plan.pack.mismatch` | exact | the same 356 runs, each from its pack: the program stated as a module of its calls and values ([`native_pack.training_pack`](../../bcir/hosted/models/native_pack.py)), planned by K_BCIR, hydrated by GEM into a StreamPack and placed by its `ExecutionPlanV1`, lowered by [`bcir_decoder_lower_pack`](../../runtime/c/bcir_decoder_pack.h) -- the two verified by their own laws, the plan's alias law among them, then each claim GEM's executor dispatches lowered to the record that runs it -- and run; a run counts when the lowering is refused or is not the program's words, the run stops, or its state or events differ in a bit from the C step's on the same case | 0 of 356 (2026-10-20, PX-2b); the parent ran no step from a StreamPack |
 | `train.plan.place.mismatch` | exact | the same 356 runs, each from its pack with every activation and scratch value placed by its lifetime in one bank ([`native_pack.place_by_lifetime`](../../bcir/hosted/models/native_pack.py): GEM+'s static memory planner over the pack's own values) and run on a trainer lending exactly the placement's arena (`NativeDecoder(transient=...)`); a run counts when the lowering is refused or is not the program's words at the placed places (`native_pack.placed_words`, the relocation's oracle), the placement lies below G26's bound (two live values sharing a byte), the run stops, or its state or events differ in a bit from the C step's on the same case; each layout's gap above the bound is read beside the row, never counted | 0 of 356 (2026-10-20, PX-4): 254 placements at the bound, each proved, and 102 32 or 52 bytes above it; the parent placed no value by its lifetime |
 | `train.mm.mismatch` | exact | `bcir_tensor_mm` against an independent binary32 emulation of its contract, bit for bit, on 20 cases (every transpose pair, the tiles' edges) | 0 of 20, and 0 on the parent kernel: the contract both keep |
-| `train.memory.transient` | exact | the bytes a trainer lends for the step's activations and workspace over G26's concurrent-live bound on the values they hold: since PX-4 the arena the step's pack is placed in, every transient value by its lifetime ([`native_pack.place_by_lifetime`](../../bcir/hosted/models/native_pack.py)); before it, the C plan's fixed spans | 1.0: 754,176 bytes placed over a 754,176-byte bound at the bench shape (2026-10-20, PX-4); the C plan's spans held 999,424 bytes over the step program's 753,664 (1.326x) |
+| `train.memory.transient` | exact | the bytes a trainer lends for the step's activations and workspace over G26's concurrent-live bound on the values they hold: since PX-4 the arena the step's pack is placed in, every transient value by its lifetime ([`native_pack.place_by_lifetime`](../../bcir/hosted/models/native_pack.py)); before it, the C plan's fixed spans | 1.0: 756,224 bytes placed over a 756,224-byte bound at the bench shape, the rotation's table's 2,048 among them (ROPE-TABLE, 2026-10-24; 754,176 at PX-4, 2026-10-20); the C plan's spans hold 1,001,472 bytes over the step program's 755,712 (1.325x; 999,424 over 753,664 before the table) |
 | `train.mm.fused.mismatch` | exact | `bcir_tensor_mm_fused` against an exact rational emulation of the fused contract rounded once per term, bit for bit, on the same 20 cases | 0 of 20 (2026-10-12, NDT-FMA) |
 | `train.mm.kblock.mismatch` | exact | `bcir_tensor_mm_kblock` against an exact rational emulation of the blocked fused contract (v3) on 40 cases (the 20 fused cases and 20 deeper ones crossing the split rule's three cases, an inexact alpha, beta 1), plus the depths where the C split rule and the Python one disagree | 0 of 40 (2026-10-12, NDT-KBLOCK) |
 | `train.mm.bf16.mismatch` | exact | `bcir_tensor_mm_bf16_variant` on every instance the host runs (portable, AVX-512, AMX where admitted) against an exact rational emulation of the bf16 contract -- operands rounded to bf16, per 32-term block two lanes from +0.0, each term's fma rounded once and flushed when tiny, then `c = daz(c) + (E + O)` -- on 28 cases (the 20 fused cases and 8 across one, two and five blocks with an inexact alpha and beta 1) | 0 of 28 (2026-10-17, NDT-BF16) |
@@ -180,8 +180,8 @@ The memory row reads the placed arena since PX-4 (NDT-MEM). The step's pack stat
 value with its lifetime, so `native_pack.place_by_lifetime` lays them out in one bank with GEM+'s
 static memory planner -- the values split where none is live across a phase, each part laid out
 by `exact_layout`, the parts sharing addresses -- and at the bench shape the extent is G26's bound
-on the same values, 754,176 bytes: a proved optimum (TMSAO-1), and 245,248 bytes (24.5%) under the
-C plan's 999,424. The bound is 512 bytes above the step program's because the pack makes the loss
+on the same values, 756,224 bytes since ROPE-TABLE's table (754,176 at PX-4): a proved optimum (TMSAO-1), and
+245,248 bytes (24.5%) under the C plan's 1,001,472 (999,424). The bound is 512 bytes above the step program's because the pack makes the loss
 rows' terms, which the C keeps at the head of the scratch, a value of their own. A trainer lends
 only that arena (`NativeDecoder(transient=...)`): `bcir_decoder_run_program` holds every operand
 inside the lengths a caller lends and the run's arguments apart from them, while the fixed step
@@ -645,6 +645,14 @@ logit: a row keeps its first 1,024 exponentials in double on its task's stack an
 values, a wider row evaluating its tail again. The same call on the same argument returns the same double and the
 loop's operations keep their order, so every adjoint, term and loss is as it was; the loss job takes x0.62-x0.65 of
 its time in the GEO step on four threads (`loss-once.json` LO1-LO7; §25).
+Since ROPE-TABLE (2026-10-24) each forward evaluates the rotation's cosines and sines once, into the scratch arena's
+last span (time x head-dim floats, counted by the C plan and the step program alike), and every rotation of the step
+reads them -- the forward's, the backward's and a recomputed layer's -- where each rotation called libm's `cos` and
+`sin` for every position and pair; each entry is the same libm call on the same argument rounded to float and each
+rotated element the same two rounded products and one rounded sum or difference, so every value is as it was. Since
+ROPE-BOUND both rotations turn a head of one range of pairs (every head up to 128 wide) in one loop bounded by its
+half, which clang compiles at three times the rate of the range-bounded one. The rotations take x0.43 of their time
+in the GEO step, some 1.9% of it at T256 (`rope-table.json` RT1-RT16, `rope-table-px.json` RTX1-RTX16; §27).
 Since NDT-SCAN-W (2026-10-17) the forward's verdict on its activations is taken by their writers: the
 RMSNorm, the SwiGLU product and the attention read back what their tasks wrote while it is in the
 core's cache, a region answering through another its value reaches and the attention reading its

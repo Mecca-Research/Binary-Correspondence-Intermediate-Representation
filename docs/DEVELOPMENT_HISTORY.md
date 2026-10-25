@@ -4986,6 +4986,61 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     AVX-512F runs the forks' tasks; a perturbation of a double intermediate below float's rounding is out of the
     witnesses' sight, so the bit-identity rests on the statement-for-statement correspondence; counter-based figures
     (no PMU on this VM).
+  ROPE-TABLE and ROPE-BOUND (2026-10-24): the rotation reads a table of the same cosines and sines, a span of the
+    plan on both rails, and both rotations turn a head of one range of pairs at their loop's rate under clang; every
+    value as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §27,
+    [measurements/2026-10-24/rope-table/](research/measurements/2026-10-24/rope-table/README.json)).
+  - Placed by NEXT-2's per-job probe: RoPE's jobs took 34-36 µs each at T256, twelve a step at the GEO dimensions
+    (the forward's queries and keys and the backward's adjoints of both, in each of three layers), each evaluating
+    libm's `cos` and `sin` for every position and pair -- 8,192 calls a rotation at T256, on the same arguments in
+    every rotation of the step.
+  - ROPE-TABLE (`a6f8feb`): `bcir_tensor_rope_table_pool` fills time x head-dim floats once a forward with the
+    expressions the rotation evaluates -- each pair's frequency the same `pow`, each angle the same product in
+    double, each entry the same libm call rounded to float -- and `bcir_tensor_rope_lent_pool` rotates with them, the
+    sine times -1 under inverse, then the same two rounded products and one rounded sum or difference an element:
+    every rotated value is `bcir_tensor_rope_pool`'s bit for bit. The table is the scratch arena's last span in the
+    C plan and the step program alike (32 KiB at the GEO dimensions at T256), filled after the embedding and read by
+    every rotation of the step. A program's ROPE record reads it as its second operand and a ROPE_TABLE record (kind
+    24, the pack's claim `train.rope.table`) writes it; the checker holds the one to time x dim floats it may read
+    and the other to time x dim floats it may write, an even dim and no unused word. `train.plan.dispatch.mismatch`
+    counts 1,171 runs, and `train.memory.transient` reads 1,001,472 / 755,712 and 756,224 / 756,224 bytes, the
+    table's 2,048 at the bench shape.
+  - ROPE-BOUND (`b86bfc4`): measured on its own, the first commit's table rotation took x0.47-0.65 of the per-call
+    one's time under clang, where ROPE-TABLE-0's prototype read x0.22-0.31. The two loops differ only in their bound:
+    the prototype's ran to the head's half, the distance between the two halves the loop pairs; the commit's to the
+    range's count, the same count for every head of at most 64 pairs. `bound_cause.c` shows that is the whole of it:
+    under clang 18 and 23 the forms bounded by the halves' distance take 18.3-19.1 µs at T256 on one thread against
+    54.4-56.4 for the others, and under GCC all five run alike; with one head a row they run alike under clang too, its
+    vector code entered past one overlap test for all of a row's heads, whose halves interleave from head to head, so
+    that the test fails. The per-call rotation had the same loop. Both now turn
+    a position's pairs through `rope_turn`, bounded by the head's half wherever the head fits one range (every head up
+    to 128 wide); the harness's output is the first commit's byte for byte.
+  - Measured on the committed tree against the tree before the slice. Under clang the table's rotation takes
+    x0.28-0.29 of the per-call one's time on one thread and x0.29-0.48 on four (GCC x0.31-0.39 and x0.38-0.71); the
+    per-call rotation itself takes x0.57-0.81 of its time before ROPE-BOUND on one thread; the fill costs x0.69-0.76
+    of one per-call rotation. In the step, a worker at a time, the rotations and the fill take 190 µs a step against
+    447 at T256 (x0.43), 336 against 815 at T512 and 764 against 1,596 at T1024: some 1.9% of the step at T256. In one
+    process the step reads x0.958 (0.931-0.985) at T256 beside an A/A control of 1.003 (0.980-1.027), the intervals
+    meeting, and x0.970-x0.973 at T128, T512 and T2048, parity at T1024 and for the 9.84M decoder, each holding 1;
+    alone in its own process x0.948 (0.905-0.992) at T128, resolved, and parity at T256. The inference forward holds
+    1 at B4, and at B1/T256 reads x0.930 (0.888-0.973), meeting its control. Every round's weights and logits are the
+    same bytes on both trees.
+  - Not taken: RMS-LANES-0, the RMSNorm's per-row passes sixteen rows at a time, a row a lane, every operation the
+    unit's in its order: alone with their operands in cache the jobs take x0.66-0.80 of their time, in the step
+    x0.953-x1.023 from T128 to T1024, each holding 1 -- the norms' jobs wait on where their operands sit, not on their
+    arithmetic -- and on non-finite input one to three elements carry another NaN than the unit's.
+  - Witnesses: the C harness's `rope_table` (201,372 table entries, each the per-pair reference's own libm call; 504
+    rotations byte for byte the reference's and `bcir_tensor_rope_pool`'s over seven shapes, four bases, forward and
+    inverse, serial and pools of two and four; a table of another base and one read a position late both seen),
+    every other line of the harness as before, under clang 18 and GCC 13 and under ThreadSanitizer; six new program
+    refusals; `rope-table.json` RT1-RT16 and `rope-table-px.json` RTX1-RTX16, each caught by its own check -- RTX14,
+    first aimed at the step program's forward rotations alone, could not be seen, the table's lifetime being its last
+    read's, the backward's; PX-DISPATCH's PY27 re-anchored, NDT-ROPE's NO1-NO7 and NDT-THREADS' NT6 caught again.
+  - Not claimed: heads wider than 128 keep the ranges' loop at clang's slower rate; the branch is a rate, not a value
+    (sending every head down the ranges' path changes no output, so only the timings witness it); the v1 contract's
+    step at x0.935 at T256, resolved by the rule but more than the rotations' whole time a step (0.45 ms of 25)
+    beside an A/A control of 1.025, and the first commit's B1/T256 forward at x0.734 beside one of 1.105 -- the rig's
+    bias at those sizes; counter-based figures (no PMU on this VM).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
