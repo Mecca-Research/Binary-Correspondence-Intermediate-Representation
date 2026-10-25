@@ -5041,6 +5041,59 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     step at x0.935 at T256, resolved by the rule but more than the rotations' whole time a step (0.45 ms of 25)
     beside an A/A control of 1.025, and the first commit's B1/T256 forward at x0.734 beside one of 1.105 -- the rig's
     bias at those sizes; counter-based figures (no PMU on this VM).
+  KSPLIT (2026-10-25): the blocked contract's weight adjoints split over their depth into the workspace the state
+    lends, folded in K order, every value as it was ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §28,
+    [measurements/2026-10-25/ksplit/](research/measurements/2026-10-25/ksplit/README.json)).
+  - Placed by NEXT-3's re-probe after ROPE-TABLE: the GEMMs take 60% of the GEO step's pool time at T256 and their
+    rate falls from 454 to 389 GFLOP/s by T1024, and of the GEMM forms the weight adjoint (dW = dY^T X, a blocked call
+    with A transposed whose depth is the batch's rows) stood furthest from MKL's: at a depth of 4,096 on four threads
+    x1.16-2.26 of `torch.mm`'s time. A blocked call's task spans all of the depth, so every task walks all of A, which
+    from a few K blocks deep a core's L2 no longer holds. KSPLIT-0, the prototype, ran such a call a task a K block:
+    the GEO step x0.928-0.981 at T1024 and T2048 in its six runs, every byte equal.
+  - KSPLIT (`bb69e4f`): a blocked-contract call with A transposed and B not, at least four K blocks deep, runs a task
+    a K block where the room it is lent holds its blocks' partials (blocks x m x n floats): each task computes its
+    block's product over all of C with the instance's own register kernel, the accumulators stored as they are (a new
+    epilogue of the portable, AVX2 and AVX-512 blocked kernels, `BCIR_MM_RAW`), and a fold job, sixteen rows of C a
+    task, gives every element its blocks in order with the blocked kernels' epilogue: the first block's beta scaling,
+    then c + alpha*P block after block. Each block's partial is the nest's fmaf chain and the fold is the nest's
+    epilogue in the nest's order, so every element of C is the nest's bit for bit. A job's calls take the room in call
+    order while their partials fit, a group's independent calls and never its chain; the rest run as before. The
+    trainer lends the state's workspace -- under a binary32 contract the attention's copies (ATT-CONTIG), idle while a
+    GEMM job runs -- to every blocked-contract GEMM job with a weight adjoint (one predicate, `ks_lends`, on the fixed
+    step and the program executor); no plan grows, so where the state lends none nothing changes. Every record of such
+    a job states the workspace, the checker requires it there and nowhere else under the contract, and the trace, the
+    launch plan and the pack (its claims and its lowering) carry it. The Python trainer's exact need on four threads
+    holds all 22 of the GEO step's weight adjoints a step at T1024 and T2048, and one a layer of the 9.84M decoder's.
+  - Measured on the committed tree against the tree before. Alone, the GEO step's weight adjoints over 4,096 and 8,192
+    rows take x0.56-0.78 of their time on four threads and x0.66-0.88 on one, x0.74-1.31 of MKL's time at 4,096 rows
+    where the nest took x0.98-2.03. A worker at a time the GEO step's GEMM claims that split take 21.3 -> 17.9 ms a
+    step at T1024 (x0.84) and 46.0 -> 36.9 ms at T2048 (x0.80). In one process the step reads x0.950 (0.930-0.970) at
+    T1024, resolved (gcc x0.941, meeting its control; at the trainer's exact need x0.968), and x0.959-0.971 in five
+    64-round runs at T2048, each meeting its control's interval; the 9.84M decoder's step at T1024 x0.938
+    (0.912-0.966), resolved, where every weight adjoint is lent room, and x1.008 at its exact need. Where nothing
+    splits -- the GEO step at T512, the v1 contract, the 9.84M decoder at T128 and T512, the forward -- every reading
+    holds 1. Every round's weights and logits are the same bytes on both trees.
+  - The residual: the split's rate falls as the weight adjoint widens -- at 8,192 rows and n 384 x1.11-1.24 of MKL's
+    time from m 256 to 640 on four threads and x1.68-1.80 at 1,024 -- as a K block's panel of A (448 x m floats, 1.75
+    MiB at m 1,024) outgrows what a core's L2 holds beside B's. On one thread that takes the 9.84M decoder's 1,024-wide
+    weight adjoint at 8,192 rows to x1.00-1.14 of the nest's time (five of six recheck runs resolved slower), where
+    four threads still gain (x0.905-0.926); the trainer lends it no room on one thread (1.44 MiB against its 28.5 MiB
+    of partials), and lent one its one-thread step reads x0.957 (gcc, resolved) and x0.975.
+  - Witnesses: the C harness's `gemm_kblock_split` (990 weight adjoints through the single, pair and group entries
+    byte for byte the K-blocked fmaf chains, 3 to 10 K blocks, every instance's row blocks and edge widths, serially
+    and on pools of two and four; 432 split, the room written exactly where a call qualifies and its partials fit,
+    never past what was lent); the harness's -contig and ThreadSanitizer builds split every blocked weight adjoint
+    whatever its depth, and the -contig build's trainer digests are the default build's; a long-context case through
+    the C step's trace, every program and pack run of the planner's choices and a weight adjoint run as a group's
+    chain of one, each the C step's state and the state a never-splitting build trains; the step program's loan under
+    each job shape and contract; five new program refusals. `ksplit.json` KS1-KS19 and `ksplit-px.json` KX1-KX14,
+    each caught by its own check (KS9, KS16 and KX7 rewritten to build: their first forms stopped the build);
+    GW8, MR5, NK5 and NT14 re-anchored and caught again; clang 23's analyzer's finding in the executor's pair fixed
+    (KX5 re-anchored).
+  - Not claimed: the split where the state lends no room (the blocked contract below 1,024 positions; the 9.84M
+    decoder's wider weight adjoints at its need) and the wide weight adjoints' rate, the next slices' (KSPLIT-ROOM,
+    KSPLIT-ROWS); T2048's gain by the rule; the fuzz harness's state lends no workspace under the blocked contract, so
+    the checker's new rule is the witnesses' and not the decoder campaign's; counter-based figures (no PMU on this VM).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

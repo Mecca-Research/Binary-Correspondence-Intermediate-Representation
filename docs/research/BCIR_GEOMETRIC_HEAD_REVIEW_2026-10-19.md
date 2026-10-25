@@ -1820,3 +1820,122 @@ sending every head down the ranges' path changes no output, so only the timings 
 at x0.935 at T256, resolved by the rule but more than the rotations' whole time a step (0.45 ms of 25) beside an A/A
 control of 1.025, and the first commit's B1/T256 forward at x0.734 beside one of 1.105, the rig's own bias at those
 sizes; counter-based figures (no PMU on this VM).
+
+## 28. KSPLIT: the blocked contract's weight adjoints split over their depth (2026-10-25)
+
+NEXT-3 re-probed the GEO step after ROPE-TABLE (§27): at T256 the GEMMs take 60% of the pool's time and the
+attention 22%, and from T256 to T1024 the GEMM jobs' rate falls from 454 to 389 GFLOP/s while the attention's
+share grows to 48%. A job at a time, the weight adjoints -- dW = dY^T X, a call with A transposed whose depth is
+the batch's rows -- were the GEMM form furthest from MKL's: at a depth of 4,096 on four threads BCIR's took
+x1.16-2.26 of `torch.mm`'s time (`design.json`, `tn_bench.py`), where the forward form, its depth the width, ran
+at x0.76-1.07 of it. Under MM-ROWS (§15) a blocked call's task is a range of whole column blocks over all of the depth, so
+every task walks all of A and its part of B; once the depth passes a few K blocks of 448, A outgrows a core's L2 and
+each task reads it from L3 again. KSPLIT-0, the prototype, gave such a call a task a K block: the GEO step
+x0.928-0.972 at T1024 and x0.945-0.981 at T2048 in its six runs, every byte equal. KSPLIT lands it
+([measurements/2026-10-25/ksplit/](measurements/2026-10-25/ksplit/README.json)).
+
+**The split.** A blocked-contract call with A transposed and B not, at least four K blocks deep
+(`bcir_tensor_kblock_split`'s blocks; a build may set `BCIR_MM_KSPLIT_BLOCKS`), runs a pool task a K block where
+the room it is lent holds its blocks' partial products, blocks x m x n floats. A task computes its block's
+product over all of C with the instance's own register kernel, the accumulators stored as they are -- a new
+epilogue of each blocked kernel (`BCIR_MM_RAW`: no alpha, no beta, C never read; masked stores at the portable,
+AVX2 and AVX-512 instances' edges) -- into its slice of the room. A fold job, sixteen rows of C a task, then gives
+every element its blocks in order with the blocked kernels' epilogue operations: the first block's beta scaling
+(NDT-BETA: +0.0 under beta 0, else the rounded product) and c + alpha*P, a rounded product and a rounded sum, then
+c + alpha*P for each later block. Each block's partial is the nest's -- its fmaf chain from zero in ascending
+depth -- and the fold performs the nest's epilogue in the nest's order, so every element of C is the nest's bit
+for bit; only where each block's product waits differs. A job's calls take the room in call order while their
+partials fit, a group's independent calls and never its chain (a chain's calls share one tiling), and the rest
+run as before; an entry lent no room, or one that cannot hold floats, runs every call as before. The pair entry
+gains its room (`bcir_tensor_mm_pair_ws_variant_pool`); the single and group entries take the workspace they
+already took.
+
+**The room.** The trainer lends the state's workspace -- under a binary32 contract the attention's copies
+(ATT-CONTIG), idle while a GEMM job runs -- to every blocked-contract GEMM job with a weight adjoint, and the unit
+splits the calls whose partials fit what is left of it. No plan grows: where the state lends no workspace (under
+the blocked contract, contexts below ATT-CONTIG's 1,024 positions) nothing changes. The Python trainer lends the
+exact need at its thread count (`bcir_decoder_workspace_need`): at the GEO dimensions on four threads 4 MiB at
+B4/T1024 and 8 MiB at T2048, where the largest group's partials take 2.5 and 4.75 MiB, so all 22 weight adjoints a
+step split; the 9.84M decoder's 5.75 MiB at B8/T1024 holds one weight adjoint a layer (the keys', 5.3 MiB) of
+groups whose partials take up to 57 MiB. A caller lending the workspace for any pool
+(`bcir_decoder_workspace_bytes`: 16, 32 and 92 MiB there), as `step_ab.c` does, has every one split (`sizes.json`).
+On the program rail every record of such a job states the workspace (slot 3, the state's whole workspace), the
+checker requires it there and nowhere else under the contract, the executor lends it by the same rule
+(`ks_lends`), the trace records it, the launch plan states it, and the pack's claims carry the workspace the job
+writes and its lowering gives it back.
+
+Measured on the committed tree against the tree before the slice (`gemm.json`, `step-parts.json`, `step.json`,
+`forward.json`):
+
+| | after / before |
+|---|---|
+| the weight adjoint alone, GEO shapes, 4,096 and 8,192 rows (10 and 19 K blocks), four threads | x0.56-0.78, every one resolved |
+| the same at 2,048 rows (5 K blocks), four threads | x0.68-0.96, three of eight holding 1 |
+| the same, 4,096 and 8,192 rows, one thread | x0.66-0.88 |
+| the 9.84M decoder's 192- and 384-wide weight adjoints, 4,096 and 8,192 rows, four threads | x0.66-0.91 (one thread x0.69-0.91) |
+| its 1,024-wide one (the down projection's), four threads | x0.905-0.98 |
+| its 1,024-wide one at 8,192 rows, one thread | x0.88-1.14: x1.00-1.14 in the recheck's six runs, five resolved slower |
+| at 1,024 rows (three K blocks: not split, the same path either way) | x0.94-1.03, one interval of twelve excluding 1 |
+| the GEO step's split GEMM jobs a worker at a time (the Python trainer), T1024 / T2048 | 21.3 -> 17.9 ms a step (x0.84) / 46.0 -> 36.9 ms (x0.80) |
+| the training step, GEO T1024, clang / gcc | x0.950 (0.930-0.970), resolved / x0.941 (0.913-0.970), meeting its control |
+| the same at the Python trainer's exact need | x0.968 (0.938-0.998), meeting its control |
+| GEO T2048, five 64-round runs (clang and gcc twice; clang at the exact need) | x0.959-0.971, each excluding 1 and meeting its control |
+| the 9.84M decoder, B8/T1024, every weight adjoint lent room / at the exact need | x0.938 (0.912-0.966), resolved / x1.008, holding 1 |
+| one thread: GEO T1024 / the 9.84M decoder T1024, every weight adjoint lent room | x0.967-x0.988 / x0.975 (clang), x0.957 (gcc, resolved) |
+| where nothing splits: GEO T512, the v1 contract, the 9.84M decoder T128 and T512; the forward | x0.975-x0.997 and x0.996-x1.014, each holding 1 |
+
+The gain is where the probe placed it. Alone, the GEO step's weight adjoints over 4,096 and 8,192 rows take
+x0.56-0.78 of their time on four threads, at 316-448 GFLOP/s where the nest ran 198-298, and against `torch.mm`
+beside them x0.74-1.31 of MKL's time at 4,096 rows and x0.82-1.11 at 8,192, where the nest took x0.98-2.03 and
+x1.44-1.87: at MKL's rate, near enough, from twice its time. A worker at a time, the GEO step's two GEMM claims
+that split -- the backward's groups and pairs, each split job now followed by its fold -- take 3.4 ms less a step at
+T1024 and 9.1 ms less at T2048, the GEMM claims that do not split as they were; the step in one process reads
+x0.950 at T1024, resolved, and the five 64-round runs at T2048 x0.959-0.971, the 3.8% the probe's 9.1 ms predicts,
+each meeting its control's interval, so not resolved by the rule. The first T2048 runs, 24 rounds a compiler,
+read x1.005 and x0.9995, their rounds swinging by a tenth and clang's control excluding 1; the 64-round runs were
+made for them, and pooled with them each compiler's 152 rounds read x0.970 and x0.971, still meeting their
+controls. The 9.84M decoder's step at T1024 reads x0.938 where every weight adjoint has its room -- 89 ms a step --
+and x1.008 at its exact need, where one a layer has.
+
+What remains is made of two things. The width: the split's rate falls as the weight adjoint widens. At 8,192 rows
+and n 384 (`sweep_m.sh`) its time is x1.11-1.24 of MKL's from m 256 to 640 on four threads and x1.68-1.80 at 1,024
+(one thread x1.11-1.30 and x1.91-2.10), and on one thread its gain over the nest fades from x0.62-0.84 at m 512
+and below to x0.92-0.96 at 768 and x0.98-1.11 at 1,024: a K block's panel of A, 448 x m floats, grows past what a
+core's L2 holds beside B's (1.75 MiB at m 1,024, against 2 MiB), so on one thread the split reads A from L3 as the
+nest does and adds the partials' traffic, while four threads still gain from reading each block once in all. That
+is the one-thread regression's whole cause: the 9.84M decoder's 1,024-wide weight adjoint at 8,192 rows. The
+trainer lends it no room on one thread (1.44 MiB against its 28.5 MiB of partials), and where a caller does, the
+one-thread step still reads x0.957 and x0.975. A K block's task over a range of rows where its panel would not
+stay in L2 is the next lever (KSPLIT-ROWS). The room: where the state lends none -- the GEO step below 1,024
+positions, whose 2,048-row weight adjoints run x0.68-0.96 of their time split alone, and the 9.84M decoder at its
+need -- nothing splits; a room planned for the partials, or a window of blocks a fold at a time, would take them
+(KSPLIT-ROOM). After the split the GEMM claims are 24% of the GEO step's pool time at T2048 and the attention's two
+claims 67%.
+
+Witnesses: the C harness's `gemm_kblock_split` holds 990 weight adjoints through the single, pair and group entries
+byte for byte to the K-blocked fmaf chains -- three to ten K blocks across kblock_next's tail rule, rows across
+each instance's row blocks and columns across its edge widths, beta 0 and 0.5, alpha 1 and -0.75, every instance,
+serially and on pools of two and four -- 432 of them split, the room written exactly where a call qualifies and
+its partials fit (the whole room, one call's partials) and untouched otherwise (none, a float short, misaligned,
+three blocks deep), a group's second weight adjoint from the next 64-byte offset, and never a byte past what was
+lent. The harness's `-contig` build splits every blocked weight adjoint whatever its depth
+(`-DBCIR_MM_KSPLIT_BLOCKS=1`, 2,726 splits), so each of its trainer witnesses runs split, and its trainer digests
+are the default build's; the ThreadSanitizer build splits them too. `test_a_blocked_weight_adjoint_job_is_lent_the_workspace`
+runs a long-context case (B2/T1024, five K blocks) through the C step's trace, every program run and every pack run
+of the planner's choices, and a weight adjoint run as a group's chain of one, each the C step's state, and the state
+a build that never splits trains; `test_the_plan_lends_a_blocked_weight_adjoint_job_the_workspace` holds the step
+program's loan under each job shape and contract; `test_a_blocked_job_states_its_workspace_or_is_refused` holds the
+checker's five new refusals, and a short context's blocked program, stating no workspace, runs. `ksplit.json`
+KS1-KS19 inject the unit's faults and `ksplit-px.json` KX1-KX14 the trainer's, the checker's, the executor's, the
+trace's, the launch plan's and the pack's, each caught by its own check; KS9, KS16 and KX7 as first written stopped
+the build and were rewritten to build. GEO-3's GW8, MM-ROWS' MR5, NDT-KBLOCK's NK5 and NDT-THREADS' NT14 are
+re-anchored on the new entries and caught again. Clang 23's analyzer found the executor's pair reading its second
+call's flag at a fixed count of two; it takes the job's count, which the checker holds to two (KX5 re-anchored,
+caught). In every timed arm the split's bytes are the nest's, and every round's weights and logits the same bytes on
+both trees.
+
+Not claimed: the split where the state lends no workspace -- the blocked contract's shorter contexts and the 9.84M
+decoder's wider weight adjoints at its need -- whose room a later slice could plan; the wide weight adjoints' rate
+(KSPLIT-ROWS); T2048's gain by the rule, every run of it meeting its control; the fuzz harness's state lends no
+workspace under the blocked contract, so the checker's new rule is the witnesses' and not the decoder campaign's;
+counter-based figures (no PMU on this VM).
