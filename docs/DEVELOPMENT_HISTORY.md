@@ -5333,6 +5333,34 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: the other floating-point kernels' builds beyond what they already pass (M17 reads these three
     sources); compiles whose object is discarded (the freestanding section); MSVC, which takes no manifest option;
     a bitwise comparison with the Python oracle across libms.
+  NEXT-9 (2026-10-26): the C BCIRQ8 decoder's next two kernel levers after DECODE-ROW, each prototyped with every
+    value the same and measured; neither taken; the hoist's decoder gain this host's clock, its unchecked ceiling the
+    kernel's own; records and docs only ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §34,
+    [measurements/2026-10-26/next9/](research/measurements/2026-10-26/next9/README.json)).
+  - Q8-HOIST, measured and not taken: the vector matvecs' x times a group's scale formed once a row and group,
+    `code * (x * s)` for `x * (code * s)`, the same bits wherever `x * s` is exact. The prototype (`q8_hoist.patch`)
+    checks every such product and computes a call that formed an inexact one again with the committed kernel, its
+    harness's path probe holding every vector matvec to one of the two paths. Without the check the hoist runs the
+    AVX-512 block matvec at x0.852-0.960 of its time; with it the prototype is x0.995-1.144 at the 860K decoder's
+    shapes (x1.042-1.109 over its 28 matvecs in order, codes from L2) and x0.967-1.060 at TinyLlama's.
+  - In one binary with the matvec's path chosen at run time the prototype makes a decoded token x0.937-0.957 of its
+    time under clang and x0.967-0.978 under GCC (3 runs each), the committed kernel's copy at addresses of its own
+    x0.997-1.012 and x0.971-1.006: not placement, and not the kernel. It is the core's clock: a dependent add chain
+    run between the matvecs at a decode's duty cycle (`clock_probe.c`, the median of 3 runs) reads the committed
+    kernel's AVX-512 matvecs lengthening this core's cycle x1.202 (clang) and x1.192 (GCC) against none, and the
+    prototype's leaving it x0.946 and x0.958 as long as the committed kernel's, in x1.027 and x1.039 of its cycles.
+    The clock answers the prototype's per-group checks, not its multiplies: the ceiling -- its block kernel with the
+    checks taken out, the same 512-bit multiplies -- leaves clang's cycle x1.002. Not taken: a gain that is this
+    host's clock answering the checks, through a kernel that is itself slower.
+  - The ceiling (exact here because every byte is compared, never a kernel) takes a token to x0.917-0.941 under clang,
+    its matvecs in x0.884 of the committed kernel's cycles with the clock as it was -- the kernel's own gain -- and to
+    x0.925-0.965 under GCC, whose build of it moves the clock too (x0.960, 1 of 3 runs resolved): what a hoist whose
+    exactness is proved once a call can reach (Q8-BOUND, next).
+  - Q8-ROWS2, measured and not taken: the head's row dots sixteen rows a step in two interleaved blocks, two
+    independent chains a coordinate, every row's chain the same terms in order: x1.050 (clang) and x1.043 (GCC) at the
+    860K decoder's head, x0.992 and x1.061 at TinyLlama's.
+  - Not claimed: any other host's clock, or a frequency in hertz; the matvec over rows as well as columns at
+    TinyLlama's sizes, still open; counter-based figures (no PMU on this VM).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

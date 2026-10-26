@@ -1,0 +1,284 @@
+[
+ {
+  "run": 1,
+  "cc": "clang",
+  "rounds": 24,
+  "reps": 3,
+  "off_per_token_ms": 0.24578,
+  "on": {
+   "per_token_ms": 0.23247,
+   "ratio": 0.9565,
+   "interval": [
+    0.9172,
+    0.9976
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.24582,
+   "ratio": 0.9928,
+   "interval": [
+    0.9659,
+    1.0205
+   ]
+  },
+  "copy": {
+   "per_token_ms": 0.24235,
+   "ratio": 0.9972,
+   "interval": [
+    0.9628,
+    1.0329
+   ]
+  },
+  "ceiling": {
+   "per_token_ms": 0.22572,
+   "ratio": 0.9207,
+   "interval": [
+    0.8886,
+    0.9539
+   ]
+  },
+  "on_over_copy": {
+   "ratio": 0.9592,
+   "interval": [
+    0.924,
+    0.9957
+   ]
+  },
+  "every_generation_the_same_bytes": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "rounds": 24,
+  "reps": 3,
+  "off_per_token_ms": 0.24206,
+  "on": {
+   "per_token_ms": 0.23557,
+   "ratio": 0.9776,
+   "interval": [
+    0.9277,
+    1.0302
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.24187,
+   "ratio": 0.972,
+   "interval": [
+    0.9441,
+    1.0008
+   ]
+  },
+  "copy": {
+   "per_token_ms": 0.24234,
+   "ratio": 0.9708,
+   "interval": [
+    0.94,
+    1.0026
+   ]
+  },
+  "ceiling": {
+   "per_token_ms": 0.22931,
+   "ratio": 0.9251,
+   "interval": [
+    0.898,
+    0.9529
+   ]
+  },
+  "on_over_copy": {
+   "ratio": 1.007,
+   "interval": [
+    0.9668,
+    1.0489
+   ]
+  },
+  "every_generation_the_same_bytes": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "rounds": 24,
+  "reps": 3,
+  "off_per_token_ms": 0.2465,
+  "on": {
+   "per_token_ms": 0.23356,
+   "ratio": 0.9368,
+   "interval": [
+    0.9127,
+    0.9615
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.24716,
+   "ratio": 1.015,
+   "interval": [
+    0.9741,
+    1.0576
+   ]
+  },
+  "copy": {
+   "per_token_ms": 0.24639,
+   "ratio": 1.0033,
+   "interval": [
+    0.9677,
+    1.0402
+   ]
+  },
+  "ceiling": {
+   "per_token_ms": 0.22737,
+   "ratio": 0.917,
+   "interval": [
+    0.8934,
+    0.9412
+   ]
+  },
+  "on_over_copy": {
+   "ratio": 0.9337,
+   "interval": [
+    0.9049,
+    0.9634
+   ]
+  },
+  "every_generation_the_same_bytes": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "rounds": 24,
+  "reps": 3,
+  "off_per_token_ms": 0.24292,
+  "on": {
+   "per_token_ms": 0.23659,
+   "ratio": 0.9776,
+   "interval": [
+    0.9616,
+    0.994
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.24342,
+   "ratio": 0.9975,
+   "interval": [
+    0.9897,
+    1.0054
+   ]
+  },
+  "copy": {
+   "per_token_ms": 0.24269,
+   "ratio": 1.0063,
+   "interval": [
+    0.9857,
+    1.0272
+   ]
+  },
+  "ceiling": {
+   "per_token_ms": 0.23306,
+   "ratio": 0.9645,
+   "interval": [
+    0.9483,
+    0.9809
+   ]
+  },
+  "on_over_copy": {
+   "ratio": 0.9716,
+   "interval": [
+    0.9497,
+    0.994
+   ]
+  },
+  "every_generation_the_same_bytes": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "rounds": 24,
+  "reps": 3,
+  "off_per_token_ms": 0.24776,
+  "on": {
+   "per_token_ms": 0.23442,
+   "ratio": 0.9529,
+   "interval": [
+    0.9247,
+    0.982
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.24757,
+   "ratio": 1.0066,
+   "interval": [
+    0.9888,
+    1.0247
+   ]
+  },
+  "copy": {
+   "per_token_ms": 0.24733,
+   "ratio": 1.0125,
+   "interval": [
+    0.9833,
+    1.0426
+   ]
+  },
+  "ceiling": {
+   "per_token_ms": 0.22953,
+   "ratio": 0.9406,
+   "interval": [
+    0.927,
+    0.9544
+   ]
+  },
+  "on_over_copy": {
+   "ratio": 0.9411,
+   "interval": [
+    0.9034,
+    0.9804
+   ]
+  },
+  "every_generation_the_same_bytes": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "rounds": 24,
+  "reps": 3,
+  "off_per_token_ms": 0.24457,
+  "on": {
+   "per_token_ms": 0.23143,
+   "ratio": 0.9668,
+   "interval": [
+    0.9171,
+    1.0192
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.23992,
+   "ratio": 0.9765,
+   "interval": [
+    0.9419,
+    1.0125
+   ]
+  },
+  "copy": {
+   "per_token_ms": 0.24015,
+   "ratio": 0.9893,
+   "interval": [
+    0.9508,
+    1.0293
+   ]
+  },
+  "ceiling": {
+   "per_token_ms": 0.23078,
+   "ratio": 0.9473,
+   "interval": [
+    0.9094,
+    0.9869
+   ]
+  },
+  "on_over_copy": {
+   "ratio": 0.9773,
+   "interval": [
+    0.9282,
+    1.0291
+   ]
+  },
+  "every_generation_the_same_bytes": true
+ }
+]

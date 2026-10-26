@@ -2392,3 +2392,74 @@ rail's lowering (`bcir_decoder_lower_pack`: 9 CRC passes over its pack a lowerin
 now one pass each; its time unmeasured), the verifier CLI, the control plane, the encoder; a gain on a whole 48-token
 GEM request beyond its control (the 0.6 ms are some 5% of it); any other host's figures; counter-based figures (no PMU
 on this VM).
+
+## 34. NEXT-9: the C decoder's matvec hoist and the head's two blocks, measured; the hoist's decoder gain is the core's clock (2026-10-26)
+
+After SP-ONCE the qualification's C decoder spends a 200-token request's operations as DECODE-ROW left them: about 62%
+the matrix kernels, 15% the head and 14% the attention (`ops.json`, the tree before, clang), most of the attention
+libm's exponential. NEXT-9 tried the two levers left inside the kernels' arithmetic, each prototyped with every value
+the same, on the tree CONTRACT-OFF left (`e9eb43a`): one host, clang 18 and GCC 13 at the qualification's flags
+([measurements/2026-10-26/next9/](measurements/2026-10-26/next9/README.json)). Neither is taken, and no runtime source
+changed.
+
+**Q8-HOIST.** Each matvec term is `x * (code * s)`, s = 2^e the group's scale: two multiplies a term. Forming `x * s`
+once a row and group leaves `code * (x * s)`, one. The two are the one product of the same three factors, and
+`code * s` is always exact (a code at most eight bits, s a power of two), so the second rounds to the first's bits
+whenever `x * s` is exact: finite, and normal or x zero. Where it is not, the bits can differ: a subnormal or an
+infinite `x * s`, as the harness's exponents past a normal double's make, or an overflow over zero codes, where
+`0 * (x * s)` is NaN and `x * (0 * s)` zero. The prototype (`q8_hoist.patch`) forms `x * s` once a row and group in
+both vector instances, checks each one, and computes a call that formed an inexact one again with the committed
+kernel. The kernel harness's path probe holds every vector matvec to one of the two paths (94 hoisted and 84 computed
+again in the full build, 47 and 42 capped at AVX2, under clang and GCC), every output the portable loops', and its
+overflow case to its zeros; the prototype's form of `test_native_ai_c_harness_c11_and_c23` passes.
+
+Timed against the committed AVX-512 block matvec (`hoist_bench.c` copies it byte for byte, `copies.json`; a shape's
+reading the median of 3 runs), the hoist without the check runs at x0.852-0.960 of its time. With the check the
+prototype is x0.995-1.144 at the 860K decoder's shapes, rows of 64 to 344 columns with a matrix's codes in L1, and
+x1.042-1.109 over the decoder's 28 matvecs in order, each once a pass (724,992 bytes of codes, from L2 as in a
+decode); x0.967-1.060 at TinyLlama's. The decoder reads it faster anyway, and these ways of timing it place where that
+comes from:
+
+| | clang | gcc |
+|---|---|---|
+| a token across processes (`decode.json`, 24 rounds) | x0.969 (0.899-1.046), A/A x1.000 (0.952-1.051) | x1.032 (0.974-1.094), A/A x0.997 (0.959-1.037) |
+| each tree's decoder built apart, an operation at a time (`ops.json`): the matvec / the operations the patch does not touch | x0.977 / x0.917-0.966 | x1.020 / x0.921-0.992 |
+| one process, the tree before's units renamed beside the tree after's (`inprocess.json`, 3 runs a layout): after / a second copy of the tree before's | x0.933-0.963 (aligned x0.931-0.990) / x0.973-1.013 | x0.960-0.986 (aligned x0.933-1.008) / x0.979-1.013 |
+| one binary, the matvec's path chosen at run time (`switched.json`, 3 runs): the prototype / the committed kernel's copy / the ceiling | x0.937-0.957 / x0.997-1.012 / x0.917-0.941 | x0.967-0.978 / x0.971-1.006 / x0.925-0.965 |
+| the core's cycle at a decode's duty cycle (`clock.json`, 3 runs): the committed kernel's matvecs against none / the prototype's against the committed kernel's / the ceiling's | x1.192-1.206 / x0.943-0.961 / x1.002-1.007 | x1.182-1.195 / x0.942-0.991 / x0.955-0.977 |
+| the matvecs' cycles at that duty cycle, against the committed kernel's: the prototype's / the ceiling's | x1.022-1.033 / x0.883-0.893 | x0.994-1.054 / x0.898-0.953 |
+| the core's cycle with the matvecs back to back: the prototype's / the ceiling's | x0.923-0.980 / x0.977-1.039 | x0.943-0.974 / x0.974-1.086 |
+
+Each tree's decoder built apart moves the operations the patch does not touch at least as much as its matvec, and two
+builds differ in where their code lands; one binary does not. There, every byte of code at a fixed address and the
+committed kernel's copy at its own reading as the original does, the prototype still makes a token x0.937-0.957 of its
+time under clang and x0.967-0.978 under GCC. The clock probe reads what moves: a dependent add chain takes one cycle a
+step, and run between the matvecs as a decode runs its other operations between them (10,000 steps after each), its
+steps take x1.202 (clang) and x1.192 (GCC) as long with the committed kernel's AVX-512 matvecs around it as with none
+(medians of 3 runs). The prototype's matvecs leave the step x0.946 and x0.958 as long as the committed kernel's (3 and
+2 of 3 runs resolved) and take x1.027 and x1.039 of its cycles: the core runs everything faster, the matvecs no fewer
+cycles. The clock does not follow the multiplies. The ceiling -- the prototype's block kernel with its checks taken
+out, the same 512-bit multiplies -- leaves clang's step x1.002 (none of 3 runs resolved); what raises the clock in the
+prototype is its checks, scalar work between the 512-bit operations, which this host answers with a faster clock for
+everything that runs. The prototype's decoder gain is that answer, through a kernel that is itself slower. Not taken.
+
+The ceiling (exact here only because every generation's bytes are compared; a measurement, never a kernel) takes a
+token to x0.917-0.941 under clang, its matvecs in x0.884 of the committed kernel's cycles with the clock as it was --
+the kernel's own gain -- and to x0.925-0.965 under GCC, whose build of it moves the clock too (x0.960, 1 of 3 runs
+resolved). That sizes the next lever, Q8-BOUND: the hoist with no per-group check, its exactness proved once a call
+from the call's ranges -- every exponent within the [-300, 300] `bcir_ai_q8_values_validate` admits and every nonzero
+|x| in [2^-722, 2^724), so that every `x * s` is normal and finite -- and the committed kernel for any call outside
+them.
+
+**Q8-ROWS2.** The head's AVX-512 row dots run eight rows a block, a row's chain a lane, one accumulator, so each
+coordinate's add waits for the one before it. Two blocks interleaved -- sixteen rows, two accumulators, every row's
+chain the same terms in the same order -- give each step two independent chains. `rows_bench.c` (the committed blocks
+and their helpers copied byte for byte, every output the committed kernel's over 32 cases) reads x1.050 under clang
+and x1.043 under GCC at the 860K decoder's head (1,024 rows of 128), and at rows of 2,048 x0.999 and x1.053 (4,096 of
+them) and x0.992 and x1.061 (TinyLlama's head of 32,000): the single chain a lane is not what bounds the block. Not
+taken.
+
+Not claimed: any other host's clock, or a frequency in hertz (the probe reads cycles' relative length, and this VM
+reports no counter); a hoist at TinyLlama's shapes alone; the matvec over rows as well as columns at TinyLlama's sizes
+(the AVX-512 block's walk down every row, x0.27-0.37 against AVX2's runs' x0.23-0.33 in Q8-LANES' records), still
+open; counter-based figures (no PMU on this VM).

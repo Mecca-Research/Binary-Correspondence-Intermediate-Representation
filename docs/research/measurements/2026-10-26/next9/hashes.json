@@ -1,0 +1,34 @@
+{
+ "tools": {
+  "measure_next9.sh": "f26f568f0b13a4ec33d9378a9946e808e1713977c163ee9c544276964c434127",
+  "copies.py": "ffe1a64588bed17cad8a20f287a5067e3bce90922f0e23dadb2970c25d6cb216",
+  "hoist_bench.c": "83e4e83f1ccb4f4c1a7cdd229afc9af47452ca18ac5def81e735612310c7e929",
+  "rows_bench.c": "4fbb04478b507d3d368d693e0a15589de572350badc49b836ed2552d65b1665b",
+  "hoist_ab.c": "e29ffeaaafd366674e84712c912eb660aa269ef23f5b83cdd739b6d092092fae",
+  "q8_hoist.patch": "016896ec95bc4b740638e9874a2422e836c8710330d32dc028a4193f6b575491",
+  "switch.py": "7971d5ce7bebb783d2ae666567e6a62e479f33a358fd79bffdb767f2680528ff",
+  "switch_ab.c": "01d9d6107826588d1a800ef088eecd13ee25328838abcd781eff0f6e02e06747",
+  "clock_probe.c": "55a738a77278a111a1adad403ffa42fb853eeb7ecff7a2323718b0d04992faba"
+ },
+ "tools run from ../../2026-10-25/q8-lanes": {
+  "decode_ab.py": "2d115150246b72ab2b4dfc6c276504d387616d5cf7c4bb93bcb26e1247447001",
+  "llama_ops.py": "56a526a9e255a6ab7b9afa70e762bb22ebf02708369e59b04c46c20d99488df8"
+ },
+ "sources": {
+  "before/bcir_ai_kernels.c": "76ae699d3712fe61c4073e119a1e6fa1d64816994d73ee3f292b3a9a9aaefdd6",
+  "before/test_ai_kernels.c": "a83b3ebbdba90d101af9868ca786977239bfe5b8ca98a0ecd34ade990033acbe",
+  "before/bcir_q4_kernel.c": "d810ceff0f1083158369484a0eb207b2bd535b40185156135b8aa53c5a52e6e3",
+  "before/bcir_llama.c": "657d849e70e51e08bdf132be19a8507a7a08f9167b5c261e9d4d1421f940e90a",
+  "before/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "before/bcir_q8_model.c": "bcc4454b16ca005818042a13bb3b49cb58305200073636e0c0750a3cdd74fc5c",
+  "before/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e",
+  "after/bcir_ai_kernels.c": "261bfe46a8747903a1a67ab0800c393b8029df9ad374b8e29056e7c41f87bf6a",
+  "after/test_ai_kernels.c": "8d55f1ad1280162f863b29c9b78ca5d973735a5be7891303db11aca607310b45",
+  "after/bcir_q4_kernel.c": "d810ceff0f1083158369484a0eb207b2bd535b40185156135b8aa53c5a52e6e3",
+  "after/bcir_llama.c": "657d849e70e51e08bdf132be19a8507a7a08f9167b5c261e9d4d1421f940e90a",
+  "after/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "after/bcir_q8_model.c": "bcc4454b16ca005818042a13bb3b49cb58305200073636e0c0750a3cdd74fc5c",
+  "after/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e"
+ },
+ "switched/bcir_ai_kernels.c": "9d06a6de8451b2d514dcede9adee7bac5791892a19433afcc26d9e020a46e79e"
+}

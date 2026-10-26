@@ -58,3 +58,6 @@ CMakeLists.txt text eol=lf
 *.7z binary
 *.bz2 binary
 *.zst binary
+
+# A unified diff is data: an unchanged empty line is a context line of one space, so whitespace checks do not apply.
+*.patch text eol=lf -whitespace

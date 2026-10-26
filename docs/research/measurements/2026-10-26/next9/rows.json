@@ -1,0 +1,398 @@
+[
+ {
+  "run": 1,
+  "cc": "clang",
+  "equality": {
+   "cases": 32,
+   "outputs": 8808,
+   "every_byte_the_committed_kernels": true
+  }
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "rows_dot": [
+   128,
+   1024,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 31.4,
+  "two_blocks": {
+   "us": 33.0,
+   "ratio_median": 1.0497,
+   "range": [
+    1.0321,
+    1.2118
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "rows_dot": [
+   2048,
+   4096,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 2346.71,
+  "two_blocks": {
+   "us": 2339.85,
+   "ratio_median": 1.0033,
+   "range": [
+    0.9436,
+    1.039
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "rows_dot": [
+   2048,
+   32000,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 19338.32,
+  "two_blocks": {
+   "us": 18676.35,
+   "ratio_median": 0.9919,
+   "range": [
+    0.8518,
+    1.0157
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "equality": {
+   "cases": 32,
+   "outputs": 8808,
+   "every_byte_the_committed_kernels": true
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "rows_dot": [
+   128,
+   1024,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 40.49,
+  "two_blocks": {
+   "us": 41.71,
+   "ratio_median": 1.0361,
+   "range": [
+    0.9881,
+    1.0555
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "rows_dot": [
+   2048,
+   4096,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 2826.44,
+  "two_blocks": {
+   "us": 2920.34,
+   "ratio_median": 1.0311,
+   "range": [
+    1.0028,
+    1.056
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "rows_dot": [
+   2048,
+   32000,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 21837.09,
+  "two_blocks": {
+   "us": 22581.33,
+   "ratio_median": 1.0543,
+   "range": [
+    0.9574,
+    1.1376
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "equality": {
+   "cases": 32,
+   "outputs": 8808,
+   "every_byte_the_committed_kernels": true
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "rows_dot": [
+   128,
+   1024,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 30.96,
+  "two_blocks": {
+   "us": 33.74,
+   "ratio_median": 1.0903,
+   "range": [
+    1.051,
+    1.1582
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "rows_dot": [
+   2048,
+   4096,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 2375.68,
+  "two_blocks": {
+   "us": 2334.16,
+   "ratio_median": 0.9932,
+   "range": [
+    0.7777,
+    1.2235
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "rows_dot": [
+   2048,
+   32000,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 18367.21,
+  "two_blocks": {
+   "us": 18270.42,
+   "ratio_median": 0.9939,
+   "range": [
+    0.864,
+    1.0128
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "equality": {
+   "cases": 32,
+   "outputs": 8808,
+   "every_byte_the_committed_kernels": true
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "rows_dot": [
+   128,
+   1024,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 39.82,
+  "two_blocks": {
+   "us": 41.6,
+   "ratio_median": 1.0431,
+   "range": [
+    0.9344,
+    1.52
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "rows_dot": [
+   2048,
+   4096,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 2809.65,
+  "two_blocks": {
+   "us": 2983.3,
+   "ratio_median": 1.0528,
+   "range": [
+    0.8642,
+    1.2457
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "rows_dot": [
+   2048,
+   32000,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 22154.56,
+  "two_blocks": {
+   "us": 23509.12,
+   "ratio_median": 1.0611,
+   "range": [
+    0.9597,
+    1.112
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "equality": {
+   "cases": 32,
+   "outputs": 8808,
+   "every_byte_the_committed_kernels": true
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "rows_dot": [
+   128,
+   1024,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 31.77,
+  "two_blocks": {
+   "us": 33.02,
+   "ratio_median": 1.0464,
+   "range": [
+    0.9122,
+    1.1842
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "rows_dot": [
+   2048,
+   4096,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 2385.68,
+  "two_blocks": {
+   "us": 2355.82,
+   "ratio_median": 0.9988,
+   "range": [
+    0.8817,
+    1.0711
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "rows_dot": [
+   2048,
+   32000,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 18758.13,
+  "two_blocks": {
+   "us": 18610.45,
+   "ratio_median": 0.9869,
+   "range": [
+    0.8306,
+    1.1314
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "equality": {
+   "cases": 32,
+   "outputs": 8808,
+   "every_byte_the_committed_kernels": true
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "rows_dot": [
+   128,
+   1024,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 40.33,
+  "two_blocks": {
+   "us": 41.96,
+   "ratio_median": 1.0435,
+   "range": [
+    0.3873,
+    1.0667
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "rows_dot": [
+   2048,
+   4096,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 2829.63,
+  "two_blocks": {
+   "us": 2972.16,
+   "ratio_median": 1.0605,
+   "range": [
+    1.0179,
+    1.0843
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "rows_dot": [
+   2048,
+   32000,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 21870.02,
+  "two_blocks": {
+   "us": 23461.98,
+   "ratio_median": 1.0719,
+   "range": [
+    1.0068,
+    1.0868
+   ]
+  }
+ }
+]

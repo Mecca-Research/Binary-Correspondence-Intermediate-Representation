@@ -1,0 +1,85 @@
+{
+ "harness": [
+  {
+   "cc": "clang",
+   "build": "-std=c11",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "matvecs_hoisted": 94,
+   "matvecs_computed_again": 84
+  },
+  {
+   "cc": "clang",
+   "build": "-std=c2x",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "matvecs_hoisted": 94,
+   "matvecs_computed_again": 84
+  },
+  {
+   "cc": "clang",
+   "build": "-std=c2x -DBCIR_AI_MAX_INSTANCE=2",
+   "all_gates_passed": true,
+   "instances": 3,
+   "vector_comparisons": 176,
+   "matvecs_hoisted": 47,
+   "matvecs_computed_again": 42
+  },
+  {
+   "cc": "clang",
+   "build": "-std=c2x -DBCIR_AI_NO_DISPATCH",
+   "all_gates_passed": true,
+   "instances": 1,
+   "vector_comparisons": 0,
+   "matvecs_hoisted": 0,
+   "matvecs_computed_again": 0
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c11",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "matvecs_hoisted": 94,
+   "matvecs_computed_again": 84
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c2x",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "matvecs_hoisted": 94,
+   "matvecs_computed_again": 84
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c2x -DBCIR_AI_MAX_INSTANCE=2",
+   "all_gates_passed": true,
+   "instances": 3,
+   "vector_comparisons": 176,
+   "matvecs_hoisted": 47,
+   "matvecs_computed_again": 42
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c2x -DBCIR_AI_NO_DISPATCH",
+   "all_gates_passed": true,
+   "instances": 1,
+   "vector_comparisons": 0,
+   "matvecs_hoisted": 0,
+   "matvecs_computed_again": 0
+  }
+ ],
+ "witness": {
+  "test": "bcir.tests.test_native_ai:test_native_ai_c_harness_c11_and_c23",
+  "required": "bcir.tests.test_native_ai:_CC",
+  "exit": 0,
+  "output": [
+   "ok test_native_ai_c_harness_c11_and_c23",
+   "tests: 1 run, 0 finding(s)"
+  ]
+ }
+}
