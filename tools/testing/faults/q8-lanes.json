@@ -26,22 +26,22 @@
     {
       "expects": "test_native_ai_c_harness_c11_and_c23",
       "label": "QL3 a run reaching past its group",
-      "new": "      size_t n = output_count - output_index; (void)left;\n",
-      "old": "      size_t n = output_count - output_index < left ? output_count - output_index : left;\n",
+      "new": "      size_t n = output_count - output_index; (void)left;\n      double scale = q8_scale(exponents_le, group);\n",
+      "old": "      size_t n = output_count - output_index < left ? output_count - output_index : left;\n      double scale = q8_scale(exponents_le, group);\n",
       "path": "runtime/c/bcir_ai_kernels.c"
     },
     {
       "expects": "test_native_ai_c_harness_c11_and_c23",
       "label": "QL4 every vector of a block on its row's first group",
-      "new": "    if (0) {                                                                                             \\\n",
-      "old": "    if (((e0 + 8u * (v)) >> shift) != group) {                                                          \\\n",
+      "new": "    if (0) {                                                                                             \\\n      group = (e0 + 8u * (v)) >> shift;                                                                  \\\n      scale = q8_scale(exponents_le, group);                                                             \\\n",
+      "old": "    if (((e0 + 8u * (v)) >> shift) != group) {                                                          \\\n      group = (e0 + 8u * (v)) >> shift;                                                                  \\\n      scale = q8_scale(exponents_le, group);                                                             \\\n",
       "path": "runtime/c/bcir_ai_kernels.c"
     },
     {
       "expects": "test_native_ai_c_harness_c11_and_c23",
       "label": "QL5 a block's third vector stored only past three",
-      "new": "    if (vectors > 3u) _mm512_storeu_pd(output + j0 + 16u, a2);\n",
-      "old": "    if (vectors > 2u) _mm512_storeu_pd(output + j0 + 16u, a2);\n",
+      "new": "#undef Q8_BLOCK_VECTOR\n    }\n    if (vectors > 0u) _mm512_storeu_pd(output + j0, a0);\n    if (vectors > 1u) _mm512_storeu_pd(output + j0 + 8u, a1);\n    if (vectors > 3u) _mm512_storeu_pd(output + j0 + 16u, a2);\n",
+      "old": "#undef Q8_BLOCK_VECTOR\n    }\n    if (vectors > 0u) _mm512_storeu_pd(output + j0, a0);\n    if (vectors > 1u) _mm512_storeu_pd(output + j0 + 8u, a1);\n    if (vectors > 2u) _mm512_storeu_pd(output + j0 + 16u, a2);\n",
       "path": "runtime/c/bcir_ai_kernels.c"
     },
     {
@@ -54,8 +54,8 @@
     {
       "expects": "test_native_ai_c_harness_c11_and_c23",
       "label": "QL7 the block for a column count not a multiple of 8",
-      "new": "  if (instance == 4 && group_size >= 8u",
-      "old": "  if (instance == 4 && output_count % 8u == 0u && group_size >= 8u",
+      "new": "  int block = instance == 4 && group_size >= 8u",
+      "old": "  int block = instance == 4 && output_count % 8u == 0u && group_size >= 8u",
       "path": "runtime/c/bcir_ai_kernels.c"
     },
     {
@@ -159,8 +159,8 @@
     {
       "expects": "test_native_ai_c_harness_c11_and_c23",
       "label": "QL22 the AVX-512 run kernel's vector a lane short",
-      "new": "  for (; k + 8u <= n; k += 8u) {\n    int64_t w;\n    __m512d code;\n    memcpy(&w, c + k, sizeof w);\n    w &= INT64_C(0x00ffffffffffffff);\n    code = _mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_cvtsi64_si128(w)));\n",
-      "old": "  for (; k + 8u <= n; k += 8u) {\n    int64_t w;\n    __m512d code;\n    memcpy(&w, c + k, sizeof w);\n    code = _mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_cvtsi64_si128(w)));\n",
+      "new": "  for (; k + 8u <= n; k += 8u) {\n    int64_t w;\n    __m512d code;\n    memcpy(&w, c + k, sizeof w);\n    w &= INT64_C(0x00ffffffffffffff);\n    code = _mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_cvtsi64_si128(w)));\n    _mm512_storeu_pd(y + k,\n",
+      "old": "  for (; k + 8u <= n; k += 8u) {\n    int64_t w;\n    __m512d code;\n    memcpy(&w, c + k, sizeof w);\n    code = _mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_cvtsi64_si128(w)));\n    _mm512_storeu_pd(y + k,\n",
       "path": "runtime/c/bcir_ai_kernels.c"
     }
   ]

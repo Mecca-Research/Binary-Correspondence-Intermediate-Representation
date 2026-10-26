@@ -91,6 +91,7 @@ static int q8_matrix_test(void) {
  * the host does not admit and a non-finite input write nothing. */
 #ifdef BCIR_AI_INSTANCE_PROBE
 int bcir_ai_q8_instance_probe(void);
+int bcir_ai_q8_bound_probe(void);
 #endif
 static uint64_t lanes_state = UINT64_C(0x9E3779B97F4A7C15);
 static uint32_t lanes_next(void) {
@@ -125,6 +126,63 @@ static int lanes_untouched(const double *buffer, size_t count) {
     if (bytes[i] != 0x5Au) return 0;
   return 1;
 }
+#ifdef BCIR_AI_INSTANCE_PROBE
+/* Q8-BOUND's ranges at their edges: 7 inputs and 40 outputs in groups of 16 (18 groups: each range's vectors and
+ * its tail), every case every instance against the portable loops -- the status and every byte -- and the path the
+ * vector instances took: 1 every x * s proved exact (every exponent in [-300, 300], every nonzero |x| in
+ * [2^-722, 2^724)), 2 the terms as before. */
+static void bound_exponent(uint8_t *exps, size_t group, int e) {
+  uint16_t u = (uint16_t)(int16_t)e;
+  exps[2u * group] = (uint8_t)u;
+  exps[2u * group + 1u] = (uint8_t)(u >> 8);
+}
+static int q8_bound_edges(int instances, int *hoisted, int *again) {
+  enum { IN = 7, OUT = 40, G = 16, N = IN * OUT, GROUPS = (N + G - 1) / G };
+  double x[IN], ref[OUT], got[OUT];
+  uint8_t codes[N], exps[2 * GROUPS];
+  int c, inst;
+  for (c = 0; c < 11; ++c) {
+    int path = 1, e_all = c == 3 || c == 4 || c == 5 || c == 6 ? 300 : -300, zero_codes = c >= 3 && c <= 5;
+    size_t i;
+    const double edge[IN] = {0x1p-722, -0x1p-722, 0.0, -0.0, 0.5, -1.25, 3.0};
+    int sm;
+    for (i = 0u; i < IN; ++i) x[i] = c == 3 ? (i & 1u ? -1.0 : 1.0) * nextafter(0x1p724, 0.0) : edge[i];
+    for (i = 0u; i < N; ++i) codes[i] = zero_codes ? 0u : (uint8_t)(lanes_next() % 255u + 129u);
+    for (i = 0u; i < GROUPS; ++i) bound_exponent(exps, i, c == 7 ? (i & 1u ? 300 : -300) : e_all);
+    switch (c) {
+    case 1: x[6] = nextafter(0x1p-722, 0.0); path = 2; break;  /* below the range, in the scan's tail */
+    case 2: x[1] = -nextafter(0x1p-722, 0.0); path = 2; break; /* below it, in the scan's vectors */
+    case 4: x[5] = 0x1p724; path = 2; break;                   /* past it, in the tail: 0 * (x * s) would be NaN */
+    case 5: x[2] = -0x1p724; path = 2; break;                  /* past it, in the vectors */
+    case 6: bound_exponent(exps, GROUPS - 1u, 301); path = 2; break; /* an exponent past 300, in the tail */
+    case 8: bound_exponent(exps, 3u, -301); path = 2; break;          /* one below -300, in the vectors */
+    case 9: bound_exponent(exps, 5u, 301); path = 2; break;           /* one past 300, in the vectors */
+    case 10:                                                   /* every |x| below the range: x * 2^-300 subnormal */
+      for (i = 0u; i < IN; ++i)
+        x[i] = ldexp(1.0 + (double)lanes_next() * 0x1p-32 + (double)lanes_next() * 0x1p-52, -741) * (i & 1u ? -1 : 1);
+      path = 2;
+      break;
+    default: break;
+    }
+    memset(ref, 0xA5, sizeof ref);
+    (void)bcir_ai_q8_bound_probe();
+    sm = bcir_ai_q8_matvec_f64_instance(1, x, IN, codes, N, exps, GROUPS, OUT, G, ref);
+    CHECK(sm == BCIR_AI_OK || sm == BCIR_AI_INVALID_NUMBER);
+    CHECK(bcir_ai_q8_bound_probe() == 0); /* the portable loops form no x * s */
+    if (zero_codes) CHECK(sm == BCIR_AI_OK);
+    for (inst = 2; inst <= 4; inst *= 2) {
+      if (!(instances & inst)) continue;
+      memset(got, 0x5A, sizeof got);
+      CHECK(bcir_ai_q8_matvec_f64_instance(inst, x, IN, codes, N, exps, GROUPS, OUT, G, got) == sm);
+      CHECK(memcmp(ref, got, sizeof ref) == 0);
+      CHECK(bcir_ai_q8_bound_probe() == path);
+      *hoisted += path == 1;
+      *again += path == 2;
+    }
+  }
+  return 0;
+}
+#endif
 static int q8_lanes_test(void) {
   static const size_t shapes[][3] = {
       {128, 128, 32}, {128, 64, 32}, {128, 344, 32}, {344, 128, 32}, {128, 1024, 32}, {64, 72, 16},
@@ -135,6 +193,9 @@ static int q8_lanes_test(void) {
   static uint8_t codes[400 * 1100], exps[2 * 400 * 1100];
   int instances = bcir_ai_q8_instances(), wide, inst, checked = 0;
   size_t q, i;
+#ifdef BCIR_AI_INSTANCE_PROBE
+  int hoisted = 0, again = 0; /* Q8-BOUND's paths */
+#endif
   CHECK((instances & 1) && !(instances & ~7));
   for (wide = 0; wide < 4; ++wide) {
     for (q = 0u; q < sizeof shapes / sizeof *shapes; ++q) {
@@ -144,13 +205,29 @@ static int q8_lanes_test(void) {
       lanes_fill(x, in, codes, n, exps, groups, wide);
       /* the matvec: in x out codes; the row dots: out rows of in coordinates (the same bytes) */
       memset(ref, 0xA5, sizeof ref);
+#ifdef BCIR_AI_INSTANCE_PROBE
+      (void)bcir_ai_q8_bound_probe();
+#endif
       sm = bcir_ai_q8_matvec_f64_instance(1, x, in, codes, n, exps, groups, out, g, ref);
       CHECK(sm == BCIR_AI_OK || sm == BCIR_AI_INVALID_NUMBER);
+#ifdef BCIR_AI_INSTANCE_PROBE
+      CHECK(bcir_ai_q8_bound_probe() == 0); /* the portable loops form no x * s */
+#endif
       for (inst = 2; inst <= 4; inst *= 2) {
         if (!(instances & inst)) continue;
         memset(got, 0x5A, sizeof got);
         CHECK(bcir_ai_q8_matvec_f64_instance(inst, x, in, codes, n, exps, groups, out, g, got) == sm);
         CHECK(memcmp(ref, got, out * sizeof *ref) == 0);
+#ifdef BCIR_AI_INSTANCE_PROBE
+        {
+          /* Q8-BOUND: the format's exponents and these inputs prove every x * s exact; the exponents past a
+           * normal double's do not */
+          int path = bcir_ai_q8_bound_probe();
+          CHECK(path == (wide < 2 ? 1 : 2));
+          hoisted += path == 1;
+          again += path == 2;
+        }
+#endif
         ++checked;
       }
       memset(ref, 0xA5, sizeof ref);
@@ -239,6 +316,11 @@ static int q8_lanes_test(void) {
   }
   printf("Q8-LANES: instances %d, %d vector comparisons equal to the portable loops\n", instances, checked);
   CHECK(checked > 0 || instances == 1);
+#ifdef BCIR_AI_INSTANCE_PROBE
+  if (q8_bound_edges(instances, &hoisted, &again)) return 1;
+  printf("Q8-BOUND: %d matvecs hoisted, %d computed again\n", hoisted, again);
+  CHECK(instances == 1 ? hoisted == 0 && again == 0 : hoisted > 0 && again > 0);
+#endif
   return 0;
 }
 

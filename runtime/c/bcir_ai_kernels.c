@@ -14,7 +14,14 @@
  * the multiplies and the add as separate operations. The vector instances only run several outputs'
  * chains side by side: the matvec a row's columns in the lanes, the row dots eight rows a vector over
  * their codes transposed eight by eight. A group's scale is ldexp(1.0, e): built from its bits where 2^e
- * is a normal double, ldexp's own elsewhere. */
+ * is a normal double, ldexp's own elsewhere.
+ *
+ * Q8-BOUND: where a call's ranges prove every product x * s exact -- every exponent of its groups in [-300, 300], the
+ * range bcir_ai_q8_values_validate admits, and every nonzero |x| in [2^-722, 2^724), so that x * s is x scaled by
+ * a power of two from 2^-300 to 2^300 with neither overflow nor a subnormal result -- the vector matvecs form x * s
+ * once a row and group and each term as the code times it. x * (code * s) and code * (x * s) are then the one product
+ * of the same three factors rounded once (code * s is exact: a code at most eight bits, s a power of two), the
+ * loop's bits. The ranges are read once a call, in vectors; a call outside them takes the terms as before. */
 #if defined(__x86_64__) && defined(__linux__) && (defined(__GNUC__) || defined(__clang__)) && \
     !defined(BCIR_AI_NO_DISPATCH)
 #define BCIR_AI_DISPATCH 1
@@ -208,8 +215,19 @@ int bcir_ai_q8_instance_probe(void) {
   q8_instance_seen = 0;
   return seen;
 }
+/* Q8-BOUND: the path the last vector matvec took -- 1 x * s once a row and group, 2 the terms as before (the
+ * call's ranges not proved), 0 before any and after a read */
+static int q8_bound_seen;
+#define Q8_BOUND_SAW(path) (q8_bound_seen = (path))
+int bcir_ai_q8_bound_probe(void);
+int bcir_ai_q8_bound_probe(void) {
+  int seen = q8_bound_seen;
+  q8_bound_seen = 0;
+  return seen;
+}
 #else
 #define Q8_SAW(instance) ((void)0)
+#define Q8_BOUND_SAW(path) ((void)0)
 #endif
 
 #ifdef BCIR_AI_DISPATCH
@@ -262,6 +280,41 @@ __attribute__((target("avx512f"))) static void q8_run_avx512(double *y, double x
     y[k] = y[k] + term;
   }
 }
+/* Q8-BOUND's runs: n columns of one group, one input row, xs that row's input times the group's scale (exact):
+ * y[k] += code[k] * xs */
+__attribute__((target("avx2"))) static void q8_run_avx2_xs(double *y, double xs, const uint8_t *c, size_t n) {
+  __m256d vxs = _mm256_set1_pd(xs);
+  size_t k = 0u;
+  for (; k + 4u <= n; k += 4u) {
+    int32_t w;
+    __m256d code;
+    memcpy(&w, c + k, sizeof w);
+    code = _mm256_cvtepi32_pd(_mm_cvtepi8_epi32(_mm_cvtsi32_si128(w)));
+    _mm256_storeu_pd(y + k, _mm256_add_pd(_mm256_loadu_pd(y + k), _mm256_mul_pd(code, vxs)));
+  }
+  for (; k < n; ++k) {
+    int code = c[k] >= UINT8_C(0x80) ? (int)c[k] - 256 : (int)c[k];
+    double term = (double)code * xs;
+    y[k] = y[k] + term;
+  }
+}
+__attribute__((target("avx512f"))) static void q8_run_avx512_xs(double *y, double xs, const uint8_t *c,
+                                                                size_t n) {
+  __m512d vxs = _mm512_set1_pd(xs);
+  size_t k = 0u;
+  for (; k + 8u <= n; k += 8u) {
+    int64_t w;
+    __m512d code;
+    memcpy(&w, c + k, sizeof w);
+    code = _mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_cvtsi64_si128(w)));
+    _mm512_storeu_pd(y + k, _mm512_add_pd(_mm512_loadu_pd(y + k), _mm512_mul_pd(code, vxs)));
+  }
+  for (; k < n; ++k) {
+    int code = c[k] >= UINT8_C(0x80) ? (int)c[k] - 256 : (int)c[k];
+    double term = (double)code * xs;
+    y[k] = y[k] + term;
+  }
+}
 /* The matvec a row at a time, each row's columns in runs of one group (any shape). */
 static void q8_matvec_runs(int instance, const double *input, size_t input_count, const uint8_t *codes,
                            const uint8_t *exponents_le, size_t output_count, size_t group_size,
@@ -275,6 +328,25 @@ static void q8_matvec_runs(int instance, const double *input, size_t input_count
       double scale = q8_scale(exponents_le, group);
       if (instance == 4) q8_run_avx512(output + output_index, input[input_index], codes + index, n, scale);
       else q8_run_avx2(output + output_index, input[input_index], codes + index, n, scale);
+      output_index += n;
+      index += n;
+    }
+  }
+}
+/* Q8-BOUND's runs: the same runs with x * s formed once a run */
+static void q8_matvec_runs_xs(int instance, const double *input, size_t input_count, const uint8_t *codes,
+                              const uint8_t *exponents_le, size_t output_count, size_t group_size,
+                              double *output) {
+  size_t input_index, output_index, index = 0u;
+  for (output_index = 0u; output_index < output_count; ++output_index) output[output_index] = 0.0;
+  for (input_index = 0u; input_index < input_count; ++input_index) {
+    double x = input[input_index];
+    for (output_index = 0u; output_index < output_count;) {
+      size_t group = index / group_size, left = (group + 1u) * group_size - index;
+      size_t n = output_count - output_index < left ? output_count - output_index : left;
+      double xs = x * q8_scale(exponents_le, group);
+      if (instance == 4) q8_run_avx512_xs(output + output_index, xs, codes + index, n);
+      else q8_run_avx2_xs(output + output_index, xs, codes + index, n);
       output_index += n;
       index += n;
     }
@@ -327,10 +399,100 @@ __attribute__((target("avx512f"))) static void q8_matvec_block512(const double *
     if (vectors > 7u) _mm512_storeu_pd(output + j0 + 56u, a7);
   }
 }
+/* Q8-BOUND's block: eight columns' terms, xs the row's input times their group's scale -- each code times xs */
+__attribute__((target("avx512f"))) static inline __m512d q8_terms512_xs(const uint8_t *c, __m512d vxs) {
+  int64_t w;
+  memcpy(&w, c, sizeof w);
+  return _mm512_mul_pd(_mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_cvtsi64_si128(w))), vxs);
+}
+/* the block with x * s formed once a row and group */
+__attribute__((target("avx512f"))) static void q8_matvec_block512_xs(const double *input, size_t input_count,
+    const uint8_t *codes, const uint8_t *exponents_le, size_t output_count, size_t group_size,
+    double *output) {
+  unsigned shift = 0u;
+  size_t j0, i;
+  while (((size_t)1 << shift) < group_size) ++shift;
+  for (j0 = 0u; j0 < output_count; j0 += 64u) {
+    size_t vectors = output_count - j0 >= 64u ? 8u : (output_count - j0) / 8u;
+    __m512d a0 = _mm512_setzero_pd(), a1 = a0, a2 = a0, a3 = a0, a4 = a0, a5 = a0, a6 = a0, a7 = a0;
+    for (i = 0u; i < input_count; ++i) {
+      size_t e0 = i * output_count + j0, group = e0 >> shift;
+      const uint8_t *c = codes + e0;
+      double x = input[i];
+      __m512d vxs = _mm512_set1_pd(x * q8_scale(exponents_le, group));
+#define Q8_BOUND_VECTOR(a, v)                                                                            \
+  if (vectors > (v)) {                                                                                   \
+    if (((e0 + 8u * (v)) >> shift) != group) {                                                          \
+      group = (e0 + 8u * (v)) >> shift;                                                                  \
+      vxs = _mm512_set1_pd(x * q8_scale(exponents_le, group));                                           \
+    }                                                                                                    \
+    a = _mm512_add_pd(a, q8_terms512_xs(c + 8u * (v), vxs));                                             \
+  }
+      Q8_BOUND_VECTOR(a0, 0u); Q8_BOUND_VECTOR(a1, 1u); Q8_BOUND_VECTOR(a2, 2u); Q8_BOUND_VECTOR(a3, 3u);
+      Q8_BOUND_VECTOR(a4, 4u); Q8_BOUND_VECTOR(a5, 5u); Q8_BOUND_VECTOR(a6, 6u); Q8_BOUND_VECTOR(a7, 7u);
+#undef Q8_BOUND_VECTOR
+    }
+    if (vectors > 0u) _mm512_storeu_pd(output + j0, a0);
+    if (vectors > 1u) _mm512_storeu_pd(output + j0 + 8u, a1);
+    if (vectors > 2u) _mm512_storeu_pd(output + j0 + 16u, a2);
+    if (vectors > 3u) _mm512_storeu_pd(output + j0 + 24u, a3);
+    if (vectors > 4u) _mm512_storeu_pd(output + j0 + 32u, a4);
+    if (vectors > 5u) _mm512_storeu_pd(output + j0 + 40u, a5);
+    if (vectors > 6u) _mm512_storeu_pd(output + j0 + 48u, a6);
+    if (vectors > 7u) _mm512_storeu_pd(output + j0 + 56u, a7);
+  }
+}
+/* Q8-BOUND's ranges, read once a call: every exponent of its groups in [-300, 300] -- (e + 300) as an unsigned
+ * 16-bit value at most 600 exactly there -- and every nonzero |x| in [2^-722, 2^724). 1 where both hold. The inputs
+ * are finite (every entry checks them before a kernel runs). */
+__attribute__((target("avx2"))) static int q8_call_exact(const double *input, size_t input_count,
+                                                          const uint8_t *exponents_le, size_t groups) {
+  const __m256i bias = _mm256_set1_epi16((short)-BCIR_AI_EXP_MIN);
+  const __m256d magnitude = _mm256_set1_pd(-0.0), low = _mm256_set1_pd(0x1p-722), high = _mm256_set1_pd(0x1p724);
+  const __m256d zero = _mm256_setzero_pd();
+  __m256i top = _mm256_setzero_si256();
+  __m256d outside = zero;
+  uint16_t lane[16];
+  size_t g = 0u, i = 0u;
+  int k;
+  for (; g + 16u <= groups; g += 16u) {
+    __m256i e = _mm256_loadu_si256((const __m256i *)(const void *)(exponents_le + 2u * g));
+    top = _mm256_max_epu16(top, _mm256_add_epi16(e, bias));
+  }
+  _mm256_storeu_si256((__m256i *)(void *)lane, top);
+  for (k = 0; k < 16; ++k)
+    if (lane[k] > BCIR_AI_EXP_MAX - BCIR_AI_EXP_MIN) return 0;
+  for (; g < groups; ++g) {
+    int e = exponent_le(exponents_le, g);
+    if (e < BCIR_AI_EXP_MIN || e > BCIR_AI_EXP_MAX) return 0;
+  }
+  for (; i + 4u <= input_count; i += 4u) {
+    __m256d a = _mm256_andnot_pd(magnitude, _mm256_loadu_pd(input + i));
+    __m256d tiny = _mm256_and_pd(_mm256_cmp_pd(a, low, _CMP_LT_OQ), _mm256_cmp_pd(a, zero, _CMP_NEQ_OQ));
+    outside = _mm256_or_pd(outside, _mm256_or_pd(tiny, _mm256_cmp_pd(a, high, _CMP_GE_OQ)));
+  }
+  if (_mm256_movemask_pd(outside)) return 0;
+  for (; i < input_count; ++i) {
+    double a = fabs(input[i]);
+    if (a != 0.0 && (a < 0x1p-722 || a >= 0x1p724)) return 0;
+  }
+  return 1;
+}
+/* Q8-BOUND where the call's ranges prove every x * s exact, the terms as before elsewhere */
 static void q8_matvec_lanes(int instance, const double *input, size_t input_count, const uint8_t *codes,
                             const uint8_t *exponents_le, size_t output_count, size_t group_size,
                             double *output) {
-  if (instance == 4 && output_count % 8u == 0u && group_size >= 8u && !(group_size & (group_size - 1u)))
+  int block = instance == 4 && output_count % 8u == 0u && group_size >= 8u && !(group_size & (group_size - 1u));
+  if (q8_call_exact(input, input_count, exponents_le, 1u + (input_count * output_count - 1u) / group_size)) {
+    Q8_BOUND_SAW(1);
+    if (block)
+      q8_matvec_block512_xs(input, input_count, codes, exponents_le, output_count, group_size, output);
+    else
+      q8_matvec_runs_xs(instance, input, input_count, codes, exponents_le, output_count, group_size, output);
+    return;
+  }
+  Q8_BOUND_SAW(2);
+  if (block)
     q8_matvec_block512(input, input_count, codes, exponents_le, output_count, group_size, output);
   else
     q8_matvec_runs(instance, input, input_count, codes, exponents_le, output_count, group_size, output);

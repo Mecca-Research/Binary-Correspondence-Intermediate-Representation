@@ -225,7 +225,10 @@ def test_native_ai_c_harness_c11_and_c23():
     capped at AVX2 and with the dispatch compiled out, every build with the instance probe: each
     admitted instance against the portable loops over the decoder's, the block's and ragged shapes,
     exponents past a normal double's, the code 0x80, non-finite outputs zeroing every output and
-    refusals writing nothing, and the prevalidated entries on the widest instance."""
+    refusals writing nothing, and the prevalidated entries on the widest instance. Q8-BOUND: the path
+    every vector matvec took -- x times a group's scale once a row and group where the call's ranges
+    prove every such product exact, the terms as before elsewhere -- over the lanes test and the
+    ranges' edges, each case every byte the portable loops'."""
     if _CC is None:
         return
     import re
@@ -280,6 +283,15 @@ def test_native_ai_c_harness_c11_and_c23():
                 assert not admitted & ~cap, (options, admitted)
             # 22 shapes, four exponent ranges, two kernels: 176 comparisons an admitted vector instance
             assert compared == 176 * bin(admitted & 6).count("1"), (options, admitted, compared)
+            # Q8-BOUND, an admitted vector instance: the lanes test's 22 shapes with the format's and the narrow
+            # exponents proved (44) and with those past a normal double's not (44); the edges' 11 cases, 3 proved
+            bound = re.search(
+                r"Q8-BOUND: (\d+) matvecs hoisted, (\d+) computed again", result.stdout
+            )
+            assert bound, result.stdout
+            vector = bin(admitted & 6).count("1")
+            counts = (int(bound.group(1)), int(bound.group(2)))
+            assert counts == (47 * vector, 52 * vector), (options, admitted, counts)
             seen.add(admitted)
     native = _native()
     if native is not None:

@@ -1,0 +1,139 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_native_ai:_CC",
+  "bcir.tests.test_native_ai:test_native_ai_c_harness_c11_and_c23",
+  "bcir.tests.test_native_ai:test_native_q8_instances_match_the_increasing_coordinate_oracle",
+  "bcir.tests.test_native_ai:test_native_q8_matrix_kernels_match_increasing_coordinate_oracle_exactly"
+ ],
+ "faults": [
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB1 the inputs' low edge loosened in the scan's vectors (2^-760)",
+   "new": "low = _mm256_set1_pd(0x1p-760)",
+   "old": "low = _mm256_set1_pd(0x1p-722)",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB2 the inputs' low edge loosened in the scan's tail (2^-760)",
+   "new": "if (a != 0.0 && (a < 0x1p-760 || a >= 0x1p724)) return 0;",
+   "old": "if (a != 0.0 && (a < 0x1p-722 || a >= 0x1p724)) return 0;",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB3 the inputs' high edge loosened in the scan's vectors (2^730)",
+   "new": "high = _mm256_set1_pd(0x1p730);",
+   "old": "high = _mm256_set1_pd(0x1p724);",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB4 the inputs' high edge loosened in the scan's tail (2^730)",
+   "new": "(a < 0x1p-722 || a >= 0x1p730)) return 0;",
+   "old": "(a < 0x1p-722 || a >= 0x1p724)) return 0;",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB5 an exponent one past 300 admitted in the scan's vectors",
+   "new": "if (lane[k] > BCIR_AI_EXP_MAX - BCIR_AI_EXP_MIN + 1) return 0;",
+   "old": "if (lane[k] > BCIR_AI_EXP_MAX - BCIR_AI_EXP_MIN) return 0;",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB6 an exponent one past 300 admitted in the scan's tail",
+   "new": "if (e < BCIR_AI_EXP_MIN || e > BCIR_AI_EXP_MAX + 1) return 0;",
+   "old": "if (e < BCIR_AI_EXP_MIN || e > BCIR_AI_EXP_MAX) return 0;",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB7 the exponents compared signed (an exponent below -300 read as small)",
+   "new": "_mm256_max_epi16(top,",
+   "old": "_mm256_max_epu16(top,",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB8 the exponent scan's tail left unread",
+   "new": "  for (; g < groups && 0; ++g) {\n    int e = exponent_le(exponents_le, g);",
+   "old": "  for (; g < groups; ++g) {\n    int e = exponent_le(exponents_le, g);",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB9 the input scan's tail left unread",
+   "new": "  for (; i < input_count && 0; ++i) {\n    double a = fabs(input[i]);",
+   "old": "  for (; i < input_count; ++i) {\n    double a = fabs(input[i]);",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB10 the call's last group left out of the exponent scan",
+   "new": "exponents_le, (input_count * output_count - 1u) / group_size)) {",
+   "old": "exponents_le, 1u + (input_count * output_count - 1u) / group_size)) {",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB11 a zero input counted outside the range",
+   "new": "_mm256_or_pd(_mm256_cmp_pd(a, low, _CMP_LT_OQ), _mm256_cmp_pd(a, zero, _CMP_EQ_OQ))",
+   "old": "_mm256_and_pd(_mm256_cmp_pd(a, low, _CMP_LT_OQ), _mm256_cmp_pd(a, zero, _CMP_NEQ_OQ))",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB12 the ranges ignored: every call hoisted",
+   "new": "  if (1 || q8_call_exact(input, input_count, exponents_le,",
+   "old": "  if (q8_call_exact(input, input_count, exponents_le,",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB13 the hoist never taken",
+   "new": "  if (0 && q8_call_exact(input, input_count, exponents_le,",
+   "old": "  if (q8_call_exact(input, input_count, exponents_le,",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB14 the block's product kept from the row's first group past a group's end",
+   "new": "\n      vxs = _mm512_set1_pd(x * q8_scale(exponents_le, e0 >> shift));",
+   "old": "\n      vxs = _mm512_set1_pd(x * q8_scale(exponents_le, group));",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB15 a run's terms taken from the input without its group's scale",
+   "new": "      double xs = x * (double)(q8_scale(exponents_le, group) > 0.0);",
+   "old": "      double xs = x * q8_scale(exponents_le, group);",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB16 the AVX-512 run's hoisted term fused into its add",
+   "new": "_mm512_storeu_pd(y + k, _mm512_fmadd_pd(code, vxs, _mm512_loadu_pd(y + k)));",
+   "old": "_mm512_storeu_pd(y + k, _mm512_add_pd(_mm512_loadu_pd(y + k), _mm512_mul_pd(code, vxs)));",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB17 the block's last vector summed into the one before it",
+   "new": "Q8_BOUND_VECTOR(a6, 6u); Q8_BOUND_VECTOR(a6, 7u);",
+   "old": "Q8_BOUND_VECTOR(a6, 6u); Q8_BOUND_VECTOR(a7, 7u);",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "QB18 the probe reporting a hoist for a call computed as before",
+   "new": "  Q8_BOUND_SAW(1);",
+   "old": "  Q8_BOUND_SAW(2);",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  }
+ ]
+}
