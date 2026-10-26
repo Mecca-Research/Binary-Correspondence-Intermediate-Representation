@@ -5399,6 +5399,44 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     cost past the multiply there (no decoder shape here is ragged); any other host's figures or clock;
     TinyLlama-1.1B's decoder end to end (no artifact of that size here: its shapes are timed at the kernel);
     counter-based figures (no PMU on this VM).
+  Q8-PAIR (2026-10-26): the C decoder's vector matvecs take two input rows a pass where eight columns' terms lie in
+    one group, every output the portable loops' bit for bit
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §36,
+    [measurements/2026-10-26/q8-pair/](research/measurements/2026-10-26/q8-pair/README.json)).
+  - Q8-PAIR (`d144970`): where a matvec's columns are a multiple of 8 and its group a power of two of at least 8,
+    both vector instances run `Q8_PAIR_KERNEL` (`q8_matvec_pair512[_xs]`, and `q8_matvec_pair256[_xs]` on `q8_x8`,
+    eight columns as two AVX2 vectors): eight outputs are loaded, row i's terms and then row i + 1's are added, and
+    they are stored; a row's scale is read again at the step where its group changes, and an odd last row runs alone.
+    Every output's chain keeps its rows in increasing order and every term is Q8-BOUND's, so every output is the
+    portable loops' bytes. It replaces the AVX-512 block (`q8_matvec_block512[_xs]`: 64 columns' sums in registers, a
+    strip walked down every row) and, at AVX2, the runs a row at a time; other shapes keep the runs. A survey before
+    the change placed it (23 shapes from L2, from L3 and from memory, clang and GCC, 3 runs, on draft tools not
+    kept): the block lost wherever a matrix passed L2 or its rows were wide; a first form, in spans between the rows'
+    group ends, lost to it at 128 x 344 under GCC (x1.06), and four rows a pass had worse cells (x1.15).
+  - Witnesses: the pair's probe (`bcir_ai_q8_pair_probe`) at every vector matvec of the lanes test; `q8_pair_edges`,
+    17 shapes in four exponent ranges with every buffer at its exact size; 92 matvecs on the pair and 64 on the runs
+    a vector instance (`test_native_ai.py`); `test_native_ai_c_harness_under_address_sanitizer`, the harness under
+    AddressSanitizer and UBSan. `q8-pair.json` PA1-PA15, each caught by its own check. Under the witnesses before
+    Q8-PAIR 13 of the 15 are caught, all but the two that move only which kernel runs (PA7, PA8); PA3, a pass one
+    step past its rows' end, only through the crash its write past a small array happens to cause. QB14, QB17 and
+    QL4-QL8 re-anchored on the pair, all caught.
+  - Measured (`d144970` against `5677fc0`, a reading the median of 3 runs): in one binary with the choice switched at
+    run time, the AVX-512 matvec takes x0.793-0.875 of the block's time at the 860K decoder's four shapes in L2 under
+    clang and x0.808-0.882 under GCC. At TinyLlama-1.1B's widest three it takes x0.439-0.513 from L3 and x0.326-0.484
+    from memory (x0.461-0.502 and x0.391-0.485 under GCC), reading 5.0 GB/s of codes at 2,048 x 5,632 against the
+    block's 1.6 (5.1 against 1.9 under GCC). The AVX2 matvec takes x0.644-0.780 (clang) and x0.533-0.671 (GCC) of the
+    AVX2 runs' time in L2. Each shape behind these figures resolved past its A/A control in at least two of its three
+    runs but clang's AVX-512 pair at 128 x 64 in L2, in one. A token of the 860K decoder takes x0.917 under clang (3
+    of 3 runs resolved past the A/A control) and x0.932 under GCC (1 of 3), x0.865 and x0.740 capped at AVX2; a token
+    of a synthetic decoder at TinyLlama's widths, six layers whose 334 MiB pass this host's L3, x0.467 (201.2 -> 95.0
+    ms) and x0.512, x0.881 and x0.821 capped at AVX2. Under callgrind (the AVX2 instance) the qualification's GEM
+    request takes 197.8 M -> 147.2 M instructions and the monolithic runner 187.7 M -> 137.1 M; its logits keep their
+    SHA-256, 23 of 23 checks on both trees.
+  - Not claimed: the head's row dots, untouched (x0.979-1.039 and x0.990-1.003 of the tree before's, the control);
+    clang's AVX2 pair at 128 x 64 read from memory, x1.034 (none of 3 resolved): 8 KiB matrices, which a decoder of
+    that width holds in L2; a real TinyLlama-1.1B (no artifact of that size here: the synthetic decoder has its
+    widths and six of its 22 layers, with pseudo-random codes); any other host's figures; counter-based figures (no
+    PMU on this VM).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

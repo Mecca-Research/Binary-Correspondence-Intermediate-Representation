@@ -204,6 +204,24 @@ trees. The whole-request walls move within this host's run-to-run noise (GEM 12.
 0.1982-0.2004 ms after, and 0.2336 ms in the after tree's first run, whose matvecs took 9.45 ms against 7.32-7.37 in
 its others.
 
+**Q8-PAIR** (2026-10-26). The vector matvecs now take two input rows a pass where eight columns' terms lie in one
+group, in place of the AVX-512 block and the AVX2 runs a row at a time, every value the same
+([measurements/2026-10-26/q8-pair/](research/measurements/2026-10-26/q8-pair/README.json)). Each tree's own run
+(`--require-callgrind`; the C rail built by the host's clang 18):
+
+| | before | after |
+|---|---|---|
+| per generated token, median (ms) | 0.1955 | 0.1890 |
+| tokens per second | 4,121 | 3,438 |
+| `matvec` / `matvec_add` (ms) | 4.77 / 2.55 | 4.46 / 2.19 |
+| simulated instructions, GEM / monolithic (callgrind: the AVX2 instance) | 197,770,611 / 187,682,454 | 147,230,931 / 137,142,774 |
+
+The logits keep their SHA-256 (`2a18b8613b6b60e4...`) and the C rail its 0 from the oracle, 23 of 23 checks on both
+trees. In this run the tree after's first token took 3.95 ms against 2.08, and its head, which Q8-PAIR leaves as it
+was, 2.58 ms against 1.65; its tokens a second fall with them. Three runs more of each tree read a generated token at
+0.1957-0.1974 ms before and 0.1652-0.1794 ms after, 4,098-4,153 tokens a second before and 4,610-4,875 after, and a
+first token at 2.02-2.12 ms and 1.77-1.81 ms.
+
 **Memory traffic.** Planned (`program_traffic`) and counted (the C kernels' counters) agree op for
 op: 57,539,312 octets read and 4,236,480 written per request. Simulated with callgrind's cache
 model (I1/D1 32 KiB 8-way, LL 8 MiB 16-way, 64-octet lines, fixed so reports compare across

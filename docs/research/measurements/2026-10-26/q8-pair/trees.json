@@ -1,0 +1,2522 @@
+[
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "m:128,128,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 4.5188,
+  "portable": {
+   "us": 31.9363,
+   "ratio": 6.8798,
+   "interval": [
+    6.6015,
+    7.1698
+   ]
+  },
+  "avx2": {
+   "us": 4.911,
+   "ratio": 1.0043,
+   "interval": [
+    0.9509,
+    1.0607
+   ]
+  },
+  "avx512": {
+   "us": 3.9644,
+   "ratio": 0.8517,
+   "interval": [
+    0.8175,
+    0.8873
+   ]
+  },
+  "A/A": {
+   "us": 4.5135,
+   "ratio": 1.0184,
+   "interval": [
+    0.9701,
+    1.0691
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "m:128,64,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 1.6011,
+  "portable": {
+   "us": 11.6477,
+   "ratio": 7.0717,
+   "interval": [
+    6.2251,
+    8.0335
+   ]
+  },
+  "avx2": {
+   "us": 1.5055,
+   "ratio": 0.9891,
+   "interval": [
+    0.8086,
+    1.21
+   ]
+  },
+  "avx512": {
+   "us": 1.3786,
+   "ratio": 0.8849,
+   "interval": [
+    0.7669,
+    1.0209
+   ]
+  },
+  "A/A": {
+   "us": 1.5288,
+   "ratio": 1.0313,
+   "interval": [
+    0.9275,
+    1.1467
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "m:128,344,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 7.8348,
+  "portable": {
+   "us": 49.7049,
+   "ratio": 6.4767,
+   "interval": [
+    6.1923,
+    6.7741
+   ]
+  },
+  "avx2": {
+   "us": 6.9829,
+   "ratio": 0.9229,
+   "interval": [
+    0.8714,
+    0.9774
+   ]
+  },
+  "avx512": {
+   "us": 6.2053,
+   "ratio": 0.8062,
+   "interval": [
+    0.7767,
+    0.8369
+   ]
+  },
+  "A/A": {
+   "us": 7.8462,
+   "ratio": 1.0105,
+   "interval": [
+    0.998,
+    1.0232
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "m:344,128,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 7.5176,
+  "portable": {
+   "us": 49.3184,
+   "ratio": 6.3715,
+   "interval": [
+    5.8588,
+    6.9289
+   ]
+  },
+  "avx2": {
+   "us": 7.1177,
+   "ratio": 0.9065,
+   "interval": [
+    0.8376,
+    0.981
+   ]
+  },
+  "avx512": {
+   "us": 5.9659,
+   "ratio": 0.7642,
+   "interval": [
+    0.7075,
+    0.8255
+   ]
+  },
+  "A/A": {
+   "us": 7.4796,
+   "ratio": 0.9572,
+   "interval": [
+    0.8805,
+    1.0405
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "r:128,1024,32",
+  "kernel": "rows_dot",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 31.938,
+  "portable": {
+   "us": 128.4468,
+   "ratio": 3.9616,
+   "interval": [
+    3.8432,
+    4.0837
+   ]
+  },
+  "avx2": {
+   "us": 35.8956,
+   "ratio": 1.1066,
+   "interval": [
+    1.0727,
+    1.1415
+   ]
+  },
+  "avx512": {
+   "us": 31.9029,
+   "ratio": 0.9879,
+   "interval": [
+    0.9545,
+    1.0226
+   ]
+  },
+  "A/A": {
+   "us": 31.8922,
+   "ratio": 0.9808,
+   "interval": [
+    0.9521,
+    1.0104
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "m:2048,2048,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 1071.4193,
+  "portable": {
+   "us": 4860.1432,
+   "ratio": 4.5478,
+   "interval": [
+    4.4573,
+    4.6401
+   ]
+  },
+  "avx2": {
+   "us": 701.406,
+   "ratio": 0.66,
+   "interval": [
+    0.6408,
+    0.6797
+   ]
+  },
+  "avx512": {
+   "us": 547.4583,
+   "ratio": 0.506,
+   "interval": [
+    0.4931,
+    0.5194
+   ]
+  },
+  "A/A": {
+   "us": 1073.7472,
+   "ratio": 1.0057,
+   "interval": [
+    0.9935,
+    1.0181
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "m:2048,256,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 82.7333,
+  "portable": {
+   "us": 578.8512,
+   "ratio": 7.0222,
+   "interval": [
+    6.8531,
+    7.1955
+   ]
+  },
+  "avx2": {
+   "us": 81.4107,
+   "ratio": 1.0011,
+   "interval": [
+    0.9691,
+    1.0342
+   ]
+  },
+  "avx512": {
+   "us": 72.0442,
+   "ratio": 0.873,
+   "interval": [
+    0.8502,
+    0.8964
+   ]
+  },
+  "A/A": {
+   "us": 84.5485,
+   "ratio": 1.0512,
+   "interval": [
+    1.0124,
+    1.0916
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "m:2048,5632,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 3003.5877,
+  "portable": {
+   "us": 13427.231,
+   "ratio": 4.3872,
+   "interval": [
+    4.1602,
+    4.6266
+   ]
+  },
+  "avx2": {
+   "us": 2126.7113,
+   "ratio": 0.7174,
+   "interval": [
+    0.6335,
+    0.8124
+   ]
+  },
+  "avx512": {
+   "us": 1736.651,
+   "ratio": 0.5636,
+   "interval": [
+    0.536,
+    0.5925
+   ]
+  },
+  "A/A": {
+   "us": 3160.1173,
+   "ratio": 1.0328,
+   "interval": [
+    0.9793,
+    1.0891
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "m:5632,2048,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 3271.8113,
+  "portable": {
+   "us": 13585.9572,
+   "ratio": 4.2146,
+   "interval": [
+    4.0305,
+    4.4072
+   ]
+  },
+  "avx2": {
+   "us": 2131.9655,
+   "ratio": 0.6528,
+   "interval": [
+    0.6397,
+    0.6662
+   ]
+  },
+  "avx512": {
+   "us": 1788.1802,
+   "ratio": 0.5384,
+   "interval": [
+    0.5289,
+    0.5481
+   ]
+  },
+  "A/A": {
+   "us": 3335.9652,
+   "ratio": 1.0086,
+   "interval": [
+    0.9935,
+    1.0238
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "r:2048,32000,32",
+  "kernel": "rows_dot",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 17872.44,
+  "portable": {
+   "us": 59380.2258,
+   "ratio": 3.3439,
+   "interval": [
+    3.2994,
+    3.389
+   ]
+  },
+  "avx2": {
+   "us": 18478.0118,
+   "ratio": 1.0427,
+   "interval": [
+    1.0327,
+    1.0527
+   ]
+  },
+  "avx512": {
+   "us": 17811.8547,
+   "ratio": 1.004,
+   "interval": [
+    0.9892,
+    1.0189
+   ]
+  },
+  "A/A": {
+   "us": 17922.0382,
+   "ratio": 1.0027,
+   "interval": [
+    0.9857,
+    1.02
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "m:128,128,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 2.6562,
+  "portable": {
+   "us": 14.3583,
+   "ratio": 5.6615,
+   "interval": [
+    5.0944,
+    6.2918
+   ]
+  },
+  "avx2": {
+   "us": 2.6038,
+   "ratio": 0.9714,
+   "interval": [
+    0.9476,
+    0.9957
+   ]
+  },
+  "avx512": {
+   "us": 2.2815,
+   "ratio": 0.8626,
+   "interval": [
+    0.83,
+    0.8965
+   ]
+  },
+  "A/A": {
+   "us": 2.7133,
+   "ratio": 1.0246,
+   "interval": [
+    0.997,
+    1.053
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "m:128,64,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 1.4835,
+  "portable": {
+   "us": 7.539,
+   "ratio": 5.1033,
+   "interval": [
+    4.8614,
+    5.3573
+   ]
+  },
+  "avx2": {
+   "us": 1.4447,
+   "ratio": 0.9699,
+   "interval": [
+    0.9438,
+    0.9968
+   ]
+  },
+  "avx512": {
+   "us": 1.3036,
+   "ratio": 0.8919,
+   "interval": [
+    0.8597,
+    0.9252
+   ]
+  },
+  "A/A": {
+   "us": 1.5102,
+   "ratio": 1.0141,
+   "interval": [
+    0.976,
+    1.0536
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "m:128,344,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 7.4241,
+  "portable": {
+   "us": 39.0079,
+   "ratio": 5.2801,
+   "interval": [
+    5.1893,
+    5.3725
+   ]
+  },
+  "avx2": {
+   "us": 6.7457,
+   "ratio": 0.9071,
+   "interval": [
+    0.8925,
+    0.9219
+   ]
+  },
+  "avx512": {
+   "us": 6.1958,
+   "ratio": 0.8396,
+   "interval": [
+    0.825,
+    0.8545
+   ]
+  },
+  "A/A": {
+   "us": 7.4058,
+   "ratio": 1.0125,
+   "interval": [
+    0.991,
+    1.0346
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "m:344,128,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 6.8037,
+  "portable": {
+   "us": 35.8152,
+   "ratio": 5.3412,
+   "interval": [
+    5.1483,
+    5.5413
+   ]
+  },
+  "avx2": {
+   "us": 6.7661,
+   "ratio": 0.9796,
+   "interval": [
+    0.9647,
+    0.9948
+   ]
+  },
+  "avx512": {
+   "us": 5.7966,
+   "ratio": 0.84,
+   "interval": [
+    0.8262,
+    0.854
+   ]
+  },
+  "A/A": {
+   "us": 6.8897,
+   "ratio": 1.0083,
+   "interval": [
+    0.9977,
+    1.0191
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "r:128,1024,32",
+  "kernel": "rows_dot",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 41.4589,
+  "portable": {
+   "us": 160.8197,
+   "ratio": 3.7317,
+   "interval": [
+    3.3694,
+    4.1329
+   ]
+  },
+  "avx2": {
+   "us": 48.5429,
+   "ratio": 1.1472,
+   "interval": [
+    1.0328,
+    1.2743
+   ]
+  },
+  "avx512": {
+   "us": 41.3697,
+   "ratio": 0.9602,
+   "interval": [
+    0.8735,
+    1.0555
+   ]
+  },
+  "A/A": {
+   "us": 41.1928,
+   "ratio": 0.9493,
+   "interval": [
+    0.8648,
+    1.0421
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "m:2048,2048,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 1137.333,
+  "portable": {
+   "us": 3482.5892,
+   "ratio": 2.93,
+   "interval": [
+    2.4285,
+    3.5351
+   ]
+  },
+  "avx2": {
+   "us": 689.6577,
+   "ratio": 0.5624,
+   "interval": [
+    0.4648,
+    0.6805
+   ]
+  },
+  "avx512": {
+   "us": 540.265,
+   "ratio": 0.4551,
+   "interval": [
+    0.3708,
+    0.5584
+   ]
+  },
+  "A/A": {
+   "us": 1152.4933,
+   "ratio": 0.9546,
+   "interval": [
+    0.8349,
+    1.0916
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "m:2048,256,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 78.537,
+  "portable": {
+   "us": 451.403,
+   "ratio": 5.7466,
+   "interval": [
+    5.5879,
+    5.9098
+   ]
+  },
+  "avx2": {
+   "us": 78.2762,
+   "ratio": 1.0224,
+   "interval": [
+    0.9545,
+    1.0951
+   ]
+  },
+  "avx512": {
+   "us": 64.4953,
+   "ratio": 0.8451,
+   "interval": [
+    0.792,
+    0.9018
+   ]
+  },
+  "A/A": {
+   "us": 78.713,
+   "ratio": 1.0428,
+   "interval": [
+    0.9735,
+    1.1171
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "m:2048,5632,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 3150.0305,
+  "portable": {
+   "us": 9405.1172,
+   "ratio": 2.9671,
+   "interval": [
+    2.891,
+    3.0452
+   ]
+  },
+  "avx2": {
+   "us": 1955.8553,
+   "ratio": 0.6148,
+   "interval": [
+    0.5939,
+    0.6365
+   ]
+  },
+  "avx512": {
+   "us": 1650.176,
+   "ratio": 0.5275,
+   "interval": [
+    0.4972,
+    0.5596
+   ]
+  },
+  "A/A": {
+   "us": 3351.1597,
+   "ratio": 1.0555,
+   "interval": [
+    1.011,
+    1.1019
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "m:5632,2048,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 3611.1187,
+  "portable": {
+   "us": 9758.633,
+   "ratio": 2.2603,
+   "interval": [
+    1.5539,
+    3.288
+   ]
+  },
+  "avx2": {
+   "us": 1998.9738,
+   "ratio": 0.4623,
+   "interval": [
+    0.3158,
+    0.6767
+   ]
+  },
+  "avx512": {
+   "us": 1698.5497,
+   "ratio": 0.3986,
+   "interval": [
+    0.2717,
+    0.5846
+   ]
+  },
+  "A/A": {
+   "us": 3656.0107,
+   "ratio": 0.8634,
+   "interval": [
+    0.5836,
+    1.2774
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "r:2048,32000,32",
+  "kernel": "rows_dot",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 22144.8465,
+  "portable": {
+   "us": 76085.9157,
+   "ratio": 3.2005,
+   "interval": [
+    2.8484,
+    3.5961
+   ]
+  },
+  "avx2": {
+   "us": 26998.4485,
+   "ratio": 1.1456,
+   "interval": [
+    0.9998,
+    1.3128
+   ]
+  },
+  "avx512": {
+   "us": 22230.1473,
+   "ratio": 0.9294,
+   "interval": [
+    0.8284,
+    1.0428
+   ]
+  },
+  "A/A": {
+   "us": 22390.3845,
+   "ratio": 0.9516,
+   "interval": [
+    0.8729,
+    1.0374
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "m:128,128,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 2.8336,
+  "portable": {
+   "us": 19.5138,
+   "ratio": 6.8026,
+   "interval": [
+    6.6175,
+    6.9928
+   ]
+  },
+  "avx2": {
+   "us": 2.6554,
+   "ratio": 0.9461,
+   "interval": [
+    0.9202,
+    0.9727
+   ]
+  },
+  "avx512": {
+   "us": 2.2503,
+   "ratio": 0.7962,
+   "interval": [
+    0.7828,
+    0.8097
+   ]
+  },
+  "A/A": {
+   "us": 2.8123,
+   "ratio": 0.9891,
+   "interval": [
+    0.9671,
+    1.0117
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "m:128,64,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 1.5207,
+  "portable": {
+   "us": 10.1386,
+   "ratio": 6.6522,
+   "interval": [
+    6.3868,
+    6.9287
+   ]
+  },
+  "avx2": {
+   "us": 1.4138,
+   "ratio": 0.9595,
+   "interval": [
+    0.9178,
+    1.0031
+   ]
+  },
+  "avx512": {
+   "us": 1.2836,
+   "ratio": 0.8557,
+   "interval": [
+    0.8346,
+    0.8774
+   ]
+  },
+  "A/A": {
+   "us": 1.4605,
+   "ratio": 1.0336,
+   "interval": [
+    0.9322,
+    1.1459
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "m:128,344,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 7.7137,
+  "portable": {
+   "us": 48.393,
+   "ratio": 6.3781,
+   "interval": [
+    6.2987,
+    6.4585
+   ]
+  },
+  "avx2": {
+   "us": 6.955,
+   "ratio": 0.9069,
+   "interval": [
+    0.883,
+    0.9314
+   ]
+  },
+  "avx512": {
+   "us": 6.0304,
+   "ratio": 0.7931,
+   "interval": [
+    0.7715,
+    0.8153
+   ]
+  },
+  "A/A": {
+   "us": 7.5982,
+   "ratio": 1.0018,
+   "interval": [
+    0.9828,
+    1.0213
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "m:344,128,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 6.8771,
+  "portable": {
+   "us": 46.8961,
+   "ratio": 6.887,
+   "interval": [
+    6.7822,
+    6.9934
+   ]
+  },
+  "avx2": {
+   "us": 6.6138,
+   "ratio": 0.9647,
+   "interval": [
+    0.9552,
+    0.9743
+   ]
+  },
+  "avx512": {
+   "us": 5.5491,
+   "ratio": 0.8113,
+   "interval": [
+    0.7975,
+    0.8254
+   ]
+  },
+  "A/A": {
+   "us": 6.8101,
+   "ratio": 1.0001,
+   "interval": [
+    0.9847,
+    1.0157
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "r:128,1024,32",
+  "kernel": "rows_dot",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 31.7604,
+  "portable": {
+   "us": 134.3673,
+   "ratio": 4.2002,
+   "interval": [
+    4.1168,
+    4.2852
+   ]
+  },
+  "avx2": {
+   "us": 35.8202,
+   "ratio": 1.1268,
+   "interval": [
+    1.0708,
+    1.1857
+   ]
+  },
+  "avx512": {
+   "us": 31.9055,
+   "ratio": 0.9719,
+   "interval": [
+    0.9019,
+    1.0474
+   ]
+  },
+  "A/A": {
+   "us": 31.7427,
+   "ratio": 1.0015,
+   "interval": [
+    0.9895,
+    1.0136
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "m:2048,2048,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 1118.0037,
+  "portable": {
+   "us": 4839.5005,
+   "ratio": 4.3112,
+   "interval": [
+    4.2493,
+    4.374
+   ]
+  },
+  "avx2": {
+   "us": 716.2157,
+   "ratio": 0.6388,
+   "interval": [
+    0.6209,
+    0.6572
+   ]
+  },
+  "avx512": {
+   "us": 561.705,
+   "ratio": 0.4987,
+   "interval": [
+    0.4795,
+    0.5187
+   ]
+  },
+  "A/A": {
+   "us": 1120.7125,
+   "ratio": 0.9994,
+   "interval": [
+    0.9787,
+    1.0206
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "m:2048,256,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 84.1835,
+  "portable": {
+   "us": 586.5637,
+   "ratio": 6.8875,
+   "interval": [
+    6.491,
+    7.3082
+   ]
+  },
+  "avx2": {
+   "us": 83.889,
+   "ratio": 0.9639,
+   "interval": [
+    0.9282,
+    1.0009
+   ]
+  },
+  "avx512": {
+   "us": 72.3865,
+   "ratio": 0.8512,
+   "interval": [
+    0.7893,
+    0.918
+   ]
+  },
+  "A/A": {
+   "us": 82.8173,
+   "ratio": 0.975,
+   "interval": [
+    0.9086,
+    1.0462
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "m:2048,5632,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 3248.318,
+  "portable": {
+   "us": 13494.8238,
+   "ratio": 4.1482,
+   "interval": [
+    4.0091,
+    4.2922
+   ]
+  },
+  "avx2": {
+   "us": 2183.1202,
+   "ratio": 0.6913,
+   "interval": [
+    0.6593,
+    0.7249
+   ]
+  },
+  "avx512": {
+   "us": 1711.8762,
+   "ratio": 0.5223,
+   "interval": [
+    0.5039,
+    0.5414
+   ]
+  },
+  "A/A": {
+   "us": 3421.3095,
+   "ratio": 1.0334,
+   "interval": [
+    0.9885,
+    1.0803
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "m:5632,2048,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 3730.6417,
+  "portable": {
+   "us": 13511.9003,
+   "ratio": 3.3306,
+   "interval": [
+    3.0291,
+    3.662
+   ]
+  },
+  "avx2": {
+   "us": 2208.9527,
+   "ratio": 0.5601,
+   "interval": [
+    0.5237,
+    0.5989
+   ]
+  },
+  "avx512": {
+   "us": 1645.2343,
+   "ratio": 0.4274,
+   "interval": [
+    0.4068,
+    0.449
+   ]
+  },
+  "A/A": {
+   "us": 3833.7535,
+   "ratio": 1.0158,
+   "interval": [
+    0.9638,
+    1.0706
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "r:2048,32000,32",
+  "kernel": "rows_dot",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 17838.4255,
+  "portable": {
+   "us": 60350.1205,
+   "ratio": 3.4249,
+   "interval": [
+    3.3007,
+    3.5538
+   ]
+  },
+  "avx2": {
+   "us": 18686.319,
+   "ratio": 1.1024,
+   "interval": [
+    1.0104,
+    1.2029
+   ]
+  },
+  "avx512": {
+   "us": 17750.5923,
+   "ratio": 1.0527,
+   "interval": [
+    0.9601,
+    1.1543
+   ]
+  },
+  "A/A": {
+   "us": 17978.8243,
+   "ratio": 1.0524,
+   "interval": [
+    0.9651,
+    1.1476
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "m:128,128,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 2.7389,
+  "portable": {
+   "us": 14.6236,
+   "ratio": 5.3509,
+   "interval": [
+    5.21,
+    5.4955
+   ]
+  },
+  "avx2": {
+   "us": 2.6149,
+   "ratio": 0.9621,
+   "interval": [
+    0.9386,
+    0.9862
+   ]
+  },
+  "avx512": {
+   "us": 2.2874,
+   "ratio": 0.8333,
+   "interval": [
+    0.8134,
+    0.8536
+   ]
+  },
+  "A/A": {
+   "us": 2.7307,
+   "ratio": 0.9915,
+   "interval": [
+    0.9697,
+    1.0138
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "m:128,64,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 1.4157,
+  "portable": {
+   "us": 7.1791,
+   "ratio": 5.3316,
+   "interval": [
+    4.9602,
+    5.7307
+   ]
+  },
+  "avx2": {
+   "us": 1.3927,
+   "ratio": 1.0121,
+   "interval": [
+    0.9605,
+    1.0664
+   ]
+  },
+  "avx512": {
+   "us": 1.2923,
+   "ratio": 0.941,
+   "interval": [
+    0.8955,
+    0.9889
+   ]
+  },
+  "A/A": {
+   "us": 1.4161,
+   "ratio": 1.0214,
+   "interval": [
+    0.9801,
+    1.0645
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "m:128,344,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 7.5366,
+  "portable": {
+   "us": 40.4697,
+   "ratio": 5.3948,
+   "interval": [
+    5.2569,
+    5.5363
+   ]
+  },
+  "avx2": {
+   "us": 6.8524,
+   "ratio": 0.9178,
+   "interval": [
+    0.901,
+    0.9349
+   ]
+  },
+  "avx512": {
+   "us": 6.4174,
+   "ratio": 0.8636,
+   "interval": [
+    0.8343,
+    0.8938
+   ]
+  },
+  "A/A": {
+   "us": 7.5403,
+   "ratio": 1.0147,
+   "interval": [
+    0.9959,
+    1.0339
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "m:344,128,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 7.1528,
+  "portable": {
+   "us": 38.0652,
+   "ratio": 5.2674,
+   "interval": [
+    5.1342,
+    5.404
+   ]
+  },
+  "avx2": {
+   "us": 6.9938,
+   "ratio": 0.9691,
+   "interval": [
+    0.9437,
+    0.9951
+   ]
+  },
+  "avx512": {
+   "us": 5.9996,
+   "ratio": 0.8288,
+   "interval": [
+    0.8083,
+    0.8499
+   ]
+  },
+  "A/A": {
+   "us": 7.1962,
+   "ratio": 0.999,
+   "interval": [
+    0.9686,
+    1.0304
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "r:128,1024,32",
+  "kernel": "rows_dot",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 41.0087,
+  "portable": {
+   "us": 160.5355,
+   "ratio": 3.9247,
+   "interval": [
+    3.76,
+    4.0966
+   ]
+  },
+  "avx2": {
+   "us": 47.9093,
+   "ratio": 1.1666,
+   "interval": [
+    1.1005,
+    1.2367
+   ]
+  },
+  "avx512": {
+   "us": 41.2221,
+   "ratio": 0.9977,
+   "interval": [
+    0.9311,
+    1.0689
+   ]
+  },
+  "A/A": {
+   "us": 41.0896,
+   "ratio": 0.9899,
+   "interval": [
+    0.9394,
+    1.0432
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "m:2048,2048,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 1060.9915,
+  "portable": {
+   "us": 3583.5448,
+   "ratio": 3.1954,
+   "interval": [
+    2.842,
+    3.5927
+   ]
+  },
+  "avx2": {
+   "us": 677.0687,
+   "ratio": 0.613,
+   "interval": [
+    0.5398,
+    0.6961
+   ]
+  },
+  "avx512": {
+   "us": 536.1097,
+   "ratio": 0.4842,
+   "interval": [
+    0.4425,
+    0.5297
+   ]
+  },
+  "A/A": {
+   "us": 1064.8155,
+   "ratio": 0.9722,
+   "interval": [
+    0.9136,
+    1.0346
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "m:2048,256,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 80.564,
+  "portable": {
+   "us": 452.8003,
+   "ratio": 5.6872,
+   "interval": [
+    5.54,
+    5.8383
+   ]
+  },
+  "avx2": {
+   "us": 80.3365,
+   "ratio": 1.0114,
+   "interval": [
+    0.9843,
+    1.0393
+   ]
+  },
+  "avx512": {
+   "us": 67.941,
+   "ratio": 0.8624,
+   "interval": [
+    0.8335,
+    0.8924
+   ]
+  },
+  "A/A": {
+   "us": 81.177,
+   "ratio": 1.0295,
+   "interval": [
+    0.9693,
+    1.0934
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "m:2048,5632,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 3010.6738,
+  "portable": {
+   "us": 9840.3698,
+   "ratio": 3.3924,
+   "interval": [
+    3.0131,
+    3.8196
+   ]
+  },
+  "avx2": {
+   "us": 1968.0513,
+   "ratio": 0.6207,
+   "interval": [
+    0.5566,
+    0.6921
+   ]
+  },
+  "avx512": {
+   "us": 1725.1478,
+   "ratio": 0.5624,
+   "interval": [
+    0.5452,
+    0.5801
+   ]
+  },
+  "A/A": {
+   "us": 3179.3808,
+   "ratio": 1.0394,
+   "interval": [
+    1.0187,
+    1.0606
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "m:5632,2048,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 3421.0717,
+  "portable": {
+   "us": 9778.8462,
+   "ratio": 2.7185,
+   "interval": [
+    2.5252,
+    2.9265
+   ]
+  },
+  "avx2": {
+   "us": 1946.385,
+   "ratio": 0.5398,
+   "interval": [
+    0.5009,
+    0.5817
+   ]
+  },
+  "avx512": {
+   "us": 1655.4818,
+   "ratio": 0.4605,
+   "interval": [
+    0.4261,
+    0.4975
+   ]
+  },
+  "A/A": {
+   "us": 3485.8422,
+   "ratio": 1.008,
+   "interval": [
+    0.9639,
+    1.0542
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "r:2048,32000,32",
+  "kernel": "rows_dot",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 22172.0413,
+  "portable": {
+   "us": 75989.1763,
+   "ratio": 3.5987,
+   "interval": [
+    3.3628,
+    3.8512
+   ]
+  },
+  "avx2": {
+   "us": 27445.0085,
+   "ratio": 1.2364,
+   "interval": [
+    1.2093,
+    1.2642
+   ]
+  },
+  "avx512": {
+   "us": 22178.6835,
+   "ratio": 1.0031,
+   "interval": [
+    0.9962,
+    1.01
+   ]
+  },
+  "A/A": {
+   "us": 22171.3122,
+   "ratio": 0.9992,
+   "interval": [
+    0.9933,
+    1.005
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "m:128,128,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 2.6862,
+  "portable": {
+   "us": 19.4393,
+   "ratio": 7.0994,
+   "interval": [
+    6.9211,
+    7.2823
+   ]
+  },
+  "avx2": {
+   "us": 2.6569,
+   "ratio": 0.9849,
+   "interval": [
+    0.9635,
+    1.0068
+   ]
+  },
+  "avx512": {
+   "us": 2.3113,
+   "ratio": 0.8497,
+   "interval": [
+    0.8285,
+    0.8715
+   ]
+  },
+  "A/A": {
+   "us": 2.6991,
+   "ratio": 1.0054,
+   "interval": [
+    0.9776,
+    1.0339
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "m:128,64,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 1.457,
+  "portable": {
+   "us": 10.1113,
+   "ratio": 6.7722,
+   "interval": [
+    6.5429,
+    7.0095
+   ]
+  },
+  "avx2": {
+   "us": 1.477,
+   "ratio": 0.9956,
+   "interval": [
+    0.9754,
+    1.0162
+   ]
+  },
+  "avx512": {
+   "us": 1.35,
+   "ratio": 0.9049,
+   "interval": [
+    0.8725,
+    0.9384
+   ]
+  },
+  "A/A": {
+   "us": 1.458,
+   "ratio": 1.0137,
+   "interval": [
+    0.9704,
+    1.059
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "m:128,344,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 7.5972,
+  "portable": {
+   "us": 49.5119,
+   "ratio": 6.5547,
+   "interval": [
+    6.5023,
+    6.6076
+   ]
+  },
+  "avx2": {
+   "us": 6.9002,
+   "ratio": 0.9211,
+   "interval": [
+    0.9058,
+    0.9366
+   ]
+  },
+  "avx512": {
+   "us": 6.1903,
+   "ratio": 0.8176,
+   "interval": [
+    0.8103,
+    0.8251
+   ]
+  },
+  "A/A": {
+   "us": 7.6007,
+   "ratio": 1.0023,
+   "interval": [
+    0.9919,
+    1.0127
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "m:344,128,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 7.2985,
+  "portable": {
+   "us": 50.5107,
+   "ratio": 6.9467,
+   "interval": [
+    6.25,
+    7.721
+   ]
+  },
+  "avx2": {
+   "us": 7.1949,
+   "ratio": 0.9959,
+   "interval": [
+    0.9106,
+    1.0893
+   ]
+  },
+  "avx512": {
+   "us": 6.1362,
+   "ratio": 0.8683,
+   "interval": [
+    0.8333,
+    0.9048
+   ]
+  },
+  "A/A": {
+   "us": 7.2253,
+   "ratio": 1.008,
+   "interval": [
+    0.9809,
+    1.0359
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "r:128,1024,32",
+  "kernel": "rows_dot",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 31.8973,
+  "portable": {
+   "us": 129.1158,
+   "ratio": 4.0391,
+   "interval": [
+    3.8451,
+    4.2429
+   ]
+  },
+  "avx2": {
+   "us": 35.8375,
+   "ratio": 1.0987,
+   "interval": [
+    1.0209,
+    1.1824
+   ]
+  },
+  "avx512": {
+   "us": 31.9044,
+   "ratio": 0.9785,
+   "interval": [
+    0.9043,
+    1.0587
+   ]
+  },
+  "A/A": {
+   "us": 31.9335,
+   "ratio": 1.0055,
+   "interval": [
+    0.9891,
+    1.0221
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "m:2048,2048,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 1104.0785,
+  "portable": {
+   "us": 4818.0393,
+   "ratio": 4.3863,
+   "interval": [
+    4.2629,
+    4.5132
+   ]
+  },
+  "avx2": {
+   "us": 717.5537,
+   "ratio": 0.6477,
+   "interval": [
+    0.6133,
+    0.6839
+   ]
+  },
+  "avx512": {
+   "us": 543.3618,
+   "ratio": 0.4905,
+   "interval": [
+    0.4796,
+    0.5018
+   ]
+  },
+  "A/A": {
+   "us": 1126.1993,
+   "ratio": 1.021,
+   "interval": [
+    1.0028,
+    1.0395
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "m:2048,256,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 83.0375,
+  "portable": {
+   "us": 579.6208,
+   "ratio": 6.9005,
+   "interval": [
+    6.544,
+    7.2763
+   ]
+  },
+  "avx2": {
+   "us": 80.5207,
+   "ratio": 0.9702,
+   "interval": [
+    0.9177,
+    1.0257
+   ]
+  },
+  "avx512": {
+   "us": 70.732,
+   "ratio": 0.8444,
+   "interval": [
+    0.7964,
+    0.8952
+   ]
+  },
+  "A/A": {
+   "us": 80.84,
+   "ratio": 0.9755,
+   "interval": [
+    0.9164,
+    1.0384
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "m:2048,5632,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 3334.4737,
+  "portable": {
+   "us": 13465.2622,
+   "ratio": 4.1918,
+   "interval": [
+    3.8566,
+    4.556
+   ]
+  },
+  "avx2": {
+   "us": 2174.6588,
+   "ratio": 0.6744,
+   "interval": [
+    0.596,
+    0.7632
+   ]
+  },
+  "avx512": {
+   "us": 1743.5902,
+   "ratio": 0.5223,
+   "interval": [
+    0.4573,
+    0.5965
+   ]
+  },
+  "A/A": {
+   "us": 3470.3635,
+   "ratio": 1.0968,
+   "interval": [
+    0.9735,
+    1.2358
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "m:5632,2048,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 3550.865,
+  "portable": {
+   "us": 13331.908,
+   "ratio": 3.7373,
+   "interval": [
+    3.6793,
+    3.7963
+   ]
+  },
+  "avx2": {
+   "us": 2180.3763,
+   "ratio": 0.612,
+   "interval": [
+    0.5968,
+    0.6276
+   ]
+  },
+  "avx512": {
+   "us": 1631.8455,
+   "ratio": 0.4566,
+   "interval": [
+    0.4474,
+    0.466
+   ]
+  },
+  "A/A": {
+   "us": 3576.458,
+   "ratio": 1.0048,
+   "interval": [
+    0.9901,
+    1.0197
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "r:2048,32000,32",
+  "kernel": "rows_dot",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 18119.1955,
+  "portable": {
+   "us": 62004.4048,
+   "ratio": 3.4344,
+   "interval": [
+    3.3488,
+    3.5222
+   ]
+  },
+  "avx2": {
+   "us": 19326.9015,
+   "ratio": 1.078,
+   "interval": [
+    1.0575,
+    1.0988
+   ]
+  },
+  "avx512": {
+   "us": 18375.5385,
+   "ratio": 1.0389,
+   "interval": [
+    0.9924,
+    1.0877
+   ]
+  },
+  "A/A": {
+   "us": 17929.8577,
+   "ratio": 0.9981,
+   "interval": [
+    0.9864,
+    1.0099
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "m:128,128,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 2.7146,
+  "portable": {
+   "us": 14.9148,
+   "ratio": 5.0895,
+   "interval": [
+    4.3608,
+    5.94
+   ]
+  },
+  "avx2": {
+   "us": 2.6051,
+   "ratio": 0.9146,
+   "interval": [
+    0.7576,
+    1.104
+   ]
+  },
+  "avx512": {
+   "us": 2.3047,
+   "ratio": 0.7831,
+   "interval": [
+    0.6984,
+    0.8781
+   ]
+  },
+  "A/A": {
+   "us": 2.723,
+   "ratio": 0.9135,
+   "interval": [
+    0.7937,
+    1.0515
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "m:128,64,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 1.5026,
+  "portable": {
+   "us": 7.4791,
+   "ratio": 4.9806,
+   "interval": [
+    4.656,
+    5.3279
+   ]
+  },
+  "avx2": {
+   "us": 1.4204,
+   "ratio": 0.9832,
+   "interval": [
+    0.9048,
+    1.0684
+   ]
+  },
+  "avx512": {
+   "us": 1.3246,
+   "ratio": 0.9115,
+   "interval": [
+    0.8427,
+    0.9859
+   ]
+  },
+  "A/A": {
+   "us": 1.4925,
+   "ratio": 0.994,
+   "interval": [
+    0.9515,
+    1.0384
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "m:128,344,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 7.5238,
+  "portable": {
+   "us": 39.8347,
+   "ratio": 5.2879,
+   "interval": [
+    5.168,
+    5.4106
+   ]
+  },
+  "avx2": {
+   "us": 6.8044,
+   "ratio": 0.91,
+   "interval": [
+    0.8954,
+    0.9248
+   ]
+  },
+  "avx512": {
+   "us": 6.2816,
+   "ratio": 0.8389,
+   "interval": [
+    0.8225,
+    0.8557
+   ]
+  },
+  "A/A": {
+   "us": 7.5057,
+   "ratio": 1.0147,
+   "interval": [
+    0.9838,
+    1.0465
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "m:344,128,32",
+  "kernel": "matvec",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 7.1446,
+  "portable": {
+   "us": 37.3791,
+   "ratio": 5.2193,
+   "interval": [
+    5.1179,
+    5.3226
+   ]
+  },
+  "avx2": {
+   "us": 6.8815,
+   "ratio": 0.9663,
+   "interval": [
+    0.9537,
+    0.9791
+   ]
+  },
+  "avx512": {
+   "us": 5.9537,
+   "ratio": 0.8369,
+   "interval": [
+    0.8187,
+    0.8554
+   ]
+  },
+  "A/A": {
+   "us": 7.0386,
+   "ratio": 0.9896,
+   "interval": [
+    0.9748,
+    1.0047
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "r:128,1024,32",
+  "kernel": "rows_dot",
+  "rounds": 15,
+  "reps": 200,
+  "before_us": 41.3375,
+  "portable": {
+   "us": 160.9572,
+   "ratio": 3.9434,
+   "interval": [
+    3.8785,
+    4.0093
+   ]
+  },
+  "avx2": {
+   "us": 48.1052,
+   "ratio": 1.1586,
+   "interval": [
+    1.1502,
+    1.1671
+   ]
+  },
+  "avx512": {
+   "us": 41.3412,
+   "ratio": 0.9896,
+   "interval": [
+    0.962,
+    1.0179
+   ]
+  },
+  "A/A": {
+   "us": 41.5454,
+   "ratio": 0.995,
+   "interval": [
+    0.979,
+    1.0112
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "m:2048,2048,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 1065.3777,
+  "portable": {
+   "us": 3594.9137,
+   "ratio": 3.3593,
+   "interval": [
+    3.2674,
+    3.4539
+   ]
+  },
+  "avx2": {
+   "us": 684.9013,
+   "ratio": 0.6498,
+   "interval": [
+    0.6154,
+    0.686
+   ]
+  },
+  "avx512": {
+   "us": 550.3997,
+   "ratio": 0.5132,
+   "interval": [
+    0.4937,
+    0.5335
+   ]
+  },
+  "A/A": {
+   "us": 1079.7813,
+   "ratio": 1.0073,
+   "interval": [
+    0.9799,
+    1.0354
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "m:2048,256,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 81.3212,
+  "portable": {
+   "us": 460.6408,
+   "ratio": 5.6026,
+   "interval": [
+    5.3491,
+    5.8681
+   ]
+  },
+  "avx2": {
+   "us": 79.444,
+   "ratio": 0.9924,
+   "interval": [
+    0.9103,
+    1.0819
+   ]
+  },
+  "avx512": {
+   "us": 68.1538,
+   "ratio": 0.8226,
+   "interval": [
+    0.7786,
+    0.8691
+   ]
+  },
+  "A/A": {
+   "us": 81.6678,
+   "ratio": 1.009,
+   "interval": [
+    0.9786,
+    1.0403
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "m:2048,5632,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 3288.8122,
+  "portable": {
+   "us": 9729.9497,
+   "ratio": 3.1867,
+   "interval": [
+    2.7073,
+    3.7511
+   ]
+  },
+  "avx2": {
+   "us": 1981.7323,
+   "ratio": 0.605,
+   "interval": [
+    0.5892,
+    0.6211
+   ]
+  },
+  "avx512": {
+   "us": 1745.8205,
+   "ratio": 0.5414,
+   "interval": [
+    0.512,
+    0.5725
+   ]
+  },
+  "A/A": {
+   "us": 3451.558,
+   "ratio": 1.0743,
+   "interval": [
+    0.986,
+    1.1705
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "m:5632,2048,32",
+  "kernel": "matvec",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 3725.2147,
+  "portable": {
+   "us": 9699.6868,
+   "ratio": 2.6044,
+   "interval": [
+    2.5828,
+    2.6261
+   ]
+  },
+  "avx2": {
+   "us": 1995.883,
+   "ratio": 0.5346,
+   "interval": [
+    0.5288,
+    0.5405
+   ]
+  },
+  "avx512": {
+   "us": 1695.9388,
+   "ratio": 0.4544,
+   "interval": [
+    0.4505,
+    0.4582
+   ]
+  },
+  "A/A": {
+   "us": 3801.3937,
+   "ratio": 1.0161,
+   "interval": [
+    1.0094,
+    1.023
+   ]
+  },
+  "bytes_equal": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "r:2048,32000,32",
+  "kernel": "rows_dot",
+  "rounds": 10,
+  "reps": 3,
+  "before_us": 21684.3085,
+  "portable": {
+   "us": 76314.6882,
+   "ratio": 3.5974,
+   "interval": [
+    3.4007,
+    3.8056
+   ]
+  },
+  "avx2": {
+   "us": 27622.7747,
+   "ratio": 1.3304,
+   "interval": [
+    1.2171,
+    1.4541
+   ]
+  },
+  "avx512": {
+   "us": 21911.1862,
+   "ratio": 1.0185,
+   "interval": [
+    0.9841,
+    1.0542
+   ]
+  },
+  "A/A": {
+   "us": 21768.5295,
+   "ratio": 0.9981,
+   "interval": [
+    0.9844,
+    1.012
+   ]
+  },
+  "bytes_equal": true
+ }
+]

@@ -1,0 +1,47 @@
+{
+ "tools": {
+  "measure_pair.sh": "af8bdd23e1bc182684159227b29b74212c18989524eb4cca30972eacaaebac6b",
+  "pair_switch.py": "bd728c9af9e695dd28dbb4fda292ae179126f23365098fefb76044926489da80",
+  "pair_kernels.c": "005201328afa4bcfda405d996a4e3f3c3fceaea958a4112d124bb9c326a73129",
+  "pair_decode.c": "a6e483729ba406cdb2a931ab716b3dea3b7f58edfe7d9bdda2eb5a167e6672f8",
+  "big_model.py": "f9d3e1f3846aa76d54f932be90f2e1847b9da12d9f4ba51134c0c67867ac89f1"
+ },
+ "tools run from ../../2026-10-25/q8-lanes": {
+  "q8_ab.c": "460162375660af405060d3974a318537530496267094e313261c234dea00adba",
+  "decode_ab.py": "2d115150246b72ab2b4dfc6c276504d387616d5cf7c4bb93bcb26e1247447001",
+  "llama_ops.py": "56a526a9e255a6ab7b9afa70e762bb22ebf02708369e59b04c46c20d99488df8",
+  "qual_summary.py": "4a4a15c7dd86bd5581bc2c31f3c0a36aa4211b028b20d767546c958598b533d5"
+ },
+ "tools run from ../next9": {
+  "hoist_ab.c": "e29ffeaaafd366674e84712c912eb660aa269ef23f5b83cdd739b6d092092fae"
+ },
+ "sources": {
+  "before/runtime/c/bcir_ai_kernels.c": "f84797b1c34cec36fbffea90d2c7001b2ed4a7b8d229c7685ce0d9ade1363ca3",
+  "before/runtime/c/test_ai_kernels.c": "9dc5d04809878ce344c842f6531852cdee6090a335b5c9dabe43f4dafcbe79ab",
+  "before/runtime/c/bcir_q4_kernel.c": "d810ceff0f1083158369484a0eb207b2bd535b40185156135b8aa53c5a52e6e3",
+  "before/runtime/c/bcir_llama.c": "657d849e70e51e08bdf132be19a8507a7a08f9167b5c261e9d4d1421f940e90a",
+  "before/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "before/runtime/c/bcir_q8_model.c": "bcc4454b16ca005818042a13bb3b49cb58305200073636e0c0750a3cdd74fc5c",
+  "before/runtime/c/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e",
+  "before/bcir/tests/test_native_ai.py": "169c1c39431e9f28a951ffd0bab07e6c72e6b73adfe9c1d57282b120042961c6",
+  "after/runtime/c/bcir_ai_kernels.c": "820d811e6884f0b20a35fcf68e2c5aca2a95322d8c931b254b37a8dc2d9b939c",
+  "after/runtime/c/test_ai_kernels.c": "c9a7589448259e6505efa01857a52c848da7507ec727dd6070a415b84b6b7667",
+  "after/runtime/c/bcir_q4_kernel.c": "d810ceff0f1083158369484a0eb207b2bd535b40185156135b8aa53c5a52e6e3",
+  "after/runtime/c/bcir_llama.c": "657d849e70e51e08bdf132be19a8507a7a08f9167b5c261e9d4d1421f940e90a",
+  "after/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "after/runtime/c/bcir_q8_model.c": "bcc4454b16ca005818042a13bb3b49cb58305200073636e0c0750a3cdd74fc5c",
+  "after/runtime/c/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e",
+  "after/bcir/tests/test_native_ai.py": "69fa1384b492093008778f9f4a84c01573e73ed723241bff77e7943f3c8041ec",
+  "after/tools/testing/faults/q8-pair.json": "88c92e4c9ef41036f093428bbe5b9a2a67a4e148bcf3f931a11121d17acc0acc",
+  "without/runtime/c/bcir_ai_kernels.c": "820d811e6884f0b20a35fcf68e2c5aca2a95322d8c931b254b37a8dc2d9b939c",
+  "without/runtime/c/test_ai_kernels.c": "9dc5d04809878ce344c842f6531852cdee6090a335b5c9dabe43f4dafcbe79ab",
+  "without/runtime/c/bcir_q4_kernel.c": "d810ceff0f1083158369484a0eb207b2bd535b40185156135b8aa53c5a52e6e3",
+  "without/runtime/c/bcir_llama.c": "657d849e70e51e08bdf132be19a8507a7a08f9167b5c261e9d4d1421f940e90a",
+  "without/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "without/runtime/c/bcir_q8_model.c": "bcc4454b16ca005818042a13bb3b49cb58305200073636e0c0750a3cdd74fc5c",
+  "without/runtime/c/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e",
+  "without/bcir/tests/test_native_ai.py": "169c1c39431e9f28a951ffd0bab07e6c72e6b73adfe9c1d57282b120042961c6",
+  "without/tools/testing/faults/q8-pair.json": "88c92e4c9ef41036f093428bbe5b9a2a67a4e148bcf3f931a11121d17acc0acc"
+ },
+ "switched/bcir_ai_kernels.c": "82d52cd305e82cdae108796c15f7d1a71853432392ac7ceb0f72d59db02ac42b"
+}

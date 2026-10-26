@@ -2550,3 +2550,68 @@ exponentials, libm's, which the oracle's parity pins.
 Not claimed: the head's row dots; the AVX-512 runs at a ragged shape; any other host's figures or clock;
 TinyLlama-1.1B's decoder end to end (no artifact of that size on this host: its shapes are timed at the kernel, from
 L3); counter-based figures (no PMU on this VM).
+
+## 36. Q8-PAIR: the C decoder's vector matvecs two input rows a pass (2026-10-26)
+
+Q8-BOUND left the matvec at 58% of a decoded token (§35) and named the wide shapes' dispatch next: at
+TinyLlama-1.1B's widths the AVX-512 block -- 64 columns' sums in registers, that strip walked down every row -- read
+slower than the AVX2 runs. A survey before the change (draft tools, not kept: 23 shapes, each one matrix again and
+again, a sequence past L2 and a sequence past L3, clang and GCC, three runs) placed why. The strip walk reads one
+line a row at a stride of the row's width, which the caches' prefetchers stop following once a matrix passes L2 or
+its rows are wide; the runs, a row at a time, stream the codes but load and store each output vector once a row. From
+memory at 2,048 x 5,632 the block read 1.6 GB/s of codes under clang.
+
+Q8-PAIR takes two input rows a pass where eight columns' terms lie in one group (the columns a multiple of 8, the
+group a power of two of at least 8): eight outputs are loaded -- one AVX-512 vector, or two AVX2 ones (`q8_x8`) --
+row i's terms and then row i + 1's are added, and they are stored. Each row's codes are read in order, every output's
+chain keeps its rows in increasing order, and every term is Q8-BOUND's (x * s hoisted where the call's ranges prove
+it exact, the terms as before elsewhere), so every output is the portable loops' bytes. A row's scale is read again
+at the step where its group changes, and an odd last row runs alone; other shapes keep the runs. The survey measured
+the alternatives and set them aside: the block over row tiles (behind the runs at the widest rows), four rows a pass
+(worse cells, x1.15 at 1,024 x 512 in L2), a pass in spans between the rows' group ends (x1.06 of the block at 128 x
+344 under GCC, where the rows' groups end out of step and its spans alternate one and three vectors), and at AVX2 a
+step of four columns (5-10% behind the spans, which a step of eight matched under clang and beat under GCC).
+
+**Measured** on the committed tree (`d144970` against `5677fc0`; one host, clang 18 and GCC 13 at the qualification's
+flags; a reading the median of 3 runs). In one binary, `pair_switch.py` puts the choice behind a run-time switch,
+with the tree before's block copied in byte for byte, and counts the calls each kernel takes, so every arm runs the
+same code at the same addresses, every output is the portable loops' bytes and every call is on its arm's kernel:
+
+| | clang | gcc |
+|---|---|---|
+| the AVX-512 matvec, the pair against the block (`kernels.json`): the 860K decoder's shapes in L2 / TinyLlama-1.1B's widest from L3 / from memory | x0.793-0.875 / x0.439-0.513 / x0.326-0.484 | x0.808-0.882 / x0.461-0.502 / x0.391-0.485 |
+| GB/s of codes from memory at 2,048 x 5,632, the block -> the pair | 1.6 -> 5.0 | 1.9 -> 5.1 |
+| the AVX2 matvec, the pair against the runs: ten shapes in L2 / from memory | x0.644-0.780 / x0.548-1.034 | x0.533-0.671 / x0.553-0.880 |
+| the tree after's AVX-512 matvec against the tree before's (`trees.json`): the 860K shapes / the row dots, which Q8-PAIR leaves as they were | x0.806-0.885 / x0.979-1.039 | x0.833-0.911 / x0.990-1.003 |
+| a token of the 860K decoder, one binary (`switched.json`): AVX-512 / capped at AVX2 | x0.917 / x0.865 | x0.932 / x0.740 |
+| a token of the synthetic decoder at TinyLlama's widths (`big.json`): AVX-512 / capped at AVX2 | x0.467 / x0.881 | x0.512 / x0.821 |
+| a token across processes (`decode.json`): the widest instance / both trees capped at AVX2 | x0.916 (0.870-0.964) / x0.871 (0.844-0.899) | x0.955 (0.887-1.028) / x0.761 (0.725-0.799) |
+| one process, after over the placement control (`inprocess.json`): plain / aligned | x0.898-0.954 / x0.891-0.948 | x0.898-0.935 / x0.917-0.947 |
+
+Each shape behind the table's `kernels.json` rows resolved past its A/A control in at least two of its three runs but
+four: clang's AVX-512 pair at 128 x 64 in L2, in one; clang's AVX2 pair at 128 x 64 from memory, in none (slower than
+parity, below); clang's AVX2 pair at 2,048 x 5,632 from memory, in one; and GCC's AVX2 pair at 5,632 x 2,048 from
+memory, in one. Across processes (`decode.json`) a token resolved past its A/A control under both compilers capped at
+AVX2 and under neither compiler at the widest instance; in one process against the placement control
+(`inprocess.json`) the widest instance resolved in 2 of 3 runs under clang and 3 of 3 under GCC.
+
+The 860K decoder's matrices sit in L2, where the pair's gain is the block's per-vector group checks and the runs'
+output traffic gone (the AVX-512 matvec x0.793-0.875 under clang, x0.808-0.882 under GCC): a token takes x0.917 under
+clang (3 of 3 runs resolved) and x0.932 under GCC (1 of 3), and capped at AVX2 x0.865 and x0.740, GCC's AVX2 runs
+having been the slowest kernel of the four. A decoder whose weights pass L3 reads them from memory every token, and
+there the kernel decides the token: the synthetic decoder (`big_model.py`: TinyLlama-1.1B's widths, six of its
+layers, group 32, tied embeddings, 334 MiB) takes 201.2 -> 95.0 ms a token under clang and 197.0 -> 100.0 under GCC.
+Capped at AVX2 it reads x0.881 and x0.821: the AVX2 runs already streamed rows there. One cell reads slower than
+parity: clang's AVX2 pair at 128 x 64 read from memory, x1.034, none of 3 resolved -- 8 KiB matrices, which a decoder
+of that width holds in L2. Under callgrind (the AVX2 instance) the qualification's GEM request takes 197.8 M -> 147.2
+M instructions (x0.744) and its data references 56.65 M -> 44.14 M; its logits keep their SHA-256 and 0 from the
+oracle, 23 of 23 checks on both trees.
+
+Where a token's time goes now (`ops.json`, clang): the matvec 55% (28.06 -> 23.23 ms a 200-token generation), the
+head 17%, the attention 17%, SwiGLU 5% and the RMSNorms 4%; under GCC the head is 21%. In the synthetic decoder the
+head's 32,000 row dots read the tied embedding's 62.5 MiB a token, transposing their codes eight by eight: HEAD-PACK,
+next.
+
+Not claimed: the head's row dots; a real TinyLlama-1.1B (no artifact of that size on this host: the synthetic decoder
+has its widths, six of its 22 layers and pseudo-random codes); any other host's figures; counter-based figures (no
+PMU on this VM).
