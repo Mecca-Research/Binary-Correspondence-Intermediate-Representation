@@ -158,10 +158,10 @@ def _q8_oracle(inputs, signed_codes, exponents, outputs, group, rows):
 def test_native_q8_instances_match_the_increasing_coordinate_oracle():
     """Q8-LANES: every instance of the Q8 matrix kernels the host admits -- 1 the portable loops, 2
     AVX2, 4 AVX-512 -- is the increasing-coordinate oracle's value for every output, bit for bit:
-    at the corpus decoder's projection shapes, at the AVX-512 block's (columns a multiple of 8, a
-    power-of-two group) with a tail block, and at ragged ones (groups straddling rows and vectors, a
-    group not a power of two, groups under 8). 0 is the widest admitted; a name outside 0/1/2/4 is
-    refused before the library, an instance the host does not admit by it."""
+    at the corpus decoder's projection shapes, at the pair's (columns a multiple of 8, a power-of-two
+    group of at least 8: Q8-PAIR) with an odd last row, and at ragged ones (groups straddling rows and
+    vectors, a group not a power of two, groups under 8). 0 is the widest admitted; a name outside
+    0/1/2/4 is refused before the library, an instance the host does not admit by it."""
     native = _native()
     if native is None:
         return
@@ -228,7 +228,9 @@ def test_native_ai_c_harness_c11_and_c23():
     refusals writing nothing, and the prevalidated entries on the widest instance. Q8-BOUND: the path
     every vector matvec took -- x times a group's scale once a row and group where the call's ranges
     prove every such product exact, the terms as before elsewhere -- over the lanes test and the
-    ranges' edges, each case every byte the portable loops'."""
+    ranges' edges, each case every byte the portable loops'. Q8-PAIR: the kernel every vector matvec ran -- two
+    rows a pass where eight columns' terms lie in one group, the runs elsewhere -- over the lanes test and the
+    passes' edges."""
     if _CC is None:
         return
     import re
@@ -292,10 +294,113 @@ def test_native_ai_c_harness_c11_and_c23():
             vector = bin(admitted & 6).count("1")
             counts = (int(bound.group(1)), int(bound.group(2)))
             assert counts == (47 * vector, 52 * vector), (options, admitted, counts)
+            # Q8-PAIR, two rows a pass where eight columns' terms lie in one group, an admitted vector instance: of the
+            # lanes test's 22 shapes 11 and of the edges' 17 shapes 12, each in four exponent ranges
+            pair = re.search(
+                r"Q8-PAIR: (\d+) matvecs two rows a pass, (\d+) in runs", result.stdout
+            )
+            assert pair, result.stdout
+            counts = (int(pair.group(1)), int(pair.group(2)))
+            assert counts == (92 * vector, 64 * vector), (options, admitted, counts)
             seen.add(admitted)
     native = _native()
     if native is not None:
         assert native.q8_instances() in seen  # the default builds admit what the library does
+
+
+def _asan_compiler() -> str | None:
+    """The first C compiler here that builds a program with -fsanitize=address,undefined and runs it, or None."""
+    import subprocess
+
+    names = (_CC, shutil.which("clang"), shutil.which("gcc"), shutil.which("cc"))
+    env = dict(os.environ, ASAN_OPTIONS="detect_leaks=0")
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
+        source, exe = Path(temporary) / "probe.c", Path(temporary) / "probe"
+        source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+        for cc in dict.fromkeys(name for name in names if name):
+            try:
+                built = subprocess.run(
+                    [cc, "-fsanitize=address,undefined", str(source), "-o", str(exe)],
+                    capture_output=True,
+                    timeout=120,
+                )
+                if built.returncode != 0:
+                    continue
+                ran = subprocess.run([str(exe)], capture_output=True, timeout=60, env=env)
+                if ran.returncode == 0:
+                    return cc
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+    return None
+
+
+class _AddressSanitizer:
+    """Truthy where a C compiler here runs a program under AddressSanitizer and UBSan, probed once, when first read:
+    what `check_tests.py --require` asks of this module when `tools/testing/faults/q8-pair.json` runs the harness's
+    sanitizer build, which returns without one."""
+
+    _probed = False
+    _cc: str | None = None
+
+    def compiler(self) -> str | None:
+        if not _AddressSanitizer._probed:
+            _AddressSanitizer._cc = _asan_compiler() if _CC is not None else None
+            _AddressSanitizer._probed = True
+        return _AddressSanitizer._cc
+
+    def __bool__(self) -> bool:
+        return self.compiler() is not None
+
+
+_ASAN = _AddressSanitizer()
+
+
+def test_native_ai_c_harness_under_address_sanitizer():
+    """Q8-PAIR: the kernel unit's C harness, with the probe, under AddressSanitizer and UBSan. Its edges allocate
+    every matrix at its exact size, so a read or write past a matrix's codes, its last group or its outputs -- a
+    pass running a step past its rows' end -- stops the run. Returns where no compiler here runs a sanitized
+    program."""
+    cc = _ASAN.compiler()
+    if cc is None:
+        return
+    import re
+    import subprocess
+
+    from bcir.toolchain import build_units, host_link_args
+
+    c = Path(__file__).resolve().parents[2] / "runtime" / "c"
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
+        exe = Path(temporary) / "ai-kernels-asan"
+        cmd = [
+            cc,
+            "-std=c11",
+            "-DBCIR_AI_INSTANCE_PROBE",
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-ffp-contract=off",
+            "-fsanitize=address,undefined",
+            "-fno-sanitize-recover=all",
+            "-I",
+            str(c),
+            str(c / "test_ai_kernels.c"),
+            str(c / "bcir_ai_kernels.c"),
+            str(c / "bcir_q4_kernel.c"),
+            "-o",
+            str(exe),
+        ]
+        build_units(cmd + host_link_args(["-lm"]), "the AI kernels' sanitizer build", timeout=180)
+        env = dict(
+            os.environ,
+            ASAN_OPTIONS="detect_leaks=0:halt_on_error=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        )
+        result = subprocess.run([str(exe)], capture_output=True, text=True, timeout=300, env=env)
+        assert result.returncode == 0, (result.returncode, result.stderr[-4000:])
+        assert "native AI kernels: all gates passed" in result.stdout, result.stdout
+        assert re.search(r"Q8-PAIR: \d+ matvecs two rows a pass, \d+ in runs", result.stdout), (
+            result.stdout
+        )
 
 
 def test_native_boundary_rejects_malformed_numbers_extents_and_symmetric_codes():

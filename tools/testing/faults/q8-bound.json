@@ -102,9 +102,9 @@
   },
   {
    "expects": "test_native_ai_c_harness_c11_and_c23",
-   "label": "QB14 the block's product kept from the row's first group past a group's end",
-   "new": "\n      vxs = _mm512_set1_pd(x * q8_scale(exponents_le, e0 >> shift));",
-   "old": "\n      vxs = _mm512_set1_pd(x * q8_scale(exponents_le, group));",
+   "label": "QB14 the pair's product kept from a row's first group past its end",
+   "new": "    if (0) m##r = SET1(x##r * s##r);",
+   "old": "    if (XS) m##r = SET1(x##r * s##r);",
    "path": "runtime/c/bcir_ai_kernels.c"
   },
   {
@@ -123,9 +123,9 @@
   },
   {
    "expects": "test_native_ai_c_harness_c11_and_c23",
-   "label": "QB17 the block's last vector summed into the one before it",
-   "new": "Q8_BOUND_VECTOR(a6, 6u); Q8_BOUND_VECTOR(a6, 7u);",
-   "old": "Q8_BOUND_VECTOR(a6, 6u); Q8_BOUND_VECTOR(a7, 7u);",
+   "label": "QB17 a pass's row's first product formed without its group's scale",
+   "new": "VT m##r = SET1((XS) ? x##r : x##r)",
+   "old": "VT m##r = SET1((XS) ? x##r * s##r : x##r)",
    "path": "runtime/c/bcir_ai_kernels.c"
   },
   {

@@ -6,6 +6,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CHECK(condition) do { if (!(condition)) { \
@@ -84,14 +85,15 @@ static int q8_matrix_test(void) {
 }
 
 /* Q8-LANES: every instance the host admits against the portable loops, bit for bit -- the decoder's shapes,
- * the AVX-512 block's shapes (columns a multiple of 8, a power-of-two group of at least 8) and their tail
- * blocks, ragged ones (groups straddling rows and vectors, a group not a power of two, groups under 8),
+ * the pair's shapes (columns a multiple of 8, a power-of-two group of at least 8: Q8-PAIR) with odd last rows,
+ * ragged ones (groups straddling rows and vectors, a group not a power of two, groups under 8),
  * exponents across the format's range and past a normal double's (ldexp's own values), the code 0x80 --
  * and the refusals: a non-finite output zeroes every output whichever row or column it is, an instance
  * the host does not admit and a non-finite input write nothing. */
 #ifdef BCIR_AI_INSTANCE_PROBE
 int bcir_ai_q8_instance_probe(void);
 int bcir_ai_q8_bound_probe(void);
+int bcir_ai_q8_pair_probe(void);
 #endif
 static uint64_t lanes_state = UINT64_C(0x9E3779B97F4A7C15);
 static uint32_t lanes_next(void) {
@@ -183,6 +185,70 @@ static int q8_bound_edges(int instances, int *hoisted, int *again) {
   return 0;
 }
 #endif
+#ifdef BCIR_AI_INSTANCE_PROBE
+/* Q8-PAIR's choice at either vector instance: two rows a pass (1) where eight columns' terms lie in one group -- the
+ * columns a multiple of 8, the group a power of two of at least 8 -- the runs (2) elsewhere */
+static int pair_path(size_t out, size_t g) { return out % 8u == 0u && g >= 8u && !(g & (g - 1u)) ? 1 : 2; }
+#endif
+/* Q8-PAIR's passes at their edges: rows whose groups end in step and out of step, past a row's end, at the matrix's
+ * end and at every step; an odd last row and a lone row; columns a multiple of four and not of eight, groups under
+ * eight or not a power of two (the runs) -- each with the four exponent ranges (x * s hoisted, the terms as before,
+ * non-finite outputs zeroed), every instance against the portable loops, the status and every byte. Every buffer is
+ * allocated at its exact size, so the sanitizer builds report a read or write past a matrix's codes, its last group or
+ * its outputs. */
+static int q8_pair_edges(int instances, int *pairs, int *runs) {
+  static const size_t shapes[][3] = {
+      {1, 8, 8},    {2, 8, 8},     {3, 16, 8},    {6, 64, 32},  {7, 40, 16},  {5, 24, 64},
+      {9, 8, 64},   {4, 1032, 8},  {3, 4100, 4},  {5, 12, 4},   {4, 64, 48},  {4, 64, 4},
+      {33, 136, 128}, {2, 4096, 32}, {101, 8, 8}, {3, 344, 32}, {3, 20, 8}};
+  size_t q;
+  (void)pairs;
+  (void)runs;
+  for (q = 0u; q < sizeof shapes / sizeof *shapes; ++q) {
+    size_t in = shapes[q][0], out = shapes[q][1], g = shapes[q][2], n = in * out, groups = 1u + (n - 1u) / g;
+    double *x = malloc(in * sizeof *x), *ref = malloc(out * sizeof *ref), *got = malloc(out * sizeof *got);
+    uint8_t *codes = malloc(n), *exps = malloc(2u * groups);
+    int wide, inst, bad_wide = -1, bad_inst = 0; /* the failing case, for the message */
+    if (x == NULL || ref == NULL || got == NULL || codes == NULL || exps == NULL) bad_wide = 4;
+    for (wide = 0; wide < 4 && bad_wide < 0; ++wide) {
+      int sm;
+      lanes_fill(x, in, codes, n, exps, groups, wide);
+      memset(ref, 0xA5, out * sizeof *ref);
+      sm = bcir_ai_q8_matvec_f64_instance(1, x, in, codes, n, exps, groups, out, g, ref);
+      if (sm != BCIR_AI_OK && sm != BCIR_AI_INVALID_NUMBER) bad_wide = wide;
+      for (inst = 2; inst <= 4 && bad_wide < 0; inst *= 2) {
+        int failed;
+        if (!(instances & inst)) continue;
+        memset(got, 0x5A, out * sizeof *got);
+        failed = bcir_ai_q8_matvec_f64_instance(inst, x, in, codes, n, exps, groups, out, g, got) != sm ||
+                 memcmp(ref, got, out * sizeof *ref) != 0;
+#ifdef BCIR_AI_INSTANCE_PROBE
+        {
+          int path = bcir_ai_q8_pair_probe();
+          failed = failed || path != pair_path(out, g);
+          *pairs += path == 1;
+          *runs += path == 2;
+        }
+#endif
+        if (failed) {
+          bad_wide = wide;
+          bad_inst = inst;
+        }
+      }
+    }
+    free(x);
+    free(ref);
+    free(got);
+    free(codes);
+    free(exps);
+    if (bad_wide >= 0) {
+      fprintf(stderr, "AI-kernel check failed: Q8-PAIR's %zu x %zu, group %zu, exponent range %d, instance %d\n",
+              in, out, g, bad_wide, bad_inst);
+      return 1;
+    }
+  }
+  return 0;
+}
 static int q8_lanes_test(void) {
   static const size_t shapes[][3] = {
       {128, 128, 32}, {128, 64, 32}, {128, 344, 32}, {344, 128, 32}, {128, 1024, 32}, {64, 72, 16},
@@ -192,6 +258,7 @@ static int q8_lanes_test(void) {
   double x[400], ref[1100], got[1100];
   static uint8_t codes[400 * 1100], exps[2 * 400 * 1100];
   int instances = bcir_ai_q8_instances(), wide, inst, checked = 0;
+  int pairs = 0, runs = 0; /* Q8-PAIR's kernels, counted where the probe is built */
   size_t q, i;
 #ifdef BCIR_AI_INSTANCE_PROBE
   int hoisted = 0, again = 0; /* Q8-BOUND's paths */
@@ -226,6 +293,11 @@ static int q8_lanes_test(void) {
           CHECK(path == (wide < 2 ? 1 : 2));
           hoisted += path == 1;
           again += path == 2;
+          /* Q8-PAIR: two rows a pass where a vector's columns lie in one group, the runs elsewhere */
+          path = bcir_ai_q8_pair_probe();
+          CHECK(path == pair_path(out, g));
+          pairs += path == 1;
+          runs += path == 2;
         }
 #endif
         ++checked;
@@ -320,6 +392,11 @@ static int q8_lanes_test(void) {
   if (q8_bound_edges(instances, &hoisted, &again)) return 1;
   printf("Q8-BOUND: %d matvecs hoisted, %d computed again\n", hoisted, again);
   CHECK(instances == 1 ? hoisted == 0 && again == 0 : hoisted > 0 && again > 0);
+#endif
+  if (q8_pair_edges(instances, &pairs, &runs)) return 1;
+#ifdef BCIR_AI_INSTANCE_PROBE
+  printf("Q8-PAIR: %d matvecs two rows a pass, %d in runs\n", pairs, runs);
+  CHECK(instances == 1 ? pairs == 0 && runs == 0 : pairs > 0 && runs > 0);
 #endif
   return 0;
 }
