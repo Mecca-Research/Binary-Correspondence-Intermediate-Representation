@@ -112,6 +112,28 @@ BCIR_AI_API int bcir_ai_q8_rows_dot_f64_instance(
     const uint8_t *exponents_le, size_t exponent_count,
     size_t output_count, size_t group_size, double *output);
 
+/* DECODE-THREADS: the matvec's outputs [column_begin, column_end) alone, so that callers may compute a matvec's
+ * columns in parts, each part on its own thread. Each of those outputs is the whole call's, bit for bit -- its
+ * chain the loop's own over every input row in order -- and the outputs outside the range are neither read nor
+ * written. column_begin < column_end <= output_count, else BCIR_AI_INVALID_ARGUMENT and nothing written; the
+ * other refusals are bcir_ai_q8_matvec_f64_instance's. A non-finite output in the range zeroes the range and
+ * returns BCIR_AI_INVALID_NUMBER: a caller that splits a call zeroes the rest of its output on that status, as
+ * the whole call would. The instance is named as the _instance entries name one (0: the widest admitted); like
+ * the prevalidated entries these trust the codes and exponents. */
+BCIR_AI_API int bcir_ai_q8_matvec_f64_columns(
+    const double *input, size_t input_count,
+    const uint8_t *codes, size_t code_count,
+    const uint8_t *exponents_le, size_t exponent_count,
+    size_t output_count, size_t group_size,
+    size_t column_begin, size_t column_end, double *output);
+
+BCIR_AI_API int bcir_ai_q8_matvec_f64_columns_instance(
+    int instance, const double *input, size_t input_count,
+    const uint8_t *codes, size_t code_count,
+    const uint8_t *exponents_le, size_t exponent_count,
+    size_t output_count, size_t group_size,
+    size_t column_begin, size_t column_end, double *output);
+
 /* HEAD-PACK: the row dots over their codes and exponents packed once for the vector instances. A pack holds the
  * rows in blocks of eight -- block b rows 8b to 8b + 7, a short last block's missing rows all zero bytes -- and a
  * block its rows' groups in order, input_count / group_size of them (input_count a multiple of group_size, so

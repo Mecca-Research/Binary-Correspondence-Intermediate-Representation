@@ -26,8 +26,8 @@
     {
       "expects": "test_native_ai_c_harness_c11_and_c23",
       "label": "QL3 a run reaching past its group",
-      "new": "      size_t n = output_count - output_index; (void)left;\n      double scale = q8_scale(exponents_le, group);\n",
-      "old": "      size_t n = output_count - output_index < left ? output_count - output_index : left;\n      double scale = q8_scale(exponents_le, group);\n",
+      "new": "      size_t n = k1 - output_index; (void)left;\n      double scale = q8_scale(exponents_le, group);\n",
+      "old": "      size_t n = k1 - output_index < left ? k1 - output_index : left;\n      double scale = q8_scale(exponents_le, group);\n",
       "path": "runtime/c/bcir_ai_kernels.c"
     },
     {

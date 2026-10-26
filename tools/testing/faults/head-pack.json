@@ -121,8 +121,8 @@
     {
       "expects": "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit",
       "label": "HP16 the decoder's head ignoring the pack",
-      "new": "  if (m->head_pack != NULL && m->vocab_size == 0u)\n",
-      "old": "  if (m->head_pack != NULL)\n",
+      "new": "  if (m->head_pack != NULL && m->vocab_size == 0u) {\n",
+      "old": "  if (m->head_pack != NULL) {\n",
       "path": "runtime/c/bcir_llama.c"
     },
     {

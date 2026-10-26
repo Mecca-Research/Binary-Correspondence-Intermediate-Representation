@@ -29,8 +29,8 @@
   {
    "expects": "test_native_ai_c_harness_under_address_sanitizer",
    "label": "PA3 a pass running one step past its rows' end (a read and a write past the matrix)",
-   "new": "      for (k = 0u; k <= output_count; k += (LANES)) {                                                     \\\n        Q8_PAIR_TURN(0, SET1, XS)                                                                        \\\n        Q8_PAIR_TURN(1, SET1, XS)",
-   "old": "      for (k = 0u; k < output_count; k += (LANES)) {                                                     \\\n        Q8_PAIR_TURN(0, SET1, XS)                                                                        \\\n        Q8_PAIR_TURN(1, SET1, XS)",
+   "new": "      for (k = k0; k <= k1; k += (LANES)) {                                                               \\\n        Q8_PAIR_TURN(0, SET1, XS)                                                                        \\\n        Q8_PAIR_TURN(1, SET1, XS)",
+   "old": "      for (k = k0; k < k1; k += (LANES)) {                                                               \\\n        Q8_PAIR_TURN(0, SET1, XS)                                                                        \\\n        Q8_PAIR_TURN(1, SET1, XS)",
    "path": "runtime/c/bcir_ai_kernels.c"
   },
   {
@@ -51,7 +51,7 @@
    "expects": "test_native_ai_c_harness_c11_and_c23",
    "label": "PA6 a row's first group end counted from the row's start",
    "new": "n##r = group_size;",
-   "old": "n##r = ((((e##r) >> shift) + 1u) << shift) - e##r;",
+   "old": "n##r = ((((e##r + k0) >> shift) + 1u) << shift) - e##r;",
    "path": "runtime/c/bcir_ai_kernels.c"
   },
   {
@@ -85,8 +85,8 @@
   {
    "expects": "test_native_ai_c_harness_c11_and_c23",
    "label": "PA11 a pass's outputs not zeroed",
-   "new": "k = 0u;",
-   "old": "for (k = 0u; k < output_count; ++k) output[k] = 0.0;",
+   "new": "k = k0;",
+   "old": "for (k = k0; k < k1; ++k) output[k] = 0.0;",
    "path": "runtime/c/bcir_ai_kernels.c"
   },
   {

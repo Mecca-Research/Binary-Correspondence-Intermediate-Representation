@@ -61,8 +61,8 @@
   {
    "expects": "test_native_ai_c_harness_c11_and_c23",
    "label": "QB8 the exponent scan's tail left unread",
-   "new": "  for (; g < groups && 0; ++g) {\n    int e = exponent_le(exponents_le, g);",
-   "old": "  for (; g < groups; ++g) {\n    int e = exponent_le(exponents_le, g);",
+   "new": "  for (; g < g1 && 0; ++g) {\n    int e = exponent_le(exponents_le, g);",
+   "old": "  for (; g < g1; ++g) {\n    int e = exponent_le(exponents_le, g);",
    "path": "runtime/c/bcir_ai_kernels.c"
   },
   {
@@ -75,8 +75,8 @@
   {
    "expects": "test_native_ai_c_harness_c11_and_c23",
    "label": "QB10 the call's last group left out of the exponent scan",
-   "new": "exponents_le, (input_count * output_count - 1u) / group_size)) {",
-   "old": "exponents_le, 1u + (input_count * output_count - 1u) / group_size)) {",
+   "new": "return q8_exponents_exact(exponents_le, 0u, (input_count * output_count - 1u) / group_size) &&",
+   "old": "return q8_exponents_exact(exponents_le, 0u, 1u + (input_count * output_count - 1u) / group_size) &&",
    "path": "runtime/c/bcir_ai_kernels.c"
   },
   {

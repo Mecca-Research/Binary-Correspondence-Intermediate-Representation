@@ -52,6 +52,9 @@ void bcir_dgem_free(bcir_dgem *g) {
 }
 
 size_t bcir_dgem_capacity(const bcir_dgem *g) { return g ? g->capacity : 0u; }
+int bcir_dgem_set_runner(bcir_dgem *g, const bcir_llama_runner *runner) {
+  return g != NULL && g->claims != NULL && g->ws.x != NULL ? bcir_llama_ws_set_runner(&g->ws, runner) : -1;
+}
 size_t bcir_dgem_prompt_len(const bcir_dgem *g) { return g ? g->prompt_len : 0u; }
 
 void bcir_dgem_reset_stats(bcir_dgem *g) {
@@ -392,7 +395,7 @@ static int dgem_kernel(const bcir_exec_item *item, void *vctx) {
     break;
   case BCIR_DGEM_MATVEC:
   case BCIR_DGEM_MATVEC_ADD:
-    if (bcir_llama_op_matvec(m, c->src, c->weight, c->in, c->out, c->dst))
+    if (bcir_llama_op_matvec(m, &g->ws, c->src, c->weight, c->in, c->out, c->dst))
       return refuse(g, BCIR_DGEM_E_KERNEL);
     rd = 8ull * c->in + q8_octets(c->weight);
     wr = 8ull * c->out;
@@ -426,7 +429,7 @@ static int dgem_kernel(const bcir_exec_item *item, void *vctx) {
     break;
   case BCIR_DGEM_HEAD:
     if (g->final_at != pos) return refuse(g, BCIR_DGEM_E_ORDER);
-    if (bcir_llama_op_head(m, c->src, g->ws.logits)) return refuse(g, BCIR_DGEM_E_KERNEL);
+    if (bcir_llama_op_head(m, &g->ws, c->src, g->ws.logits)) return refuse(g, BCIR_DGEM_E_KERNEL);
     g->head_at = pos;
     rd = 8u * d + q8_octets(c->weight);
     wr = 8ull * m->vocab_size;

@@ -7,6 +7,7 @@ import os
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import zlib
 from pathlib import Path
@@ -217,6 +218,10 @@ def _build_cli(directory: Path) -> Path:
         str(_RUNTIME / "bcir_ai_kernels.c"),
         str(_RUNTIME / "bcir_llama.c"),
         str(_RUNTIME / "bcir_llama_cli.c"),
+        # DECODE-THREADS: the deterministic pool bcir-llama --threads lends the decoder (pthreads here, Win32 threads
+        # with no flag on Windows)
+        str(_RUNTIME / "bcir_tensor.c"),
+        *([] if sys.platform == "win32" else ["-pthread"]),
         "-o",
         str(executable),
         *_link_args(),
@@ -228,7 +233,8 @@ def _build_cli(directory: Path) -> Path:
 
 def test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads():
     """Each head tied and untied, in the toy whose rows straddle its groups (no pack) and in _WIDE (HEAD-PACK: the
-    head packed at load)."""
+    head packed at load); and with --threads 3 (DECODE-THREADS), every operation split and by the defaults, the same
+    tokens and logits byte for byte."""
     if _compiler() is None:
         return
     prompt = [1, 2, 3]
@@ -262,6 +268,30 @@ def test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads():
             raw = logits_path.read_bytes()
             c_logits = struct.unpack(f"<{spec.vocab_size}d", raw)
             assert max(abs(a - b) for a, b in zip(python_logits, c_logits)) <= 1e-9
+            # DECODE-THREADS: three threads with every operation split, then the default thresholds -- the same
+            # tokens and the same logits, byte for byte
+            for split in (["--split-min", "0"], []):
+                threaded_path = directory / f"logits-{tied}-{wide}-threads.f64"
+                threaded = subprocess.run(
+                    [
+                        str(executable),
+                        "--model",
+                        str(artifact),
+                        "--prompt-ids",
+                        "1,2,3",
+                        "--max-new",
+                        "2",
+                        "--logits-out",
+                        str(threaded_path),
+                        "--threads",
+                        "3",
+                        *split,
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                assert threaded.returncode == 0, threaded.stderr
+                assert threaded.stdout == result.stdout and threaded_path.read_bytes() == raw, split
         corrupt = bytearray((directory / "model-False.bcirq8").read_bytes())
         corrupt[-1] ^= 1
         corrupt_path = directory / "corrupt.bcirq8"
@@ -296,6 +326,28 @@ def test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads():
             text=True,
         )
         assert result.returncode != 0 and "context limit" in result.stderr
+        # DECODE-THREADS: a thread count outside 1 to 64, or a threshold that is not a count, is a usage error
+        for bad in (
+            ["--threads", "0"],
+            ["--threads", "65"],
+            ["--threads", "x"],
+            ["--split-min", "-1"],
+        ):
+            result = subprocess.run(
+                [
+                    str(executable),
+                    "--model",
+                    str(directory / "model-False.bcirq8"),
+                    "--prompt-ids",
+                    "1",
+                    "--max-new",
+                    "1",
+                    *bad,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 2 and "usage" in result.stderr, (bad, result.stderr)
 
 
 _ROPE_WITNESS = r"""
@@ -484,7 +536,7 @@ int main(int argc, char **argv) {
       row[k] = ((double)(int64_t)(state >> 11) / 4503599627370496.0 - 1.0) * (i % 3 == 2 ? 1e-3 : 4.0);
     }
     (void)bcir_ai_q8_pack_probe(NULL, NULL);
-    if (bcir_llama_op_head(&m, row, got)) return 5;
+    if (bcir_llama_op_head(&m, NULL, row, got)) return 5;
     path = bcir_ai_q8_pack_probe(&passes, &blocks);
     on_pack += path != 0;
     if (bcir_ai_q8_rows_dot_f64_prevalidated(row, m.d_model, head->codes, head->element_count, head->exponents,
@@ -569,6 +621,222 @@ def test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit():
                 else:  # the portable loop over the pack
                     tail = "packed, 12 of 12 calls on it (path 2, 0 passes, 0 blocks)"
                 assert rest == f"head: 12 rows, every logit the rows' own; {tail}\n", run.stdout
+
+
+_THREADS_WITNESS = r"""
+#include "bcir_llama.h"
+#include "bcir_llama_ops.h"
+#include "bcir_tensor.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* a runner of its own: every part on the caller's thread, the last first -- the parts' order is no part of their
+ * outputs -- each call and part counted */
+typedef struct { size_t calls, parts; } counted;
+static void reverse_run(void *self, bcir_llama_task_fn task, void *ctx, size_t tasks) {
+  counted *c = self;
+  size_t t;
+  c->calls++;
+  c->parts += tasks;
+  for (t = tasks; t-- > 0;) task(ctx, t);
+}
+static void pool_run(void *self, bcir_llama_task_fn task, void *ctx, size_t tasks) {
+  bcir_tensor_pool_run((bcir_tensor_pool *)self, task, ctx, tasks);
+}
+/* a runner that leaves an operation's last part unrun */
+static void lazy_run(void *self, bcir_llama_task_fn task, void *ctx, size_t tasks) {
+  size_t t;
+  (void)self;
+  for (t = 0; t + 1u < tasks; t++) task(ctx, t);
+}
+
+/* DECODE-THREADS: a greedy decode (prompt 1, 2, 3; six new tokens) lent a runner at every worker count with every
+ * operation split, then the trainer's pool at two to four threads -- every token and every final logit the decode's
+ * without one, byte for byte; the default thresholds, which split none of a toy's operations; the runners a decode
+ * and a workspace refuse; and a runner leaving a part unrun, which fails the decode rather than let it go on. */
+int main(int argc, char **argv) {
+  bcir_q8_model m;
+  bcir_llama_ws w;
+  char err[256];
+  int32_t prompt[3] = {1, 2, 3}, ref_ids[6], ids[6];
+  double *ref_logits, *logits;
+  bcir_host_allocator alloc = bcir_host_allocator_default();
+  counted c;
+  unsigned workers;
+  if (argc != 2 || bcir_q8_model_load(argv[1], &m, err, sizeof err)) return 2;
+  ref_logits = malloc(m.vocab_size * sizeof *ref_logits);
+  logits = malloc(m.vocab_size * sizeof *logits);
+  if (!ref_logits || !logits) return 2;
+  if (bcir_llama_generate_greedy_with_runner(&m, prompt, 3, 6, ref_ids, ref_logits, &alloc, NULL)) return 3;
+  for (workers = 1; workers <= 5; workers++) {
+    bcir_llama_runner r = {reverse_run, NULL, 0u, 0u, 0u};
+    r.self = &c, r.workers = workers;
+    memset(&c, 0, sizeof c);
+    if (bcir_llama_generate_greedy_with_runner(&m, prompt, 3, 6, ids, logits, &alloc, &r)) return 4;
+    if (memcmp(ids, ref_ids, sizeof ids) || memcmp(logits, ref_logits, m.vocab_size * sizeof *logits)) {
+      printf("%u workers: a token or a logit differs\n", workers);
+      return 1;
+    }
+    printf("%u workers: %zu splits, %zu parts\n", workers, c.calls, c.parts);
+  }
+  {
+    bcir_llama_runner r = {reverse_run, NULL, 4u, BCIR_LLAMA_SPLIT_MIN, BCIR_LLAMA_HEAD_SPLIT_MIN};
+    r.self = &c;
+    memset(&c, 0, sizeof c);
+    if (bcir_llama_generate_greedy_with_runner(&m, prompt, 3, 6, ids, logits, &alloc, &r)) return 4;
+    if (memcmp(ids, ref_ids, sizeof ids) || memcmp(logits, ref_logits, m.vocab_size * sizeof *logits)) return 1;
+    printf("defaults: %zu splits\n", c.calls);
+  }
+  for (workers = 2; workers <= 4; workers++) {
+    size_t bytes = bcir_tensor_pool_size(workers);
+    void *memory = bytes ? malloc(bytes) : NULL;
+    bcir_tensor_pool *pool = memory ? bcir_tensor_pool_init(memory, bytes, workers) : NULL;
+    bcir_llama_runner r = {pool_run, NULL, 0u, 0u, 0u};
+    int rc;
+    if (pool == NULL) {
+      printf("pool of %u: none on this host\n", workers);
+      free(memory);
+      continue;
+    }
+    r.self = pool, r.workers = workers;
+    rc = bcir_llama_generate_greedy_with_runner(&m, prompt, 3, 6, ids, logits, &alloc, &r);
+    bcir_tensor_pool_stop(pool);
+    free(memory);
+    if (rc) return 4;
+    if (memcmp(ids, ref_ids, sizeof ids) || memcmp(logits, ref_logits, m.vocab_size * sizeof *logits)) {
+      printf("pool of %u: a token or a logit differs\n", workers);
+      return 1;
+    }
+    printf("pool of %u: every token and logit the same\n", workers);
+  }
+  {
+    /* refused before any allocation: no function for more than one worker, more workers than parts; a workspace
+     * keeps the runner it had */
+    bcir_llama_runner none = {NULL, NULL, 2u, 0u, 0u}, many = {reverse_run, NULL, BCIR_LLAMA_MAX_PARTS + 1u, 0u, 0u};
+    bcir_llama_runner one = {NULL, NULL, 1u, 0u, 0u}, good = {reverse_run, NULL, 3u, 7u, 9u};
+    if (bcir_llama_generate_greedy_with_runner(&m, prompt, 3, 6, ids, logits, &alloc, &none) != -1 ||
+        bcir_llama_generate_greedy_with_runner(&m, prompt, 3, 6, ids, logits, &alloc, &many) != -1)
+      return 5;
+    if (bcir_llama_generate_greedy_with_runner(&m, prompt, 3, 6, ids, logits, &alloc, &one) ||
+        memcmp(ids, ref_ids, sizeof ids))
+      return 5;
+    if (bcir_llama_ws_init(&w, &m, 16u, &alloc)) return 2;
+    if (w.runner.run != NULL || w.runner.workers != 0u || bcir_llama_ws_set_runner(&w, &good) ||
+        bcir_llama_ws_set_runner(&w, &none) != -1 || bcir_llama_ws_set_runner(&w, &many) != -1 ||
+        w.runner.run != reverse_run || w.runner.workers != 3u || w.runner.split_min != 7u ||
+        w.runner.head_split_min != 9u || bcir_llama_ws_set_runner(&w, NULL) || w.runner.run != NULL ||
+        w.runner.workers != 0u)
+      return 6;
+    bcir_llama_ws_free(&w);
+  }
+  printf("refusals: a decode and a workspace refuse what they must\n");
+  {
+    bcir_llama_runner lazy = {lazy_run, NULL, 3u, 0u, 0u};
+    if (bcir_llama_generate_greedy_with_runner(&m, prompt, 3, 6, ids, logits, &alloc, &lazy) != -1) return 7;
+  }
+  printf("a part left unrun: the decode fails\n");
+  free(ref_logits);
+  free(logits);
+  bcir_q8_model_free(&m);
+  return 0;
+}
+"""
+
+
+def _split_parts(outputs: int, unit: int, workers: int) -> int:
+    """DECODE-THREADS' partition, stated here apart from the C: as many parts as workers, at most one a unit of
+    outputs, the chunk the outputs over the parts rounded up to a unit -- the parts the runner runs, 0 unsplit."""
+    parts = min(workers, outputs // unit)
+    if workers < 2 or parts < 2:
+        return 0
+    share = (outputs + parts - 1) // parts
+    chunk = (share + unit - 1) // unit * unit
+    return (outputs + chunk - 1) // chunk
+
+
+def test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit():
+    """DECODE-THREADS: a decode lent a runner -- one of the test's own that runs the parts last first, at one to
+    five workers with every operation split, and the trainer's pool at two to four threads -- gives every token and
+    every final logit of the decode without one, byte for byte, tied and untied, with the head packed (_WIDE) and
+    not. The parts are exactly the partition stated above, matvec by matvec and head by head: eight steps of two
+    layers' seven matvecs, and six heads where the loader packed one (a head over its rows as they are is never
+    split). The defaults split none of a toy's operations; a runner of no function, or of too many workers, fails
+    the decode before any allocation, and a workspace keeps its runner when it refuses another; a runner that leaves
+    a part unrun fails the decode."""
+    if _compiler() is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        source = directory / "threads_witness.c"
+        source.write_text(_THREADS_WITNESS, encoding="utf-8")
+        executable = directory / ("threads_witness.exe" if os.name == "nt" else "threads_witness")
+        command = [
+            _compiler(),
+            "-std=c11",
+            "-O2",
+            "-ffp-contract=off",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-I",
+            str(_RUNTIME),
+            str(source),
+            str(_RUNTIME / "bcir_q8_model.c"),
+            str(_RUNTIME / "bcir_decode.c"),
+            str(_RUNTIME / "bcir_ai_kernels.c"),
+            str(_RUNTIME / "bcir_llama.c"),
+            str(_RUNTIME / "bcir_tensor.c"),
+            *([] if sys.platform == "win32" else ["-pthread"]),
+            "-o",
+            str(executable),
+            *_link_args(),
+        ]
+        build = subprocess.run(command, capture_output=True, text=True)
+        assert build.returncode == 0, build.stderr
+        for tied in (False, True):
+            for wide in (False, True):
+                artifact = directory / f"model-{tied}-{wide}.bcirq8"
+                _write(artifact, tied=tied, **(_WIDE if wide else {}))
+                spec, _, _ = read_q8_decoder(artifact)
+                run = subprocess.run(
+                    [str(executable), str(artifact)], capture_output=True, text=True
+                )
+                assert run.returncode == 0, (tied, wide, run.returncode, run.stdout, run.stderr)
+                d, ff = spec.d_model, spec.d_ff
+                kvd = spec.n_kv_heads * (d // spec.n_heads)
+                outs = (d, kvd, kvd, d, ff, ff, d)  # each layer's seven matvecs
+                packed = d % 32 == 0
+                lines = run.stdout.splitlines()
+                for workers in range(1, 6):
+                    parts = [_split_parts(out, 8, workers) for out in outs]
+                    head = _split_parts(spec.vocab_size, 32, workers) if packed else 0
+                    splits = 8 * spec.n_layers * sum(1 for n in parts if n) + 6 * (head > 0)
+                    total = 8 * spec.n_layers * sum(parts) + 6 * head
+                    assert (
+                        lines[workers - 1] == f"{workers} workers: {splits} splits, {total} parts"
+                    ), (
+                        tied,
+                        wide,
+                        lines,
+                    )
+                assert lines[5] == "defaults: 0 splits", lines
+                pools = lines[6:9]
+                assert all(
+                    line.endswith(": every token and logit the same")
+                    or line.endswith(": none on this host")
+                    for line in pools
+                ), pools
+                if sys.platform != "win32":  # pthreads here: every pool runs
+                    assert all(
+                        line.endswith(": every token and logit the same") for line in pools
+                    ), pools
+                assert lines[9:] == [
+                    "refusals: a decode and a workspace refuse what they must",
+                    "a part left unrun: the decode fails",
+                ], lines
 
 
 if __name__ == "__main__":

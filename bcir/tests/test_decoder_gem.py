@@ -296,6 +296,168 @@ def test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated
         assert refused["status"] == _C_REFUSAL["program"] and refused["live_after_free"] == 0
 
 
+_GEM_THREADS = r"""
+#include "bcir_decoder_gem.h"
+#include "bcir_tensor.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* a runner of its own: every part on the caller's thread, the last first, each call and part counted */
+typedef struct { size_t calls, parts; } counted;
+static void reverse_run(void *self, bcir_llama_task_fn task, void *ctx, size_t tasks) {
+  counted *c = self;
+  size_t t;
+  c->calls++;
+  c->parts += tasks;
+  for (t = tasks; t-- > 0;) task(ctx, t);
+}
+static void pool_run(void *self, bcir_llama_task_fn task, void *ctx, size_t tasks) {
+  bcir_tensor_pool_run((bcir_tensor_pool *)self, task, ctx, tasks);
+}
+
+/* DECODE-THREADS: the GEM interpreter lent a runner -- the test's own at one to four workers with every operation
+ * split, then the trainer's pool at two to four threads -- runs the program to every token and every final logit
+ * of its run without one, byte for byte; before a load it refuses a runner. MODEL PACK, the prompt 1, 2, 3. */
+int main(int argc, char **argv) {
+  bcir_q8_model model;
+  bcir_dgem g;
+  char err[256];
+  FILE *f;
+  long size;
+  uint8_t *pack;
+  int32_t prompt[3] = {1, 2, 3}, ref_ids[16], ids[16];
+  double *ref, *got;
+  size_t max_new;
+  bcir_host_allocator alloc = bcir_host_allocator_default();
+  counted c;
+  unsigned workers;
+  bcir_llama_runner r = {reverse_run, NULL, 2u, 0u, 0u};
+  if (argc != 3 || bcir_q8_model_load(argv[1], &model, err, sizeof err)) return 2;
+  f = fopen(argv[2], "rb");
+  if (f == NULL || fseek(f, 0, SEEK_END) || (size = ftell(f)) <= 0 || fseek(f, 0, SEEK_SET)) return 2;
+  pack = malloc((size_t)size);
+  if (pack == NULL || fread(pack, 1, (size_t)size, f) != (size_t)size) return 2;
+  fclose(f);
+  memset(&g, 0, sizeof g);
+  r.self = &c;
+  if (bcir_dgem_set_runner(&g, &r) != -1) return 7; /* nothing loaded */
+  if (bcir_dgem_load(&g, &model, pack, (size_t)size, &alloc)) return 3;
+  max_new = bcir_dgem_capacity(&g) - bcir_dgem_prompt_len(&g);
+  if (bcir_dgem_prompt_len(&g) != 3u || max_new > 16u) return 3;
+  ref = malloc(model.vocab_size * sizeof *ref);
+  got = malloc(model.vocab_size * sizeof *got);
+  if (ref == NULL || got == NULL || bcir_dgem_run(&g, prompt, 3, ref_ids, max_new, ref)) return 4;
+  for (workers = 1; workers <= 4; workers++) {
+    r.run = reverse_run, r.self = &c, r.workers = workers;
+    memset(&c, 0, sizeof c);
+    if (bcir_dgem_set_runner(&g, &r) || bcir_dgem_run(&g, prompt, 3, ids, max_new, got)) return 5;
+    if (memcmp(ids, ref_ids, max_new * sizeof *ids) || memcmp(got, ref, model.vocab_size * sizeof *got)) {
+      printf("%u workers: a token or a logit differs\n", workers);
+      return 1;
+    }
+    printf("%u workers: %zu splits, %zu parts\n", workers, c.calls, c.parts);
+  }
+  for (workers = 2; workers <= 4; workers++) {
+    size_t bytes = bcir_tensor_pool_size(workers);
+    void *memory = bytes ? malloc(bytes) : NULL;
+    bcir_tensor_pool *pool = memory ? bcir_tensor_pool_init(memory, bytes, workers) : NULL;
+    int rc;
+    if (pool == NULL) {
+      printf("pool of %u: none on this host\n", workers);
+      free(memory);
+      continue;
+    }
+    r.run = pool_run, r.self = pool, r.workers = workers;
+    rc = bcir_dgem_set_runner(&g, &r) || bcir_dgem_run(&g, prompt, 3, ids, max_new, got);
+    (void)bcir_dgem_set_runner(&g, NULL);
+    bcir_tensor_pool_stop(pool);
+    free(memory);
+    if (rc) return 5;
+    if (memcmp(ids, ref_ids, max_new * sizeof *ids) || memcmp(got, ref, model.vocab_size * sizeof *got)) {
+      printf("pool of %u: a token or a logit differs\n", workers);
+      return 1;
+    }
+    printf("pool of %u: every token and logit the same\n", workers);
+  }
+  bcir_dgem_free(&g);
+  bcir_q8_model_free(&model);
+  free(pack);
+  free(ref);
+  free(got);
+  return 0;
+}
+"""
+
+
+def test_the_c_interpreter_lent_a_runner_is_itself_bit_for_bit():
+    """DECODE-THREADS: the GEM interpreter lent a runner (bcir_dgem_set_runner) -- one that runs the parts last first
+    at one to four workers with every operation split, and the trainer's pool at two to four threads -- runs the
+    program to every token and every final logit of its run without one, byte for byte, in the fixture and the
+    wider one; the parts are the monolithic decoder's partition (test_model_weights_io's statement of it), the
+    matvecs' claims split as that runner's, and an interpreter with nothing loaded refuses a runner."""
+    if _CC is None:
+        return
+    import sys
+
+    from bcir.tests.test_model_weights_io import _split_parts
+
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        source = d / "gem_threads.c"
+        source.write_text(_GEM_THREADS, encoding="utf-8")
+        executable = d / ("gem_threads.exe" if os.name == "nt" else "gem_threads")
+        sources = (
+            "bcir_decoder_gem.c",
+            "bcir_llama.c",
+            "bcir_q8_model.c",
+            "bcir_q4_kernel.c",
+            "bcir_ai_kernels.c",
+            "bcir_decode.c",
+            "bcir_exec.c",
+            "bcir_runtime.c",
+            "bcir_tensor.c",
+        )
+        command = [_CC, "-std=c11", "-O1", "-ffp-contract=off", "-Wall", "-Wextra", "-Werror"]
+        command += ["-I", str(_RUNTIME), str(source), *(str(_RUNTIME / s) for s in sources)]
+        command += [] if sys.platform == "win32" else ["-pthread"]
+        command += ["-o", str(executable), *_link_args()]
+        build_units(command, "the GEM runner witness's build", timeout=600)
+        for wide in (False, True):
+            spec, _, model_bytes = fx.model(tied=False, wide=wide)
+            model = d / f"model-{wide}.bcirq8"
+            model.write_bytes(model_bytes)
+            pack, _ = fx.planned_pack(fx.program(spec))
+            (d / "pack.bin").write_bytes(encode(pack))
+            run = subprocess.run(
+                [str(executable), str(model), str(d / "pack.bin")], capture_output=True, text=True
+            )
+            assert run.returncode == 0, (wide, run.returncode, run.stdout, run.stderr)
+            dm, ff = spec.d_model, spec.d_ff
+            kvd = spec.n_kv_heads * (dm // spec.n_heads)
+            steps = len(fx.PROMPT) + fx.MAX_NEW - 1
+            lines = run.stdout.splitlines()
+            for workers in range(1, 5):
+                parts = [_split_parts(out, 8, workers) for out in (dm, kvd, kvd, dm, ff, ff, dm)]
+                splits = steps * spec.n_layers * sum(1 for n in parts if n)
+                total = steps * spec.n_layers * sum(parts)
+                assert lines[workers - 1] == f"{workers} workers: {splits} splits, {total} parts", (
+                    wide,
+                    lines,
+                )
+            assert all(
+                line.endswith(": every token and logit the same")
+                or line.endswith(": none on this host")
+                for line in lines[4:]
+            ), lines
+            if sys.platform != "win32":
+                assert len(lines) == 7 and all(line.endswith("the same") for line in lines[4:]), (
+                    lines
+                )
+
+
 def test_final_is_a_resource_of_its_own_on_the_c_rail():
     """The program with H written between the final norm and the head (test_decoder_program's
     witness) is, on the C rail too, the decoder: bit for bit the monolithic runner, whose own

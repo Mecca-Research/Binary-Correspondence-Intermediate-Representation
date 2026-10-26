@@ -220,6 +220,90 @@ def test_native_q8_instances_match_the_increasing_coordinate_oracle():
             pass
 
 
+def test_native_q8_matvec_columns_are_the_oracles_columns():
+    """DECODE-THREADS: the matvec over a range of its columns, on every instance the host admits and on the widest,
+    is the increasing-coordinate oracle's value for every output in the range, bit for bit -- the whole range, a
+    first and a last column, stretches on vectors' edges and off them, and a call split into parts whose outputs
+    together are the whole call's -- at the decoder's shapes, the pair's and ragged ones. A range that is not
+    0 <= begin < end <= output_count is refused before the library."""
+    native = _native()
+    if native is None:
+        return
+    instances = native.q8_instances()
+    rng = random.Random(0xDEC0DE)
+    symmetric = tuple(code for code in range(256) if code != 0x80)
+    shapes = (
+        (128, 64, 32),
+        (16, 72, 16),
+        (3, 200, 8),
+        (17, 33, 5),
+        (9, 40, 4),
+        (40, 17, 32),
+        (5, 344, 32),
+    )
+    ran = 0
+    for inputs_count, outputs, group in shapes:
+        inputs = tuple(rng.uniform(-2.0, 2.0) for _ in range(inputs_count))
+        codes = bytes(rng.choice(symmetric) for _ in range(inputs_count * outputs))
+        exponents = tuple(rng.randint(-30, 30) for _ in range(-(-len(codes) // group)))
+        signed = tuple(code - 256 if code >= 128 else code for code in codes)
+        expected = _q8_oracle(inputs, signed, exponents, outputs, group, False)
+        ranges = [
+            (0, outputs),
+            (0, 1),
+            (outputs - 1, outputs),
+            (outputs // 3, outputs - outputs // 4),
+        ]
+        if outputs >= 24:
+            ranges.append((8, outputs // 8 * 8 - 8))
+        for _ in range(3):
+            begin = rng.randrange(outputs)
+            ranges.append((begin, rng.randint(begin + 1, outputs)))
+        for instance in (None, 0, 1, 2, 4):
+            if instance and not instances & instance:
+                continue
+            for begin, end in ranges:
+                got = native.q8_matvec(
+                    inputs,
+                    codes,
+                    exponents,
+                    output_count=outputs,
+                    group_size=group,
+                    instance=instance,
+                    columns=(begin, end),
+                )
+                assert got == expected[begin:end], (
+                    inputs_count,
+                    outputs,
+                    group,
+                    instance,
+                    begin,
+                    end,
+                )
+                ran += 1
+            for parts in (2, 3, 7):  # the call in parts, as the decoder's threads take it
+                chunk = -(-outputs // parts)
+                got = ()
+                for begin in range(0, outputs, chunk):
+                    got += native.q8_matvec(
+                        inputs,
+                        codes,
+                        exponents,
+                        output_count=outputs,
+                        group_size=group,
+                        instance=instance,
+                        columns=(begin, min(begin + chunk, outputs)),
+                    )
+                assert got == expected, (inputs_count, outputs, group, instance, parts)
+    assert ran >= 3 * len(shapes) * 7  # None, 0 and 1 at least, on every host
+    for refused in ((0, 0), (2, 1), (0, 2), (-1, 1), (0.0, 1), [0, 1], (0, 1, 1), "01", True):
+        try:
+            native.q8_matvec((1.0,), b"\x01", (0,), output_count=1, group_size=32, columns=refused)
+            raise AssertionError(f"columns {refused!r} were accepted")
+        except ValueError:
+            pass
+
+
 def _reference_pack(
     codes: bytes, exponents, input_count: int, output_count: int, group_size: int
 ) -> bytes:
@@ -329,7 +413,10 @@ def test_native_ai_c_harness_c11_and_c23():
     rows a pass where eight columns' terms lie in one group, the runs elsewhere -- over the lanes test and the
     passes' edges. HEAD-PACK: the row dots over a pack on every admitted instance against the portable row dots over
     the rows as they are, the 32-row passes and blocks the vector instances ran, the layout pinned, a pack serving
-    fewer rows, non-finite totals zeroing every output and the refusals writing nothing."""
+    fewer rows, non-finite totals zeroing every output and the refusals writing nothing. DECODE-THREADS: the matvec
+    over column ranges on every admitted instance -- a range's outputs the whole call's and every other output
+    untouched; a call split into parts on vectors' edges and off them failing exactly where the whole call does --
+    the parts the named vector instances ran and those on Q8-PAIR's kernels, and the refusals writing nothing."""
     if _CC is None:
         return
     import re
@@ -410,6 +497,18 @@ def test_native_ai_c_harness_c11_and_c23():
             assert pack, result.stdout
             counts = (int(pack.group(1)), int(pack.group(2)), int(pack.group(3)))
             assert counts == (32 * vector, 152 * vector, 40 * vector), (options, admitted, counts)
+            # DECODE-THREADS, the matvec's column parts on a named vector instance: the 21 shapes in four exponent
+            # ranges, each split into 2, 3, 4 and 7 parts on vectors' edges and off them, 2,128 parts an instance;
+            # 648 of them on Q8-PAIR's kernels, the parts on vectors' edges of the shapes whose whole call runs there
+            parts = re.search(
+                r"DECODE-THREADS: (\d+) column parts on a named vector instance equal",
+                result.stdout,
+            )
+            assert parts, result.stdout
+            assert int(parts.group(1)) == 2128 * vector, (options, admitted, parts.group(1))
+            pairs = re.search(r"DECODE-THREADS: (\d+) of them two rows a pass", result.stdout)
+            assert pairs, result.stdout
+            assert int(pairs.group(1)) == 648 * vector, (options, admitted, pairs.group(1))
             seen.add(admitted)
     native = _native()
     if native is not None:
@@ -467,7 +566,8 @@ def test_native_ai_c_harness_under_address_sanitizer():
     """Q8-PAIR: the kernel unit's C harness, with the probe, under AddressSanitizer and UBSan. Its edges allocate
     every matrix at its exact size, so a read or write past a matrix's codes, its last group or its outputs -- a
     pass running a step past its rows' end -- stops the run; HEAD-PACK's edges allocate every pack, input and
-    output so too. Returns where no compiler here runs a sanitized program."""
+    output so too, and DECODE-THREADS' column ranges every matrix, input and output. Returns where no compiler here
+    runs a sanitized program."""
     cc = _ASAN.compiler()
     if cc is None:
         return
@@ -511,6 +611,9 @@ def test_native_ai_c_harness_under_address_sanitizer():
         )
         assert re.search(
             r"HEAD-PACK: \d+ packed row dots, \d+ passes of 32 rows, \d+ blocks", result.stdout
+        ), result.stdout
+        assert re.search(
+            r"DECODE-THREADS: \d+ column parts on a named vector instance equal", result.stdout
         ), result.stdout
 
 
