@@ -167,6 +167,7 @@ judged, only who schedules it.
 | Optimization | Release is `-O2` **without** `NDEBUG`: the verifier's asserts compile in, as in every gate |
 | Sanitizers | `BCIR_SANITIZE=address,undefined` / `undefined` / `thread` on every target (`asan`/`ubsan`/`tsan` presets), `-fno-omit-frame-pointer -g` |
 | Fuzzers | Clang only (`libFuzzer`); GCC configures with `BCIR_BUILD_FUZZERS=OFF` and says so |
+| Contraction | `-ffp-contract=off` for the decode and train kernels' library (`bcir_streampack`) and the harness holding them to the one-chain loops (`test_decode`), as for the model and trainer units: clang contracts by default where the target fuses (aarch64), GCC outside ISO mode. M17 holds every build of `bcir_decode.c`, `bcir_train.c` and `test_decode.c` to it, the manifest's and the gates' and the Python harnesses' alike, and `test_the_manifests_options_build_the_kernels_without_contraction` builds them from the manifest under fast contraction with FMA |
 | `-march` | never set; the rails are portable C and the measured rigs (`tools/silicon`) choose their own |
 | MSVC | `/W4 /WX`, best effort, a configure-time warning that it is not claimed |
 

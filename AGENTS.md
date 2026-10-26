@@ -59,6 +59,8 @@ whether the IR builds or how it verifies. Its conventions live in `CONTRIBUTING.
   and CMake alike).
 - Adding a gate `tools/c/check_runtime.sh` calls that builds its own binaries → the manifest's
   `delegated` (its own CTest entry; the gate calls it under `BCIR_SKIP_DELEGATED_GATES`, M16).
+- Building the decode or train kernels (`bcir_decode.c`, `bcir_train.c`, `test_decode.c`) anywhere → pass
+  `-ffp-contract=off` beside the source (M17 holds the manifest's units, the gates and the Python builds).
 - Architecture → [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md).
 
 ## Non-negotiable pre-PR validation

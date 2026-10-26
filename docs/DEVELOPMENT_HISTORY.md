@@ -5302,6 +5302,37 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     lowering (`bcir_decoder_lower_pack`: 9 CRC passes over its pack a lowering where it made 13, its two executions
     now one pass each; its time unmeasured), the verifier CLI, the control plane, the encoder; any other host's
     figures; counter-based figures.
+  CONTRACT-OFF (2026-10-26): the decode and train kernels compiled without floating-point contraction in every
+    build the repository writes, the manifest checker's M17 holding every build to it and a witness building them
+    under a hostile default.
+  - Found after DECODE-ROW's order witness failed on CI's aarch64 job, where clang contracts by default: the
+    CMake and BCIR Make builds compiled `bcir_decode.c` and `bcir_train.c` (library `bcir_streampack`) with no
+    contraction option, though every other decoder build here passes `-ffp-contract=off`. On this host's
+    x86-64 FMA shows it (`-mfma`): clang 18's default contraction moves 6 of the training twin's 12 epoch losses
+    and 1 of its 5 trained weights in their last bits (by at most 5.6e-17), and a default of fast contraction
+    (GCC's own outside ISO mode) breaks `test_decode`'s `order` witness under clang and GCC, the fusion in either
+    the kernels or the one-chain loops enough. The oracle differentials' 1e-12 tolerance hid both.
+  - CONTRACT-OFF (`a46c3e1`): `runtime/manifest.json` gives `bcir_streampack` and the `test_decode` harness (the
+    one-chain loops the kernels are held to) `-ffp-contract=off`, which CMake and BCIR Make apply to each unit's
+    own sources and the variants and fuzzers take through their closures; the six Python builds that compiled the
+    kernels without it (the decode and training oracle differentials, the preflight builds, the cfront allocation
+    sweep's harness) and `tools/c/fuzz_streampack.sh` pass it. Built so, the training twin's losses equal the
+    Python oracle's floats exactly on this host.
+  - M17 (`tools/build/manifest.py`): the unit that owns `bcir_decode.c`, `bcir_train.c` or `test_decode.c` names
+    the option, unscoped; no unit or variant turns contraction back on; a Python function under bcir/ or tools/,
+    or a gate script, that names one names the option beside it (in the function, at the module's top level, or
+    anywhere in the module for a name at the top level). A build assembling its flags elsewhere is a finding until
+    it names the option where it names the source -- the declared scope.
+  - Witness (`test_the_manifests_options_build_the_kernels_without_contraction`): test_decode, test_train and
+    test_train_stream with their closures, compiled source by source with each unit's manifest options after a
+    hostile default (`-O2 -ffp-contract=fast`, with `-mfma` on an x86-64 CPU that has FMA), print the plain
+    build's bytes (`-O0 -ffp-contract=off`): the order mode's 2,482 comparisons for two seeds and both training
+    runs' losses and weights to 17 digits. Its control requires the hostile default to move something without
+    the units' options: under clang 18 all four runs move, under GCC 13 the order mode, under clang 23 the
+    training runs. `fp-contract.json` FC1-FC15, each caught by its own check.
+  - Not claimed: the other floating-point kernels' builds beyond what they already pass (M17 reads these three
+    sources); compiles whose object is discarded (the freestanding section); MSVC, which takes no manifest option;
+    a bitwise comparison with the Python oracle across libms.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
