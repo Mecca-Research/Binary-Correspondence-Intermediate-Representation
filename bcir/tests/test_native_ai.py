@@ -416,7 +416,8 @@ def test_native_ai_c_harness_c11_and_c23():
     fewer rows, non-finite totals zeroing every output and the refusals writing nothing. DECODE-THREADS: the matvec
     over column ranges on every admitted instance -- a range's outputs the whole call's and every other output
     untouched; a call split into parts on vectors' edges and off them failing exactly where the whole call does --
-    the parts the named vector instances ran and those on Q8-PAIR's kernels, and the refusals writing nothing."""
+    the parts the named vector instances ran and those on Q8-PAIR's kernels, every vector matvec on its kernel's
+    whole-call instance exactly where its range is the whole, and the refusals writing nothing."""
     if _CC is None:
         return
     import re

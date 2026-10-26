@@ -43,7 +43,10 @@
  * so that a caller may compute a matvec's columns in parts on threads of its own (bcir_ai_q8_matvec_f64_columns).
  * An output's chain does not depend on the range it is computed in: its terms are its column's, every input row in
  * order. A range's call reads Q8-BOUND's ranges over the groups its columns touch, row by row, and takes Q8-PAIR's
- * two rows a pass where it starts and ends on a vector's edge; either path gives every output the loop's bits. */
+ * two rows a pass where it starts and ends on a vector's edge; either path gives every output the loop's bits. Each
+ * vector kernel is one body in two instances, the whole call's -- its range the constant [0, output_count), so its
+ * code is the kernel's before the ranges -- and a range's; a call takes the whole call's where its range is the
+ * whole. */
 #if defined(__x86_64__) && defined(__linux__) && (defined(__GNUC__) || defined(__clang__)) && \
     !defined(BCIR_AI_NO_DISPATCH)
 #define BCIR_AI_DISPATCH 1
@@ -257,6 +260,16 @@ int bcir_ai_q8_pair_probe(void) {
   q8_pair_seen = 0;
   return seen;
 }
+/* DECODE-THREADS: the instance of its kernel the last vector matvec ran -- 1 the whole call's, its range the constant
+ * [0, output_count), 2 a range's, 0 before any and after a read */
+static int q8_columns_seen;
+#define Q8_COLUMNS_SAW(path) (q8_columns_seen = (path))
+int bcir_ai_q8_columns_probe(void);
+int bcir_ai_q8_columns_probe(void) {
+  int seen = q8_columns_seen;
+  q8_columns_seen = 0;
+  return seen;
+}
 /* HEAD-PACK: the last packed row-dot call -- 1 the vector kernels, 2 the portable loop over the pack, 0 before any
  * and after a read -- with the vector kernels' passes of 32 rows and blocks of at most 8 */
 static int q8_pack_seen;
@@ -276,6 +289,7 @@ int bcir_ai_q8_pack_probe(size_t *passes, size_t *blocks) {
 #define Q8_SAW(instance) ((void)0)
 #define Q8_BOUND_SAW(path) ((void)0)
 #define Q8_PAIR_SAW(path) ((void)0)
+#define Q8_COLUMNS_SAW(path) ((void)0)
 #define Q8_PACK_SAW(path, passes, blocks) ((void)(passes), (void)(blocks))
 #endif
 
@@ -365,10 +379,13 @@ __attribute__((target("avx512f"))) static void q8_run_avx512_xs(double *y, doubl
   }
 }
 /* The matvec a row at a time over columns [k0, k1) -- the whole call is [0, output_count) -- each row's columns in
- * runs of one group (any shape). */
-static void q8_matvec_runs(int instance, const double *input, size_t input_count, const uint8_t *codes,
-                           const uint8_t *exponents_le, size_t output_count, size_t group_size, size_t k0,
-                           size_t k1, double *output) {
+ * runs of one group (any shape). Each kernel's body is one function always inlined into two instances: the whole
+ * call's, its range the constant [0, output_count) and its code the kernel's before the ranges, and a range's
+ * (DECODE-THREADS: with the range a variable in every call, clang's whole calls ran x1.02-1.12 of their time). */
+#define Q8_INLINE static inline __attribute__((always_inline))
+Q8_INLINE void q8_matvec_runs_cols(int instance, const double *input, size_t input_count, const uint8_t *codes,
+                                   const uint8_t *exponents_le, size_t output_count, size_t group_size, size_t k0,
+                                   size_t k1, double *output) {
   size_t input_index, output_index, index;
   for (output_index = k0; output_index < k1; ++output_index) output[output_index] = 0.0;
   for (input_index = 0u; input_index < input_count; ++input_index) {
@@ -385,9 +402,9 @@ static void q8_matvec_runs(int instance, const double *input, size_t input_count
   }
 }
 /* Q8-BOUND's runs: the same runs with x * s formed once a run */
-static void q8_matvec_runs_xs(int instance, const double *input, size_t input_count, const uint8_t *codes,
-                              const uint8_t *exponents_le, size_t output_count, size_t group_size, size_t k0,
-                              size_t k1, double *output) {
+Q8_INLINE void q8_matvec_runs_xs_cols(int instance, const double *input, size_t input_count, const uint8_t *codes,
+                                      const uint8_t *exponents_le, size_t output_count, size_t group_size, size_t k0,
+                                      size_t k1, double *output) {
   size_t input_index, output_index, index;
   for (output_index = k0; output_index < k1; ++output_index) output[output_index] = 0.0;
   for (input_index = 0u; input_index < input_count; ++input_index) {
@@ -403,6 +420,27 @@ static void q8_matvec_runs_xs(int instance, const double *input, size_t input_co
       index += n;
     }
   }
+}
+static void q8_matvec_runs(int instance, const double *input, size_t input_count, const uint8_t *codes,
+                           const uint8_t *exponents_le, size_t output_count, size_t group_size, double *output) {
+  q8_matvec_runs_cols(instance, input, input_count, codes, exponents_le, output_count, group_size, 0u, output_count,
+                      output);
+}
+static void q8_matvec_runs_range(int instance, const double *input, size_t input_count, const uint8_t *codes,
+                                 const uint8_t *exponents_le, size_t output_count, size_t group_size, size_t k0,
+                                 size_t k1, double *output) {
+  q8_matvec_runs_cols(instance, input, input_count, codes, exponents_le, output_count, group_size, k0, k1, output);
+}
+static void q8_matvec_runs_xs(int instance, const double *input, size_t input_count, const uint8_t *codes,
+                              const uint8_t *exponents_le, size_t output_count, size_t group_size, double *output) {
+  q8_matvec_runs_xs_cols(instance, input, input_count, codes, exponents_le, output_count, group_size, 0u,
+                         output_count, output);
+}
+static void q8_matvec_runs_xs_range(int instance, const double *input, size_t input_count, const uint8_t *codes,
+                                    const uint8_t *exponents_le, size_t output_count, size_t group_size, size_t k0,
+                                    size_t k1, double *output) {
+  q8_matvec_runs_xs_cols(instance, input, input_count, codes, exponents_le, output_count, group_size, k0, k1,
+                         output);
 }
 /* one vector of eight columns' terms: x times each code times their group's scale s */
 __attribute__((target("avx512f"))) static inline __m512d q8_terms512(const uint8_t *c, __m512d vx, double s) {
@@ -484,7 +522,7 @@ __attribute__((target("avx2"))) static inline q8_x8 q8_terms_x8_xs(const uint8_t
     n##r += group_size;                                                                                  \
   }
 #define Q8_PAIR_KERNEL(NAME, TARGET, VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS)                       \
-  __attribute__((target(TARGET))) static void NAME(const double *input, size_t input_count,              \
+  __attribute__((target(TARGET))) Q8_INLINE void NAME##_cols(const double *input, size_t input_count,     \
       const uint8_t *codes, const uint8_t *exponents_le, size_t output_count, size_t group_size,        \
       size_t k0, size_t k1, double *output) {                                                            \
     unsigned shift = 0u;                                                                                 \
@@ -507,6 +545,17 @@ __attribute__((target("avx2"))) static inline q8_x8 q8_terms_x8_xs(const uint8_t
         STOREU(output + k, ADD(LOADU(output + k), TERM(0)));                                             \
       }                                                                                                  \
     }                                                                                                    \
+  }                                                                                                      \
+  __attribute__((target(TARGET))) static void NAME(const double *input, size_t input_count,              \
+      const uint8_t *codes, const uint8_t *exponents_le, size_t output_count, size_t group_size,        \
+      double *output) {                                                                                  \
+    NAME##_cols(input, input_count, codes, exponents_le, output_count, group_size, 0u, output_count,     \
+                output);                                                                                 \
+  }                                                                                                      \
+  __attribute__((target(TARGET))) static void NAME##_range(const double *input, size_t input_count,      \
+      const uint8_t *codes, const uint8_t *exponents_le, size_t output_count, size_t group_size,        \
+      size_t k0, size_t k1, double *output) {                                                            \
+    NAME##_cols(input, input_count, codes, exponents_le, output_count, group_size, k0, k1, output);      \
   }
 /* row r's term at column k: x * (code * s) as before, code * (x * s) where Q8-BOUND proves the call */
 #define Q8_TERM512(r) q8_terms512(c##r + k, m##r, s##r)
@@ -529,7 +578,8 @@ Q8_PAIR_KERNEL(q8_matvec_pair256_xs, "avx2", q8_x8, 8u, q8_x8_loadu, q8_x8_store
 #undef Q8_PAIR_ROW
 /* Q8-BOUND's ranges: every exponent of groups [g0, g1) in [-300, 300] -- (e + 300) as an unsigned 16-bit value at
  * most 600 exactly there */
-__attribute__((target("avx2"))) static int q8_exponents_exact(const uint8_t *exponents_le, size_t g0, size_t g1) {
+__attribute__((target("avx2"))) static inline int q8_exponents_exact(const uint8_t *exponents_le, size_t g0,
+                                                                     size_t g1) {
   const __m256i bias = _mm256_set1_epi16((short)-BCIR_AI_EXP_MIN);
   __m256i top = _mm256_setzero_si256();
   uint16_t lane[16];
@@ -549,7 +599,7 @@ __attribute__((target("avx2"))) static int q8_exponents_exact(const uint8_t *exp
   return 1;
 }
 /* and every nonzero |x| in [2^-722, 2^724). The inputs are finite (every entry checks them before a kernel runs). */
-__attribute__((target("avx2"))) static int q8_input_exact(const double *input, size_t input_count) {
+__attribute__((target("avx2"))) static inline int q8_input_exact(const double *input, size_t input_count) {
   const __m256d magnitude = _mm256_set1_pd(-0.0), low = _mm256_set1_pd(0x1p-722), high = _mm256_set1_pd(0x1p724);
   const __m256d zero = _mm256_setzero_pd();
   __m256d outside = zero;
@@ -568,8 +618,9 @@ __attribute__((target("avx2"))) static int q8_input_exact(const double *input, s
 }
 /* Q8-BOUND's ranges, read once a call: 1 where every exponent of the call's groups and every input lie in them. A
  * call over columns [k0, k1) of the rows (DECODE-THREADS) reads the groups those columns touch, row by row. */
-static int q8_call_exact(const double *input, size_t input_count, const uint8_t *exponents_le, size_t output_count,
-                         size_t group_size, size_t k0, size_t k1) {
+__attribute__((target("avx2"))) static int q8_call_exact(const double *input, size_t input_count,
+                                                          const uint8_t *exponents_le, size_t output_count,
+                                                          size_t group_size, size_t k0, size_t k1) {
   size_t i;
   if (k0 == 0u && k1 == output_count)
     return q8_exponents_exact(exponents_le, 0u, 1u + (input_count * output_count - 1u) / group_size) &&
@@ -581,31 +632,40 @@ static int q8_call_exact(const double *input, size_t input_count, const uint8_t 
   return q8_input_exact(input, input_count);
 }
 /* Q8-BOUND where the call's ranges prove every x * s exact, the terms as before elsewhere; Q8-PAIR where eight columns'
- * terms lie in one group and the columns [k0, k1) start and end on a vector's edge, the runs elsewhere */
+ * terms lie in one group and the columns [k0, k1) start and end on a vector's edge, the runs elsewhere -- each
+ * kernel's whole-call instance where the range is the whole, its range's elsewhere */
+#define Q8_LANES_RUN(KERNEL, ...)                                                                        \
+  do {                                                                                                   \
+    Q8_COLUMNS_SAW(whole ? 1 : 2);                                                                       \
+    if (whole) KERNEL(__VA_ARGS__, output);                                                              \
+    else KERNEL##_range(__VA_ARGS__, k0, k1, output);                                                    \
+  } while (0)
 static void q8_matvec_lanes(int instance, const double *input, size_t input_count, const uint8_t *codes,
                             const uint8_t *exponents_le, size_t output_count, size_t group_size, size_t k0,
                             size_t k1, double *output) {
   int pair = output_count % 8u == 0u && group_size >= 8u && !(group_size & (group_size - 1u)) && k0 % 8u == 0u &&
              k1 % 8u == 0u;
+  int whole = k0 == 0u && k1 == output_count;
   Q8_PAIR_SAW(pair ? 1 : 2);
   if (q8_call_exact(input, input_count, exponents_le, output_count, group_size, k0, k1)) {
     Q8_BOUND_SAW(1);
     if (!pair)
-      q8_matvec_runs_xs(instance, input, input_count, codes, exponents_le, output_count, group_size, k0, k1, output);
+      Q8_LANES_RUN(q8_matvec_runs_xs, instance, input, input_count, codes, exponents_le, output_count, group_size);
     else if (instance == 4)
-      q8_matvec_pair512_xs(input, input_count, codes, exponents_le, output_count, group_size, k0, k1, output);
+      Q8_LANES_RUN(q8_matvec_pair512_xs, input, input_count, codes, exponents_le, output_count, group_size);
     else
-      q8_matvec_pair256_xs(input, input_count, codes, exponents_le, output_count, group_size, k0, k1, output);
+      Q8_LANES_RUN(q8_matvec_pair256_xs, input, input_count, codes, exponents_le, output_count, group_size);
     return;
   }
   Q8_BOUND_SAW(2);
   if (!pair)
-    q8_matvec_runs(instance, input, input_count, codes, exponents_le, output_count, group_size, k0, k1, output);
+    Q8_LANES_RUN(q8_matvec_runs, instance, input, input_count, codes, exponents_le, output_count, group_size);
   else if (instance == 4)
-    q8_matvec_pair512(input, input_count, codes, exponents_le, output_count, group_size, k0, k1, output);
+    Q8_LANES_RUN(q8_matvec_pair512, input, input_count, codes, exponents_le, output_count, group_size);
   else
-    q8_matvec_pair256(input, input_count, codes, exponents_le, output_count, group_size, k0, k1, output);
+    Q8_LANES_RUN(q8_matvec_pair256, input, input_count, codes, exponents_le, output_count, group_size);
 }
+#undef Q8_LANES_RUN
 #endif
 
 /* Instance 1, the portable loops: the tree before Q8-LANES' prevalidated entries, byte for byte, as functions of

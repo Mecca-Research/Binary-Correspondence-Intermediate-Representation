@@ -174,6 +174,69 @@
       "new": "            or not 0 <= columns[0] <= columns[1]\n",
       "old": "            or not 0 <= columns[0] < columns[1] <= output_count\n",
       "path": "bcir/kbcir/native_ai.py"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT24 a range from column 0 run on the whole call's instance",
+      "new": "  int whole = k0 == 0u;",
+      "old": "  int whole = k0 == 0u && k1 == output_count;",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT25 the whole call run on its range's instance",
+      "new": "  int whole = k0 == 0u && k1 == output_count && 0;",
+      "old": "  int whole = k0 == 0u && k1 == output_count;",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT26 the probe reporting the whole call's instance for every range",
+      "new": "Q8_COLUMNS_SAW(1);",
+      "old": "Q8_COLUMNS_SAW(whole ? 1 : 2);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT27 the runs' whole-call instance a column short",
+      "new": "group_size, 0u, output_count - 1u,\n                      output);",
+      "old": "group_size, 0u, output_count,\n                      output);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT28 Q8-BOUND's runs' whole-call instance a column short",
+      "new": "group_size, 0u,\n                         output_count - 1u, output);",
+      "old": "group_size, 0u,\n                         output_count, output);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT29 the pair's whole-call instance a vector short",
+      "new": "group_size, 0u, output_count - 8u, \\",
+      "old": "group_size, 0u, output_count,     \\",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT30 the runs' range instance begun at column 0",
+      "new": "  q8_matvec_runs_cols(instance, input, input_count, codes, exponents_le, output_count, group_size, k0 * 0u, k1, output);",
+      "old": "  q8_matvec_runs_cols(instance, input, input_count, codes, exponents_le, output_count, group_size, k0, k1, output);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT31 Q8-BOUND's runs' range instance begun at column 0",
+      "new": "  q8_matvec_runs_xs_cols(instance, input, input_count, codes, exponents_le, output_count, group_size, k0 * 0u, k1,\n",
+      "old": "  q8_matvec_runs_xs_cols(instance, input, input_count, codes, exponents_le, output_count, group_size, k0, k1,\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT32 the pair's range instance begun at column 0",
+      "new": "    NAME##_cols(input, input_count, codes, exponents_le, output_count, group_size, k0 * 0u, k1, output);",
+      "old": "    NAME##_cols(input, input_count, codes, exponents_le, output_count, group_size, k0, k1, output);",
+      "path": "runtime/c/bcir_ai_kernels.c"
     }
   ]
 }

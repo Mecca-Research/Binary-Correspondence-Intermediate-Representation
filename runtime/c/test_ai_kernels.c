@@ -94,6 +94,7 @@ static int q8_matrix_test(void) {
 int bcir_ai_q8_instance_probe(void);
 int bcir_ai_q8_bound_probe(void);
 int bcir_ai_q8_pair_probe(void);
+int bcir_ai_q8_columns_probe(void);
 int bcir_ai_q8_pack_probe(size_t *passes, size_t *blocks);
 #endif
 static uint64_t lanes_state = UINT64_C(0x9E3779B97F4A7C15);
@@ -227,6 +228,7 @@ static int q8_pair_edges(int instances, int *pairs, int *runs) {
         {
           int path = bcir_ai_q8_pair_probe();
           failed = failed || path != pair_path(out, g);
+          failed = failed || bcir_ai_q8_columns_probe() != 1; /* DECODE-THREADS: the whole call's instance */
           *pairs += path == 1;
           *runs += path == 2;
         }
@@ -492,7 +494,8 @@ static int columns_case(int inst, const double *x, size_t in, const uint8_t *cod
  * succeeded, and a part fails exactly where the whole call does. Every buffer is allocated at its exact size, so the
  * sanitizer build reports a read or write past a matrix's codes, its last group or its outputs. `parts` counts the
  * parts the named vector instances ran; with the probe, `pairs` those Q8-PAIR's kernels ran (a range starting and
- * ending on a vector's edge in a shape whose whole call they run). */
+ * ending on a vector's edge in a shape whose whole call they run), and every vector range ran its kernel's whole-call
+ * instance exactly where it is the whole, [0, out), a range's elsewhere. */
 static int q8_columns_test(int instances, int *parts, int *pairs) {
   static const size_t shapes[][3] = {
       {1, 8, 8},      {2, 8, 8},     {3, 16, 8},   {6, 64, 32},   {7, 40, 16},  {5, 24, 64},  {9, 8, 64},
@@ -533,7 +536,8 @@ static int q8_columns_test(int instances, int *parts, int *pairs) {
 #ifdef BCIR_AI_INSTANCE_PROBE
           if (!bad && inst != 1 && instances != 1) {
             int path = bcir_ai_q8_pair_probe();
-            bad = path != (k0 % 8u == 0u && k1 % 8u == 0u ? pair_path(out, g) : 2);
+            bad = path != (k0 % 8u == 0u && k1 % 8u == 0u ? pair_path(out, g) : 2) ||
+                  bcir_ai_q8_columns_probe() != (k0 == 0u && k1 == out ? 1 : 2);
           }
 #endif
         }
@@ -555,7 +559,8 @@ static int q8_columns_test(int instances, int *parts, int *pairs) {
 #ifdef BCIR_AI_INSTANCE_PROBE
             if (!bad && inst != 1 && instances != 1) {
               int path = bcir_ai_q8_pair_probe();
-              bad = path != (k0 % 8u == 0u && k1 % 8u == 0u ? pair_path(out, g) : 2);
+              bad = path != (k0 % 8u == 0u && k1 % 8u == 0u ? pair_path(out, g) : 2) ||
+                    bcir_ai_q8_columns_probe() != (k0 == 0u && k1 == out ? 1 : 2);
               if (inst == 2 || inst == 4) *pairs += path == 1;
             }
 #endif
