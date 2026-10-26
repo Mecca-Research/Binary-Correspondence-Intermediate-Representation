@@ -5361,6 +5361,44 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     860K decoder's head, x0.992 and x1.061 at TinyLlama's.
   - Not claimed: any other host's clock, or a frequency in hertz; the matvec over rows as well as columns at
     TinyLlama's sizes, still open; counter-based figures (no PMU on this VM).
+  Q8-BOUND (2026-10-26): the C decoder's vector matvecs form x times a group's scale once a row and group where the
+    call's ranges prove every such product exact, one multiply a term where there were two, every output the portable
+    loops' bit for bit ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §35,
+    [measurements/2026-10-26/q8-bound/](research/measurements/2026-10-26/q8-bound/README.json)).
+  - Q8-BOUND (`7224194`): `q8_matvec_lanes` reads a call's ranges once (`q8_call_exact`, AVX2): every exponent of its
+    groups in [-300, 300], the range `bcir_ai_q8_values_validate` admits -- each biased by 300 and compared unsigned,
+    sixteen a vector -- and every nonzero |x| in [2^-722, 2^724). Each `x * s` is then x scaled by a power of two
+    from 2^-300 to 2^300 with neither overflow nor a subnormal result, exact, so `code * (x * s)` rounds to the
+    loop's `x * (code * s)` (`code * s` is exact), and the call takes the hoisted kernels (`q8_matvec_block512_xs`;
+    `q8_matvec_runs_xs` over `q8_run_avx512_xs` and `q8_run_avx2_xs`), no check inside their loops. A call outside
+    the ranges -- the `_instance` and prevalidated entries never check exponents -- takes the committed kernels, as
+    before. NEXT-9 placed it: checked a row and group, the hoist was slower.
+  - Witnesses: the kernel harness's lanes test holds every vector matvec to the path its call's ranges choose, and
+    `q8_bound_edges` runs the ranges' edges (inputs at 2^-722 and a step below, a step below 2^724 and 2^724 itself
+    over zero codes, exponents at +-300 and +-301, inputs whose `x * 2^-300` is subnormal, each range's vectors and
+    its tail), every instance against the portable loops, the status, every byte and the path the bound probe
+    reports; `test_native_ai_c_harness_c11_and_c23` holds each build to 47 hoisted and 52 computed as before a vector
+    instance. `q8-bound.json` QB1-QB18, each caught by its own check; the witnesses before Q8-BOUND catch 5 of the 18
+    -- the ranges ignored, the block's and the runs' scale, the fused term and the summed vector (QB12, QB14-QB17) --
+    and none of the other 13: with each of them in place every output the old harness compares stayed the portable
+    loops' bytes. `q8-lanes.json`'s QL3, QL4, QL5, QL7 and QL22 re-anchored past the hoisted copies of their lines,
+    all 22 caught.
+  - Measured (`7224194` against `7e5572a`, a reading the median of 3 runs): against the tree before's unit the
+    AVX-512 matvec takes x0.870-0.892 of its time at the 860K decoder's shapes under clang and x0.943-0.962 under GCC
+    (x0.872-0.936 and x0.917-1.000 at TinyLlama-1.1B's), the head's row dots, which Q8-BOUND leaves as they were,
+    x1.000-1.006 and x1.001-1.008. In one binary with the choice switched at run time a decoded token is x0.926 of
+    its time under clang (x0.908-0.946, 2 of 3 runs resolved past the A/A control) and x0.972 under GCC
+    (x0.942-0.982, none of 3); NEXT-9's unchecked ceiling read x0.917-0.941 and x0.925-0.965. The clock does not
+    carry clang's: between the matvecs at a decode's duty cycle its cycle reads x0.976-1.002 of the committed
+    kernel's (none of 3 past the A/A control) while the matvecs take x0.894 of its time; under GCC the cycle reads
+    x0.951-0.973 (1 of 3) and the matvecs take x0.924. Under callgrind (the AVX2 instance) the qualification's GEM
+    request takes 211.1 M -> 197.8 M instructions and the monolithic runner 201.0 M -> 187.7 M; its logits keep their
+    SHA-256, 23 of 23 checks on both trees.
+  - Not claimed: the head's row dots (a block's lanes carry eight rows' scales, so no product is shared); the AVX-512
+    runs, which a ragged shape takes and which read x1.017 (clang) and x1.026 (GCC) with the choice on, the scan's
+    cost past the multiply there (no decoder shape here is ragged); any other host's figures or clock;
+    TinyLlama-1.1B's decoder end to end (no artifact of that size here: its shapes are timed at the kernel);
+    counter-based figures (no PMU on this VM).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

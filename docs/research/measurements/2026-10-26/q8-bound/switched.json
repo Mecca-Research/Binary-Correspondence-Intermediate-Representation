@@ -1,0 +1,326 @@
+[
+ {
+  "run": 1,
+  "cc": "clang",
+  "widest": 4,
+  "rounds": 24,
+  "reps": 3,
+  "matvecs_a_generation": 5712,
+  "off_per_token_ms": 0.25098,
+  "on": {
+   "per_token_ms": 0.23458,
+   "ratio": 0.9079,
+   "interval": [
+    0.8662,
+    0.9517
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.249,
+   "ratio": 0.9659,
+   "interval": [
+    0.9211,
+    1.013
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_matvec_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "widest": 2,
+  "rounds": 24,
+  "reps": 3,
+  "matvecs_a_generation": 5712,
+  "off_per_token_ms": 0.2797,
+  "on": {
+   "per_token_ms": 0.26429,
+   "ratio": 0.9781,
+   "interval": [
+    0.9313,
+    1.0272
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.28308,
+   "ratio": 1.0169,
+   "interval": [
+    0.9948,
+    1.0395
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_matvec_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "widest": 4,
+  "rounds": 24,
+  "reps": 3,
+  "matvecs_a_generation": 5712,
+  "off_per_token_ms": 0.24229,
+  "on": {
+   "per_token_ms": 0.23466,
+   "ratio": 0.9723,
+   "interval": [
+    0.9305,
+    1.0159
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.24243,
+   "ratio": 0.9914,
+   "interval": [
+    0.9487,
+    1.036
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_matvec_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "widest": 2,
+  "rounds": 24,
+  "reps": 3,
+  "matvecs_a_generation": 5712,
+  "off_per_token_ms": 0.30683,
+  "on": {
+   "per_token_ms": 0.30101,
+   "ratio": 0.979,
+   "interval": [
+    0.9557,
+    1.0029
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.30911,
+   "ratio": 1.0087,
+   "interval": [
+    0.9812,
+    1.037
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_matvec_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "widest": 4,
+  "rounds": 24,
+  "reps": 3,
+  "matvecs_a_generation": 5712,
+  "off_per_token_ms": 0.24833,
+  "on": {
+   "per_token_ms": 0.22935,
+   "ratio": 0.9456,
+   "interval": [
+    0.9227,
+    0.969
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.24847,
+   "ratio": 1.0292,
+   "interval": [
+    0.9983,
+    1.061
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_matvec_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "widest": 2,
+  "rounds": 24,
+  "reps": 3,
+  "matvecs_a_generation": 5712,
+  "off_per_token_ms": 0.28617,
+  "on": {
+   "per_token_ms": 0.2621,
+   "ratio": 0.9101,
+   "interval": [
+    0.8808,
+    0.9404
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.28758,
+   "ratio": 1.0343,
+   "interval": [
+    0.9876,
+    1.0832
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_matvec_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "widest": 4,
+  "rounds": 24,
+  "reps": 3,
+  "matvecs_a_generation": 5712,
+  "off_per_token_ms": 0.24504,
+  "on": {
+   "per_token_ms": 0.23653,
+   "ratio": 0.9822,
+   "interval": [
+    0.9466,
+    1.0191
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.24681,
+   "ratio": 1.0164,
+   "interval": [
+    0.9834,
+    1.0505
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_matvec_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "widest": 2,
+  "rounds": 24,
+  "reps": 3,
+  "matvecs_a_generation": 5712,
+  "off_per_token_ms": 0.3065,
+  "on": {
+   "per_token_ms": 0.29546,
+   "ratio": 0.9489,
+   "interval": [
+    0.9197,
+    0.979
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.30456,
+   "ratio": 0.986,
+   "interval": [
+    0.9485,
+    1.025
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_matvec_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "widest": 4,
+  "rounds": 24,
+  "reps": 3,
+  "matvecs_a_generation": 5712,
+  "off_per_token_ms": 0.24594,
+  "on": {
+   "per_token_ms": 0.22931,
+   "ratio": 0.9262,
+   "interval": [
+    0.8966,
+    0.9568
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.24578,
+   "ratio": 1.0022,
+   "interval": [
+    0.9596,
+    1.0466
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_matvec_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "widest": 2,
+  "rounds": 24,
+  "reps": 3,
+  "matvecs_a_generation": 5712,
+  "off_per_token_ms": 0.28507,
+  "on": {
+   "per_token_ms": 0.25861,
+   "ratio": 0.9003,
+   "interval": [
+    0.8705,
+    0.9311
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.28811,
+   "ratio": 1.0069,
+   "interval": [
+    0.9637,
+    1.0521
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_matvec_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "widest": 4,
+  "rounds": 24,
+  "reps": 3,
+  "matvecs_a_generation": 5712,
+  "off_per_token_ms": 0.24535,
+  "on": {
+   "per_token_ms": 0.23601,
+   "ratio": 0.9417,
+   "interval": [
+    0.9075,
+    0.9772
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.24476,
+   "ratio": 0.9806,
+   "interval": [
+    0.9468,
+    1.0155
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_matvec_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "widest": 2,
+  "rounds": 24,
+  "reps": 3,
+  "matvecs_a_generation": 5712,
+  "off_per_token_ms": 0.31076,
+  "on": {
+   "per_token_ms": 0.31753,
+   "ratio": 1.0192,
+   "interval": [
+    0.9982,
+    1.0406
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.30936,
+   "ratio": 0.9965,
+   "interval": [
+    0.9777,
+    1.0158
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_matvec_on_its_arms_path": true
+ }
+]

@@ -1,0 +1,2108 @@
+[
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "128,128,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 3.2587
+  },
+  "avx512_on": {
+   "us": 2.8656,
+   "ratio": 0.8689,
+   "interval": [
+    0.8483,
+    0.89
+   ]
+  },
+  "avx2_off": {
+   "us": 3.9358
+  },
+  "avx2_on": {
+   "us": 3.5644,
+   "ratio": 0.9082,
+   "interval": [
+    0.8918,
+    0.9249
+   ]
+  },
+  "A/A": {
+   "us": 3.2636,
+   "ratio": 1.0049,
+   "interval": [
+    0.9742,
+    1.0365
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "128,64,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 1.6793
+  },
+  "avx512_on": {
+   "us": 1.4617,
+   "ratio": 0.8535,
+   "interval": [
+    0.7635,
+    0.954
+   ]
+  },
+  "avx2_off": {
+   "us": 2.1371
+  },
+  "avx2_on": {
+   "us": 1.8903,
+   "ratio": 0.8933,
+   "interval": [
+    0.8561,
+    0.9322
+   ]
+  },
+  "A/A": {
+   "us": 1.6836,
+   "ratio": 0.9597,
+   "interval": [
+    0.869,
+    1.0597
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "128,344,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 13.5014
+  },
+  "avx512_on": {
+   "us": 10.4615,
+   "ratio": 0.8316,
+   "interval": [
+    0.7527,
+    0.9188
+   ]
+  },
+  "avx2_off": {
+   "us": 18.7424
+  },
+  "avx2_on": {
+   "us": 17.6196,
+   "ratio": 0.9631,
+   "interval": [
+    0.9263,
+    1.0013
+   ]
+  },
+  "A/A": {
+   "us": 13.4145,
+   "ratio": 0.994,
+   "interval": [
+    0.8991,
+    1.0988
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "344,128,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 8.4528
+  },
+  "avx512_on": {
+   "us": 7.5033,
+   "ratio": 0.8797,
+   "interval": [
+    0.8663,
+    0.8934
+   ]
+  },
+  "avx2_off": {
+   "us": 10.4544
+  },
+  "avx2_on": {
+   "us": 9.3989,
+   "ratio": 0.8959,
+   "interval": [
+    0.8872,
+    0.9046
+   ]
+  },
+  "A/A": {
+   "us": 8.5395,
+   "ratio": 1.003,
+   "interval": [
+    0.9901,
+    1.0162
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "128,100,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 3.4066
+  },
+  "avx512_on": {
+   "us": 3.4573,
+   "ratio": 1.0169,
+   "interval": [
+    1.0061,
+    1.0278
+   ]
+  },
+  "avx2_off": {
+   "us": 3.3988
+  },
+  "avx2_on": {
+   "us": 3.4215,
+   "ratio": 1.0098,
+   "interval": [
+    0.9998,
+    1.02
+   ]
+  },
+  "A/A": {
+   "us": 3.4166,
+   "ratio": 0.9995,
+   "interval": [
+    0.988,
+    1.0111
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "2048,2048,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 1281.3788
+  },
+  "avx512_on": {
+   "us": 1127.5275,
+   "ratio": 0.9266,
+   "interval": [
+    0.8528,
+    1.0067
+   ]
+  },
+  "avx2_off": {
+   "us": 1072.2267
+  },
+  "avx2_on": {
+   "us": 986.265,
+   "ratio": 0.9904,
+   "interval": [
+    0.8637,
+    1.1356
+   ]
+  },
+  "A/A": {
+   "us": 1290.6395,
+   "ratio": 1.0502,
+   "interval": [
+    0.9631,
+    1.1451
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "2048,256,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 98.1033
+  },
+  "avx512_on": {
+   "us": 88.2717,
+   "ratio": 0.8656,
+   "interval": [
+    0.7969,
+    0.9403
+   ]
+  },
+  "avx2_off": {
+   "us": 122.8343
+  },
+  "avx2_on": {
+   "us": 131.9075,
+   "ratio": 1.0934,
+   "interval": [
+    1.0581,
+    1.1299
+   ]
+  },
+  "A/A": {
+   "us": 97.2275,
+   "ratio": 0.958,
+   "interval": [
+    0.8577,
+    1.07
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "2048,5632,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 3686.2363
+  },
+  "avx512_on": {
+   "us": 3284.8518,
+   "ratio": 0.8955,
+   "interval": [
+    0.8744,
+    0.9172
+   ]
+  },
+  "avx2_off": {
+   "us": 2894.8043
+  },
+  "avx2_on": {
+   "us": 2673.1783,
+   "ratio": 0.9239,
+   "interval": [
+    0.9089,
+    0.9392
+   ]
+  },
+  "A/A": {
+   "us": 3677.7792,
+   "ratio": 0.9997,
+   "interval": [
+    0.9786,
+    1.0211
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "case": "5632,2048,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 3898.9275
+  },
+  "avx512_on": {
+   "us": 3575.4888,
+   "ratio": 0.8976,
+   "interval": [
+    0.8507,
+    0.947
+   ]
+  },
+  "avx2_off": {
+   "us": 2993.5062
+  },
+  "avx2_on": {
+   "us": 2859.9392,
+   "ratio": 0.953,
+   "interval": [
+    0.9115,
+    0.9964
+   ]
+  },
+  "A/A": {
+   "us": 3892.0597,
+   "ratio": 0.9667,
+   "interval": [
+    0.9121,
+    1.0245
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "128,128,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 2.9151
+  },
+  "avx512_on": {
+   "us": 2.7454,
+   "ratio": 0.9241,
+   "interval": [
+    0.8801,
+    0.9702
+   ]
+  },
+  "avx2_off": {
+   "us": 4.1527
+  },
+  "avx2_on": {
+   "us": 4.0474,
+   "ratio": 0.9793,
+   "interval": [
+    0.9401,
+    1.0202
+   ]
+  },
+  "A/A": {
+   "us": 2.963,
+   "ratio": 1.0324,
+   "interval": [
+    0.9985,
+    1.0675
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "128,64,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 1.4919
+  },
+  "avx512_on": {
+   "us": 1.4637,
+   "ratio": 0.9743,
+   "interval": [
+    0.9181,
+    1.034
+   ]
+  },
+  "avx2_off": {
+   "us": 2.1212
+  },
+  "avx2_on": {
+   "us": 2.0454,
+   "ratio": 0.959,
+   "interval": [
+    0.9234,
+    0.996
+   ]
+  },
+  "A/A": {
+   "us": 1.505,
+   "ratio": 1.0065,
+   "interval": [
+    0.9691,
+    1.0453
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "128,344,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 8.1156
+  },
+  "avx512_on": {
+   "us": 7.7372,
+   "ratio": 0.9337,
+   "interval": [
+    0.9041,
+    0.9643
+   ]
+  },
+  "avx2_off": {
+   "us": 11.0883
+  },
+  "avx2_on": {
+   "us": 11.2527,
+   "ratio": 1.0218,
+   "interval": [
+    0.9561,
+    1.092
+   ]
+  },
+  "A/A": {
+   "us": 8.021,
+   "ratio": 0.9869,
+   "interval": [
+    0.9398,
+    1.0363
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "344,128,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 7.677
+  },
+  "avx512_on": {
+   "us": 7.1969,
+   "ratio": 0.9508,
+   "interval": [
+    0.9266,
+    0.9756
+   ]
+  },
+  "avx2_off": {
+   "us": 10.9476
+  },
+  "avx2_on": {
+   "us": 10.4778,
+   "ratio": 0.9521,
+   "interval": [
+    0.9088,
+    0.9974
+   ]
+  },
+  "A/A": {
+   "us": 7.627,
+   "ratio": 0.997,
+   "interval": [
+    0.9797,
+    1.0146
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "128,100,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 3.9567
+  },
+  "avx512_on": {
+   "us": 4.0286,
+   "ratio": 1.0083,
+   "interval": [
+    0.9839,
+    1.0334
+   ]
+  },
+  "avx2_off": {
+   "us": 3.8072
+  },
+  "avx2_on": {
+   "us": 3.8851,
+   "ratio": 0.9848,
+   "interval": [
+    0.9477,
+    1.0234
+   ]
+  },
+  "A/A": {
+   "us": 3.9741,
+   "ratio": 0.9951,
+   "interval": [
+    0.9654,
+    1.0258
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "2048,2048,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 1713.4267
+  },
+  "avx512_on": {
+   "us": 1567.9202,
+   "ratio": 0.9087,
+   "interval": [
+    0.8274,
+    0.9979
+   ]
+  },
+  "avx2_off": {
+   "us": 1822.4922
+  },
+  "avx2_on": {
+   "us": 1767.7512,
+   "ratio": 0.9628,
+   "interval": [
+    0.9419,
+    0.9841
+   ]
+  },
+  "A/A": {
+   "us": 1691.4068,
+   "ratio": 1.0618,
+   "interval": [
+    0.9054,
+    1.2453
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "2048,256,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 89.7957
+  },
+  "avx512_on": {
+   "us": 79.6262,
+   "ratio": 0.9154,
+   "interval": [
+    0.846,
+    0.9904
+   ]
+  },
+  "avx2_off": {
+   "us": 131.453
+  },
+  "avx2_on": {
+   "us": 124.2468,
+   "ratio": 0.9572,
+   "interval": [
+    0.9011,
+    1.0168
+   ]
+  },
+  "A/A": {
+   "us": 95.8225,
+   "ratio": 1.0535,
+   "interval": [
+    0.9851,
+    1.1266
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "2048,5632,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 3302.1333
+  },
+  "avx512_on": {
+   "us": 3141.3248,
+   "ratio": 0.9503,
+   "interval": [
+    0.927,
+    0.9741
+   ]
+  },
+  "avx2_off": {
+   "us": 3022.7707
+  },
+  "avx2_on": {
+   "us": 2969.8733,
+   "ratio": 0.9854,
+   "interval": [
+    0.9671,
+    1.0041
+   ]
+  },
+  "A/A": {
+   "us": 3296.513,
+   "ratio": 1.0109,
+   "interval": [
+    0.9733,
+    1.05
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "case": "5632,2048,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 3828.6872
+  },
+  "avx512_on": {
+   "us": 3597.4422,
+   "ratio": 0.9419,
+   "interval": [
+    0.932,
+    0.9519
+   ]
+  },
+  "avx2_off": {
+   "us": 3156.6648
+  },
+  "avx2_on": {
+   "us": 3001.4672,
+   "ratio": 0.9538,
+   "interval": [
+    0.9275,
+    0.9809
+   ]
+  },
+  "A/A": {
+   "us": 3860.1183,
+   "ratio": 1.0105,
+   "interval": [
+    0.9871,
+    1.0345
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "128,128,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 4.0636
+  },
+  "avx512_on": {
+   "us": 4.0682,
+   "ratio": 0.9971,
+   "interval": [
+    0.9768,
+    1.0178
+   ]
+  },
+  "avx2_off": {
+   "us": 4.0095
+  },
+  "avx2_on": {
+   "us": 3.6911,
+   "ratio": 0.9162,
+   "interval": [
+    0.8807,
+    0.9532
+   ]
+  },
+  "A/A": {
+   "us": 4.0951,
+   "ratio": 0.9997,
+   "interval": [
+    0.9815,
+    1.0184
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "128,64,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 2.0493
+  },
+  "avx512_on": {
+   "us": 2.0459,
+   "ratio": 0.9957,
+   "interval": [
+    0.9424,
+    1.0521
+   ]
+  },
+  "avx2_off": {
+   "us": 2.0493
+  },
+  "avx2_on": {
+   "us": 1.9084,
+   "ratio": 0.9154,
+   "interval": [
+    0.8756,
+    0.9571
+   ]
+  },
+  "A/A": {
+   "us": 2.0424,
+   "ratio": 0.9788,
+   "interval": [
+    0.9331,
+    1.0267
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "128,344,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 10.4221
+  },
+  "avx512_on": {
+   "us": 10.4937,
+   "ratio": 0.9507,
+   "interval": [
+    0.8856,
+    1.0206
+   ]
+  },
+  "avx2_off": {
+   "us": 10.9364
+  },
+  "avx2_on": {
+   "us": 11.6337,
+   "ratio": 0.9997,
+   "interval": [
+    0.9037,
+    1.106
+   ]
+  },
+  "A/A": {
+   "us": 10.6307,
+   "ratio": 0.9935,
+   "interval": [
+    0.9443,
+    1.0453
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "344,128,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 10.2915
+  },
+  "avx512_on": {
+   "us": 10.2517,
+   "ratio": 0.9871,
+   "interval": [
+    0.9744,
+    1.0001
+   ]
+  },
+  "avx2_off": {
+   "us": 10.3766
+  },
+  "avx2_on": {
+   "us": 9.495,
+   "ratio": 0.9279,
+   "interval": [
+    0.8863,
+    0.9714
+   ]
+  },
+  "A/A": {
+   "us": 10.2912,
+   "ratio": 0.9985,
+   "interval": [
+    0.9838,
+    1.0135
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "128,100,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 3.4036
+  },
+  "avx512_on": {
+   "us": 3.4744,
+   "ratio": 1.0248,
+   "interval": [
+    1.0131,
+    1.0367
+   ]
+  },
+  "avx2_off": {
+   "us": 3.4233
+  },
+  "avx2_on": {
+   "us": 3.4229,
+   "ratio": 0.9994,
+   "interval": [
+    0.9892,
+    1.0097
+   ]
+  },
+  "A/A": {
+   "us": 3.4361,
+   "ratio": 1.0101,
+   "interval": [
+    0.9972,
+    1.0232
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "2048,2048,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 1165.1802
+  },
+  "avx512_on": {
+   "us": 1048.254,
+   "ratio": 0.8644,
+   "interval": [
+    0.7945,
+    0.9404
+   ]
+  },
+  "avx2_off": {
+   "us": 1016.698
+  },
+  "avx2_on": {
+   "us": 944.1288,
+   "ratio": 0.9278,
+   "interval": [
+    0.9059,
+    0.9503
+   ]
+  },
+  "A/A": {
+   "us": 1175.4078,
+   "ratio": 0.9694,
+   "interval": [
+    0.8976,
+    1.0469
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "2048,256,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 101.2223
+  },
+  "avx512_on": {
+   "us": 89.8757,
+   "ratio": 0.8975,
+   "interval": [
+    0.8589,
+    0.9377
+   ]
+  },
+  "avx2_off": {
+   "us": 122.2832
+  },
+  "avx2_on": {
+   "us": 129.0077,
+   "ratio": 1.0617,
+   "interval": [
+    1.0264,
+    1.0982
+   ]
+  },
+  "A/A": {
+   "us": 97.4508,
+   "ratio": 0.9976,
+   "interval": [
+    0.9595,
+    1.0372
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "2048,5632,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 3420.757
+  },
+  "avx512_on": {
+   "us": 3134.1575,
+   "ratio": 0.9404,
+   "interval": [
+    0.874,
+    1.0118
+   ]
+  },
+  "avx2_off": {
+   "us": 2891.3492
+  },
+  "avx2_on": {
+   "us": 2671.2262,
+   "ratio": 0.9081,
+   "interval": [
+    0.8629,
+    0.9558
+   ]
+  },
+  "A/A": {
+   "us": 3472.2657,
+   "ratio": 1.0139,
+   "interval": [
+    0.9916,
+    1.0366
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "case": "5632,2048,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 3848.759
+  },
+  "avx512_on": {
+   "us": 3518.85,
+   "ratio": 0.9462,
+   "interval": [
+    0.8477,
+    1.0562
+   ]
+  },
+  "avx2_off": {
+   "us": 2985.5292
+  },
+  "avx2_on": {
+   "us": 2825.6583,
+   "ratio": 0.8873,
+   "interval": [
+    0.7649,
+    1.0293
+   ]
+  },
+  "A/A": {
+   "us": 3802.669,
+   "ratio": 1.0122,
+   "interval": [
+    0.9677,
+    1.0588
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "128,128,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 2.9541
+  },
+  "avx512_on": {
+   "us": 2.7462,
+   "ratio": 0.9328,
+   "interval": [
+    0.9008,
+    0.9661
+   ]
+  },
+  "avx2_off": {
+   "us": 4.1999
+  },
+  "avx2_on": {
+   "us": 4.117,
+   "ratio": 1.1435,
+   "interval": [
+    0.882,
+    1.4826
+   ]
+  },
+  "A/A": {
+   "us": 2.9962,
+   "ratio": 1.0041,
+   "interval": [
+    0.9774,
+    1.0316
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "128,64,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 1.5199
+  },
+  "avx512_on": {
+   "us": 1.4117,
+   "ratio": 0.9673,
+   "interval": [
+    0.9336,
+    1.0023
+   ]
+  },
+  "avx2_off": {
+   "us": 2.0938
+  },
+  "avx2_on": {
+   "us": 2.0866,
+   "ratio": 0.953,
+   "interval": [
+    0.9027,
+    1.0062
+   ]
+  },
+  "A/A": {
+   "us": 1.5493,
+   "ratio": 1.0244,
+   "interval": [
+    0.9981,
+    1.0514
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "128,344,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 8.0482
+  },
+  "avx512_on": {
+   "us": 7.7665,
+   "ratio": 0.9388,
+   "interval": [
+    0.893,
+    0.9868
+   ]
+  },
+  "avx2_off": {
+   "us": 11.2738
+  },
+  "avx2_on": {
+   "us": 11.51,
+   "ratio": 1.006,
+   "interval": [
+    0.962,
+    1.052
+   ]
+  },
+  "A/A": {
+   "us": 7.9706,
+   "ratio": 0.9803,
+   "interval": [
+    0.9595,
+    1.0016
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "344,128,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 7.524
+  },
+  "avx512_on": {
+   "us": 7.1263,
+   "ratio": 0.9467,
+   "interval": [
+    0.9384,
+    0.955
+   ]
+  },
+  "avx2_off": {
+   "us": 10.9029
+  },
+  "avx2_on": {
+   "us": 10.42,
+   "ratio": 0.9585,
+   "interval": [
+    0.9467,
+    0.9704
+   ]
+  },
+  "A/A": {
+   "us": 7.5898,
+   "ratio": 1.0144,
+   "interval": [
+    0.9987,
+    1.0303
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "128,100,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 3.8917
+  },
+  "avx512_on": {
+   "us": 3.9931,
+   "ratio": 1.0256,
+   "interval": [
+    1.0136,
+    1.0377
+   ]
+  },
+  "avx2_off": {
+   "us": 3.7941
+  },
+  "avx2_on": {
+   "us": 3.822,
+   "ratio": 1.0097,
+   "interval": [
+    0.998,
+    1.0215
+   ]
+  },
+  "A/A": {
+   "us": 3.8961,
+   "ratio": 1.0017,
+   "interval": [
+    0.9887,
+    1.0148
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "2048,2048,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 1259.0093
+  },
+  "avx512_on": {
+   "us": 1145.8702,
+   "ratio": 0.9139,
+   "interval": [
+    0.8858,
+    0.9429
+   ]
+  },
+  "avx2_off": {
+   "us": 1065.2135
+  },
+  "avx2_on": {
+   "us": 1035.4733,
+   "ratio": 0.9716,
+   "interval": [
+    0.9546,
+    0.9889
+   ]
+  },
+  "A/A": {
+   "us": 1266.8207,
+   "ratio": 0.9965,
+   "interval": [
+    0.9729,
+    1.0206
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "2048,256,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 87.1618
+  },
+  "avx512_on": {
+   "us": 80.3815,
+   "ratio": 0.9302,
+   "interval": [
+    0.8996,
+    0.9617
+   ]
+  },
+  "avx2_off": {
+   "us": 125.9492
+  },
+  "avx2_on": {
+   "us": 120.783,
+   "ratio": 0.9628,
+   "interval": [
+    0.9442,
+    0.9818
+   ]
+  },
+  "A/A": {
+   "us": 86.7557,
+   "ratio": 0.999,
+   "interval": [
+    0.9675,
+    1.0315
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "2048,5632,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 3352.5248
+  },
+  "avx512_on": {
+   "us": 3185.0107,
+   "ratio": 0.8988,
+   "interval": [
+    0.8094,
+    0.9981
+   ]
+  },
+  "avx2_off": {
+   "us": 2974.3577
+  },
+  "avx2_on": {
+   "us": 2963.1752,
+   "ratio": 0.9956,
+   "interval": [
+    0.8951,
+    1.1075
+   ]
+  },
+  "A/A": {
+   "us": 3365.0468,
+   "ratio": 1.0119,
+   "interval": [
+    0.9747,
+    1.0506
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "case": "5632,2048,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 3585.7145
+  },
+  "avx512_on": {
+   "us": 3344.0152,
+   "ratio": 0.9417,
+   "interval": [
+    0.9026,
+    0.9826
+   ]
+  },
+  "avx2_off": {
+   "us": 3131.1185
+  },
+  "avx2_on": {
+   "us": 2965.63,
+   "ratio": 0.9018,
+   "interval": [
+    0.8266,
+    0.9838
+   ]
+  },
+  "A/A": {
+   "us": 3589.937,
+   "ratio": 1.0035,
+   "interval": [
+    0.9803,
+    1.0272
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "128,128,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 3.2463
+  },
+  "avx512_on": {
+   "us": 2.9039,
+   "ratio": 0.9947,
+   "interval": [
+    0.7951,
+    1.2444
+   ]
+  },
+  "avx2_off": {
+   "us": 3.9691
+  },
+  "avx2_on": {
+   "us": 3.5923,
+   "ratio": 0.9221,
+   "interval": [
+    0.8999,
+    0.9448
+   ]
+  },
+  "A/A": {
+   "us": 3.2702,
+   "ratio": 1.0162,
+   "interval": [
+    0.995,
+    1.0378
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "128,64,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 1.6509
+  },
+  "avx512_on": {
+   "us": 1.4912,
+   "ratio": 0.8924,
+   "interval": [
+    0.8677,
+    0.9177
+   ]
+  },
+  "avx2_off": {
+   "us": 2.0963
+  },
+  "avx2_on": {
+   "us": 1.9625,
+   "ratio": 0.9275,
+   "interval": [
+    0.9032,
+    0.9526
+   ]
+  },
+  "A/A": {
+   "us": 1.7007,
+   "ratio": 1.0563,
+   "interval": [
+    0.9762,
+    1.143
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "128,344,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 8.8315
+  },
+  "avx512_on": {
+   "us": 7.8089,
+   "ratio": 0.8794,
+   "interval": [
+    0.8615,
+    0.8977
+   ]
+  },
+  "avx2_off": {
+   "us": 10.6915
+  },
+  "avx2_on": {
+   "us": 11.1036,
+   "ratio": 1.0364,
+   "interval": [
+    1.0241,
+    1.0489
+   ]
+  },
+  "A/A": {
+   "us": 8.7746,
+   "ratio": 0.9953,
+   "interval": [
+    0.9674,
+    1.024
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "344,128,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 8.5382
+  },
+  "avx512_on": {
+   "us": 7.535,
+   "ratio": 0.879,
+   "interval": [
+    0.865,
+    0.8933
+   ]
+  },
+  "avx2_off": {
+   "us": 10.6193
+  },
+  "avx2_on": {
+   "us": 9.4396,
+   "ratio": 0.8898,
+   "interval": [
+    0.8564,
+    0.9246
+   ]
+  },
+  "A/A": {
+   "us": 8.5381,
+   "ratio": 0.9913,
+   "interval": [
+    0.9731,
+    1.0098
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "128,100,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 3.4195
+  },
+  "avx512_on": {
+   "us": 3.4558,
+   "ratio": 1.0082,
+   "interval": [
+    0.9877,
+    1.0291
+   ]
+  },
+  "avx2_off": {
+   "us": 3.4312
+  },
+  "avx2_on": {
+   "us": 3.4206,
+   "ratio": 0.9843,
+   "interval": [
+    0.958,
+    1.0113
+   ]
+  },
+  "A/A": {
+   "us": 3.44,
+   "ratio": 1.0415,
+   "interval": [
+    0.9849,
+    1.1014
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "2048,2048,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 1219.8147
+  },
+  "avx512_on": {
+   "us": 1071.5803,
+   "ratio": 0.9503,
+   "interval": [
+    0.8014,
+    1.127
+   ]
+  },
+  "avx2_off": {
+   "us": 1017.9037
+  },
+  "avx2_on": {
+   "us": 964.4378,
+   "ratio": 0.8958,
+   "interval": [
+    0.7931,
+    1.0118
+   ]
+  },
+  "A/A": {
+   "us": 1208.0748,
+   "ratio": 0.963,
+   "interval": [
+    0.9057,
+    1.0239
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "2048,256,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 96.4713
+  },
+  "avx512_on": {
+   "us": 84.4042,
+   "ratio": 0.9228,
+   "interval": [
+    0.8574,
+    0.9932
+   ]
+  },
+  "avx2_off": {
+   "us": 123.4835
+  },
+  "avx2_on": {
+   "us": 129.29,
+   "ratio": 1.0509,
+   "interval": [
+    1.0132,
+    1.09
+   ]
+  },
+  "A/A": {
+   "us": 97.6405,
+   "ratio": 1.021,
+   "interval": [
+    0.9859,
+    1.0574
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "2048,5632,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 3503.8587
+  },
+  "avx512_on": {
+   "us": 3145.1552,
+   "ratio": 0.952,
+   "interval": [
+    0.846,
+    1.0714
+   ]
+  },
+  "avx2_off": {
+   "us": 2880.9357
+  },
+  "avx2_on": {
+   "us": 2652.1622,
+   "ratio": 0.8269,
+   "interval": [
+    0.6933,
+    0.9861
+   ]
+  },
+  "A/A": {
+   "us": 3523.9885,
+   "ratio": 0.9968,
+   "interval": [
+    0.955,
+    1.0406
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "case": "5632,2048,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 3733.6965
+  },
+  "avx512_on": {
+   "us": 3629.374,
+   "ratio": 0.9796,
+   "interval": [
+    0.914,
+    1.05
+   ]
+  },
+  "avx2_off": {
+   "us": 2990.1395
+  },
+  "avx2_on": {
+   "us": 2848.1787,
+   "ratio": 0.9398,
+   "interval": [
+    0.9108,
+    0.9696
+   ]
+  },
+  "A/A": {
+   "us": 3795.8913,
+   "ratio": 1.0181,
+   "interval": [
+    0.9756,
+    1.0625
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "128,128,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 3.4599
+  },
+  "avx512_on": {
+   "us": 3.4039,
+   "ratio": 0.973,
+   "interval": [
+    0.9486,
+    0.998
+   ]
+  },
+  "avx2_off": {
+   "us": 5.6946
+  },
+  "avx2_on": {
+   "us": 5.4326,
+   "ratio": 0.9634,
+   "interval": [
+    0.93,
+    0.998
+   ]
+  },
+  "A/A": {
+   "us": 3.4322,
+   "ratio": 1.0041,
+   "interval": [
+    0.9806,
+    1.0283
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "128,64,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 1.4885
+  },
+  "avx512_on": {
+   "us": 1.4219,
+   "ratio": 0.9528,
+   "interval": [
+    0.9232,
+    0.9833
+   ]
+  },
+  "avx2_off": {
+   "us": 2.0569
+  },
+  "avx2_on": {
+   "us": 1.9988,
+   "ratio": 0.9709,
+   "interval": [
+    0.9556,
+    0.9864
+   ]
+  },
+  "A/A": {
+   "us": 1.4799,
+   "ratio": 0.9966,
+   "interval": [
+    0.9659,
+    1.0282
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "128,344,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 7.9127
+  },
+  "avx512_on": {
+   "us": 7.4697,
+   "ratio": 0.9438,
+   "interval": [
+    0.9287,
+    0.9591
+   ]
+  },
+  "avx2_off": {
+   "us": 10.9026
+  },
+  "avx2_on": {
+   "us": 10.9558,
+   "ratio": 1.0078,
+   "interval": [
+    1.0027,
+    1.013
+   ]
+  },
+  "A/A": {
+   "us": 7.9575,
+   "ratio": 0.9992,
+   "interval": [
+    0.9844,
+    1.0142
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "344,128,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 7.5045
+  },
+  "avx512_on": {
+   "us": 7.0229,
+   "ratio": 0.9437,
+   "interval": [
+    0.935,
+    0.9524
+   ]
+  },
+  "avx2_off": {
+   "us": 10.8148
+  },
+  "avx2_on": {
+   "us": 10.3566,
+   "ratio": 1.0195,
+   "interval": [
+    0.894,
+    1.1626
+   ]
+  },
+  "A/A": {
+   "us": 7.5271,
+   "ratio": 1.0042,
+   "interval": [
+    0.9928,
+    1.0158
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "128,100,32",
+  "rounds": 15,
+  "reps": 200,
+  "avx512_off": {
+   "us": 3.9172
+  },
+  "avx512_on": {
+   "us": 3.9904,
+   "ratio": 1.0263,
+   "interval": [
+    0.9957,
+    1.0578
+   ]
+  },
+  "avx2_off": {
+   "us": 3.7478
+  },
+  "avx2_on": {
+   "us": 3.7857,
+   "ratio": 1.0012,
+   "interval": [
+    0.9838,
+    1.019
+   ]
+  },
+  "A/A": {
+   "us": 3.9087,
+   "ratio": 0.9932,
+   "interval": [
+    0.9754,
+    1.0112
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "2048,2048,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 1315.0335
+  },
+  "avx512_on": {
+   "us": 1176.4153,
+   "ratio": 0.9019,
+   "interval": [
+    0.8859,
+    0.9182
+   ]
+  },
+  "avx2_off": {
+   "us": 1075.0963
+  },
+  "avx2_on": {
+   "us": 1043.1172,
+   "ratio": 0.9842,
+   "interval": [
+    0.9442,
+    1.0259
+   ]
+  },
+  "A/A": {
+   "us": 1286.4083,
+   "ratio": 0.9794,
+   "interval": [
+    0.9663,
+    0.9927
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "2048,256,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 85.221
+  },
+  "avx512_on": {
+   "us": 79.5068,
+   "ratio": 0.9356,
+   "interval": [
+    0.9016,
+    0.9708
+   ]
+  },
+  "avx2_off": {
+   "us": 126.635
+  },
+  "avx2_on": {
+   "us": 123.5968,
+   "ratio": 0.9741,
+   "interval": [
+    0.935,
+    1.0149
+   ]
+  },
+  "A/A": {
+   "us": 86.4855,
+   "ratio": 1.0179,
+   "interval": [
+    0.9833,
+    1.0538
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "2048,5632,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 3384.0367
+  },
+  "avx512_on": {
+   "us": 3245.4897,
+   "ratio": 0.9996,
+   "interval": [
+    0.9228,
+    1.0829
+   ]
+  },
+  "avx2_off": {
+   "us": 2991.3375
+  },
+  "avx2_on": {
+   "us": 2947.8572,
+   "ratio": 0.9664,
+   "interval": [
+    0.8939,
+    1.0447
+   ]
+  },
+  "A/A": {
+   "us": 3400.6708,
+   "ratio": 1.0402,
+   "interval": [
+    0.9684,
+    1.1173
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "case": "5632,2048,32",
+  "rounds": 10,
+  "reps": 3,
+  "avx512_off": {
+   "us": 3987.7348
+  },
+  "avx512_on": {
+   "us": 3732.2207,
+   "ratio": 0.9354,
+   "interval": [
+    0.9317,
+    0.939
+   ]
+  },
+  "avx2_off": {
+   "us": 3208.0638
+  },
+  "avx2_on": {
+   "us": 2997.0947,
+   "ratio": 0.9344,
+   "interval": [
+    0.915,
+    0.9543
+   ]
+  },
+  "A/A": {
+   "us": 4053.2815,
+   "ratio": 1.0052,
+   "interval": [
+    0.9927,
+    1.0178
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_path": true
+ }
+]

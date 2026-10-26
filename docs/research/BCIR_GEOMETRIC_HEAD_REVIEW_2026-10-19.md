@@ -2463,3 +2463,90 @@ Not claimed: any other host's clock, or a frequency in hertz (the probe reads cy
 reports no counter); a hoist at TinyLlama's shapes alone; the matvec over rows as well as columns at TinyLlama's sizes
 (the AVX-512 block's walk down every row, x0.27-0.37 against AVX2's runs' x0.23-0.33 in Q8-LANES' records), still
 open; counter-based figures (no PMU on this VM).
+
+## 35. Q8-BOUND: the C decoder's matvec hoist with its exactness proved once a call (2026-10-26)
+
+NEXT-9 left the hoist's room measured and its check placed: `code * (x * s)` rounds to `x * (code * s)`'s bits
+wherever `x * s` is exact, and checking that a row and group cost more than the multiply it saves. Q8-BOUND proves it
+once a call instead, from the call's own ranges
+([measurements/2026-10-26/q8-bound/](measurements/2026-10-26/q8-bound/README.json)).
+
+**The bound.** s = 2^e. Every exponent a BCIRQ8 artifact can carry is in [-300, 300] (`bcir_ai_q8_values_validate`
+refuses any other), so `x * s` is x scaled by a power of two from 2^-300 to 2^300: exact unless it leaves the normal
+doubles. It cannot where every nonzero |x| is in [2^-722, 2^724): the smallest product is then at least 2^-722 *
+2^-300 = 2^-1022, the least normal double, and the largest below 2^724 * 2^300 = 2^1024, so finite. A zero x gives a
+zero `x * s`, exact. Under those ranges every `x * s` of the call is exact, every term `code * (x * s)` the loop's
+`x * (code * s)` bit for bit, and every output the portable loops'. `q8_call_exact` reads both ranges once a call
+with AVX2: the exponents sixteen a vector, each biased by 300 and compared unsigned, so that a 16-bit value at most
+600 is exactly an exponent in range (`_mm256_max_epu16`), and the inputs four a vector, their magnitudes against the
+two edges with zero let through; each range's tail scalar. Where both hold the call runs the hoisted kernels --
+`q8_matvec_block512_xs`, and `q8_matvec_runs_xs` over `q8_run_avx512_xs` and `q8_run_avx2_xs` -- one multiply a term
+where there were two and no check inside their loops; otherwise the committed kernels, as before. The `_instance` and
+prevalidated entries never check exponents, so a call can reach the kernel with exponents past the format's (the
+harness's exponent ranges past a normal double's do): those calls are computed as before.
+
+**Witnesses.** The kernel harness's lanes test now holds every vector matvec to the path its call's ranges choose
+(the format's and the narrow exponents hoisted, those past a normal double's not), and `q8_bound_edges` runs the
+ranges' edges over 7 inputs, 40 outputs and 18 groups of 16 -- inputs at 2^-722 and a step below it, a step below
+2^724 and 2^724 itself over zero codes (where `0 * (x * s)` would be NaN), exponents at +-300 and at +-301, inputs
+whose `x * 2^-300` is subnormal, each range in the scan's vectors and in its tail -- every instance against the
+portable loops, the status and every byte, and the path the bound probe (`bcir_ai_q8_bound_probe`) reports.
+`test_native_ai_c_harness_c11_and_c23` holds each build to 47 matvecs hoisted and 52 computed as before a vector
+instance. `q8-bound.json` injects eighteen faults, QB1-QB18 -- each edge loosened, an exponent past 300 admitted in
+the vectors and in the tail, the exponents compared signed, a tail or the last group left unread, a zero counted
+outside, the ranges ignored, the hoist never taken, the block's product kept from the row's first group, a run's
+terms without the scale, a hoisted term fused, a vector summed into its neighbour, the probe misreporting -- each
+caught by its own check. Swept again over the tree after's kernels under the witnesses there were before Q8-BOUND
+(the tree before's harness and Python test), they catch 5 of the 18 -- the ranges ignored, the block's and the runs'
+scale, the fused term and the summed vector (QB12, QB14-QB17) -- and none of the other 13: with each of them in place
+every output the old harness compares stayed the portable loops' bytes. The edges' cases and the path the probe
+reports are what catch them now.
+
+**Measured** on the committed tree (`7224194` against `7e5572a`; one host, clang 18 and GCC 13 at the qualification's
+flags; a reading the median of 3 runs). `q8_ab.c` times the tree after's kernel unit against the tree before's in one
+process; in one binary, `bound_switch.py` puts the once-a-call choice behind a run-time switch and counts the calls
+each path takes, so every arm runs the same code at the same addresses, every output is the portable loops' bytes and
+every call is on its arm's path (5,712 matvecs a 200-token generation, every one hoisted in the on arm and none in
+the others):
+
+| | clang | gcc |
+|---|---|---|
+| the AVX-512 matvec against the tree before's (`trees.json`): the 860K decoder's shapes / TinyLlama-1.1B's | x0.870-0.892 / x0.872-0.936 | x0.943-0.962 / x0.917-1.000 |
+| the head's row dots, which Q8-BOUND leaves as they were (the control) | x1.000-1.006 | x1.001-1.008 |
+| one binary, the choice on against off (`kernels.json`): the AVX-512 matvec at the 860K shapes / at TinyLlama's | x0.879-0.995 / x0.897-0.946 | x0.933-0.967 / x0.909-0.950 |
+| the AVX2 matvec at the 860K shapes / at TinyLlama's | x0.896-1.000 / x0.908-1.062 | x0.959-1.008 / x0.934-0.985 |
+| a decoded token, one binary (`switched.json`): AVX-512 / capped at AVX2 | x0.908-0.946 / x0.900-0.978 | x0.942-0.982 / x0.949-1.019 |
+| runs resolved past the A/A control | 2 of 3 / 2 of 3 | none of 3 / none of 3 |
+| a token across processes (`decode.json`, 24 rounds): the widest instance / both trees capped at AVX2 | x0.876 (0.818-0.937) / x0.959 (0.901-1.020) | x0.942 (0.901-0.986) / x0.966 (0.897-1.041) |
+| one process, the trees' units side by side, after over the placement control (`inprocess.json`): plain / aligned | x0.898-1.065 / x0.894-1.012 | x0.926-0.976 / x0.959-1.002 |
+| the core's cycle between the matvecs at a decode's duty cycle, on against off (`clock.json`) / the matvecs' time | x0.976-1.002 / x0.891-0.939 | x0.951-0.973 / x0.884-0.940 |
+| each tree's decoder built apart (`ops.json`): the matvec / the operations Q8-BOUND does not touch | x0.912 / x0.959-1.044 | x0.946 / x0.981-1.009 |
+
+Against the tree before's unit the AVX-512 matvec takes x0.870-0.892 of its time at the 860K decoder's shapes under
+clang and x0.943-0.962 under GCC, whose committed kernel was already the faster, and the row dots Q8-BOUND does not
+touch read x1.000-1.006 and x1.001-1.008. In one binary the same kernels read x0.879-0.995 and x0.933-0.967 (clang's
+second run read the committed AVX-512 matvec x1.22 as long as its other two did at those shapes, the two arms near
+parity); the AVX2 matvec x0.896-1.000 and x0.959-1.008. A ragged shape (128 x 100: no output count a multiple of 8)
+takes the AVX-512 runs, which read x1.017 and x1.026 with the choice on: there, runs of a group cut at the group's
+ends and their scalar tails leave less multiply to save than the scan costs. No decoder shape here is ragged.
+
+A decoded token, in one binary, is x0.926 of its time under clang (x0.908-0.946, 2 of 3 runs past the A/A control)
+and x0.910 capped at AVX2; under GCC x0.972 and x0.979, none of 3 resolved. NEXT-9's unchecked ceiling, the same kind
+of binary, read x0.917-0.941 and x0.925-0.965: checked once a call, the hoist keeps most of it under clang. The clock
+does not carry clang's gain. The clock probe's dependent add chain, run between the 860K decoder's 28 matvecs at a
+decode's duty cycle, reads the core's cycle x0.976-1.002 as long with Q8-BOUND's matvecs around it as with the
+committed kernel's (none of 3 runs past the A/A control, which reads x0.978-1.019) while the matvecs take
+x0.891-0.939 of the committed kernel's time (2 of 3 resolved) -- where NEXT-9's prototype, checking every row and
+group, moved the clock and not the cycles. Under GCC the chain reads x0.951-0.973 (1 of 3 past its control) and the
+matvecs x0.884-0.940: some of GCC's smaller gain may be the clock. Across processes clang's token reads x0.876
+(0.818-0.937) and GCC's x0.942 (0.901-0.986); in one process beside a placement control x0.898-1.065 and
+x0.926-0.976, clang's second run reading the after arm slower than the tree before's.
+
+Where a token's time goes now (`ops.json`, clang): the matvec 58% (31.39 -> 28.63 ms a 200-token generation), the
+head 15%, the attention 15%, SwiGLU 4% and the RMSNorms 3%; under GCC the head is 19%. Beside the matvec what is left
+is the head's row dots, which transpose their codes eight by eight on every token, and the attention's and SwiGLU's
+exponentials, libm's, which the oracle's parity pins.
+
+Not claimed: the head's row dots; the AVX-512 runs at a ragged shape; any other host's figures or clock;
+TinyLlama-1.1B's decoder end to end (no artifact of that size on this host: its shapes are timed at the kernel, from
+L3); counter-based figures (no PMU on this VM).

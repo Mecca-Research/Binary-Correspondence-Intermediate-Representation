@@ -185,6 +185,25 @@ GEM's load 2.16-2.26 -> 1.24-1.31 ms, the trust boundary 0.98-1.00 -> 0.67-0.69 
 2.68-2.89 -> 2.00-2.08 ms, and GEM/monolithic 1.06-1.25 -> 1.03-1.07. The logits keep their SHA-256 and the monolithic
 runner its 201,016,566 simulated instructions. Every run still validates the pack it executes.
 
+**Q8-BOUND** (2026-10-26). The vector matvecs now form x times a group's scale once a row and group where the call's
+ranges prove every such product exact -- every exponent within the [-300, 300] the format admits, every nonzero input
+in [2^-722, 2^724) -- one multiply a term where there were two, every value the same
+([measurements/2026-10-26/q8-bound/](research/measurements/2026-10-26/q8-bound/README.json)). Each tree's own run
+(`--require-callgrind`; the C rail built by the host's clang 18):
+
+| | before | after |
+|---|---|---|
+| per generated token, median (ms) | 0.2174 | 0.1920 |
+| tokens per second | 3,838 | 4,273 |
+| `matvec` / `matvec_add` (ms) | 5.35 / 2.74 | 4.62 / 2.25 |
+| simulated instructions, GEM / monolithic (callgrind: the AVX2 instance) | 211,104,723 / 201,016,566 | 197,770,611 / 187,682,454 |
+
+The logits keep their SHA-256 (`2a18b8613b6b60e4...`) and the C rail its 0 from the oracle, 23 of 23 checks on both
+trees. The whole-request walls move within this host's run-to-run noise (GEM 12.45 -> 11.66 ms, monolithic 11.60 ->
+12.33 ms in these two runs); three runs more of each tree read a generated token at 0.2155-0.2208 ms before and
+0.1982-0.2004 ms after, and 0.2336 ms in the after tree's first run, whose matvecs took 9.45 ms against 7.32-7.37 in
+its others.
+
 **Memory traffic.** Planned (`program_traffic`) and counted (the C kernels' counters) agree op for
 op: 57,539,312 octets read and 4,236,480 written per request. Simulated with callgrind's cache
 model (I1/D1 32 KiB 8-way, LL 8 MiB 16-way, 64-octet lines, fixed so reports compare across
