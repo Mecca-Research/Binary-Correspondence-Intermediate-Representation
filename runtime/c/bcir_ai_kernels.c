@@ -28,7 +28,16 @@
  * ones), row i's terms and then row i + 1's are added to them, and they are stored. Every output's chain keeps its
  * rows in increasing order, the portable loop's, and each row's codes are read in order, so the caches' prefetchers
  * follow a pass from L3 or memory, where the block it replaces walked a strip of 64 columns down every row. Elsewhere
- * the runs, a row at a time. */
+ * the runs, a row at a time.
+ *
+ * HEAD-PACK: the row dots over a copy of their codes and exponents packed once (bcir_ai_q8_rows_pack, the layout in
+ * bcir_ai_kernels.h): rows in blocks of eight, a block's groups one after another, each group's segment its eight
+ * rows' exponents and then its coordinates' codes, eight bytes a coordinate. A block is then one stream read in the
+ * order its terms are taken: a coordinate's eight codes one load, a group's eight scales one load and three integer
+ * operations (2^e is (e + 1023) << 52 for every exponent a pack admits, |e| <= 300: q8_scale's own value), and no
+ * division a group. The vector instances take four blocks a pass, 32 rows in four streams, then a block at a time.
+ * Every row's chain is its own lane's, over the coordinates in order, each term x * (code * s): every output the
+ * portable loop's. */
 #if defined(__x86_64__) && defined(__linux__) && (defined(__GNUC__) || defined(__clang__)) && \
     !defined(BCIR_AI_NO_DISPATCH)
 #define BCIR_AI_DISPATCH 1
@@ -242,10 +251,26 @@ int bcir_ai_q8_pair_probe(void) {
   q8_pair_seen = 0;
   return seen;
 }
+/* HEAD-PACK: the last packed row-dot call -- 1 the vector kernels, 2 the portable loop over the pack, 0 before any
+ * and after a read -- with the vector kernels' passes of 32 rows and blocks of at most 8 */
+static int q8_pack_seen;
+static size_t q8_pack_passes, q8_pack_blocks;
+#define Q8_PACK_SAW(path, passes, blocks) \
+  (q8_pack_seen = (path), q8_pack_passes = (passes), q8_pack_blocks = (blocks))
+int bcir_ai_q8_pack_probe(size_t *passes, size_t *blocks);
+int bcir_ai_q8_pack_probe(size_t *passes, size_t *blocks) {
+  int seen = q8_pack_seen;
+  if (passes != NULL) *passes = q8_pack_passes;
+  if (blocks != NULL) *blocks = q8_pack_blocks;
+  q8_pack_seen = 0;
+  q8_pack_passes = q8_pack_blocks = 0u;
+  return seen;
+}
 #else
 #define Q8_SAW(instance) ((void)0)
 #define Q8_BOUND_SAW(path) ((void)0)
 #define Q8_PAIR_SAW(path) ((void)0)
+#define Q8_PACK_SAW(path, passes, blocks) ((void)(passes), (void)(blocks))
 #endif
 
 #ifdef BCIR_AI_DISPATCH
@@ -817,6 +842,154 @@ static int q8_rows_lanes(int instance, const double *input, size_t input_count, 
   }
   return BCIR_AI_OK;
 }
+
+/* HEAD-PACK: a group's eight scales from its segment's eight exponents, 2^e as (e + 1023) << 52 (|e| <= 300, the
+ * range a pack admits: q8_scale's own bits) */
+#define Q8_PACK_SCALES512(P)                                                                                    \
+  _mm512_castsi512_pd(_mm512_slli_epi64(                                                                        \
+      _mm512_add_epi64(_mm512_cvtepi16_epi64(_mm_loadu_si128((const __m128i *)(P))), _mm512_set1_epi64(1023)), \
+      52))
+/* one coordinate's eight terms, x * (code * s), added to the eight rows' totals: the codes the eight bytes at P */
+#define Q8_PACK_TERMS512(T, S, P)                                                                  \
+  T = _mm512_add_pd(T, _mm512_mul_pd(x, _mm512_mul_pd(_mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(    \
+                                                          _mm_loadl_epi64((const __m128i *)(P)))), \
+                                                      S)))
+#define Q8_PACK_SCALES256(L, H, P)                                                                               \
+  do {                                                                                                           \
+    __m128i e_ = _mm_loadu_si128((const __m128i *)(P));                                                          \
+    __m256i bias_ = _mm256_set1_epi64x(1023);                                                                    \
+    L = _mm256_castsi256_pd(_mm256_slli_epi64(_mm256_add_epi64(_mm256_cvtepi16_epi64(e_), bias_), 52));         \
+    H = _mm256_castsi256_pd(                                                                                     \
+        _mm256_slli_epi64(_mm256_add_epi64(_mm256_cvtepi16_epi64(_mm_srli_si128(e_, 8)), bias_), 52));           \
+  } while (0)
+#define Q8_PACK_TERMS256(TL, TH, SL, SH, P)                                                                       \
+  do {                                                                                                            \
+    __m128i w_ = _mm_loadl_epi64((const __m128i *)(P));                                                           \
+    TL = _mm256_add_pd(TL, _mm256_mul_pd(x, _mm256_mul_pd(_mm256_cvtepi32_pd(_mm_cvtepi8_epi32(w_)), SL)));     \
+    TH = _mm256_add_pd(                                                                                           \
+        TH, _mm256_mul_pd(x, _mm256_mul_pd(_mm256_cvtepi32_pd(_mm_cvtepi8_epi32(_mm_srli_si128(w_, 4))), SH))); \
+  } while (0)
+/* HEAD-PACK: rows row0 .. row0 + 31, the pack's blocks row0 / 8 to row0 / 8 + 3, each block's eight rows a register */
+__attribute__((target("avx512f,avx2"))) static void q8_rows_pack512x4(const double *input, size_t input_count,
+    const uint8_t *packed, size_t group_size, size_t row0, double *output) {
+  size_t runs = input_count / group_size, step = 16u + 8u * group_size, span = runs * step, j, k;
+  const uint8_t *p0 = packed + row0 / 8u * span, *p1 = p0 + span, *p2 = p1 + span, *p3 = p2 + span;
+  __m512d t0 = _mm512_setzero_pd(), t1 = _mm512_setzero_pd(), t2 = _mm512_setzero_pd(), t3 = _mm512_setzero_pd();
+  for (j = 0u; j < runs; ++j, p0 += step, p1 += step, p2 += step, p3 += step) {
+    const double *xr = input + j * group_size;
+    __m512d s0 = Q8_PACK_SCALES512(p0), s1 = Q8_PACK_SCALES512(p1);
+    __m512d s2 = Q8_PACK_SCALES512(p2), s3 = Q8_PACK_SCALES512(p3);
+    for (k = 0u; k < group_size; ++k) {
+      __m512d x = _mm512_set1_pd(xr[k]);
+      Q8_PACK_TERMS512(t0, s0, p0 + 16u + 8u * k);
+      Q8_PACK_TERMS512(t1, s1, p1 + 16u + 8u * k);
+      Q8_PACK_TERMS512(t2, s2, p2 + 16u + 8u * k);
+      Q8_PACK_TERMS512(t3, s3, p3 + 16u + 8u * k);
+    }
+  }
+  _mm512_storeu_pd(output, t0);
+  _mm512_storeu_pd(output + 8, t1);
+  _mm512_storeu_pd(output + 16, t2);
+  _mm512_storeu_pd(output + 24, t3);
+}
+/* one block: rows row0 .. row0 + rows - 1 (row0 a multiple of 8, rows at most 8; a short block's missing rows,
+ * codes 0 in the pack, never stored) */
+__attribute__((target("avx512f,avx2"))) static void q8_rows_pack512(const double *input, size_t input_count,
+    const uint8_t *packed, size_t group_size, size_t row0, size_t rows, double *output) {
+  size_t runs = input_count / group_size, step = 16u + 8u * group_size, j, k;
+  const uint8_t *p0 = packed + row0 / 8u * runs * step;
+  __m512d t0 = _mm512_setzero_pd();
+  for (j = 0u; j < runs; ++j, p0 += step) {
+    const double *xr = input + j * group_size;
+    __m512d s0 = Q8_PACK_SCALES512(p0);
+    for (k = 0u; k < group_size; ++k) {
+      __m512d x = _mm512_set1_pd(xr[k]);
+      Q8_PACK_TERMS512(t0, s0, p0 + 16u + 8u * k);
+    }
+  }
+  _mm512_mask_storeu_pd(output, (__mmask8)((1u << rows) - 1u), t0);
+}
+/* the same pass at AVX2, each block's eight rows two registers */
+__attribute__((target("avx2"))) static void q8_rows_pack256x4(const double *input, size_t input_count,
+    const uint8_t *packed, size_t group_size, size_t row0, double *output) {
+  size_t runs = input_count / group_size, step = 16u + 8u * group_size, span = runs * step, j, k;
+  const uint8_t *p0 = packed + row0 / 8u * span, *p1 = p0 + span, *p2 = p1 + span, *p3 = p2 + span;
+  __m256d a0 = _mm256_setzero_pd(), a1 = _mm256_setzero_pd(), b0 = _mm256_setzero_pd(), b1 = _mm256_setzero_pd();
+  __m256d c0 = _mm256_setzero_pd(), c1 = _mm256_setzero_pd(), d0 = _mm256_setzero_pd(), d1 = _mm256_setzero_pd();
+  for (j = 0u; j < runs; ++j, p0 += step, p1 += step, p2 += step, p3 += step) {
+    const double *xr = input + j * group_size;
+    __m256d sa0, sa1, sb0, sb1, sc0, sc1, sd0, sd1;
+    Q8_PACK_SCALES256(sa0, sa1, p0);
+    Q8_PACK_SCALES256(sb0, sb1, p1);
+    Q8_PACK_SCALES256(sc0, sc1, p2);
+    Q8_PACK_SCALES256(sd0, sd1, p3);
+    for (k = 0u; k < group_size; ++k) {
+      __m256d x = _mm256_set1_pd(xr[k]);
+      Q8_PACK_TERMS256(a0, a1, sa0, sa1, p0 + 16u + 8u * k);
+      Q8_PACK_TERMS256(b0, b1, sb0, sb1, p1 + 16u + 8u * k);
+      Q8_PACK_TERMS256(c0, c1, sc0, sc1, p2 + 16u + 8u * k);
+      Q8_PACK_TERMS256(d0, d1, sd0, sd1, p3 + 16u + 8u * k);
+    }
+  }
+  _mm256_storeu_pd(output, a0);
+  _mm256_storeu_pd(output + 4, a1);
+  _mm256_storeu_pd(output + 8, b0);
+  _mm256_storeu_pd(output + 12, b1);
+  _mm256_storeu_pd(output + 16, c0);
+  _mm256_storeu_pd(output + 20, c1);
+  _mm256_storeu_pd(output + 24, d0);
+  _mm256_storeu_pd(output + 28, d1);
+}
+__attribute__((target("avx2"))) static void q8_rows_pack256(const double *input, size_t input_count,
+    const uint8_t *packed, size_t group_size, size_t row0, size_t rows, double *output) {
+  size_t runs = input_count / group_size, step = 16u + 8u * group_size, j, k;
+  const uint8_t *p0 = packed + row0 / 8u * runs * step;
+  __m256d a0 = _mm256_setzero_pd(), a1 = _mm256_setzero_pd();
+  __m256i lanes = _mm256_setr_epi64x(0, 1, 2, 3);
+  for (j = 0u; j < runs; ++j, p0 += step) {
+    const double *xr = input + j * group_size;
+    __m256d sa0, sa1;
+    Q8_PACK_SCALES256(sa0, sa1, p0);
+    for (k = 0u; k < group_size; ++k) {
+      __m256d x = _mm256_set1_pd(xr[k]);
+      Q8_PACK_TERMS256(a0, a1, sa0, sa1, p0 + 16u + 8u * k);
+    }
+  }
+  _mm256_maskstore_pd(output, _mm256_cmpgt_epi64(_mm256_set1_epi64x((long long)rows), lanes), a0);
+  _mm256_maskstore_pd(output + 4, _mm256_cmpgt_epi64(_mm256_set1_epi64x((long long)rows - 4), lanes), a1);
+}
+/* HEAD-PACK's rows: four blocks a pass while 32 rows remain, then a block at a time; a pass's or a block's totals
+ * checked in row order, a non-finite one zeroing every output as the portable loop leaves them */
+static int q8_rows_pack_lanes(int instance, const double *input, size_t input_count, const uint8_t *packed,
+                              size_t output_count, size_t group_size, double *output) {
+  size_t row, rows, r, passes = 0u, blocks = 0u;
+  int status = BCIR_AI_OK;
+  for (row = 0u; row < output_count && status == BCIR_AI_OK; row += rows) {
+    if (output_count - row >= 32u) {
+      rows = 32u;
+      ++passes;
+      if (instance == 4)
+        q8_rows_pack512x4(input, input_count, packed, group_size, row, output + row);
+      else
+        q8_rows_pack256x4(input, input_count, packed, group_size, row, output + row);
+    } else {
+      rows = output_count - row < 8u ? output_count - row : 8u;
+      ++blocks;
+      if (instance == 4)
+        q8_rows_pack512(input, input_count, packed, group_size, row, rows, output + row);
+      else
+        q8_rows_pack256(input, input_count, packed, group_size, row, rows, output + row);
+    }
+    for (r = 0u; r < rows; ++r)
+      if (!isfinite(output[row + r])) {
+        memset(output, 0, output_count * sizeof *output);
+        status = BCIR_AI_INVALID_NUMBER;
+        break;
+      }
+  }
+  Q8_PACK_SAW(1, passes, blocks);
+  return status;
+}
 #endif
 
 Q8_PORTABLE int q8_rows_dot_portable(
@@ -900,6 +1073,99 @@ int bcir_ai_q8_rows_dot_f64(const double *input, size_t input_count,
   return bcir_ai_q8_rows_dot_f64_prevalidated(
       input, input_count, codes, code_count, exponents_le, exponent_count,
       output_count, group_size, output);
+}
+
+/* HEAD-PACK: ceil(output_count / 8) blocks of input_count / group_size segments, 16 + 8 * group_size bytes each */
+int bcir_ai_q8_rows_pack_size(size_t input_count, size_t output_count, size_t group_size, size_t *packed_size) {
+  size_t elements, groups, blocks, runs, step;
+  if (packed_size == NULL || !q8_shape(input_count, output_count, group_size, &elements, &groups) ||
+      input_count % group_size != 0u)
+    return BCIR_AI_INVALID_ARGUMENT;
+  blocks = output_count / 8u + (output_count % 8u != 0u);
+  runs = input_count / group_size;
+  step = 16u + 8u * group_size; /* group_size <= UINT16_MAX: step at most 524,296 */
+  if (runs > SIZE_MAX / step || blocks > SIZE_MAX / (runs * step)) return BCIR_AI_INVALID_ARGUMENT;
+  *packed_size = blocks * runs * step;
+  return BCIR_AI_OK;
+}
+
+int bcir_ai_q8_rows_pack(const uint8_t *codes, size_t code_count, const uint8_t *exponents_le,
+                         size_t exponent_count, size_t input_count, size_t output_count, size_t group_size,
+                         uint8_t *packed, size_t packed_capacity) {
+  size_t size, runs, step, row, j, k;
+  int status;
+  if (bcir_ai_q8_rows_pack_size(input_count, output_count, group_size, &size) != BCIR_AI_OK || packed == NULL ||
+      packed_capacity < size)
+    return BCIR_AI_INVALID_ARGUMENT;
+  status = bcir_ai_q8_values_validate(codes, code_count, exponents_le, exponent_count, input_count * output_count,
+                                      group_size);
+  if (status != BCIR_AI_OK) return status;
+  memset(packed, 0, size);
+  runs = input_count / group_size;
+  step = 16u + 8u * group_size;
+  for (row = 0u; row < output_count; ++row) {
+    uint8_t *segment = packed + row / 8u * runs * step;
+    size_t lane = row % 8u;
+    for (j = 0u; j < runs; ++j, segment += step) {
+      const uint8_t *exponent = exponents_le + 2u * (row * runs + j);
+      const uint8_t *code = codes + row * input_count + j * group_size;
+      segment[2u * lane] = exponent[0];
+      segment[2u * lane + 1u] = exponent[1];
+      for (k = 0u; k < group_size; ++k) segment[16u + 8u * k + lane] = code[k];
+    }
+  }
+  return BCIR_AI_OK;
+}
+
+/* HEAD-PACK's portable loop: the row dots' own, a row at a time and its coordinates in order, over the pack */
+Q8_PORTABLE int q8_rows_dot_packed_portable(const double *input, size_t input_count, const uint8_t *packed,
+                                            size_t output_count, size_t group_size, double *output) {
+  size_t runs = input_count / group_size, step = 16u + 8u * group_size, row, j, k;
+  for (row = 0u; row < output_count; ++row) {
+    const uint8_t *segment = packed + row / 8u * runs * step;
+    size_t lane = row % 8u;
+    double total = 0.0;
+    for (j = 0u; j < runs; ++j, segment += step) {
+      double scale = ldexp(1.0, exponent_le(segment, lane));
+      for (k = 0u; k < group_size; ++k) {
+        uint8_t byte = segment[16u + 8u * k + lane];
+        int code = byte >= UINT8_C(0x80) ? (int)byte - 256 : (int)byte;
+        total += input[j * group_size + k] * ((double)code * scale);
+      }
+    }
+    if (!isfinite(total)) {
+      memset(output, 0, output_count * sizeof *output);
+      return BCIR_AI_INVALID_NUMBER;
+    }
+    output[row] = total;
+  }
+  return BCIR_AI_OK;
+}
+
+int bcir_ai_q8_rows_dot_f64_packed_instance(int instance, const double *input, size_t input_count,
+                                            const uint8_t *packed, size_t packed_size, size_t output_count,
+                                            size_t group_size, double *output) {
+  size_t size;
+  instance = q8_instance(instance);
+  if (bcir_ai_q8_rows_pack_size(input_count, output_count, group_size, &size) != BCIR_AI_OK || packed == NULL ||
+      packed_size < size || output == NULL || !q8_input_validate(input, input_count) || !instance)
+    return BCIR_AI_INVALID_ARGUMENT;
+  Q8_SAW(instance);
+  if (instance == 1) {
+    Q8_PACK_SAW(2, (size_t)0, (size_t)0);
+    return q8_rows_dot_packed_portable(input, input_count, packed, output_count, group_size, output);
+  }
+#ifdef BCIR_AI_DISPATCH
+  return q8_rows_pack_lanes(instance, input, input_count, packed, output_count, group_size, output);
+#else
+  return BCIR_AI_INVALID_ARGUMENT; /* without the dispatch only instance 1 is admitted */
+#endif
+}
+
+int bcir_ai_q8_rows_dot_f64_packed(const double *input, size_t input_count, const uint8_t *packed,
+                                   size_t packed_size, size_t output_count, size_t group_size, double *output) {
+  return bcir_ai_q8_rows_dot_f64_packed_instance(0, input, input_count, packed, packed_size, output_count,
+                                                 group_size, output);
 }
 
 static int match_less(const bcir_ai_match *left, const bcir_ai_match *right) {

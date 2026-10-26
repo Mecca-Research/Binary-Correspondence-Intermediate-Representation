@@ -254,6 +254,12 @@ void bcir_llama_op_swiglu(const bcir_q8_model *m, workspace *w) {
 
 int bcir_llama_op_head(const bcir_q8_model *m, const double *row, double *logits) {
   const bcir_q8_tensor *head = bcir_llama_head_tensor(m);
+  /* HEAD-PACK: the head's rows as the loader packed them, where it did: the same logits, bit for bit */
+  if (m->head_pack != NULL)
+    return bcir_ai_q8_rows_dot_f64_packed(row, m->d_model, m->head_pack, m->head_pack_size, m->vocab_size,
+                                          m->group_size, logits)
+               ? -1
+               : 0;
   return bcir_ai_q8_rows_dot_f64_prevalidated(
              row, m->d_model, head->codes, head->element_count, head->exponents,
              head->group_count, m->vocab_size, m->group_size, logits)

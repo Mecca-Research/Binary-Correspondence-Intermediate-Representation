@@ -299,9 +299,15 @@ static int q8_once(const char *path,fault_state *state,size_t fail_at,
   if(fail_at){
     CHECK(rc!=0);CHECK(model.storage==NULL&&model.tensors==NULL);
     CHECK(model.tensor_count==0&&model.storage_size==0);
-  }else CHECK(rc==0&&model.storage&&model.tensors&&model.tensor_count>0);
+    CHECK(model.head_pack==NULL&&model.head_pack_size==0);
+  }else{
+    CHECK(rc==0&&model.storage&&model.tensors&&model.tensor_count>0);
+    /* HEAD-PACK: the head packed at load exactly where its rows are a whole number of groups */
+    CHECK((model.head_pack!=NULL&&model.head_pack_size>0)==(model.d_model%model.group_size==0));
+  }
   bcir_q8_model_free(&model);
   CHECK(model.storage==NULL&&model.tensors==NULL&&model.tensor_count==0);
+  CHECK(model.head_pack==NULL&&model.head_pack_size==0);
   bcir_q8_model_free(&model);
   CHECK(state->live==0u);
   return 0;

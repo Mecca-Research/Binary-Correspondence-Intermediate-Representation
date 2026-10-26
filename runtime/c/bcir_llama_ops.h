@@ -76,7 +76,7 @@ int bcir_llama_op_attention(const bcir_q8_model *model, bcir_llama_ws *w, uint32
 void bcir_llama_op_residual(const bcir_q8_model *model, bcir_llama_ws *w);
 /* ff = silu(gate) * up, elementwise, with the guarded two-branch sigmoid. */
 void bcir_llama_op_swiglu(const bcir_q8_model *model, bcir_llama_ws *w);
-/* logits[vocab] = head . row. */
+/* logits[vocab] = head . row (HEAD-PACK: over the model's head_pack where the loader packed the head). */
 int bcir_llama_op_head(const bcir_q8_model *model, const double *row, double *logits);
 /* The greedy pick: the largest logit, the lowest id on a tie. */
 int32_t bcir_llama_op_argmax(const bcir_q8_model *model, const double *logits);

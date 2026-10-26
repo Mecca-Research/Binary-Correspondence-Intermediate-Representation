@@ -23,12 +23,16 @@ if [ -z "${CC_BIN}" ]; then
 fi
 
 model="${tmp}/memory-discipline-toy.bcirq8"
-PYTHONPATH="${ROOT}${PYTHONPATH:+:${PYTHONPATH}}" "${PYTHON}" - "${model}" <<'PY'
+# HEAD-PACK: and a toy whose rows are a whole number of groups, so the loader packs its head -- one allocation
+# more for the fault sweep to fail, and the head read from the pack in the generations it runs
+wide_model="${tmp}/memory-discipline-toy-wide.bcirq8"
+PYTHONPATH="${ROOT}${PYTHONPATH:+:${PYTHONPATH}}" "${PYTHON}" - "${model}" "${wide_model}" <<'PY'
 import sys
 from pathlib import Path
-from bcir.tests.test_model_weights_io import _write
+from bcir.tests.test_model_weights_io import _WIDE, _write
 
 _write(Path(sys.argv[1]))
+_write(Path(sys.argv[2]), **_WIDE)
 PY
 
 link_args=()
@@ -82,6 +86,7 @@ ai_sources=(
 "${CC_BIN}" "${strict[@]}" -O1 "${compat_warnings[@]}" \
   "${sources[@]}" -o "${tmp}/memory-discipline" "${link_args[@]}"
 "${tmp}/memory-discipline" "${model}"
+"${tmp}/memory-discipline" "${wide_model}"
 "${CC_BIN}" "${strict[@]}" -O2 -ffp-contract=off \
   "${ai_sources[@]}" -o "${tmp}/ai-kernels" "${link_args[@]}"
 "${tmp}/ai-kernels"
@@ -96,6 +101,9 @@ if [ "${MEMORY_DISCIPLINE_SANITIZE:-0}" = 1 ]; then
       ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
       UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
         "${tmp}/memory-discipline-sanitize" "${model}"
+      ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+      UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+        "${tmp}/memory-discipline-sanitize" "${wide_model}"
       "${CC_BIN}" -std=c11 -O1 -g -fno-omit-frame-pointer -ffp-contract=off \
         -fsanitize=address,undefined "${compat_warnings[@]}" -I "${C}" \
         "${ai_sources[@]}" -o "${tmp}/ai-kernels-sanitize" "${link_args[@]}"

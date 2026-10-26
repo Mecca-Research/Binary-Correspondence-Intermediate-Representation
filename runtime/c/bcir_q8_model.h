@@ -71,13 +71,19 @@ typedef struct bcir_q8_model {
   unsigned char *storage;
   size_t storage_size;
   bcir_q8_tensor *tensors;
+  /* HEAD-PACK: the head's rows (the embedding's when tied, else the LM head's) packed once at load for the
+   * vector row dots, bcir_ai_q8_rows_pack's layout (bcir_ai_kernels.h), head_pack_size bytes; NULL and 0 where
+   * d_model is not a whole number of groups, which no pack holds. */
+  unsigned char *head_pack;
+  size_t head_pack_size;
   bcir_host_allocator _allocator;
   uint32_t _owner_tag;
 } bcir_q8_model;
 
-/* A successfully loaded model owns `storage` and `tensors`; callers borrow the
- * complete object as immutable state until bcir_q8_model_free.  Mutating either
- * inventory invalidates the loader's CRC/value validation and is unsupported. */
+/* A successfully loaded model owns `storage`, `tensors` and `head_pack`; callers
+ * borrow the complete object as immutable state until bcir_q8_model_free.
+ * Mutating any of them invalidates the loader's CRC/value validation and is
+ * unsupported. */
 
 void bcir_q8_model_init(bcir_q8_model *model);
 

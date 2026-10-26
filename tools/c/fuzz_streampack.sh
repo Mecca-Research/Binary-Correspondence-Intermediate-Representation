@@ -113,9 +113,10 @@ add_target plan_sign "plan signatures (Ed25519 + PlanStatementV1)" "-max_len=102
 # fuzzer, since a random mutation dies on a checksum long before it reaches the geometry,
 # span-overlap, exponent-range or canonical-inventory checks. The harness therefore drives
 # each input twice: RAW (keeps the reject-on-bad-CRC path covered) and CRC-REPAIRED, which
-# is what actually explores the parser (measured: 49 -> 228 covered blocks).
+# is what actually explores the parser (measured: 49 -> 228 covered blocks). A model the
+# loader accepts has its head packed (HEAD-PACK, bcir_ai_kernels.c's bcir_ai_q8_rows_pack).
 add_target q8 "BCIRQ8 model loader" "-max_len=16384" \
-  "${C}/fuzz_q8_model.c" "${C}/bcir_q8_model.c"
+  "${C}/fuzz_q8_model.c" "${C}/bcir_q8_model.c" "${C}/bcir_ai_kernels.c"
 # bcir_decoder_gem.c executes a StreamPack as a decoder program (QUAL-2): op strings, RIDs,
 # positions and counts all come from the pack. The input is a model and a program; the pack is
 # driven raw and RESEALED (its CRC recomputed, the BCIRQ8 repair applied to the pack), and the

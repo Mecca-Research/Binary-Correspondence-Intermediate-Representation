@@ -220,6 +220,103 @@ def test_native_q8_instances_match_the_increasing_coordinate_oracle():
             pass
 
 
+def _reference_pack(
+    codes: bytes, exponents, input_count: int, output_count: int, group_size: int
+) -> bytes:
+    """HEAD-PACK's layout as bcir_ai_kernels.h states it, built here independently of the C: the rows in blocks of
+    eight, a block's groups in order, each a segment of the eight rows' exponents (int16 little-endian) and then, a
+    coordinate at a time, the eight rows' codes; a short last block's missing rows all zero bytes."""
+    runs = input_count // group_size
+    out = bytearray()
+    for block in range(-(-output_count // 8)):
+        for run in range(runs):
+            head, body = bytearray(16), bytearray(8 * group_size)
+            for lane in range(8):
+                row = 8 * block + lane
+                if row >= output_count:
+                    continue
+                struct.pack_into("<h", head, 2 * lane, exponents[row * runs + run])
+                for k in range(group_size):
+                    body[8 * k + lane] = codes[row * input_count + run * group_size + k]
+            out += head + body
+    return bytes(out)
+
+
+def test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout():
+    """HEAD-PACK: the row dots over a pack, on every instance the host admits and on the widest, are the
+    increasing-coordinate oracle's value for every output, bit for bit -- a lone short block, blocks, 32-row passes
+    and the rows after them, groups of 1, 2, 3 and a whole row, exponents across the format's range; the pack's bytes
+    are the layout bcir_ai_kernels.h states, built independently above. A shape whose rows straddle their groups has
+    no pack, a code the format refuses is refused, and `packed` is a bool."""
+    native = _native()
+    if native is None:
+        return
+    instances = native.q8_instances()
+    rng = random.Random(0x4EAD)
+    symmetric = tuple(code for code in range(256) if code != 0x80)
+    shapes = (
+        (8, 3, 8),
+        (4, 9, 2),
+        (128, 64, 32),
+        (16, 72, 16),
+        (3, 65, 1),
+        (6, 41, 3),
+        (64, 33, 64),
+        (24, 70, 8),
+    )
+    ran = 0
+    for inputs_count, outputs, group in shapes:
+        inputs = tuple(rng.uniform(-2.0, 2.0) for _ in range(inputs_count))
+        codes = bytes(rng.choice(symmetric) for _ in range(inputs_count * outputs))
+        exponents = tuple(
+            rng.choice((-300, 300, rng.randint(-30, 30))) for _ in range(len(codes) // group)
+        )
+        signed = tuple(code - 256 if code >= 128 else code for code in codes)
+        packed = native.q8_rows_pack(
+            codes, exponents, input_count=inputs_count, output_count=outputs, group_size=group
+        )
+        assert packed == _reference_pack(codes, exponents, inputs_count, outputs, group), (
+            inputs_count,
+            outputs,
+        )
+        expected = _q8_oracle(inputs, signed, exponents, outputs, group, True)
+        for instance in (None, 0, 1, 2, 4):
+            if instance and not instances & instance:
+                continue
+            got = native.q8_rows_dot(
+                inputs,
+                codes,
+                exponents,
+                output_count=outputs,
+                group_size=group,
+                instance=instance,
+                packed=True,
+            )
+            assert got == expected, (inputs_count, outputs, group, instance)
+            ran += 1
+    assert ran >= 3 * len(shapes)  # None, 0 and 1 at least, on every host
+    try:
+        native.q8_rows_dot(
+            (1.0,) * 6, b"\x01" * 24, (0,) * 6, output_count=4, group_size=4, packed=True
+        )
+        raise AssertionError("a pack of rows straddling their groups was made")
+    except ValueError:
+        pass
+    try:
+        native.q8_rows_pack(
+            b"\x01" * 15 + b"\x80", (0, 0), input_count=8, output_count=2, group_size=8
+        )
+        raise AssertionError("the code 0x80 was packed")
+    except RuntimeError:
+        pass
+    for bad in (1, "yes", None):
+        try:
+            native.q8_rows_dot((1.0,), b"\x01", (0,), output_count=1, group_size=1, packed=bad)
+            raise AssertionError(f"packed={bad!r} was accepted")
+        except ValueError:
+            pass
+
+
 def test_native_ai_c_harness_c11_and_c23():
     """Q8-LANES: the kernel unit's C harness (runtime/c/test_ai_kernels.c) under C11 and C23, under C23
     capped at AVX2 and with the dispatch compiled out, every build with the instance probe: each
@@ -230,7 +327,9 @@ def test_native_ai_c_harness_c11_and_c23():
     prove every such product exact, the terms as before elsewhere -- over the lanes test and the
     ranges' edges, each case every byte the portable loops'. Q8-PAIR: the kernel every vector matvec ran -- two
     rows a pass where eight columns' terms lie in one group, the runs elsewhere -- over the lanes test and the
-    passes' edges."""
+    passes' edges. HEAD-PACK: the row dots over a pack on every admitted instance against the portable row dots over
+    the rows as they are, the 32-row passes and blocks the vector instances ran, the layout pinned, a pack serving
+    fewer rows, non-finite totals zeroing every output and the refusals writing nothing."""
     if _CC is None:
         return
     import re
@@ -302,6 +401,15 @@ def test_native_ai_c_harness_c11_and_c23():
             assert pair, result.stdout
             counts = (int(pair.group(1)), int(pair.group(2)))
             assert counts == (92 * vector, 64 * vector), (options, admitted, counts)
+            # HEAD-PACK, the packed row dots on a named vector instance: the edges' 16 shapes in two exponent ranges,
+            # 76 passes of 32 rows and 20 blocks a range
+            pack = re.search(
+                r"HEAD-PACK: (\d+) packed row dots, (\d+) passes of 32 rows, (\d+) blocks",
+                result.stdout,
+            )
+            assert pack, result.stdout
+            counts = (int(pack.group(1)), int(pack.group(2)), int(pack.group(3)))
+            assert counts == (32 * vector, 152 * vector, 40 * vector), (options, admitted, counts)
             seen.add(admitted)
     native = _native()
     if native is not None:
@@ -358,8 +466,8 @@ _ASAN = _AddressSanitizer()
 def test_native_ai_c_harness_under_address_sanitizer():
     """Q8-PAIR: the kernel unit's C harness, with the probe, under AddressSanitizer and UBSan. Its edges allocate
     every matrix at its exact size, so a read or write past a matrix's codes, its last group or its outputs -- a
-    pass running a step past its rows' end -- stops the run. Returns where no compiler here runs a sanitized
-    program."""
+    pass running a step past its rows' end -- stops the run; HEAD-PACK's edges allocate every pack, input and
+    output so too. Returns where no compiler here runs a sanitized program."""
     cc = _ASAN.compiler()
     if cc is None:
         return
@@ -401,6 +509,9 @@ def test_native_ai_c_harness_under_address_sanitizer():
         assert re.search(r"Q8-PAIR: \d+ matvecs two rows a pass, \d+ in runs", result.stdout), (
             result.stdout
         )
+        assert re.search(
+            r"HEAD-PACK: \d+ packed row dots, \d+ passes of 32 rows, \d+ blocks", result.stdout
+        ), result.stdout
 
 
 def test_native_boundary_rejects_malformed_numbers_extents_and_symmetric_codes():

@@ -28,18 +28,23 @@ _HASHES = {"model": "00" * 32, "config": "11" * 32, "tokenizer": "22" * 32}
 _TOKENS = {"bos": 1, "eos": 2, "pad": 0, "context_length": 128}
 
 
-def _model(*, tied: bool = False):
-    config = dict(_CONFIG, tie_word_embeddings=tied)
+def _model(*, tied: bool = False, **dimensions):
+    config = dict(_CONFIG, tie_word_embeddings=tied, **dimensions)
     tensors = _hf_tensors(config)
     prepared = {name: ("F32", shape, values) for name, (shape, values) in tensors.items()}
     spec = spec_from_config(config)
     return spec, weights_from_tensors(spec, prepared)
 
 
-def _write(path: Path, *, tied: bool = False):
-    spec, weights = _model(tied=tied)
+def _write(path: Path, *, tied: bool = False, **dimensions):
+    """The toy decoder (_CONFIG, its dimensions overridden by `dimensions`) as a BCIRQ8 artifact. _WIDE is a toy
+    whose rows are a whole number of groups (64 = 2 x 32), so the C loader packs its head (HEAD-PACK)."""
+    spec, weights = _model(tied=tied, **dimensions)
     metadata = write_q8_decoder(path, spec, weights, source_hashes=_HASHES, tokenizer_ids=_TOKENS)
     return spec, weights, metadata
+
+
+_WIDE = {"hidden_size": 64, "intermediate_size": 32}
 
 
 def test_bcirq8_export_is_deterministic_and_exactly_the_q8_roundtrip():
@@ -222,19 +227,21 @@ def _build_cli(directory: Path) -> Path:
 
 
 def test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads():
+    """Each head tied and untied, in the toy whose rows straddle its groups (no pack) and in _WIDE (HEAD-PACK: the
+    head packed at load)."""
     if _compiler() is None:
         return
     prompt = [1, 2, 3]
     with tempfile.TemporaryDirectory() as tmp:
         directory = Path(tmp)
         executable = _build_cli(directory)
-        for tied in (False, True):
-            artifact = directory / f"model-{tied}.bcirq8"
-            _write(artifact, tied=tied)
+        for tied, wide in ((False, False), (True, False), (False, True), (True, True)):
+            artifact = directory / f"model-{tied}{'-wide' if wide else ''}.bcirq8"
+            _write(artifact, tied=tied, **(_WIDE if wide else {}))
             spec, weights, _ = read_q8_decoder(artifact)
             expected_ids = reference_decode(prompt, spec, weights, 2)
             python_logits = next_token_logits(prompt + expected_ids[:1], spec, weights)
-            logits_path = directory / f"logits-{tied}.f64"
+            logits_path = directory / f"logits-{tied}-{wide}.f64"
             result = subprocess.run(
                 [
                     str(executable),
@@ -398,6 +405,170 @@ def test_the_decoders_rotation_is_bcir_ropes_rows_bit_for_bit():
         run = subprocess.run([str(executable), str(artifact)], capture_output=True, text=True)
         assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
         assert run.stdout == "rope: 14 calls, every head bcir_rope's row\n", run.stdout
+
+
+_HEAD_WITNESS = r"""
+#include "bcir_ai_kernels.h"
+#include "bcir_llama_ops.h"
+#include "bcir_q8_model.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int bcir_ai_q8_pack_probe(size_t *passes, size_t *blocks);
+
+/* an allocator that counts its live allocations and refuses the fail_at-th */
+typedef struct { size_t attempt, fail_at, live; } faults;
+static void *fault_allocate(void *context, size_t size) {
+  faults *f = context;
+  void *p;
+  if (++f->attempt == f->fail_at) return NULL;
+  p = malloc(size);
+  f->live += p != NULL;
+  return p;
+}
+static void *fault_reallocate(void *context, void *allocation, size_t size) {
+  (void)context;
+  return realloc(allocation, size);
+}
+static void fault_deallocate(void *context, void *allocation) {
+  faults *f = context;
+  if (allocation) --f->live;
+  free(allocation);
+}
+
+/* HEAD-PACK: the loader under an allocator refusing each of its allocations in turn -- every refusal fails the
+ * load with nothing live and no pack, and a whole load's allocations, the pack's among them, all freed by
+ * bcir_q8_model_free; then the decoder's head (bcir_llama_op_head, which both dispatchers call) against the row
+ * dots over the head's rows as they are, byte for byte, at rows of either sign and of two magnitudes, and whether
+ * it read the pack the loader built, as the kernel unit's probe saw each call. */
+int main(int argc, char **argv) {
+  bcir_q8_model m;
+  char err[256];
+  uint64_t state = 0x9E3779B97F4A7C15u;
+  const bcir_q8_tensor *head;
+  double *row, *got, *ref;
+  size_t passes = 0, blocks = 0, i, k, on_pack = 0, allocations;
+  int path = 0;
+  faults f = {0, 0, 0};
+  bcir_host_allocator counted = {&f, fault_allocate, fault_reallocate, fault_deallocate};
+  if (argc != 2 || bcir_q8_model_load_with_allocator(argv[1], &m, err, sizeof err, &counted)) return 2;
+  allocations = f.attempt;
+  bcir_q8_model_free(&m);
+  if (f.live != 0) {
+    printf("a whole load left %zu allocations live\n", f.live);
+    return 1;
+  }
+  for (i = 1; i <= allocations; i++) {
+    f.attempt = 0, f.fail_at = i, f.live = 0;
+    if (!bcir_q8_model_load_with_allocator(argv[1], &m, err, sizeof err, &counted) || f.live != 0 ||
+        m.head_pack != NULL || m.storage != NULL) {
+      printf("allocation %zu refused: the load did not fail clean\n", i);
+      return 1;
+    }
+  }
+  printf("loads: %zu allocations, each refused in turn, nothing left live\n", allocations);
+  bcir_q8_model_init(&m);
+  if (bcir_q8_model_load(argv[1], &m, err, sizeof err)) return 2;
+  if (!bcir_llama_model_ready(&m)) return 3;
+  head = bcir_llama_head_tensor(&m);
+  row = malloc(m.d_model * sizeof *row);
+  got = malloc(m.vocab_size * sizeof *got);
+  ref = malloc(m.vocab_size * sizeof *ref);
+  if (!row || !got || !ref) return 4;
+  for (i = 0; i < 12; i++) {
+    for (k = 0; k < m.d_model; k++) {
+      state ^= state << 13, state ^= state >> 7, state ^= state << 17;
+      row[k] = ((double)(int64_t)(state >> 11) / 4503599627370496.0 - 1.0) * (i % 3 == 2 ? 1e-3 : 4.0);
+    }
+    (void)bcir_ai_q8_pack_probe(NULL, NULL);
+    if (bcir_llama_op_head(&m, row, got)) return 5;
+    path = bcir_ai_q8_pack_probe(&passes, &blocks);
+    on_pack += path != 0;
+    if (bcir_ai_q8_rows_dot_f64_prevalidated(row, m.d_model, head->codes, head->element_count, head->exponents,
+                                             head->group_count, m.vocab_size, m.group_size, ref))
+      return 6;
+    if (memcmp(got, ref, m.vocab_size * sizeof *ref)) {
+      printf("row %zu: a logit differs\n", i);
+      return 1;
+    }
+  }
+  printf("instances %d\nhead: 12 rows, every logit the rows' own; %s, %zu of 12 calls on it (path %d, %zu passes, "
+         "%zu blocks)\n",
+         bcir_ai_q8_instances(), m.head_pack ? "packed" : "no pack", on_pack, path, passes, blocks);
+  free(row);
+  free(got);
+  free(ref);
+  bcir_q8_model_free(&m);
+  return 0;
+}
+"""
+
+
+def test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit():
+    """HEAD-PACK: the loader's pack is one more allocation where it packs the head -- each refused in turn fails
+    the load with nothing left live, and bcir_q8_model_free releases it with the rest -- and bcir_llama_op_head, the
+    head both dispatchers call, gives every logit of the row dots over the head's rows as they are, byte for byte,
+    tied and untied. The loader packs a head whose rows are a whole number
+    of groups (_WIDE: 64 = 2 x 32), and the head reads that pack, all 64 rows in two 32-row passes on a vector
+    instance (the portable loop over the pack on a host without one); the toy whose rows straddle its groups has
+    no pack, and the head reads its rows as they are."""
+    if _compiler() is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        source = directory / "head_witness.c"
+        source.write_text(_HEAD_WITNESS, encoding="utf-8")
+        executable = directory / ("head_witness.exe" if os.name == "nt" else "head_witness")
+        command = [
+            _compiler(),
+            "-std=c11",
+            "-O2",
+            "-ffp-contract=off",
+            "-DBCIR_AI_INSTANCE_PROBE",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-I",
+            str(_RUNTIME),
+            str(source),
+            str(_RUNTIME / "bcir_q8_model.c"),
+            str(_RUNTIME / "bcir_decode.c"),
+            str(_RUNTIME / "bcir_ai_kernels.c"),
+            str(_RUNTIME / "bcir_llama.c"),
+            "-o",
+            str(executable),
+            *_link_args(),
+        ]
+        build = subprocess.run(command, capture_output=True, text=True)
+        assert build.returncode == 0, build.stderr
+        for tied in (False, True):
+            for wide in (False, True):
+                artifact = directory / f"model-{tied}-{wide}.bcirq8"
+                _write(artifact, tied=tied, **(_WIDE if wide else {}))
+                run = subprocess.run(
+                    [str(executable), str(artifact)], capture_output=True, text=True
+                )
+                assert run.returncode == 0, (tied, wide, run.returncode, run.stdout, run.stderr)
+                loads, _, rest = run.stdout.partition("\n")
+                # storage, the tensors and the spans' scratch, and the pack where the loader packs the head
+                allocations = 4 if wide else 3
+                assert (
+                    loads
+                    == f"loads: {allocations} allocations, each refused in turn, nothing left live"
+                ), loads
+                first, _, rest = rest.partition("\n")
+                instances = int(first.removeprefix("instances "))
+                assert instances & 1 and not instances & ~7, run.stdout
+                if not wide:
+                    tail = "no pack, 0 of 12 calls on it (path 0, 0 passes, 0 blocks)"
+                elif instances & 6:  # a vector instance: the 64 rows two passes of 32
+                    tail = "packed, 12 of 12 calls on it (path 1, 2 passes, 0 blocks)"
+                else:  # the portable loop over the pack
+                    tail = "packed, 12 of 12 calls on it (path 2, 0 passes, 0 blocks)"
+                assert rest == f"head: 12 rows, every logit the rows' own; {tail}\n", run.stdout
 
 
 if __name__ == "__main__":

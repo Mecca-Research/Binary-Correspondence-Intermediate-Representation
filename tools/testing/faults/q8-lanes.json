@@ -89,8 +89,8 @@
     {
       "expects": "test_native_ai_c_harness_c11_and_c23",
       "label": "QL12 the AVX-512 row block's store missing its first lane",
-      "new": "(__mmask8)((1u << rows) - 2u)",
-      "old": "(__mmask8)((1u << rows) - 1u)",
+      "new": "_mm512_mask_storeu_pd(output, (__mmask8)((1u << rows) - 2u), t);",
+      "old": "_mm512_mask_storeu_pd(output, (__mmask8)((1u << rows) - 1u), t);",
       "path": "runtime/c/bcir_ai_kernels.c"
     },
     {

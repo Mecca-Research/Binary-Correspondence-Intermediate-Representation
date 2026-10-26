@@ -401,6 +401,42 @@ class NativeAIKernels:
         for entry in ("bcir_ai_q8_matvec_f64_instance", "bcir_ai_q8_rows_dot_f64_instance"):
             getattr(self._library, entry).argtypes = [ctypes.c_int, *matrix_args]
             getattr(self._library, entry).restype = ctypes.c_int
+        # HEAD-PACK: the row dots' pack, and the row dots over it
+        self._library.bcir_ai_q8_rows_pack_size.argtypes = [
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            sizep,
+        ]
+        self._library.bcir_ai_q8_rows_pack_size.restype = ctypes.c_int
+        self._library.bcir_ai_q8_rows_pack.argtypes = [
+            u8p,
+            ctypes.c_size_t,
+            u8p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            u8p,
+            ctypes.c_size_t,
+        ]
+        self._library.bcir_ai_q8_rows_pack.restype = ctypes.c_int
+        packed_args = [
+            f64p,
+            ctypes.c_size_t,
+            u8p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            f64p,
+        ]
+        self._library.bcir_ai_q8_rows_dot_f64_packed.argtypes = packed_args
+        self._library.bcir_ai_q8_rows_dot_f64_packed.restype = ctypes.c_int
+        self._library.bcir_ai_q8_rows_dot_f64_packed_instance.argtypes = [
+            ctypes.c_int,
+            *packed_args,
+        ]
+        self._library.bcir_ai_q8_rows_dot_f64_packed_instance.restype = ctypes.c_int
         self._library.bcir_ai_q15_topk.argtypes = [
             i16p,
             i16p,
@@ -554,6 +590,63 @@ class NativeAIKernels:
             instance=instance,
         )
 
+    def _pack(
+        self,
+        raw_codes: bytes,
+        exponent_bytes: bytes,
+        groups: int,
+        input_count: int,
+        output_count: int,
+        group_size: int,
+    ):
+        """HEAD-PACK: the C library's pack of validated codes and exponents, as a ctypes array of its size."""
+        size = ctypes.c_size_t()
+        if self._library.bcir_ai_q8_rows_pack_size(
+            input_count, output_count, group_size, ctypes.byref(size)
+        ):
+            raise ValueError(
+                "native Q8 rows pack shape is malformed: no pack holds rows that straddle their groups"
+            )
+        # the layout's own size, ceil(rows / 8) blocks of input_count / group_size segments of 16 + 8 * group_size
+        # bytes: a library that sizes a pack otherwise would write past the buffer allocated for it
+        if size.value != -(-output_count // 8) * (input_count // group_size) * (
+            16 + 8 * group_size
+        ):
+            raise RuntimeError(
+                "native Q8 rows pack size disagrees with the layout bcir_ai_kernels.h states"
+            )
+        code_array = (ctypes.c_uint8 * len(raw_codes)).from_buffer_copy(raw_codes)
+        exponent_array = (ctypes.c_uint8 * len(exponent_bytes)).from_buffer_copy(exponent_bytes)
+        pack = (ctypes.c_uint8 * size.value)()
+        status = self._library.bcir_ai_q8_rows_pack(
+            code_array,
+            len(raw_codes),
+            exponent_array,
+            groups,
+            input_count,
+            output_count,
+            group_size,
+            pack,
+            size.value,
+        )
+        if status:
+            raise RuntimeError(f"native Q8 rows pack failed with status {status}")
+        return pack
+
+    def q8_rows_pack(
+        self, codes, exponents, *, input_count: int, output_count: int, group_size: int
+    ) -> bytes:
+        """HEAD-PACK: `output_count` rows of `input_count` codes, and their groups' exponents, packed for the vector
+        row dots -- bcir_ai_kernels.h's layout; input_count a whole number of groups."""
+        if type(input_count) is not int or not 1 <= input_count <= _MAX_ELEMENTS:
+            raise ValueError("native Q8 matrix arguments are malformed")
+        _, raw_codes, exponent_bytes, groups = self._matrix_inputs(
+            (0.0,) * input_count, codes, exponents, output_count, group_size
+        )
+        return bytes(
+            self._pack(raw_codes, exponent_bytes, groups, input_count, output_count, group_size)
+        )
+
     def q8_rows_dot(
         self,
         input_values,
@@ -563,8 +656,40 @@ class NativeAIKernels:
         output_count: int,
         group_size: int,
         instance: int | None = None,
+        packed: bool = False,
     ) -> tuple[float, ...]:
-        """`instance` as q8_matvec's."""
+        """`instance` as q8_matvec's. `packed` (HEAD-PACK): the codes and exponents packed first (q8_rows_pack) and
+        the row dots taken over the pack -- every output the same; the input a whole number of groups."""
+        if packed is not False and packed is not True:
+            raise ValueError("native Q8 packed must be a bool")
+        if packed:
+            values, raw_codes, exponent_bytes, groups = self._matrix_inputs(
+                input_values, codes, exponents, output_count, group_size
+            )
+            if instance is not None and (type(instance) is not int or instance not in (0, 1, 2, 4)):
+                raise ValueError("native Q8 instance must be 0, 1, 2 or 4")
+            pack = self._pack(
+                raw_codes, exponent_bytes, groups, len(values), output_count, group_size
+            )
+            input_array = (ctypes.c_double * len(values))(*values)
+            output_array = (ctypes.c_double * output_count)()
+            if instance is None:
+                function, extra = self._library.bcir_ai_q8_rows_dot_f64_packed, ()
+            else:
+                function, extra = self._library.bcir_ai_q8_rows_dot_f64_packed_instance, (instance,)
+            status = function(
+                *extra,
+                input_array,
+                len(values),
+                pack,
+                len(pack),
+                output_count,
+                group_size,
+                output_array,
+            )
+            if status:
+                raise RuntimeError(f"native Q8 matrix kernel failed with status {status}")
+            return tuple(float(value) for value in output_array)
         return self._matrix(
             "bcir_ai_q8_rows_dot_f64",
             input_values,

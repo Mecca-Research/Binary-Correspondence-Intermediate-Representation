@@ -1,5 +1,6 @@
 /*===- bcir_q8_model.c - portable BCIRQ8 v1 loader ----------------------===*/
 #include "bcir_q8_model.h"
+#include "bcir_ai_kernels.h"
 #include "bcir_crc32.h"
 
 #include <math.h>
@@ -178,6 +179,7 @@ void bcir_q8_model_free(bcir_q8_model *model) {
     memset(model,0,sizeof *model);return;
   }
   allocator=model->_allocator;
+  bcir_host_deallocate(&allocator,model->head_pack);
   bcir_host_deallocate(&allocator,model->tensors);
   bcir_host_deallocate(&allocator,model->storage);
   memset(model, 0, sizeof *model);
@@ -231,6 +233,31 @@ static int validate_inventory(const bcir_q8_model *m, char *error, size_t cap) {
   if (!(m->flags & BCIR_Q8_FLAG_TIED_EMBEDDINGS) &&
       expect_tensor(m, BCIR_Q8_TENSOR_LM_HEAD, -1, 2, m->vocab_size, d, error, cap))
     return -1;
+  return 0;
+}
+
+/* HEAD-PACK: the head's rows packed once for the vector row dots, through the model's allocator, after the inventory
+ * has been validated (the head [vocab_size, d_model], its every code and exponent the format's). A head whose rows
+ * are not a whole number of groups has no pack, and the decoder reads its rows as they are. */
+static int pack_head(bcir_q8_model *m, char *error, size_t cap) {
+  const bcir_q8_tensor *head =
+      bcir_q8_model_tensor(m, (m->flags & BCIR_Q8_FLAG_TIED_EMBEDDINGS) ? BCIR_Q8_TENSOR_EMBEDDING
+                                                                        : BCIR_Q8_TENSOR_LM_HEAD, -1);
+  size_t size;
+  if (head == NULL ||
+      bcir_ai_q8_rows_pack_size(m->d_model, m->vocab_size, m->group_size, &size) != BCIR_AI_OK)
+    return 0;
+  m->head_pack = (unsigned char *)bcir_host_allocate(&m->_allocator, size);
+  if (m->head_pack == NULL) {
+    set_error(error, cap, "cannot allocate the head's %zu-byte pack", size);
+    return -1;
+  }
+  m->head_pack_size = size;
+  if (bcir_ai_q8_rows_pack(head->codes, head->element_count, head->exponents, head->group_count, m->d_model,
+                           m->vocab_size, m->group_size, m->head_pack, size) != BCIR_AI_OK) {
+    set_error(error, cap, "the head's rows refused packing");
+    return -1;
+  }
   return 0;
 }
 
@@ -484,6 +511,7 @@ int bcir_q8_model_load_with_allocator_limited(
   bcir_host_deallocate(&m._allocator, spans);
   spans = NULL;
   if (validate_inventory(&m, error, error_capacity)) goto fail;
+  if (pack_head(&m, error, error_capacity)) goto fail;
   *out = m;
   return 0;
 
