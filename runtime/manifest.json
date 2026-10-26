@@ -8,6 +8,8 @@
     "units of this file; `link` names system libraries (m, pthread); `class` is the unit's memory",
     "class from runtime/c/MEMORY_CLASSIFICATION.txt, one per library; `options` are GNU-style compile",
     "options the gates pass for that unit (`gcc:`/`clang:` prefixes scope one to that compiler);",
+    "the decode and train kernels' library (bcir_streampack) and the harness holding them to the",
+    "one-chain loops (test_decode) pass -ffp-contract=off, as every build of those sources must (M17);",
     "`max_len` is libFuzzer's -max_len, absent when unbounded. `sections` are the gate sections that",
     "moved into tools/c/sections/*.sh (BUILD-2): the script and the binaries it takes, in order --",
     "manifest harnesses, `tools` (bcir-cc, for the sections that drive it; a script that compiles what",
@@ -41,7 +43,8 @@
         "bcir_binrec.c", "bcir_train.c", "bcir_telemetry_frame.c", "bcir_provenance.c"
       ],
       "libraries": ["bcir_base"],
-      "link": ["m"]
+      "link": ["m"],
+      "options": ["-ffp-contract=off"]
     },
     "bcir_plane": {
       "class": "freestanding_core",
@@ -144,7 +147,7 @@
     "test_exec": {"sources": ["test_exec.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "test_decoder_gem": {"sources": ["test_decoder_gem.c"], "libraries": ["bcir_models"], "options": ["-ffp-contract=off"]},
     "test_encode": {"sources": ["test_encode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
-    "test_decode": {"sources": ["test_decode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
+    "test_decode": {"sources": ["test_decode.c"], "libraries": ["bcir_streampack", "bcir_base"], "options": ["-ffp-contract=off"]},
     "test_binrec": {"sources": ["test_binrec.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "test_train": {"sources": ["test_train.c"], "libraries": ["bcir_streampack", "bcir_base"], "link": ["m"]},
     "test_train_stream": {"sources": ["test_train_stream.c"], "libraries": ["bcir_streampack", "bcir_base"], "link": ["m"]},

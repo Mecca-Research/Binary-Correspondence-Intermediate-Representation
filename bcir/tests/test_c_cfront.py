@@ -10198,7 +10198,18 @@ def test_the_emit_grows_whole_under_a_failing_allocator():
     )
     exe = os.path.join(_session_build_dir(), "memory_discipline")
     b = subprocess.run(
-        [_CC, "-std=c11", "-O1", "-I", _C, *(os.path.join(_C, s) for s in srcs), "-o", exe, "-lm"],
+        [
+            _CC,
+            "-std=c11",
+            "-O1",
+            "-ffp-contract=off",
+            "-I",
+            _C,
+            *(os.path.join(_C, s) for s in srcs),
+            "-o",
+            exe,
+            "-lm",
+        ],
         capture_output=True,
         text=True,
     )

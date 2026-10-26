@@ -291,8 +291,10 @@ build_fail=0
 for key in "${KEYS[@]}"; do
   while [ "$(jobs -rp | wc -l)" -ge "${JOBS}" ]; do wait -n 2>/dev/null || true; done
   # shellcheck disable=SC2086 -- SRCS is a deliberate word-split source list.
-  ( "${CLANG}" -std=c23 -g ${FUZZ_SAN} ${SRCS[${key}]} -I "${C}" -o "${tmp}/fuzz_${key}" \
-      2>"${tmp}/build_${key}.log" ) &
+  # -ffp-contract=off: the decoder and trainer kernels compile without contraction in every build
+  # (tools/build/manifest.py M17), as the manifest's own fuzzer builds compile them.
+  ( "${CLANG}" -std=c23 -g -ffp-contract=off ${FUZZ_SAN} ${SRCS[${key}]} -I "${C}" \
+      -o "${tmp}/fuzz_${key}" 2>"${tmp}/build_${key}.log" ) &
 done
 wait || true
 for key in "${KEYS[@]}"; do

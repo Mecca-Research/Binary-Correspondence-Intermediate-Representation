@@ -69,6 +69,14 @@ The rules, each with the code its findings carry:
                    under its own switch; cmake/BCIRTests.cmake registers the entries from the
                    manifest and hands the CTest c-runtime entry the switch, so `ctest` runs each
                    delegated gate once
+  M17 contraction  the decode and train kernels (bcir_decode.c, bcir_train.c) and the one-chain loops
+                   their bitwise witness holds them to (test_decode.c) compile without floating-point
+                   contraction in every build the repository writes: the manifest unit that owns one
+                   names -ffp-contract=off in its own options, unscoped (CMake and BCIR Make apply a
+                   unit's options to its own sources); no unit or variant passes an option that turns
+                   contraction back on; and a Python function under bcir/ or tools/ that names one
+                   names the option too -- in its own body or at its module's top level, or anywhere
+                   in the module for a name at the top level -- as does a gate script M9 reads
   D1  deps index   bcir-deps.json (written at configure) is JSON of schema bcir-deps.v1 with the
                    compilers named and one {name, found: true|false, detail} row per dependency,
                    names unique, PYTHON3 / THREADS / MLIR and every optional library among them,
@@ -77,7 +85,9 @@ The rules, each with the code its findings carry:
 
 Scope: the checker reads the gates and the Python modules as text (string literals and compile
 lines); a source list assembled at run time is outside it, and a gate that links a unit the
-manifest lacks is a finding, never a skip. Nothing here runs a compiler. The tree is read once
+manifest lacks is a finding, never a skip. M17 reads the option beside the source, in the same
+function, module or script: a build that assembles its flags elsewhere is a finding until it names
+the option where it names the source. Nothing here runs a compiler. The tree is read once
 (`Tree`) so a test can hold many manifests to the same facts.
 """
 
@@ -178,6 +188,14 @@ PYTHON_TREES = ("bcir", "tools")
 SOURCE_TOKEN = re.compile(r"\b((?:bcir|test|fuzz)_\w+\.(?:cpp|c))\b")
 SOURCE_LITERAL = re.compile(r"(?:bcir|test|fuzz)_\w+\.(?:cpp|c)")
 OPTION = re.compile(r"^(?:(?:gcc|clang):)?-\S+$")
+# M17: the sources every build compiles without floating-point contraction (the decode and train
+# kernels, and the one-chain loops test_decode.c's `order` mode holds them to byte for byte), the
+# option, and the spellings that turn contraction back on (the last option wins, so one after the
+# manifest's would undo it).
+CONTRACTION_FREE = ("bcir_decode.c", "bcir_train.c", "test_decode.c")
+CONTRACTION_OFF = "-ffp-contract=off"
+CONTRACTION_ON = re.compile(r"^(?:(?:gcc|clang):)?-ffp-contract=(?!off$)\S*$")
+CONTRACTION_IN_GATE = re.compile(r"(?<![\w-])-ffp-contract=off(?![\w=-])")
 
 
 class ManifestError(Exception):
@@ -337,6 +355,72 @@ def python_groups(text: str) -> list[list[str]]:
     return groups
 
 
+def _names_contraction_off(value: str) -> bool:
+    """A string literal that passes the option: the option itself, or a flags string beginning with
+    a dash that holds it as one word (never prose: a docstring that mentions it is not a build)."""
+    return value == CONTRACTION_OFF or (value.startswith("-") and CONTRACTION_OFF in value.split())
+
+
+def gate_contraction(text: str) -> tuple[list[str], bool]:
+    """M17's reading of a gate script: the contraction-free sources its lines name and whether its
+    lines name the option (a comment line is not a build)."""
+    plain = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    free = sorted(set(SOURCE_TOKEN.findall(plain)) & set(CONTRACTION_FREE))
+    return free, CONTRACTION_IN_GATE.search(plain) is not None
+
+
+def contraction_scopes(text: str) -> list[tuple[str, list[str], bool]]:
+    """M17's reading of a Python module: (scope, the contraction-free sources it names, whether the
+    option is named where they are) for each function -- or the module, for names outside every
+    function -- that names one. A function's option may be in its own body (a nested function is a
+    scope of its own) or at its module's top level, where shared flags live; a name at the top level
+    may be built by any function, so the option anywhere in the module answers for it. A module that
+    does not parse is one scope, its text read whole."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        found = sorted({m.group(0) for m in SOURCE_LITERAL.finditer(text)} & set(CONTRACTION_FREE))
+        return [("<module>", found, CONTRACTION_OFF in text)] if found else []
+
+    def own(scope: ast.AST) -> tuple[set[str], bool, list[ast.AST]]:
+        """The scope's own literals, not its nested functions': the sources and the option it names,
+        and the functions it defines."""
+        sources: set[str] = set()
+        option = False
+        nested: list[ast.AST] = []
+        todo = list(ast.iter_child_nodes(scope))
+        while todo:
+            node = todo.pop()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                nested.append(node)
+                continue
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if node.value in CONTRACTION_FREE:
+                    sources.add(node.value)
+                option = option or _names_contraction_off(node.value)
+            todo.extend(ast.iter_child_nodes(node))
+        return sources, option, nested
+
+    top_sources, top_option, functions = own(tree)
+    anywhere = any(
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and _names_contraction_off(node.value)
+        for node in ast.walk(tree)
+    )
+    scopes: list[tuple[str, list[str], bool]] = []
+    if top_sources:
+        scopes.append(("<module>", sorted(top_sources), anywhere))
+    while functions:
+        function = functions.pop(0)
+        sources, option, nested = own(function)
+        functions.extend(nested)
+        if sources:
+            where = f"{function.name} (line {function.lineno})"
+            scopes.append((where, sorted(sources), option or top_option))
+    return scopes
+
+
 class KernelFacts:
     """What a kernel entry is judged against (M15): the drivers under runtime/c/kernels/ and the
     functions bcir/lower/c_kernel.py defines at module level, read as text -- nothing is imported.
@@ -371,6 +455,9 @@ class Tree(KernelFacts):
         self.missing_gates: list[str] = []
         self.freestanding: set[str] = set()
         self.section_scripts = sorted(p.name for p in (root / SECTIONS_DIR).glob("*.sh"))
+        # M17: every gate script and Python scope that names a contraction-free source, with
+        # whether it names the option beside it
+        self.contraction: list[tuple[str, list[str], bool]] = []
         scanned = [(rel, self._read(root / rel)) for rel in GATES]
         # A section script is gate text moved out of tools/c/check_runtime.sh (BUILD-2): what it
         # compiles is held to the manifest as the gate's own lines were.
@@ -389,6 +476,9 @@ class Tree(KernelFacts):
                 (tag, self.existing(SOURCE_TOKEN.findall(body))) for tag, body in gate_groups(text)
             ]
             self.gate_tokens[rel] = self.existing(SOURCE_TOKEN.findall(text))
+            free, option = gate_contraction(text)
+            if free:
+                self.contraction.append((rel, free, option))
             for line in re.sub(r"\\\n\s*", " ", text).splitlines():
                 if "-ffreestanding" in line and not line.lstrip().startswith("#"):
                     self.freestanding.update(
@@ -415,6 +505,9 @@ class Tree(KernelFacts):
                     tokens = self.existing(group)
                     if tokens:
                         self.python.append((f"{rel_path} (literal group {number})", tokens))
+                if any(source in text for source in CONTRACTION_FREE):
+                    for scope, sources, option in contraction_scopes(text):
+                        self.contraction.append((f"{rel_path} {scope}", sources, option))
         self.seam: dict[str, tuple[set[str], set[str]] | None] = {}
         for rel, cpp_pattern, c_pattern in SEAM_PAIRS:
             text = self._read(root / rel)
@@ -1108,6 +1201,31 @@ def check_delegated(manifest: dict, tree: Tree, errors: list[str]) -> None:
         )
 
 
+def check_contraction(manifest: dict, tree: Tree, errors: list[str]) -> None:
+    for kind in C_KINDS:
+        for name, unit in _units(manifest, kind).items():
+            free = sorted(set(_sources(unit)) & set(CONTRACTION_FREE))
+            if free and CONTRACTION_OFF not in _list(unit, "options"):
+                errors.append(
+                    f"M17: {kind}/{name} compiles {', '.join(free)} without {CONTRACTION_OFF} "
+                    "(unscoped: clang contracts by default where the target can fuse, GCC outside ISO mode)"
+                )
+            for option in _list(unit, "options"):
+                if CONTRACTION_ON.match(option):
+                    errors.append(
+                        f"M17: {kind}/{name} passes {option}, turning contraction back on"
+                    )
+    for name, variant in _units(manifest, "variants").items():
+        for option in _list(variant, "options"):
+            if CONTRACTION_ON.match(option):
+                errors.append(f"M17: variants/{name} passes {option}, turning contraction back on")
+    for where, sources, option in tree.contraction:
+        if not option:
+            errors.append(
+                f"M17: {where} compiles {', '.join(sources)} and names no {CONTRACTION_OFF} beside it"
+            )
+
+
 def check(manifest: dict, tree: Tree | None = None) -> list[str]:
     """Every finding over `manifest` against the tree (empty when clean)."""
     if tree is None:
@@ -1127,6 +1245,7 @@ def check(manifest: dict, tree: Tree | None = None) -> list[str]:
     check_variants(manifest, tree, errors)
     check_kernels(manifest, tree, errors)
     check_delegated(manifest, tree, errors)
+    check_contraction(manifest, tree, errors)
     check_presets(tree.presets, errors)
     return errors
 

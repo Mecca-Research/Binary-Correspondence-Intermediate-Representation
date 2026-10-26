@@ -1,0 +1,119 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_build_manifest:_CC",
+  "bcir.tests.test_build_manifest:test_the_manifests_options_build_the_kernels_without_contraction",
+  "bcir.tests.test_build_manifest:test_every_injected_violation_is_a_finding",
+  "bcir.tests.test_build_manifest:test_the_manifest_reconciles_with_the_tree",
+  "bcir.tests.test_build_manifest:test_a_build_names_the_option_beside_the_source"
+ ],
+ "faults": [
+  {
+   "label": "FC1 the decode and train kernels' library built with the compiler's contraction",
+   "path": "runtime/manifest.json",
+   "old": "\"bcir_telemetry_frame.c\", \"bcir_provenance.c\"\n      ],\n      \"libraries\": [\"bcir_base\"],\n      \"link\": [\"m\"],\n      \"options\": [\"-ffp-contract=off\"]\n",
+   "new": "\"bcir_telemetry_frame.c\", \"bcir_provenance.c\"\n      ],\n      \"libraries\": [\"bcir_base\"],\n      \"link\": [\"m\"]\n",
+   "expects": "test_the_manifests_options_build_the_kernels_without_contraction"
+  },
+  {
+   "label": "FC2 the one-chain loops the kernels are held to built with the compiler's contraction",
+   "path": "runtime/manifest.json",
+   "old": "\"test_decode\": {\"sources\": [\"test_decode.c\"], \"libraries\": [\"bcir_streampack\", \"bcir_base\"], \"options\": [\"-ffp-contract=off\"]},",
+   "new": "\"test_decode\": {\"sources\": [\"test_decode.c\"], \"libraries\": [\"bcir_streampack\", \"bcir_base\"]},",
+   "expects": "test_the_manifests_options_build_the_kernels_without_contraction"
+  },
+  {
+   "label": "FC3 the unit clause taking a scoped spelling for the option",
+   "path": "tools/build/manifest.py",
+   "old": "            if free and CONTRACTION_OFF not in _list(unit, \"options\"):\n",
+   "new": "            if free and not any(o.endswith(CONTRACTION_OFF) for o in _list(unit, \"options\")):\n",
+   "expects": "test_every_injected_violation_is_a_finding"
+  },
+  {
+   "label": "FC4 contraction turned back on read as the unscoped fast spelling alone",
+   "path": "tools/build/manifest.py",
+   "old": "CONTRACTION_ON = re.compile(r\"^(?:(?:gcc|clang):)?-ffp-contract=(?!off$)\\S*$\")\n",
+   "new": "CONTRACTION_ON = re.compile(r\"^-ffp-contract=fast$\")\n",
+   "expects": "test_every_injected_violation_is_a_finding"
+  },
+  {
+   "label": "FC5 a function's option read from anywhere in its module",
+   "path": "tools/build/manifest.py",
+   "old": "            scopes.append((where, sorted(sources), option or top_option))\n",
+   "new": "            scopes.append((where, sorted(sources), option or anywhere))\n",
+   "expects": "test_a_build_names_the_option_beside_the_source"
+  },
+  {
+   "label": "FC6 a docstring's mention taken for the option",
+   "path": "tools/build/manifest.py",
+   "old": "    return value == CONTRACTION_OFF or (value.startswith(\"-\") and CONTRACTION_OFF in value.split())\n",
+   "new": "    return CONTRACTION_OFF in value.split()\n",
+   "expects": "test_a_build_names_the_option_beside_the_source"
+  },
+  {
+   "label": "FC7 a gate's comment taken for a build",
+   "path": "tools/build/manifest.py",
+   "old": "    plain = \"\\n\".join(line for line in text.splitlines() if not line.lstrip().startswith(\"#\"))\n    free = sorted(set(SOURCE_TOKEN.findall(plain)) & set(CONTRACTION_FREE))\n",
+   "new": "    plain = text\n    free = sorted(set(SOURCE_TOKEN.findall(plain)) & set(CONTRACTION_FREE))\n",
+   "expects": "test_a_build_names_the_option_beside_the_source"
+  },
+  {
+   "label": "FC8 the tree not reading the gates for M17",
+   "path": "tools/build/manifest.py",
+   "old": "            free, option = gate_contraction(text)\n            if free:\n",
+   "new": "            free, option = gate_contraction(text)\n            if False:\n",
+   "expects": "test_a_build_names_the_option_beside_the_source"
+  },
+  {
+   "label": "FC9 the tree not reading the Python modules for M17",
+   "path": "tools/build/manifest.py",
+   "old": "                if any(source in text for source in CONTRACTION_FREE):\n",
+   "new": "                if False:\n",
+   "expects": "test_a_build_names_the_option_beside_the_source"
+  },
+  {
+   "label": "FC10 the decode kernels' oracle differential built with the compiler's contraction",
+   "path": "bcir/tests/test_decode_c_kernels.py",
+   "old": "                \"-O2\",\n                \"-ffp-contract=off\",\n                \"-Wall\",\n                \"-Wextra\",\n                \"-I\",\n                _RUNTIME_C,\n                os.path.join(_RUNTIME_C, \"test_decode.c\"),\n",
+   "new": "                \"-O2\",\n                \"-Wall\",\n                \"-Wextra\",\n                \"-I\",\n                _RUNTIME_C,\n                os.path.join(_RUNTIME_C, \"test_decode.c\"),\n",
+   "expects": "test_the_manifest_reconciles_with_the_tree"
+  },
+  {
+   "label": "FC11 the training differential built with the compiler's contraction",
+   "path": "bcir/tests/test_train_c_kernels.py",
+   "old": "            [\n                _cc(),\n                \"-std=c11\",\n                \"-O2\",\n                \"-ffp-contract=off\",\n",
+   "new": "            [\n                _cc(),\n                \"-std=c11\",\n                \"-O2\",\n",
+   "expects": "test_the_manifest_reconciles_with_the_tree"
+  },
+  {
+   "label": "FC12 the fuzz harnesses built with the compiler's contraction",
+   "path": "tools/c/fuzz_streampack.sh",
+   "old": "  ( \"${CLANG}\" -std=c23 -g -ffp-contract=off ${FUZZ_SAN} ${SRCS[${key}]} -I \"${C}\" \\\n",
+   "new": "  ( \"${CLANG}\" -std=c23 -g ${FUZZ_SAN} ${SRCS[${key}]} -I \"${C}\" \\\n",
+   "expects": "test_the_manifest_reconciles_with_the_tree"
+  },
+  {
+   "label": "FC13 the witness without its hostile default (a witness that cannot fail)",
+   "path": "bcir/tests/test_build_manifest.py",
+   "old": "        hostile = [\"-std=c11\", \"-O2\", *fusing]\n",
+   "new": "        hostile = [\"-std=c11\", \"-O2\"]\n",
+   "expects": "test_the_manifests_options_build_the_kernels_without_contraction"
+  },
+  {
+   "label": "FC14 the witness building every source with the flags alone",
+   "path": "bcir/tests/test_build_manifest.py",
+   "old": "            manifest = _built_from_the_manifest(work, \"manifest\", harness, hostile, own=True)\n",
+   "new": "            manifest = _built_from_the_manifest(work, \"manifest\", harness, hostile, own=False)\n",
+   "expects": "test_the_manifests_options_build_the_kernels_without_contraction"
+  },
+  {
+   "label": "FC15 the witness reading a library's sources' options from the harness",
+   "path": "bcir/tests/test_build_manifest.py",
+   "old": "        units += [(source, library.get(\"options\", [])) for source in library[\"sources\"]]\n",
+   "new": "        units += [(source, unit.get(\"options\", [])) for source in library[\"sources\"]]\n",
+   "expects": "test_the_manifests_options_build_the_kernels_without_contraction"
+  }
+ ]
+}

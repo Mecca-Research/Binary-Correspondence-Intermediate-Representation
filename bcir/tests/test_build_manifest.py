@@ -14,10 +14,12 @@ from __future__ import annotations
 import ast
 import contextlib
 import copy
+import hashlib
 import importlib.util
 import io
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -42,6 +44,9 @@ parity_tool = _load_tool("build_parity")
 section_tool = _load_tool("section_parity")
 mutate_tool = _load_tool("mutate")
 sanitizer_tool = _load_tool("sanitizer")
+
+#: The C compiler M17's witness builds with (None: it returns early); a capability check_tests.py reads.
+_CC = __import__("bcir.toolchain", fromlist=["host_c_compiler"]).host_c_compiler()
 
 _TREE = None
 
@@ -393,6 +398,37 @@ _FAULTS = (
         "M16",
         "an entry renamed away from the name the gate's SKIP line gives",
         lambda m: m["delegated"].__setitem__("cpp-sycl-oracle", m["delegated"].pop("cpp-sycl")),
+    ),
+    (
+        "M17",
+        "the decode and train kernels' library built with the compiler's contraction",
+        lambda m: m["libraries"]["bcir_streampack"].pop("options"),
+    ),
+    (
+        "M17",
+        "the one-chain loops the kernels are held to built with the compiler's contraction",
+        lambda m: m["harnesses"]["test_decode"].pop("options"),
+    ),
+    (
+        "M17",
+        "the option scoped to one compiler, the other left contracting",
+        lambda m: m["libraries"]["bcir_streampack"].__setitem__(
+            "options", ["gcc:-ffp-contract=off"]
+        ),
+    ),
+    (
+        "M17",
+        "a unit turning contraction back on after the option",
+        lambda m: m["libraries"]["bcir_streampack"].__setitem__(
+            "options", ["-ffp-contract=off", "-ffp-contract=fast"]
+        ),
+    ),
+    (
+        "M17",
+        "a variant turning contraction back on over a closure that holds the kernels",
+        lambda m: m["variants"]["test_ring_O3"].__setitem__(
+            "options", ["-O3", "clang:-ffp-contract=on"]
+        ),
     ),
 )
 
@@ -957,6 +993,236 @@ def test_python_groups_follow_the_literal_containers():
     }, groups
     broken = manifest_tool.python_groups('x = ("bcir_runtime.c",\n')
     assert broken == [["bcir_runtime.c"]], broken
+
+
+def test_a_build_names_the_option_beside_the_source():
+    """M17 reads the option where a build names a contraction-free source: in the same function, or at
+    its module's top level (shared flags), or anywhere in the module for a name at the top level; a
+    nested function is a scope of its own, and a docstring that mentions the option is not a build
+    (L11: each clause fires on its own case). A gate script is read whole, its comments not builds."""
+    source = (
+        'def ok():\n    return [cc, "-ffp-contract=off", "bcir_decode.c"]\n'
+        'def prose():\n    """built with -ffp-contract=off at -O2, says the docstring"""\n'
+        '    return [cc, "-O2", "bcir_train.c"]\n'
+        'def joined():\n    return [cc, "-O2 -ffp-contract=off", "test_decode.c"]\n'
+        'def outer():\n    flags = ["-ffp-contract=off"]\n'
+        '    def inner():\n        return [cc, "bcir_decode.c"]\n    return inner\n'
+    )
+    scopes = {
+        where.split(" ")[0]: (sources, option)
+        for where, sources, option in manifest_tool.contraction_scopes(source)
+    }
+    assert scopes == {
+        "ok": (["bcir_decode.c"], True),
+        "prose": (["bcir_train.c"], False),
+        "joined": (["test_decode.c"], True),
+        "inner": (["bcir_decode.c"], False),
+    }, scopes
+    shared = (
+        'FLAGS = ["-ffp-contract=off"]\ndef build():\n    return [cc, *FLAGS, "bcir_decode.c"]\n'
+    )
+    assert manifest_tool.contraction_scopes(shared) == [("build (line 2)", ["bcir_decode.c"], True)]
+    listed = (
+        'SRCS = ("bcir_decode.c",)\ndef build():\n    return [cc, "-ffp-contract=off", *SRCS]\n'
+    )
+    assert manifest_tool.contraction_scopes(listed) == [("<module>", ["bcir_decode.c"], True)]
+    bare = 'SRCS = ("bcir_decode.c",)\ndef build():\n    return [cc, *SRCS]\n'
+    assert manifest_tool.contraction_scopes(bare) == [("<module>", ["bcir_decode.c"], False)]
+    assert manifest_tool.contraction_scopes('x = ("bcir_train.c",\n') == [
+        ("<module>", ["bcir_train.c"], False)
+    ]
+    gate = 'cc -O2 "${C}/bcir_decode.c" -o x\n'
+    assert manifest_tool.gate_contraction(gate) == (["bcir_decode.c"], False)
+    assert manifest_tool.gate_contraction("# -ffp-contract=off\n" + gate) == (
+        ["bcir_decode.c"],
+        False,
+    )
+    assert manifest_tool.gate_contraction(gate + "cc -ffp-contract=offset\n")[1] is False
+    assert manifest_tool.gate_contraction("cc -ffp-contract=off \\\n" + gate)[1] is True
+    # the tree's reading found the builds there are (a scanner that matched nothing would make M17
+    # vacuous: L2), every one naming the option (test_the_manifest_reconciles_with_the_tree) ...
+    tree = manifest_tool.Tree()  # its own: the faults below must not reach the shared tree
+    where = {w for w, _sources, _option in tree.contraction}
+    assert len(tree.contraction) >= 14, sorted(where)
+    assert {"tools/c/fuzz_streampack.sh", "tools/c/check_memory_discipline.sh"} <= where, where
+    assert any(w.startswith("bcir/tests/test_decode_c_kernels.py _build ") for w in where), where
+    assert any(w.startswith("bcir/tests/test_train_c_kernels.py _build ") for w in where), where
+    # ... and a Python build or a gate that names one without the option is a finding
+    tree.contraction.append(("bcir/tests/elsewhere.py build (line 1)", ["bcir_train.c"], False))
+    tree.contraction.append(("tools/c/elsewhere.sh", ["bcir_decode.c"], False))
+    findings = [f for f in manifest_tool.check(_manifest(), tree) if f.startswith("M17:")]
+    assert len(findings) == 2, findings
+    assert "elsewhere.py" in findings[0] and "elsewhere.sh" in findings[1], findings
+
+
+def _fusing_flags(work: Path) -> list[str] | None:
+    """Flags under which this host's compiler fuses a product into its sum wherever it can: a default
+    of fast contraction (GCC's own outside ISO mode), with the FMA instructions an x86-64 CPU must
+    offer (-mfma; aarch64 has them in its base set). None where the host has no fused multiply-add."""
+    machine = platform.machine().lower()
+    if machine in ("aarch64", "arm64"):
+        return ["-ffp-contract=fast"]
+    if machine not in ("x86_64", "amd64"):
+        return None
+    probe = work / "fma_probe.c"
+    probe.write_text(
+        'int main(void) { __builtin_cpu_init(); return __builtin_cpu_supports("fma") ? 0 : 1; }\n',
+        encoding="utf-8",
+    )
+    exe = work / "fma_probe"
+    built = subprocess.run([_CC, str(probe), "-o", str(exe)], capture_output=True, text=True)
+    if built.returncode != 0:
+        return None
+    has = subprocess.run([str(exe)], capture_output=True).returncode == 0
+    return ["-ffp-contract=fast", "-mfma"] if has else None
+
+
+def _scoped(options: list[str], family: str) -> list[str]:
+    out = []
+    for option in options:
+        scope, sep, flag = option.partition(":")
+        if not sep:
+            out.append(option)
+        elif scope == family:
+            out.append(flag)
+    return out
+
+
+def _built_from_the_manifest(
+    work: Path, build: str, harness: str, flags: list[str], own: bool
+) -> Path:
+    """`harness` and its library closure compiled source by source as BCIR Make compiles them -- the
+    `flags` first, then, with `own`, each source's own manifest unit's options (CMake applies a
+    unit's options to its own sources the same way) -- and linked."""
+    manifest = _manifest()
+    family = (
+        "clang"
+        if "clang"
+        in subprocess.run([_CC, "--version"], capture_output=True, text=True).stdout.lower()
+        else "gcc"
+    )
+    unit = manifest["harnesses"][harness]
+    units = [(source, unit.get("options", [])) for source in unit["sources"]]
+    for lib in manifest_tool.closure(manifest, "harnesses", harness)["libraries"]:
+        library = manifest["libraries"][lib]
+        units += [(source, library.get("options", [])) for source in library["sources"]]
+    out = work / build
+    out.mkdir(exist_ok=True)
+    c_dir = _ROOT / "runtime" / "c"
+    objects = []
+    for source, options in units:
+        command = [_CC, *flags, *(_scoped(options, family) if own else []), "-I", str(c_dir)]
+        # an object is shared only by builds that compile it the same way: keyed by its command, so
+        # a harness never links an object compiled with another unit's options
+        key = hashlib.sha256("\0".join(command).encode()).hexdigest()[:16]
+        obj = out / f"{Path(source).stem}-{key}.o"
+        if not obj.exists():
+            built = subprocess.run(
+                [*command, "-c", str(c_dir / source), "-o", str(obj)],
+                capture_output=True,
+                text=True,
+            )
+            assert built.returncode == 0, (source, command, built.stderr[-2000:])
+        objects.append(str(obj))
+    exe = out / harness
+    from bcir.toolchain import host_link_args
+
+    linked = subprocess.run(
+        host_link_args([_CC, *objects, "-o", str(exe), "-lm"]), capture_output=True, text=True
+    )
+    assert linked.returncode == 0, (harness, linked.stderr[-2000:])
+    return exe
+
+
+def _training_inputs(work: Path) -> dict[str, list[str]]:
+    """The arguments test_train and test_train_stream take: the oracle's planned and streamed steps,
+    their packs and data, as their oracle differentials feed them."""
+    from bcir.abi import encode
+    from bcir.gem.streampack import hydrate
+    from bcir.kbcir.realize import optimize
+    from bcir.kbcir.train_graph import TrainStepSpec, train_planned, train_stream_module
+    from bcir.tests.test_train_c_kernels import AVX, COOL
+    from bcir.tests.test_train_graph import _toy_logistic
+
+    spec = TrainStepSpec()
+    X, y = _toy_logistic()
+    w0 = [0.0] * spec.n_params
+    rows = [" ".join(repr(float(v)) for v in row) for row in X]
+    tail = [" ".join(repr(float(v)) for v in y), " ".join(repr(float(v)) for v in w0)]
+    planned = train_planned(spec, X, y, w0, epochs=12, lr=0.5, h=AVX, theta=COOL)
+    (work / "step.pack").write_bytes(encode(planned.pack))
+    head = f"{spec.n_features} {spec.batch} {len(X)} 12 {0.5!r}"
+    (work / "step.txt").write_text("\n".join([head, *rows, *tail]) + "\n", encoding="utf-8")
+    streams = 4
+    m = train_stream_module(spec, streams)
+    (work / "stream.pack").write_bytes(encode(hydrate(m, optimize(m, AVX, COOL), plan=m.name)))
+    head = f"{spec.n_features} {spec.batch} {len(X)} 12 {streams} {0.5!r}"
+    (work / "stream.txt").write_text("\n".join([head, *rows, *tail]) + "\n", encoding="utf-8")
+    return {
+        "test_train": [str(work / "step.pack"), str(work / "step.txt")],
+        "test_train_stream": [str(work / "stream.pack"), str(work / "stream.txt")],
+    }
+
+
+def test_the_manifests_options_build_the_kernels_without_contraction():
+    """M17's witness: the decode and train kernels, built as the manifest says, compute the same bytes
+    whatever the compiler would fuse. Each harness and its closure is compiled source by source with
+    each unit's options after a hostile default -- fast contraction with the host's FMA instructions,
+    under which a compiler fuses a product into its sum wherever it can -- and must print what the
+    plain build prints (-O0 -ffp-contract=off): test_decode's `order` mode, the kernels against the
+    one-chain loops byte for byte, and test_train's and test_train_stream's training runs, every
+    epoch's loss and every trained weight to 17 digits. The control proves the hostile default bites
+    here: without the units' options, something moves (L2), as it did on CI's aarch64 job, where clang
+    contracts by default. Where the host has no fused multiply-add the witness cannot tell, and it
+    returns early, as it does without a compiler."""
+    if _CC is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        fusing = _fusing_flags(work)
+        if fusing is None:
+            return
+        plain = ["-std=c11", "-O0", "-ffp-contract=off"]
+        hostile = ["-std=c11", "-O2", *fusing]
+        inputs = _training_inputs(work)
+        order = "order: 2482 comparisons, every byte the one-chain loops'\n"
+        moved = []
+        for harness in ("test_decode", "test_train", "test_train_stream"):
+            reference = _built_from_the_manifest(work, "plain", harness, plain, own=False)
+            manifest = _built_from_the_manifest(work, "manifest", harness, hostile, own=True)
+            control = _built_from_the_manifest(work, "control", harness, hostile, own=False)
+            runs = (
+                [{"input": f"order {seed}\n", "args": []} for seed in (1, 2)]
+                if harness == "test_decode"
+                else [{"input": None, "args": inputs[harness]}]
+            )
+            for run in runs:
+                out = {}
+                for name, exe in (
+                    ("plain", reference),
+                    ("manifest", manifest),
+                    ("control", control),
+                ):
+                    done = subprocess.run(
+                        [str(exe), *run["args"]], input=run["input"], capture_output=True, text=True
+                    )
+                    out[name] = (done.returncode, done.stdout)
+                if harness == "test_decode":
+                    assert out["plain"] == (0, order), out["plain"]
+                else:
+                    assert out["plain"][0] == 0 and "weights:" in out["plain"][1], out["plain"]
+                assert out["manifest"] == out["plain"], (
+                    harness,
+                    run,
+                    out["manifest"],
+                    out["plain"],
+                )
+                if out["control"] != out["plain"]:
+                    moved.append((harness, run["input"]))
+        assert moved, (
+            f"the hostile default ({' '.join(hostile)}) moved no byte without the manifest's options: "
+            "the witness cannot tell contraction from its absence under this compiler"
+        )
 
 
 def test_the_closure_is_dependents_first_and_once():
