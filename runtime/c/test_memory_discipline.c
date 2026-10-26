@@ -139,9 +139,18 @@ static int cpp_fault_and_isolation_test(void){
                                   b,sizeof b,error,sizeof error)!=0);
     CHECK(b[0]==0);
     {
-      size_t w=(size_t)snprintf(paste,sizeof paste,"#define CAT(a,b) a ## b\nCAT(x,");
-      for(size_t k=0;k<200u;k++)w+=(size_t)snprintf(paste+w,sizeof paste-w,"y+");
-      (void)snprintf(paste+w,sizeof paste-w,"z)\n");
+      /* the paste written a piece at a time, each piece checked whole before the next is placed after it */
+      int n=snprintf(paste,sizeof paste,"#define CAT(a,b) a ## b\nCAT(x,");
+      size_t w;
+      CHECK(n>0&&(size_t)n<sizeof paste);
+      w=(size_t)n;
+      for(size_t k=0;k<200u;k++){
+        n=snprintf(paste+w,sizeof paste-w,"y+");
+        CHECK(n>0&&(size_t)n<sizeof paste-w);
+        w+=(size_t)n;
+      }
+      n=snprintf(paste+w,sizeof paste-w,"z)\n");
+      CHECK(n>0&&(size_t)n<sizeof paste-w);
       CHECK(!bcir_cpp_run_context(&right,paste,NULL,b,sizeof b,error,sizeof error));
       CHECK(strstr(b,"x")!=NULL&&strstr(b,"z")!=NULL);
     }
