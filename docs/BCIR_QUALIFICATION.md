@@ -222,6 +222,22 @@ was, 2.58 ms against 1.65; its tokens a second fall with them. Three runs more o
 0.1957-0.1974 ms before and 0.1652-0.1794 ms after, 4,098-4,153 tokens a second before and 4,610-4,875 after, and a
 first token at 2.02-2.12 ms and 1.77-1.81 ms.
 
+**HEAD-PACK** (2026-10-26). The head now reads its rows from a copy packed once at load, four eight-row blocks a
+pass, every value the same
+([measurements/2026-10-26/head-pack/](research/measurements/2026-10-26/head-pack/README.json)). Each tree's own run
+(`--require-callgrind`; the C rail built by the host's clang 18):
+
+| | before | after |
+|---|---|---|
+| per generated token, median (ms) | 0.1850 | 0.1458 |
+| tokens per second | 4,440 | 5,454 |
+| `head` (ms) | 1.74 | 0.79 |
+| simulated instructions, GEM / monolithic (callgrind: the AVX2 instance) | 147,230,931 / 137,142,774 | 135,617,235 / 125,529,750 |
+
+The logits keep their SHA-256 (`2a18b8613b6b60e4...`) and the C rail its 0 from the oracle, 23 of 23 checks on both
+trees. Three runs more of each tree read a generated token at 0.1771-0.1943 ms before and 0.1576-0.1602 ms after,
+4,092-4,580 tokens a second before and 4,964-5,078 after, and the head at 1.64-1.92 ms and 0.86-0.96 ms a generation.
+
 **Memory traffic.** Planned (`program_traffic`) and counted (the C kernels' counters) agree op for
 op: 57,539,312 octets read and 4,236,480 written per request. Simulated with callgrind's cache
 model (I1/D1 32 KiB 8-way, LL 8 MiB 16-way, 64-octet lines, fixed so reports compare across

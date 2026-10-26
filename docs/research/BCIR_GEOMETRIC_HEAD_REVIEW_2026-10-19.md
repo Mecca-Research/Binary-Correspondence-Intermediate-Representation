@@ -2615,3 +2615,61 @@ next.
 Not claimed: the head's row dots; a real TinyLlama-1.1B (no artifact of that size on this host: the synthetic decoder
 has its widths, six of its 22 layers and pseudo-random codes); any other host's figures; counter-based figures (no
 PMU on this VM).
+
+## 37. HEAD-PACK: the C decoder's head over its rows packed once at load (2026-10-26)
+
+Q8-PAIR left the head at 17% of a decoded token under clang and 21% under GCC (§36), and in a decoder at
+TinyLlama-1.1B's widths the head's 32,000 row dots read the tied embedding's 62.5 MiB a token. The row dots ran eight
+rows a block: each step of eight coordinates loaded the eight rows' codes and transposed them eight by eight, and
+each group's eight scales took eight exponent reads and a division a row to find the row's group. A survey before the
+change (draft tools, not kept: the 860K decoder's head, a ragged one, TinyLlama's and a GPT-2-sized one, from L2,
+from L3 and from memory, clang and GCC) placed where the time went. Packing the codes alone, coordinate-major a
+block, read slower than the transpose at TinyLlama's head under clang (x1.09 from L3, x1.15 from memory): the scales,
+not the codes, held it. The same kernel with each group's exponents in the pack read x0.62.
+
+HEAD-PACK packs the head once, when the model loads (`bcir_ai_q8_rows_pack`, the layout stated in
+`bcir_ai_kernels.h`): rows in blocks of eight, a block's groups in order, each group's segment its eight rows'
+exponents (16 bytes) and then its coordinates' codes, eight bytes a coordinate. A block is one stream read in the
+order its terms are taken: a coordinate's eight codes are one load, and a group's eight scales one load and three
+integer operations -- 2^e is (e + 1023) << 52 for every exponent the loader admits (|e| <= 300), `q8_scale`'s own
+bits -- with no division. Both vector instances take four blocks a pass, 32 rows in four streams, then a block at a
+time with its store masked; every row's chain is its own lane's over the coordinates in order, each term x * (code *
+s), so every logit is the portable loop's. The survey set aside one and two blocks a pass (four led everywhere once
+written out) and a pass written as loops over arrays of registers, which GCC spilled. The loader packs the head (the
+embedding when tied, else the LM head) wherever `d_model` is a whole number of groups, through the model's allocator,
+and `bcir_llama_op_head`, which both dispatchers call, reads the pack; the pack is about the size of the head's own
+codes and exponents.
+
+**Measured** on the committed tree (`27091ae` against `06e67ce`; one host, clang 18 and GCC 13 at the qualification's
+flags; a reading the median of 3 runs). `headpack_kernels.c` times the tree after's row dots over the rows as they
+are -- the tree before's head -- against the same rows packed, in one binary; `headpack_decode.c` times the decoder
+on a copy of the loaded model without its pack against the model as loaded, in one binary, every generation's tokens
+and final logits the unpacked head's bytes:
+
+| | clang | gcc |
+|---|---|---|
+| the packed row dots over the rows as they are, AVX-512 (`kernels.json`): the 860K head in L2 / TinyLlama's from L3 / from memory | x0.516 / x0.478 / x0.392 | x0.401 / x0.396 / x0.330 |
+| the same at AVX2 | x0.599 / x0.637 / x0.586 | x0.448 / x0.443 / x0.352 |
+| a 4 MiB head from L3 and a GPT-2-sized one from L3 / from memory, AVX-512 | x0.445, x0.442 / x0.332 | x0.364, x0.394 / x0.294 |
+| GB/s at TinyLlama's head from memory, AVX-512: the rows as they are -> the pack | 2.6 -> 7.2 | 2.2 -> 7.1 |
+| a token of the 860K decoder, one binary (`switched.json`): AVX-512 / capped at AVX2 | x0.920 / x0.940 | x0.877 / x0.855 |
+| a token of the synthetic decoder at TinyLlama's widths (`big.json`): AVX-512 / capped at AVX2 | x0.791 / x0.899 | x0.742 / x0.749 |
+| a token across processes (`decode.json`): the widest instance / both trees capped at AVX2 | x0.948 (0.907-0.991) / x0.924 (0.854-1.000) | x0.865 (0.849-0.881) / x0.860 (0.838-0.883) |
+| the head's time a 200-token generation of the 860K decoder (`ops.json`), its tree after over its tree before | x0.512 | x0.399 |
+
+Each cell of `kernels.json` resolved past its A/A control in at least two of its three runs. Across processes
+(`decode.json`), where every run is a fresh process and placement moves, a token resolved past its A/A control under
+GCC, at the widest instance and capped at AVX2, and under clang at neither. The 860K decoder's token resolves past
+its A/A control in 3 of 3 runs under clang and 3 of 3 under GCC, and capped at AVX2 in 3 of 3 and 3 of 3. At
+TinyLlama's widths the synthetic decoder (Q8-PAIR's `big_model.py`: six layers, group 32, tied embeddings, 334 MiB,
+read from memory every token) takes 93.9 -> 73.4 ms a token under clang and 99.7 -> 73.9 under GCC. Under callgrind
+(the AVX2 instance) the qualification's GEM request takes 147.2 M -> 135.6 M instructions (x0.921); its logits keep
+their SHA-256 and 0 from the oracle, 23 of 23 checks on both trees.
+
+Where a token's time goes now (`ops.json`, clang): the matvec 60%, the attention 18%, the head 9% (7.18 -> 3.68 ms a
+200-token generation), SwiGLU 5% and the RMSNorms 4%; under GCC the head is 9%. The operations HEAD-PACK leaves as
+they were read x1.003-1.016 of their time before under clang and x0.965-1.006 under GCC.
+
+Not claimed: a real TinyLlama-1.1B (no artifact of that size on this host: the synthetic decoder has its widths, six
+of its 22 layers and pseudo-random codes); a head whose rows are not a whole number of groups, which has no pack; any
+other host's figures; counter-based figures (no PMU on this VM).
