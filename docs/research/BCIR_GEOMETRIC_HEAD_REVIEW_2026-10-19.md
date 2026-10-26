@@ -2322,3 +2322,73 @@ Not claimed: libm's exponential, now most of the attention row's time -- one cal
 oracle's values; a gain at the qualification's 48 tokens beyond its noise; the same bytes where a compiler may
 contract; any other host's figures; counter-based figures (no PMU on this VM). After DECODE-ROW the matrix kernels are
 61% of a 200-token request's operations again, the head 14%, the attention 15%.
+
+## 33. NEXT-8 and SP-ONCE: a StreamPack validated once a call (2026-10-25)
+
+After DECODE-ROW, CRC-SLICE's own trust-boundary record (`../crc-slice/trust.json`, read a part at a time in NEXT-8's
+`explore.json`, [measurements/2026-10-25/sp-once/](measurements/2026-10-25/sp-once/README.json)) still had GEM
+crossing one pack's CRC several times a call. `bcir_sp_execute` (1.43 ms under clang, 1.35 under GCC, before its
+first kernel) was `bcir_sp_validate` (0.32 / 0.25), `bcir_sp_verify_semantic` (0.70 / 0.71: the same CRC pass again,
+then the R10 walk) and the segment walk (0.40 / 0.37: the CRC a third time, then the parse) -- three CRC passes, some
+0.95 / 0.75 ms. `bcir_dgem_load` validated and walked four times (1.92 / 1.82 ms). The walks re-validated because each
+public walk is its own trust boundary, which a caller that walks one pack several times in one call pays once a walk.
+
+**SP-ONCE.** Each walk in `bcir_runtime.c` is now a body over the header `bcir_sp_validate` read from the same bytes
+(`sp_segments`, `sp_blocks`, `sp_semantic`, `sp_generation`). Each plain walk validates and runs its body, so its
+contract is unchanged. Beside them is a checked pack: `bcir_sp_check` runs `bcir_sp_validate` and records the bytes,
+their length and their header in a `bcir_sp_checked` token, and `bcir_sp_checked_verify_semantic`,
+`bcir_sp_checked_generation`, `bcir_sp_checked_for_each_segment` and `bcir_sp_checked_for_each_block` run the same
+bodies over the token, without recomputing the CRC. A refused check records no pack. Every checked walk refuses
+(`BCIR_ERR_TRUNCATED`) a token with no buffer, or with one too short for a header and the trailer -- what the bodies
+assume of their bytes besides the CRC -- so a token `bcir_sp_check` did not fill fails its shape check rather than
+read. `bcir_sp_execute` and `bcir_sp_execute_checked` check once and run the semantic and segment walks over the
+token; `bcir_dgem_load` checks once and runs the semantic, segment and block walks over it; the generation-vector
+walks validate once (they validated twice). The qualification's trust-boundary row times what a run now pays, a check
+and the semantic walk. Every run still validates the pack it executes: trusting the bytes across runs after one
+validation a load (TRUST-ONCE) would change that contract, and SP-ONCE does not.
+
+Measured on the committed tree (`0f29c50`) against the tree before (`8d97b1c`), one host, clang 18 and GCC 13 at the
+qualification's -O2 (`once.json`: one process, the tree before's GEM units renamed beside the tree after's, an A/A
+control; every result, token and final logit the tree before's):
+
+| | clang | gcc |
+|---|---|---|
+| `bcir_sp_execute`, its kernel doing nothing (ms) | 1.39 -> 0.74 (x0.530) | 1.29 -> 0.76 (x0.591) |
+| `bcir_dgem_load` and `bcir_dgem_free` (ms) | 1.97 -> 0.98 (x0.500) | 1.84 -> 1.07 (x0.584) |
+| a whole GEM request, the card's prompt and 48 new tokens (unresolved: its control meets it) | x0.941 | x0.959 |
+
+Counted under callgrind (`passes.json`: each tree's units built at -O0 -fno-inline, every call a call, and a profile
+part dumped around each call), a pack's CRC passes a call are 3 -> 1 in `bcir_sp_execute`, 3 -> 1 in `bcir_dgem_run`,
+4 -> 1 in `bcir_dgem_load` and 13 -> 9 in the program rail's lowering (`bcir_decoder_lower_pack`, whose two executions
+now take one pass each; its plan's four passes are as they were).
+
+The qualification (`qualification.json` with callgrind and `qualification-repeats.json` without, four runs of each
+tree in all): GEM's load 2.16-2.26 -> 1.24-1.31 ms, the trust boundary alone 0.98-1.00 -> 0.67-0.69 ms, the first token
+of a GEM run 2.68-2.89 -> 2.00-2.08 ms, GEM's overhead over the monolithic runner 0.75-3.14 -> 0.38-0.79 ms and
+GEM/monolithic 1.06-1.25 -> 1.03-1.07 under its 1.5 band (the before tree's callgrind run read 1.254, its repeats
+1.06-1.17). The logits are one SHA-256 on both trees, 0 from the oracle's, 23 of 23 checks. Under callgrind a GEM
+request takes 214.9 M instructions before and 211.1 M after, and the monolithic runner's the same 201,016,566.
+
+Witnesses: the executor harness's `--checked` mode holds each checked walk to its plain form on the same bytes -- the
+check's status and header; the semantic walk and the generation check under four generation pairs (none, the pack's
+own, its map generation and its data generation each one off); the segment and block walks' statuses and every view
+their callbacks are handed, walked whole and stopped after three -- and requires forged tokens (no buffer, a buffer
+with no length, one too short for a header and the trailer, a length with no buffer) and a refused check's token to be
+refused. `test_the_checked_walks_are_the_plain_walks_on_every_pack` runs it over 1,100 packs: the hydrated packs of the
+executor's parity test and their 21 disorders, each base truncated at nine lengths, its CRC flipped, ten of its header
+fields each moved by one either way and resealed, and 48 octets of its body changed and resealed -- 467 accepted by
+every walk, 500 refused by a walk after the check, 133 refused by the check. `fuzz_streampack.c` runs the same
+differential on every input, raw and with its CRC sealed. `sp-once.json` SO1-SO11 inject the token's and the callers'
+faults -- a refused check's token keeping the bytes, the checked walks without the length bound or the buffer check, the
+checked generation check without data_gen, the checked semantic walk without R11, the checked segment walk on the block
+walk's body, a check taking a CRC refusal for acceptance, GEM's execution or load without the semantic walk, the R11
+wrapper without its generation check, the generation vector located without the semantic walk -- each caught by its own
+check;
+`qual.json`'s QL2 and QG3 were re-anchored on the moved lines, and the whole table (28 faults, 22 of them in the three
+changed C units) was swept again on the committed tree, each still caught by its own check (`faults.json`).
+
+Not claimed: TRUST-ONCE; the other callers that validate and then walk, which keep their plain walks -- the program
+rail's lowering (`bcir_decoder_lower_pack`: 9 CRC passes over its pack a lowering where it made 13, its two executions
+now one pass each; its time unmeasured), the verifier CLI, the control plane, the encoder; a gain on a whole 48-token
+GEM request beyond its control (the 0.6 ms are some 5% of it); any other host's figures; counter-based figures (no PMU
+on this VM).

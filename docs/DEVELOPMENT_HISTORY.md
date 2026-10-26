@@ -5268,6 +5268,40 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: libm's exponential, now most of the attention row's time (one call a probability, kept for the
     oracle's values); the same bytes where a compiler may fuse a product into its sum; a gain at the qualification's
     48 tokens beyond its noise; any other host's figures; counter-based figures (no PMU on this VM).
+  SP-ONCE (2026-10-25): a StreamPack validated once a call, GEM's execution and load crossing the CRC once where they
+    crossed it three and four times, every bound and verdict as it was
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §33,
+    [measurements/2026-10-25/sp-once/](research/measurements/2026-10-25/sp-once/README.json)).
+  - Placed by NEXT-8 after DECODE-ROW, reading CRC-SLICE's trust-boundary record: `bcir_sp_execute` (1.43 ms clang,
+    1.35 gcc) was a validation, `bcir_sp_verify_semantic` (which validated again) and the segment walk (a third
+    time), three CRC passes over one pack in one call, about 0.95 / 0.75 ms of it; `bcir_dgem_load`'s walks were four.
+  - SP-ONCE (`0f29c50`): `bcir_runtime.c`'s walks are bodies over the header `bcir_sp_validate` reads, each plain walk
+    validating and running its body; `bcir_sp_check` records a validated pack in a `bcir_sp_checked` token and the
+    checked semantic walk, generation check, segment and block walks run the same bodies over it without recomputing
+    the CRC, refusing a refused check's token and one `bcir_sp_check` did not fill. `bcir_sp_execute` and its R11
+    wrapper, `bcir_dgem_load` and the generation-vector walks check once; the qualification's trust-boundary row
+    times what a run now pays. Every run still validates the pack it executes. Counted under callgrind (each
+    tree's units at -O0, a profile part a call), a pack's CRC passes a call: `bcir_sp_execute` and `bcir_dgem_run`
+    3 -> 1, `bcir_dgem_load` 4 -> 1, the program rail's lowering 13 -> 9.
+  - Measured on the committed tree against the tree before (one host, one process, an A/A control):
+    `bcir_sp_execute` with no kernel 1.39 -> 0.74 ms (x0.530, clang) and 1.29 -> 0.76 ms (x0.591, gcc); GEM's load
+    1.97 -> 0.98 ms (x0.500) and 1.84 -> 1.07 ms (x0.584); a whole 48-token GEM request x0.94-0.96, within its
+    control. In the qualification, over four runs of each tree: GEM's load 2.16-2.26 -> 1.24-1.31 ms, the trust
+    boundary 0.98-1.00 -> 0.67-0.69 ms, the first token of a GEM run 2.68-2.89 -> 2.00-2.08 ms, GEM/monolithic
+    1.06-1.25 -> 1.03-1.07; the logits one SHA-256 on both trees, 23 of 23 checks, GEM 214.9 M -> 211.1 M simulated
+    instructions and the monolithic runner's the same 201,016,566.
+  - Witnesses: the executor harness's `--checked` differential
+    (`test_the_checked_walks_are_the_plain_walks_on_every_pack`: 1,100 packs -- the hydrated packs and their 21
+    disorders, truncations, a flipped CRC, header fields moved by one and resealed, body octets changed and resealed
+    -- each checked walk's status, header and every callback's view the plain walk's, forged and refused tokens
+    refused); `fuzz_streampack.c`'s same differential on every input, raw and sealed; `sp-once.json` SO1-SO11, each
+    caught by its own check; `qual.json`'s QL2 and QG3 re-anchored on the moved lines and the whole table (28 faults)
+    swept again on the committed tree, each still caught.
+  - Not claimed: validating once a load and trusting the bytes across runs (TRUST-ONCE, a change to the per-run
+    contract); the other callers that validate and walk, which keep their plain walks -- the program rail's
+    lowering (`bcir_decoder_lower_pack`: 9 CRC passes over its pack a lowering where it made 13, its two executions
+    now one pass each; its time unmeasured), the verifier CLI, the control plane, the encoder; any other host's
+    figures; counter-based figures.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

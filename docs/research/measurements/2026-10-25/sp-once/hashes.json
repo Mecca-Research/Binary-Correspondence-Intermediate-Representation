@@ -1,0 +1,23 @@
+{
+ "tools": {
+  "measure_once.sh": "9b7c1ccbed38e290801e64ec9440d5aa3ba7a8a0fe08530086c45db6ceb7c4c7",
+  "once_ab.c": "58468c6fa2b6e904f3162918291c4bc4309e1e4c60e5400eca3c0018e427083c"
+ },
+ "tools run from ../crc-slice": {
+  "dump_pack.py": "3863a8e171b1178f587f03e2461b0adb3a3eb55e224813445baacc868697ca43",
+  "qual_crc.py": "40ce4b63c526e9da0fe2aeab193c2a629fafa82bd3d490754d1480bf1ee3c3bf"
+ },
+ "sources": {
+  "before/bcir_runtime.c": "78e63ecddb5f6b271c26d51637bae5dede3f0aac1802a228f18aeb173765f7de",
+  "before/bcir_runtime.h": "fe2beef5ae92de07b46f8f827e6245021bacadf3be7465e089865a63b4011806",
+  "before/bcir_exec.c": "2d9e4449931095af8028e08b1525ae3a5235393933f1d94eb5802dd1a6196d8b",
+  "before/bcir_decoder_gem.c": "ffa73bdef663acbc55f2d3f6ed191036d6d1792531ae52277fe9f7a5dc693c12",
+  "before/bcir_qualify_cli.c": "b4a21071183fc086ab6acfff73cb00d4518a03de973f8ff41a954a02c74c5c31",
+  "after/bcir_runtime.c": "290bb60f8c41af10e24043f19c5970c805dd530fc37955cfb5b07949f9ba6713",
+  "after/bcir_runtime.h": "a42ffc087946b9896673001554e5027756be7263d28c2f3642110854db85976e",
+  "after/bcir_exec.c": "e52930b1c96b2ea7adc0da36a39c4b62134583d081ca19124bf2d2c5a4ef541d",
+  "after/bcir_decoder_gem.c": "1cfc4e3a61ad98b47c2a8069f67ea93a3e578ddbe3c5b09ad43afee7e95ce6ed",
+  "after/bcir_qualify_cli.c": "40c4980da29ae3335a5cba2c180cb25b772d55cf889adf23b7bc441630e6c27a"
+ },
+ "pack.bin": "295a1d81bef9f878b3f4850237339c0da6b5d4b152929d90edd250451377655a"
+}
