@@ -500,7 +500,8 @@ def test_no_counts_means_no_ipc():
 
 def test_the_ring_and_the_dna_take_the_os_signals_when_a_count_is_missing():
     """A record is all PMU or all OS: with a count missing, the ring and silicon_dna carry the OS
-    signals for both cycles and misses, and silicon_dna claims no 'pmu' provenance."""
+    signals for both cycles and misses, and silicon_dna claims no 'pmu' provenance. The PMU's
+    misses are a pressure: 7 per 3,000 instructions is 2 per thousand."""
     lap = Counters(wall_ns=73, cpu_ns=50, minor_faults=4, major_faults=1, vol_ctx=0, invol_ctx=0)
 
     class FixedSampler:
@@ -510,7 +511,7 @@ def test_the_ring_and_the_dna_take_the_os_signals_when_a_count_is_missing():
     for sample, want, pmu in (
         (HwSample(cycles=2_000, instructions=3_000, cache_misses=None), (50, 5), False),
         (HwSample(cycles=None, instructions=3_000, cache_misses=7), (50, 5), False),
-        (HwSample(cycles=2_000, instructions=3_000, cache_misses=7), (2_000, 7), True),
+        (HwSample(cycles=2_000, instructions=3_000, cache_misses=7), (2_000, 2), True),
     ):
         runs = []
 
@@ -529,6 +530,67 @@ def test_the_ring_and_the_dna_take_the_os_signals_when_a_count_is_missing():
         assert runs == [1, 1]
         assert (rec.cycles, rec.misses) == want and (dna.cycles, dna.misses) == want
         assert ("pmu" in provenance) is pmu
+
+
+def _fed(sample, lap):
+    """The ring's record and the DNA (with its provenance) for one PMU `sample` and OS `lap`."""
+
+    class FixedSampler:
+        def lap(self):
+            return lap
+
+    def counted(work, sample=sample):
+        work()
+        return sample
+
+    with (
+        mock.patch.object(silicon, "CounterSampler", FixedSampler),
+        mock.patch.object(silicon, "read_hw_counters", counted),
+    ):
+        ring = TelemetryRing(capacity=4)
+        sample_into_ring(ring, claim_id=3, work=lambda: None)
+        rec = ring.read_one()
+        dna, provenance = silicon.silicon_dna(lambda: None, claim_id=3)
+    return rec, dna, provenance
+
+
+def test_a_pmu_counting_thousands_of_misses_writes_a_pressure_the_ring_takes():
+    """The frame's miss signal is a 0..100 pressure (`DataDNA.misses`, validated by the ring's
+    write and dropped by every calibrator past 100), so the PMU's is its last-level misses per
+    thousand instructions retired, saturating at 100 -- never the raw count, which a real
+    workload puts in the thousands. The calibrators' ingest gate keeps the event."""
+    from bcir.telemetry import sanitize_events
+
+    lap = Counters(wall_ns=73, cpu_ns=50, minor_faults=4, major_faults=1, vol_ctx=0, invol_ctx=0)
+    for misses, want in ((50_000, 50), (999, 0), (100_000, 100), (10**12, 100)):
+        sample = HwSample(cycles=2_000_000, instructions=1_000_000, cache_misses=misses)
+        rec, dna, provenance = _fed(sample, lap)
+        assert (rec.cycles, rec.misses) == (2_000_000, want) == (dna.cycles, dna.misses)
+        assert "pmu" in provenance and dna.violations() == []
+        kept, integrity = sanitize_events([dna])
+        assert kept == [dna] and (integrity.accepted, integrity.rejected) == (1, 0)
+
+
+def test_the_os_fault_signal_saturates_at_the_frames_ceiling():
+    """Without a PMU the frame's miss signal is the lap's page faults, saturating at 100: a lap
+    that faults in a fresh MiB (256 pages) is a record the ring takes, not an integrity error."""
+    sample = HwSample(cycles=None, instructions=None, cache_misses=None)
+    for minor, major, want in ((4, 1, 5), (99, 1, 100), (300, 2, 100)):
+        lap = Counters(
+            wall_ns=73, cpu_ns=50, minor_faults=minor, major_faults=major, vol_ctx=0, invol_ctx=0
+        )
+        rec, dna, provenance = _fed(sample, lap)
+        assert (rec.cycles, rec.misses) == (50, want) == (dna.cycles, dna.misses)
+        assert "pmu" not in provenance and dna.violations() == []
+
+
+def test_no_instruction_retired_is_no_pmu_pressure():
+    """A PMU sample that retired no instruction has no misses-per-instruction rate: the record
+    takes the OS pair, and the DNA claims no PMU."""
+    lap = Counters(wall_ns=73, cpu_ns=50, minor_faults=4, major_faults=1, vol_ctx=0, invol_ctx=0)
+    rec, dna, provenance = _fed(HwSample(cycles=2_000, instructions=0, cache_misses=7), lap)
+    assert (rec.cycles, rec.misses) == (50, 5) == (dna.cycles, dna.misses)
+    assert "pmu" not in provenance
 
 
 def test_kernel_text_integers_are_read_in_their_own_grammar():

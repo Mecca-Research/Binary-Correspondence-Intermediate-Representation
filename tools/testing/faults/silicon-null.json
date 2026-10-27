@@ -108,15 +108,15 @@
   {
    "expects": "test_the_ring_and_the_dna_take_the_os_signals_when_a_count_is_missing",
    "label": "SN13 the ring taking a sample with a gap",
-   "new": "    c = sampler.lap()\n    counts = (hw.cycles, hw.instructions, hw.cache_misses) if hw is not None else None\n",
-   "old": "    c = sampler.lap()\n    counts = pmu_counts(hw)\n",
+   "new": "    c = sampler.lap()\n    pmu = _pmu_signals((hw.cycles, hw.instructions, hw.cache_misses) if hw else None)\n",
+   "old": "    c = sampler.lap()\n    pmu = _pmu_signals(pmu_counts(hw))\n",
    "path": "bcir/silicon.py"
   },
   {
    "expects": "test_the_ring_and_the_dna_take_the_os_signals_when_a_count_is_missing",
    "label": "SN14 silicon_dna claiming pmu provenance for a sample with a gap",
-   "new": "    counts = pmu_counts(hw)\n    if hw is not None:\n        provenance.add(\"pmu\")\n",
-   "old": "    counts = pmu_counts(hw)\n    if counts is not None:\n        provenance.add(\"pmu\")\n",
+   "new": "    pmu = _pmu_signals(pmu_counts(hw))\n    if hw is not None:\n        provenance.add(\"pmu\")\n",
+   "old": "    pmu = _pmu_signals(pmu_counts(hw))\n    if pmu is not None:\n        provenance.add(\"pmu\")\n",
    "path": "bcir/silicon.py"
   },
   {

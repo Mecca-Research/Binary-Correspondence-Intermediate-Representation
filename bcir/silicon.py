@@ -536,13 +536,34 @@ def thermal_pressure() -> int | None:
     return max(0, min(100, int(round((c - _THERMAL_FLOOR_C) * 100 / span))))
 
 
+def _pmu_signals(counts: tuple[int, int, int] | None) -> tuple[int, int] | None:
+    """The telemetry frame's (cycles, miss pressure) from the PMU's counts, or None without them.
+    The frame's miss signal is a 0..100 pressure (`DataDNA.misses`: the ring's write validates it,
+    and every calibrator's ingest drops a record past it), never a raw count, which a real
+    workload puts in the thousands. The PMU's pressure is its last-level-cache misses per
+    thousand instructions retired, saturating at 100: a rate, so a short run and a long run of one
+    loop read alike. A sample that retired no instruction has no rate: None, and the frame takes
+    the OS pair."""
+    if counts is None:
+        return None
+    cycles, instructions, cache_misses = counts
+    if instructions <= 0:
+        return None
+    from .telemetry import NORM_MAX
+
+    return cycles, min(NORM_MAX, cache_misses * 1000 // instructions)
+
+
 def _fault_signal(c: Counters) -> int:
-    """The telemetry frame's OS miss signal: the lap's page faults, or 0 on a host without
-    getrusage. The frame has no null, and 0 is its nominal value; `Counters` itself says None,
-    and `summary()["rusage_counters"]` says the host has no such counter."""
+    """The telemetry frame's OS miss signal, when the PMU gave none: the lap's page faults,
+    saturating at the frame's 100 (a fresh MiB is 256 faults), or 0 on a host without getrusage.
+    The frame has no null, and 0 is its nominal value; `Counters` itself says None, and
+    `summary()["rusage_counters"]` says the host has no such counter."""
     if c.minor_faults is None or c.major_faults is None:
         return 0
-    return c.minor_faults + c.major_faults
+    from .telemetry import NORM_MAX
+
+    return min(NORM_MAX, c.minor_faults + c.major_faults)
 
 
 def silicon_dna(work, claim_id: int = 0):
@@ -552,7 +573,9 @@ def silicon_dna(work, claim_id: int = 0):
     provenance) where `provenance` is the set of signals that were genuinely real
     (e.g. {"pmu", "rapl", "thermal", "os"}); a signal absent on this host falls back
     to a derived/zero value and is omitted from the set (honest, never faked). Cycles and
-    misses are the PMU's only when it counted both (`pmu_counts`), else both the OS's."""
+    misses are the PMU's only when it counted all three and retired an instruction
+    (`_pmu_signals`: its misses a 0..100 pressure, per thousand instructions), else both the
+    OS's (`_fault_signal`)."""
     from .telemetry import DataDNA
 
     provenance: set[str] = set()
@@ -561,8 +584,8 @@ def silicon_dna(work, claim_id: int = 0):
     hw = read_hw_counters(work)  # runs work() iff a PMU is present
     if hw is None:
         work()  # no PMU: run once under OS counters
-    counts = pmu_counts(hw)
-    if counts is not None:
+    pmu = _pmu_signals(pmu_counts(hw))
+    if pmu is not None:
         provenance.add("pmu")
     c = sampler.lap()
     energy_uj = rapl.lap_uj()
@@ -574,10 +597,7 @@ def silicon_dna(work, claim_id: int = 0):
     thermal = therm if therm is not None else 0
     if therm is not None:
         provenance.add("thermal")
-    if counts is not None:
-        cycles, misses = counts[0], counts[2]
-    else:
-        cycles, misses = c.cpu_ns, _fault_signal(c)
+    cycles, misses = pmu if pmu is not None else (c.cpu_ns, _fault_signal(c))
     util = min(100, (c.cpu_ns * 100) // max(1, c.wall_ns))
     # Voltage axis (reserved): a coarse power proxy from RAPL (uJ over wall-ns ->
     # milliwatts), clamped to 0..100; 0 when no RAPL.
@@ -602,12 +622,12 @@ def silicon_dna(work, claim_id: int = 0):
 
 def sample_into_ring(ring, claim_id: int, work) -> Counters:
     """Run `work()` once, measure it, and write one record into the zero-copy
-    telemetry ring. When a hardware PMU is present, the real cycle + cache-miss
-    counts are used (`misses` carries L*-miss counts); otherwise `cycles` = measured
-    CPU nanoseconds, falling back to measured wall nanoseconds when the host CPU clock
-    is too coarse to move during short work (notably Windows), and `misses` = page
-    faults; a PMU that counted one of the two and not the other gives the OS pair
-    (`pmu_counts`). The raw ``Counters`` delta remains unchanged. The kernel writes, the
+    telemetry ring. When the PMU counted all three and retired an instruction, `cycles` is
+    its cycle count and `misses` its last-level misses per thousand instructions, saturating
+    at the frame's 100 (`_pmu_signals`); otherwise `cycles` = measured CPU nanoseconds,
+    falling back to measured wall nanoseconds when the host CPU clock is too coarse to move
+    during short work (notably Windows), and `misses` = page faults, saturating at 100
+    (`_fault_signal`). The raw ``Counters`` delta remains unchanged. The kernel writes, the
     consumer `drain()`s the same buffer -- a real measured signal."""
     from .telemetry import DataDNA
 
@@ -616,9 +636,9 @@ def sample_into_ring(ring, claim_id: int, work) -> Counters:
     if hw is None:
         work()  # no PMU: run once under OS counters
     c = sampler.lap()
-    counts = pmu_counts(hw)
-    if counts is not None:
-        cycles, misses = counts[0], counts[2]
+    pmu = _pmu_signals(pmu_counts(hw))
+    if pmu is not None:
+        cycles, misses = pmu
     else:
         cycles = c.cpu_ns if c.cpu_ns > 0 else c.wall_ns
         misses = _fault_signal(c)

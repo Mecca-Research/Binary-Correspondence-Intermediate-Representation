@@ -5633,6 +5633,22 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     the OS's page faults -- into the telemetry frame's 0..100 miss pressure, which `TelemetryRing.write` validates;
     on a host whose PMU counts more than 100 misses (a bare-metal host, now that SILICON-NULL opens its counters
     unprivileged) the write raises. That is the next slice.
+  DNA-PRESSURE (2026-10-27): the telemetry frame's miss signal a 0..100 pressure, as the frame declares it.
+  - `DataDNA.misses` is a pressure in [0, 100]: `TelemetryRing.write` validates it, and every calibrator's ingest
+    (`sanitize_events`) drops a record past it. `sample_into_ring` and `silicon_dna` wrote raw counts there -- the
+    PMU's cache misses, else the OS's page faults. On a host whose PMU counts more than 100 misses in a run (any real
+    workload on bare metal, which SILICON-NULL now reads unprivileged) the ring's write raised
+    TelemetryIntegrityError, and the calibration loop dropped every one of its own PMU events while its certificate
+    still named `pmu` among its sources; without a PMU, a lap that faults in more than 400 KiB did the same.
+  - The PMU's pressure is its last-level-cache misses per thousand instructions retired, saturating at 100
+    (`_pmu_signals`): a rate, so a short and a long run of one loop read alike. A sample that retired no
+    instruction has no rate and takes the OS pair, claiming no PMU. The OS fallback stays the lap's page faults,
+    saturating at 100 (`_fault_signal`).
+  - Witnesses (test_silicon): a PMU counting 999 to 10^12 misses over 10^6 instructions written as 0, 50 and 100
+    and kept by the ingest gate; 5, 100 and 302 faults written as 5, 100 and 100; a sample that retired nothing.
+    `miss-pressure.json` MP1-MP7, each caught by its own check; under the tests before DNA-PRESSURE none, the one
+    test that read the PMU path asserting the raw count. SILICON-NULL's SN13 and SN14 follow the feed to its new
+    lines (`test_every_committed_table_loads_and_anchors_exactly_once` refused them where they were).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

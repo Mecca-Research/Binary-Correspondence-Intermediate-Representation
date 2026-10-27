@@ -1,0 +1,61 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "bcir.tests.test_silicon:test_a_pmu_counting_thousands_of_misses_writes_a_pressure_the_ring_takes",
+  "bcir.tests.test_silicon:test_the_os_fault_signal_saturates_at_the_frames_ceiling",
+  "bcir.tests.test_silicon:test_no_instruction_retired_is_no_pmu_pressure",
+  "bcir.tests.test_silicon:test_the_ring_and_the_dna_take_the_os_signals_when_a_count_is_missing"
+ ],
+ "faults": [
+  {
+   "expects": "test_a_pmu_counting_thousands_of_misses_writes_a_pressure_the_ring_takes",
+   "label": "MP1 the ring written the PMU's raw miss count",
+   "new": "    pmu = (lambda k: (k[0], k[2]) if k is not None else None)(pmu_counts(hw))\n    if pmu is not None:\n        cycles, misses = pmu\n",
+   "old": "    pmu = _pmu_signals(pmu_counts(hw))\n    if pmu is not None:\n        cycles, misses = pmu\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_pmu_counting_thousands_of_misses_writes_a_pressure_the_ring_takes",
+   "label": "MP2 the DNA given the PMU's raw miss count",
+   "new": "    pmu = (lambda k: (k[0], k[2]) if k is not None else None)(pmu_counts(hw))\n    if pmu is not None:\n        provenance.add(\"pmu\")\n",
+   "old": "    pmu = _pmu_signals(pmu_counts(hw))\n    if pmu is not None:\n        provenance.add(\"pmu\")\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_pmu_counting_thousands_of_misses_writes_a_pressure_the_ring_takes",
+   "label": "MP3 the PMU's pressure never saturating",
+   "new": "    return cycles, cache_misses * 1000 // instructions\n",
+   "old": "    return cycles, min(NORM_MAX, cache_misses * 1000 // instructions)\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_pmu_counting_thousands_of_misses_writes_a_pressure_the_ring_takes",
+   "label": "MP4 misses per instruction taken for per thousand",
+   "new": "    return cycles, min(NORM_MAX, cache_misses // instructions)\n",
+   "old": "    return cycles, min(NORM_MAX, cache_misses * 1000 // instructions)\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_the_os_fault_signal_saturates_at_the_frames_ceiling",
+   "label": "MP5 the OS fault signal never saturating",
+   "new": "    return c.minor_faults + c.major_faults\n",
+   "old": "    return min(NORM_MAX, c.minor_faults + c.major_faults)\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_no_instruction_retired_is_no_pmu_pressure",
+   "label": "MP6 a sample that retired nothing divided by",
+   "new": "",
+   "old": "    if instructions <= 0:\n        return None\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_no_instruction_retired_is_no_pmu_pressure",
+   "label": "MP7 the PMU claimed where its pressure was not used",
+   "new": "    pmu = _pmu_signals(pmu_counts(hw))\n    if pmu_counts(hw) is not None:\n        provenance.add(\"pmu\")\n",
+   "old": "    pmu = _pmu_signals(pmu_counts(hw))\n    if pmu is not None:\n        provenance.add(\"pmu\")\n",
+   "path": "bcir/silicon.py"
+  }
+ ]
+}
