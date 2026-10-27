@@ -105,8 +105,15 @@ line-length = 100
 target-version = "py311"
 include = ["*.py", "*.pyi"]
 # Anchored at the root: a bare "build" names every directory called build, and so skipped
-# tools/build -- the build tooling -- in every lint and format check.
-extend-exclude = ["./build", "training/llvm/dataset"]
+# tools/build -- the build tooling -- in every lint and format check. The five research bundles
+# under docs/research are frozen evidence, not maintained code: each one's protocol.json and
+# MANIFEST_SHA256.json hash its scripts' bytes, so restyling them would break the reproduction
+# they exist for (GEO-2 reran them from those bytes). Each is named, so a new bundle is a decision.
+extend-exclude = [
+    "./build", "training/llvm/dataset",
+    "docs/research/gp-global", "docs/research/wedge-next", "docs/research/wedge-integrated",
+    "docs/research/wedge-query-aware", "docs/research/wedge-pr818",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "UP"]
