@@ -2752,3 +2752,103 @@ them are, the whole-call instances' (DT27, DT28 and DT29).
 
 Not claimed: a real TinyLlama-1.1B (the synthetic decoders have its widths, not its weights); thresholds right for
 every host, since the defaults were calibrated on the session's first; counter-based figures (no PMU on either VM).
+
+## 39. KERNEL-ALIGN: the decoder's units built so that where the linker places the vector kernels no longer moves their time (2026-10-27)
+
+DECODE-THREADS' whole calls (§38) found the same instructions reading up to a fifth apart on this host at different
+placements: the tree after's whole calls, the tree before's instructions, took x0.880-1.223 of the tree before's time
+under clang AVX-512 at the compilers' own placements, and the records had to align every function to 64 bytes before
+two trees differed in their code alone. The host is a Xeon of Cascade Lake's family (family 6, model 85, stepping 7),
+a core with Intel's JCC erratum: a jump, or a compare fused with one, that crosses or ends on a 32-byte boundary is
+not cached as decoded micro-operations, so a hot loop holding one is decoded again every pass. A unit's text is
+aligned to 16 bytes, so a linker may start it at any of four placements modulo 64, and which loop branches meet a
+32-byte boundary changes with it.
+
+A pilot in one binary (draft tools, then committed as this section's records) held copies of one build of the kernel
+unit, each copy's text 0, 16, 32 or 48 bytes past a 64-byte boundary. Loop alignment (`-falign-loops=32` or 64) and
+64-byte function alignment each left some kernel slow at some placement they admit; the assembler's JCC-erratum
+mitigation, which pads so that no jump or fused pair meets a 32-byte boundary, put every kernel, shape and instance at
+the fast level at both placements its 32-byte text alignment admits.
+
+KERNEL-ALIGN (`4329b80`) builds `bcir_models` -- the matvec and head kernels, the decode loop, the GEM interpreter --
+with that mitigation on x86-64: `x86_64:clang:-mbranches-within-32B-boundaries` and
+`x86_64:gcc:-Wa,-mbranches-within-32B-boundaries` in `runtime/manifest.json` (clang refuses the `-Wa` spelling; an
+aarch64 compiler refuses both). An option's `x86_64:` target scope comes before its `gcc:`/`clang:` compiler scope,
+each at most once (M6's grammar, `bcir.toolchain.OPTION_GRAMMAR`), read by one predicate,
+`bcir.toolchain.manifest_options`, and by its CMake twin `bcir_manifest_resolve`, held to it by test under `cmake -P`.
+The builds that time the decoder's units -- the native AI library, the model microbenchmark and the qualification's
+`bcir-qualify` -- take their flags from `bcir.toolchain.unit_options`, the options of the units that own their
+sources. M18 holds the two options to `bcir_models` alone, the speed builds to `unit_options`, and every other module
+and gate to never spelling the mitigation itself. The kernels' sources do not change.
+
+**Measured** on the committed tree (`4329b80` against `dbe444c`) on the session's second host, a Xeon at 2.80 GHz (4
+cores, one thread each), clang 18 and GCC 13 at the qualification's flags; a reading is an arm's time over the first
+copy's in the same round, the geometric mean over the rounds and its 95% interval, resolved where the interval excludes
+1 and does not meet the A/A control's. `align_ab.c` times whole calls in one binary holding copies of one build of
+`bcir_ai_kernels.c`, each copy's text where `build_align.py` placed it, 101 rounds: the 860K decoder's matvec shapes
+(128 x 128 with and without Q8-BOUND's proof, 128 x 100, 128 x 344 and 344 x 128), 512 and 2,048 square, and the
+packed head at 256 x 1,024 and 2,048 x 2,048, on the widest instance, on AVX2 and on the portable loops. Each tree's
+build is timed at every placement its alignment admits -- the tree before's at 16, 32 and 48 against its own at 0, the
+tree after's at 0 and 32 against the tree before's at 0 -- and the alternatives beside it at every placement theirs
+admit:
+
+| arms resolved slower than the tree before's build at 0 | clang AVX-512 | GCC AVX-512 | clang AVX2 | GCC AVX2 | clang portable | GCC portable | of |
+|---|---|---|---|---|---|---|---|
+| the tree before's build at 16, 32, 48 | 7 | 8 | 1 | 0 | 0 | 2 | 162 |
+| the mitigation (the tree after's) at 0, 32 | 0 | 0 | 0 | 0 | 0 | 0 | 108 |
+| loops aligned to 32 or 64 | 1 | 0 | 0 | 0 | 0 | 0 | 162 |
+| every function aligned to 64 | 0 | 2 | 0 | 0 | 0 | 2 | 54 |
+| loops aligned to 32 and the mitigation | 1 | 0 | 0 | 0 | 0 | 0 | 108 |
+
+At the tree before's placements clang's AVX-512 pair kernels took x0.985-1.228 of their time at 0: slower at 32 for
+every shape Q8-BOUND proves (x1.149-1.228, 5 of 5 resolved) and at 16 and 48 for the one it does not (x1.124 and
+x1.120), each shape's slowest placement x1.124-1.228 of its fastest. GCC's took x0.973-1.328: slower at 48 for five
+of the six shapes (x1.174-1.328) and at 16 for three (x1.091-1.150). Under GCC's portable loops 0 is the slow placement for the matvecs, whose pair kernels took
+x0.769-1.015 of their time there at the other three (12 of 18 resolved faster), and 16 for the packed head
+(x1.527-1.619). With the mitigation every kernel ran at its
+fast level at both placements: clang's AVX-512 pair kernels x0.922-1.080 and GCC's x0.942-1.028 of the tree before's at
+0, GCC's portable pair kernels x0.764-0.831; against each shape's fastest placement under the tree before's build no
+mitigated arm resolved slower, and one faster (clang's AVX-512 kernel at 128 x 128 without Q8-BOUND's proof, x0.922).
+Outside GCC's portable loops the run kernel (128 x 100) and the packed head kept their time at every placement of
+the tree before's build (x0.961-1.067, none resolved). The A/A controls read x0.957-1.034.
+
+The code (`code.json`): the kernel unit's text grows 36,576 -> 37,361 bytes under clang (+2.1%) and 33,862 -> 34,662
+under GCC (+2.4%), `bcir_models`' five sources +2.7% and +3.0%, each one's text aligned to 32 bytes where it was 16.
+Clang pads with NOPs (20 -> 44 inside the hot kernels' loops), GCC mostly with redundant prefixes (41 prefixed
+instructions, 31 -> 32 NOPs). In the copies `align_ab` timed, the hot kernels' loops hold 114 branches under clang and
+156 under GCC; under the tree before's build 17 (at 0 and 32) or 19 (at 16 and 48) of clang's are jumps that cross or
+end on a 32-byte boundary, and 20 or 34 of GCC's, whose slow AVX-512 placements are its 34; with the mitigation no
+jump does at either placement, under either compiler (it leaves calls be: two). Loop alignment leaves 18 and 29, function alignment 17 and 37. Clang's slow placement at 32 holds the
+17 its fast one at 0 does, so the count is not the whole of the effect.
+
+The decoder (`decode.json`, `decode-long.json`): `decode_place.c` decodes with copies of the four sources a decode
+links -- `bcir_ai_kernels.c`, `bcir_q8_model.c` and `bcir_llama.c` of `bcir_models`, and `bcir_decode.c` -- in one
+binary, each built as its tree's manifest gives it, every generation's tokens and final logits the first copy's bytes:
+the tree before's build at its four placements, the tree after's at its two, and the tree after's kernel unit alone
+beside the tree before's other sources at two. In 101-round runs (`decode-long.json`, three a decoder) the tree before's copy at 32 took a token of the 860K
+decoder x1.069 of its copy's time at 0 under clang and one of the 256-wide synthetic decoder x1.108, its copy at 48
+under GCC x1.093 and x1.143 (medians over the runs): each of the twelve runs' intervals above 1, nine resolved past
+the A/A control. Its other placements read x0.982-1.061 (GCC's at 16 on the 256-wide decoder x1.061, its intervals
+above 1, none resolved). The tree after's copies at 0 and 32 took x0.989-1.023, none of 24 resolved (two intervals
+above 1, each meeting its control: x1.079 and x1.046 on the 256-wide decoder), and its kernel unit alone beside the
+tree before's other sources x0.977-1.030, none resolved. A token took 0.415 ms (clang) and 0.410 ms (GCC) on the
+860K decoder at the copy at 0, 2.62 and 2.35 ms on the 256-wide one. The first pass (`decode.json`, 31 rounds a run,
+with a decoder 512 wide besides) reads the same way with intervals about twice as wide: the tree before's copy at 32
+under clang x1.097, x1.180 and x1.056 on the three decoders and its copy at 48 under GCC x1.116, x1.097 and x1.060,
+one of 18 runs resolved; the tree after's copies x0.948-1.055, none resolved.
+
+The trainer's GEMM (`gemm.json`, `bcir_tensor.c`, a unit the slice leaves as it was): MM-ROWS' `ab_gemm.c` against
+the unit as a shared library at its first placement, its other three and the mitigation at two, four shapes in cache,
+48 rounds: x0.948-1.025 under clang and x0.957-1.032 under GCC, none of 40 resolved -- it keeps its build. Under
+callgrind (the AVX2 instance, clang) the qualification's GEM request takes 135,438,771 -> 138,792,520 instructions
+(x1.025, the NOPs executed) and the monolithic runner 125,375,994 -> 128,614,321, its data references the same; its
+logits keep their SHA-256, 23 of 23 checks on both trees. Over six qualification runs a tree, each tree three times in
+each place of the order, a token took 0.3124 ms (0.2823-0.5230) before and 0.3104 ms (0.2879-0.5200) after: runs of
+both trees at about 0.52 ms, the host's state rather than either tree. `kernel-align.json`'s 35 faults are each caught
+by their own check; under the witnesses before KERNEL-ALIGN 10 of them are, through M18 run by the manifest's
+reconciliation test and the native library's stamp tests.
+
+Not claimed: the mechanism -- no PMU on this VM, so no count of the decoded-micro-operation cache's misses, and the
+boundary branches are a correlate the mitigation removes, not a measured cause; any other host's figures; a gain on
+a core without the erratum, where the padding costs some 2-3% more code and, by the callgrind count, 2.5% more
+instructions executed; aarch64 and Windows timing (the option is x86-64's, and CI builds both).

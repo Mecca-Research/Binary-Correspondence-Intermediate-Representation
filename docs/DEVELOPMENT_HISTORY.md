@@ -5437,6 +5437,40 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     that width holds in L2; a real TinyLlama-1.1B (no artifact of that size here: the synthetic decoder has its
     widths and six of its 22 layers, with pseudo-random codes); any other host's figures; counter-based figures (no
     PMU on this VM).
+  HEAD-PACK (2026-10-26): the C decoder's head reads its rows from a copy packed once at load, 32 rows a pass, every
+    logit the rows' own bit for bit ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §37,
+    [measurements/2026-10-26/head-pack/](research/measurements/2026-10-26/head-pack/README.json)).
+  - HEAD-PACK (`27091ae`): `bcir_ai_q8_rows_pack` packs a matrix's rows once -- blocks of eight rows, a block's
+    groups in order, each group's segment its eight rows' exponents and then its coordinates' codes, eight bytes a
+    coordinate -- and `bcir_ai_q8_rows_dot_f64_packed` reads it: four blocks a pass on both vector instances
+    (`q8_rows_pack512x4`, `q8_rows_pack256x4`, every accumulator and scale a named register), then a block at a time,
+    a group's eight scales one load and (e + 1023) << 52, no division. The loader packs the head (the embedding when
+    tied, else the LM head) where `d_model` is a whole number of groups (`head_pack`), and `bcir_llama_op_head`,
+    which both dispatchers call, reads it. A survey before the change (draft tools, not kept) placed the layout: the
+    codes alone packed, a block a pass, read x1.09-1.15 of the committed transpose at TinyLlama-1.1B's head under
+    clang, the same kernel with the exponents in the pack x0.62, and four blocks a pass x0.24-0.50 at AVX-512 and
+    x0.30-0.59 at AVX2.
+  - Witnesses: `q8_pack_shapes` (16 shapes in two exponent ranges, every buffer at its exact size, the probe's passes
+    and blocks: 32 calls, 152 passes and 40 blocks a vector instance) and `q8_pack_test` (a 64-byte pack pinned, a
+    pack serving fewer rows, non-finite totals, the refusals); the Python oracle and layout test; the head witness
+    (the loader under an allocator refusing each of its allocations in turn, the head against the unpacked row dots
+    byte for byte, 12 of 12 calls on the pack); the standalone decoder's parity and the memory-discipline gate on a
+    toy whose head is packed. `head-pack.json` HP1-HP18, each caught by its own check; under the witnesses before
+    HEAD-PACK 0 of the 18 are caught, since none of them calls a packed entry or reads a packed head (the rotation
+    witness loads a toy whose head the loader packs and reads only its rotation). QL12 re-anchored on the committed
+    row block's store.
+  - Measured (`27091ae` against `06e67ce`, a reading the median of 3 runs): in one binary the packed row dots take
+    x0.516 of the unpacked time at the 860K decoder's head (in L2) under clang and x0.401 under GCC, and x0.392
+    (x0.330) at TinyLlama-1.1B's head from memory, reading 7.2 GB/s of the pack against 2.6 of the rows as they are;
+    at AVX2 x0.599 (x0.448) and x0.586 (x0.352). A token of the 860K decoder takes x0.920 under clang (3 of 3 runs
+    resolved past the A/A control) and x0.877 under GCC (3 of 3), x0.940 and x0.855 capped at AVX2; a token of a
+    synthetic decoder at TinyLlama's widths, six layers whose 334 MiB pass this host's L3, x0.791 (93.9 -> 73.4 ms)
+    and x0.742, x0.899 and x0.749 capped at AVX2. Under callgrind (the AVX2 instance) the qualification's GEM request
+    takes 147.2 M -> 135.6 M instructions and the monolithic runner 137.1 M -> 125.5 M; its logits keep their
+    SHA-256, 23 of 23 checks on both trees.
+  - Not claimed: a real TinyLlama-1.1B (the synthetic decoder has its widths and six of its 22 layers, with
+    pseudo-random codes); a head whose rows are not a whole number of groups (no pack: the rows as they are); any
+    other host's figures; counter-based figures (no PMU on this VM).
   DECODE-THREADS (2026-10-26): the C decoder's large matvecs by columns and its head by rows in parts on a runner the
     caller lends, every token and logit the same at every thread count
     ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §38,
@@ -5490,40 +5524,53 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: a real TinyLlama-1.1B (the synthetic decoders have its widths, not its weights); thresholds right for
     every host (the defaults were calibrated on the session's first host, and on its second they split the 256-wide
     decoder at a loss under GCC); counter-based figures (no PMU on either VM).
-  HEAD-PACK (2026-10-26): the C decoder's head reads its rows from a copy packed once at load, 32 rows a pass, every
-    logit the rows' own bit for bit ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §37,
-    [measurements/2026-10-26/head-pack/](research/measurements/2026-10-26/head-pack/README.json)).
-  - HEAD-PACK (`27091ae`): `bcir_ai_q8_rows_pack` packs a matrix's rows once -- blocks of eight rows, a block's
-    groups in order, each group's segment its eight rows' exponents and then its coordinates' codes, eight bytes a
-    coordinate -- and `bcir_ai_q8_rows_dot_f64_packed` reads it: four blocks a pass on both vector instances
-    (`q8_rows_pack512x4`, `q8_rows_pack256x4`, every accumulator and scale a named register), then a block at a time,
-    a group's eight scales one load and (e + 1023) << 52, no division. The loader packs the head (the embedding when
-    tied, else the LM head) where `d_model` is a whole number of groups (`head_pack`), and `bcir_llama_op_head`,
-    which both dispatchers call, reads it. A survey before the change (draft tools, not kept) placed the layout: the
-    codes alone packed, a block a pass, read x1.09-1.15 of the committed transpose at TinyLlama-1.1B's head under
-    clang, the same kernel with the exponents in the pack x0.62, and four blocks a pass x0.24-0.50 at AVX-512 and
-    x0.30-0.59 at AVX2.
-  - Witnesses: `q8_pack_shapes` (16 shapes in two exponent ranges, every buffer at its exact size, the probe's passes
-    and blocks: 32 calls, 152 passes and 40 blocks a vector instance) and `q8_pack_test` (a 64-byte pack pinned, a
-    pack serving fewer rows, non-finite totals, the refusals); the Python oracle and layout test; the head witness
-    (the loader under an allocator refusing each of its allocations in turn, the head against the unpacked row dots
-    byte for byte, 12 of 12 calls on the pack); the standalone decoder's parity and the memory-discipline gate on a
-    toy whose head is packed. `head-pack.json` HP1-HP18, each caught by its own check; under the witnesses before
-    HEAD-PACK 0 of the 18 are caught, since none of them calls a packed entry or reads a packed head (the rotation
-    witness loads a toy whose head the loader packs and reads only its rotation). QL12 re-anchored on the committed
-    row block's store.
-  - Measured (`27091ae` against `06e67ce`, a reading the median of 3 runs): in one binary the packed row dots take
-    x0.516 of the unpacked time at the 860K decoder's head (in L2) under clang and x0.401 under GCC, and x0.392
-    (x0.330) at TinyLlama-1.1B's head from memory, reading 7.2 GB/s of the pack against 2.6 of the rows as they are;
-    at AVX2 x0.599 (x0.448) and x0.586 (x0.352). A token of the 860K decoder takes x0.920 under clang (3 of 3 runs
-    resolved past the A/A control) and x0.877 under GCC (3 of 3), x0.940 and x0.855 capped at AVX2; a token of a
-    synthetic decoder at TinyLlama's widths, six layers whose 334 MiB pass this host's L3, x0.791 (93.9 -> 73.4 ms)
-    and x0.742, x0.899 and x0.749 capped at AVX2. Under callgrind (the AVX2 instance) the qualification's GEM request
-    takes 147.2 M -> 135.6 M instructions and the monolithic runner 137.1 M -> 125.5 M; its logits keep their
+  KERNEL-ALIGN (2026-10-27): the decoder's units built with the JCC-erratum mitigation on x86-64, so that where the
+    linker places the vector kernels no longer moves their time, every value the same
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §39,
+    [measurements/2026-10-27/kernel-align/](research/measurements/2026-10-27/kernel-align/README.json)).
+  - KERNEL-ALIGN (`4329b80`): on the session's second host, a core of Cascade Lake's family with Intel's JCC erratum
+    (a jump, or a compare fused with one, that crosses or ends on a 32-byte boundary leaves its loop uncached as
+    decoded micro-operations), the same instructions of the vector kernels read up to a fifth apart at different
+    placements of their 16-byte-aligned text (DECODE-THREADS' `kernels.json`). `bcir_models` now takes
+    `x86_64:clang:-mbranches-within-32B-boundaries` and `x86_64:gcc:-Wa,-mbranches-within-32B-boundaries`
+    (`runtime/manifest.json`), the assembler padding so that no such jump meets a boundary; the sources do not change.
+    M6's grammar takes an `x86_64:` target scope before the compiler scope, each at most once, read by one predicate
+    (`bcir.toolchain.manifest_options`) for BCIR Make and the Python builds and by its CMake twin
+    (`bcir_manifest_resolve`, held to it under `cmake -P`, a joined list's empty element read as no option);
+    `bcir.toolchain.unit_options` gives a build the options of the units that own its sources, and the native AI
+    library, the model microbenchmark and the qualification's `bcir-qualify` take theirs there. M18 holds the two
+    options to `bcir_models` alone, the three speed builds to `unit_options` and every other module and gate to never
+    spelling the mitigation.
+  - Witnesses: the grammar's spellings and the resolver's truth table, the machine read from `-dumpmachine`, a
+    compiler's identity asked once, `unit_options` over the manifest (test_toolchain); M6's, M14's and M18's injected
+    violations, M18's readers over the speed builds' texts and its tree over a scratch root, CMake's scopes against
+    the resolver's under `cmake -P` (test_build_manifest); BCIR Make's compile lines on x86-64 and aarch64
+    (test_make_rails); the native AI library's command and stamp, the kernels' object -- its text aligned to 32 bytes
+    with the unit's options and to 16 without -- and the microbenchmark's command (test_native_ai); the
+    qualification's command, plain and callgrind (test_qualification). `kernel-align.json` KA1-KA35, each caught by
+    its own check; under the witnesses before KERNEL-ALIGN 10 of the 35, through M18 in the manifest's reconciliation
+    test and the native library's stamp tests. FC4 re-anchored on M17's pattern as it now reads.
+  - Measured (`4329b80` against `dbe444c` on that host, clang 18 and GCC 13; resolved where a 95% interval excludes
+    1 and does not meet the A/A control's): in one binary holding copies of one build of the kernel unit, each copy
+    at every placement its build admits (101 rounds, the 860K decoder's matvec shapes, 512 and 2,048 square and the
+    packed head, on AVX-512, AVX2 and the portable loops), 18 of the tree before's 162 arms at 16, 32 or 48 bytes
+    past a 64-byte boundary resolved slower than its copy at 0 -- clang's AVX-512 pair kernels up to x1.228, GCC's up
+    to x1.328, GCC's portable head x1.527-1.619 -- and none of the mitigation's 108 at 0 and 32, nor against each
+    shape's fastest placement before; GCC's portable pair kernels, slowest at 0 before, ran x0.764-0.831 of that.
+    Beside it loop alignment left 1 of 162 arms slow, 64-byte function alignment 4 of 54, and loops aligned with the
+    mitigation 1 of 108. The kernel unit's text grows 2.1% (clang) and 2.4% (GCC), `bcir_models`' 2.7% and 3.0%; in
+    the copies timed, the hot loops' jumps on a 32-byte boundary go from 17-19 (clang) and 20-34 (GCC) to none.
+    In the decoder (`decode_place.c`, copies of the four sources a decode links, 101 rounds, three runs a decoder) the
+    tree before's slow placement took a token x1.069 (clang) and x1.093 (GCC) of its copy's at 0 on the 860K decoder
+    and x1.108 and x1.143 on a 256-wide one, each run's interval above 1 and 9 of 12 resolved; the tree after's
+    copies x0.989-1.023, none of 24 resolved. The trainer's GEMM (`bcir_tensor.c`, left as it was) read x0.948-1.032 at its placements and
+    with the mitigation, none of 40 resolved. Under callgrind (the AVX2 instance) the qualification's GEM request
+    takes 135,438,771 -> 138,792,520 instructions (x1.025, the padding's NOPs executed), its logits keep their
     SHA-256, 23 of 23 checks on both trees.
-  - Not claimed: a real TinyLlama-1.1B (the synthetic decoder has its widths and six of its 22 layers, with
-    pseudo-random codes); a head whose rows are not a whole number of groups (no pack: the rows as they are); any
-    other host's figures; counter-based figures (no PMU on this VM).
+  - Not claimed: the mechanism (no PMU on this VM, so no count of the micro-operation cache's misses: the boundary
+    jumps are a correlate the mitigation removes, and clang's slow placement at 32 holds as many as its fast one at
+    0); any other host's figures, or a gain on a core without the erratum, where the padding costs its 2-3% of code;
+    aarch64 and Windows timing (the option is x86-64's).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

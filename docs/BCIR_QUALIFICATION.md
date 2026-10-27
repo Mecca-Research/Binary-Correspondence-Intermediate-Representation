@@ -245,6 +245,14 @@ under callgrind (the AVX2 instance) the GEM request takes 135,617,235 -> 135,438
 the C matvecs took 6.74 ms (6.30-7.70) before and 6.61 ms (6.40-6.92) after. `bcir-llama --threads T` lends the decoder a pool
 of T threads, every token and logit the same at every T.
 
+**KERNEL-ALIGN** (2026-10-27). `bcir-qualify` builds the decoder's units with the options the manifest gives them
+(`bcir.toolchain.unit_options`): on x86-64 the assembler's JCC-erratum mitigation, so the decoder's vector kernels run
+at the same speed wherever the linker places them ([measurements/2026-10-27/kernel-align/](research/measurements/2026-10-27/kernel-align/README.json)).
+Under callgrind (the AVX2 instance) the GEM request takes 135,438,771 -> 138,792,520 instructions and the monolithic runner
+125,375,994 -> 128,614,321, the padding's NOPs executed, their data references the same; the logits keep their SHA-256
+(`2a18b8613b6b60e4...`), 23 of 23 checks on both trees. Over six runs of each tree a token took 0.3124 ms (0.2823-0.5230)
+before and 0.3104 ms (0.2879-0.5200) after, runs of both trees at about 0.52 ms: the host's state, not the tree.
+
 **Memory traffic.** Planned (`program_traffic`) and counted (the C kernels' counters) agree op for
 op: 57,539,312 octets read and 4,236,480 written per request. Simulated with callgrind's cache
 model (I1/D1 32 KiB 8-way, LL 8 MiB 16-way, 64-octet lines, fixed so reports compare across
