@@ -52,9 +52,11 @@ record = {
     "event_sources": sources, "msr_events": msr_events,
     "powercap": os.path.isdir("/sys/class/powercap"),
     "clocks": {
-        "elapsed": "CLOCK_MONOTONIC: every time in these records",
-        "reference_ticks": "the TSC (invariant: constant_tsc and nonstop_tsc); its rate as the kernel detected it at "
-                           "boot, not read by these tools; no tick count is derived from a time here",
+        "elapsed": "CLOCK_MONOTONIC: vcpu.json's times; probe.json's per-claim job clock (clock_ms_a_step_median) is "
+                   "the trainer's own, ISO C11 timespec_get (TIME_UTC)",
+        "reference_ticks": "the TSC (invariant: constant_tsc and nonstop_tsc): probe.json's pool-job times (wall, "
+                           "entry, busy, leave) are rdtsc ticks over the TSC's rate a microsecond, measured by the "
+                           "probe against timespec_get over 50 ms (each row's tsc_per_us); vcpu.json reads no ticks",
         "core_cycles": None,
         "core_cycles_reason": "no hardware PMU event source (a KVM guest): core cycles, instructions retired and the "
                               "decoded-µop-cache events cannot be counted here, and none is inferred from the TSC",
