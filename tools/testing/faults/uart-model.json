@@ -14,7 +14,20 @@
     "bcir.tests.test_uart_model:test_the_sllz058a_erratum_is_recorded_with_its_misprints_as_provenance",
     "bcir.tests.test_uart_model:test_a_malformed_placement_is_refused_by_name",
     "bcir.tests.test_uart_model:test_the_regeneration_command_reports_and_repairs_drift",
-    "bcir.tests.test_uart_model:test_the_golden_headers_ship_in_the_wheel"
+    "bcir.tests.test_uart_model:test_the_golden_headers_ship_in_the_wheel",
+    "bcir.tests.test_uart_laws:test_the_canonical_driver_is_law_clean_on_every_placement",
+    "bcir.tests.test_uart_laws:test_every_declared_access_idiom_resolves_its_register",
+    "bcir.tests.test_uart_laws:test_law1_only_dll_dlm_and_lcr_inside_a_dlab_bracket",
+    "bcir.tests.test_uart_laws:test_law1_a_dlab_bracket_is_straight_line",
+    "bcir.tests.test_uart_laws:test_law1_every_lcr_store_decides_dlab",
+    "bcir.tests.test_uart_laws:test_law2_divisor_zero_is_forbidden",
+    "bcir.tests.test_uart_laws:test_law2_the_baud_bound_holds_a_declared_target",
+    "bcir.tests.test_uart_laws:test_law3_an_fcr_write_without_fifo_enable_programs_nothing",
+    "bcir.tests.test_uart_laws:test_law4_reconfiguration_waits_for_a_dominating_lsr_read",
+    "bcir.tests.test_uart_laws:test_the_laws_follow_every_path_through_a_function",
+    "bcir.tests.test_uart_laws:test_law5_read_effects_are_volatile_and_never_merged",
+    "bcir.tests.test_uart_laws:test_the_contract_literal_is_attested",
+    "bcir.tests.test_uart_laws:test_the_laws_are_vacuous_on_the_existing_corpus"
   ],
   "faults": [
     {
@@ -177,6 +190,216 @@
       "new": "        if current is not None:",
       "old": "        if current == data:",
       "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_law1_only_dll_dlm_and_lcr_inside_a_dlab_bracket",
+      "label": "UL1 a register other than DLL/DLM/LCR accepted inside a bracket",
+      "new": "        if state.dlab == 1 and reg not in BRACKET_REGS and offset is None:",
+      "old": "        if state.dlab == 1 and reg not in BRACKET_REGS:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law1_only_dll_dlm_and_lcr_inside_a_dlab_bracket",
+      "label": "UL2 SCR joins the DLAB-bracket whitelist",
+      "new": "BRACKET_REGS = (\"DLL\", \"DLM\", \"LCR\", \"SCR\")",
+      "old": "BRACKET_REGS = (\"DLL\", \"DLM\", \"LCR\")",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law1_a_dlab_bracket_is_straight_line",
+      "label": "UL3 a call inside a bracket accepted",
+      "new": "        if c.op.startswith(\"c.call.never\"):",
+      "old": "        if c.op.startswith(\"c.call\"):",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law1_a_dlab_bracket_is_straight_line",
+      "label": "UL4 a bracket left open at the function's end accepted",
+      "new": "        self.block(self.lf.body, _State(), True)",
+      "old": "        self.closed(self.block(self.lf.body, _State(), True), True)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law1_every_lcr_store_decides_dlab",
+      "label": "UL5 an undecidable DLAB bit read as clear",
+      "new": "                state = replace(state, dlab=0, divisor=None)",
+      "old": "                self.say(\"LCR store with an undecidable DLAB bit\", report)\n                state = replace(state, dlab=None, divisor=None)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law2_divisor_zero_is_forbidden",
+      "label": "UL6 a divisor of 0 accepted",
+      "new": "        if value == -1:",
+      "old": "        if value == 0:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law2_the_baud_bound_holds_a_declared_target",
+      "label": "UL7 the divisor latches' bytes swapped",
+      "new": "        value = (low << 8) | high",
+      "old": "        value = (high << 8) | low",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law2_the_baud_bound_holds_a_declared_target",
+      "label": "UL8 the 3% baud bound loosened tenfold",
+      "new": "        if error > 10 * um.BAUD_ERROR_LIMIT:",
+      "old": "        if error > um.BAUD_ERROR_LIMIT:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law3_an_fcr_write_without_fifo_enable_programs_nothing",
+      "label": "UL9 FCR gating applied to a placement that does not gate",
+      "new": "        if reg == \"FCR\":",
+      "old": "        if reg == \"FCR\" and self.p.fcr_gated:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law3_an_fcr_write_without_fifo_enable_programs_nothing",
+      "label": "UL10 the 16450-mode FCR write of 0 refused",
+      "new": "            if zeros & 0x01:",
+      "old": "            if zeros & 0x01 and zeros & rest != rest:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law4_reconfiguration_waits_for_a_dominating_lsr_read",
+      "label": "UL11 a THR store does not void the LSR check",
+      "new": "            state = replace(state, idle=True)",
+      "old": "            state = replace(state, idle=False)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law4_reconfiguration_waits_for_a_dominating_lsr_read",
+      "label": "UL12 an LSR read on one branch arm taken as dominating",
+      "new": "        idle=any(s.idle for s in live),",
+      "old": "        idle=all(s.idle for s in live),",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law5_read_effects_are_volatile_and_never_merged",
+      "label": "UL13 a non-volatile register read accepted",
+      "new": "            if c.volatile is None:",
+      "old": "            if not c.volatile:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law5_read_effects_are_volatile_and_never_merged",
+      "label": "UL14 the plan never consulted for a merged read",
+      "new": "            if sum(1 for i in ids if i in realized) < 0:",
+      "old": "            if sum(1 for i in ids if i in realized) < len(ids):",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law5_read_effects_are_volatile_and_never_merged",
+      "label": "UL15 LSR left out of the read-clear registers",
+      "new": "READ_CLEAR = (\"RBR\", \"IIR\", \"MSR\")",
+      "old": "READ_CLEAR = (\"RBR\", \"IIR\", \"LSR\", \"MSR\")",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_contract_literal_is_attested",
+      "label": "UL16 the contract literal's stride taken from the registry, not the unit",
+      "new": "    contract = um.RegMapContract(placement=name, stride=placement.stride if placement else stride, base_offset=base, regs=laid_out)",
+      "old": "    contract = um.RegMapContract(placement=name, stride=stride, base_offset=base, regs=laid_out)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_are_vacuous_on_the_existing_corpus",
+      "label": "UL17 every unit taken for a pc16550d UART unit",
+      "new": "    if literal is None:\n        literal = '{\"pc16550d\", 1, 0, 0, 1843200}'",
+      "old": "    if literal is None:\n        return None, []",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_canonical_driver_is_law_clean_on_every_placement",
+      "label": "UL18 the pipeline drops the UART diagnostics",
+      "new": "    res.uart_diagnostics = []",
+      "old": "    res.uart_diagnostics = [Diagnostic(\"R3\", m) for m in uart_msgs]",
+      "path": "bcir/frontends/cfront/pipeline.py"
+    },
+    {
+      "expects": "test_every_declared_access_idiom_resolves_its_register",
+      "label": "UL19 pointer arithmetic not scaled by the pointee size",
+      "new": "self.derived[out] = (root, off + step)",
+      "old": "self.derived[out] = (root, off + step * size)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_declared_access_idiom_resolves_its_register",
+      "label": "UL20 an index not scaled by the element size",
+      "new": "            return None if size is None else off + k",
+      "old": "            return None if size is None else off + k * size",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_declared_access_idiom_resolves_its_register",
+      "label": "UL21 constant folding loses division",
+      "new": "    \"c.bin.div\": lambda a, b: None,",
+      "old": "    \"c.bin.div\": lambda a, b: a // b if b else None,",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL22 a loop walked once, its way back to the head ignored",
+      "new": "            settled = head",
+      "old": "            settled = _join(head, back)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL23 a break's state dropped",
+      "new": "                    self.exits[-1][0].append(None)",
+      "old": "                    self.exits[-1][0].append(state)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL24 a continue's state dropped",
+      "new": "                    loops[-1].append(None)",
+      "old": "                    loops[-1].append(state)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL25 a switch without a default never falls out from its head",
+      "new": "        return _join(self.closed(state, report), *breaks)",
+      "old": "        return _join(self.closed(state, report), *breaks, None if default else entry)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL26 a case entered only from the switch head (fallthrough ignored)",
+      "new": "                state = entry",
+      "old": "                state = _join(self.closed(state, report), entry)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL27 a bracket across a case label accepted",
+      "new": "                state = _join(state, entry)",
+      "old": "                state = _join(self.closed(state, report), entry)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL28 a label keeps the state that falls into it",
+      "new": "            else:  # a label, where a jump may land, or a construct this walk does not know\n                state = state if kind == \"LabelNode\" else _ANYWHERE",
+      "old": "            else:  # a label, where a jump may land, or a construct this walk does not know\n                state = _ANYWHERE",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL29 a constant loop condition taken as an exit",
+      "new": "        always, never = False, test == 0",
+      "old": "        always, never = test not in (None, 0), test == 0",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL30 a call to the unit's own function taken as transparent",
+      "new": "                return state",
+      "old": "                return None if idle is None else replace(state, idle=idle)",
+      "path": "bcir/frontends/devices/uart_laws.py"
     }
   ]
 }

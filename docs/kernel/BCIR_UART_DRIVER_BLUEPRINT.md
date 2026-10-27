@@ -1,17 +1,19 @@
 # BCIR UART-16550 Driver — the full build blueprint
 
-> **Implementation status (2026-10-27): U0 landed on the oracle rail; no driver yet.** Slice
-> U0's device registry — [`uart_model.py`](../../bcir/frontends/devices/uart_model.py): the
+> **Implementation status (2026-10-27): U0 and U1 landed on the oracle rail; no driver yet.**
+> Slice U0's device registry — [`uart_model.py`](../../bcir/frontends/devices/uart_model.py): the
 > normative register table, three placements, the RegMap contract and its law, an errata table —
-> and the header it generates, `runtime/c/uart16550_regs.h`, have landed on the oracle rail; its
-> law-rail half (the `bcir.regmap_contract` op, the `-bcir-verify` clause, the lit negatives) is
-> pending. Its facts were checked page by page against the source documents
-> (`uart_model.PROVENANCE`), which corrected two entries below (section 2's FCR-gating row and
-> section 5's `fcr_impl_mask` default). The repository also contains a vendor-style register
-> header and bounded polling source used as a C-compiler fixture, plus generic event-phase and
-> telemetry-frame codec tests. It does **not** contain a channel-backed UART driver, device
-> simulator, IRQ service, learned trigger/burst prior, or slices U1–U9. Unchecked slices remain
-> future work.
+> and the header it generates, `runtime/c/uart16550_regs.h`, have landed on the oracle rail, and
+> so have slice U1's protocol laws ([`uart_laws.py`](../../bcir/frontends/devices/uart_laws.py):
+> advisory `R3-uart` diagnostics on a unit that embeds the U0 contract, vacuous on any other).
+> Their law-rail halves (the `bcir.regmap_contract` op, the `-bcir-verify` clauses, the lit
+> negatives) and U1's C-twin form are pending. U0's facts were checked page by page against the
+> source documents (`uart_model.PROVENANCE`), which corrected two entries below (section 2's
+> FCR-gating row and section 5's `fcr_impl_mask` default); U1's notes say where its laws refine
+> section 5's text. The repository also contains a vendor-style register header and bounded
+> polling source used as a C-compiler fixture, plus generic event-phase and telemetry-frame codec
+> tests. It does **not** contain a channel-backed UART driver, device simulator, IRQ service,
+> learned trigger/burst prior, or slices U2–U9. Unchecked slices remain future work.
 >
 > **What this document is.** The complete, execution-ready engineering blueprint for the first
 > BCIR ML-compiled device driver: a 16550/16750-family UART driver built registry-first, verified by
@@ -672,6 +674,37 @@ law on both rails (oracle message + MLIR `expected-error`), plus the vacuousness
 `cfront_driver_gpio.c` and the whole existing corpus produces zero `uart_diagnostics`
 (non-disturbance measured, not assumed).
 
+**As landed on the oracle rail (2026-10-27).** `compile_unit` runs the laws on every unit that
+embeds `uart_regmap_contract`, after attesting the literal against the registry
+(`CompileResult.uart_diagnostics`, and the attested contract as `CompileResult.regmap_contract`);
+the module docstring of `uart_laws.py` declares the scope. Where the text above left a choice open
+or could not be met as written:
+- *Law 1.* A register is named the way the device names it — by byte offset, direction and DLAB
+  state — so inside a bracket slots 0 and 1 *are* DLL and DLM, and the two intent-keyed messages
+  (`DLL/DLM access outside ...`, `<RBR|THR|IER> access inside ...`) cannot arise from an
+  offset-addressed access. The law reports `<REG> access inside a DLAB=1 bracket` for every
+  register but DLL, DLM and LCR, an access whose offset the claim graph cannot fix as
+  `unidentified register access inside a DLAB=1 bracket`, and an LCR store whose bit 7 it cannot
+  decide as `LCR store with an undecidable DLAB bit`. Straight-line means no branch, loop, switch,
+  call, jump, label or return inside a bracket, and none left open at the function's end.
+- *Law 2.* The rate bound reads the target the unit declares as `uart_target_baud`; the slice names
+  no source for it.
+- *Law 3.* It fires when bit 0 is provably clear and the write asks for anything else: FCR = 0, the
+  16450-mode write, programs what it says.
+- *Law 4.* It holds along every path — branch arms, a loop's way back to its head, `break` and
+  `continue`, a switch's cases, a label (which assumes nothing) — and through a call to one of the
+  unit's own functions, which leaves the check as the callee does; a call out of the unit is
+  transparent.
+- *Law 5.* It reads the claim's existing `volatile` qualifier and the plan's steps instead of a new
+  `hazard="mmio_read_clear"` field: the planner's CSE already refuses volatile and MMIO claims
+  (`kbcir.realize.cse_eligible`, one predicate: laws.md L14), so the law is the witness that it did.
+  The volatility clause, stated above for the MLIR rail, holds on the oracle for every register
+  read.
+
+The positive is a section-1.4 driver written for the test (the U2 driver does not exist yet).
+Pending: the `-bcir-verify` clauses, `verify_uart_protocol.mlir`, the `check_passes.sh` stanza and
+the C twin's form.
+
 **Commit.** `devices: U1 -- the UART protocol laws (DLAB bracket, divisor, FCR gating, idle-reconfig, read effects)`
 
 ### U2 — The polled driver + the simulated device + the linked, running binary
@@ -1052,6 +1085,9 @@ data is held, wake on RX edge / modem change / THR write — all in char-ticks.
       `tools/testing/faults/uart-model.json`); the law-rail half is pending.*
 - [ ] U1: five laws fire on negatives on both rails; whole existing corpus produces zero
       UART diagnostics.
+      *Oracle rail landed 2026-10-27 (`bcir/tests/test_uart_laws.py`: a negative per law, the
+      corpus at zero; `tools/testing/faults/uart-model.json`); the law-rail half and the C twin
+      are pending.*
 - [ ] U2: the emitted-TUs-only binary runs the probe/init/selftest/TX/RX/flush transcript
       byte-identically to the reference build on both rails; sim passes its spec-fidelity suite.
 - [ ] U3: service module is R-law clean, hydrates, pipelines with a certified win.

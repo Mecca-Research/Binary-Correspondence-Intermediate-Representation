@@ -269,6 +269,18 @@ constants to its certificate. The descriptors of the target (`TargetProfile` /
 `parse.*`) and of a `gem.conv` validate at construction on both rails under the same rules,
 and the MAP/ROP front-ends derive a claim's domain from the resources it touches.
 
+**Device protocol laws (R3-uart; UART slice U1, oracle rail).** A unit that includes a generated
+UART-16550 register header (`runtime/c/uart16550_regs.h`, slice U0 of
+[`kernel/BCIR_UART_DRIVER_BLUEPRINT.md`](kernel/BCIR_UART_DRIVER_BLUEPRINT.md)) embeds its
+placement's `uart_regmap_contract`; the oracle's C front end attests it against the device registry
+and holds the unit's register accesses — named by offset, direction and DLAB state, as the device
+names them — to five protocol laws under `R3-uart:` (`bcir/frontends/devices/uart_laws.py`): the
+DLAB bracket (only DLL, DLM and LCR inside it, straight-line), divisor sanity (never 0; within 3% of
+a declared rate), FCR gating, reconfiguration only after an LSR read on every path, and read effects
+(a volatile read the plan never merges). They are advisory (`CompileResult.uart_diagnostics`, out
+of the frontend verdict like R21) and vacuous on a unit without the contract; their `-bcir-verify`
+clauses and the C twin's form are pending.
+
 **Timing + lifetime laws (R19/R20/R21).** Three further laws over the
 register-transfer / naked-pointer-safety tracks. They are driven by *optional*
 claim metadata (absent by default, so the entire scalar / C-frontend subset is

@@ -3725,7 +3725,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     constants) instead of choosing beside them. The measuring host is this container's (no AMX, no
     AVX512-BF16): a table is the host's that measured it, and names it.
   - The ladder: PX-6 (GPU lowering and synchronization) is a documented skip on this host.
-  UART U0 (2026-10-27): the 16550 device registry -- one model, three placements, the RegMap contract.
+  UART U0 + U1 (2026-10-27): the 16550 device registry -- one model, three placements, the RegMap
+  contract -- and its protocol laws.
   - `bcir/frontends/devices/uart_model.py` (blueprint slice U0, oracle rail): the normative register
     table (twelve registers over eight slots, their fields, the IIR priority ladder), the placements
     `pc16550d`, `core16550_apb` and `axi16550` with the U8 capability fields at their defaults,
@@ -3748,8 +3749,28 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     witnesses; the C twin compiles each placement's header and prints the oracle's parity summary
     line. `uart-model.json` UM1-UM23, 23 of 23 caught, each by its own test. The blueprint gained a
     proposal section (U10-U15, from the 2026-10-27 review; not milestones).
-  - Not in this slice: the law-rail half (the `bcir.regmap_contract` op, the `-bcir-verify` clause,
-    its lit negatives and `check_passes.sh` stanza), which needs the MLIR rail built.
+  - U1, `bcir/frontends/devices/uart_laws.py` (oracle rail): the five protocol laws -- the DLAB
+    bracket, divisor sanity, FCR gating, reconfiguration only after an LSR read, read effects -- as
+    advisory `R3-uart` diagnostics (`CompileResult.uart_diagnostics`) on a unit that embeds the U0
+    header's `uart_regmap_contract`, which is attested against the registry first; nothing for any
+    other unit. A register is named as the device names it -- offset, direction, DLAB state -- off
+    the claim graph (indices, members, member arrays, derived pointers scaled by the pointee, casts,
+    constants folded exactly), and the walk follows every path: branch arms, a loop's way back to its
+    head, `break` and `continue`, a switch's cases, labels, and calls to the unit's own functions.
+    Where section 5 could not be met as written the blueprint says how it was refined: the
+    intent-keyed DLAB messages need the register a driver meant, which an offset does not carry; the
+    rate bound reads the unit's `uart_target_baud`; law 5 reads the claim's `volatile` qualifier and
+    the plan's steps instead of adding a claim field (the planner's CSE already refuses MMIO claims,
+    so the law is its witness).
+  - Tests: `bcir/tests/test_uart_laws.py`, a section-1.4 driver clean on every placement, a negative
+    per law asserting the whole message list, every declared access idiom and control path, the
+    contract literal's attestation, and the whole cfront corpus at zero UART diagnostics.
+    `uart-model.json` UL1-UL30, and the whole table (UM1-UM23 with them) 53 of 53 caught, each by
+    its own test; the sweep that first ran UL1-UL21 found UL19 (a derived pointer's scale)
+    uncaught, which a 32-bit derived local in the idioms test now catches.
+  - Not in these slices: the law-rail halves (U0's `bcir.regmap_contract` op; the `-bcir-verify`
+    clauses, lit negatives and `check_passes.sh` stanzas of both) and U1's C-twin form, which need
+    the MLIR rail and the twin built.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
