@@ -59,6 +59,9 @@ whether the IR builds or how it verifies. Its conventions live in `CONTRIBUTING.
   and CMake alike).
 - Adding a gate `tools/c/check_runtime.sh` calls that builds its own binaries → the manifest's
   `delegated` (its own CTest entry; the gate calls it under `BCIR_SKIP_DELEGATED_GATES`, M16).
+- Writing a driver's documents, code or tests → public sources only, cited (the Sources rule in
+  [`docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md`](docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) §8.3); nothing
+  from material distributed under confidentiality terms enters the tree, a commit message or a PR.
 - Architecture → [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md).
 
 ## Non-negotiable pre-PR validation

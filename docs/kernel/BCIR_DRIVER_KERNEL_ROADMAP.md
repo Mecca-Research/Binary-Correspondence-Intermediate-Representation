@@ -741,6 +741,11 @@ Before any driver/kernel commit or PR update:
    completed handoff.
 5. Record exact commands, skips, resource limits, and residual hardware risk in the PR.
 
+**Sources.** Everything a driver change publishes -- documents, generated headers, fixtures, tests,
+code comments, commit messages and PR descriptions -- states what public sources state and cites
+them. Nothing is reproduced, quoted, paraphrased or summarized from material distributed under
+confidentiality terms.
+
 Manual full sweeps remain required before releases, after allocator/wire/UAPI changes, and before a
 new driver family, as defined in [`C_MEMORY_DISCIPLINE.md`](../languages/C_MEMORY_DISCIPLINE.md).
 
