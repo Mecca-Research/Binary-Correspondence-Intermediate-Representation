@@ -96,10 +96,10 @@ def test_numerical_evidence_artifact_roundtrips_deterministically():
         assert read_numerical_evidence(path).digest == artifact.digest
 
 
-def test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts():
+def test_a_provider_measurement_records_a_pmu_sample_missing_a_count_as_null():
     """A provider measurement carries the PMU's counts only when the sample read all three
     (`silicon.pmu_counts`, the one test every evidence record makes); a sample missing one is
-    recorded as the record's no-PMU zeros -- never two counts and a gap."""
+    recorded as three nulls (EVIDENCE-NULL) -- never two counts and a gap, never a 0."""
     from unittest import mock
 
     from bcir.kbcir import numerical_providers as providers
@@ -107,9 +107,9 @@ def test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts():
 
     workload = NumericalWorkload("gemm", (2, 2, 2), "float32", 1)
     for sample, want in (
-        (HwSample(cycles=2_000, instructions=3_000, cache_misses=None), (0, 0, 0)),
-        (HwSample(cycles=None, instructions=None, cache_misses=None), (0, 0, 0)),
-        (HwSample(cycles=2_000, instructions=3_000, cache_misses=7), (2_000, 3_000, 7)),
+        (HwSample(cycles=2_000, instructions=3_000, cache_misses=None), (None, None, None)),
+        (HwSample(cycles=None, instructions=None, cache_misses=None), (None, None, None)),
+        (HwSample(cycles=2_000, instructions=3_000, cache_misses=0), (2_000, 3_000, 0)),
     ):
 
         def counted(work, sample=sample):
@@ -121,3 +121,56 @@ def test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts():
                 _Provider("fixture", 50), workload, repeats=1
             ).measurements[0]
         assert (measurement.cycles, measurement.instructions, measurement.cache_misses) == want
+
+
+def _refused(fn, *args, **kwargs) -> bool:
+    try:
+        fn(*args, **kwargs)
+    except ValueError:
+        return True
+    return False
+
+
+# The bytes of a v1 artifact as the v1 writer wrote them (no PMU, so its zeros), and their digest.
+_V1_EVIDENCE = (
+    '{"evidence":[{"available":true,"detail":"executed","measurements":[{"cache_misses":0,'
+    '"cpu_ns":900,"cycles":0,"instructions":0,"repeats":1,"wall_ns":1000,'
+    '"workload_sha256":"81542931d9f6af5703fbe813e0ccf74b20234773d1ac4b2aea71017d2b3bf6f4"}],'
+    '"provider":"cblas"}],"host_architecture":"x86_64",'
+    '"schema":"bcir.numerical_provider_evidence.v1"}'
+)
+_V1_EVIDENCE_DIGEST = "7aaf4c460ee740a33b97abca690f5756d58eef7704646b87d814ae810a1c0592"
+
+
+def test_provider_evidence_says_null_and_a_v1_artifact_reads_as_it_was_written():
+    """v2 says null: three nulls round-trip and differ in the digest from three zeros the PMU
+    read, and a gap or a count past 2^63 is refused. v1 still reads, to its bytes and its
+    digest, and cannot say null."""
+    workload = NumericalWorkload("gemm", (2, 2, 2), "float32", 1)
+
+    def artifact(*counts):
+        measurement = ProviderMeasurement(workload.digest, 100, 90, *counts, 2)
+        return NumericalEvidenceArtifact(
+            "x86_64", (ProviderEvidence("cblas", True, "executed", (measurement,)),)
+        )
+
+    none, zeros = artifact(None, None, None), artifact(0, 0, 0)
+    assert none.schema == "bcir.numerical_provider_evidence.v2"
+    assert '"cache_misses":null' in none.to_json() and none.digest != zeros.digest
+    assert _refused(ProviderMeasurement, workload.digest, 100, 90, 1, None, None, 2)
+    assert _refused(ProviderMeasurement, workload.digest, 100, 90, None, 0, None, 2)
+    assert _refused(artifact, 1 << 63, 1, 1)
+    assert _refused(replace, none, schema="bcir.numerical_provider_evidence.v3")
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "providers.json"
+        write_numerical_evidence(path, none)
+        assert read_numerical_evidence(path) == none
+        path.write_text(_V1_EVIDENCE + "\n", "utf-8")
+        v1 = read_numerical_evidence(path)
+        assert (v1.to_json(), v1.digest) == (_V1_EVIDENCE, _V1_EVIDENCE_DIGEST)
+        nulls = _V1_EVIDENCE
+        for name in ("cache_misses", "cycles", "instructions"):
+            nulls = nulls.replace(f'"{name}":0,', f'"{name}":null,')
+        assert nulls.count("null") == 3
+        path.write_text(nulls, "utf-8")
+        assert _refused(read_numerical_evidence, path)

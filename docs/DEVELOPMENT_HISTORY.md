@@ -5604,6 +5604,35 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `silicon-null.json` SN1-SN25, each caught by its own check; under the tests before SILICON-NULL 1 of
     the 25 (SN12, incidentally: on a host without a PMU its close of a refused counter raises inside the measured-plan
     tests).
+  EVIDENCE-NULL (2026-10-27): the evidence records say null -- a count nobody read is recorded as null, never 0.
+  - Three v2 schemas, written from now on: `bcir.measured_plan.v2`, `bcir.schedule_artifact.v2` and
+    `bcir.numerical_provider_evidence.v2`. Each holds the PMU's cycles, instructions and cache misses or three nulls,
+    and (the first two) getrusage's faults and context switches or four nulls: `CounterSampler.lap` gave 0 for all
+    four on a host without getrusage (native Windows), the defect SILICON-NULL removed from the PMU's counts. One
+    rule reads every group (`silicon.recorded_counts`): all integers in [0, 2^63), a 0 among them a reading, or all
+    null; a null beside a count, a bool, a float, a negative count or one past the bound is refused. The telemetry
+    frame has no null, so its OS miss signal stays the frame's nominal 0 without getrusage (`Counters` says None).
+  - A schedule artifact's constants are its measured winner's, derived by one function for the writer and the
+    reader (`_constants`): cycles per instruction and cache misses per kMAC are null exactly when the winner's counts
+    are (cycles per instruction also when it retired no instructions), 0 cache misses give 0, and an artifact whose
+    constants are not its winner's -- v1's zeros where the counts are null, a number one off -- is refused, as is a
+    plan measured twice.
+  - v1 still reads, to its bytes and its digest, so a corpus that holds a v1 entry keeps its chain; the witnesses pin
+    a v1 entry, artifact and provider record as the v1 writer wrote them, and the head of a two-entry v1 corpus. v1
+    cannot say null, and its writer recorded an unread count as 0 (and a multiplexed one unscaled), so its PMU counts
+    read as present only when none is 0 (`silicon.v1_pmu_counts`, `MeasuredPlan.counts`,
+    `ScheduleArtifact.counts_of`). B1's artifacts enter the corpus as v2 entries, `hardware_pmu` saying whether the
+    PMU counted.
+  - Witnesses in test_silicon, test_workload, test_schedule_artifact and test_numerical_providers. The three tests of
+    a sample missing a count, one name in three modules, are now one name each, so a fault names the record it
+    breaks; SILICON-NULL's SN23-SN25 follow the writers to their new lines. `evidence-null.json` EN1-EN36, each caught
+    by its own check -- EN24 first missed: the winner's constants re-read its counts, so the bound's witness puts the
+    out-of-range count on a losing candidate. Under the tests before EVIDENCE-NULL 2 of the 36 were caught (EN10 and
+    EN30, a writer left on v1, incidentally: v1 refuses the null a PMU-less host records), none by its own check.
+  - Found beside it, not changed here: `silicon_dna` and `sample_into_ring` put raw counts -- the PMU's cache misses,
+    the OS's page faults -- into the telemetry frame's 0..100 miss pressure, which `TelemetryRing.write` validates;
+    on a host whose PMU counts more than 100 misses (a bare-metal host, now that SILICON-NULL opens its counters
+    unprivileged) the write raises. That is the next slice.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

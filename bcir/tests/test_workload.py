@@ -29,6 +29,7 @@ from bcir.kbcir.measured import (
     TENANCIES,
     MeasuredCorpus,
     MeasuredPlan,
+    MeasuredSample,
     assignment_digest,
     from_schedule_artifact,
     measure_plans,
@@ -469,7 +470,13 @@ def test_the_measured_certificate_is_bound_to_its_scope_and_the_corpus_informs_n
     # corpus is data: these entries CLAIM bare metal, which is what the rule reads)
     silicon = MeasuredCorpus(
         replace(
-            e, tenancy="bare-metal", signals="pmu=cpu", hardware_pmu=True, cycles=1, instructions=1
+            e,
+            tenancy="bare-metal",
+            signals="pmu=cpu",
+            hardware_pmu=True,
+            cycles=1,
+            instructions=1,
+            cache_misses=1,
         )
         for e in corpus.entries
     )
@@ -485,6 +492,7 @@ def test_the_measured_certificate_is_bound_to_its_scope_and_the_corpus_informs_n
                 hardware_pmu=True,
                 cycles=1,
                 instructions=1,
+                cache_misses=1,
             )
         )
     two = certify_measured(m, H, Theta.cool(), w, silicon, pols)
@@ -523,10 +531,10 @@ def test_the_measured_certificate_is_bound_to_its_scope_and_the_corpus_informs_n
     assert verify_plan(m, result, H, theta=Theta.cool(), policy=policy) == []
 
 
-def test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts():
+def test_a_measured_plan_records_a_pmu_sample_missing_a_count_as_null():
     """A measured plan carries the PMU's counts only when the sample read all three
-    (`silicon.pmu_counts`); a sample missing one is recorded as the entry's no-PMU zeros, with the
-    host's attestation as it is (the attestation is the host's, the counts the run's)."""
+    (`silicon.pmu_counts`); a sample missing one is recorded as three nulls (EVIDENCE-NULL),
+    with the host's attestation as it is (the attestation is the host's, the counts the run's)."""
     from unittest import mock
 
     from bcir import silicon
@@ -535,8 +543,8 @@ def test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts():
     m = vector_add(256)
     w = workload_for(m, batch=1)
     for sample, want in (
-        (HwSample(cycles=None, instructions=3_000, cache_misses=7), (0, 0, 0)),
-        (HwSample(cycles=2_000, instructions=3_000, cache_misses=7), (2_000, 3_000, 7)),
+        (HwSample(cycles=None, instructions=3_000, cache_misses=7), None),
+        (HwSample(cycles=2_000, instructions=3_000, cache_misses=0), (2_000, 3_000, 0)),
     ):
 
         def counted(work, sample=sample):
@@ -547,4 +555,155 @@ def test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts():
             (entry,) = measure_plans(
                 m, H, Theta.cool(), (PERF,), _work, workload=w, source_commit=COMMIT, repeats=1
             )
-        assert (entry.cycles, entry.instructions, entry.cache_misses) == want
+        assert entry.schema == "bcir.measured_plan.v2" and entry.counts == want
+        triple = (entry.cycles, entry.instructions, entry.cache_misses)
+        assert triple == (want or (None, None, None))
+        text = entry.to_json()
+        assert ('"cycles":null' in text) is (want is None)
+        assert MeasuredPlan.from_dict(json.loads(text)) == entry
+
+
+# The bytes a v1 entry had before EVIDENCE-NULL, written by the v1 writer, and their digests: a
+# v1 entry reads back to the same bytes, so a corpus that holds one keeps its chain.
+_V1_ENTRY = (
+    '{"cache_misses":0,"cycles":0,"hardware_pmu":false,"host_architecture":"x86_64",'
+    '"instructions":0,"plan":"' + "c" * 64 + '","policy":"latency","program":"12345",'
+    '"samples":[{"cpu_ns":900,"involuntary_context_switches":3,"major_faults":0,'
+    '"minor_faults":1,"voluntary_context_switches":2,"wall_ns":1000}],'
+    '"schema":"bcir.measured_plan.v1","signals":"no PMU exposed","source_commit":"5b45fdca",'
+    '"target":"' + "a" * 64 + '","tenancy":"virtualized","theta":"678",'
+    '"workload":"' + "b" * 64 + '"}'
+)
+_V1_ENTRY_DIGEST = "38dddb1b99f2fad2e1edcd8dbfa0e838c3baedbf5855640710205706ae5e11ae"
+_V1_COUNTED = (
+    _V1_ENTRY.replace('"cycles":0', '"cycles":2000')
+    .replace('"instructions":0', '"instructions":3000')
+    .replace('"hardware_pmu":false', '"hardware_pmu":true')
+    .replace('"signals":"no PMU exposed"', '"signals":"pmu=cpu"')
+    .replace('"tenancy":"virtualized"', '"tenancy":"bare-metal"')
+)
+_V1_COUNTED_DIGEST = "98143816815f990b2bebb400afdcd7a83cf6ccdbb76f8bbaf58dff85392cdf22"
+_V1_CORPUS_HEAD = "823d5a7568ad9c90b6001044d7b089c59f39225ae2c4e2a067c4664657a6422c"
+
+
+def test_a_v1_entry_reads_as_it_was_written_and_a_v2_entry_says_null():
+    """v1 had no null; it still reads, to its bytes, its digest and its corpus chain, and its
+    zeros read as no counts -- a 0 in it may be a count nobody read. v2 says null: its nulls
+    round-trip, differ in the digest from zeros, and come all or none."""
+    v1 = MeasuredPlan.from_dict(json.loads(_V1_ENTRY))
+    counted = MeasuredPlan.from_dict(json.loads(_V1_COUNTED))
+    assert (v1.to_json(), v1.digest) == (_V1_ENTRY, _V1_ENTRY_DIGEST)
+    assert (counted.to_json(), counted.digest) == (_V1_COUNTED, _V1_COUNTED_DIGEST)
+    assert v1.counts is None and counted.counts is None  # (2000, 3000, 0): a zero is no reading
+    full = _V1_COUNTED.replace('"cache_misses":0', '"cache_misses":9')
+    assert MeasuredPlan.from_dict(json.loads(full)).counts == (2_000, 3_000, 9)
+    corpus = MeasuredCorpus([v1, counted])
+    assert corpus.head == _V1_CORPUS_HEAD
+    # v1 cannot say null: not in its counts, not in a sample's
+    pmu_null = _V1_ENTRY.replace('"cycles":0', '"cycles":null')
+    assert _refused(MeasuredPlan.from_dict, json.loads(pmu_null))
+    rusage_null = _V1_ENTRY
+    for name, value in (
+        ("minor_faults", 1),
+        ("major_faults", 0),
+        ("voluntary_context_switches", 2),
+        ("involuntary_context_switches", 3),
+    ):
+        rusage_null = rusage_null.replace(f'"{name}":{value}', f'"{name}":null')
+    assert _refused(MeasuredPlan.from_dict, json.loads(rusage_null))
+    # v2 says both: three PMU zeros it read beside four rusage nulls is a v2 entry
+    v2 = MeasuredPlan.from_dict(
+        json.loads(rusage_null.replace("measured_plan.v1", "measured_plan.v2"))
+    )
+    assert v2.counts == (0, 0, 0) and v2.samples[0].rusage == (None, None, None, None)
+    # v2: the same entry with three nulls, and with three zeros the PMU read
+    none = replace(
+        v1, schema="bcir.measured_plan.v2", cycles=None, instructions=None, cache_misses=None
+    )
+    zeros = replace(none, cycles=0, instructions=0, cache_misses=0)
+    assert none.counts is None and zeros.counts == (0, 0, 0)
+    assert '"cache_misses":null,"cycles":null' in none.to_json() and none.digest != zeros.digest
+    assert MeasuredPlan.from_dict(json.loads(none.to_json())) == none
+    rusage_less = replace(none, samples=(MeasuredSample(1000, 900, None, None, None, None),))
+    assert MeasuredPlan.from_dict(json.loads(rusage_less.to_json())) == rusage_less
+    assert rusage_less.digest != none.digest
+    for bad in (
+        {"cycles": 1},
+        {"cycles": 1, "instructions": 1},
+        {"cycles": True, "instructions": 1, "cache_misses": 1},
+        {"cycles": 1 << 63, "instructions": 1, "cache_misses": 1},
+    ):
+        assert _refused(replace, none, **bad), bad
+    assert _refused(MeasuredSample, 1000, 900, None, 0, None, None)
+    assert _refused(replace, none, schema="bcir.measured_plan.v3")
+    # one corpus holds both, and its chain survives the round trip
+    corpus.append(none)
+    again = MeasuredCorpus.from_json(corpus.to_json())
+    assert again.chain == corpus.chain and again.entries == corpus.entries
+
+
+def test_without_getrusage_a_measured_sample_records_four_nulls():
+    """On a host without getrusage a sample's faults and context switches are null, never 0."""
+    from bcir import silicon
+
+    m = vector_add(256)
+    w = workload_for(m, batch=1)
+    saved = silicon._resource
+    silicon._resource = None
+    try:
+        (entry,) = measure_plans(
+            m, H, Theta.cool(), (PERF,), _work, workload=w, source_commit=COMMIT, repeats=2
+        )
+    finally:
+        silicon._resource = saved
+    assert all(sample.rusage == (None, None, None, None) for sample in entry.samples)
+    assert all(sample.wall_ns >= 1 for sample in entry.samples)
+    assert '"minor_faults":null' in entry.to_json()
+    assert MeasuredPlan.from_dict(json.loads(entry.to_json())) == entry
+
+
+def test_b1_evidence_enters_the_corpus_with_its_counts_or_nulls():
+    """A schedule artifact's candidates enter the corpus as v2 entries: the PMU's counts as the
+    artifact records them and `hardware_pmu` true, or three nulls and false -- a v1 artifact's
+    zeros read as no counts."""
+    from unittest import mock
+
+    from bcir.kbcir import schedule_artifact as artifacts
+    from bcir.silicon import HwSample
+
+    w = workload_for(vector_add(256), batch=1)
+    target_profile = TargetProfile.x86_avx2()
+    plans = [plan_matmul(2, 2, 2, target_profile)]
+    for sample, want in (
+        (None, None),
+        (HwSample(cycles=2_000, instructions=3_000, cache_misses=0), (2_000, 3_000, 0)),
+    ):
+        with mock.patch.object(artifacts, "read_hw_counters", lambda work, s=sample: s):
+            artifact = measure_schedule_candidates(
+                2, 2, 2, target_profile, plans, lambda _plan: None, workload="gemm",
+                source_commit=COMMIT, repeats=1,
+            )  # fmt: skip
+        (row,) = from_schedule_artifact(artifact, w)
+        assert row.schema == "bcir.measured_plan.v2" and row.counts == want
+        assert row.hardware_pmu is (want is not None)
+    # the last artifact as the v1 writer would have written it (no null: rusage as integers)
+    (candidate,) = artifact.candidates
+    for misses, want in ((0, None), (9, (2_000, 3_000, 9))):
+        v1 = replace(
+            artifact,
+            schema="bcir.schedule_artifact.v1",
+            candidates=(
+                replace(
+                    candidate,
+                    minor_faults=1,
+                    major_faults=0,
+                    voluntary_context_switches=0,
+                    involuntary_context_switches=0,
+                    cache_misses=misses,
+                ),
+            ),
+            constants=artifacts.MeasuredCostConstants(artifact.constants.ns_per_mac_q20, 1, 1),
+        )
+        (row,) = from_schedule_artifact(v1, w)  # (2000, 3000, 0) in v1: a zero, so no counts
+        assert row.counts == want and row.hardware_pmu is (want is not None)
+        assert (row.cycles, row.instructions, row.cache_misses) == (want or (None, None, None))

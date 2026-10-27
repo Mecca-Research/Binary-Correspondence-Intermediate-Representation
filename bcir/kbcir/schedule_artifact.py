@@ -3,6 +3,14 @@
 An artifact records both the analytic K_BCIR choice and every bounded measured candidate.
 Measurements may calibrate future cost constants, but they do not mutate legality or steer
 an in-flight execution.  Activation requires a separately reviewed artifact generation.
+
+Its counts are explicit (EVIDENCE-NULL). `bcir.schedule_artifact.v2`, the schema written, holds
+for each candidate the PMU's three counts or three nulls, and getrusage's four sums or four nulls
+on a host without getrusage; its constants are its measured winner's, derived by one function for
+the writer and the reader, so a constant the PMU's counts would give is null exactly when they
+are. `bcir.schedule_artifact.v1` had no null -- an unread count was 0, as was a constant from one
+-- and still reads, to the same bytes and digest; `counts_of` reads its PMU counts as present
+only when none is 0.
 """
 
 from __future__ import annotations
@@ -19,13 +27,22 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .._artifact_json import read_bounded_text, strict_json_loads
-from ..silicon import CounterSampler, pmu_counts, read_hw_counters
+from ..silicon import CounterSampler, pmu_counts, read_hw_counters, recorded_counts, v1_pmu_counts
 from .cost import TargetProfile
 from .matmul import TilePlan, plan_matmul
 
 
+SCHEMA = "bcir.schedule_artifact.v2"  # the schema written: counts or nulls
+SCHEMA_V1 = "bcir.schedule_artifact.v1"  # read only: no null, an unread count recorded as 0
 _WORKLOADS = frozenset({"gemm", "fused", "attention"})
 _LOOP_ORDERS = frozenset({"ijk", "ikj", "jik"})
+_RUSAGE_FIELDS = (
+    "minor_faults",
+    "major_faults",
+    "voluntary_context_switches",
+    "involuntary_context_switches",
+)
+_PMU_FIELDS = ("cycles", "instructions", "cache_misses")
 
 
 def _canonical(value) -> str:
@@ -128,35 +145,44 @@ def target_fingerprint(target: TargetProfile) -> str:
 
 @dataclass(frozen=True)
 class MeasuredScheduleCandidate:
+    """One tile plan's evidence: the median clocks and the summed getrusage counts over its
+    repeats, and the PMU's counts for one more run. Each group of counts is all read or all
+    None; whether its artifact's schema admits a None is the artifact's to check."""
+
     plan: TilePlan
     wall_ns: int
     cpu_ns: int
-    minor_faults: int
-    major_faults: int
-    voluntary_context_switches: int
-    involuntary_context_switches: int
-    cycles: int
-    instructions: int
-    cache_misses: int
+    minor_faults: int | None
+    major_faults: int | None
+    voluntary_context_switches: int | None
+    involuntary_context_switches: int | None
+    cycles: int | None
+    instructions: int | None
+    cache_misses: int | None
     repeats: int
 
     def __post_init__(self) -> None:
         _plan_from_dict(_plan_dict(self.plan))
-        for field in (
-            "wall_ns",
-            "cpu_ns",
-            "minor_faults",
-            "major_faults",
-            "voluntary_context_switches",
-            "involuntary_context_switches",
-            "cycles",
-            "instructions",
-            "cache_misses",
-        ):
+        for field in ("wall_ns", "cpu_ns"):
             _positive(getattr(self, field), field, zero=True)
+        for fields in (_RUSAGE_FIELDS, _PMU_FIELDS):
+            values = tuple(getattr(self, field) for field in fields)
+            if None in values:
+                recorded_counts(*values)  # a group is all null or refused
+            else:
+                for field in fields:
+                    _positive(getattr(self, field), field, zero=True)
         _positive(self.repeats, "repeats")
         if self.wall_ns == 0:
             raise ValueError("measured wall time must be positive")
+
+    @property
+    def rusage(self) -> tuple[int | None, ...]:
+        return tuple(getattr(self, field) for field in _RUSAGE_FIELDS)
+
+    @property
+    def pmu(self) -> tuple[int | None, ...]:
+        return tuple(getattr(self, field) for field in _PMU_FIELDS)
 
     def to_dict(self) -> dict:
         value = asdict(self)
@@ -166,13 +192,36 @@ class MeasuredScheduleCandidate:
 
 @dataclass(frozen=True)
 class MeasuredCostConstants:
+    """The cost constants of the measured winner, Q20. The two from the PMU's counts are None in
+    a v2 artifact whose winner has none (cycles per instruction also when it retired no
+    instructions); v1 recorded both as 0."""
+
     ns_per_mac_q20: int
-    cycles_per_instruction_q20: int
-    cache_misses_per_kmac_q20: int
+    cycles_per_instruction_q20: int | None
+    cache_misses_per_kmac_q20: int | None
 
     def __post_init__(self) -> None:
-        for field in ("ns_per_mac_q20", "cycles_per_instruction_q20", "cache_misses_per_kmac_q20"):
-            _positive(getattr(self, field), field, zero=True)
+        _positive(self.ns_per_mac_q20, "ns_per_mac_q20", zero=True)
+        for field in ("cycles_per_instruction_q20", "cache_misses_per_kmac_q20"):
+            if getattr(self, field) is not None:
+                _positive(getattr(self, field), field, zero=True)
+
+
+def _constants(winner: MeasuredScheduleCandidate, macs: int) -> MeasuredCostConstants:
+    """A v2 artifact's constants: its measured winner's, by the one derivation the writer and
+    the reader share. Without the PMU's counts the two constants they would give are None, and
+    cycles per instruction is None also when the winner retired no instructions; a count of 0 is
+    a reading, so 0 cache misses give 0."""
+    ns = (winner.cpu_ns << 20) // macs
+    counts = recorded_counts(*winner.pmu)
+    if counts is None:
+        return MeasuredCostConstants(ns, None, None)
+    cycles, instructions, cache_misses = counts
+    return MeasuredCostConstants(
+        ns,
+        (cycles << 20) // instructions if instructions else None,
+        (cache_misses * 1000 << 20) // macs,
+    )
 
 
 @dataclass(frozen=True)
@@ -187,10 +236,10 @@ class ScheduleArtifact:
     candidates: tuple[MeasuredScheduleCandidate, ...]
     constants: MeasuredCostConstants
     source_commit: str
-    schema: str = "bcir.schedule_artifact.v1"
+    schema: str = SCHEMA
 
     def __post_init__(self) -> None:
-        if self.schema != "bcir.schedule_artifact.v1" or self.workload not in _WORKLOADS:
+        if self.schema not in (SCHEMA, SCHEMA_V1) or self.workload not in _WORKLOADS:
             raise ValueError("unsupported schedule artifact schema or workload")
         if not isinstance(self.shape, (tuple, list)) or len(self.shape) != 3:
             raise ValueError("schedule shape must contain M, N, K")
@@ -228,6 +277,40 @@ class ScheduleArtifact:
             or any(character not in "0123456789abcdef" for character in self.source_commit)
         ):
             raise ValueError("schedule source_commit must be a hexadecimal commit ID")
+        if self.schema == SCHEMA_V1:
+            nulls = [None in (*candidate.rusage, *candidate.pmu) for candidate in self.candidates]
+            constants = (
+                self.constants.cycles_per_instruction_q20,
+                self.constants.cache_misses_per_kmac_q20,
+            )
+            if any(nulls) or None in constants:
+                raise ValueError("a v1 schedule artifact has no null")
+        else:
+            self._check_v2()
+
+    def _check_v2(self) -> None:
+        """v2: each candidate's counts within the shared rule, each plan measured once, and the
+        constants the measured winner's, derived as the writer derives them."""
+        for candidate in self.candidates:
+            recorded_counts(*candidate.rusage)
+            recorded_counts(*candidate.pmu)
+        plans = tuple(candidate.plan for candidate in self.candidates)
+        if len(set(plans)) != len(plans):
+            raise ValueError("a schedule artifact measures each candidate plan once")
+        winner = self.candidates[plans.index(self.measured_plan)]
+        M, N, K = self.shape
+        if self.constants != _constants(winner, M * N * K):
+            raise ValueError("schedule constants are not the measured winner's")
+
+    def counts_of(self, candidate: MeasuredScheduleCandidate) -> tuple[int, int, int] | None:
+        """A candidate's PMU counts as this artifact records them, or None when the PMU read
+        none. A v1 artifact has no null and recorded an unread count as 0, so a v1 candidate's
+        counts are the three only when none is 0 (`silicon.v1_pmu_counts`)."""
+        if candidate not in self.candidates:
+            raise ValueError("the candidate is not this artifact's")
+        if self.schema == SCHEMA_V1:
+            return v1_pmu_counts(*candidate.pmu)
+        return recorded_counts(*candidate.pmu)
 
     def to_dict(self) -> dict:
         return {
@@ -295,20 +378,22 @@ def measure_schedule_candidates(
             work(plan)
             laps.append(sampler.lap())
         hardware = read_hw_counters(functools.partial(work, plan))
-        # The PMU's counts when it read all three; else the candidate's no-PMU zeros.
-        cycles, instructions, cache_misses = pmu_counts(hardware) or (0, 0, 0)
+        # The PMU's counts when it read all three, else three nulls; getrusage's four sums
+        # when every lap read them, else four nulls.
+        counts = pmu_counts(hardware)
+        rusage = [(lap.minor_faults, lap.major_faults, lap.vol_ctx, lap.invol_ctx) for lap in laps]
+        sums = (
+            (None, None, None, None)
+            if any(None in row for row in rusage)
+            else tuple(sum(column) for column in zip(*rusage))
+        )
         evidence.append(
             MeasuredScheduleCandidate(
                 plan,
                 int(statistics.median(lap.wall_ns for lap in laps)),
                 int(statistics.median(lap.cpu_ns for lap in laps)),
-                sum(lap.minor_faults for lap in laps),
-                sum(lap.major_faults for lap in laps),
-                sum(lap.vol_ctx for lap in laps),
-                sum(lap.invol_ctx for lap in laps),
-                cycles,
-                instructions,
-                cache_misses,
+                *sums,
+                *(counts if counts is not None else (None, None, None)),
                 repeats,
             )
         )
@@ -323,12 +408,7 @@ def measure_schedule_candidates(
             -item.plan.tile_k,
         ),
     )
-    macs = M * N * K
-    constants = MeasuredCostConstants(
-        (winner.cpu_ns << 20) // macs,
-        (winner.cycles << 20) // winner.instructions if winner.instructions else 0,
-        (winner.cache_misses * 1000 << 20) // macs if winner.cache_misses else 0,
-    )
+    constants = _constants(winner, M * N * K)
     return ScheduleArtifact(
         workload,
         (M, N, K),

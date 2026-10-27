@@ -16,9 +16,9 @@
   "bcir.tests.test_measured_silicon:test_a_lap_after_a_failed_rapl_read_has_no_start",
   "bcir.tests.test_measured_silicon:test_rapl_and_thermal_text_is_read_in_its_own_grammar",
   "bcir.tests.test_ot_contract:test_the_two_python_perf_probes_ask_for_the_same_user_space_counter",
-  "bcir.tests.test_numerical_providers:test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts",
-  "bcir.tests.test_schedule_artifact:test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts",
-  "bcir.tests.test_workload:test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts"
+  "bcir.tests.test_numerical_providers:test_a_provider_measurement_records_a_pmu_sample_missing_a_count_as_null",
+  "bcir.tests.test_schedule_artifact:test_a_schedule_candidate_records_a_pmu_sample_missing_a_count_as_null",
+  "bcir.tests.test_workload:test_a_measured_plan_records_a_pmu_sample_missing_a_count_as_null"
  ],
  "faults": [
   {
@@ -176,24 +176,24 @@
    "path": "tools/perf/ot_contract.py"
   },
   {
-   "expects": "test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts",
+   "expects": "test_a_measured_plan_records_a_pmu_sample_missing_a_count_as_null",
    "label": "SN23 a measured plan carrying a sample with a gap",
-   "new": "        cycles, instructions, cache_misses = (\n            (hardware.cycles, hardware.instructions, hardware.cache_misses) if hardware else (0, 0, 0)\n        )\n",
-   "old": "        cycles, instructions, cache_misses = pmu_counts(hardware) or (0, 0, 0)\n",
+   "new": "        counts = (hardware.cycles, hardware.instructions, hardware.cache_misses) if hardware else None\n",
+   "old": "        counts = pmu_counts(hardware)\n",
    "path": "bcir/kbcir/measured.py"
   },
   {
-   "expects": "test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts",
+   "expects": "test_a_provider_measurement_records_a_pmu_sample_missing_a_count_as_null",
    "label": "SN24 a provider measurement carrying a sample with a gap",
-   "new": "    cycles, instructions, cache_misses = (\n        (hardware.cycles, hardware.instructions, hardware.cache_misses) if hardware else (0, 0, 0)\n    )\n",
-   "old": "    cycles, instructions, cache_misses = pmu_counts(hardware) or (0, 0, 0)\n",
+   "new": "    counts = (hardware.cycles, hardware.instructions, hardware.cache_misses) if hardware else None\n",
+   "old": "    counts = pmu_counts(hardware)\n",
    "path": "bcir/kbcir/numerical_providers.py"
   },
   {
-   "expects": "test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts",
+   "expects": "test_a_schedule_candidate_records_a_pmu_sample_missing_a_count_as_null",
    "label": "SN25 a schedule candidate carrying a sample with a gap",
-   "new": "        cycles, instructions, cache_misses = (\n            (hardware.cycles, hardware.instructions, hardware.cache_misses) if hardware else (0, 0, 0)\n        )\n",
-   "old": "        cycles, instructions, cache_misses = pmu_counts(hardware) or (0, 0, 0)\n",
+   "new": "        counts = (hardware.cycles, hardware.instructions, hardware.cache_misses) if hardware else None\n",
+   "old": "        counts = pmu_counts(hardware)\n",
    "path": "bcir/kbcir/schedule_artifact.py"
   }
  ]

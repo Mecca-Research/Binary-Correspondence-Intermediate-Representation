@@ -115,6 +115,8 @@ def test_counter_sampler_measures_real_deltas():
 
 
 def test_counter_sampler_degrades_without_posix_rusage():
+    """Without getrusage (native Windows) the lap's four rusage counts are None -- no count, not
+    a count of 0 -- and the two clocks are read as everywhere (EVIDENCE-NULL)."""
     saved = silicon._resource
     silicon._resource = None
     try:
@@ -122,10 +124,76 @@ def test_counter_sampler_degrades_without_posix_rusage():
         _ = sum(range(10000))
         c = s.lap()
         assert c.wall_ns > 0 and c.cpu_ns >= 0
-        assert (c.minor_faults, c.major_faults, c.vol_ctx, c.invol_ctx) == (0, 0, 0, 0)
+        assert (c.minor_faults, c.major_faults, c.vol_ctx, c.invol_ctx) == (None, None, None, None)
         assert summary()["rusage_counters"] is False
     finally:
         silicon._resource = saved
+
+
+def test_without_getrusage_the_ring_and_the_dna_carry_no_fault_count():
+    """The telemetry frame has no null: with neither a PMU nor getrusage its miss signal is the
+    frame's nominal 0 (never a sum over counts nobody read), and the DNA claims no PMU."""
+    saved = silicon._resource
+    silicon._resource = None
+    try:
+        with mock.patch.object(silicon, "read_hw_counters", return_value=None):
+            ring = TelemetryRing(capacity=4)
+            delta = sample_into_ring(ring, claim_id=5, work=lambda: sum(range(1000)))
+            rec = ring.read_one()
+            dna, provenance = silicon.silicon_dna(lambda: sum(range(1000)), claim_id=5)
+    finally:
+        silicon._resource = saved
+    assert (delta.minor_faults, delta.major_faults) == (None, None)
+    assert rec.claim_id == 5 and rec.misses == 0 and rec.cycles > 0
+    assert dna.misses == 0 and "pmu" not in provenance
+
+
+def _refused(fn, *args) -> bool:
+    try:
+        fn(*args)
+    except ValueError:
+        return True
+    return False
+
+
+def test_recorded_counts_are_all_or_none_and_never_a_gap():
+    """The one rule every v2 evidence record reads a group of counts by (EVIDENCE-NULL): every
+    count, a 0 among them a reading, or every count None; a None beside a count, a bool, a
+    float, a negative count or one past 2^63 is refused, as is an empty group."""
+    from bcir.silicon import recorded_counts
+
+    assert recorded_counts(None, None, None) is None
+    assert recorded_counts(None, None, None, None) is None
+    assert recorded_counts(0, 0, 0) == (0, 0, 0)  # zeros the PMU read
+    assert recorded_counts(2_000, 3_000, 0) == (2_000, 3_000, 0)
+    assert recorded_counts((1 << 63) - 1, 0, 1, 2) == ((1 << 63) - 1, 0, 1, 2)
+    for bad in (
+        (1, 1, None),
+        (None, 0, None),
+        (None, None, None, 0),
+        (True, 1, 1),
+        (1, 1.0, 1),
+        (1, 1, "7"),
+        (-1, 1, 1),
+        (1, 1 << 63, 1),
+        (),
+    ):
+        assert _refused(recorded_counts, *bad), bad
+
+
+def test_a_v1_records_pmu_counts_are_read_only_where_none_is_zero():
+    """A v1 record has no null and its writer recorded a count it could not read as 0, so a 0
+    in it may be no reading: its counts are the three only when none is 0, and a None in it is
+    refused -- v1 cannot say null."""
+    from bcir.silicon import v1_pmu_counts
+
+    assert v1_pmu_counts(0, 0, 0) is None
+    assert v1_pmu_counts(2_000, 3_000, 0) is None
+    assert v1_pmu_counts(0, 3_000, 7) is None
+    assert v1_pmu_counts(2_000, 3_000, 7) == (2_000, 3_000, 7)
+    assert v1_pmu_counts(1 << 64, 1, 1) == (1 << 64, 1, 1)  # v1's own bound is its record's
+    for bad in ((None, 0, 0), (None, None, None), (True, 1, 1), (-1, 1, 1), (1, 1.5, 1)):
+        assert _refused(v1_pmu_counts, *bad), bad
 
 
 def test_ring_uses_wall_delta_when_the_host_cpu_clock_is_too_coarse():

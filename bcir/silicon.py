@@ -27,7 +27,8 @@ kernel refused, never ran or ran for part of its window, a read that failed or c
 energy counter that wrapped past a range nobody could read, a clock no cpufreq driver states. The
 kernel's text is read in its own grammar (`_decimal`): ASCII digits, a '-' only where a value may
 be negative, never through `int()` or `float()`, which take '+5', '1_000', 'inf' and non-ASCII
-digits.
+digits. The evidence records keep the same null: a v2 record holds the PMU's three counts or three
+nulls, and getrusage's four or four nulls (`recorded_counts`), never a 0 for a count nobody read.
 """
 
 from __future__ import annotations
@@ -169,19 +170,21 @@ def cpufreq_info() -> CpuFreq:
 
 @dataclass(frozen=True)
 class Counters:
-    """A real measurement snapshot delta (all genuine OS/timer counters)."""
+    """A real measurement snapshot delta (all genuine OS/timer counters). The four getrusage
+    counts are None together on a host without getrusage (native Windows): never 0."""
 
     wall_ns: int
     cpu_ns: int
-    minor_faults: int
-    major_faults: int
-    vol_ctx: int
-    invol_ctx: int
+    minor_faults: int | None
+    major_faults: int | None
+    vol_ctx: int | None
+    invol_ctx: int | None
 
 
 class CounterSampler:
     """Sample real OS counters (getrusage + monotonic/CPU clocks) around a unit of
-    work -- the actual perf signal that feeds the telemetry ring."""
+    work -- the actual perf signal that feeds the telemetry ring. Without getrusage the lap's
+    four rusage counts are None; the two clocks are read everywhere."""
 
     def __init__(self):
         self._w = time.perf_counter_ns()
@@ -191,20 +194,16 @@ class CounterSampler:
     def lap(self) -> Counters:
         w, c = time.perf_counter_ns(), time.process_time_ns()
         r = _resource.getrusage(_resource.RUSAGE_SELF) if _resource is not None else None
-        out = Counters(
-            wall_ns=w - self._w,
-            cpu_ns=c - self._c,
-            minor_faults=(r.ru_minflt - self._r.ru_minflt)
-            if r is not None and self._r is not None
-            else 0,
-            major_faults=(r.ru_majflt - self._r.ru_majflt)
-            if r is not None and self._r is not None
-            else 0,
-            vol_ctx=(r.ru_nvcsw - self._r.ru_nvcsw) if r is not None and self._r is not None else 0,
-            invol_ctx=(r.ru_nivcsw - self._r.ru_nivcsw)
-            if r is not None and self._r is not None
-            else 0,
-        )
+        if r is not None and self._r is not None:
+            rusage = (
+                r.ru_minflt - self._r.ru_minflt,
+                r.ru_majflt - self._r.ru_majflt,
+                r.ru_nvcsw - self._r.ru_nvcsw,
+                r.ru_nivcsw - self._r.ru_nivcsw,
+            )
+        else:  # no getrusage at either end of the lap: no count, not a count of 0
+            rusage = (None, None, None, None)
+        out = Counters(w - self._w, c - self._c, *rusage)
         self._w, self._c, self._r = w, c, r
         return out
 
@@ -345,6 +344,39 @@ def pmu_counts(sample: HwSample | None) -> tuple[int, int, int] | None:
     if sample is None or None in (sample.cycles, sample.instructions, sample.cache_misses):
         return None
     return sample.cycles, sample.instructions, sample.cache_misses
+
+
+#: A recorded count is an integer below 2^63: a signed 64-bit field on every rail that reads one.
+_COUNT_LIMIT = 1 << 63
+
+
+def recorded_counts(*values) -> tuple[int, ...] | None:
+    """The counts an evidence record holds from one source read at once -- the PMU's cycles,
+    instructions and cache misses, or getrusage's faults and context switches -- by the rule
+    every v2 record (`MeasuredPlan`, `MeasuredSample`, `MeasuredScheduleCandidate`,
+    `ProviderMeasurement`; EVIDENCE-NULL) reads them by: all of them or none. Ints in [0, 2^63)
+    are the counts, a 0 among them a count the source read; all None (JSON null) says the source
+    read none, and gives None. Anything else is refused: a null beside a count (no source here
+    reads a gap: `pmu_counts` gives all three or none, getrusage all four or none), a bool, a
+    float, a negative count or one past the limit."""
+    if not values:
+        raise ValueError("a group of recorded counts names at least one count")
+    if all(value is None for value in values):
+        return None
+    if any(type(value) is not int or not 0 <= value < _COUNT_LIMIT for value in values):
+        raise ValueError("recorded counts are all integers in [0, 2^63) or all null, never a mix")
+    return values
+
+
+def v1_pmu_counts(cycles, instructions, cache_misses) -> tuple[int, int, int] | None:
+    """A v1 record's PMU counts, read only. A v1 record has no null, and its writer recorded a
+    count it could not read as 0 -- and read a multiplexed counter without scaling it -- so a 0
+    in it may be no reading at all: the three only when none is 0, else None. A None, a bool or a
+    negative count is refused (v1 has no null); v1's own bound is its record's to check."""
+    values = (cycles, instructions, cache_misses)
+    if any(type(value) is not int or value < 0 for value in values):
+        raise ValueError("a v1 record's PMU counts are three integers >= 0: v1 has no null")
+    return values if all(values) else None
 
 
 def read_hw_counters(work) -> HwSample | None:
@@ -504,6 +536,15 @@ def thermal_pressure() -> int | None:
     return max(0, min(100, int(round((c - _THERMAL_FLOOR_C) * 100 / span))))
 
 
+def _fault_signal(c: Counters) -> int:
+    """The telemetry frame's OS miss signal: the lap's page faults, or 0 on a host without
+    getrusage. The frame has no null, and 0 is its nominal value; `Counters` itself says None,
+    and `summary()["rusage_counters"]` says the host has no such counter."""
+    if c.minor_faults is None or c.major_faults is None:
+        return 0
+    return c.minor_faults + c.major_faults
+
+
 def silicon_dna(work, claim_id: int = 0):
     """Run `work()` once under every real signal the host exposes (PMU cache-misses,
     RAPL energy, on-die temperature, OS utilization) and assemble a `DataDNA` -- the
@@ -536,7 +577,7 @@ def silicon_dna(work, claim_id: int = 0):
     if counts is not None:
         cycles, misses = counts[0], counts[2]
     else:
-        cycles, misses = c.cpu_ns, c.minor_faults + c.major_faults
+        cycles, misses = c.cpu_ns, _fault_signal(c)
     util = min(100, (c.cpu_ns * 100) // max(1, c.wall_ns))
     # Voltage axis (reserved): a coarse power proxy from RAPL (uJ over wall-ns ->
     # milliwatts), clamped to 0..100; 0 when no RAPL.
@@ -580,7 +621,7 @@ def sample_into_ring(ring, claim_id: int, work) -> Counters:
         cycles, misses = counts[0], counts[2]
     else:
         cycles = c.cpu_ns if c.cpu_ns > 0 else c.wall_ns
-        misses = c.minor_faults + c.major_faults
+        misses = _fault_signal(c)
     ring.write(
         DataDNA(
             segment_id="",
