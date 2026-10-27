@@ -470,7 +470,9 @@ Native work proceeds in parallel and does not block Linux-hosted driver packages
 2. Physical memory and immutable region registry.
 3. Virtual memory, page-table construction, and address-space generations.
 4. ACPI/static table and Device Tree parsers; no general AML implementation in the initial core.
-5. Clock, timer, interrupt-controller, and event-delivery substrate.
+5. Clock, timer, interrupt-controller, and event-delivery substrate. The event-timer program's
+   proposal (HPET and AVR RTC placements, the T-laws, a tick-timed simulator):
+   [`BCIR_EVENT_TIMER_BLUEPRINT.md`](BCIR_EVENT_TIMER_BLUEPRINT.md).
 6. PCIe enumeration, BAR/capability parsing, and MSI/MSI-X allocation.
 7. DMA and IOMMU isolation.
 8. Storage, network, USB, security, display, and accelerator adapters in evidence order.
