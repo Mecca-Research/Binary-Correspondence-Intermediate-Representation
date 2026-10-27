@@ -63,7 +63,8 @@ const bcir_q8_tensor *bcir_llama_head_tensor(const bcir_q8_model *model);
 
 /* x = embedding[token]. -1 on a token outside the vocabulary. */
 int bcir_llama_op_embed(const bcir_q8_model *model, bcir_llama_ws *w, int32_t token);
-/* dst = rmsnorm(src) * gamma (gamma dequantized into the workspace's scratch). */
+/* dst = rmsnorm(src) * gamma (gamma dequantized into the workspace's scratch by bcir_q8_tensor_values, DECODE-PASSES;
+ * a gamma that is not the model's own, or shorter than a row, leaves dst a row of NaN). */
 void bcir_llama_op_rmsnorm(const bcir_q8_model *model, bcir_llama_ws *w, const double *src,
                            const bcir_q8_tensor *gamma, double *dst);
 /* y[out] = x[in] @ weight[in x out], the ascending-k order of matmul_reference -- in parts of its columns on the
@@ -86,7 +87,8 @@ void bcir_llama_op_swiglu(const bcir_q8_model *model, bcir_llama_ws *w);
  * its rows on the workspace's runner where it has one and the pack is large enough, DECODE-THREADS; w NULL: in one
  * call). */
 int bcir_llama_op_head(const bcir_q8_model *model, const bcir_llama_ws *w, const double *row, double *logits);
-/* The greedy pick: the largest logit, the lowest id on a tie. */
+/* The greedy pick: the largest logit, the lowest id on a tie (-0.0 ties +0.0); a NaN is never picked past id 0, and
+ * a NaN at id 0 is picked (DECODE-PASSES: the scalar loop's pick, over four lanes and a scan). */
 int32_t bcir_llama_op_argmax(const bcir_q8_model *model, const double *logits);
 
 #ifdef __cplusplus

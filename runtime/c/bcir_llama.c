@@ -102,18 +102,6 @@ int bcir_llama_model_ready(const bcir_q8_model *m) {
          tensor_ready(m,BCIR_Q8_TENSOR_LM_HEAD,-1,2,m->vocab_size,d);
 }
 
-/* The public accessor defends against foreign/stale tensor pointers.  The whole
- * model has already passed model_ready() on this hot inference path, so avoid
- * repeating those ownership/span checks for every weight element. */
-static double tensor_value_unchecked(const bcir_q8_model *m,
-                                     const bcir_q8_tensor *t,uint32_t index) {
-  const unsigned char *ep=t->exponents+2u*(index/m->group_size);
-  int exponent=(int)(int16_t)((uint16_t)ep[0]|((uint16_t)ep[1]<<8));
-  int code=(int)t->codes[index];
-  if(code>=128)code-=256;
-  return ldexp((double)code,exponent);
-}
-
 int bcir_llama_ws_init(workspace *w, const bcir_q8_model *m, size_t capacity,
                        const bcir_host_allocator *allocator) {
   size_t cache_rows, cache_values, total_values = 0u, term, workspace_bytes;
@@ -152,12 +140,6 @@ int bcir_llama_ws_init(workspace *w, const bcir_q8_model *m, size_t capacity,
     return -1;
   }
   return 0;
-}
-
-static void dequant_vector(const bcir_q8_model *m, const bcir_q8_tensor *t,
-                           double *out) {
-  uint32_t i;
-  for (i = 0; i < t->element_count; ++i) out[i] = tensor_value_unchecked(m, t, i);
 }
 
 int bcir_llama_ws_set_runner(workspace *w, const bcir_llama_runner *runner) {
@@ -249,19 +231,23 @@ const bcir_q8_tensor *bcir_llama_head_tensor(const bcir_q8_model *m) {
              : bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_LM_HEAD, -1);
 }
 
+/* DECODE-PASSES: the embedding's row and the RMSNorms' gammas through bcir_q8_tensor_values -- a group's scale once,
+ * formed from its bits, where an ldexp an element took most of a norm's time -- every value bcir_q8_tensor_value's,
+ * the tensor's checks made once a call rather than once an element. */
 int bcir_llama_op_embed(const bcir_q8_model *m, workspace *w, int32_t token) {
   const bcir_q8_tensor *embedding = bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_EMBEDDING, -1);
-  uint32_t d = m->d_model, i;
   if (token < 0 || (uint32_t)token >= m->vocab_size) return -1;
-  for (i = 0; i < d; ++i)
-    w->x[i] = tensor_value_unchecked(m, embedding, (uint32_t)token * d + i);
-  return 0;
+  return bcir_q8_tensor_values(m, embedding, (uint32_t)token * m->d_model, m->d_model, w->x) ? -1 : 0;
 }
 
 void bcir_llama_op_rmsnorm(const bcir_q8_model *m, workspace *w, const double *src,
                            const bcir_q8_tensor *gamma, double *dst) {
-  dequant_vector(m, gamma, w->gamma);
-  bcir_rmsnorm(src, 1, (int)m->d_model, w->gamma, m->rms_norm_eps, dst);
+  uint32_t d = m->d_model, i;
+  if (bcir_q8_tensor_values(m, gamma, 0u, d, w->gamma)) { /* not the model's own, or short of a row: */
+    for (i = 0; i < d; ++i) dst[i] = NAN;                  /* none bcir_llama_model_ready admits */
+    return;
+  }
+  bcir_rmsnorm(src, 1, (int)d, w->gamma, m->rms_norm_eps, dst);
 }
 
 int bcir_llama_op_matvec(const bcir_q8_model *m, const workspace *w, const double *x,
@@ -347,11 +333,30 @@ int bcir_llama_op_head(const bcir_q8_model *m, const workspace *w, const double 
              : 0;
 }
 
+/* DECODE-PASSES: the token the loop `if (logits[t] > logits[best]) best = t` from best 0 picks -- the first holding
+ * the largest logit under `>`, no NaN past the first, the first token when the first is a NaN -- in two passes with no
+ * comparison waiting on the last: the largest logit over four independent lanes, each `lane = v > lane ? v : lane`
+ * (MAXPD's rule: an equal value or a NaN keeps the lane), then the first token equal to it (== takes -0.0 for +0.0,
+ * which `>` never told apart). */
 int32_t bcir_llama_op_argmax(const bcir_q8_model *m, const double *logits) {
-  uint32_t token, best = 0;
-  for (token = 1; token < m->vocab_size; ++token)
-    if (logits[token] > logits[best]) best = token;
-  return (int32_t)best;
+  uint32_t n = m->vocab_size, token;
+  double top, a, b, c, e;
+  if (n == 0u || logits[0] != logits[0]) return 0;
+  top = a = b = c = e = logits[0];
+  for (token = 1u; n - token >= 4u; token += 4u) {
+    a = logits[token] > a ? logits[token] : a;
+    b = logits[token + 1u] > b ? logits[token + 1u] : b;
+    c = logits[token + 2u] > c ? logits[token + 2u] : c;
+    e = logits[token + 3u] > e ? logits[token + 3u] : e;
+  }
+  for (; token < n; ++token) top = logits[token] > top ? logits[token] : top;
+  top = a > top ? a : top;
+  top = b > top ? b : top;
+  top = c > top ? c : top;
+  top = e > top ? e : top;
+  for (token = 0u; token < n; ++token)
+    if (logits[token] == top) return (int32_t)token;
+  return 0; /* unreachable: top is one of the logits */
 }
 
 /* One position through every layer, in the decoder's fixed order: the monolithic dispatch of

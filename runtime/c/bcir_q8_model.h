@@ -121,6 +121,18 @@ const bcir_q8_tensor *bcir_q8_model_tensor(const bcir_q8_model *model,
 double bcir_q8_tensor_value(const bcir_q8_model *model,
                             const bcir_q8_tensor *tensor, uint32_t index);
 
+/* DECODE-PASSES: 2**exponent for an exponent the format admits ([-300, 300]), formed from its bits; NaN past it. A
+ * code (an integer in [-127, 127]) times it is exact, so it is ldexp(code, exponent) for every code and exponent a
+ * loaded tensor holds. */
+double bcir_q8_group_scale(int exponent);
+
+/* DECODE-PASSES: elements [start, start + count) of `tensor` into out[0 .. count), each bcir_q8_tensor_value's value
+ * bit for bit (NaN where it gives NaN), a group's scale formed once (bcir_q8_group_scale) instead of an ldexp an
+ * element. 0; -1 with `out` untouched for a tensor bcir_q8_tensor_value refuses whole (foreign, stale, malformed), a
+ * range past its elements, or a NULL `out` with a nonzero count. A zero count writes nothing. */
+int bcir_q8_tensor_values(const bcir_q8_model *model, const bcir_q8_tensor *tensor,
+                          uint32_t start, uint32_t count, double *out);
+
 #ifdef __cplusplus
 }
 #endif

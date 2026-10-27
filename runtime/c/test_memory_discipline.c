@@ -3,11 +3,13 @@
 #include "bcir_cpp.h"
 #include "bcir_host_alloc.h"
 #include "bcir_llama.h"
+#include "bcir_llama_ops.h"
 #include "bcir_q8_model.h"
 #include "bcir_runtime.h"
 #include "bcir_runtime_channel.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -385,6 +387,98 @@ static int q8_and_llama_fault_test(const char *path){
   return 0;
 }
 
+/* DECODE-PASSES. (1) bcir_q8_group_scale: code * scale is ldexp(code, e) bit for bit for every code in [-127, 127]
+ * and every exponent in [-300, 300] the format admits, and NaN past them. (2) bcir_q8_tensor_values is
+ * bcir_q8_tensor_value bit for bit over every tensor of the model -- whole, across every group's edge and to its end
+ * -- and where a group's exponent or an element's code is one the loader refuses (written into the loaded storage and
+ * restored: NaN, as the reference); refused whole with `out` untouched for a foreign tensor, a range past the end and
+ * a NULL `out`; a zero count writes nothing. (3) bcir_llama_op_argmax picks the scalar loop's token over vocabularies
+ * of 1 to 23 logits drawn from ties, -0.0 and +0.0, infinities and NaNs. */
+static int same_bits(double a,double b){ return memcmp(&a,&b,sizeof a)==0; }
+static int tensor_values_agree(const bcir_q8_model *m,const bcir_q8_tensor *t,uint32_t start,uint32_t count,
+                               double *out){
+  if(bcir_q8_tensor_values(m,t,start,count,out))return 0;
+  for(uint32_t i=0;i<count;i++) if(!same_bits(out[i],bcir_q8_tensor_value(m,t,start+i)))return 0;
+  return 1;
+}
+static uint64_t passes_state=UINT64_C(0x9E3779B97F4A7C15);
+static uint64_t passes_next(void){
+  passes_state^=passes_state<<13; passes_state^=passes_state>>7; passes_state^=passes_state<<17;
+  return passes_state;
+}
+static int decode_passes_test(const char *path){
+  bcir_q8_model model;char error[256];
+  for(int e=-300;e<=300;e++){
+    double scale=bcir_q8_group_scale(e);
+    for(int code=-127;code<=127;code++) CHECK(same_bits((double)code*scale,ldexp((double)code,e)));
+  }
+  CHECK(isnan(bcir_q8_group_scale(-301))&&isnan(bcir_q8_group_scale(301)));
+  CHECK(isnan(bcir_q8_group_scale(-32768))&&isnan(bcir_q8_group_scale(32767)));
+  bcir_q8_model_init(&model);
+  CHECK(!bcir_q8_model_load(path,&model,error,sizeof error));
+  for(uint32_t k=0;k<model.tensor_count;k++){
+    const bcir_q8_tensor *t=&model.tensors[k];
+    uint32_t n=t->element_count,g=model.group_size;
+    double *out=(double *)malloc((size_t)n*sizeof *out);
+    CHECK(out!=NULL);
+    CHECK(tensor_values_agree(&model,t,0u,n,out));
+    for(uint32_t edge=g;edge<n;edge+=g){                 /* across each group's edge, and a group and one */
+      CHECK(tensor_values_agree(&model,t,edge-1u,n-edge+1u<3u ? n-edge+1u : 3u,out));
+      CHECK(tensor_values_agree(&model,t,edge,n-edge<g+1u ? n-edge : g+1u,out));
+    }
+    CHECK(tensor_values_agree(&model,t,n-1u,1u,out));
+    free(out);
+  }
+  {
+    bcir_q8_tensor *t=&model.tensors[0],foreign=model.tensors[0];
+    unsigned char *e0=model.storage+t->exponent_offset,saved[2],code_saved;
+    double out[4]={-1.0,-2.0,-3.0,-4.0};
+    uint32_t n=t->element_count;
+    CHECK(bcir_q8_tensor_values(&model,&foreign,0u,1u,out)==-1&&out[0]==-1.0);
+    CHECK(bcir_q8_tensor_values(&model,t,n,1u,out)==-1&&out[0]==-1.0);
+    CHECK(bcir_q8_tensor_values(&model,t,n-1u,2u,out)==-1&&out[0]==-1.0);
+    CHECK(bcir_q8_tensor_values(&model,t,UINT32_MAX,1u,out)==-1&&out[0]==-1.0);
+    CHECK(bcir_q8_tensor_values(&model,t,0u,1u,NULL)==-1);
+    CHECK(bcir_q8_tensor_values(&model,t,0u,0u,NULL)==0);
+    CHECK(bcir_q8_tensor_values(&model,t,n,0u,out)==0&&out[0]==-1.0);
+    CHECK(bcir_q8_tensor_values(NULL,t,0u,1u,out)==-1&&out[0]==-1.0);
+    {                                                    /* the model's own entry, its codes off its offset: */
+      const unsigned char *codes=t->codes;               /* the shared predicate's spans refuse it in both */
+      t->codes=codes+1;
+      CHECK(isnan(bcir_q8_tensor_value(&model,t,0u)));
+      CHECK(bcir_q8_tensor_values(&model,t,0u,1u,out)==-1&&out[0]==-1.0);
+      t->codes=codes;
+    }
+    memcpy(saved,e0,2u);                                 /* an exponent past [-300, 300]: 301, little-endian */
+    e0[0]=(unsigned char)(301&0xff);e0[1]=(unsigned char)(301>>8);
+    CHECK(n>=4u&&tensor_values_agree(&model,t,0u,4u,out)&&isnan(out[0])&&isnan(out[3]));
+    memcpy(e0,saved,2u);
+    code_saved=model.storage[t->code_offset+1u];        /* the -128 code */
+    model.storage[t->code_offset+1u]=0x80u;
+    CHECK(tensor_values_agree(&model,t,0u,4u,out)&&isnan(out[1])&&!isnan(out[0]));
+    model.storage[t->code_offset+1u]=code_saved;
+    CHECK(tensor_values_agree(&model,t,0u,4u,out)&&!isnan(out[1]));
+  }
+  bcir_q8_model_free(&model);
+  {
+    static const double kinds[]={-0.0,0.0,1.0,1.0,-1.0,2.5,-2.5};
+    bcir_q8_model sized;double logits[23];
+    memset(&sized,0,sizeof sized);
+    for(int trial=0;trial<200000;trial++){
+      uint32_t n=1u+(uint32_t)(passes_next()%23u),best=0;
+      for(uint32_t i=0;i<n;i++){
+        uint64_t pick=passes_next()%12u;
+        logits[i]=pick<7u ? kinds[pick] : pick==7u ? INFINITY : pick==8u ? -INFINITY : pick==9u ? NAN :
+                  (double)(int64_t)(passes_next()%2001u)/7.0-142.0;
+      }
+      for(uint32_t i=1;i<n;i++) if(logits[i]>logits[best])best=i;  /* the loop the decoder ran before */
+      sized.vocab_size=n;
+      CHECK(bcir_llama_op_argmax(&sized,logits)==(int32_t)best);
+    }
+  }
+  return 0;
+}
+
 static int channel_test(void){
   bcir_runtime_channel channel={0};
   bcir_runtime_channel_hooks_v1 bad={0};
@@ -477,6 +571,7 @@ int main(int argc,char **argv){
   }
   CHECK(!cpp_fault_and_isolation_test());
   CHECK(!q8_and_llama_fault_test(argv[1]));
+  CHECK(!decode_passes_test(argv[1]));
   CHECK(!channel_test());
   puts("memory-discipline: ok");
   return 0;

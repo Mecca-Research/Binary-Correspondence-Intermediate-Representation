@@ -839,6 +839,69 @@ def test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit():
                 ], lines
 
 
+# DECODE-PASSES: the memory-discipline harness's sources (tools/c/check_memory_discipline.sh builds the same list)
+_DISCIPLINE_SOURCES = (
+    "test_memory_discipline.c",
+    "bcir_runtime_channel.c",
+    "bcir_cfront.c",
+    "bcir_cpp.c",
+    "bcir_verify.c",
+    "bcir_runtime.c",
+    "bcir_q8_model.c",
+    "bcir_decode.c",
+    "bcir_ai_kernels.c",
+    "bcir_llama.c",
+)
+
+
+def test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick():
+    """DECODE-PASSES, through runtime/c/test_memory_discipline.c's witness on both toys: bcir_q8_group_scale times every
+    code is ldexp's value for every exponent the format admits and NaN past them; bcir_q8_tensor_values is
+    bcir_q8_tensor_value bit for bit over every tensor, across every group's edge and to its end, and where an exponent
+    or a code the loader refuses is written into the loaded storage (NaN); both refuse an entry whose codes are off its
+    offset, and the range form a foreign tensor, a range past the end and a NULL out with `out` untouched; and
+    bcir_llama_op_argmax picks the scalar loop's token over 200,000 vocabularies of ties, signed zeros, infinities and
+    NaNs."""
+    compiler = _compiler()
+    if compiler is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        executable = directory / (
+            "memory-discipline.exe" if os.name == "nt" else "memory-discipline"
+        )
+        defines = ["-D_CRT_SECURE_NO_WARNINGS"] if os.name == "nt" else []
+        build = subprocess.run(
+            [
+                compiler,
+                "-std=c11",
+                "-O1",
+                "-ffp-contract=off",
+                *defines,
+                "-I",
+                str(_RUNTIME),
+                *(str(_RUNTIME / source) for source in _DISCIPLINE_SOURCES),
+                "-o",
+                str(executable),
+                *_link_args(),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert build.returncode == 0, build.stderr[-3000:]
+        for wide in (False, True):
+            model = directory / f"toy{'-wide' if wide else ''}.bcirq8"
+            _write(model, **(_WIDE if wide else {}))
+            run = subprocess.run(
+                [str(executable), str(model)], capture_output=True, text=True, timeout=600
+            )
+            assert run.returncode == 0 and "memory-discipline: ok" in run.stdout, (
+                wide,
+                run.stdout[-2000:],
+                run.stderr[-2000:],
+            )
+
+
 if __name__ == "__main__":
     import sys
 

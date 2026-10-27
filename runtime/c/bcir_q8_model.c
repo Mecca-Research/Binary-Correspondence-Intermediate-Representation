@@ -128,35 +128,73 @@ const bcir_q8_tensor *bcir_q8_model_tensor(const bcir_q8_model *model,
   return find_tensor(model, tensor_id, layer);
 }
 
-double bcir_q8_tensor_value(const bcir_q8_model *model,
-                            const bcir_q8_tensor *tensor, uint32_t index) {
+/* The checks bcir_q8_tensor_value and bcir_q8_tensor_values both make (DECODE-PASSES: one predicate, not two copies):
+ * `model` a live loaded model and `tensor` one of its own entries -- its address inside the model's array, not a
+ * copy -- with at least one element, the loader's group count, and its exponents and codes the model's storage at
+ * its offsets. 1 where they all hold. */
+static int tensor_checked(const bcir_q8_model *model, const bcir_q8_tensor *tensor) {
   uintptr_t base, address;
   size_t tensor_bytes, delta;
   uint64_t groups, exponent_bytes;
-  int code;
-  int exponent;
   if (!model || !tensor || model->_owner_tag != BCIR_Q8_MODEL_OWNER_TAG ||
       !model->storage || !model->tensors || !model->group_size || model->bits != 8u)
-    return NAN;
+    return 0;
   if (mul_overflows_size((size_t)model->tensor_count,
-                         sizeof *model->tensors,&tensor_bytes)) return NAN;
+                         sizeof *model->tensors,&tensor_bytes)) return 0;
   base = (uintptr_t)(const void *)model->tensors;
   address = (uintptr_t)(const void *)tensor;
-  if (address < base) return NAN;
+  if (address < base) return 0;
   delta = (size_t)(address - base);
-  if (delta >= tensor_bytes || delta % sizeof *model->tensors) return NAN;
-  if (index >= tensor->element_count || !tensor->element_count) return NAN;
+  if (delta >= tensor_bytes || delta % sizeof *model->tensors) return 0;
+  if (!tensor->element_count) return 0;
   groups = ((uint64_t)tensor->element_count + model->group_size - 1u) /
            model->group_size;
   exponent_bytes = groups * 2u;
-  if (groups != tensor->group_count ||
-      tensor->exponent_offset > model->storage_size ||
-      exponent_bytes > model->storage_size - tensor->exponent_offset ||
-      tensor->code_offset > model->storage_size ||
-      tensor->element_count > model->storage_size - tensor->code_offset ||
-      tensor->exponents != model->storage + tensor->exponent_offset ||
-      tensor->codes != model->storage + tensor->code_offset)
-    return NAN;
+  return groups == tensor->group_count &&
+         tensor->exponent_offset <= model->storage_size &&
+         exponent_bytes <= model->storage_size - tensor->exponent_offset &&
+         tensor->code_offset <= model->storage_size &&
+         tensor->element_count <= model->storage_size - tensor->code_offset &&
+         tensor->exponents == model->storage + tensor->exponent_offset &&
+         tensor->codes == model->storage + tensor->code_offset;
+}
+
+double bcir_q8_group_scale(int exponent) {
+  uint64_t bits;
+  double scale;
+  if (exponent < -300 || exponent > 300) return NAN;
+  bits = (uint64_t)(exponent + 1023) << 52; /* 2**e's biased exponent, its mantissa zero: 2**e itself */
+  memcpy(&scale, &bits, sizeof scale);
+  return scale;
+}
+
+int bcir_q8_tensor_values(const bcir_q8_model *model, const bcir_q8_tensor *tensor,
+                          uint32_t start, uint32_t count, double *out) {
+  uint64_t i, end;
+  if (!tensor_checked(model, tensor) || start > tensor->element_count ||
+      count > tensor->element_count - start || (count && !out)) return -1;
+  for (i = start, end = (uint64_t)start + count; i < end;) {
+    /* the group's exponent read once, at the widened index bcir_q8_tensor_value reads it at */
+    uint64_t group = i / model->group_size, stop = (group + 1u) * model->group_size;
+    double scale = bcir_q8_group_scale(
+        (int)rdi16(tensor->exponents + (size_t)group * 2u));
+    if (stop > end) stop = end;
+    for (; i < stop; ++i) {
+      int code = (int)tensor->codes[i];
+      if (code >= 128) code -= 256;
+      /* an exponent past [-300, 300] (scale NaN) or the -128 code: NaN, as bcir_q8_tensor_value -- the constant
+       * itself, never a product of one; elsewhere code * 2**e, exact (|code| <= 127, |e| <= 300) and so ldexp's */
+      out[i - start] = code == -128 || scale != scale ? NAN : (double)code * scale;
+    }
+  }
+  return 0;
+}
+
+double bcir_q8_tensor_value(const bcir_q8_model *model,
+                            const bcir_q8_tensor *tensor, uint32_t index) {
+  int code;
+  int exponent;
+  if (!tensor_checked(model, tensor) || index >= tensor->element_count) return NAN;
   code = (int)tensor->codes[index];
   if (code >= 128) code -= 256;
   /* Widen to size_t BEFORE scaling: `2u * (index / group_size)` is `unsigned int`
