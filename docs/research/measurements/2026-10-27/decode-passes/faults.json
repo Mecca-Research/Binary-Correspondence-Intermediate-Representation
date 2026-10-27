@@ -1,0 +1,312 @@
+{
+ "decode_passes": {
+  "command": [
+   "@python",
+   "tools/testing/check_tests.py",
+   "--require",
+   "bcir.tests.test_native_ai:_CC",
+   "bcir.tests.test_model_weights_io:test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "bcir.tests.test_model_weights_io:test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads"
+  ],
+  "results": [
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick"
+    ],
+    "label": "DP1 the group scale's biased exponent one high",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+    "fired": [
+     "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick"
+    ],
+    "label": "DP2 the group scale admitting 301 and -301",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+    "fired": [
+     "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick"
+    ],
+    "label": "DP3 a group's scale applied a group past its end",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+    "fired": [
+     "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick"
+    ],
+    "label": "DP4 the range form dequantizing the -128 code",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+    "fired": [
+     "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick"
+    ],
+    "label": "DP5 a range past the tensor's end accepted",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+    "fired": [
+     "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick"
+    ],
+    "label": "DP6 a NULL out with a count accepted",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+    "fired": [
+     "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick"
+    ],
+    "label": "DP7 a start past the tensor's end not refused first",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+    "fired": [
+     "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick"
+    ],
+    "label": "DP8 the shared predicate blind to an entry's codes off their offset",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick"
+    ],
+    "label": "DP9 the range form reading the next group's exponent",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+    "fired": [
+     "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick"
+    ],
+    "label": "DP10 the argmax's scan taking the last token equal to the largest",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+    "fired": [
+     "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick"
+    ],
+    "label": "DP11 the argmax skipping the logits past the last whole four",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick"
+    ],
+    "label": "DP12 the argmax leaving a lane out of its reduction",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+    "fired": [
+     "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick"
+    ],
+    "label": "DP13 a lane taking a NaN (the operands of its select swapped)",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads"
+    ],
+    "label": "DP14 the embedding's row a row late",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads"
+    ],
+    "label": "DP15 a norm's gamma a value short",
+    "verdict": "RED"
+   }
+  ],
+  "table": "tools/testing/faults/decode-passes.json"
+ },
+ "decode_passes_under_the_witnesses_before": {
+  "command": [
+   "@python",
+   "tools/testing/check_tests.py",
+   "--require",
+   "bcir.tests.test_native_ai:_CC",
+   "bcir.tests.test_decoder_gem:test_the_c_interpreter_is_the_monolithic_runner_bit_for_bit",
+   "bcir.tests.test_decoder_gem:test_the_c_interpreter_counts_the_traffic_the_program_plans",
+   "bcir.tests.test_decoder_gem:test_the_c_interpreter_refuses_what_the_oracle_refuses",
+   "bcir.tests.test_decoder_gem:test_a_c_run_reads_what_it_wrote_or_zeros",
+   "bcir.tests.test_decoder_gem:test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated",
+   "bcir.tests.test_decoder_gem:test_the_c_interpreter_lent_a_runner_is_itself_bit_for_bit",
+   "bcir.tests.test_decoder_gem:test_final_is_a_resource_of_its_own_on_the_c_rail",
+   "bcir.tests.test_model_weights_io:test_bcirq8_export_is_deterministic_and_exactly_the_q8_roundtrip",
+   "bcir.tests.test_model_weights_io:test_bcirq8_rejects_truncation_corruption_and_invalid_spans",
+   "bcir.tests.test_model_weights_io:test_bcirq8_limits_and_metadata_are_strict_before_allocation_or_write",
+   "bcir.tests.test_model_weights_io:test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+   "bcir.tests.test_model_weights_io:test_the_decoders_rotation_is_bcir_ropes_rows_bit_for_bit",
+   "bcir.tests.test_model_weights_io:test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit",
+   "bcir.tests.test_model_weights_io:test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit",
+   "bcir.tests.test_c_runtime:test_the_runtime_crc_is_zlibs",
+   "bcir.tests.test_c_cfront:test_the_emit_grows_whole_under_a_failing_allocator"
+  ],
+  "results": [
+   {
+    "exit_code": 1,
+    "expects": "",
+    "fired": [
+     "test_a_c_run_reads_what_it_wrote_or_zeros",
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_c_interpreter_is_the_monolithic_runner_bit_for_bit"
+    ],
+    "label": "DP1 the group scale's biased exponent one high",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 0,
+    "expects": "",
+    "fired": [],
+    "label": "DP2 the group scale admitting 301 and -301",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "",
+    "fired": [],
+    "label": "DP3 a group's scale applied a group past its end",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "",
+    "fired": [],
+    "label": "DP4 the range form dequantizing the -128 code",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "",
+    "fired": [],
+    "label": "DP5 a range past the tensor's end accepted",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "",
+    "fired": [],
+    "label": "DP6 a NULL out with a count accepted",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "",
+    "fired": [],
+    "label": "DP7 a start past the tensor's end not refused first",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "",
+    "fired": [],
+    "label": "DP8 the shared predicate blind to an entry's codes off their offset",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 1,
+    "expects": "",
+    "fired": [
+     "test_a_c_run_reads_what_it_wrote_or_zeros",
+     "test_final_is_a_resource_of_its_own_on_the_c_rail",
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_c_interpreter_counts_the_traffic_the_program_plans",
+     "test_the_c_interpreter_is_the_monolithic_runner_bit_for_bit",
+     "test_the_c_interpreter_lent_a_runner_is_itself_bit_for_bit",
+     "test_the_c_interpreter_refuses_what_the_oracle_refuses",
+     "test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit"
+    ],
+    "label": "DP9 the range form reading the next group's exponent",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 0,
+    "expects": "",
+    "fired": [],
+    "label": "DP10 the argmax's scan taking the last token equal to the largest",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 1,
+    "expects": "",
+    "fired": [
+     "test_a_c_run_reads_what_it_wrote_or_zeros"
+    ],
+    "label": "DP11 the argmax skipping the logits past the last whole four",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "",
+    "fired": [
+     "test_a_c_run_reads_what_it_wrote_or_zeros",
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_c_interpreter_is_the_monolithic_runner_bit_for_bit"
+    ],
+    "label": "DP12 the argmax leaving a lane out of its reduction",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 0,
+    "expects": "",
+    "fired": [],
+    "label": "DP13 a lane taking a NaN (the operands of its select swapped)",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 1,
+    "expects": "",
+    "fired": [
+     "test_a_c_run_reads_what_it_wrote_or_zeros",
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_c_interpreter_is_the_monolithic_runner_bit_for_bit"
+    ],
+    "label": "DP14 the embedding's row a row late",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "",
+    "fired": [
+     "test_a_c_run_reads_what_it_wrote_or_zeros",
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_c_interpreter_is_the_monolithic_runner_bit_for_bit"
+    ],
+    "label": "DP15 a norm's gamma a value short",
+    "verdict": "RED"
+   }
+  ],
+  "table": "<SCRATCH>/next20/vac-faults.json"
+ }
+}
