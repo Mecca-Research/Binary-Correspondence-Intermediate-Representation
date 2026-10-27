@@ -1038,7 +1038,7 @@ data is held, wake on RX edge / modem change / THR write — all in char-ticks.
 | Item | Why deferred | Unblocks when |
 |---|---|---|
 | Interrupt/ISR claim model + IRQ-driven driver | the EV1–EV3 event phases have since landed (driver roadmap §2); the polled slice needs none, and the IRQ port is sequenced after U2. Design note: THRE-as-hint rule (§3.2) is already written so the IRQ port cannot regress. | after U7; needs an `event.irq` phase-trigger design on the IR |
-| Bus-master DMA | not in the 16550 family (pins only); platform DMA engines are their own drivers | a DMA-engine registry model |
+| Bus-master DMA | not in the 16550 family (pins only); platform DMA engines are their own drivers | a DMA-engine registry model (proposed: [`BCIR_DMA_BLUEPRINT.md`](BCIR_DMA_BLUEPRINT.md)) |
 | Real-silicon measurement (PMU/RAPL, a physical UART) | rig-gated, same as CT4 | `HARDWARE_VALIDATION.md` runbook rig |
 | Chip-lot errata sheets (date-code silicon bugs) | not publicly indexed | **vendor support** (TI/Exar/Microsemi/AMD/CAST/Lattice contacts) |
 | ~~16750/64-byte-FIFO + sleep modes~~ | **no longer deferred — §1.8/§1.9/§2.1, slices U8/U9** | — |
@@ -1117,7 +1117,7 @@ data is held, wake on RX edge / modem change / THR write — all in char-ticks.
 | Slice | What the review proposes | What it would have to show |
 |---|---|---|
 | U10 | IRQ-based execution: the interrupt lifecycle (arm, deliver, service, re-arm), lowering CPU use where appropriate | THRE stays a hint (§3.2); lower CPU time than the polled driver, measured |
-| U11 | DMA integration: buffer ownership, cancellation, completion safety | the buffer-ownership law below holds under injected cancellation |
+| U11 | DMA integration: buffer ownership, cancellation, completion safety | the buffer-ownership law below holds under injected cancellation (its DMA side: D-OWN, [`BCIR_DMA_BLUEPRINT.md`](BCIR_DMA_BLUEPRINT.md) §4) |
 | U12 | Advanced fault detection | a measured improvement in recognition and recovery over conventional rules, first |
 | U13 | Adaptive service scheduling | gains on held-out workloads, with a guaranteed fallback to the certified static plan |
 | U14 | FPGA UART research: configurable FIFOs, oversampling, CRC/SECDED, timestamps, DMA, on soft IP (Core16550, AXI UART 16550, H16750S) | the licences checked first |
