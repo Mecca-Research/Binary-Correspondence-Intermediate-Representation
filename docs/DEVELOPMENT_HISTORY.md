@@ -5571,6 +5571,37 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     jumps are a correlate the mitigation removes, and clang's slow placement at 32 holds as many as its fast one at
     0); any other host's figures, or a gain on a core without the erratum, where the padding costs its 2-3% of code;
     aarch64 and Windows timing (the option is x86-64's).
+  DECODE-PASSES (2026-10-27): the C decoder's embedding row and norm gammas dequantized a range at a time, its argmax
+    over four lanes, every value the same ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §40,
+    [measurements/2026-10-27/decode-passes/](research/measurements/2026-10-27/decode-passes/README.json)).
+  - DECODE-PASSES (`661e9c3`): NEXT-12's survey placed the decoder's remaining per-token cost outside its matrix
+    kernels in two passes -- the embedding row and every RMSNorm's gamma dequantized an element at a time through
+    `ldexp`, and the greedy argmax one dependent chain over the vocabulary. `bcir_q8_group_scale(e)` builds 2**e from
+    its bits for every exponent the loader admits ([-300, 300]; NaN outside), and `bcir_q8_tensor_values` writes a
+    range of a tensor a group at a time, a -128 code NaN; both, and `bcir_q8_tensor_value`, read the tensor through one
+    predicate (`tensor_checked`), a refusal leaving the output untouched. `op_embed` and `op_rmsnorm` read through the
+    range form; `op_argmax` keeps four lanes (MAXPD's rule), a scalar tail, a reduction in lane order and a
+    first-equal scan -- the scalar loop's pick exactly: the lowest id on a tie, -0.0 tying +0.0, a NaN never picked
+    past id 0 and a NaN at id 0 picked.
+  - Witnesses: test_memory_discipline.c's `decode_passes_test` on both toy models (the group scale against `ldexp`
+    over every exponent and code, the range form against the per-element value over every tensor and group edge,
+    every refusal, the argmax against the scalar loop over 200,000 vocabularies of signed zeros, ties, infinities,
+    NaN and random values), run by `test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick`;
+    fuzz_q8_model.c holds a window of every fuzzed tensor to the per-element value byte for byte.
+    `decode-passes.json` DP1-DP15, each caught by its own check; under the witnesses before DECODE-PASSES 6 of the 15.
+  - Measured (`661e9c3` against `0311c60`, the session's second host, clang 18 and GCC 13; resolved where a 95%
+    interval excludes 1 and does not meet the A/A control's): over six qualification runs a tree a token of the 860K
+    decoder took 0.2981 -> 0.2721 ms (x0.913), the embedding 0.103 -> 0.028 ms, the norms 1.028 -> 0.338 ms and the
+    argmax 0.202 -> 0.032 ms over the instrumented run; under callgrind the GEM request 138,794,053 -> 135,023,534
+    instructions, the logits the same bytes, 23 of 23 checks on both trees. The argmax alone x0.569 (clang) and x0.466
+    (GCC) of its time on 1,024 logits and x0.203 and x0.132 on 32,000, every one resolved, its pick the scalar loop's
+    on every case. In the decoder (`decode_place.c`, three runs of 101 rounds) the 860K decoder's token x0.928-0.960
+    under clang (6 of 6 arms resolved) and x0.943-0.981 under GCC (3 of 6), a 256-wide synthetic decoder's
+    x0.918-0.977 (1 of 12) and a 512-wide one's x0.969-1.003 (none of 12); every generation's tokens and logits the
+    first copy's bytes. A single-threaded process of this session overlapped two of the GCC runs for about two minutes
+    (`README.json`'s `overlap`); no reading rests on them alone.
+  - Not claimed: counter-based figures (no PMU on this VM); any other host's figures; a gain at TinyLlama's widths,
+    where the passes are a vanishing share of a token.
   SILICON-NULL (2026-10-27): `bcir.silicon`'s PMU flags, and every value it cannot read recorded as None -- never 0,
     never a nearby number.
   - The perf flags: `_perf_open` set bit 20 of perf_event_attr's flag word for exclude_kernel; bit 20 is

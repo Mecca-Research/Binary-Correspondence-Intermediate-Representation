@@ -2852,3 +2852,73 @@ Not claimed: the mechanism -- no PMU on this VM, so no count of the decoded-micr
 boundary branches are a correlate the mitigation removes, not a measured cause; any other host's figures; a gain on
 a core without the erratum, where the padding costs some 2-3% more code and, by the callgrind count, 2.5% more
 instructions executed; aarch64 and Windows timing (the option is x86-64's, and CI builds both).
+
+## 40. DECODE-PASSES: the C decoder's embedding row and norm gammas a range at a time, its argmax over four lanes (2026-10-27)
+
+With the matvecs, the head and their placement settled (§35-§39), NEXT-12's survey placed the C BCIRQ8 decoder's
+remaining per-token cost outside its matrix kernels in two passes that had been too small to see: the embedding row
+and every RMSNorm's gamma were dequantized an element at a time through `ldexp` (about 14 ns an element on this
+host), and the greedy argmax compared each logit against the last best, one dependent chain over the vocabulary.
+
+DECODE-PASSES (`661e9c3`) gives `bcir_q8_model.c` two entries. `bcir_q8_group_scale(e)` builds 2**e from its bits,
+`(e + 1023) << 52` with a zero mantissa, for every exponent the loader admits ([-300, 300]; NaN outside), and
+`bcir_q8_tensor_values(model, tensor, start, count, out)` writes `[start, start + count)` of a tensor a group at a
+time, each code times its group's scale and a -128 code NaN as the per-element value has it. Both read the tensor
+through one predicate, `tensor_checked` (the owner tag, the entry inside the model's array, the element and group
+counts, the codes' and exponents' spans and their pointers at their offsets), which `bcir_q8_tensor_value` now calls
+too; a refused tensor, a range past its end or a NULL `out` with a count leaves `out` untouched and returns -1.
+`bcir_q8_tensor_value` keeps its `ldexp` path, and the witnesses hold the range form to it. In `bcir_llama.c`
+`op_embed` takes its row and `op_rmsnorm` its gamma through the range form, and `op_argmax` keeps four lanes, `lane =
+v > lane ? v : lane` (MAXPD's rule, the lane kept on a tie or a NaN), with a scalar tail, a reduction in lane order
+and a first-equal scan: the scalar loop's pick exactly -- the lowest id on a tie, -0.0 tying +0.0, a NaN never picked
+past id 0 and a NaN at id 0 picked.
+
+**Measured** on the committed trees (`661e9c3` against `0311c60`) on the session's second host (a Xeon at 2.80 GHz,
+4 cores, the host of §38 and §39), clang 18 and GCC 13 at the qualification's flags; resolved where a 95% interval
+excludes 1 and does not meet the A/A control's ([measurements/2026-10-27/decode-passes/](measurements/2026-10-27/decode-passes/README.json)).
+
+The qualification (the 860K lab model, a different checkpoint from §39's: its logits `1aaa3ca1...` on both trees):
+under callgrind (the AVX2 instance) the GEM request takes 138,794,053 -> 135,023,534 instructions (x0.973) and the
+monolithic runner 128,615,854 -> 124,743,070, data references 41.6 M -> 40.4 M and 37.8 M -> 36.6 M; 23 of 23 checks
+on both trees. Over six runs a tree without callgrind, the order rotated a run, a token took 0.2981 ms (0.2913-0.3018)
+before and 0.2721 ms (0.2710-0.2846) after, x0.913; over the instrumented run the embedding took 0.103 ms
+(0.095-0.115) -> 0.028 ms (0.027-0.029), the norms 1.028 ms (0.947-1.207) -> 0.338 ms (0.337-0.398) and the argmax
+0.202 ms (0.200-0.244) -> 0.032 ms (0.031-0.043), the matvecs (7.050 -> 6.726 ms) and the head (1.362 -> 1.372 ms)
+within their runs' spread.
+
+The argmax alone (`argmax_ab.c`: the two trees' loops copied verbatim, held to one pick over 200,000 vocabularies of
+1-23 logits of -0.0, +0.0, ties, infinities, NaN and random values, then timed beside an A/A control, 101 rounds):
+
+| logits | clang before | clang after | clang ratio | GCC before | GCC after | GCC ratio |
+|---|---|---|---|---|---|---|
+| 1,024 | 1,734.1 ns | 1,021.0 ns | x0.569 (0.542-0.598) | 3,136.6 ns | 1,916.5 ns | x0.466 (0.432-0.503) |
+| 32,000 | 54,410.3 ns | 10,630.7 ns | x0.203 (0.199-0.207) | 98,043.3 ns | 12,234.9 ns | x0.132 (0.128-0.136) |
+
+each resolved, the A/A controls x0.9885-1.0144, and the tree after's pick the tree before's on every case.
+
+The decoder (`decode.json`): KERNEL-ALIGN's `decode_place.c` decodes with copies of the four sources a decode links,
+each tree's build at 0 and 32 bytes past a 64-byte boundary (the tree before's at 32, D32, against its own at 0;
+the tree after's, P0 and P32, against the tree before's at 0), three runs of 101 rounds a decoder, every generation's
+tokens and final logits the first copy's bytes:
+
+| decoder | clang P0, P32 | resolved | GCC P0, P32 | resolved |
+|---|---|---|---|---|
+| 860K (the lab model) | x0.928-0.960 | 6 of 6 | x0.943-0.981 | 3 of 6 |
+| 256 wide (synthetic) | x0.948-0.977 | 0 of 6 | x0.918-0.968 | 1 of 6 |
+| 512 wide (synthetic) | x0.975-1.003 | 0 of 6 | x0.969-0.988 | 0 of 6 |
+
+The tree before's own copy at 32 read x0.975-1.021, none of 18 resolved (KERNEL-ALIGN's placement holds), and the A/A
+controls x0.972-1.020. The passes are linear in the model's width and the vocabulary where the matvecs are quadratic
+in the width, so their share of a token, and the gain, shrinks as the decoder widens: at 512 wide no arm resolved.
+One overlap is recorded with the records (`README.json`'s `overlap`): for about two minutes during the GCC decode
+runs a single-threaded process of this session ran on one of the four vCPUs; paced evenly, the window falls in run
+3's 256-wide and 512-wide GCC runs, whose 256-wide intervals are that decoder's widest and whose arm at 0 is the one
+resolved of its twelve. No reading above rests on run 3 alone.
+
+`decode-passes.json`'s 15 faults are each caught by their own check; under the witnesses before DECODE-PASSES 6 of
+them are, through the standalone decoder's and the GEM interpreter's end-to-end parity -- the range form's refusals,
+its -128 rule, its group edge and the argmax's tie and NaN rules only by the new ones.
+
+Not claimed: counter-based figures (no PMU on this VM); any other host's figures; a gain at TinyLlama's widths (the
+passes are a vanishing share there, and the synthetic decoders at 512 wide already resolve none); the 256-wide
+decoder's GCC reading beyond its runs 1-2 (run 3 overlapped another process).

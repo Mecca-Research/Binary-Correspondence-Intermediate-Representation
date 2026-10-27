@@ -1,0 +1,16 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_native_ai:_CC",
+  "bcir.tests.test_model_weights_io:test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+  "bcir.tests.test_model_weights_io:test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads"
+ ],
+ "exit": 0,
+ "output": [
+  "ok test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+  "  ok test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+  "tests: 2 run, 0 finding(s)"
+ ]
+}

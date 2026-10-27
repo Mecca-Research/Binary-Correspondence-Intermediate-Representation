@@ -1,0 +1,106 @@
+{
+ "what": "DECODE-PASSES (2026-10-27): the C BCIRQ8 decoder's embedding row and each RMSNorm's gamma dequantized a range at a time -- a group's scale built from its exponent's bits, each code times it -- and its greedy argmax kept in four lanes with the scalar loop's pick; the records of 661e9c3 against 0311c60. In the qualification on the 860K lab model, six runs a tree without callgrind, a token took 0.2721 ms (median; 0.2710-0.2846) where it took 0.2981 (0.2913-0.3018), x0.913: over the instrumented run the embedding 0.103 -> 0.028 ms, the norms 1.028 -> 0.338 ms and the argmax 0.202 -> 0.032 ms, the matvecs and the head within their spread; under callgrind GEM's request ran 2.7% fewer instructions (138,794,053 -> 135,023,534) and the C logits are the same bytes. The argmax alone, 101 rounds beside an A/A control, took x0.569 (clang) and x0.466 (GCC) of the tree before's time on 1,024 logits and x0.203 and x0.132 on 32,000, every one resolved, its pick the scalar loop's on all 200,000 vocabularies. In the decoder (KERNEL-ALIGN's decode_place.c, three runs of 101 rounds, each tree's build at 0 and 32 bytes past a 64-byte boundary), the 860K decoder's token took x0.928-0.960 of the tree before's under clang, 6 of 6 arms resolved, and x0.943-0.981 under GCC, 3 of 6; a 256-wide synthetic decoder x0.948-0.977 and x0.918-0.968, 1 of 12 resolved (run 3's GCC arm at 0, which overlapped another process: see overlap); a 512-wide one x0.975-1.003 and x0.969-0.988, none of 12 -- the two passes are a smaller share of a wider decoder's token. Every generation's tokens and logits are the first copy's bytes. The fault table decode-passes.json: 15 of 15 caught on the tree after, each by its own check, and 6 of the 15 under the witnesses there were before.",
+ "host": "the session's second host: Intel(R) Xeon(R) Processor @ 2.80GHz (family 6, model 85, stepping 7: Cascade Lake's family), 4 vCPU (4 cores, one thread each; AVX-512F/BW/DQ/VL/VNNI, no AMX) in a KVM guest; Linux 6.18; clang 18.1.3 and GCC 13.3 (-std=c11 -O2 -ffp-contract=off, the qualification's flags, and each unit's manifest options); Python 3.11.15; valgrind 3.22 (callgrind); no PMU (host.json)",
+ "tree": {
+  "before": "0311c60f9b5c8ab3768507f45ad61223ea32027e",
+  "after": "661e9c353aeb77eef2a9fd9702e2d9aa66873393"
+ },
+ "records": {
+  "measure_passes.sh": "the records' script: builds, runs and writes every record below but faults.json, from the committed trees, one step at a time",
+  "argmax_ab.c": "the argmax A/B: the two trees' loops copied verbatim, held to one pick over 200,000 vocabularies of -0.0, +0.0, ties, infinities, NaN and random values, then timed on 1,024 and 32,000 logits beside an A/A control, the arms rotated a round, each arm's time over the tree before's in the same round, the geometric mean and its 95% interval",
+  "vacuity_table.py": "faults.json's vacuity control: the fault table the sweep under the witnesses before ran (the same fifteen faults, each expecting any finding)",
+  "host.json": "the host as /proc and /sys present it: identity, the flags that decide what a record here can read, the event sources, and the three clocks -- elapsed time (CLOCK_MONOTONIC, every time here), reference ticks (the invariant TSC, not read) and core cycles, effective frequency and energy (none readable on this guest, each with its reason)",
+  "decode.json": "KERNEL-ALIGN's decode_place.c and build_decode.py, each compiler: the tree before's build of the decoder's four sources at 0 and 32 past a 64-byte boundary (D0, D32) and the tree after's (P0, P32), with the A/A control, on the lab model (BCIR-Corpus-860K) and synthetic decoders 256 and 512 wide (DECODE-THREADS' synthetic_model.py; the artifacts are not kept, their sha256 is), three runs, 101 rounds",
+  "argmax.json": "argmax_ab.c, each compiler (-O2 -ffp-contract=off), 101 rounds",
+  "qualification.json": "Q8-LANES' qual_summary.py over run_qualification.py from each tree with --require-callgrind: the C latency rows, the logits, callgrind's simulated rows (under valgrind the AVX2 instance runs) and every check's verdict",
+  "qualification-repeats.json": "run_qualification.py from each tree six times without callgrind, the order rotated a run, each run's C latency rows and every operation's time",
+  "witness.json": "the fault table's command on the tree after, every witness passing with its capabilities required",
+  "faults.json": "tools/testing/red_sweep.py: decode-passes.json on the tree after, and on the tree after's code under the witnesses there were before DECODE-PASSES (vacuity_table.py's table; the tree before's test_memory_discipline.c, fuzz_q8_model.c and test_model_weights_io.py)",
+  "hashes.json": "measure_passes.sh's tools' sha256 (this directory's and those it runs from other records), the models' and the measured sources'"
+ },
+ "verdicts": "an effect resolved where its 95% interval excludes 1 and does not meet the A/A control's; the A/Bs report each ratio's geometric mean over the rounds and its 95% interval; prose quotes medians over the runs and ranges over the runs or shapes",
+ "overlap": "21:42:49-21:44:52 UTC, during the GCC decode runs: one single-threaded Python process of this session (a text scan, about two minutes, stopped) ran on one of the four vCPUs. The runs carry no clock times; paced evenly over 21:15:26-21:46:44 the window falls in run 3's 256-wide and 512-wide GCC runs. Each round times every arm, so a load lasting rounds weighs on them alike, but run 3's 256-wide GCC intervals are that model's widest and its arm at 0 the one resolved of its 12: no reading here rests on run 3 alone.",
+ "reading": {
+  "host": [
+   "Intel(R) Xeon(R) Processor @ 2.80GHz (GenuineIntel, signature 06_55H, stepping 7), 4 CPUs; microcode 0x1 (hypervisor-presented); clocksource tsc; perf_event_paranoid 2",
+   "flags: hypervisor yes, constant_tsc yes, nonstop_tsc yes, tsc_known_freq yes, tsc_deadline_timer yes, x2apic yes, arat yes, aperfmperf no, arch_perfmon no, avx2 yes, avx512f yes, avx512bw yes, avx512dq yes, avx512vl yes, avx512_vnni yes, amx_tile no",
+   "event sources: breakpoint, msr, power, software, tracepoint, uprobe; msr events: smi, tsc; powercap no",
+   "clock elapsed: CLOCK_MONOTONIC: every time in these records",
+   "clock reference_ticks: the TSC (invariant: constant_tsc and nonstop_tsc); its rate as the kernel detected it at boot, not read by these tools; no tick count is derived from a time here",
+   "clock core_cycles: None -- no hardware PMU event source (a KVM guest): core cycles, instructions retired and the decoded-µop-cache events cannot be counted here, and none is inferred from the TSC",
+   "clock effective_frequency: None -- neither APERF/MPERF (the aperfmperf flag absent; the msr event source offers only tsc and smi) nor a core-cycle counter",
+   "clock energy: None -- no RAPL (no powercap; the power event source lists no events)",
+   "level: A (timing-qualified): correctness witnesses and elapsed time against an A/A control; no microarchitectural counter (Level B) is available on this host"
+  ],
+  "witness": [
+   "ok test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "ok test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+   "tests: 2 run, 0 finding(s)"
+  ],
+  "decode": [
+   "the synthetic decoder d256: 6 layers, 56 tensors, 6,856,496 bytes, sha256 2de1f43949aa824e",
+   "the synthetic decoder d512: 6 layers, 56 tensors, 22,953,728 bytes, sha256 23796e5e867cb044",
+   "clang D0 (before): placed 0 past a 64-byte boundary (pad 32), text aligned to 32; bcir_ai_kernels.c -ffp-contract=off -mbranches-within-32B-boundaries; bcir_q8_model.c -ffp-contract=off -mbranches-within-32B-boundaries; bcir_llama.c -ffp-contract=off -mbranches-within-32B-boundaries; bcir_decode.c -ffp-contract=off",
+   "clang D32 (before): placed 32 past a 64-byte boundary (pad 0), text aligned to 32; bcir_ai_kernels.c -ffp-contract=off -mbranches-within-32B-boundaries; bcir_q8_model.c -ffp-contract=off -mbranches-within-32B-boundaries; bcir_llama.c -ffp-contract=off -mbranches-within-32B-boundaries; bcir_decode.c -ffp-contract=off",
+   "clang P0 (after): placed 0 past a 64-byte boundary (pad 0), text aligned to 32; bcir_ai_kernels.c -ffp-contract=off -mbranches-within-32B-boundaries; bcir_q8_model.c -ffp-contract=off -mbranches-within-32B-boundaries; bcir_llama.c -ffp-contract=off -mbranches-within-32B-boundaries; bcir_decode.c -ffp-contract=off",
+   "clang P32 (after): placed 32 past a 64-byte boundary (pad 32), text aligned to 32; bcir_ai_kernels.c -ffp-contract=off -mbranches-within-32B-boundaries; bcir_q8_model.c -ffp-contract=off -mbranches-within-32B-boundaries; bcir_llama.c -ffp-contract=off -mbranches-within-32B-boundaries; bcir_decode.c -ffp-contract=off",
+   "GCC D0 (before): placed 0 past a 64-byte boundary (pad 0), text aligned to 32; bcir_ai_kernels.c -ffp-contract=off -Wa,-mbranches-within-32B-boundaries; bcir_q8_model.c -ffp-contract=off -Wa,-mbranches-within-32B-boundaries; bcir_llama.c -ffp-contract=off -Wa,-mbranches-within-32B-boundaries; bcir_decode.c -ffp-contract=off",
+   "GCC D32 (before): placed 32 past a 64-byte boundary (pad 0), text aligned to 32; bcir_ai_kernels.c -ffp-contract=off -Wa,-mbranches-within-32B-boundaries; bcir_q8_model.c -ffp-contract=off -Wa,-mbranches-within-32B-boundaries; bcir_llama.c -ffp-contract=off -Wa,-mbranches-within-32B-boundaries; bcir_decode.c -ffp-contract=off",
+   "GCC P0 (after): placed 0 past a 64-byte boundary (pad 0), text aligned to 32; bcir_ai_kernels.c -ffp-contract=off -Wa,-mbranches-within-32B-boundaries; bcir_q8_model.c -ffp-contract=off -Wa,-mbranches-within-32B-boundaries; bcir_llama.c -ffp-contract=off -Wa,-mbranches-within-32B-boundaries; bcir_decode.c -ffp-contract=off",
+   "GCC P32 (after): placed 32 past a 64-byte boundary (pad 0), text aligned to 32; bcir_ai_kernels.c -ffp-contract=off -Wa,-mbranches-within-32B-boundaries; bcir_q8_model.c -ffp-contract=off -Wa,-mbranches-within-32B-boundaries; bcir_llama.c -ffp-contract=off -Wa,-mbranches-within-32B-boundaries; bcir_decode.c -ffp-contract=off",
+   "run 1 clang 860K: a token 0.3882 ms at D0; D32 x1.002 (0.974-1.030); P0 x0.928 (0.904-0.952); P32 x0.933 (0.907-0.959); A/A x1.000 (0.976-1.025); 101 rounds of 4; every generation's tokens and logits the first copy's bytes",
+   "run 1 clang d256: a token 2.3077 ms at D0; D32 x0.987 (0.960-1.016); P0 x0.948 (0.924-0.972); P32 x0.965 (0.937-0.994); A/A x0.997 (0.969-1.026); 101 rounds of 2; every generation's tokens and logits the first copy's bytes",
+   "run 1 clang d512: a token 8.0720 ms at D0; D32 x1.012 (0.991-1.034); P0 x0.999 (0.975-1.024); P32 x0.998 (0.974-1.024); A/A x1.001 (0.977-1.025); 101 rounds of 1; every generation's tokens and logits the first copy's bytes",
+   "run 2 clang 860K: a token 0.3728 ms at D0; D32 x1.008 (0.978-1.040); P0 x0.952 (0.924-0.981); P32 x0.944 (0.916-0.972); A/A x1.020 (0.991-1.050); 101 rounds of 4; every generation's tokens and logits the first copy's bytes",
+   "run 2 clang d256: a token 2.1683 ms at D0; D32 x0.996 (0.966-1.027); P0 x0.977 (0.947-1.008); P32 x0.963 (0.936-0.992); A/A x1.015 (0.983-1.047); 101 rounds of 2; every generation's tokens and logits the first copy's bytes",
+   "run 2 clang d512: a token 7.8475 ms at D0; D32 x1.003 (0.982-1.025); P0 x1.003 (0.981-1.026); P32 x0.993 (0.971-1.015); A/A x1.005 (0.983-1.029); 101 rounds of 1; every generation's tokens and logits the first copy's bytes",
+   "run 3 clang 860K: a token 0.3738 ms at D0; D32 x0.988 (0.969-1.008); P0 x0.941 (0.920-0.962); P32 x0.960 (0.937-0.983); A/A x1.012 (0.988-1.036); 101 rounds of 4; every generation's tokens and logits the first copy's bytes",
+   "run 3 clang d256: a token 2.0913 ms at D0; D32 x0.988 (0.962-1.015); P0 x0.950 (0.927-0.974); P32 x0.969 (0.944-0.995); A/A x0.992 (0.971-1.012); 101 rounds of 2; every generation's tokens and logits the first copy's bytes",
+   "run 3 clang d512: a token 7.9218 ms at D0; D32 x0.984 (0.964-1.004); P0 x0.978 (0.957-0.999); P32 x0.975 (0.956-0.995); A/A x0.982 (0.964-1.001); 101 rounds of 1; every generation's tokens and logits the first copy's bytes",
+   "run 1 GCC 860K: a token 0.3975 ms at D0; D32 x1.019 (0.988-1.051); P0 x0.944 (0.911-0.979); P32 x0.943 (0.914-0.973); A/A x0.972 (0.947-0.998); 101 rounds of 4; every generation's tokens and logits the first copy's bytes",
+   "run 1 GCC d256: a token 2.3157 ms at D0; D32 x0.990 (0.956-1.024); P0 x0.968 (0.939-0.998); P32 x0.962 (0.932-0.992); A/A x0.985 (0.956-1.014); 101 rounds of 2; every generation's tokens and logits the first copy's bytes",
+   "run 1 GCC d512: a token 8.0670 ms at D0; D32 x1.013 (0.985-1.041); P0 x0.983 (0.954-1.012); P32 x0.969 (0.944-0.994); A/A x1.001 (0.972-1.031); 101 rounds of 1; every generation's tokens and logits the first copy's bytes",
+   "run 2 GCC 860K: a token 0.3786 ms at D0; D32 x0.997 (0.973-1.021); P0 x0.953 (0.930-0.977); P32 x0.952 (0.928-0.977); A/A x1.006 (0.983-1.031); 101 rounds of 4; every generation's tokens and logits the first copy's bytes",
+   "run 2 GCC d256: a token 2.2024 ms at D0; D32 x0.981 (0.955-1.007); P0 x0.944 (0.916-0.973); P32 x0.952 (0.921-0.983); A/A x0.989 (0.963-1.016); 101 rounds of 2; every generation's tokens and logits the first copy's bytes",
+   "run 2 GCC d512: a token 7.8610 ms at D0; D32 x1.014 (0.988-1.040); P0 x0.980 (0.958-1.002); P32 x0.988 (0.966-1.010); A/A x1.020 (0.993-1.047); 101 rounds of 1; every generation's tokens and logits the first copy's bytes",
+   "run 3 GCC 860K: a token 0.3663 ms at D0; D32 x1.021 (0.998-1.045); P0 x0.981 (0.956-1.007); P32 x0.958 (0.935-0.983); A/A x1.017 (0.991-1.044); 101 rounds of 4; every generation's tokens and logits the first copy's bytes",
+   "run 3 GCC d256: a token 2.3880 ms at D0; D32 x0.975 (0.941-1.010); P0 x0.918 (0.883-0.954); P32 x0.948 (0.911-0.987); A/A x1.000 (0.963-1.039); 101 rounds of 2; every generation's tokens and logits the first copy's bytes",
+   "run 3 GCC d512: a token 8.0509 ms at D0; D32 x0.981 (0.954-1.009); P0 x0.970 (0.946-0.994); P32 x0.988 (0.966-1.010); A/A x0.988 (0.963-1.014); 101 rounds of 1; every generation's tokens and logits the first copy's bytes"
+  ],
+  "argmax": [
+   "clang: the tree after's pick the tree before's on every case (200,000 cases)",
+   "clang 1,024 logits: before 1,734.1 ns, after 1,021.0 ns, after over before x0.5693 (0.5418-0.5982), A/A x0.9961 (0.9747-1.0181), 101 rounds; resolved",
+   "clang 32,000 logits: before 54,410.3 ns, after 10,630.7 ns, after over before x0.2030 (0.1992-0.2070), A/A x0.9991 (0.9904-1.0078), 101 rounds; resolved",
+   "GCC: the tree after's pick the tree before's on every case (200,000 cases)",
+   "GCC 1,024 logits: before 3,136.6 ns, after 1,916.5 ns, after over before x0.4661 (0.4320-0.5028), A/A x0.9885 (0.9479-1.0309), 101 rounds; resolved",
+   "GCC 32,000 logits: before 98,043.3 ns, after 12,234.9 ns, after over before x0.1317 (0.1280-0.1356), A/A x1.0144 (0.9963-1.0329), 101 rounds; resolved"
+  ],
+  "qualification": [
+   "before: PASS, 23 of 23 checks ok; a token 0.2917 ms; embed 0.101 ms, rmsnorm 1.012 ms, argmax 0.201 ms, matvec 7.453 ms, head 1.427 ms; callgrind (the AVX2 instance) 138,794,053 instructions on GEM, 128,615,854 monolithic, 41,595,293 and 37,843,064 data references; the C logits 1aaa3ca17a55aed8",
+   "after: PASS, 23 of 23 checks ok; a token 0.2699 ms; embed 0.029 ms, rmsnorm 0.362 ms, argmax 0.032 ms, matvec 6.568 ms, head 1.338 ms; callgrind (the AVX2 instance) 135,023,534 instructions on GEM, 124,743,070 monolithic, 40,396,241 and 36,631,450 data references; the C logits 1aaa3ca17a55aed8"
+  ],
+  "qualification_repeats": [
+   "run 1 before (0311c60): PASS, a token 0.2984 ms; embed 0.103 ms, rmsnorm 1.021 ms, argmax 0.244 ms, matvec 6.825 ms, head 1.402 ms; GEM 17.320 ms against 15.787 monolithic",
+   "run 1 after (661e9c3): PASS, a token 0.2846 ms; embed 0.029 ms, rmsnorm 0.339 ms, argmax 0.031 ms, matvec 6.737 ms, head 1.370 ms; GEM 17.155 ms against 15.188 monolithic",
+   "run 2 after (661e9c3): PASS, a token 0.2713 ms; embed 0.028 ms, rmsnorm 0.339 ms, argmax 0.033 ms, matvec 6.944 ms, head 1.374 ms; GEM 16.543 ms against 21.165 monolithic",
+   "run 2 before (0311c60): PASS, a token 0.2934 ms; embed 0.107 ms, rmsnorm 1.081 ms, argmax 0.200 ms, matvec 7.275 ms, head 1.304 ms; GEM 17.300 ms against 15.755 monolithic",
+   "run 3 before (0311c60): PASS, a token 0.3018 ms; embed 0.102 ms, rmsnorm 1.035 ms, argmax 0.209 ms, matvec 7.500 ms, head 1.361 ms; GEM 22.439 ms against 17.984 monolithic",
+   "run 3 after (661e9c3): PASS, a token 0.2711 ms; embed 0.027 ms, rmsnorm 0.338 ms, argmax 0.032 ms, matvec 6.733 ms, head 1.392 ms; GEM 16.390 ms against 15.382 monolithic",
+   "run 4 after (661e9c3): PASS, a token 0.2729 ms; embed 0.029 ms, rmsnorm 0.337 ms, argmax 0.032 ms, matvec 6.720 ms, head 1.522 ms; GEM 16.610 ms against 15.185 monolithic",
+   "run 4 before (0311c60): PASS, a token 0.2913 ms; embed 0.095 ms, rmsnorm 0.982 ms, argmax 0.202 ms, matvec 6.717 ms, head 1.362 ms; GEM 17.262 ms against 16.106 monolithic",
+   "run 5 before (0311c60): PASS, a token 0.2991 ms; embed 0.096 ms, rmsnorm 0.947 ms, argmax 0.200 ms, matvec 6.641 ms, head 1.361 ms; GEM 17.343 ms against 15.357 monolithic",
+   "run 5 after (661e9c3): PASS, a token 0.2710 ms; embed 0.028 ms, rmsnorm 0.398 ms, argmax 0.043 ms, matvec 6.678 ms, head 1.329 ms; GEM 16.751 ms against 14.783 monolithic",
+   "run 6 after (661e9c3): PASS, a token 0.2773 ms; embed 0.029 ms, rmsnorm 0.337 ms, argmax 0.032 ms, matvec 6.639 ms, head 1.345 ms; GEM 17.152 ms against 17.503 monolithic",
+   "run 6 before (0311c60): PASS, a token 0.2977 ms; embed 0.115 ms, rmsnorm 1.207 ms, argmax 0.202 ms, matvec 7.467 ms, head 1.454 ms; GEM 16.997 ms against 15.716 monolithic",
+   "before: a token 0.2981 ms (0.2913-0.3018) over 6 runs; embed 0.103 ms (0.095-0.115); rmsnorm 1.028 ms (0.947-1.207); argmax 0.202 ms (0.200-0.244); matvec 7.050 ms (6.641-7.500); head 1.362 ms (1.304-1.454)",
+   "after: a token 0.2721 ms (0.2710-0.2846) over 6 runs; embed 0.028 ms (0.027-0.029); rmsnorm 0.338 ms (0.337-0.398); argmax 0.032 ms (0.031-0.043); matvec 6.726 ms (6.639-6.944); head 1.372 ms (1.329-1.522)"
+  ],
+  "faults": [
+   "decode-passes.json on the tree after: 15 faults, 15 RED",
+   "decode-passes.json under the witnesses before DECODE-PASSES: 15 faults, 6 RED, 9 NOT CAUGHT (DP1, DP9, DP11, DP12, DP14, DP15 caught)"
+  ]
+ },
+ "reproduce": [
+  "bash measure_passes.sh  # from <REPO> (the trees are named by commit), <SCRATCH> and <LAB> filled in a copy"
+ ]
+}

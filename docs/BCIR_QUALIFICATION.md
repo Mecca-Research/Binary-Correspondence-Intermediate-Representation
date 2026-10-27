@@ -253,6 +253,13 @@ Under callgrind (the AVX2 instance) the GEM request takes 135,438,771 -> 138,792
 (`2a18b8613b6b60e4...`), 23 of 23 checks on both trees. Over six runs of each tree a token took 0.3124 ms (0.2823-0.5230)
 before and 0.3104 ms (0.2879-0.5200) after, runs of both trees at about 0.52 ms: the host's state, not the tree.
 
+**DECODE-PASSES** (2026-10-27). The decoder dequantizes its embedding row and every norm's gamma a range at a time and
+keeps its greedy argmax in four lanes, every value the same ([measurements/2026-10-27/decode-passes/](research/measurements/2026-10-27/decode-passes/README.json)).
+Under callgrind (the AVX2 instance) the GEM request takes 138,794,053 -> 135,023,534 instructions and the monolithic runner
+128,615,854 -> 124,743,070; on this session's lab model, a checkpoint other than KERNEL-ALIGN's, the logits are
+`1aaa3ca17a55aed8...` on both trees, 23 of 23 checks on both. Over six runs of each tree a token took 0.2981 ms
+(0.2913-0.3018) before and 0.2721 ms (0.2710-0.2846) after.
+
 **Memory traffic.** Planned (`program_traffic`) and counted (the C kernels' counters) agree op for
 op: 57,539,312 octets read and 4,236,480 written per request. Simulated with callgrind's cache
 model (I1/D1 32 KiB 8-way, LL 8 MiB 16-way, 64-octet lines, fixed so reports compare across
