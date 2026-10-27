@@ -44,9 +44,9 @@
  * An output's chain does not depend on the range it is computed in: its terms are its column's, every input row in
  * order. A range's call reads Q8-BOUND's ranges over the groups its columns touch, row by row, and takes Q8-PAIR's
  * two rows a pass where it starts and ends on a vector's edge; either path gives every output the loop's bits. Each
- * vector kernel is one body in two instances, the whole call's -- its range the constant [0, output_count), so its
- * code is the kernel's before the ranges -- and a range's; a call takes the whole call's where its range is the
- * whole. */
+ * vector kernel has two instances, the whole call's -- its range the constant [0, output_count) -- and a range's, and
+ * a call takes the whole call's where its range is the whole: Q8-PAIR's are one text in two, so the whole call's is
+ * the kernel before the ranges instruction for instruction (clang 18 and GCC 13). */
 #if defined(__x86_64__) && defined(__linux__) && (defined(__GNUC__) || defined(__clang__)) && \
     !defined(BCIR_AI_NO_DISPATCH)
 #define BCIR_AI_DISPATCH 1
@@ -379,9 +379,9 @@ __attribute__((target("avx512f"))) static void q8_run_avx512_xs(double *y, doubl
   }
 }
 /* The matvec a row at a time over columns [k0, k1) -- the whole call is [0, output_count) -- each row's columns in
- * runs of one group (any shape). Each kernel's body is one function always inlined into two instances: the whole
- * call's, its range the constant [0, output_count) and its code the kernel's before the ranges, and a range's
- * (DECODE-THREADS: with the range a variable in every call, clang's whole calls ran x1.02-1.12 of their time). */
+ * runs of one group (any shape). Each run kernel is one body always inlined into two instances, the whole call's (its
+ * range the constant [0, output_count)) and a range's, as Q8-PAIR's are one text in two: with the range a variable
+ * in every call, the whole calls ran the range's code, under clang in up to x1.14 of their time (DECODE-THREADS). */
 #define Q8_INLINE static inline __attribute__((always_inline))
 Q8_INLINE void q8_matvec_runs_cols(int instance, const double *input, size_t input_count, const uint8_t *codes,
                                    const uint8_t *exponents_le, size_t output_count, size_t group_size, size_t k0,
@@ -510,10 +510,10 @@ __attribute__((target("avx2"))) static inline q8_x8 q8_terms_x8_xs(const uint8_t
  * again at the step where its group changes; an odd last row runs alone. A row's state: its codes, its first
  * element, the column where its group ends (from k0 on), its input, its group's scale and the multiplier its terms
  * take (x * s where Q8-BOUND proves the call, x as before elsewhere). */
-#define Q8_PAIR_ROW(r, row, VT, SET1, XS)                                                                \
+#define Q8_PAIR_ROW(r, row, VT, SET1, XS, K0)                                                            \
   const uint8_t *c##r = codes + (row) * output_count;                                                    \
-  size_t e##r = (row) * output_count, n##r = ((((e##r + k0) >> shift) + 1u) << shift) - e##r;            \
-  double x##r = input[row], s##r = q8_scale(exponents_le, (e##r + k0) >> shift);                         \
+  size_t e##r = (row) * output_count, n##r = ((((e##r + K0) >> shift) + 1u) << shift) - e##r;            \
+  double x##r = input[row], s##r = q8_scale(exponents_le, (e##r + K0) >> shift);                         \
   VT m##r = SET1((XS) ? x##r * s##r : x##r)
 #define Q8_PAIR_TURN(r, SET1, XS)                                                                        \
   if (k == n##r) {                                                                                       \
@@ -521,41 +521,38 @@ __attribute__((target("avx2"))) static inline q8_x8 q8_terms_x8_xs(const uint8_t
     if (XS) m##r = SET1(x##r * s##r);                                                                    \
     n##r += group_size;                                                                                  \
   }
-#define Q8_PAIR_KERNEL(NAME, TARGET, VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS)                       \
-  __attribute__((target(TARGET))) Q8_INLINE void NAME##_cols(const double *input, size_t input_count,     \
-      const uint8_t *codes, const uint8_t *exponents_le, size_t output_count, size_t group_size,        \
-      size_t k0, size_t k1, double *output) {                                                            \
+#define Q8_PAIR_BODY(VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS, K0, K1)                               \
     unsigned shift = 0u;                                                                                 \
     size_t i, k;                                                                                         \
     while (((size_t)1 << shift) < group_size) ++shift;                                                  \
-    for (k = k0; k < k1; ++k) output[k] = 0.0;                                                           \
+    for (k = K0; k < K1; ++k) output[k] = 0.0;                                                           \
     for (i = 0u; i + 1u < input_count; i += 2u) {                                                        \
-      Q8_PAIR_ROW(0, i, VT, SET1, XS);                                                                   \
-      Q8_PAIR_ROW(1, i + 1u, VT, SET1, XS);                                                              \
-      for (k = k0; k < k1; k += (LANES)) {                                                               \
+      Q8_PAIR_ROW(0, i, VT, SET1, XS, K0);                                                               \
+      Q8_PAIR_ROW(1, i + 1u, VT, SET1, XS, K0);                                                          \
+      for (k = K0; k < K1; k += (LANES)) {                                                               \
         Q8_PAIR_TURN(0, SET1, XS)                                                                        \
         Q8_PAIR_TURN(1, SET1, XS)                                                                        \
         STOREU(output + k, ADD(ADD(LOADU(output + k), TERM(0)), TERM(1)));                               \
       }                                                                                                  \
     }                                                                                                    \
     if (i < input_count) {                                                                               \
-      Q8_PAIR_ROW(0, i, VT, SET1, XS);                                                                   \
-      for (k = k0; k < k1; k += (LANES)) {                                                               \
+      Q8_PAIR_ROW(0, i, VT, SET1, XS, K0);                                                               \
+      for (k = K0; k < K1; k += (LANES)) {                                                               \
         Q8_PAIR_TURN(0, SET1, XS)                                                                        \
         STOREU(output + k, ADD(LOADU(output + k), TERM(0)));                                             \
       }                                                                                                  \
-    }                                                                                                    \
-  }                                                                                                      \
+    }
+/* each pair kernel's two instances of its one text: the whole call's, its range [0, output_count), and a range's */
+#define Q8_PAIR_KERNEL(NAME, TARGET, VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS)                       \
   __attribute__((target(TARGET))) static void NAME(const double *input, size_t input_count,              \
       const uint8_t *codes, const uint8_t *exponents_le, size_t output_count, size_t group_size,        \
       double *output) {                                                                                  \
-    NAME##_cols(input, input_count, codes, exponents_le, output_count, group_size, 0u, output_count,     \
-                output);                                                                                 \
+    Q8_PAIR_BODY(VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS, 0u, output_count)                        \
   }                                                                                                      \
   __attribute__((target(TARGET))) static void NAME##_range(const double *input, size_t input_count,      \
       const uint8_t *codes, const uint8_t *exponents_le, size_t output_count, size_t group_size,        \
       size_t k0, size_t k1, double *output) {                                                            \
-    NAME##_cols(input, input_count, codes, exponents_le, output_count, group_size, k0, k1, output);      \
+    Q8_PAIR_BODY(VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS, k0, k1)                                  \
   }
 /* row r's term at column k: x * (code * s) as before, code * (x * s) where Q8-BOUND proves the call */
 #define Q8_TERM512(r) q8_terms512(c##r + k, m##r, s##r)
@@ -574,6 +571,7 @@ Q8_PAIR_KERNEL(q8_matvec_pair256_xs, "avx2", q8_x8, 8u, q8_x8_loadu, q8_x8_store
 #undef Q8_TERM256
 #undef Q8_TERM256_XS
 #undef Q8_PAIR_KERNEL
+#undef Q8_PAIR_BODY
 #undef Q8_PAIR_TURN
 #undef Q8_PAIR_ROW
 /* Q8-BOUND's ranges: every exponent of groups [g0, g1) in [-300, 300] -- (e + 300) as an unsigned 16-bit value at
@@ -640,9 +638,9 @@ __attribute__((target("avx2"))) static int q8_call_exact(const double *input, si
     if (whole) KERNEL(__VA_ARGS__, output);                                                              \
     else KERNEL##_range(__VA_ARGS__, k0, k1, output);                                                    \
   } while (0)
-static void q8_matvec_lanes(int instance, const double *input, size_t input_count, const uint8_t *codes,
-                            const uint8_t *exponents_le, size_t output_count, size_t group_size, size_t k0,
-                            size_t k1, double *output) {
+Q8_INLINE void q8_matvec_lanes(int instance, const double *input, size_t input_count, const uint8_t *codes,
+                               const uint8_t *exponents_le, size_t output_count, size_t group_size, size_t k0,
+                               size_t k1, double *output) {
   int pair = output_count % 8u == 0u && group_size >= 8u && !(group_size & (group_size - 1u)) && k0 % 8u == 0u &&
              k1 % 8u == 0u;
   int whole = k0 == 0u && k1 == output_count;

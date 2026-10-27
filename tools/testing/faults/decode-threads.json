@@ -32,14 +32,14 @@
       "expects": "test_native_ai_c_harness_c11_and_c23",
       "label": "DT3 the pair's group end found from column 0, not k0",
       "new": "n##r = ((((e##r) >> shift) + 1u) << shift) - e##r;     ",
-      "old": "n##r = ((((e##r + k0) >> shift) + 1u) << shift) - e##r;",
+      "old": "n##r = ((((e##r + K0) >> shift) + 1u) << shift) - e##r;",
       "path": "runtime/c/bcir_ai_kernels.c"
     },
     {
       "expects": "test_native_ai_c_harness_c11_and_c23",
       "label": "DT4 the pair's first scale column 0's group's",
       "new": "s##r = q8_scale(exponents_le, (e##r) >> shift);     ",
-      "old": "s##r = q8_scale(exponents_le, (e##r + k0) >> shift);",
+      "old": "s##r = q8_scale(exponents_le, (e##r + K0) >> shift);",
       "path": "runtime/c/bcir_ai_kernels.c"
     },
     {
@@ -213,8 +213,8 @@
     {
       "expects": "test_native_ai_c_harness_c11_and_c23",
       "label": "DT29 the pair's whole-call instance a vector short",
-      "new": "group_size, 0u, output_count - 8u, \\",
-      "old": "group_size, 0u, output_count,     \\",
+      "new": "Q8_PAIR_BODY(VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS, 0u, output_count - 8u)",
+      "old": "Q8_PAIR_BODY(VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS, 0u, output_count)",
       "path": "runtime/c/bcir_ai_kernels.c"
     },
     {
@@ -234,8 +234,8 @@
     {
       "expects": "test_native_ai_c_harness_c11_and_c23",
       "label": "DT32 the pair's range instance begun at column 0",
-      "new": "    NAME##_cols(input, input_count, codes, exponents_le, output_count, group_size, k0 * 0u, k1, output);",
-      "old": "    NAME##_cols(input, input_count, codes, exponents_le, output_count, group_size, k0, k1, output);",
+      "new": "Q8_PAIR_BODY(VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS, k0 * 0u, k1)",
+      "old": "Q8_PAIR_BODY(VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS, k0, k1)",
       "path": "runtime/c/bcir_ai_kernels.c"
     }
   ]
