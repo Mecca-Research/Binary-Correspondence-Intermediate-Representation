@@ -455,7 +455,11 @@ static const char *char_value(const bcir_abi *a, const char *s, int n, long long
     for(int k=0;k<L.n;k++) p=((p<<8)|L.units[k])&0xFFFFFFFFu;
     *v = p>=0x80000000u ? (long long)p-(1LL<<32) : (long long)p; return NULL; }
   *v=(long long)L.units[0];
-  if(L.prefix=='L' && a->wchar_signed && bits<64 && ((unsigned long long)*v>>(bits-1))) *v-=(1LL<<bits);
+  /* a signed `wchar_t` unit with its top bit set is v - 2^bits: char_literal keeps v below 2^bits, so 2^bits - v lies
+   * in (0, 2^(bits-1)] and is taken unsigned, then negated exactly -- no shift into a signed value's sign bit, at any
+   * width below 64 */
+  if(L.prefix=='L' && a->wchar_signed && bits<64 && ((unsigned long long)*v>>(bits-1)))
+    *v=-(long long)((1ULL<<bits)-(unsigned long long)*v);
   return NULL;
 }
 
