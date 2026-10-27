@@ -5437,6 +5437,59 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     that width holds in L2; a real TinyLlama-1.1B (no artifact of that size here: the synthetic decoder has its
     widths and six of its 22 layers, with pseudo-random codes); any other host's figures; counter-based figures (no
     PMU on this VM).
+  DECODE-THREADS (2026-10-26): the C decoder's large matvecs by columns and its head by rows in parts on a runner the
+    caller lends, every token and logit the same at every thread count
+    ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §38,
+    [measurements/2026-10-26/decode-threads/](research/measurements/2026-10-26/decode-threads/README.json)).
+  - DECODE-THREADS (`ef6717a`): every matvec kernel runs over a range of columns [k0, k1), the whole call [0, out), an
+    output's chain its column's terms over every input row in order whatever its range
+    (`bcir_ai_q8_matvec_f64_columns`). `bcir_llama_runner` (`bcir_llama.h`) lent to the workspace computes a matvec of
+    at least 64 Ki weights in parts of its columns and the head over its pack of at least 1 Mi in parts of its rows,
+    one part a worker, each output by one part; `bcir_llama_generate_greedy_with_runner`, `bcir_dgem_set_runner` and
+    `bcir-llama --threads T`, which lends the trainer's deterministic pool. A survey before the change (draft tools,
+    not kept) placed it: at TinyLlama-1.1B's widths from memory four threads took the matvecs to x0.41 and the head to
+    x0.27 of their time; the thresholds were then calibrated end to end on the 860K decoder and synthetic decoders
+    256, 512 and 1,024 wide.
+  - The whole calls (`0c24748`, `ea6fc46`): one kernel serving the whole call and a range, its range a variable in
+    every call, `ef6717a`'s whole calls ran the range's code -- under clang its pair kernels carried 7 to 12 more
+    stack accesses in their vector loops -- and its first records found them slower. Each vector kernel now has two
+    instances, the whole call's (its range the constant [0, out)) and a range's, and a call takes the whole call's
+    where its range is the whole. `0c24748` inlined one body into both, which the compilers made other code of (its
+    pair kernels' listings 84 to 286 lines from the tree before's under GCC, 134 and 322 for clang's AVX-512 two); in
+    `ea6fc46` Q8-PAIR's kernels are one text in two, so the whole call's is the kernel before the ranges instruction
+    for instruction under clang 18 and GCC 13. A probe (`bcir_ai_q8_columns_probe`) witnesses the instance each vector
+    matvec ran.
+  - Witnesses: `q8_columns_test` (ranges and splits on vectors' edges and off them, every output the whole call's,
+    2,128 parts a named vector instance; every vector range on its kernel's whole-call instance exactly where it is
+    [0, out); Q8-BOUND within a range; the refusals) and the Python column oracle test; the decoder's and GEM's runner
+    witnesses (a runner running the parts last first, and the pool at two to four threads, every token and logit the
+    same; the exact partition; a part left unrun failing the decode); the CLI's `--threads` parity.
+    `decode-threads.json` DT1-DT32, each caught by its own check; under the witnesses before DECODE-THREADS 3 of the
+    32 are caught -- DT27, DT28 and DT29, the whole-call instances a column or a vector short, on the path the lanes
+    test always ran. HP16, QB8, QB10, PA3, PA6, PA11 and QL3 re-anchored.
+  - Measured (`ea6fc46`, on the session's second host -- a Xeon at 2.80 GHz, 4 cores, 1 MiB of L2 a core and 33 MiB of
+    L3 -- a reading the median of 3 runs, in one binary lent no runner and the pool at two to four threads): a token
+    of a synthetic decoder at TinyLlama-1.1B's widths takes x0.473 of its one-thread time at four threads under clang
+    (107.1 -> 51.5 ms) and x0.580 under GCC (x0.458 and x0.498 capped at AVX2), one 1,024 wide x0.585, x0.640, x0.731,
+    x0.641 (clang AVX-512, clang AVX2, GCC AVX-512, GCC AVX2), 512 wide x0.775, x0.736, x1.007, x0.776 and 256 wide
+    x0.962, x0.845, x1.169, x1.005: the one 256 wide slower under GCC's AVX-512 build, its operations past the default
+    thresholds but too small for their parts here. Every generation's tokens and final logits are the one-thread
+    decode's bytes. The 860K decoder splits none of its operations, its token x0.971-1.026 at two to four threads. On
+    the session's first host, a Xeon at 2.30 GHz with 2 MiB of L2 a core and 260 MiB of L3 where the thresholds were
+    calibrated, the same records of `0c24748` (`decode-0c24748.json`) read x0.370 at TinyLlama's widths and x0.454 at
+    1,024 wide under clang AVX-512 (x0.351 and x0.432 under GCC), the one 256 wide x0.793. The whole calls, in one
+    binary holding the three trees' kernel units with every function on a 64-byte boundary (`kernels.json`, 101
+    rounds): `ef6717a`'s x1.102-1.250 of the tree before's time under clang AVX-512 and x0.996-1.046 on AVX2 (seven
+    and two of seven shapes resolved slower), the tree after's x0.961-1.002 and x0.981-1.005, and under GCC
+    x0.993-1.032 and x0.963-1.002, none resolved slower. At the compilers' own placements the tree after's read
+    x0.880-1.223 under clang AVX-512 (six resolved slower), though its instructions are the tree before's: on this
+    host where a kernel lies moves its time by up to a fifth. Over six qualification runs a tree its C matvecs took
+    6.74 ms (6.30-7.70) before, 8.40 ms (8.27-11.45) at `ef6717a` and 6.61 ms (6.40-6.92) after; under callgrind its
+    GEM request takes 135,617,235 -> 135,438,771 instructions, its logits keep their SHA-256, 23 of 23 checks on both
+    trees.
+  - Not claimed: a real TinyLlama-1.1B (the synthetic decoders have its widths, not its weights); thresholds right for
+    every host (the defaults were calibrated on the session's first host, and on its second they split the 256-wide
+    decoder at a loss under GCC); counter-based figures (no PMU on either VM).
   HEAD-PACK (2026-10-26): the C decoder's head reads its rows from a copy packed once at load, 32 rows a pass, every
     logit the rows' own bit for bit ([review](research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md) §37,
     [measurements/2026-10-26/head-pack/](research/measurements/2026-10-26/head-pack/README.json)).

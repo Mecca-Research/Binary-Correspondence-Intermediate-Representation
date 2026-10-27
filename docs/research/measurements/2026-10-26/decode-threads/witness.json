@@ -1,0 +1,164 @@
+{
+ "harness": [
+  {
+   "cc": "clang",
+   "build": "-std=c11",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "column_parts": 4256,
+   "column_parts_two_rows_a_pass": 1296,
+   "matvecs_two_rows_a_pass": 184,
+   "matvecs_in_runs": 128,
+   "packed_row_dots": 64
+  },
+  {
+   "cc": "clang",
+   "build": "-std=c2x",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "column_parts": 4256,
+   "column_parts_two_rows_a_pass": 1296,
+   "matvecs_two_rows_a_pass": 184,
+   "matvecs_in_runs": 128,
+   "packed_row_dots": 64
+  },
+  {
+   "cc": "clang",
+   "build": "-std=c2x -DBCIR_AI_MAX_INSTANCE=2",
+   "all_gates_passed": true,
+   "instances": 3,
+   "vector_comparisons": 176,
+   "column_parts": 2128,
+   "column_parts_two_rows_a_pass": 648,
+   "matvecs_two_rows_a_pass": 92,
+   "matvecs_in_runs": 64,
+   "packed_row_dots": 32
+  },
+  {
+   "cc": "clang",
+   "build": "-std=c2x -DBCIR_AI_NO_DISPATCH",
+   "all_gates_passed": true,
+   "instances": 1,
+   "vector_comparisons": 0,
+   "column_parts": 0,
+   "column_parts_two_rows_a_pass": 0,
+   "matvecs_two_rows_a_pass": 0,
+   "matvecs_in_runs": 0,
+   "packed_row_dots": 0
+  },
+  {
+   "cc": "clang",
+   "build": "-std=c11 without the probe",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "column_parts": 4256
+  },
+  {
+   "cc": "clang",
+   "build": "-std=c11 -fsanitize=address,undefined",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "column_parts": 4256,
+   "column_parts_two_rows_a_pass": 1296,
+   "matvecs_two_rows_a_pass": 184,
+   "matvecs_in_runs": 128,
+   "packed_row_dots": 64
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c11",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "column_parts": 4256,
+   "column_parts_two_rows_a_pass": 1296,
+   "matvecs_two_rows_a_pass": 184,
+   "matvecs_in_runs": 128,
+   "packed_row_dots": 64
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c2x",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "column_parts": 4256,
+   "column_parts_two_rows_a_pass": 1296,
+   "matvecs_two_rows_a_pass": 184,
+   "matvecs_in_runs": 128,
+   "packed_row_dots": 64
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c2x -DBCIR_AI_MAX_INSTANCE=2",
+   "all_gates_passed": true,
+   "instances": 3,
+   "vector_comparisons": 176,
+   "column_parts": 2128,
+   "column_parts_two_rows_a_pass": 648,
+   "matvecs_two_rows_a_pass": 92,
+   "matvecs_in_runs": 64,
+   "packed_row_dots": 32
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c2x -DBCIR_AI_NO_DISPATCH",
+   "all_gates_passed": true,
+   "instances": 1,
+   "vector_comparisons": 0,
+   "column_parts": 0,
+   "column_parts_two_rows_a_pass": 0,
+   "matvecs_two_rows_a_pass": 0,
+   "matvecs_in_runs": 0,
+   "packed_row_dots": 0
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c11 without the probe",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "column_parts": 4256
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c11 -fsanitize=address,undefined",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "column_parts": 4256,
+   "column_parts_two_rows_a_pass": 1296,
+   "matvecs_two_rows_a_pass": 184,
+   "matvecs_in_runs": 128,
+   "packed_row_dots": 64
+  }
+ ],
+ "witness": {
+  "tests": [
+   "bcir.tests.test_native_ai:test_native_ai_c_harness_c11_and_c23",
+   "bcir.tests.test_native_ai:test_native_ai_c_harness_under_address_sanitizer",
+   "bcir.tests.test_native_ai:test_native_q8_matvec_columns_are_the_oracles_columns",
+   "bcir.tests.test_model_weights_io:test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit",
+   "bcir.tests.test_model_weights_io:test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+   "bcir.tests.test_decoder_gem:test_the_c_interpreter_lent_a_runner_is_itself_bit_for_bit"
+  ],
+  "required": [
+   "bcir.tests.test_native_ai:_CC",
+   "bcir.tests.test_native_ai:_ASAN"
+  ],
+  "exit": 0,
+  "output": [
+   "ok test_native_ai_c_harness_c11_and_c23",
+   "  ok test_native_ai_c_harness_under_address_sanitizer",
+   "  ok test_native_q8_matvec_columns_are_the_oracles_columns",
+   "  ok test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit",
+   "  ok test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+   "  ok test_the_c_interpreter_lent_a_runner_is_itself_bit_for_bit",
+   "tests: 6 run, 0 finding(s)"
+  ]
+ }
+}

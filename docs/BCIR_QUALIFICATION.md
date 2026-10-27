@@ -238,6 +238,13 @@ The logits keep their SHA-256 (`2a18b8613b6b60e4...`) and the C rail its 0 from 
 trees. Three runs more of each tree read a generated token at 0.1771-0.1943 ms before and 0.1576-0.1602 ms after,
 4,092-4,580 tokens a second before and 4,964-5,078 after, and the head at 1.64-1.92 ms and 0.86-0.96 ms a generation.
 
+**DECODE-THREADS** (2026-10-26). The qualification lends its decoders no runner, so each runs an operation in one
+call as before, every vector kernel's whole-call instance ([measurements/2026-10-26/decode-threads/](research/measurements/2026-10-26/decode-threads/README.json)):
+under callgrind (the AVX2 instance) the GEM request takes 135,617,235 -> 135,438,771 instructions and the monolithic runner
+125,529,750 -> 125,375,994; the logits keep their SHA-256 (`2a18b8613b6b60e4...`), 23 of 23 checks on both trees. Over six runs of each tree
+the C matvecs took 6.74 ms (6.30-7.70) before and 6.61 ms (6.40-6.92) after. `bcir-llama --threads T` lends the decoder a pool
+of T threads, every token and logit the same at every T.
+
 **Memory traffic.** Planned (`program_traffic`) and counted (the C kernels' counters) agree op for
 op: 57,539,312 octets read and 4,236,480 written per request. Simulated with callgrind's cache
 model (I1/D1 32 KiB 8-way, LL 8 MiB 16-way, 64-octet lines, fixed so reports compare across

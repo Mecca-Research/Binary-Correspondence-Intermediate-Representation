@@ -1,0 +1,3630 @@
+{
+ "models": {
+  "d256": {
+   "layers": 6,
+   "tensors": 56,
+   "bytes": 6856496,
+   "sha256": "2de1f43949aa824ebcda1a3fb30b16f773a480c623ba67d59e6efe3dfdd416d6"
+  },
+  "d512": {
+   "layers": 8,
+   "tensors": 74,
+   "bytes": 33157856,
+   "sha256": "0c134a044984cdb04eeac7ef43da44a64a1e54b36479a23cf360f94f98c41323"
+  },
+  "d1024": {
+   "layers": 12,
+   "tensors": 110,
+   "bytes": 178569152,
+   "sha256": "1638efb6ebbdec3f3d607c32c358f786c434cfbcb8bc1e26851622617206ba8b"
+  },
+  "tinyllama": {
+   "layers": 6,
+   "tensors": 56,
+   "bytes": 350419424,
+   "sha256": "9574ef4e59ccdb03579c8baac7f999e6d17d3540df89a00514b79bfbf178dbeb"
+  }
+ },
+ "runs": [
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 4,
+   "model": "860K",
+   "rounds": 24,
+   "reps": 3,
+   "short": 8,
+   "long": 200,
+   "vocab": 1024,
+   "d_model": 128,
+   "d_ff": 344,
+   "layers": 4,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 0.19508,
+   "threads_2": {
+    "per_token_ms": 0.19177,
+    "ratio": 0.9843,
+    "interval": [
+     0.9395,
+     1.0312
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.19207,
+    "ratio": 0.9721,
+    "interval": [
+     0.9227,
+     1.0242
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.1907,
+    "ratio": 0.9511,
+    "interval": [
+     0.9176,
+     0.9858
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "A/A": {
+    "per_token_ms": 0.1927,
+    "ratio": 0.963,
+    "interval": [
+     0.9287,
+     0.9985
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 4,
+   "model": "d256",
+   "rounds": 12,
+   "reps": 1,
+   "short": 8,
+   "long": 48,
+   "vocab": 8192,
+   "d_model": 256,
+   "d_ff": 688,
+   "layers": 6,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 1.07709,
+   "threads_2": {
+    "per_token_ms": 0.97152,
+    "ratio": 0.9091,
+    "interval": [
+     0.8498,
+     0.9724
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 62.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.86687,
+    "ratio": 0.8198,
+    "interval": [
+     0.772,
+     0.8706
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 93.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.87562,
+    "ratio": 0.8364,
+    "interval": [
+     0.7648,
+     0.9146
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 124.0
+   },
+   "A/A": {
+    "per_token_ms": 1.09879,
+    "ratio": 1.0566,
+    "interval": [
+     1.0007,
+     1.1156
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 4,
+   "model": "d512",
+   "rounds": 8,
+   "reps": 1,
+   "short": 8,
+   "long": 32,
+   "vocab": 16384,
+   "d_model": 512,
+   "d_ff": 1344,
+   "layers": 8,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 4.90866,
+   "threads_2": {
+    "per_token_ms": 4.14748,
+    "ratio": 0.8693,
+    "interval": [
+     0.7973,
+     0.9479
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 114.0
+   },
+   "threads_3": {
+    "per_token_ms": 3.59701,
+    "ratio": 0.763,
+    "interval": [
+     0.6872,
+     0.8472
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 171.0
+   },
+   "threads_4": {
+    "per_token_ms": 3.57108,
+    "ratio": 0.7287,
+    "interval": [
+     0.6775,
+     0.7838
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 228.0
+   },
+   "A/A": {
+    "per_token_ms": 4.97865,
+    "ratio": 1.019,
+    "interval": [
+     0.9665,
+     1.0743
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 4,
+   "model": "d1024",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 1024,
+   "d_ff": 2816,
+   "layers": 12,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 41.19834,
+   "threads_2": {
+    "per_token_ms": 21.26744,
+    "ratio": 0.5269,
+    "interval": [
+     0.4514,
+     0.615
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 170.0
+   },
+   "threads_3": {
+    "per_token_ms": 16.57425,
+    "ratio": 0.4309,
+    "interval": [
+     0.4042,
+     0.4595
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 255.0
+   },
+   "threads_4": {
+    "per_token_ms": 16.61105,
+    "ratio": 0.4401,
+    "interval": [
+     0.3423,
+     0.5658
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 340.0
+   },
+   "A/A": {
+    "per_token_ms": 40.32259,
+    "ratio": 1.0169,
+    "interval": [
+     0.928,
+     1.1142
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 4,
+   "model": "TinyLlama",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "d_ff": 5632,
+   "layers": 6,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 72.65906,
+   "threads_2": {
+    "per_token_ms": 40.71776,
+    "ratio": 0.5788,
+    "interval": [
+     0.5159,
+     0.6494
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 86.0
+   },
+   "threads_3": {
+    "per_token_ms": 29.51287,
+    "ratio": 0.4345,
+    "interval": [
+     0.3752,
+     0.5032
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 129.0
+   },
+   "threads_4": {
+    "per_token_ms": 25.61786,
+    "ratio": 0.3703,
+    "interval": [
+     0.3171,
+     0.4325
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 172.0
+   },
+   "A/A": {
+    "per_token_ms": 77.58852,
+    "ratio": 1.0832,
+    "interval": [
+     1.0317,
+     1.1372
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 2,
+   "model": "860K",
+   "rounds": 24,
+   "reps": 3,
+   "short": 8,
+   "long": 200,
+   "vocab": 1024,
+   "d_model": 128,
+   "d_ff": 344,
+   "layers": 4,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 0.20526,
+   "threads_2": {
+    "per_token_ms": 0.20535,
+    "ratio": 1.0339,
+    "interval": [
+     0.9724,
+     1.0993
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.2048,
+    "ratio": 0.9835,
+    "interval": [
+     0.9517,
+     1.0164
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.20555,
+    "ratio": 1.0192,
+    "interval": [
+     0.9622,
+     1.0795
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "A/A": {
+    "per_token_ms": 0.20499,
+    "ratio": 1.0062,
+    "interval": [
+     0.9639,
+     1.0504
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 2,
+   "model": "d256",
+   "rounds": 12,
+   "reps": 1,
+   "short": 8,
+   "long": 48,
+   "vocab": 8192,
+   "d_model": 256,
+   "d_ff": 688,
+   "layers": 6,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 1.32836,
+   "threads_2": {
+    "per_token_ms": 1.12204,
+    "ratio": 0.8394,
+    "interval": [
+     0.8242,
+     0.855
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 62.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.96955,
+    "ratio": 0.7411,
+    "interval": [
+     0.7014,
+     0.7831
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 93.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.95699,
+    "ratio": 0.7224,
+    "interval": [
+     0.6941,
+     0.7519
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 124.0
+   },
+   "A/A": {
+    "per_token_ms": 1.35561,
+    "ratio": 1.0428,
+    "interval": [
+     0.9605,
+     1.1321
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 2,
+   "model": "d512",
+   "rounds": 8,
+   "reps": 1,
+   "short": 8,
+   "long": 32,
+   "vocab": 16384,
+   "d_model": 512,
+   "d_ff": 1344,
+   "layers": 8,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 5.94181,
+   "threads_2": {
+    "per_token_ms": 4.79262,
+    "ratio": 0.7192,
+    "interval": [
+     0.5844,
+     0.8851
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 114.0
+   },
+   "threads_3": {
+    "per_token_ms": 4.20232,
+    "ratio": 0.6568,
+    "interval": [
+     0.5705,
+     0.7562
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 171.0
+   },
+   "threads_4": {
+    "per_token_ms": 3.95902,
+    "ratio": 0.6537,
+    "interval": [
+     0.5485,
+     0.7789
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 228.0
+   },
+   "A/A": {
+    "per_token_ms": 5.83173,
+    "ratio": 0.9352,
+    "interval": [
+     0.841,
+     1.0399
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 2,
+   "model": "d1024",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 1024,
+   "d_ff": 2816,
+   "layers": 12,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 48.71557,
+   "threads_2": {
+    "per_token_ms": 26.50781,
+    "ratio": 0.5234,
+    "interval": [
+     0.4353,
+     0.6293
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 170.0
+   },
+   "threads_3": {
+    "per_token_ms": 21.51547,
+    "ratio": 0.42,
+    "interval": [
+     0.3595,
+     0.4906
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 255.0
+   },
+   "threads_4": {
+    "per_token_ms": 18.32363,
+    "ratio": 0.3579,
+    "interval": [
+     0.3,
+     0.427
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 340.0
+   },
+   "A/A": {
+    "per_token_ms": 51.75412,
+    "ratio": 1.0248,
+    "interval": [
+     0.8897,
+     1.1804
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 2,
+   "model": "TinyLlama",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "d_ff": 5632,
+   "layers": 6,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 88.70096,
+   "threads_2": {
+    "per_token_ms": 44.4836,
+    "ratio": 0.5014,
+    "interval": [
+     0.448,
+     0.5611
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 86.0
+   },
+   "threads_3": {
+    "per_token_ms": 35.72116,
+    "ratio": 0.4157,
+    "interval": [
+     0.3606,
+     0.4791
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 129.0
+   },
+   "threads_4": {
+    "per_token_ms": 30.48532,
+    "ratio": 0.3513,
+    "interval": [
+     0.3208,
+     0.3847
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 172.0
+   },
+   "A/A": {
+    "per_token_ms": 89.54904,
+    "ratio": 1.0092,
+    "interval": [
+     0.9736,
+     1.046
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "860K",
+   "rounds": 24,
+   "reps": 3,
+   "short": 8,
+   "long": 200,
+   "vocab": 1024,
+   "d_model": 128,
+   "d_ff": 344,
+   "layers": 4,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 0.18062,
+   "threads_2": {
+    "per_token_ms": 0.18152,
+    "ratio": 1.0037,
+    "interval": [
+     0.9752,
+     1.0329
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.18315,
+    "ratio": 1.0108,
+    "interval": [
+     0.9771,
+     1.0458
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.18036,
+    "ratio": 1.0063,
+    "interval": [
+     0.9771,
+     1.0363
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "A/A": {
+    "per_token_ms": 0.18189,
+    "ratio": 1.0285,
+    "interval": [
+     0.9835,
+     1.0754
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "d256",
+   "rounds": 12,
+   "reps": 1,
+   "short": 8,
+   "long": 48,
+   "vocab": 8192,
+   "d_model": 256,
+   "d_ff": 688,
+   "layers": 6,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 1.07904,
+   "threads_2": {
+    "per_token_ms": 0.9699,
+    "ratio": 0.9069,
+    "interval": [
+     0.8875,
+     0.9268
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 62.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.92624,
+    "ratio": 0.8948,
+    "interval": [
+     0.8594,
+     0.9317
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 93.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.88917,
+    "ratio": 0.8531,
+    "interval": [
+     0.81,
+     0.8984
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 124.0
+   },
+   "A/A": {
+    "per_token_ms": 1.07449,
+    "ratio": 1.0013,
+    "interval": [
+     0.9849,
+     1.018
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "d512",
+   "rounds": 8,
+   "reps": 1,
+   "short": 8,
+   "long": 32,
+   "vocab": 16384,
+   "d_model": 512,
+   "d_ff": 1344,
+   "layers": 8,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 4.8329,
+   "threads_2": {
+    "per_token_ms": 4.43786,
+    "ratio": 0.9738,
+    "interval": [
+     0.8569,
+     1.1067
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 114.0
+   },
+   "threads_3": {
+    "per_token_ms": 4.05777,
+    "ratio": 0.8405,
+    "interval": [
+     0.7598,
+     0.9297
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 171.0
+   },
+   "threads_4": {
+    "per_token_ms": 4.0152,
+    "ratio": 0.807,
+    "interval": [
+     0.7316,
+     0.8902
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 228.0
+   },
+   "A/A": {
+    "per_token_ms": 4.85728,
+    "ratio": 1.0091,
+    "interval": [
+     0.9188,
+     1.1084
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "d1024",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 1024,
+   "d_ff": 2816,
+   "layers": 12,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 34.87772,
+   "threads_2": {
+    "per_token_ms": 19.03124,
+    "ratio": 0.5112,
+    "interval": [
+     0.3998,
+     0.6537
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 170.0
+   },
+   "threads_3": {
+    "per_token_ms": 20.0271,
+    "ratio": 0.5695,
+    "interval": [
+     0.4532,
+     0.7157
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 255.0
+   },
+   "threads_4": {
+    "per_token_ms": 16.7024,
+    "ratio": 0.4603,
+    "interval": [
+     0.3597,
+     0.589
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 340.0
+   },
+   "A/A": {
+    "per_token_ms": 38.28688,
+    "ratio": 1.0856,
+    "interval": [
+     0.9001,
+     1.3092
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "TinyLlama",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "d_ff": 5632,
+   "layers": 6,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 73.6386,
+   "threads_2": {
+    "per_token_ms": 40.19591,
+    "ratio": 0.5352,
+    "interval": [
+     0.4691,
+     0.6106
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 86.0
+   },
+   "threads_3": {
+    "per_token_ms": 29.69554,
+    "ratio": 0.3993,
+    "interval": [
+     0.3814,
+     0.418
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 129.0
+   },
+   "threads_4": {
+    "per_token_ms": 26.9708,
+    "ratio": 0.3511,
+    "interval": [
+     0.3133,
+     0.3934
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 172.0
+   },
+   "A/A": {
+    "per_token_ms": 74.51592,
+    "ratio": 1.0143,
+    "interval": [
+     0.9508,
+     1.082
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "860K",
+   "rounds": 24,
+   "reps": 3,
+   "short": 8,
+   "long": 200,
+   "vocab": 1024,
+   "d_model": 128,
+   "d_ff": 344,
+   "layers": 4,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 0.19822,
+   "threads_2": {
+    "per_token_ms": 0.1959,
+    "ratio": 0.9573,
+    "interval": [
+     0.9006,
+     1.0176
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.19856,
+    "ratio": 0.9509,
+    "interval": [
+     0.9001,
+     1.0046
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.19889,
+    "ratio": 0.9688,
+    "interval": [
+     0.9099,
+     1.0314
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "A/A": {
+    "per_token_ms": 0.19873,
+    "ratio": 0.9605,
+    "interval": [
+     0.9116,
+     1.0121
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "d256",
+   "rounds": 12,
+   "reps": 1,
+   "short": 8,
+   "long": 48,
+   "vocab": 8192,
+   "d_model": 256,
+   "d_ff": 688,
+   "layers": 6,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 1.20493,
+   "threads_2": {
+    "per_token_ms": 1.16149,
+    "ratio": 0.9386,
+    "interval": [
+     0.8742,
+     1.0078
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 62.0
+   },
+   "threads_3": {
+    "per_token_ms": 1.02634,
+    "ratio": 0.8387,
+    "interval": [
+     0.7742,
+     0.9085
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 93.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.95996,
+    "ratio": 0.7773,
+    "interval": [
+     0.7228,
+     0.836
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 124.0
+   },
+   "A/A": {
+    "per_token_ms": 1.22281,
+    "ratio": 0.9839,
+    "interval": [
+     0.9322,
+     1.0385
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "d512",
+   "rounds": 8,
+   "reps": 1,
+   "short": 8,
+   "long": 32,
+   "vocab": 16384,
+   "d_model": 512,
+   "d_ff": 1344,
+   "layers": 8,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 5.59194,
+   "threads_2": {
+    "per_token_ms": 5.10811,
+    "ratio": 0.8354,
+    "interval": [
+     0.7164,
+     0.9741
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 114.0
+   },
+   "threads_3": {
+    "per_token_ms": 4.42567,
+    "ratio": 0.7733,
+    "interval": [
+     0.66,
+     0.9062
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 171.0
+   },
+   "threads_4": {
+    "per_token_ms": 4.7332,
+    "ratio": 0.819,
+    "interval": [
+     0.688,
+     0.9748
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 228.0
+   },
+   "A/A": {
+    "per_token_ms": 5.60031,
+    "ratio": 0.9702,
+    "interval": [
+     0.8224,
+     1.1444
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "d1024",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 1024,
+   "d_ff": 2816,
+   "layers": 12,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 43.27414,
+   "threads_2": {
+    "per_token_ms": 23.81423,
+    "ratio": 0.5578,
+    "interval": [
+     0.4898,
+     0.6353
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 170.0
+   },
+   "threads_3": {
+    "per_token_ms": 20.09236,
+    "ratio": 0.4693,
+    "interval": [
+     0.4386,
+     0.502
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 255.0
+   },
+   "threads_4": {
+    "per_token_ms": 19.14892,
+    "ratio": 0.4481,
+    "interval": [
+     0.4023,
+     0.499
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 340.0
+   },
+   "A/A": {
+    "per_token_ms": 44.55044,
+    "ratio": 1.0601,
+    "interval": [
+     1.0334,
+     1.0875
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "TinyLlama",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "d_ff": 5632,
+   "layers": 6,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 85.69508,
+   "threads_2": {
+    "per_token_ms": 45.91338,
+    "ratio": 0.5475,
+    "interval": [
+     0.5096,
+     0.5883
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 86.0
+   },
+   "threads_3": {
+    "per_token_ms": 38.02785,
+    "ratio": 0.4228,
+    "interval": [
+     0.3902,
+     0.4581
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 129.0
+   },
+   "threads_4": {
+    "per_token_ms": 28.95483,
+    "ratio": 0.3451,
+    "interval": [
+     0.3125,
+     0.3811
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 172.0
+   },
+   "A/A": {
+    "per_token_ms": 86.56797,
+    "ratio": 1.0228,
+    "interval": [
+     0.9613,
+     1.0882
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 4,
+   "model": "860K",
+   "rounds": 24,
+   "reps": 3,
+   "short": 8,
+   "long": 200,
+   "vocab": 1024,
+   "d_model": 128,
+   "d_ff": 344,
+   "layers": 4,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 0.19069,
+   "threads_2": {
+    "per_token_ms": 0.18804,
+    "ratio": 0.9672,
+    "interval": [
+     0.9316,
+     1.0041
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.18722,
+    "ratio": 0.981,
+    "interval": [
+     0.9285,
+     1.0365
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.18843,
+    "ratio": 0.9714,
+    "interval": [
+     0.9326,
+     1.012
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "A/A": {
+    "per_token_ms": 0.19012,
+    "ratio": 0.9732,
+    "interval": [
+     0.9396,
+     1.0081
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 4,
+   "model": "d256",
+   "rounds": 12,
+   "reps": 1,
+   "short": 8,
+   "long": 48,
+   "vocab": 8192,
+   "d_model": 256,
+   "d_ff": 688,
+   "layers": 6,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 1.13201,
+   "threads_2": {
+    "per_token_ms": 1.04072,
+    "ratio": 0.9224,
+    "interval": [
+     0.8109,
+     1.0492
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 62.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.99084,
+    "ratio": 0.8544,
+    "interval": [
+     0.7842,
+     0.931
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 93.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.89762,
+    "ratio": 0.7931,
+    "interval": [
+     0.7429,
+     0.8467
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 124.0
+   },
+   "A/A": {
+    "per_token_ms": 1.12662,
+    "ratio": 1.0003,
+    "interval": [
+     0.9892,
+     1.0116
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 4,
+   "model": "d512",
+   "rounds": 8,
+   "reps": 1,
+   "short": 8,
+   "long": 32,
+   "vocab": 16384,
+   "d_model": 512,
+   "d_ff": 1344,
+   "layers": 8,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 5.03301,
+   "threads_2": {
+    "per_token_ms": 4.27511,
+    "ratio": 0.8537,
+    "interval": [
+     0.7755,
+     0.9397
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 114.0
+   },
+   "threads_3": {
+    "per_token_ms": 3.8639,
+    "ratio": 0.7904,
+    "interval": [
+     0.6712,
+     0.9309
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 171.0
+   },
+   "threads_4": {
+    "per_token_ms": 3.63804,
+    "ratio": 0.7324,
+    "interval": [
+     0.6554,
+     0.8184
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 228.0
+   },
+   "A/A": {
+    "per_token_ms": 4.90462,
+    "ratio": 0.9836,
+    "interval": [
+     0.8495,
+     1.1387
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 4,
+   "model": "d1024",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 1024,
+   "d_ff": 2816,
+   "layers": 12,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 39.76171,
+   "threads_2": {
+    "per_token_ms": 19.7611,
+    "ratio": 0.4923,
+    "interval": [
+     0.4645,
+     0.5217
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 170.0
+   },
+   "threads_3": {
+    "per_token_ms": 18.84495,
+    "ratio": 0.4732,
+    "interval": [
+     0.4422,
+     0.5063
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 255.0
+   },
+   "threads_4": {
+    "per_token_ms": 18.39121,
+    "ratio": 0.4541,
+    "interval": [
+     0.4358,
+     0.4732
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 340.0
+   },
+   "A/A": {
+    "per_token_ms": 41.35972,
+    "ratio": 1.0461,
+    "interval": [
+     0.9907,
+     1.1046
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 4,
+   "model": "TinyLlama",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "d_ff": 5632,
+   "layers": 6,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 70.71123,
+   "threads_2": {
+    "per_token_ms": 43.12984,
+    "ratio": 0.5947,
+    "interval": [
+     0.5643,
+     0.6267
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 86.0
+   },
+   "threads_3": {
+    "per_token_ms": 30.90325,
+    "ratio": 0.4338,
+    "interval": [
+     0.3999,
+     0.4705
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 129.0
+   },
+   "threads_4": {
+    "per_token_ms": 26.53589,
+    "ratio": 0.3697,
+    "interval": [
+     0.3461,
+     0.395
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 172.0
+   },
+   "A/A": {
+    "per_token_ms": 71.23816,
+    "ratio": 1.0104,
+    "interval": [
+     0.964,
+     1.059
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 2,
+   "model": "860K",
+   "rounds": 24,
+   "reps": 3,
+   "short": 8,
+   "long": 200,
+   "vocab": 1024,
+   "d_model": 128,
+   "d_ff": 344,
+   "layers": 4,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 0.20762,
+   "threads_2": {
+    "per_token_ms": 0.20776,
+    "ratio": 1.0085,
+    "interval": [
+     0.9785,
+     1.0393
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.20726,
+    "ratio": 0.9978,
+    "interval": [
+     0.9576,
+     1.0397
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.20827,
+    "ratio": 0.9777,
+    "interval": [
+     0.9551,
+     1.0009
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "A/A": {
+    "per_token_ms": 0.20815,
+    "ratio": 1.0056,
+    "interval": [
+     0.9723,
+     1.0401
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 2,
+   "model": "d256",
+   "rounds": 12,
+   "reps": 1,
+   "short": 8,
+   "long": 48,
+   "vocab": 8192,
+   "d_model": 256,
+   "d_ff": 688,
+   "layers": 6,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 1.26632,
+   "threads_2": {
+    "per_token_ms": 1.09275,
+    "ratio": 0.846,
+    "interval": [
+     0.7923,
+     0.9034
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 62.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.96754,
+    "ratio": 0.7874,
+    "interval": [
+     0.7064,
+     0.8777
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 93.0
+   },
+   "threads_4": {
+    "per_token_ms": 1.0462,
+    "ratio": 0.7883,
+    "interval": [
+     0.7113,
+     0.8736
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 124.0
+   },
+   "A/A": {
+    "per_token_ms": 1.27246,
+    "ratio": 1.007,
+    "interval": [
+     0.9192,
+     1.1032
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 2,
+   "model": "d512",
+   "rounds": 8,
+   "reps": 1,
+   "short": 8,
+   "long": 32,
+   "vocab": 16384,
+   "d_model": 512,
+   "d_ff": 1344,
+   "layers": 8,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 5.9467,
+   "threads_2": {
+    "per_token_ms": 4.85389,
+    "ratio": 0.7703,
+    "interval": [
+     0.6814,
+     0.8708
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 114.0
+   },
+   "threads_3": {
+    "per_token_ms": 4.51301,
+    "ratio": 0.7151,
+    "interval": [
+     0.6018,
+     0.8498
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 171.0
+   },
+   "threads_4": {
+    "per_token_ms": 4.32486,
+    "ratio": 0.6767,
+    "interval": [
+     0.5948,
+     0.7698
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 228.0
+   },
+   "A/A": {
+    "per_token_ms": 6.17595,
+    "ratio": 1.0058,
+    "interval": [
+     0.8687,
+     1.1645
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 2,
+   "model": "d1024",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 1024,
+   "d_ff": 2816,
+   "layers": 12,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 48.92587,
+   "threads_2": {
+    "per_token_ms": 27.5728,
+    "ratio": 0.5491,
+    "interval": [
+     0.4693,
+     0.6424
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 170.0
+   },
+   "threads_3": {
+    "per_token_ms": 21.79275,
+    "ratio": 0.413,
+    "interval": [
+     0.354,
+     0.4818
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 255.0
+   },
+   "threads_4": {
+    "per_token_ms": 18.98888,
+    "ratio": 0.382,
+    "interval": [
+     0.3284,
+     0.4444
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 340.0
+   },
+   "A/A": {
+    "per_token_ms": 51.4989,
+    "ratio": 1.0461,
+    "interval": [
+     0.9747,
+     1.1227
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 2,
+   "model": "TinyLlama",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "d_ff": 5632,
+   "layers": 6,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 88.45691,
+   "threads_2": {
+    "per_token_ms": 49.15821,
+    "ratio": 0.5444,
+    "interval": [
+     0.4974,
+     0.5959
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 86.0
+   },
+   "threads_3": {
+    "per_token_ms": 37.15167,
+    "ratio": 0.4206,
+    "interval": [
+     0.3801,
+     0.4654
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 129.0
+   },
+   "threads_4": {
+    "per_token_ms": 33.70018,
+    "ratio": 0.3877,
+    "interval": [
+     0.3693,
+     0.4071
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 172.0
+   },
+   "A/A": {
+    "per_token_ms": 92.65504,
+    "ratio": 1.0408,
+    "interval": [
+     1.02,
+     1.0621
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "860K",
+   "rounds": 24,
+   "reps": 3,
+   "short": 8,
+   "long": 200,
+   "vocab": 1024,
+   "d_model": 128,
+   "d_ff": 344,
+   "layers": 4,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 0.1917,
+   "threads_2": {
+    "per_token_ms": 0.19218,
+    "ratio": 1.03,
+    "interval": [
+     0.9541,
+     1.112
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.19155,
+    "ratio": 0.9699,
+    "interval": [
+     0.9246,
+     1.0174
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.19002,
+    "ratio": 0.9632,
+    "interval": [
+     0.9193,
+     1.0093
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "A/A": {
+    "per_token_ms": 0.19134,
+    "ratio": 0.9947,
+    "interval": [
+     0.9317,
+     1.0618
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "d256",
+   "rounds": 12,
+   "reps": 1,
+   "short": 8,
+   "long": 48,
+   "vocab": 8192,
+   "d_model": 256,
+   "d_ff": 688,
+   "layers": 6,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 1.08435,
+   "threads_2": {
+    "per_token_ms": 1.01591,
+    "ratio": 0.9398,
+    "interval": [
+     0.9224,
+     0.9575
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 62.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.94264,
+    "ratio": 0.8871,
+    "interval": [
+     0.8541,
+     0.9213
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 93.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.91474,
+    "ratio": 0.8577,
+    "interval": [
+     0.827,
+     0.8895
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 124.0
+   },
+   "A/A": {
+    "per_token_ms": 1.08591,
+    "ratio": 1.0042,
+    "interval": [
+     0.9973,
+     1.0111
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "d512",
+   "rounds": 8,
+   "reps": 1,
+   "short": 8,
+   "long": 32,
+   "vocab": 16384,
+   "d_model": 512,
+   "d_ff": 1344,
+   "layers": 8,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 4.87654,
+   "threads_2": {
+    "per_token_ms": 4.3536,
+    "ratio": 0.917,
+    "interval": [
+     0.8452,
+     0.9948
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 114.0
+   },
+   "threads_3": {
+    "per_token_ms": 3.97753,
+    "ratio": 0.8313,
+    "interval": [
+     0.7701,
+     0.8975
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 171.0
+   },
+   "threads_4": {
+    "per_token_ms": 3.91767,
+    "ratio": 0.8313,
+    "interval": [
+     0.734,
+     0.9415
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 228.0
+   },
+   "A/A": {
+    "per_token_ms": 4.81436,
+    "ratio": 0.962,
+    "interval": [
+     0.815,
+     1.1354
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "d1024",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 1024,
+   "d_ff": 2816,
+   "layers": 12,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 36.38505,
+   "threads_2": {
+    "per_token_ms": 19.62019,
+    "ratio": 0.556,
+    "interval": [
+     0.4637,
+     0.6667
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 170.0
+   },
+   "threads_3": {
+    "per_token_ms": 18.37164,
+    "ratio": 0.5158,
+    "interval": [
+     0.4547,
+     0.585
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 255.0
+   },
+   "threads_4": {
+    "per_token_ms": 15.7376,
+    "ratio": 0.4319,
+    "interval": [
+     0.3621,
+     0.515
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 340.0
+   },
+   "A/A": {
+    "per_token_ms": 37.44758,
+    "ratio": 1.0126,
+    "interval": [
+     0.7656,
+     1.3393
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "TinyLlama",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "d_ff": 5632,
+   "layers": 6,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 73.80297,
+   "threads_2": {
+    "per_token_ms": 38.44433,
+    "ratio": 0.5466,
+    "interval": [
+     0.4675,
+     0.6392
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 86.0
+   },
+   "threads_3": {
+    "per_token_ms": 31.60444,
+    "ratio": 0.4318,
+    "interval": [
+     0.3961,
+     0.4706
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 129.0
+   },
+   "threads_4": {
+    "per_token_ms": 25.89336,
+    "ratio": 0.3439,
+    "interval": [
+     0.3094,
+     0.3822
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 172.0
+   },
+   "A/A": {
+    "per_token_ms": 75.21388,
+    "ratio": 1.0294,
+    "interval": [
+     0.9684,
+     1.0942
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "860K",
+   "rounds": 24,
+   "reps": 3,
+   "short": 8,
+   "long": 200,
+   "vocab": 1024,
+   "d_model": 128,
+   "d_ff": 344,
+   "layers": 4,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 0.20222,
+   "threads_2": {
+    "per_token_ms": 0.20246,
+    "ratio": 0.97,
+    "interval": [
+     0.9396,
+     1.0015
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.20214,
+    "ratio": 0.9953,
+    "interval": [
+     0.9364,
+     1.058
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.20362,
+    "ratio": 0.9938,
+    "interval": [
+     0.9444,
+     1.0457
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "A/A": {
+    "per_token_ms": 0.20268,
+    "ratio": 0.974,
+    "interval": [
+     0.9371,
+     1.0123
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "d256",
+   "rounds": 12,
+   "reps": 1,
+   "short": 8,
+   "long": 48,
+   "vocab": 8192,
+   "d_model": 256,
+   "d_ff": 688,
+   "layers": 6,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 1.24829,
+   "threads_2": {
+    "per_token_ms": 1.17833,
+    "ratio": 1.023,
+    "interval": [
+     0.933,
+     1.1216
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 62.0
+   },
+   "threads_3": {
+    "per_token_ms": 1.06205,
+    "ratio": 0.8885,
+    "interval": [
+     0.8347,
+     0.9459
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 93.0
+   },
+   "threads_4": {
+    "per_token_ms": 1.03017,
+    "ratio": 0.8495,
+    "interval": [
+     0.7833,
+     0.9213
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 124.0
+   },
+   "A/A": {
+    "per_token_ms": 1.25614,
+    "ratio": 1.0041,
+    "interval": [
+     0.9777,
+     1.0311
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "d512",
+   "rounds": 8,
+   "reps": 1,
+   "short": 8,
+   "long": 32,
+   "vocab": 16384,
+   "d_model": 512,
+   "d_ff": 1344,
+   "layers": 8,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 5.62746,
+   "threads_2": {
+    "per_token_ms": 4.95378,
+    "ratio": 0.8485,
+    "interval": [
+     0.777,
+     0.9266
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 114.0
+   },
+   "threads_3": {
+    "per_token_ms": 4.67457,
+    "ratio": 0.802,
+    "interval": [
+     0.7288,
+     0.8825
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 171.0
+   },
+   "threads_4": {
+    "per_token_ms": 4.27656,
+    "ratio": 0.756,
+    "interval": [
+     0.6528,
+     0.8756
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 228.0
+   },
+   "A/A": {
+    "per_token_ms": 5.48403,
+    "ratio": 0.9517,
+    "interval": [
+     0.8766,
+     1.0332
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "d1024",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 1024,
+   "d_ff": 2816,
+   "layers": 12,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 43.9665,
+   "threads_2": {
+    "per_token_ms": 22.80242,
+    "ratio": 0.5086,
+    "interval": [
+     0.4662,
+     0.5548
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 170.0
+   },
+   "threads_3": {
+    "per_token_ms": 19.88765,
+    "ratio": 0.4658,
+    "interval": [
+     0.4243,
+     0.5114
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 255.0
+   },
+   "threads_4": {
+    "per_token_ms": 16.96406,
+    "ratio": 0.399,
+    "interval": [
+     0.3139,
+     0.5071
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 340.0
+   },
+   "A/A": {
+    "per_token_ms": 49.02608,
+    "ratio": 1.0841,
+    "interval": [
+     0.9396,
+     1.2509
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "TinyLlama",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "d_ff": 5632,
+   "layers": 6,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 83.34603,
+   "threads_2": {
+    "per_token_ms": 46.10041,
+    "ratio": 0.5454,
+    "interval": [
+     0.5075,
+     0.5862
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 86.0
+   },
+   "threads_3": {
+    "per_token_ms": 34.65033,
+    "ratio": 0.4031,
+    "interval": [
+     0.3757,
+     0.4325
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 129.0
+   },
+   "threads_4": {
+    "per_token_ms": 30.81502,
+    "ratio": 0.3644,
+    "interval": [
+     0.3246,
+     0.409
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 172.0
+   },
+   "A/A": {
+    "per_token_ms": 87.07621,
+    "ratio": 1.019,
+    "interval": [
+     0.942,
+     1.1022
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 4,
+   "model": "860K",
+   "rounds": 24,
+   "reps": 3,
+   "short": 8,
+   "long": 200,
+   "vocab": 1024,
+   "d_model": 128,
+   "d_ff": 344,
+   "layers": 4,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 0.19118,
+   "threads_2": {
+    "per_token_ms": 0.19114,
+    "ratio": 1.0001,
+    "interval": [
+     0.9685,
+     1.0328
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.19071,
+    "ratio": 1.0018,
+    "interval": [
+     0.9597,
+     1.0457
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.18989,
+    "ratio": 0.9797,
+    "interval": [
+     0.9512,
+     1.009
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "A/A": {
+    "per_token_ms": 0.19055,
+    "ratio": 0.9976,
+    "interval": [
+     0.9424,
+     1.0561
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 4,
+   "model": "d256",
+   "rounds": 12,
+   "reps": 1,
+   "short": 8,
+   "long": 48,
+   "vocab": 8192,
+   "d_model": 256,
+   "d_ff": 688,
+   "layers": 6,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 1.10621,
+   "threads_2": {
+    "per_token_ms": 0.96217,
+    "ratio": 0.8558,
+    "interval": [
+     0.8213,
+     0.8917
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 62.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.92414,
+    "ratio": 0.8264,
+    "interval": [
+     0.7845,
+     0.8706
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 93.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.88138,
+    "ratio": 0.7881,
+    "interval": [
+     0.7622,
+     0.8148
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 124.0
+   },
+   "A/A": {
+    "per_token_ms": 1.11223,
+    "ratio": 1.0252,
+    "interval": [
+     0.9728,
+     1.0805
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 4,
+   "model": "d512",
+   "rounds": 8,
+   "reps": 1,
+   "short": 8,
+   "long": 32,
+   "vocab": 16384,
+   "d_model": 512,
+   "d_ff": 1344,
+   "layers": 8,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 4.98861,
+   "threads_2": {
+    "per_token_ms": 4.2349,
+    "ratio": 0.8393,
+    "interval": [
+     0.8022,
+     0.8781
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 114.0
+   },
+   "threads_3": {
+    "per_token_ms": 3.99191,
+    "ratio": 0.8167,
+    "interval": [
+     0.7647,
+     0.8722
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 171.0
+   },
+   "threads_4": {
+    "per_token_ms": 3.76738,
+    "ratio": 0.7578,
+    "interval": [
+     0.7068,
+     0.8125
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 228.0
+   },
+   "A/A": {
+    "per_token_ms": 4.99636,
+    "ratio": 0.9983,
+    "interval": [
+     0.988,
+     1.0087
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 4,
+   "model": "d1024",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 1024,
+   "d_ff": 2816,
+   "layers": 12,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 36.11123,
+   "threads_2": {
+    "per_token_ms": 20.39871,
+    "ratio": 0.5486,
+    "interval": [
+     0.4941,
+     0.6091
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 170.0
+   },
+   "threads_3": {
+    "per_token_ms": 18.19016,
+    "ratio": 0.4955,
+    "interval": [
+     0.4174,
+     0.5881
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 255.0
+   },
+   "threads_4": {
+    "per_token_ms": 16.89006,
+    "ratio": 0.4589,
+    "interval": [
+     0.4013,
+     0.5248
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 340.0
+   },
+   "A/A": {
+    "per_token_ms": 41.79636,
+    "ratio": 1.1325,
+    "interval": [
+     1.0605,
+     1.2094
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 4,
+   "model": "TinyLlama",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "d_ff": 5632,
+   "layers": 6,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 74.21004,
+   "threads_2": {
+    "per_token_ms": 41.65654,
+    "ratio": 0.5466,
+    "interval": [
+     0.4788,
+     0.6241
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 86.0
+   },
+   "threads_3": {
+    "per_token_ms": 32.57488,
+    "ratio": 0.4217,
+    "interval": [
+     0.3482,
+     0.5108
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 129.0
+   },
+   "threads_4": {
+    "per_token_ms": 27.7125,
+    "ratio": 0.3724,
+    "interval": [
+     0.3461,
+     0.4007
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 172.0
+   },
+   "A/A": {
+    "per_token_ms": 75.31623,
+    "ratio": 0.9924,
+    "interval": [
+     0.931,
+     1.0579
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 2,
+   "model": "860K",
+   "rounds": 24,
+   "reps": 3,
+   "short": 8,
+   "long": 200,
+   "vocab": 1024,
+   "d_model": 128,
+   "d_ff": 344,
+   "layers": 4,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 0.20683,
+   "threads_2": {
+    "per_token_ms": 0.20712,
+    "ratio": 0.9912,
+    "interval": [
+     0.9712,
+     1.0115
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.20713,
+    "ratio": 0.9969,
+    "interval": [
+     0.9813,
+     1.0128
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.20656,
+    "ratio": 1.0013,
+    "interval": [
+     0.9568,
+     1.0479
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "A/A": {
+    "per_token_ms": 0.20668,
+    "ratio": 0.9884,
+    "interval": [
+     0.9567,
+     1.0212
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 2,
+   "model": "d256",
+   "rounds": 12,
+   "reps": 1,
+   "short": 8,
+   "long": 48,
+   "vocab": 8192,
+   "d_model": 256,
+   "d_ff": 688,
+   "layers": 6,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 1.35077,
+   "threads_2": {
+    "per_token_ms": 1.14244,
+    "ratio": 0.8376,
+    "interval": [
+     0.7849,
+     0.8938
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 62.0
+   },
+   "threads_3": {
+    "per_token_ms": 1.08572,
+    "ratio": 0.7865,
+    "interval": [
+     0.7211,
+     0.8578
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 93.0
+   },
+   "threads_4": {
+    "per_token_ms": 1.04374,
+    "ratio": 0.78,
+    "interval": [
+     0.7193,
+     0.8458
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 124.0
+   },
+   "A/A": {
+    "per_token_ms": 1.36116,
+    "ratio": 1.0438,
+    "interval": [
+     0.984,
+     1.1072
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 2,
+   "model": "d512",
+   "rounds": 8,
+   "reps": 1,
+   "short": 8,
+   "long": 32,
+   "vocab": 16384,
+   "d_model": 512,
+   "d_ff": 1344,
+   "layers": 8,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 5.81629,
+   "threads_2": {
+    "per_token_ms": 4.98462,
+    "ratio": 0.924,
+    "interval": [
+     0.7991,
+     1.0684
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 114.0
+   },
+   "threads_3": {
+    "per_token_ms": 4.40066,
+    "ratio": 0.8142,
+    "interval": [
+     0.6759,
+     0.9808
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 171.0
+   },
+   "threads_4": {
+    "per_token_ms": 3.94165,
+    "ratio": 0.729,
+    "interval": [
+     0.6471,
+     0.8213
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 228.0
+   },
+   "A/A": {
+    "per_token_ms": 5.84323,
+    "ratio": 1.0888,
+    "interval": [
+     0.9392,
+     1.2622
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 2,
+   "model": "d1024",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 1024,
+   "d_ff": 2816,
+   "layers": 12,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 49.86743,
+   "threads_2": {
+    "per_token_ms": 23.5027,
+    "ratio": 0.4954,
+    "interval": [
+     0.4279,
+     0.5737
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 170.0
+   },
+   "threads_3": {
+    "per_token_ms": 19.54556,
+    "ratio": 0.4159,
+    "interval": [
+     0.3286,
+     0.5264
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 255.0
+   },
+   "threads_4": {
+    "per_token_ms": 18.80337,
+    "ratio": 0.3852,
+    "interval": [
+     0.3455,
+     0.4294
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 340.0
+   },
+   "A/A": {
+    "per_token_ms": 46.18328,
+    "ratio": 0.9841,
+    "interval": [
+     0.8508,
+     1.1383
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 2,
+   "model": "TinyLlama",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "d_ff": 5632,
+   "layers": 6,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 92.71099,
+   "threads_2": {
+    "per_token_ms": 49.29161,
+    "ratio": 0.5381,
+    "interval": [
+     0.4667,
+     0.6203
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 86.0
+   },
+   "threads_3": {
+    "per_token_ms": 38.63208,
+    "ratio": 0.4124,
+    "interval": [
+     0.3813,
+     0.4461
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 129.0
+   },
+   "threads_4": {
+    "per_token_ms": 31.73575,
+    "ratio": 0.3396,
+    "interval": [
+     0.3011,
+     0.3831
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 172.0
+   },
+   "A/A": {
+    "per_token_ms": 90.88471,
+    "ratio": 0.9917,
+    "interval": [
+     0.9326,
+     1.0544
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "860K",
+   "rounds": 24,
+   "reps": 3,
+   "short": 8,
+   "long": 200,
+   "vocab": 1024,
+   "d_model": 128,
+   "d_ff": 344,
+   "layers": 4,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 0.19205,
+   "threads_2": {
+    "per_token_ms": 0.19154,
+    "ratio": 0.9807,
+    "interval": [
+     0.9556,
+     1.0065
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.1914,
+    "ratio": 1.0062,
+    "interval": [
+     0.9603,
+     1.0543
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.19112,
+    "ratio": 0.9997,
+    "interval": [
+     0.9547,
+     1.047
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "A/A": {
+    "per_token_ms": 0.19264,
+    "ratio": 1.017,
+    "interval": [
+     0.973,
+     1.0629
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "d256",
+   "rounds": 12,
+   "reps": 1,
+   "short": 8,
+   "long": 48,
+   "vocab": 8192,
+   "d_model": 256,
+   "d_ff": 688,
+   "layers": 6,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 1.10529,
+   "threads_2": {
+    "per_token_ms": 1.08185,
+    "ratio": 0.9816,
+    "interval": [
+     0.9014,
+     1.069
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 62.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.97435,
+    "ratio": 0.9077,
+    "interval": [
+     0.8051,
+     1.0234
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 93.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.98837,
+    "ratio": 0.9106,
+    "interval": [
+     0.7917,
+     1.0474
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 124.0
+   },
+   "A/A": {
+    "per_token_ms": 1.10552,
+    "ratio": 0.9899,
+    "interval": [
+     0.902,
+     1.0863
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "d512",
+   "rounds": 8,
+   "reps": 1,
+   "short": 8,
+   "long": 32,
+   "vocab": 16384,
+   "d_model": 512,
+   "d_ff": 1344,
+   "layers": 8,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 4.83721,
+   "threads_2": {
+    "per_token_ms": 4.45557,
+    "ratio": 0.917,
+    "interval": [
+     0.8992,
+     0.9351
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 114.0
+   },
+   "threads_3": {
+    "per_token_ms": 3.89703,
+    "ratio": 0.8118,
+    "interval": [
+     0.7784,
+     0.8467
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 171.0
+   },
+   "threads_4": {
+    "per_token_ms": 3.8222,
+    "ratio": 0.7975,
+    "interval": [
+     0.7642,
+     0.8323
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 228.0
+   },
+   "A/A": {
+    "per_token_ms": 4.88588,
+    "ratio": 1.0266,
+    "interval": [
+     0.983,
+     1.0721
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "d1024",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 1024,
+   "d_ff": 2816,
+   "layers": 12,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 37.66739,
+   "threads_2": {
+    "per_token_ms": 19.69347,
+    "ratio": 0.4904,
+    "interval": [
+     0.4051,
+     0.5938
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 170.0
+   },
+   "threads_3": {
+    "per_token_ms": 19.58,
+    "ratio": 0.4883,
+    "interval": [
+     0.4221,
+     0.5648
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 255.0
+   },
+   "threads_4": {
+    "per_token_ms": 15.89449,
+    "ratio": 0.3974,
+    "interval": [
+     0.3261,
+     0.4844
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 340.0
+   },
+   "A/A": {
+    "per_token_ms": 37.5839,
+    "ratio": 0.9298,
+    "interval": [
+     0.7829,
+     1.1043
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 4,
+   "model": "TinyLlama",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "d_ff": 5632,
+   "layers": 6,
+   "instances": 7,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 72.39296,
+   "threads_2": {
+    "per_token_ms": 40.54288,
+    "ratio": 0.5665,
+    "interval": [
+     0.5245,
+     0.612
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 86.0
+   },
+   "threads_3": {
+    "per_token_ms": 31.39508,
+    "ratio": 0.4396,
+    "interval": [
+     0.4027,
+     0.4799
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 129.0
+   },
+   "threads_4": {
+    "per_token_ms": 28.38781,
+    "ratio": 0.3792,
+    "interval": [
+     0.3529,
+     0.4075
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 172.0
+   },
+   "A/A": {
+    "per_token_ms": 75.47525,
+    "ratio": 1.0592,
+    "interval": [
+     0.9617,
+     1.1667
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "860K",
+   "rounds": 24,
+   "reps": 3,
+   "short": 8,
+   "long": 200,
+   "vocab": 1024,
+   "d_model": 128,
+   "d_ff": 344,
+   "layers": 4,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 0.19793,
+   "threads_2": {
+    "per_token_ms": 0.1991,
+    "ratio": 1.0384,
+    "interval": [
+     1.0003,
+     1.0778
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_3": {
+    "per_token_ms": 0.19998,
+    "ratio": 1.0311,
+    "interval": [
+     0.9993,
+     1.0638
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "threads_4": {
+    "per_token_ms": 0.19975,
+    "ratio": 1.0149,
+    "interval": [
+     0.9991,
+     1.031
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "A/A": {
+    "per_token_ms": 0.19973,
+    "ratio": 1.0175,
+    "interval": [
+     1.0076,
+     1.0276
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "d256",
+   "rounds": 12,
+   "reps": 1,
+   "short": 8,
+   "long": 48,
+   "vocab": 8192,
+   "d_model": 256,
+   "d_ff": 688,
+   "layers": 6,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 1.22596,
+   "threads_2": {
+    "per_token_ms": 1.20004,
+    "ratio": 1.0114,
+    "interval": [
+     0.9622,
+     1.0631
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 62.0
+   },
+   "threads_3": {
+    "per_token_ms": 1.05529,
+    "ratio": 0.8848,
+    "interval": [
+     0.8149,
+     0.9606
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 93.0
+   },
+   "threads_4": {
+    "per_token_ms": 1.00732,
+    "ratio": 0.8683,
+    "interval": [
+     0.8106,
+     0.93
+    ],
+    "splits_a_token": 31.0,
+    "parts_a_token": 124.0
+   },
+   "A/A": {
+    "per_token_ms": 1.23125,
+    "ratio": 1.0259,
+    "interval": [
+     0.9605,
+     1.0958
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "d512",
+   "rounds": 8,
+   "reps": 1,
+   "short": 8,
+   "long": 32,
+   "vocab": 16384,
+   "d_model": 512,
+   "d_ff": 1344,
+   "layers": 8,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 5.66047,
+   "threads_2": {
+    "per_token_ms": 5.14068,
+    "ratio": 0.927,
+    "interval": [
+     0.8499,
+     1.0111
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 114.0
+   },
+   "threads_3": {
+    "per_token_ms": 4.50621,
+    "ratio": 0.8065,
+    "interval": [
+     0.763,
+     0.8524
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 171.0
+   },
+   "threads_4": {
+    "per_token_ms": 4.29153,
+    "ratio": 0.7799,
+    "interval": [
+     0.7213,
+     0.8434
+    ],
+    "splits_a_token": 57.0,
+    "parts_a_token": 228.0
+   },
+   "A/A": {
+    "per_token_ms": 5.65782,
+    "ratio": 1.0139,
+    "interval": [
+     0.9723,
+     1.0573
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "d1024",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 1024,
+   "d_ff": 2816,
+   "layers": 12,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 44.8551,
+   "threads_2": {
+    "per_token_ms": 23.75167,
+    "ratio": 0.5273,
+    "interval": [
+     0.4695,
+     0.5922
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 170.0
+   },
+   "threads_3": {
+    "per_token_ms": 20.61672,
+    "ratio": 0.4488,
+    "interval": [
+     0.3867,
+     0.5208
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 255.0
+   },
+   "threads_4": {
+    "per_token_ms": 18.67692,
+    "ratio": 0.4071,
+    "interval": [
+     0.3724,
+     0.4451
+    ],
+    "splits_a_token": 85.0,
+    "parts_a_token": 340.0
+   },
+   "A/A": {
+    "per_token_ms": 48.02404,
+    "ratio": 1.0081,
+    "interval": [
+     0.8727,
+     1.1645
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 2,
+   "model": "TinyLlama",
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "d_ff": 5632,
+   "layers": 6,
+   "instances": 3,
+   "split_min": 65536,
+   "head_split_min": 1048576,
+   "none_per_token_ms": 83.97785,
+   "threads_2": {
+    "per_token_ms": 46.84839,
+    "ratio": 0.5495,
+    "interval": [
+     0.5111,
+     0.5909
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 86.0
+   },
+   "threads_3": {
+    "per_token_ms": 32.53429,
+    "ratio": 0.4106,
+    "interval": [
+     0.3442,
+     0.4897
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 129.0
+   },
+   "threads_4": {
+    "per_token_ms": 31.97593,
+    "ratio": 0.3783,
+    "interval": [
+     0.3481,
+     0.4111
+    ],
+    "splits_a_token": 43.0,
+    "parts_a_token": 172.0
+   },
+   "A/A": {
+    "per_token_ms": 82.62034,
+    "ratio": 0.9866,
+    "interval": [
+     0.9203,
+     1.0577
+    ],
+    "splits_a_token": 0.0,
+    "parts_a_token": 0.0
+   },
+   "every_generation_the_same_bytes": true,
+   "every_generation_of_an_arm_split_alike": true
+  }
+ ]
+}

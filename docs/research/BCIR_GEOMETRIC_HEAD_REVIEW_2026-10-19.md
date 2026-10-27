@@ -2673,3 +2673,82 @@ they were read x1.003-1.016 of their time before under clang and x0.965-1.006 un
 Not claimed: a real TinyLlama-1.1B (no artifact of that size on this host: the synthetic decoder has its widths, six
 of its 22 layers and pseudo-random codes); a head whose rows are not a whole number of groups, which has no pack; any
 other host's figures; counter-based figures (no PMU on this VM).
+
+## 38. DECODE-THREADS: the C decoder's large matvecs by columns and its head by rows across threads (2026-10-26)
+
+After HEAD-PACK the matvec took 60% of a token of the 860K decoder under clang (§37), and a decoder whose weights pass
+this host's L3 reads them from memory on one core every token: the synthetic decoder at TinyLlama-1.1B's widths took
+73.4 ms a token. A survey before the change (draft tools, not kept) split each matvec's outputs by columns and the
+packed head's by rows across the trainer's deterministic pool (NDT-THREADS). At TinyLlama's widths from memory four
+threads took the matvecs to x0.41 and the head to x0.27 of their time, every output the serial kernels' bytes; with
+the weights held in cache a matvec's parts gained little, and below about 128 KiB they lost.
+
+DECODE-THREADS gives every matvec kernel a range of columns [k0, k1), the whole call being [0, out), and the decoder a
+runner the caller lends (`bcir_llama_runner`: a function that runs a job's tasks, its workers, and the smallest matvec
+and head its parts split). A matvec of at least that many weights is computed in parts of its columns, multiples of
+eight, and the head over its pack in parts of its rows, whole 32-row passes, one part a worker. Each output is
+computed by one part with its chain the whole call's -- its column's terms over every input row in order -- so every
+token and logit is the same at every thread count. A range reads Q8-BOUND's ranges over the groups its columns touch,
+row by row, and takes Q8-PAIR's two rows a pass where it starts and ends on a vector's edge. The thresholds were
+calibrated end to end at one to four threads: matvecs from 64 Ki weights, and the head from 1 Mi, since it runs once a
+token and a split head pays to wake a pool the matvecs left idle. `bcir-llama --threads T` lends the trainer's pool;
+both dispatchers call the split operations, and `bcir_dgem_set_runner` lends GEM's interpreter one.
+
+The first records found the whole calls slower (`ef6717a`): one kernel served the whole call and a range, its range a
+variable in every call, so a decode lent no runner ran the range's code -- under clang its pair kernels carried 7 to
+12 more stack accesses in their vector loops. Each vector kernel now has two instances, the whole call's, its range
+the constant [0, out), and a range's. Inlining one body into both (`0c24748`) made other code of it (GCC's pair
+kernels' listings 84 to 286 lines from the tree before's); so Q8-PAIR's kernels are one text in two (`ea6fc46`), and
+the whole call's is the kernel before the ranges instruction for instruction under clang 18 and GCC 13, registers and
+stack slots included.
+
+**Measured** on the committed tree (`ea6fc46`) on the session's second host, a Xeon at 2.80 GHz (4 cores, one thread
+each, 1 MiB of L2 a core and 33 MiB of L3), clang 18 and GCC 13 at the qualification's flags, a reading the median of
+3 runs. `threads_decode.c` times the decoder in one binary lent no runner, the pool at two, three and four threads,
+and no runner again (the A/A control), a token's time from generations of two lengths; every generation's tokens and
+final logits are the no-runner arm's bytes, and every generation of an arm splits the same operations into the same
+parts:
+
+| a token at 2 / 3 / 4 threads, of its time on one | clang AVX-512 | clang AVX2 | GCC AVX-512 | GCC AVX2 |
+|---|---|---|---|---|
+| the 860K decoder (none of its operations split) | x0.971 / x1.004 / x0.986 | x1.007 / x1.025 / x1.026 | x0.992 / x1.000 / x1.019 | x1.002 / x0.997 / x0.994 |
+| 256 wide, 6 layers (6.9 MB) | x0.959 / x0.910 / x0.962 | x0.926 / x0.815 / x0.845 | x1.292 / x1.182 / x1.169 | x1.062 / x1.044 / x1.005 |
+| 512 wide, 8 layers (33 MB) | x0.766 / x0.749 / x0.775 | x0.788 / x0.675 / x0.736 | x1.038 / x0.917 / x1.007 | x0.886 / x0.812 / x0.776 |
+| 1,024 wide, 12 layers (179 MB) | x0.728 / x0.649 / x0.585 | x0.710 / x0.620 / x0.640 | x0.881 / x0.779 / x0.731 | x0.752 / x0.665 / x0.641 |
+| TinyLlama-1.1B's widths, 6 layers (350 MB, past L3) | x0.665 / x0.564 / x0.473 | x0.664 / x0.524 / x0.458 | x0.773 / x0.641 / x0.580 | x0.660 / x0.543 / x0.498 |
+
+On one thread a token of the synthetic decoder at TinyLlama's widths takes 107.1 ms under clang and 51.5 ms at four
+threads; one 1,024 wide 60.6 -> 35.6 ms. Each splits 43 and 85 operations a token, every layer's seven matvecs and the
+head. At four threads the decoder at TinyLlama's widths resolves past its A/A control in 3 of 3 runs in every build,
+the one 1,024 wide in 3, 3, 3, 2 (clang AVX-512, clang AVX2, GCC AVX-512, GCC AVX2); both are faster at every thread
+count in every build. The one 512 wide reads x0.775, x0.736, x1.007, x0.776 at four threads (3, 3, 0, 1 of 3
+resolved), and the one 256 wide x0.962, x0.845, x1.169, x1.005 (0, 0, 1, 0): under GCC's AVX-512 build its parts cost
+more than they save on this host. The 860K decoder splits none of its operations, and its token reads x0.971-1.026 of
+its time at two to four threads, within the A/A control's reach.
+
+The thresholds were calibrated on the session's first host, a Xeon at 2.30 GHz with 2 MiB of L2 a core and 260 MiB of
+L3, where the same records of `0c24748` (`decode-0c24748.json`: its kernels one body inlined into both instances, not
+this commit's text) read x0.370 at TinyLlama's widths and x0.454 at 1,024 wide under clang AVX-512, x0.351 and x0.432
+under GCC, and the one 256 wide x0.793 and x0.858: the parts pay for themselves less on this host, and least under
+GCC, so the thresholds are a caller's to set (`bcir-llama --split-min`).
+
+The whole calls (`kernels.json`): the three trees' kernel units in one binary, every arm writing one 64-byte-aligned
+buffer, whole calls on the 860K decoder's matvec shapes, 512 and 2,048 square and one call Q8-BOUND does not prove,
+101 rounds. On this host the same instructions read up to a fifth apart at different placements -- at the compilers'
+own the tree after's whole calls took x0.880-1.223 of the tree before's time under clang AVX-512 (six of the seven
+resolved slower) -- so each tree is also built with every function on a 64-byte boundary, where two trees differ in
+their code alone. There `ef6717a`'s took x1.102-1.250 under clang AVX-512 (seven of the seven resolved slower) and
+x0.996-1.046 on AVX2 (two); the tree after's x0.961-1.002 and x0.981-1.005, and under GCC x0.993-1.032 and
+x0.963-1.002, none resolved slower (the A/A controls x0.982-1.023, x0.984-1.015, x0.983-1.032 and x0.988-1.019). The
+decode A/B across processes (`serial.json`, clang's widest instance, 24 rounds) reads the same way: built aligned,
+`ef6717a` x1.120 (1.040-1.207) and the tree after x0.990 (0.921-1.065) (A/A x0.985 (0.923-1.050)); as the decoder's
+builds place their functions, x1.050 (0.976-1.130) and x1.088 (1.031-1.147) (A/A x0.977 (0.930-1.026)). Over six
+qualification runs a tree, each tree twice in each place of the order, its C matvecs took 6.74 ms (6.30-7.70) before,
+8.40 ms (8.27-11.45) at `ef6717a` and 6.61 ms (6.40-6.92) after, a token 0.2903 ms (0.2850-0.3101), 0.3453 ms
+(0.3252-0.4277) and 0.2965 ms (0.2903-0.3047). Under callgrind (the AVX2 instance) the qualification's GEM request
+takes 135,617,235 -> 135,438,771 instructions (x0.9987), its logits keep their SHA-256, 23 of 23 checks on both trees.
+`decode-threads.json`'s 32 faults are each caught by their own check; under the witnesses before DECODE-THREADS 3 of
+them are, the whole-call instances' (DT27, DT28 and DT29).
+
+Not claimed: a real TinyLlama-1.1B (the synthetic decoders have its widths, not its weights); thresholds right for
+every host, since the defaults were calibrated on the session's first; counter-based figures (no PMU on either VM).
