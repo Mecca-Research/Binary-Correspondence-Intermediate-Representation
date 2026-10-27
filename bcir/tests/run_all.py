@@ -316,6 +316,7 @@ _MODULES = [
     "bcir.tests.test_cfront_link",
     "bcir.tests.test_cfront_constexpr",
     "bcir.tests.test_driver_gpio",
+    "bcir.tests.test_uart_model",
     "bcir.tests.test_c_channel",
     "bcir.tests.test_cpp_handoff",
     "bcir.tests.test_memory_model",

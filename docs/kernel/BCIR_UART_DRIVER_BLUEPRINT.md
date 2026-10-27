@@ -1,10 +1,17 @@
 # BCIR UART-16550 Driver — the full build blueprint
 
-> **Implementation status (2026-07-10): blueprint, not a landed driver.** The repository
-> contains a vendor-style register header and bounded polling source used as a C-compiler
-> fixture, plus generic event-phase and telemetry-frame codec tests. It does **not** contain
-> a channel-backed UART driver, device simulator, IRQ service, learned trigger/burst prior,
-> or the U0–U9 program described below. Unchecked slices remain future work.
+> **Implementation status (2026-10-27): U0 landed on the oracle rail; no driver yet.** Slice
+> U0's device registry — [`uart_model.py`](../../bcir/frontends/devices/uart_model.py): the
+> normative register table, three placements, the RegMap contract and its law, an errata table —
+> and the header it generates, `runtime/c/uart16550_regs.h`, have landed on the oracle rail; its
+> law-rail half (the `bcir.regmap_contract` op, the `-bcir-verify` clause, the lit negatives) is
+> pending. Its facts were checked page by page against the source documents
+> (`uart_model.PROVENANCE`), which corrected two entries below (section 2's FCR-gating row and
+> section 5's `fcr_impl_mask` default). The repository also contains a vendor-style register
+> header and bounded polling source used as a C-compiler fixture, plus generic event-phase and
+> telemetry-frame codec tests. It does **not** contain a channel-backed UART driver, device
+> simulator, IRQ service, learned trigger/burst prior, or slices U1–U9. Unchecked slices remain
+> future work.
 >
 > **What this document is.** The complete, execution-ready engineering blueprint for the first
 > BCIR ML-compiled device driver: a 16550/16750-family UART driver built registry-first, verified by
@@ -104,8 +111,9 @@ Three multiplexing dimensions (the driver's central protocol hazard):
   | `0010` (0x02) | THRE (TX FIFO empty) | 3 | writing THR or reading IIR |
   | `0000` (0x00) | Modem status (ΔCTS/ΔDSR/TERI/ΔDCD) | 4 | reading MSR |
 
-- **FCR** (write): 0=FIFO enable (**gates all other FCR bits** — on Core16550 an FCR write with
-  bit0=0 does not program the other bits), 1=RX FIFO reset (self-clearing; shift register NOT
+- **FCR** (write): 0=FIFO enable (**gates all other FCR bits** — an FCR write with bit0=0 does
+  not program the other bits: PC16550D p.22, and TL16C550C/D, ST16C550 and Core16550 say the
+  same), 1=RX FIFO reset (self-clearing; shift register NOT
   cleared), 2=TX FIFO reset (self-clearing), 3=DMA mode select (RXRDY/TXRDY pin mode 0/1),
   4–5 reserved, 7:6=RX trigger level: `00`→1, `01`→4, `10`→8, `11`→14 bytes.
 - **LCR**: 1:0=word length (`00`→5 … `11`→8 bits), 2=stop bits (0→1; 1→1.5 for 5-bit words,
@@ -162,6 +170,10 @@ Three multiplexing dimensions (the driver's central protocol hazard):
   0x006F (111): 100e6 / (16 × 111) = 56306 baud, +0.55% error.
 - PC16550D divisor tables (1.8432 MHz / 3.072 MHz / 18.432 MHz crystals) are the other test
   vectors: e.g. 1.8432 MHz → 115200 = divisor 1, 9600 = divisor 12, 300 = divisor 384.
+  (115200 is not a Table 4 row, and PC16550D p.17 states divisors 2 to 2^16−1 where
+  TL16C550C/D, ST16C550 and Core16550 state 1 to 65535; the AXI examples truncate the formula,
+  Table 4 rounds it. U0's worked-example test pins every printed vector and the two Table 4
+  entries that disagree with their own formula.)
 
 ### 1.4 Initialization contract (the canonical bring-up order)
 
@@ -172,8 +184,8 @@ PG143's programming sequence, generalized and hardened (this exact order is what
 2. Write LCR with DLAB=1 plus the final line format bits (one write).
 3. Write DLL, then DLM (LSB first).
 4. Write LCR again with DLAB=0, same format bits (closes the DLAB bracket).
-5. Write FCR: enable FIFOs + reset both FIFOs + trigger level (one write; on Core16550-class
-   parts bit0 must be 1 in this same write for the rest to take).
+5. Write FCR: enable FIFOs + reset both FIFOs + trigger level (one write; bit0 must be 1 in
+   this same write for the rest to take — PC16550D p.22, and every documented part).
 6. Write MCR: DTR/RTS/OUT2 as required (+AFE on autoflow parts, per §1.6).
 7. Write IER last (0x00 for polled mode; enables for interrupt mode).
 8. Read LSR, RBR, IIR, MSR once each to clear any stale status.
@@ -335,7 +347,7 @@ the registry must therefore record **capabilities, not part names** (this is the
 | Register stride | 1 byte (A2:A0) | 1 byte | 1 byte | **4 bytes** (PADDR 0x00–0x1C) | **4 bytes at base+0x1000** (0x1000–0x101C), 32-bit lanes |
 | FCR at reset | 0x00 | 0x00 | 0x00 | **0x01 (FIFOs on)** | 0x00 |
 | FCR readable | no (write-only) | no | no | no | **yes** (reads at slot 2, LCR7=1 documented) |
-| FCR bit-gating | n/a | n/a | n/a | **other bits ignored unless bit0=1 in the same write** | per PC16550D |
+| FCR bit-gating | **other bits ignored unless bit0=1 in the same write** (p.22) | same (TL16C550C p.24, TL16C550D p.33) | same (p.15) | same (p.6) | per PC16550D |
 | DLL/DLM at reset | undefined | undefined | undefined | **0x01 / 0x00** | per core |
 | MCR5 | 0 (reserved) | **AFE** | 0 | 0 | 0 |
 | Extra regs behind DLAB | none | none | **"enhanced feature register"** (EFR-class, 16650 lineage) | none | none |
@@ -350,7 +362,8 @@ the registry must therefore record **capabilities, not part names** (this is the
 - **H-B (DLAB leakage)**: on ST16C550-class clones, DLAB=1 exposes *more than divisor latches*;
   a sloppy bracket that "just sets DLAB and pokes around" can hit the EFR and reconfigure the
   part. → the DLAB bracket law (U1) allows **only** DLL/DLM/LCR accesses inside the bracket.
-- **H-C (FCR gating)**: on Core16550, `FCR = 0x06` (reset FIFOs, bit0=0) programs nothing.
+- **H-C (FCR gating)**: on Core16550, `FCR = 0x06` (reset FIFOs, bit0=0) programs nothing — and
+  on every documented part: the gating is the PC16550D's own rule (p.22).
   → U1 law: every FCR write must have bit0=1 unless the *variant record* says plain-16450
   writes are meaningful.
 - **H-D (reset-state drift)**: FIFOs already on at reset (Core16550) — init must not *assume*
@@ -512,7 +525,8 @@ banks, so U0 needs no distance matrix — but any DMA-bearing device blueprint M
 `StridedView`s; the D-R1..D-R6 rule card is a design axiom for every future U0.)**
 
 **Files.**
-- `bcir/frontends/devices/__init__.py` — new package (dep-free stdlib; exports below).
+- `bcir/frontends/devices/__init__.py` — new package (dep-free stdlib; it exports nothing:
+  importers use the modules, e.g. `bcir.frontends.devices.uart_model`).
 - `bcir/frontends/devices/uart_model.py` — the model + generator.
 - `bcir/frontends/devices/fixtures/` — golden generated headers (checked in for diffability).
 - `runtime/c/uart16550_regs.h` — the generated header for the default placement (byte-strided),
@@ -536,7 +550,7 @@ class UartPlacement:
     base_offset: int     # 0 | 0 | 0x1000
     reg_width: int       # 1 | 4 | 4 (bytes per register lane)
     fcr_reset: int       # 0x00 | 0x01 | 0x00
-    fcr_gated: bool      # False | True | False   (H-C)
+    fcr_gated: bool      # True | True | True   (H-C; PC16550D p.22 -- corrected from False | True | False)
     has_afe: bool        # MCR5 autoflow exists
     has_modem: bool      # modem lines wired (H-NOMSR)
     ref_clk_hz: int      # the baud reference the divisor law uses
@@ -553,9 +567,13 @@ class UartPlacement:
     has_frac_divisor: bool = False  # DLF present (750E)
     has_sleep: bool = False       # EFR[4]&IER[4] sleep mode
     has_scr: bool = True          # False on Lattice (H-L: probe must consult this)
-    fcr_impl_mask: int = 0xFF     # which FCR bits exist (Lattice: ~(bit0|bit3))
+    fcr_impl_mask: int = 0xCF     # which FCR bits exist: FCR[5:4] are reserved on the 16550
+                                  # class (PC16550D p.22; corrected from 0xFF, which disagreed
+                                  # with Lattice's 0xC6 = 0xCF & ~(bit0|bit3))
     reset_honest: bool = True     # False when reset values are synthesis attributes /
                                   # registers survive reset (Lattice, 750E DLL/DLH; H-M)
+    errata: tuple = ()            # ERRATA ids the part is subject to (none in U0; SLLZ058A is
+                                  # recorded for TL16C752C/754C/2752 as registry data)
 
 UART16550: tuple[UartReg, ...]          # THE normative table (from §1.1)
 PLACEMENTS: dict[str, UartPlacement]    # U0: the three §2 placements.
@@ -1030,6 +1048,8 @@ data is held, wake on RX edge / modem change / THR write — all in char-ticks.
 ## 11. Acceptance checklist (the definition of done for the program)
 
 - [ ] U0: three placements generate; contracts round-trip; tampering caught on both rails.
+      *Oracle rail landed 2026-10-27 (`bcir/tests/test_uart_model.py`,
+      `tools/testing/faults/uart-model.json`); the law-rail half is pending.*
 - [ ] U1: five laws fire on negatives on both rails; whole existing corpus produces zero
       UART diagnostics.
 - [ ] U2: the emitted-TUs-only binary runs the probe/init/selftest/TX/RX/flush transcript
@@ -1048,3 +1068,57 @@ data is held, wake on RX edge / modem change / THR write — all in char-ticks.
       law-clean per placement; `caps_mismatch` fires on a mis-profiled sim; the `efr_tcr`
       autoflow arm runs end-to-end; the widened prior re-certified (mismatches 0) and the
       64/128-deep services/byte + fractional-baud gates pinned from fresh measurements.
+
+---
+
+## 12. Proposed extension U10–U15 (from the 2026-10-27 review; a proposal, not milestones)
+
+> **Status: proposal.** Recorded from the 2026-10-27 review of this program. U10–U15 are not
+> milestones of this blueprint: none is scheduled and none has a checklist entry. U0–U9 stand as
+> written, and U0–U2 come first. Each slice below would need its own Goal · Files · Design ·
+> Tests · Gates section, written in this document's form, before it is built.
+
+| Slice | What the review proposes | What it would have to show |
+|---|---|---|
+| U10 | IRQ-based execution: the interrupt lifecycle (arm, deliver, service, re-arm), lowering CPU use where appropriate | THRE stays a hint (§3.2); lower CPU time than the polled driver, measured |
+| U11 | DMA integration: buffer ownership, cancellation, completion safety | the buffer-ownership law below holds under injected cancellation |
+| U12 | Advanced fault detection | a measured improvement in recognition and recovery over conventional rules, first |
+| U13 | Adaptive service scheduling | gains on held-out workloads, with a guaranteed fallback to the certified static plan |
+| U14 | FPGA UART research: configurable FIFOs, oversampling, CRC/SECDED, timestamps, DMA, on soft IP (Core16550, AXI UART 16550, H16750S) | the licences checked first |
+| U15 | Physical hardware qualification: a standing matrix of silicon revisions, bus bindings, clock sources and interrupt configurations | rig access (§9); a part's errata are registry data already (`uart_model.ERRATA`) |
+
+**Laws and constraints the proposal carries.**
+- *Buffer ownership* (U11): every transfer buffer moves AVAILABLE → RESERVED → DEVICE_OWNED →
+  COMPLETING → RETIRED → AVAILABLE; DEVICE_OWNED(B) implies no reuse of B; a cancellation is a
+  transition request, never proof that the device stopped. The review cites Linux 8250
+  DMA-cancellation patch discussions from 2026-10 as the motivating hazard.
+- *FIFO headroom* on any trigger or service choice: free FIFO slots ≥ ⌈R_bytes × T_service_worst⌉
+  + N_inflight + M_safety. A higher trigger level is legal only if it leaves that headroom, which
+  makes U5's prior choose among legal triggers.
+- *Four things represented independently*: the serial protocol, the register semantics, the bus
+  binding (x86 port I/O, MMIO, AXI4-Lite) and the execution strategy (polled, FIFO-burst, IRQ, DMA,
+  adaptive).
+
+**Metrics.** Useful correct payload bytes per CPU time; latency and its tail; interrupts per KiB;
+copies and bus transactions; data loss and recovery time. CPU cycles per byte and energy per byte
+are hardware-observable — Level B, needing a PMU/RAPL host; the cloud container can produce
+Level A (timing-qualified) evidence only (`docs/BCIR_TARGET_ACCESS.md`).
+
+**Verification and the first experiment.**
+- The verification triad: the reference model, the native implementation, and an independent
+  oracle or assertion set that does not trust the implementation; randomized stimulus with
+  coverage, and deliberate fault injection. OpenTitan's UART DV is the reference methodology.
+- The first advanced experiment: baseline A (a conventional 16550 driver), baseline B (an
+  optimized C driver: FIFO batching, IRQ, DMA where supported) and candidate C (BCIR's compiled,
+  verified, adaptive driver), on the same device model and later the same hardware, with the Linux
+  and Zephyr drivers as external references. BCIR is allowed to lose individual tests.
+- The review's priority order: formal register and buffer-ownership verification and FIFO, IRQ and
+  DMA optimization first; ML fault classification last, and only if it beats deterministic rules.
+
+**Research the review cites** — each cited by the 2026-10-27 review and not independently verified
+here:
+- Engineering Research Express 8, 095231 (2026), DOI 10.1088/2631-8695/ae6617: Hamming ECC,
+  decision-tree fault diagnosis and shadow-channel failover; it reports 99.76% classification at
+  115,200 baud on a Cyclone V.
+- VLSID 2026, DOI 10.1109/VLSID68508.2026.00046: a low-power UART with SECDED.
+- The OpenTitan UART and its DV plan.

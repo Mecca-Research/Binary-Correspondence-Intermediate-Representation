@@ -78,6 +78,9 @@ include = ["bcir*"]
 # raises "cannot read calibrated profile" from close_loop() itself — not
 # only from a test. A package must contain what it registers (L21).
 "bcir.kbcir" = ["tables/*.json"]
+# The UART device model's golden headers, one per placement: its tests read them through the
+# package (`uart_model.read_fixture`), so a wheel without them fails the drift test it registers.
+"bcir.frontends.devices" = ["fixtures/*.h"]
 
 # --- ruff ---------------------------------------------------------------------------
 # Calibrated to be GREEN on the existing tree so the gate catches *regressions*, not the

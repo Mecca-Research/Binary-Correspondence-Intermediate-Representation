@@ -3725,6 +3725,31 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     constants) instead of choosing beside them. The measuring host is this container's (no AMX, no
     AVX512-BF16): a table is the host's that measured it, and names it.
   - The ladder: PX-6 (GPU lowering and synchronization) is a documented skip on this host.
+  UART U0 (2026-10-27): the 16550 device registry -- one model, three placements, the RegMap contract.
+  - `bcir/frontends/devices/uart_model.py` (blueprint slice U0, oracle rail): the normative register
+    table (twelve registers over eight slots, their fields, the IIR priority ladder), the placements
+    `pc16550d`, `core16550_apb` and `axi16550` with the U8 capability fields at their defaults,
+    `emit_header` (an offset per register, a shift and mask per field, the RX trigger enum by byte
+    value, the `uart_regmap_contract` literal), the RegMap contract and its law, the placement
+    record's own law and the baud formula. `runtime/c/uart16550_regs.h` and a golden header per
+    placement are generated from it and drift-guarded, and the wheel ships the golden headers.
+  - Checked page by page against the blueprint's sources (`uart_model.PROVENANCE`) and held to their
+    worked examples, two blueprint facts were wrong and are corrected: FCR gating holds on every
+    documented part -- it is the PC16550D's own sentence (p.22) -- not on Core16550 alone, and
+    FCR[5:4] are reserved (`fcr_impl_mask` 0xCF, not 0xFF). The documents' own errors are recorded,
+    not adopted: PC16550D Table 4's 920 for 960 and 0.628 for 0.629, Core16550 Table 1-6's "percent"
+    errors that are deviations in baud, and SLLZ058A's three (bit periods printed in milliseconds,
+    Table 2's tenfold rates, Tables 3 and 4 decrementing the unrounded divisor).
+  - Errata as registry data: `Erratum`, `ERRATA` (TI SLLZ058A: short STOP bits on the TL16C752C,
+    TL16C754C and TL16C2752) and `UartPlacement.errata`, empty on every U0 placement and rendering
+    nothing. Its witness recomputes the erratum's four tables from clock/(16 x divisor) and holds the
+    cells that disagree to exactly the cells its provenance notes cover.
+  - Tests: `bcir/tests/test_uart_model.py`, the five the blueprint names and the module's own
+    witnesses; the C twin compiles each placement's header and prints the oracle's parity summary
+    line. `uart-model.json` UM1-UM23, 23 of 23 caught, each by its own test. The blueprint gained a
+    proposal section (U10-U15, from the 2026-10-27 review; not milestones).
+  - Not in this slice: the law-rail half (the `bcir.regmap_contract` op, the `-bcir-verify` clause,
+    its lit negatives and `check_passes.sh` stanza), which needs the MLIR rail built.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models
