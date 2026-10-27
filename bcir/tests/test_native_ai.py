@@ -11,8 +11,10 @@ import os
 import random
 import shutil
 import struct
+import subprocess
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 from bcir.frontends.models.model_microbench import run_bounded_model_microbench_native
 from bcir.frontends.models.weights_io import write_q8_decoder
@@ -787,6 +789,110 @@ def test_native_q15_returns_fewer_matches_than_asked_when_fewer_are_admitted():
     query = tuple((coordinate * 4409) % 65536 - 32768 for coordinate in range(9))
     index = NativeOptimizationIndex(native, memory)
     assert len(index.query(query, top_k=3, active_facts=(facts[0],))) == 3
+
+
+#: The JCC-erratum mitigation as each compiler spells it, on x86-64 (M18).
+_MITIGATION = {
+    "clang": "-mbranches-within-32B-boundaries",
+    "gcc": "-Wa,-mbranches-within-32B-boundaries",
+}
+
+
+def test_the_kernels_library_takes_its_units_options_from_the_manifest():
+    """M18: the native AI library's command carries its unit's options as the compiler resolves
+    them -- on x86-64 the JCC-erratum mitigation in that compiler's own spelling, on another
+    machine none -- and the build stamp, which hashes that command, moves with them, so a library
+    built without them is never reused as one built with them."""
+    out = Path("libbcir_ai_kernels.so")
+    digests = {}
+    for family, machine in (("clang", "x86_64"), ("gcc", "x86_64"), ("clang", "aarch64")):
+        with mock.patch("bcir.toolchain.compiler_identity", return_value=(family, machine)):
+            command = NativeAIKernels._compile_command("cc", out)
+            digests[family, machine] = NativeAIKernels._input_digest("cc")
+        mitigations = [a for a in command if "branches-within-32B-boundaries" in a]
+        assert mitigations == ([_MITIGATION[family]] if machine == "x86_64" else []), command
+        assert command.count("-ffp-contract=off") == 1, "a flag the manifest repeats is passed once"
+    assert len(set(digests.values())) == 3, digests
+
+
+def _elf_text_alignment(path: Path) -> int | None:
+    """The .text section's alignment in a 64-bit little-endian ELF object, None for any other."""
+    data = path.read_bytes()
+    if data[:4] != b"\x7fELF" or data[4:6] != b"\x02\x01":
+        return None
+    (shoff,) = struct.unpack_from("<Q", data, 0x28)
+    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 0x3A)
+
+    def header(index: int) -> tuple:
+        return struct.unpack_from("<IIQQQQIIQQ", data, shoff + index * shentsize)
+
+    names = header(shstrndx)[4]
+    for index in range(shnum):
+        sh = header(index)
+        start = names + sh[0]
+        if data[start : data.index(b"\0", start)] == b".text":
+            return sh[8]
+    return None
+
+
+def test_the_kernels_unit_compiles_with_the_mitigation_where_its_options_name_it():
+    """L11: the manifest's options reach the kernels' code. On an x86-64 host the kernel unit built
+    with its unit's options takes the compiler's own spelling of the JCC-erratum mitigation, and
+    the assembler -- padding every branch off a 32-byte boundary -- aligns its text to 32 bytes
+    where the unit built without them aligns it to 16; elsewhere the options name no mitigation."""
+    if _CC is None:
+        return
+    from bcir.toolchain import build_units, compiler_identity, unit_options
+
+    family, machine = compiler_identity(_CC)
+    own = unit_options(["bcir_ai_kernels.c"], _CC)
+    mitigations = [f for f in own if "branches-within-32B-boundaries" in f]
+    if machine != "x86_64":
+        assert mitigations == [], own
+        return
+    assert mitigations == [_MITIGATION[family]], own
+    c = Path(__file__).resolve().parents[2] / "runtime" / "c"
+    with tempfile.TemporaryDirectory() as tmp:
+        aligned = {}
+        for name, extra in (("without", []), ("with", own)):
+            obj = Path(tmp) / f"{name}.o"
+            build_units(
+                [_CC, "-std=c11", "-O2", "-ffp-contract=off", *extra, "-I", str(c), "-c",
+                 str(c / "bcir_ai_kernels.c"), "-o", str(obj)],
+                f"the AI kernels {name} their unit's options",
+                timeout=300,
+            )  # fmt: skip
+            aligned[name] = _elf_text_alignment(obj)
+    if aligned["without"] is None:
+        return  # not an ELF object (a COFF or Mach-O host): the alignment is read from ELF alone
+    assert aligned == {"without": 16, "with": 32}, aligned
+
+
+def test_the_model_microbenchmark_times_the_kernels_as_the_manifest_builds_them():
+    """M18: the microbenchmark compiles the kernels it times with their unit's options -- on x86-64
+    the JCC-erratum mitigation -- read from the manifest, not spelled beside its own flags."""
+    for family, machine in (("gcc", "x86_64"), ("clang", "x86_64"), ("gcc", "aarch64")):
+        built = []
+
+        def refuse(command, *, _built=built, **kwargs):
+            _built.append(command)
+            return subprocess.CompletedProcess(command, 1, "", "refused by the test")
+
+        with (
+            mock.patch("bcir.toolchain.compiler_identity", return_value=(family, machine)),
+            mock.patch("bcir.frontends.models.model_microbench.subprocess.run", side_effect=refuse),
+        ):
+            try:
+                run_bounded_model_microbench_native(
+                    dimension=8, repeats=3, weight_format="source", cc="cc"
+                )
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError("the refused build ran")
+        assert len(built) == 1, built
+        mitigations = [a for a in built[0] if "branches-within-32B-boundaries" in a]
+        assert mitigations == ([_MITIGATION[family]] if machine == "x86_64" else []), built[0]
 
 
 def test_native_model_microbench_is_bounded_and_emits_typed_intervals():

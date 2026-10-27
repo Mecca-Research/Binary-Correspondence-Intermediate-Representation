@@ -34,7 +34,7 @@
   {
    "label": "FC4 contraction turned back on read as the unscoped fast spelling alone",
    "path": "tools/build/manifest.py",
-   "old": "CONTRACTION_ON = re.compile(r\"^(?:(?:gcc|clang):)?-ffp-contract=(?!off$)\\S*$\")\n",
+   "old": "CONTRACTION_ON = re.compile(r\"^(?:x86_64:)?(?:(?:gcc|clang):)?-ffp-contract=(?!off$)\\S*$\")\n",
    "new": "CONTRACTION_ON = re.compile(r\"^-ffp-contract=fast$\")\n",
    "expects": "test_every_injected_violation_is_a_finding"
   },

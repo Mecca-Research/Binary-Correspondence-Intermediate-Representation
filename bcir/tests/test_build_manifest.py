@@ -47,6 +47,9 @@ sanitizer_tool = _load_tool("sanitizer")
 
 #: The C compiler M17's witness builds with (None: it returns early); a capability check_tests.py reads.
 _CC = __import__("bcir.toolchain", fromlist=["host_c_compiler"]).host_c_compiler()
+#: CMake, for the scopes' twin under `cmake -P` (None: that witness returns early); a capability
+#: check_tests.py reads.
+_CMAKE = shutil.which("cmake")
 
 _TREE = None
 
@@ -430,6 +433,68 @@ _FAULTS = (
             "options", ["-O3", "clang:-ffp-contract=on"]
         ),
     ),
+    (
+        "M17",
+        "contraction turned back on for one target alone",
+        lambda m: m["libraries"]["bcir_streampack"]["options"].append("x86_64:-ffp-contract=fast"),
+    ),
+    (
+        "M6",
+        "an option scoped to its compiler before its target (one spelling: x86_64: first)",
+        lambda m: m["libraries"]["bcir_base"].__setitem__("options", ["gcc:x86_64:-Wa,-x"]),
+    ),
+    (
+        "M6",
+        "an option scoped to a target the grammar does not know",
+        lambda m: m["libraries"]["bcir_base"].__setitem__("options", ["aarch64:-mcpu=native"]),
+    ),
+    (
+        "M14",
+        "a variant's option scoped twice to its target (M6's grammar, a variant's flags)",
+        lambda m: m["variants"]["test_ring_O3"].__setitem__("options", ["x86_64:x86_64:-O3"]),
+    ),
+    (
+        "M18",
+        "the decoder's units without clang's spelling of the mitigation",
+        lambda m: m["libraries"]["bcir_models"]["options"].remove(
+            "x86_64:clang:-mbranches-within-32B-boundaries"
+        ),
+    ),
+    (
+        "M18",
+        "the decoder's units without GCC's spelling of the mitigation",
+        lambda m: m["libraries"]["bcir_models"]["options"].remove(
+            "x86_64:gcc:-Wa,-mbranches-within-32B-boundaries"
+        ),
+    ),
+    (
+        "M18",
+        "the mitigation unscoped to x86-64 (an aarch64 compiler refuses it)",
+        lambda m: m["libraries"]["bcir_models"]["options"].append(
+            "clang:-mbranches-within-32B-boundaries"
+        ),
+    ),
+    (
+        "M18",
+        "clang's spelling scoped to GCC, whose driver knows no such option",
+        lambda m: m["libraries"]["bcir_models"]["options"].append(
+            "x86_64:gcc:-mbranches-within-32B-boundaries"
+        ),
+    ),
+    (
+        "M18",
+        "the mitigation on a unit beside the decoder's",
+        lambda m: m["libraries"]["bcir_decoder_training"]["options"].append(
+            "x86_64:clang:-mbranches-within-32B-boundaries"
+        ),
+    ),
+    (
+        "M18",
+        "a variant passing the mitigation",
+        lambda m: m["variants"]["test_ring_O3"]["options"].append(
+            "x86_64:gcc:-Wa,-mbranches-within-32B-boundaries"
+        ),
+    ),
 )
 
 
@@ -440,6 +505,143 @@ def test_every_injected_violation_is_a_finding():
         assert any(f.startswith(f"{code}:") for f in findings), (
             f"{code} ({what}) did not fire: {findings}"
         )
+
+
+def test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation():
+    """M18's readers over the speed builds' own texts: each names a decoder source, calls
+    unit_options and spells no mitigation; the same text with the call renamed reads as not taking
+    the manifest's options, and with the flag written beside its flags as a spelling of its own. A
+    docstring that mentions the flag is prose, not a build, and a gate's comment line is no build
+    either. The tree as it is has no spelling outside the manifest, this checker and the tests."""
+    decoder = set(_manifest()["libraries"]["bcir_models"]["sources"])
+    for rel in manifest_tool.SPEED_BUILDS:
+        text = (_ROOT / rel).read_text(encoding="utf-8")
+        named, calls, spells = manifest_tool.jcc_facts(text)
+        assert named & decoder and calls and not spells, (rel, named, calls, spells)
+        assert manifest_tool.jcc_facts(text.replace("unit_options(", "unit_opts("))[1] is False
+        spelled = text + '\nEXTRA = ["-O2", "-mbranches-within-32B-boundaries"]\n'
+        assert manifest_tool.jcc_facts(spelled)[2] is True, rel
+    assert manifest_tool._spells_jcc("x86_64:clang:-mbranches-within-32B-boundaries")
+    assert manifest_tool._spells_jcc("-O2 -Wa,-mbranches-within-32B-boundaries")
+    assert not manifest_tool._spells_jcc(
+        "the JCC-erratum mitigation (-mbranches-within-32B-boundaries) the decoder takes"
+    )
+    assert manifest_tool.gate_spells_jcc("cc -O2 -mbranches-within-32B-boundaries -c x.c\n")
+    assert not manifest_tool.gate_spells_jcc("# cc -mbranches-within-32B-boundaries\ncc -c x.c\n")
+    tree = _tree()
+    assert tree.jcc_spellings == [], tree.jcc_spellings
+    assert sorted(tree.speed_builds) == sorted(manifest_tool.SPEED_BUILDS)
+
+
+def test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options():
+    """M18 over the tree: a speed build that stops calling unit_options, one that names no decoder
+    source any more (an entry gone stale), one that is missing, and a module or gate script that
+    spells the mitigation itself -- each a finding naming it; the tree as it is, none."""
+    tree, manifest = _tree(), _manifest()
+    assert not [f for f in manifest_tool.check(manifest, tree) if f.startswith("M18:")]
+    rel = "bcir/kbcir/native_ai.py"
+    named, _calls = tree.speed_builds[rel]
+    cases = {
+        "without bcir.toolchain.unit_options": (named, False),
+        "names none of": (set(), True),
+        "is missing": None,
+    }
+    for what, facts in cases.items():
+        mutant = copy.copy(tree)
+        mutant.speed_builds = {**tree.speed_builds, rel: facts}
+        findings = [f for f in manifest_tool.check(manifest, mutant) if f.startswith("M18:")]
+        assert any(what in f and rel in f for f in findings), (what, findings)
+    for where in ("tools/models/run_real_model_gate.py", "tools/c/check_runtime.sh"):
+        mutant = copy.copy(tree)
+        mutant.jcc_spellings = [where]
+        findings = manifest_tool.check(manifest, mutant)
+        assert any(f.startswith(f"M18: {where} spells the JCC-erratum") for f in findings), findings
+
+
+def test_m18_finds_every_module_and_gate_that_spells_the_mitigation_itself():
+    """The checker's tree, read over a scratch root: a module that passes the flag beside its own
+    flags and a gate line that does are each a spelling; a docstring that mentions it, a gate's
+    comment, the tests and the checker are not; and each speed build is read where it is, missing
+    where it is not."""
+    planted = {
+        "bcir/stray.py": 'FLAGS = ["-O2", "-mbranches-within-32B-boundaries"]\n',
+        "tools/models/stray_gate.py": 'EXTRA = "x86_64:gcc:-Wa,-mbranches-within-32B-boundaries"\n',
+        "bcir/prose.py": '"""mentions -mbranches-within-32B-boundaries in prose"""\n',
+        "bcir/tests/test_planted.py": 'X = ["-mbranches-within-32B-boundaries"]\n',
+        "tools/build/manifest.py": 'J = ("x86_64:clang:-mbranches-within-32B-boundaries",)\n',
+        "tools/c/check_runtime.sh": "cc -O2 -Wa,-mbranches-within-32B-boundaries -c x.c\n",
+        "tools/c/check_memory_discipline.sh": "# cc -mbranches-within-32B-boundaries\ncc -c x.c\n",
+        "bcir/kbcir/native_ai.py": 'S = "bcir_ai_kernels.c"\nunit_options([S], "cc")\n',
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for rel, text in planted.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        tree = manifest_tool.Tree(root, presets=None)
+    assert sorted(tree.jcc_spellings) == [
+        "bcir/stray.py", "tools/c/check_runtime.sh", "tools/models/stray_gate.py"
+    ], tree.jcc_spellings  # fmt: skip
+    assert tree.speed_builds == {
+        "bcir/kbcir/native_ai.py": ({"bcir_ai_kernels.c"}, True),
+        "bcir/frontends/models/model_microbench.py": None,
+        "tools/models/run_qualification.py": None,
+    }, tree.speed_builds
+
+
+def test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do():
+    """bcir_manifest_resolve (cmake/BCIRManifest.cmake) under `cmake -P` gives every compiler and
+    target processor the flags bcir.toolchain.manifest_options gives that family and machine, over
+    the scopes' table and the decoder's own options -- the twin held to one truth (laws.md L14) --
+    reads a joined list's empty elements (a closure's options beside a unit's own none, as
+    runtime/c/CMakeLists.txt joins a fuzzer's) as no option, and refuses at configure what the
+    grammar refuses."""
+    cmake = _CMAKE
+    if cmake is None:
+        return  # no CMake visible here; the CMake builds themselves need it
+    from bcir.toolchain import machine_of, manifest_options
+
+    module = (_ROOT / "cmake" / "BCIRManifest.cmake").as_posix()
+    options = [
+        "-ffp-contract=off", "gcc:-Wno-x", "clang:-Wno-y", "x86_64:-mavx2",
+        *_manifest()["libraries"]["bcir_models"]["options"],
+    ]  # fmt: skip
+    ids = {"GNU": "gcc", "Clang": "clang", "AppleClang": "clang"}
+    processors = ("x86_64", "AMD64", "amd64", "aarch64", "arm64")
+    lines = [f'include("{module}")', f'set(opts "{";".join(options)}")']
+    lines += [
+        'bcir_manifest_resolve(r ";${opts};;" "Clang" "x86_64")',
+        'message("joined Clang x86_64=${r}")',
+    ]
+    for cid in ids:
+        for processor in processors:
+            lines += [
+                f'bcir_manifest_resolve(r "${{opts}}" "{cid}" "{processor}")',
+                f'message("{cid} {processor}=${{r}}")',
+            ]
+    with tempfile.TemporaryDirectory() as tmp:
+        script = Path(tmp) / "resolve.cmake"
+        script.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        run = subprocess.run(
+            [cmake, "-P", str(script)], capture_output=True, text=True, timeout=120
+        )
+        assert run.returncode == 0, run.stderr
+        got = dict(line.split("=", 1) for line in run.stderr.splitlines() if "=" in line)
+        assert got["joined Clang x86_64"] == got["Clang x86_64"], got
+        for cid, family in ids.items():
+            for processor in processors:
+                value = got[f"{cid} {processor}"]
+                want = manifest_options(options, family, machine_of(processor))
+                assert (value.split(";") if value else []) == want, (cid, processor, value, want)
+        bad = Path(tmp) / "bad.cmake"
+        bad.write_text(
+            f'include("{module}")\nbcir_manifest_resolve(r "gcc:x86_64:-x" GNU x86_64)\n',
+            encoding="utf-8",
+        )
+        refused = subprocess.run(
+            [cmake, "-P", str(bad)], capture_output=True, text=True, timeout=120
+        )
+        assert refused.returncode != 0 and "is not a flag" in refused.stderr, refused.stderr
 
 
 def _writer_with(manifest: dict, tmp: str):
@@ -1077,15 +1279,11 @@ def _fusing_flags(work: Path) -> list[str] | None:
     return ["-ffp-contract=fast", "-mfma"] if has else None
 
 
-def _scoped(options: list[str], family: str) -> list[str]:
-    out = []
-    for option in options:
-        scope, sep, flag = option.partition(":")
-        if not sep:
-            out.append(option)
-        elif scope == family:
-            out.append(flag)
-    return out
+def _scoped(options: list[str], family: str, machine: str) -> list[str]:
+    """A unit's options as BCIR Make and CMake apply them: the one reading of the scopes."""
+    from bcir.toolchain import manifest_options
+
+    return manifest_options(options, family, machine)
 
 
 def _built_from_the_manifest(
@@ -1094,13 +1292,10 @@ def _built_from_the_manifest(
     """`harness` and its library closure compiled source by source as BCIR Make compiles them -- the
     `flags` first, then, with `own`, each source's own manifest unit's options (CMake applies a
     unit's options to its own sources the same way) -- and linked."""
+    from bcir.toolchain import compiler_identity
+
     manifest = _manifest()
-    family = (
-        "clang"
-        if "clang"
-        in subprocess.run([_CC, "--version"], capture_output=True, text=True).stdout.lower()
-        else "gcc"
-    )
+    family, machine = compiler_identity(_CC)
     unit = manifest["harnesses"][harness]
     units = [(source, unit.get("options", [])) for source in unit["sources"]]
     for lib in manifest_tool.closure(manifest, "harnesses", harness)["libraries"]:
@@ -1111,7 +1306,13 @@ def _built_from_the_manifest(
     c_dir = _ROOT / "runtime" / "c"
     objects = []
     for source, options in units:
-        command = [_CC, *flags, *(_scoped(options, family) if own else []), "-I", str(c_dir)]
+        command = [
+            _CC,
+            *flags,
+            *(_scoped(options, family, machine) if own else []),
+            "-I",
+            str(c_dir),
+        ]
         # an object is shared only by builds that compile it the same way: keyed by its command, so
         # a harness never links an object compiled with another unit's options
         key = hashlib.sha256("\0".join(command).encode()).hexdigest()[:16]

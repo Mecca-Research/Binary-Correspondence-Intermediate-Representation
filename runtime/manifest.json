@@ -7,7 +7,10 @@
     "Sources are basenames under runtime/c (seam_* kinds: under runtime/cpp). `libraries` names other",
     "units of this file; `link` names system libraries (m, pthread); `class` is the unit's memory",
     "class from runtime/c/MEMORY_CLASSIFICATION.txt, one per library; `options` are GNU-style compile",
-    "options the gates pass for that unit (`gcc:`/`clang:` prefixes scope one to that compiler);",
+    "options the gates pass for that unit (`gcc:`/`clang:` prefixes scope one to that compiler,",
+    "and an `x86_64:` before them to x86-64 targets: bcir.toolchain.manifest_options is the one",
+    "reading); the decoder's units (bcir_models) take the JCC-erratum mitigation on x86-64, each",
+    "compiler's spelling, in every build the repository times (M18);",
     "the decode and train kernels' library (bcir_streampack) and the harness holding them to the",
     "one-chain loops (test_decode) pass -ffp-contract=off, as every build of those sources must (M17);",
     "`max_len` is libFuzzer's -max_len, absent when unbounded. `sections` are the gate sections that",
@@ -83,7 +86,11 @@
       "sources": ["bcir_q8_model.c", "bcir_q4_kernel.c", "bcir_ai_kernels.c", "bcir_llama.c", "bcir_decoder_gem.c"],
       "libraries": ["bcir_streampack", "bcir_base"],
       "link": ["m"],
-      "options": ["-ffp-contract=off"]
+      "options": [
+        "-ffp-contract=off",
+        "x86_64:clang:-mbranches-within-32B-boundaries",
+        "x86_64:gcc:-Wa,-mbranches-within-32B-boundaries"
+      ]
     },
     "bcir_decoder_training": {
       "class": "hosted_tool",

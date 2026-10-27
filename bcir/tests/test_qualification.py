@@ -30,6 +30,7 @@ import json
 import math
 import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from unittest import mock
@@ -434,6 +435,42 @@ def test_each_rail_is_one_part_and_an_absent_part_is_not_a_zero():
             assert message in str(error), (message, str(error))
         else:
             raise AssertionError(f"accepted: {message}")
+
+
+def test_the_qualification_times_the_decoder_as_the_manifest_builds_it():
+    """M18: bcir-qualify -- whose latency the qualification records -- compiles with the manifest's
+    options for the units it compiles, their union in its one command: on x86-64 the JCC-erratum
+    mitigation the decoder's units take, in the compiler's own spelling; on another machine none;
+    and the callgrind build the same."""
+    harness = _tool("run_qualification")
+    spelling = {
+        "clang": "-mbranches-within-32B-boundaries",
+        "gcc": "-Wa,-mbranches-within-32B-boundaries",
+    }
+    for family, machine in (("clang", "x86_64"), ("gcc", "x86_64"), ("gcc", "aarch64")):
+        for callgrind in (False, True):
+            built = []
+
+            def refuse(command, *, _built=built, **kwargs):
+                _built.append(command)
+                return subprocess.CompletedProcess(command, 1, "", "refused by the test")
+
+            with (
+                tempfile.TemporaryDirectory() as tmp,
+                mock.patch("bcir.toolchain.host_c_compiler", return_value="cc"),
+                mock.patch("bcir.toolchain.compiler_identity", return_value=(family, machine)),
+                mock.patch.object(harness.subprocess, "run", side_effect=refuse),
+            ):
+                try:
+                    harness.build_qualify(Path(tmp), callgrind=callgrind)
+                except harness.QualificationError:
+                    pass
+                else:
+                    raise AssertionError("the refused build ran")
+            assert len(built) == 1, built
+            mitigations = [a for a in built[0] if "branches-within-32B-boundaries" in a]
+            want = [spelling[family]] if machine == "x86_64" else []
+            assert mitigations == want, (family, machine, callgrind, built[0])
 
 
 def test_the_callgrind_build_measures_one_run_of_each_rail():

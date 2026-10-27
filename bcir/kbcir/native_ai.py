@@ -23,7 +23,7 @@ from array import array
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..toolchain import host_link_args
+from ..toolchain import host_link_args, unit_options
 from .optimization_memory import OptimizationMatch, OptimizationMemory, _prepare_optimization_query
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -185,8 +185,13 @@ class NativeAIKernels:
 
     @staticmethod
     def _compile_command(compiler: str, output: Path) -> list[str]:
-        """The exact argv a build would run. One definition, so the stamp cannot drift."""
-        command = [compiler, *_COMPILE_FLAGS]
+        """The exact argv a build would run. One definition, so the stamp cannot drift: the flags,
+        then the manifest's options for the kernels' unit under this compiler (M18,
+        bcir.toolchain.unit_options -- on x86-64 the JCC-erratum mitigation, without which their
+        vector loops ran up to x1.35 slower at some placements on the Cascade Lake core
+        KERNEL-ALIGN measured)."""
+        own = [f for f in unit_options([_SOURCE.name], compiler) if f not in _COMPILE_FLAGS]
+        command = [compiler, *_COMPILE_FLAGS, *own]
         if os.name != "nt":
             command.append("-fPIC")
         command.extend(
@@ -202,9 +207,11 @@ class NativeAIKernels:
         and *every* header beside it, which over-approximates the include graph on
         purpose -- an unrelated header change can only force a needless rebuild, never
         permit a stale reuse. The compiler is identified by its resolved path, size and
-        modification time rather than by running it: a version probe costs ~25 ms
+        modification time rather than by running it each time: a version probe costs ~25 ms
         against a ~1 ms hash, and the recorded output digest below already refuses any
-        library whose bytes are not the ones this stamp was written for.
+        library whose bytes are not the ones this stamp was written for. (The command's
+        manifest options are this compiler's -- its family and machine, asked once a process
+        by bcir.toolchain.compiler_identity.)
 
         Declared scope: a compiler swapped in place at the same path, size and
         nanosecond mtime is not distinguished. Nothing else about the build is out of
