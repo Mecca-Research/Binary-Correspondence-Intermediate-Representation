@@ -7,20 +7,24 @@ signal (so CI never flakes)."""
 
 import json
 import os
+import struct
 import subprocess
 import tempfile
 import time
 from shutil import which
+from unittest import mock
 
 import bcir.silicon as silicon
 
 from bcir.silicon import (
     Counters,
     CounterSampler,
+    CpuFreq,
     HwSample,
     cache_topology,
     cpufreq_info,
     perf_counters_available,
+    pmu_counts,
     read_hw_counters,
     sample_into_ring,
     summary,
@@ -294,3 +298,236 @@ def test_dvfs_actuation_is_a_safe_noop_without_a_governor():
 
     res = actuate([FreqTarget(phase_id=0, clock_q8=192, target_khz=1_000_000, settable=False)], fq)
     assert res[0].applied is False and "governor" in res[0].reason.lower()
+
+
+# --- null, never zero: the PMU's attr and counts, the frequency, the kernel's integers ----------
+#
+# A counter, a clock or an energy figure this host cannot read is None -- never 0, never a nearby
+# number. These drive each failure through silicon's module-level hooks (`_perf_syscall`,
+# `_perf_ioctl`, `_perf_read`, `_perf_close`, `_read`), so they hold on every host: one with no PMU
+# (this guest's perf_event_open says ENOENT), a CI runner that is not root, a root workstation.
+
+
+def _reading(value, enabled=1_000, running=1_000):
+    """One counter's read() with TOTAL_TIME_ENABLED | TOTAL_TIME_RUNNING: value, then the times."""
+    return struct.pack("=QQQ", value, enabled, running)
+
+
+class _FakePmu:
+    """Three counters that open as fds 101 (cycles), 102 (instructions) and 103 (cache misses);
+    each read() gives what `readings` holds for its fd -- bytes, or an exception to raise. A config
+    in `refuse` does not open."""
+
+    _FDS = {0: 101, 1: 102, 3: 103}
+
+    def __init__(self, readings=None, refuse=()):
+        self.readings, self.refuse, self.closed = dict(readings or {}), set(refuse), []
+
+    def _open(self, config):
+        return None if config in self.refuse else self._FDS[config]
+
+    def _read(self, fd):
+        got = self.readings[fd]
+        if isinstance(got, BaseException):
+            raise got
+        return got
+
+    def __enter__(self):
+        self._patches = [
+            mock.patch.object(silicon, "_perf_open", self._open),
+            mock.patch.object(silicon, "_perf_ioctl", lambda fd, request: None),
+            mock.patch.object(silicon, "_perf_read", self._read),
+            mock.patch.object(silicon, "_perf_close", self.closed.append),
+        ]
+        for p in self._patches:
+            p.start()
+        return self
+
+    def __exit__(self, *exc):
+        for p in reversed(self._patches):
+            p.stop()
+
+
+def test_the_perf_attr_asks_for_a_user_space_counter():
+    """perf_event_attr as include/uapi/linux/perf_event.h lays it out: the flag word at offset 40
+    holds disabled (bit 0), exclude_kernel (bit 5) and exclude_hv (bit 6) -- `perf stat -e cycles:u`,
+    the only counter an unprivileged process may open at perf_event_paranoid=2 -- and never
+    exclude_guest (bit 20), which counted the kernel and had every unprivileged open refused. The
+    read format asks for the enabled and running times, so a count can be told from no count."""
+    for config in (0, 1, 3):
+        attr = silicon._perf_attr(config)
+        assert len(attr) == 72  # PERF_ATTR_SIZE_VER1: through bp_len
+        assert struct.unpack_from("=IIQ", attr, 0) == (0, 72, config)  # PERF_TYPE_HARDWARE
+        read_format, flags = struct.unpack_from("=QQ", attr, 32)
+        assert flags == 0b110_0001, hex(flags)
+        assert not flags >> 20 & 1
+        assert read_format == 0b11
+
+
+def test_perf_open_passes_that_attr_and_a_refusal_is_none():
+    seen = []
+
+    def refuse(attr):
+        seen.append(bytes(attr))
+        return -1
+
+    with mock.patch.object(silicon, "_perf_syscall", refuse):
+        assert silicon._perf_open(1) is None
+    assert seen == [silicon._perf_attr(1)]
+    with mock.patch.object(silicon, "_perf_syscall", lambda attr: 7):
+        assert silicon._perf_open(1) == 7
+    with (
+        mock.patch.object(silicon, "_perf_syscall", lambda attr: 7),
+        mock.patch.object(silicon, "_BYTE_ORDER", "big"),  # bitfields allocated from the top
+    ):
+        assert silicon._perf_open(1) is None
+
+
+def test_a_counter_that_cannot_be_read_is_none_never_zero():
+    full = {101: _reading(2_000), 102: _reading(3_000)}
+    cases = {
+        "a read that fails": OSError(5, "Input/output error"),
+        "an empty read": b"",
+        "a reading cut short": _reading(7)[:16],
+        "a counter the kernel never ran": _reading(0, 1_000, 0),
+        "a counter never enabled": _reading(0, 0, 0),
+        "a counter multiplexed for half its time": _reading(400, 1_000, 500),
+    }
+    for label, bad in cases.items():
+        runs = []
+        with _FakePmu({**full, 103: bad}) as pmu:
+            hw = read_hw_counters(lambda runs=runs: runs.append(1))
+        assert runs == [1], label  # the work ran exactly once
+        assert (hw.cycles, hw.instructions, hw.cache_misses) == (2_000, 3_000, None), label
+        assert hw.ipc_milli == 1_500, label
+        assert pmu_counts(hw) is None, label
+        assert sorted(pmu.closed) == [101, 102, 103], label
+    with _FakePmu({**full, 103: _reading(7)}) as pmu:
+        hw = read_hw_counters(lambda: None)
+    assert pmu_counts(hw) == (2_000, 3_000, 7) and sorted(pmu.closed) == [101, 102, 103]
+
+
+def test_a_counter_that_cannot_be_opened_runs_nothing_and_closes_the_rest():
+    runs = []
+    with _FakePmu({}, refuse={3}) as pmu:
+        assert read_hw_counters(lambda: runs.append(1)) is None
+    assert runs == [] and sorted(pmu.closed) == [101, 102]
+
+
+def test_no_counts_means_no_ipc():
+    assert HwSample(cycles=None, instructions=None, cache_misses=None).ipc_milli is None
+    assert HwSample(cycles=None, instructions=5, cache_misses=1).ipc_milli is None
+    assert HwSample(cycles=2_000, instructions=None, cache_misses=1).ipc_milli is None
+    assert (
+        HwSample(cycles=0, instructions=5, cache_misses=1).ipc_milli is None
+    )  # cycles never moved
+    assert HwSample(cycles=2_000, instructions=3_000, cache_misses=None).ipc_milli == 1_500
+    assert pmu_counts(None) is None
+    assert pmu_counts(HwSample(cycles=2_000, instructions=3_000, cache_misses=0)) == (
+        2_000,
+        3_000,
+        0,
+    )
+
+
+def test_the_ring_and_the_dna_take_the_os_signals_when_a_count_is_missing():
+    """A record is all PMU or all OS: with a count missing, the ring and silicon_dna carry the OS
+    signals for both cycles and misses, and silicon_dna claims no 'pmu' provenance."""
+    lap = Counters(wall_ns=73, cpu_ns=50, minor_faults=4, major_faults=1, vol_ctx=0, invol_ctx=0)
+
+    class FixedSampler:
+        def lap(self):
+            return lap
+
+    for sample, want, pmu in (
+        (HwSample(cycles=2_000, instructions=3_000, cache_misses=None), (50, 5), False),
+        (HwSample(cycles=None, instructions=3_000, cache_misses=7), (50, 5), False),
+        (HwSample(cycles=2_000, instructions=3_000, cache_misses=7), (2_000, 7), True),
+    ):
+        runs = []
+
+        def counted(work, sample=sample):
+            work()
+            return sample
+
+        with (
+            mock.patch.object(silicon, "CounterSampler", FixedSampler),
+            mock.patch.object(silicon, "read_hw_counters", counted),
+        ):
+            ring = TelemetryRing(capacity=4)
+            sample_into_ring(ring, claim_id=3, work=lambda runs=runs: runs.append(1))
+            rec = ring.read_one()
+            dna, provenance = silicon.silicon_dna(lambda runs=runs: runs.append(1), claim_id=3)
+        assert runs == [1, 1]
+        assert (rec.cycles, rec.misses) == want and (dna.cycles, dna.misses) == want
+        assert ("pmu" in provenance) is pmu
+
+
+def test_kernel_text_integers_are_read_in_their_own_grammar():
+    """sysfs writes ASCII digits (a '-' where a value may be negative); int() takes a larger
+    language -- '+5', '1_000', ' 5', '٣' -- and float() takes 'inf' and 'nan'."""
+    for text, want in (("0", 0), ("2800000", 2_800_000), ("007", 7)):
+        assert silicon._decimal(text) == want
+    for text in (
+        "",
+        "+5",
+        "-5",
+        "1_000",
+        " 5",
+        "5 ",
+        "inf",
+        "nan",
+        "0x10",
+        "1e3",
+        "2.8",
+        "٣",
+        "５",
+    ):
+        assert silicon._decimal(text) is None, text
+    assert silicon._decimal("-5000", signed=True) == -5_000
+    for text in ("--5", "+5", "-", "-1_0", "- 5"):
+        assert silicon._decimal(text, signed=True) is None, text
+    assert silicon._decimal(None) is None
+
+
+def test_the_nominal_frequency_is_cpufreqs_or_none():
+    """cpufreq's cpuinfo_max_freq, or None: never /proc/cpuinfo's 'cpu MHz', which is the current
+    or hypervisor-reported clock (on this KVM guest, 2800.198: the TSC's rate), not a nominal one."""
+    files = {"/proc/cpuinfo": "processor\t: 0\ncpu MHz\t\t: 2800.198\n"}  # offered, never taken
+    fq_dir = f"{silicon._SYS_CPU}/cpufreq"
+    with mock.patch.object(silicon, "_read", files.get):
+        assert silicon.cpufreq_info().nominal_khz is None and not silicon.cpufreq_info().available
+        files[f"{fq_dir}/cpuinfo_max_freq"] = "2800000"
+        files[f"{fq_dir}/scaling_available_frequencies"] = "800000 1600000 2800000"
+        fq = silicon.cpufreq_info()
+        assert fq.nominal_khz == 2_800_000 and fq.steps_khz == (800_000, 1_600_000, 2_800_000)
+        files[f"{fq_dir}/cpuinfo_max_freq"] = "2_800_000"
+        files[f"{fq_dir}/scaling_available_frequencies"] = "800000 1_600_000"
+        fq = silicon.cpufreq_info()
+        assert fq.nominal_khz is None and fq.steps_khz == ()
+        files[f"{fq_dir}/cpuinfo_max_freq"] = "0"
+        assert silicon.cpufreq_info().nominal_khz is None
+        assert silicon.summary()["cpu_nominal_khz"] is None
+
+
+def test_dvfs_quantizes_to_a_given_frequency_table():
+    """The quantization on every host, against a stated table: a guest with no cpufreq has no
+    frequency of its own to anchor to, so the host-read test above it skips there."""
+    fq = CpuFreq(
+        nominal_khz=2_800_000,
+        steps_khz=(800_000, 1_600_000, 2_400_000, 2_800_000),
+        governor=None,
+        actuatable=False,
+    )
+    m = vector_add(1 << 16)
+    plan = plan_dvfs(m, optimize(m, AVX, Theta.cool()), Theta.cool())
+    targets = quantize_to_silicon(plan, fq)
+    assert len(targets) == len(plan.decisions)
+    for d, t in zip(plan.decisions, targets):
+        want = fq.nominal_khz * d.clock_q8 // NOMINAL
+        assert t.target_khz in fq.steps_khz
+        assert all(abs(t.target_khz - want) <= abs(s - want) for s in fq.steps_khz)
+        assert t.settable is False
+    results = actuate(targets, fq)
+    assert all(not r.applied and r.reason and r.observed_khz is None for r in results)
+    assert quantize_to_silicon(plan, CpuFreq(None, (), None, False)) == []

@@ -836,3 +836,35 @@ def test_ot01s_verdict_is_every_routes():
                 assert not any("P-EAGER" in u for u in rec["labels"]["unsupported"])
     finally:
         ot_torch.p_eager_block = saved
+
+
+def test_the_two_python_perf_probes_ask_for_the_same_user_space_counter():
+    """ot_contract's PMU probe spells its own perf_event_attr; bcir.silicon spells the other. Both
+    set exclude_kernel (bit 5) and exclude_hv (bit 6) of the flag word at offset 40 and leave
+    exclude_guest (bit 20) clear: one rule, two spellings, held to each other. The syscall is a fake
+    that refuses, so the probe runs on every host and opens nothing."""
+    import types
+    from unittest import mock
+
+    from bcir import silicon
+
+    seen = []
+
+    class Refusing:
+        def syscall(self, nr, attr, *rest):
+            seen.append(bytes(attr))
+            return -1
+
+    with (
+        mock.patch("ctypes.CDLL", lambda *a, **k: Refusing()),
+        mock.patch.object(oc.sys, "platform", "linux"),
+        mock.patch.object(
+            oc.os, "uname", lambda: types.SimpleNamespace(machine="x86_64"), create=True
+        ),
+    ):
+        assert oc._pmu_readable() is False
+    assert len(seen) == 1
+    theirs = int.from_bytes(seen[0][40:48], "little")
+    ours = int.from_bytes(silicon._perf_attr(0)[40:48], "little")
+    for flags in (theirs, ours):
+        assert flags >> 5 & 1 and flags >> 6 & 1 and not flags >> 20 & 1, hex(flags)

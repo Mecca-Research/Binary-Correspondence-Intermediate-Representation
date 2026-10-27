@@ -434,7 +434,7 @@ def measure_plans(
     once unmeasured (warm-up, excluded), then `repeats` times under the OS counters, once
     more under the hardware PMU when the host exposes one; the entry carries the host's
     attestation. `work(result)` executes the plan; it is the caller's, as in B1."""
-    from ..silicon import CounterSampler, read_hw_counters
+    from ..silicon import CounterSampler, pmu_counts, read_hw_counters
     from .microbench import host_attestation
     from .realize import optimize
 
@@ -470,6 +470,9 @@ def measure_plans(
                 )
             )
         hardware = read_hw_counters(functools.partial(work, result))
+        # The PMU's counts when it read all three; else the entry's no-PMU zeros (its schema has no
+        # null). `hardware_pmu` stays the host's attestation; the counts are this run's.
+        cycles, instructions, cache_misses = pmu_counts(hardware) or (0, 0, 0)
         out.append(
             MeasuredPlan(
                 program,
@@ -479,9 +482,9 @@ def measure_plans(
                 policy.name,
                 assignment_digest(result),
                 tuple(samples),
-                hardware.cycles if hardware else 0,
-                hardware.instructions if hardware else 0,
-                hardware.cache_misses if hardware else 0,
+                cycles,
+                instructions,
+                cache_misses,
                 attestation["tenancy"],
                 attestation["signals"],
                 bool(attestation["hardware_pmu"]),

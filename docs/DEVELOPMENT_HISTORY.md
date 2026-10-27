@@ -5571,6 +5571,39 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     jumps are a correlate the mitigation removes, and clang's slow placement at 32 holds as many as its fast one at
     0); any other host's figures, or a gain on a core without the erratum, where the padding costs its 2-3% of code;
     aarch64 and Windows timing (the option is x86-64's).
+  SILICON-NULL (2026-10-27): `bcir.silicon`'s PMU flags, and every value it cannot read recorded as None -- never 0,
+    never a nearby number.
+  - The perf flags: `_perf_open` set bit 20 of perf_event_attr's flag word for exclude_kernel; bit 20 is
+    exclude_guest, exclude_kernel bit 5 (include/uapi/linux/perf_event.h). The counter counted the kernel, and at the
+    default perf_event_paranoid=2 an unprivileged open was refused, so a bare-metal host with a PMU read as having
+    none -- and `MeasuredPlan`, whose `hardware_pmu` is the host's attestation, recorded "silicon" with 0 cycles. The
+    attr is now built as bytes (`_perf_attr`, PERF_ATTR_SIZE_VER1): disabled, exclude_kernel and exclude_hv (bits 0, 5
+    and 6, named as constants), the read format asking for the enabled and running times; a big-endian host, whose
+    bitfields the kernel allocates from the top, opens nothing. The other two openers were right and stay as they
+    are: `runtime/c/bcir_asn1_bench.c` sets the struct's named fields, `tools/perf/ot_contract.py` bits 5 and 6.
+  - Null, never zero: a counter read that failed, came back short, was never enabled, never ran, or ran for part of
+    its window (multiplexed) is None (`_perf_count`), and `HwSample.ipc_milli` None unless both counts were read and
+    cycles moved; `pmu_counts` is the one test every record makes before it carries PMU counts, so the telemetry ring
+    and `silicon_dna` carry the PMU's cycles and misses or the OS's pair, never one of each, and claim the `pmu`
+    provenance only for the first. `RaplSampler.lap_uj` gains the range back on a wrap and is None when the range is
+    unreadable or a reading lies past it (it was 0 J), and a lap after a failed read has no start (its energy was the
+    next lap's). `cpufreq_info` has no fallback: `/proc/cpuinfo`'s "cpu MHz" -- the current clock on bare metal, the
+    hypervisor's reported one in a guest (2800.198 MHz here, the TSC's rate) -- was taken for the nominal frequency;
+    without a cpufreq driver the frequency is now None. The kernel's text is read in its own grammar (`_decimal`:
+    ASCII digits, a '-' only for a thermal zone), never `int()`/`float()`, which take '+5', '1_000', 'inf', non-ASCII
+    digits; a scaling table with one malformed entry is no table.
+  - The evidence records (`MeasuredPlan`, `ProviderMeasurement`, `MeasuredScheduleCandidate`) take their counts
+    through `pmu_counts` and keep their schemas' documented zeros when the PMU gave none; giving them a null of their
+    own is a schema change, proposed rather than made here.
+  - Witnesses, host-independent (a PMU-less guest, an unprivileged CI runner, a root workstation alike), through
+    patchable hooks (`_perf_syscall`, `_perf_ioctl`, `_perf_read`, `_perf_close`, `_read`): the attr held as bytes to
+    the uapi layout; every unreadable-count case, the work run once and every fd closed; the IPC; the ring's and the
+    DNA's fallback; the grammar; the frequency with and without cpufreq, a "cpu MHz" offered and never taken; the
+    RAPL laps; ot_contract's probe held to the same flag bits; the three records. DVFS quantization is now tested
+    against a stated table, since a guest without cpufreq has no frequency of its own to anchor the host-read test.
+    `silicon-null.json` SN1-SN25, each caught by its own check; under the tests before SILICON-NULL 1 of
+    the 25 (SN12, incidentally: on a host without a PMU its close of a refused counter raises inside the measured-plan
+    tests).
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

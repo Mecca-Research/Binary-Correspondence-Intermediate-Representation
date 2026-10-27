@@ -521,3 +521,30 @@ def test_the_measured_certificate_is_bound_to_its_scope_and_the_corpus_informs_n
     )
     assert result == optimize(m, H, Theta.cool(), policy)
     assert verify_plan(m, result, H, theta=Theta.cool(), policy=policy) == []
+
+
+def test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts():
+    """A measured plan carries the PMU's counts only when the sample read all three
+    (`silicon.pmu_counts`); a sample missing one is recorded as the entry's no-PMU zeros, with the
+    host's attestation as it is (the attestation is the host's, the counts the run's)."""
+    from unittest import mock
+
+    from bcir import silicon
+    from bcir.silicon import HwSample
+
+    m = vector_add(256)
+    w = workload_for(m, batch=1)
+    for sample, want in (
+        (HwSample(cycles=None, instructions=3_000, cache_misses=7), (0, 0, 0)),
+        (HwSample(cycles=2_000, instructions=3_000, cache_misses=7), (2_000, 3_000, 7)),
+    ):
+
+        def counted(work, sample=sample):
+            work()
+            return sample
+
+        with mock.patch.object(silicon, "read_hw_counters", counted):
+            (entry,) = measure_plans(
+                m, H, Theta.cool(), (PERF,), _work, workload=w, source_commit=COMMIT, repeats=1
+            )
+        assert (entry.cycles, entry.instructions, entry.cache_misses) == want

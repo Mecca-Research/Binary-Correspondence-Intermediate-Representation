@@ -94,3 +94,30 @@ def test_numerical_evidence_artifact_roundtrips_deterministically():
         write_numerical_evidence(path, artifact)
         assert read_numerical_evidence(path) == artifact
         assert read_numerical_evidence(path).digest == artifact.digest
+
+
+def test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts():
+    """A provider measurement carries the PMU's counts only when the sample read all three
+    (`silicon.pmu_counts`, the one test every evidence record makes); a sample missing one is
+    recorded as the record's no-PMU zeros -- never two counts and a gap."""
+    from unittest import mock
+
+    from bcir.kbcir import numerical_providers as providers
+    from bcir.silicon import HwSample
+
+    workload = NumericalWorkload("gemm", (2, 2, 2), "float32", 1)
+    for sample, want in (
+        (HwSample(cycles=2_000, instructions=3_000, cache_misses=None), (0, 0, 0)),
+        (HwSample(cycles=None, instructions=None, cache_misses=None), (0, 0, 0)),
+        (HwSample(cycles=2_000, instructions=3_000, cache_misses=7), (2_000, 3_000, 7)),
+    ):
+
+        def counted(work, sample=sample):
+            work()
+            return sample
+
+        with mock.patch.object(providers, "read_hw_counters", counted):
+            measurement = measure_provider(
+                _Provider("fixture", 50), workload, repeats=1
+            ).measurements[0]
+        assert (measurement.cycles, measurement.instructions, measurement.cache_misses) == want

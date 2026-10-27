@@ -1,0 +1,200 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "bcir.tests.test_silicon:test_the_perf_attr_asks_for_a_user_space_counter",
+  "bcir.tests.test_silicon:test_perf_open_passes_that_attr_and_a_refusal_is_none",
+  "bcir.tests.test_silicon:test_a_counter_that_cannot_be_read_is_none_never_zero",
+  "bcir.tests.test_silicon:test_a_counter_that_cannot_be_opened_runs_nothing_and_closes_the_rest",
+  "bcir.tests.test_silicon:test_no_counts_means_no_ipc",
+  "bcir.tests.test_silicon:test_the_ring_and_the_dna_take_the_os_signals_when_a_count_is_missing",
+  "bcir.tests.test_silicon:test_kernel_text_integers_are_read_in_their_own_grammar",
+  "bcir.tests.test_silicon:test_the_nominal_frequency_is_cpufreqs_or_none",
+  "bcir.tests.test_silicon:test_dvfs_quantizes_to_a_given_frequency_table",
+  "bcir.tests.test_measured_silicon:test_a_rapl_wrap_gains_the_range_back_exactly",
+  "bcir.tests.test_measured_silicon:test_a_rapl_wrap_whose_range_is_unreadable_is_none_never_zero",
+  "bcir.tests.test_measured_silicon:test_a_lap_after_a_failed_rapl_read_has_no_start",
+  "bcir.tests.test_measured_silicon:test_rapl_and_thermal_text_is_read_in_its_own_grammar",
+  "bcir.tests.test_ot_contract:test_the_two_python_perf_probes_ask_for_the_same_user_space_counter",
+  "bcir.tests.test_numerical_providers:test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts",
+  "bcir.tests.test_schedule_artifact:test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts",
+  "bcir.tests.test_workload:test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_perf_attr_asks_for_a_user_space_counter",
+   "label": "SN1 exclude_kernel taken for bit 20 (exclude_guest) again",
+   "new": "PERF_ATTR_EXCLUDE_KERNEL = 1 << 20\n",
+   "old": "PERF_ATTR_EXCLUDE_KERNEL = 1 << 5\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_the_perf_attr_asks_for_a_user_space_counter",
+   "label": "SN2 the hypervisor counted (exclude_hv dropped)",
+   "new": "_PERF_USER_FLAGS = PERF_ATTR_DISABLED | PERF_ATTR_EXCLUDE_KERNEL\n",
+   "old": "_PERF_USER_FLAGS = PERF_ATTR_DISABLED | PERF_ATTR_EXCLUDE_KERNEL | PERF_ATTR_EXCLUDE_HV\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_the_perf_attr_asks_for_a_user_space_counter",
+   "label": "SN3 the enabled and running times not asked for",
+   "new": "_PERF_READ_FORMAT = 0\n",
+   "old": "_PERF_READ_FORMAT = PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_perf_open_passes_that_attr_and_a_refusal_is_none",
+   "label": "SN4 a counter opened on a big-endian host, its bitfields elsewhere",
+   "new": "    if _BYTE_ORDER == \"middle\":\n        return None\n    try:\n        fd = _perf_syscall",
+   "old": "    if _BYTE_ORDER != \"little\":\n        return None\n    try:\n        fd = _perf_syscall",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_counter_that_cannot_be_read_is_none_never_zero",
+   "label": "SN5 a counter read that fails recorded as 0",
+   "new": "        raw = _perf_read(fd)\n    except OSError:\n        return 0\n",
+   "old": "        raw = _perf_read(fd)\n    except OSError:\n        return None\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_counter_that_cannot_be_read_is_none_never_zero",
+   "label": "SN6 the times ignored: the first 8 bytes taken for the count",
+   "new": "    return int.from_bytes(raw[:8], \"little\")\n",
+   "old": "    if len(raw) != _PERF_READING.size:\n        return None\n    value, enabled, running = _PERF_READING.unpack(raw)\n    if running == 0 or running != enabled:\n        return None\n    return value\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_counter_that_cannot_be_read_is_none_never_zero",
+   "label": "SN7 a counter never enabled taken for a count of 0",
+   "new": "    if running != enabled:\n",
+   "old": "    if running == 0 or running != enabled:\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_counter_that_cannot_be_read_is_none_never_zero",
+   "label": "SN8 a multiplexed counter's partial value taken for the count",
+   "new": "    if running == 0:\n",
+   "old": "    if running == 0 or running != enabled:\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_no_counts_means_no_ipc",
+   "label": "SN9 an IPC over zero cycles",
+   "new": "        if self.cycles is None or self.instructions is None:\n",
+   "old": "        if self.cycles is None or self.instructions is None or self.cycles <= 0:\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_counter_that_cannot_be_read_is_none_never_zero",
+   "label": "SN10 pmu_counts admitting a sample with a gap",
+   "new": "    if sample is None or sample.cycles is None:\n",
+   "old": "    if sample is None or None in (sample.cycles, sample.instructions, sample.cache_misses):\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_counter_that_cannot_be_opened_runs_nothing_and_closes_the_rest",
+   "label": "SN11 a refused counter's siblings run the work anyway",
+   "new": "    if all(fd is None for fd in fds.values()):  # no PMU: do NOT run work here\n",
+   "old": "    if any(fd is None for fd in fds.values()):  # no PMU: do NOT run work here\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_counter_that_cannot_be_opened_runs_nothing_and_closes_the_rest",
+   "label": "SN12 the counters that opened left open when one is refused",
+   "new": "            if fd is None:\n                _perf_close(fd)\n        return None\n",
+   "old": "            if fd is not None:\n                _perf_close(fd)\n        return None\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_the_ring_and_the_dna_take_the_os_signals_when_a_count_is_missing",
+   "label": "SN13 the ring taking a sample with a gap",
+   "new": "    c = sampler.lap()\n    counts = (hw.cycles, hw.instructions, hw.cache_misses) if hw is not None else None\n",
+   "old": "    c = sampler.lap()\n    counts = pmu_counts(hw)\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_the_ring_and_the_dna_take_the_os_signals_when_a_count_is_missing",
+   "label": "SN14 silicon_dna claiming pmu provenance for a sample with a gap",
+   "new": "    counts = pmu_counts(hw)\n    if hw is not None:\n        provenance.add(\"pmu\")\n",
+   "old": "    counts = pmu_counts(hw)\n    if counts is not None:\n        provenance.add(\"pmu\")\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_kernel_text_integers_are_read_in_their_own_grammar",
+   "label": "SN15 int() back for the kernel's text",
+   "new": "    if text is None:\n        return None\n    try:\n        return int(text)\n    except ValueError:\n        return None\n",
+   "old": "    if text is None or not (_SIGNED if signed else _UNSIGNED).fullmatch(text):\n        return None\n    return int(text)\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_the_nominal_frequency_is_cpufreqs_or_none",
+   "label": "SN16 the cpu MHz fallback back as a nominal frequency",
+   "new": "    nominal_khz = _decimal(_read(f\"{fq}/cpuinfo_max_freq\")) or next(\n        (int(float(line.split(\":\")[1]) * 1000) for line in (_read(\"/proc/cpuinfo\") or \"\").splitlines()\n         if line.startswith(\"cpu MHz\")), None)\n",
+   "old": "    nominal_khz = _decimal(_read(f\"{fq}/cpuinfo_max_freq\")) or None  # 0 kHz is no frequency\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_the_nominal_frequency_is_cpufreqs_or_none",
+   "label": "SN17 a scaling table kept with a malformed entry dropped",
+   "new": "    steps = tuple(s for s in steps if s)\n",
+   "old": "    if None in steps or 0 in steps:\n        steps = ()\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_rapl_wrap_whose_range_is_unreadable_is_none_never_zero",
+   "label": "SN18 a RAPL wrap without a readable range recorded as 0 J",
+   "new": "            return 0\n        return delta + self._max\n",
+   "old": "            return None\n        return delta + self._max\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_rapl_wrap_whose_range_is_unreadable_is_none_never_zero",
+   "label": "SN19 a RAPL reading past the range it names undone with it",
+   "new": "        if self._max is None:\n",
+   "old": "        if self._max is None or now > self._max or start > self._max:\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_lap_after_a_failed_rapl_read_has_no_start",
+   "label": "SN20 a failed RAPL read keeps the old start: its energy lands in the next lap",
+   "new": "        start = self._start\n        if now is not None:\n            self._start = now\n",
+   "old": "        start, self._start = self._start, now\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_rapl_and_thermal_text_is_read_in_its_own_grammar",
+   "label": "SN21 a thermal zone below 0 C refused as malformed",
+   "new": "        return _decimal(_read(f\"{_THERMAL_BASE}/{z}/temp\"))",
+   "old": "        return _decimal(_read(f\"{_THERMAL_BASE}/{z}/temp\"), signed=True)",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_the_two_python_perf_probes_ask_for_the_same_user_space_counter",
+   "label": "SN22 ot_contract's probe counting the kernel",
+   "new": "        attr[40] = 1 << 6  # exclude_kernel, exclude_hv\n",
+   "old": "        attr[40] = 1 << 5 | 1 << 6  # exclude_kernel, exclude_hv\n",
+   "path": "tools/perf/ot_contract.py"
+  },
+  {
+   "expects": "test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts",
+   "label": "SN23 a measured plan carrying a sample with a gap",
+   "new": "        cycles, instructions, cache_misses = (\n            (hardware.cycles, hardware.instructions, hardware.cache_misses) if hardware else (0, 0, 0)\n        )\n",
+   "old": "        cycles, instructions, cache_misses = pmu_counts(hardware) or (0, 0, 0)\n",
+   "path": "bcir/kbcir/measured.py"
+  },
+  {
+   "expects": "test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts",
+   "label": "SN24 a provider measurement carrying a sample with a gap",
+   "new": "    cycles, instructions, cache_misses = (\n        (hardware.cycles, hardware.instructions, hardware.cache_misses) if hardware else (0, 0, 0)\n    )\n",
+   "old": "    cycles, instructions, cache_misses = pmu_counts(hardware) or (0, 0, 0)\n",
+   "path": "bcir/kbcir/numerical_providers.py"
+  },
+  {
+   "expects": "test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts",
+   "label": "SN25 a schedule candidate carrying a sample with a gap",
+   "new": "        cycles, instructions, cache_misses = (\n            (hardware.cycles, hardware.instructions, hardware.cache_misses) if hardware else (0, 0, 0)\n        )\n",
+   "old": "        cycles, instructions, cache_misses = pmu_counts(hardware) or (0, 0, 0)\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  }
+ ]
+}

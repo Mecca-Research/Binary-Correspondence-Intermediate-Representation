@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .._artifact_json import read_bounded_text, strict_json_loads
-from ..silicon import CounterSampler, read_hw_counters
+from ..silicon import CounterSampler, pmu_counts, read_hw_counters
 from .cost import TargetProfile
 from .matmul import TilePlan, plan_matmul
 
@@ -295,6 +295,8 @@ def measure_schedule_candidates(
             work(plan)
             laps.append(sampler.lap())
         hardware = read_hw_counters(functools.partial(work, plan))
+        # The PMU's counts when it read all three; else the candidate's no-PMU zeros.
+        cycles, instructions, cache_misses = pmu_counts(hardware) or (0, 0, 0)
         evidence.append(
             MeasuredScheduleCandidate(
                 plan,
@@ -304,9 +306,9 @@ def measure_schedule_candidates(
                 sum(lap.major_faults for lap in laps),
                 sum(lap.vol_ctx for lap in laps),
                 sum(lap.invol_ctx for lap in laps),
-                hardware.cycles if hardware else 0,
-                hardware.instructions if hardware else 0,
-                hardware.cache_misses if hardware else 0,
+                cycles,
+                instructions,
+                cache_misses,
                 repeats,
             )
         )

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .._artifact_json import read_bounded_text, strict_json_loads
-from ..silicon import CounterSampler, read_hw_counters
+from ..silicon import CounterSampler, pmu_counts, read_hw_counters
 
 
 _OPERATIONS = frozenset({"gemm", "fft", "linsolve", "special", "vecmath"})
@@ -187,13 +187,15 @@ def measure_provider(
         provider.run(workload)
         laps.append(sampler.lap())
     hardware = read_hw_counters(lambda: provider.run(workload))
+    # The PMU's counts when it read all three; else the measurement's no-PMU zeros.
+    cycles, instructions, cache_misses = pmu_counts(hardware) or (0, 0, 0)
     measurement = ProviderMeasurement(
         workload.digest,
         int(statistics.median(lap.wall_ns for lap in laps)),
         int(statistics.median(lap.cpu_ns for lap in laps)),
-        hardware.cycles if hardware else 0,
-        hardware.instructions if hardware else 0,
-        hardware.cache_misses if hardware else 0,
+        cycles,
+        instructions,
+        cache_misses,
         repeats,
     )
     return ProviderEvidence(descriptor.name, True, "executed", (measurement,))

@@ -18,7 +18,7 @@ prints the live real/unavailable split for any host.
 | Cache-tier latency | compiled pointer-chase | **L1 ≈ 1 ns vs DRAM ≈ 166 ns** — the real basis for hot→SRAM |
 | Synchronized zero-copy telemetry ring | `struct.pack_into` vs equivalently validated `json.dumps` | fixed-buffer integrity and both timing paths are exercised; no shared-runner speedup ratio is asserted after adding race-free publication |
 | Ring feed | `getrusage` + CPU/wall timers | real CPU-ns / page-fault counts reach the ring |
-| DVFS plan anchor | `/proc/cpuinfo` nominal (2100 MHz) | clock plan quantized to the real nominal frequency |
+| DVFS plan anchor | cpufreq's `cpuinfo_max_freq` where a cpufreq driver exposes one | none on this guest (no cpufreq driver): the plan quantizes nothing here. The 2100 MHz once read from `/proc/cpuinfo`'s `cpu MHz` was the reported clock, not a nominal one, and is no longer taken for one (SILICON-NULL); the quantization itself is tested against a stated table on every host |
 
 The signal and correctness observations are genuine and reproducible; they do not
 need privilege. Timing ratios are evidence from a named rig, not portable CI laws.

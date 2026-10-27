@@ -109,3 +109,35 @@ def test_schedule_artifacts_keep_workload_families_distinct():
             repeats=1,
         )
         assert artifact.workload == workload and artifact.candidates[0].wall_ns > 0
+
+
+def test_a_pmu_sample_missing_a_count_is_recorded_as_no_counts():
+    """Each measured candidate carries the PMU's counts only when the sample read all three
+    (`silicon.pmu_counts`); a sample missing one is the candidate's no-PMU zeros, and the derived
+    constants follow them."""
+    from unittest import mock
+
+    from bcir.kbcir import schedule_artifact as artifacts
+    from bcir.silicon import HwSample
+
+    M = N = K = 4
+    target = TargetProfile.for_host()
+    plans = [plan_matmul(M, N, K, target)]
+    for sample, want in (
+        (HwSample(cycles=2_000, instructions=None, cache_misses=7), (0, 0, 0)),
+        (HwSample(cycles=2_000, instructions=4_000, cache_misses=7), (2_000, 4_000, 7)),
+    ):
+
+        def counted(work, sample=sample):
+            work()
+            return sample
+
+        with mock.patch.object(artifacts, "read_hw_counters", counted):
+            artifact = measure_schedule_candidates(
+                M, N, K, target, plans, lambda plan: None, workload="gemm",
+                source_commit="4a5ae9a", repeats=1,
+            )  # fmt: skip
+        (candidate,) = artifact.candidates
+        assert (candidate.cycles, candidate.instructions, candidate.cache_misses) == want
+        cpi = artifact.constants.cycles_per_instruction_q20
+        assert cpi == ((2_000 << 20) // 4_000 if want[1] else 0)
