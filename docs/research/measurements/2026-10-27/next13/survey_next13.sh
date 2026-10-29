@@ -38,6 +38,25 @@ want = ("hypervisor", "constant_tsc", "nonstop_tsc", "tsc_known_freq", "tsc_dead
         "aperfmperf", "arch_perfmon", "avx2", "avx512f", "avx512bw", "avx512dq", "avx512vl", "avx512_vnni", "amx_tile")
 sources = sorted(os.listdir("/sys/bus/event_source/devices")) if os.path.isdir("/sys/bus/event_source/devices") else []
 msr_events = sorted(os.listdir("/sys/bus/event_source/devices/msr/events")) if "msr" in sources else []
+power_dir = "/sys/bus/event_source/devices/power/events"
+power_events = sorted(os.listdir(power_dir)) if os.path.isdir(power_dir) else []
+powercap = os.path.isdir("/sys/class/powercap")
+# the caches as the guest presents them (cpu0's): a matrix's regime, resident or not, is read against them
+cache_dir = "/sys/devices/system/cpu/cpu0/cache"
+caches = [{k: first(f"{cache_dir}/{i}/{k}") for k in ("level", "type", "size", "shared_cpu_list")}
+          for i in (sorted(os.listdir(cache_dir)) if os.path.isdir(cache_dir) else []) if i.startswith("index")]
+# each reason a clock is not read, said of this host as it presents itself
+pmu = "cpu" in sources
+core_reason = ("no hardware PMU event source" + (" (a KVM guest)" if "hypervisor" in flags else "") +
+               ": core cycles, instructions retired and the decoded-µop-cache events cannot be counted here, and none "
+               "is inferred from the TSC") if not pmu else "a PMU event source is present; these tools read none of it"
+freq_reason = ("neither APERF/MPERF (the aperfmperf flag " + ("present" if "aperfmperf" in flags else "absent") +
+               "; the msr event source offers " + (" and ".join(msr_events) or "nothing") + ") nor a core-cycle counter")
+energy_reason = (("no RAPL (no powercap; " + ("the power event source lists no events" if "power" in sources
+                                              else "no power event source") + ")")
+                 if not powercap and not power_events else
+                 "not read by these tools (" + ("powercap present" if powercap else "no powercap") + "; power events: "
+                 + (", ".join(power_events) or "none") + ")")
 record = {
     "brand": info.get("model name"), "vendor": info.get("vendor_id"),
     "signature": "%02X_%02XH" % (int(info.get("cpu family", "0")), int(info.get("model", "0"))),
@@ -49,23 +68,21 @@ record = {
     "cpus": os.cpu_count(),
     "clocksource": first("/sys/devices/system/clocksource/clocksource0/current_clocksource"),
     "perf_event_paranoid": first("/proc/sys/kernel/perf_event_paranoid"),
-    "event_sources": sources, "msr_events": msr_events,
-    "powercap": os.path.isdir("/sys/class/powercap"),
+    "event_sources": sources, "msr_events": msr_events, "power_events": power_events,
+    "powercap": powercap,
+    "caches": caches,
     "clocks": {
         "elapsed": "CLOCK_MONOTONIC: vcpu.json's times; probe.json's per-claim job clock (clock_ms_a_step_median) is "
                    "the trainer's own, ISO C11 timespec_get (TIME_UTC)",
         "reference_ticks": "the TSC (invariant: constant_tsc and nonstop_tsc): probe.json's pool-job times (wall, "
                            "entry, busy, leave) are rdtsc ticks over the TSC's rate a microsecond, measured by the "
                            "probe against timespec_get over 50 ms (each row's tsc_per_us); vcpu.json reads no ticks",
-        "core_cycles": None,
-        "core_cycles_reason": "no hardware PMU event source (a KVM guest): core cycles, instructions retired and the "
-                              "decoded-µop-cache events cannot be counted here, and none is inferred from the TSC",
-        "effective_frequency": None,
-        "effective_frequency_reason": "neither APERF/MPERF (the aperfmperf flag absent; the msr event source offers "
-                                      "only tsc and smi) nor a core-cycle counter",
-        "energy": None, "energy_reason": "no RAPL (no powercap; the power event source lists no events)"},
-    "level": "A (timing-qualified): correctness witnesses and elapsed time against an A/A control; no "
-             "microarchitectural counter (Level B) is available on this host",
+        "core_cycles": None, "core_cycles_reason": core_reason,
+        "effective_frequency": None, "effective_frequency_reason": freq_reason,
+        "energy": None, "energy_reason": energy_reason},
+    "level": "A (timing-qualified): correctness witnesses and elapsed time against an A/A control; " +
+             ("no microarchitectural counter (Level B) is available on this host" if not pmu else
+              "a PMU is present, and these tools read no counter of it"),
 }
 json.dump(record, open(sys.argv[1], "w"), indent=1)
 PY
