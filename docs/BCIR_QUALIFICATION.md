@@ -125,6 +125,141 @@ program on hydrated packs and the same request ran 5-14x the monolithic runner; 
 linear with identical verdicts and dispatch order
 (`test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims`).
 
+**Q8-LANES** (2026-10-25). The C decoder's two matrix kernels -- `bcir_ai_kernels.c`'s BCIRQ8 matvec and row dots,
+most of the request above -- now run several outputs' chains side by side: the matvec a row's columns in the vector
+lanes, the head's row dots eight rows a vector over their codes transposed eight by eight, each output's chain the
+portable loop's own, term for term in its order (instances 1 portable, 2 AVX2, 4 AVX-512, chosen at run time; under
+valgrind the AVX2 instance runs, AVX-512 hidden from it). On one host (a 2.3 GHz Xeon with AVX-512, clang 18), a lab
+model of the train rail's recipe (BCIR-Corpus-860K) and its card's request, each tree's own run (`--require-callgrind`;
+[measurements/2026-10-25/q8-lanes/](research/measurements/2026-10-25/q8-lanes/README.json)):
+
+| | before | after |
+|---|---|---|
+| monolithic, whole request (ms) | 52.10 | 12.81 |
+| GEM, whole request (ms) | 55.97 | 17.11 |
+| GEM / monolithic (gated at 1.5) | 1.074 | 1.336 |
+| per generated token, median (ms) | 0.972 | 0.234 |
+| tokens per second | 791 | 2,828 |
+| `matvec` / `matvec_add` / `head` (ms) | 31.95 / 15.88 / 5.54 | 5.34 / 2.80 / 1.74 |
+
+Every token and logit is the same: C GEM's and C monolithic's logits share one SHA-256 on both trees
+(`2a18b8613b6b60e4...`), and the C and oracle logits differ by 0. The ratio row rises because GEM's trust boundary -- the
+pack's CRC and the R10 walk -- is a fixed cost the faster kernels no longer hide: the band is a dispatch-overhead
+check, and GEM's own overhead (GEM less monolithic) is 3.9 ms before and 4.3 ms after. Under callgrind (the AVX2
+instance) a GEM request takes 922 M instructions before and 231 M after, 252 M and 64 M data references,
+with the same D1 misses.
+
+**CRC-SLICE** (2026-10-25). GEM's trust boundary was that rise: a CRC-32 pass over the 610 KB pack took 1.27 ms
+(one table lookup a byte), and a GEM run validated the pack three times (`bcir_sp_execute`, then
+`bcir_sp_verify_semantic` and the segment walk) and a GEM load four. The C rail's CRC (`runtime/c/bcir_crc32.h`) is
+now zlib's eight bytes a step -- the same function, every value, verdict and wire byte as it was -- and a pass takes
+0.25-0.32 ms. On the same host and model, each tree's own run (`--require-callgrind`;
+[measurements/2026-10-25/crc-slice/](research/measurements/2026-10-25/crc-slice/README.json)):
+
+| | before | after |
+|---|---|---|
+| GEM's load of the program, `bcir_dgem_load` (ms) | 6.19 | 2.22 |
+| the DER artifact converted to the native pack in C (ms) | 7.46 | 5.33 |
+| the trust boundary alone (ms) | 2.93 | 1.00 |
+| GEM's own overhead, GEM less monolithic (ms) | 4.17 | 1.57 |
+| GEM / monolithic (gated at 1.5) | 1.336 | 1.116 |
+| the first token of a GEM run (ms) | 5.82 | 2.99 |
+
+The logits and the native pack keep one SHA-256 across the trees, 23 of 23 checks pass on each, and three runs more
+of each tree read the ratio at 1.32-1.35 before and 1.11-1.13 after. Under callgrind the monolithic runner's request
+is the same 210,858,806 instructions on both trees. A GEM run then still validated the pack three times; SP-ONCE
+(below) makes it once.
+
+**DECODE-ROW** (2026-10-25). The attention row's scores and context now run eight chains side by side and the
+rotation reads a table filled once a position, every chain the one it was
+([measurements/2026-10-25/decode-row/](research/measurements/2026-10-25/decode-row/README.json)). The lab model's
+logits keep their SHA-256 and the C rail its 0 from the oracle, 23 of 23 checks, with 4.4-4.7% fewer simulated
+instructions on its two rails (GEM 224.7 M -> 214.9 M, monolithic 210.9 M -> 201.0 M). At this request's 48 tokens the
+latencies move within run-to-run noise -- a 55-position request's attention is a small share of it -- while over 200
+tokens a generated token reads x0.75-0.83 (0.30-0.32 -> 0.24-0.25 ms).
+
+**SP-ONCE** (2026-10-25). A GEM run validated the pack three times, a load four. Both now check the pack once
+(`bcir_sp_check`) and run their walks over the checked token, every bound and verdict as before
+([measurements/2026-10-25/sp-once/](research/measurements/2026-10-25/sp-once/README.json)). Over four runs of each tree:
+GEM's load 2.16-2.26 -> 1.24-1.31 ms, the trust boundary 0.98-1.00 -> 0.67-0.69 ms, the first token of a GEM run
+2.68-2.89 -> 2.00-2.08 ms, and GEM/monolithic 1.06-1.25 -> 1.03-1.07. The logits keep their SHA-256 and the monolithic
+runner its 201,016,566 simulated instructions. Every run still validates the pack it executes.
+
+**Q8-BOUND** (2026-10-26). The vector matvecs now form x times a group's scale once a row and group where the call's
+ranges prove every such product exact -- every exponent within the [-300, 300] the format admits, every nonzero input
+in [2^-722, 2^724) -- one multiply a term where there were two, every value the same
+([measurements/2026-10-26/q8-bound/](research/measurements/2026-10-26/q8-bound/README.json)). Each tree's own run
+(`--require-callgrind`; the C rail built by the host's clang 18):
+
+| | before | after |
+|---|---|---|
+| per generated token, median (ms) | 0.2174 | 0.1920 |
+| tokens per second | 3,838 | 4,273 |
+| `matvec` / `matvec_add` (ms) | 5.35 / 2.74 | 4.62 / 2.25 |
+| simulated instructions, GEM / monolithic (callgrind: the AVX2 instance) | 211,104,723 / 201,016,566 | 197,770,611 / 187,682,454 |
+
+The logits keep their SHA-256 (`2a18b8613b6b60e4...`) and the C rail its 0 from the oracle, 23 of 23 checks on both
+trees. The whole-request walls move within this host's run-to-run noise (GEM 12.45 -> 11.66 ms, monolithic 11.60 ->
+12.33 ms in these two runs); three runs more of each tree read a generated token at 0.2155-0.2208 ms before and
+0.1982-0.2004 ms after, and 0.2336 ms in the after tree's first run, whose matvecs took 9.45 ms against 7.32-7.37 in
+its others.
+
+**Q8-PAIR** (2026-10-26). The vector matvecs now take two input rows a pass where eight columns' terms lie in one
+group, in place of the AVX-512 block and the AVX2 runs a row at a time, every value the same
+([measurements/2026-10-26/q8-pair/](research/measurements/2026-10-26/q8-pair/README.json)). Each tree's own run
+(`--require-callgrind`; the C rail built by the host's clang 18):
+
+| | before | after |
+|---|---|---|
+| per generated token, median (ms) | 0.1955 | 0.1890 |
+| tokens per second | 4,121 | 3,438 |
+| `matvec` / `matvec_add` (ms) | 4.77 / 2.55 | 4.46 / 2.19 |
+| simulated instructions, GEM / monolithic (callgrind: the AVX2 instance) | 197,770,611 / 187,682,454 | 147,230,931 / 137,142,774 |
+
+The logits keep their SHA-256 (`2a18b8613b6b60e4...`) and the C rail its 0 from the oracle, 23 of 23 checks on both
+trees. In this run the tree after's first token took 3.95 ms against 2.08, and its head, which Q8-PAIR leaves as it
+was, 2.58 ms against 1.65; its tokens a second fall with them. Three runs more of each tree read a generated token at
+0.1957-0.1974 ms before and 0.1652-0.1794 ms after, 4,098-4,153 tokens a second before and 4,610-4,875 after, and a
+first token at 2.02-2.12 ms and 1.77-1.81 ms.
+
+**HEAD-PACK** (2026-10-26). The head now reads its rows from a copy packed once at load, four eight-row blocks a
+pass, every value the same
+([measurements/2026-10-26/head-pack/](research/measurements/2026-10-26/head-pack/README.json)). Each tree's own run
+(`--require-callgrind`; the C rail built by the host's clang 18):
+
+| | before | after |
+|---|---|---|
+| per generated token, median (ms) | 0.1850 | 0.1458 |
+| tokens per second | 4,440 | 5,454 |
+| `head` (ms) | 1.74 | 0.79 |
+| simulated instructions, GEM / monolithic (callgrind: the AVX2 instance) | 147,230,931 / 137,142,774 | 135,617,235 / 125,529,750 |
+
+The logits keep their SHA-256 (`2a18b8613b6b60e4...`) and the C rail its 0 from the oracle, 23 of 23 checks on both
+trees. Three runs more of each tree read a generated token at 0.1771-0.1943 ms before and 0.1576-0.1602 ms after,
+4,092-4,580 tokens a second before and 4,964-5,078 after, and the head at 1.64-1.92 ms and 0.86-0.96 ms a generation.
+
+**DECODE-THREADS** (2026-10-26). The qualification lends its decoders no runner, so each runs an operation in one
+call as before, every vector kernel's whole-call instance ([measurements/2026-10-26/decode-threads/](research/measurements/2026-10-26/decode-threads/README.json)):
+under callgrind (the AVX2 instance) the GEM request takes 135,617,235 -> 135,438,771 instructions and the monolithic runner
+125,529,750 -> 125,375,994; the logits keep their SHA-256 (`2a18b8613b6b60e4...`), 23 of 23 checks on both trees. Over six runs of each tree
+the C matvecs took 6.74 ms (6.30-7.70) before and 6.61 ms (6.40-6.92) after. `bcir-llama --threads T` lends the decoder a pool
+of T threads, every token and logit the same at every T.
+
+**KERNEL-ALIGN** (2026-10-27). `bcir-qualify` builds the decoder's units with the options the manifest gives them
+(`bcir.toolchain.unit_options`): on x86-64 the assembler's JCC-erratum mitigation, so the decoder's vector kernels run
+at the same speed wherever the linker places them ([measurements/2026-10-27/kernel-align/](research/measurements/2026-10-27/kernel-align/README.json)).
+Under callgrind (the AVX2 instance) the GEM request takes 135,438,771 -> 138,792,520 instructions and the monolithic runner
+125,375,994 -> 128,614,321, the padding's NOPs executed, their data references the same; the logits keep their SHA-256
+(`2a18b8613b6b60e4...`), 23 of 23 checks on both trees. Over six runs of each tree a token took 0.3124 ms (0.2823-0.5230)
+before and 0.3104 ms (0.2879-0.5200) after, runs of both trees at about 0.52 ms: the host's state, not the tree.
+
+**DECODE-PASSES** (2026-10-27). The decoder dequantizes its embedding row and every norm's gamma a range at a time and
+keeps its greedy argmax in four lanes, every value the same ([measurements/2026-10-27/decode-passes/](research/measurements/2026-10-27/decode-passes/README.json)).
+Under callgrind (the AVX2 instance) the GEM request takes 138,794,053 -> 135,023,534 instructions and the monolithic runner
+128,615,854 -> 124,743,070; on this session's lab model, a checkpoint other than KERNEL-ALIGN's, the logits are
+`1aaa3ca17a55aed8...` on both trees, 23 of 23 checks on both. Over six runs of each tree a token took 0.2981 ms
+(0.2913-0.3018) before and 0.2721 ms (0.2710-0.2846) after.
+
 **Memory traffic.** Planned (`program_traffic`) and counted (the C kernels' counters) agree op for
 op: 57,539,312 octets read and 4,236,480 written per request. Simulated with callgrind's cache
 model (I1/D1 32 KiB 8-way, LL 8 MiB 16-way, 64-octet lines, fixed so reports compare across

@@ -1,0 +1,2511 @@
+{
+ "what": "the slice's exploration on the tree before (6aa16aee): ROPE-TABLE-1, the prototype the slice became, and RMS-LANES-0, measured and not taken; and ROPE-TABLE's first commit measured on its own (measure_table.sh), where the table's rotation read x0.47-0.65 of the per-call one under clang against the prototype's x0.22-0.31, which found ROPE-BOUND",
+ "first_commit": {
+  "what": "measure_table.sh on a6f8feb1 (ROPE-TABLE's first commit) against 6aa16aee: the rotation alone (rope_lent_bench.c on its unit) and its step and forward in one process beside an A/A control",
+  "tree": {
+   "before": "6aa16aeec901774c025a4131b88f3f26fd3cc915",
+   "after": "a6f8feb15814f41d39aca600a07c571a616b0bc2"
+  },
+  "rope": [
+   {
+    "compiler": "clang",
+    "threads": 4,
+    "b": 4,
+    "t": 256,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 43.76,
+    "lent_us": 28.43,
+    "lent_over_unit": 0.65,
+    "fill_us": 17.31
+   },
+   {
+    "compiler": "clang",
+    "threads": 1,
+    "b": 4,
+    "t": 256,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 97.25,
+    "lent_us": 57.18,
+    "lent_over_unit": 0.588,
+    "fill_us": 39.85
+   },
+   {
+    "compiler": "clang",
+    "threads": 4,
+    "b": 4,
+    "t": 512,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 68.63,
+    "lent_us": 32.3,
+    "lent_over_unit": 0.471,
+    "fill_us": 22.2
+   },
+   {
+    "compiler": "clang",
+    "threads": 1,
+    "b": 4,
+    "t": 512,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 218.64,
+    "lent_us": 118.18,
+    "lent_over_unit": 0.541,
+    "fill_us": 91.22
+   },
+   {
+    "compiler": "clang",
+    "threads": 4,
+    "b": 4,
+    "t": 1024,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 121.14,
+    "lent_us": 63.52,
+    "lent_over_unit": 0.524,
+    "fill_us": 45.45
+   },
+   {
+    "compiler": "clang",
+    "threads": 1,
+    "b": 4,
+    "t": 1024,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 453.8,
+    "lent_us": 233.26,
+    "lent_over_unit": 0.514,
+    "fill_us": 206.69
+   },
+   {
+    "compiler": "clang",
+    "threads": 4,
+    "b": 4,
+    "t": 2048,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 276.0,
+    "lent_us": 129.23,
+    "lent_over_unit": 0.468,
+    "fill_us": 107.98
+   },
+   {
+    "compiler": "clang",
+    "threads": 1,
+    "b": 4,
+    "t": 2048,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 909.44,
+    "lent_us": 470.46,
+    "lent_over_unit": 0.517,
+    "fill_us": 462.65
+   },
+   {
+    "compiler": "gcc",
+    "threads": 4,
+    "b": 4,
+    "t": 256,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 30.12,
+    "lent_us": 16.32,
+    "lent_over_unit": 0.542,
+    "fill_us": 17.59
+   },
+   {
+    "compiler": "gcc",
+    "threads": 1,
+    "b": 4,
+    "t": 256,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 59.53,
+    "lent_us": 23.48,
+    "lent_over_unit": 0.394,
+    "fill_us": 42.12
+   },
+   {
+    "compiler": "gcc",
+    "threads": 4,
+    "b": 4,
+    "t": 512,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 34.01,
+    "lent_us": 14.77,
+    "lent_over_unit": 0.434,
+    "fill_us": 23.73
+   },
+   {
+    "compiler": "gcc",
+    "threads": 1,
+    "b": 4,
+    "t": 512,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 122.39,
+    "lent_us": 45.59,
+    "lent_over_unit": 0.372,
+    "fill_us": 87.04
+   },
+   {
+    "compiler": "gcc",
+    "threads": 4,
+    "b": 4,
+    "t": 1024,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 66.47,
+    "lent_us": 27.32,
+    "lent_over_unit": 0.411,
+    "fill_us": 44.43
+   },
+   {
+    "compiler": "gcc",
+    "threads": 1,
+    "b": 4,
+    "t": 1024,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 292.95,
+    "lent_us": 98.56,
+    "lent_over_unit": 0.336,
+    "fill_us": 206.85
+   },
+   {
+    "compiler": "gcc",
+    "threads": 4,
+    "b": 4,
+    "t": 2048,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 144.29,
+    "lent_us": 52.31,
+    "lent_over_unit": 0.363,
+    "fill_us": 106.79
+   },
+   {
+    "compiler": "gcc",
+    "threads": 1,
+    "b": 4,
+    "t": 2048,
+    "heads": 4,
+    "dim": 32,
+    "bytes_equal": true,
+    "unit_us": 595.76,
+    "lent_us": 191.74,
+    "lent_over_unit": 0.322,
+    "fill_us": 440.42
+   }
+  ],
+  "one_process": {
+   "ab-step": [
+    {
+     "compiler": "clang",
+     "case": "geo-dims T128 kblock+exp+reduce, step",
+     "b_over_a": {
+      "geometric_mean": 1.0122246309638239,
+      "ci95": [
+       0.982526291208576,
+       1.042820647852101
+      ],
+      "rounds": 64
+     },
+     "aa": {
+      "geometric_mean": 0.9753259488425654,
+      "ci95": [
+       0.9408030030313329,
+       1.0111157207413477
+      ],
+      "rounds": 64
+     },
+     "verdict": "not resolved: holds 1"
+    },
+    {
+     "compiler": "clang",
+     "case": "geo-dims T256 kblock+exp+reduce, step",
+     "b_over_a": {
+      "geometric_mean": 0.985957184535164,
+      "ci95": [
+       0.9635499163055028,
+       1.0088855318091172
+      ],
+      "rounds": 64
+     },
+     "aa": {
+      "geometric_mean": 0.9832506235314528,
+      "ci95": [
+       0.9618008487152373,
+       1.0051787643631287
+      ],
+      "rounds": 64
+     },
+     "verdict": "not resolved: holds 1"
+    },
+    {
+     "compiler": "clang",
+     "case": "geo-dims T512 kblock+exp+reduce, step",
+     "b_over_a": {
+      "geometric_mean": 0.991407754982195,
+      "ci95": [
+       0.9711651536267821,
+       1.0120722855101116
+      ],
+      "rounds": 48
+     },
+     "aa": {
+      "geometric_mean": 0.9866217537767598,
+      "ci95": [
+       0.9724361720740806,
+       1.0010142701184643
+      ],
+      "rounds": 48
+     },
+     "verdict": "not resolved: holds 1"
+    },
+    {
+     "compiler": "clang",
+     "case": "geo-dims T1024 kblock+exp+reduce, step",
+     "b_over_a": {
+      "geometric_mean": 0.9967306175981356,
+      "ci95": [
+       0.9760048771343133,
+       1.0178964750407122
+      ],
+      "rounds": 48
+     },
+     "aa": {
+      "geometric_mean": 0.9800843843266709,
+      "ci95": [
+       0.9563135375481209,
+       1.0044460971071998
+      ],
+      "rounds": 48
+     },
+     "verdict": "not resolved: holds 1"
+    },
+    {
+     "compiler": "clang",
+     "case": "geo-dims T2048 kblock+exp+reduce, step",
+     "b_over_a": {
+      "geometric_mean": 0.9862274981348262,
+      "ci95": [
+       0.9576592131808466,
+       1.0156480141267146
+      ],
+      "rounds": 24
+     },
+     "aa": {
+      "geometric_mean": 1.0193808569016092,
+      "ci95": [
+       0.9971232300663954,
+       1.0421353149582786
+      ],
+      "rounds": 24
+     },
+     "verdict": "not resolved: holds 1"
+    },
+    {
+     "compiler": "gcc",
+     "case": "geo-dims T256 kblock+exp+reduce, step",
+     "b_over_a": {
+      "geometric_mean": 0.9699655698603796,
+      "ci95": [
+       0.9357661289345037,
+       1.0054148976153228
+      ],
+      "rounds": 64
+     },
+     "aa": {
+      "geometric_mean": 1.0043737865317577,
+      "ci95": [
+       0.9737882895399065,
+       1.0359199365077194
+      ],
+      "rounds": 64
+     },
+     "verdict": "not resolved: holds 1"
+    },
+    {
+     "compiler": "gcc",
+     "case": "geo-dims T512 kblock+exp+reduce, step",
+     "b_over_a": {
+      "geometric_mean": 1.0087420093407413,
+      "ci95": [
+       0.9679573236657859,
+       1.051245149481546
+      ],
+      "rounds": 48
+     },
+     "aa": {
+      "geometric_mean": 0.9683015305152862,
+      "ci95": [
+       0.9291232409581449,
+       1.00913184889375
+      ],
+      "rounds": 48
+     },
+     "verdict": "not resolved: holds 1"
+    },
+    {
+     "compiler": "clang",
+     "case": "geo-dims T256 v1 (the libm softmax), step",
+     "b_over_a": {
+      "geometric_mean": 0.9988766916929824,
+      "ci95": [
+       0.973187083372055,
+       1.0252444388702087
+      ],
+      "rounds": 64
+     },
+     "aa": {
+      "geometric_mean": 0.9922502842971108,
+      "ci95": [
+       0.9671066359835022,
+       1.0180476382384092
+      ],
+      "rounds": 64
+     },
+     "verdict": "not resolved: holds 1"
+    },
+    {
+     "compiler": "clang",
+     "case": "decoder-9.84M kblock+exp+reduce+attn, step",
+     "b_over_a": {
+      "geometric_mean": 1.012958094227316,
+      "ci95": [
+       0.9906973080590096,
+       1.035719076163593
+      ],
+      "rounds": 48
+     },
+     "aa": {
+      "geometric_mean": 0.9871397570890182,
+      "ci95": [
+       0.968627012517827,
+       1.0060063238302803
+      ],
+      "rounds": 48
+     },
+     "verdict": "not resolved: holds 1"
+    }
+   ],
+   "ab-forward": [
+    {
+     "compiler": "clang",
+     "case": "geo-dims B4 T1024, forward",
+     "b_over_a": {
+      "geometric_mean": 0.98783767268747,
+      "ci95": [
+       0.9742531689939872,
+       1.001611591972784
+      ],
+      "rounds": 48
+     },
+     "aa": {
+      "geometric_mean": 1.0119743657833746,
+      "ci95": [
+       0.9882298862842374,
+       1.0362893606195909
+      ],
+      "rounds": 48
+     },
+     "verdict": "not resolved: holds 1"
+    },
+    {
+     "compiler": "clang",
+     "case": "geo-dims B4 T2048, forward",
+     "b_over_a": {
+      "geometric_mean": 1.00659106093884,
+      "ci95": [
+       0.9752578685023616,
+       1.0389309296400986
+      ],
+      "rounds": 32
+     },
+     "aa": {
+      "geometric_mean": 1.013133885832179,
+      "ci95": [
+       0.9816932530698956,
+       1.0455814659126816
+      ],
+      "rounds": 32
+     },
+     "verdict": "not resolved: holds 1"
+    },
+    {
+     "compiler": "gcc",
+     "case": "geo-dims B4 T2048, forward",
+     "b_over_a": {
+      "geometric_mean": 0.9826814033073593,
+      "ci95": [
+       0.9562046378743915,
+       1.0098912953954653
+      ],
+      "rounds": 32
+     },
+     "aa": {
+      "geometric_mean": 1.015339107737977,
+      "ci95": [
+       0.9745918546193149,
+       1.0577899854342985
+      ],
+      "rounds": 32
+     },
+     "verdict": "not resolved: holds 1"
+    },
+    {
+     "compiler": "clang",
+     "case": "geo-dims B1 T256, forward",
+     "b_over_a": {
+      "geometric_mean": 0.7342444089677553,
+      "ci95": [
+       0.6835422160201542,
+       0.7887074703876267
+      ],
+      "rounds": 64
+     },
+     "aa": {
+      "geometric_mean": 1.1054895164374159,
+      "ci95": [
+       1.0332644920301957,
+       1.1827630586160867
+      ],
+      "rounds": 64
+     },
+     "verdict": "resolved"
+    }
+   ]
+  }
+ },
+ "rope_table_1": {
+  "what": "proto_rope_table.py over a worktree of the tree before: the trainer's rotations reading one table of the step's cosines and sines in a static buffer, filled once a forward with the unit's own expressions (the direct path and the program executor; no plan span) -- every run's weights the same digest as the tree before's. steady: ../pool-affinity/step_one.c, one library a process, the two alternating, six runs each, the GEO dimensions T128 to T1024 (contract 14, four threads, 40 steps, 20 at T1024), clang and gcc; probe: ../gp-lanes/probe_step.py on probe_jobs.py's copies of the tree before and of the prototype, 12 logged steps, the rotations' jobs",
+  "steady": [
+   {
+    "compiler": "clang",
+    "time": 128,
+    "runs": 6,
+    "weights_fnv1a": [
+     "64e87a7b7a668d4e"
+    ],
+    "median_ms": {
+     "base": 6.185700000000001,
+     "rt": 6.162800000000001
+    },
+    "rt_over_base": {
+     "geometric_mean": 0.9794249782645996,
+     "ci95": [
+      0.875715596513293,
+      1.0954164706761051
+     ],
+     "rounds": 6
+    },
+    "verdict": "not resolved: holds 1"
+   },
+   {
+    "compiler": "clang",
+    "time": 256,
+    "runs": 6,
+    "weights_fnv1a": [
+     "43ebeaf4ffa940c8"
+    ],
+    "median_ms": {
+     "base": 13.2637,
+     "rt": 13.1984
+    },
+    "rt_over_base": {
+     "geometric_mean": 0.999649462212178,
+     "ci95": [
+      0.9705485660709388,
+      1.0296229186619152
+     ],
+     "rounds": 6
+    },
+    "verdict": "not resolved: holds 1"
+   },
+   {
+    "compiler": "clang",
+    "time": 512,
+    "runs": 6,
+    "weights_fnv1a": [
+     "e56a429d20e44af6"
+    ],
+    "median_ms": {
+     "base": 32.197,
+     "rt": 31.268900000000002
+    },
+    "rt_over_base": {
+     "geometric_mean": 0.9658348203453206,
+     "ci95": [
+      0.9470740805698863,
+      0.9849671945727397
+     ],
+     "rounds": 6
+    },
+    "verdict": "resolved"
+   },
+   {
+    "compiler": "clang",
+    "time": 1024,
+    "runs": 6,
+    "weights_fnv1a": [
+     "da5b63787daec30a"
+    ],
+    "median_ms": {
+     "base": 83.34845,
+     "rt": 83.2771
+    },
+    "rt_over_base": {
+     "geometric_mean": 0.9967082250435157,
+     "ci95": [
+      0.9813392025693874,
+      1.0123179459949816
+     ],
+     "rounds": 6
+    },
+    "verdict": "not resolved: holds 1"
+   },
+   {
+    "compiler": "gcc",
+    "time": 128,
+    "runs": 6,
+    "weights_fnv1a": [
+     "64e87a7b7a668d4e"
+    ],
+    "median_ms": {
+     "base": 5.989599999999999,
+     "rt": 6.2778
+    },
+    "rt_over_base": {
+     "geometric_mean": 1.0365705870327406,
+     "ci95": [
+      0.8602494312338101,
+      1.2490314354062788
+     ],
+     "rounds": 6
+    },
+    "verdict": "not resolved: holds 1"
+   },
+   {
+    "compiler": "gcc",
+    "time": 256,
+    "runs": 6,
+    "weights_fnv1a": [
+     "43ebeaf4ffa940c8"
+    ],
+    "median_ms": {
+     "base": 12.85585,
+     "rt": 12.856449999999999
+    },
+    "rt_over_base": {
+     "geometric_mean": 1.02300835801774,
+     "ci95": [
+      0.9702596395560366,
+      1.0786247906313229
+     ],
+     "rounds": 6
+    },
+    "verdict": "not resolved: holds 1"
+   },
+   {
+    "compiler": "gcc",
+    "time": 512,
+    "runs": 6,
+    "weights_fnv1a": [
+     "e56a429d20e44af6"
+    ],
+    "median_ms": {
+     "base": 31.387099999999997,
+     "rt": 31.252200000000002
+    },
+    "rt_over_base": {
+     "geometric_mean": 1.0047565595974841,
+     "ci95": [
+      0.9594562641331631,
+      1.0521956881132615
+     ],
+     "rounds": 6
+    },
+    "verdict": "not resolved: holds 1"
+   },
+   {
+    "compiler": "gcc",
+    "time": 1024,
+    "runs": 6,
+    "weights_fnv1a": [
+     "da5b63787daec30a"
+    ],
+    "median_ms": {
+     "base": 83.34745000000001,
+     "rt": 81.79384999999999
+    },
+    "rt_over_base": {
+     "geometric_mean": 0.9821032267760088,
+     "ci95": [
+      0.9582977321905419,
+      1.0065000841012823
+     ],
+     "rounds": 6
+    },
+    "verdict": "not resolved: holds 1"
+   }
+  ],
+  "probe_rotations": {
+   "256": {
+    "before": {
+     "train.rope.inverse": {
+      "jobs_a_step": 6.0,
+      "wall_us_median": 35.77001141529724,
+      "wall_us_a_step": 233.56500207391912
+     },
+     "train.rope": {
+      "jobs_a_step": 6.0,
+      "wall_us_median": 35.787402725195165,
+      "wall_us_a_step": 228.82514548882313
+     }
+    },
+    "prototype": {
+     "train.rope.inverse": {
+      "jobs_a_step": 6.0,
+      "wall_us_median": 12.845221256040327,
+      "wall_us_a_step": 90.337925730656
+     },
+     "train.rope": {
+      "jobs_a_step": 6.0,
+      "wall_us_median": 14.537395678207568,
+      "wall_us_a_step": 88.07683809384181
+     }
+    }
+   },
+   "512": {
+    "before": {
+     "train.rope.inverse": {
+      "jobs_a_step": 6.0,
+      "wall_us_median": 59.67827825410541,
+      "wall_us_a_step": 411.08367047508625
+     },
+     "train.rope": {
+      "jobs_a_step": 6.0,
+      "wall_us_median": 62.41175731124923,
+      "wall_us_a_step": 371.8655431086474
+     }
+    },
+    "prototype": {
+     "train.rope.inverse": {
+      "jobs_a_step": 6.0,
+      "wall_us_median": 20.04130842579357,
+      "wall_us_a_step": 153.55372689699544
+     },
+     "train.rope": {
+      "jobs_a_step": 6.0,
+      "wall_us_median": 23.78522223107632,
+      "wall_us_a_step": 152.89445140052848
+     }
+    }
+   }
+  },
+  "raw": [
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 5.9016,
+    "min_ms": 5.6414,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.2453,
+    "min_ms": 5.5535,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 5.7711,
+    "min_ms": 5.5601,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.7258,
+    "min_ms": 5.5203,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.1253,
+    "min_ms": 5.6014,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 5.61,
+    "min_ms": 5.3839,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.6515,
+    "min_ms": 5.8024,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.0184,
+    "min_ms": 5.7362,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.039,
+    "min_ms": 5.9844,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.2438,
+    "min_ms": 6.0312,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.2461,
+    "min_ms": 6.0567,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.0818,
+    "min_ms": 5.8625,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.902,
+    "min_ms": 12.4084,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.5596,
+    "min_ms": 13.2262,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.6006,
+    "min_ms": 13.0778,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.2756,
+    "min_ms": 12.9059,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.0069,
+    "min_ms": 12.5355,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.1212,
+    "min_ms": 12.7775,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.2497,
+    "min_ms": 13.0562,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.1087,
+    "min_ms": 12.6385,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.2777,
+    "min_ms": 12.8464,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.9277,
+    "min_ms": 12.1876,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.3488,
+    "min_ms": 12.9206,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.3626,
+    "min_ms": 12.9072,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 32.0792,
+    "min_ms": 30.9261,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.6855,
+    "min_ms": 29.5476,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 30.6071,
+    "min_ms": 29.7654,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 30.2482,
+    "min_ms": 28.9943,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 32.3148,
+    "min_ms": 30.1068,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.2393,
+    "min_ms": 29.288,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.1784,
+    "min_ms": 29.0558,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 29.6741,
+    "min_ms": 28.3029,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 33.023,
+    "min_ms": 29.5241,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.3815,
+    "min_ms": 29.97,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 32.908,
+    "min_ms": 30.8582,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.2985,
+    "min_ms": 30.0365,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 82.5726,
+    "min_ms": 81.1051,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 81.3231,
+    "min_ms": 79.2216,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 84.1243,
+    "min_ms": 82.5405,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 85.005,
+    "min_ms": 79.9001,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 81.8848,
+    "min_ms": 79.4529,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 80.0787,
+    "min_ms": 78.4255,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 82.567,
+    "min_ms": 80.8319,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 83.3067,
+    "min_ms": 78.4762,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 84.2343,
+    "min_ms": 81.0654,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 83.2475,
+    "min_ms": 79.2382,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "clang",
+    "build": "base",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_clang_base.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 84.2174,
+    "min_ms": 79.8116,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "clang",
+    "build": "rt",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_clang_rt.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 85.0824,
+    "min_ms": 77.7183,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 5.7956,
+    "min_ms": 5.5894,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.974,
+    "min_ms": 6.04,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.0706,
+    "min_ms": 5.6913,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.0941,
+    "min_ms": 5.9953,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.0212,
+    "min_ms": 5.7236,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 5.908,
+    "min_ms": 5.667,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.107,
+    "min_ms": 5.9316,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 5.985,
+    "min_ms": 5.3564,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 5.583,
+    "min_ms": 5.3693,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.4615,
+    "min_ms": 6.2336,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 5.9086,
+    "min_ms": 5.7082,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.3985,
+    "min_ms": 5.6426,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.9962,
+    "min_ms": 12.5399,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.6721,
+    "min_ms": 12.3938,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.7944,
+    "min_ms": 12.3176,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 14.3177,
+    "min_ms": 12.6078,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.9173,
+    "min_ms": 12.4253,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.937,
+    "min_ms": 12.1753,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.0877,
+    "min_ms": 12.5846,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.7759,
+    "min_ms": 12.3678,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.7603,
+    "min_ms": 12.186,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.7089,
+    "min_ms": 12.2104,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.7123,
+    "min_ms": 12.3122,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.7113,
+    "min_ms": 12.187,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 32.3508,
+    "min_ms": 29.4552,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 33.9395,
+    "min_ms": 29.8804,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.6101,
+    "min_ms": 29.9972,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 30.1482,
+    "min_ms": 29.2185,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.3071,
+    "min_ms": 30.0727,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.7577,
+    "min_ms": 29.4964,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.4671,
+    "min_ms": 29.4583,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 30.1013,
+    "min_ms": 28.6287,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.2979,
+    "min_ms": 29.373,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.3768,
+    "min_ms": 29.1227,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 29.4486,
+    "min_ms": 28.1207,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.1276,
+    "min_ms": 28.4729,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 85.1114,
+    "min_ms": 80.171,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 1,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 81.5909,
+    "min_ms": 77.6039,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 85.3527,
+    "min_ms": 78.8485,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 2,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 81.8513,
+    "min_ms": 76.1873,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 84.226,
+    "min_ms": 79.7922,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 3,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 81.7364,
+    "min_ms": 79.2897,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 80.5344,
+    "min_ms": 78.5733,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 4,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 79.6801,
+    "min_ms": 77.1797,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 81.6846,
+    "min_ms": 78.4391,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 5,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 82.2977,
+    "min_ms": 78.9082,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "gcc",
+    "build": "base",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_base.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 82.4689,
+    "min_ms": 80.859,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "cc": "gcc",
+    "build": "rt",
+    "run": 6,
+    "lib": "<EXPLORE_BIN>/libdec_gcc_rt.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 83.2119,
+    "min_ms": 80.9231,
+    "weights_fnv1a": "da5b63787daec30a"
+   }
+  ]
+ },
+ "rms_lanes_0": {
+  "what": "proto_rms_lanes.py: the RMSNorm's jobs with their per-row passes in AVX-512 -- the forward's scale and its scan, the VJP's dx, the gamma adjoint's columns in 16, 32 or 64 columns a task -- each lane its row's operations in the unit's order. bench: rms_bench.c (the unit's jobs and the variant's, four threads, ROWS rows of 128, the median of 9 rounds of 200 calls; every output compared first over four kinds of input under every VJP mode: byte for byte on the finite kinds, and on the non-finite kind the elements listed in notes carry another NaN than the unit's, every other byte the same -- a second spelling of a NaN, which the trainer's scans refuse either way); steady: ../pool-affinity/step_one.c with the tree before's library against the variant's, one library a process, alternating, six runs each, T128 to T1024, clang",
+  "bench": [
+   {
+    "compiler": "clang",
+    "threads": 4,
+    "rows": 1024,
+    "width": 128,
+    "bytes_equal": true,
+    "fwd_us": [
+     12.61,
+     8.76
+    ],
+    "fwd_ratio": 0.695,
+    "rows_us": [
+     18.18,
+     11.97
+    ],
+    "rows_ratio": 0.658,
+    "cols_us": {
+     "unit16": 9.31,
+     "v16": 7.37,
+     "v32": 7.86,
+     "v64": 13.21
+    }
+   },
+   {
+    "compiler": "clang",
+    "threads": 4,
+    "rows": 2048,
+    "width": 128,
+    "bytes_equal": true,
+    "fwd_us": [
+     19.13,
+     13.83
+    ],
+    "fwd_ratio": 0.723,
+    "rows_us": [
+     32.57,
+     22.41
+    ],
+    "rows_ratio": 0.688,
+    "cols_us": {
+     "unit16": 35.22,
+     "v16": 25.95,
+     "v32": 27.19,
+     "v64": 48.99
+    }
+   },
+   {
+    "compiler": "clang",
+    "threads": 4,
+    "rows": 4096,
+    "width": 128,
+    "bytes_equal": true,
+    "fwd_us": [
+     38.81,
+     29.31
+    ],
+    "fwd_ratio": 0.755,
+    "rows_us": [
+     83.13,
+     66.16
+    ],
+    "rows_ratio": 0.796,
+    "cols_us": {
+     "unit16": 118.06,
+     "v16": 94.17,
+     "v32": 92.71,
+     "v64": 171.45
+    }
+   },
+   {
+    "compiler": "gcc",
+    "threads": 4,
+    "rows": 1024,
+    "width": 128,
+    "bytes_equal": true,
+    "fwd_us": [
+     15.52,
+     11.79
+    ],
+    "fwd_ratio": 0.76,
+    "rows_us": [
+     16.23,
+     10.94
+    ],
+    "rows_ratio": 0.674,
+    "cols_us": {
+     "unit16": 7.37,
+     "v16": 5.78,
+     "v32": 6.12,
+     "v64": 9.29
+    }
+   },
+   {
+    "compiler": "gcc",
+    "threads": 4,
+    "rows": 2048,
+    "width": 128,
+    "bytes_equal": true,
+    "fwd_us": [
+     24.73,
+     19.68
+    ],
+    "fwd_ratio": 0.796,
+    "rows_us": [
+     32.19,
+     23.14
+    ],
+    "rows_ratio": 0.719,
+    "cols_us": {
+     "unit16": 28.71,
+     "v16": 27.78,
+     "v32": 25.43,
+     "v64": 46.93
+    }
+   },
+   {
+    "compiler": "gcc",
+    "threads": 4,
+    "rows": 4096,
+    "width": 128,
+    "bytes_equal": true,
+    "fwd_us": [
+     42.27,
+     28.74
+    ],
+    "fwd_ratio": 0.68,
+    "rows_us": [
+     78.91,
+     60.81
+    ],
+    "rows_ratio": 0.771,
+    "cols_us": {
+     "unit16": 104.22,
+     "v16": 96.1,
+     "v32": 97.42,
+     "v64": 174.03
+    }
+   }
+  ],
+  "notes": {
+   "clang 1024": [
+    "kind 3: 2 elements differ only in which NaN they carry"
+   ],
+   "clang 2048": [
+    "kind 3: 2 elements differ only in which NaN they carry"
+   ],
+   "clang 4096": [
+    "kind 3: 2 elements differ only in which NaN they carry"
+   ],
+   "gcc 1024": [
+    "kind 3: 3 elements differ only in which NaN they carry"
+   ],
+   "gcc 2048": [
+    "kind 3: 1 elements differ only in which NaN they carry"
+   ],
+   "gcc 4096": [
+    "kind 3: 1 elements differ only in which NaN they carry"
+   ]
+  },
+  "steady": [
+   {
+    "time": 128,
+    "runs": 6,
+    "weights_fnv1a": [
+     "64e87a7b7a668d4e"
+    ],
+    "median_ms": {
+     "A": 6.64785,
+     "R": 6.2798
+    },
+    "R_over_A": {
+     "geometric_mean": 0.9675050091382468,
+     "ci95": [
+      0.8610467400120508,
+      1.0871255870436234
+     ],
+     "rounds": 6
+    },
+    "verdict": "not resolved: holds 1"
+   },
+   {
+    "time": 256,
+    "runs": 6,
+    "weights_fnv1a": [
+     "43ebeaf4ffa940c8"
+    ],
+    "median_ms": {
+     "A": 13.4993,
+     "R": 13.141100000000002
+    },
+    "R_over_A": {
+     "geometric_mean": 0.953189500097219,
+     "ci95": [
+      0.8926936909521924,
+      1.0177849718266287
+     ],
+     "rounds": 6
+    },
+    "verdict": "not resolved: holds 1"
+   },
+   {
+    "time": 512,
+    "runs": 6,
+    "weights_fnv1a": [
+     "e56a429d20e44af6"
+    ],
+    "median_ms": {
+     "A": 30.7823,
+     "R": 31.450499999999998
+    },
+    "R_over_A": {
+     "geometric_mean": 1.0225530869437423,
+     "ci95": [
+      0.9850745046750797,
+      1.0614575960049497
+     ],
+     "rounds": 6
+    },
+    "verdict": "not resolved: holds 1"
+   },
+   {
+    "time": 1024,
+    "runs": 6,
+    "weights_fnv1a": [
+     "da5b63787daec30a"
+    ],
+    "median_ms": {
+     "A": 83.53120000000001,
+     "R": 82.53275
+    },
+    "R_over_A": {
+     "geometric_mean": 0.9940472102433466,
+     "ci95": [
+      0.958456656814312,
+      1.0309593544656417
+     ],
+     "rounds": 6
+    },
+    "verdict": "not resolved: holds 1"
+   }
+  ],
+  "raw": [
+   {
+    "build": "A",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.661,
+    "min_ms": 6.2076,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "R",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.3929,
+    "min_ms": 5.9792,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "A",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.8026,
+    "min_ms": 6.0963,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "R",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.0274,
+    "min_ms": 5.9027,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "A",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.6347,
+    "min_ms": 6.0229,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "R",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.3543,
+    "min_ms": 5.9282,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "A",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.7887,
+    "min_ms": 6.1329,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "R",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.2053,
+    "min_ms": 5.9343,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "A",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.4735,
+    "min_ms": 6.0099,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "R",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.1519,
+    "min_ms": 5.85,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "A",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.1688,
+    "min_ms": 5.8921,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "R",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.0857,
+    "min_ms": 5.753,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "A",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 14.4986,
+    "min_ms": 12.5973,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "R",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.4441,
+    "min_ms": 12.5918,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "A",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.1121,
+    "min_ms": 12.8819,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "R",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.204,
+    "min_ms": 12.8093,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "A",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 15.2128,
+    "min_ms": 12.6378,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "R",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.9804,
+    "min_ms": 12.4817,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "A",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.0722,
+    "min_ms": 12.563,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "R",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.0782,
+    "min_ms": 12.5967,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "A",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.8865,
+    "min_ms": 12.6548,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "R",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.2558,
+    "min_ms": 12.4923,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "A",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.8331,
+    "min_ms": 12.3419,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "R",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 12.6496,
+    "min_ms": 11.9337,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "A",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 30.5417,
+    "min_ms": 29.1561,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "R",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 32.1045,
+    "min_ms": 29.2095,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "A",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.4648,
+    "min_ms": 29.4596,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "R",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.2382,
+    "min_ms": 28.6848,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "A",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 30.4183,
+    "min_ms": 29.5312,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "R",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.5158,
+    "min_ms": 28.7409,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "A",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.0229,
+    "min_ms": 29.3147,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "R",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 30.5128,
+    "min_ms": 29.3698,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "A",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.3885,
+    "min_ms": 28.9084,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "R",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.3852,
+    "min_ms": 29.5281,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "A",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 30.2358,
+    "min_ms": 28.9049,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "R",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 32.5054,
+    "min_ms": 29.8023,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "A",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 85.4415,
+    "min_ms": 79.7693,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "R",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 81.1694,
+    "min_ms": 79.4635,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "A",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 84.0066,
+    "min_ms": 81.5159,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "R",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 84.1908,
+    "min_ms": 79.8715,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "A",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 84.2236,
+    "min_ms": 80.2646,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "R",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 82.5709,
+    "min_ms": 80.0093,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "A",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 83.0558,
+    "min_ms": 79.8198,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "R",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 81.8432,
+    "min_ms": 79.4271,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "A",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 83.0401,
+    "min_ms": 76.2181,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "R",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 82.4946,
+    "min_ms": 78.5687,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "A",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 81.5168,
+    "min_ms": 79.3935,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "R",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_R.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 86.0738,
+    "min_ms": 80.4959,
+    "weights_fnv1a": "da5b63787daec30a"
+   }
+  ]
+ }
+}

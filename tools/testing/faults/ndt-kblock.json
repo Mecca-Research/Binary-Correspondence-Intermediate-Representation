@@ -40,8 +40,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NK5 the pool entry of one thread runs the fused kernel under the blocked contract",
-      "new": "  (fused==MM_KBLOCK ? bcir_tensor_mm_fused : fused ? bcir_tensor_mm_fused : bcir_tensor_mm)\n    (NULL,ta,tb,m,n,k,alpha,a,b,beta,c);",
-      "old": "  (fused==MM_KBLOCK ? bcir_tensor_mm_kblock : fused ? bcir_tensor_mm_fused : bcir_tensor_mm)\n    (NULL,ta,tb,m,n,k,alpha,a,b,beta,c);",
+      "new": "  mm_variant_any(variant,fused==MM_KBLOCK ? MM_FUSED : fused,ta,tb,m,n,k,alpha,a,b,beta,c);\n}\n/* one call; `ws` the room lent for KSPLIT",
+      "old": "  mm_variant_any(variant,fused,ta,tb,m,n,k,alpha,a,b,beta,c);\n}\n/* one call; `ws` the room lent for KSPLIT",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -54,8 +54,8 @@
     {
       "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
       "label": "NK7 the AVX-512 instance stops before its last single row (the row keeps its beta-scaled value)",
-      "new": "      for (;i+1<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);\n",
-      "old": "      for (;i<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);\n",
+      "new": "  for (;i+1<r1;i++) kb512_block(1,nv,x,bt,i,jb,nj,lb,nl);\n",
+      "old": "  for (;i<r1;i++) kb512_block(1,nv,x,bt,i,jb,nj,lb,nl);\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

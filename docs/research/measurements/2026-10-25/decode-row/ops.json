@@ -1,0 +1,100 @@
+[
+ {
+  "tree": "before",
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 135.0,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1514.8,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 31423.1,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 3106.5,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 65.9,
+    "calls": 816
+   },
+   "attention": {
+    "us": 14600.0,
+    "calls": 816
+   },
+   "residual": {
+    "us": 93.9,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 2287.4,
+    "calls": 816
+   },
+   "head": {
+    "us": 7305.4,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 628.7,
+    "calls": 200
+   },
+   "total": {
+    "us": 61160.7
+   }
+  }
+ },
+ {
+  "tree": "after",
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 146.6,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1607.3,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 31290.8,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 349.6,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 96.4,
+    "calls": 816
+   },
+   "attention": {
+    "us": 7682.0,
+    "calls": 816
+   },
+   "residual": {
+    "us": 103.9,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 2271.6,
+    "calls": 816
+   },
+   "head": {
+    "us": 7421.0,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 654.3,
+    "calls": 200
+   },
+   "total": {
+    "us": 51623.5
+   }
+  }
+ }
+]

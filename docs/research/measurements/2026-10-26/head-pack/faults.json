@@ -1,0 +1,760 @@
+{
+ "head_pack": {
+  "command": [
+   "@python",
+   "tools/testing/check_tests.py",
+   "--require",
+   "bcir.tests.test_native_ai:_CC",
+   "--require",
+   "bcir.tests.test_native_ai:_ASAN",
+   "bcir.tests.test_native_ai:test_native_ai_c_harness_c11_and_c23",
+   "bcir.tests.test_native_ai:test_native_ai_c_harness_under_address_sanitizer",
+   "bcir.tests.test_native_ai:test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout",
+   "bcir.tests.test_model_weights_io:test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit",
+   "bcir.tests.test_model_weights_io:test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads"
+  ],
+  "results": [
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout",
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit"
+    ],
+    "label": "HP1 the pack's exponent bytes swapped",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout",
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit"
+    ],
+    "label": "HP2 a code packed in its neighbour's lane",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout"
+    ],
+    "label": "HP3 a pack a short block too small",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit"
+    ],
+    "label": "HP4 a pass only where more than 32 rows remain",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout",
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit"
+    ],
+    "label": "HP5 the AVX-512 pass's fourth block read from the third",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout"
+    ],
+    "label": "HP6 the AVX2 pass's fourth block read from the third",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout",
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit"
+    ],
+    "label": "HP7 the AVX-512 scales' exponent bias 1022",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout"
+    ],
+    "label": "HP8 the AVX2 scales' high half from the low half's exponents",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout"
+    ],
+    "label": "HP9 the AVX-512 block's store missing its first lane",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer"
+    ],
+    "label": "HP10 the AVX2 block's store a lane past its rows",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer"
+    ],
+    "label": "HP11 a pass's totals never checked finite",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout"
+    ],
+    "label": "HP12 the portable loop over a pack reading the next row's lane",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout"
+    ],
+    "label": "HP13 a pack refusing nothing",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer"
+    ],
+    "label": "HP14 a pack one byte short accepted",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit",
+    "fired": [
+     "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit"
+    ],
+    "label": "HP15 the loader packing no head",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit",
+    "fired": [
+     "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit"
+    ],
+    "label": "HP16 the decoder's head ignoring the pack",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit",
+    "fired": [
+     "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit"
+    ],
+    "label": "HP17 the pack left live when the model is freed",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit",
+    "fired": [
+     "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit"
+    ],
+    "label": "HP18 a refused pack allocation loading a model without one",
+    "verdict": "RED"
+   }
+  ],
+  "table": "tools/testing/faults/head-pack.json"
+ },
+ "q8_pair": {
+  "command": [
+   "@python",
+   "tools/testing/check_tests.py",
+   "--require",
+   "bcir.tests.test_native_ai:_CC",
+   "--require",
+   "bcir.tests.test_native_ai:_ASAN",
+   "bcir.tests.test_native_ai:test_native_ai_c_harness_c11_and_c23",
+   "bcir.tests.test_native_ai:test_native_ai_c_harness_under_address_sanitizer",
+   "bcir.tests.test_native_ai:test_native_q8_instances_match_the_increasing_coordinate_oracle",
+   "bcir.tests.test_native_ai:test_native_q8_matrix_kernels_match_increasing_coordinate_oracle_exactly"
+  ],
+  "results": [
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "PA1 a pass's two rows added in the other order",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "PA2 a pass's second row reading the first row's codes",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_under_address_sanitizer",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "PA3 a pass running one step past its rows' end (a read and a write past the matrix)",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "PA4 an odd last row paired with the row past the matrix",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "PA5 a row's group turn taking the next group's scale",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "PA6 a row's first group end counted from the row's start",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer"
+    ],
+    "label": "PA7 the probe reporting the pair for every vector matvec",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer"
+    ],
+    "label": "PA8 the pair never taken",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer"
+    ],
+    "label": "PA9 the AVX-512 terms as before formed as (x * s) * code",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer"
+    ],
+    "label": "PA10 the AVX2 terms as before formed as (x * s) * code",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer"
+    ],
+    "label": "PA11 a pass's outputs not zeroed",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "PA12 a pass's row skipping every other group's scale",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "PA13 the AVX2 step's upper four terms taken from the lower four codes",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "PA14 the AVX2 step's upper four outputs stored over the lower four",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_ai_c_harness_under_address_sanitizer"
+    ],
+    "label": "PA15 the AVX2 step's upper four terms as before without their group's scale",
+    "verdict": "RED"
+   }
+  ],
+  "table": "tools/testing/faults/q8-pair.json"
+ },
+ "q8_lanes": {
+  "command": [
+   "@python",
+   "tools/testing/check_tests.py",
+   "--require",
+   "bcir.tests.test_native_ai:_CC",
+   "bcir.tests.test_native_ai:test_native_ai_c_harness_c11_and_c23",
+   "bcir.tests.test_native_ai:test_native_q8_instances_match_the_increasing_coordinate_oracle",
+   "bcir.tests.test_native_ai:test_native_q8_matrix_kernels_match_increasing_coordinate_oracle_exactly"
+  ],
+  "results": [
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23"
+    ],
+    "label": "QL1 the AVX-512 run kernel's add fused with its product",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23"
+    ],
+    "label": "QL2 the AVX2 run kernel's tail add fused with its product",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23"
+    ],
+    "label": "QL3 a run reaching past its group",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "QL4 a pass's group turn taking the row's first group again",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "QL5 an odd last row left out of the pair",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "QL6 the pair for a group that is not a power of two",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23"
+    ],
+    "label": "QL7 the pair for a column count not a multiple of 8",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "QL8 the pair for a group under 8 columns",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "QL9 the AVX2 row dots' coordinate pair swapped",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "QL10 the AVX-512 row dots' coordinate pair swapped",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle",
+     "test_native_q8_matrix_kernels_match_increasing_coordinate_oracle_exactly"
+    ],
+    "label": "QL11 a row block's run held to its first row's group alone",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle",
+     "test_native_q8_matrix_kernels_match_increasing_coordinate_oracle_exactly"
+    ],
+    "label": "QL12 the AVX-512 row block's store missing its first lane",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "QL13 the transpose's coordinates 2-3 and 4-5 swapped",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23"
+    ],
+    "label": "QL14 a non-finite row dot not zeroing the output (vector instances)",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23"
+    ],
+    "label": "QL15 any instance admitted",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23",
+     "test_native_q8_instances_match_the_increasing_coordinate_oracle"
+    ],
+    "label": "QL16 an instance bit no kernel has",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23"
+    ],
+    "label": "QL17 the prevalidated matvec on the portable loops",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23"
+    ],
+    "label": "QL18 the prevalidated row dots on the portable loops",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23"
+    ],
+    "label": "QL19 a scale built from bits below a normal double",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23"
+    ],
+    "label": "QL20 a scale built from bits past the largest double",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23"
+    ],
+    "label": "QL21 an AVX-512 term's codes read unsigned",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_native_ai_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_ai_c_harness_c11_and_c23"
+    ],
+    "label": "QL22 the AVX-512 run kernel's vector a lane short",
+    "verdict": "RED"
+   }
+  ],
+  "table": "tools/testing/faults/q8-lanes.json"
+ },
+ "head_pack_under_the_witnesses_before": {
+  "command": [
+   "@python",
+   "tools/testing/check_tests.py",
+   "--require",
+   "bcir.tests.test_native_ai:_CC",
+   "--require",
+   "bcir.tests.test_native_ai:_ASAN",
+   "bcir.tests.test_native_ai:test_native_ai_c_harness_c11_and_c23",
+   "bcir.tests.test_native_ai:test_native_ai_c_harness_under_address_sanitizer",
+   "bcir.tests.test_native_ai:test_native_q8_instances_match_the_increasing_coordinate_oracle",
+   "bcir.tests.test_native_ai:test_native_q8_matrix_kernels_match_increasing_coordinate_oracle_exactly",
+   "bcir.tests.test_model_weights_io:test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+   "bcir.tests.test_model_weights_io:test_the_decoders_rotation_is_bcir_ropes_rows_bit_for_bit"
+  ],
+  "results": [
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP1 the pack's exponent bytes swapped",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP2 a code packed in its neighbour's lane",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP3 a pack a short block too small",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP4 a pass only where more than 32 rows remain",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP5 the AVX-512 pass's fourth block read from the third",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP6 the AVX2 pass's fourth block read from the third",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP7 the AVX-512 scales' exponent bias 1022",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP8 the AVX2 scales' high half from the low half's exponents",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP9 the AVX-512 block's store missing its first lane",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP10 the AVX2 block's store a lane past its rows",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP11 a pass's totals never checked finite",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP12 the portable loop over a pack reading the next row's lane",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP13 a pack refusing nothing",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP14 a pack one byte short accepted",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP15 the loader packing no head",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP16 the decoder's head ignoring the pack",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP17 the pack left live when the model is freed",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "HP18 a refused pack allocation loading a model without one",
+    "verdict": "NOT CAUGHT"
+   }
+  ],
+  "table": "<SCRATCH>/head-pack/head-pack-without.json"
+ }
+}

@@ -1,0 +1,88 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PA1 a block's start drops the remainder (the last n % W tasks of a job are in no block and never run)",
+      "new": "  return n/workers*w;\n",
+      "old": "  return n/workers*w+(w<n%workers ? w : n%workers);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PA2 each block ends one task past the next block's start (the task between them runs twice, the last block's one past the job's last task)",
+      "new": "      p->blocks[w].end=p->head+pool_block_start(tasks-p->head,workers,w+1)+1;\n",
+      "old": "      p->blocks[w].end=p->head+pool_block_start(tasks-p->head,workers,w+1);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PA3 no worker takes another's leftovers (a worker held in a task leaves the rest of its block unrun)",
+      "new": "    for (k=0;k<1;k++) {\n      pool_block *b=&p->blocks[(id+k)%workers];\n",
+      "old": "    for (k=0;k<workers;k++) {\n      pool_block *b=&p->blocks[(id+k)%workers];\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PA4 a worker takes leftovers only from the next worker's block (with three or more workers the others' rests wait for their owners)",
+      "new": "    for (k=0;k<workers && k<2;k++) {\n      pool_block *b=&p->blocks[(id+k)%workers];\n",
+      "old": "    for (k=0;k<workers;k++) {\n      pool_block *b=&p->blocks[(id+k)%workers];\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PA5 the blocks deal the head's tasks too (a led job's leading tasks, and every task of a job no larger than its workers, run twice)",
+      "new": "      p->blocks[w].next=pool_block_start(tasks,workers,w);\n      p->blocks[w].end=pool_block_start(tasks,workers,w+1);\n",
+      "old": "      p->blocks[w].next=p->head+pool_block_start(tasks-p->head,workers,w);\n      p->blocks[w].end=p->head+pool_block_start(tasks-p->head,workers,w+1);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PA6 no worker claims the head's tasks (a led job's leading tasks, and every task of a job no larger than its workers, never run)",
+      "new": "    while (0 && (t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<head) {\n",
+      "old": "    while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<head) {\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PA7 the blocks dealt over the pool's threads, not the job's cap (the blocks of workers past the cap never run)",
+      "new": "    unsigned w,workers=p->threads;\n    p->head=",
+      "old": "    unsigned w,workers=p->cap ? p->cap : p->threads;\n    p->head=",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PA8 a claim of the head takes two tasks (every other leading task never runs)",
+      "new": "    while ((t=__atomic_fetch_add(&p->next,(size_t)2,__ATOMIC_RELAXED))<head) {\n",
+      "old": "    while ((t=__atomic_fetch_add(&p->next,(size_t)1,__ATOMIC_RELAXED))<head) {\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PA9 the leftovers' check inverted (a worker skips every other block that still has tasks)",
+      "new": "      if (k && __atomic_load_n(&b->next,__ATOMIC_RELAXED)<b->end) continue;  /* nothing left in it */\n",
+      "old": "      if (k && __atomic_load_n(&b->next,__ATOMIC_RELAXED)>=b->end) continue;  /* nothing left in it */\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PA10 a head past the job's tasks kept (the blocks' share wraps below zero: tasks past the job's last run)",
+      "new": "    p->head=tasks>workers ? head : tasks;\n",
+      "old": "    p->head=head<tasks && tasks>workers ? head : tasks;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "PA11 the blocks' room missing (the workers' counters past the first written beyond the bytes the pool asked for)",
+      "new": "  *blocks=off; off+=BCIR_POOL_LINE;\n",
+      "old": "  *blocks=off; off+=BCIR_POOL_LINE+(size_t)threads*sizeof(pool_block);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

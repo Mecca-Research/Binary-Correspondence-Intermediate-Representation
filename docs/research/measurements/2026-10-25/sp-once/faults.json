@@ -1,0 +1,491 @@
+{
+ "sp_once": {
+  "command": [
+   "@python",
+   "tools/testing/check_tests.py",
+   "--require",
+   "bcir.tests.test_c_executor:_CC",
+   "bcir.tests.test_c_executor:test_the_checked_walks_are_the_plain_walks_on_every_pack",
+   "bcir.tests.test_c_executor:test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+   "bcir.tests.test_c_runtime:test_c_rejects_crc_valid_semantically_corrupt_packs",
+   "bcir.tests.test_c_runtime:test_c_rejects_stale_generation_vectors_per_resource",
+   "bcir.tests.test_decoder_gem:test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated"
+  ],
+  "results": [
+   {
+    "exit_code": 1,
+    "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+    "fired": [
+     "test_the_checked_walks_are_the_plain_walks_on_every_pack"
+    ],
+    "label": "SO1 a refused check's token keeping the bytes",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+    "fired": [
+     "test_the_checked_walks_are_the_plain_walks_on_every_pack"
+    ],
+    "label": "SO2 the checked walks without the length bound",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+    "fired": [
+     "test_the_checked_walks_are_the_plain_walks_on_every_pack"
+    ],
+    "label": "SO3 the checked walks without the buffer check",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+    "fired": [
+     "test_the_checked_walks_are_the_plain_walks_on_every_pack"
+    ],
+    "label": "SO4 the checked generation check without data_gen",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+    "fired": [
+     "test_the_checked_walks_are_the_plain_walks_on_every_pack"
+    ],
+    "label": "SO5 the checked semantic walk without R11",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+    "fired": [
+     "test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated",
+     "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+     "test_the_checked_walks_are_the_plain_walks_on_every_pack"
+    ],
+    "label": "SO6 the checked segment walk on the block walk's body",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_checked_walks_are_the_plain_walks_on_every_pack",
+    "fired": [
+     "test_the_checked_walks_are_the_plain_walks_on_every_pack"
+    ],
+    "label": "SO7 a check reporting the CRC's refusal as acceptance",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+    "fired": [
+     "test_c_rejects_crc_valid_semantically_corrupt_packs",
+     "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order"
+    ],
+    "label": "SO8 GEM's execution without the semantic walk",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_c_rejects_crc_valid_semantically_corrupt_packs",
+    "fired": [
+     "test_c_rejects_crc_valid_semantically_corrupt_packs"
+    ],
+    "label": "SO9 the R11 execution wrapper without its generation check",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_c_rejects_stale_generation_vectors_per_resource",
+    "fired": [
+     "test_c_rejects_stale_generation_vectors_per_resource"
+    ],
+    "label": "SO10 the generation vector located without the semantic walk",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated",
+    "fired": [
+     "test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated"
+    ],
+    "label": "SO11 GEM's load without the semantic walk",
+    "verdict": "RED"
+   }
+  ]
+ },
+ "qual": {
+  "table": "tools/testing/faults/qual.json",
+  "command": [
+   "@python",
+   "tools/testing/check_tests.py",
+   "--require",
+   "bcir.tests.test_c_executor:_CC",
+   "--require",
+   "bcir.tests.test_decoder_gem:_CC",
+   "bcir.tests.test_c_executor:test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+   "bcir.tests.test_c_executor:test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+   "bcir.tests.test_c_executor:test_intra_phase_sort_is_by_claim_id",
+   "bcir.tests.test_c_executor:test_dispatch_order_and_telemetry_match_gem_execute",
+   "bcir.tests.test_decoder_gem:test_the_c_interpreter_is_the_monolithic_runner_bit_for_bit",
+   "bcir.tests.test_decoder_gem:test_the_c_interpreter_counts_the_traffic_the_program_plans",
+   "bcir.tests.test_decoder_gem:test_the_c_interpreter_refuses_what_the_oracle_refuses",
+   "bcir.tests.test_decoder_gem:test_a_c_run_reads_what_it_wrote_or_zeros",
+   "bcir.tests.test_decoder_gem:test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated",
+   "bcir.tests.test_decoder_gem:test_final_is_a_resource_of_its_own_on_the_c_rail",
+   "bcir.tests.test_decoder_program:test_a_program_states_every_operation_of_every_token_once",
+   "bcir.tests.test_decoder_program:test_the_oracle_runs_the_pack_as_the_monolithic_decoder_bit_for_bit",
+   "bcir.tests.test_decoder_program:test_the_oracle_refuses_a_pack_that_is_not_this_models_program",
+   "bcir.tests.test_decoder_program:test_a_run_reads_what_it_wrote_or_zeros",
+   "bcir.tests.test_decoder_program:test_final_is_a_resource_of_its_own",
+   "bcir.tests.test_decoder_program:test_planned_traffic_is_each_claims_operands"
+  ],
+  "results": [
+   {
+    "exit_code": 1,
+    "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+    "fired": [
+     "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order"
+    ],
+    "label": "QL1 a segment claim id tying the greatest so far is taken as new",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+    "fired": [
+     "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order"
+    ],
+    "label": "QL2 a segment claim id below the greatest so far is never rescanned",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+    "fired": [
+     "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order"
+    ],
+    "label": "QL3 a trace id tying the greatest so far is taken as new",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+    "fired": [
+     "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order"
+    ],
+    "label": "QL4 a prefetch name equal to the greatest so far sorts after it",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+    "fired": [
+     "test_final_is_a_resource_of_its_own_on_the_c_rail",
+     "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+     "test_the_c_interpreter_refuses_what_the_oracle_refuses"
+    ],
+    "label": "QL5 the trace search does not wrap to the records before the last match",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+    "fired": [
+     "test_final_is_a_resource_of_its_own_on_the_c_rail",
+     "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+     "test_the_c_interpreter_refuses_what_the_oracle_refuses"
+    ],
+    "label": "QL6 the prefetch search does not wrap to the records before the last match",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+    "fired": [
+     "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order"
+    ],
+    "label": "QL7 a phase id that decreases in pack order still takes the run path",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_intra_phase_sort_is_by_claim_id",
+    "fired": [
+     "test_dispatch_order_and_telemetry_match_gem_execute",
+     "test_intra_phase_sort_is_by_claim_id",
+     "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order"
+    ],
+    "label": "QL8 the run path leaves a phase's claims in pack order",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_dispatch_order_and_telemetry_match_gem_execute",
+    "fired": [
+     "test_dispatch_order_and_telemetry_match_gem_execute",
+     "test_intra_phase_sort_is_by_claim_id",
+     "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order"
+    ],
+    "label": "QL9 the run path counts a phase one claim short",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+    "fired": [
+     "build",
+     "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims"
+    ],
+    "label": "QL10 every segment's claim id rescans the segments before it",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+    "fired": [
+     "build",
+     "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims"
+    ],
+    "label": "QL11 every prefetch name rescans the names before it",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+    "fired": [
+     "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims"
+    ],
+    "label": "QL12 every prefetch search starts at the first record",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+    "fired": [
+     "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims"
+    ],
+    "label": "QL13 every trace search starts at the first record",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+    "fired": [
+     "build",
+     "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims"
+    ],
+    "label": "QL14 every trace id rescans the ids before it",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+    "fired": [
+     "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims"
+    ],
+    "label": "QL15 every pack takes the general phase path",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_a_c_run_reads_what_it_wrote_or_zeros",
+    "fired": [
+     "test_a_c_run_reads_what_it_wrote_or_zeros"
+    ],
+    "label": "QG1 a run starts from the activations the last run left",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_final_is_a_resource_of_its_own_on_the_c_rail",
+    "fired": [
+     "test_final_is_a_resource_of_its_own_on_the_c_rail"
+    ],
+    "label": "QG2 FINAL is kept in the workspace's h, where the attention norm writes",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated",
+    "fired": [
+     "test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated"
+    ],
+    "label": "QG3 the claim table is sized from the header before the semantic walk reads the body",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_c_interpreter_refuses_what_the_oracle_refuses",
+    "fired": [
+     "test_the_c_interpreter_refuses_what_the_oracle_refuses"
+    ],
+    "label": "QG4 an append may skip a row of its layer's cache",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_c_interpreter_refuses_what_the_oracle_refuses",
+    "fired": [
+     "test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated",
+     "test_the_c_interpreter_refuses_what_the_oracle_refuses"
+    ],
+    "label": "QG5 the q projection may write any activation",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_c_interpreter_counts_the_traffic_the_program_plans",
+    "fired": [
+     "test_the_c_interpreter_counts_the_traffic_the_program_plans"
+    ],
+    "label": "QG6 attention is counted as reading one cache row too few",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_c_interpreter_refuses_what_the_oracle_refuses",
+    "fired": [
+     "test_the_c_interpreter_refuses_what_the_oracle_refuses"
+    ],
+    "label": "QG7 an embedding may run out of position order",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_oracle_runs_the_pack_as_the_monolithic_decoder_bit_for_bit",
+    "fired": [
+     "test_a_c_run_reads_what_it_wrote_or_zeros",
+     "test_the_c_interpreter_is_the_monolithic_runner_bit_for_bit",
+     "test_the_oracle_runs_the_pack_as_the_monolithic_decoder_bit_for_bit"
+    ],
+    "label": "QG8 the oracle scales attention by the model width, not the head width",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_oracle_runs_the_pack_as_the_monolithic_decoder_bit_for_bit",
+    "fired": [
+     "test_the_oracle_runs_the_pack_as_the_monolithic_decoder_bit_for_bit"
+    ],
+    "label": "QG9 the oracle's gate multiplies in another order than the reference MLP",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_final_is_a_resource_of_its_own",
+    "fired": [
+     "test_a_c_run_reads_what_it_wrote_or_zeros",
+     "test_final_is_a_resource_of_its_own",
+     "test_the_c_interpreter_is_the_monolithic_runner_bit_for_bit",
+     "test_the_oracle_runs_the_pack_as_the_monolithic_decoder_bit_for_bit"
+    ],
+    "label": "QG10 the oracle's head reads H",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_a_run_reads_what_it_wrote_or_zeros",
+    "fired": [
+     "test_a_c_run_reads_what_it_wrote_or_zeros",
+     "test_a_run_reads_what_it_wrote_or_zeros",
+     "test_the_c_interpreter_refuses_what_the_oracle_refuses",
+     "test_the_oracle_refuses_a_pack_that_is_not_this_models_program"
+    ],
+    "label": "QG11 the oracle's activations start a run unwritten",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_a_program_states_every_operation_of_every_token_once",
+    "fired": [
+     "test_a_c_run_reads_what_it_wrote_or_zeros",
+     "test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated",
+     "test_a_program_states_every_operation_of_every_token_once",
+     "test_a_run_reads_what_it_wrote_or_zeros",
+     "test_final_is_a_resource_of_its_own",
+     "test_final_is_a_resource_of_its_own_on_the_c_rail",
+     "test_the_c_interpreter_counts_the_traffic_the_program_plans",
+     "test_the_c_interpreter_is_the_monolithic_runner_bit_for_bit",
+     "test_the_oracle_refuses_a_pack_that_is_not_this_models_program",
+     "test_the_oracle_runs_the_pack_as_the_monolithic_decoder_bit_for_bit"
+    ],
+    "label": "QG13 attention's planned work counts one row too few",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_planned_traffic_is_each_claims_operands",
+    "fired": [
+     "test_planned_traffic_is_each_claims_operands",
+     "test_the_c_interpreter_counts_the_traffic_the_program_plans"
+    ],
+    "label": "QG14 the traffic model has attention read one cache row too few",
+    "verdict": "RED"
+   }
+  ]
+ },
+ "qual_before_rescans": {
+  "tree": "8d97b1cf19d96c255734f94dc2e3397ab0870cae",
+  "what": "QL10, QL11 and QL14 (--only rescans) on the tree before: each mutant leaves a running maximum set and unused, which a test's -Werror build reports as 'build' on both trees; each is caught by its own check on both",
+  "table": "tools/testing/faults/qual.json",
+  "command": [
+   "@python",
+   "tools/testing/check_tests.py",
+   "--require",
+   "bcir.tests.test_c_executor:_CC",
+   "--require",
+   "bcir.tests.test_decoder_gem:_CC",
+   "bcir.tests.test_c_executor:test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+   "bcir.tests.test_c_executor:test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+   "bcir.tests.test_c_executor:test_intra_phase_sort_is_by_claim_id",
+   "bcir.tests.test_c_executor:test_dispatch_order_and_telemetry_match_gem_execute",
+   "bcir.tests.test_decoder_gem:test_the_c_interpreter_is_the_monolithic_runner_bit_for_bit",
+   "bcir.tests.test_decoder_gem:test_the_c_interpreter_counts_the_traffic_the_program_plans",
+   "bcir.tests.test_decoder_gem:test_the_c_interpreter_refuses_what_the_oracle_refuses",
+   "bcir.tests.test_decoder_gem:test_a_c_run_reads_what_it_wrote_or_zeros",
+   "bcir.tests.test_decoder_gem:test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated",
+   "bcir.tests.test_decoder_gem:test_final_is_a_resource_of_its_own_on_the_c_rail",
+   "bcir.tests.test_decoder_program:test_a_program_states_every_operation_of_every_token_once",
+   "bcir.tests.test_decoder_program:test_the_oracle_runs_the_pack_as_the_monolithic_decoder_bit_for_bit",
+   "bcir.tests.test_decoder_program:test_the_oracle_refuses_a_pack_that_is_not_this_models_program",
+   "bcir.tests.test_decoder_program:test_a_run_reads_what_it_wrote_or_zeros",
+   "bcir.tests.test_decoder_program:test_final_is_a_resource_of_its_own",
+   "bcir.tests.test_decoder_program:test_planned_traffic_is_each_claims_operands"
+  ],
+  "results": [
+   {
+    "exit_code": 1,
+    "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+    "fired": [
+     "build",
+     "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims"
+    ],
+    "label": "QL10 every segment's claim id rescans the segments before it",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+    "fired": [
+     "build",
+     "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims"
+    ],
+    "label": "QL11 every prefetch name rescans the names before it",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+    "fired": [
+     "build",
+     "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims"
+    ],
+    "label": "QL14 every trace id rescans the ids before it",
+    "verdict": "RED"
+   }
+  ]
+ }
+}

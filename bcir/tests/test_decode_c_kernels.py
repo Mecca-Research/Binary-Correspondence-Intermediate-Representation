@@ -24,6 +24,7 @@ def _build(tmp):
                 _cc(),
                 "-std=c11",
                 "-O2",
+                "-ffp-contract=off",
                 "-Wall",
                 "-Wextra",
                 "-I",
@@ -189,6 +190,55 @@ def test_gqa_kernel_matches_the_oracle_and_the_cached_row_is_bitwise():
         assert full.stdout.split()[-nh * dk :] == rowr.stdout.split()  # bitwise, not epsilon
 
 
+def test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit():
+    """DECODE-ROW: the attention row's scores run eight and four key rows' chains side by side, its
+    context eight coordinates' chains down the rows, and the decoder's rotation reads a table filled
+    once a position -- each value still the one chain the loops before them computed, term for term.
+    The oracle differential above allows 1e-12, which a reassociated chain passes; this one compares
+    bytes. test_decode.c's `order` mode holds bcir_gqa_attention_row, bcir_gqa_attention, bcir_rope and
+    bcir_rope_apply over bcir_rope_table to those loops (kept in the harness as the definition) over
+    every shape around the blocks, six head groupings, six value ranges (signed zeros, infinities,
+    subnormal products, scores past exp's range) and rotations at ten positions to INT_MAX - 300, built
+    with -ffp-contract=off at -O0, -O2 and -O3, as every build of the decoder here compiles it. Where a
+    compiler may fuse a product into its sum -- clang's default on hardware with FMA, aarch64 among it --
+    each code shape's chains fuse as the compiler chooses, the old loops' as much as the new, so no byte is
+    claimed there."""
+    if _cc() is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        for flags in (["-O0"], ["-O2"], ["-O3"]):
+            exe = os.path.join(tmp, "test_decode_order")
+            build = subprocess.run(
+                host_link_args(
+                    [
+                        _cc(),
+                        "-std=c11",
+                        *flags,
+                        "-ffp-contract=off",
+                        "-Wall",
+                        "-Wextra",
+                        "-Werror",
+                        "-I",
+                        _RUNTIME_C,
+                        os.path.join(_RUNTIME_C, "test_decode.c"),
+                        os.path.join(_RUNTIME_C, "bcir_decode.c"),
+                        "-o",
+                        exe,
+                        "-lm",
+                    ]
+                ),
+                capture_output=True,
+                text=True,
+            )
+            assert build.returncode == 0, (flags, build.stderr)
+            for seed in (1, 2):
+                run = subprocess.run([exe], input=f"order {seed}\n", capture_output=True, text=True)
+                assert run.returncode == 0, (flags, seed, run.returncode, run.stdout, run.stderr)
+                assert run.stdout == (
+                    "order: 2482 comparisons, every byte the one-chain loops'\n"
+                ), (flags, seed, run.stdout)
+
+
 def test_decode_kernels_preflight_indices_and_pointer_arithmetic():
     if _cc() is None:
         return
@@ -216,6 +266,7 @@ int main(void){
                     _cc(),
                     "-std=c11",
                     "-O1",
+                    "-ffp-contract=off",
                     "-Wall",
                     "-Wextra",
                     "-Werror",

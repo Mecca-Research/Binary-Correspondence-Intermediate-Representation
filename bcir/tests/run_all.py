@@ -192,6 +192,7 @@ def _apply_tier(tier: str) -> None:
 
 _MODULES = [
     "bcir.tests.test_kbcir",
+    "bcir.tests.test_kbcir_measured",
     "bcir.tests.test_linear_layout",
     "bcir.tests.test_planner_compact",
     "bcir.tests.test_native_hydrate",
@@ -358,6 +359,8 @@ _MODULES = [
     "bcir.tests.test_native_decoder",
     "bcir.tests.test_native_launch",
     "bcir.tests.test_native_choose",
+    "bcir.tests.test_native_dispatch",
+    "bcir.tests.test_native_measured",
     "bcir.tests.test_native_place",
     "bcir.tests.test_native_run_pack",
     "bcir.tests.test_native_run_program",
@@ -433,6 +436,7 @@ _MODULES = [
     "bcir.tests.test_execution_scope",
     "bcir.tests.test_gemplus_baseline",
     "bcir.tests.test_gemplus_floors",
+    "bcir.tests.test_ot_contract",
     "bcir.tests.test_ab_audit",
     "bcir.tests.test_call_counts",
     "bcir.tests.test_irdl_inventory",
@@ -619,6 +623,7 @@ _REPO_ONLY_MODULES = frozenset(
         "bcir.tests.test_event_phases",
         "bcir.tests.test_gemplus_baseline",
         "bcir.tests.test_gemplus_floors",
+        "bcir.tests.test_ot_contract",
         "bcir.tests.test_ab_audit",
         "bcir.tests.test_irdl_inventory",
         "bcir.tests.test_mlir_fixture_inventory",

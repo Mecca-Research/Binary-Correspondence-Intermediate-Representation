@@ -1,0 +1,143 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_ai:_CC",
+    "--require",
+    "bcir.tests.test_native_ai:_ASAN",
+    "bcir.tests.test_native_ai:test_native_ai_c_harness_c11_and_c23",
+    "bcir.tests.test_native_ai:test_native_ai_c_harness_under_address_sanitizer",
+    "bcir.tests.test_native_ai:test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout",
+    "bcir.tests.test_model_weights_io:test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit",
+    "bcir.tests.test_model_weights_io:test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP1 the pack's exponent bytes swapped",
+      "new": "      segment[2u * lane] = exponent[1];\n      segment[2u * lane + 1u] = exponent[0];",
+      "old": "      segment[2u * lane] = exponent[0];\n      segment[2u * lane + 1u] = exponent[1];",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP2 a code packed in its neighbour's lane",
+      "new": "for (k = 0u; k < group_size; ++k) segment[16u + 8u * k + (lane ^ 1u)] = code[k];",
+      "old": "for (k = 0u; k < group_size; ++k) segment[16u + 8u * k + lane] = code[k];",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP3 a pack a short block too small",
+      "new": "  blocks = output_count / 8u;",
+      "old": "  blocks = output_count / 8u + (output_count % 8u != 0u);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP4 a pass only where more than 32 rows remain",
+      "new": "    if (output_count - row > 32u) {",
+      "old": "    if (output_count - row >= 32u) {",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP5 the AVX-512 pass's fourth block read from the third",
+      "new": "*p2 = p1 + span, *p3 = p2;\n  __m512d t0",
+      "old": "*p2 = p1 + span, *p3 = p2 + span;\n  __m512d t0",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP6 the AVX2 pass's fourth block read from the third",
+      "new": "*p2 = p1 + span, *p3 = p2;\n  __m256d a0",
+      "old": "*p2 = p1 + span, *p3 = p2 + span;\n  __m256d a0",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP7 the AVX-512 scales' exponent bias 1022",
+      "new": "      _mm512_add_epi64(_mm512_cvtepi16_epi64(_mm_loadu_si128((const __m128i *)(P))), _mm512_set1_epi64(1022)), \\",
+      "old": "      _mm512_add_epi64(_mm512_cvtepi16_epi64(_mm_loadu_si128((const __m128i *)(P))), _mm512_set1_epi64(1023)), \\",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP8 the AVX2 scales' high half from the low half's exponents",
+      "new": "_mm256_cvtepi16_epi64(e_)",
+      "old": "_mm256_cvtepi16_epi64(_mm_srli_si128(e_, 8))",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP9 the AVX-512 block's store missing its first lane",
+      "new": "_mm512_mask_storeu_pd(output, (__mmask8)((1u << rows) - 2u), t0);",
+      "old": "_mm512_mask_storeu_pd(output, (__mmask8)((1u << rows) - 1u), t0);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP10 the AVX2 block's store a lane past its rows",
+      "new": "_mm256_set1_epi64x((long long)rows - 3), lanes), a1);",
+      "old": "_mm256_set1_epi64x((long long)rows - 4), lanes), a1);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP11 a pass's totals never checked finite",
+      "new": "    for (r = 0u; r < rows && rows < 32u; ++r)\n      if (!isfinite(output[row + r])) {\n        memset(output, 0, output_count * sizeof *output);\n        status = BCIR_AI_INVALID_NUMBER;",
+      "old": "    for (r = 0u; r < rows; ++r)\n      if (!isfinite(output[row + r])) {\n        memset(output, 0, output_count * sizeof *output);\n        status = BCIR_AI_INVALID_NUMBER;",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP12 the portable loop over a pack reading the next row's lane",
+      "new": "    size_t lane = (row + 1u) % 8u;\n    double total = 0.0;",
+      "old": "    size_t lane = row % 8u;\n    double total = 0.0;",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP13 a pack refusing nothing",
+      "new": "  (void)status;\n  memset(packed, 0, size);",
+      "old": "  if (status != BCIR_AI_OK) return status;\n  memset(packed, 0, size);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "HP14 a pack one byte short accepted",
+      "new": "      packed_size + 1u < size || output == NULL || !q8_input_validate(input, input_count) || !instance)",
+      "old": "      packed_size < size || output == NULL || !q8_input_validate(input, input_count) || !instance)",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit",
+      "label": "HP15 the loader packing no head",
+      "new": "  if (head != NULL ||\n      bcir_ai_q8_rows_pack_size(",
+      "old": "  if (head == NULL ||\n      bcir_ai_q8_rows_pack_size(",
+      "path": "runtime/c/bcir_q8_model.c"
+    },
+    {
+      "expects": "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit",
+      "label": "HP16 the decoder's head ignoring the pack",
+      "new": "  if (m->head_pack != NULL && m->vocab_size == 0u) {\n",
+      "old": "  if (m->head_pack != NULL) {\n",
+      "path": "runtime/c/bcir_llama.c"
+    },
+    {
+      "expects": "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit",
+      "label": "HP17 the pack left live when the model is freed",
+      "new": "",
+      "old": "  bcir_host_deallocate(&allocator,model->head_pack);\n",
+      "path": "runtime/c/bcir_q8_model.c"
+    },
+    {
+      "expects": "test_the_decoders_head_reads_the_pack_and_is_the_rows_own_bit_for_bit",
+      "label": "HP18 a refused pack allocation loading a model without one",
+      "new": "  if (m->head_pack == NULL) return 0;",
+      "old": "  if (m->head_pack == NULL) {\n    set_error(error, cap, \"cannot allocate the head's %zu-byte pack\", size);\n    return -1;\n  }",
+      "path": "runtime/c/bcir_q8_model.c"
+    }
+  ]
+}

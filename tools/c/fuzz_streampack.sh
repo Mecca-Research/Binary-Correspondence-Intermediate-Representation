@@ -113,9 +113,10 @@ add_target plan_sign "plan signatures (Ed25519 + PlanStatementV1)" "-max_len=102
 # fuzzer, since a random mutation dies on a checksum long before it reaches the geometry,
 # span-overlap, exponent-range or canonical-inventory checks. The harness therefore drives
 # each input twice: RAW (keeps the reject-on-bad-CRC path covered) and CRC-REPAIRED, which
-# is what actually explores the parser (measured: 49 -> 228 covered blocks).
+# is what actually explores the parser (measured: 49 -> 228 covered blocks). A model the
+# loader accepts has its head packed (HEAD-PACK, bcir_ai_kernels.c's bcir_ai_q8_rows_pack).
 add_target q8 "BCIRQ8 model loader" "-max_len=16384" \
-  "${C}/fuzz_q8_model.c" "${C}/bcir_q8_model.c"
+  "${C}/fuzz_q8_model.c" "${C}/bcir_q8_model.c" "${C}/bcir_ai_kernels.c"
 # bcir_decoder_gem.c executes a StreamPack as a decoder program (QUAL-2): op strings, RIDs,
 # positions and counts all come from the pack. The input is a model and a program; the pack is
 # driven raw and RESEALED (its CRC recomputed, the BCIRQ8 repair applied to the pack), and the
@@ -291,8 +292,10 @@ build_fail=0
 for key in "${KEYS[@]}"; do
   while [ "$(jobs -rp | wc -l)" -ge "${JOBS}" ]; do wait -n 2>/dev/null || true; done
   # shellcheck disable=SC2086 -- SRCS is a deliberate word-split source list.
-  ( "${CLANG}" -std=c23 -g ${FUZZ_SAN} ${SRCS[${key}]} -I "${C}" -o "${tmp}/fuzz_${key}" \
-      2>"${tmp}/build_${key}.log" ) &
+  # -ffp-contract=off: the decoder and trainer kernels compile without contraction in every build
+  # (tools/build/manifest.py M17), as the manifest's own fuzzer builds compile them.
+  ( "${CLANG}" -std=c23 -g -ffp-contract=off ${FUZZ_SAN} ${SRCS[${key}]} -I "${C}" \
+      -o "${tmp}/fuzz_${key}" 2>"${tmp}/build_${key}.log" ) &
 done
 wait || true
 for key in "${KEYS[@]}"; do
@@ -506,6 +509,17 @@ for i, case in enumerate(corpus_cases()[::97][:32]):   # modes 0 and 2: real rec
     except Exception:
         continue
     open(os.path.join(d, f"plan_{i}.bin"), "wb").write(b"\x01" + plan)
+from bcir.tests.planner_fixtures import measured_cases    # PX-3b-2: version-1 records and plans
+for i, case in enumerate(measured_cases()[::7][:16]):
+    args = (case.module, case.h, case.theta, case.policy)
+    record = encode_input(*args)
+    open(os.path.join(d, f"measured_input_{i}.bin"), "wb").write(b"\x00" + record)
+    open(os.path.join(d, f"measured_unsealed_{i}.bin"), "wb").write(b"\x02" + record[:-4])
+    try:
+        plan = encode_realization(optimize(*args))
+    except Exception:
+        continue
+    open(os.path.join(d, f"measured_plan_{i}.bin"), "wb").write(b"\x01" + plan)
 for name, blob, _status in malformed_inputs():           # one per law
     open(os.path.join(d, "bad_input_" + name + ".bin"), "wb").write(b"\x00" + blob)
 for name, blob, _status in malformed_realizations():

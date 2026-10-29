@@ -1,0 +1,1093 @@
+{
+ "what": "the backward a phase at a time: the tree before's unit through instrument_bwd4.py (BWD-NEXT's thread-local TSC counters around each phase of the row path) and the tree after's through instrument_bands.py (the same counters, and around the banded backward's three calls: dV's banded walk, the 16-row groups, dK's banded walk), each under bwd_bench4.c (the stored forward under contract 49 untimed, then the backward timed whole and by phase; evict 1 reads 1 GiB between them, P and the operands out of the caches), two runs; TSC cycles a probability (the task's counters summed over the threads); each product's share of v1's measured rate (1.443 TSC cycles a probability at d = 32, ../bwd-vt/micro.json); check: dq, dk and dv at fixed indices, the same in both trees",
+ "rows": [
+  {
+   "tree": "before",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 49,
+   "evict": 0,
+   "rounds": 8,
+   "wall_ms": 40.98226739130435,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 2.4393722213961078,
+    "dp_tiles": 2.193942768623795,
+    "dot": 0.8899508430179356,
+    "ds": 0.4858503290477062,
+    "dq": 1.6526221465692106,
+    "dk": 2.0118940510710255,
+    "copies": 0.6570269248146963,
+    "task_whole": 10.479022285308764,
+    "unplaced": 0.14836300076828812,
+    "wall_x_threads": 11.231090123040202
+   },
+   "v1_rate_percent": {
+    "dv": 59.15456392194786,
+    "dk": 71.72345875926337,
+    "dq": 87.31578497817065
+   },
+   "check": [
+    2.94099846e-05,
+    -8.69052164e-05,
+    -0.000175841327
+   ],
+   "raw": {
+    "tree": "A",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 49,
+    "evict": 0,
+    "workspace_bytes": 8388671,
+    "rounds": 8,
+    "wall_cycles_per_call": 94259215,
+    "dv": 81891716,
+    "dp": 59907636,
+    "dot": 29876376,
+    "ds": 16310392,
+    "dq": 55479874,
+    "dk": 67540925,
+    "contig_task": 351789329,
+    "dp_again": 701538,
+    "tile_zero": 2388028,
+    "tile_panel": 10655247,
+    "kv_in": 3327656,
+    "qdy_in": 3631590,
+    "dq_out": 5116840,
+    "dkdv_out": 9980844,
+    "dq0": 2.94099846e-05,
+    "dk0": -8.69052164e-05,
+    "dv0": -0.000175841327
+   }
+  },
+  {
+   "tree": "before",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 49,
+   "evict": 1,
+   "rounds": 8,
+   "wall_ms": 43.138610434782606,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 2.565576719970107,
+    "dp_tiles": 2.2111628445373506,
+    "dot": 1.0924806832219984,
+    "ds": 0.5024899603274463,
+    "dq": 1.670411347761103,
+    "dk": 1.9821721938483712,
+    "copies": 0.695610258624634,
+    "task_whole": 10.86333528502852,
+    "unplaced": 0.14343127673750988,
+    "wall_x_threads": 11.822030659010492
+   },
+   "v1_rate_percent": {
+    "dv": 56.24466377356329,
+    "dk": 72.7989225395412,
+    "dq": 86.38590739545033
+   },
+   "check": [
+    2.94099846e-05,
+    -8.69052164e-05,
+    -0.000175841327
+   ],
+   "raw": {
+    "tree": "A",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 49,
+    "evict": 1,
+    "workspace_bytes": 8388671,
+    "rounds": 8,
+    "wall_cycles_per_call": 99218804,
+    "dv": 86128504,
+    "dp": 59366231,
+    "dot": 36675468,
+    "ds": 16868998,
+    "dq": 56077072,
+    "dk": 66543138,
+    "contig_task": 364691030,
+    "dp_again": 729084,
+    "tile_zero": 2473250,
+    "tile_panel": 11661976,
+    "kv_in": 4116736,
+    "qdy_in": 4255332,
+    "dq_out": 4939715,
+    "dkdv_out": 10040421,
+    "dq0": 2.94099846e-05,
+    "dk0": -8.69052164e-05,
+    "dv0": -0.000175841327
+   }
+  },
+  {
+   "tree": "before",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "contract": 49,
+   "evict": 0,
+   "rounds": 3,
+   "wall_ms": 139.91757478260868,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 2.2443644205729165,
+    "dp_tiles": 2.053146995294961,
+    "dot": 0.8713953512479411,
+    "ds": 0.45069354286770985,
+    "dq": 1.5231084939966903,
+    "dk": 1.7718082575055667,
+    "copies": 0.5333149185292367,
+    "task_whole": 9.585211363346069,
+    "unplaced": 0.13737938333104682,
+    "wall_x_threads": 9.586017271668345
+   },
+   "v1_rate_percent": {
+    "dv": 64.29437157231565,
+    "dk": 81.44222118207769,
+    "dq": 94.74046042600139
+   },
+   "check": [
+    2.94099846e-05,
+    -8.69052164e-05,
+    -0.000175841327
+   ],
+   "raw": {
+    "tree": "A",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 1,
+    "contract": 49,
+    "evict": 0,
+    "workspace_bytes": 2097215,
+    "rounds": 3,
+    "wall_cycles_per_call": 321810422,
+    "dv": 75345145,
+    "dp": 56150845,
+    "dot": 29253453,
+    "ds": 15130150,
+    "dq": 51131995,
+    "dk": 59481049,
+    "contig_task": 321783367,
+    "dp_again": 715153,
+    "tile_zero": 2200411,
+    "tile_panel": 9859411,
+    "kv_in": 3185093,
+    "qdy_in": 3567526,
+    "dq_out": 3912579,
+    "dkdv_out": 7238619,
+    "dq0": 2.94099846e-05,
+    "dk0": -8.69052164e-05,
+    "dv0": -0.000175841327
+   }
+  },
+  {
+   "tree": "before",
+   "shape": [
+    4,
+    1024,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 49,
+   "evict": 0,
+   "rounds": 12,
+   "wall_ms": 9.016758695652173,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 1.856094464557927,
+    "dp_tiles": 2.1162011718750002,
+    "dot": 0.6086744950457317,
+    "ds": 0.42047446646341463,
+    "dq": 1.645982636242378,
+    "dk": 1.7691808784298781,
+    "copies": 0.928154892339939,
+    "task_whole": 9.504377381859756,
+    "unplaced": 0.15961437690548674,
+    "wall_x_threads": 9.879261147103659
+   },
+   "v1_rate_percent": {
+    "dv": 77.74388790840368,
+    "dk": 81.56316957713454,
+    "dq": 87.66799650415706
+   },
+   "check": [
+    -0.000643098028,
+    -0.000824578921,
+    0.00140797149
+   ],
+   "raw": {
+    "tree": "A",
+    "shape": [
+     4,
+     1024,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 49,
+    "evict": 0,
+    "workspace_bytes": 4194367,
+    "rounds": 12,
+    "wall_cycles_per_call": 20738545,
+    "dv": 15585254,
+    "dp": 14496799,
+    "dot": 5110918,
+    "ds": 3530640,
+    "dq": 13820987,
+    "dk": 14855458,
+    "contig_task": 79806356,
+    "dp_again": 160590,
+    "tile_zero": 562237,
+    "tile_panel": 2549692,
+    "kv_in": 983676,
+    "qdy_in": 1000868,
+    "dq_out": 1903054,
+    "dkdv_out": 3905933,
+    "dq0": -0.000643098028,
+    "dk0": -0.000824578921,
+    "dv0": 0.00140797149
+   }
+  },
+  {
+   "tree": "after",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 49,
+   "evict": 0,
+   "rounds": 8,
+   "wall_ms": 30.044697826086956,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 1.8963941180339494,
+    "groups (dP blocks, dots, score adjoints, dQ)": 3.7089615873501556,
+    "dk": 1.8627568659635798,
+    "copies": 0.5497341500427038,
+    "task_whole": 8.022173545021962,
+    "unplaced": 0.004326823631573218,
+    "wall_x_threads": 8.233675940435884
+   },
+   "v1_rate_percent": {
+    "dv": 76.09177787874616,
+    "dk": 77.46582639777603
+   },
+   "check": [
+    2.94099846e-05,
+    -8.69052164e-05,
+    -0.000175841327
+   ],
+   "raw": {
+    "tree": "B",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 49,
+    "evict": 0,
+    "workspace_bytes": 8388671,
+    "rounds": 8,
+    "wall_cycles_per_call": 69102805,
+    "dv": 63663498,
+    "dp": 124512867,
+    "dot": 0,
+    "ds": 0,
+    "dq": 0,
+    "dk": 62534268,
+    "contig_task": 269310912,
+    "dp_again": 0,
+    "tile_zero": 0,
+    "tile_panel": 0,
+    "kv_in": 2579710,
+    "qdy_in": 2836820,
+    "dq_out": 4448996,
+    "dkdv_out": 8589498,
+    "dq0": 2.94099846e-05,
+    "dk0": -8.69052164e-05,
+    "dv0": -0.000175841327
+   }
+  },
+  {
+   "tree": "after",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 49,
+   "evict": 1,
+   "rounds": 8,
+   "wall_ms": 32.77851913043478,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 1.942285376679554,
+    "groups (dP blocks, dots, score adjoints, dQ)": 3.8966939022274585,
+    "dk": 1.9452942996679021,
+    "copies": 0.6278062767375091,
+    "task_whole": 8.422445674242772,
+    "unplaced": 0.010365818930347603,
+    "wall_x_threads": 8.982872981103586
+   },
+   "v1_rate_percent": {
+    "dv": 74.293922887217,
+    "dk": 74.17900727135977
+   },
+   "check": [
+    2.94099846e-05,
+    -8.69052164e-05,
+    -0.000175841327
+   ],
+   "raw": {
+    "tree": "B",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 49,
+    "evict": 1,
+    "workspace_bytes": 8388671,
+    "rounds": 8,
+    "wall_cycles_per_call": 75390594,
+    "dv": 65204105,
+    "dp": 130815194,
+    "dot": 0,
+    "ds": 0,
+    "dq": 0,
+    "dk": 65305117,
+    "contig_task": 282748374,
+    "dp_again": 0,
+    "tile_zero": 0,
+    "tile_panel": 0,
+    "kv_in": 3558335,
+    "qdy_in": 3485992,
+    "dq_out": 4852208,
+    "dkdv_out": 9179434,
+    "dq0": 2.94099846e-05,
+    "dk0": -8.69052164e-05,
+    "dv0": -0.000175841327
+   }
+  },
+  {
+   "tree": "after",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "contract": 49,
+   "evict": 0,
+   "rounds": 3,
+   "wall_ms": 119.13135086956521,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 1.9300800135450982,
+    "groups (dP blocks, dots, score adjoints, dQ)": 3.7612315113222152,
+    "dk": 1.8413801737795112,
+    "copies": 0.6238086676236885,
+    "task_whole": 8.161167842926428,
+    "unplaced": 0.004667476655915825,
+    "wall_x_threads": 8.161913818240224
+   },
+   "v1_rate_percent": {
+    "dv": 74.7637398384097,
+    "dk": 78.36513179340805
+   },
+   "check": [
+    2.94099846e-05,
+    -8.69052164e-05,
+    -0.000175841327
+   ],
+   "raw": {
+    "tree": "B",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 1,
+    "contract": 49,
+    "evict": 0,
+    "workspace_bytes": 2097215,
+    "rounds": 3,
+    "wall_cycles_per_call": 274002107,
+    "dv": 64794361,
+    "dp": 126267611,
+    "dot": 0,
+    "ds": 0,
+    "dq": 0,
+    "dk": 61816635,
+    "contig_task": 273977064,
+    "dp_again": 0,
+    "tile_zero": 0,
+    "tile_panel": 0,
+    "kv_in": 4094868,
+    "qdy_in": 3916733,
+    "dq_out": 4263067,
+    "dkdv_out": 8667098,
+    "dq0": 2.94099846e-05,
+    "dk0": -8.69052164e-05,
+    "dv0": -0.000175841327
+   }
+  },
+  {
+   "tree": "after",
+   "shape": [
+    4,
+    1024,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 49,
+   "evict": 0,
+   "rounds": 12,
+   "wall_ms": 8.04610956521739,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 1.7365894150152439,
+    "groups (dP blocks, dots, score adjoints, dQ)": 3.6215808403201217,
+    "dk": 1.6615084317835367,
+    "copies": 1.087031130907012,
+    "task_whole": 8.123760241996951,
+    "unplaced": 0.017050423971037176,
+    "wall_x_threads": 8.815764100609757
+   },
+   "v1_rate_percent": {
+    "dv": 83.09390737518306,
+    "dk": 86.84879188070205
+   },
+   "check": [
+    -0.000643098028,
+    -0.000824578921,
+    0.00140797149
+   ],
+   "raw": {
+    "tree": "B",
+    "shape": [
+     4,
+     1024,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 49,
+    "evict": 0,
+    "workspace_bytes": 4194367,
+    "rounds": 12,
+    "wall_cycles_per_call": 18506052,
+    "dv": 14581794,
+    "dp": 30409690,
+    "dot": 0,
+    "ds": 0,
+    "dq": 0,
+    "dk": 13951354,
+    "contig_task": 68213590,
+    "dp_again": 0,
+    "tile_zero": 0,
+    "tile_panel": 0,
+    "kv_in": 1074149,
+    "qdy_in": 1052000,
+    "dq_out": 2020636,
+    "dkdv_out": 4980798,
+    "dq0": -0.000643098028,
+    "dk0": -0.000824578921,
+    "dv0": 0.00140797149
+   }
+  },
+  {
+   "tree": "before",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 49,
+   "evict": 0,
+   "rounds": 8,
+   "wall_ms": 37.127633913043475,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 2.1689196652235085,
+    "dp_tiles": 2.1304715977115363,
+    "dot": 0.8509024326367283,
+    "ds": 0.46503617904313077,
+    "dq": 1.5612325002764307,
+    "dk": 1.8334515610225262,
+    "copies": 0.6080339244658217,
+    "task_whole": 9.76068225449152,
+    "unplaced": 0.14263439411183954,
+    "wall_x_threads": 10.17473724797157
+   },
+   "v1_rate_percent": {
+    "dv": 66.53081822886686,
+    "dk": 78.70401545788485,
+    "dq": 92.42697674718555
+   },
+   "check": [
+    2.94099846e-05,
+    -8.69052164e-05,
+    -0.000175841327
+   ],
+   "raw": {
+    "tree": "A",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 49,
+    "evict": 0,
+    "workspace_bytes": 8388671,
+    "rounds": 8,
+    "wall_cycles_per_call": 85393558,
+    "dv": 72812403,
+    "dp": 58125421,
+    "dot": 28565489,
+    "ds": 15611644,
+    "dq": 52411849,
+    "dk": 61550465,
+    "contig_task": 327674068,
+    "dp_again": 694066,
+    "tile_zero": 2296191,
+    "tile_panel": 10405992,
+    "kv_in": 3023275,
+    "qdy_in": 3325162,
+    "dq_out": 4822878,
+    "dkdv_out": 9240880,
+    "dq0": 2.94099846e-05,
+    "dk0": -8.69052164e-05,
+    "dv0": -0.000175841327
+   }
+  },
+  {
+   "tree": "before",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 49,
+   "evict": 1,
+   "rounds": 8,
+   "wall_ms": 41.395809130434785,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 2.4399415254011103,
+    "dp_tiles": 2.196103574009044,
+    "dot": 1.0064096446151325,
+    "ds": 0.48660407897144947,
+    "dq": 1.627948662314315,
+    "dk": 1.9270657585445645,
+    "copies": 0.6958898169171699,
+    "task_whole": 10.52692928286283,
+    "unplaced": 0.14696622209004295,
+    "wall_x_threads": 11.344420224995424
+   },
+   "v1_rate_percent": {
+    "dv": 59.14076157061921,
+    "dk": 74.88068290362028,
+    "dq": 88.63915880176533
+   },
+   "check": [
+    2.94099846e-05,
+    -8.69052164e-05,
+    -0.000175841327
+   ],
+   "raw": {
+    "tree": "A",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 49,
+    "evict": 1,
+    "workspace_bytes": 8388671,
+    "rounds": 8,
+    "wall_cycles_per_call": 95210361,
+    "dv": 81910828,
+    "dp": 59423074,
+    "dot": 33785993,
+    "ds": 16335696,
+    "dq": 54651565,
+    "dk": 64693170,
+    "contig_task": 353397606,
+    "dp_again": 1224841,
+    "tile_zero": 2399954,
+    "tile_panel": 10677120,
+    "kv_in": 4814444,
+    "qdy_in": 3874266,
+    "dq_out": 4994084,
+    "dkdv_out": 9678795,
+    "dq0": 2.94099846e-05,
+    "dk0": -8.69052164e-05,
+    "dv0": -0.000175841327
+   }
+  },
+  {
+   "tree": "before",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "contract": 49,
+   "evict": 0,
+   "rounds": 3,
+   "wall_ms": 145.07019304347827,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 2.256360196904359,
+    "dp_tiles": 2.089260803192868,
+    "dot": 0.8943723322066405,
+    "ds": 0.47404159017165387,
+    "dq": 1.5798547464559693,
+    "dk": 1.8284632700021353,
+    "copies": 0.6698536014137995,
+    "task_whole": 9.937964272301276,
+    "unplaced": 0.145757731953851,
+    "wall_x_threads": 9.93903287903398
+   },
+   "v1_rate_percent": {
+    "dv": 63.95255518067291,
+    "dk": 78.91873048116055,
+    "dq": 91.33751082098082
+   },
+   "check": [
+    2.94099846e-05,
+    -8.69052164e-05,
+    -0.000175841327
+   ],
+   "raw": {
+    "tree": "A",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 1,
+    "contract": 49,
+    "evict": 0,
+    "workspace_bytes": 2097215,
+    "rounds": 3,
+    "wall_cycles_per_call": 333661444,
+    "dv": 75747853,
+    "dp": 56991370,
+    "dot": 30024809,
+    "ds": 15913963,
+    "dq": 53037013,
+    "dk": 61383004,
+    "contig_task": 333625570,
+    "dp_again": 708542,
+    "tile_zero": 2261375,
+    "tile_panel": 10176903,
+    "kv_in": 3681045,
+    "qdy_in": 3969954,
+    "dq_out": 5059511,
+    "dkdv_out": 9777022,
+    "dq0": 2.94099846e-05,
+    "dk0": -8.69052164e-05,
+    "dv0": -0.000175841327
+   }
+  },
+  {
+   "tree": "before",
+   "shape": [
+    4,
+    1024,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 49,
+   "evict": 0,
+   "rounds": 12,
+   "wall_ms": 9.716374782608696,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 1.8760453982469512,
+    "dp_tiles": 2.2216063262195123,
+    "dot": 0.6271964319740854,
+    "ds": 0.4388762385670732,
+    "dq": 1.6935673113567074,
+    "dk": 1.862745331554878,
+    "copies": 0.831605254382622,
+    "task_whole": 9.716133288871951,
+    "unplaced": 0.16449099657012067,
+    "wall_x_threads": 10.645799352134146
+   },
+   "v1_rate_percent": {
+    "dv": 76.91711519073017,
+    "dk": 77.46630607821702,
+    "dq": 85.20476218001757
+   },
+   "check": [
+    -0.000643098028,
+    -0.000824578921,
+    0.00140797149
+   ],
+   "raw": {
+    "tree": "A",
+    "shape": [
+     4,
+     1024,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 49,
+    "evict": 0,
+    "workspace_bytes": 4194367,
+    "rounds": 12,
+    "wall_cycles_per_call": 22347662,
+    "dv": 15752778,
+    "dp": 15166923,
+    "dot": 5266443,
+    "ds": 3685156,
+    "dq": 14220546,
+    "dk": 15641100,
+    "contig_task": 81584428,
+    "dp_again": 172837,
+    "tile_zero": 658804,
+    "tile_panel": 2655820,
+    "kv_in": 1019662,
+    "qdy_in": 1091988,
+    "dq_out": 1551963,
+    "dkdv_out": 3319210,
+    "dq0": -0.000643098028,
+    "dk0": -0.000824578921,
+    "dv0": 0.00140797149
+   }
+  },
+  {
+   "tree": "after",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 49,
+   "evict": 0,
+   "rounds": 8,
+   "wall_ms": 31.676306521739132,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 1.907469094585011,
+    "groups (dP blocks, dots, score adjoints, dQ)": 3.7568716232575343,
+    "dk": 1.8929966730626984,
+    "copies": 0.5460859217720535,
+    "task_whole": 8.108046852361289,
+    "unplaced": 0.004623539683991762,
+    "wall_x_threads": 8.680814312050085
+   },
+   "v1_rate_percent": {
+    "dv": 75.64998059976114,
+    "dk": 76.22834316266156
+   },
+   "check": [
+    2.94099846e-05,
+    -8.69052164e-05,
+    -0.000175841327
+   ],
+   "raw": {
+    "tree": "B",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 49,
+    "evict": 0,
+    "workspace_bytes": 8388671,
+    "rounds": 8,
+    "wall_cycles_per_call": 72855505,
+    "dv": 64035294,
+    "dp": 126121246,
+    "dot": 0,
+    "ds": 0,
+    "dq": 0,
+    "dk": 63549443,
+    "contig_task": 272193749,
+    "dp_again": 0,
+    "tile_zero": 0,
+    "tile_panel": 0,
+    "kv_in": 2575556,
+    "qdy_in": 2927805,
+    "dq_out": 4329854,
+    "dkdv_out": 8499335,
+    "dq0": 2.94099846e-05,
+    "dk0": -8.69052164e-05,
+    "dv0": -0.000175841327
+   }
+  },
+  {
+   "tree": "after",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 49,
+   "evict": 1,
+   "rounds": 8,
+   "wall_ms": 30.434108695652174,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 1.8823951136606272,
+    "groups (dP blocks, dots, score adjoints, dQ)": 3.7584630650622253,
+    "dk": 1.870084778397999,
+    "copies": 0.579315677045205,
+    "task_whole": 8.09496787328613,
+    "unplaced": 0.004709239120074038,
+    "wall_x_threads": 8.340393036618472
+   },
+   "v1_rate_percent": {
+    "dv": 76.65765755170544,
+    "dk": 77.16227716885331
+   },
+   "check": [
+    2.94099846e-05,
+    -8.69052164e-05,
+    -0.000175841327
+   ],
+   "raw": {
+    "tree": "B",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 49,
+    "evict": 1,
+    "workspace_bytes": 8388671,
+    "rounds": 8,
+    "wall_cycles_per_call": 69998450,
+    "dv": 63193540,
+    "dp": 126174672,
+    "dot": 0,
+    "ds": 0,
+    "dq": 0,
+    "dk": 62780272,
+    "contig_task": 271754677,
+    "dp_again": 0,
+    "tile_zero": 0,
+    "tile_panel": 0,
+    "kv_in": 3422060,
+    "qdy_in": 3531446,
+    "dq_out": 4067749,
+    "dkdv_out": 8426845,
+    "dq0": 2.94099846e-05,
+    "dk0": -8.69052164e-05,
+    "dv0": -0.000175841327
+   }
+  },
+  {
+   "tree": "after",
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "contract": 49,
+   "evict": 0,
+   "rounds": 3,
+   "wall_ms": 111.30890739130434,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 1.8138404499908491,
+    "groups (dP blocks, dots, score adjoints, dQ)": 3.5354152547260096,
+    "dk": 1.7479829802171027,
+    "copies": 0.5239163683122865,
+    "task_whole": 7.625306754533462,
+    "unplaced": 0.0041517012872140935,
+    "wall_x_threads": 7.62598344347662
+   },
+   "v1_rate_percent": {
+    "dv": 79.55495754917584,
+    "dk": 82.55229120255947
+   },
+   "check": [
+    2.94099846e-05,
+    -8.69052164e-05,
+    -0.000175841327
+   ],
+   "raw": {
+    "tree": "B",
+    "shape": [
+     4,
+     2048,
+     4,
+     4,
+     32
+    ],
+    "threads": 1,
+    "contract": 49,
+    "evict": 0,
+    "workspace_bytes": 2097215,
+    "rounds": 3,
+    "wall_cycles_per_call": 256010487,
+    "dv": 60892104,
+    "dp": 118686775,
+    "dot": 0,
+    "ds": 0,
+    "dq": 0,
+    "dk": 58681215,
+    "contig_task": 255987770,
+    "dp_again": 0,
+    "tile_zero": 0,
+    "tile_panel": 0,
+    "kv_in": 3092514,
+    "qdy_in": 3597645,
+    "dq_out": 4015739,
+    "dkdv_out": 6882402,
+    "dq0": 2.94099846e-05,
+    "dk0": -8.69052164e-05,
+    "dv0": -0.000175841327
+   }
+  },
+  {
+   "tree": "after",
+   "shape": [
+    4,
+    1024,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "contract": 49,
+   "evict": 0,
+   "rounds": 12,
+   "wall_ms": 7.00472,
+   "tsc_cycles_a_probability_x_threads": {
+    "dv": 1.621446503429878,
+    "groups (dP blocks, dots, score adjoints, dQ)": 3.407494521722561,
+    "dk": 1.604459794207317,
+    "copies": 0.9830257955411585,
+    "task_whole": 7.634502548589939,
+    "unplaced": 0.018075933689024604,
+    "wall_x_threads": 7.674759908536585
+   },
+   "v1_rate_percent": {
+    "dv": 88.99461048807923,
+    "dk": 89.93681270230357
+   },
+   "check": [
+    -0.000643098028,
+    -0.000824578921,
+    0.00140797149
+   ],
+   "raw": {
+    "tree": "B",
+    "shape": [
+     4,
+     1024,
+     4,
+     4,
+     32
+    ],
+    "threads": 4,
+    "contract": 49,
+    "evict": 0,
+    "workspace_bytes": 4194367,
+    "rounds": 12,
+    "wall_cycles_per_call": 16110856,
+    "dv": 13614962,
+    "dp": 28612050,
+    "dot": 0,
+    "ds": 0,
+    "dq": 0,
+    "dk": 13472328,
+    "contig_task": 64105391,
+    "dp_again": 0,
+    "tile_zero": 0,
+    "tile_panel": 0,
+    "kv_in": 918286,
+    "qdy_in": 914990,
+    "dq_out": 1980041,
+    "dkdv_out": 4440954,
+    "dq0": -0.000643098028,
+    "dk0": -0.000824578921,
+    "dv0": 0.00140797149
+   }
+  }
+ ]
+}

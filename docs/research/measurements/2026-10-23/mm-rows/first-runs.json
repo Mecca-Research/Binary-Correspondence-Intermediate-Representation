@@ -1,0 +1,2544 @@
+{
+ "what": "measure.sh's and confirm.sh's first runs, on 6ea32448: the slice before its chunks were held to an A stored by rows (a transposed A's 1,024-row weight adjoint read x1.04-x1.07 with chunks there); superseded by the runs on the committed tree, kept beside them as the declaration says",
+ "commit": "6ea32448f54199dc535564b5ccb029f140941964",
+ "gemm_4_threads": [
+  {
+   "case": "g:0,0,8192,128,128",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 0.6439,
+   "before_gflops": 416.9,
+   "after_ms": 0.4805,
+   "after_over_before": {
+    "geometric_mean": 0.763473267291097,
+    "ci95": [
+     0.7449884197949372,
+     0.7824167656573606
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0094082572341143,
+    "ci95": [
+     1.0019269382270541,
+     1.0169454387316914
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.7563572635943109,
+    "ci95": [
+     0.7378218639667242,
+     0.7753583054807314
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,0,8192,256,128",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.2394,
+   "before_gflops": 433.2,
+   "after_ms": 0.9355,
+   "after_over_before": {
+    "geometric_mean": 0.7748657320821114,
+    "ci95": [
+     0.7537653743003359,
+     0.7965567578803532
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0066631382538989,
+    "ci95": [
+     0.9954201318460327,
+     1.0180331314375424
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.769736868905471,
+    "ci95": [
+     0.7468643050090621,
+     0.7933099003107521
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,0,8192,128,256",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.1642,
+   "before_gflops": 461.2,
+   "after_ms": 0.9417,
+   "after_over_before": {
+    "geometric_mean": 0.8138932059162624,
+    "ci95": [
+     0.8047118561125135,
+     0.8231793102151492
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0434778792296704,
+    "ci95": [
+     0.9850315523872372,
+     1.1053920880024783
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.7799812742720573,
+    "ci95": [
+     0.7398145845290445,
+     0.8223287306539686
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,0,8192,260,128",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.3749,
+   "before_gflops": 396.6,
+   "after_ms": 0.9991,
+   "after_over_before": {
+    "geometric_mean": 0.7412691760477459,
+    "ci95": [
+     0.7223219603622469,
+     0.7607133958421226
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0101471796952357,
+    "ci95": [
+     0.9957147582486124,
+     1.0247887923656378
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.7338229427828417,
+    "ci95": [
+     0.7151879355022084,
+     0.7529435056483933
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,1,8192,128,128",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 0.7317,
+   "before_gflops": 366.8,
+   "after_ms": 0.5263,
+   "after_over_before": {
+    "geometric_mean": 0.7436991373486906,
+    "ci95": [
+     0.6947174275585337,
+     0.7961343489495029
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0296905476283167,
+    "ci95": [
+     0.9391024966330099,
+     1.1290169365713454
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.7222549911346188,
+    "ci95": [
+     0.6684042623737744,
+     0.7804442634256543
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,1,8192,128,256",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.2688,
+   "before_gflops": 423.1,
+   "after_ms": 0.9917,
+   "after_over_before": {
+    "geometric_mean": 0.7790606299848473,
+    "ci95": [
+     0.7687530307406238,
+     0.7895064356463867
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0091662413917202,
+    "ci95": [
+     0.9678015670446777,
+     1.0522988776248567
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.7719844343093175,
+    "ci95": [
+     0.7414110631225306,
+     0.803818551487388
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,1,8192,256,128",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.3196,
+   "before_gflops": 406.8,
+   "after_ms": 0.9763,
+   "after_over_before": {
+    "geometric_mean": 0.7425699527382693,
+    "ci95": [
+     0.7252458437897036,
+     0.7603078865345495
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0073852361556865,
+    "ci95": [
+     0.9911397158203111,
+     1.0238970327049544
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.7371261023955573,
+    "ci95": [
+     0.7216764391805978,
+     0.7529065123004417
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:1,0,128,128,8192",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 0.8179,
+   "before_gflops": 328.2,
+   "after_ms": 0.8213,
+   "after_over_before": {
+    "geometric_mean": 1.049979463643229,
+    "ci95": [
+     1.0056086852675958,
+     1.0963080273905503
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0086369473949999,
+    "ci95": [
+     0.9689489953151587,
+     1.0499505098505242
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0409885007236788,
+    "ci95": [
+     0.9804136275349508,
+     1.1053059935157838
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:1,0,256,128,8192",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.7434,
+   "before_gflops": 307.9,
+   "after_ms": 1.6827,
+   "after_over_before": {
+    "geometric_mean": 0.9464384024517483,
+    "ci95": [
+     0.916043749090578,
+     0.9778415610877624
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 0.9829364541270557,
+    "ci95": [
+     0.946968571595509,
+     1.0202704734160488
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9628683507239322,
+    "ci95": [
+     0.945340247220447,
+     0.9807214529919706
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:1,0,128,256,8192",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.6717,
+   "before_gflops": 321.1,
+   "after_ms": 1.6338,
+   "after_over_before": {
+    "geometric_mean": 0.961345836074778,
+    "ci95": [
+     0.9367701968381875,
+     0.9865662033844066
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 0.9872254708244602,
+    "ci95": [
+     0.9760828570912177,
+     0.9984952846615732
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9737854871916247,
+    "ci95": [
+     0.9510300343046543,
+     0.9970854135625159
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:1,0,260,128,8192",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 2.5156,
+   "before_gflops": 216.8,
+   "after_ms": 2.2857,
+   "after_over_before": {
+    "geometric_mean": 0.9185440576636275,
+    "ci95": [
+     0.8958563760142322,
+     0.9418063078626315
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 0.9898289832187048,
+    "ci95": [
+     0.9752530031953767,
+     1.0046228135772222
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9279825840992507,
+    "ci95": [
+     0.9044122081616941,
+     0.9521672403581299
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "p:0,0,8192,128,128:1,0,128,128,8192",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.6042,
+   "before_gflops": 334.7,
+   "after_ms": 1.4785,
+   "after_over_before": {
+    "geometric_mean": 0.8753471469135025,
+    "ci95": [
+     0.8166395047293952,
+     0.9382752403871408
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0237741697645333,
+    "ci95": [
+     0.9908353042750774,
+     1.0578080394944025
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8550197619410843,
+    "ci95": [
+     0.7973459850042388,
+     0.9168652091549718
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "c3:0,0,8192,128,128:3x1,0,128,128,8192",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 3.975,
+   "before_gflops": 405.2,
+   "after_ms": 3.1156,
+   "after_over_before": {
+    "geometric_mean": 0.8259249949281982,
+    "ci95": [
+     0.7863098022729872,
+     0.8675360465750851
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0177556009352149,
+    "ci95": [
+     0.9829784852450801,
+     1.0537631075178049
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8115160399699655,
+    "ci95": [
+     0.7827782674477473,
+     0.8413088488976163
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "c2:0,0,8192,128,256:2x1,0,256,128,8192",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 5.0897,
+   "before_gflops": 421.9,
+   "after_ms": 4.4884,
+   "after_over_before": {
+    "geometric_mean": 0.8831806359285977,
+    "ci95": [
+     0.8550980719446288,
+     0.9121854688613438
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0020358613576146,
+    "ci95": [
+     0.9724306032497451,
+     1.0325424396262284
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8813862557094662,
+    "ci95": [
+     0.8536476305773271,
+     0.9100262261937865
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,0,4096,128,128",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 0.3608,
+   "before_gflops": 372.0,
+   "after_ms": 0.3227,
+   "after_over_before": {
+    "geometric_mean": 0.925330368661382,
+    "ci95": [
+     0.8201854022079478,
+     1.0439545605932656
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.1412641517952085,
+    "ci95": [
+     1.0202032323618564,
+     1.276690587577807
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8107942120199232,
+    "ci95": [
+     0.7350333510686493,
+     0.8943638452449088
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,1,4096,128,256",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 0.5808,
+   "before_gflops": 462.2,
+   "after_ms": 0.4791,
+   "after_over_before": {
+    "geometric_mean": 0.8422904644422574,
+    "ci95": [
+     0.7723913456413553,
+     0.9185152455343206
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 0.969825169898537,
+    "ci95": [
+     0.9107656440727188,
+     1.0327144708300267
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.868497220514887,
+    "ci95": [
+     0.8171099347352125,
+     0.9231162050263333
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,0,2048,128,128",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 0.1412,
+   "before_gflops": 475.1,
+   "after_ms": 0.1152,
+   "after_over_before": {
+    "geometric_mean": 0.8368736943278894,
+    "ci95": [
+     0.7933741656541397,
+     0.8827582376350287
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0278728251624047,
+    "ci95": [
+     0.9668747585466682,
+     1.0927191297199927
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8141801921805479,
+    "ci95": [
+     0.7472378644693063,
+     0.8871196400224483
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,1,2048,256,128",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 0.3068,
+   "before_gflops": 437.4,
+   "after_ms": 0.3257,
+   "after_over_before": {
+    "geometric_mean": 0.9744255059609579,
+    "ci95": [
+     0.9246534643147805,
+     1.0268766660285047
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.002571276094502,
+    "ci95": [
+     0.9660137476460043,
+     1.040512276454781
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9719264148049549,
+    "ci95": [
+     0.9213363197487727,
+     1.0252943854999608
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,1,1024,384,384",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 0.5285,
+   "before_gflops": 571.4,
+   "after_ms": 0.5193,
+   "after_over_before": {
+    "geometric_mean": 1.0348934180126488,
+    "ci95": [
+     0.9897409883380502,
+     1.082105721865989
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 0.999231383625918,
+    "ci95": [
+     0.98528126776166,
+     1.0133790123618742
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0356894658945996,
+    "ci95": [
+     0.9851252267575336,
+     1.0888490525164987
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,1,1024,192,384",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 0.2693,
+   "before_gflops": 560.7,
+   "after_ms": 0.2607,
+   "after_over_before": {
+    "geometric_mean": 0.9603983377006408,
+    "ci95": [
+     0.9420733062312023,
+     0.9790798242103981
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0069000298452229,
+    "ci95": [
+     0.9856544303287474,
+     1.0286035743421353
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9538169721260907,
+    "ci95": [
+     0.9382238627193418,
+     0.9696692361660059
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,1,1024,1024,384",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.5174,
+   "before_gflops": 530.7,
+   "after_ms": 1.4593,
+   "after_over_before": {
+    "geometric_mean": 0.9859646161082841,
+    "ci95": [
+     0.9303758571769425,
+     1.0448747317748523
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0180432305092393,
+    "ci95": [
+     0.9700799531516149,
+     1.0683779371159792
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9684899290721585,
+    "ci95": [
+     0.9269806925836507,
+     1.0118579062309347
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,1,1024,384,1024",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.4806,
+   "before_gflops": 543.9,
+   "after_ms": 1.4474,
+   "after_over_before": {
+    "geometric_mean": 0.98170088570266,
+    "ci95": [
+     0.9410004105150439,
+     1.024161751918789
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.009108118878459,
+    "ci95": [
+     0.9679181238239335,
+     1.0520509643557963
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9728401420392297,
+    "ci95": [
+     0.9233837108162298,
+     1.0249454597009489
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,1,1024,260,384",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 0.4485,
+   "before_gflops": 455.9,
+   "after_ms": 0.4116,
+   "after_over_before": {
+    "geometric_mean": 0.9531933610306366,
+    "ci95": [
+     0.9166947498743848,
+     0.991145180702065
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 0.9916369116709423,
+    "ci95": [
+     0.9765171592933252,
+     1.0069907683956103
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9612322310839287,
+    "ci95": [
+     0.9244900000137235,
+     0.9994347175857734
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,0,1024,384,384",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 0.5372,
+   "before_gflops": 562.2,
+   "after_ms": 0.5432,
+   "after_over_before": {
+    "geometric_mean": 1.0412820013507824,
+    "ci95": [
+     0.9852959029135836,
+     1.1004493199767091
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0086330485754744,
+    "ci95": [
+     0.9677123067387425,
+     1.0512841674062858
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0323695052639998,
+    "ci95": [
+     0.9814532369466118,
+     1.0859272304351384
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,0,1024,384,1024",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.5534,
+   "before_gflops": 518.4,
+   "after_ms": 1.477,
+   "after_over_before": {
+    "geometric_mean": 0.9888140415474386,
+    "ci95": [
+     0.9199756893105405,
+     1.0628033111332966
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0650842544535308,
+    "ci95": [
+     1.0022100121842956,
+     1.1319029497743922
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9283904418010341,
+    "ci95": [
+     0.8491342968157936,
+     1.0150441639910548
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:0,0,1024,1024,384",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.6121,
+   "before_gflops": 499.5,
+   "after_ms": 1.5393,
+   "after_over_before": {
+    "geometric_mean": 0.9881280079413522,
+    "ci95": [
+     0.9467644455128617,
+     1.0312987192386927
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0036482602559051,
+    "ci95": [
+     0.9613772173478413,
+     1.0477779295556624
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9845361637845158,
+    "ci95": [
+     0.9401059056864361,
+     1.0310662361936445
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:1,0,384,384,1024",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 0.564,
+   "before_gflops": 535.5,
+   "after_ms": 0.5625,
+   "after_over_before": {
+    "geometric_mean": 0.9770943085945143,
+    "ci95": [
+     0.9310715435841037,
+     1.0253919738677448
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0105241013254729,
+    "ci95": [
+     0.9697258806471262,
+     1.0530387811019393
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9669183617816639,
+    "ci95": [
+     0.9371781899555267,
+     0.9976023005773356
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:1,0,1024,384,1024",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.8842,
+   "before_gflops": 427.4,
+   "after_ms": 2.0009,
+   "after_over_before": {
+    "geometric_mean": 1.0483196180489898,
+    "ci95": [
+     1.0049440397510407,
+     1.0935673809843514
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0123237228171282,
+    "ci95": [
+     0.9767618667056466,
+     1.0491803117116976
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0355576920905212,
+    "ci95": [
+     0.9975606072320531,
+     1.0750020859618696
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:1,0,384,1024,1024",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 1.6853,
+   "before_gflops": 477.8,
+   "after_ms": 1.7143,
+   "after_over_before": {
+    "geometric_mean": 1.0299584198692868,
+    "ci95": [
+     0.994071586822196,
+     1.0671407982304395
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 1.0327721931608669,
+    "ci95": [
+     0.9939010844781525,
+     1.0731635367178765
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9972755140870239,
+    "ci95": [
+     0.947263728501728,
+     1.0499277245320213
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "case": "g:1,0,192,384,1024",
+   "threads": 4,
+   "rounds": 32,
+   "calls_a_round": 5,
+   "before_ms": 0.3256,
+   "before_gflops": 463.8,
+   "after_ms": 0.31,
+   "after_over_before": {
+    "geometric_mean": 0.976192708643414,
+    "ci95": [
+     0.9153540242574498,
+     1.0410750148628185
+    ],
+    "rounds": 32
+   },
+   "aa": {
+    "geometric_mean": 0.9989320085500795,
+    "ci95": [
+     0.9723889139435664,
+     1.0261996443984636
+    ],
+    "rounds": 32
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9772363887511515,
+    "ci95": [
+     0.9217461908317003,
+     1.0360671614359418
+    ],
+    "rounds": 32
+   }
+  }
+ ],
+ "gemm_1_thread": [
+  {
+   "case": "g:0,0,8192,128,128",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 2.4304,
+   "before_gflops": 110.4,
+   "after_ms": 1.9005,
+   "after_over_before": {
+    "geometric_mean": 0.789324526960347,
+    "ci95": [
+     0.7775215814017584,
+     0.8013066437820764
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.0158055673917008,
+    "ci95": [
+     0.9877555287928197,
+     1.0446521640886774
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.7770429226796891,
+    "ci95": [
+     0.7526543632286495,
+     0.8022217543475073
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,0,8192,256,128",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 4.9208,
+   "before_gflops": 109.1,
+   "after_ms": 3.7188,
+   "after_over_before": {
+    "geometric_mean": 0.7536165694856792,
+    "ci95": [
+     0.7487546516796232,
+     0.7585100573724017
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.0069251822736007,
+    "ci95": [
+     1.0010154536807088,
+     1.0128698003299004
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.7484335308647662,
+    "ci95": [
+     0.7433946501490423,
+     0.7535065661427567
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,0,8192,128,256",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 4.4806,
+   "before_gflops": 119.8,
+   "after_ms": 3.7888,
+   "after_over_before": {
+    "geometric_mean": 0.8465401067545928,
+    "ci95": [
+     0.8160375295748402,
+     0.87818283641617
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.010428813196166,
+    "ci95": [
+     0.9669689051545459,
+     1.0558420039099774
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8378028176738507,
+    "ci95": [
+     0.7938848935321894,
+     0.8841502930976016
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,0,8192,260,128",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 5.1027,
+   "before_gflops": 106.9,
+   "after_ms": 3.9447,
+   "after_over_before": {
+    "geometric_mean": 0.7633245243702829,
+    "ci95": [
+     0.634341212899645,
+     0.9185345641373266
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9413575420163102,
+    "ci95": [
+     0.8351182845550821,
+     1.0611119865290664
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8108763039549295,
+    "ci95": [
+     0.7104042172306538,
+     0.925558103918355
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,1,8192,128,128",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 2.4232,
+   "before_gflops": 110.8,
+   "after_ms": 2.002,
+   "after_over_before": {
+    "geometric_mean": 0.8246019006887534,
+    "ci95": [
+     0.8095914514717699,
+     0.8398906551982224
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.0166989049438173,
+    "ci95": [
+     0.9988237474378553,
+     1.0348939599859386
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8110581182678867,
+    "ci95": [
+     0.7921083109283282,
+     0.8304612666382765
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,1,8192,128,256",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 4.2379,
+   "before_gflops": 126.7,
+   "after_ms": 3.7586,
+   "after_over_before": {
+    "geometric_mean": 0.8806439678387262,
+    "ci95": [
+     0.8593766386732834,
+     0.9024376079014838
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.007003879737771,
+    "ci95": [
+     0.9735060945897511,
+     1.0416543044183617
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8745189423381869,
+    "ci95": [
+     0.832899944896576,
+     0.9182175904733273
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,1,8192,256,128",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 4.6067,
+   "before_gflops": 116.5,
+   "after_ms": 3.7285,
+   "after_over_before": {
+    "geometric_mean": 0.8062784113804515,
+    "ci95": [
+     0.7954885669649315,
+     0.8172146070414147
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9958394251515765,
+    "ci95": [
+     0.9883277194829663,
+     1.0034082229374466
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8096470083595336,
+    "ci95": [
+     0.8008520661136865,
+     0.818538536494811
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:1,0,128,128,8192",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 2.2165,
+   "before_gflops": 121.1,
+   "after_ms": 2.1163,
+   "after_over_before": {
+    "geometric_mean": 0.9519512914474452,
+    "ci95": [
+     0.9393555587732568,
+     0.9647159191477158
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9970521556907355,
+    "ci95": [
+     0.982724276196616,
+     1.0115889321621359
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9547657923551197,
+    "ci95": [
+     0.9444353650612493,
+     0.9652092159767663
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:1,0,256,128,8192",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 4.1985,
+   "before_gflops": 127.9,
+   "after_ms": 4.0377,
+   "after_over_before": {
+    "geometric_mean": 0.9812538997547006,
+    "ci95": [
+     0.9463793719735321,
+     1.0174135703908145
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.011749821675983,
+    "ci95": [
+     0.9894163268388135,
+     1.0345874369507397
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9698582384024882,
+    "ci95": [
+     0.9300997239308904,
+     1.0113162904960387
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:1,0,128,256,8192",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 4.9293,
+   "before_gflops": 108.9,
+   "after_ms": 4.6131,
+   "after_over_before": {
+    "geometric_mean": 0.9484105687349463,
+    "ci95": [
+     0.9233483572403495,
+     0.9741530375128041
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9939796700034411,
+    "ci95": [
+     0.9772371202161749,
+     1.011009062121581
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9541548960771632,
+    "ci95": [
+     0.9317354583239515,
+     0.977113790802501
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:1,0,260,128,8192",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 7.0939,
+   "before_gflops": 76.9,
+   "after_ms": 6.6019,
+   "after_over_before": {
+    "geometric_mean": 0.9333921862088413,
+    "ci95": [
+     0.9104721555086782,
+     0.9568892008443374
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9887155138556207,
+    "ci95": [
+     0.9757272117807868,
+     1.0018767085061153
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.944045251772131,
+    "ci95": [
+     0.9239664918128493,
+     0.9645603442229856
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "p:0,0,8192,128,128:1,0,128,128,8192",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 5.0132,
+   "before_gflops": 107.1,
+   "after_ms": 4.3504,
+   "after_over_before": {
+    "geometric_mean": 0.8727246479635592,
+    "ci95": [
+     0.8619632547238242,
+     0.8836203944762737
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9927738267992741,
+    "ci95": [
+     0.9740578854706277,
+     1.011849383778122
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8790770106996512,
+    "ci95": [
+     0.8551652731035949,
+     0.9036573572919401
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "c3:0,0,8192,128,128:3x1,0,128,128,8192",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 15.0573,
+   "before_gflops": 107.0,
+   "after_ms": 13.1975,
+   "after_over_before": {
+    "geometric_mean": 0.8872040156316017,
+    "ci95": [
+     0.8685072045223912,
+     0.9063033228212514
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9866895742555682,
+    "ci95": [
+     0.9567907225581682,
+     1.0175227382448278
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8991723828651723,
+    "ci95": [
+     0.8750277552632897,
+     0.9239832328108917
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "c2:0,0,8192,128,256:2x1,0,256,128,8192",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 19.2417,
+   "before_gflops": 111.6,
+   "after_ms": 17.283,
+   "after_over_before": {
+    "geometric_mean": 0.8983886268085683,
+    "ci95": [
+     0.8709237964919035,
+     0.926719568382454
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.0012201493764155,
+    "ci95": [
+     0.9930762021702224,
+     1.0094308828734813
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.897293794344937,
+    "ci95": [
+     0.8655303211735748,
+     0.9302229323153554
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,0,4096,128,128",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 1.2084,
+   "before_gflops": 111.1,
+   "after_ms": 0.966,
+   "after_over_before": {
+    "geometric_mean": 0.8013732751815543,
+    "ci95": [
+     0.7854488678778281,
+     0.8176205383175897
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.0211944965809125,
+    "ci95": [
+     1.0053647224889863,
+     1.0372735152924242
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.7847410829814034,
+    "ci95": [
+     0.7719767462450157,
+     0.7977164730858004
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,1,4096,128,256",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 2.2714,
+   "before_gflops": 118.2,
+   "after_ms": 1.9639,
+   "after_over_before": {
+    "geometric_mean": 0.8712079420318968,
+    "ci95": [
+     0.8601800924209773,
+     0.8823771730443536
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.0240765750970646,
+    "ci95": [
+     0.9812133473751619,
+     1.0688122358587893
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8507253883327245,
+    "ci95": [
+     0.8127873041960026,
+     0.8904342902720063
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,0,2048,128,128",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 0.479,
+   "before_gflops": 140.1,
+   "after_ms": 0.4322,
+   "after_over_before": {
+    "geometric_mean": 0.9110839881046623,
+    "ci95": [
+     0.8894846523435341,
+     0.9332078200491621
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.017597665436608,
+    "ci95": [
+     0.9681349676932178,
+     1.0695874472640317
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.8953283002214385,
+    "ci95": [
+     0.8621539634933236,
+     0.9297791335661103
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,1,2048,256,128",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 1.1576,
+   "before_gflops": 115.9,
+   "after_ms": 1.0361,
+   "after_over_before": {
+    "geometric_mean": 0.9040217540286853,
+    "ci95": [
+     0.8807582656604463,
+     0.927899701451309
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.99236508839345,
+    "ci95": [
+     0.967946647150947,
+     1.0173995349441673
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9109769827677185,
+    "ci95": [
+     0.8882135165499394,
+     0.934323839560616
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,1,1024,384,384",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 2.0071,
+   "before_gflops": 150.5,
+   "after_ms": 2.0804,
+   "after_over_before": {
+    "geometric_mean": 1.0258662617464906,
+    "ci95": [
+     1.0033030207664382,
+     1.048936926538678
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.013613310428887,
+    "ci95": [
+     0.9894371086238603,
+     1.0383802407689797
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0120883883346197,
+    "ci95": [
+     0.98455494233076,
+     1.0403918174204316
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,1,1024,192,384",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 0.9952,
+   "before_gflops": 151.7,
+   "after_ms": 1.0118,
+   "after_over_before": {
+    "geometric_mean": 0.9987773183308691,
+    "ci95": [
+     0.8970799439354995,
+     1.1120036049807474
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9698893145123169,
+    "ci95": [
+     0.899304747101285,
+     1.046013918460086
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0297848459471666,
+    "ci95": [
+     0.988821286760647,
+     1.0724453884042673
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,1,1024,1024,384",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 5.2965,
+   "before_gflops": 152.0,
+   "after_ms": 5.2978,
+   "after_over_before": {
+    "geometric_mean": 1.0001358082334952,
+    "ci95": [
+     0.9940881718523189,
+     1.0062202360249655
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9999345231197857,
+    "ci95": [
+     0.9928742011063582,
+     1.0070450510373223
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0002012982940938,
+    "ci95": [
+     0.9943665952297874,
+     1.0060702379870359
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,1,1024,384,1024",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 5.4518,
+   "before_gflops": 147.7,
+   "after_ms": 5.4941,
+   "after_over_before": {
+    "geometric_mean": 0.9959667161510862,
+    "ci95": [
+     0.9756588577728805,
+     1.0166972725949361
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9908855224938979,
+    "ci95": [
+     0.9696979150378551,
+     1.0125360727930155
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0051279320787732,
+    "ci95": [
+     0.9899945466706243,
+     1.020492651441924
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,1,1024,260,384",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 1.5322,
+   "before_gflops": 133.4,
+   "after_ms": 1.4889,
+   "after_over_before": {
+    "geometric_mean": 0.9644668887849639,
+    "ci95": [
+     0.9414360842936241,
+     0.9880611069422631
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9983441373683443,
+    "ci95": [
+     0.9651690865353332,
+     1.0326594899506827
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9660665623051772,
+    "ci95": [
+     0.9404908696020617,
+     0.9923377599604257
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,0,1024,384,384",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 2.0476,
+   "before_gflops": 147.5,
+   "after_ms": 2.0657,
+   "after_over_before": {
+    "geometric_mean": 1.0140221258777709,
+    "ci95": [
+     0.9584570069293239,
+     1.072808549925386
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.0140816495239393,
+    "ci95": [
+     0.9595049989547154,
+     1.071762620331828
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.999941302905741,
+    "ci95": [
+     0.9482461920486606,
+     1.0544546528540348
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,0,1024,384,1024",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 5.6396,
+   "before_gflops": 142.8,
+   "after_ms": 5.7025,
+   "after_over_before": {
+    "geometric_mean": 1.002461941731209,
+    "ci95": [
+     0.9273777279381777,
+     1.0836252740873435
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.0244149146338084,
+    "ci95": [
+     0.9498284645809013,
+     1.1048583575427355
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.978570233028629,
+    "ci95": [
+     0.9112104264571749,
+     1.0509095080187942
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:0,0,1024,1024,384",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 5.3261,
+   "before_gflops": 151.2,
+   "after_ms": 5.2808,
+   "after_over_before": {
+    "geometric_mean": 1.0101396569899443,
+    "ci95": [
+     0.9935983714143497,
+     1.0269563195552416
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9830624493181318,
+    "ci95": [
+     0.9272244344732005,
+     1.0422630631044878
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0275437310117927,
+    "ci95": [
+     0.973711509450233,
+     1.0843520990501347
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:1,0,384,384,1024",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 2.0232,
+   "before_gflops": 149.3,
+   "after_ms": 2.1007,
+   "after_over_before": {
+    "geometric_mean": 1.0283249291313918,
+    "ci95": [
+     0.9794373243746688,
+     1.0796527083019045
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.0037538066996696,
+    "ci95": [
+     0.9613778453483435,
+     1.047997631044862
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0244792321261644,
+    "ci95": [
+     0.9912170523137515,
+     1.0588575878591697
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:1,0,1024,384,1024",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 6.7254,
+   "before_gflops": 119.7,
+   "after_ms": 7.2478,
+   "after_over_before": {
+    "geometric_mean": 1.0777328823715016,
+    "ci95": [
+     1.0174800916277624,
+     1.1415537024283264
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9815199177342843,
+    "ci95": [
+     0.9341306315349324,
+     1.0313133049990235
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.098024464810977,
+    "ci95": [
+     1.0611138089280892,
+     1.136219051320572
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:1,0,384,1024,1024",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 5.4988,
+   "before_gflops": 146.5,
+   "after_ms": 5.506,
+   "after_over_before": {
+    "geometric_mean": 1.0238746548722895,
+    "ci95": [
+     0.9983673953065936,
+     1.0500335986712748
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 0.9995111748268215,
+    "ci95": [
+     0.978237730875131,
+     1.0212472460144917
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0243753953523222,
+    "ci95": [
+     1.0042809004500355,
+     1.0448719577689838
+    ],
+    "rounds": 16
+   }
+  },
+  {
+   "case": "g:1,0,192,384,1024",
+   "threads": 1,
+   "rounds": 16,
+   "calls_a_round": 3,
+   "before_ms": 0.9222,
+   "before_gflops": 163.7,
+   "after_ms": 0.9501,
+   "after_over_before": {
+    "geometric_mean": 1.0315111539565318,
+    "ci95": [
+     1.0178093193796676,
+     1.0453974437817386
+    ],
+    "rounds": 16
+   },
+   "aa": {
+    "geometric_mean": 1.0005747247754715,
+    "ci95": [
+     0.9875760861854908,
+     1.0137444535807345
+    ],
+    "rounds": 16
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0309186594614432,
+    "ci95": [
+     1.0185354003135638,
+     1.0434524731281705
+    ],
+    "rounds": 16
+   }
+  }
+ ],
+ "gemm_1_thread_confirm": [
+  {
+   "case": "g:1,0,192,384,1024",
+   "threads": 1,
+   "rounds": 48,
+   "calls_a_round": 3,
+   "before_ms": 0.9462,
+   "before_gflops": 159.6,
+   "after_ms": 0.968,
+   "after_over_before": {
+    "geometric_mean": 1.0308647342469544,
+    "ci95": [
+     1.0095385077092152,
+     1.0526414715228831
+    ],
+    "rounds": 48
+   },
+   "aa": {
+    "geometric_mean": 1.0049450975486267,
+    "ci95": [
+     0.9828427725697364,
+     1.0275444631357469
+    ],
+    "rounds": 48
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0257920922859902,
+    "ci95": [
+     1.004309541909087,
+     1.0477341623143936
+    ],
+    "rounds": 48
+   }
+  },
+  {
+   "case": "g:1,0,384,384,1024",
+   "threads": 1,
+   "rounds": 48,
+   "calls_a_round": 3,
+   "before_ms": 2.0097,
+   "before_gflops": 150.3,
+   "after_ms": 2.0426,
+   "after_over_before": {
+    "geometric_mean": 1.0424601695263163,
+    "ci95": [
+     1.019802370547933,
+     1.06562137570336
+    ],
+    "rounds": 48
+   },
+   "aa": {
+    "geometric_mean": 1.002881349897355,
+    "ci95": [
+     0.980496553305898,
+     1.0257771927711792
+    ],
+    "rounds": 48
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0394651068473975,
+    "ci95": [
+     1.0167049908487933,
+     1.0627347343414035
+    ],
+    "rounds": 48
+   }
+  },
+  {
+   "case": "g:1,0,1024,384,1024",
+   "threads": 1,
+   "rounds": 48,
+   "calls_a_round": 3,
+   "before_ms": 7.2457,
+   "before_gflops": 111.1,
+   "after_ms": 7.7313,
+   "after_over_before": {
+    "geometric_mean": 1.0698234053104816,
+    "ci95": [
+     1.05467385617985,
+     1.0851905656367606
+    ],
+    "rounds": 48
+   },
+   "aa": {
+    "geometric_mean": 1.0062386642496728,
+    "ci95": [
+     0.9917093438579196,
+     1.0209808505908633
+    ],
+    "rounds": 48
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0631905166437055,
+    "ci95": [
+     1.0474503905974013,
+     1.0791671709019206
+    ],
+    "rounds": 48
+   }
+  },
+  {
+   "case": "g:1,0,384,1024,1024",
+   "threads": 1,
+   "rounds": 48,
+   "calls_a_round": 3,
+   "before_ms": 5.9313,
+   "before_gflops": 135.8,
+   "after_ms": 5.9603,
+   "after_over_before": {
+    "geometric_mean": 0.9960159062708965,
+    "ci95": [
+     0.9873912251443763,
+     1.0047159224040887
+    ],
+    "rounds": 48
+   },
+   "aa": {
+    "geometric_mean": 0.993051027303146,
+    "ci95": [
+     0.9798783716600247,
+     1.0064007649818656
+    ],
+    "rounds": 48
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0029856260013166,
+    "ci95": [
+     0.9911106432562088,
+     1.0150028887392346
+    ],
+    "rounds": 48
+   }
+  },
+  {
+   "case": "g:0,1,1024,384,384",
+   "threads": 1,
+   "rounds": 48,
+   "calls_a_round": 3,
+   "before_ms": 2.0167,
+   "before_gflops": 149.7,
+   "after_ms": 2.0416,
+   "after_over_before": {
+    "geometric_mean": 1.0096928007536894,
+    "ci95": [
+     0.9956442742018449,
+     1.023939551815423
+    ],
+    "rounds": 48
+   },
+   "aa": {
+    "geometric_mean": 0.9940316688526101,
+    "ci95": [
+     0.9824370983950805,
+     1.0057630766347014
+    ],
+    "rounds": 48
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.015755163936735,
+    "ci95": [
+     1.005381420902216,
+     1.0262359454964434
+    ],
+    "rounds": 48
+   }
+  },
+  {
+   "case": "g:0,0,1024,384,384",
+   "threads": 1,
+   "rounds": 48,
+   "calls_a_round": 3,
+   "before_ms": 2.0389,
+   "before_gflops": 148.1,
+   "after_ms": 2.057,
+   "after_over_before": {
+    "geometric_mean": 1.0169570637767122,
+    "ci95": [
+     1.0023800890993435,
+     1.0317460221048491
+    ],
+    "rounds": 48
+   },
+   "aa": {
+    "geometric_mean": 1.0030497097822832,
+    "ci95": [
+     0.9905223910215647,
+     1.0157354638461864
+    ],
+    "rounds": 48
+   },
+   "after_over_aa": {
+    "geometric_mean": 1.0138650695561717,
+    "ci95": [
+     1.0005966303074711,
+     1.027309455309951
+    ],
+    "rounds": 48
+   }
+  },
+  {
+   "case": "g:0,0,1024,1024,384",
+   "threads": 1,
+   "rounds": 48,
+   "calls_a_round": 3,
+   "before_ms": 5.6523,
+   "before_gflops": 142.5,
+   "after_ms": 5.6184,
+   "after_over_before": {
+    "geometric_mean": 0.9901984612858045,
+    "ci95": [
+     0.9795904990402451,
+     1.0009212969025465
+    ],
+    "rounds": 48
+   },
+   "aa": {
+    "geometric_mean": 1.0060037470232166,
+    "ci95": [
+     0.9940217317318586,
+     1.0181301944591234
+    ],
+    "rounds": 48
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9842890388985327,
+    "ci95": [
+     0.9740951759719466,
+     0.994589580149711
+    ],
+    "rounds": 48
+   }
+  },
+  {
+   "case": "g:0,1,1024,1024,384",
+   "threads": 1,
+   "rounds": 48,
+   "calls_a_round": 3,
+   "before_ms": 5.5434,
+   "before_gflops": 145.3,
+   "after_ms": 5.4841,
+   "after_over_before": {
+    "geometric_mean": 1.000730831241241,
+    "ci95": [
+     0.9662803964847151,
+     1.0364095145053756
+    ],
+    "rounds": 48
+   },
+   "aa": {
+    "geometric_mean": 1.0081108084429682,
+    "ci95": [
+     0.9925958643068457,
+     1.023868261640636
+    ],
+    "rounds": 48
+   },
+   "after_over_aa": {
+    "geometric_mean": 0.9926793987923556,
+    "ci95": [
+     0.9661033563122225,
+     1.019986508015287
+    ],
+    "rounds": 48
+   }
+  }
+ ],
+ "step": [
+  {
+   "compiler": "clang",
+   "case": "geo-dims T512 kblock+exp+reduce, step",
+   "rounds": 48,
+   "ms": {
+    "A": 43.784,
+    "B": 40.3554,
+    "B-AA": 40.1159
+   },
+   "after_over_before_exact": {
+    "geometric_mean": 0.9243570415067158,
+    "ci95": [
+     0.9052111872338006,
+     0.9439078440845231
+    ],
+    "rounds": 48
+   },
+   "aa_exact": {
+    "geometric_mean": 1.00332106535548,
+    "ci95": [
+     0.9823918161573523,
+     1.024696199245228
+    ],
+    "rounds": 48
+   }
+  },
+  {
+   "compiler": "clang",
+   "case": "geo-dims T1024 kblock+exp+reduce, step",
+   "rounds": 48,
+   "ms": {
+    "A": 101.6418,
+    "B": 94.0442,
+    "B-AA": 94.2915
+   },
+   "after_over_before_exact": {
+    "geometric_mean": 0.9250244646679717,
+    "ci95": [
+     0.9004043653556427,
+     0.9503177607277526
+    ],
+    "rounds": 48
+   },
+   "aa_exact": {
+    "geometric_mean": 0.9967016457958516,
+    "ci95": [
+     0.9720942581410544,
+     1.0219319396370832
+    ],
+    "rounds": 48
+   }
+  },
+  {
+   "compiler": "clang",
+   "case": "geo-dims T2048 kblock+exp+reduce, step",
+   "rounds": 48,
+   "ms": {
+    "A": 279.0037,
+    "B": 275.4973,
+    "B-AA": 271.7897
+   },
+   "after_over_before_exact": {
+    "geometric_mean": 0.9827085059088173,
+    "ci95": [
+     0.9640314957084934,
+     1.0017473618699653
+    ],
+    "rounds": 48
+   },
+   "aa_exact": {
+    "geometric_mean": 0.9821652583365243,
+    "ci95": [
+     0.9641974345428048,
+     1.0004679126123799
+    ],
+    "rounds": 48
+   }
+  },
+  {
+   "compiler": "clang",
+   "case": "geo-dims T2048 v1 (control), step",
+   "rounds": 48,
+   "ms": {
+    "A": 403.7251,
+    "B": 401.8211,
+    "B-AA": 398.6764
+   },
+   "after_over_before_exact": {
+    "geometric_mean": 0.9907844549844059,
+    "ci95": [
+     0.9760257196890951,
+     1.0057663609022967
+    ],
+    "rounds": 48
+   },
+   "aa_exact": {
+    "geometric_mean": 0.99443345687965,
+    "ci95": [
+     0.9790613118067989,
+     1.0100469584858367
+    ],
+    "rounds": 48
+   }
+  },
+  {
+   "compiler": "clang",
+   "case": "geo-dims T2048 kblock+exp+reduce, 1 thread, step",
+   "rounds": 24,
+   "ms": {
+    "A": 1007.7742,
+    "B": 1008.5821,
+    "B-AA": 988.7728
+   },
+   "after_over_before_exact": {
+    "geometric_mean": 0.9961029776609761,
+    "ci95": [
+     0.977554876180856,
+     1.0150030103491536
+    ],
+    "rounds": 24
+   },
+   "aa_exact": {
+    "geometric_mean": 0.9830190030227718,
+    "ci95": [
+     0.9651364320950864,
+     1.001232911917142
+    ],
+    "rounds": 24
+   }
+  },
+  {
+   "compiler": "clang",
+   "case": "decoder-9.84M kblock+exp+reduce+attn, step",
+   "rounds": 48,
+   "ms": {
+    "A": 165.7579,
+    "B": 162.9942,
+    "B-AA": 162.5031
+   },
+   "after_over_before_exact": {
+    "geometric_mean": 0.9897480574179066,
+    "ci95": [
+     0.97559806237276,
+     1.0041032828417304
+    ],
+    "rounds": 48
+   },
+   "aa_exact": {
+    "geometric_mean": 1.0050715189285675,
+    "ci95": [
+     0.988435436523798,
+     1.021987598617481
+    ],
+    "rounds": 48
+   }
+  },
+  {
+   "compiler": "gcc",
+   "case": "geo-dims T1024 kblock+exp+reduce, step",
+   "rounds": 48,
+   "ms": {
+    "A": 105.166,
+    "B": 96.3532,
+    "B-AA": 95.4517
+   },
+   "after_over_before_exact": {
+    "geometric_mean": 0.9204799786614991,
+    "ci95": [
+     0.8953330279842558,
+     0.9463332242129384
+    ],
+    "rounds": 48
+   },
+   "aa_exact": {
+    "geometric_mean": 0.9886067723872973,
+    "ci95": [
+     0.9707250383323118,
+     1.0068179060149596
+    ],
+    "rounds": 48
+   }
+  },
+  {
+   "compiler": "gcc",
+   "case": "geo-dims T2048 kblock+exp+reduce, step",
+   "rounds": 48,
+   "ms": {
+    "A": 293.8072,
+    "B": 280.376,
+    "B-AA": 279.2863
+   },
+   "after_over_before_exact": {
+    "geometric_mean": 0.9677690104028239,
+    "ci95": [
+     0.95197494262758,
+     0.9838251150928216
+    ],
+    "rounds": 48
+   },
+   "aa_exact": {
+    "geometric_mean": 1.0011628361428753,
+    "ci95": [
+     0.9821854568285088,
+     1.0205068884955542
+    ],
+    "rounds": 48
+   }
+  }
+ ],
+ "step_confirm": [
+  {
+   "compiler": "clang",
+   "case": "geo-dims T2048 kblock+exp+reduce, step",
+   "rounds": 64,
+   "ms": {
+    "A": 282.9616,
+    "B": 271.2373,
+    "B-AA": 261.1955
+   },
+   "after_over_before_exact": {
+    "geometric_mean": 0.9561876572726422,
+    "ci95": [
+     0.940726850986993,
+     0.9719025612602454
+    ],
+    "rounds": 64
+   },
+   "aa_exact": {
+    "geometric_mean": 0.969090384505431,
+    "ci95": [
+     0.9540200662435196,
+     0.984398763265807
+    ],
+    "rounds": 64
+   }
+  },
+  {
+   "compiler": "clang",
+   "case": "geo-dims T2048 kblock+exp+reduce, 1 thread, step",
+   "rounds": 32,
+   "ms": {
+    "A": 1035.6716,
+    "B": 987.6133,
+    "B-AA": 959.6651
+   },
+   "after_over_before_exact": {
+    "geometric_mean": 0.9652996039259325,
+    "ci95": [
+     0.9505079945085932,
+     0.9803213973190187
+    ],
+    "rounds": 32
+   },
+   "aa_exact": {
+    "geometric_mean": 0.981718167638339,
+    "ci95": [
+     0.9684819013739776,
+     0.9951353342833604
+    ],
+    "rounds": 32
+   }
+  },
+  {
+   "compiler": "clang",
+   "case": "decoder-9.84M kblock+exp+reduce+attn, step",
+   "rounds": 64,
+   "ms": {
+    "A": 165.127,
+    "B": 163.0511,
+    "B-AA": 164.0514
+   },
+   "after_over_before_exact": {
+    "geometric_mean": 0.977748677061787,
+    "ci95": [
+     0.9607906501079225,
+     0.99500601446183
+    ],
+    "rounds": 64
+   },
+   "aa_exact": {
+    "geometric_mean": 1.010842896525377,
+    "ci95": [
+     0.9964937227481303,
+     1.0253986935691726
+    ],
+    "rounds": 64
+   }
+  }
+ ]
+}

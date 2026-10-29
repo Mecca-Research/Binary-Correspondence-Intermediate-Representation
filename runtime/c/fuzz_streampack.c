@@ -41,14 +41,47 @@ static int visit(const bcir_segment_view *seg, void *ctx) {
   return 0;
 }
 
+/* the lifetimes a walk handed over: their count and the RIDs folded in order */
+typedef struct { uint64_t count, fold; } seen_lifetimes;
+static int seen(const bcir_ep_lifetime_view *v, void *ctx) {
+  seen_lifetimes *s = (seen_lifetimes *)ctx;
+  s->count++;
+  s->fold = s->fold * UINT64_C(1099511628211) + v->rid;
+  return 0;
+}
+
+/* ALIAS-SWEEP: the alias law judged by the sweep over lent scratch is the pairwise law, on every
+ * input -- bcir_ep_verify_lent's status bcir_ep_verify's, and the plan walk with scratch handing
+ * over the lifetimes it hands over without -- or the harness aborts: a differential, not only a
+ * bounds check. The scratch is exactly bcir_ep_sweep_bytes' length (ASan bounds every write),
+ * for a header declaring at most 2^16 lifetimes. */
+static void sweep_differential(const uint8_t *data, size_t size, bcir_status pairwise) {
+  static const uint8_t no_pack[1] = {0};
+  bcir_ep_header h;
+  size_t bytes;
+  uint8_t *scratch;
+  if (bcir_ep_validate(data, size, &h) != BCIR_OK || h.n_lifetimes > 65536u) return;
+  bytes = bcir_ep_sweep_bytes(h.n_lifetimes);
+  scratch = (uint8_t *)malloc(bytes ? bytes : 1u);
+  if (!scratch) abort();
+  if (bcir_ep_verify_lent(data, size, scratch, bytes) != pairwise) abort();
+  {
+    seen_lifetimes a = {0, 0}, b = {0, 0};
+    bcir_status sa = bcir_ep_check_pack_walk(data, size, no_pack, 0, 0, seen, &a, 0, 0);
+    bcir_status sb = bcir_ep_check_pack_walk(data, size, no_pack, 0, 0, seen, &b, scratch, bytes);
+    if (sa != sb || a.count != b.count || a.fold != b.fold) abort();
+  }
+  free(scratch);
+}
+
 /* The ExecutionPlan twin's passes over one buffer (G11; the v3 move laws and the binding
  * trailer, G8): header/CRC validation, the wire-law walk (every record family, the O(n^2)
  * duplicate-claim re-walk, the v3 window/step re-walks), each record family's iteration, the
  * binding, the R11 registry check and the plan/pack binding must all return a status, never
- * over-read. */
+ * over-read; and the alias law's sweep must be the pairwise law (ALIAS-SWEEP). */
 static void plan_passes(const uint8_t *data, size_t size) {
   uint64_t source_hash, spec_hash;
-  (void)bcir_ep_verify(data, size);
+  sweep_differential(data, size, bcir_ep_verify(data, size));
   (void)bcir_ep_for_each_step(data, size, 0, 0);
   (void)bcir_ep_for_each_lifetime(data, size, 0, 0);
   (void)bcir_ep_for_each_move(data, size, 0, 0);
@@ -59,6 +92,58 @@ static void plan_passes(const uint8_t *data, size_t size) {
     (void)bcir_ep_check_generation_vector(data, size, live, 2u);
   }
   (void)bcir_ep_check_pack(data, size, data, size);
+}
+
+/* SP-ONCE: a pack checked once (bcir_sp_check) and walked over the token gives the plain walks'
+ * statuses and hands their callbacks the same views, on every input -- the raw bytes, and a copy
+ * with its CRC sealed so the semantic laws are reached -- or the harness aborts: a differential, not
+ * only a bounds check. A refused check leaves a token every checked walk refuses. */
+typedef struct { uint64_t h; unsigned calls; } walk_fold;
+static int fold_seg(const bcir_segment_view *s, void *ctx) {
+  walk_fold *f = (walk_fold *)ctx;
+  uint64_t acc = 0;
+  (void)visit(s, &acc);
+  f->h = (f->h ^ acc) * UINT64_C(1099511628211);
+  f->calls++;
+  return 0;
+}
+static int fold_blk(const bcir_block_view *b, void *ctx) {
+  walk_fold *f = (walk_fold *)ctx;
+  f->h = (f->h ^ b->base ^ (b->count << 1) ^ b->n_strides) * UINT64_C(1099511628211);
+  for (uint16_t i = 0; i < b->n_strides; i++) f->h = (f->h ^ bcir_block_stride(b, i)) * UINT64_C(1099511628211);
+  f->calls++;
+  return 0;
+}
+static void checked_differential(const uint8_t *data, size_t size) {
+  bcir_streampack_header plain;
+  bcir_sp_checked pack;
+  bcir_status sv = bcir_sp_validate(data, size, &plain);
+  if (bcir_sp_check(data, size, &pack) != sv) abort();
+  if (sv != BCIR_OK) {
+    walk_fold f = {0, 0};
+    if (pack.data || bcir_sp_checked_verify_semantic(&pack, 0xFFFFFFFFu, 0xFFFFFFFFu) != BCIR_ERR_TRUNCATED ||
+        bcir_sp_checked_for_each_segment(&pack, fold_seg, &f) != BCIR_ERR_TRUNCATED || f.calls)
+      abort();
+    return;
+  }
+  if (pack.hdr.n_segments != plain.n_segments || pack.hdr.n_blocks != plain.n_blocks ||
+      pack.hdr.version != plain.version || pack.hdr.map_gen != plain.map_gen)
+    abort();
+  if (bcir_sp_checked_verify_semantic(&pack, 0xFFFFFFFFu, 0xFFFFFFFFu) !=
+          bcir_sp_verify_semantic(data, size, 0xFFFFFFFFu, 0xFFFFFFFFu) ||
+      bcir_sp_checked_verify_semantic(&pack, 1u, 0u) != bcir_sp_verify_semantic(data, size, 1u, 0u) ||
+      bcir_sp_checked_generation(&pack, 1u, 0u) != bcir_sp_check_generation(data, size, 1u, 0u))
+    abort();
+  {
+    walk_fold a = {0, 0}, b = {0, 0}, c = {0, 0}, d = {0, 0};
+    if (bcir_sp_for_each_segment(data, size, fold_seg, &a) !=
+            bcir_sp_checked_for_each_segment(&pack, fold_seg, &b) ||
+        a.h != b.h || a.calls != b.calls)
+      abort();
+    if (bcir_sp_for_each_block(data, size, fold_blk, &c) != bcir_sp_checked_for_each_block(&pack, fold_blk, &d) ||
+        c.h != d.h || c.calls != d.calls)
+      abort();
+  }
 }
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
@@ -93,6 +178,22 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       sealed[size - 1u] = (uint8_t)(crc >> 24);
     }
     plan_passes(sealed, size);
+    free(sealed);
+  }
+  /* SP-ONCE's differential over the raw bytes and over a copy with its StreamPack CRC sealed. */
+  checked_differential(data, size);
+  if (size >= 4u) {
+    uint8_t *sealed = (uint8_t *)malloc(size);
+    if (!sealed) abort();
+    memcpy(sealed, data, size);
+    {
+      uint32_t crc = bcir_crc32(sealed, size - 4u);
+      sealed[size - 4u] = (uint8_t)crc;
+      sealed[size - 3u] = (uint8_t)(crc >> 8);
+      sealed[size - 2u] = (uint8_t)(crc >> 16);
+      sealed[size - 1u] = (uint8_t)(crc >> 24);
+    }
+    checked_differential(sealed, size);
     free(sealed);
   }
   /* A standalone CRC over the buffer must also never over-read. */

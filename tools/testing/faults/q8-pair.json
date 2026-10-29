@@ -1,0 +1,121 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_native_ai:_CC",
+  "--require",
+  "bcir.tests.test_native_ai:_ASAN",
+  "bcir.tests.test_native_ai:test_native_ai_c_harness_c11_and_c23",
+  "bcir.tests.test_native_ai:test_native_ai_c_harness_under_address_sanitizer",
+  "bcir.tests.test_native_ai:test_native_q8_instances_match_the_increasing_coordinate_oracle",
+  "bcir.tests.test_native_ai:test_native_q8_matrix_kernels_match_increasing_coordinate_oracle_exactly"
+ ],
+ "faults": [
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA1 a pass's two rows added in the other order",
+   "new": "STOREU(output + k, ADD(ADD(LOADU(output + k), TERM(1)), TERM(0)));",
+   "old": "STOREU(output + k, ADD(ADD(LOADU(output + k), TERM(0)), TERM(1)));",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA2 a pass's second row reading the first row's codes",
+   "new": "const uint8_t *c##r = codes + (i) * output_count;",
+   "old": "const uint8_t *c##r = codes + (row) * output_count;",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_under_address_sanitizer",
+   "label": "PA3 a pass running one step past its rows' end (a read and a write past the matrix)",
+   "new": "      for (k = K0; k <= K1; k += (LANES)) {                                                               \\\n        Q8_PAIR_TURN(0, SET1, XS)                                                                        \\\n        Q8_PAIR_TURN(1, SET1, XS)",
+   "old": "      for (k = K0; k < K1; k += (LANES)) {                                                               \\\n        Q8_PAIR_TURN(0, SET1, XS)                                                                        \\\n        Q8_PAIR_TURN(1, SET1, XS)",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA4 an odd last row paired with the row past the matrix",
+   "new": "for (i = 0u; i < input_count; i += 2u) {",
+   "old": "for (i = 0u; i + 1u < input_count; i += 2u) {",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA5 a row's group turn taking the next group's scale",
+   "new": "    s##r = q8_scale(exponents_le, (e##r + k + group_size) >> shift);",
+   "old": "    s##r = q8_scale(exponents_le, (e##r + k) >> shift);",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA6 a row's first group end counted from the row's start",
+   "new": "n##r = group_size;",
+   "old": "n##r = ((((e##r + K0) >> shift) + 1u) << shift) - e##r;",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA7 the probe reporting the pair for every vector matvec",
+   "new": "  Q8_PAIR_SAW(1);",
+   "old": "  Q8_PAIR_SAW(pair ? 1 : 2);",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA8 the pair never taken",
+   "new": "  int pair = !output_count && output_count % 8u == 0u",
+   "old": "  int pair = output_count % 8u == 0u",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA9 the AVX-512 terms as before formed as (x * s) * code",
+   "new": "  return _mm512_mul_pd(_mm512_mul_pd(vx, _mm512_set1_pd(s)),\n                       _mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_cvtsi64_si128(w))));",
+   "old": "  return _mm512_mul_pd(vx, _mm512_mul_pd(_mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_cvtsi64_si128(w))),\n                                         _mm512_set1_pd(s)));",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA10 the AVX2 terms as before formed as (x * s) * code",
+   "new": "  return _mm256_mul_pd(_mm256_mul_pd(vx, _mm256_set1_pd(s)),\n                       _mm256_cvtepi32_pd(_mm_cvtepi8_epi32(_mm_cvtsi32_si128(w))));",
+   "old": "  return _mm256_mul_pd(vx, _mm256_mul_pd(_mm256_cvtepi32_pd(_mm_cvtepi8_epi32(_mm_cvtsi32_si128(w))),\n                                         _mm256_set1_pd(s)));",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA11 a pass's outputs not zeroed",
+   "new": "k = K0;",
+   "old": "for (k = K0; k < K1; ++k) output[k] = 0.0;",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA12 a pass's row skipping every other group's scale",
+   "new": "    n##r += 2u * group_size;",
+   "old": "    n##r += group_size;",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA13 the AVX2 step's upper four terms taken from the lower four codes",
+   "new": "  t.hi = q8_terms256_xs(c, vxs.hi);",
+   "old": "  t.hi = q8_terms256_xs(c + 4, vxs.hi);",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA14 the AVX2 step's upper four outputs stored over the lower four",
+   "new": "  _mm256_storeu_pd(p, v.hi);",
+   "old": "  _mm256_storeu_pd(p + 4, v.hi);",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  },
+  {
+   "expects": "test_native_ai_c_harness_c11_and_c23",
+   "label": "PA15 the AVX2 step's upper four terms as before without their group's scale",
+   "new": "  t.hi = q8_terms256(c + 4, vx.hi, 1.0);",
+   "old": "  t.hi = q8_terms256(c + 4, vx.hi, s);",
+   "path": "runtime/c/bcir_ai_kernels.c"
+  }
+ ]
+}

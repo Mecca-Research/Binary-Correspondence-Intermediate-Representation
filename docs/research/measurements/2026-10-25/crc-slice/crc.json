@@ -1,0 +1,838 @@
+[
+ {
+  "cc": "clang",
+  "model_sha256": "4cf019ead940342a",
+  "case": "crc32 16384 bytes",
+  "rounds": 15,
+  "before_ms": 0.03446,
+  "after": {
+   "ms": 0.00857,
+   "ratio": 0.2541,
+   "interval": [
+    0.2415,
+    0.2673
+   ]
+  },
+  "zlib": {
+   "ms": 0.00311,
+   "ratio": 0.0899,
+   "interval": [
+    0.089,
+    0.0909
+   ]
+  },
+  "A/A": {
+   "ms": 0.03437,
+   "ratio": 1.001,
+   "interval": [
+    0.9877,
+    1.0145
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "model_sha256": "4cf019ead940342a",
+  "case": "crc32 131072 bytes",
+  "rounds": 15,
+  "before_ms": 0.27127,
+  "after": {
+   "ms": 0.06654,
+   "ratio": 0.2459,
+   "interval": [
+    0.2412,
+    0.2506
+   ]
+  },
+  "zlib": {
+   "ms": 0.02364,
+   "ratio": 0.0874,
+   "interval": [
+    0.0847,
+    0.0903
+   ]
+  },
+  "A/A": {
+   "ms": 0.27134,
+   "ratio": 1.004,
+   "interval": [
+    0.9837,
+    1.0247
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "model_sha256": "4cf019ead940342a",
+  "case": "crc32 609997 bytes",
+  "rounds": 15,
+  "before_ms": 1.25327,
+  "after": {
+   "ms": 0.32203,
+   "ratio": 0.2533,
+   "interval": [
+    0.2483,
+    0.2583
+   ]
+  },
+  "zlib": {
+   "ms": 0.11031,
+   "ratio": 0.0935,
+   "interval": [
+    0.084,
+    0.1041
+   ]
+  },
+  "A/A": {
+   "ms": 1.26521,
+   "ratio": 1.0119,
+   "interval": [
+    0.9874,
+    1.0371
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "model_sha256": "4cf019ead940342a",
+  "case": "crc32 912840 bytes",
+  "rounds": 15,
+  "before_ms": 1.90952,
+  "after": {
+   "ms": 0.47617,
+   "ratio": 0.2472,
+   "interval": [
+    0.2444,
+    0.2501
+   ]
+  },
+  "zlib": {
+   "ms": 0.16795,
+   "ratio": 0.0885,
+   "interval": [
+    0.0856,
+    0.0915
+   ]
+  },
+  "A/A": {
+   "ms": 1.91356,
+   "ratio": 0.9919,
+   "interval": [
+    0.9757,
+    1.0084
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "model_sha256": "4cf019ead940342a",
+  "case": "crc32 1048576 bytes",
+  "rounds": 15,
+  "before_ms": 2.19477,
+  "after": {
+   "ms": 0.54949,
+   "ratio": 0.2512,
+   "interval": [
+    0.2482,
+    0.2542
+   ]
+  },
+  "zlib": {
+   "ms": 0.1927,
+   "ratio": 0.0875,
+   "interval": [
+    0.0863,
+    0.0887
+   ]
+  },
+  "A/A": {
+   "ms": 2.19707,
+   "ratio": 1.0002,
+   "interval": [
+    0.9972,
+    1.0032
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "model_sha256": "4cf019ead940342a",
+  "case": "crc32 8388608 bytes",
+  "rounds": 15,
+  "before_ms": 17.63677,
+  "after": {
+   "ms": 4.43867,
+   "ratio": 0.2509,
+   "interval": [
+    0.2494,
+    0.2525
+   ]
+  },
+  "zlib": {
+   "ms": 1.73143,
+   "ratio": 0.0983,
+   "interval": [
+    0.0974,
+    0.0992
+   ]
+  },
+  "A/A": {
+   "ms": 17.62811,
+   "ratio": 0.9972,
+   "interval": [
+    0.992,
+    1.0024
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "model_sha256": "4cf019ead940342a",
+  "case": "bcir_q8_model_load",
+  "rounds": 15,
+  "before_ms": 8.19648,
+  "after": {
+   "ms": 1.30894,
+   "ratio": 0.1591,
+   "interval": [
+    0.157,
+    0.1611
+   ]
+  },
+  "A/A": {
+   "ms": 8.19311,
+   "ratio": 0.9968,
+   "interval": [
+    0.9906,
+    1.003
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "model_sha256": "daea8965d330683e",
+  "case": "crc32 16384 bytes",
+  "rounds": 15,
+  "before_ms": 0.03429,
+  "after": {
+   "ms": 0.00849,
+   "ratio": 0.2411,
+   "interval": [
+    0.2309,
+    0.2517
+   ]
+  },
+  "zlib": {
+   "ms": 0.00312,
+   "ratio": 0.0881,
+   "interval": [
+    0.0845,
+    0.0919
+   ]
+  },
+  "A/A": {
+   "ms": 0.03422,
+   "ratio": 0.989,
+   "interval": [
+    0.9679,
+    1.0104
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "model_sha256": "daea8965d330683e",
+  "case": "crc32 131072 bytes",
+  "rounds": 15,
+  "before_ms": 0.27396,
+  "after": {
+   "ms": 0.06844,
+   "ratio": 0.2496,
+   "interval": [
+    0.2484,
+    0.2508
+   ]
+  },
+  "zlib": {
+   "ms": 0.02418,
+   "ratio": 0.089,
+   "interval": [
+    0.0872,
+    0.0907
+   ]
+  },
+  "A/A": {
+   "ms": 0.27359,
+   "ratio": 0.9976,
+   "interval": [
+    0.9945,
+    1.0007
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "model_sha256": "daea8965d330683e",
+  "case": "crc32 609997 bytes",
+  "rounds": 15,
+  "before_ms": 1.27531,
+  "after": {
+   "ms": 0.31785,
+   "ratio": 0.2463,
+   "interval": [
+    0.2403,
+    0.2525
+   ]
+  },
+  "zlib": {
+   "ms": 0.11122,
+   "ratio": 0.0899,
+   "interval": [
+    0.082,
+    0.0987
+   ]
+  },
+  "A/A": {
+   "ms": 1.27632,
+   "ratio": 1.0002,
+   "interval": [
+    0.9575,
+    1.0448
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "model_sha256": "daea8965d330683e",
+  "case": "crc32 912840 bytes",
+  "rounds": 15,
+  "before_ms": 1.9065,
+  "after": {
+   "ms": 0.4771,
+   "ratio": 0.2483,
+   "interval": [
+    0.2457,
+    0.2508
+   ]
+  },
+  "zlib": {
+   "ms": 0.16737,
+   "ratio": 0.0881,
+   "interval": [
+    0.0862,
+    0.09
+   ]
+  },
+  "A/A": {
+   "ms": 1.91721,
+   "ratio": 1.002,
+   "interval": [
+    0.9952,
+    1.0088
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "model_sha256": "daea8965d330683e",
+  "case": "crc32 1048576 bytes",
+  "rounds": 15,
+  "before_ms": 2.19558,
+  "after": {
+   "ms": 0.54855,
+   "ratio": 0.2464,
+   "interval": [
+    0.238,
+    0.2552
+   ]
+  },
+  "zlib": {
+   "ms": 0.19174,
+   "ratio": 0.0864,
+   "interval": [
+    0.0837,
+    0.0892
+   ]
+  },
+  "A/A": {
+   "ms": 2.19509,
+   "ratio": 0.9811,
+   "interval": [
+    0.9493,
+    1.014
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "model_sha256": "daea8965d330683e",
+  "case": "crc32 8388608 bytes",
+  "rounds": 15,
+  "before_ms": 17.58707,
+  "after": {
+   "ms": 4.45978,
+   "ratio": 0.2613,
+   "interval": [
+    0.2453,
+    0.2782
+   ]
+  },
+  "zlib": {
+   "ms": 1.73499,
+   "ratio": 0.1045,
+   "interval": [
+    0.0942,
+    0.1159
+   ]
+  },
+  "A/A": {
+   "ms": 17.58219,
+   "ratio": 0.997,
+   "interval": [
+    0.9894,
+    1.0047
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "model_sha256": "daea8965d330683e",
+  "case": "bcir_q8_model_load",
+  "rounds": 15,
+  "before_ms": 8.24389,
+  "after": {
+   "ms": 1.30657,
+   "ratio": 0.1573,
+   "interval": [
+    0.1543,
+    0.1603
+   ]
+  },
+  "A/A": {
+   "ms": 8.22119,
+   "ratio": 1.0047,
+   "interval": [
+    0.9639,
+    1.0473
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "4cf019ead940342a",
+  "case": "crc32 16384 bytes",
+  "rounds": 15,
+  "before_ms": 0.03426,
+  "after": {
+   "ms": 0.00668,
+   "ratio": 0.1951,
+   "interval": [
+    0.1908,
+    0.1994
+   ]
+  },
+  "zlib": {
+   "ms": 0.00313,
+   "ratio": 0.0908,
+   "interval": [
+    0.0894,
+    0.0922
+   ]
+  },
+  "A/A": {
+   "ms": 0.03431,
+   "ratio": 0.994,
+   "interval": [
+    0.9843,
+    1.0037
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "4cf019ead940342a",
+  "case": "crc32 131072 bytes",
+  "rounds": 15,
+  "before_ms": 0.27525,
+  "after": {
+   "ms": 0.0533,
+   "ratio": 0.1946,
+   "interval": [
+    0.1933,
+    0.196
+   ]
+  },
+  "zlib": {
+   "ms": 0.02425,
+   "ratio": 0.0882,
+   "interval": [
+    0.0868,
+    0.0896
+   ]
+  },
+  "A/A": {
+   "ms": 0.27434,
+   "ratio": 1.0007,
+   "interval": [
+    0.9943,
+    1.0071
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "4cf019ead940342a",
+  "case": "crc32 609997 bytes",
+  "rounds": 15,
+  "before_ms": 1.27963,
+  "after": {
+   "ms": 0.24867,
+   "ratio": 0.1942,
+   "interval": [
+    0.1935,
+    0.1949
+   ]
+  },
+  "zlib": {
+   "ms": 0.11154,
+   "ratio": 0.0875,
+   "interval": [
+    0.087,
+    0.0881
+   ]
+  },
+  "A/A": {
+   "ms": 1.27701,
+   "ratio": 1.0005,
+   "interval": [
+    0.9948,
+    1.0062
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "4cf019ead940342a",
+  "case": "crc32 912840 bytes",
+  "rounds": 15,
+  "before_ms": 1.91688,
+  "after": {
+   "ms": 0.37271,
+   "ratio": 0.1935,
+   "interval": [
+    0.1908,
+    0.1962
+   ]
+  },
+  "zlib": {
+   "ms": 0.16804,
+   "ratio": 0.0868,
+   "interval": [
+    0.0851,
+    0.0886
+   ]
+  },
+  "A/A": {
+   "ms": 1.91776,
+   "ratio": 0.9933,
+   "interval": [
+    0.9748,
+    1.0121
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "4cf019ead940342a",
+  "case": "crc32 1048576 bytes",
+  "rounds": 15,
+  "before_ms": 2.20185,
+  "after": {
+   "ms": 0.42413,
+   "ratio": 0.1894,
+   "interval": [
+    0.1836,
+    0.1954
+   ]
+  },
+  "zlib": {
+   "ms": 0.19259,
+   "ratio": 0.0919,
+   "interval": [
+    0.0809,
+    0.1045
+   ]
+  },
+  "A/A": {
+   "ms": 2.20437,
+   "ratio": 1.0103,
+   "interval": [
+    0.9579,
+    1.0654
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "4cf019ead940342a",
+  "case": "crc32 8388608 bytes",
+  "rounds": 15,
+  "before_ms": 17.6416,
+  "after": {
+   "ms": 3.47231,
+   "ratio": 0.1968,
+   "interval": [
+    0.196,
+    0.1977
+   ]
+  },
+  "zlib": {
+   "ms": 1.78107,
+   "ratio": 0.1006,
+   "interval": [
+    0.0995,
+    0.1017
+   ]
+  },
+  "A/A": {
+   "ms": 17.64042,
+   "ratio": 1.0025,
+   "interval": [
+    0.9965,
+    1.0085
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "4cf019ead940342a",
+  "case": "bcir_q8_model_load",
+  "rounds": 15,
+  "before_ms": 16.40657,
+  "after": {
+   "ms": 1.10882,
+   "ratio": 0.0687,
+   "interval": [
+    0.0673,
+    0.07
+   ]
+  },
+  "A/A": {
+   "ms": 16.26207,
+   "ratio": 1.0051,
+   "interval": [
+    0.9963,
+    1.014
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "daea8965d330683e",
+  "case": "crc32 16384 bytes",
+  "rounds": 15,
+  "before_ms": 0.03455,
+  "after": {
+   "ms": 0.00674,
+   "ratio": 0.1944,
+   "interval": [
+    0.1932,
+    0.1956
+   ]
+  },
+  "zlib": {
+   "ms": 0.00313,
+   "ratio": 0.0906,
+   "interval": [
+    0.0896,
+    0.0917
+   ]
+  },
+  "A/A": {
+   "ms": 0.03468,
+   "ratio": 1.0017,
+   "interval": [
+    0.9957,
+    1.0076
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "daea8965d330683e",
+  "case": "crc32 131072 bytes",
+  "rounds": 15,
+  "before_ms": 0.28192,
+  "after": {
+   "ms": 0.05352,
+   "ratio": 0.2106,
+   "interval": [
+    0.1575,
+    0.2817
+   ]
+  },
+  "zlib": {
+   "ms": 0.02445,
+   "ratio": 0.087,
+   "interval": [
+    0.0738,
+    0.1025
+   ]
+  },
+  "A/A": {
+   "ms": 0.27664,
+   "ratio": 0.9715,
+   "interval": [
+    0.8814,
+    1.0709
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "daea8965d330683e",
+  "case": "crc32 609997 bytes",
+  "rounds": 15,
+  "before_ms": 1.28756,
+  "after": {
+   "ms": 0.25078,
+   "ratio": 0.1931,
+   "interval": [
+    0.1899,
+    0.1964
+   ]
+  },
+  "zlib": {
+   "ms": 0.11232,
+   "ratio": 0.0914,
+   "interval": [
+    0.0858,
+    0.0973
+   ]
+  },
+  "A/A": {
+   "ms": 1.30058,
+   "ratio": 1.0195,
+   "interval": [
+    0.9952,
+    1.0443
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "daea8965d330683e",
+  "case": "crc32 912840 bytes",
+  "rounds": 15,
+  "before_ms": 1.89808,
+  "after": {
+   "ms": 0.3725,
+   "ratio": 0.1945,
+   "interval": [
+    0.192,
+    0.197
+   ]
+  },
+  "zlib": {
+   "ms": 0.16837,
+   "ratio": 0.0879,
+   "interval": [
+    0.0867,
+    0.0891
+   ]
+  },
+  "A/A": {
+   "ms": 1.90378,
+   "ratio": 1.0119,
+   "interval": [
+    0.9829,
+    1.0418
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "daea8965d330683e",
+  "case": "crc32 1048576 bytes",
+  "rounds": 15,
+  "before_ms": 2.19084,
+  "after": {
+   "ms": 0.42623,
+   "ratio": 0.1953,
+   "interval": [
+    0.194,
+    0.1967
+   ]
+  },
+  "zlib": {
+   "ms": 0.19141,
+   "ratio": 0.0876,
+   "interval": [
+    0.0858,
+    0.0894
+   ]
+  },
+  "A/A": {
+   "ms": 2.19507,
+   "ratio": 1.005,
+   "interval": [
+    0.9963,
+    1.0138
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "daea8965d330683e",
+  "case": "crc32 8388608 bytes",
+  "rounds": 15,
+  "before_ms": 17.54298,
+  "after": {
+   "ms": 3.46983,
+   "ratio": 0.2011,
+   "interval": [
+    0.196,
+    0.2063
+   ]
+  },
+  "zlib": {
+   "ms": 1.77723,
+   "ratio": 0.11,
+   "interval": [
+    0.0991,
+    0.1221
+   ]
+  },
+  "A/A": {
+   "ms": 17.56699,
+   "ratio": 1.0014,
+   "interval": [
+    0.9907,
+    1.0122
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "model_sha256": "daea8965d330683e",
+  "case": "bcir_q8_model_load",
+  "rounds": 15,
+  "before_ms": 16.09073,
+  "after": {
+   "ms": 1.06491,
+   "ratio": 0.0664,
+   "interval": [
+    0.0657,
+    0.0671
+   ]
+  },
+  "A/A": {
+   "ms": 16.07326,
+   "ratio": 0.9971,
+   "interval": [
+    0.9935,
+    1.0007
+   ]
+  }
+ }
+]

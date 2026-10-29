@@ -1,0 +1,167 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_ai:_CC",
+    "bcir.tests.test_native_ai:test_native_ai_c_harness_c11_and_c23",
+    "bcir.tests.test_native_ai:test_native_q8_instances_match_the_increasing_coordinate_oracle",
+    "bcir.tests.test_native_ai:test_native_q8_matrix_kernels_match_increasing_coordinate_oracle_exactly"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL1 the AVX-512 run kernel's add fused with its product",
+      "new": "_mm512_fmadd_pd(vx, _mm512_mul_pd(code, vs), _mm512_loadu_pd(y + k))",
+      "old": "_mm512_add_pd(_mm512_loadu_pd(y + k), _mm512_mul_pd(vx, _mm512_mul_pd(code, vs)))",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL2 the AVX2 run kernel's tail add fused with its product",
+      "new": "_mm256_mul_pd(code, vs))));\n  }\n  for (; k < n; ++k) {\n    int code = c[k] >= UINT8_C(0x80) ? (int)c[k] - 256 : (int)c[k];\n    double term = xi * ((double)code * s);\n    y[k] = fma(xi, (double)code * s, y[k]); (void)term;\n",
+      "old": "_mm256_mul_pd(code, vs))));\n  }\n  for (; k < n; ++k) {\n    int code = c[k] >= UINT8_C(0x80) ? (int)c[k] - 256 : (int)c[k];\n    double term = xi * ((double)code * s);\n    y[k] = y[k] + term;\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL3 a run reaching past its group",
+      "new": "      size_t n = k1 - output_index; (void)left;\n      double scale = q8_scale(exponents_le, group);\n",
+      "old": "      size_t n = k1 - output_index < left ? k1 - output_index : left;\n      double scale = q8_scale(exponents_le, group);\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL4 a pass's group turn taking the row's first group again",
+      "new": "    s##r = q8_scale(exponents_le, e##r >> shift);",
+      "old": "    s##r = q8_scale(exponents_le, (e##r + k) >> shift);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL5 an odd last row left out of the pair",
+      "new": "    if (i < input_count && !input_count) {",
+      "old": "    if (i < input_count) {",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL6 the pair for a group that is not a power of two",
+      "new": "group_size >= 8u",
+      "old": "group_size >= 8u && !(group_size & (group_size - 1u))",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL7 the pair for a column count not a multiple of 8",
+      "new": "output_count % 4u == 0u && group_size >= 8u",
+      "old": "output_count % 8u == 0u && group_size >= 8u",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL8 the pair for a group under 8 columns",
+      "new": "group_size >= 4u && !(",
+      "old": "group_size >= 8u && !(",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL9 the AVX2 row dots' coordinate pair swapped",
+      "new": "        __m256d xa = _mm256_set1_pd(input[c + k + 2u * (size_t)q + 1u]);\n",
+      "old": "        __m256d xa = _mm256_set1_pd(input[c + k + 2u * (size_t)q]);\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL10 the AVX-512 row dots' coordinate pair swapped",
+      "new": "        __m512d xa = _mm512_set1_pd(input[c + k + 2u * (size_t)q + 1u]);\n",
+      "old": "        __m512d xa = _mm512_set1_pd(input[c + k + 2u * (size_t)q]);\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL11 a row block's run held to its first row's group alone",
+      "new": "  size_t n = input_count - c, r;\n  (void)rows;\n  for (r = 0u; r < 1u; ++r) {\n",
+      "old": "  size_t n = input_count - c, r;\n  for (r = 0u; r < rows; ++r) {\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL12 the AVX-512 row block's store missing its first lane",
+      "new": "_mm512_mask_storeu_pd(output, (__mmask8)((1u << rows) - 2u), t);",
+      "old": "_mm512_mask_storeu_pd(output, (__mmask8)((1u << rows) - 1u), t);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL13 the transpose's coordinates 2-3 and 4-5 swapped",
+      "new": "  out[2] = _mm_unpackhi_epi32(b[0], b[2]);\n  out[1] = _mm_unpacklo_epi32(b[1], b[3]);\n",
+      "old": "  out[1] = _mm_unpackhi_epi32(b[0], b[2]);\n  out[2] = _mm_unpacklo_epi32(b[1], b[3]);\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL14 a non-finite row dot not zeroing the output (vector instances)",
+      "new": "    for (r = 0u; r < rows; ++r) {\n      if (!isfinite(output[row + r])) {\n",
+      "old": "    for (r = 0u; r < rows; ++r) {\n      if (!isfinite(output[row + r])) {\n        memset(output, 0, output_count * sizeof *output);\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL15 any instance admitted",
+      "new": "  return instance ? instance : 1;\n",
+      "old": "  return (instance == 1 || instance == 2 || instance == 4) && (admitted & instance) ? instance : 0;\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL16 an instance bit no kernel has",
+      "new": "__builtin_cpu_supports(\"avx512f\")) instances |= 12;",
+      "old": "__builtin_cpu_supports(\"avx512f\")) instances |= 4;",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL17 the prevalidated matvec on the portable loops",
+      "new": "  return bcir_ai_q8_matvec_f64_instance(1, input,",
+      "old": "  return bcir_ai_q8_matvec_f64_instance(0, input,",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL18 the prevalidated row dots on the portable loops",
+      "new": "  return bcir_ai_q8_rows_dot_f64_instance(1, input,",
+      "old": "  return bcir_ai_q8_rows_dot_f64_instance(0, input,",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL19 a scale built from bits below a normal double",
+      "new": "  if (e >= -1074 && e <= 1023) {\n",
+      "old": "  if (e >= -1022 && e <= 1023) {\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL20 a scale built from bits past the largest double",
+      "new": "  if (e >= -1022 && e <= 1100) {\n",
+      "old": "  if (e >= -1022 && e <= 1023) {\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL21 an AVX-512 term's codes read unsigned",
+      "new": "  return _mm512_mul_pd(vx, _mm512_mul_pd(_mm512_cvtepi32_pd(_mm256_cvtepu8_epi32(_mm_cvtsi64_si128(w))),\n",
+      "old": "  return _mm512_mul_pd(vx, _mm512_mul_pd(_mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_cvtsi64_si128(w))),\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "QL22 the AVX-512 run kernel's vector a lane short",
+      "new": "  for (; k + 8u <= n; k += 8u) {\n    int64_t w;\n    __m512d code;\n    memcpy(&w, c + k, sizeof w);\n    w &= INT64_C(0x00ffffffffffffff);\n    code = _mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_cvtsi64_si128(w)));\n    _mm512_storeu_pd(y + k,\n",
+      "old": "  for (; k + 8u <= n; k += 8u) {\n    int64_t w;\n    __m512d code;\n    memcpy(&w, c + k, sizeof w);\n    code = _mm512_cvtepi32_pd(_mm256_cvtepi8_epi32(_mm_cvtsi64_si128(w)));\n    _mm512_storeu_pd(y + k,\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    }
+  ]
+}

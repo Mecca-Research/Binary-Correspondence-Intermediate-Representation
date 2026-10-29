@@ -71,13 +71,19 @@ typedef struct bcir_q8_model {
   unsigned char *storage;
   size_t storage_size;
   bcir_q8_tensor *tensors;
+  /* HEAD-PACK: the head's rows (the embedding's when tied, else the LM head's) packed once at load for the
+   * vector row dots, bcir_ai_q8_rows_pack's layout (bcir_ai_kernels.h), head_pack_size bytes; NULL and 0 where
+   * d_model is not a whole number of groups, which no pack holds. */
+  unsigned char *head_pack;
+  size_t head_pack_size;
   bcir_host_allocator _allocator;
   uint32_t _owner_tag;
 } bcir_q8_model;
 
-/* A successfully loaded model owns `storage` and `tensors`; callers borrow the
- * complete object as immutable state until bcir_q8_model_free.  Mutating either
- * inventory invalidates the loader's CRC/value validation and is unsupported. */
+/* A successfully loaded model owns `storage`, `tensors` and `head_pack`; callers
+ * borrow the complete object as immutable state until bcir_q8_model_free.
+ * Mutating any of them invalidates the loader's CRC/value validation and is
+ * unsupported. */
 
 void bcir_q8_model_init(bcir_q8_model *model);
 
@@ -114,6 +120,18 @@ const bcir_q8_tensor *bcir_q8_model_tensor(const bcir_q8_model *model,
  * Returns NaN for a foreign/stale tensor, malformed span, or bad index. */
 double bcir_q8_tensor_value(const bcir_q8_model *model,
                             const bcir_q8_tensor *tensor, uint32_t index);
+
+/* DECODE-PASSES: 2**exponent for an exponent the format admits ([-300, 300]), formed from its bits; NaN past it. A
+ * code (an integer in [-127, 127]) times it is exact, so it is ldexp(code, exponent) for every code and exponent a
+ * loaded tensor holds. */
+double bcir_q8_group_scale(int exponent);
+
+/* DECODE-PASSES: elements [start, start + count) of `tensor` into out[0 .. count), each bcir_q8_tensor_value's value
+ * bit for bit (NaN where it gives NaN), a group's scale formed once (bcir_q8_group_scale) instead of an ldexp an
+ * element. 0; -1 with `out` untouched for a tensor bcir_q8_tensor_value refuses whole (foreign, stale, malformed), a
+ * range past its elements, or a NULL `out` with a nonzero count. A zero count writes nothing. */
+int bcir_q8_tensor_values(const bcir_q8_model *model, const bcir_q8_tensor *tensor,
+                          uint32_t start, uint32_t count, double *out);
 
 #ifdef __cplusplus
 }

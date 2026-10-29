@@ -25,6 +25,13 @@ Three laws:
     key; a candidate without evidence on one of them is refused rather than judged on the
     rest, and the certificate names the corpus head and the number of episodes the corpus
     logs, so the portfolio can refuse a certificate over a subset.
+
+An entry's counts are explicit (EVIDENCE-NULL): `bcir.measured_plan.v2`, the schema written,
+holds the PMU's cycles, instructions and cache misses for the run or three nulls when the PMU read
+none, and each sample's four getrusage counts or four nulls on a host without getrusage -- a 0 is
+a count the source read. `bcir.measured_plan.v1` had no null: its writer recorded a count it
+could not read as 0. A v1 entry still reads, to the same bytes and digest, so a corpus holding one
+keeps its chain; `counts` reads its PMU counts as present only when none is 0.
 """
 
 from __future__ import annotations
@@ -40,9 +47,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .._artifact_json import read_bounded_text, strict_json_loads
+from ..silicon import recorded_counts, v1_pmu_counts
 from .portfolio import ReplayCertificate
 
-SCHEMA = "bcir.measured_plan.v1"
+SCHEMA = "bcir.measured_plan.v2"  # the schema written: PMU counts or three nulls
+SCHEMA_V1 = "bcir.measured_plan.v1"  # read only: no null, an unread count recorded as 0
 CORPUS_SCHEMA = "bcir.measured_corpus.v1"
 
 #: The tenancies the rig can attest (mirrors `kbcir.microbench.TENANCIES`).
@@ -84,25 +93,31 @@ def _bounded_str(value, what: str, limit: int = _STR_MAX) -> str:
 
 @dataclass(frozen=True)
 class MeasuredSample:
-    """One repeat: the OS counters around one execution of the plan (nothing discarded)."""
+    """One repeat: the OS counters around one execution of the plan (nothing discarded). The
+    four getrusage counts are all read or all None (a host without getrusage); the clocks are
+    always read."""
 
     wall_ns: int
     cpu_ns: int
-    minor_faults: int
-    major_faults: int
-    voluntary_context_switches: int
-    involuntary_context_switches: int
+    minor_faults: int | None
+    major_faults: int | None
+    voluntary_context_switches: int | None
+    involuntary_context_switches: int | None
 
     def __post_init__(self) -> None:
-        for name in (
-            "cpu_ns",
-            "minor_faults",
-            "major_faults",
-            "voluntary_context_switches",
-            "involuntary_context_switches",
-        ):
-            _u63(getattr(self, name), name)
+        _u63(self.cpu_ns, "cpu_ns")
         _u63(self.wall_ns, "wall_ns", lo=1)
+        recorded_counts(*self.rusage)
+
+    @property
+    def rusage(self) -> tuple[int | None, int | None, int | None, int | None]:
+        """(minor faults, major faults, voluntary and involuntary context switches)."""
+        return (
+            self.minor_faults,
+            self.major_faults,
+            self.voluntary_context_switches,
+            self.involuntary_context_switches,
+        )
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -111,8 +126,8 @@ class MeasuredSample:
 @dataclass(frozen=True)
 class MeasuredPlan:
     """One measured candidate: the plan a policy selected for (program, target, workload,
-    Theta), the raw samples of executing it, the PMU counters when the host has a PMU, and
-    the host's attestation."""
+    Theta), the raw samples of executing it, the PMU's counts for the run (three nulls when it
+    read none), and the host's attestation."""
 
     program: str  # the module's R13 digest (decimal), or B1's family:shape for an artifact
     target: str  # `schedule_artifact.target_fingerprint` (SHA-256)
@@ -121,9 +136,9 @@ class MeasuredPlan:
     policy: str  # the admitted candidate: a portfolio policy name, or B1's tile plan name
     plan: str  # `assignment_digest` of what the policy selected when measured (SHA-256)
     samples: tuple[MeasuredSample, ...]
-    cycles: int
-    instructions: int
-    cache_misses: int
+    cycles: int | None  # the three PMU counts, or three Nones (v2; v1 has no null)
+    instructions: int | None
+    cache_misses: int | None
     tenancy: str
     signals: str
     hardware_pmu: bool
@@ -132,7 +147,7 @@ class MeasuredPlan:
     schema: str = SCHEMA
 
     def __post_init__(self) -> None:
-        if self.schema != SCHEMA:
+        if self.schema not in (SCHEMA, SCHEMA_V1):
             raise ValueError("unsupported measured-plan schema")
         _bounded_str(self.program, "program")
         _hex_digest(self.target, "target")
@@ -149,8 +164,13 @@ class MeasuredPlan:
         ):
             raise ValueError(f"samples must be 1..{_MAX_SAMPLES} measured repeats")
         object.__setattr__(self, "samples", tuple(self.samples))
-        for name in ("cycles", "instructions", "cache_misses"):
-            _u63(getattr(self, name), name)
+        if self.schema == SCHEMA:
+            recorded_counts(self.cycles, self.instructions, self.cache_misses)
+        else:  # v1, as it was read before v2: integers in [0, 2^63), no null anywhere
+            for name in ("cycles", "instructions", "cache_misses"):
+                _u63(getattr(self, name), name)
+            if any(None in sample.rusage for sample in self.samples):
+                raise ValueError("a v1 measured plan has no null: its samples' counts are integers")
         if self.tenancy not in TENANCIES:
             raise ValueError(f"tenancy must be one of {TENANCIES}")
         _bounded_str(self.signals, "signals")
@@ -175,6 +195,15 @@ class MeasuredPlan:
         median = int(statistics.median(walls))
         mad = int(statistics.median(abs(wall - median) for wall in walls))
         return walls[0], median, walls[-1], mad
+
+    @property
+    def counts(self) -> tuple[int, int, int] | None:
+        """The PMU's (cycles, instructions, cache misses) for the run, or None when it read none.
+        A v1 entry has no null and recorded an unread count as 0, so its counts are the three
+        only when none is 0 (`silicon.v1_pmu_counts`)."""
+        if self.schema == SCHEMA_V1:
+            return v1_pmu_counts(self.cycles, self.instructions, self.cache_misses)
+        return recorded_counts(self.cycles, self.instructions, self.cache_misses)
 
     @property
     def silicon(self) -> bool:
@@ -434,7 +463,7 @@ def measure_plans(
     once unmeasured (warm-up, excluded), then `repeats` times under the OS counters, once
     more under the hardware PMU when the host exposes one; the entry carries the host's
     attestation. `work(result)` executes the plan; it is the caller's, as in B1."""
-    from ..silicon import CounterSampler, read_hw_counters
+    from ..silicon import CounterSampler, pmu_counts, read_hw_counters
     from .microbench import host_attestation
     from .realize import optimize
 
@@ -470,6 +499,10 @@ def measure_plans(
                 )
             )
         hardware = read_hw_counters(functools.partial(work, result))
+        # The PMU's counts when it read all three; else three nulls. `hardware_pmu` stays the
+        # host's attestation; the counts are this run's.
+        counts = pmu_counts(hardware)
+        cycles, instructions, cache_misses = counts if counts is not None else (None, None, None)
         out.append(
             MeasuredPlan(
                 program,
@@ -479,9 +512,9 @@ def measure_plans(
                 policy.name,
                 assignment_digest(result),
                 tuple(samples),
-                hardware.cycles if hardware else 0,
-                hardware.instructions if hardware else 0,
-                hardware.cache_misses if hardware else 0,
+                cycles,
+                instructions,
+                cache_misses,
                 attestation["tenancy"],
                 attestation["signals"],
                 bool(attestation["hardware_pmu"]),
@@ -495,7 +528,9 @@ def measure_plans(
 def from_schedule_artifact(artifact, workload, theta=None) -> tuple[MeasuredPlan, ...]:
     """B1's matmul evidence as corpus entries: one per measured tile plan. B1 recorded
     medians and no attestation, so each entry carries one sample and the tenancy
-    `unproven` -- the corpus says what B1 knew, not more."""
+    `unproven` -- the corpus says what B1 knew, not more. Each entry is v2: a candidate's
+    counts as its artifact records them (`ScheduleArtifact.counts_of`, a v1 artifact's zeros
+    read as no counts), else three nulls, and `hardware_pmu` says whether the PMU counted."""
     from .cost import Theta
     from .schedule_artifact import ScheduleArtifact, _plan_dict
 
@@ -506,6 +541,7 @@ def from_schedule_artifact(artifact, workload, theta=None) -> tuple[MeasuredPlan
     out = []
     for candidate in artifact.candidates:
         plan = candidate.plan
+        counts = artifact.counts_of(candidate)
         out.append(
             MeasuredPlan(
                 f"{artifact.workload}:{M}x{N}x{K}",
@@ -524,12 +560,10 @@ def from_schedule_artifact(artifact, workload, theta=None) -> tuple[MeasuredPlan
                         candidate.involuntary_context_switches,
                     ),
                 ),
-                candidate.cycles,
-                candidate.instructions,
-                candidate.cache_misses,
+                *(counts if counts is not None else (None, None, None)),
                 "unproven",
                 "b1-artifact: no attestation recorded",
-                candidate.cycles > 0,
+                counts is not None,
                 artifact.host_architecture,
                 artifact.source_commit,
             )
@@ -583,6 +617,7 @@ def replay_measured(
 __all__ = [
     "CORPUS_SCHEMA",
     "SCHEMA",
+    "SCHEMA_V1",
     "TENANCIES",
     "MeasuredCorpus",
     "MeasuredPlan",

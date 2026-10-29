@@ -1,0 +1,57 @@
+{
+ "brand": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+ "vendor": "GenuineIntel",
+ "signature": "06_55H",
+ "family": 6,
+ "model": 85,
+ "stepping": 7,
+ "microcode": {
+  "presented": "0x1",
+  "trust": "hypervisor-presented"
+ },
+ "flags": {
+  "hypervisor": true,
+  "constant_tsc": true,
+  "nonstop_tsc": true,
+  "tsc_known_freq": true,
+  "tsc_deadline_timer": true,
+  "x2apic": true,
+  "arat": true,
+  "aperfmperf": false,
+  "arch_perfmon": false,
+  "avx2": true,
+  "avx512f": true,
+  "avx512bw": true,
+  "avx512dq": true,
+  "avx512vl": true,
+  "avx512_vnni": true,
+  "amx_tile": false
+ },
+ "cpus": 4,
+ "clocksource": "tsc",
+ "perf_event_paranoid": "2",
+ "event_sources": [
+  "breakpoint",
+  "msr",
+  "power",
+  "software",
+  "tracepoint",
+  "uprobe"
+ ],
+ "msr_events": [
+  "smi",
+  "tsc"
+ ],
+ "powercap": false,
+ "clocks": {
+  "elapsed": "CLOCK_MONOTONIC: every time in these records",
+  "reference_ticks": "the TSC (invariant: constant_tsc and nonstop_tsc); its rate as the kernel detected it at boot, not read by these tools; no tick count is derived from a time here",
+  "core_cycles": null,
+  "core_cycles_reason": "no hardware PMU event source (a KVM guest): core cycles, instructions retired and the decoded-\u00b5op-cache events cannot be counted here, and none is inferred from the TSC",
+  "effective_frequency": null,
+  "effective_frequency_reason": "neither APERF/MPERF (the aperfmperf flag absent; the msr event source offers only tsc and smi) nor a core-cycle counter",
+  "energy": null,
+  "energy_reason": "no RAPL (no powercap; the power event source lists no events)"
+ },
+ "level": "A (timing-qualified): correctness witnesses and elapsed time against an A/A control; no microarchitectural counter (Level B) is available on this host"
+}

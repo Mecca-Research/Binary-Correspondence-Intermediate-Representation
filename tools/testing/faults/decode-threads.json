@@ -1,0 +1,242 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_ai:_CC",
+    "--require",
+    "bcir.tests.test_native_ai:_ASAN",
+    "bcir.tests.test_native_ai:test_native_ai_c_harness_c11_and_c23",
+    "bcir.tests.test_native_ai:test_native_ai_c_harness_under_address_sanitizer",
+    "bcir.tests.test_native_ai:test_native_q8_matvec_columns_are_the_oracles_columns",
+    "bcir.tests.test_model_weights_io:test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit",
+    "bcir.tests.test_model_weights_io:test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+    "bcir.tests.test_decoder_gem:test_the_c_interpreter_lent_a_runner_is_itself_bit_for_bit"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT1 the runs' rows begun at column 0's element, not k0's",
+      "new": "  for (input_index = 0u; input_index < input_count; ++input_index) {\n    index = input_index * output_count;",
+      "old": "  for (input_index = 0u; input_index < input_count; ++input_index) {\n    index = input_index * output_count + k0;",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT2 Q8-BOUND's runs begun at column 0's element, not k0's",
+      "new": "    double x = input[input_index];\n    index = input_index * output_count;",
+      "old": "    double x = input[input_index];\n    index = input_index * output_count + k0;",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT3 the pair's group end found from column 0, not k0",
+      "new": "n##r = ((((e##r) >> shift) + 1u) << shift) - e##r;     ",
+      "old": "n##r = ((((e##r + K0) >> shift) + 1u) << shift) - e##r;",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT4 the pair's first scale column 0's group's",
+      "new": "s##r = q8_scale(exponents_le, (e##r) >> shift);     ",
+      "old": "s##r = q8_scale(exponents_le, (e##r + K0) >> shift);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT5 the pair run on a range ending off a vector's edge",
+      "new": "&& k0 % 8u == 0u &&\n             1;",
+      "old": "&& k0 % 8u == 0u &&\n             k1 % 8u == 0u;",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT6 a range's bound read without its last row",
+      "new": "  for (i = 0u; i + 1u < input_count; ++i)\n    if (!q8_exponents_exact(",
+      "old": "  for (i = 0u; i < input_count; ++i)\n    if (!q8_exponents_exact(",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT7 a range's bound read a group short of its end",
+      "new": "(i * output_count + k1 - 1u) / group_size))",
+      "old": "(i * output_count + k1 - 1u) / group_size + 1u))",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT8 an empty range admitted",
+      "new": "exponent_count < groups || column_begin > column_end ||",
+      "old": "exponent_count < groups || column_begin >= column_end ||",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT9 a range past the outputs admitted",
+      "new": "      column_end > output_count + 8u || !instance)",
+      "old": "      column_end > output_count || !instance)",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT10 a non-finite output zeroing the outputs before its range",
+      "new": "      memset(output, 0, column_end * sizeof *output);",
+      "old": "      memset(output + column_begin, 0, (column_end - column_begin) * sizeof *output);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT11 the portable range's scale kept a group too long",
+      "new": "        next_group += 2u * group_size;",
+      "old": "        next_group += group_size;",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit",
+      "label": "DT12 every operation split, the threshold ignored",
+      "new": "  if (w == NULL || w->runner.workers < 2u || least > weights + least) return 1u;",
+      "old": "  if (w == NULL || w->runner.workers < 2u || weights < least) return 1u;",
+      "path": "runtime/c/bcir_llama.c"
+    },
+    {
+      "expects": "test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit",
+      "label": "DT13 a part's outputs not a whole number of units",
+      "new": "  job->chunk = (job->out + parts - 1u) / parts + 0u * unit;",
+      "old": "  job->chunk = ((job->out + parts - 1u) / parts + unit - 1u) / unit * unit;",
+      "path": "runtime/c/bcir_llama.c"
+    },
+    {
+      "expects": "test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit",
+      "label": "DT14 only the first part's status read",
+      "new": "  for (t = 0u; t < 1u && status == BCIR_AI_OK; ++t) status = job->status[t];",
+      "old": "  for (t = 0u; t < tasks && status == BCIR_AI_OK; ++t) status = job->status[t];",
+      "path": "runtime/c/bcir_llama.c"
+    },
+    {
+      "expects": "test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit",
+      "label": "DT15 a part never run taken to have succeeded",
+      "new": "  for (t = 0u; t < tasks; ++t) job->status[t] = BCIR_AI_OK; /* a part never run fails the call */",
+      "old": "  for (t = 0u; t < tasks; ++t) job->status[t] = BCIR_AI_INVALID_ARGUMENT; /* a part never run fails the call */",
+      "path": "runtime/c/bcir_llama.c"
+    },
+    {
+      "expects": "test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit",
+      "label": "DT16 every head part read from the pack's start",
+      "new": "job->m->head_pack + 0u,",
+      "old": "job->m->head_pack + skip,",
+      "path": "runtime/c/bcir_llama.c"
+    },
+    {
+      "expects": "test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit",
+      "label": "DT17 a short last part run to a whole chunk",
+      "new": "  size_t k0 = part * job->chunk, k1 = k0 + job->chunk;",
+      "old": "  size_t k0 = part * job->chunk, k1 = job->out - k0 > job->chunk ? k0 + job->chunk : job->out;",
+      "path": "runtime/c/bcir_llama.c"
+    },
+    {
+      "expects": "test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit",
+      "label": "DT18 a workspace lent more workers than parts",
+      "new": "  if (runner->workers > 1u && runner->run == NULL) return -1;",
+      "old": "  if (runner->workers > BCIR_LLAMA_MAX_PARTS || (runner->workers > 1u && runner->run == NULL)) return -1;",
+      "path": "runtime/c/bcir_llama.c"
+    },
+    {
+      "expects": "test_the_decoder_lent_a_runner_is_the_decoder_bit_for_bit",
+      "label": "DT19 a decode lent a runner without a function",
+      "new": "  if (runner && runner->workers > BCIR_LLAMA_MAX_PARTS) return -1;",
+      "old": "  if (runner && (runner->workers > BCIR_LLAMA_MAX_PARTS || (runner->workers > 1u && !runner->run))) return -1;",
+      "path": "runtime/c/bcir_llama.c"
+    },
+    {
+      "expects": "test_the_c_interpreter_lent_a_runner_is_itself_bit_for_bit",
+      "label": "DT20 a runner lent before a load",
+      "new": "  return g != NULL ? bcir_llama_ws_set_runner(&g->ws, runner) : -1;",
+      "old": "  return g != NULL && g->claims != NULL && g->ws.x != NULL ? bcir_llama_ws_set_runner(&g->ws, runner) : -1;",
+      "path": "runtime/c/bcir_decoder_gem.c"
+    },
+    {
+      "expects": "test_the_c_interpreter_lent_a_runner_is_itself_bit_for_bit",
+      "label": "DT21 GEM's matvecs never lent the runner",
+      "new": "    if (bcir_llama_op_matvec(m, NULL, c->src, c->weight, c->in, c->out, c->dst))",
+      "old": "    if (bcir_llama_op_matvec(m, &g->ws, c->src, c->weight, c->in, c->out, c->dst))",
+      "path": "runtime/c/bcir_decoder_gem.c"
+    },
+    {
+      "expects": "test_native_q8_matvec_columns_are_the_oracles_columns",
+      "label": "DT22 the binding's columns the whole output",
+      "new": "        return tuple(float(value) for value in output_array)",
+      "old": "        return tuple(float(value) for value in output_array[columns[0] : columns[1]])",
+      "path": "bcir/kbcir/native_ai.py"
+    },
+    {
+      "expects": "test_native_q8_matvec_columns_are_the_oracles_columns",
+      "label": "DT23 the binding's range unchecked",
+      "new": "            or not 0 <= columns[0] <= columns[1]\n",
+      "old": "            or not 0 <= columns[0] < columns[1] <= output_count\n",
+      "path": "bcir/kbcir/native_ai.py"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT24 a range from column 0 run on the whole call's instance",
+      "new": "  int whole = k0 == 0u;",
+      "old": "  int whole = k0 == 0u && k1 == output_count;",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT25 the whole call run on its range's instance",
+      "new": "  int whole = k0 == 0u && k1 == output_count && 0;",
+      "old": "  int whole = k0 == 0u && k1 == output_count;",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT26 the probe reporting the whole call's instance for every range",
+      "new": "Q8_COLUMNS_SAW(1);",
+      "old": "Q8_COLUMNS_SAW(whole ? 1 : 2);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT27 the runs' whole-call instance a column short",
+      "new": "group_size, 0u, output_count - 1u,\n                      output);",
+      "old": "group_size, 0u, output_count,\n                      output);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT28 Q8-BOUND's runs' whole-call instance a column short",
+      "new": "group_size, 0u,\n                         output_count - 1u, output);",
+      "old": "group_size, 0u,\n                         output_count, output);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT29 the pair's whole-call instance a vector short",
+      "new": "Q8_PAIR_BODY(VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS, 0u, output_count - 8u)",
+      "old": "Q8_PAIR_BODY(VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS, 0u, output_count)",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT30 the runs' range instance begun at column 0",
+      "new": "  q8_matvec_runs_cols(instance, input, input_count, codes, exponents_le, output_count, group_size, k0 * 0u, k1, output);",
+      "old": "  q8_matvec_runs_cols(instance, input, input_count, codes, exponents_le, output_count, group_size, k0, k1, output);",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT31 Q8-BOUND's runs' range instance begun at column 0",
+      "new": "  q8_matvec_runs_xs_cols(instance, input, input_count, codes, exponents_le, output_count, group_size, k0 * 0u, k1,\n",
+      "old": "  q8_matvec_runs_xs_cols(instance, input, input_count, codes, exponents_le, output_count, group_size, k0, k1,\n",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "DT32 the pair's range instance begun at column 0",
+      "new": "Q8_PAIR_BODY(VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS, k0 * 0u, k1)",
+      "old": "Q8_PAIR_BODY(VT, LANES, LOADU, STOREU, ADD, SET1, TERM, XS, k0, k1)",
+      "path": "runtime/c/bcir_ai_kernels.c"
+    }
+  ]
+}

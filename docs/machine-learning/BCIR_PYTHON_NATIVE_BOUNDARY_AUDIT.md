@@ -59,8 +59,8 @@ configures any data-plane entry point.
 | Operation | Contract and reason for native placement |
 |---|---|
 | Q8/Q4 group quantization | Finite `double` input, symmetric `[-127,127]` / `[-7,7]` codes, power-of-two exponents, low-nibble-first Q4, odd padding zero; byte-identical to the Python oracle |
-| Q8 input-major matvec | Cache-friendly decoder projection preserving increasing-input accumulation for each output; immutable weights are validated by the loader once |
-| Q8 output-major row dots | Embedding/LM-head projection with deterministic lowest-token argmax retained by the decoder |
+| Q8 input-major matvec | Cache-friendly decoder projection preserving increasing-input accumulation for each output; immutable weights are validated by the loader once. On x86-64 Linux it runs the widest instance the host admits (`bcir_ai_q8_instances`: 1 portable, 2 AVX2, 4 AVX-512), a row's columns in the vector lanes, each output's chain the portable loop's term for term, bit for bit (Q8-LANES); the `_instance` entries and the binding's `instance=` name one |
+| Q8 output-major row dots | Embedding/LM-head projection with deterministic lowest-token argmax retained by the decoder; on the vector instances eight rows a vector over their codes transposed eight by eight, each row's chain the portable loop's |
 | Exact Q15 top-k | Unsigned-64 squared distance, canonical pattern-index tie-break, optional hard-fact eligibility mask; bounded dimensions make overflow impossible |
 
 [`bcir_q4_kernel.c`](../../runtime/c/bcir_q4_kernel.c) additionally applies separate

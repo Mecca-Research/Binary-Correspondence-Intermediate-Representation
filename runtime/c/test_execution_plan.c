@@ -17,9 +17,18 @@
  * `vector=<BCIR_*>` when requested, then `OK` when every verdict is BCIR_OK. The exit
  * status is 0 exactly when it printed OK.
  *
- * `test_execution_plan --time <plan-file> <reps>` runs bcir_ep_verify REPS times and prints the
- * fastest run: the complexity witness of test_execution_plan.py times two plans of one shape at
- * two sizes (the step walk's claim check rescans only at or below the greatest claim so far).
+ * `test_execution_plan --time <plan-file> <reps> [lent]` runs bcir_ep_verify REPS times (with
+ * `lent`, bcir_ep_verify_lent on exactly bcir_ep_sweep_bytes' scratch) and prints the fastest run:
+ * the complexity witnesses of test_execution_plan.py time plans of one shape at two sizes (the
+ * step walk's claim check rescans only at or below the greatest claim so far; ALIAS-SWEEP's
+ * alias law sweeps the lifetimes in O(n log n) where the pairwise law is quadratic).
+ *
+ * `test_execution_plan --sweep <plan-file>` prints the alias law's verdicts both ways
+ * (ALIAS-SWEEP): `verify=` bcir_ep_verify's status, `lent=` bcir_ep_verify_lent's on scratch of
+ * exactly bcir_ep_sweep_bytes' length at an odd address, `short=` its status on one byte less (the
+ * pairwise law), and `walk=` / `walk_lent=` bcir_ep_check_pack_walk's status without and with
+ * scratch beside the lifetimes it handed over (their count and a digest of their RIDs, in order);
+ * then `canary=ok` when no byte past the lent scratch was written.
  *
  * The harness uses libc (it is a test); the runtime stays freestanding.
  *===----------------------------------------------------------------------===*/
@@ -114,28 +123,84 @@ static uint8_t *slurp(const char *path, size_t *n) {
   return buf;
 }
 
-static int time_mode(const char *path, long reps) {
-  size_t n = 0;
+/* the scratch bcir_ep_sweep_bytes names for the plan's declared lifetimes (0 when the header is
+ * not valid or the count overflows) */
+static size_t sweep_bytes(const uint8_t *buf, size_t n) {
+  bcir_ep_header hdr;
+  if (bcir_ep_validate(buf, n, &hdr) != BCIR_OK) return 0;
+  return bcir_ep_sweep_bytes(hdr.n_lifetimes);
+}
+
+static int time_mode(const char *path, long reps, int lent) {
+  size_t n = 0, bytes = 0;
   uint8_t *buf = reps < 1 ? 0 : slurp(path, &n);
+  uint8_t *scratch = 0;
   double best = -1.0;
   bcir_status st = BCIR_OK;
   if (!buf) { fprintf(stderr, "time: bad arguments\n"); return 2; }
+  if (lent) {
+    bytes = sweep_bytes(buf, n);
+    scratch = (uint8_t *)malloc(bytes ? bytes : 1u);
+    if (!scratch || !bytes) { fprintf(stderr, "time: no scratch\n"); free(buf); free(scratch); return 2; }
+  }
   for (long r = 0; r < reps && st == BCIR_OK; r++) {
     struct timespec t0, t1;
     timespec_get(&t0, TIME_UTC);
-    st = bcir_ep_verify(buf, n);
+    st = lent ? bcir_ep_verify_lent(buf, n, scratch, bytes) : bcir_ep_verify(buf, n);
     timespec_get(&t1, TIME_UTC);
     double ns = (double)(t1.tv_sec - t0.tv_sec) * 1e9 + (double)(t1.tv_nsec - t0.tv_nsec);
     if (best < 0.0 || ns < best) best = ns;
   }
   free(buf);
+  free(scratch);
   if (st != BCIR_OK) { printf("ERR %s\n", status_name(st)); return 1; }
   printf("verify ns %.0f\n", best);
   return 0;
 }
 
+/* the lifetimes a walk handed over: their count and an FNV-1a digest of their RIDs, in order */
+typedef struct { uint64_t count, digest; } seen_lifetimes;
+static int on_seen(const bcir_ep_lifetime_view *v, void *ctx) {
+  seen_lifetimes *s = (seen_lifetimes *)ctx;
+  s->count++;
+  for (int b = 0; b < 4; b++) s->digest = (s->digest ^ ((v->rid >> (8 * b)) & 0xFFu)) * UINT64_C(1099511628211);
+  return 0;
+}
+
+static int sweep_mode(const char *path) {
+  enum { CANARY = 64 };
+  static const uint8_t no_pack[1] = {0};
+  size_t n = 0, bytes;
+  uint8_t *buf = slurp(path, &n), *room;
+  seen_lifetimes plain = {0, UINT64_C(14695981039346656037)}, lent = {0, UINT64_C(14695981039346656037)};
+  bcir_status st;
+  int canary_ok = 1;
+  if (!buf) { fprintf(stderr, "sweep: read failed: %s\n", path); return 2; }
+  bytes = sweep_bytes(buf, n);
+  /* one byte of offset, so the lent scratch starts at an odd address; canary bytes after it */
+  room = (uint8_t *)malloc(1u + bytes + CANARY);
+  if (!room) { free(buf); return 2; }
+  memset(room, 0xA5, 1u + bytes + CANARY);
+  printf("verify=%s\n", status_name(bcir_ep_verify(buf, n)));
+  printf("lent=%s\n", status_name(bcir_ep_verify_lent(buf, n, bytes ? room + 1 : 0, bytes)));
+  printf("short=%s\n", status_name(bcir_ep_verify_lent(buf, n, bytes ? room + 1 : 0,
+                                                        bytes ? bytes - 1u : 0)));
+  st = bcir_ep_check_pack_walk(buf, n, no_pack, 0, 0, on_seen, &plain, 0, 0);
+  printf("walk=%s %" PRIu64 " %016" PRIx64 "\n", status_name(st), plain.count, plain.digest);
+  st = bcir_ep_check_pack_walk(buf, n, no_pack, 0, 0, on_seen, &lent, bytes ? room + 1 : 0, bytes);
+  printf("walk_lent=%s %" PRIu64 " %016" PRIx64 "\n", status_name(st), lent.count, lent.digest);
+  for (size_t i = 0; i < CANARY; i++) canary_ok &= room[1u + bytes + i] == 0xA5;
+  canary_ok &= room[0] == 0xA5;
+  printf("canary=%s\n", canary_ok ? "ok" : "BROKEN");
+  free(room);
+  free(buf);
+  return canary_ok ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
-  if (argc == 4 && strcmp(argv[1], "--time") == 0) return time_mode(argv[2], strtol(argv[3], NULL, 10));
+  if ((argc == 4 || (argc == 5 && strcmp(argv[4], "lent") == 0)) && strcmp(argv[1], "--time") == 0)
+    return time_mode(argv[2], strtol(argv[3], NULL, 10), argc == 5);
+  if (argc == 3 && strcmp(argv[1], "--sweep") == 0) return sweep_mode(argv[2]);
   if (argc < 2) {
     fprintf(stderr, "usage: %s <plan-file> [--dump] [--pack <pack-file>] [--live rid:map:data ...]\n",
             argv[0]);

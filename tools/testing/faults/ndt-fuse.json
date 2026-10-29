@@ -10,8 +10,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NU1 the v2 SwiGLU forward rounds the gate product once (silu(g)*u taken as g*(sigmoid(g)*u))",
-      "new": "  size_t i; for (i=0;i<n;i++) { y[i]=x[i]*(sigmoid2(x[i])*u[i]); }\n",
-      "old": "  size_t i; for (i=0;i<n;i++) { float s=x[i]*sigmoid2(x[i]); y[i]=s*u[i]; }\n",
+      "new": "  size_t i; BCIR_EXP_LANES for (i=0;i<n;i++) { y[i]=x[i]*(sigmoid2(x[i])*u[i]); }\n",
+      "old": "  size_t i; BCIR_EXP_LANES for (i=0;i<n;i++) { float s=x[i]*sigmoid2(x[i]); y[i]=s*u[i]; }\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -122,22 +122,22 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NZ3 the context's blocks start from what y holds (no fill precedes them any more)",
-      "new": "        a0[r]=_mm512_maskz_loadu_ps(m0,yr); a1[r]=_mm512_maskz_loadu_ps(first ? 0 : m1,yr+16);\n",
-      "old": "        a0[r]=_mm512_maskz_loadu_ps(first ? 0 : m0,yr); a1[r]=_mm512_maskz_loadu_ps(first ? 0 : m1,yr+16);\n",
+      "new": "    a0[r]=_mm512_maskz_loadu_ps(m0,yr);\n",
+      "old": "    a0[r]=_mm512_maskz_loadu_ps(first ? 0 : m0,yr);\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NZ4 every query head of a KV head starts dk and dv from +0.0 (the group's earlier heads' terms are dropped)",
       "new": "    att_rows(variant,a->fused,&x,t,ATT_TRANSPOSED,1);\n  }\n",
-      "old": "    att_rows(variant,a->fused,&x,t,ATT_TRANSPOSED,h%(nh/nk)==0);\n  }\n",
+      "old": "    att_rows(variant,a->fused,&x,t,ATT_TRANSPOSED,first);\n  }\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "NZ5 the transposed products start from what dv holds on the KV head's first query head (no fill precedes them)",
-      "new": "        a0[r]=_mm512_maskz_loadu_ps(m0,o); a1[r]=_mm512_maskz_loadu_ps(first ? 0 : m1,o+16);\n",
-      "old": "        a0[r]=_mm512_maskz_loadu_ps(first ? 0 : m0,o); a1[r]=_mm512_maskz_loadu_ps(first ? 0 : m1,o+16);\n",
+      "new": "    a0[r]=_mm512_maskz_loadu_ps(m0,o);\n",
+      "old": "    a0[r]=_mm512_maskz_loadu_ps(zero ? 0 : m0,o);\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

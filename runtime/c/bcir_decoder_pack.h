@@ -14,7 +14,9 @@
  * plan.
  *
  * bcir_decoder_lower_pack verifies the two artifacts with their own verifiers -- bcir_ep_check_pack's
- * laws, in one walk of the plan that hands the lowering its lifetimes (bcir_ep_check_pack_lifetimes):
+ * laws, in one walk of the plan that hands the lowering its steps and lifetimes
+ * (bcir_ep_check_pack_walk, its alias law swept over `work`'s executor bytes before the executor
+ * takes them: ALIAS-SWEEP):
  * the pack's provenance and range laws; the plan's wire laws, among them the alias law -- no two
  * lifetimes of one bank live at once on overlapping bytes; the pack the plan's lowering, one claim
  * per step in step order; one generation vector -- then lowers each claim GEM's executor dispatches
@@ -23,14 +25,19 @@
  * its launch (rank + 1) and the time a lifetime's phase span (its half-open ticks) is read in:
  * every value a claim names must be live at the claim's rank -- with the alias law, no claim can
  * write a byte another value still holds. The banks are the state's: weights, gradients, moment1,
- * moment2, activations and scratch (spaces 1-6), workspace (7, the bf16 workspace), tokens and
- * targets (8, the micro-batch's). Every claim is lowered and checked before any record is written,
- * so a refused pack writes nothing to `program` (*records 0): BCIR_DT_INVALID with `why` the
- * verifiers' bcir_status (1..25), ahead of any reason of the lowering's own, or a BCIR_DP_* reason
- * below; BCIR_DT_CAPACITY when `work` or `program` is short of bcir_decoder_pack_sizes' figures.
- * `work` is scratch: its bytes are the lowering's. The lowered program is the planner's, checked
- * again whole by bcir_decoder_run_program before anything runs (its records' grammar, operands and
- * job shapes are its check's, not this one's).
+ * moment2, activations and scratch (spaces 1-6), workspace (7: the bf16 GEMMs' packs and the binary32
+ * attention's copies), tokens and targets (8, the micro-batch's). Every claim is lowered and checked
+ * before any record is written, so a refused pack writes nothing to `program` (*records 0):
+ * BCIR_DT_INVALID with `why` the verifiers' bcir_status (1..25), ahead of any reason of the
+ * lowering's own, or a BCIR_DP_* reason below; BCIR_DT_CAPACITY when `work` or `program` is short of
+ * bcir_decoder_pack_sizes' figures.
+ * `work` is scratch: its bytes are the lowering's. PX-3b-2: a claim whose plan step runs a
+ * measured realization, `<name>@i<bit>` or `<name>@t<k>` (K_BCIR's offer under a target's measured
+ * table, the plan's own candidate string), lowers to a record of that instance (word 41) or that
+ * many workers (word 42); its own realization, to the default dispatch (both 0). The lowered
+ * program is the planner's, checked again whole by bcir_decoder_run_program before anything runs
+ * (its records' grammar, operands, job shapes and dispatch -- a job's records alike, an instance
+ * its family admits on the host, workers within the pool -- are its check's, not this one's).
  *===----------------------------------------------------------------------===*/
 #ifndef BCIR_DECODER_PACK_H
 #define BCIR_DECODER_PACK_H
@@ -54,7 +61,9 @@ extern "C" {
  *   RUN       a run of tensors not one contiguous span of one bank
  *   SHAPE     a dimension the operands do not determine (a size not a whole multiple)
  *   BLOCK     a block's base not the claim's micro-batch, or its count not the call's work
- *   LIVENESS  a plan whose lifetimes live in the schedule's ticks, not the phases' */
+ *   LIVENESS  a plan whose lifetimes live in the schedule's ticks, not the phases'
+ *   ALTERNATIVE  a step's realization `<name>@<alternative>` whose alternative is neither `i<bit>`
+ *             (1, 2, 4 or 8) nor `t<k>` (1 .. 32767 workers, ASCII digits, no leading zero) */
 enum {
   BCIR_DP_OP = 101,
   BCIR_DP_CLAIMS,
@@ -65,7 +74,8 @@ enum {
   BCIR_DP_RUN,
   BCIR_DP_SHAPE,
   BCIR_DP_BLOCK,
-  BCIR_DP_LIVENESS
+  BCIR_DP_LIVENESS,
+  BCIR_DP_ALTERNATIVE
 };
 
 /* The records and the work bytes bcir_decoder_lower_pack needs for this pack and plan (the pack's

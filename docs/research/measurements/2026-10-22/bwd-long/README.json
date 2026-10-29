@@ -1,0 +1,113 @@
+{
+ "what": "BWD-LONG (2026-10-22): the attention backward at long context, every value as it was -- BWD-BAND (once a row of P spans a 4 KB page, the transposed products dV = P^T dY and dK = dS^T Q run a band of 32 rows of P at a time, every block a band reaches taking the band's terms, its sums stored between bands) and DP-PANEL (past the KV head's whole transposed panel, each probability-adjoint tile's values transposed into the tile's own panel for the register blocks, not the GEMM kernel) -- measured on the committed tree against the tree before it: the cross-build hashes, the backward with both builds in one process, the decoder's training step, the backward's phases, and the GEO study's attention model's training update built as the study builds it, against PyTorch; and the prototype runs that chose the band's height, its threshold and the tiles' panels, and found BWD-FUSE not worth taking.",
+ "host": "Intel(R) Xeon(R) Processor @ 2.80GHz, 4 vCPU (AVX-512F, no AMX), Linux 6.18; clang 18.1.3, gcc 13.3.0; Python 3.11.15, torch 2.13.0+cu130 (CPU), numpy 2.2.6; OMP_WAIT_POLICY=PASSIVE",
+ "records": {
+  "hashes.json": "band_hash.c and ../attn-rate/attn_hash.c from both trees, clang and gcc",
+  "backward.json": "../bwd-width/ab_bwd.c: the attention backward, both tensor units in one process, A/B/A-A rounds, 24 rounds every row",
+  "step.json": "../attn-rate/step_ab.c: the training step, both trainers in one process on three identical states, 24 rounds",
+  "phases.json": "instrument_bwd2.py + ../bwd-width/bwd_phase_bench.c: the backward's seven phases, before and after, TSC cycles a call",
+  "geo-train.json": "../bwd-width/train_compare.py: the GEO attention model's training update on both level-3 builds against P-EAGER and P-IND, 24 rotated rounds, the two builds' trained states equal by digest first",
+  "level3-builds.json": "../infer-attn/build_level3.py's two builds (gcc, as the study's level 2 is built)",
+  "prototype.json": "the design runs before the commit: band heights 16/32/64 at every context, thresholds 256/512/1024, height 16 against 32, the tiles' panels over the bands alone, and BWD-FUSE (not taken)"
+ },
+ "reading": {
+  "hashes": [
+   "clang: backward 48 cases, forward 88 cases, before == after: True/True",
+   "gcc: backward 48 cases, forward 88 cases, before == after: True/True",
+   "clang's lines gcc's: {'band_hash': True, 'attn_hash': True}"
+  ],
+  "backward": [
+   "clang 4x2048x4x4x32 contract 0 at 1 thread(s): 644.63 -> 393.42 ms, 0.597 (0.554-0.644) of before, A/A 0.965 (0.905-1.028)",
+   "clang 4x2048x4x4x32 contract 0 at 4 thread(s): 184.09 -> 113.62 ms, 0.641 (0.601-0.683) of before, A/A 0.981 (0.913-1.054)",
+   "clang 4x1024x4x4x32 contract 0 at 4 thread(s): 33.20 -> 24.90 ms, 0.707 (0.657-0.759) of before, A/A 1.009 (0.961-1.059)",
+   "clang 4x512x4x4x32 contract 0 at 4 thread(s): 6.57 -> 6.38 ms, 0.994 (0.917-1.078) of before, A/A 0.959 (0.867-1.060)",
+   "clang 1x4096x8x8x64 contract 2 at 4 thread(s): 688.80 -> 481.12 ms, 0.695 (0.660-0.731) of before, A/A 1.001 (0.960-1.043)",
+   "clang 8x128x8x4x48 contract 2 at 4 thread(s): 1.95 -> 1.85 ms, 0.977 (0.900-1.061) of before, A/A 1.016 (0.936-1.102)",
+   "gcc 4x2048x4x4x32 contract 0 at 4 thread(s): 161.09 -> 101.95 ms, 0.635 (0.605-0.666) of before, A/A 0.986 (0.933-1.042)",
+   "gcc 4x1024x4x4x32 contract 0 at 4 thread(s): 33.23 -> 22.11 ms, 0.687 (0.664-0.711) of before, A/A 1.054 (1.005-1.105)"
+  ],
+  "step": [
+   "clang geo-dims T512 kblock+exp+reduce, step: 85.1 -> 82.1 ms, 0.958 (0.910-1.009) of before, A/A 1.040 (0.975-1.109)",
+   "clang geo-dims T1024 kblock+exp+reduce, step: 258.6 -> 224.8 ms, 0.852 (0.816-0.889) of before, A/A 1.003 (0.964-1.043)",
+   "clang geo-dims T2048 kblock+exp+reduce, step: 928.0 -> 749.2 ms, 0.804 (0.783-0.825) of before, A/A 0.954 (0.930-0.979)",
+   "clang decoder-9.84M kblock+exp+reduce+attn, step: 326.0 -> 295.5 ms, 0.899 (0.860-0.940) of before, A/A 0.995 (0.965-1.026)",
+   "gcc geo-dims T2048 kblock+exp+reduce, step: 971.3 -> 761.4 ms, 0.797 (0.767-0.828) of before, A/A 0.981 (0.937-1.027)"
+  ],
+  "geo_attention_model": [
+   "T512: B-BEFORE 81.8, B-AFTER 79.9, P-EAGER 212.7, P-IND 150.7 ms an update; after/before 0.984 (0.930-1.040), after/eager 0.384 (0.368-0.401), after/Inductor 0.545 (0.517-0.575), A/A 0.969 (0.931-1.008); trained state equal: True",
+   "T1024: B-BEFORE 253.8, B-AFTER 234.9, P-EAGER 334.3, P-IND 272.4 ms an update; after/before 0.904 (0.877-0.931), after/eager 0.684 (0.655-0.715), after/Inductor 0.847 (0.814-0.881), A/A 1.011 (0.971-1.052); trained state equal: True",
+   "T2048: B-BEFORE 938.8, B-AFTER 743.1, P-EAGER 673.1, P-IND 605.5 ms an update; after/before 0.789 (0.769-0.810), after/eager 1.091 (1.051-1.131), after/Inductor 1.225 (1.186-1.266), A/A 0.999 (0.975-1.024); trained state equal: True"
+  ],
+  "phases": [
+   "after clang 4x2048x4x4x32 contract 0 at 1 thread(s): 1077M TSC cycles a call -- dv 211M, dp_pass0 166M, dot 110M, dp_pass1 116M, ds 53M, dq 215M, dk 199M",
+   "after clang 4x1024x4x4x32 contract 0 at 1 thread(s): 305M TSC cycles a call -- dv 62M, dp_pass0 51M, dot 34M, dp_pass1 28M, ds 16M, dq 55M, dk 56M",
+   "after clang 4x512x4x4x32 contract 0 at 1 thread(s): 70M TSC cycles a call -- dv 22M, dp_pass0 10M, dot 5M, dp_pass1 2M, ds 3M, dq 12M, dk 15M",
+   "after clang 4x2048x4x4x32 contract 0 at 4 thread(s): 361M TSC cycles a call -- dv 296M, dp_pass0 187M, dot 135M, dp_pass1 135M, ds 73M, dq 215M, dk 278M",
+   "after clang 1x4096x8x8x64 contract 2 at 1 thread(s): 5205M TSC cycles a call -- dv 1355M, dp_pass0 492M, dot 368M, dp_pass1 404M, ds 200M, dq 1184M, dk 1185M",
+   "after gcc 4x2048x4x4x32 contract 0 at 1 thread(s): 1142M TSC cycles a call -- dv 219M, dp_pass0 181M, dot 118M, dp_pass1 130M, ds 60M, dq 215M, dk 212M",
+   "before clang 4x2048x4x4x32 contract 0 at 1 thread(s): 1823M TSC cycles a call -- dv 494M, dp_pass0 266M, dot 112M, dp_pass1 181M, ds 59M, dq 214M, dk 491M",
+   "before clang 4x1024x4x4x32 contract 0 at 1 thread(s): 395M TSC cycles a call -- dv 111M, dp_pass0 74M, dot 25M, dp_pass1 35M, ds 13M, dq 50M, dk 85M",
+   "before clang 4x512x4x4x32 contract 0 at 1 thread(s): 63M TSC cycles a call -- dv 20M, dp_pass0 9M, dot 4M, dp_pass1 2M, ds 3M, dq 10M, dk 14M",
+   "before clang 4x2048x4x4x32 contract 0 at 4 thread(s): 567M TSC cycles a call -- dv 576M, dp_pass0 296M, dot 135M, dp_pass1 212M, ds 78M, dq 221M, dk 543M",
+   "before clang 1x4096x8x8x64 contract 2 at 1 thread(s): 7250M TSC cycles a call -- dv 1976M, dp_pass0 929M, dot 361M, dp_pass1 766M, ds 203M, dq 1151M, dk 1848M",
+   "before gcc 4x2048x4x4x32 contract 0 at 1 thread(s): 1858M TSC cycles a call -- dv 506M, dp_pass0 261M, dot 120M, dp_pass1 181M, ds 59M, dq 224M, dk 500M"
+  ],
+  "prototype": [
+   "bands of 32 at every context over BWD-WIDTH, clang 4 2048 4 4 32 1 0: 0.698 (0.664-0.733), A/A 1.056 (0.997-1.119)",
+   "bands of 32 at every context over BWD-WIDTH, clang 4 2048 4 4 32 4 0: 0.706 (0.656-0.760), A/A 0.959 (0.890-1.034)",
+   "bands of 32 at every context over BWD-WIDTH, clang 4 1024 4 4 32 4 0: 0.824 (0.774-0.878), A/A 1.007 (0.936-1.082)",
+   "bands of 32 at every context over BWD-WIDTH, clang 4 512 4 4 32 4 0: 0.989 (0.886-1.105), A/A 0.966 (0.890-1.049)",
+   "bands of 32 at every context over BWD-WIDTH, gcc 4 2048 4 4 32 4 0: 0.772 (0.684-0.872), A/A 0.921 (0.809-1.048)",
+   "bands of 16 at every context over BWD-WIDTH, clang 4 2048 4 4 32 1 0: 0.690 (0.656-0.726), A/A 0.980 (0.930-1.033)",
+   "bands of 16 at every context over BWD-WIDTH, clang 4 2048 4 4 32 4 0: 0.707 (0.636-0.785), A/A 0.979 (0.911-1.053)",
+   "bands of 16 at every context over BWD-WIDTH, clang 4 1024 4 4 32 4 0: 0.822 (0.769-0.879), A/A 1.012 (0.938-1.092)",
+   "bands of 16 at every context over BWD-WIDTH, clang 4 512 4 4 32 4 0: 1.051 (0.914-1.209), A/A 1.012 (0.901-1.137)",
+   "bands of 16 at every context over BWD-WIDTH, gcc 4 2048 4 4 32 4 0: 0.731 (0.656-0.814), A/A 0.958 (0.873-1.051)",
+   "bands of 64 at every context over BWD-WIDTH, clang 4 2048 4 4 32 1 0: 0.843 (0.762-0.932), A/A 0.952 (0.858-1.056)",
+   "bands of 64 at every context over BWD-WIDTH, clang 4 2048 4 4 32 4 0: 0.825 (0.758-0.899), A/A 0.989 (0.933-1.049)",
+   "bands of 64 at every context over BWD-WIDTH, clang 4 1024 4 4 32 4 0: 0.860 (0.755-0.979), A/A 0.959 (0.840-1.096)",
+   "bands of 64 at every context over BWD-WIDTH, clang 4 512 4 4 32 4 0: 0.893 (0.859-0.928), A/A 1.128 (0.898-1.416)",
+   "bands of 64 at every context over BWD-WIDTH, gcc 4 2048 4 4 32 4 0: 0.770 (0.725-0.819), A/A 1.033 (0.926-1.154)",
+   "bands of 32 at every context over BWD-WIDTH, clang 1 4096 8 8 64 4 2: 0.817 (0.779-0.857), A/A 1.005 (0.944-1.070)",
+   "bands of 32 at every context over BWD-WIDTH, clang 8 128 8 4 48 4 2: 1.074 (1.028-1.121), A/A 0.965 (0.898-1.036)",
+   "bands of 32 from a 256-float row over BWD-WIDTH, clang 4 256 4 4 32 4 0: 1.082 (0.932-1.256), A/A 0.957 (0.815-1.124)",
+   "bands of 32 from a 256-float row over BWD-WIDTH, clang 4 512 4 4 32 4 0: 0.984 (0.852-1.136), A/A 0.959 (0.897-1.026)",
+   "bands of 32 from a 512-float row over BWD-WIDTH, clang 4 512 4 4 32 4 0: 0.898 (0.823-0.981), A/A 1.087 (0.965-1.224)",
+   "bands of 32 from a 512-float row over BWD-WIDTH, clang 4 1024 4 4 32 4 0: 0.881 (0.780-0.995), A/A 0.901 (0.783-1.037)",
+   "bands of 32 from a 1024-float row over BWD-WIDTH, clang 8 128 8 4 48 4 2: 0.986 (0.883-1.101), A/A 1.031 (0.941-1.129)",
+   "bands of 32 from a 1024-float row over BWD-WIDTH, clang 4 1024 4 4 32 4 0: 0.812 (0.768-0.860), A/A 1.051 (0.975-1.132)",
+   "bands of 16 from a 1024-float row over BWD-WIDTH, clang 4 2048 4 4 32 1 0: 0.688 (0.643-0.735), A/A 0.970 (0.901-1.045)",
+   "height 16 over height 32 (both from a 1024-float row), clang 4 2048 4 4 32 1 0: 0.975 (0.905-1.051), A/A 0.972 (0.891-1.061)",
+   "height 16 over height 32 (both from a 1024-float row), clang 4 2048 4 4 32 4 0: 0.982 (0.917-1.051), A/A 1.037 (0.974-1.104)",
+   "height 16 over height 32 (both from a 1024-float row), clang 4 1024 4 4 32 4 0: 1.023 (0.965-1.086), A/A 0.994 (0.934-1.057)",
+   "height 16 over height 32 (both from a 1024-float row), gcc 4 2048 4 4 32 4 0: 1.058 (1.011-1.108), A/A 1.017 (0.963-1.075)",
+   "height 16 over height 32 (both from a 1024-float row), gcc 4 2048 4 4 32 1 0: 1.020 (0.938-1.110), A/A 0.990 (0.901-1.087)",
+   "the tiles' panels over the bands alone, clang 4 2048 4 4 32 1 0: 0.842 (0.785-0.902), A/A 1.032 (0.950-1.121)",
+   "the tiles' panels over the bands alone, clang 4 2048 4 4 32 4 0: 0.925 (0.872-0.982), A/A 0.998 (0.927-1.074)",
+   "the tiles' panels over the bands alone, clang 4 1024 4 4 32 4 0: 0.826 (0.777-0.877), A/A 1.039 (0.929-1.162)",
+   "the tiles' panels over the bands alone, clang 4 512 4 4 32 4 0: 0.998 (0.959-1.039), A/A 1.070 (0.985-1.161)",
+   "the tiles' panels over the bands alone, clang 4 256 4 4 32 4 0: 1.060 (0.986-1.140), A/A 0.941 (0.877-1.010)",
+   "the tiles' panels over the bands alone, gcc 4 2048 4 4 32 4 0: 0.878 (0.792-0.973), A/A 0.968 (0.878-1.067)",
+   "the tiles' panels over the bands alone, clang 1 4096 8 8 64 4 2: 0.896 (0.836-0.961), A/A 0.978 (0.931-1.026)",
+   "the tiles' panels over the bands alone, clang 8 128 8 4 48 4 2: 1.043 (0.974-1.117), A/A 0.989 (0.939-1.042)",
+   "BWD-FUSE (not taken) over this slice, clang 4 2048 4 4 32 1 0: 0.927 (0.842-1.021), A/A 1.020 (0.931-1.116)",
+   "BWD-FUSE (not taken) over this slice, clang 4 2048 4 4 32 4 0: 0.930 (0.864-1.001), A/A 1.008 (0.948-1.071)",
+   "BWD-FUSE (not taken) over this slice, clang 4 1024 4 4 32 4 0: 1.092 (1.017-1.172), A/A 0.957 (0.883-1.037)",
+   "BWD-FUSE (not taken) over this slice, gcc 4 2048 4 4 32 4 0: 0.985 (0.942-1.030), A/A 0.992 (0.942-1.046)",
+   "BWD-FUSE (not taken) over this slice, clang 1 4096 8 8 64 4 2: 0.998 (0.931-1.071), A/A 1.010 (0.900-1.134)"
+  ]
+ },
+ "reproduce": [
+  "git show BEFORE:runtime/c/<unit> > BEFORE_SRC/<unit>; git show AFTER:... > AFTER_SRC/<unit>  # bcir_tensor.c/.h, bcir_decoder_train.c/.h",
+  "CF='-std=c11 -O3 -ffp-contract=off -fno-math-errno -pthread'",
+  "CC $CF -I SRC band_hash.c SRC/bcir_tensor.c -lm; CC $CF -I SRC ../attn-rate/attn_hash.c SRC/bcir_tensor.c -lm  # run each (band_hash: all), compare BEFORE's lines with AFTER's",
+  "CC $CF -fPIC -shared -I SRC SRC/bcir_tensor.c -lm -o libtensor_X.so; clang -O2 ../bwd-width/ab_bwd.c -ldl -lm; ab_bwd libtensor_BEFORE.so libtensor_AFTER.so 24 B T H KH D THREADS CONTRACT",
+  "CC $CF -fPIC -shared -I SRC SRC/bcir_tensor.c SRC/bcir_decoder_train.c -lm -o libdec_X.so; clang -O2 -I SRC ../attn-rate/step_ab.c -ldl -lm; step_ab libdec_BEFORE.so libdec_AFTER.so VOCAB WIDTH HEADS KVHEADS LAYERS FF BATCH TIME CONTRACT THREADS 24",
+  "python3 -I instrument_bwd2.py SRC/bcir_tensor.c phase_tensor.c; CC $CF -I SRC ../bwd-width/bwd_phase_bench.c phase_tensor.c -lm; bwd_phase_bench B T H KH D THREADS ROUNDS CONTRACT",
+  "python3 -I ../infer-attn/build_level3.py LEVEL2_WORK BEFORE_WORK BEFORE_SRC MAIN_SRC --scratch (and AFTER); TORCH_PY -I ../bwd-width/train_compare.py BEFORE_WORK AFTER_WORK geo-train.json --rounds 24 --steps 3 --threads 4 --times 512,1024,2048  # the work dirs: GEO-2b's level 2 without its build, baseline, bf16, checkpoints and results"
+ ],
+ "faults": "tools/testing/faults/bwd-long.json BB1-BB6 and DP1-DP4, each injected and caught by its own check, each compiling warning-free under GCC 13, clang 18 and clang 23; NA9, NA13, NZ5, AF4, NT8, BW1 and BW2 re-anchored to the lines this moved, each keeping its defect, caught again (144 builds, 0 findings).",
+ "scripts": "the Python script is the one that ran, formatted by ruff 0.16.6 (the same AST); the C bench byte for byte",
+ "before": "2474881c9bdbd315cedf48479a9f371b494d233d",
+ "after": "ed16377de85fd9fa797a4bbda7ba544ad78598e5"
+}

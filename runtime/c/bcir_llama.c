@@ -40,6 +40,7 @@ void bcir_llama_ws_free(workspace *w) {
   bcir_host_deallocate(&allocator,w->ff); bcir_host_deallocate(&allocator,w->gamma);
   bcir_host_deallocate(&allocator,w->scores); bcir_host_deallocate(&allocator,w->logits);
   bcir_host_deallocate(&allocator,w->k_cache); bcir_host_deallocate(&allocator,w->v_cache);
+  bcir_host_deallocate(&allocator,w->rope_cs);
   memset(w, 0, sizeof *w);
 }
 
@@ -101,18 +102,6 @@ int bcir_llama_model_ready(const bcir_q8_model *m) {
          tensor_ready(m,BCIR_Q8_TENSOR_LM_HEAD,-1,2,m->vocab_size,d);
 }
 
-/* The public accessor defends against foreign/stale tensor pointers.  The whole
- * model has already passed model_ready() on this hot inference path, so avoid
- * repeating those ownership/span checks for every weight element. */
-static double tensor_value_unchecked(const bcir_q8_model *m,
-                                     const bcir_q8_tensor *t,uint32_t index) {
-  const unsigned char *ep=t->exponents+2u*(index/m->group_size);
-  int exponent=(int)(int16_t)((uint16_t)ep[0]|((uint16_t)ep[1]<<8));
-  int code=(int)t->codes[index];
-  if(code>=128)code-=256;
-  return ldexp((double)code,exponent);
-}
-
 int bcir_llama_ws_init(workspace *w, const bcir_q8_model *m, size_t capacity,
                        const bcir_host_allocator *allocator) {
   size_t cache_rows, cache_values, total_values = 0u, term, workspace_bytes;
@@ -121,10 +110,11 @@ int bcir_llama_ws_init(workspace *w, const bcir_q8_model *m, size_t capacity,
   w->allocator=bcir_host_allocator_or_default(allocator);
   if (mul_size(m->n_layers, capacity, &cache_rows) ||
       mul_size(cache_rows, kvd, &cache_values)) return -1;
-  /* Eight d-sized vectors; three kvd vectors; gate/up/ff; scores; logits;
-   * and two complete layer x position x kvd caches. Budget the whole operation
-   * before making any allocator call so refusal is failure-atomic. */
+  /* Eight d-sized vectors; three kvd vectors; gate/up/ff; scores; logits; the rotation's table (a head's
+   * width); and two complete layer x position x kvd caches. Budget the whole operation before making any
+   * allocator call so refusal is failure-atomic. */
   if (mul_size(8u, d, &term) || !bcir_size_add(total_values, term, &total_values) ||
+      !bcir_size_add(total_values, (size_t)(m->d_model / m->n_heads), &total_values) ||
       mul_size(3u, kvd, &term) || !bcir_size_add(total_values, term, &total_values) ||
       mul_size(3u, (size_t)m->d_ff, &term) ||
           !bcir_size_add(total_values, term, &total_values) ||
@@ -142,25 +132,81 @@ int bcir_llama_ws_init(workspace *w, const bcir_q8_model *m, size_t capacity,
   w->ff = new_doubles(w,m->d_ff); w->gamma = new_doubles(w,d);
   w->scores = new_doubles(w,capacity); w->logits = new_doubles(w,m->vocab_size);
   w->k_cache = new_doubles(w,cache_values); w->v_cache = new_doubles(w,cache_values);
+  w->rope_cs = new_doubles(w, m->d_model / m->n_heads); w->rope_pos = SIZE_MAX;
   if (!w->x || !w->h || !w->h2 || !w->q || !w->q_rope || !w->k || !w->k_rope ||
       !w->v || !w->context || !w->attn || !w->gate || !w->up || !w->ff ||
-      !w->gamma || !w->scores || !w->logits || !w->k_cache || !w->v_cache) {
+      !w->gamma || !w->scores || !w->logits || !w->k_cache || !w->v_cache || !w->rope_cs) {
     bcir_llama_ws_free(w);
     return -1;
   }
   return 0;
 }
 
-static void dequant_vector(const bcir_q8_model *m, const bcir_q8_tensor *t,
-                           double *out) {
-  uint32_t i;
-  for (i = 0; i < t->element_count; ++i) out[i] = tensor_value_unchecked(m, t, i);
+int bcir_llama_ws_set_runner(workspace *w, const bcir_llama_runner *runner) {
+  static const bcir_llama_runner none = {NULL, NULL, 0u, 0u, 0u};
+  if (runner == NULL) runner = &none;
+  if (runner->workers > BCIR_LLAMA_MAX_PARTS || (runner->workers > 1u && runner->run == NULL)) return -1;
+  w->runner = *runner;
+  return 0;
 }
 
-/* x[1 x in] @ weight[in x out], matching matmul_reference's i/j/k loop order. */
-static int matvec(const bcir_q8_model *m, const double *x,
+/* DECODE-THREADS: one operation's outputs in parts on the workspace's runner. A part is a range of the outputs --
+ * a matvec's columns, the head's rows -- and computes every output in it whole, so the parts' outputs are the
+ * whole call's. A part's status is the kernel's; where one is BCIR_AI_INVALID_NUMBER the whole output is zeroed,
+ * as the whole call zeroes it. */
+typedef struct split_job {
+  const bcir_q8_model *m;
+  const double *x;
+  const bcir_q8_tensor *weight; /* the matvec's; the head reads the model's pack */
+  size_t in, out, chunk;        /* chunk: the outputs a part, the last part's the rest */
+  double *y;
+  int status[BCIR_LLAMA_MAX_PARTS];
+} split_job;
+
+/* the parts an operation of `weights` weights and `outputs` outputs takes on the workspace's runner: as many as it
+ * has workers, at most one a `unit` of outputs, and 1 -- the whole call -- with no runner or under `least` */
+static size_t split_parts(const workspace *w, size_t weights, size_t least, size_t outputs, size_t unit) {
+  size_t parts;
+  if (w == NULL || w->runner.workers < 2u || weights < least) return 1u;
+  parts = outputs / unit;
+  if (parts > w->runner.workers) parts = w->runner.workers;
+  return parts < 2u ? 1u : parts;
+}
+
+/* the parts' ranges of `unit`-aligned outputs: chunk outputs each, the last the rest; runs them and returns the
+ * first failing part's status, the output zeroed where it is BCIR_AI_INVALID_NUMBER */
+static int split_run(const workspace *w, split_job *job, bcir_llama_task_fn part, size_t parts, size_t unit) {
+  size_t tasks, t;
+  int status = BCIR_AI_OK;
+  job->chunk = ((job->out + parts - 1u) / parts + unit - 1u) / unit * unit;
+  tasks = (job->out + job->chunk - 1u) / job->chunk;
+  for (t = 0u; t < tasks; ++t) job->status[t] = BCIR_AI_INVALID_ARGUMENT; /* a part never run fails the call */
+  w->runner.run(w->runner.self, part, job, tasks);
+  for (t = 0u; t < tasks && status == BCIR_AI_OK; ++t) status = job->status[t];
+  if (status == BCIR_AI_INVALID_NUMBER) memset(job->y, 0, job->out * sizeof *job->y);
+  return status;
+}
+
+static void matvec_part(void *ctx, size_t part) {
+  split_job *job = (split_job *)ctx;
+  size_t k0 = part * job->chunk, k1 = job->out - k0 > job->chunk ? k0 + job->chunk : job->out;
+  job->status[part] = bcir_ai_q8_matvec_f64_columns(job->x, job->in, job->weight->codes,
+                                                    job->weight->element_count, job->weight->exponents,
+                                                    job->weight->group_count, job->out, job->m->group_size,
+                                                    k0, k1, job->y);
+}
+
+/* x[1 x in] @ weight[in x out], matching matmul_reference's i/j/k loop order: in parts of eight-column multiples on
+ * the workspace's runner where the matrix has at least its split_min weights */
+static int matvec(const bcir_q8_model *m, const workspace *w, const double *x,
                   const bcir_q8_tensor *weight, uint32_t in, uint32_t out,
                   double *result) {
+  size_t parts = split_parts(w, (size_t)in * out, w != NULL ? w->runner.split_min : 0u, out, 8u);
+  if (parts > 1u) {
+    split_job job;
+    job.m = m; job.x = x; job.weight = weight; job.in = in; job.out = out; job.y = result;
+    return split_run(w, &job, matvec_part, parts, 8u);
+  }
   return bcir_ai_q8_matvec_f64_prevalidated(
       x, in, weight->codes, weight->element_count, weight->exponents,
       weight->group_count, out, m->group_size, result);
@@ -185,34 +231,42 @@ const bcir_q8_tensor *bcir_llama_head_tensor(const bcir_q8_model *m) {
              : bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_LM_HEAD, -1);
 }
 
+/* DECODE-PASSES: the embedding's row and the RMSNorms' gammas through bcir_q8_tensor_values -- a group's scale once,
+ * formed from its bits, where an ldexp an element took most of a norm's time -- every value bcir_q8_tensor_value's,
+ * the tensor's checks made once a call rather than once an element. */
 int bcir_llama_op_embed(const bcir_q8_model *m, workspace *w, int32_t token) {
   const bcir_q8_tensor *embedding = bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_EMBEDDING, -1);
-  uint32_t d = m->d_model, i;
   if (token < 0 || (uint32_t)token >= m->vocab_size) return -1;
-  for (i = 0; i < d; ++i)
-    w->x[i] = tensor_value_unchecked(m, embedding, (uint32_t)token * d + i);
-  return 0;
+  return bcir_q8_tensor_values(m, embedding, (uint32_t)token * m->d_model, m->d_model, w->x) ? -1 : 0;
 }
 
 void bcir_llama_op_rmsnorm(const bcir_q8_model *m, workspace *w, const double *src,
                            const bcir_q8_tensor *gamma, double *dst) {
-  dequant_vector(m, gamma, w->gamma);
-  bcir_rmsnorm(src, 1, (int)m->d_model, w->gamma, m->rms_norm_eps, dst);
+  uint32_t d = m->d_model, i;
+  if (bcir_q8_tensor_values(m, gamma, 0u, d, w->gamma)) { /* not the model's own, or short of a row: */
+    for (i = 0; i < d; ++i) dst[i] = NAN;                  /* none bcir_llama_model_ready admits */
+    return;
+  }
+  bcir_rmsnorm(src, 1, (int)d, w->gamma, m->rms_norm_eps, dst);
 }
 
-int bcir_llama_op_matvec(const bcir_q8_model *m, const double *x,
+int bcir_llama_op_matvec(const bcir_q8_model *m, const workspace *w, const double *x,
                          const bcir_q8_tensor *weight, uint32_t in, uint32_t out, double *y) {
-  return matvec(m, x, weight, in, out, y);
+  return matvec(m, w, x, weight, in, out, y);
 }
 
+/* Every head of every layer turns by the same angles at a position: the table is filled once a position
+ * (DECODE-ROW) with bcir_rope's own expressions and each head applied from it, bit for bit bcir_rope's rows. */
 void bcir_llama_op_rope(const bcir_q8_model *m, workspace *w, size_t pos) {
   uint32_t dk = m->d_model / m->n_heads, head;
+  if (w->rope_pos != pos) {
+    bcir_rope_table((int)dk, m->rope_base, (double)(int)pos, w->rope_cs);
+    w->rope_pos = pos;
+  }
   for (head = 0; head < m->n_heads; ++head)
-    bcir_rope(w->q + (size_t)head * dk, 1, (int)dk, m->rope_base, (int)pos,
-              w->q_rope + (size_t)head * dk);
+    bcir_rope_apply(w->q + (size_t)head * dk, (int)dk, w->rope_cs, w->q_rope + (size_t)head * dk);
   for (head = 0; head < m->n_kv_heads; ++head)
-    bcir_rope(w->k + (size_t)head * dk, 1, (int)dk, m->rope_base, (int)pos,
-              w->k_rope + (size_t)head * dk);
+    bcir_rope_apply(w->k + (size_t)head * dk, (int)dk, w->rope_cs, w->k_rope + (size_t)head * dk);
 }
 
 void bcir_llama_op_kv_append(const bcir_q8_model *m, workspace *w, uint32_t layer,
@@ -245,8 +299,33 @@ void bcir_llama_op_swiglu(const bcir_q8_model *m, workspace *w) {
     w->ff[i] = w->gate[i] * sigmoid_guarded(w->gate[i]) * w->up[i];
 }
 
-int bcir_llama_op_head(const bcir_q8_model *m, const double *row, double *logits) {
+/* DECODE-THREADS: rows [r0, r0 + chunk) of the head over its pack -- r0 a whole number of 32-row passes, so the
+ * pack's first r0 rows are whole blocks of bcir_ai_q8_rows_pack_size's bytes */
+static void head_part(void *ctx, size_t part) {
+  split_job *job = (split_job *)ctx;
+  size_t r0 = part * job->chunk, rows = job->out - r0 > job->chunk ? job->chunk : job->out - r0, skip = 0u;
+  if (r0 && bcir_ai_q8_rows_pack_size(job->in, r0, job->m->group_size, &skip) != BCIR_AI_OK) return;
+  job->status[part] = bcir_ai_q8_rows_dot_f64_packed(job->x, job->in, job->m->head_pack + skip,
+                                                     job->m->head_pack_size - skip, rows, job->m->group_size,
+                                                     job->y + r0);
+}
+
+int bcir_llama_op_head(const bcir_q8_model *m, const workspace *w, const double *row, double *logits) {
   const bcir_q8_tensor *head = bcir_llama_head_tensor(m);
+  /* HEAD-PACK: the head's rows as the loader packed them, where it did: the same logits, bit for bit */
+  if (m->head_pack != NULL) {
+    size_t parts = split_parts(w, (size_t)m->vocab_size * m->d_model, w != NULL ? w->runner.head_split_min : 0u,
+                               m->vocab_size, 32u);
+    if (parts > 1u) {
+      split_job job;
+      job.m = m; job.x = row; job.weight = head; job.in = m->d_model; job.out = m->vocab_size; job.y = logits;
+      return split_run(w, &job, head_part, parts, 32u) ? -1 : 0;
+    }
+    return bcir_ai_q8_rows_dot_f64_packed(row, m->d_model, m->head_pack, m->head_pack_size, m->vocab_size,
+                                          m->group_size, logits)
+               ? -1
+               : 0;
+  }
   return bcir_ai_q8_rows_dot_f64_prevalidated(
              row, m->d_model, head->codes, head->element_count, head->exponents,
              head->group_count, m->vocab_size, m->group_size, logits)
@@ -254,11 +333,30 @@ int bcir_llama_op_head(const bcir_q8_model *m, const double *row, double *logits
              : 0;
 }
 
+/* DECODE-PASSES: the token the loop `if (logits[t] > logits[best]) best = t` from best 0 picks -- the first holding
+ * the largest logit under `>`, no NaN past the first, the first token when the first is a NaN -- in two passes with no
+ * comparison waiting on the last: the largest logit over four independent lanes, each `lane = v > lane ? v : lane`
+ * (MAXPD's rule: an equal value or a NaN keeps the lane), then the first token equal to it (== takes -0.0 for +0.0,
+ * which `>` never told apart). */
 int32_t bcir_llama_op_argmax(const bcir_q8_model *m, const double *logits) {
-  uint32_t token, best = 0;
-  for (token = 1; token < m->vocab_size; ++token)
-    if (logits[token] > logits[best]) best = token;
-  return (int32_t)best;
+  uint32_t n = m->vocab_size, token;
+  double top, a, b, c, e;
+  if (n == 0u || logits[0] != logits[0]) return 0;
+  top = a = b = c = e = logits[0];
+  for (token = 1u; n - token >= 4u; token += 4u) {
+    a = logits[token] > a ? logits[token] : a;
+    b = logits[token + 1u] > b ? logits[token + 1u] : b;
+    c = logits[token + 2u] > c ? logits[token + 2u] : c;
+    e = logits[token + 3u] > e ? logits[token + 3u] : e;
+  }
+  for (; token < n; ++token) top = logits[token] > top ? logits[token] : top;
+  top = a > top ? a : top;
+  top = b > top ? b : top;
+  top = c > top ? c : top;
+  top = e > top ? e : top;
+  for (token = 0u; token < n; ++token)
+    if (logits[token] == top) return (int32_t)token;
+  return 0; /* unreachable: top is one of the logits */
 }
 
 /* One position through every layer, in the decoder's fixed order: the monolithic dispatch of
@@ -274,23 +372,23 @@ static int step_token(const bcir_q8_model *m, workspace *w, int32_t token, size_
   for (layer = 0; layer < m->n_layers; ++layer) {
     int16_t li = (int16_t)layer;
     bcir_llama_op_rmsnorm(m, w, w->x, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_G_ATTN, li), w->h);
-    if (matvec(m, w->h, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_Q, li), d, d, w->q) ||
-        matvec(m, w->h, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_K, li), d, kvd, w->k) ||
-        matvec(m, w->h, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_V, li), d, kvd, w->v))
+    if (matvec(m, w, w->h, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_Q, li), d, d, w->q) ||
+        matvec(m, w, w->h, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_K, li), d, kvd, w->k) ||
+        matvec(m, w, w->h, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_V, li), d, kvd, w->v))
       return -1;
     bcir_llama_op_rope(m, w, pos);
     bcir_llama_op_kv_append(m, w, layer, pos);
     if (bcir_llama_op_attention(m, w, layer, pos)) return -1;
-    if (matvec(m, w->context, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_O, li), d, d, w->attn))
+    if (matvec(m, w, w->context, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_O, li), d, d, w->attn))
       return -1;
     bcir_llama_op_residual(m, w);
     bcir_llama_op_rmsnorm(m, w, w->x, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_G_FF, li), w->h2);
-    if (matvec(m, w->h2, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_GATE, li), d, m->d_ff,
+    if (matvec(m, w, w->h2, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_GATE, li), d, m->d_ff,
                w->gate) ||
-        matvec(m, w->h2, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_UP, li), d, m->d_ff, w->up))
+        matvec(m, w, w->h2, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_UP, li), d, m->d_ff, w->up))
       return -1;
     bcir_llama_op_swiglu(m, w);
-    if (matvec(m, w->ff, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_DOWN, li), m->d_ff, d,
+    if (matvec(m, w, w->ff, bcir_q8_model_tensor(m, BCIR_Q8_TENSOR_W_DOWN, li), m->d_ff, d,
                w->attn))
       return -1;
     bcir_llama_op_residual(m, w);
@@ -300,22 +398,23 @@ static int step_token(const bcir_q8_model *m, workspace *w, int32_t token, size_
   return 0;
 }
 
-static int logits_and_argmax(const bcir_q8_model *m, const double *row,
+static int logits_and_argmax(const bcir_q8_model *m, const workspace *w, const double *row,
                              double *logits, int *best_out) {
-  if (!best_out || bcir_llama_op_head(m, row, logits)) return -1;
+  if (!best_out || bcir_llama_op_head(m, w, row, logits)) return -1;
   *best_out = (int)bcir_llama_op_argmax(m, logits);
   return 0;
 }
 
-int bcir_llama_generate_greedy_with_allocator(
+int bcir_llama_generate_greedy_with_runner(
     const bcir_q8_model *model,const int32_t *prompt_ids,size_t prompt_count,
     size_t max_new_tokens,int32_t *generated_ids,double *final_logits,
-    const bcir_host_allocator *allocator) {
+    const bcir_host_allocator *allocator,const bcir_llama_runner *runner) {
   workspace w;
   size_t capacity, pos, step;
   int next;
   if (!model || !prompt_ids || !prompt_count || !bcir_llama_model_ready(model) ||
       (max_new_tokens && !generated_ids)) return -1;
+  if (runner && (runner->workers > BCIR_LLAMA_MAX_PARTS || (runner->workers > 1u && !runner->run))) return -1;
   if (model->vocab_size > INT32_MAX || model->d_model > INT32_MAX ||
       model->n_heads > INT32_MAX || model->n_kv_heads > INT32_MAX ||
       model->n_layers > INT16_MAX || model->d_ff > INT32_MAX) return -1;
@@ -326,12 +425,13 @@ int bcir_llama_generate_greedy_with_allocator(
   capacity = prompt_count + max_new_tokens;
   if (model->context_length && capacity-1u > (size_t)model->context_length) return -2;
   if (capacity > (size_t)INT32_MAX || bcir_llama_ws_init(&w, model, capacity,allocator)) return -3;
+  (void)bcir_llama_ws_set_runner(&w, runner); /* admitted above */
   for (pos = 0; pos < prompt_count; ++pos)
     if (step_token(model, &w, prompt_ids[pos], pos, w.h)) {
       bcir_llama_ws_free(&w); return -1;
     }
   for (step = 0; step < max_new_tokens; ++step) {
-    if (logits_and_argmax(model, w.h, w.logits, &next)) {
+    if (logits_and_argmax(model, &w, w.h, w.logits, &next)) {
       bcir_llama_ws_free(&w); return -1;
     }
     generated_ids[step] = (int32_t)next;
@@ -344,6 +444,14 @@ int bcir_llama_generate_greedy_with_allocator(
     memcpy(final_logits, w.logits, (size_t)model->vocab_size * sizeof(double));
   bcir_llama_ws_free(&w);
   return 0;
+}
+
+int bcir_llama_generate_greedy_with_allocator(
+    const bcir_q8_model *model,const int32_t *prompt_ids,size_t prompt_count,
+    size_t max_new_tokens,int32_t *generated_ids,double *final_logits,
+    const bcir_host_allocator *allocator) {
+  return bcir_llama_generate_greedy_with_runner(model,prompt_ids,prompt_count,max_new_tokens,
+                                                generated_ids,final_logits,allocator,NULL);
 }
 
 int bcir_llama_generate_greedy(const bcir_q8_model *model,

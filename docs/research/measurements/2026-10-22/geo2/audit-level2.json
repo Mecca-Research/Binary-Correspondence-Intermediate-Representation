@@ -1,0 +1,3428 @@
+{
+ "label": "level2",
+ "mine": "WORK-LEVEL2 (GEO-2b)",
+ "parts": {
+  "bf16/results": {
+   "counterfactual_groups": 18,
+   "evaluation_rows": 33,
+   "evaluations_all_equal": 15,
+   "evaluations_compared": 15,
+   "missing": [],
+   "policy_byte_deltas": [
+    "arena_bytes:-229568",
+    "arena_bytes:-426176",
+    "fixed_bytes:8",
+    "packing_bytes:-229568",
+    "packing_bytes:-426176",
+    "policy_resident_bound_bytes:-426168",
+    "policy_resident_bound_bytes:8",
+    "resident_bound_bytes:-229560",
+    "resident_bound_bytes:-426168",
+    "resident_bound_bytes:8",
+    "workspace_floats:-106544",
+    "workspace_floats:-57392"
+   ],
+   "rows": [
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-attention-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "arena_bytes": [
+        -819392,
+        -426176
+       ],
+       "fixed_bytes": [
+        8
+       ],
+       "packing_bytes": [
+        -819392,
+        -426176
+       ],
+       "policy_resident_bound_bytes": [
+        -819384
+       ],
+       "resident_bound_bytes": [
+        -819384,
+        -426168
+       ],
+       "workspace_floats": [
+        -204848,
+        -106544
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 2,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "arena_bytes": [
+       -426176,
+       -229568
+      ],
+      "fixed_bytes": [
+       8
+      ],
+      "packing_bytes": [
+       -426176,
+       -229568
+      ],
+      "policy_resident_bound_bytes": [
+       -426168
+      ],
+      "resident_bound_bytes": [
+       -426168,
+       -229560
+      ],
+      "workspace_floats": [
+       -106544,
+       -57392
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-attention-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "arena_bytes": [
+        -819392,
+        -426176
+       ],
+       "fixed_bytes": [
+        8
+       ],
+       "packing_bytes": [
+        -819392,
+        -426176
+       ],
+       "policy_resident_bound_bytes": [
+        -819384
+       ],
+       "resident_bound_bytes": [
+        -819384,
+        -426168
+       ],
+       "workspace_floats": [
+        -204848,
+        -106544
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 2,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "arena_bytes": [
+       -426176,
+       -229568
+      ],
+      "fixed_bytes": [
+       8
+      ],
+      "packing_bytes": [
+       -426176,
+       -229568
+      ],
+      "policy_resident_bound_bytes": [
+       -426168
+      ],
+      "resident_bound_bytes": [
+       -426168,
+       -229560
+      ],
+      "workspace_floats": [
+       -106544,
+       -57392
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-attention-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "arena_bytes": [
+        -819392,
+        -426176
+       ],
+       "fixed_bytes": [
+        8
+       ],
+       "packing_bytes": [
+        -819392,
+        -426176
+       ],
+       "policy_resident_bound_bytes": [
+        -819384
+       ],
+       "resident_bound_bytes": [
+        -819384,
+        -426168
+       ],
+       "workspace_floats": [
+        -204848,
+        -106544
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 2,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "arena_bytes": [
+       -426176,
+       -229568
+      ],
+      "fixed_bytes": [
+       8
+      ],
+      "packing_bytes": [
+       -426176,
+       -229568
+      ],
+      "policy_resident_bound_bytes": [
+       -426168
+      ],
+      "resident_bound_bytes": [
+       -426168,
+       -229560
+      ],
+      "workspace_floats": [
+       -106544,
+       -57392
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-global-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 2,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-global-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 2,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-global-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 2,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-query_full-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 2,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-query_full-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 2,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-query_full-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 2,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-query_full-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 3,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-query_full-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 3,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-query_full-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 3,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-query_full-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 2,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-query_full-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 2,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-query_full-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 2,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    }
+   ],
+   "training_runs_all_equal": 15,
+   "training_runs_compared": 15,
+   "updates_compared": 12600
+  },
+  "results": {
+   "counterfactual_groups": 120,
+   "evaluation_rows": 600,
+   "evaluations_all_equal": 51,
+   "evaluations_compared": 51,
+   "missing": [],
+   "policy_byte_deltas": [
+    "fixed_bytes:8",
+    "policy_resident_bound_bytes:8",
+    "resident_bound_bytes:8"
+   ],
+   "rows": [
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-attention-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-attention-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-attention-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-global-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-global-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-global-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-query_full-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-query_full-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-query_full-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-query_matched-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-query_matched-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_curriculum-query_matched-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_single-attention-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_single-attention-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_single-attention-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_single-global-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_single-global-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_single-global-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_single-query_full-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_single-query_full-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_single-query_full-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_single-query_matched-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_single-query_matched-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "kv_single-query_matched-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 4,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 20,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-attention-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-attention-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-attention-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-global-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-global-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-global-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-hybrid-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-hybrid-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-hybrid-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-query_full-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-query_full-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-query_full-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-query_matched-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-query_matched-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "lm-query_matched-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 0,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 4,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-attention-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 5,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-attention-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 5,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-attention-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 5,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-global-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 5,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-global-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 5,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-global-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 5,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-query_full-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 5,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-query_full-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 5,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-query_full-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 5,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-query_matched-20261018",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 5,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-query_matched-20261019",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 5,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    },
+    {
+     "all_equal": true,
+     "case": "ordered-query_matched-20261020",
+     "checks": {
+      "events_step_loss_grad_norm": true,
+      "final_training_state_sha256": true,
+      "history": true,
+      "input_sha256": true,
+      "parameters": true,
+      "physical_positions": true,
+      "policy_decisions": true,
+      "recipe": true,
+      "selected_step": true,
+      "selected_validation_ce": true,
+      "state_sha256": true,
+      "steps": true,
+      "supervised_tokens": true
+     },
+     "evaluation": {
+      "paired": 2,
+      "paired_equal": true,
+      "policy_byte_deltas": {
+       "fixed_bytes": [
+        8
+       ],
+       "policy_resident_bound_bytes": [
+        8
+       ],
+       "resident_bound_bytes": [
+        8
+       ]
+      },
+      "policy_decisions": true,
+      "rows": 5,
+      "rows_equal": true,
+      "state_sha256_equal": true
+     },
+     "first_differing_update": null,
+     "policy_byte_deltas": {
+      "fixed_bytes": [
+       8
+      ],
+      "policy_resident_bound_bytes": [
+       8
+      ],
+      "resident_bound_bytes": [
+       8
+      ]
+     }
+    }
+   ],
+   "training_runs_all_equal": 51,
+   "training_runs_compared": 51,
+   "updates_compared": 41400
+  }
+ },
+ "theirs": "BUNDLE (docs/research/wedge-pr818 at origin/main 490f5be0)"
+}

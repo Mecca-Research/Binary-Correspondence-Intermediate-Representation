@@ -1260,12 +1260,24 @@ in, and the harness rows and the tests measure one definition of each gate
 (`bcir/tests/plan_fixtures.py`) rather than two that could drift.
 S1-D instance (2026-09-12): the alias law is ONE predicate in three places that
 must agree -- `StaticAllocation.overlaps` / `_has_live_alias` on the planner's
-rows, `validate_plan` on the plan's bytes and `ep_lifetime_aliases_before` in the
-C twin -- all judged on the same half-open ticks; and the liveness interval is
+rows, `validate_plan` on the plan's bytes (`lifetimes_alias` since ALIAS-SWEEP)
+and `ep_lifetimes_alias` in the C twin (`ep_lifetime_aliases_before` until
+ALIAS-SWEEP) -- all judged on the same half-open ticks; and the liveness interval is
 computed by ONE function (`schedule_intervals`) the planner, the verifier and the
 plan-bytes verifier share, so "does the schedule refine the phase order" and
 "do the lifetimes cover the schedule" are the same question asked of the same
 intervals.
+ALIAS-SWEEP instance (2026-10-21): a faster law is a second spelling of the same
+verdict, so it lands beside the first and is held to it, not swapped in for it.
+The sweep (`first_alias` in the codec, `ep_sweep_first_alias` in the C twin) asks
+only the pairs that can alias first -- a lifetime that starts against its two
+live neighbours by (bank, offset) -- so its tick half is the sweep's order (at one
+tick the ends before the starts: the half-open ticks) and only its byte half is
+the predicate's. The pairwise walk stays the reference the differentials run
+against -- `_pairwise_first_alias` in the codec's tests, and in the C twin
+`ep_first_alias_rewalk`, its path when no scratch is lent -- on draws crowded at
+exactly the boundaries a sweep's order decides: equal ticks, touching spans,
+three banks.
 S2-A instance (2026-09-13): the dispatch is ONE loop -- `_PhaseDispatch.run`,
 of which `_dispatch` is the one-shot form -- run by `schedule_eft`,
 `execute_tokens` and the placer's checkpointed replay alike, so the incremental

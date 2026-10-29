@@ -269,12 +269,20 @@ def hash_target(h) -> int:
     it did). Both rails
     moved in one commit: a cross-rail content address that one rail widens alone is worse than
     the gap.
+
+    PX-3b-2: a profile carrying a measured table (`TargetProfile.measured`) folds it after the
+    tiers -- "measured", its generation, then each entry's (op, count, alternative, q8) in the
+    table's order -- and the law rail recomputes it from `target.capability`'s `measured_*`
+    attributes; a profile without one hashes as it always did. Two targets that differ only in a
+    measured price plan differently, so they must not share a content address.
     """
     mem = getattr(h, "mem", None)
     tiers = tuple(
         (t.name, t.latency_cyc, t.bw_factor, t.lat_factor, t.capacity)
         for t in getattr(mem, "tiers", ())
     )
+    measured = getattr(h, "measured", None)
+    tail = () if measured is None else measured.items()
     return _fnv(
         h.name,
         h.triple,
@@ -293,6 +301,7 @@ def hash_target(h) -> int:
         getattr(h, "mem_channels", 4),
         getattr(h, "cal_gen", 0),
         tiers,
+        tail,
     )
 
 

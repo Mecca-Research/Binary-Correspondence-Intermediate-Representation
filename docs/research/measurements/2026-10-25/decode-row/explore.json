@@ -1,0 +1,20 @@
+{
+ "what": "NEXT-7, the survey after CRC-SLICE that placed DECODE-ROW, on the tree before (d920f25): its commands in the order they ran and their outputs, as they ran; gqa_bench.c beside this file is the instrument written apart",
+ "tree": "d920f254ffa2eb0c87f7f16db3f9f65b507607d5",
+ "runs": [
+  {
+   "step": 1,
+   "what": "the placement: Q8-LANES' committed per-operation record (../q8-lanes/ops.json), the tree after Q8-LANES (clang, 200 new tokens from a 5-token prompt, the median of 5 runs)",
+   "command": "cd <REPO> && python3 -c \"\nimport json\nd = json.load(open('docs/research/measurements/2026-10-25/q8-lanes/ops.json'))\nfor row in d:\n    t = row['tree']; ops = {k: v for k, v in row.items() if k not in ('tree',)}\n    print(t, json.dumps(ops)[:900])\n\"",
+   "output": "before {\"runs\": 5, \"operations\": {\"embed\": {\"us\": 120.3, \"calls\": 204}, \"rmsnorm\": {\"us\": 1330.9, \"calls\": 1836}, \"matvec\": {\"us\": 160276.3, \"calls\": 5712}, \"rope\": {\"us\": 2688.7, \"calls\": 816}, \"kv_append\": {\"us\": 72.8, \"calls\": 816}, \"attention\": {\"us\": 13088.2, \"calls\": 816}, \"residual\": {\"us\": 89.7, \"calls\": 1632}, \"swiglu\": {\"us\": 2269.4, \"calls\": 816}, \"head\": {\"us\": 27857.7, \"calls\": 200}, \"argmax\": {\"us\": 555.3, \"calls\": 200}, \"total\": {\"us\": 208349.3}}}\nafter {\"runs\": 5, \"operations\": {\"embed\": {\"us\": 138.2, \"calls\": 204}, \"rmsnorm\": {\"us\": 1518.2, \"calls\": 1836}, \"matvec\": {\"us\": 31536.8, \"calls\": 5712}, \"rope\": {\"us\": 3055.4, \"calls\": 816}, \"kv_append\": {\"us\": 61.4, \"calls\": 816}, \"attention\": {\"us\": 14364.1, \"calls\": 816}, \"residual\": {\"us\": 91.8, \"calls\": 1632}, \"swiglu\": {\"us\": 2250.4, \"calls\": 816}, \"head\": {\"us\": 7112.8, \"calls\": 200}, \"argmax\": {\"us\": 633.7, \"calls\": 200}, \"total\": {\"us\": 60762.8}}}",
+   "reading": "after Q8-LANES the attention is 14.36 ms (23.6%) and the rotation 3.06 ms (5.0%) of the step's 60.76 ms: 816 calls each, 204 positions x 4 layers"
+  },
+  {
+   "step": 2,
+   "what": "gqa_bench.c (beside this file): gqa_row's committed form against the row-major context and register-blocked forms of its scores (1, 4 or 8 key rows' chains side by side) and its context (4 or 8 coordinates' chains), each chain the committed order; 3,000 random shapes byte for byte (outputs and probabilities, 18,000 comparisons), then a request's decode steps at the 860K decoder's shapes (4 heads of 32, 2 kv heads, 4 layers) over contexts 1..T, the median of REPS rotated rounds",
+   "command": "B=<SCRATCH>/next11/bench; cd $B && for cc in clang gcc; do $cc -std=c11 -O2 -ffp-contract=off -Wall -Wextra -Werror gqa_bench.c -o gqa_bench-$cc -lm || exit 1; done; for cc in clang gcc; do echo \"== $cc\"; ./gqa_bench-$cc 205 15; ./gqa_bench-$cc 1024 7; done",
+   "output": "== clang\n{\"compared\":18000,\"T\":205,\"reps\":15,\"old_ms\":11.8225,\"s1_rowmajor_ms\":7.8643,\"s1_blk8_ms\":6.3728,\"s4_blk8_ms\":5.2705,\"s8_blk8_ms\":5.3449,\"s4_blk4_ms\":5.9936,\"s8_blk4_ms\":6.0705}\n{\"compared\":18000,\"T\":1024,\"reps\":7,\"old_ms\":411.5647,\"s1_rowmajor_ms\":236.4361,\"s1_blk8_ms\":213.6551,\"s4_blk8_ms\":201.0609,\"s8_blk8_ms\":201.2126,\"s4_blk4_ms\":216.0024,\"s8_blk4_ms\":215.5753}\n== gcc\n{\"compared\":18000,\"T\":205,\"reps\":15,\"old_ms\":13.3919,\"s1_rowmajor_ms\":10.5656,\"s1_blk8_ms\":7.1953,\"s4_blk8_ms\":5.7201,\"s8_blk8_ms\":5.4931,\"s4_blk4_ms\":6.3276,\"s8_blk4_ms\":6.1427}\n{\"compared\":18000,\"T\":1024,\"reps\":7,\"old_ms\":442.4221,\"s1_rowmajor_ms\":307.891,\"s1_blk8_ms\":243.6653,\"s4_blk8_ms\":203.8582,\"s8_blk8_ms\":199.1538,\"s4_blk4_ms\":223.7924,\"s8_blk4_ms\":207.8893}",
+   "reading": "every form the committed bytes; the row-major context alone x0.67 (clang) and x0.79 (gcc) at T205, blocking the context's coordinates in registers x0.54 / x0.54, and the scores' rows side by side too x0.45 (clang, four rows) and x0.41 (gcc, eight): DECODE-ROW takes eight rows, then four, then one, and eight coordinates"
+  }
+ ]
+}

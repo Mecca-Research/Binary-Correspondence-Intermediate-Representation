@@ -1,0 +1,1964 @@
+[
+ {
+  "run": 1,
+  "cc": "clang",
+  "equality": {
+   "cases": 80,
+   "outputs_compared_where_every_x_s_is_exact": 11816,
+   "prototype": {
+    "outputs_compared": 15744,
+    "calls_hoisted": 73,
+    "calls_computed_again": 7
+   },
+   "every_byte_the_committed_kernels": true
+  }
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "matvec": [
+   128,
+   128,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 3.077,
+  "hoisted": {
+   "us": 2.651,
+   "ratio_median": 0.8516,
+   "range": [
+    0.7864,
+    0.928
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 2.824,
+   "ratio_median": 0.9144,
+   "range": [
+    0.8502,
+    0.9808
+   ]
+  },
+  "prototype": {
+   "us": 3.034,
+   "ratio_median": 0.9859,
+   "range": [
+    0.9039,
+    1.1214
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "matvec": [
+   128,
+   64,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 1.929,
+  "hoisted": {
+   "us": 1.677,
+   "ratio_median": 0.852,
+   "range": [
+    0.8169,
+    1.0826
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 1.847,
+   "ratio_median": 0.9299,
+   "range": [
+    0.782,
+    0.9954
+   ]
+  },
+  "prototype": {
+   "us": 1.929,
+   "ratio_median": 0.9949,
+   "range": [
+    0.836,
+    1.6572
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "matvec": [
+   128,
+   344,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 12.301,
+  "hoisted": {
+   "us": 10.684,
+   "ratio_median": 0.8575,
+   "range": [
+    0.7405,
+    0.9841
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 12.06,
+   "ratio_median": 0.9669,
+   "range": [
+    0.8799,
+    1.0668
+   ]
+  },
+  "prototype": {
+   "us": 13.408,
+   "ratio_median": 1.0599,
+   "range": [
+    0.8788,
+    1.2784
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "matvec": [
+   344,
+   128,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 8.285,
+  "hoisted": {
+   "us": 7.189,
+   "ratio_median": 0.86,
+   "range": [
+    0.8255,
+    0.8928
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 7.245,
+   "ratio_median": 0.875,
+   "range": [
+    0.8262,
+    1.0161
+   ]
+  },
+  "prototype": {
+   "us": 8.097,
+   "ratio_median": 0.9713,
+   "range": [
+    0.9208,
+    1.0472
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "matvec": [
+   2048,
+   2048,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 1310.608,
+  "hoisted": {
+   "us": 1187.267,
+   "ratio_median": 0.8972,
+   "range": [
+    0.8667,
+    0.9915
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 1502.693,
+   "ratio_median": 1.1461,
+   "range": [
+    1.0426,
+    1.3641
+   ]
+  },
+  "prototype": {
+   "us": 1272.721,
+   "ratio_median": 0.9671,
+   "range": [
+    0.9191,
+    1.216
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "matvec": [
+   2048,
+   256,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 99.308,
+  "hoisted": {
+   "us": 85.861,
+   "ratio_median": 0.8555,
+   "range": [
+    0.795,
+    1.584
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 91.108,
+   "ratio_median": 0.924,
+   "range": [
+    0.8431,
+    1.1232
+   ]
+  },
+  "prototype": {
+   "us": 102.728,
+   "ratio_median": 1.019,
+   "range": [
+    0.9462,
+    1.0964
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "matvec": [
+   2048,
+   5632,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 3742.884,
+  "hoisted": {
+   "us": 3341.227,
+   "ratio_median": 0.9043,
+   "range": [
+    0.7952,
+    0.9378
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 3062.224,
+   "ratio_median": 0.8087,
+   "range": [
+    0.7089,
+    0.8687
+   ]
+  },
+  "prototype": {
+   "us": 3748.672,
+   "ratio_median": 1.0023,
+   "range": [
+    0.864,
+    1.0342
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "matvec": [
+   5632,
+   2048,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 3996.767,
+  "hoisted": {
+   "us": 3664.061,
+   "ratio_median": 0.9168,
+   "range": [
+    0.8933,
+    0.9259
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 4680.276,
+   "ratio_median": 1.166,
+   "range": [
+    1.1421,
+    1.6746
+   ]
+  },
+  "prototype": {
+   "us": 3867.621,
+   "ratio_median": 0.9693,
+   "range": [
+    0.9468,
+    0.9867
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "sequence": "the 860K decoder's matvecs, each once a pass",
+  "matvecs": 28,
+  "code_bytes": 724992,
+  "rounds": 15,
+  "committed_us": 138.973,
+  "hoisted": {
+   "us": 121.531,
+   "ratio_median": 0.8735,
+   "range": [
+    0.7809,
+    1.5372
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 126.119,
+   "ratio_median": 0.9074,
+   "range": [
+    0.8143,
+    0.9346
+   ]
+  },
+  "prototype": {
+   "us": 143.665,
+   "ratio_median": 1.0417,
+   "range": [
+    0.8968,
+    1.3896
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "equality": {
+   "cases": 80,
+   "outputs_compared_where_every_x_s_is_exact": 11816,
+   "prototype": {
+    "outputs_compared": 15744,
+    "calls_hoisted": 73,
+    "calls_computed_again": 7
+   },
+   "every_byte_the_committed_kernels": true
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "matvec": [
+   128,
+   128,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 2.738,
+  "hoisted": {
+   "us": 2.52,
+   "ratio_median": 0.9247,
+   "range": [
+    0.8604,
+    0.9684
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 2.755,
+   "ratio_median": 0.9942,
+   "range": [
+    0.9286,
+    1.1204
+   ]
+  },
+  "prototype": {
+   "us": 2.947,
+   "ratio_median": 1.0811,
+   "range": [
+    0.9737,
+    1.182
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "matvec": [
+   128,
+   64,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 1.364,
+  "hoisted": {
+   "us": 1.252,
+   "ratio_median": 0.9178,
+   "range": [
+    0.7961,
+    1.1306
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 1.414,
+   "ratio_median": 1.009,
+   "range": [
+    0.8536,
+    1.1263
+   ]
+  },
+  "prototype": {
+   "us": 1.497,
+   "ratio_median": 1.0796,
+   "range": [
+    0.8741,
+    1.1742
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "matvec": [
+   128,
+   344,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 7.695,
+  "hoisted": {
+   "us": 7.129,
+   "ratio_median": 0.9315,
+   "range": [
+    0.8729,
+    0.9981
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 7.703,
+   "ratio_median": 1.0083,
+   "range": [
+    0.9275,
+    1.0483
+   ]
+  },
+  "prototype": {
+   "us": 8.794,
+   "ratio_median": 1.1407,
+   "range": [
+    1.0883,
+    1.2195
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "matvec": [
+   344,
+   128,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 7.344,
+  "hoisted": {
+   "us": 6.702,
+   "ratio_median": 0.9189,
+   "range": [
+    0.8688,
+    1.0009
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 7.323,
+   "ratio_median": 0.997,
+   "range": [
+    0.8764,
+    1.0465
+   ]
+  },
+  "prototype": {
+   "us": 7.924,
+   "ratio_median": 1.0766,
+   "range": [
+    1.0167,
+    1.1844
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "matvec": [
+   2048,
+   2048,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 1273.927,
+  "hoisted": {
+   "us": 1147.36,
+   "ratio_median": 0.9121,
+   "range": [
+    0.8732,
+    1.0101
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 1529.019,
+   "ratio_median": 1.1913,
+   "range": [
+    1.1396,
+    1.2595
+   ]
+  },
+  "prototype": {
+   "us": 1228.204,
+   "ratio_median": 0.974,
+   "range": [
+    0.932,
+    1.0473
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "matvec": [
+   2048,
+   256,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 86.416,
+  "hoisted": {
+   "us": 79.7,
+   "ratio_median": 0.8991,
+   "range": [
+    0.8149,
+    1.137
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 88.568,
+   "ratio_median": 1.0134,
+   "range": [
+    0.8811,
+    1.0912
+   ]
+  },
+  "prototype": {
+   "us": 94.487,
+   "ratio_median": 1.07,
+   "range": [
+    0.9639,
+    1.8864
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "matvec": [
+   2048,
+   5632,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 3335.718,
+  "hoisted": {
+   "us": 3220.743,
+   "ratio_median": 0.9481,
+   "range": [
+    0.8443,
+    1.6257
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 3129.544,
+   "ratio_median": 0.9531,
+   "range": [
+    0.8515,
+    1.2214
+   ]
+  },
+  "prototype": {
+   "us": 3470.039,
+   "ratio_median": 1.0497,
+   "range": [
+    0.9486,
+    1.1105
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "matvec": [
+   5632,
+   2048,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 3508.321,
+  "hoisted": {
+   "us": 3318.047,
+   "ratio_median": 0.933,
+   "range": [
+    0.8788,
+    0.9987
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 4584.105,
+   "ratio_median": 1.2275,
+   "range": [
+    1.1022,
+    1.3528
+   ]
+  },
+  "prototype": {
+   "us": 3793.513,
+   "ratio_median": 0.9725,
+   "range": [
+    0.8843,
+    1.1791
+   ]
+  }
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "sequence": "the 860K decoder's matvecs, each once a pass",
+  "matvecs": 28,
+  "code_bytes": 724992,
+  "rounds": 15,
+  "committed_us": 124.278,
+  "hoisted": {
+   "us": 114.271,
+   "ratio_median": 0.9172,
+   "range": [
+    0.8975,
+    0.939
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 124.937,
+   "ratio_median": 1.0061,
+   "range": [
+    0.9856,
+    1.0288
+   ]
+  },
+  "prototype": {
+   "us": 137.338,
+   "ratio_median": 1.102,
+   "range": [
+    1.0111,
+    1.1479
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "equality": {
+   "cases": 80,
+   "outputs_compared_where_every_x_s_is_exact": 11816,
+   "prototype": {
+    "outputs_compared": 15744,
+    "calls_hoisted": 73,
+    "calls_computed_again": 7
+   },
+   "every_byte_the_committed_kernels": true
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "matvec": [
+   128,
+   128,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 2.897,
+  "hoisted": {
+   "us": 2.468,
+   "ratio_median": 0.8433,
+   "range": [
+    0.7385,
+    0.8994
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 2.719,
+   "ratio_median": 0.9324,
+   "range": [
+    0.8517,
+    0.9564
+   ]
+  },
+  "prototype": {
+   "us": 3.041,
+   "ratio_median": 1.0417,
+   "range": [
+    0.9462,
+    1.0998
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "matvec": [
+   128,
+   64,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 1.447,
+  "hoisted": {
+   "us": 1.245,
+   "ratio_median": 0.8456,
+   "range": [
+    0.825,
+    0.8887
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 1.371,
+   "ratio_median": 0.9413,
+   "range": [
+    0.8824,
+    1.0211
+   ]
+  },
+  "prototype": {
+   "us": 1.525,
+   "ratio_median": 1.0509,
+   "range": [
+    0.9778,
+    1.1104
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "matvec": [
+   128,
+   344,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 8.019,
+  "hoisted": {
+   "us": 7.165,
+   "ratio_median": 0.8909,
+   "range": [
+    0.8499,
+    0.9101
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 7.895,
+   "ratio_median": 0.9872,
+   "range": [
+    0.9357,
+    1.0723
+   ]
+  },
+  "prototype": {
+   "us": 9.259,
+   "ratio_median": 1.1491,
+   "range": [
+    1.0854,
+    1.1966
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "matvec": [
+   344,
+   128,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 7.649,
+  "hoisted": {
+   "us": 6.71,
+   "ratio_median": 0.8722,
+   "range": [
+    0.821,
+    0.9295
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 7.44,
+   "ratio_median": 0.9656,
+   "range": [
+    0.9033,
+    1.0254
+   ]
+  },
+  "prototype": {
+   "us": 8.183,
+   "ratio_median": 1.0785,
+   "range": [
+    0.9908,
+    1.1495
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "matvec": [
+   2048,
+   2048,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 1292.454,
+  "hoisted": {
+   "us": 1135.303,
+   "ratio_median": 0.8872,
+   "range": [
+    0.8481,
+    0.9217
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 1444.15,
+   "ratio_median": 1.1093,
+   "range": [
+    1.0445,
+    1.1624
+   ]
+  },
+  "prototype": {
+   "us": 1263.36,
+   "ratio_median": 0.972,
+   "range": [
+    0.9412,
+    1.0421
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "matvec": [
+   2048,
+   256,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 93.128,
+  "hoisted": {
+   "us": 81.167,
+   "ratio_median": 0.868,
+   "range": [
+    0.7927,
+    0.9407
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 90.147,
+   "ratio_median": 0.9596,
+   "range": [
+    0.9216,
+    1.0752
+   ]
+  },
+  "prototype": {
+   "us": 96.907,
+   "ratio_median": 1.0505,
+   "range": [
+    1.0014,
+    1.1832
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "matvec": [
+   2048,
+   5632,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 3792.094,
+  "hoisted": {
+   "us": 3243.803,
+   "ratio_median": 0.858,
+   "range": [
+    0.8428,
+    0.8971
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 2895.796,
+   "ratio_median": 0.7571,
+   "range": [
+    0.7425,
+    0.8178
+   ]
+  },
+  "prototype": {
+   "us": 3639.292,
+   "ratio_median": 0.9571,
+   "range": [
+    0.9252,
+    1.0232
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "matvec": [
+   5632,
+   2048,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 4048.986,
+  "hoisted": {
+   "us": 3643.01,
+   "ratio_median": 0.9025,
+   "range": [
+    0.8819,
+    0.9335
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 4639.168,
+   "ratio_median": 1.1584,
+   "range": [
+    1.1217,
+    1.1683
+   ]
+  },
+  "prototype": {
+   "us": 3881.039,
+   "ratio_median": 0.9667,
+   "range": [
+    0.9425,
+    1.0088
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "sequence": "the 860K decoder's matvecs, each once a pass",
+  "matvecs": 28,
+  "code_bytes": 724992,
+  "rounds": 15,
+  "committed_us": 130.403,
+  "hoisted": {
+   "us": 114.298,
+   "ratio_median": 0.8826,
+   "range": [
+    0.8553,
+    0.916
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 126.316,
+   "ratio_median": 0.9681,
+   "range": [
+    0.9386,
+    1.0044
+   ]
+  },
+  "prototype": {
+   "us": 143.377,
+   "ratio_median": 1.101,
+   "range": [
+    1.0128,
+    1.1663
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "equality": {
+   "cases": 80,
+   "outputs_compared_where_every_x_s_is_exact": 11816,
+   "prototype": {
+    "outputs_compared": 15744,
+    "calls_hoisted": 73,
+    "calls_computed_again": 7
+   },
+   "every_byte_the_committed_kernels": true
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "matvec": [
+   128,
+   128,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 2.731,
+  "hoisted": {
+   "us": 2.476,
+   "ratio_median": 0.9095,
+   "range": [
+    0.8828,
+    1.0062
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 2.759,
+   "ratio_median": 0.999,
+   "range": [
+    0.9716,
+    1.1351
+   ]
+  },
+  "prototype": {
+   "us": 2.972,
+   "ratio_median": 1.0872,
+   "range": [
+    1.0244,
+    1.1813
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "matvec": [
+   128,
+   64,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 1.325,
+  "hoisted": {
+   "us": 1.256,
+   "ratio_median": 0.9219,
+   "range": [
+    0.8193,
+    0.9892
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 1.359,
+   "ratio_median": 0.9936,
+   "range": [
+    0.856,
+    1.0739
+   ]
+  },
+  "prototype": {
+   "us": 1.437,
+   "ratio_median": 1.0783,
+   "range": [
+    0.9387,
+    1.1577
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "matvec": [
+   128,
+   344,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 7.648,
+  "hoisted": {
+   "us": 7.118,
+   "ratio_median": 0.9223,
+   "range": [
+    0.8911,
+    0.9937
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 7.718,
+   "ratio_median": 1.0123,
+   "range": [
+    0.9541,
+    1.104
+   ]
+  },
+  "prototype": {
+   "us": 8.74,
+   "ratio_median": 1.1443,
+   "range": [
+    1.1059,
+    1.2232
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "matvec": [
+   344,
+   128,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 7.325,
+  "hoisted": {
+   "us": 6.738,
+   "ratio_median": 0.9243,
+   "range": [
+    0.2489,
+    0.9896
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 7.385,
+   "ratio_median": 1.0082,
+   "range": [
+    0.3065,
+    1.105
+   ]
+  },
+  "prototype": {
+   "us": 7.956,
+   "ratio_median": 1.0829,
+   "range": [
+    0.2924,
+    1.1521
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "matvec": [
+   2048,
+   2048,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 1082.536,
+  "hoisted": {
+   "us": 993.194,
+   "ratio_median": 0.9355,
+   "range": [
+    0.8226,
+    1.1074
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 1286.834,
+   "ratio_median": 1.1715,
+   "range": [
+    1.1182,
+    2.1044
+   ]
+  },
+  "prototype": {
+   "us": 1096.724,
+   "ratio_median": 1.0115,
+   "range": [
+    0.9609,
+    1.0795
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "matvec": [
+   2048,
+   256,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 86.929,
+  "hoisted": {
+   "us": 79.366,
+   "ratio_median": 0.9132,
+   "range": [
+    0.8436,
+    0.9739
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 86.834,
+   "ratio_median": 1.0083,
+   "range": [
+    0.933,
+    1.0569
+   ]
+  },
+  "prototype": {
+   "us": 91.746,
+   "ratio_median": 1.0597,
+   "range": [
+    0.9755,
+    1.2741
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "matvec": [
+   2048,
+   5632,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 2926.75,
+  "hoisted": {
+   "us": 2798.194,
+   "ratio_median": 0.9663,
+   "range": [
+    0.903,
+    1.0177
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 2788.926,
+   "ratio_median": 0.9552,
+   "range": [
+    0.9196,
+    0.984
+   ]
+  },
+  "prototype": {
+   "us": 3069.864,
+   "ratio_median": 1.0506,
+   "range": [
+    1.0257,
+    1.0942
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "matvec": [
+   5632,
+   2048,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 3377.671,
+  "hoisted": {
+   "us": 3120.572,
+   "ratio_median": 0.9257,
+   "range": [
+    0.9027,
+    0.9404
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 4088.337,
+   "ratio_median": 1.2143,
+   "range": [
+    1.1899,
+    1.2567
+   ]
+  },
+  "prototype": {
+   "us": 3329.121,
+   "ratio_median": 0.9879,
+   "range": [
+    0.9657,
+    1.0656
+   ]
+  }
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "sequence": "the 860K decoder's matvecs, each once a pass",
+  "matvecs": 28,
+  "code_bytes": 724992,
+  "rounds": 15,
+  "committed_us": 124.371,
+  "hoisted": {
+   "us": 115.131,
+   "ratio_median": 0.9284,
+   "range": [
+    0.902,
+    0.9394
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 125.426,
+   "ratio_median": 1.0139,
+   "range": [
+    0.9879,
+    1.0544
+   ]
+  },
+  "prototype": {
+   "us": 138.081,
+   "ratio_median": 1.1088,
+   "range": [
+    1.0381,
+    1.1923
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "equality": {
+   "cases": 80,
+   "outputs_compared_where_every_x_s_is_exact": 11816,
+   "prototype": {
+    "outputs_compared": 15744,
+    "calls_hoisted": 73,
+    "calls_computed_again": 7
+   },
+   "every_byte_the_committed_kernels": true
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "matvec": [
+   128,
+   128,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 3.083,
+  "hoisted": {
+   "us": 2.629,
+   "ratio_median": 0.8548,
+   "range": [
+    0.8011,
+    0.8915
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 2.803,
+   "ratio_median": 0.921,
+   "range": [
+    0.848,
+    1.0113
+   ]
+  },
+  "prototype": {
+   "us": 3.079,
+   "ratio_median": 0.9949,
+   "range": [
+    0.9203,
+    1.0724
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "matvec": [
+   128,
+   64,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 1.541,
+  "hoisted": {
+   "us": 1.313,
+   "ratio_median": 0.8608,
+   "range": [
+    0.7644,
+    1.0434
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 1.379,
+   "ratio_median": 0.8866,
+   "range": [
+    0.8097,
+    0.9956
+   ]
+  },
+  "prototype": {
+   "us": 1.507,
+   "ratio_median": 0.9669,
+   "range": [
+    0.9033,
+    1.0278
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "matvec": [
+   128,
+   344,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 8.461,
+  "hoisted": {
+   "us": 7.403,
+   "ratio_median": 0.8621,
+   "range": [
+    0.8242,
+    1.001
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 7.822,
+   "ratio_median": 0.9259,
+   "range": [
+    0.8998,
+    1.1663
+   ]
+  },
+  "prototype": {
+   "us": 9.278,
+   "ratio_median": 1.0858,
+   "range": [
+    0.9448,
+    1.1452
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "matvec": [
+   344,
+   128,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 8.214,
+  "hoisted": {
+   "us": 7.129,
+   "ratio_median": 0.8648,
+   "range": [
+    0.8272,
+    0.9098
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 7.444,
+   "ratio_median": 0.9142,
+   "range": [
+    0.8542,
+    0.9849
+   ]
+  },
+  "prototype": {
+   "us": 8.118,
+   "ratio_median": 1.0015,
+   "range": [
+    0.9273,
+    1.098
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "matvec": [
+   2048,
+   2048,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 1265.316,
+  "hoisted": {
+   "us": 1133.149,
+   "ratio_median": 0.8938,
+   "range": [
+    0.7483,
+    0.9769
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 1417.81,
+   "ratio_median": 1.1226,
+   "range": [
+    0.9869,
+    1.293
+   ]
+  },
+  "prototype": {
+   "us": 1229.406,
+   "ratio_median": 0.9651,
+   "range": [
+    0.8266,
+    1.0233
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "matvec": [
+   2048,
+   256,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 101.868,
+  "hoisted": {
+   "us": 87.047,
+   "ratio_median": 0.8581,
+   "range": [
+    0.6412,
+    0.9944
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 95.223,
+   "ratio_median": 0.9421,
+   "range": [
+    0.6398,
+    1.1043
+   ]
+  },
+  "prototype": {
+   "us": 106.844,
+   "ratio_median": 1.0592,
+   "range": [
+    0.6884,
+    1.4215
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "matvec": [
+   2048,
+   5632,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 3936.914,
+  "hoisted": {
+   "us": 3451.993,
+   "ratio_median": 0.8734,
+   "range": [
+    0.7444,
+    1.0773
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 3099.324,
+   "ratio_median": 0.8015,
+   "range": [
+    0.655,
+    0.9314
+   ]
+  },
+  "prototype": {
+   "us": 3974.106,
+   "ratio_median": 0.9733,
+   "range": [
+    0.8478,
+    1.3798
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "matvec": [
+   5632,
+   2048,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 4175.93,
+  "hoisted": {
+   "us": 3905.419,
+   "ratio_median": 0.9079,
+   "range": [
+    0.8247,
+    1.2189
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 5047.54,
+   "ratio_median": 1.178,
+   "range": [
+    1.1137,
+    1.5211
+   ]
+  },
+  "prototype": {
+   "us": 4089.915,
+   "ratio_median": 0.9715,
+   "range": [
+    0.8611,
+    1.1029
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "sequence": "the 860K decoder's matvecs, each once a pass",
+  "matvecs": 28,
+  "code_bytes": 724992,
+  "rounds": 15,
+  "committed_us": 140.456,
+  "hoisted": {
+   "us": 121.282,
+   "ratio_median": 0.863,
+   "range": [
+    0.7973,
+    0.9535
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 127.633,
+   "ratio_median": 0.9045,
+   "range": [
+    0.8429,
+    0.9939
+   ]
+  },
+  "prototype": {
+   "us": 145.235,
+   "ratio_median": 1.0383,
+   "range": [
+    0.9913,
+    1.1044
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "equality": {
+   "cases": 80,
+   "outputs_compared_where_every_x_s_is_exact": 11816,
+   "prototype": {
+    "outputs_compared": 15744,
+    "calls_hoisted": 73,
+    "calls_computed_again": 7
+   },
+   "every_byte_the_committed_kernels": true
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "matvec": [
+   128,
+   128,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 2.755,
+  "hoisted": {
+   "us": 2.535,
+   "ratio_median": 0.9011,
+   "range": [
+    0.8748,
+    1.0666
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 2.772,
+   "ratio_median": 0.9662,
+   "range": [
+    0.7039,
+    1.062
+   ]
+  },
+  "prototype": {
+   "us": 2.996,
+   "ratio_median": 1.0757,
+   "range": [
+    1.038,
+    1.6645
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "matvec": [
+   128,
+   64,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 1.392,
+  "hoisted": {
+   "us": 1.229,
+   "ratio_median": 0.8972,
+   "range": [
+    0.6783,
+    0.9681
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 1.417,
+   "ratio_median": 1.0401,
+   "range": [
+    0.7685,
+    1.1237
+   ]
+  },
+  "prototype": {
+   "us": 1.469,
+   "ratio_median": 1.0896,
+   "range": [
+    0.8026,
+    1.1514
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "matvec": [
+   128,
+   344,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 11.516,
+  "hoisted": {
+   "us": 10.792,
+   "ratio_median": 0.9351,
+   "range": [
+    0.883,
+    4.3114
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 12.768,
+   "ratio_median": 1.1151,
+   "range": [
+    1.0641,
+    1.555
+   ]
+  },
+  "prototype": {
+   "us": 13.487,
+   "ratio_median": 1.1706,
+   "range": [
+    1.1195,
+    1.3134
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "matvec": [
+   344,
+   128,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 10.672,
+  "hoisted": {
+   "us": 9.849,
+   "ratio_median": 0.9222,
+   "range": [
+    0.8885,
+    0.934
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 11.492,
+   "ratio_median": 1.068,
+   "range": [
+    0.9858,
+    1.7227
+   ]
+  },
+  "prototype": {
+   "us": 11.615,
+   "ratio_median": 1.0997,
+   "range": [
+    1.0246,
+    1.3124
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "matvec": [
+   2048,
+   2048,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 1328.057,
+  "hoisted": {
+   "us": 1104.224,
+   "ratio_median": 0.9456,
+   "range": [
+    0.737,
+    1.1226
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 1499.83,
+   "ratio_median": 1.1929,
+   "range": [
+    1.1293,
+    1.5292
+   ]
+  },
+  "prototype": {
+   "us": 1348.754,
+   "ratio_median": 1.0272,
+   "range": [
+    0.971,
+    1.2161
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "matvec": [
+   2048,
+   256,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 86.938,
+  "hoisted": {
+   "us": 79.318,
+   "ratio_median": 0.9203,
+   "range": [
+    0.8846,
+    0.9593
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 87.32,
+   "ratio_median": 1.01,
+   "range": [
+    0.9751,
+    1.0711
+   ]
+  },
+  "prototype": {
+   "us": 91.638,
+   "ratio_median": 1.0587,
+   "range": [
+    0.9416,
+    1.1294
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "matvec": [
+   2048,
+   5632,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 3225.792,
+  "hoisted": {
+   "us": 3059.597,
+   "ratio_median": 0.9599,
+   "range": [
+    0.9402,
+    1.5895
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 2966.97,
+   "ratio_median": 0.9339,
+   "range": [
+    0.89,
+    1.9067
+   ]
+  },
+  "prototype": {
+   "us": 3379.214,
+   "ratio_median": 1.047,
+   "range": [
+    0.9876,
+    1.3266
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "matvec": [
+   5632,
+   2048,
+   32
+  ],
+  "rounds": 15,
+  "committed_us": 3625.791,
+  "hoisted": {
+   "us": 3384.31,
+   "ratio_median": 0.9302,
+   "range": [
+    0.9142,
+    0.9537
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 4494.733,
+   "ratio_median": 1.2348,
+   "range": [
+    1.2205,
+    1.2798
+   ]
+  },
+  "prototype": {
+   "us": 3584.241,
+   "ratio_median": 0.9847,
+   "range": [
+    0.9703,
+    1.0049
+   ]
+  }
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "sequence": "the 860K decoder's matvecs, each once a pass",
+  "matvecs": 28,
+  "code_bytes": 724992,
+  "rounds": 15,
+  "committed_us": 122.931,
+  "hoisted": {
+   "us": 114.189,
+   "ratio_median": 0.9296,
+   "range": [
+    0.9135,
+    0.9584
+   ]
+  },
+  "hoisted_loop_form": {
+   "us": 124.093,
+   "ratio_median": 1.0075,
+   "range": [
+    0.9806,
+    1.0553
+   ]
+  },
+  "prototype": {
+   "us": 138.613,
+   "ratio_median": 1.1278,
+   "range": [
+    1.0342,
+    1.1897
+   ]
+  }
+ }
+]

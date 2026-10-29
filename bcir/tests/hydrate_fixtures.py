@@ -42,6 +42,8 @@ def _result_of(real: pa.Realization):
     steps = []
     for s in real.steps:
         name = f"vec{s.width}" if s.name == pa.NAME_VEC else pa.NAMES[s.name]
+        if s.alternative:  # PX-3b-2: a measured realization, `<name>@<alternative>`
+            name += "@" + pa.measured_alternative(s.alternative)
         cand = SimpleNamespace(name=name, lane=Lane(s.lane), width=s.width)
         steps.append(SimpleNamespace(claim_id=s.claim_id, phase_id=s.phase_id, candidate=cand))
     return SimpleNamespace(steps=steps)

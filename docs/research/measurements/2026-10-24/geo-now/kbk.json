@@ -1,0 +1,17 @@
+{
+ "what": "kb_micro.c (one 8 x 48 block of kb512_block's untransposed path, copied from the tree, called again and again on L1-resident operands) and kb_micro2.c (one 448-term contract block over 128 rows, 16 such blocks a packed tile, as the nest runs them: the whole block a row block, or the terms S at a time across the row blocks with each block's accumulators stored and loaded between -- the same bits), clang 18 and GCC 13 at -O3, the best of five timings each",
+ "lines": [
+  "single clang K=128 lda=128: 188.3 GFLOP/s (521.993 ns a block; checksum 3.75218e+06)",
+  "single clang K=448 lda=128: 115.2 GFLOP/s (2986.714 ns a block; checksum 1.39711e+07)",
+  "tile clang same bits: yes M=128 K=448 N=48: base 188.0 GFLOP/s, sub 224 188.8 GFLOP/s (x0.995 of base's time) ",
+  "tile clang same bits: yes M=128 K=448 N=48: base 189.1 GFLOP/s, sub 150 194.1 GFLOP/s (x0.974 of base's time) ",
+  "tile clang same bits: yes M=128 K=448 N=48: base 188.6 GFLOP/s, sub 112 186.6 GFLOP/s (x1.011 of base's time) ",
+  "tile clang same bits: yes M=128 K=448 N=48: base 200.0 GFLOP/s, sub 64 199.7 GFLOP/s (x1.001 of base's time) ",
+  "single gcc K=128 lda=128: 213.9 GFLOP/s (459.639 ns a block; checksum 3.75218e+06)",
+  "single gcc K=448 lda=128: 120.1 GFLOP/s (2865.115 ns a block; checksum 1.39711e+07)",
+  "tile gcc same bits: yes M=128 K=448 N=48: base 190.7 GFLOP/s, sub 224 190.2 GFLOP/s (x1.003 of base's time) ",
+  "tile gcc same bits: yes M=128 K=448 N=48: base 200.1 GFLOP/s, sub 150 203.6 GFLOP/s (x0.983 of base's time) ",
+  "tile gcc same bits: yes M=128 K=448 N=48: base 199.7 GFLOP/s, sub 112 203.9 GFLOP/s (x0.979 of base's time) ",
+  "tile gcc same bits: yes M=128 K=448 N=48: base 197.4 GFLOP/s, sub 64 194.1 GFLOP/s (x1.017 of base's time) "
+ ]
+}

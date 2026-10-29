@@ -1,0 +1,107 @@
+{
+ "tools": {
+  "count_passes.sh": "81de81414da11cf25335c573aa1384703d669297b01edff1ba7fdce5b3222bbe",
+  "count_passes.c": "a34d280fb965a16b8e2e70ebb50a8f4499d5230f8133968924e7dde3356be619",
+  "replay_pack.c": "101895c2802c565f9780e5765878248a783f712b47aee61593afd0d8e97a7bda"
+ },
+ "inputs": {
+  "pack.bin": "295a1d81bef9f878b3f4850237339c0da6b5d4b152929d90edd250451377655a",
+  "seed.bin (fuzz_pack_seeds' c0_1x1)": "9c5b3e8a8095052cea26654d5bdc2735b0b988e564bf886ec541e7febfe74302"
+ },
+ "sources": {
+  "before/bcir_runtime.c": "78e63ecddb5f6b271c26d51637bae5dede3f0aac1802a228f18aeb173765f7de",
+  "before/bcir_exec.c": "2d9e4449931095af8028e08b1525ae3a5235393933f1d94eb5802dd1a6196d8b",
+  "before/bcir_decoder_gem.c": "ffa73bdef663acbc55f2d3f6ed191036d6d1792531ae52277fe9f7a5dc693c12",
+  "before/bcir_decoder_pack.c": "cf457ccdb2570210e5f723eed48679587ac5b7003334dfd6ff214f284caf1ab3",
+  "before/fuzz_decoder_pack.c": "cc4afae606a6dcdba8aa43251745f0985793de662ac1f101308f300d8d41c2d8",
+  "after/bcir_runtime.c": "290bb60f8c41af10e24043f19c5970c805dd530fc37955cfb5b07949f9ba6713",
+  "after/bcir_exec.c": "e52930b1c96b2ea7adc0da36a39c4b62134583d081ca19124bf2d2c5a4ef541d",
+  "after/bcir_decoder_gem.c": "1cfc4e3a61ad98b47c2a8069f67ea93a3e578ddbe3c5b09ad43afee7e95ce6ed",
+  "after/bcir_decoder_pack.c": "cf457ccdb2570210e5f723eed48679587ac5b7003334dfd6ff214f284caf1ab3",
+  "after/fuzz_decoder_pack.c": "cc4afae606a6dcdba8aa43251745f0985793de662ac1f101308f300d8d41c2d8"
+ },
+ "rows": [
+  {
+   "tree": "before",
+   "entry": "bcir_sp_execute",
+   "calls": 1,
+   "crc32_by_caller_each_call": {
+    "bcir_sp_validate": 3
+   },
+   "pack_passes_a_call": 3,
+   "plan_passes_a_call": 0
+  },
+  {
+   "tree": "before",
+   "entry": "bcir_dgem_load",
+   "calls": 1,
+   "crc32_by_caller_each_call": {
+    "bcir_sp_validate": 4
+   },
+   "pack_passes_a_call": 4,
+   "plan_passes_a_call": 0
+  },
+  {
+   "tree": "before",
+   "entry": "bcir_dgem_run",
+   "calls": 1,
+   "crc32_by_caller_each_call": {
+    "bcir_sp_validate": 3
+   },
+   "pack_passes_a_call": 3,
+   "plan_passes_a_call": 0
+  },
+  {
+   "tree": "before",
+   "entry": "bcir_decoder_lower_pack",
+   "calls": 4,
+   "crc32_by_caller_each_call": {
+    "bcir_ep_validate": 4,
+    "bcir_sp_validate": 13
+   },
+   "pack_passes_a_call": 13,
+   "plan_passes_a_call": 4
+  },
+  {
+   "tree": "after",
+   "entry": "bcir_sp_execute",
+   "calls": 1,
+   "crc32_by_caller_each_call": {
+    "bcir_sp_validate": 1
+   },
+   "pack_passes_a_call": 1,
+   "plan_passes_a_call": 0
+  },
+  {
+   "tree": "after",
+   "entry": "bcir_dgem_load",
+   "calls": 1,
+   "crc32_by_caller_each_call": {
+    "bcir_sp_validate": 1
+   },
+   "pack_passes_a_call": 1,
+   "plan_passes_a_call": 0
+  },
+  {
+   "tree": "after",
+   "entry": "bcir_dgem_run",
+   "calls": 1,
+   "crc32_by_caller_each_call": {
+    "bcir_sp_validate": 1
+   },
+   "pack_passes_a_call": 1,
+   "plan_passes_a_call": 0
+  },
+  {
+   "tree": "after",
+   "entry": "bcir_decoder_lower_pack",
+   "calls": 4,
+   "crc32_by_caller_each_call": {
+    "bcir_ep_validate": 4,
+    "bcir_sp_validate": 9
+   },
+   "pack_passes_a_call": 9,
+   "plan_passes_a_call": 4
+  }
+ ]
+}

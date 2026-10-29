@@ -16,12 +16,18 @@ from pathlib import Path
 
 from bcir.frontends.models.decode import DecoderSpec
 from bcir.hosted.models.native_launch import (
+    ATTN,
+    ATTN_VJP,
     GEMM,
     KIND_NAMES,
     PREFLIGHT,
+    E_GROUP,
+    E_KBLOCK,
+    SPACES,
     Launch,
     launch_mismatches,
     run_launches,
+    step_program,
 )
 from bcir.hosted.models.native_program import training_step_program
 from bcir.tests import native_decoder_fixtures as nf
@@ -89,6 +95,140 @@ def test_the_c_step_issues_the_planned_launches():
         differ = [corpus[i] for i in picked
                   if nf.trace_case(plain, corpus[i], trace=False).state != states[i]]  # fmt: skip
         assert not differ, differ[:3]
+
+
+def test_a_long_context_lends_the_binary32_attention_the_workspace():
+    """ATT-CONTIG: from the copies' context threshold on, a trainer under a binary32 contract lends
+    its attention a workspace -- the step's need is the attention's regions -- and both of the
+    attention's launches state it, the state's whole workspace; the C step issues exactly the
+    launches its plan states, and every program run of the case (the C step's decisions and each
+    planner choice) runs to its end with the C step's state and events bit for bit. The trace
+    corpus holds the same under the bf16 GEMM contract, whose workspace the binary32 attention is
+    lent too; nowhere else in it does a binary32 contract lend one."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.trace_library(Path(tmp) / "trace")
+        if path is None:
+            return  # no C compiler, or no C units (an installed package): a documented skip
+        spec = DecoderSpec(16, 8, 2, 1, 16, activation="silu_gate", n_kv_heads=1)
+        case = nf.TraceCase(spec, 1, 1024, "v1")
+        problems, runs, lent = [], 0, set()
+        for _case, choices, step, run in nf.program_runs(path, [case]):
+            runs += 1
+            if not choices:
+                problems += launch_mismatches(step.planned, step.traced)[:2]
+                if step.dropped:
+                    problems.append(f"{step.dropped} records dropped")
+            problems += [(choices, found) for found in nf.program_problems(step, run)[:2]]
+            lent |= {r.refs[8] for launch in run.program for r in launch.records
+                     if r.kind in (ATTN, ATTN_VJP)}  # fmt: skip
+        assert not problems, problems[:3]
+        assert runs == nf.program_run_count([case]) and runs > 1, runs
+        assert len(lent) == 1, lent  # one operand, the same on every launch of every program
+        space, offset, size = next(iter(lent))
+        assert (space, offset) == (SPACES["workspace"], 0) and size > 0, lent
+
+
+def _gemm_workspaces(program) -> tuple[set, set]:
+    """The workspace slots of a program's GEMM records: those of the jobs with a weight adjoint
+    (a call with A transposed), and those of the others."""
+    lent, kept = set(), set()
+    for launch in program:
+        gemm = [r for r in launch.records if r.kind == GEMM]
+        weight = any(r.dims[0] == 1 for r in gemm)
+        (lent if weight else kept).update(r.refs[3] for r in gemm)
+    return lent, kept
+
+
+def test_the_plan_lends_a_blocked_weight_adjoint_job_the_workspace():
+    """KSPLIT, the step program alone: under the blocked GEMM contract with workspace bytes, every
+    record of a GEMM job with a weight adjoint carries the whole workspace and no other GEMM record
+    does -- as one job, as a group's or a pair's, or alone, as the planner's choices shape them;
+    under v1's or the fused contract, over a provider's GEMM, or with no bytes, no binary32 GEMM
+    record carries one."""
+    spec = DecoderSpec(16, 8, 2, 2, 16, activation="silu_gate", n_kv_heads=1)
+    ws, none = 1 << 16, {(0, 0, 0)}
+    for choices in ({}, {"group": False}, {"pair": False}, {"group": False, "pair": False}):
+        lent, kept = _gemm_workspaces(step_program(spec, 2, 8, contract=4 | 2, workspace_bytes=ws,
+                                                   **choices))  # fmt: skip
+        assert lent == {(SPACES["workspace"], 0, ws)} and kept == none, (choices, lent, kept)
+    for contract, bytes_, provider in ((0, ws, False), (1 | 2, ws, False), (4, 0, False),
+                                       (4, ws, True)):  # fmt: skip
+        lent, kept = _gemm_workspaces(step_program(spec, 2, 8, contract=contract,
+                                                   workspace_bytes=bytes_, provider_mm=provider))  # fmt: skip
+        assert lent | kept == none, (contract, bytes_, provider, lent, kept)
+
+
+def _chained(program):
+    """KSPLIT: `program` with its first weight adjoint alone (a job of one blocked call with A
+    transposed) run as a group's chain of one -- a job the planner never makes, whose weight
+    adjoint is a chain's call."""
+    out = list(program)
+    for i, launch in enumerate(out):
+        r, *more = launch.records
+        if not more and r.kind == GEMM and r.dims[0] == 1 and r.flags & 15 == E_KBLOCK:
+            out[i] = Launch((replace(r, flags=E_GROUP | 1 << 4 | E_KBLOCK << 16),))
+            return out
+    raise AssertionError("no weight adjoint alone")
+
+
+def test_a_blocked_weight_adjoint_job_is_lent_the_workspace():
+    """KSPLIT: under the blocked GEMM contract a trainer that has a workspace -- a long context's,
+    the attention's copies (ATT-CONTIG), and a short context's four K blocks deep, the room its
+    weight adjoints split in alone (KSPLIT-ROOM) -- lends it to every GEMM job with a weight
+    adjoint (a call with A transposed) and to no other job, every record of such a job stating the
+    state's whole workspace; the C step issues exactly the launches its plan states, and every
+    program run and every pack run of each case (the C step's decisions and each planner choice:
+    the linears alone, a linear's VJPs apart) runs to its end with the C step's state and events
+    bit for bit -- as does a program running a weight adjoint as a group's chain of one, lent by
+    its chain. At these depths -- 2048 rows, five K blocks, and 1408, four -- the tensor unit
+    splits the weight adjoints into the workspace, and each state is the one a build that never
+    splits trains."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.trace_library(Path(tmp) / "trace")
+        packs = nf.pack_library(Path(tmp) / "pack")
+        if path is None or packs is None:
+            return  # no C compiler, or no C units (an installed package): a documented skip
+        spec = DecoderSpec(16, 8, 2, 1, 16, activation="silu_gate", n_kv_heads=1)
+        case = nf.TraceCase(spec, 2, 1024, "kblock+exp")
+        short = nf.TraceCase(spec, 2, 704, "kblock")  # KSPLIT-ROOM: the room alone
+        cases = (case, short)
+        problems, runs, kept, first = [], 0, set(), {}
+        lent: dict = {ran: set() for ran in cases}
+        for ran, choices, step, run in nf.program_runs(path, cases):
+            runs += 1
+            if not choices:
+                problems += launch_mismatches(step.planned, step.traced)[:2]
+                if step.dropped:
+                    problems.append(f"{step.dropped} records dropped")
+                first[ran] = step
+            problems += [(ran.time, choices, found)
+                         for found in nf.program_problems(step, run)[:2]]  # fmt: skip
+            ran_lent, ran_kept = _gemm_workspaces(run.program)
+            lent[ran] |= ran_lent
+            kept |= ran_kept
+        packed = 0
+        for ran, choices, step, run in nf.pack_runs(packs, cases):
+            packed += 1
+            problems += [(ran.time, choices, "pack", found)
+                         for found in nf.pack_problems(step, run)[:2]]  # fmt: skip
+        chained = nf.program_case(path, case, {"pair": False}, edit=_chained)
+        problems += [("chained", found) for found in nf.program_problems(first[case], chained)[:2]]
+        assert not problems, problems[:3]
+        assert any(r.flags & 0xFF == E_GROUP | 1 << 4 and r.refs[3] in lent[case]
+                   for launch in chained.program for r in launch.records)  # fmt: skip
+        assert runs == packed == nf.program_run_count(cases) and runs > 2, (runs, packed)
+        assert kept == {(0, 0, 0)} and len(lent[case]) == 1, (kept, lent)
+        space, offset, size = next(iter(lent[case]))
+        assert (space, offset) == (SPACES["workspace"], 0) and size > 0, lent
+        assert lent[short] == {(SPACES["workspace"], 0, nf.ksplit_room(spec, 1408))}, lent
+        # a build whose threshold no depth reaches runs every weight adjoint unsplit
+        never = nf.build_library(
+            Path(tmp) / "never",
+            sources={"bcir_tensor.c": "#define BCIR_MM_KSPLIT_BLOCKS ((size_t)-1)\n"
+                     + nf.source("bcir_tensor.c")},
+        )  # fmt: skip
+        for ran in cases:
+            assert nf.trace_case(never, ran, trace=False).state == first[ran].state, ran.time
 
 
 def _as_trace(launches):

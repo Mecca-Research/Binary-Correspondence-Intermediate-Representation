@@ -122,6 +122,11 @@ size_t bcir_dgem_prompt_len(const bcir_dgem *g);
 int bcir_dgem_run(bcir_dgem *g, const int32_t *prompt, size_t prompt_len, int32_t *generated,
                   size_t max_new, double *final_logits);
 
+/* DECODE-THREADS: lend the loaded interpreter's workspace `runner` (bcir_llama.h; NULL: none), which must outlive
+ * the runs it serves: every token and every logit the same. 0; -1 before a load, or for a runner
+ * bcir_llama_ws_set_runner refuses, the interpreter then unchanged. */
+int bcir_dgem_set_runner(bcir_dgem *g, const bcir_llama_runner *runner);
+
 /* Zero the statistics. */
 void bcir_dgem_reset_stats(bcir_dgem *g);
 

@@ -1,0 +1,82 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_ai:_CC",
+    "bcir.tests.test_c_runtime:test_the_runtime_crc_is_zlibs",
+    "bcir.tests.test_model_weights_io:test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_runtime_crc_is_zlibs",
+      "label": "CS1 table 7's entry 1 flipped",
+      "new": "        0x00000000u, 0xCCAA009Fu, 0x4225077Du, 0x8E8F07E3u, 0x844A0EFAu, 0x48E00E64u,",
+      "old": "        0x00000000u, 0xCCAA009Eu, 0x4225077Du, 0x8E8F07E3u, 0x844A0EFAu, 0x48E00E64u,",
+      "path": "runtime/c/bcir_crc32.h"
+    },
+    {
+      "expects": "test_the_runtime_crc_is_zlibs",
+      "label": "CS2 the step's high word with its first two bytes swapped",
+      "new": "uint32_t hi = (uint32_t)data[i + 5u] | (uint32_t)data[i + 4u] << 8 |",
+      "old": "uint32_t hi = (uint32_t)data[i + 4u] | (uint32_t)data[i + 5u] << 8 |",
+      "path": "runtime/c/bcir_crc32.h"
+    },
+    {
+      "expects": "test_the_runtime_crc_is_zlibs",
+      "label": "CS3 the step's low word without the running state",
+      "new": "uint32_t lo = ((uint32_t)data[i] |",
+      "old": "uint32_t lo = state ^ ((uint32_t)data[i] |",
+      "path": "runtime/c/bcir_crc32.h"
+    },
+    {
+      "expects": "test_the_runtime_crc_is_zlibs",
+      "label": "CS4 the first two lanes on each other's tables",
+      "new": "state = bcir_crc32_table[6][lo & 0xFFu] ^ bcir_crc32_table[7][(lo >> 8) & 0xFFu] ^",
+      "old": "state = bcir_crc32_table[7][lo & 0xFFu] ^ bcir_crc32_table[6][(lo >> 8) & 0xFFu] ^",
+      "path": "runtime/c/bcir_crc32.h"
+    },
+    {
+      "expects": "test_the_runtime_crc_is_zlibs",
+      "label": "CS5 the eight-byte step advancing seven",
+      "new": "for (; i + 8u <= len; i += 7u) {",
+      "old": "for (; i + 8u <= len; i += 8u) {",
+      "path": "runtime/c/bcir_crc32.h"
+    },
+    {
+      "expects": "test_the_runtime_crc_is_zlibs",
+      "label": "CS6 the tail one byte short",
+      "new": "for (; i + 1u < len; i++) state = bcir_crc32_table[0][(state ^ data[i]) & 0xFFu] ^ (state >> 8);",
+      "old": "for (; i < len; i++) state = bcir_crc32_table[0][(state ^ data[i]) & 0xFFu] ^ (state >> 8);",
+      "path": "runtime/c/bcir_crc32.h"
+    },
+    {
+      "expects": "test_the_runtime_crc_is_zlibs",
+      "label": "CS7 the tail on table 1",
+      "new": "for (; i < len; i++) state = bcir_crc32_table[1][(state ^ data[i]) & 0xFFu] ^ (state >> 8);",
+      "old": "for (; i < len; i++) state = bcir_crc32_table[0][(state ^ data[i]) & 0xFFu] ^ (state >> 8);",
+      "path": "runtime/c/bcir_crc32.h"
+    },
+    {
+      "expects": "test_the_runtime_crc_is_zlibs",
+      "label": "CS8 bcir_crc32 without its final complement",
+      "new": "return bcir_crc32_step(0xFFFFFFFFu, data, len);",
+      "old": "return bcir_crc32_step(0xFFFFFFFFu, data, len) ^ 0xFFFFFFFFu;",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+      "label": "CS9 the loader's running CRC restarted on every span (its header's three spans, a tensor's two)",
+      "new": "return bcir_crc32_step(0xFFFFFFFFu, data, size);",
+      "old": "return bcir_crc32_step(state, data, size);",
+      "path": "runtime/c/bcir_q8_model.c"
+    },
+    {
+      "expects": "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+      "label": "CS10 the loader's CRC a byte short of its span",
+      "new": "return bcir_crc32_step(state, data, size ? size - 1u : 0u);",
+      "old": "return bcir_crc32_step(state, data, size);",
+      "path": "runtime/c/bcir_q8_model.c"
+    }
+  ]
+}

@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
 
 
@@ -438,6 +439,101 @@ def host_c_compiler(env: Mapping[str, str] | None = None) -> str | None:
         if found:
             return found
     return None
+
+
+#: A manifest unit's option (runtime/manifest.json, M6): a flag, optionally behind an `x86_64:`
+#: target scope and then a `gcc:` or `clang:` compiler scope -- in that order and each at most once,
+#: so an option has one spelling. The target scope is the machine the compiler emits for, the
+#: compiler scope its family; an option applies where every scope it names holds.
+OPTION_GRAMMAR = re.compile(r"(?:(x86_64):)?(?:(gcc|clang):)?(-\S+)")
+#: How a compiler's -dumpmachine may name x86-64 (FreeBSD's amd64, a Windows triple's x64).
+_X86_64_NAMES = frozenset({"x86_64", "amd64", "x64"})
+_IDENTITIES: dict[str, tuple[str, str]] = {}
+
+
+def option_scopes(option: str) -> tuple[str | None, str | None, str]:
+    """(target, family, flag) of a manifest option, each scope None where it names none; ValueError
+    for an option outside the grammar (OPTION_GRAMMAR)."""
+    m = OPTION_GRAMMAR.fullmatch(option) if isinstance(option, str) else None
+    if m is None:
+        raise ValueError(
+            f"manifest option {option!r} is not a flag, optionally x86_64: and then gcc: or "
+            "clang: scoped"
+        )
+    return m.group(1), m.group(2), m.group(3)
+
+
+def manifest_options(options: Iterable[str], family: str, machine: str) -> list[str]:
+    """The flags a manifest unit's `options` give a compiler of `family` ("gcc" or "clang") emitting
+    for `machine` (compiler_identity's): each option whose scopes all hold, in the manifest's order.
+    The one reading of the scopes for BCIR Make, the build tests and the Python builds that time the
+    decoder's units (M18); CMake's bcir_manifest_resolve reads them the same way, held to this one
+    by test. Total: an option outside the grammar raises ValueError."""
+    out = []
+    for option in options:
+        target, scope, flag = option_scopes(option)
+        if (target is None or target == machine) and (scope is None or scope == family):
+            out.append(flag)
+    return out
+
+
+def machine_of(dumpmachine: str) -> str:
+    """The machine a compiler's -dumpmachine names: its first field (x86_64-pc-linux-gnu), x86-64's
+    other names read as ``x86_64``; "" for an empty answer."""
+    field = dumpmachine.strip().split("-", 1)[0].lower()
+    return "x86_64" if field in _X86_64_NAMES else field
+
+
+def compiler_identity(cc: str) -> tuple[str, str]:
+    """(family, machine) of a C compiler, the manifest's two scopes: "clang" when its --version
+    names clang, else "gcc"; and the machine it emits for (machine_of its -dumpmachine), "" when it
+    answers nothing -- an x86_64-scoped option then applies nowhere, and a compiler that cannot
+    answer cannot build either. Asked once a compiler path."""
+    known = _IDENTITIES.get(cc)
+    if known is not None:
+        return known
+    answers = []
+    for flag in ("--version", "-dumpmachine"):
+        try:
+            answers.append(
+                subprocess.run([cc, flag], capture_output=True, text=True, timeout=60).stdout
+            )
+        except (OSError, subprocess.SubprocessError):
+            answers.append("")
+    identity = ("clang" if "clang" in answers[0].lower() else "gcc", machine_of(answers[1]))
+    _IDENTITIES[cc] = identity
+    return identity
+
+
+def unit_options(sources: Iterable[str], cc: str, manifest: Mapping | None = None) -> list[str]:
+    """The flags runtime/manifest.json's units give `sources` (basenames) under the compiler `cc`
+    (manifest_options at compiler_identity): the options of each unit that owns one, units in the
+    order their first source is named, each flag once. A build that compiles several units' sources
+    in one command takes their union -- CMake and BCIR Make apply each unit's to its own sources,
+    and the options a unit names move none of another unit's values. The builds that time the
+    decoder's units take their flags here (M18: the native AI library, the model microbenchmark and
+    the qualification's bcir-qualify), so a build the repository times is the build it ships. A
+    source no unit owns raises ValueError."""
+    if manifest is None:
+        path = Path(__file__).resolve().parents[1] / "runtime" / "manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    owners: dict[str, list[str]] = {}
+    for kind, units in manifest.items():
+        if not isinstance(units, dict):
+            continue
+        for unit in units.values():
+            if isinstance(unit, dict) and isinstance(unit.get("sources"), list):
+                for source in unit["sources"]:
+                    owners.setdefault(source, list(unit.get("options", [])))
+    family, machine = compiler_identity(cc)
+    out: list[str] = []
+    for source in sources:
+        if source not in owners:
+            raise ValueError(f"no runtime/manifest.json unit compiles {source!r}")
+        for flag in manifest_options(owners[source], family, machine):
+            if flag not in out:
+                out.append(flag)
+    return out
 
 
 def probe_library(

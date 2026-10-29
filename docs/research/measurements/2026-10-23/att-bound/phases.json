@@ -1,0 +1,56 @@
+{
+ "what": "phase_bench.c over instrument_phases.py's copy of the tree's tensor unit (e3ca8031): the scratch forward at B4/T2048, 4 heads of 32, contract 1 (EXP; v1's products), TSC cycles a call over 6 calls after one -- the scores (with each strip's key panels), the softmax (its max pass, its exponential-and-sum pass and its division), the context; summed over the workers on four threads",
+ "probabilities_a_call": 33570816,
+ "runs": [
+  {
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 1,
+   "wall_cycles_per_call": 209421376,
+   "scores": 69452680,
+   "softmax": 75930253,
+   "context": 61396654,
+   "max": 8344635,
+   "expsum": 49143365,
+   "divide": 17741007,
+   "cycles_a_probability": {
+    "scores": 2.0688409837878234,
+    "softmax": 2.261793487533934,
+    "context": 1.828869873166026,
+    "max": 0.2485681313197749,
+    "expsum": 1.4638716258788587,
+    "divide": 0.5284651704623444
+   }
+  },
+  {
+   "shape": [
+    4,
+    2048,
+    4,
+    4,
+    32
+   ],
+   "threads": 4,
+   "wall_cycles_per_call": 54627883,
+   "scores": 68692009,
+   "softmax": 77016090,
+   "context": 61743929,
+   "max": 8521522,
+   "expsum": 49401421,
+   "divide": 17868424,
+   "cycles_a_probability": {
+    "scores": 2.046182285232507,
+    "softmax": 2.2941381585720166,
+    "context": 1.839214423623185,
+    "max": 0.2538372019315825,
+    "expsum": 1.471558540608605,
+    "divide": 0.5322606397175451
+   }
+  }
+ ]
+}

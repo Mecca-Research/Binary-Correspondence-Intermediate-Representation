@@ -1,0 +1,33 @@
+{
+ "carried": {},
+ "chosen": {},
+ "claims": 893,
+ "commit": "d1379177d138d7b4c3bf752b5ea95aa1be3473ec",
+ "contract": "bf16+exp+reduce+attnbf16",
+ "k": 4,
+ "lifetimes": 883,
+ "measured_prices": null,
+ "measured_step_count": 0,
+ "measured_steps": [],
+ "measurement": "t4-bf16attnbf16.json",
+ "one_state": true,
+ "plan_dispatch": [
+  "instance 0 workers 0"
+ ],
+ "seconds": {
+  "lower": 0.0177,
+  "plan_hydrate_place": 0.167
+ },
+ "state_sha256_16": {
+  "chosen program": "29bb1c5a7f68b184",
+  "lowered pack": "29bb1c5a7f68b184"
+ },
+ "threads": 4,
+ "trees": {
+  "bcir": "397c953a8d20608ad6fa9609d27dabf8e763f6be",
+  "runtime/c": "d33d600f5d0f80363e538de6ddea3623eca4cccf"
+ },
+ "uncarried": [],
+ "words_are_the_carried_program": true,
+ "worktree_diff_sha256_16": "e3b0c44298fc1c14"
+}

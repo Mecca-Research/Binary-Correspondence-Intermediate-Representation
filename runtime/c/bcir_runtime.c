@@ -4,65 +4,17 @@
  * byte (host-endian-independent). Matches bcir/abi/streampack_abi.py.
  *===----------------------------------------------------------------------===*/
 #include "bcir_runtime.h"
+#include "bcir_crc32.h"
 #include "bcir_execution_plan.h"
 
-/* --- zlib-compatible CRC-32 (table-driven, freestanding) --- */
-/* CRC-32 (IEEE 802.3, reflected, polynomial 0xEDB88320; zlib's crc32), one table step per byte.
- * The table is the bitwise loop's state after eight steps from each byte value -- entry n is
- * what `for (k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320 & -(c & 1))` leaves from c = n --
- * precomputed, so the eight dependent shifts per byte become one load (CXX4: the bitwise loop was
- * 81% of the native hydrate's instructions). Const data: freestanding, no heap, no init. The
- * table and the loop are held equal to zlib.crc32 over random buffers (test_c_runtime.py). */
-static const uint32_t bcir_crc_table[256] = {
-    0x00000000u, 0x77073096u, 0xEE0E612Cu, 0x990951BAu, 0x076DC419u, 0x706AF48Fu,
-    0xE963A535u, 0x9E6495A3u, 0x0EDB8832u, 0x79DCB8A4u, 0xE0D5E91Eu, 0x97D2D988u,
-    0x09B64C2Bu, 0x7EB17CBDu, 0xE7B82D07u, 0x90BF1D91u, 0x1DB71064u, 0x6AB020F2u,
-    0xF3B97148u, 0x84BE41DEu, 0x1ADAD47Du, 0x6DDDE4EBu, 0xF4D4B551u, 0x83D385C7u,
-    0x136C9856u, 0x646BA8C0u, 0xFD62F97Au, 0x8A65C9ECu, 0x14015C4Fu, 0x63066CD9u,
-    0xFA0F3D63u, 0x8D080DF5u, 0x3B6E20C8u, 0x4C69105Eu, 0xD56041E4u, 0xA2677172u,
-    0x3C03E4D1u, 0x4B04D447u, 0xD20D85FDu, 0xA50AB56Bu, 0x35B5A8FAu, 0x42B2986Cu,
-    0xDBBBC9D6u, 0xACBCF940u, 0x32D86CE3u, 0x45DF5C75u, 0xDCD60DCFu, 0xABD13D59u,
-    0x26D930ACu, 0x51DE003Au, 0xC8D75180u, 0xBFD06116u, 0x21B4F4B5u, 0x56B3C423u,
-    0xCFBA9599u, 0xB8BDA50Fu, 0x2802B89Eu, 0x5F058808u, 0xC60CD9B2u, 0xB10BE924u,
-    0x2F6F7C87u, 0x58684C11u, 0xC1611DABu, 0xB6662D3Du, 0x76DC4190u, 0x01DB7106u,
-    0x98D220BCu, 0xEFD5102Au, 0x71B18589u, 0x06B6B51Fu, 0x9FBFE4A5u, 0xE8B8D433u,
-    0x7807C9A2u, 0x0F00F934u, 0x9609A88Eu, 0xE10E9818u, 0x7F6A0DBBu, 0x086D3D2Du,
-    0x91646C97u, 0xE6635C01u, 0x6B6B51F4u, 0x1C6C6162u, 0x856530D8u, 0xF262004Eu,
-    0x6C0695EDu, 0x1B01A57Bu, 0x8208F4C1u, 0xF50FC457u, 0x65B0D9C6u, 0x12B7E950u,
-    0x8BBEB8EAu, 0xFCB9887Cu, 0x62DD1DDFu, 0x15DA2D49u, 0x8CD37CF3u, 0xFBD44C65u,
-    0x4DB26158u, 0x3AB551CEu, 0xA3BC0074u, 0xD4BB30E2u, 0x4ADFA541u, 0x3DD895D7u,
-    0xA4D1C46Du, 0xD3D6F4FBu, 0x4369E96Au, 0x346ED9FCu, 0xAD678846u, 0xDA60B8D0u,
-    0x44042D73u, 0x33031DE5u, 0xAA0A4C5Fu, 0xDD0D7CC9u, 0x5005713Cu, 0x270241AAu,
-    0xBE0B1010u, 0xC90C2086u, 0x5768B525u, 0x206F85B3u, 0xB966D409u, 0xCE61E49Fu,
-    0x5EDEF90Eu, 0x29D9C998u, 0xB0D09822u, 0xC7D7A8B4u, 0x59B33D17u, 0x2EB40D81u,
-    0xB7BD5C3Bu, 0xC0BA6CADu, 0xEDB88320u, 0x9ABFB3B6u, 0x03B6E20Cu, 0x74B1D29Au,
-    0xEAD54739u, 0x9DD277AFu, 0x04DB2615u, 0x73DC1683u, 0xE3630B12u, 0x94643B84u,
-    0x0D6D6A3Eu, 0x7A6A5AA8u, 0xE40ECF0Bu, 0x9309FF9Du, 0x0A00AE27u, 0x7D079EB1u,
-    0xF00F9344u, 0x8708A3D2u, 0x1E01F268u, 0x6906C2FEu, 0xF762575Du, 0x806567CBu,
-    0x196C3671u, 0x6E6B06E7u, 0xFED41B76u, 0x89D32BE0u, 0x10DA7A5Au, 0x67DD4ACCu,
-    0xF9B9DF6Fu, 0x8EBEEFF9u, 0x17B7BE43u, 0x60B08ED5u, 0xD6D6A3E8u, 0xA1D1937Eu,
-    0x38D8C2C4u, 0x4FDFF252u, 0xD1BB67F1u, 0xA6BC5767u, 0x3FB506DDu, 0x48B2364Bu,
-    0xD80D2BDAu, 0xAF0A1B4Cu, 0x36034AF6u, 0x41047A60u, 0xDF60EFC3u, 0xA867DF55u,
-    0x316E8EEFu, 0x4669BE79u, 0xCB61B38Cu, 0xBC66831Au, 0x256FD2A0u, 0x5268E236u,
-    0xCC0C7795u, 0xBB0B4703u, 0x220216B9u, 0x5505262Fu, 0xC5BA3BBEu, 0xB2BD0B28u,
-    0x2BB45A92u, 0x5CB36A04u, 0xC2D7FFA7u, 0xB5D0CF31u, 0x2CD99E8Bu, 0x5BDEAE1Du,
-    0x9B64C2B0u, 0xEC63F226u, 0x756AA39Cu, 0x026D930Au, 0x9C0906A9u, 0xEB0E363Fu,
-    0x72076785u, 0x05005713u, 0x95BF4A82u, 0xE2B87A14u, 0x7BB12BAEu, 0x0CB61B38u,
-    0x92D28E9Bu, 0xE5D5BE0Du, 0x7CDCEFB7u, 0x0BDBDF21u, 0x86D3D2D4u, 0xF1D4E242u,
-    0x68DDB3F8u, 0x1FDA836Eu, 0x81BE16CDu, 0xF6B9265Bu, 0x6FB077E1u, 0x18B74777u,
-    0x88085AE6u, 0xFF0F6A70u, 0x66063BCAu, 0x11010B5Cu, 0x8F659EFFu, 0xF862AE69u,
-    0x616BFFD3u, 0x166CCF45u, 0xA00AE278u, 0xD70DD2EEu, 0x4E048354u, 0x3903B3C2u,
-    0xA7672661u, 0xD06016F7u, 0x4969474Du, 0x3E6E77DBu, 0xAED16A4Au, 0xD9D65ADCu,
-    0x40DF0B66u, 0x37D83BF0u, 0xA9BCAE53u, 0xDEBB9EC5u, 0x47B2CF7Fu, 0x30B5FFE9u,
-    0xBDBDF21Cu, 0xCABAC28Au, 0x53B39330u, 0x24B4A3A6u, 0xBAD03605u, 0xCDD70693u,
-    0x54DE5729u, 0x23D967BFu, 0xB3667A2Eu, 0xC4614AB8u, 0x5D681B02u, 0x2A6F2B94u,
-    0xB40BBE37u, 0xC30C8EA1u, 0x5A05DF1Bu, 0x2D02EF8Du};
-
+/* --- zlib-compatible CRC-32 (freestanding) --- */
+/* CRC-32 (IEEE 802.3, reflected, polynomial 0xEDB88320; zlib's crc32) eight bytes a step: bcir_crc32.h's tables
+ * and step, the ones every unit that checks a CRC-32 reads (CRC-SLICE; the byte table before it, one table step a
+ * byte, replaced in turn the bitwise loop that was 81% of the native hydrate's instructions -- CXX4). Const data:
+ * freestanding, no heap, no init. Held equal to zlib.crc32 over random buffers (test_c_runtime.py). */
 uint32_t bcir_crc32(const uint8_t *BCIR_RESTRICT data, size_t len) {
   if (!data && len) return 0;
-  uint32_t c = 0xFFFFFFFFu;
-  for (size_t i = 0; i < len; i++) c = bcir_crc_table[(c ^ data[i]) & 0xFFu] ^ (c >> 8);
-  return c ^ 0xFFFFFFFFu;
+  return bcir_crc32_step(0xFFFFFFFFu, data, len) ^ 0xFFFFFFFFu;
 }
 
 /* The default heterogeneous channel for a v1/v2 segment (no channel on the wire). The C
@@ -240,18 +192,17 @@ bcir_status bcir_sp_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
   return BCIR_OK;
 }
 
-bcir_status bcir_sp_for_each_segment(const uint8_t *BCIR_RESTRICT data, size_t len,
-                                     bcir_seg_fn fn, void *ctx) {
-  bcir_streampack_header hdr;
-  bcir_status st = bcir_sp_validate(data, len, &hdr);
-  if (st != BCIR_OK) return st;
-
+/* SP-ONCE: each walk is a body over the header bcir_sp_validate read from the same bytes. A plain walk
+ * validates and runs its body; a checked walk (bcir_sp_checked_*) runs it over a pack bcir_sp_check
+ * validated once -- every bound, every range gate and every verdict the same, the CRC not recomputed. */
+static bcir_status sp_segments(const uint8_t *BCIR_RESTRICT data, size_t len,
+                               const bcir_streampack_header *hdr, bcir_seg_fn fn, void *ctx) {
   cur c;
   c.d = data; c.len = len - 4u; c.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; c.err = 0;
   int invoke_callback = 1;
   c_skip_str(&c); /* source_plan */
 
-  for (uint32_t i = 0; i < hdr.n_segments && !c.err; i++) {
+  for (uint32_t i = 0; i < hdr->n_segments && !c.err; i++) {
     bcir_segment_view v;
     v.name = c_str(&c, &v.name_len);
     v.claim_id = c_u64(&c);
@@ -266,7 +217,7 @@ bcir_status bcir_sp_for_each_segment(const uint8_t *BCIR_RESTRICT data, size_t l
     c_skip_strarr(&c);  /* fence_before */
     c_skip_strarr(&c);  /* fence_after */
     /* v3 (append-only) segment-record tail: dispatch (u8) + channel (str). v1/v2 default. */
-    if (hdr.version >= 3) {
+    if (hdr->version >= 3) {
       v.dispatch = c_u8(&c);
       v.channel = c_str(&c, &v.channel_len);
     } else {
@@ -285,18 +236,29 @@ bcir_status bcir_sp_for_each_segment(const uint8_t *BCIR_RESTRICT data, size_t l
   return c.err ? c_status(&c) : BCIR_OK;
 }
 
+bcir_status bcir_sp_for_each_segment(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                     bcir_seg_fn fn, void *ctx) {
+  bcir_streampack_header hdr;
+  bcir_status st = bcir_sp_validate(data, len, &hdr);
+  return st != BCIR_OK ? st : sp_segments(data, len, &hdr, fn, ctx);
+}
+
+/* R11: a generation mismatch is a STALE pack -- rehydrate, never execute. */
+static bcir_status sp_generation(const bcir_streampack_header *hdr, uint32_t expected_map_gen,
+                                 uint32_t expected_data_gen) {
+  if (expected_map_gen != 0xFFFFFFFFu && hdr->map_gen != expected_map_gen)
+    return BCIR_ERR_STALE;
+  if (expected_data_gen != 0xFFFFFFFFu && hdr->data_gen != expected_data_gen)
+    return BCIR_ERR_STALE;
+  return BCIR_OK;
+}
+
 bcir_status bcir_sp_check_generation(const uint8_t *BCIR_RESTRICT data, size_t len,
                                      uint32_t expected_map_gen,
                                      uint32_t expected_data_gen) {
   bcir_streampack_header hdr;
   bcir_status st = bcir_sp_validate(data, len, &hdr);
-  if (st != BCIR_OK) return st;
-  /* R11: a generation mismatch is a STALE pack -- rehydrate, never execute. */
-  if (expected_map_gen != 0xFFFFFFFFu && hdr.map_gen != expected_map_gen)
-    return BCIR_ERR_STALE;
-  if (expected_data_gen != 0xFFFFFFFFu && hdr.data_gen != expected_data_gen)
-    return BCIR_ERR_STALE;
-  return BCIR_OK;
+  return st != BCIR_OK ? st : sp_generation(&hdr, expected_map_gen, expected_data_gen);
 }
 
 /* --- R10 provenance walk (freestanding; second pass over the decoded body) ---
@@ -351,19 +313,15 @@ uint64_t bcir_block_stride(const bcir_block_view *block, uint16_t i) {
              ? rd64(block->strides + (size_t)i * 8u) : 0u;
 }
 
-bcir_status bcir_sp_for_each_block(const uint8_t *BCIR_RESTRICT data, size_t len,
-                                   bcir_block_fn fn, void *ctx) {
-  bcir_streampack_header hdr;
-  bcir_status st = bcir_sp_validate(data, len, &hdr);
-  if (st != BCIR_OK) return st;
-
+static bcir_status sp_blocks(const uint8_t *BCIR_RESTRICT data, size_t len,
+                             const bcir_streampack_header *hdr, bcir_block_fn fn, void *ctx) {
   cur c;
   c.d = data; c.len = len - 4u; c.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; c.err = 0;
   int invoke_callback = 1;
   c_skip_str(&c); /* source_plan */
-  for (uint32_t i = 0; i < hdr.n_segments && !c.err; i++) skip_segment(&c, hdr.version);
-  for (uint32_t i = 0; i < hdr.n_prefetches && !c.err; i++) skip_prefetch(&c, hdr.version);
-  for (uint32_t i = 0; i < hdr.n_blocks && !c.err; i++) {
+  for (uint32_t i = 0; i < hdr->n_segments && !c.err; i++) skip_segment(&c, hdr->version);
+  for (uint32_t i = 0; i < hdr->n_prefetches && !c.err; i++) skip_prefetch(&c, hdr->version);
+  for (uint32_t i = 0; i < hdr->n_blocks && !c.err; i++) {
     bcir_block_view b;
     b.base = c_u64(&c);
     b.count = c_u64(&c);
@@ -373,6 +331,13 @@ bcir_status bcir_sp_for_each_block(const uint8_t *BCIR_RESTRICT data, size_t len
     if (invoke_callback && fn && fn(&b, ctx)) invoke_callback = 0;
   }
   return c.err ? c_status(&c) : BCIR_OK;
+}
+
+bcir_status bcir_sp_for_each_block(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                   bcir_block_fn fn, void *ctx) {
+  bcir_streampack_header hdr;
+  bcir_status st = bcir_sp_validate(data, len, &hdr);
+  return st != BCIR_OK ? st : sp_blocks(data, len, &hdr, fn, ctx);
 }
 
 /* A StreamPack executes each claim at most once. Re-walk only the already-validated
@@ -496,22 +461,16 @@ static int targets_cover_read(const uint8_t *targets, uint16_t n_targets,
   return 0;
 }
 
-bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t len,
-                                    uint32_t expected_map_gen,
-                                    uint32_t expected_data_gen) {
-  bcir_streampack_header hdr;
-  bcir_status st = bcir_sp_validate(data, len, &hdr);   /* magic + version + CRC + bounds */
-  if (st != BCIR_OK) return st;
-
+static bcir_status sp_semantic(const uint8_t *BCIR_RESTRICT data, size_t len,
+                               const bcir_streampack_header *hdr, uint32_t expected_map_gen,
+                               uint32_t expected_data_gen) {
   /* R11 (staleness): a generation mismatch is a stale pack -- reject, do not execute. */
-  if (expected_map_gen != 0xFFFFFFFFu && hdr.map_gen != expected_map_gen)
-    return BCIR_ERR_STALE;
-  if (expected_data_gen != 0xFFFFFFFFu && hdr.data_gen != expected_data_gen)
-    return BCIR_ERR_STALE;
+  bcir_status st = sp_generation(hdr, expected_map_gen, expected_data_gen);
+  if (st != BCIR_OK) return st;
 
   /* R10 well-formedness: pipeline_depth >= 1; the per-
    * prefetch buffers (1|2) is checked as the prefetch stream is walked below. */
-  if (hdr.pipeline_depth < 1) return BCIR_ERR_PROVENANCE;
+  if (hdr->pipeline_depth < 1) return BCIR_ERR_PROVENANCE;
 
   const size_t body_len = len - 4u;
 
@@ -519,19 +478,19 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
    * streams (bounds-checked). The body is source_plan, segments, prefetches, blocks, trace. */
   cur c; c.d = data; c.len = body_len; c.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; c.err = 0;
   c_skip_str(&c);   /* source_plan */
-  for (uint32_t i = 0; i < hdr.n_segments && !c.err; i++) skip_segment(&c, hdr.version);
+  for (uint32_t i = 0; i < hdr->n_segments && !c.err; i++) skip_segment(&c, hdr->version);
   if (c.err) return c_status(&c);
   size_t pf_start = c.pos;
   /* validate prefetch buffers (1|2) while skipping to the blocks */
   const char *pf_last = 0;         /* the shortlex-greatest name so far */
   uint16_t pf_last_len = 0;
-  for (uint32_t i = 0; i < hdr.n_prefetches && !c.err; i++) {
+  for (uint32_t i = 0; i < hdr->n_prefetches && !c.err; i++) {
     uint16_t name_len;
     const char *name = c_str(&c, &name_len);
     if (!c.err) {
       if (i == 0 || shortlex_after(name, name_len, pf_last, pf_last_len)) {
         pf_last = name; pf_last_len = name_len;  /* repeats no earlier name */
-      } else if (prefetch_has_name(data, body_len, pf_start, i, hdr.version, name, name_len)) {
+      } else if (prefetch_has_name(data, body_len, pf_start, i, hdr->version, name, name_len)) {
         return BCIR_ERR_PROVENANCE;  /* duplicate names make target binding ambiguous */
       }
     }
@@ -539,13 +498,13 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
     { uint16_t n; (void)c_u32arr(&c, &n); }  /* targets */
     c_skip_str(&c);                /* hint */
     c_skip_str(&c);                /* pattern */
-    if (hdr.version >= 2) {
+    if (hdr->version >= 2) {
       uint8_t buffers = c_u8(&c);
       if (!c.err && buffers != 1u && buffers != 2u) return BCIR_ERR_PROVENANCE;
     }
   }
   if (c.err) return c_status(&c);
-  for (uint32_t i = 0; i < hdr.n_blocks && !c.err; i++) {
+  for (uint32_t i = 0; i < hdr->n_blocks && !c.err; i++) {
     c_skip(&c, 16);                /* base u64 + count u64 */
     { uint16_t n = c_u16(&c);      /* strides u64_array */
       c_skip(&c, (size_t)n * 8u); }
@@ -556,7 +515,7 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
    * authenticates bytes, not their schema membership: accepting undeclared suffix bytes gives two
    * byte-distinct artifacts the same decoded meaning and lets future parsers disagree. */
   uint64_t trace_max = 0;           /* the greatest claim id traced so far */
-  for (uint32_t i = 0; i < hdr.n_trace && !c.err; i++) {
+  for (uint32_t i = 0; i < hdr->n_trace && !c.err; i++) {
     uint64_t cid = c_u64(&c);
     if (c.err) break;
     if (i == 0 || cid > trace_max) {
@@ -573,10 +532,10 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
    * the header map_gen/data_gen exactly its maxima. The header tags a v1-v3 reader sees are
    * a SUMMARY of the vector; two sources of truth that may disagree are a second spelling
    * of a stale pack (the Python decoder applies the same predicate). */
-  if (hdr.version >= 4) {
+  if (hdr->version >= 4) {
     uint32_t prev = 0, vmap = 0, vdata = 0;
     int have_prev = 0;
-    for (uint32_t i = 0; i < hdr.n_gens && !c.err; i++) {
+    for (uint32_t i = 0; i < hdr->n_gens && !c.err; i++) {
       uint32_t rid = c_u32(&c), mg = c_u32(&c), dg = c_u32(&c);
       if (c.err) break;
       if (have_prev && rid <= prev) return BCIR_ERR_GENERATION;
@@ -585,7 +544,7 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
       if (dg > vdata) vdata = dg;
     }
     if (c.err) return c_status(&c);
-    if (hdr.n_gens != 0 && (vmap != hdr.map_gen || vdata != hdr.data_gen))
+    if (hdr->n_gens != 0 && (vmap != hdr->map_gen || vdata != hdr->data_gen))
       return BCIR_ERR_GENERATION;
   }
   if (c.pos != body_len) return BCIR_ERR_TRAILING;
@@ -596,7 +555,7 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
   uint64_t seg_max = 0;             /* the greatest segment claim id so far */
   uint32_t trace_next = 0;          /* the trace record after the previous match */
   pf_cursor pf_next; pf_next.pos = pf_start; pf_next.index = 0;
-  for (uint32_t i = 0; i < hdr.n_segments && !s.err; i++) {
+  for (uint32_t i = 0; i < hdr->n_segments && !s.err; i++) {
     bcir_segment_view v;
     v.name = c_str(&s, &v.name_len);
     v.claim_id = c_u64(&s);
@@ -610,23 +569,23 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
     v.prefetch = c_str(&s, &v.prefetch_len);
     c_skip_strarr(&s);  /* fence_before */
     c_skip_strarr(&s);  /* fence_after */
-    if (hdr.version >= 3) { v.dispatch = c_u8(&s); v.channel = c_str(&s, &v.channel_len); }
+    if (hdr->version >= 3) { v.dispatch = c_u8(&s); v.channel = c_str(&s, &v.channel_len); }
     else { v.dispatch = (uint8_t)BCIR_DISPATCH_CORE; v.channel = BCIR_DEFAULT_CHANNEL; v.channel_len = BCIR_DEFAULT_CHANNEL_LEN; }
     if (s.err) return c_status(&s);
     bcir_status rg = seg_range_ok(&v);
     if (rg != BCIR_OK) return rg;
     if (i == 0 || v.claim_id > seg_max)
       seg_max = v.claim_id;         /* repeats no earlier segment's claim */
-    else if (segment_claim_seen_before(data, body_len, hdr.version, i, v.claim_id))
+    else if (segment_claim_seen_before(data, body_len, hdr->version, i, v.claim_id))
       return BCIR_ERR_PROVENANCE;
     /* R10: every segment maps back to a live trace note (no dangling/redirected claim_id). */
-    if (!trace_find_claim(data, trace_start, hdr.n_trace, v.claim_id, &trace_next))
+    if (!trace_find_claim(data, trace_start, hdr->n_trace, v.claim_id, &trace_next))
       return BCIR_ERR_PROVENANCE;
     /* R10: a declared prefetch name must resolve to a prefetch record... */
     if (v.prefetch_len > 0) {
       const uint8_t *targets = 0;
       uint16_t n_targets = 0;
-      if (!prefetch_find(data, body_len, hdr.version, pf_start, hdr.n_prefetches, &pf_next,
+      if (!prefetch_find(data, body_len, hdr->version, pf_start, hdr->n_prefetches, &pf_next,
                          v.prefetch, v.prefetch_len, &targets, &n_targets))
         return BCIR_ERR_PROVENANCE;
       /* ...and that prefetch must actually feed this segment (cover >= 1 read RID), so a
@@ -638,15 +597,65 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
   return BCIR_OK;
 }
 
+bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                    uint32_t expected_map_gen,
+                                    uint32_t expected_data_gen) {
+  bcir_streampack_header hdr;
+  bcir_status st = bcir_sp_validate(data, len, &hdr);   /* magic + version + CRC + bounds */
+  return st != BCIR_OK ? st : sp_semantic(data, len, &hdr, expected_map_gen, expected_data_gen);
+}
+
+/* --- SP-ONCE: a pack checked once, walked without recomputing its CRC -------------------- */
+
+bcir_status bcir_sp_check(const uint8_t *BCIR_RESTRICT data, size_t len,
+                          bcir_sp_checked *BCIR_RESTRICT out) {
+  if (!out) return bcir_sp_validate(data, len, NULL);
+  bcir_status st = bcir_sp_validate(data, len, &out->hdr);
+  out->data = st == BCIR_OK ? data : NULL;   /* a refused pack is no token: its walks refuse */
+  out->len = st == BCIR_OK ? len : 0u;
+  return st;
+}
+
+/* What every body assumes of its bytes besides their CRC: a buffer, and one long enough for a
+ * header and the trailer (the body's cursor ends 4 octets short). A token bcir_sp_check did
+ * not fill -- or one it refused -- fails here, never reads. */
+static int sp_checked_ok(const bcir_sp_checked *pack) {
+  return pack && pack->data && pack->len >= (size_t)BCIR_STREAMPACK_HEADER_SIZE + 4u;
+}
+
+bcir_status bcir_sp_checked_verify_semantic(const bcir_sp_checked *BCIR_RESTRICT pack,
+                                            uint32_t expected_map_gen,
+                                            uint32_t expected_data_gen) {
+  if (!sp_checked_ok(pack)) return BCIR_ERR_TRUNCATED;
+  return sp_semantic(pack->data, pack->len, &pack->hdr, expected_map_gen, expected_data_gen);
+}
+
+bcir_status bcir_sp_checked_generation(const bcir_sp_checked *BCIR_RESTRICT pack,
+                                       uint32_t expected_map_gen, uint32_t expected_data_gen) {
+  if (!sp_checked_ok(pack)) return BCIR_ERR_TRUNCATED;
+  return sp_generation(&pack->hdr, expected_map_gen, expected_data_gen);
+}
+
+bcir_status bcir_sp_checked_for_each_segment(const bcir_sp_checked *BCIR_RESTRICT pack,
+                                             bcir_seg_fn fn, void *ctx) {
+  if (!sp_checked_ok(pack)) return BCIR_ERR_TRUNCATED;
+  return sp_segments(pack->data, pack->len, &pack->hdr, fn, ctx);
+}
+
+bcir_status bcir_sp_checked_for_each_block(const bcir_sp_checked *BCIR_RESTRICT pack,
+                                           bcir_block_fn fn, void *ctx) {
+  if (!sp_checked_ok(pack)) return BCIR_ERR_TRUNCATED;
+  return sp_blocks(pack->data, pack->len, &pack->hdr, fn, ctx);
+}
+
 /* --- v4: the per-resource generation vector (R11) ----------------------------------- */
 
 /* The vector is the body's tail (verified above to end exactly at the CRC), so after the
  * semantic pass it is located by arithmetic, not by a third walk. */
 static bcir_status locate_generations(const uint8_t *BCIR_RESTRICT data, size_t len,
                                       bcir_streampack_header *hdr, size_t *start) {
-  bcir_status st = bcir_sp_verify_semantic(data, len, 0xFFFFFFFFu, 0xFFFFFFFFu);
-  if (st != BCIR_OK) return st;
-  st = bcir_sp_validate(data, len, hdr);
+  bcir_status st = bcir_sp_validate(data, len, hdr);
+  if (st == BCIR_OK) st = sp_semantic(data, len, hdr, 0xFFFFFFFFu, 0xFFFFFFFFu);
   if (st != BCIR_OK) return st;
   *start = 0;
   if (hdr->version < 4 || hdr->n_gens == 0) return BCIR_OK;
@@ -828,21 +837,249 @@ static void ep_read_lifetime(cur *c, uint16_t version, bcir_ep_lifetime_view *v)
   }
 }
 
-/* The alias law by bytes: does any lifetime before `before` share `v`'s bank, live at the
- * same time (half-open ticks) and overlap it in address? Re-walks the validated prefix. */
-static int ep_lifetime_aliases_before(const uint8_t *data, size_t body_len, size_t start,
-                                      uint32_t before, uint16_t version,
-                                      const bcir_ep_lifetime_view *v) {
+/* A lifetime's own laws, in the walk's order: the record read whole, RIDs ascending, a bank and
+ * bytes, a power-of-two alignment its offset keeps, no interval past the 64-bit line, phases and
+ * ticks in order. */
+static bcir_status ep_lifetime_own_laws(const cur *c, const bcir_ep_lifetime_view *v,
+                                        int have_prev, uint32_t prev) {
+  if (c->err) return c_status(c);
+  if (have_prev && v->rid <= prev) return BCIR_ERR_PLAN;
+  if (v->bank_len == 0u || v->size == 0u) return BCIR_ERR_PLAN;
+  if (v->alignment == 0u || (v->alignment & (v->alignment - 1u)) != 0u) return BCIR_ERR_PLAN;
+  if ((v->offset & ((uint64_t)v->alignment - 1u)) != 0u) return BCIR_ERR_PLAN;
+  if (v->offset > UINT64_MAX - v->size) return BCIR_ERR_OVERFLOW;
+  if (v->last_phase < v->first_phase) return BCIR_ERR_PLAN;
+  if (v->last_tick <= v->first_tick) return BCIR_ERR_PLAN;
+  return BCIR_OK;
+}
+
+/* The alias law by bytes: two lifetimes of one bank live at once (half-open ticks) on
+ * overlapping addresses. */
+static int ep_lifetimes_alias(const bcir_ep_lifetime_view *a, const bcir_ep_lifetime_view *b) {
+  return str_eq(a->bank, a->bank_len, b->bank, b->bank_len) &&
+         a->first_tick < b->last_tick && b->first_tick < a->last_tick &&
+         a->offset < b->offset + b->size && b->offset < a->offset + a->size;
+}
+
+/* The first of the first `k` lifetimes that aliases an earlier one (k when none does), with no
+ * scratch: each against every earlier one, re-walking the validated prefix -- quadratic. */
+static uint32_t ep_first_alias_rewalk(const uint8_t *data, size_t body_len, size_t start,
+                                      uint32_t k, uint16_t version) {
   cur c; c.d = data; c.len = body_len; c.pos = start; c.err = 0;
-  for (uint32_t i = 0; i < before && !c.err; i++) {
-    bcir_ep_lifetime_view prior;
-    ep_read_lifetime(&c, version, &prior);
-    if (c.err) return 0;
-    if (!str_eq(prior.bank, prior.bank_len, v->bank, v->bank_len)) continue;
-    if (!(prior.first_tick < v->last_tick && v->first_tick < prior.last_tick)) continue;
-    if (prior.offset < v->offset + v->size && v->offset < prior.offset + prior.size) return 1;
+  for (uint32_t i = 0; i < k; i++) {
+    bcir_ep_lifetime_view v;
+    cur p; p.d = data; p.len = body_len; p.pos = start; p.err = 0;
+    ep_read_lifetime(&c, version, &v);
+    for (uint32_t j = 0; j < i; j++) {
+      bcir_ep_lifetime_view prior;
+      ep_read_lifetime(&p, version, &prior);
+      if (ep_lifetimes_alias(&prior, &v)) return i;
+    }
   }
-  return 0;
+  return k;
+}
+
+/* ALIAS-SWEEP: the same first record in O(n log n) over caller-lent scratch.
+ *
+ * A sweep decides whether a prefix [0, p) of the records holds an aliasing pair. It visits the
+ * records' ticks in order -- at one tick the ends before the starts, the intervals being
+ * half-open -- keeping the live records ranked by (bank, offset, index). Until a pair is found
+ * the live records of one bank lie pairwise apart in bytes, so a record that starts aliases a
+ * live one only if it aliases the live record ranked just below it or just above it: two looks a
+ * start, each O(log n) in a Fenwick tree over the ranks. The prefixes are monotone (a pair in
+ * [0, p) is one in [0, p + 1)), so the first aliasing record is a binary search of sweeps, run
+ * only once the whole is known to hold a pair: a plan the law admits costs one sweep.
+ *
+ * The scratch is bytes (little-endian, any alignment): per lifetime 42 bytes of fields -- its
+ * offset, end, first and last tick and the position and length of its bank's octets in the plan
+ * -- and five u32 (three orders: by key, by first tick, by last tick; its rank; a node of the
+ * tree), and one u32 more, the tree's unused node 0: BCIR_EP_SWEEP_BYTES_PER_LIFETIME a lifetime
+ * and BCIR_EP_SWEEP_BYTES_FIXED. */
+#define EP_SW_FIELDS 42u
+
+size_t bcir_ep_sweep_bytes(uint32_t n_lifetimes) {
+  /* a u32 fits a size_t, so the count is exact; the product overflows only where size_t has 32
+   * bits (a count past (2^32 - 5) / 62), and then names no scratch */
+  const size_t n = (size_t)n_lifetimes;
+  if (n > (SIZE_MAX - BCIR_EP_SWEEP_BYTES_FIXED) / BCIR_EP_SWEEP_BYTES_PER_LIFETIME) return 0;
+  return n * BCIR_EP_SWEEP_BYTES_PER_LIFETIME + BCIR_EP_SWEEP_BYTES_FIXED;
+}
+
+static void sw_put16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+static void sw_put32(uint8_t *p, uint32_t v) {
+  p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
+}
+static void sw_put64(uint8_t *p, uint64_t v) {
+  sw_put32(p, (uint32_t)v);
+  sw_put32(p + 4, (uint32_t)(v >> 32));
+}
+
+typedef struct {
+  const uint8_t *data;   /* the plan: the banks' octets */
+  uint8_t *f;            /* the fields, EP_SW_FIELDS bytes a record */
+  uint8_t *by_key, *by_first, *by_last, *rank;  /* u32 arrays */
+  uint8_t *tree;         /* u32 nodes 0 .. n */
+  uint32_t n;            /* the records the sweep reads: those before the first breaking its own law */
+} ep_sweep;
+
+static uint32_t sw_at(const uint8_t *arr, size_t i) { return rd32(arr + 4u * i); }
+static void sw_set(uint8_t *arr, size_t i, uint32_t v) { sw_put32(arr + 4u * i, v); }
+static const uint8_t *sw_rec(const ep_sweep *s, uint32_t i) { return s->f + (size_t)i * EP_SW_FIELDS; }
+static uint64_t sw_off(const ep_sweep *s, uint32_t i) { return rd64(sw_rec(s, i)); }
+static uint64_t sw_end(const ep_sweep *s, uint32_t i) { return rd64(sw_rec(s, i) + 8); }
+static uint64_t sw_first(const ep_sweep *s, uint32_t i) { return rd64(sw_rec(s, i) + 16); }
+static uint64_t sw_last(const ep_sweep *s, uint32_t i) { return rd64(sw_rec(s, i) + 24); }
+static const char *sw_bank(const ep_sweep *s, uint32_t i, uint16_t *len) {
+  *len = rd16(sw_rec(s, i) + 40);
+  return (const char *)(s->data + (size_t)rd64(sw_rec(s, i) + 32));
+}
+
+/* Carve the lent scratch for `n_lifetimes` records; 0 when none is lent or it is short. */
+static int ep_sweep_lend(ep_sweep *s, uint8_t *scratch, size_t scratch_len, const uint8_t *data,
+                         uint32_t n_lifetimes) {
+  size_t need = bcir_ep_sweep_bytes(n_lifetimes), n = n_lifetimes;
+  if (!scratch || need == 0u || scratch_len < need) return 0;
+  s->data = data;
+  s->f = scratch;
+  s->by_key = s->f + n * EP_SW_FIELDS;
+  s->by_first = s->by_key + 4u * n;
+  s->by_last = s->by_first + 4u * n;
+  s->rank = s->by_last + 4u * n;
+  s->tree = s->rank + 4u * n;
+  s->n = 0;
+  return 1;
+}
+
+/* Record `i`'s fields, as the walk read it (its own laws kept: its end does not wrap). */
+static void ep_sweep_put(ep_sweep *s, uint32_t i, const bcir_ep_lifetime_view *v) {
+  uint8_t *p = s->f + (size_t)i * EP_SW_FIELDS;
+  sw_put64(p, v->offset);
+  sw_put64(p + 8, v->offset + v->size);
+  sw_put64(p + 16, v->first_tick);
+  sw_put64(p + 24, v->last_tick);
+  sw_put64(p + 32, (uint64_t)((const uint8_t *)v->bank - s->data));
+  sw_put16(p + 40, v->bank_len);
+}
+
+/* The three orders, each total (the index last): -1, 0 or 1 as record a sorts before, with or
+ * after b. 0 by key (the bank's octets in shortlex, then the offset), 1 by first tick, 2 by last. */
+static int sw_cmp_u64(uint64_t a, uint64_t b) { return a < b ? -1 : a > b ? 1 : 0; }
+static int sw_cmp(const ep_sweep *s, int order, uint32_t a, uint32_t b) {
+  int r = 0;
+  if (order == 0) {
+    uint16_t la, lb;
+    const char *ba = sw_bank(s, a, &la), *bb = sw_bank(s, b, &lb);
+    if (la != lb) return la < lb ? -1 : 1;
+    for (uint16_t i = 0; i < la && !r; i++)
+      if (ba[i] != bb[i]) r = (uint8_t)ba[i] < (uint8_t)bb[i] ? -1 : 1;
+    if (!r) r = sw_cmp_u64(sw_off(s, a), sw_off(s, b));
+  } else {
+    r = order == 1 ? sw_cmp_u64(sw_first(s, a), sw_first(s, b))
+                   : sw_cmp_u64(sw_last(s, a), sw_last(s, b));
+  }
+  return r ? r : sw_cmp_u64(a, b);
+}
+
+/* Heapsort of the record indices 0 .. n by `order`: in place, no recursion, O(n log n) on every
+ * input. */
+static void sw_sift(const ep_sweep *s, uint8_t *arr, int order, size_t root, size_t n) {
+  for (;;) {
+    size_t child = 2u * root + 1u;
+    uint32_t top;
+    if (child >= n) return;
+    if (child + 1u < n && sw_cmp(s, order, sw_at(arr, child), sw_at(arr, child + 1u)) < 0)
+      child++;
+    if (sw_cmp(s, order, sw_at(arr, root), sw_at(arr, child)) >= 0) return;
+    top = sw_at(arr, root);
+    sw_set(arr, root, sw_at(arr, child));
+    sw_set(arr, child, top);
+    root = child;
+  }
+}
+static void sw_sort(const ep_sweep *s, uint8_t *arr, int order) {
+  size_t n = s->n, i;
+  for (i = 0; i < n; i++) sw_set(arr, i, (uint32_t)i);
+  for (i = n / 2u; i-- > 0;) sw_sift(s, arr, order, i, n);
+  for (i = n; i-- > 1;) {
+    uint32_t top = sw_at(arr, 0);
+    sw_set(arr, 0, sw_at(arr, i));
+    sw_set(arr, i, top);
+    sw_sift(s, arr, order, 0, i);
+  }
+}
+
+/* The Fenwick tree over the ranks: node i (1 .. n) counts the live ranks (i - lowbit(i), i]. */
+static void sw_tree_add(ep_sweep *s, uint32_t rank, uint32_t delta) {  /* delta 1 or UINT32_MAX */
+  for (size_t i = (size_t)rank + 1u; i <= s->n; i += i & (~i + 1u))
+    sw_set(s->tree, i, sw_at(s->tree, i) + delta);
+}
+static uint32_t sw_tree_below(const ep_sweep *s, uint32_t rank) {  /* the live ranks below `rank` */
+  uint32_t c = 0;
+  for (size_t i = rank; i > 0; i -= i & (~i + 1u)) c += sw_at(s->tree, i);
+  return c;
+}
+static uint32_t sw_tree_kth(const ep_sweep *s, uint32_t k) {       /* the k-th live rank, 1-based */
+  size_t pos = 0, step = 1;
+  while (step <= s->n / 2u) step <<= 1;
+  for (; step; step >>= 1)
+    if (pos + step <= s->n && sw_at(s->tree, pos + step) < k) {
+      pos += step;
+      k -= sw_at(s->tree, pos);
+    }
+  return (uint32_t)pos;
+}
+
+/* Do records a and b, both live, alias: one bank and overlapping bytes. */
+static int sw_alias(const ep_sweep *s, uint32_t a, uint32_t b) {
+  uint16_t la, lb;
+  const char *ba = sw_bank(s, a, &la), *bb = sw_bank(s, b, &lb);
+  return str_eq(ba, la, bb, lb) && sw_off(s, a) < sw_end(s, b) && sw_off(s, b) < sw_end(s, a);
+}
+
+/* Do records [0, p) hold an aliasing pair? */
+static int sw_prefix_aliases(ep_sweep *s, uint32_t p) {
+  size_t at_start = 0, at_end = 0, i;
+  uint32_t live = 0;
+  for (i = 0; i <= s->n; i++) sw_set(s->tree, i, 0);
+  for (;;) {
+    uint32_t x, r, below;
+    while (at_start < s->n && sw_at(s->by_first, at_start) >= p) at_start++;
+    while (at_end < s->n && sw_at(s->by_last, at_end) >= p) at_end++;
+    if (at_start == s->n) return 0;                 /* every record started: no pair */
+    x = sw_at(s->by_first, at_start);
+    if (at_end < s->n && sw_last(s, sw_at(s->by_last, at_end)) <= sw_first(s, x)) {
+      sw_tree_add(s, sw_at(s->rank, sw_at(s->by_last, at_end)), UINT32_MAX);  /* an end first */
+      live--;
+      at_end++;
+      continue;
+    }
+    r = sw_at(s->rank, x);
+    below = sw_tree_below(s, r);
+    if (below && sw_alias(s, x, sw_at(s->by_key, sw_tree_kth(s, below)))) return 1;
+    if (below < live && sw_alias(s, x, sw_at(s->by_key, sw_tree_kth(s, below + 1u)))) return 1;
+    sw_tree_add(s, r, 1u);
+    live++;
+    at_start++;
+  }
+}
+
+/* The first of the sweep's n records that aliases an earlier one, n when none does. */
+static uint32_t ep_sweep_first_alias(ep_sweep *s) {
+  uint32_t lo, hi;
+  size_t i;
+  if (s->n < 2u) return s->n;
+  sw_sort(s, s->by_key, 0);
+  sw_sort(s, s->by_first, 1);
+  sw_sort(s, s->by_last, 2);
+  for (i = 0; i < s->n; i++) sw_set(s->rank, sw_at(s->by_key, i), (uint32_t)i);
+  if (!sw_prefix_aliases(s, s->n)) return s->n;
+  lo = 2u;                                          /* [0, lo - 1) holds no pair, [0, hi) one */
+  hi = s->n;
+  while (lo < hi) {
+    uint32_t mid = lo + (hi - lo) / 2u;
+    if (sw_prefix_aliases(s, mid)) hi = mid; else lo = mid + 1u;
+  }
+  return lo - 1u;
 }
 
 /* The placement slot of step `cid`: found in the validated step prefix (no heap). */
@@ -930,6 +1167,7 @@ typedef struct ep_callbacks {
   bcir_ep_lifetime_fn lifetime; void *lifetime_ctx;
   bcir_ep_move_fn move; void *move_ctx;
   bcir_gen_fn gen; void *gen_ctx;
+  uint8_t *scratch; size_t scratch_len;  /* ALIAS-SWEEP: the alias law's sweep, when lent */
 } ep_callbacks;
 
 /* The one walk: validate, then every record family under the wire laws, invoking the
@@ -943,7 +1181,7 @@ static bcir_status ep_walk(const uint8_t *BCIR_RESTRICT data, size_t len,
   {
     const size_t body_len = len - 4u;
     cur c; c.d = data; c.len = body_len; c.pos = (size_t)BCIR_EP_HEADER_SIZE; c.err = 0;
-    int invoke_step = 1, invoke_lt = 1, invoke_mv = 1, invoke_gen = 1;
+    int invoke_step = 1, invoke_mv = 1, invoke_gen = 1;
     size_t steps_start;
     uint64_t claim_max = 0;           /* the greatest step claim id so far */
     uint32_t i;
@@ -981,24 +1219,42 @@ static bcir_status ep_walk(const uint8_t *BCIR_RESTRICT data, size_t len,
     }
     size_t lifetimes_start = c.pos;
     {
-      uint32_t prev = 0; int have_prev = 0;
-      for (i = 0; i < hdr.n_lifetimes; i++) {
+      /* each record's own laws first, to the first that breaks one (`own` its status), then the
+       * alias law over the records before it: the first that aliases an earlier one is refused
+       * (BCIR_ERR_PLAN) ahead of any later record's own law -- the verdict of one walk checking
+       * both record by record. The lifetime callback sees the records before that verdict, in
+       * order, as such a walk hands them over. */
+      uint32_t prev = 0, k, first;
+      int have_prev = 0;
+      bcir_status own = BCIR_OK;
+      ep_sweep sw;
+      const int lent = cb && ep_sweep_lend(&sw, cb->scratch, cb->scratch_len, data,
+                                           hdr.n_lifetimes);
+      for (k = 0; k < hdr.n_lifetimes; k++) {
         bcir_ep_lifetime_view v;
         ep_read_lifetime(&c, hdr.version, &v);
-        if (c.err) return c_status(&c);
-        if (have_prev && v.rid <= prev) return BCIR_ERR_PLAN;
+        own = ep_lifetime_own_laws(&c, &v, have_prev, prev);
+        if (own != BCIR_OK) break;
         prev = v.rid; have_prev = 1;
-        if (v.bank_len == 0u || v.size == 0u) return BCIR_ERR_PLAN;
-        if (v.alignment == 0u || (v.alignment & (v.alignment - 1u)) != 0u) return BCIR_ERR_PLAN;
-        if ((v.offset & ((uint64_t)v.alignment - 1u)) != 0u) return BCIR_ERR_PLAN;
-        if (v.offset > UINT64_MAX - v.size) return BCIR_ERR_OVERFLOW;
-        if (v.last_phase < v.first_phase) return BCIR_ERR_PLAN;
-        if (v.last_tick <= v.first_tick) return BCIR_ERR_PLAN;
-        /* no two lifetimes of one bank live at once at overlapping addresses */
-        if (ep_lifetime_aliases_before(data, body_len, lifetimes_start, i, hdr.version, &v))
-          return BCIR_ERR_PLAN;
-        if (invoke_lt && cb && cb->lifetime && cb->lifetime(&v, cb->lifetime_ctx)) invoke_lt = 0;
+        if (lent) ep_sweep_put(&sw, k, &v);
       }
+      /* no two lifetimes of one bank live at once at overlapping addresses */
+      if (lent) {
+        sw.n = k;
+        first = ep_sweep_first_alias(&sw);
+      } else {
+        first = ep_first_alias_rewalk(data, body_len, lifetimes_start, k, hdr.version);
+      }
+      if (cb && cb->lifetime) {
+        cur r; r.d = data; r.len = body_len; r.pos = lifetimes_start; r.err = 0;
+        for (i = 0; i < first; i++) {
+          bcir_ep_lifetime_view v;
+          ep_read_lifetime(&r, hdr.version, &v);
+          if (cb->lifetime(&v, cb->lifetime_ctx)) break;
+        }
+      }
+      if (first < k) return BCIR_ERR_PLAN;
+      if (own != BCIR_OK) return own;
     }
     for (i = 0; i < hdr.n_moves; i++) {
       bcir_ep_move_view v;
@@ -1067,6 +1323,13 @@ bcir_status bcir_ep_verify(const uint8_t *BCIR_RESTRICT data, size_t len) {
   return ep_walk(data, len, 0);
 }
 
+bcir_status bcir_ep_verify_lent(const uint8_t *BCIR_RESTRICT data, size_t len, void *scratch,
+                                size_t scratch_len) {
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  cb.scratch = (uint8_t *)scratch; cb.scratch_len = scratch_len;
+  return ep_walk(data, len, &cb);
+}
+
 const char *bcir_ep_source_plan(const uint8_t *BCIR_RESTRICT data, size_t len,
                                 uint16_t *BCIR_RESTRICT out_len) {
   cur c;
@@ -1083,28 +1346,28 @@ const char *bcir_ep_source_plan(const uint8_t *BCIR_RESTRICT data, size_t len,
 
 bcir_status bcir_ep_for_each_step(const uint8_t *BCIR_RESTRICT data, size_t len,
                                   bcir_ep_step_fn fn, void *ctx) {
-  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   cb.step = fn; cb.step_ctx = ctx;
   return ep_walk(data, len, &cb);
 }
 
 bcir_status bcir_ep_for_each_lifetime(const uint8_t *BCIR_RESTRICT data, size_t len,
                                       bcir_ep_lifetime_fn fn, void *ctx) {
-  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   cb.lifetime = fn; cb.lifetime_ctx = ctx;
   return ep_walk(data, len, &cb);
 }
 
 bcir_status bcir_ep_for_each_move(const uint8_t *BCIR_RESTRICT data, size_t len,
                                   bcir_ep_move_fn fn, void *ctx) {
-  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   cb.move = fn; cb.move_ctx = ctx;
   return ep_walk(data, len, &cb);
 }
 
 bcir_status bcir_ep_for_each_generation(const uint8_t *BCIR_RESTRICT data, size_t len,
                                         bcir_gen_fn fn, void *ctx) {
-  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   cb.gen = fn; cb.gen_ctx = ctx;
   return ep_walk(data, len, &cb);
 }
@@ -1253,7 +1516,18 @@ bcir_status bcir_ep_check_pack(const uint8_t *BCIR_RESTRICT plan, size_t plan_le
 bcir_status bcir_ep_check_pack_lifetimes(const uint8_t *BCIR_RESTRICT plan, size_t plan_len,
                                          const uint8_t *BCIR_RESTRICT pack, size_t pack_len,
                                          bcir_ep_lifetime_fn fn, void *ctx) {
-  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   cb.lifetime = fn; cb.lifetime_ctx = ctx;
+  return ep_check_pack(plan, plan_len, pack, pack_len, &cb);
+}
+
+bcir_status bcir_ep_check_pack_walk(const uint8_t *BCIR_RESTRICT plan, size_t plan_len,
+                                    const uint8_t *BCIR_RESTRICT pack, size_t pack_len,
+                                    bcir_ep_step_fn step, bcir_ep_lifetime_fn lifetime,
+                                    void *ctx, void *scratch, size_t scratch_len) {
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  cb.step = step; cb.step_ctx = ctx;
+  cb.lifetime = lifetime; cb.lifetime_ctx = ctx;
+  cb.scratch = (uint8_t *)scratch; cb.scratch_len = scratch_len;
   return ep_check_pack(plan, plan_len, pack, pack_len, &cb);
 }

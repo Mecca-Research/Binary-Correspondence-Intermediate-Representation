@@ -1,0 +1,159 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_kbcir_measured:test_a_measured_table_has_one_spelling_and_refuses_the_rest",
+    "bcir.tests.test_kbcir_measured:test_the_offer_appends_each_realization_run_each_alternative",
+    "bcir.tests.test_kbcir_measured:test_the_plan_takes_a_cheaper_measured_realization_and_r9_holds_it",
+    "bcir.tests.test_kbcir_measured:test_no_table_is_every_plan_record_and_hash_as_before",
+    "bcir.tests.test_kbcir_measured:test_the_hash_folds_every_field_of_the_table",
+    "bcir.tests.test_kbcir_measured:test_the_records_carry_the_table_at_version_one",
+    "bcir.tests.test_kbcir_measured:test_the_law_rail_capability_carries_the_table",
+    "bcir.tests.test_native_measured:test_a_pick_is_carried_only_where_its_keys_are_held_by_its_pick_alone",
+    "bcir.tests.test_native_measured:test_measured_prices_carry_each_pick_on_its_kinds_claims",
+    "bcir.tests.test_native_measured:test_the_planner_takes_every_carried_pick_and_the_plan_states_its_dispatch",
+    "bcir.tests.test_native_measured:test_the_plan_dispatch_reads_the_lowerings_grammar"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_offer_appends_each_realization_run_each_alternative",
+      "label": "MO1 a measured row's compute left unscaled",
+      "new": "(b[0], (b[1] * e.q8) >> 8)",
+      "old": "((b[0] * e.q8) >> 8, (b[1] * e.q8) >> 8)",
+      "path": "bcir/kbcir/realize.py"
+    },
+    {
+      "expects": "test_the_offer_appends_each_realization_run_each_alternative",
+      "label": "MO2 a measured row's memory left unscaled",
+      "new": "((b[0] * e.q8) >> 8, b[1])",
+      "old": "((b[0] * e.q8) >> 8, (b[1] * e.q8) >> 8)",
+      "path": "bcir/kbcir/realize.py"
+    },
+    {
+      "expects": "test_the_offer_appends_each_realization_run_each_alternative",
+      "label": "MO3 the measured rows in (entry, then realization) order",
+      "new": "                for e in entries\n                for lane, w, name, b, rw in own\n",
+      "old": "                for lane, w, name, b, rw in own\n                for e in entries\n",
+      "path": "bcir/kbcir/realize.py"
+    },
+    {
+      "expects": "test_the_offer_appends_each_realization_run_each_alternative",
+      "label": "MO4 a control op measured",
+      "new": "    if measured is not None:\n",
+      "old": "    if measured is not None and claim.opcode not in UNMEASURED_OPCODES:\n",
+      "path": "bcir/kbcir/realize.py"
+    },
+    {
+      "expects": "test_the_offer_appends_each_realization_run_each_alternative",
+      "label": "MO5 R9's single-candidate offer naming every measured row",
+      "new": "            return rows\n",
+      "old": "            return rows if only is None else [r for r in rows if (r[0], r[1], r[2]) in only]\n",
+      "path": "bcir/kbcir/realize.py"
+    },
+    {
+      "expects": "test_the_plan_takes_a_cheaper_measured_realization_and_r9_holds_it",
+      "label": "MO6 the planner's slots sized without the measured rows",
+      "new": "        per *= h.measured.most_per_key\n",
+      "old": "        per *= 1 + h.measured.most_per_key\n",
+      "path": "bcir/kbcir/realize.py"
+    },
+    {
+      "expects": "test_a_measured_table_has_one_spelling_and_refuses_the_rest",
+      "label": "MO7 the opcode spelling read off the first letter alone",
+      "new": "        and \"A\" <= op[0] <= \"Z\"\n",
+      "old": "        and \"A\" <= op[0] <= \"Z\"\n        and all(\"A\" <= ch <= \"Z\" or \"0\" <= ch <= \"9\" or ch == \"_\" for ch in op)\n",
+      "path": "bcir/kbcir/cost.py"
+    },
+    {
+      "expects": "test_a_measured_table_has_one_spelling_and_refuses_the_rest",
+      "label": "MO8 eight entries of one op and count admitted",
+      "new": "            if len(run) > MEASURED_PER_KEY_MAX:\n",
+      "old": "            if len(run) == MEASURED_PER_KEY_MAX:\n",
+      "path": "bcir/kbcir/cost.py"
+    },
+    {
+      "expects": "test_a_measured_table_has_one_spelling_and_refuses_the_rest",
+      "label": "MO9 a worker count's leading zero admitted",
+      "new": "or not digits.isdigit() or len(digits) > 5:",
+      "old": "or not digits.isdigit() or digits[0] == \"0\" or len(digits) > 5:",
+      "path": "bcir/kbcir/cost.py"
+    },
+    {
+      "expects": "test_a_measured_table_has_one_spelling_and_refuses_the_rest",
+      "label": "MO10 a non-ASCII digit admitted",
+      "new": "    if not digits.isdigit()",
+      "old": "    if not digits.isascii() or not digits.isdigit()",
+      "path": "bcir/kbcir/cost.py"
+    },
+    {
+      "expects": "test_the_hash_folds_every_field_of_the_table",
+      "label": "MO11 the target's hash blind to the table",
+      "new": "    tail = ()\n",
+      "old": "    tail = () if measured is None else measured.items()\n",
+      "path": "bcir/kbcir/provenance.py"
+    },
+    {
+      "expects": "test_the_records_carry_the_table_at_version_one",
+      "label": "MO12 a worker count's code written as an instance's",
+      "new": "    return value\n",
+      "old": "    return value if kind == 0 else MEASURED_WORKERS | value\n",
+      "path": "bcir/abi/planner_abi.py"
+    },
+    {
+      "expects": "test_the_records_carry_the_table_at_version_one",
+      "label": "MO13 the entries no claim reads encoded",
+      "new": "            for e in table.entries\n",
+      "old": "            for e in table.entries\n            if (e.op, e.count) in read\n",
+      "path": "bcir/abi/planner_abi.py"
+    },
+    {
+      "expects": "test_the_law_rail_capability_carries_the_table",
+      "label": "MO14 a measured path's symbol written bare",
+      "new": "    return f\"@{name}\"\n",
+      "old": "    return f\"@{name}\" if _BARE_SYMBOL.match(name) else f'@\"{name}\"'\n",
+      "path": "bcir/lower/mlir.py"
+    },
+    {
+      "expects": "test_the_law_rail_capability_carries_the_table",
+      "label": "MO15 the capability's values (q8, count) per entry",
+      "new": "values = \", \".join(f\"{e.q8}, {e.count}\" for e in table.entries)",
+      "old": "values = \", \".join(f\"{e.count}, {e.q8}\" for e in table.entries)",
+      "path": "bcir/lower/mlir.py"
+    },
+    {
+      "expects": "test_measured_prices_carry_each_pick_on_its_kinds_claims",
+      "label": "MO16 a shared key priced at the least of its kinds' prices",
+      "new": "min(price[h] for h in hs)",
+      "old": "max(price[h] for h in hs)",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_a_pick_is_carried_only_where_its_keys_are_held_by_its_pick_alone",
+      "label": "MO17 the carried kinds found in one pass",
+      "new": "        return carried - uncarried\n",
+      "old": "        if not uncarried:\n            return carried\n        carried -= uncarried\n",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_measured_prices_carry_each_pick_on_its_kinds_claims",
+      "label": "MO18 a key's kind with no pick taken for the same pick",
+      "new": "if any(picks.get(h, picks[kind]) != picks[kind]",
+      "old": "if any(h not in carried or picks[h] != picks[kind]",
+      "path": "bcir/hosted/models/native_choose.py"
+    },
+    {
+      "expects": "test_the_plan_dispatch_reads_the_lowerings_grammar",
+      "label": "MO19 the plan's instance read as workers",
+      "new": "        out[step.claim_id] = (0, value) if kind == 0 else (value, 0)\n",
+      "old": "        out[step.claim_id] = (value, 0) if kind == 0 else (0, value)\n",
+      "path": "bcir/hosted/models/native_pack.py"
+    },
+    {
+      "expects": "test_the_planner_takes_every_carried_pick_and_the_plan_states_its_dispatch",
+      "label": "MO20 the placed words' workers dropped",
+      "new": "        words[claim * nl.RECORD_WORDS + nl.WORD_WORKERS] = 0\n",
+      "old": "        words[claim * nl.RECORD_WORDS + nl.WORD_WORKERS] = workers\n",
+      "path": "bcir/hosted/models/native_pack.py"
+    }
+  ]
+}

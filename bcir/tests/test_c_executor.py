@@ -404,6 +404,91 @@ def test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order():
     assert accepted >= 100 and refused >= 80, (accepted, refused)
 
 
+def _sealed(raw: bytes) -> bytes:
+    """`raw` with its CRC-32 trailer rewritten, so a mutation reaches the walks past the CRC."""
+    import zlib
+
+    return raw[:-4] + (zlib.crc32(raw[:-4]) & 0xFFFFFFFF).to_bytes(4, "little")
+
+
+def test_the_checked_walks_are_the_plain_walks_on_every_pack():
+    """SP-ONCE: GEM's execution and load check a pack once (bcir_sp_check) and run the semantic,
+    segment and block walks over the token, the CRC computed once a call rather than once a walk.
+    The harness's --checked mode holds each checked walk to its plain form on the same bytes --
+    statuses, the token's header and every view a callback is handed, walked to the end and
+    stopped early, the generation check under four generation pairs, forged and refused tokens
+    refused. The corpus: every hydrated pack the parity test above uses with each disorder (packs
+    the laws accept and packs they refuse); each base truncated at nine lengths; its CRC flipped;
+    every header field it counts by changed and the CRC resealed; and 48 single octets of its body
+    changed and resealed -- so the walks' bounds, the range gate, R10 and R11 are all reached."""
+    if _cc() is None:
+        return
+    spec = DecoderSpec(
+        vocab_size=64, d_model=32, n_heads=2, n_layers=1, d_ff=64, n_kv_heads=1,
+        activation="silu_gate",
+    )  # fmt: skip
+    bases = [_hydrated_shape(24)]
+    for m in (
+        vector_add(),
+        multi_histogram(),
+        matmul_tiled(),
+        scan(),
+        decoder_program(spec, 2, 3).module,
+    ):
+        r = optimize(m, AVX, COOL)
+        bases += [encode(hydrate(m, r)), encode(hydrate_pipelined(m, r, depth=2))]
+    rng = random.Random(0x5EED_0CE)
+    cases = []
+    for raw in bases:
+        pack = decode(raw)
+        cases.append(raw)
+        cases += [encode(_disorder(pack, rng, kind)) for kind in _DISORDERS]
+        for cut in (0, 1, 3, 63, 64, 67, 68, len(raw) // 2, len(raw) - 1):
+            cases.append(raw[:cut])
+        cases.append(raw[:-1] + bytes([raw[-1] ^ 0x01]))  # the CRC flipped
+        for offset, width in (
+            (4, 2),
+            (8, 4),
+            (12, 4),
+            (16, 4),
+            (20, 4),
+            (24, 4),
+            (28, 4),
+            (32, 4),
+            (36, 2),
+            (40, 4),
+        ):
+            for delta in (1, -1):
+                field = int.from_bytes(raw[offset : offset + width], "little")
+                changed = ((field + delta) % (1 << (8 * width))).to_bytes(width, "little")
+                cases.append(_sealed(raw[:offset] + changed + raw[offset + width :]))
+        for _ in range(48):
+            at = rng.randrange(64, len(raw) - 4)
+            cases.append(
+                _sealed(raw[:at] + bytes([raw[at] ^ (1 << rng.randrange(8))]) + raw[at + 1 :])
+            )
+    verdicts = {"equal-ok": 0, "equal-refused": 0, "refused": 0}
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = _build_harness(tmp)
+        path = os.path.join(tmp, "pack.bin")
+        for raw in cases:
+            with open(path, "wb") as f:
+                f.write(raw)
+            r = subprocess.run([exe, "--checked", path], capture_output=True, text=True)
+            assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+            words = r.stdout.split()
+            assert words[:2] in (["checked:", "equal"], ["checked:", "refused"]), r.stdout
+            if words[1] == "refused":
+                verdicts["refused"] += 1
+            elif words[2:] == ["0", "0", "0"]:
+                verdicts["equal-ok"] += 1
+            else:
+                verdicts["equal-refused"] += 1
+    # every verdict exercised many times over: packs walked whole, packs a walk refuses after the
+    # CRC, and packs the check itself refuses
+    assert min(verdicts.values()) >= 100, verdicts
+
+
 def _hydrated_shape(n: int) -> bytes:
     """n claims laid out as hydrate_pipelined lays them: ascending claim ids two to a phase,
     trace notes and one prefetch per claim in claim order, a double-buffer prefetch per phase

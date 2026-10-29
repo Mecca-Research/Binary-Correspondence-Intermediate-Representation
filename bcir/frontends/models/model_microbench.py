@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from ..._artifact_json import strict_json_loads
-from ...toolchain import host_link_args
+from ...toolchain import host_link_args, unit_options
 from .assessment import KernelBenchmark
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -143,8 +143,7 @@ def run_bounded_model_microbench_native(
         executable = Path(directory) / (
             "bcir-ai-microbench.exe" if os.name == "nt" else "bcir-ai-microbench"
         )
-        command = [
-            compiler,
+        flags = [
             "-std=c11",
             "-O3",
             "-ffp-contract=off",
@@ -152,6 +151,13 @@ def run_bounded_model_microbench_native(
             "-Wextra",
             "-Wpedantic",
             "-Werror",
+        ]
+        # the manifest's options for the units it times (M18: on x86-64 the JCC-erratum
+        # mitigation the decoder's kernels take in every build the repository times)
+        flags += [f for f in unit_options([s.name for s in sources], compiler) if f not in flags]
+        command = [
+            compiler,
+            *flags,
             "-I",
             str(_RUNTIME),
             *(str(source) for source in sources),

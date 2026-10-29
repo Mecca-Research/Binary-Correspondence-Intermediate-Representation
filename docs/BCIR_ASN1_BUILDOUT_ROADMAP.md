@@ -1467,6 +1467,11 @@ sentence in a standard rather than a preference.
 
 ### 9.2 Excluded by design, with the sentence that excludes them
 
+These exclusions describe the ASN.1 family. The proposed
+[universal interface program](BCIR_UNIVERSAL_INTERFACE_ROADMAP.md) may admit a peer notation
+or foreign codec under a separate contract; it does not expand ASN.1's standard or imply a
+new frontend is implemented.
+
 | Rule | Standard | Recommendation | Justification |
 |---|---|---|---|
 | **CER** | X.690 | **exclude** | CER and DER are both canonical subsets of BER differing in one axis: CER uses indefinite-length constructed form for large values, DER definite. DER is the one security-critical infrastructure actually uses (X.509, CMS, PKCS). Emitting both canonical forms would give one abstract value two certified spellings with no selection criterion to choose between them — which is the *opposite* of what a digest is for. BER-in already accepts anything a CER encoder produces. |
@@ -1474,7 +1479,7 @@ sentence in a standard rather than a preference.
 | **GSER** | IETF RFC 3641 (+ 3642, 4792) | **exclude** | RFC 3641 states GSER "does not necessarily enable the exact octet encoding of certain string types to be reconstructed" and "MUST NOT be used to re-encode values whose original binary encoding must be recoverable". BCIR's *canonical-or-excluded* law forbids selecting an encoding for emission when the encoding is not canonical; a rule that cannot round-trip its own input cannot be a certified artifact. GSER is a human-readable directory-debugging format and BCIR already has one of those in JER. |
 | **RXER** | IETF RFC 4910/4911 | **exclude** | **Experimental** status, published 2007, no deployed base BCIR targets, and its purpose — robustness against unknown XML elements in an XML-enabled directory — is a schema-evolution story that ASN.1 extensibility markers plus X.691 Annex A.3/A.4 already handle on the rails that are built. |
 | **BACnet encoding** | ASHRAE 135 | **exclude** (revisit only with a workload) | BACnet's application-layer encoding is ASN.1-*flavoured* — it borrows tag/length/value shape — but it is defined by ASHRAE, not ITU-T, and its tagging is not X.690's. Supporting it is writing a *new* codec against a building-automation standard, not covering more of ASN.1. Reopen only under the same gate ECN's user-defined half had to pass: a written workload, a missing-expressiveness proof, and approval. |
-| **CSN.1** | 3GPP (GSM/GPRS) | **exclude** | CSN.1 is a **different abstract notation**, not an encoding rule for ASN.1. It has its own syntax and its own semantics for bit-level layout. The honest comparison is that CSN.1 is a peer of ASN.1, and the ASN.1 answer to CSN.1's problem domain is **ECN** — which is built. A CSN.1 front-end would be a second language, and §8's "what this is not" applies. |
+| **CSN.1** | 3GPP (GSM/GPRS) | **outside ASN.1; peer frontend planned** | CSN.1 is a different notation with bit-string semantics, not an ASN.1 encoding rule. ECN remains the built ASN.1 mechanism. The [UDSI-6 program](BCIR_UNIVERSAL_INTERFACE_ROADMAP.md#9-gateable-implementation-order) now proposes a separate CSN.1 frontend with independent bit-exact fixtures and explicit semantic bindings; it is not implemented by this roadmap update. |
 | **"SER"** | *unidentified* | **cannot recommend as stated** | No ASN.1 encoding rule by that abbreviation was found in the ITU-T X.69x series or the IETF RFC corpus. If this means *Signalling*, *Simple*, or *Streaming* Encoding Rules, or a vendor-specific rule, the name needs resolving before a recommendation means anything. Recorded as unresolved rather than guessed at. |
 
 ### 9.3 Custom BCIR high-speed coding rules

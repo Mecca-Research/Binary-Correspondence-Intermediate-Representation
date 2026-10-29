@@ -345,6 +345,7 @@ def _bind_plan(lib):
     for name, args in (
         ("workspace_bytes", [plan, ct.c_uint32]),
         ("workspace_need", [plan, ct.c_uint32, ct.c_uint]),
+        ("workspace_unsplit", [plan, ct.c_uint32, ct.c_uint]),
         ("workspace_floor", [plan, ct.c_uint32, ct.c_uint]),
         ("workspace_panels", [plan, ct.c_uint32]),
         ("activation_count", [plan, ct.c_uint64]),
@@ -355,15 +356,20 @@ def _bind_plan(lib):
 
 @dataclass(frozen=True)
 class MemoryPlan:
-    """A trainer's arenas under a recompute set and a bf16 workspace (GEO-3), in bytes, every
-    count the C plan's (bcir_decoder_activation_count, bcir_decoder_workspace_need/_panels/_floor).
+    """A trainer's arenas under a recompute set and a workspace (GEO-3), in bytes, every
+    count the C plan's (bcir_decoder_activation_count, bcir_decoder_workspace_need/_unsplit/_panels/
+    _floor).
     Each plan trains the state the all-kept trainer at the exact need trains, bit for bit: the
     choice moves memory and time, never a value."""
 
     recompute: int  # the layers the backward recomputes, bit l for layer l
-    workspace_bytes: int  # the bf16 workspace lent (0 without a bf16 GEMM contract)
+    workspace_bytes: int  # the workspace lent (0 where the step packs nothing)
     activation_count: int  # floats of the activation arena under the recompute set
-    workspace_need: int  # every GEMM group whole (the SwiGLU block's panels where admitted)
+    workspace_need: int  # every GEMM group whole (the SwiGLU block's panels where admitted), the
+    # attention's regions (the bf16 attention's, else the binary32 attention's copies, ATT-CONTIG),
+    # and under the blocked contract the room its weight adjoints split in (KSPLIT-ROOM)
+    workspace_unsplit: int  # the need without that room: the attention's copies under the blocked
+    # contract, the need under every other
     workspace_panels: int  # the least at which the SwiGLU block keeps its panels; 0 none
     workspace_floor: int  # the least the state admits on its pool
     recomputes: int  # layer forwards the backward re-runs a step (the highest set layer is free)
@@ -377,14 +383,17 @@ def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspa
     """The arenas of one trainer (GEO-3: per-layer caching coupled with packing-aware workspace
     planning). With `recompute` given: that set and `workspace_bytes` (None: the exact need),
     refused (ValueError) where the C refuses them -- a bit past the last layer, a workspace below
-    the floor or lent without a bf16 contract. With `recompute` None: the plan this module
+    the floor or lent where the step packs nothing. With `recompute` None: the plan this module
     chooses within `budget` bytes, among the choices that keep every value, in the order the
     measured frontier prices them (docs/research/measurements/2026-10-19/geo3): the fewest
     recomputed layers (the lowest ones; which layers is no matter of cost), each with the
-    workspace at the step's need and then at the SwiGLU panels' need, and the floor only after
-    every set. On both measured shapes the panels' tier cost no step time the rounds resolved
-    (1.3-2.1 MiB freed), a re-run layer 1-11% of a step (10.5-25 MiB) and the floor 32-75%
-    (1.7-4.1 MiB). A declared policy, no optimality claim (TMSAO-4); micro-batch accumulation --
+    workspace at the step's need, then at the need without the blocked contract's split room
+    (KSPLIT-ROOM) and then at the SwiGLU panels' need, and the floor only after every set. On both
+    measured shapes the panels' tier cost no step time the rounds resolved (1.3-2.1 MiB freed), a
+    re-run layer 1-11% of a step (10.5-25 MiB) and the floor 32-75% (1.7-4.1 MiB); the split room
+    5-9% of a step on four threads where it applies (1.25-57 MiB, 1.1-2.5% of the plan:
+    docs/research/measurements/2026-10-25/ksplit-room). A declared policy, no
+    optimality claim (TMSAO-4); micro-batch accumulation --
     cheaper than recomputation at one measured shape, dearer at the other, and never the same
     state -- is the caller's."""
     _bind_plan(lib)
@@ -401,9 +410,10 @@ def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspa
     bits = _CONTRACTS[contract]
     p = ct.byref(plan)
     need = lib.bcir_decoder_workspace_need(p, bits, threads)
+    unsplit = lib.bcir_decoder_workspace_unsplit(p, bits, threads)
     floor = lib.bcir_decoder_workspace_floor(p, bits, threads)
     panels = lib.bcir_decoder_workspace_panels(p, bits)
-    if _SIZE_MAX in (need, floor, panels):
+    if _SIZE_MAX in (need, unsplit, floor, panels):
         raise ValueError("native plan's workspace overflows size_t or the plan is refused")
     layers = plan.spec.layers
 
@@ -414,22 +424,24 @@ def memory_plan(lib, plan, contract, threads, budget, *, recompute=None, workspa
         named = sum(1 for layer in range(min(layers, 64)) if (mask >> layer) & 1)
         persistent, acts, scratch = 16 * plan.parameters, 4 * count, 4 * plan.scratch
         return MemoryPlan(
-            mask, workspace, count, need, panels, floor, max(named - 1, 0), persistent, acts,
-            scratch, persistent + acts + scratch + workspace,
+            mask, workspace, count, need, unsplit, panels, floor, max(named - 1, 0), persistent,
+            acts, scratch, persistent + acts + scratch + workspace,
         )  # fmt: skip
 
     if recompute is not None:
         if workspace_bytes is None:
             workspace_bytes = need
         if not need and workspace_bytes:
-            raise ValueError("a workspace is lent only under a bf16 GEMM contract")
+            raise ValueError("a workspace is lent only where the step packs into it")
         if workspace_bytes < floor:
             raise ValueError(f"workspace {workspace_bytes} below the floor {floor}")
         return arenas(recompute, workspace_bytes)
     if type(budget) is not int or budget < 1:
         raise ValueError("the budget must be a positive integer")
     tiers = [need]
-    if floor <= panels < need:
+    if floor <= unsplit < need:  # KSPLIT-ROOM: the weight adjoints unsplit before a re-run layer
+        tiers.append(unsplit)
+    if floor <= panels < tiers[-1]:
         tiers.append(panels)
     sets = [0] + [(1 << r) - 1 for r in range(2, min(layers, 64) + 1)]
     # the frontier's prices: the panels' tier about free, then a re-run layer, the floor dearest
@@ -646,7 +658,9 @@ class NativeDecoder:
             workspace_bytes=workspace_bytes,
         )  # fmt: skip
         self.recompute = recompute
-        # NDT-BF16 / WS-PLAN: the bf16 GEMMs' workspace, by default the step's exact need
+        # NDT-BF16 / WS-PLAN / ATT-CONTIG / KSPLIT: the workspace the bf16 GEMMs pack into and the
+        # binary32 attention copies its heads' rows into -- and under the blocked contract the weight
+        # adjoints' split partials take, where they fit -- by default the step's exact need
         self.workspace_bytes = self.plan_memory.workspace_bytes
         self.activation_count = self.plan_memory.activation_count
         self.memory_bytes = self.plan_memory.total_bytes
@@ -997,7 +1011,28 @@ class NativeDecoder:
             alignment={SPACES[name]: ct.addressof(buf) % 64 for name, buf in self.buffers.items()},
             provider_mm=bool(provider.mm), provider_silu=bool(provider.silu),
             steps=steps, accumulation=gradient_accumulation,
+            threads=self.threads, instances=self.instance_families(),
         )  # fmt: skip
+
+    def instance_families(self) -> dict:
+        """PX-3b (DISPATCH): the instances this host admits for the trainer's jobs, as masks of
+        bcir_tensor.h's bits (1 portable, 2 AVX2, 4 AVX-512, 8 AMX): "gemm" its GEMM contract's
+        family (bcir_tensor_mm_contract_variants), "attention" its attention's products' (the bf16
+        family under +attnbf16, the fused GEMM's under +attn, v1's otherwise)."""
+        lib, bits = self.lib, _CONTRACTS[self.contract]
+        for name in ("mm_variants", "mm_fused_variants", "mm_bf16_variants"):
+            fn = getattr(lib, "bcir_tensor_" + name)
+            fn.argtypes, fn.restype = [], ct.c_int
+        lib.bcir_tensor_mm_contract_variants.argtypes = [ct.c_int]
+        lib.bcir_tensor_mm_contract_variants.restype = ct.c_int
+        gemm = 3 if bits & _BF16 else 2 if bits & _KBLOCK else 1 if bits & 1 else 0
+        attention = (lib.bcir_tensor_mm_bf16_variants() if bits & _ATTNBF16 else
+                     lib.bcir_tensor_mm_fused_variants() if bits & _ATTN else
+                     lib.bcir_tensor_mm_variants())  # fmt: skip
+        return {
+            "gemm": int(lib.bcir_tensor_mm_contract_variants(gemm)),
+            "attention": int(attention),
+        }
 
     def lower_pack(self, pack: bytes, plan: bytes) -> array:
         """PX-2b: the launch program a StreamPack and its ExecutionPlanV1 state for this trainer

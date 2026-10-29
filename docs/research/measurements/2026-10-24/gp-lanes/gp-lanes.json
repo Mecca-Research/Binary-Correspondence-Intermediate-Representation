@@ -1,0 +1,319 @@
+{
+ "what": "gp_lanes_check.c, -std=c11 -O3 -ffp-contract=off -fno-math-errno, clang and gcc: the lane kernels (gp_lanes_pair.inc, gp_lanes_query.inc) against the PR818 fork's scalar kernels (gp_scalar.inc: gp_extract.py's verbatim copy of wedge_ill_conditioned, wedge_precise_forward/backward, gp_pair_forward/backward, gp_query_unit, gp_query_contract_pair, gp_query_contract_vjp from the level-2 build's query_guard_compact.c; GP_RANK 22, GP_PROJECTOR 0, GP_SYMMETRIC 0, the study's -D values), every output -- the features, both adjoints, the query contraction and its two adjoints -- byte for byte over ROWS*6 rows in groups of sixteen of each kind (uniform; u and v near parallel, which the scalar kernel sends to its FP64 fallback; tiny; zero u; large; sparse), the flagged rows recomputed by the scalar kernel; then each kernel's ns a row, the scalar kernel row by row and the lanes a group at a time with their transposes, on uniform rows -- 1,008 rows (every operand L2-resident) and 24,576 (the features streaming to memory); parts: gp_parts.c, the lane forward's parts on one group of sixteen rows held in L1, 20,000 times, TSC cycles (2.3 GHz) a row",
+ "kernels": [
+  "gp_pair_forward",
+  "gp_pair_backward",
+  "gp_query_contract_pair",
+  "gp_query_contract_vjp"
+ ],
+ "rows": [
+  {
+   "compiler": "clang",
+   "rows": 1008,
+   "fallback_rows": 335,
+   "mismatched_outputs": 0,
+   "ns_a_row": {
+    "scalar": [
+     240.1,
+     692.7,
+     290.4,
+     662.6
+    ],
+    "lanes": [
+     170.5,
+     191.5,
+     118.4,
+     288.7
+    ]
+   },
+   "lanes_over_scalar": {
+    "gp_pair_forward": 0.7101207830070804,
+    "gp_pair_backward": 0.27645445358741155,
+    "gp_query_contract_pair": 0.4077134986225896,
+    "gp_query_contract_vjp": 0.4357078176878961
+   },
+   "regime": "L2-resident"
+  },
+  {
+   "compiler": "clang",
+   "rows": 24576,
+   "fallback_rows": 8189,
+   "mismatched_outputs": 0,
+   "ns_a_row": {
+    "scalar": [
+     238.3,
+     860.4,
+     304.0,
+     621.9
+    ],
+    "lanes": [
+     179.8,
+     219.5,
+     123.5,
+     321.8
+    ]
+   },
+   "lanes_over_scalar": {
+    "gp_pair_forward": 0.7545111204364247,
+    "gp_pair_backward": 0.25511390051139005,
+    "gp_query_contract_pair": 0.40625,
+    "gp_query_contract_vjp": 0.5174465348126709
+   },
+   "regime": "streaming"
+  },
+  {
+   "compiler": "gcc",
+   "rows": 1008,
+   "fallback_rows": 335,
+   "mismatched_outputs": 0,
+   "ns_a_row": {
+    "scalar": [
+     261.2,
+     686.2,
+     244.6,
+     462.7
+    ],
+    "lanes": [
+     140.5,
+     183.1,
+     115.2,
+     270.3
+    ]
+   },
+   "lanes_over_scalar": {
+    "gp_pair_forward": 0.5379019908116386,
+    "gp_pair_backward": 0.2668318274555523,
+    "gp_query_contract_pair": 0.4709730171708913,
+    "gp_query_contract_vjp": 0.5841798141344284
+   },
+   "regime": "L2-resident"
+  },
+  {
+   "compiler": "gcc",
+   "rows": 24576,
+   "fallback_rows": 8189,
+   "mismatched_outputs": 0,
+   "ns_a_row": {
+    "scalar": [
+     253.6,
+     848.3,
+     273.4,
+     482.7
+    ],
+    "lanes": [
+     204.1,
+     236.1,
+     133.9,
+     349.9
+    ]
+   },
+   "lanes_over_scalar": {
+    "gp_pair_forward": 0.8048107255520505,
+    "gp_pair_backward": 0.27832134857951196,
+    "gp_query_contract_pair": 0.4897585954645209,
+    "gp_query_contract_vjp": 0.7248808783923761
+   },
+   "regime": "streaming"
+  }
+ ],
+ "parts_tsc_cycles_a_row": {
+  "clang": {
+   "in_u_v": 7.8,
+   "ill": 10.3,
+   "forward_with_ill": 120.5,
+   "out_p": 34.8,
+   "scalar_forward": 518.4
+  },
+  "gcc": {
+   "in_u_v": 9.4,
+   "ill": 11.7,
+   "forward_with_ill": 131.0,
+   "out_p": 35.6,
+   "scalar_forward": 538.5
+  }
+ },
+ "prefetch": {
+  "what": "gp_pf_bench.c (GP-PF-0): the lane forward a group at a time over ROWS rows whose outputs were made cold (64 MiB written between rounds), without and with the next group's input and output rows prefetched -- the overlay's tasks prefetch so -- and the scalar kernel row by row; every feature byte for byte; ns a row, median of 9 rounds",
+  "rows": [
+   {
+    "compiler": "clang",
+    "rows": 1024,
+    "bytes_equal": true,
+    "ns_a_row": {
+     "scalar": 287.8,
+     "lanes": 148.6,
+     "lanes_prefetch": 113.3,
+     "prefetch_over_lanes": 0.7624495289367429
+    }
+   },
+   {
+    "compiler": "clang",
+    "rows": 4096,
+    "bytes_equal": true,
+    "ns_a_row": {
+     "scalar": 250.5,
+     "lanes": 142.5,
+     "lanes_prefetch": 111.1,
+     "prefetch_over_lanes": 0.7796491228070175
+    }
+   },
+   {
+    "compiler": "clang",
+    "rows": 8192,
+    "bytes_equal": true,
+    "ns_a_row": {
+     "scalar": 257.0,
+     "lanes": 146.7,
+     "lanes_prefetch": 124.8,
+     "prefetch_over_lanes": 0.8507157464212679
+    }
+   },
+   {
+    "compiler": "gcc",
+    "rows": 1024,
+    "bytes_equal": true,
+    "ns_a_row": {
+     "scalar": 257.1,
+     "lanes": 167.7,
+     "lanes_prefetch": 113.2,
+     "prefetch_over_lanes": 0.6750149075730472
+    }
+   },
+   {
+    "compiler": "gcc",
+    "rows": 4096,
+    "bytes_equal": true,
+    "ns_a_row": {
+     "scalar": 270.6,
+     "lanes": 136.3,
+     "lanes_prefetch": 129.6,
+     "prefetch_over_lanes": 0.9508437270726338
+    }
+   },
+   {
+    "compiler": "gcc",
+    "rows": 8192,
+    "bytes_equal": true,
+    "ns_a_row": {
+     "scalar": 262.9,
+     "lanes": 143.8,
+     "lanes_prefetch": 128.9,
+     "prefetch_over_lanes": 0.8963838664812239
+    }
+   }
+  ]
+ },
+ "tasks": {
+  "what": "gp_tasks_check.c: each fork's geometric-head entries from the build without the lanes and with them, each library loaded on its own, on the same inputs -- row counts 1, 15, 16, 17, 66, 111, 512, 1,024 (rows past the last group of sixteen), serially and on a four-thread pool, every batch's first row with a zero prefix and every seventh near parallel to its own (the FP64 fallback among the lanes) -- every output byte for byte",
+  "rows": [
+   {
+    "library": "guard_compact",
+    "query": 0,
+    "shapes": 8,
+    "pools": [
+     1,
+     4
+    ],
+    "outputs_compared": 48,
+    "mismatched_outputs": 0
+   },
+   {
+    "library": "query_guard_compact",
+    "query": 1,
+    "shapes": 8,
+    "pools": [
+     1,
+     4
+    ],
+    "outputs_compared": 80,
+    "mismatched_outputs": 0
+   }
+  ]
+ },
+ "faults": {
+  "faults": {
+   "LN1": {
+    "what": "the forward normalises in float (the scalar kernel rounds o*inv from double)",
+    "in": "gp_lanes_pair.inc",
+    "kernel_check_mismatches": 3,
+    "task_check_mismatches": {
+     "guard_compact": 12,
+     "query_guard_compact": 36
+    },
+    "caught": true
+   },
+   "LN2": {
+    "what": "a row the scalar kernel sends to its FP64 fallback kept as the lanes computed it",
+    "in": "gp_lanes_overlay.py",
+    "kernel_check_mismatches": 0,
+    "task_check_mismatches": {
+     "guard_compact": 12,
+     "query_guard_compact": 24
+    },
+    "caught": true
+   },
+   "LN3": {
+    "what": "the backward's rows past the last group of sixteen start one row late",
+    "in": "gp_lanes_overlay.py",
+    "kernel_check_mismatches": 0,
+    "task_check_mismatches": {
+     "guard_compact": 10,
+     "query_guard_compact": 10
+    },
+    "caught": true
+   },
+   "LN4": {
+    "what": "the query contraction's output a rounded float sum with a term the scalar kernel lacks",
+    "in": "gp_lanes_query.inc",
+    "kernel_check_mismatches": 1,
+    "task_check_mismatches": {
+     "guard_compact": 0,
+     "query_guard_compact": 12
+    },
+    "caught": true
+   },
+   "LN5": {
+    "what": "one adjoint's first term scaled by 1 + 2^-23 after it lands",
+    "in": "gp_lanes_pair.inc",
+    "kernel_check_mismatches": 1,
+    "task_check_mismatches": {
+     "guard_compact": 12,
+     "query_guard_compact": 23
+    },
+    "caught": true
+   }
+  },
+  "equivalent": {
+   "LE1": {
+    "what": "the norm's square and sum fused: od*od of a widened float is exact in double (48 significant bits), so one rounding of od*od+norm is the two roundings' value",
+    "in": "gp_lanes_pair.inc",
+    "kernel_check_mismatches": 0,
+    "task_check_mismatches": {
+     "guard_compact": 0,
+     "query_guard_compact": 0
+    },
+    "observable": false
+   },
+   "LE2": {
+    "what": "the query pair's two updates swapped: acc[k] and acc[i] are distinct accumulators (i < k)",
+    "in": "gp_lanes_query.inc",
+    "kernel_check_mismatches": 0,
+    "task_check_mismatches": {
+     "guard_compact": 0,
+     "query_guard_compact": 0
+    },
+    "observable": false
+   },
+   "LE3": {
+    "what": "the vjp's dot accumulated on every lane: a lane whose norm is at most the epsilon never reads it",
+    "in": "gp_lanes_query.inc",
+    "kernel_check_mismatches": 0,
+    "task_check_mismatches": {
+     "guard_compact": 0,
+     "query_guard_compact": 0
+    },
+    "observable": false
+   }
+  }
+ }
+}

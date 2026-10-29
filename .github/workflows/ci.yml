@@ -129,6 +129,9 @@ jobs:
           # the six-target capability matrix must equal a fresh emission too (drift gate)
           python3 -m bcir.kbcir.differential --emit-matrix
           git diff --exit-code -- mlir/test/passes/target_matrix.mlir
+          # PX-3b-2: the measured-table plan parity must equal a fresh emission too
+          python3 -m bcir.kbcir.differential --emit-measured
+          git diff --exit-code -- mlir/test/passes/plan_measured.mlir mlir/test/passes/verify_measured.mlir
 
       - name: BCIR trust-boundary fuzz (seeded by gen_module)
         if: matrix.shard == 1
@@ -1304,8 +1307,10 @@ jobs:
     runs-on: ubuntu-latest
     # A hang guard, not a budget: on main the cells ran 9.3 (clang23), 15.3 (clang) and 20.7 (gcc)
     # minutes, and one commit's identical steps ran 1.3 times slower on one hosted runner than on
-    # another (2026-10-19, BF16-ATTN-COST), so 25 left the gcc cell no headroom.
-    timeout-minutes: 40
+    # another (2026-10-19, BF16-ATTN-COST), so 25 left the gcc cell no headroom. On 2026-10-23 one
+    # commit's gcc cell ran 21 minutes on one runner and reached 40 on two others -- its build-parity
+    # step 970 seconds on the first and 1,882 on the second, twice the time for the same steps -- so 60.
+    timeout-minutes: 60
     # BUILD-1 (docs/BCIR_BUILD_ROADMAP.md): the top-level CMake project over runtime/manifest.json.
     # Building is the proof for the libraries, the tools, the harnesses, the C++ seam and the
     # freestanding object checks (C11 + C23); `ctest -L build` runs the manifest reconciliation and

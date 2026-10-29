@@ -7,8 +7,10 @@ is stated as BCIR's own artifacts, and reaches the trainer through them alone:
   job's calls share theirs), each phase after the one before -- so GEM's dispatch order (topological
   phase, then ascending claim id) is the program's record order, and a phase's position is its
   launch. The resources are the program's VALUES. Each parameter tensor of the four parameter
-  arenas, the bf16 workspace and the micro-batch's tokens and targets live through the whole
-  program; a write of a span of the activations or the scratch starts a new value and ends every
+  arenas, the workspace (the bf16 GEMMs' packs, the binary32 attention's copies: ATT-CONTIG, the
+  blocked contract's split weight adjoints: KSPLIT) and the micro-batch's tokens and targets live
+  through the whole program; a write of a span of the
+  activations or the scratch starts a new value and ends every
   value of a span it meets, and a read takes the span's current value (a read of a span no live
   value holds is refused here: the program would read bytes another value left). The C step's own
   reuse of its buffers -- the scratch every layer and micro-batch, the RMS VJP's 1/rms in the head of
@@ -46,7 +48,9 @@ A claim (the vocabulary both rails share, `OPS` and the GEMM grammar):
     train.loss                                 rd (logits, targets) wr (dlogits, the row terms)
     train.rms, train.rms.vjp[.add][.first]     the norm, and its VJP (how: dx accumulates; dgamma
                                                written first)
-    train.rope[.inverse], train.attention[.vjp], train.add, train.mul, train.provider.silu,
+    train.rope.table / train.rope[.inverse]    wr (the rotation's table: ROPE-TABLE) / rd (x, the
+                                               table) wr (x)
+    train.attention[.vjp], train.add, train.mul, train.provider.silu,
     train.silu_mul[.panels], train.swiglu.vjp[.panels], train.check.forward|ran|loss, train.update
 
 Each claim's rd lists the RIDs of its read operands and wr of its written ones, each in operand
@@ -70,7 +74,7 @@ OPS = (
     "train.silu_mul", "train.silu_mul.panels", "train.swiglu.vjp", "train.swiglu.vjp.panels",
     "train.rms.vjp", "train.rms.vjp.add", "train.rms.vjp.first", "train.rms.vjp.add.first",
     "train.loss", "train.scatter", "train.check.forward", "train.check.ran", "train.check.loss",
-    "train.update",
+    "train.update", "train.rope.table",
 )  # fmt: skip
 #: A GEMM claim's roles and orientations (its name's second and third parts).
 GEMM_ROLES = ("alone", "pair", "chain", "rest")
@@ -87,7 +91,7 @@ REASONS = {
     14: "utf8", 15: "generation", 16: "plan", 17: "control", 18: "mac", 19: "telemetry",
     20: "ring", 21: "full", 22: "busy", 23: "lifetime", 24: "shard", 25: "planner",
     101: "op", 102: "claims", 103: "rid", 104: "bank", 105: "live", 106: "slots", 107: "run",
-    108: "shape", 109: "block", 110: "liveness",
+    108: "shape", 109: "block", 110: "liveness", 111: "alternative",
 }  # fmt: skip
 
 _SIMPLE = {
@@ -96,7 +100,7 @@ _SIMPLE = {
     nl.MUL: "train.mul", nl.PROVIDER_SILU: "train.provider.silu", nl.SILU_MUL: "train.silu_mul",
     nl.SILU_MUL_PANELS: "train.silu_mul.panels", nl.SWIGLU_VJP: "train.swiglu.vjp",
     nl.SWIGLU_VJP_PANELS: "train.swiglu.vjp.panels", nl.LOSS: "train.loss",
-    nl.SCATTER: "train.scatter", nl.UPDATE: "train.update",
+    nl.SCATTER: "train.scatter", nl.UPDATE: "train.update", nl.ROPE_TABLE: "train.rope.table",
 }  # fmt: skip
 _CHECKS = {
     nl.CHECK_FORWARD: "train.check.forward",
@@ -134,30 +138,33 @@ def op_name(r: nl.Record) -> str:
 def uses(r: nl.Record) -> tuple[tuple[int, int], ...]:
     """(operand slot, use) for every operand of `r`, in slot order: what its kernel reads (R),
     writes (W) or updates in place (RW) -- the C check's own reading (bcir_decoder_train.c's
-    px_kernel, px_gemm and px_update); the bf16 workspace a call packs into is written."""
+    px_kernel, px_gemm and px_update); the bf16 workspace a call packs into is written, and the
+    workspace the binary32 attention copies its heads' rows into where its record carries it (the
+    state lends bytes: ATT-CONTIG), as is the workspace a blocked-contract call's record carries (a
+    job with a weight adjoint, whose split partials it holds: KSPLIT)."""
     k, f = r.kind, r.flags
     if k == nl.GEMM:
-        ws = ((3, W),) if f & 15 in (nl.E_BF16, nl.E_BF16_GROUP) else ()
+        lent = f & 15 in (nl.E_BF16, nl.E_BF16_GROUP) or r.refs[3] != (0, 0, 0)
+        ws = ((3, W),) if lent else ()
         return ((0, R), (1, R), (2, RW if r.dims[6] else W)) + ws
-    if k == nl.ATTN:
-        return ((0, R), (1, R), (2, R), (3, W), (4, W)) + (((8, W),) if f & _ATTN_BF16 else ())
-    if k == nl.ATTN_VJP:
+    if k in (nl.ATTN, nl.ATTN_VJP):
         bf = bool(f & _ATTN_BF16)
-        return ((0, R), (1, R), (2, R), (3, R if bf else RW), (4, R), (5, W), (6, W), (7, W)) + (
-            ((8, W),) if bf else ()
-        )
+        ws = ((8, W),) if bf or r.refs[8] != (0, 0, 0) else ()  # an absent operand: (0, 0, 0)
+        if k == nl.ATTN:
+            return ((0, R), (1, R), (2, R), (3, W), (4, W)) + ws
+        return ((0, R), (1, R), (2, R), (3, R if bf else RW), (4, R), (5, W), (6, W), (7, W)) + ws
     if k == nl.RMS_VJP:
         return ((0, R), (1, R), (2, R), (3, RW if f & _RMSB_ADD else W),
                 (4, W if f & _RMSB_FIRST else RW), (5, W))  # fmt: skip
     table = {
         nl.SCAN: ((0, R),), nl.ZERO: ((0, W),), nl.EMBED: ((0, R), (1, R), (2, W)),
-        nl.RMS: ((0, R), (1, R), (2, W)), nl.ROPE: ((0, RW),), nl.ADD: ((0, R), (1, RW)),
+        nl.RMS: ((0, R), (1, R), (2, W)), nl.ROPE: ((0, RW), (1, R)), nl.ADD: ((0, R), (1, RW)),
         nl.MUL: ((0, R), (1, RW)), nl.PROVIDER_SILU: ((0, R), (1, W)),
         nl.SILU_MUL: ((0, R), (1, R), (2, W)), nl.SILU_MUL_PANELS: ((0, R), (1, R), (2, W), (3, W)),
         nl.SWIGLU_VJP: ((0, R), (1, R), (2, R), (3, W), (4, W)),
         nl.SWIGLU_VJP_PANELS: ((0, R), (1, R), (2, R), (3, W), (4, W), (5, W), (6, W)),
         nl.LOSS: ((0, R), (1, R), (2, W), (3, W)), nl.SCATTER: ((0, R), (1, R), (2, RW)),
-        nl.CHECK: (), nl.UPDATE: ((0, R), (1, RW), (2, RW), (3, RW)),
+        nl.CHECK: (), nl.UPDATE: ((0, R), (1, RW), (2, RW), (3, RW)), nl.ROPE_TABLE: ((0, W),),
     }  # fmt: skip
     if k not in table:
         raise ValueError(f"a program holds no record of kind {k}")
@@ -178,7 +185,7 @@ def work(r: nl.Record) -> int:
     if k == nl.ROPE:
         return d[0] * d[1] * d[2] * d[3]
     if k in (nl.EMBED, nl.SCATTER, nl.RMS, nl.RMS_VJP, nl.LOSS, nl.SILU_MUL_PANELS,
-             nl.SWIGLU_VJP_PANELS):  # fmt: skip
+             nl.SWIGLU_VJP_PANELS, nl.ROPE_TABLE):  # fmt: skip
         return d[0] * d[1]
     if k == nl.CHECK:
         return 1
@@ -405,11 +412,12 @@ def program_pack(
                         placements, tensors, tuple(bindings))  # fmt: skip
 
 
-def placed_words(tp: TrainingPack, placements) -> tuple[int, ...]:
+def placed_words(tp: TrainingPack, placements, dispatch=None) -> tuple[int, ...]:
     """The words the lowering of `tp`'s pack placed by `placements` must write: the program's, every
     operand at its value's place -- a slot's space its value's bank, its offset the value's (a run
     of parameter tensors from its first) -- and every other word as it was. With `tp.placements`,
-    `tp.words` itself."""
+    `tp.words` itself. PX-3b-2: `dispatch`, a claim id -> (instance, workers) map as `plan_dispatch`
+    reads a plan, puts each claim's into its record's words 41 and 42 (claim i is record i)."""
     where = {p.rid: p for p in placements}
     words = list(tp.words)
     for i, binding in enumerate(tp.bindings):
@@ -418,7 +426,34 @@ def placed_words(tp: TrainingPack, placements) -> tuple[int, ...]:
             place = where[rids[0]]
             words[base + 3 * slot] = BANKS[place.bank]
             words[base + 3 * slot + 1] = place.offset
+    for claim, (instance, workers) in (dispatch or {}).items():
+        words[claim * nl.RECORD_WORDS + nl.WORD_INSTANCE] = instance
+        words[claim * nl.RECORD_WORDS + nl.WORD_WORKERS] = workers
     return tuple(words)
+
+
+def plan_dispatch(plan) -> dict[int, tuple[int, int]]:
+    """PX-3b-2: each claim's dispatch as `plan`'s steps state it, (instance, workers): a measured
+    realization `<name>@i<bit>` (K_BCIR's offer under a target's measured table) that instance, one
+    `<name>@t<k>` that many workers, and every other realization the default (0, 0) -- the C
+    lowering's reading of the plan's candidate strings (bcir_decoder_pack.c `dp_on_step`); an
+    alternative outside `cost.measured_alternative_key`'s grammar is refused, as the lowering
+    refuses it (ALTERNATIVE)."""
+    from ...kbcir.cost import measured_alternative_key
+
+    out: dict[int, tuple[int, int]] = {}
+    for step in plan.steps:
+        _, at, alternative = step.candidate.partition("@")
+        if not at:
+            out[step.claim_id] = (0, 0)
+            continue
+        try:
+            kind, value = measured_alternative_key(alternative)
+        except ValueError:
+            raise ValueError(f"claim {step.claim_id}: {step.candidate!r} runs no alternative "
+                             "(ALTERNATIVE)") from None  # fmt: skip
+        out[step.claim_id] = (value, 0) if kind == 0 else (0, value)
+    return out
 
 
 #: PX-4: the alignment a placed transient value starts at -- a cache line, as the C step's own
@@ -524,6 +559,7 @@ __all__ = [
     "pack_artifacts",
     "place_by_lifetime",
     "placed_words",
+    "plan_dispatch",
     "program_pack",
     "training_pack",
     "uses",

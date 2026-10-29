@@ -141,6 +141,23 @@ static int64_t hashTargetFromIR(TargetCapabilityOp cap) {
         h = fnvInt(h, kDefaultMemTierValues[4 * i + k]);
     }
   }
+  // PX-3b-2: the measured table after the tiers -- "measured", its generation, then each entry's
+  // (op, count, alternative, q8) in the table's order (provenance.hash_target's tail); a
+  // capability without one hashes as it always did.
+  if (auto gen = cap->getAttrOfType<IntegerAttr>("measured_gen")) {
+    auto ops = cap.getMeasuredOps();
+    auto alts = cap.getMeasuredAlternatives();
+    auto values = cap.getMeasuredValues();
+    h = fnvItem(h, "measured");
+    h = fnvInt(h, gen.getInt());
+    if (ops && alts && values)
+      for (size_t i = 0; i < ops->size() && i < alts->size() && 2 * i + 1 < values->size(); ++i) {
+        h = fnvItem(h, cast<StringAttr>((*ops)[i]).getValue());
+        h = fnvInt(h, (*values)[2 * i]);
+        h = fnvItem(h, cast<StringAttr>((*alts)[i]).getValue());
+        h = fnvInt(h, (*values)[2 * i + 1]);
+      }
+  }
   return fnvMask(h);
 }
 
@@ -941,18 +958,33 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
                   << claim.getSymName() << " negative realized cost " << cost;
               ok = false;
             }
+            // PX-3b-2: the realization the plan names -- its own at that width, or with
+            // kbcir.plan_alternative the measured one running that alternative
+            auto altAttr = claim->getAttrOfType<StringAttr>("kbcir.plan_alternative");
             SmallVector<int64_t> offered, prices;
+            bool widthOffered = false;
             for (const cm::Cand &cand : col.cands) {
               if (!llvm::is_contained(offered, cand.width))
                 offered.push_back(cand.width);
               if (cand.width != width)
+                continue;
+              widthOffered = true;
+              const bool measured = cand.measured >= 0;
+              if (measured != static_cast<bool>(altAttr) ||
+                  (measured && pa.h.measured[cand.measured].alternative != altAttr.getValue()))
                 continue;
               cm::Cost e = cand.cost;
               cm::applyFactor(
                   e, cm::contextFactor(pa.thetaThermal, prevReads, prevWidth, col.reads, width));
               prices.push_back(cm::scalarize(e, pa.weights));
             }
-            if (prices.empty()) {
+            if (prices.empty() && widthOffered && altAttr) {
+              claim.emitError("R9: claim @")
+                  << claim.getSymName() << " realized at width " << width << " running '"
+                  << altAttr.getValue()
+                  << "', not among the measured alternatives this target admits for it";
+              ok = false;
+            } else if (prices.empty()) {
               claim.emitError("R9: claim @")
                   << claim.getSymName() << " realized at width " << width << ", not among the "
                   << offered.size()

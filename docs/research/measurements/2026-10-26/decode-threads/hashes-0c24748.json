@@ -1,0 +1,53 @@
+{
+ "tools": {
+  "measure_threads.sh": "1220641a839dedbd5e59db09f282cf10b18f8e25494557f6099d01840ed6e801",
+  "threads_decode.c": "1586c9a4dda58c6207789845a7be1986448ab2773135e24cc4e789db1a94a16f",
+  "synthetic_model.py": "e91c78c82cdcc4d090128b5bcc13efb01cb5bde94a20f28c8606d6fadb597368"
+ },
+ "tools run from ../../2026-10-25/q8-lanes": {
+  "qual_summary.py": "4a4a15c7dd86bd5581bc2c31f3c0a36aa4211b028b20d767546c958598b533d5"
+ },
+ "sources": {
+  "before/runtime/c/bcir_ai_kernels.c": "6058db010122305081c38ceb982c71be9e0562428288950cde2abb185743158a",
+  "before/runtime/c/bcir_ai_kernels.h": "c94f373e6e546b9897b074621b379463becf442779ad55069ff8098050e61a7f",
+  "before/runtime/c/test_ai_kernels.c": "06e9d14c3f2ab12cd64b9d327b9f1941207c9ba7926bceed2ba7767b8e444e3e",
+  "before/runtime/c/bcir_llama.c": "eddd8fd56a5d5c1d24b73d7d3df0487fee8732046c094857dcb48adcb18dca20",
+  "before/runtime/c/bcir_llama.h": "3567bed1bc3e380af9fbda03e0b9dc9fd1b47be11bc5b652deae959bae57cee5",
+  "before/runtime/c/bcir_llama_ops.h": "017a20b7c67e2f5d2bc5bce1d3e00102c6c1ccf71c7ea7c7a375470214f8c973",
+  "before/runtime/c/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e",
+  "before/runtime/c/bcir_decoder_gem.c": "1cfc4e3a61ad98b47c2a8069f67ea93a3e578ddbe3c5b09ad43afee7e95ce6ed",
+  "before/runtime/c/bcir_tensor.c": "18241b181820728c34121d3f0eac79eb73bc7e4bd56690663eeffda1b025b7ec",
+  "before/bcir/tests/test_native_ai.py": "1d2855d2d8b4f6cabd32f7cf134be8492d7342517d177cf0866e91e426edfac8",
+  "before/bcir/tests/test_model_weights_io.py": "557bd52a2a78b26b3bf9f91d2d372fdab323935d1527d348045b92bc39864321",
+  "before/bcir/tests/test_decoder_gem.py": "0171253d3498d7342840f91d5450804f2448d25b8b692fd03d1fa01d45e92afe",
+  "before/bcir/kbcir/native_ai.py": "6d51003b10b630cddfd3a541cfe1955cbbc49df6c0dfa1afa70b74259aee9fdb",
+  "after/runtime/c/bcir_ai_kernels.c": "4bce681ddbf428a6db14b7532937602def0ebceec4975e5c6fb0a3ce400bf911",
+  "after/runtime/c/bcir_ai_kernels.h": "cb684e79f3c4120829bb3578c6da2744a13cc222a75a4a6f9f536d02fd99fe48",
+  "after/runtime/c/test_ai_kernels.c": "8c4a1a54978c32713062663183fce89a558584d6ab48a03eba3e0393a469aef0",
+  "after/runtime/c/bcir_llama.c": "f3a31700b5f08ad0b9b6d0a4933325ad50f333ae9ef08cc80d0585eec6fbd2da",
+  "after/runtime/c/bcir_llama.h": "6906d9820b43499c9d706e82364539077a5ed094cc014baeecfd5dd166d7b644",
+  "after/runtime/c/bcir_llama_ops.h": "56c836c5d00c378b8cddd523429cd30796807c1b8cf5b97619ec8b5894c3a399",
+  "after/runtime/c/bcir_llama_cli.c": "16ad76c8f8ec5a5ae350043f5fdb68a20e4291e0a4b5a388c65962df3bccc372",
+  "after/runtime/c/bcir_decoder_gem.c": "9cde9b2dd290f72bc5f9a516a9ed379a51d822615c2f346383aa7060d57521ce",
+  "after/runtime/c/bcir_tensor.c": "18241b181820728c34121d3f0eac79eb73bc7e4bd56690663eeffda1b025b7ec",
+  "after/bcir/tests/test_native_ai.py": "6272fbce0227e4fb6a07f3380033390eea05c7525a2ed94ab07c53ee7400b043",
+  "after/bcir/tests/test_model_weights_io.py": "1d9fe0bb7979f5747d728aa092a0da3fcf04ce11f29ac6d615489c4dc85dee3d",
+  "after/bcir/tests/test_decoder_gem.py": "ce7235ebf2b3099b40708171dd45a25510f45ca9b8d0254e819f432c43978c9f",
+  "after/bcir/kbcir/native_ai.py": "c19e0a671a963e4c7eefb91b6b239b87acc71756b423342455b5b7758dbb3689",
+  "after/tools/testing/faults/decode-threads.json": "ebc913ce5270fe8f512d4a913a3d9f9152289a0b1fc7d83984ffd90fda631676",
+  "without/runtime/c/bcir_ai_kernels.c": "4bce681ddbf428a6db14b7532937602def0ebceec4975e5c6fb0a3ce400bf911",
+  "without/runtime/c/bcir_ai_kernels.h": "cb684e79f3c4120829bb3578c6da2744a13cc222a75a4a6f9f536d02fd99fe48",
+  "without/runtime/c/test_ai_kernels.c": "06e9d14c3f2ab12cd64b9d327b9f1941207c9ba7926bceed2ba7767b8e444e3e",
+  "without/runtime/c/bcir_llama.c": "f3a31700b5f08ad0b9b6d0a4933325ad50f333ae9ef08cc80d0585eec6fbd2da",
+  "without/runtime/c/bcir_llama.h": "6906d9820b43499c9d706e82364539077a5ed094cc014baeecfd5dd166d7b644",
+  "without/runtime/c/bcir_llama_ops.h": "56c836c5d00c378b8cddd523429cd30796807c1b8cf5b97619ec8b5894c3a399",
+  "without/runtime/c/bcir_llama_cli.c": "16ad76c8f8ec5a5ae350043f5fdb68a20e4291e0a4b5a388c65962df3bccc372",
+  "without/runtime/c/bcir_decoder_gem.c": "9cde9b2dd290f72bc5f9a516a9ed379a51d822615c2f346383aa7060d57521ce",
+  "without/runtime/c/bcir_tensor.c": "18241b181820728c34121d3f0eac79eb73bc7e4bd56690663eeffda1b025b7ec",
+  "without/bcir/tests/test_native_ai.py": "1d2855d2d8b4f6cabd32f7cf134be8492d7342517d177cf0866e91e426edfac8",
+  "without/bcir/tests/test_model_weights_io.py": "557bd52a2a78b26b3bf9f91d2d372fdab323935d1527d348045b92bc39864321",
+  "without/bcir/tests/test_decoder_gem.py": "0171253d3498d7342840f91d5450804f2448d25b8b692fd03d1fa01d45e92afe",
+  "without/bcir/kbcir/native_ai.py": "c19e0a671a963e4c7eefb91b6b239b87acc71756b423342455b5b7758dbb3689",
+  "without/tools/testing/faults/decode-threads.json": "ebc913ce5270fe8f512d4a913a3d9f9152289a0b1fc7d83984ffd90fda631676"
+ }
+}

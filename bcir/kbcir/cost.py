@@ -19,7 +19,7 @@ not of the in-channel realization.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from enum import IntEnum
 
 from ..model.lanes import Domain
@@ -362,6 +362,129 @@ _POINTER_BITS_PREFIX = (
 )
 
 
+#: PX-3b-2: the largest worker count a measured alternative names (the BKPI/BKPR code's 15 bits).
+MEASURED_WORKERS_MAX = (1 << 15) - 1
+#: The instance bits a measured alternative names (bcir_tensor.h: portable, AVX2, AVX-512, AMX).
+MEASURED_INSTANCES = (1, 2, 4, 8)
+#: The most measured entries one (op, count) holds: a claim's offer is then at most eight times its
+#: own, so the native planner's rows per claim stay under 128 (16 widths x (1 + 7)) and its
+#: predecessor index fits its u8 (planner_abi.MEASURED_PER_KEY_MAX, bcir_kplan.h).
+MEASURED_PER_KEY_MAX = 7
+
+
+def spelled_as_opcode(op: str) -> bool:
+    """Whether `op` is spelled as an `Opcode` name is: an ASCII capital, then ASCII capitals,
+    digits and underscores. The law rail writes an op-less claim's op as its opcode's name
+    (`bcir.lower.mlir`: `claim.op or claim.opcode.name`), so a measured entry spelled so would, on
+    that rail, name op-less claims the oracle never offers it: no measured table holds one, on
+    any rail (PX-3b-2; bcir_kplan.c `kp_opcode_spelled`, BCIRMeasured.h `isOpcodeSpelled`)."""
+    return (
+        bool(op)
+        and "A" <= op[0] <= "Z"
+        and all("A" <= ch <= "Z" or "0" <= ch <= "9" or ch == "_" for ch in op)
+    )
+
+
+def measured_alternative_key(alternative) -> tuple[int, int]:
+    """(0, bit) for an instance `i<bit>`, (1, k) for a worker count `t<k>` -- the order a measured
+    table holds its alternatives in, and their code on the planner's records (`code`) -- refusing
+    any other spelling: ASCII digits, no leading zero, an instance of `MEASURED_INSTANCES`, a
+    worker count of 1 .. `MEASURED_WORKERS_MAX`."""
+    if type(alternative) is not str or len(alternative) < 2 or alternative[0] not in "it":
+        raise ValueError(f"a measured alternative is i<bit> or t<workers>, not {alternative!r}")
+    digits = alternative[1:]
+    if not digits.isascii() or not digits.isdigit() or digits[0] == "0" or len(digits) > 5:
+        raise ValueError(f"a measured alternative is i<bit> or t<workers>, not {alternative!r}")
+    value = int(digits)
+    if alternative[0] == "i":
+        if value not in MEASURED_INSTANCES:
+            raise ValueError(f"{alternative!r} names no instance (1, 2, 4 or 8)")
+        return 0, value
+    if value > MEASURED_WORKERS_MAX:
+        raise ValueError(f"{alternative!r}: more than {MEASURED_WORKERS_MAX} workers")
+    return 1, value
+
+
+@dataclass(frozen=True)
+class MeasuredEntry:
+    """One measured alternative of a claim (PX-3b-2): the claims of op `op` and count `count` may
+    run `alternative` (`i<bit>` an instance, `t<k>` k workers) at `q8`/256 of their default's
+    time -- a price measured and resolved faster (1..255), never a legality fact."""
+
+    op: str
+    count: int
+    alternative: str
+    q8: int
+
+
+@dataclass(frozen=True)
+class MeasuredPrices:
+    """A frozen, generation-tagged table of measured alternatives (PX-3b-2) -- the one form a
+    measured price takes into K_BCIR's candidates (LangRef §13's learning law, as
+    `kbcir.microbench`'s tables): a claim whose (op, count) it names is offered, after each of its
+    own realizations, that realization run each named alternative, its compute and memory axes
+    scaled by the entry's Q8. It ranks; it never decides legality (the realization's lane and
+    width are its own realization's, R9's), and no table is today's offer exactly.
+
+    The entries are strictly ascending by (op, count, alternative), the alternatives in
+    `measured_alternative_key` order: one spelling of one table. A claim's op is non-empty (an
+    op-less claim is never measured), at most 65,535 UTF-8 bytes and never spelled as an opcode
+    (`spelled_as_opcode`); a count is 1 .. 2**32 - 1; one (op, count) holds at most
+    `MEASURED_PER_KEY_MAX` entries."""
+
+    generation: int
+    entries: tuple[MeasuredEntry, ...]
+    _by_key: dict = field(default=None, compare=False, repr=False, hash=False)
+
+    @property
+    def most_per_key(self) -> int:
+        """The most entries one (op, count) holds: a claim's offer grows at most this many times
+        over its own realizations."""
+        return max(map(len, self._by_key.values()))
+
+    def __post_init__(self) -> None:
+        if type(self.generation) is not int or not 1 <= self.generation < 1 << 63:
+            raise ValueError("a measured table's generation is a positive 63-bit integer")
+        if not isinstance(self.entries, (tuple, list)) or not self.entries:
+            raise ValueError("a measured table holds at least one entry")
+        entries, last, by_key = tuple(self.entries), None, {}
+        for e in entries:
+            if not isinstance(e, MeasuredEntry):
+                raise ValueError("a measured table holds MeasuredEntry values")
+            if type(e.op) is not str or not e.op or len(e.op.encode("utf-8")) > 0xFFFF:
+                raise ValueError("a measured entry's op is a non-empty string of at most 65,535 "
+                                 "UTF-8 bytes")  # fmt: skip
+            if spelled_as_opcode(e.op):
+                raise ValueError(f"{e.op}: a measured entry's op is never spelled as an opcode "
+                                 "(the law rail's spelling of an op-less claim)")  # fmt: skip
+            if type(e.count) is not int or not 1 <= e.count < 1 << 32:
+                raise ValueError(f"{e.op}: a measured entry's count is 1 .. 2**32 - 1")
+            key = (e.op, e.count, measured_alternative_key(e.alternative))
+            if type(e.q8) is not int or not 1 <= e.q8 <= 255:
+                raise ValueError(f"{e.op} {e.alternative}: a measured price is 1 .. 255 (Q8, "
+                                 "resolved faster than the default)")  # fmt: skip
+            if last is not None and not last < key:
+                raise ValueError("a measured table's entries are strictly ascending by (op, "
+                                 "count, alternative)")  # fmt: skip
+            last = key
+            run = by_key.setdefault((e.op, e.count), [])
+            if len(run) == MEASURED_PER_KEY_MAX:
+                raise ValueError(f"{e.op} {e.count}: more than {MEASURED_PER_KEY_MAX} measured "
+                                 "entries share one op and count")  # fmt: skip
+            run.append(e)
+        object.__setattr__(self, "entries", entries)
+        object.__setattr__(self, "_by_key", {k: tuple(v) for k, v in by_key.items()})
+
+    def lookup(self, op: str, count: int) -> tuple[MeasuredEntry, ...]:
+        """The entries a claim of `op` and `count` is offered, in the table's order."""
+        return self._by_key.get((op, count), ())
+
+    def items(self) -> tuple:
+        """The table as the target's hash folds it (`provenance.hash_target`)."""
+        return ("measured", self.generation,
+                tuple((e.op, e.count, e.alternative, e.q8) for e in self.entries))  # fmt: skip
+
+
 @dataclass(frozen=True)
 class TargetProfile:
     """Substrate descriptor H -- an *open container* for any target (x86/ARM/RISC-V/GPU).
@@ -391,6 +514,9 @@ class TargetProfile:
     cal_gen: int = 0  # cost-table generation (0 = seeded constants;
     # >=1 = a frozen CalibratedProfile was applied)
     mem: MemoryHierarchy = MemoryHierarchy.default()
+    # PX-3b-2: measured alternatives the offer prices beside each realization (None: none -- the
+    # profile, its hash and every plan exactly as before the field existed)
+    measured: MeasuredPrices | None = None
 
     def __post_init__(self) -> None:
         # Construction-time well-formedness (S0-6), mirroring the parse-time
@@ -419,6 +545,12 @@ class TargetProfile:
         for name in ("affinity_domains", "mem_channels", "mem_unit", "elem_bytes"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive (got {getattr(self, name)})")
+        if self.measured is not None and not isinstance(self.measured, MeasuredPrices):
+            raise ValueError("measured is a MeasuredPrices table or None")
+
+    def with_measured(self, table: "MeasuredPrices | None") -> "TargetProfile":
+        """This profile with `table`'s measured alternatives priced into the offer (PX-3b-2)."""
+        return replace(self, measured=table)
 
     @property
     def vector_width(self) -> int:

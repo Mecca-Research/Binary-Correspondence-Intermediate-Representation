@@ -1,0 +1,7 @@
+{
+ "what": "exp_span_check.c, built against the tree after's unit (-std=c11 -O3 -ffp-contract=off -fno-math-errno -pthread), clang and gcc: the tensor unit's span exponential bcir_tensor_exp (the widest instance) and each instance bcir_tensor_exp_variant admits (1 portable, 2 AVX2, 4 AVX-512) against the scalar bcir_tensor_expf (exp1) on every one of the 2^32 binary32 bit patterns, in spans of 4,096, compared bit for bit; then the spans of every length from 1 to 80 at sixteen block starts and over the special values (both zeros, both infinities, NaN payloads, the overflow and underflow thresholds and their neighbours, the clamps, FLT_MAX, the smallest normal and subnormal) at every offset from 0 to 15, so the masked tail meets each: the premise of once_level3.py's gate edit",
+ "lines": [
+  "clang exp_span_check: 4294967296 inputs; widest 0 mismatches (+103680 tail inputs); instance 1 ran 0, 2 ran 0, 4 ran 0",
+  "gcc exp_span_check: 4294967296 inputs; widest 0 mismatches (+103680 tail inputs); instance 1 ran 0, 2 ran 0, 4 ran 0"
+ ]
+}

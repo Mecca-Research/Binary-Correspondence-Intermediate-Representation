@@ -1,0 +1,117 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_native_ai:_CC",
+  "bcir.tests.test_model_weights_io:test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+  "bcir.tests.test_model_weights_io:test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "label": "DP1 the group scale's biased exponent one high",
+   "new": "bits = (uint64_t)(exponent + 1024) << 52;",
+   "old": "bits = (uint64_t)(exponent + 1023) << 52;",
+   "path": "runtime/c/bcir_q8_model.c"
+  },
+  {
+   "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "label": "DP2 the group scale admitting 301 and -301",
+   "new": "  if (exponent < -301 || exponent > 301) return NAN;\n  bits =",
+   "old": "  if (exponent < -300 || exponent > 300) return NAN;\n  bits =",
+   "path": "runtime/c/bcir_q8_model.c"
+  },
+  {
+   "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "label": "DP3 a group's scale applied a group past its end",
+   "new": "stop = (group + 2u) * model->group_size;",
+   "old": "stop = (group + 1u) * model->group_size;",
+   "path": "runtime/c/bcir_q8_model.c"
+  },
+  {
+   "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "label": "DP4 the range form dequantizing the -128 code",
+   "new": "out[i - start] = scale != scale ? NAN : (double)code * scale;",
+   "old": "out[i - start] = code == -128 || scale != scale ? NAN : (double)code * scale;",
+   "path": "runtime/c/bcir_q8_model.c"
+  },
+  {
+   "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "label": "DP5 a range past the tensor's end accepted",
+   "new": "      (count && !out)) return -1;",
+   "old": "      count > tensor->element_count - start || (count && !out)) return -1;",
+   "path": "runtime/c/bcir_q8_model.c"
+  },
+  {
+   "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "label": "DP6 a NULL out with a count accepted",
+   "new": "      count > tensor->element_count - start) return -1;",
+   "old": "      count > tensor->element_count - start || (count && !out)) return -1;",
+   "path": "runtime/c/bcir_q8_model.c"
+  },
+  {
+   "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "label": "DP7 a start past the tensor's end not refused first",
+   "new": "  if (!tensor_checked(model, tensor) ||\n",
+   "old": "  if (!tensor_checked(model, tensor) || start > tensor->element_count ||\n",
+   "path": "runtime/c/bcir_q8_model.c"
+  },
+  {
+   "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "label": "DP8 the shared predicate blind to an entry's codes off their offset",
+   "new": "         tensor->codes != NULL;",
+   "old": "         tensor->codes == model->storage + tensor->code_offset;",
+   "path": "runtime/c/bcir_q8_model.c"
+  },
+  {
+   "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "label": "DP9 the range form reading the next group's exponent",
+   "new": "(int)rdi16(tensor->exponents + (size_t)group * 2u + 2u));",
+   "old": "(int)rdi16(tensor->exponents + (size_t)group * 2u));",
+   "path": "runtime/c/bcir_q8_model.c"
+  },
+  {
+   "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "label": "DP10 the argmax's scan taking the last token equal to the largest",
+   "new": "  for (token = n; token-- > 0u;)\n    if (logits[token] == top) return (int32_t)token;",
+   "old": "  for (token = 0u; token < n; ++token)\n    if (logits[token] == top) return (int32_t)token;",
+   "path": "runtime/c/bcir_llama.c"
+  },
+  {
+   "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "label": "DP11 the argmax skipping the logits past the last whole four",
+   "new": "",
+   "old": "  for (; token < n; ++token) top = logits[token] > top ? logits[token] : top;\n",
+   "path": "runtime/c/bcir_llama.c"
+  },
+  {
+   "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "label": "DP12 the argmax leaving a lane out of its reduction",
+   "new": "",
+   "old": "  top = e > top ? e : top;\n",
+   "path": "runtime/c/bcir_llama.c"
+  },
+  {
+   "expects": "test_the_decoders_passes_are_the_per_element_values_and_the_loops_pick",
+   "label": "DP13 a lane taking a NaN (the operands of its select swapped)",
+   "new": "    a = a > logits[token] ? a : logits[token];",
+   "old": "    a = logits[token] > a ? logits[token] : a;",
+   "path": "runtime/c/bcir_llama.c"
+  },
+  {
+   "expects": "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+   "label": "DP14 the embedding's row a row late",
+   "new": "return bcir_q8_tensor_values(m, embedding, ((uint32_t)token + 1u) % m->vocab_size * m->d_model, m->d_model, w->x) ? -1 : 0;",
+   "old": "return bcir_q8_tensor_values(m, embedding, (uint32_t)token * m->d_model, m->d_model, w->x) ? -1 : 0;",
+   "path": "runtime/c/bcir_llama.c"
+  },
+  {
+   "expects": "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+   "label": "DP15 a norm's gamma a value short",
+   "new": "  if (bcir_q8_tensor_values(m, gamma, 0u, d - 1u, w->gamma)) {",
+   "old": "  if (bcir_q8_tensor_values(m, gamma, 0u, d, w->gamma)) {",
+   "path": "runtime/c/bcir_llama.c"
+  }
+ ]
+}

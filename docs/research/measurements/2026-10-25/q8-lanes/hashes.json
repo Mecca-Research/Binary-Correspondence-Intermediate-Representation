@@ -1,0 +1,29 @@
+{
+ "tools": {
+  "measure_lanes.sh": "49c62ca6f4c614744c3e18f55427a3b73e63cf3df88c1fa24b6f32894f8f2d31",
+  "q8_ab.c": "460162375660af405060d3974a318537530496267094e313261c234dea00adba",
+  "decode_ab.py": "2d115150246b72ab2b4dfc6c276504d387616d5cf7c4bb93bcb26e1247447001",
+  "llama_ops.py": "56a526a9e255a6ab7b9afa70e762bb22ebf02708369e59b04c46c20d99488df8",
+  "bits.sh": "550bafd6c7a44465b9e2b4d8b39feccf0c6df4d1ccbc065390626ccd65baf69e",
+  "portable_check.sh": "52a1f6d1f215ca7785b7363d5356c4e15399e16bd9995b51168485a645d5710d",
+  "qual_summary.py": "4a4a15c7dd86bd5581bc2c31f3c0a36aa4211b028b20d767546c958598b533d5",
+  "without_the_cases.py": "9496d6c2b208514ba2290e190c88f04e172241fc6e63ac452ac2b4ad1dcebd2a"
+ },
+ "sources": {
+  "before/bcir_ai_kernels.c": "07cb6a368aeea2966bbcc9130221cafe7fc868c0583776b9f25ea823fdb41b07",
+  "before/bcir_ai_kernels.h": "feb8c14d5fbd45263f1bd4d6d16844163cc883198d9c8029d8241e13365129dc",
+  "before/test_ai_kernels.c": "d5bdbe57ba9090d9d74d60a77e4dfe8c9e2c45c4a5ea24b323f57052f3668469",
+  "before/bcir_llama.c": "241ab7e6fe025fa34ade317dedde77624979e937044e92eba1784759c78e8239",
+  "before/bcir_decode.c": "7c8ce567478a5b178cceca94f7fb3a3c942e92d9f970ae2c618c3f1547ff5200",
+  "before/bcir_q8_model.c": "30caa9e582859a034565b0d5378ed5b268f5ffc9777459e9f27aa235977d2693",
+  "before/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e",
+  "after/bcir_ai_kernels.c": "76ae699d3712fe61c4073e119a1e6fa1d64816994d73ee3f292b3a9a9aaefdd6",
+  "after/bcir_ai_kernels.h": "42ab07b340dfc90d03d67a857426ad448ae2ed4dabe076c4f2db2a8e1ee19006",
+  "after/test_ai_kernels.c": "a83b3ebbdba90d101af9868ca786977239bfe5b8ca98a0ecd34ade990033acbe",
+  "after/bcir_llama.c": "241ab7e6fe025fa34ade317dedde77624979e937044e92eba1784759c78e8239",
+  "after/bcir_decode.c": "7c8ce567478a5b178cceca94f7fb3a3c942e92d9f970ae2c618c3f1547ff5200",
+  "after/bcir_q8_model.c": "30caa9e582859a034565b0d5378ed5b268f5ffc9777459e9f27aa235977d2693",
+  "after/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e",
+  "first/bcir_ai_kernels.c": "58e7993349d9c59464bd02f87db974adf4599ef8af421e0a51676898c74f925a"
+ }
+}

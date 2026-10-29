@@ -1,0 +1,34 @@
+{
+ "tools": {
+  "measure_passes.sh": "d3ed93df64c4921010ce78e1fbc08b2328c3549cfdd0891a85ff772290e39a30",
+  "argmax_ab.c": "baef4f36d5bd53c803001d918616a62c0cb5e00b2cad5bec09187992ecb9c41b",
+  "vacuity_table.py": "e77915755cb3717db635735c218a7d893966f6d1ffb7aa49a4992474da3553f6"
+ },
+ "tools run from other records": {
+  "../kernel-align/decode_place.c": "86a4c268d5545d7f701766efb67ad396af96cdfeceb4b7d6b382dee1bee3f576",
+  "../kernel-align/build_decode.py": "47f9d9a155dff49bf4c1552061e9ee3b6b58f26ddc10436200ac9eaef6404eb1",
+  "../../2026-10-26/decode-threads/synthetic_model.py": "e91c78c82cdcc4d090128b5bcc13efb01cb5bde94a20f28c8606d6fadb597368",
+  "../../2026-10-25/q8-lanes/qual_summary.py": "4a4a15c7dd86bd5581bc2c31f3c0a36aa4211b028b20d767546c958598b533d5"
+ },
+ "models": {
+  "lab": "820060120447c560a12a9b74959bee99c39475b8b5bfd193c14fee79d5accb21",
+  "d256": "2de1f43949aa824ebcda1a3fb30b16f773a480c623ba67d59e6efe3dfdd416d6",
+  "d512": "23796e5e867cb04417e48989549f8b349e5188587dccfc5bb05db6fe0ce46e13"
+ },
+ "sources": {
+  "before/runtime/c/bcir_ai_kernels.c": "c751553471aea88bdde01fbe31730ea0a7f5eb0638404881eab186c06f676127",
+  "before/runtime/c/bcir_q8_model.c": "ae8b0ff55014355fac0f10c49005c22f97e7ad5921de07b4db0ca81cf331c4c0",
+  "before/runtime/c/bcir_q8_model.h": "568387ea97a1a6da56b81645046b0a473ac1633d1fe07b76ad72320374185c08",
+  "before/runtime/c/bcir_llama.c": "f3a31700b5f08ad0b9b6d0a4933325ad50f333ae9ef08cc80d0585eec6fbd2da",
+  "before/runtime/c/bcir_llama_ops.h": "56c836c5d00c378b8cddd523429cd30796807c1b8cf5b97619ec8b5894c3a399",
+  "before/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "before/runtime/manifest.json": "9e35f85218918aa691263d457e0ce4a005ae2517b7502b916fafb68e33161a53",
+  "after/runtime/c/bcir_ai_kernels.c": "c751553471aea88bdde01fbe31730ea0a7f5eb0638404881eab186c06f676127",
+  "after/runtime/c/bcir_q8_model.c": "2521249fae3831227081c95a225cc514bf475dd1a7639ceb26738368f31e2e9b",
+  "after/runtime/c/bcir_q8_model.h": "6c381b31847c4f0922b2cdcd2deec0286ba430a6d779ad838fc60269190c4a1c",
+  "after/runtime/c/bcir_llama.c": "5824cc07597d1b0dd8bfce1bede4264869bb0ffea07a72c7f5ee6dd743bdcf3d",
+  "after/runtime/c/bcir_llama_ops.h": "f2a2503bc21cd057c98f495eaae1a0cca8c4220d42d38ed808945ea44551ce25",
+  "after/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "after/runtime/manifest.json": "9e35f85218918aa691263d457e0ce4a005ae2517b7502b916fafb68e33161a53"
+ }
+}

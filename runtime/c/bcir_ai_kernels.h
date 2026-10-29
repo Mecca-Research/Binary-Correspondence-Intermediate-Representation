@@ -91,6 +91,81 @@ BCIR_AI_API int bcir_ai_q8_rows_dot_f64_prevalidated(
     const uint8_t *exponents_le, size_t exponent_count,
     size_t output_count, size_t group_size, double *output);
 
+/* Q8-LANES: the two matrix kernels above on a named instance -- 1 the portable loops, 2 AVX2, 4 AVX-512
+ * (x86-64 Linux under GCC or Clang) -- each the portable loops' value for every output, bit for bit: an
+ * output's chain is the loop's own, term for term in its order, and the vector instances only run several
+ * outputs' chains side by side. bcir_ai_q8_instances() is the instances this host admits, as bits (1
+ * always). An _instance entry is its prevalidated entry run on `instance` (0: the widest admitted), and
+ * refuses an instance the host does not admit with BCIR_AI_INVALID_ARGUMENT, writing nothing; the
+ * prevalidated entries run the widest. */
+BCIR_AI_API int bcir_ai_q8_instances(void);
+
+BCIR_AI_API int bcir_ai_q8_matvec_f64_instance(
+    int instance, const double *input, size_t input_count,
+    const uint8_t *codes, size_t code_count,
+    const uint8_t *exponents_le, size_t exponent_count,
+    size_t output_count, size_t group_size, double *output);
+
+BCIR_AI_API int bcir_ai_q8_rows_dot_f64_instance(
+    int instance, const double *input, size_t input_count,
+    const uint8_t *codes, size_t code_count,
+    const uint8_t *exponents_le, size_t exponent_count,
+    size_t output_count, size_t group_size, double *output);
+
+/* DECODE-THREADS: the matvec's outputs [column_begin, column_end) alone, so that callers may compute a matvec's
+ * columns in parts, each part on its own thread. Each of those outputs is the whole call's, bit for bit -- its
+ * chain the loop's own over every input row in order -- and the outputs outside the range are neither read nor
+ * written. column_begin < column_end <= output_count, else BCIR_AI_INVALID_ARGUMENT and nothing written; the
+ * other refusals are bcir_ai_q8_matvec_f64_instance's. A non-finite output in the range zeroes the range and
+ * returns BCIR_AI_INVALID_NUMBER: a caller that splits a call zeroes the rest of its output on that status, as
+ * the whole call would. The instance is named as the _instance entries name one (0: the widest admitted); like
+ * the prevalidated entries these trust the codes and exponents. */
+BCIR_AI_API int bcir_ai_q8_matvec_f64_columns(
+    const double *input, size_t input_count,
+    const uint8_t *codes, size_t code_count,
+    const uint8_t *exponents_le, size_t exponent_count,
+    size_t output_count, size_t group_size,
+    size_t column_begin, size_t column_end, double *output);
+
+BCIR_AI_API int bcir_ai_q8_matvec_f64_columns_instance(
+    int instance, const double *input, size_t input_count,
+    const uint8_t *codes, size_t code_count,
+    const uint8_t *exponents_le, size_t exponent_count,
+    size_t output_count, size_t group_size,
+    size_t column_begin, size_t column_end, double *output);
+
+/* HEAD-PACK: the row dots over their codes and exponents packed once for the vector instances. A pack holds the
+ * rows in blocks of eight -- block b rows 8b to 8b + 7, a short last block's missing rows all zero bytes -- and a
+ * block its rows' groups in order, input_count / group_size of them (input_count a multiple of group_size, so
+ * that each group lies in one row), each a segment of 16 + 8 * group_size bytes: the eight rows' exponents of
+ * that group, int16 little-endian (row 8b + i at bytes 2i and 2i + 1), then for each of the group's coordinates
+ * in order the eight rows' codes (row 8b + i at byte i). bcir_ai_q8_rows_pack_size gives a pack's size,
+ * ceil(output_count / 8) * (input_count / group_size) * (16 + 8 * group_size) bytes. bcir_ai_q8_rows_pack checks
+ * the codes and exponents as bcir_ai_q8_values_validate does and writes the pack, or refuses and writes nothing;
+ * codes, exponents and pack must not overlap. The packed entries are the row dots of the rows packed: every
+ * output, and every status, bcir_ai_q8_rows_dot_f64_instance's over the same codes and exponents, on an instance
+ * named as the _instance entries name one (0: the widest admitted). Like the prevalidated entries they trust
+ * the pack, which must be bcir_ai_q8_rows_pack's bytes, unmodified; a pack of more rows serves a call with
+ * fewer, its first rows'. */
+BCIR_AI_API int bcir_ai_q8_rows_pack_size(size_t input_count, size_t output_count, size_t group_size,
+                                          size_t *packed_size);
+
+BCIR_AI_API int bcir_ai_q8_rows_pack(
+    const uint8_t *codes, size_t code_count,
+    const uint8_t *exponents_le, size_t exponent_count,
+    size_t input_count, size_t output_count, size_t group_size,
+    uint8_t *packed, size_t packed_capacity);
+
+BCIR_AI_API int bcir_ai_q8_rows_dot_f64_packed(
+    const double *input, size_t input_count,
+    const uint8_t *packed, size_t packed_size,
+    size_t output_count, size_t group_size, double *output);
+
+BCIR_AI_API int bcir_ai_q8_rows_dot_f64_packed_instance(
+    int instance, const double *input, size_t input_count,
+    const uint8_t *packed, size_t packed_size,
+    size_t output_count, size_t group_size, double *output);
+
 /* Exact Q15 squared-L2 top-k.  Pattern rows and query coordinates are signed
  * int16.  `eligible` is optional; when present it contains only 0/1 bytes.
  * Pattern order is the deterministic tie-break (the Python contract stores

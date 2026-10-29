@@ -19,6 +19,7 @@ argmin reproduces the oracle's globally-coupled selection and per-claim score. T
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from ..model import Domain, Lane, Module, StrideClass
@@ -235,6 +236,32 @@ def _path_sym(claim_id: int, name: str) -> str:
     return f"path_{claim_id}_{name}"
 
 
+# The names bcir-opt prints bare after `@` (AsmPrinter's isBareIdentifier); any other name -- a
+# measured realization's `<name>@<alternative>` (PX-3b-2) -- is written quoted, as it prints.
+_BARE_SYMBOL = re.compile(r"[A-Za-z_][A-Za-z0-9_$.]*\Z", re.ASCII)
+
+
+def _sym_ref(name: str) -> str:
+    return f"@{name}" if _BARE_SYMBOL.match(name) else f'@"{name}"'
+
+
+def _measured_attrs(h) -> str:
+    """PX-3b-2: the target's measured table as the capability's `measured_*` attributes -- its
+    generation, each entry's op and alternative (two string arrays) and its (count, q8) (one i64
+    array, two per entry), in the table's order -- or nothing when the target carries none, so a
+    module emitted without one is the text it always was."""
+    table = getattr(h, "measured", None)
+    if table is None:
+        return ""
+    ops = ", ".join(f'"{e.op}"' for e in table.entries)  # as a claim's `op` is written
+    alternatives = ", ".join(f'"{e.alternative}"' for e in table.entries)
+    values = ", ".join(f"{e.count}, {e.q8}" for e in table.entries)
+    return (
+        f", measured_gen = {table.generation} : i64, measured_ops = [{ops}], "
+        f"measured_alternatives = [{alternatives}], measured_values = array<i64: {values}>"
+    )
+
+
 def to_mlir(
     module: Module,
     h: HProfile,
@@ -298,7 +325,7 @@ def to_mlir(
         f"mem_unit = {h.mem_unit} : i32, base_overhead = {h.base_overhead} : i32, "
         f"per_op_heat = {h.per_op_heat} : i32, elem_bytes = {h.elem_bytes} : i32, "
         f"cal_gen = {h.cal_gen} : i64, mem_tier_names = [{tier_names}], "
-        f"mem_tier_values = array<i64: {tier_values}> }}"
+        f"mem_tier_values = array<i64: {tier_values}>{_measured_attrs(h)} }}"
     )
     # registry: the resources the claims reference (so the cost model resolves the
     # tier from each claim's read[0] domain, and HAM access).
@@ -383,16 +410,17 @@ def to_mlir(
             sym = _path_sym(cv.claim_id, p.name)
             # kbcir.path is a Symbol (referenced by @sym) -> no SSA result on MLIR 22.
             L.append(
-                f"    bcir.kbcir.path @{sym} {{ claim = @c{cv.claim_id}, "
+                f"    bcir.kbcir.path {_sym_ref(sym)} {{ claim = @c{cv.claim_id}, "
                 f'realization = "{_LANE_SPELL[p.lane]}.{p.name}", '
                 f"lane = #bcir.lane<{_LANE_SPELL[p.lane]}>, layout = #bcir.layout<{path_layout}>, "
                 f"cost = {_costvec(p.cost)} }}"
             )
-        frm = ", ".join(f"@{_path_sym(cv.claim_id, p.name)}" for p in cv.paths)
+        frm = ", ".join(_sym_ref(_path_sym(cv.claim_id, p.name)) for p in cv.paths)
+        selected = _sym_ref(_path_sym(cv.claim_id, cv.selected))
         L.append(
             f"    %sel_{cv.claim_id} = bcir.kbcir.select @c{cv.claim_id} from [{frm}] {{ "
             f"policy = #bcir.policy_mode<{pv.policy_mode}>, semiring = #bcir.semiring<min_plus>, "
-            f"selected = @{_path_sym(cv.claim_id, cv.selected)}, score = {cv.score} : i64 }} "
+            f"selected = {selected}, score = {cv.score} : i64 }} "
             ": !bcir.path"
         )
     if pv.claims:
@@ -415,9 +443,8 @@ def to_mlir(
                 f'// CHECK-DAG: kbcir.classified_lane = "{_LANE_SPELL[_canonical_lane(cv.stride_class)]}"'
             )
         for cv in pv.claims:
-            L.append(
-                f"// CHECK-DAG: kbcir.computed_selected = @{_path_sym(cv.claim_id, cv.selected)}"
-            )
+            selected = _sym_ref(_path_sym(cv.claim_id, cv.selected))
+            L.append(f"// CHECK-DAG: kbcir.computed_selected = {selected}")
             L.append(f"// CHECK-DAG: kbcir.computed_score = {cv.score}")
         L.append("// CHECK-DAG: kbcir.lowered = true")
     return "\n".join(L) + "\n"

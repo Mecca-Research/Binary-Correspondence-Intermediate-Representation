@@ -190,8 +190,8 @@
     {
       "expects": "test_a_program_trains_the_c_steps_bits",
       "label": "PM8 the program's records one word short",
-      "new": "            words += [0] * (RECORD_WORDS - 4 - DIMS - 3 * REFS)",
-      "old": "            words += [0] * (RECORD_WORDS - 3 - DIMS - 3 * REFS)",
+      "new": "    spare = RECORD_WORDS - 4 - DIMS - 3 * REFS - 2  # after the two dispatch words (PX-3b)",
+      "old": "    spare = RECORD_WORDS - 3 - DIMS - 3 * REFS - 2  # after the two dispatch words (PX-3b)",
       "path": "bcir/hosted/models/native_launch.py"
     },
     {
@@ -211,8 +211,8 @@
     {
       "expects": "test_a_program_trains_the_c_steps_bits",
       "label": "PM11 the update's pass traced without the reduce contract's flag",
-      "new": "            out.append(Launch((replace(record, kind=PASS, flags=0),)))",
-      "old": "            out.append(Launch((replace(record, kind=PASS),)))",
+      "new": "            out.append(Launch((replace(update, kind=PASS, flags=0),)))",
+      "old": "            out.append(Launch((replace(update, kind=PASS),)))",
       "path": "bcir/hosted/models/native_launch.py"
     },
     {

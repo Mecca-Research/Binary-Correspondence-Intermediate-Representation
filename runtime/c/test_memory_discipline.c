@@ -3,11 +3,13 @@
 #include "bcir_cpp.h"
 #include "bcir_host_alloc.h"
 #include "bcir_llama.h"
+#include "bcir_llama_ops.h"
 #include "bcir_q8_model.h"
 #include "bcir_runtime.h"
 #include "bcir_runtime_channel.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -139,9 +141,18 @@ static int cpp_fault_and_isolation_test(void){
                                   b,sizeof b,error,sizeof error)!=0);
     CHECK(b[0]==0);
     {
-      size_t w=(size_t)snprintf(paste,sizeof paste,"#define CAT(a,b) a ## b\nCAT(x,");
-      for(size_t k=0;k<200u;k++)w+=(size_t)snprintf(paste+w,sizeof paste-w,"y+");
-      (void)snprintf(paste+w,sizeof paste-w,"z)\n");
+      /* the paste written a piece at a time, each piece checked whole before the next is placed after it */
+      int n=snprintf(paste,sizeof paste,"#define CAT(a,b) a ## b\nCAT(x,");
+      size_t w;
+      CHECK(n>0&&(size_t)n<sizeof paste);
+      w=(size_t)n;
+      for(size_t k=0;k<200u;k++){
+        n=snprintf(paste+w,sizeof paste-w,"y+");
+        CHECK(n>0&&(size_t)n<sizeof paste-w);
+        w+=(size_t)n;
+      }
+      n=snprintf(paste+w,sizeof paste-w,"z)\n");
+      CHECK(n>0&&(size_t)n<sizeof paste-w);
       CHECK(!bcir_cpp_run_context(&right,paste,NULL,b,sizeof b,error,sizeof error));
       CHECK(strstr(b,"x")!=NULL&&strstr(b,"z")!=NULL);
     }
@@ -174,10 +185,39 @@ static int cfront_wide_source(char *src,size_t cap){
   return 0;
 }
 
-/* One compile under the fault allocator (fail_at 0: none fails). A failure is the whole compile's: no unit, no
- * emitted C -- never a partial text -- and every block released; a success emits `expect` whole. */
+/* CF-LINKTWIN: a unit whose linkable artifact takes every rendering the linkable emit makes -- a typedef, a tagged
+ * struct, an enum and a forward declaration recorded; a brace list with designators, floating constants, a string's
+ * pieces, an element's address, an array, a function and a global by name, and a folded `sizeof` as initializers;
+ * an `extern` global declared; a static function calling an exported one; the headers its text names (`memcpy`,
+ * `bool`) -- so the sweep below fails each of its allocations in turn: the records, the initializers' text, the
+ * fold's scratch function, the declarations and the headers. */
+static const char cfront_linkable_source[]=
+  "typedef bool lk_flag;\n"
+  "struct lk_pt { unsigned x, y; };\n"
+  "struct lk_fw;\n"
+  "enum lk_e { LK_A = 3, LK_B };\n"
+  "struct lk_pt lk_tab[2] = {[0] = {.y = 7u}, {1u, 2u}};\n"
+  "double lk_d = -(2.5);\n"
+  "const char *lk_s = \"ab\" \"cd\";\n"
+  "unsigned lk_m[2][3] = {{1u, 2u, 3u}, {4u, 5u, 6u}};\n"
+  "unsigned *lk_mp = &lk_m[1][2];\n"
+  "unsigned lk_arr[4] = {1u, 2u, 3u, 4u};\n"
+  "unsigned *lk_ap = lk_arr;\n"
+  "extern unsigned lk_ext;\n"
+  "unsigned lk_k = sizeof(struct lk_pt) * (unsigned)LK_B;\n"
+  "unsigned *lk_kp = &lk_k;\n"
+  "unsigned lk_g(unsigned x) { return x + lk_k; }\n"
+  "unsigned (*lk_fp)(unsigned) = lk_g;\n"
+  "static unsigned lk_h(unsigned x) { lk_flag b = x > 2u; unsigned y; memcpy(&y, &x, 4); return lk_g(y) + b; }\n"
+  "unsigned lk_entry(unsigned s) {\n"
+  "  return lk_h(s) + lk_tab[0].y + (unsigned)lk_s[1] + *lk_mp + lk_ap[2] + *lk_kp + (unsigned)lk_d;\n"
+  "}\n";
+
+/* One compile under the fault allocator (fail_at 0: none fails) -- the linkable artifact's when `linkable`. A failure
+ * is the whole compile's: no unit, no emitted C -- never a partial text -- and every block released; a success emits
+ * `expect` whole. */
 static int cfront_once(const char *source,const char *expect,size_t min_emit,fault_state *state,
-                       size_t fail_at,size_t *attempts){
+                       size_t fail_at,size_t *attempts,int linkable){
   bcir_host_allocator allocator=fault_allocator(state);
   bcir_cfront_context context;
   bcir_cfront_result result;
@@ -185,7 +225,8 @@ static int cfront_once(const char *source,const char *expect,size_t min_emit,fau
   bcir_cfront_result_init(&result);
   CHECK(!bcir_cfront_context_init(&context,&allocator));
   state->attempt=0;state->fail_at=fail_at;
-  int rc=bcir_cfront_compile_context(&context,source,&result);
+  int rc=linkable ? bcir_cfront_compile_linkable_context(&context,source,NULL,&result)
+                  : bcir_cfront_compile_context(&context,source,&result);
   *attempts=state->attempt;
   if(fail_at){
     CHECK(rc!=0);CHECK(result.unit.funcs==NULL);CHECK(result.unit.n_funcs==0);
@@ -205,23 +246,26 @@ static int cfront_once(const char *source,const char *expect,size_t min_emit,fau
   return 0;
 }
 
-static int cfront_sweep(const char *source,const char *expect,size_t min_emit,size_t min_attempts){
+static int cfront_sweep(const char *source,const char *expect,size_t min_emit,size_t min_attempts,int linkable){
   fault_state state={0};size_t attempts=0,baseline;
-  CHECK(!cfront_once(source,expect,min_emit,&state,0,&attempts));
+  CHECK(!cfront_once(source,expect,min_emit,&state,0,&attempts,linkable));
   baseline=attempts;CHECK(baseline>=min_attempts);
   for(size_t fail=1;fail<=baseline;fail++){
     memset(&state,0,sizeof state);
-    CHECK(!cfront_once(source,expect,min_emit,&state,fail,&attempts));
+    CHECK(!cfront_once(source,expect,min_emit,&state,fail,&attempts,linkable));
   }
   return 0;
 }
 
 static int cfront_fault_test(void){
   char wide[WIDE_SOURCE];
-  CHECK(!cfront_sweep(cfront_source,"hi ",1u,6u));
+  CHECK(!cfront_sweep(cfront_source,"hi ",1u,6u,0));
   CHECK(!cfront_wide_source(wide,sizeof wide));
   /* the emit's first block is 4 KiB: this one's verified C needs it grown at least three times */
-  CHECK(!cfront_sweep(wide,"typedef uint32_t (*__bcir_fp63)(uint32_t, uint32_t);",8u*4096u+1u,64u));
+  CHECK(!cfront_sweep(wide,"typedef uint32_t (*__bcir_fp63)(uint32_t, uint32_t);",8u*4096u+1u,64u,0));
+  /* the linkable artifact (CF-LINKTWIN), its prelude, types, globals and functions, each allocation failed in turn */
+  CHECK(!cfront_sweep(cfront_linkable_source,"\nuint32_t lk_k = 32;\n",1u,64u,1));
+  CHECK(!cfront_sweep(wide,"\nuint32_t wide_63(__bcir_fp63 op_63, uint32_t a, uint32_t b)",8u*4096u+1u,64u,1));
   return 0;
 }
 
@@ -299,9 +343,15 @@ static int q8_once(const char *path,fault_state *state,size_t fail_at,
   if(fail_at){
     CHECK(rc!=0);CHECK(model.storage==NULL&&model.tensors==NULL);
     CHECK(model.tensor_count==0&&model.storage_size==0);
-  }else CHECK(rc==0&&model.storage&&model.tensors&&model.tensor_count>0);
+    CHECK(model.head_pack==NULL&&model.head_pack_size==0);
+  }else{
+    CHECK(rc==0&&model.storage&&model.tensors&&model.tensor_count>0);
+    /* HEAD-PACK: the head packed at load exactly where its rows are a whole number of groups */
+    CHECK((model.head_pack!=NULL&&model.head_pack_size>0)==(model.d_model%model.group_size==0));
+  }
   bcir_q8_model_free(&model);
   CHECK(model.storage==NULL&&model.tensors==NULL&&model.tensor_count==0);
+  CHECK(model.head_pack==NULL&&model.head_pack_size==0);
   bcir_q8_model_free(&model);
   CHECK(state->live==0u);
   return 0;
@@ -367,6 +417,98 @@ static int q8_and_llama_fault_test(const char *path){
     }
   }
   bcir_q8_model_free(&model);bcir_q8_model_free(&model);
+  return 0;
+}
+
+/* DECODE-PASSES. (1) bcir_q8_group_scale: code * scale is ldexp(code, e) bit for bit for every code in [-127, 127]
+ * and every exponent in [-300, 300] the format admits, and NaN past them. (2) bcir_q8_tensor_values is
+ * bcir_q8_tensor_value bit for bit over every tensor of the model -- whole, across every group's edge and to its end
+ * -- and where a group's exponent or an element's code is one the loader refuses (written into the loaded storage and
+ * restored: NaN, as the reference); refused whole with `out` untouched for a foreign tensor, a range past the end and
+ * a NULL `out`; a zero count writes nothing. (3) bcir_llama_op_argmax picks the scalar loop's token over vocabularies
+ * of 1 to 23 logits drawn from ties, -0.0 and +0.0, infinities and NaNs. */
+static int same_bits(double a,double b){ return memcmp(&a,&b,sizeof a)==0; }
+static int tensor_values_agree(const bcir_q8_model *m,const bcir_q8_tensor *t,uint32_t start,uint32_t count,
+                               double *out){
+  if(bcir_q8_tensor_values(m,t,start,count,out))return 0;
+  for(uint32_t i=0;i<count;i++) if(!same_bits(out[i],bcir_q8_tensor_value(m,t,start+i)))return 0;
+  return 1;
+}
+static uint64_t passes_state=UINT64_C(0x9E3779B97F4A7C15);
+static uint64_t passes_next(void){
+  passes_state^=passes_state<<13; passes_state^=passes_state>>7; passes_state^=passes_state<<17;
+  return passes_state;
+}
+static int decode_passes_test(const char *path){
+  bcir_q8_model model;char error[256];
+  for(int e=-300;e<=300;e++){
+    double scale=bcir_q8_group_scale(e);
+    for(int code=-127;code<=127;code++) CHECK(same_bits((double)code*scale,ldexp((double)code,e)));
+  }
+  CHECK(isnan(bcir_q8_group_scale(-301))&&isnan(bcir_q8_group_scale(301)));
+  CHECK(isnan(bcir_q8_group_scale(-32768))&&isnan(bcir_q8_group_scale(32767)));
+  bcir_q8_model_init(&model);
+  CHECK(!bcir_q8_model_load(path,&model,error,sizeof error));
+  for(uint32_t k=0;k<model.tensor_count;k++){
+    const bcir_q8_tensor *t=&model.tensors[k];
+    uint32_t n=t->element_count,g=model.group_size;
+    double *out=(double *)malloc((size_t)n*sizeof *out);
+    CHECK(out!=NULL);
+    CHECK(tensor_values_agree(&model,t,0u,n,out));
+    for(uint32_t edge=g;edge<n;edge+=g){                 /* across each group's edge, and a group and one */
+      CHECK(tensor_values_agree(&model,t,edge-1u,n-edge+1u<3u ? n-edge+1u : 3u,out));
+      CHECK(tensor_values_agree(&model,t,edge,n-edge<g+1u ? n-edge : g+1u,out));
+    }
+    CHECK(tensor_values_agree(&model,t,n-1u,1u,out));
+    free(out);
+  }
+  {
+    bcir_q8_tensor *t=&model.tensors[0],foreign=model.tensors[0];
+    unsigned char *e0=model.storage+t->exponent_offset,saved[2],code_saved;
+    double out[4]={-1.0,-2.0,-3.0,-4.0};
+    uint32_t n=t->element_count;
+    CHECK(bcir_q8_tensor_values(&model,&foreign,0u,1u,out)==-1&&out[0]==-1.0);
+    CHECK(bcir_q8_tensor_values(&model,t,n,1u,out)==-1&&out[0]==-1.0);
+    CHECK(bcir_q8_tensor_values(&model,t,n-1u,2u,out)==-1&&out[0]==-1.0);
+    CHECK(bcir_q8_tensor_values(&model,t,UINT32_MAX,1u,out)==-1&&out[0]==-1.0);
+    CHECK(bcir_q8_tensor_values(&model,t,0u,1u,NULL)==-1);
+    CHECK(bcir_q8_tensor_values(&model,t,0u,0u,NULL)==0);
+    CHECK(bcir_q8_tensor_values(&model,t,n,0u,out)==0&&out[0]==-1.0);
+    CHECK(bcir_q8_tensor_values(NULL,t,0u,1u,out)==-1&&out[0]==-1.0);
+    {                                                    /* the model's own entry, its codes off its offset: */
+      const unsigned char *codes=t->codes;               /* the shared predicate's spans refuse it in both */
+      t->codes=codes+1;
+      CHECK(isnan(bcir_q8_tensor_value(&model,t,0u)));
+      CHECK(bcir_q8_tensor_values(&model,t,0u,1u,out)==-1&&out[0]==-1.0);
+      t->codes=codes;
+    }
+    memcpy(saved,e0,2u);                                 /* an exponent past [-300, 300]: 301, little-endian */
+    e0[0]=(unsigned char)(301&0xff);e0[1]=(unsigned char)(301>>8);
+    CHECK(n>=4u&&tensor_values_agree(&model,t,0u,4u,out)&&isnan(out[0])&&isnan(out[3]));
+    memcpy(e0,saved,2u);
+    code_saved=model.storage[t->code_offset+1u];        /* the -128 code */
+    model.storage[t->code_offset+1u]=0x80u;
+    CHECK(tensor_values_agree(&model,t,0u,4u,out)&&isnan(out[1])&&!isnan(out[0]));
+    model.storage[t->code_offset+1u]=code_saved;
+    CHECK(tensor_values_agree(&model,t,0u,4u,out)&&!isnan(out[1]));
+  }
+  bcir_q8_model_free(&model);
+  {
+    static const double kinds[]={-0.0,0.0,1.0,1.0,-1.0,2.5,-2.5};
+    bcir_q8_model sized;double logits[23];
+    memset(&sized,0,sizeof sized);
+    for(int trial=0;trial<200000;trial++){
+      uint32_t n=1u+(uint32_t)(passes_next()%23u),best=0;
+      for(uint32_t i=0;i<n;i++){
+        uint64_t pick=passes_next()%12u;
+        logits[i]=pick<7u ? kinds[pick] : pick==7u ? INFINITY : pick==8u ? -INFINITY : pick==9u ? NAN :
+                  (double)(int64_t)(passes_next()%2001u)/7.0-142.0;
+      }
+      for(uint32_t i=1;i<n;i++) if(logits[i]>logits[best])best=i;  /* the loop the decoder ran before */
+      sized.vocab_size=n;
+      CHECK(bcir_llama_op_argmax(&sized,logits)==(int32_t)best);
+    }
+  }
   return 0;
 }
 
@@ -462,6 +604,7 @@ int main(int argc,char **argv){
   }
   CHECK(!cpp_fault_and_isolation_test());
   CHECK(!q8_and_llama_fault_test(argv[1]));
+  CHECK(!decode_passes_test(argv[1]));
   CHECK(!channel_test());
   puts("memory-discipline: ok");
   return 0;

@@ -1,0 +1,27 @@
+{
+ "tools": {
+  "measure_row.sh": "90c67aca59786d97fdf07ccfa80fdeba84a06cf05e05b5994c278f739157c0a6",
+  "attn_ab.c": "74d241f3ceb516270ea595b84a2b13273de1814c921e2186e3c179a284244656",
+  "gqa_bench.c": "ea98ceafee730a2688cc059f364cb530d9a998628bf11abbfa88a95e72ee9649"
+ },
+ "tools run from ../q8-lanes": {
+  "decode_ab.py": "2d115150246b72ab2b4dfc6c276504d387616d5cf7c4bb93bcb26e1247447001",
+  "llama_ops.py": "56a526a9e255a6ab7b9afa70e762bb22ebf02708369e59b04c46c20d99488df8",
+  "bits.sh": "550bafd6c7a44465b9e2b4d8b39feccf0c6df4d1ccbc065390626ccd65baf69e"
+ },
+ "tools run from ../crc-slice": {
+  "qual_crc.py": "40ce4b63c526e9da0fe2aeab193c2a629fafa82bd3d490754d1480bf1ee3c3bf"
+ },
+ "sources": {
+  "before/bcir_decode.c": "7c8ce567478a5b178cceca94f7fb3a3c942e92d9f970ae2c618c3f1547ff5200",
+  "before/bcir_decode.h": "54e397a26de64078ff36881afcceee07df4a6025fc2a3f9127e0793ba1290300",
+  "before/bcir_llama.c": "241ab7e6fe025fa34ade317dedde77624979e937044e92eba1784759c78e8239",
+  "before/bcir_llama_ops.h": "4282eb0c5383290fee756bb695ded1f4ecfba137c8619df9234d13ab7c7ef8f7",
+  "before/bcir_decoder_gem.c": "ff050c6d3b2329377a70dc1539f044d74f6bf2c8e163a03b17bbcac662f686c7",
+  "after/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "after/bcir_decode.h": "7010ec708a09495c24ca8139398bc2a5099aca13119098e5469a3c44ca94f32b",
+  "after/bcir_llama.c": "657d849e70e51e08bdf132be19a8507a7a08f9167b5c261e9d4d1421f940e90a",
+  "after/bcir_llama_ops.h": "2a299ce8439ad06fdcdb26e4b586c4771ba22b7a04fdcf57486ba6f63b9f70ec",
+  "after/bcir_decoder_gem.c": "ffa73bdef663acbc55f2d3f6ed191036d6d1792531ae52277fe9f7a5dc693c12"
+ }
+}

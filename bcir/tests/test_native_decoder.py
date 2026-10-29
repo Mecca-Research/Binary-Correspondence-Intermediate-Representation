@@ -140,19 +140,48 @@ def test_native_c_harness_c11_and_c23():
     # check_tests.py reports as the finding `build` and a RED sweep as DOES NOT BUILD (RED-VACUITY)
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
         # and C23 once more with the writers' verdict bytes bounded at two tasks, so every scan
-        # entry takes the scan after its job (NDT-SCAN-W), and once capped at AVX2, so a host whose
-        # widest variant is AVX-512 runs the update's AVX2 pairs and commit too (NDT-UPDATE); every
-        # build with the commit's shared division exposed to the harness's check of it, and with
+        # entry takes the scan after its job (NDT-SCAN-W), once capped at AVX2, so a host whose
+        # widest variant is AVX-512 runs the update's AVX2 pairs and commit too (NDT-UPDATE), and
+        # once with the attention's long-context paths at every context -- the transposed products
+        # banded from 16 terms, every probability-adjoint tile on its own panel and the stored
+        # forward a strip of rows at a time -- so the attention references hold what a long context
+        # takes otherwise (BWD-LONG, FWD-STRIP), and once more
+        # with the binary32 attention's tasks on copies of their heads' rows at every context and
+        # those paths with them, the harness lending the workspace the plan asks (ATT-CONTIG), and
+        # every blocked-contract weight adjoint that workspace holds split over its depth however
+        # shallow (KSPLIT: one K block on), so the trainer's every such job runs split there; every
+        # build with the commit's shared division exposed to the harness's check of it, with
         # PX-1's launch trace compiled in but never begun, PX-5's layout probes compiled in but
         # never called, and PX-3's job clock compiled in but never begun -- so the probes build
         # warning-free on every compiler and standard, and the harness's every check holds with
-        # them in (inert)
+        # them in (inert) -- and with PX-3b's instance probe, which the harness's dispatch checks
+        # read (the instance each job's kernels ran)
         builds = (
             ("c11", [], ""),
             ("c2x", [], ""),
             ("c2x", ["-DBCIR_TENSOR_SCAN_TASKS=2"], "-bounded"),
             ("c2x", ["-DBCIR_TENSOR_MAX_VARIANT=2"], "-avx2"),
+            (
+                "c2x",
+                ["-DBCIR_ATT_BAND_FROM=16", "-DBCIR_ATT_WHOLE=0", "-DBCIR_ATT_STRIP_FROM=1"],
+                "-long",
+            ),
+            (
+                "c2x",
+                [
+                    "-DBCIR_ATT_CONTIG_FROM=1",
+                    "-DBCIR_ATT_BAND_FROM=16",
+                    "-DBCIR_ATT_WHOLE=0",
+                    "-DBCIR_ATT_STRIP_FROM=1",
+                    "-DBCIR_MM_KSPLIT_BLOCKS=1",
+                ],
+                "-contig",
+            ),
         )
+        # P-BANDS: the trainer's state digests from every build, where the bands take effect (an
+        # AVX-512 host's default builds) and where none can (the AVX2-capped build), and (KSPLIT)
+        # where the blocked contract's weight adjoints run split (the -contig build): one set
+        trained = {}
         for standard, options, tag in builds:
             exe = Path(temporary) / f"gate-{standard}{tag}"
             cmd = [
@@ -166,6 +195,9 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_TRACE_PROBE",
                 "-DBCIR_DT_LAYOUT_PROBE",
                 "-DBCIR_DT_TIME_PROBE",
+                "-DBCIR_TENSOR_INSTANCE_PROBE",
+                "-DBCIR_TENSOR_POOL_PROBE",
+                "-DBCIR_DT_LOSS_PROBE",
                 *options,
                 "-O2",
                 "-Wall",
@@ -184,16 +216,34 @@ def test_native_c_harness_c11_and_c23():
             build_units(
                 cmd + host_link_args(["-lm"]), f"the C harness's {standard}{tag} build", timeout=120
             )
+            # 120 s: a contended CI shard ran the C11 build past 60 s (2026-10-23), about three times
+            # an idle four-core host's time for the same binary
             result = subprocess.run(
-                [str(exe)], check=True, capture_output=True, text=True, timeout=60
+                [str(exe)], check=True, capture_output=True, text=True, timeout=120
             )
             # update_pairs, division_probe (NDT-UPDATE); the bf16 contract, its trainer and the
             # workspace probe (NDT-BF16); the fused attention contract and its trainer (ATTN-FMA);
             # the bf16 panels' writers and grouped GEMMs, and their trainer (BF16-PANELS); a run's
             # steps against one-step calls, the weight scans counted (FACTS-RUN); the bf16
             # attention against its reference, and its trainer (BF16-ATTN); the workspace from
-            # its floor up and the recompute sets (GEO-3)
-            assert result.stdout.count("PASS") == 29
+            # its floor up and the recompute sets (GEO-3); the pool's cap and the entries with
+            # the instance named (PX-3b); the attention without its probabilities and the forward
+            # that runs it (INFER-ATTN); the attention's workspace entries (ATT-CONTIG); the stored
+            # forward a strip of rows at a time (FWD-STRIP); the stored forward under LOWER and a
+            # training step from NaN-filled arenas (P-LOWER); the backward's kept tiles (BWD-KEEP);
+            # the blocked GEMM's tasks, chunks, edge blocks and job order (MM-ROWS); the scratch
+            # forward's groups in the lanes (SCORES-T); the exponential's single scaling where the
+            # result rounds (SOFTMAX-T); the attention in bands and its trainer (P-BANDS); the pool's
+            # tasks in per-worker blocks (POOL-AFFINITY); the loss's rows with each exponential
+            # evaluated once (LOSS-ONCE); the rotation reading a table of its cosines and sines
+            # (ROPE-TABLE); the blocked contract's weight adjoints split over their depth (KSPLIT);
+            # the planned workspace holding the room they split in (KSPLIT-ROOM)
+            assert result.stdout.count("PASS") == 48
+            digests = [ln.split("digests", 1)[1].split() for ln in result.stdout.splitlines()
+                       if "PASS P-BANDS trainer" in ln]  # fmt: skip
+            assert len(digests) == 1 and len(digests[0]) == 5, result.stdout[-2000:]
+            trained[f"{standard}{tag}"] = tuple(digests[0])
+        assert len(set(trained.values())) == 1, trained
         # Once more under UBSan, float-cast-overflow included: every path of the harness -- the
         # trainer's NaN and overflow refusals among them -- is defined behaviour (the exponential's
         # clamp let a NaN reach an integer conversion until NDT-SCAN's sanitized run found it). The
@@ -224,6 +274,9 @@ def test_native_c_harness_c11_and_c23():
                 "-DBCIR_DT_TRACE_PROBE",
                 "-DBCIR_DT_LAYOUT_PROBE",
                 "-DBCIR_DT_TIME_PROBE",
+                "-DBCIR_TENSOR_INSTANCE_PROBE",
+                "-DBCIR_TENSOR_POOL_PROBE",
+                "-DBCIR_DT_LOSS_PROBE",
             ]
             cmd += ["-I", str(c)]
             cmd += [str(c / u) for u in ("test_decoder_train.c", "bcir_tensor.c")]
@@ -233,7 +286,7 @@ def test_native_c_harness_c11_and_c23():
             assert result.returncode == 0 and "runtime error" not in result.stderr, result.stderr[
                 -2000:
             ]
-            assert result.stdout.count("PASS") == 29
+            assert result.stdout.count("PASS") == 48
             break
 
 
@@ -388,8 +441,8 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
         # single row left at its beta-scaled value, a transposed tile's ragged columns stale
         # below the whole blocks, a ragged block's partial added with one fused rounding
         ("mm_kblock@4", "bcir_tensor.c", tensor,
-         "      for (;i<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);\n",
-         "      for (;i+1<r->r1;i++) kb512_block(1,x,bt,i,jb,nj,lb,nl);\n"),
+         "  for (;i<r1;i++) kb512_block(1,nv,x,bt,i,jb,nj,lb,nl);\n",
+         "  for (;i+1<r1;i++) kb512_block(1,nv,x,bt,i,jb,nj,lb,nl);\n"),
         ("mm_kblock@4", "bcir_tensor.c", tensor,
          "      for (l=j<jw ? lw : 0;l<nl;l++) bt[l*48+j]=column[l];\n",
          "      for (l=lw;l<nl;l++) bt[l*48+j]=column[l];\n"),
@@ -419,7 +472,7 @@ def test_the_rows_fire_on_wrong_kernels_and_plans():
         ("exp_ulp", "bcir_tensor.c", tensor,
          "#define BCIR_EXP_LN2_LO 1.428606765330187e-06f", "#define BCIR_EXP_LN2_LO 0.0f"),
         ("exp_mismatch", "bcir_tensor.c", tensor,
-         "static void exp_avx2(size_t n, const float *x, float *y) { exp_body(n,x,y); }",
+         "static void exp_avx2(size_t n, const float *x, float *y) { exp_body(16,n,x,y); }",
          "static void exp_avx2(size_t n, const float *x, float *y) { size_t i; for (i=0;i<n;i++) y[i]=expf(x[i]); }"),
         ("plan", "bcir_decoder_train.c", train,
          "!term(&p.scratch,5,nd)", "!term(&p.scratch,6,nd)"),
@@ -662,10 +715,10 @@ def test_recompute_and_the_workspace_keep_every_state():
                 else:
                     try:
                         NativeDecoder(path, spec, contract=contract, workspace_bytes=64, **kw)
-                    except ValueError as e:
-                        assert "bf16" in str(e)
+                    except ValueError as e:  # a short context: nothing packs, nothing copies
+                        assert "packs into it" in str(e)
                     else:
-                        raise AssertionError("a workspace lent without a bf16 contract")
+                        raise AssertionError("a workspace lent where the step packs nothing")
                 x = [(5 * i + 2) % spec.vocab_size for i in range(batch * time_)]
                 logits = plain.forward(x)
                 assert plain.activation_count == plain.state.plan.activations  # none recomputed
@@ -791,6 +844,96 @@ def test_the_memory_plan_fits_its_budget_and_keeps_the_state():
             finally:
                 full.close()
         assert orders == 1, orders  # the fused attention's three tiers: the order is never vacuous
+
+
+def test_the_blocked_contract_plans_the_room_its_weight_adjoints_split_in():
+    """KSPLIT-ROOM: under the blocked GEMM contract the trainer's workspace holds the room its
+    weight adjoints split in (`nf.ksplit_room`, stated apart from the C), so a short context of
+    1,408 rows -- four K blocks, no attention copies -- lends it at every pool where it lent
+    nothing before, and the need without it (`workspace_unsplit`) is the attention's copies: none
+    there, and the need under every other contract (the copies under v1's, the bf16 GEMMs' and
+    attention's regions under bf16's). Where a long context's copies fall short of the room,
+    `memory_plan` offers each recompute set at the need, then at the copies, then with nothing lent
+    before the next set, and a budget that fits only the copies trains on them. Lent the need, the
+    room less a byte (one of the gate and up projections' weight adjoints unsplit a layer), less
+    than any weight adjoint's room, or nothing, the short context trains one state, bit for bit, at
+    one thread and at four; the tensor unit's probe counts the split calls -- every weight
+    adjoint, all but one a layer, none and none -- so the agreement is not vacuous."""
+    import ctypes as ct
+
+    from bcir.hosted.models.native import memory_plan
+    from bcir.tests import native_decoder_fixtures as nf
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.probe_library(Path(tmp) / "probe")
+        if path is None:
+            return  # no C compiler, or no C units (an installed package): a documented skip
+        spec, batch, time_ = _spec(), 2, 704
+        rows, layers = batch * time_, spec.n_layers
+        room = nf.ksplit_room(spec, rows)
+        assert len(nf.kblock_split(rows)) == 4 and room == 4096, room  # the gate and up group's
+        kw = {"batch_size": batch, "context_length": time_}
+        trainer = NativeDecoder(path, spec, contract="kblock", threads=4, **kw)
+        try:
+            lib, plan = trainer.lib, trainer.state.plan
+            assert trainer.workspace_bytes == room, trainer.workspace_bytes
+            assert lib.bcir_decoder_workspace_bytes(ct.byref(plan), 4) == room  # any pool's
+            for contract in ("v1", "fused", "exp", "reduce+attn", "kblock", "kblock+exp+reduce+attn",
+                             "bf16", "bf16+exp+reduce+attnbf16"):  # fmt: skip
+                for threads in (1, 4):
+                    tiers = memory_plan(lib, plan, contract, threads, None, recompute=0)
+                    need, unsplit = tiers.workspace_need, tiers.workspace_unsplit
+                    if contract.startswith("kblock"):
+                        assert (need, unsplit) == (room, 0), (contract, threads, tiers)
+                    elif contract.startswith("bf16"):
+                        assert unsplit == need > 0, (contract, threads, tiers)
+                    else:
+                        assert (need, unsplit) == (0, 0), (contract, threads, tiers)
+        finally:
+            trainer.close()
+        # a long context whose room passes the attention's copies: a vocabulary of 2,048, one thread
+        wide = DecoderSpec(2048, 8, 2, 2, 16, activation="silu_gate", n_kv_heads=1)
+        trainer = NativeDecoder(path, wide, batch_size=2, context_length=1024, contract="kblock")
+        try:
+            lib, plan, tiers = trainer.lib, trainer.state.plan, trainer.plan_memory
+            need, copies = tiers.workspace_need, tiers.workspace_unsplit
+            assert need == nf.ksplit_room(wide, 2048) > copies > 0, tiers
+            seen, budget = [], trainer.memory_bytes
+            while True:
+                try:
+                    chosen = memory_plan(lib, plan, "kblock", 1, budget)
+                except ValueError as e:
+                    assert "the least is" in str(e)
+                    break
+                assert chosen.total_bytes <= budget
+                seen.append((chosen.workspace_bytes, chosen.recompute))
+                budget = chosen.total_bytes - 1
+            assert seen == [(w, r) for r in (0, 3) for w in (need, copies, 0)], seen
+            fit = memory_plan(lib, plan, "kblock", 1, None, recompute=0, workspace_bytes=copies)
+        finally:
+            trainer.close()
+        auto = NativeDecoder(path, wide, batch_size=2, context_length=1024, contract="kblock",
+                             recompute="auto", max_memory_bytes=fit.total_bytes)  # fmt: skip
+        try:
+            assert (auto.recompute, auto.workspace_bytes) == (0, copies), (auto.recompute,
+                                                                           auto.workspace_bytes)  # fmt: skip
+        finally:
+            auto.close()
+        # the short context's state under every loan; the probe counts the calls that split
+        probe = ct.CDLL(str(Path(path).resolve())).bcir_tensor_ksplit_probe
+        probe.argtypes, probe.restype = [], ct.c_size_t
+        probe()
+        states, splits = {}, {}
+        for lent in (None, room - 1, 511, 0):
+            states[lent] = nf.thread_states(path, (spec, batch, time_), steps=2, counts=(1, 4),
+                                            contract="kblock", workspace_bytes=lent)  # fmt: skip
+            splits[lent] = probe()
+        assert len(set(states[None].values())) == 1, states[None]
+        assert all(got == states[None] for got in states.values()), states
+        # a step's weight adjoints: the head's, and a layer's down, gate, up, output, q, k and v --
+        # two steps on each of two pools
+        per = {None: 1 + 7 * layers, room - 1: 1 + 6 * layers, 511: 0, 0: 0}
+        assert splits == {lent: 2 * 2 * n for lent, n in per.items()}, splits
 
 
 def test_the_bf16_panels_keep_every_state():
@@ -949,7 +1092,8 @@ def test_the_bf16_attention_is_a_contract_of_its_own():
             return lib.bcir_tensor_attention_probe(0), lib.bcir_tensor_attention_probe(1)
 
         seen()
-        exp, bf16 = 1, 4  # BCIR_TENSOR_ATTENTION_EXP, BCIR_TENSOR_ATTENTION_BF16
+        # BCIR_TENSOR_ATTENTION_EXP, _BF16 and _LOWER (P-LOWER: the binary32 stored forward's)
+        exp, bf16, lower = 1, 4, 16
         states = {}
         for contract in ("bf16+exp", "bf16+exp+attnbf16", "bf16+attnbf16",
                          "bf16+exp+reduce+attnbf16"):  # fmt: skip
@@ -957,7 +1101,8 @@ def test_the_bf16_attention_is_a_contract_of_its_own():
             assert set(under) == set(nf.THREAD_COUNTS), (contract, under)
             assert len(set(under.values())) == 1, (contract, under)
             states[contract] = under[1]
-            forward = (exp if "+exp" in contract else 0) | (bf16 if "attnbf16" in contract else 0)
+            attention = bf16 if "attnbf16" in contract else lower
+            forward = (exp if "+exp" in contract else 0) | attention
             assert seen() == (forward, bf16 if "attnbf16" in contract else 0), contract
         assert states["bf16+exp+attnbf16"] != states["bf16+exp"], states
         assert states["bf16+exp+attnbf16"] != states["bf16+attnbf16"], states
@@ -1319,7 +1464,8 @@ def test_the_harness_rows_are_the_programs_numbers():
                          "train.mm.bf16.mismatch", "train.plan.remat.mismatch",
                          "train.plan.executed.mismatch", "train.plan.program.mismatch",
                          "train.plan.pack.mismatch", "train.plan.place.mismatch",
-                         "train.plan.choose.mismatch"}  # fmt: skip
+                         "train.plan.choose.mismatch", "train.plan.dispatch.mismatch",
+                         "train.plan.measured.mismatch"}  # fmt: skip
     remat = rows["train.plan.remat.mismatch"]
     assert remat.kind == "exact" and remat.bound == 0 and remat.baseline == 0
     assert remat.what.startswith("(spec, recompute set) pairs") and remat.slice_owner == "GEO-3"
@@ -1336,6 +1482,17 @@ def test_the_harness_rows_are_the_programs_numbers():
     assert choose.kind == "exact" and choose.bound == 0 and choose.baseline == chosen
     assert choose.what.startswith(f"of the {chosen} choice runs") and choose.slice_owner == "PX-3"
     assert f"the {states} state cases" in choose.what, "the row names the cases it runs"
+    # PX-3b: the state cases again, under every dispatch kind switched alone and seeded mixes
+    dispatch, dispatched = rows["train.plan.dispatch.mismatch"], nf.dispatch_run_count()
+    assert dispatch.kind == "exact" and dispatch.bound == 0 and dispatch.baseline == dispatched
+    assert dispatch.what.startswith(f"of the {dispatched:,} dispatch runs")
+    assert dispatch.slice_owner == "PX-3b" and f"the {states} state cases" in dispatch.what
+    # PX-3b-2: the state cases again, under seeded tables whose picks K_BCIR prices and plans
+    measured, priced = rows["train.plan.measured.mismatch"], nf.measured_run_count()
+    assert measured.kind == "exact" and measured.bound == 0 and measured.baseline == priced
+    assert measured.what.startswith(f"of the {priced} measured runs")
+    assert measured.slice_owner == "PX-3b-2" and f"the {states} state cases" in measured.what
+    assert nf.MEASURED_TABLES == 2 and "each under two seeded choice tables" in measured.what
     # PX-2b: the same runs, each from its pack -- the program row's corpus, one carrier more
     pack = rows["train.plan.pack.mismatch"]
     assert pack.kind == "exact" and pack.bound == 0 and pack.baseline == runs
@@ -1375,12 +1532,12 @@ def test_the_harness_rows_are_the_programs_numbers():
     assert unselected is None or unselected == 0, unselected  # None outside a source checkout
     ratio, held, bound, incumbent = nf.transient_ratio()
     assert rows["train.memory.transient"].baseline == ratio == held / bound
-    assert (held, bound, incumbent) == (999_424, 753_664, 753_664)
+    assert (held, bound, incumbent) == (1_001_472, 755_712, 755_712)  # ROPE-TABLE's 2,048 bytes
     # PX-4: the row reads the placed pack -- its arena at the bound on the values it holds
     placed, extent, floor, optimal = nf.placed_transient()
-    assert (placed, extent, floor, optimal) == (1.0, 754_176, 754_176, True)
+    assert (placed, extent, floor, optimal) == (1.0, 756_224, 756_224, True)
     assert rows["train.memory.transient"].bound == placed
-    assert "754,176 / 754,176" in rows["train.memory.transient"].what
+    assert "756,224 / 756,224" in rows["train.memory.transient"].what
     assert rows["train.mm.mismatch"].what.startswith(f"of {len(nf.MM_CASES)} GEMM cases")
     pairs = len(nf.PLAN_CORPUS) * 2  # the parent stated activations and scratch only in C
     assert rows["train.plan.mismatch"].baseline == pairs

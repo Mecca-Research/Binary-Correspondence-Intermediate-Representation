@@ -52,6 +52,9 @@ void bcir_dgem_free(bcir_dgem *g) {
 }
 
 size_t bcir_dgem_capacity(const bcir_dgem *g) { return g ? g->capacity : 0u; }
+int bcir_dgem_set_runner(bcir_dgem *g, const bcir_llama_runner *runner) {
+  return g != NULL && g->claims != NULL && g->ws.x != NULL ? bcir_llama_ws_set_runner(&g->ws, runner) : -1;
+}
 size_t bcir_dgem_prompt_len(const bcir_dgem *g) { return g ? g->prompt_len : 0u; }
 
 void bcir_dgem_reset_stats(bcir_dgem *g) {
@@ -244,6 +247,7 @@ static int fail_load(bcir_dgem *g, bcir_host_allocator *a, uint32_t *order, int 
 int bcir_dgem_load(bcir_dgem *g, const bcir_q8_model *model, const uint8_t *pack, size_t len,
                    const bcir_host_allocator *allocator) {
   bcir_streampack_header hdr;
+  bcir_sp_checked checked;
   load_ctx lc;
   uint32_t *order = NULL;
   size_t i, n_embed = 0, n_argmax = 0, first_argmax = DGEM_NONE, last_argmax = 0;
@@ -260,8 +264,9 @@ int bcir_dgem_load(bcir_dgem *g, const bcir_q8_model *model, const uint8_t *pack
   g->pack_len = len;
   /* The semantic walk (R10 and the range gate) reads every declared record before anything is
    * sized from the header: a count the body does not carry is refused, not allocated for. */
-  st = bcir_sp_validate(pack, len, &hdr);
-  if (st == BCIR_OK) st = bcir_sp_verify_semantic(pack, len, 0xFFFFFFFFu, 0xFFFFFFFFu);
+  st = bcir_sp_check(pack, len, &checked);   /* SP-ONCE: one CRC, then every walk over it */
+  if (st == BCIR_OK) st = bcir_sp_checked_verify_semantic(&checked, 0xFFFFFFFFu, 0xFFFFFFFFu);
+  hdr = checked.hdr;
   if (st != BCIR_OK) {
     g->pack_status = st;
     return fail_load(g, &g->allocator, NULL, BCIR_DGEM_E_PACK);
@@ -276,14 +281,14 @@ int bcir_dgem_load(bcir_dgem *g, const bcir_q8_model *model, const uint8_t *pack
   lc.g = g;
   lc.order = order;
   lc.index = 0;
-  st = bcir_sp_for_each_segment(pack, len, on_segment, &lc);
+  st = bcir_sp_checked_for_each_segment(&checked, on_segment, &lc);
   if (st != BCIR_OK) {
     g->pack_status = st;
     return fail_load(g, &g->allocator, order, BCIR_DGEM_E_PACK);
   }
   if (lc.index != g->n_claims) return fail_load(g, &g->allocator, order, BCIR_DGEM_E_PROGRAM);
   lc.index = 0;
-  st = bcir_sp_for_each_block(pack, len, on_block, &lc);
+  st = bcir_sp_checked_for_each_block(&checked, on_block, &lc);
   if (st != BCIR_OK) {
     g->pack_status = st;
     return fail_load(g, &g->allocator, order, BCIR_DGEM_E_PACK);
@@ -390,7 +395,7 @@ static int dgem_kernel(const bcir_exec_item *item, void *vctx) {
     break;
   case BCIR_DGEM_MATVEC:
   case BCIR_DGEM_MATVEC_ADD:
-    if (bcir_llama_op_matvec(m, c->src, c->weight, c->in, c->out, c->dst))
+    if (bcir_llama_op_matvec(m, &g->ws, c->src, c->weight, c->in, c->out, c->dst))
       return refuse(g, BCIR_DGEM_E_KERNEL);
     rd = 8ull * c->in + q8_octets(c->weight);
     wr = 8ull * c->out;
@@ -424,7 +429,7 @@ static int dgem_kernel(const bcir_exec_item *item, void *vctx) {
     break;
   case BCIR_DGEM_HEAD:
     if (g->final_at != pos) return refuse(g, BCIR_DGEM_E_ORDER);
-    if (bcir_llama_op_head(m, c->src, g->ws.logits)) return refuse(g, BCIR_DGEM_E_KERNEL);
+    if (bcir_llama_op_head(m, &g->ws, c->src, g->ws.logits)) return refuse(g, BCIR_DGEM_E_KERNEL);
     g->head_at = pos;
     rd = 8u * d + q8_octets(c->weight);
     wr = 8ull * m->vocab_size;
@@ -467,6 +472,7 @@ static void clear_activations(bcir_dgem *g) {
   for (i = 0; i < 3u; ++i) memset(rows_kv[i], 0, kvd * sizeof(double));
   for (i = 0; i < 3u; ++i) memset(rows_ff[i], 0, ff * sizeof(double));
   memset(g->ws.logits, 0, (size_t)m->vocab_size * sizeof(double));
+  g->ws.rope_pos = SIZE_MAX; /* the rotation's table, refilled at the run's first position */
 }
 
 int bcir_dgem_run(bcir_dgem *g, const int32_t *prompt, size_t prompt_len, int32_t *generated,

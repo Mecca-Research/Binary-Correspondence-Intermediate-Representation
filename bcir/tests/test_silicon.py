@@ -7,20 +7,24 @@ signal (so CI never flakes)."""
 
 import json
 import os
+import struct
 import subprocess
 import tempfile
 import time
 from shutil import which
+from unittest import mock
 
 import bcir.silicon as silicon
 
 from bcir.silicon import (
     Counters,
     CounterSampler,
+    CpuFreq,
     HwSample,
     cache_topology,
     cpufreq_info,
     perf_counters_available,
+    pmu_counts,
     read_hw_counters,
     sample_into_ring,
     summary,
@@ -111,6 +115,8 @@ def test_counter_sampler_measures_real_deltas():
 
 
 def test_counter_sampler_degrades_without_posix_rusage():
+    """Without getrusage (native Windows) the lap's four rusage counts are None -- no count, not
+    a count of 0 -- and the two clocks are read as everywhere (EVIDENCE-NULL)."""
     saved = silicon._resource
     silicon._resource = None
     try:
@@ -118,10 +124,76 @@ def test_counter_sampler_degrades_without_posix_rusage():
         _ = sum(range(10000))
         c = s.lap()
         assert c.wall_ns > 0 and c.cpu_ns >= 0
-        assert (c.minor_faults, c.major_faults, c.vol_ctx, c.invol_ctx) == (0, 0, 0, 0)
+        assert (c.minor_faults, c.major_faults, c.vol_ctx, c.invol_ctx) == (None, None, None, None)
         assert summary()["rusage_counters"] is False
     finally:
         silicon._resource = saved
+
+
+def test_without_getrusage_the_ring_and_the_dna_carry_no_fault_count():
+    """The telemetry frame has no null: with neither a PMU nor getrusage its miss signal is the
+    frame's nominal 0 (never a sum over counts nobody read), and the DNA claims no PMU."""
+    saved = silicon._resource
+    silicon._resource = None
+    try:
+        with mock.patch.object(silicon, "read_hw_counters", return_value=None):
+            ring = TelemetryRing(capacity=4)
+            delta = sample_into_ring(ring, claim_id=5, work=lambda: sum(range(1000)))
+            rec = ring.read_one()
+            dna, provenance = silicon.silicon_dna(lambda: sum(range(1000)), claim_id=5)
+    finally:
+        silicon._resource = saved
+    assert (delta.minor_faults, delta.major_faults) == (None, None)
+    assert rec.claim_id == 5 and rec.misses == 0 and rec.cycles > 0
+    assert dna.misses == 0 and "pmu" not in provenance
+
+
+def _refused(fn, *args) -> bool:
+    try:
+        fn(*args)
+    except ValueError:
+        return True
+    return False
+
+
+def test_recorded_counts_are_all_or_none_and_never_a_gap():
+    """The one rule every v2 evidence record reads a group of counts by (EVIDENCE-NULL): every
+    count, a 0 among them a reading, or every count None; a None beside a count, a bool, a
+    float, a negative count or one past 2^63 is refused, as is an empty group."""
+    from bcir.silicon import recorded_counts
+
+    assert recorded_counts(None, None, None) is None
+    assert recorded_counts(None, None, None, None) is None
+    assert recorded_counts(0, 0, 0) == (0, 0, 0)  # zeros the PMU read
+    assert recorded_counts(2_000, 3_000, 0) == (2_000, 3_000, 0)
+    assert recorded_counts((1 << 63) - 1, 0, 1, 2) == ((1 << 63) - 1, 0, 1, 2)
+    for bad in (
+        (1, 1, None),
+        (None, 0, None),
+        (None, None, None, 0),
+        (True, 1, 1),
+        (1, 1.0, 1),
+        (1, 1, "7"),
+        (-1, 1, 1),
+        (1, 1 << 63, 1),
+        (),
+    ):
+        assert _refused(recorded_counts, *bad), bad
+
+
+def test_a_v1_records_pmu_counts_are_read_only_where_none_is_zero():
+    """A v1 record has no null and its writer recorded a count it could not read as 0, so a 0
+    in it may be no reading: its counts are the three only when none is 0, and a None in it is
+    refused -- v1 cannot say null."""
+    from bcir.silicon import v1_pmu_counts
+
+    assert v1_pmu_counts(0, 0, 0) is None
+    assert v1_pmu_counts(2_000, 3_000, 0) is None
+    assert v1_pmu_counts(0, 3_000, 7) is None
+    assert v1_pmu_counts(2_000, 3_000, 7) == (2_000, 3_000, 7)
+    assert v1_pmu_counts(1 << 64, 1, 1) == (1 << 64, 1, 1)  # v1's own bound is its record's
+    for bad in ((None, 0, 0), (None, None, None), (True, 1, 1), (-1, 1, 1), (1, 1.5, 1)):
+        assert _refused(v1_pmu_counts, *bad), bad
 
 
 def test_ring_uses_wall_delta_when_the_host_cpu_clock_is_too_coarse():
@@ -294,3 +366,298 @@ def test_dvfs_actuation_is_a_safe_noop_without_a_governor():
 
     res = actuate([FreqTarget(phase_id=0, clock_q8=192, target_khz=1_000_000, settable=False)], fq)
     assert res[0].applied is False and "governor" in res[0].reason.lower()
+
+
+# --- null, never zero: the PMU's attr and counts, the frequency, the kernel's integers ----------
+#
+# A counter, a clock or an energy figure this host cannot read is None -- never 0, never a nearby
+# number. These drive each failure through silicon's module-level hooks (`_perf_syscall`,
+# `_perf_ioctl`, `_perf_read`, `_perf_close`, `_read`), so they hold on every host: one with no PMU
+# (this guest's perf_event_open says ENOENT), a CI runner that is not root, a root workstation.
+
+
+def _reading(value, enabled=1_000, running=1_000):
+    """One counter's read() with TOTAL_TIME_ENABLED | TOTAL_TIME_RUNNING: value, then the times."""
+    return struct.pack("=QQQ", value, enabled, running)
+
+
+class _FakePmu:
+    """Three counters that open as fds 101 (cycles), 102 (instructions) and 103 (cache misses);
+    each read() gives what `readings` holds for its fd -- bytes, or an exception to raise. A config
+    in `refuse` does not open."""
+
+    _FDS = {0: 101, 1: 102, 3: 103}
+
+    def __init__(self, readings=None, refuse=()):
+        self.readings, self.refuse, self.closed = dict(readings or {}), set(refuse), []
+
+    def _open(self, config):
+        return None if config in self.refuse else self._FDS[config]
+
+    def _read(self, fd):
+        got = self.readings[fd]
+        if isinstance(got, BaseException):
+            raise got
+        return got
+
+    def __enter__(self):
+        self._patches = [
+            mock.patch.object(silicon, "_perf_open", self._open),
+            mock.patch.object(silicon, "_perf_ioctl", lambda fd, request: None),
+            mock.patch.object(silicon, "_perf_read", self._read),
+            mock.patch.object(silicon, "_perf_close", self.closed.append),
+        ]
+        for p in self._patches:
+            p.start()
+        return self
+
+    def __exit__(self, *exc):
+        for p in reversed(self._patches):
+            p.stop()
+
+
+def test_the_perf_attr_asks_for_a_user_space_counter():
+    """perf_event_attr as include/uapi/linux/perf_event.h lays it out: the flag word at offset 40
+    holds disabled (bit 0), exclude_kernel (bit 5) and exclude_hv (bit 6) -- `perf stat -e cycles:u`,
+    the only counter an unprivileged process may open at perf_event_paranoid=2 -- and never
+    exclude_guest (bit 20), which counted the kernel and had every unprivileged open refused. The
+    read format asks for the enabled and running times, so a count can be told from no count."""
+    for config in (0, 1, 3):
+        attr = silicon._perf_attr(config)
+        assert len(attr) == 72  # PERF_ATTR_SIZE_VER1: through bp_len
+        assert struct.unpack_from("=IIQ", attr, 0) == (0, 72, config)  # PERF_TYPE_HARDWARE
+        read_format, flags = struct.unpack_from("=QQ", attr, 32)
+        assert flags == 0b110_0001, hex(flags)
+        assert not flags >> 20 & 1
+        assert read_format == 0b11
+
+
+def test_perf_open_passes_that_attr_and_a_refusal_is_none():
+    seen = []
+
+    def refuse(attr):
+        seen.append(bytes(attr))
+        return -1
+
+    with mock.patch.object(silicon, "_perf_syscall", refuse):
+        assert silicon._perf_open(1) is None
+    assert seen == [silicon._perf_attr(1)]
+    with mock.patch.object(silicon, "_perf_syscall", lambda attr: 7):
+        assert silicon._perf_open(1) == 7
+    with (
+        mock.patch.object(silicon, "_perf_syscall", lambda attr: 7),
+        mock.patch.object(silicon, "_BYTE_ORDER", "big"),  # bitfields allocated from the top
+    ):
+        assert silicon._perf_open(1) is None
+
+
+def test_a_counter_that_cannot_be_read_is_none_never_zero():
+    full = {101: _reading(2_000), 102: _reading(3_000)}
+    cases = {
+        "a read that fails": OSError(5, "Input/output error"),
+        "an empty read": b"",
+        "a reading cut short": _reading(7)[:16],
+        "a counter the kernel never ran": _reading(0, 1_000, 0),
+        "a counter never enabled": _reading(0, 0, 0),
+        "a counter multiplexed for half its time": _reading(400, 1_000, 500),
+    }
+    for label, bad in cases.items():
+        runs = []
+        with _FakePmu({**full, 103: bad}) as pmu:
+            hw = read_hw_counters(lambda runs=runs: runs.append(1))
+        assert runs == [1], label  # the work ran exactly once
+        assert (hw.cycles, hw.instructions, hw.cache_misses) == (2_000, 3_000, None), label
+        assert hw.ipc_milli == 1_500, label
+        assert pmu_counts(hw) is None, label
+        assert sorted(pmu.closed) == [101, 102, 103], label
+    with _FakePmu({**full, 103: _reading(7)}) as pmu:
+        hw = read_hw_counters(lambda: None)
+    assert pmu_counts(hw) == (2_000, 3_000, 7) and sorted(pmu.closed) == [101, 102, 103]
+
+
+def test_a_counter_that_cannot_be_opened_runs_nothing_and_closes_the_rest():
+    runs = []
+    with _FakePmu({}, refuse={3}) as pmu:
+        assert read_hw_counters(lambda: runs.append(1)) is None
+    assert runs == [] and sorted(pmu.closed) == [101, 102]
+
+
+def test_no_counts_means_no_ipc():
+    assert HwSample(cycles=None, instructions=None, cache_misses=None).ipc_milli is None
+    assert HwSample(cycles=None, instructions=5, cache_misses=1).ipc_milli is None
+    assert HwSample(cycles=2_000, instructions=None, cache_misses=1).ipc_milli is None
+    assert (
+        HwSample(cycles=0, instructions=5, cache_misses=1).ipc_milli is None
+    )  # cycles never moved
+    assert HwSample(cycles=2_000, instructions=3_000, cache_misses=None).ipc_milli == 1_500
+    assert pmu_counts(None) is None
+    assert pmu_counts(HwSample(cycles=2_000, instructions=3_000, cache_misses=0)) == (
+        2_000,
+        3_000,
+        0,
+    )
+
+
+def test_the_ring_and_the_dna_take_the_os_signals_when_a_count_is_missing():
+    """A record is all PMU or all OS: with a count missing, the ring and silicon_dna carry the OS
+    signals for both cycles and misses, and silicon_dna claims no 'pmu' provenance. The PMU's
+    misses are a pressure: 7 per 3,000 instructions is 2 per thousand."""
+    lap = Counters(wall_ns=73, cpu_ns=50, minor_faults=4, major_faults=1, vol_ctx=0, invol_ctx=0)
+
+    class FixedSampler:
+        def lap(self):
+            return lap
+
+    for sample, want, pmu in (
+        (HwSample(cycles=2_000, instructions=3_000, cache_misses=None), (50, 5), False),
+        (HwSample(cycles=None, instructions=3_000, cache_misses=7), (50, 5), False),
+        (HwSample(cycles=2_000, instructions=3_000, cache_misses=7), (2_000, 2), True),
+    ):
+        runs = []
+
+        def counted(work, sample=sample):
+            work()
+            return sample
+
+        with (
+            mock.patch.object(silicon, "CounterSampler", FixedSampler),
+            mock.patch.object(silicon, "read_hw_counters", counted),
+        ):
+            ring = TelemetryRing(capacity=4)
+            sample_into_ring(ring, claim_id=3, work=lambda runs=runs: runs.append(1))
+            rec = ring.read_one()
+            dna, provenance = silicon.silicon_dna(lambda runs=runs: runs.append(1), claim_id=3)
+        assert runs == [1, 1]
+        assert (rec.cycles, rec.misses) == want and (dna.cycles, dna.misses) == want
+        assert ("pmu" in provenance) is pmu
+
+
+def _fed(sample, lap):
+    """The ring's record and the DNA (with its provenance) for one PMU `sample` and OS `lap`."""
+
+    class FixedSampler:
+        def lap(self):
+            return lap
+
+    def counted(work, sample=sample):
+        work()
+        return sample
+
+    with (
+        mock.patch.object(silicon, "CounterSampler", FixedSampler),
+        mock.patch.object(silicon, "read_hw_counters", counted),
+    ):
+        ring = TelemetryRing(capacity=4)
+        sample_into_ring(ring, claim_id=3, work=lambda: None)
+        rec = ring.read_one()
+        dna, provenance = silicon.silicon_dna(lambda: None, claim_id=3)
+    return rec, dna, provenance
+
+
+def test_a_pmu_counting_thousands_of_misses_writes_a_pressure_the_ring_takes():
+    """The frame's miss signal is a 0..100 pressure (`DataDNA.misses`, validated by the ring's
+    write and dropped by every calibrator past 100), so the PMU's is its last-level misses per
+    thousand instructions retired, saturating at 100 -- never the raw count, which a real
+    workload puts in the thousands. The calibrators' ingest gate keeps the event."""
+    from bcir.telemetry import sanitize_events
+
+    lap = Counters(wall_ns=73, cpu_ns=50, minor_faults=4, major_faults=1, vol_ctx=0, invol_ctx=0)
+    for misses, want in ((50_000, 50), (999, 0), (100_000, 100), (10**12, 100)):
+        sample = HwSample(cycles=2_000_000, instructions=1_000_000, cache_misses=misses)
+        rec, dna, provenance = _fed(sample, lap)
+        assert (rec.cycles, rec.misses) == (2_000_000, want) == (dna.cycles, dna.misses)
+        assert "pmu" in provenance and dna.violations() == []
+        kept, integrity = sanitize_events([dna])
+        assert kept == [dna] and (integrity.accepted, integrity.rejected) == (1, 0)
+
+
+def test_the_os_fault_signal_saturates_at_the_frames_ceiling():
+    """Without a PMU the frame's miss signal is the lap's page faults, saturating at 100: a lap
+    that faults in a fresh MiB (256 pages) is a record the ring takes, not an integrity error."""
+    sample = HwSample(cycles=None, instructions=None, cache_misses=None)
+    for minor, major, want in ((4, 1, 5), (99, 1, 100), (300, 2, 100)):
+        lap = Counters(
+            wall_ns=73, cpu_ns=50, minor_faults=minor, major_faults=major, vol_ctx=0, invol_ctx=0
+        )
+        rec, dna, provenance = _fed(sample, lap)
+        assert (rec.cycles, rec.misses) == (50, want) == (dna.cycles, dna.misses)
+        assert "pmu" not in provenance and dna.violations() == []
+
+
+def test_no_instruction_retired_is_no_pmu_pressure():
+    """A PMU sample that retired no instruction has no misses-per-instruction rate: the record
+    takes the OS pair, and the DNA claims no PMU."""
+    lap = Counters(wall_ns=73, cpu_ns=50, minor_faults=4, major_faults=1, vol_ctx=0, invol_ctx=0)
+    rec, dna, provenance = _fed(HwSample(cycles=2_000, instructions=0, cache_misses=7), lap)
+    assert (rec.cycles, rec.misses) == (50, 5) == (dna.cycles, dna.misses)
+    assert "pmu" not in provenance
+
+
+def test_kernel_text_integers_are_read_in_their_own_grammar():
+    """sysfs writes ASCII digits (a '-' where a value may be negative); int() takes a larger
+    language -- '+5', '1_000', ' 5', '٣' -- and float() takes 'inf' and 'nan'."""
+    for text, want in (("0", 0), ("2800000", 2_800_000), ("007", 7)):
+        assert silicon._decimal(text) == want
+    for text in (
+        "",
+        "+5",
+        "-5",
+        "1_000",
+        " 5",
+        "5 ",
+        "inf",
+        "nan",
+        "0x10",
+        "1e3",
+        "2.8",
+        "٣",
+        "５",
+    ):
+        assert silicon._decimal(text) is None, text
+    assert silicon._decimal("-5000", signed=True) == -5_000
+    for text in ("--5", "+5", "-", "-1_0", "- 5"):
+        assert silicon._decimal(text, signed=True) is None, text
+    assert silicon._decimal(None) is None
+
+
+def test_the_nominal_frequency_is_cpufreqs_or_none():
+    """cpufreq's cpuinfo_max_freq, or None: never /proc/cpuinfo's 'cpu MHz', which is the current
+    or hypervisor-reported clock (on this KVM guest, 2800.198: the TSC's rate), not a nominal one."""
+    files = {"/proc/cpuinfo": "processor\t: 0\ncpu MHz\t\t: 2800.198\n"}  # offered, never taken
+    fq_dir = f"{silicon._SYS_CPU}/cpufreq"
+    with mock.patch.object(silicon, "_read", files.get):
+        assert silicon.cpufreq_info().nominal_khz is None and not silicon.cpufreq_info().available
+        files[f"{fq_dir}/cpuinfo_max_freq"] = "2800000"
+        files[f"{fq_dir}/scaling_available_frequencies"] = "800000 1600000 2800000"
+        fq = silicon.cpufreq_info()
+        assert fq.nominal_khz == 2_800_000 and fq.steps_khz == (800_000, 1_600_000, 2_800_000)
+        files[f"{fq_dir}/cpuinfo_max_freq"] = "2_800_000"
+        files[f"{fq_dir}/scaling_available_frequencies"] = "800000 1_600_000"
+        fq = silicon.cpufreq_info()
+        assert fq.nominal_khz is None and fq.steps_khz == ()
+        files[f"{fq_dir}/cpuinfo_max_freq"] = "0"
+        assert silicon.cpufreq_info().nominal_khz is None
+        assert silicon.summary()["cpu_nominal_khz"] is None
+
+
+def test_dvfs_quantizes_to_a_given_frequency_table():
+    """The quantization on every host, against a stated table: a guest with no cpufreq has no
+    frequency of its own to anchor to, so the host-read test above it skips there."""
+    fq = CpuFreq(
+        nominal_khz=2_800_000,
+        steps_khz=(800_000, 1_600_000, 2_400_000, 2_800_000),
+        governor=None,
+        actuatable=False,
+    )
+    m = vector_add(1 << 16)
+    plan = plan_dvfs(m, optimize(m, AVX, Theta.cool()), Theta.cool())
+    targets = quantize_to_silicon(plan, fq)
+    assert len(targets) == len(plan.decisions)
+    for d, t in zip(plan.decisions, targets):
+        want = fq.nominal_khz * d.clock_q8 // NOMINAL
+        assert t.target_khz in fq.steps_khz
+        assert all(abs(t.target_khz - want) <= abs(s - want) for s in fq.steps_khz)
+        assert t.settable is False
+    results = actuate(targets, fq)
+    assert all(not r.applied and r.reason and r.observed_khz is None for r in results)
+    assert quantize_to_silicon(plan, CpuFreq(None, (), None, False)) == []

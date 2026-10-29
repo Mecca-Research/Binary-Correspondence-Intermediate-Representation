@@ -840,6 +840,54 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="PX-3",
     ),
     Metric(
+        "train.plan.dispatch.mismatch",
+        "train",
+        "of the 1,171 dispatch runs (bcir/tests/native_decoder_fixtures.py `dispatch_runs`: the 27 "
+        "state cases of the trace corpus, each under every dispatch kind -- a GEMM's role, an "
+        "attention, every other kernel -- switched alone to the portable instance and to its "
+        "family's widest named (a GEMM of BCIR's entries, an attention) and to each worker count "
+        "below the case's threads, and three seeded draws of one a kind), those that stopped, "
+        "trained another state or events than bcir_decoder_run_accum on the same case, or traced "
+        "other launches than the dispatched program states as the host resolves them (the "
+        "instance each GEMM and attention job ran, the workers each job ran on: "
+        "native_launch.step_program's `dispatch`, words 41 and 42). The parent named no job's "
+        "instance or workers, so every run was unheld: 1,153 at PX-3b, 1,171 since ROPE-TABLE's "
+        "table fill joined the kernels (its three worker counts in each of the six four-thread "
+        "cases)",
+        1171,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one step, every instance and every cap: each instance of a family is the "
+        "contract's bits and a pool's partition is a function of the shapes alone "
+        "(bcir_tensor.h), so a dispatch is a choice of who runs a job and on which unit, never "
+        "of a value -- a run that differs is a defect of the dispatch, the program model or the "
+        "probe",
+        slice_owner="PX-3b",
+    ),
+    Metric(
+        "train.plan.measured.mismatch",
+        "train",
+        "of the 54 measured runs (bcir/tests/native_decoder_fixtures.py `measured_runs`: the 27 "
+        "state cases of the trace corpus at two threads at least, each under two seeded choice "
+        "tables that measured the dispatch -- the rms kernel's t1 resolved faster in every one -- "
+        "their picks carried into K_BCIR's candidates by native_choose.measured_prices, the "
+        "default program planned on the AVX-512 profile carrying them, hydrated, placed and "
+        "lowered by the C), those whose lowering was refused or wrote other words than the "
+        "program step_program states under the carried dispatch, that stopped, or that trained "
+        "another state or events than the C step on the same case. The parent priced no measured "
+        "alternative, so its plans ran every job at the default and all 54 were unheld (PX-3b-2)",
+        54,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a measured realization is its own realization's lane and width at a lower "
+        "price, so the planner takes it and the lowering writes its alternative into the job's "
+        "dispatch words, and every dispatch trains the same bits (PX-3b) -- a run that differs is "
+        "a defect of the prices, the planner, the plan's candidate string or the lowering",
+        slice_owner="PX-3b-2",
+    ),
+    Metric(
         "train.plan.pack.mismatch",
         "train",
         "of the 356 pack runs (bcir/tests/native_decoder_fixtures.py `pack_runs`: the program runs "
@@ -901,12 +949,14 @@ METRICS: tuple[Metric, ...] = (
         "train",
         "bytes a trainer lends for the bench step's activations and backward workspace, over G26's "
         "concurrent-live bound on the values they hold (vocab 256, width 64, 2 layers, batch 2 x "
-        "32 tokens). Frozen at the C plan's fixed spans over the step program's bound, 999,424 / "
-        "753,664 bytes; read since PX-4 at the step's pack with every transient value placed by "
+        "32 tokens). Frozen at the C plan's fixed spans over the step program's bound, 1,001,472 / "
+        "755,712 bytes; read since PX-4 at the step's pack with every transient value placed by "
         "its lifetime (native_pack.place_by_lifetime) over the bound on the pack's own values, "
-        "754,176 / 754,176 -- the pack makes the two temporaries the C kept inside other buffers "
-        "values of their own (the loss rows' terms, 512 bytes, and the norms' 1/rms)",
-        999_424 / 753_664,
+        "756,224 / 756,224 -- the pack makes the two temporaries the C kept inside other buffers "
+        "values of their own (the loss rows' terms, 512 bytes, and the norms' 1/rms). Every figure "
+        "holds the rotation's table, 2,048 bytes live from the forward to the backward's last "
+        "rotation (ROPE-TABLE: 999,424 / 753,664 and 754,176 / 754,176 before it)",
+        1_001_472 / 755_712,
         "x",
         "exact",
         bound=1.0,
@@ -2037,8 +2087,8 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "planner.malformed.accepted",
         "kplan",
-        "(malformed record, rail) pairs not refused with the declared status: one BKPI variant per wire and planning law, one BKPR variant per wire law (54 + 20), on the Python codec and the C twin",
-        148,
+        "(malformed record, rail) pairs not refused with the declared status: one BKPI variant per wire and planning law, one BKPR variant per wire law (71 + 23, PX-3b-2's version-1 laws among them), on the Python codec and the C twin",
+        188,
         "count",
         "exact",
         bound=0,
@@ -2055,6 +2105,17 @@ METRICS: tuple[Metric, ...] = (
         bound=0,
         bound_source="every forgery refused with a diagnostic and every honest plan accepted; the parent raised on 176 forgery verdicts (a plain-int lane, an unhashable phase) and accepted 56 (a first step's phase was never bound to its claim)",
         slice_owner="G17",
+    ),
+    Metric(
+        "planner.measured.parity",
+        "kplan",
+        "(case, comparison) pairs over the measured corpus (bcir/tests/planner_fixtures.py `measured_cases`: every module of the fixed corpus and two native-trainer training packs under every target, each with a measured table drawn over its claims, and the seed module under a table naming its capital-led op: 114 cases, every one a version-1 BKPI record) that fail: R9 judging the compact planner's plan otherwise than the same target's plan without its table, the plan priced above that plan, the native planner writing other bytes than the compact planner's (its version-1 BKPR record, or the same refusal), or the native hydrate another pack than the oracle's. The parent priced no measured alternative, so all 456 were unheld (PX-3b-2)",
+        456,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a measured alternative is a candidate like any other: its lane and width its own realization's, its price that realization's scaled -- every rail derives the same offer, so the same plan, the same bytes and the same pack",
+        slice_owner="PX-3b-2",
     ),
     # The 2026-09-04 profile's 6.06 M was the whole K_BCIR->StreamPack chain at scale 8 before
     # S0-A made R9 re-derive the planner's offer; this row is the planner alone, the thing G17

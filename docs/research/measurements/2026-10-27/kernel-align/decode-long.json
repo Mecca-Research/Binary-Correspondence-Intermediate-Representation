@@ -1,0 +1,1362 @@
+{
+ "builds": [
+  {
+   "cc": "clang",
+   "arm": "D0",
+   "build": "before",
+   "placement": 0,
+   "pad": 0,
+   "text_alignment": 16,
+   "compiler": "clang",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "clang",
+   "arm": "D16",
+   "build": "before",
+   "placement": 16,
+   "pad": 48,
+   "text_alignment": 16,
+   "compiler": "clang",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "clang",
+   "arm": "D32",
+   "build": "before",
+   "placement": 32,
+   "pad": 48,
+   "text_alignment": 16,
+   "compiler": "clang",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "clang",
+   "arm": "D48",
+   "build": "before",
+   "placement": 48,
+   "pad": 48,
+   "text_alignment": 16,
+   "compiler": "clang",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "clang",
+   "arm": "M0",
+   "build": "after",
+   "placement": 0,
+   "pad": 32,
+   "text_alignment": 32,
+   "compiler": "clang",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off",
+     "-mbranches-within-32B-boundaries"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off",
+     "-mbranches-within-32B-boundaries"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off",
+     "-mbranches-within-32B-boundaries"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "clang",
+   "arm": "M32",
+   "build": "after",
+   "placement": 32,
+   "pad": 0,
+   "text_alignment": 32,
+   "compiler": "clang",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off",
+     "-mbranches-within-32B-boundaries"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off",
+     "-mbranches-within-32B-boundaries"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off",
+     "-mbranches-within-32B-boundaries"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "clang",
+   "arm": "K0",
+   "build": "kernels",
+   "placement": 0,
+   "pad": 0,
+   "text_alignment": 32,
+   "compiler": "clang",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off",
+     "-mbranches-within-32B-boundaries"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "clang",
+   "arm": "K32",
+   "build": "kernels",
+   "placement": 32,
+   "pad": 32,
+   "text_alignment": 32,
+   "compiler": "clang",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off",
+     "-mbranches-within-32B-boundaries"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "gcc",
+   "arm": "D0",
+   "build": "before",
+   "placement": 0,
+   "pad": 0,
+   "text_alignment": 16,
+   "compiler": "gcc",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "gcc",
+   "arm": "D16",
+   "build": "before",
+   "placement": 16,
+   "pad": 48,
+   "text_alignment": 16,
+   "compiler": "gcc",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "gcc",
+   "arm": "D32",
+   "build": "before",
+   "placement": 32,
+   "pad": 48,
+   "text_alignment": 16,
+   "compiler": "gcc",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "gcc",
+   "arm": "D48",
+   "build": "before",
+   "placement": 48,
+   "pad": 48,
+   "text_alignment": 16,
+   "compiler": "gcc",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "gcc",
+   "arm": "M0",
+   "build": "after",
+   "placement": 0,
+   "pad": 32,
+   "text_alignment": 32,
+   "compiler": "gcc",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off",
+     "-Wa,-mbranches-within-32B-boundaries"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off",
+     "-Wa,-mbranches-within-32B-boundaries"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off",
+     "-Wa,-mbranches-within-32B-boundaries"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "gcc",
+   "arm": "M32",
+   "build": "after",
+   "placement": 32,
+   "pad": 0,
+   "text_alignment": 32,
+   "compiler": "gcc",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off",
+     "-Wa,-mbranches-within-32B-boundaries"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off",
+     "-Wa,-mbranches-within-32B-boundaries"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off",
+     "-Wa,-mbranches-within-32B-boundaries"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "gcc",
+   "arm": "K0",
+   "build": "kernels",
+   "placement": 0,
+   "pad": 0,
+   "text_alignment": 32,
+   "compiler": "gcc",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off",
+     "-Wa,-mbranches-within-32B-boundaries"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  },
+  {
+   "cc": "gcc",
+   "arm": "K32",
+   "build": "kernels",
+   "placement": 32,
+   "pad": 32,
+   "text_alignment": 32,
+   "compiler": "gcc",
+   "machine": "x86_64",
+   "flags": {
+    "bcir_ai_kernels.c": [
+     "-ffp-contract=off",
+     "-Wa,-mbranches-within-32B-boundaries"
+    ],
+    "bcir_q8_model.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_llama.c": [
+     "-ffp-contract=off"
+    ],
+    "bcir_decode.c": [
+     "-ffp-contract=off"
+    ]
+   }
+  }
+ ],
+ "runs": [
+  {
+   "cc": "clang",
+   "run": 1,
+   "model": "<LAB>/model.bcirq8",
+   "vocab": 1024,
+   "rounds": 101,
+   "reps": 4,
+   "short": 8,
+   "long": 200,
+   "every_generation_the_first_copys_bytes": true,
+   "first": "D0",
+   "first_per_token_ms": 0.41946,
+   "arms": {
+    "D16": {
+     "per_token_ms": 0.42014,
+     "ratio": [
+      0.9853,
+      0.9513,
+      1.0206
+     ]
+    },
+    "D32": {
+     "per_token_ms": 0.45609,
+     "ratio": [
+      1.0847,
+      1.0429,
+      1.1282
+     ]
+    },
+    "D48": {
+     "per_token_ms": 0.40462,
+     "ratio": [
+      0.9667,
+      0.9238,
+      1.0116
+     ]
+    },
+    "M0": {
+     "per_token_ms": 0.41549,
+     "ratio": [
+      1.0005,
+      0.9603,
+      1.0425
+     ]
+    },
+    "M32": {
+     "per_token_ms": 0.41644,
+     "ratio": [
+      0.981,
+      0.9442,
+      1.0193
+     ]
+    },
+    "K0": {
+     "per_token_ms": 0.40012,
+     "ratio": [
+      0.9569,
+      0.9171,
+      0.9985
+     ]
+    },
+    "K32": {
+     "per_token_ms": 0.3974,
+     "ratio": [
+      0.96,
+      0.9217,
+      0.9999
+     ]
+    },
+    "A/A": {
+     "per_token_ms": 0.41363,
+     "ratio": [
+      0.9817,
+      0.9441,
+      1.0208
+     ]
+    }
+   }
+  },
+  {
+   "cc": "clang",
+   "run": 1,
+   "model": "<SCRATCH>/kernel-align-decode-long/d256.bcirq8",
+   "vocab": 8192,
+   "rounds": 101,
+   "reps": 2,
+   "short": 8,
+   "long": 72,
+   "every_generation_the_first_copys_bytes": true,
+   "first": "D0",
+   "first_per_token_ms": 2.53486,
+   "arms": {
+    "D16": {
+     "per_token_ms": 2.46411,
+     "ratio": [
+      0.9659,
+      0.9315,
+      1.0017
+     ]
+    },
+    "D32": {
+     "per_token_ms": 2.79786,
+     "ratio": [
+      1.0994,
+      1.0506,
+      1.1504
+     ]
+    },
+    "D48": {
+     "per_token_ms": 2.46885,
+     "ratio": [
+      0.9637,
+      0.9264,
+      1.0025
+     ]
+    },
+    "M0": {
+     "per_token_ms": 2.45735,
+     "ratio": [
+      0.9808,
+      0.9355,
+      1.0282
+     ]
+    },
+    "M32": {
+     "per_token_ms": 2.49506,
+     "ratio": [
+      0.985,
+      0.9441,
+      1.0277
+     ]
+    },
+    "K0": {
+     "per_token_ms": 2.44693,
+     "ratio": [
+      0.9476,
+      0.9125,
+      0.984
+     ]
+    },
+    "K32": {
+     "per_token_ms": 2.48016,
+     "ratio": [
+      0.965,
+      0.9259,
+      1.0057
+     ]
+    },
+    "A/A": {
+     "per_token_ms": 2.58521,
+     "ratio": [
+      1.0018,
+      0.9622,
+      1.0431
+     ]
+    }
+   }
+  },
+  {
+   "cc": "clang",
+   "run": 2,
+   "model": "<LAB>/model.bcirq8",
+   "vocab": 1024,
+   "rounds": 101,
+   "reps": 4,
+   "short": 8,
+   "long": 200,
+   "every_generation_the_first_copys_bytes": true,
+   "first": "D0",
+   "first_per_token_ms": 0.4073,
+   "arms": {
+    "D16": {
+     "per_token_ms": 0.43246,
+     "ratio": [
+      1.0347,
+      0.9954,
+      1.0755
+     ]
+    },
+    "D32": {
+     "per_token_ms": 0.43358,
+     "ratio": [
+      1.0677,
+      1.0246,
+      1.1127
+     ]
+    },
+    "D48": {
+     "per_token_ms": 0.41583,
+     "ratio": [
+      1.0073,
+      0.9718,
+      1.0441
+     ]
+    },
+    "M0": {
+     "per_token_ms": 0.41404,
+     "ratio": [
+      1.0387,
+      0.9986,
+      1.0805
+     ]
+    },
+    "M32": {
+     "per_token_ms": 0.42013,
+     "ratio": [
+      1.0253,
+      0.986,
+      1.0662
+     ]
+    },
+    "K0": {
+     "per_token_ms": 0.41172,
+     "ratio": [
+      1.0135,
+      0.9761,
+      1.0523
+     ]
+    },
+    "K32": {
+     "per_token_ms": 0.41697,
+     "ratio": [
+      1.0239,
+      0.9857,
+      1.0636
+     ]
+    },
+    "A/A": {
+     "per_token_ms": 0.40821,
+     "ratio": [
+      0.9994,
+      0.9646,
+      1.0354
+     ]
+    }
+   }
+  },
+  {
+   "cc": "clang",
+   "run": 2,
+   "model": "<SCRATCH>/kernel-align-decode-long/d256.bcirq8",
+   "vocab": 8192,
+   "rounds": 101,
+   "reps": 2,
+   "short": 8,
+   "long": 72,
+   "every_generation_the_first_copys_bytes": true,
+   "first": "D0",
+   "first_per_token_ms": 2.61661,
+   "arms": {
+    "D16": {
+     "per_token_ms": 2.60662,
+     "ratio": [
+      1.0013,
+      0.9615,
+      1.0428
+     ]
+    },
+    "D32": {
+     "per_token_ms": 2.95049,
+     "ratio": [
+      1.1194,
+      1.0665,
+      1.175
+     ]
+    },
+    "D48": {
+     "per_token_ms": 2.60893,
+     "ratio": [
+      1.0067,
+      0.9602,
+      1.0554
+     ]
+    },
+    "M0": {
+     "per_token_ms": 2.59838,
+     "ratio": [
+      1.0133,
+      0.9674,
+      1.0614
+     ]
+    },
+    "M32": {
+     "per_token_ms": 2.57213,
+     "ratio": [
+      0.9887,
+      0.9432,
+      1.0364
+     ]
+    },
+    "K0": {
+     "per_token_ms": 2.5354,
+     "ratio": [
+      1.002,
+      0.9548,
+      1.0515
+     ]
+    },
+    "K32": {
+     "per_token_ms": 2.52641,
+     "ratio": [
+      0.9803,
+      0.9434,
+      1.0188
+     ]
+    },
+    "A/A": {
+     "per_token_ms": 2.55325,
+     "ratio": [
+      0.9847,
+      0.945,
+      1.0261
+     ]
+    }
+   }
+  },
+  {
+   "cc": "clang",
+   "run": 3,
+   "model": "<LAB>/model.bcirq8",
+   "vocab": 1024,
+   "rounds": 101,
+   "reps": 4,
+   "short": 8,
+   "long": 200,
+   "every_generation_the_first_copys_bytes": true,
+   "first": "D0",
+   "first_per_token_ms": 0.41458,
+   "arms": {
+    "D16": {
+     "per_token_ms": 0.43275,
+     "ratio": [
+      1.0033,
+      0.9641,
+      1.0441
+     ]
+    },
+    "D32": {
+     "per_token_ms": 0.45681,
+     "ratio": [
+      1.0695,
+      1.0207,
+      1.1207
+     ]
+    },
+    "D48": {
+     "per_token_ms": 0.42867,
+     "ratio": [
+      0.9997,
+      0.9569,
+      1.0445
+     ]
+    },
+    "M0": {
+     "per_token_ms": 0.41808,
+     "ratio": [
+      0.9955,
+      0.9509,
+      1.0421
+     ]
+    },
+    "M32": {
+     "per_token_ms": 0.44261,
+     "ratio": [
+      1.023,
+      0.978,
+      1.0701
+     ]
+    },
+    "K0": {
+     "per_token_ms": 0.42293,
+     "ratio": [
+      0.9946,
+      0.9473,
+      1.0442
+     ]
+    },
+    "K32": {
+     "per_token_ms": 0.40861,
+     "ratio": [
+      0.9766,
+      0.9323,
+      1.023
+     ]
+    },
+    "A/A": {
+     "per_token_ms": 0.42319,
+     "ratio": [
+      1.006,
+      0.9735,
+      1.0395
+     ]
+    }
+   }
+  },
+  {
+   "cc": "clang",
+   "run": 3,
+   "model": "<SCRATCH>/kernel-align-decode-long/d256.bcirq8",
+   "vocab": 8192,
+   "rounds": 101,
+   "reps": 2,
+   "short": 8,
+   "long": 72,
+   "every_generation_the_first_copys_bytes": true,
+   "first": "D0",
+   "first_per_token_ms": 2.71758,
+   "arms": {
+    "D16": {
+     "per_token_ms": 2.75242,
+     "ratio": [
+      1.0431,
+      1.0056,
+      1.082
+     ]
+    },
+    "D32": {
+     "per_token_ms": 2.95832,
+     "ratio": [
+      1.1077,
+      1.0671,
+      1.1499
+     ]
+    },
+    "D48": {
+     "per_token_ms": 2.80987,
+     "ratio": [
+      1.0471,
+      1.0054,
+      1.0904
+     ]
+    },
+    "M0": {
+     "per_token_ms": 2.84516,
+     "ratio": [
+      1.0794,
+      1.0379,
+      1.1225
+     ]
+    },
+    "M32": {
+     "per_token_ms": 2.79474,
+     "ratio": [
+      1.0419,
+      0.9952,
+      1.0909
+     ]
+    },
+    "K0": {
+     "per_token_ms": 2.69612,
+     "ratio": [
+      1.0229,
+      0.983,
+      1.0644
+     ]
+    },
+    "K32": {
+     "per_token_ms": 2.70704,
+     "ratio": [
+      1.0198,
+      0.9854,
+      1.0553
+     ]
+    },
+    "A/A": {
+     "per_token_ms": 2.70729,
+     "ratio": [
+      1.0242,
+      0.9891,
+      1.0605
+     ]
+    }
+   }
+  },
+  {
+   "cc": "gcc",
+   "run": 1,
+   "model": "<LAB>/model.bcirq8",
+   "vocab": 1024,
+   "rounds": 101,
+   "reps": 4,
+   "short": 8,
+   "long": 200,
+   "every_generation_the_first_copys_bytes": true,
+   "first": "D0",
+   "first_per_token_ms": 0.41964,
+   "arms": {
+    "D16": {
+     "per_token_ms": 0.42913,
+     "ratio": [
+      1.0152,
+      0.9759,
+      1.0561
+     ]
+    },
+    "D32": {
+     "per_token_ms": 0.39887,
+     "ratio": [
+      0.9638,
+      0.9239,
+      1.0054
+     ]
+    },
+    "D48": {
+     "per_token_ms": 0.46039,
+     "ratio": [
+      1.0843,
+      1.0426,
+      1.1277
+     ]
+    },
+    "M0": {
+     "per_token_ms": 0.40419,
+     "ratio": [
+      0.9662,
+      0.9233,
+      1.011
+     ]
+    },
+    "M32": {
+     "per_token_ms": 0.41894,
+     "ratio": [
+      0.9725,
+      0.9315,
+      1.0153
+     ]
+    },
+    "K0": {
+     "per_token_ms": 0.4095,
+     "ratio": [
+      0.9651,
+      0.9244,
+      1.0075
+     ]
+    },
+    "K32": {
+     "per_token_ms": 0.43037,
+     "ratio": [
+      0.9918,
+      0.9486,
+      1.0371
+     ]
+    },
+    "A/A": {
+     "per_token_ms": 0.43027,
+     "ratio": [
+      1.0079,
+      0.9654,
+      1.0522
+     ]
+    }
+   }
+  },
+  {
+   "cc": "gcc",
+   "run": 1,
+   "model": "<SCRATCH>/kernel-align-decode-long/d256.bcirq8",
+   "vocab": 8192,
+   "rounds": 101,
+   "reps": 2,
+   "short": 8,
+   "long": 72,
+   "every_generation_the_first_copys_bytes": true,
+   "first": "D0",
+   "first_per_token_ms": 2.35049,
+   "arms": {
+    "D16": {
+     "per_token_ms": 2.47073,
+     "ratio": [
+      1.0435,
+      1.0059,
+      1.0825
+     ]
+    },
+    "D32": {
+     "per_token_ms": 2.35207,
+     "ratio": [
+      1.0052,
+      0.9649,
+      1.0472
+     ]
+    },
+    "D48": {
+     "per_token_ms": 2.7145,
+     "ratio": [
+      1.143,
+      1.0963,
+      1.1917
+     ]
+    },
+    "M0": {
+     "per_token_ms": 2.37678,
+     "ratio": [
+      1.0019,
+      0.9639,
+      1.0414
+     ]
+    },
+    "M32": {
+     "per_token_ms": 2.33931,
+     "ratio": [
+      0.9992,
+      0.9608,
+      1.0392
+     ]
+    },
+    "K0": {
+     "per_token_ms": 2.31271,
+     "ratio": [
+      0.9819,
+      0.9399,
+      1.0259
+     ]
+    },
+    "K32": {
+     "per_token_ms": 2.39248,
+     "ratio": [
+      0.9835,
+      0.9457,
+      1.0229
+     ]
+    },
+    "A/A": {
+     "per_token_ms": 2.38271,
+     "ratio": [
+      0.9836,
+      0.948,
+      1.0204
+     ]
+    }
+   }
+  },
+  {
+   "cc": "gcc",
+   "run": 2,
+   "model": "<LAB>/model.bcirq8",
+   "vocab": 1024,
+   "rounds": 101,
+   "reps": 4,
+   "short": 8,
+   "long": 200,
+   "every_generation_the_first_copys_bytes": true,
+   "first": "D0",
+   "first_per_token_ms": 0.41023,
+   "arms": {
+    "D16": {
+     "per_token_ms": 0.41615,
+     "ratio": [
+      1.0225,
+      0.9952,
+      1.0506
+     ]
+    },
+    "D32": {
+     "per_token_ms": 0.39186,
+     "ratio": [
+      0.9819,
+      0.9515,
+      1.0132
+     ]
+    },
+    "D48": {
+     "per_token_ms": 0.44166,
+     "ratio": [
+      1.093,
+      1.0578,
+      1.1293
+     ]
+    },
+    "M0": {
+     "per_token_ms": 0.40885,
+     "ratio": [
+      0.9947,
+      0.963,
+      1.0274
+     ]
+    },
+    "M32": {
+     "per_token_ms": 0.40794,
+     "ratio": [
+      0.9953,
+      0.9618,
+      1.0299
+     ]
+    },
+    "K0": {
+     "per_token_ms": 0.39559,
+     "ratio": [
+      0.9806,
+      0.9519,
+      1.0102
+     ]
+    },
+    "K32": {
+     "per_token_ms": 0.40387,
+     "ratio": [
+      1.0022,
+      0.971,
+      1.0345
+     ]
+    },
+    "A/A": {
+     "per_token_ms": 0.40289,
+     "ratio": [
+      0.9895,
+      0.959,
+      1.0209
+     ]
+    }
+   }
+  },
+  {
+   "cc": "gcc",
+   "run": 2,
+   "model": "<SCRATCH>/kernel-align-decode-long/d256.bcirq8",
+   "vocab": 8192,
+   "rounds": 101,
+   "reps": 2,
+   "short": 8,
+   "long": 72,
+   "every_generation_the_first_copys_bytes": true,
+   "first": "D0",
+   "first_per_token_ms": 2.63641,
+   "arms": {
+    "D16": {
+     "per_token_ms": 2.85854,
+     "ratio": [
+      1.0729,
+      1.0352,
+      1.1119
+     ]
+    },
+    "D32": {
+     "per_token_ms": 2.68872,
+     "ratio": [
+      1.0095,
+      0.9708,
+      1.0497
+     ]
+    },
+    "D48": {
+     "per_token_ms": 3.04217,
+     "ratio": [
+      1.1259,
+      1.0844,
+      1.169
+     ]
+    },
+    "M0": {
+     "per_token_ms": 2.76925,
+     "ratio": [
+      1.0461,
+      1.0069,
+      1.0868
+     ]
+    },
+    "M32": {
+     "per_token_ms": 2.64621,
+     "ratio": [
+      1.0057,
+      0.9701,
+      1.0426
+     ]
+    },
+    "K0": {
+     "per_token_ms": 2.77004,
+     "ratio": [
+      1.0297,
+      0.9943,
+      1.0664
+     ]
+    },
+    "K32": {
+     "per_token_ms": 2.61809,
+     "ratio": [
+      1.0038,
+      0.9632,
+      1.0462
+     ]
+    },
+    "A/A": {
+     "per_token_ms": 2.69469,
+     "ratio": [
+      1.0218,
+      0.9836,
+      1.0614
+     ]
+    }
+   }
+  },
+  {
+   "cc": "gcc",
+   "run": 3,
+   "model": "<LAB>/model.bcirq8",
+   "vocab": 1024,
+   "rounds": 101,
+   "reps": 4,
+   "short": 8,
+   "long": 200,
+   "every_generation_the_first_copys_bytes": true,
+   "first": "D0",
+   "first_per_token_ms": 0.40384,
+   "arms": {
+    "D16": {
+     "per_token_ms": 0.41385,
+     "ratio": [
+      1.0291,
+      0.9901,
+      1.0696
+     ]
+    },
+    "D32": {
+     "per_token_ms": 0.40091,
+     "ratio": [
+      0.9862,
+      0.9458,
+      1.0283
+     ]
+    },
+    "D48": {
+     "per_token_ms": 0.45797,
+     "ratio": [
+      1.12,
+      1.0733,
+      1.1686
+     ]
+    },
+    "M0": {
+     "per_token_ms": 0.40832,
+     "ratio": [
+      1.0002,
+      0.9596,
+      1.0425
+     ]
+    },
+    "M32": {
+     "per_token_ms": 0.41977,
+     "ratio": [
+      1.0205,
+      0.9782,
+      1.0646
+     ]
+    },
+    "K0": {
+     "per_token_ms": 0.40041,
+     "ratio": [
+      0.999,
+      0.9605,
+      1.039
+     ]
+    },
+    "K32": {
+     "per_token_ms": 0.40579,
+     "ratio": [
+      0.9886,
+      0.9547,
+      1.0238
+     ]
+    },
+    "A/A": {
+     "per_token_ms": 0.42756,
+     "ratio": [
+      1.0183,
+      0.9816,
+      1.0564
+     ]
+    }
+   }
+  },
+  {
+   "cc": "gcc",
+   "run": 3,
+   "model": "<SCRATCH>/kernel-align-decode-long/d256.bcirq8",
+   "vocab": 8192,
+   "rounds": 101,
+   "reps": 2,
+   "short": 8,
+   "long": 72,
+   "every_generation_the_first_copys_bytes": true,
+   "first": "D0",
+   "first_per_token_ms": 2.27532,
+   "arms": {
+    "D16": {
+     "per_token_ms": 2.42705,
+     "ratio": [
+      1.0613,
+      1.0214,
+      1.1027
+     ]
+    },
+    "D32": {
+     "per_token_ms": 2.36487,
+     "ratio": [
+      1.0237,
+      0.9823,
+      1.0669
+     ]
+    },
+    "D48": {
+     "per_token_ms": 2.69005,
+     "ratio": [
+      1.1645,
+      1.1198,
+      1.211
+     ]
+    },
+    "M0": {
+     "per_token_ms": 2.32816,
+     "ratio": [
+      1.0052,
+      0.9667,
+      1.0453
+     ]
+    },
+    "M32": {
+     "per_token_ms": 2.3819,
+     "ratio": [
+      1.0239,
+      0.9833,
+      1.0662
+     ]
+    },
+    "K0": {
+     "per_token_ms": 2.49051,
+     "ratio": [
+      1.0439,
+      0.9998,
+      1.0898
+     ]
+    },
+    "K32": {
+     "per_token_ms": 2.22815,
+     "ratio": [
+      0.978,
+      0.9397,
+      1.0178
+     ]
+    },
+    "A/A": {
+     "per_token_ms": 2.27516,
+     "ratio": [
+      1.0052,
+      0.9704,
+      1.0414
+     ]
+    }
+   }
+  }
+ ],
+ "synthetic_models": {
+  "d256": {
+   "layers": 6,
+   "tensors": 56,
+   "bytes": 6856496,
+   "sha256": "2de1f43949aa824ebcda1a3fb30b16f773a480c623ba67d59e6efe3dfdd416d6"
+  }
+ }
+}

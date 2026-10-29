@@ -9,11 +9,13 @@ nothing but the parameter count held the C plan to an independent statement of w
 spec alone (no C, no ctypes):
 
 * **buffers** -- every span of every arena, in the C plan's own order (`params`, `activations`
-  and the backward workspace of `bcir_decoder_train.c`), so the arena sums are a second
-  derivation of `bcir_decoder_make_plan`'s three counts, held to it by `train.plan.mismatch`;
+  and the backward workspace of `bcir_decoder_train.c`, then the rotation's table, ROPE-TABLE), so
+  the arena sums are a second derivation of `bcir_decoder_make_plan`'s three counts, held to it by
+  `train.plan.mismatch`;
 * **values** -- a buffer's versions: an overwrite (`beta == 0`, a fresh cache entry) starts a
   new value, a read-modify-write (an accumulated gradient, a residual add, in-place RoPE) keeps
-  the value it reads, so a workspace buffer reused by every layer is one value per layer;
+  the value it reads, so a workspace buffer reused by every layer is one value per layer -- and
+  the rotation's table, written once after the embedding, is one value every rotation reads;
 * **steps** -- one per kernel call, in the C rail's order, each with the values it reads and
   writes and its counted work.
 
@@ -85,6 +87,9 @@ _LAYER = (
 _CACHE = ("n1", "q", "k", "v", "p", "ctx", "x2", "n2", "gate", "up", "hidden")
 #: The backward workspace, in `bcir_decoder_loss_backward`'s order.
 _WORKSPACE = ("cur", "tmp", "dn", "dq", "dk", "dv", "dc", "dg", "du", "dh", "dl")
+#: ROPE-TABLE: the scratch arena's last span, time x head-dim floats -- the rotation's cosines and
+#: sines, written by the forward after the embedding and read by every rotation after it.
+ROPE_TABLE = "rope"
 
 
 @dataclass(frozen=True)
@@ -249,8 +254,8 @@ def _layer_forward(s, c, p, x, n, d, k, f, causal):
     s.step(c("rms1"), (x, p("norm1")), new=(c("n1"),))
     for proj, out in (("q", d), ("k", k), ("v", k)):
         s.linear(c(proj), n, d, out, c("n1"), p(proj), c(proj))
-    s.step(c("rope.q"), (), (c("q"),))
-    s.step(c("rope.k"), (), (c("k"),))
+    s.step(c("rope.q"), (ROPE_TABLE,), (c("q"),))
+    s.step(c("rope.k"), (ROPE_TABLE,), (c("k"),))
     s.step(c("attention"), (c("q"), c("k"), c("v")), new=(c("p"), c("ctx")), work=4 * causal)
     s.linear(c("o"), n, d, d, c("ctx"), p("o"), c("x2"))
     s.step(c("residual1"), (x,), (c("x2"),))
@@ -308,6 +313,7 @@ def training_step_program(
     work_sizes = {"cur": nd, "tmp": nd, "dn": nd, "dq": nd, "dk": nk, "dv": nk, "dc": nd,
                   "dg": nf, "du": nf, "dh": nf, "dl": nv}  # fmt: skip
     buffers += [Buffer(name, "scratch", work_sizes[name]) for name in _WORKSPACE]
+    buffers.append(Buffer(ROPE_TABLE, "scratch", t * hd))
 
     w = lambda name: f"weights:{name}"  # noqa: E731
     gr = lambda name: f"gradients:{name}"  # noqa: E731
@@ -316,6 +322,7 @@ def training_step_program(
 
     # --- forward --------------------------------------------------------------------------
     s.step("embed", ("tokens", w("embed")), new=("x0",))
+    s.step("rope.table", (), new=(ROPE_TABLE,))
     for layer in range(L):
         c = lambda name, layer=layer: f"{slot[layer]}.{name}"  # noqa: E731
         p = lambda name, layer=layer: w(f"L{layer}.{name}")  # noqa: E731
@@ -350,8 +357,8 @@ def training_step_program(
         # p is read-modify-written, so its lifetime ends here exactly as when it was only read
         s.step(c("attention.vjp"), (c("q"), c("k"), c("v"), "dc"), (c("p"),),
                new=("dq", "dk", "dv"), work=8 * causal)  # fmt: skip
-        s.step(c("rope.q.vjp"), (), ("dq",))
-        s.step(c("rope.k.vjp"), (), ("dk",))
+        s.step(c("rope.q.vjp"), (ROPE_TABLE,), ("dq",))
+        s.step(c("rope.k.vjp"), (ROPE_TABLE,), ("dk",))
         s.linear_vjp(c("q.vjp"), n, d, d, c("n1"), p("q"), "dq", q("q"), "dn", False)
         s.linear_vjp(c("k.vjp"), n, d, k, c("n1"), p("k"), "dk", q("k"), "dn", True)
         s.linear_vjp(c("v.vjp"), n, d, k, c("n1"), p("v"), "dv", q("v"), "dn", True)
@@ -375,6 +382,7 @@ def training_step_program(
 __all__ = [
     "ARENAS",
     "Buffer",
+    "ROPE_TABLE",
     "Step",
     "TRANSIENT",
     "TrainingStepProgram",

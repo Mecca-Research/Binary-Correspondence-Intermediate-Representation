@@ -1,0 +1,112 @@
+{
+ "crc_slice": {
+  "command": [
+   "@python",
+   "tools/testing/check_tests.py",
+   "--require",
+   "bcir.tests.test_native_ai:_CC",
+   "bcir.tests.test_c_runtime:test_the_runtime_crc_is_zlibs",
+   "bcir.tests.test_model_weights_io:test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads"
+  ],
+  "results": [
+   {
+    "exit_code": 1,
+    "expects": "test_the_runtime_crc_is_zlibs",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_runtime_crc_is_zlibs"
+    ],
+    "label": "CS1 table 7's entry 1 flipped",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_runtime_crc_is_zlibs",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_runtime_crc_is_zlibs"
+    ],
+    "label": "CS2 the step's high word with its first two bytes swapped",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_runtime_crc_is_zlibs",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_runtime_crc_is_zlibs"
+    ],
+    "label": "CS3 the step's low word without the running state",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_runtime_crc_is_zlibs",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_runtime_crc_is_zlibs"
+    ],
+    "label": "CS4 the first two lanes on each other's tables",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_runtime_crc_is_zlibs",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_runtime_crc_is_zlibs"
+    ],
+    "label": "CS5 the eight-byte step advancing seven",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_runtime_crc_is_zlibs",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_runtime_crc_is_zlibs"
+    ],
+    "label": "CS6 the tail one byte short",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_runtime_crc_is_zlibs",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+     "test_the_runtime_crc_is_zlibs"
+    ],
+    "label": "CS7 the tail on table 1",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_runtime_crc_is_zlibs",
+    "fired": [
+     "test_the_runtime_crc_is_zlibs"
+    ],
+    "label": "CS8 bcir_crc32 without its final complement",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads"
+    ],
+    "label": "CS9 the loader's running CRC restarted on every span (its header's three spans, a tensor's two)",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+    "fired": [
+     "test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads"
+    ],
+    "label": "CS10 the loader's CRC a byte short of its span",
+    "verdict": "RED"
+   }
+  ],
+  "table": "tools/testing/faults/crc-slice.json"
+ }
+}

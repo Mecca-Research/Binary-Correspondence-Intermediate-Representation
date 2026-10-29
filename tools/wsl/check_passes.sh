@@ -478,6 +478,16 @@ echo "[passes] alloc-pool (liveness-based memory pooling: allocator.pool_plan)"
 run_fc -bcir-alloc-pool "${T}/alloc_pool.mlir"
 echo "[passes] hot-Theta plan parity (the kbcir.theta context op)"
 run_fc -bcir-plan "${T}/theta_hot.mlir"
+echo "[passes] measured-table plan parity (PX-3b-2: -bcir-plan then -bcir-verify, R9 and R13)"
+if [ -n "${FC}" ]; then
+  "${BO}" -bcir-plan -bcir-verify "${T}/plan_measured.mlir" 2>"${ERR}" | "${FC}" "${T}/plan_measured.mlir" \
+    && echo "  PASS plan_measured.mlir (FileCheck)" || { echo "  FAIL plan_measured.mlir"; cat "${ERR}"; fail=1; }
+else
+  "${BO}" -bcir-plan -bcir-verify "${T}/plan_measured.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY plan_measured.mlir" || { echo "  FAIL plan_measured.mlir"; cat "${ERR}"; fail=1; }
+fi
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_measured.mlir" >/dev/null 2>"${ERR}" \
+  && echo "  PASS verify_measured.mlir (-verify-diagnostics)" || { echo "  FAIL verify_measured.mlir"; cat "${ERR}"; fail=1; }
 echo "[passes] six-target capability matrix (-bcir-plan/-overlap/-rcsp-plan per target)"
 MATRIX="-bcir-plan -bcir-overlap -bcir-rcsp-plan"
 if [ -n "${FC}" ]; then

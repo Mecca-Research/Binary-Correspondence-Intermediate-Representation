@@ -1,0 +1,166 @@
+{
+ "what": "P-BANDS (2026-10-24): BCIR_TENSOR_ATTENTION_BANDS (32) lays a stored forward's probabilities out in 16-row bands with the rows in the vector lanes -- row i's probability of key j at (i/16)*16*T + j*16 + i%16 of its head's T x T region, so a band's column of 16 rows is one 64-byte line -- where the host's widest instance is AVX-512, the context a multiple of 16 and the head at most 256 wide; the stored forward computes SCORES-T's 16-row groups inside the band itself and the backward reads the bands: dV and dK by banded transposed walks, each group's probability adjoints, dots, score adjoints and dQ rows-in-lanes. The trainer's stored binary32 forward and its backward run under it (the pack and the launch plan state it). Found by BWD-NEXT's placement: the transposed products walked P across 32 concurrent row streams, the dots transposed every 16 x 16 block, and band and prefetch variants of the row walk moved nothing. Every value as it was: the row paths' hashes before == after, bands_check's cases byte for byte, the trainer's states the same digests with the bit on and off. Measured on the committed tree against the tree before it.",
+ "host": "Intel(R) Xeon(R) Processor @ 2.30GHz, 4 vCPU (AVX-512F, AMX), 2 MiB of L2 a core, 260 MiB of L3; Linux 6.18 (transparent huge pages: madvise); clang 18.1.3 and GCC 13.3 (-std=c11 -O3 -ffp-contract=off -fno-math-errno; the level-3 overlays with GCC, as the study builds them); Python 3.11.15, NumPy 2.2.6, torch 2.13.0+cu130 (CPU); OMP_WAIT_POLICY=PASSIVE",
+ "tree": "4dad925044a7a22ef56342e3de6bd9d4f1307221",
+ "records": {
+  "hashes.json": "the attention's row paths before == after (five hash programs, clang and gcc)",
+  "bands-check.json": "bands_check.c: the tree before against the tree after under BANDS, every value at its place, instance pairs and compilers",
+  "attention.json": "ab_bands.c: before, after and A/A in one process, every arm's outputs the same bytes",
+  "phases.json": "the backward a phase at a time on both trees",
+  "step.json": "step_ab.c: the training step, both trainers in one process, the weights equal every round",
+  "step-parts.json": "../../2026-10-23/bwd-keep/step_parts.py: the GEO step at T2048 a part at a time, both trees",
+  "geo-ab.json": "../geo-now/geo_ab.py: the GEO attention model on both level-3 builds, train and inference, every trained state and logit the same",
+  "level3-train.json": "../compile-limit/static_compare.py: the tree after's level-3 build against PyTorch eager and Inductor at fixed shapes, 24 rounds",
+  "level3-train-confirm.json": "the same at T2048, 32 rounds",
+  "level3-builds.json": "the level-3 builds' logs",
+  "sdpa.json": "../../2026-10-23/fwd-strip/attn_vs_sdpa.py: the attention as the trainer runs it against PyTorch's scaled_dot_product_attention",
+  "placement.json": "run_place.sh: the host's bandwidths, the row walk's variants, the banded walks",
+  "row-walk-variants.json": "BWD-NEXT's runs of the row walk's band and prefetch variants in the whole backward",
+  "prototype.json": "the prototype's readings before the implementation"
+ },
+ "verdicts": "each effect resolved where its 95% interval excludes 1 and does not meet the A/A control's",
+ "reading": {
+  "hashes": [
+   "clang: strict 1248 lines before == after: True, fwd_hash 288 lines before == after: True, lower_hash 208 lines before == after: True, attn_hash 88 lines before == after: True, band_hash 48 lines before == after: True",
+   "gcc: strict 1248 lines before == after: True, fwd_hash 288 lines before == after: True, lower_hash 208 lines before == after: True, attn_hash 88 lines before == after: True, band_hash 48 lines before == after: True",
+   "clang's lines gcc's: {'strict': True, 'fwd_hash': True, 'lower_hash': True, 'attn_hash': True, 'band_hash': True}"
+  ],
+  "bands_check": [
+   "clang before, clang after, forward instance 0, backward instance 0, heavy: 529 cases, 0 failed",
+   "clang before, clang after, forward instance 4, backward instance 4, heavy: 529 cases, 0 failed",
+   "clang before, clang after, forward instance 1, backward instance 1, small: 456 cases, 0 failed",
+   "clang before, clang after, forward instance 2, backward instance 2, small: 456 cases, 0 failed",
+   "clang before, clang after, forward instance 4, backward instance 1, small: 456 cases, 0 failed",
+   "clang before, clang after, forward instance 1, backward instance 4, small: 456 cases, 0 failed",
+   "clang before, clang after, forward instance 2, backward instance 4, small: 456 cases, 0 failed",
+   "clang before, clang after, forward instance 4, backward instance 2, small: 456 cases, 0 failed",
+   "clang before, clang after, forward instance 1, backward instance 2, small: 456 cases, 0 failed",
+   "gcc before, gcc after, forward instance 0, backward instance 0, heavy: 529 cases, 0 failed",
+   "gcc before, gcc after, forward instance 1, backward instance 4, small: 456 cases, 0 failed",
+   "clang before, gcc after, forward instance 0, backward instance 0, heavy: 529 cases, 0 failed",
+   "gcc before, clang after, forward instance 2, backward instance 1, small: 456 cases, 0 failed",
+   "in all 6220 cases, 0 failed"
+  ],
+  "attention": [
+   "clang B4/T2048 4 heads (4 KV) of 32, EXP (contract 49), 4 thread(s), 48 rounds, outputs equal True: before forward 21.73 ms, backward 37.39 ms; after's forward 0.901 (0.868-0.936), backward 0.807 (0.782-0.833), total 0.841 (0.817-0.866); A/A forward 0.999 (0.962-1.037), backward 1.002 (0.955-1.051), total 1.001 (0.965-1.039); forward resolved; backward resolved; total resolved",
+   "clang B4/T2048 4 heads (4 KV) of 32, EXP (contract 49), 1 thread(s), 24 rounds, outputs equal True: before forward 84.20 ms, backward 144.74 ms; after's forward 0.914 (0.894-0.934), backward 0.838 (0.814-0.863), total 0.866 (0.847-0.886); A/A forward 0.991 (0.970-1.012), backward 1.002 (0.976-1.028), total 0.998 (0.979-1.017); forward resolved; backward resolved; total resolved",
+   "clang B4/T1024 4 heads (4 KV) of 32, EXP (contract 49), 4 thread(s), 48 rounds, outputs equal True: before forward 5.82 ms, backward 9.31 ms; after's forward 0.843 (0.816-0.871), backward 0.807 (0.781-0.834), total 0.821 (0.802-0.841); A/A forward 1.014 (0.984-1.045), backward 1.015 (0.985-1.046), total 1.014 (0.988-1.041); forward resolved; backward resolved; total resolved",
+   "clang B4/T512 4 heads (4 KV) of 32, EXP (contract 49), 4 thread(s), 48 rounds, outputs equal True: before forward 1.61 ms, backward 2.58 ms; after's forward 0.773 (0.741-0.806), backward 0.741 (0.694-0.792), total 0.755 (0.717-0.796); A/A forward 0.964 (0.928-1.001), backward 0.968 (0.929-1.008), total 0.967 (0.932-1.002); forward resolved; backward resolved; total resolved",
+   "clang B4/T256 4 heads (4 KV) of 32, EXP (contract 49), 4 thread(s), 48 rounds, outputs equal True: before forward 0.50 ms, backward 0.73 ms; after's forward 0.800 (0.773-0.828), backward 0.816 (0.792-0.840), total 0.808 (0.791-0.826); A/A forward 0.984 (0.951-1.018), backward 0.985 (0.956-1.015), total 0.984 (0.961-1.007); forward resolved; backward resolved; total resolved",
+   "clang B4/T128 4 heads (4 KV) of 32, EXP (contract 49), 4 thread(s), 48 rounds, outputs equal True: before forward 0.15 ms, backward 0.22 ms; after's forward 0.821 (0.752-0.896), backward 0.829 (0.790-0.869), total 0.829 (0.780-0.881); A/A forward 0.961 (0.906-1.019), backward 0.975 (0.926-1.027), total 0.969 (0.926-1.014); forward resolved; backward resolved; total resolved",
+   "clang B4/T2048 4 heads (4 KV) of 32, EXP+FUSED (contract 51), 4 thread(s), 48 rounds, outputs equal True: before forward 19.72 ms, backward 28.41 ms; after's forward 0.801 (0.782-0.821), backward 0.851 (0.823-0.879), total 0.831 (0.811-0.850); A/A forward 0.999 (0.969-1.031), backward 0.989 (0.949-1.032), total 0.994 (0.960-1.029); forward resolved; backward resolved; total resolved",
+   "clang B4/T2048 4 heads (4 KV) of 32, v1 (contract 48), 4 thread(s), 48 rounds, outputs equal True: before forward 38.26 ms, backward 36.23 ms; after's forward 0.988 (0.952-1.025), backward 0.816 (0.782-0.853), total 0.904 (0.877-0.931); A/A forward 0.991 (0.952-1.031), backward 0.970 (0.924-1.018), total 0.980 (0.944-1.017); forward not resolved: holds 1; backward resolved; total resolved",
+   "clang B4/T2048 4 heads (4 KV) of 32, FUSED (contract 50), 4 thread(s), 48 rounds, outputs equal True: before forward 38.73 ms, backward 28.23 ms; after's forward 0.926 (0.899-0.955), backward 0.852 (0.828-0.876), total 0.895 (0.874-0.916); A/A forward 0.994 (0.963-1.027), backward 1.000 (0.959-1.042), total 0.998 (0.967-1.029); forward resolved; backward resolved; total resolved",
+   "clang B1/T2048 8 heads (8 KV) of 64, EXP (contract 49), 4 thread(s), 48 rounds, outputs equal True: before forward 18.47 ms, backward 34.68 ms; after's forward 0.932 (0.893-0.974), backward 0.867 (0.833-0.901), total 0.890 (0.857-0.925); A/A forward 1.025 (0.987-1.065), backward 1.011 (0.982-1.042), total 1.016 (0.988-1.046); forward resolved; backward resolved; total resolved",
+   "clang B1/T1024 4 heads (4 KV) of 128, EXP (contract 49), 4 thread(s), 48 rounds, outputs equal True: before forward 3.86 ms, backward 7.84 ms; after's forward 0.973 (0.933-1.016), backward 0.903 (0.871-0.937), total 0.926 (0.896-0.956); A/A forward 0.980 (0.940-1.022), backward 0.968 (0.928-1.011), total 0.972 (0.935-1.010); forward not resolved: holds 1; backward not resolved: meets the A/A control's interval; total not resolved: meets the A/A control's interval",
+   "clang B2/T1024 8 heads (2 KV) of 48, EXP (contract 49), 4 thread(s), 48 rounds, outputs equal True: before forward 7.21 ms, backward 11.96 ms; after's forward 0.897 (0.868-0.928), backward 0.862 (0.813-0.914), total 0.875 (0.836-0.916); A/A forward 0.993 (0.959-1.028), backward 0.985 (0.932-1.042), total 0.988 (0.943-1.034); forward resolved; backward resolved; total resolved",
+   "clang B1/T4096 8 heads (8 KV) of 64, EXP (contract 49), 4 thread(s), 48 rounds, outputs equal True: before forward 81.57 ms, backward 141.82 ms; after's forward 0.913 (0.865-0.964), backward 0.935 (0.905-0.967), total 0.926 (0.896-0.957); A/A forward 0.987 (0.938-1.039), backward 1.042 (1.001-1.085), total 1.020 (0.987-1.055); forward not resolved: meets the A/A control's interval; backward resolved; total resolved",
+   "clang B8/T128 8 heads (4 KV) of 48, EXP+FUSED (contract 51), 4 thread(s), 48 rounds, outputs equal True: before forward 0.59 ms, backward 0.80 ms; after's forward 0.790 (0.745-0.838), backward 0.868 (0.846-0.890), total 0.838 (0.809-0.869); A/A forward 0.989 (0.969-1.010), backward 1.014 (0.992-1.037), total 1.004 (0.986-1.021); forward resolved; backward resolved; total resolved",
+   "clang B4/T1000 4 heads (4 KV) of 32, EXP (contract 49), 4 thread(s), 48 rounds, outputs equal True: before forward 6.74 ms, backward 11.93 ms; after's forward 0.971 (0.943-1.001), backward 0.973 (0.943-1.005), total 0.973 (0.949-0.998); A/A forward 0.975 (0.946-1.006), backward 0.970 (0.947-0.994), total 0.972 (0.950-0.994); forward not resolved: holds 1; backward not resolved: holds 1; total not resolved: meets the A/A control's interval",
+   "gcc B4/T2048 4 heads (4 KV) of 32, EXP (contract 49), 4 thread(s), 48 rounds, outputs equal True: before forward 22.49 ms, backward 38.21 ms; after's forward 0.843 (0.815-0.873), backward 0.830 (0.803-0.857), total 0.834 (0.811-0.858); A/A forward 1.015 (0.977-1.055), backward 0.974 (0.936-1.014), total 0.989 (0.954-1.025); forward resolved; backward resolved; total resolved"
+  ],
+  "attention_confirm": [
+   "declared 2026-10-24T10:42Z, before they ran, from the 48-round rows' verdicts: ab_bands.c at 64 rounds for B1/T1024 4x4 heads of 128 (contract 49; its backward and total met the A/A control's interval) and B1/T4096 8x8 heads of 64 (contract 49; its forward met the A/A control's interval), clang, four threads, on the same libraries, after measure_bands.sh's last step",
+   "clang B1/T1024 4 heads (4 KV) of 128, contract 49, 64 rounds, outputs equal True: after's forward 0.973 (0.935-1.012), backward 0.937 (0.906-0.969), total 0.950 (0.921-0.980); A/A total 1.009 (0.975-1.044); forward not resolved: holds 1; backward resolved; total not resolved: meets the A/A control's interval",
+   "clang B1/T4096 8 heads (8 KV) of 64, contract 49, 64 rounds, outputs equal True: after's forward 0.949 (0.918-0.981), backward 0.912 (0.882-0.942), total 0.925 (0.900-0.949); A/A total 0.991 (0.961-1.023); forward not resolved: meets the A/A control's interval; backward not resolved: meets the A/A control's interval; total resolved"
+  ],
+  "phases": [
+   "before B4/T2048 4x32, 4 thread(s), 2 runs: wall 39.05 ms; TSC cycles a probability (x threads): dv 2.30, dp_tiles 2.16, dot 0.87, ds 0.48, dq 1.61, dk 1.92, copies 0.63, task_whole 10.12, unplaced 0.15, wall_x_threads 10.70",
+   "before B4/T2048 4x32, 4 thread(s), evicted, 2 runs: wall 42.27 ms; TSC cycles a probability (x threads): dv 2.50, dp_tiles 2.20, dot 1.05, ds 0.49, dq 1.65, dk 1.95, copies 0.70, task_whole 10.70, unplaced 0.15, wall_x_threads 11.58",
+   "before B4/T2048 4x32, 1 thread(s), 2 runs: wall 142.49 ms; TSC cycles a probability (x threads): dv 2.25, dp_tiles 2.07, dot 0.88, ds 0.46, dq 1.55, dk 1.80, copies 0.60, task_whole 9.76, unplaced 0.14, wall_x_threads 9.76",
+   "before B4/T1024 4x32, 4 thread(s), 2 runs: wall 9.37 ms; TSC cycles a probability (x threads): dv 1.87, dp_tiles 2.17, dot 0.62, ds 0.43, dq 1.67, dk 1.82, copies 0.88, task_whole 9.61, unplaced 0.16, wall_x_threads 10.26",
+   "after B4/T2048 4x32, 4 thread(s), 2 runs: wall 30.86 ms; TSC cycles a probability (x threads): dv 1.90, groups (dP blocks, dots, score adjoints, dQ) 3.73, dk 1.88, copies 0.55, task_whole 8.07, unplaced 0.00, wall_x_threads 8.46",
+   "after B4/T2048 4x32, 4 thread(s), evicted, 2 runs: wall 31.61 ms; TSC cycles a probability (x threads): dv 1.91, groups (dP blocks, dots, score adjoints, dQ) 3.83, dk 1.91, copies 0.60, task_whole 8.26, unplaced 0.01, wall_x_threads 8.66",
+   "after B4/T2048 4x32, 1 thread(s), 2 runs: wall 115.22 ms; TSC cycles a probability (x threads): dv 1.87, groups (dP blocks, dots, score adjoints, dQ) 3.65, dk 1.79, copies 0.57, task_whole 7.89, unplaced 0.00, wall_x_threads 7.89",
+   "after B4/T1024 4x32, 4 thread(s), 2 runs: wall 7.53 ms; TSC cycles a probability (x threads): dv 1.68, groups (dP blocks, dots, score adjoints, dQ) 3.51, dk 1.63, copies 1.04, task_whole 7.88, unplaced 0.02, wall_x_threads 8.25"
+  ],
+  "step": [
+   "clang geo-dims T2048 kblock+exp+reduce, step, 48 rounds: before 279.56 ms, after 246.22 ms; after / before 0.892 (0.870-0.915), A/A 1.010 (0.987-1.033): resolved; weights 2a159fed4bffaed4",
+   "clang geo-dims T1024 kblock+exp+reduce, step, 48 rounds: before 94.85 ms, after 87.07 ms; after / before 0.911 (0.887-0.935), A/A 0.994 (0.971-1.017): resolved; weights 51555a66acf32080",
+   "clang geo-dims T512 kblock+exp+reduce, step, 48 rounds: before 42.28 ms, after 36.18 ms; after / before 0.861 (0.835-0.888), A/A 1.004 (0.971-1.039): resolved; weights 7e3fbb6c70369b39",
+   "clang geo-dims T2048 kblock+exp+reduce, 1 thread, step, 24 rounds: before 1002.13 ms, after 915.09 ms; after / before 0.917 (0.902-0.931), A/A 0.976 (0.962-0.990): resolved; weights 48a7c5aecec0bc31",
+   "clang decoder-9.84M kblock+exp+reduce+attn, step, 48 rounds: before 166.53 ms, after 160.13 ms; after / before 0.962 (0.939-0.986), A/A 1.011 (0.990-1.032): resolved; weights 0fddec37385155d4",
+   "gcc geo-dims T2048 kblock+exp+reduce, step, 48 rounds: before 270.97 ms, after 242.17 ms; after / before 0.887 (0.868-0.906), A/A 0.993 (0.975-1.010): resolved; weights 2a159fed4bffaed4",
+   "clang geo-dims T2048 v1 (the libm softmax), step, 48 rounds: before 403.86 ms, after 383.93 ms; after / before 0.949 (0.935-0.963), A/A 1.012 (0.992-1.032): resolved; weights 185a1077d096bdbc"
+  ],
+  "step_parts": [
+   "before run 1: jobs 271.9 ms; train.attention.vjp 110.9 ms (40.8%), train.attention 65.2 ms (24.0%), train.gemm.chain.nn 28.9 ms (10.6%), train.gemm.pair.nn 15.8 ms (5.8%), train.gemm.rest.nt 12.6 ms (4.7%), train.gemm.alone.nt 6.9 ms (2.5%)",
+   "before run 2: jobs 260.2 ms; train.attention.vjp 104.1 ms (40.0%), train.attention 64.5 ms (24.8%), train.gemm.chain.nn 27.9 ms (10.7%), train.gemm.pair.nn 15.6 ms (6.0%), train.gemm.rest.nt 12.7 ms (4.9%), train.gemm.alone.nt 6.9 ms (2.7%)",
+   "after run 1: jobs 242.6 ms; train.attention.vjp 95.5 ms (39.4%), train.attention 60.2 ms (24.8%), train.gemm.chain.nn 28.1 ms (11.6%), train.gemm.pair.nn 15.5 ms (6.4%), train.gemm.rest.nt 12.8 ms (5.3%), train.gemm.alone.nt 6.9 ms (2.9%)",
+   "after run 2: jobs 258.9 ms; train.attention.vjp 101.2 ms (39.1%), train.attention 60.9 ms (23.5%), train.gemm.chain.nn 29.5 ms (11.4%), train.gemm.pair.nn 16.3 ms (6.3%), train.gemm.rest.nt 13.0 ms (5.0%), train.gemm.alone.nt 7.1 ms (2.7%)"
+  ],
+  "geo_attention_model_before_after": [
+   "train attention B4T512: B-BEFORE 41.73, B-AFTER 33.79 ms; after / before 0.808 (0.788-0.828), A/A 0.948 (0.910-0.988): resolved; state the same: True",
+   "train attention B4T1024: B-BEFORE 98.47, B-AFTER 88.23 ms; after / before 0.917 (0.876-0.961), A/A 1.020 (0.976-1.067): resolved; state the same: True",
+   "train attention B4T2048: B-BEFORE 280.52, B-AFTER 248.23 ms; after / before 0.905 (0.876-0.935), A/A 1.019 (0.989-1.050): resolved; state the same: True",
+   "infer attention B4T1024: B-BEFORE 28.83, B-AFTER 29.68 ms; after / before 0.995 (0.960-1.031), A/A 1.017 (0.984-1.051): not resolved: holds 1; logits the same: True",
+   "infer attention B4T2048: B-BEFORE 82.69, B-AFTER 81.83 ms; after / before 1.006 (0.962-1.053), A/A 0.966 (0.894-1.044): not resolved: holds 1; logits the same: True"
+  ],
+  "against_pytorch": [
+   "level3-train.json: train attention B4T512, 24 rounds: B 32.94, P-EAGER 83.18, P-IND 64.78 ms; B / P-EAGER 0.407 (0.389-0.426), B / P-IND 0.537 (0.511-0.564), A/A 1.016 (0.977-1.056)",
+   "level3-train.json: train attention B4T1024, 24 rounds: B 85.26, P-EAGER 135.66, P-IND 115.18 ms; B / P-EAGER 0.629 (0.605-0.654), B / P-IND 0.727 (0.696-0.759), A/A 0.988 (0.963-1.014)",
+   "level3-train.json: train attention B4T2048, 24 rounds: B 245.21, P-EAGER 310.68, P-IND 306.91 ms; B / P-EAGER 0.780 (0.762-0.799), B / P-IND 0.797 (0.775-0.821), A/A 1.003 (0.983-1.022)",
+   "level3-train-confirm.json: train attention B4T2048, 32 rounds: B 242.75, P-EAGER 313.98, P-IND 298.55 ms; B / P-EAGER 0.780 (0.766-0.795), B / P-IND 0.824 (0.806-0.842), A/A 0.993 (0.975-1.012)"
+  ],
+  "sdpa": [
+   "B4/T2048 4 heads of 32: BCIR forward 19.1, backward 29.6 ms; flash forward 17.0, backward 38.2 ms, its time over BCIR's: forward 0.966 (0.906-1.029), backward 1.320 (1.235-1.412), total 1.188 (1.128-1.251)",
+   "B4/T2048 4 heads of 32: BCIR forward 19.1, backward 29.6 ms; math forward 185.5, backward 162.1 ms, its time over BCIR's: forward 9.464 (9.012-9.938), backward 5.339 (5.015-5.684), total 6.939 (6.590-7.307)",
+   "B4/T2048 4 heads of 32: BCIR forward 19.1, backward 29.6 ms; bcir-AA forward 19.4, backward 30.0 ms, its time over BCIR's: forward 1.007 (0.964-1.053), backward 0.997 (0.946-1.051), total 1.002 (0.960-1.044)",
+   "B4/T1024 4 heads of 32: BCIR forward 4.9, backward 7.7 ms; flash forward 5.6, backward 12.5 ms, its time over BCIR's: forward 1.091 (0.993-1.197), backward 1.649 (1.545-1.760), total 1.422 (1.320-1.532)",
+   "B4/T1024 4 heads of 32: BCIR forward 4.9, backward 7.7 ms; math forward 48.9, backward 42.5 ms, its time over BCIR's: forward 8.913 (8.071-9.842), backward 5.333 (4.995-5.695), total 6.757 (6.288-7.261)",
+   "B4/T1024 4 heads of 32: BCIR forward 4.9, backward 7.7 ms; bcir-AA forward 5.3, backward 7.9 ms, its time over BCIR's: forward 0.998 (0.905-1.100), backward 1.033 (0.969-1.100), total 1.017 (0.945-1.093)"
+  ],
+  "row_walk_variants": [
+   "four threads: bwd4_clang 34.73 ms (dV 1.92, dK 1.78), v_b16p0T0 35.80 ms (dV 1.86, dK 1.83), v_b8p0T0 37.73 ms (dV 2.06, dK 1.94), v_b32p32T1 33.23 ms (dV 1.79, dK 1.73), v_b32p64T1 35.81 ms (dV 1.87, dK 1.78), v_b32p128T1 34.83 ms (dV 1.87, dK 1.78), v_b16p64T1 36.63 ms (dV 1.89, dK 1.82), v_b32p64T0 38.48 ms (dV 1.94, dK 1.87), v_b32p64T2 34.26 ms (dV 1.83, dK 1.75)",
+   "one thread: bwd4_clang 139.69 ms (dV 2.22, dK 1.78), v_b16p0T0 133.36 ms (dV 1.92, dK 1.75), v_b8p0T0 133.38 ms (dV 2.01, dK 1.84), v_b32p32T1 129.13 ms (dV 1.85, dK 1.69), v_b32p64T1 136.14 ms (dV 1.95, dK 1.78), v_b32p128T1 133.37 ms (dV 2.01, dK 1.74), v_b16p64T1 131.95 ms (dV 1.88, dK 1.76), v_b32p64T0 138.26 ms (dV 2.00, dK 1.80), v_b32p64T2 135.14 ms (dV 1.96, dK 1.75)"
+  ],
+  "placement": [
+   "row walk base (tr), 1 buffer(s): median of 8 passes' medians 1.776 TSC cycles a probability (range 1.738-1.829), 81% of v1's rate",
+   "row walk b16p0T0 (tr), 1 buffer(s): median of 8 passes' medians 1.773 TSC cycles a probability (range 1.731-2.589), 81% of v1's rate",
+   "row walk b32p32T1 (tr), 1 buffer(s): median of 8 passes' medians 1.742 TSC cycles a probability (range 1.697-1.825), 83% of v1's rate",
+   "row walk b32p128T0 (tr), 1 buffer(s): median of 8 passes' medians 1.793 TSC cycles a probability (range 1.750-2.526), 80% of v1's rate",
+   "row walk b32p128T1 (tr), 1 buffer(s): median of 8 passes' medians 1.738 TSC cycles a probability (range 1.685-1.837), 83% of v1's rate",
+   "row walk b32p128T2 (tr), 1 buffer(s): median of 8 passes' medians 1.770 TSC cycles a probability (range 1.738-2.691), 82% of v1's rate",
+   "row walk b32p256T1 (tr), 1 buffer(s): median of 8 passes' medians 1.856 TSC cycles a probability (range 1.814-2.795), 78% of v1's rate",
+   "row walk base (ctx), 1 buffer(s): median of 8 passes' medians 1.529 TSC cycles a probability (range 1.506-1.674), 94% of v1's rate",
+   "bandp tr band 32 (tr), 1 buffer(s): median of 8 passes' medians 1.756 TSC cycles a probability (range 1.697-1.834), 82% of v1's rate",
+   "bandp btr band 32 (btr), 1 buffer(s): median of 8 passes' medians 1.505 TSC cycles a probability (range 1.474-2.815), 96% of v1's rate",
+   "bandp bp band 32 (bp), 1 buffer(s): median of 8 passes' medians 1.619 TSC cycles a probability (range 1.488-1.960), 89% of v1's rate",
+   "bandp ctx band 32 (ctx), 1 buffer(s): median of 8 passes' medians 1.513 TSC cycles a probability (range 1.465-1.526), 95% of v1's rate",
+   "bandp bctx band 32 (bctx), 1 buffer(s): median of 8 passes' medians 1.462 TSC cycles a probability (range 1.382-1.853), 99% of v1's rate",
+   "bandp btr band 16 (btr), 1 buffer(s): median of 8 passes' medians 1.528 TSC cycles a probability (range 1.484-1.557), 94% of v1's rate",
+   "bandp btr band 64 (btr), 1 buffer(s): median of 8 passes' medians 1.462 TSC cycles a probability (range 1.442-1.513), 99% of v1's rate",
+   "bandp-rewrite1 btr band 32 (btr), 1 buffer(s): median of 8 passes' medians 1.511 TSC cycles a probability (range 1.485-1.787), 95% of v1's rate",
+   "bandp-rewrite2 btr band 32 (btr), 1 buffer(s): median of 8 passes' medians 1.498 TSC cycles a probability (range 1.452-1.575), 96% of v1's rate",
+   "row walk base (tr), 16 buffer(s): median of 8 passes' medians 2.167 TSC cycles a probability (range 2.076-2.396), 67% of v1's rate",
+   "row walk b16p0T0 (tr), 16 buffer(s): median of 8 passes' medians 1.962 TSC cycles a probability (range 1.854-2.012), 74% of v1's rate",
+   "row walk b32p32T1 (tr), 16 buffer(s): median of 8 passes' medians 1.955 TSC cycles a probability (range 1.914-2.066), 74% of v1's rate",
+   "row walk b32p128T0 (tr), 16 buffer(s): median of 8 passes' medians 2.053 TSC cycles a probability (range 2.010-2.082), 70% of v1's rate",
+   "row walk b32p128T1 (tr), 16 buffer(s): median of 8 passes' medians 2.063 TSC cycles a probability (range 2.003-2.084), 70% of v1's rate",
+   "row walk b32p128T2 (tr), 16 buffer(s): median of 8 passes' medians 2.053 TSC cycles a probability (range 1.981-2.230), 70% of v1's rate",
+   "row walk b32p256T1 (tr), 16 buffer(s): median of 8 passes' medians 2.478 TSC cycles a probability (range 2.402-2.627), 58% of v1's rate",
+   "row walk base (ctx), 16 buffer(s): median of 8 passes' medians 1.643 TSC cycles a probability (range 1.593-1.676), 88% of v1's rate",
+   "bandp tr band 32 (tr), 16 buffer(s): median of 8 passes' medians 2.119 TSC cycles a probability (range 2.069-2.354), 68% of v1's rate",
+   "bandp btr band 32 (btr), 16 buffer(s): median of 8 passes' medians 1.835 TSC cycles a probability (range 1.778-2.061), 79% of v1's rate",
+   "bandp bp band 32 (bp), 16 buffer(s): median of 8 passes' medians 1.957 TSC cycles a probability (range 1.909-2.160), 74% of v1's rate",
+   "bandp ctx band 32 (ctx), 16 buffer(s): median of 8 passes' medians 1.657 TSC cycles a probability (range 1.611-1.672), 87% of v1's rate",
+   "bandp bctx band 32 (bctx), 16 buffer(s): median of 8 passes' medians 2.482 TSC cycles a probability (range 2.385-2.567), 58% of v1's rate",
+   "bandp btr band 16 (btr), 16 buffer(s): median of 8 passes' medians 2.160 TSC cycles a probability (range 2.104-2.565), 67% of v1's rate",
+   "bandp btr band 64 (btr), 16 buffer(s): median of 8 passes' medians 1.726 TSC cycles a probability (range 1.692-1.757), 84% of v1's rate",
+   "bandp-rewrite1 btr band 32 (btr), 16 buffer(s): median of 8 passes' medians 1.768 TSC cycles a probability (range 1.739-1.838), 82% of v1's rate",
+   "bandp-rewrite2 btr band 32 (btr), 16 buffer(s): median of 8 passes' medians 1.775 TSC cycles a probability (range 1.706-1.807), 81% of v1's rate"
+  ],
+  "membw": [
+   "read, 1 thread(s): 1 MiB 63.1, 2 MiB 24.0, 4 MiB 23.0, 8 MiB 23.8, 16 MiB 18.7, 32 MiB 19.4, 48 MiB 22.4, 64 MiB 17.1, 128 MiB 16.6, 256 MiB 14.8, 1024 MiB 15.8 GB/s",
+   "copy, 1 thread(s): 1 MiB 51.5, 2 MiB 38.2, 4 MiB 28.2, 8 MiB 19.3, 16 MiB 21.7, 32 MiB 19.6, 48 MiB 19.8, 64 MiB 16.7, 128 MiB 14.4, 256 MiB 21.8, 1024 MiB 22.7 GB/s",
+   "copy-nt, 1 thread(s): 1 MiB 41.1, 2 MiB 34.4, 4 MiB 29.0, 8 MiB 27.9, 16 MiB 26.0, 32 MiB 25.7, 48 MiB 26.3, 64 MiB 25.0, 128 MiB 21.3, 256 MiB 19.3, 1024 MiB 17.8 GB/s",
+   "read, 4 thread(s): 1 MiB 66.2, 2 MiB 107.9, 4 MiB 62.8, 8 MiB 91.4, 16 MiB 69.3, 32 MiB 65.5, 48 MiB 66.1, 64 MiB 64.0, 128 MiB 56.7, 256 MiB 55.0, 1024 MiB 52.9 GB/s",
+   "copy, 4 thread(s): 1 MiB 76.0, 2 MiB 100.8, 4 MiB 102.4, 8 MiB 84.3, 16 MiB 89.7, 32 MiB 82.7, 48 MiB 66.4, 64 MiB 71.0, 128 MiB 68.5, 256 MiB 52.3, 1024 MiB 82.0 GB/s",
+   "copy-nt, 4 thread(s): 1 MiB 82.8, 2 MiB 99.3, 4 MiB 105.1, 8 MiB 91.7, 16 MiB 98.3, 32 MiB 98.8, 48 MiB 100.4, 64 MiB 96.7, 128 MiB 99.0, 256 MiB 72.4, 1024 MiB 65.6 GB/s"
+  ]
+ },
+ "reproduce": [
+  "bash measure_bands.sh  # on the committed tree, HEAD~1 the tree before; <SCRATCH> paths as named there",
+  "python3 -I proto_bands.py TREE_BEFORE/runtime/c/bcir_tensor.c PROTO.c  # the prototype"
+ ]
+}

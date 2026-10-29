@@ -1,0 +1,82 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_execution_plan:_CC",
+    "bcir.tests.test_execution_plan:test_the_c_twin_sweeps_the_alias_law_to_the_pairwise_laws_verdict",
+    "bcir.tests.test_execution_plan:test_the_c_twin_sweeps_the_alias_law_in_time_n_log_n"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_c_twin_sweeps_the_alias_law_to_the_pairwise_laws_verdict",
+      "label": "AC1 the ends after the starts at one tick",
+      "new": "    if (at_end < s->n && sw_last(s, sw_at(s->by_last, at_end)) < sw_first(s, x)) {\n",
+      "old": "    if (at_end < s->n && sw_last(s, sw_at(s->by_last, at_end)) <= sw_first(s, x)) {\n",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_c_twin_sweeps_the_alias_law_to_the_pairwise_laws_verdict",
+      "label": "AC2 only the live neighbour below looked at",
+      "new": "    if (0 && below < live && sw_alias(s, x, sw_at(s->by_key, sw_tree_kth(s, below + 1u)))) return 1;\n",
+      "old": "    if (below < live && sw_alias(s, x, sw_at(s->by_key, sw_tree_kth(s, below + 1u)))) return 1;\n",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_c_twin_sweeps_the_alias_law_to_the_pairwise_laws_verdict",
+      "label": "AC3 only the live neighbour above looked at",
+      "new": "    if (0 && below && sw_alias(s, x, sw_at(s->by_key, sw_tree_kth(s, below)))) return 1;\n",
+      "old": "    if (below && sw_alias(s, x, sw_at(s->by_key, sw_tree_kth(s, below)))) return 1;\n",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_c_twin_sweeps_the_alias_law_to_the_pairwise_laws_verdict",
+      "label": "AC4 the live records ranked without their bank",
+      "new": "  if (order == 0 && 0) {\n    uint16_t la, lb;\n",
+      "old": "  if (order == 0) {\n    uint16_t la, lb;\n",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_c_twin_sweeps_the_alias_law_to_the_pairwise_laws_verdict",
+      "label": "AC5 the first aliasing record one past",
+      "new": "  return lo;\n}\n",
+      "old": "  return lo - 1u;\n}\n",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_c_twin_sweeps_the_alias_law_to_the_pairwise_laws_verdict",
+      "label": "AC6 the tree kept between sweeps",
+      "new": "  for (i = 0; i <= s->n && p == s->n; i++) sw_set(s->tree, i, 0);\n",
+      "old": "  for (i = 0; i <= s->n; i++) sw_set(s->tree, i, 0);\n",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_c_twin_sweeps_the_alias_law_to_the_pairwise_laws_verdict",
+      "label": "AC7 the k-th live rank one past",
+      "new": "    if (pos + step <= s->n && sw_at(s->tree, pos + step) <= k) {\n",
+      "old": "    if (pos + step <= s->n && sw_at(s->tree, pos + step) < k) {\n",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_c_twin_sweeps_the_alias_law_to_the_pairwise_laws_verdict",
+      "label": "AC8 the scratch one byte a lifetime short",
+      "new": "#define BCIR_EP_SWEEP_BYTES_PER_LIFETIME 61u\n",
+      "old": "#define BCIR_EP_SWEEP_BYTES_PER_LIFETIME 62u\n",
+      "path": "runtime/c/bcir_execution_plan.h"
+    },
+    {
+      "expects": "test_the_c_twin_sweeps_the_alias_law_in_time_n_log_n",
+      "label": "AC9 the lent scratch never swept",
+      "new": "      const int lent = 0 && cb && ep_sweep_lend(&sw, cb->scratch, cb->scratch_len, data,\n",
+      "old": "      const int lent = cb && ep_sweep_lend(&sw, cb->scratch, cb->scratch_len, data,\n",
+      "path": "runtime/c/bcir_runtime.c"
+    },
+    {
+      "expects": "test_the_c_twin_sweeps_the_alias_law_to_the_pairwise_laws_verdict",
+      "label": "AC10 every record before the first own-law breaker handed over",
+      "new": "        for (i = 0; i < k; i++) {\n          bcir_ep_lifetime_view v;\n",
+      "old": "        for (i = 0; i < first; i++) {\n          bcir_ep_lifetime_view v;\n",
+      "path": "runtime/c/bcir_runtime.c"
+    }
+  ]
+}

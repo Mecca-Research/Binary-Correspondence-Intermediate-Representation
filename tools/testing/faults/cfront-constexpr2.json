@@ -346,7 +346,7 @@
       "expects": "test_a_wide_character_constant_is_a_code_unit_of_its_targets_wchar_t_on_both_rails",
       "label": "KT8 the twin reads an `L` constant unsigned where `wchar_t` is signed",
       "new": "",
-      "old": "  if(L.prefix=='L' && a->wchar_signed && bits<64 && ((unsigned long long)*v>>(bits-1))) *v-=(1LL<<bits);\n",
+      "old": "  if(L.prefix=='L' && a->wchar_signed && bits<64 && ((unsigned long long)*v>>(bits-1)))\n    *v=-(long long)((1ULL<<bits)-(unsigned long long)*v);\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

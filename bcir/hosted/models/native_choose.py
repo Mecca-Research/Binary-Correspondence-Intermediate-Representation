@@ -25,11 +25,31 @@ is a fact of the host -- so the choice is MEASURED, never modelled:
   its default; no table is the defaults (non-disturbance: the program is the one the booleans
   state, word for word).
 
+PX-3b (DISPATCH) adds the jobs' dispatch as kinds of their own: `dispatch:<kind>` for every
+dispatch kind of `native_launch.DISPATCH_KINDS` (a GEMM's role, or a kernel), its alternatives the
+host's (`native_launch.dispatch_alternatives`: an instance its family admits other than the widest,
+the default; a worker count below the pool's threads). `measure` runs them like any kind -- the
+program with every job of the kind dispatched so, its launches read by their dispatch labels -- and
+a table that measured one names the instances it measured on (its shape's `instances`, the
+families' masks): its times are of that host's defaults, so it is another shape's on a host with
+other instances, and refused there. `choose_dispatch` takes, per dispatch kind, the alternative
+resolved faster with the lowest mean, by the same rule as `choose`. A kind takes one alternative:
+an instance or a worker count, measured against the default program, each kind apart.
+
 The chosen program is then planned and verified like any other: `native_pack.training_pack(...,
 sites=...)` states it as a module whose claims carry each call's role, K_BCIR plans it, the plan's
-laws (R9 among them) verify it, and the C lowers it to the program it states. The measured prices
-inform the choice and do not enter the plan's own costs: carrying them into K_BCIR's candidates on
-its three rails (a BKPI table beside the target's constants) is the open half of the ladder's row.
+laws (R9 among them) verify it, and the C lowers it to the program it states.
+
+PX-3b-2 carries the dispatch prices into K_BCIR's own candidates instead of choosing beside them:
+`measured_prices` turns `choose_dispatch`'s picks into a `cost.MeasuredPrices` table keyed on the
+program's claims -- one entry per (op, count) the claims of a kind's jobs hold, the kind's pick at
+its measured price -- so a target carrying it (`TargetProfile.with_measured`) offers every such
+claim, beside each of its realizations, that realization run the pick (`<name>@<alternative>`,
+`realize._offer_rows`), on the oracle, the C planner (BKPI/BKPR version 1) and the law rail alike;
+the planner takes it by its own min-plus, R9 re-derives it, and the C lowering of the pack writes
+the plan's alternative into the job's dispatch words (`bcir_decoder_pack.c`). A pick the claims'
+keys cannot carry alone -- a key two kinds' claims hold with different picks -- is left out and
+named, never priced at another kind's measurement.
 """
 
 from __future__ import annotations
@@ -45,27 +65,34 @@ from dataclasses import dataclass
 
 from ...frontends.models.decode import DecoderSpec
 from .native_launch import (
+    DISPATCH_KINDS,
     HEAD_ALTERNATIVES,
     HEAD_SITE,
     RECORD_WORDS,
     SITE_KINDS,
     choice_sites,
     default_sites,
+    dispatch_alternatives,
     program_words,
     step_program,
 )
 
 __all__ = [
     "CHOICE_KINDS",
+    "DISPATCH_CHOICE_KINDS",
     "ChoiceEntry",
     "ChoiceTable",
     "Q8",
     "SCOPES",
     "choose",
+    "carried_kinds",
+    "choose_dispatch",
+    "dispatch_kind",
     "estimate",
     "host_attestation",
     "kind_of",
     "measure",
+    "measured_prices",
     "scope",
     "timed_run",
     "trainer_shape",
@@ -75,6 +102,10 @@ __all__ = [
 Q8 = 256
 #: Every kind of site and its alternatives, the layers' kinds then the head's.
 CHOICE_KINDS = dict(SITE_KINDS) | {HEAD_SITE: HEAD_ALTERNATIVES}
+#: PX-3b: the jobs' dispatch, a kind per dispatch kind (`native_launch.DISPATCH_KINDS`), whose
+#: alternatives are the host's (`native_launch.dispatch_alternatives`).
+DISPATCH_PREFIX = "dispatch:"
+DISPATCH_CHOICE_KINDS = tuple(DISPATCH_PREFIX + kind for kind in DISPATCH_KINDS)
 #: The launches an alternative of a kind changes, by the kind of site their labels name: the
 #: panels' change the down and gate/up VJPs too (the panels the GEMMs read instead of packing).
 SCOPES = {"panels": ("panels", "down.vjp", "gateup.vjp")}
@@ -99,6 +130,13 @@ def kind_of(site: str) -> str:
             or (digits != "0" and digits[0] == "0") or kind not in SITE_KINDS):  # fmt: skip
         raise ValueError(f"not a choice site: {site!r}")
     return kind
+
+
+def dispatch_kind(kind) -> str | None:
+    """The dispatch kind a kind of choice names (`dispatch:rms` -> `rms`); None for any other."""
+    if type(kind) is str and kind in DISPATCH_CHOICE_KINDS:
+        return kind[len(DISPATCH_PREFIX) :]
+    return None
 
 
 def scope(kind: str) -> tuple[str, ...]:
@@ -155,32 +193,50 @@ _SHAPE_POSITIVE = ("vocab", "d_model", "n_heads", "n_layers", "d_ff", "kv_heads"
 _SHAPE_NATURAL = ("recompute", "workspace_bytes")
 _SHAPE_KEYS = frozenset((*_SHAPE_POSITIVE, *_SHAPE_NATURAL, "contract"))
 _SPEC_KEYS = ("vocab", "d_model", "n_heads", "n_layers", "d_ff", "kv_heads")
+#: PX-3b: a shape that measured the dispatch names the instances each family admitted (bcir_tensor.h's
+#: masks, the portable bit always among them), as `NativeDecoder.instance_families` reads them.
+_INSTANCE_FAMILIES = frozenset(("attention", "gemm"))
 
 
 def _checked_shape(shape) -> dict:
-    if (not isinstance(shape, dict) or set(shape) != _SHAPE_KEYS
+    if (not isinstance(shape, dict) or set(shape) - {"instances"} != _SHAPE_KEYS
             or type(shape["contract"]) is not str):  # fmt: skip
-        raise ValueError(f"a choice table's shape names {sorted(_SHAPE_KEYS)}")
+        raise ValueError(f"a choice table's shape names {sorted(_SHAPE_KEYS)} (and instances)")
     if any(type(shape[k]) is not int or shape[k] < 1 for k in _SHAPE_POSITIVE) or any(
         type(shape[k]) is not int or shape[k] < 0 for k in _SHAPE_NATURAL
     ):
         raise ValueError("a choice table's shape is positive dimensions, a recompute set, "
                          "workspace bytes and a contract")  # fmt: skip
-    return dict(shape)
+    out = dict(shape)
+    if "instances" in shape:
+        masks = shape["instances"]
+        if (not isinstance(masks, dict) or set(masks) != _INSTANCE_FAMILIES
+                or any(type(v) is not int or not 1 <= v <= 15 or not v & 1
+                       for v in masks.values())):  # fmt: skip
+            raise ValueError("a shape's instances are each family's mask: the portable bit and "
+                             "any of 2, 4 and 8")  # fmt: skip
+        out["instances"] = dict(masks)
+    return out
 
 
 def _spec_shape(spec: DecoderSpec) -> tuple[int, ...]:
     return (spec.vocab_size, spec.d_model, spec.n_heads, spec.n_layers, spec.d_ff, spec.kv_heads)
 
 
-def trainer_shape(trainer, *, steps: int = 1) -> dict:
-    """The shape a table measured on `trainer` names, for calls of `steps` steps."""
+def trainer_shape(trainer, *, steps: int = 1, instances: bool = False) -> dict:
+    """The shape a table measured on `trainer` names, for calls of `steps` steps; with
+    `instances`, the shape of a table that measured the dispatch (PX-3b), which names the instances
+    each family admits on the trainer's host too."""
     if type(steps) is not int or steps < 1:
         raise ValueError("steps must be a positive integer")
+    if type(instances) is not bool:
+        raise ValueError("instances is a boolean")
     shape = dict(zip(_SPEC_KEYS, _spec_shape(trainer.spec)))
     shape.update(batch=trainer.batch_size, time=trainer.context_length, threads=trainer.threads,
                  steps=steps, recompute=trainer.recompute,
                  workspace_bytes=trainer.workspace_bytes, contract=trainer.contract)  # fmt: skip
+    if instances:
+        shape["instances"] = trainer.instance_families()
     return _checked_shape(shape)
 
 
@@ -213,8 +269,16 @@ class ChoiceTable:
                 raise ValueError("a choice table holds ChoiceEntry values")
             if type(e.kind) is not str or type(e.alternative) is not str:
                 raise ValueError("a choice entry names its kind and alternative")
-            alternatives = CHOICE_KINDS.get(e.kind)
-            if alternatives is None or e.alternative not in alternatives:
+            dispatched = dispatch_kind(e.kind)
+            if dispatched is not None:  # PX-3b: an alternative the shape's host admits
+                if "instances" not in shape:
+                    raise ValueError("a choice table that measured the dispatch names the "
+                                     "instances it measured on")  # fmt: skip
+                admitted = dispatch_alternatives(threads=shape["threads"],
+                                                 instances=shape["instances"])[dispatched]  # fmt: skip
+            else:
+                admitted = CHOICE_KINDS.get(e.kind, ())
+            if e.alternative not in admitted:
                 raise ValueError(f"no kind {e.kind!r} with the alternative {e.alternative!r}")
             if (e.kind, e.alternative) in seen:
                 raise ValueError(f"{e.kind} {e.alternative} measured twice")
@@ -223,6 +287,8 @@ class ChoiceTable:
                 raise ValueError("a choice entry is integers")
             if not 0 < e.low_q8 <= e.q8 <= e.high_q8 or e.rounds < 5:
                 raise ValueError(f"{e.kind} {e.alternative}: not an interval of five rounds")
+        if "instances" in shape and not any(dispatch_kind(e.kind) for e in entries):
+            raise ValueError("a choice table names instances only when it measured the dispatch")
         object.__setattr__(self, "shape", shape)
         object.__setattr__(self, "host", dict(self.host))
         object.__setattr__(self, "entries",
@@ -273,17 +339,119 @@ def choose(table: ChoiceTable | None, spec: DecoderSpec, shape: dict) -> dict[st
         raise ValueError("choose takes a ChoiceTable or None")
     if table.shape != shape:
         raise ValueError(f"the table was measured at {table.shape}, not at {shape}")
-    best: dict[str, ChoiceEntry] = {}
-    for e in table.entries:
-        if e.high_q8 < Q8 and (
-            e.kind not in best or (e.q8, e.high_q8) < (best[e.kind].q8, best[e.kind].high_q8)
-        ):
-            best[e.kind] = e
+    best = _best(table, site_kinds=True)
     for site in sites:
         e = best.get(kind_of(site))
         if e is not None:
             sites[site] = e.alternative
     return sites
+
+
+def _best(table: ChoiceTable, *, site_kinds: bool) -> dict[str, ChoiceEntry]:
+    """Per kind of the table (the site kinds', or the dispatch kinds'), its entry whose whole
+    interval lies below 256 with the lowest mean, the narrower interval on a tie, then the table's
+    order."""
+    best: dict[str, ChoiceEntry] = {}
+    for e in table.entries:
+        if (dispatch_kind(e.kind) is None) != site_kinds:
+            continue
+        if e.high_q8 < Q8 and (
+            e.kind not in best or (e.q8, e.high_q8) < (best[e.kind].q8, best[e.kind].high_q8)
+        ):
+            best[e.kind] = e
+    return best
+
+
+def choose_dispatch(table: ChoiceTable | None, spec: DecoderSpec, shape: dict) -> dict[str, str]:
+    """PX-3b: the dispatch a program of `spec` at `shape` takes, as `native_launch.step_program`'s
+    `dispatch` (a dispatch kind to its alternative): per dispatch kind, the measured alternative
+    `choose`'s rule takes (its whole interval below 256, the lowest mean); every other kind the
+    default (absent). `table` None, or a table that measured no dispatch, is no dispatch. A table
+    measured at another shape is refused -- the instances it measured on among it, since its times
+    are of that host's defaults."""
+    shape = _checked_shape(shape)
+    if tuple(shape[k] for k in _SPEC_KEYS) != _spec_shape(spec):
+        raise ValueError("the shape names another decoder than spec")
+    if table is None:
+        return {}
+    if not isinstance(table, ChoiceTable):
+        raise ValueError("choose_dispatch takes a ChoiceTable or None")
+    if table.shape != shape:
+        raise ValueError(f"the table was measured at {table.shape}, not at {shape}")
+    best = _best(table, site_kinds=False)
+    return {dispatch_kind(kind): best[kind].alternative for kind in sorted(best)}
+
+
+def carried_kinds(picks: dict, keys: dict, holders: dict) -> set:
+    """The kinds whose pick (`picks`: a kind -> its alternative) a table keyed on claims can carry
+    (`measured_prices`): `keys` maps a kind to the (op, count) keys its jobs' claims hold,
+    `holders` a key to the kinds holding it. A kind is carried when every key of its claims is
+    held by carried kinds of its own pick alone; a kind with no claim is never carried. Found as
+    the greatest such set: from every picked kind with claims, the kinds a key ties to another
+    pick -- or to no pick -- are dropped, then the kinds those leave tied, until none is."""
+    carried = {kind for kind in picks if keys.get(kind)}
+    while True:
+        uncarried = {kind for kind in carried
+                     if any(h not in carried or picks[h] != picks[kind]
+                            for key in keys[kind] for h in holders[key])}  # fmt: skip
+        if not uncarried:
+            return carried
+        carried -= uncarried
+
+
+def measured_prices(table: ChoiceTable | None, spec: DecoderSpec, shape: dict, **decisions):
+    """PX-3b-2: the dispatch `choose_dispatch` takes from `table`, as K_BCIR's own prices -- a
+    `cost.MeasuredPrices` table for the target the program's pack is planned on -- and the kinds
+    whose pick it does not carry, as `(prices or None, kinds)`.
+
+    The program is `step_program(spec, batch, time, **decisions)` at the shape's batch and time,
+    under the trainer's decisions (`NativeDecoder.program_decisions`: the shape's threads and
+    instances, no dispatch -- the picks are measured against the default dispatch); its claims are
+    its records, each keyed (op, count) as `native_pack.program_pack` states it (`op_name`,
+    `work`). A kind's pick is carried by one entry per key its jobs' claims hold: the pick's
+    alternative at its price, the highest of the prices of the kinds holding the key (the least
+    any of them was measured to gain). A key the claims of two kinds hold takes one alternative,
+    so a kind any of whose keys another kind holds with another pick (or with none: the default)
+    is carried by no entry -- the planner would otherwise price its claims at another kind's
+    measurement, or one job's claims at two alternatives -- and that leaves its keys' other kinds
+    uncarried in turn, until every carried kind's keys are held by carried kinds of its pick
+    alone. The table's generation is `table`'s; the kinds returned, sorted, are the picks no entry
+    carries (a kind with no job in the program among them). `table` None, or no pick, is
+    `(None, ())`."""
+    from ...kbcir.cost import MeasuredEntry, MeasuredPrices
+    from .native_pack import op_name, work
+
+    picks = choose_dispatch(table, spec, shape)  # the shape and table checked as it checks them
+    if not picks:
+        return None, ()
+    for name in ("dispatch", "dispatch_labels"):
+        if name in decisions:
+            raise ValueError(f"measured_prices states the default program: no {name}")
+    for name in ("threads", "instances"):
+        if name in decisions and decisions[name] != table.shape.get(name):
+            raise ValueError(f"the decisions' {name} are not the {name} the table measured at")
+    best = _best(table, site_kinds=False)
+    price = {dispatch_kind(kind): entry.q8 for kind, entry in best.items()}
+    labels: list = []
+    program = step_program(spec, table.shape["batch"], table.shape["time"], **decisions,
+                           dispatch_labels=labels)  # fmt: skip
+    keys: dict[str, set] = {}  # a kind -> the (op, count) keys its jobs' claims hold
+    holders: dict[tuple, set] = {}  # a key -> the kinds holding it
+    for launch, kind in zip(program, labels):
+        if kind is None:  # a CHECK: no dispatch
+            continue
+        for record in launch.records:
+            key = (op_name(record), work(record))
+            keys.setdefault(kind, set()).add(key)
+            holders.setdefault(key, set()).add(kind)
+    carried = carried_kinds(picks, keys, holders)
+    entries = sorted(
+        (MeasuredEntry(op, count, picks[next(iter(hs))], max(price[h] for h in hs))
+         for (op, count), hs in holders.items() if hs <= carried),
+        key=lambda e: (e.op, e.count),
+    )  # fmt: skip
+    left = tuple(sorted(set(picks) - carried))
+    return (MeasuredPrices(table.generation, tuple(entries)) if entries else None), left
 
 
 def host_attestation() -> dict:
@@ -339,37 +507,57 @@ def measure(trainer, *, steps: int = 1, rounds: int = 16, generation: int = 1, k
     each run it reads the nanoseconds of the launches the kind's scope labels (`scope`), and each
     alternative's entry is `estimate` of its rounds paired with the default's. `raw`, an empty
     list, receives each round's readings. Returns the table at `generation`, its shape the
-    trainer's (`trainer_shape`), its host `host` or `host_attestation()`. A trainer with a
-    provider is refused: a provider's calls are not BCIR's to choose."""
+    trainer's (`trainer_shape`; with the instances when it measured the dispatch), its host `host`
+    or `host_attestation()`. A trainer with a provider is refused: a provider's calls are not
+    BCIR's to choose.
+
+    PX-3b: `kinds` may name dispatch kinds (`DISPATCH_CHOICE_KINDS`, none by default): each
+    alternative the host admits (`native_launch.dispatch_alternatives`) is the program with every
+    job of the kind dispatched so, read at the launches its dispatch labels name."""
     if type(rounds) is not int or rounds < 5:
         raise ValueError("a measurement takes at least five rounds")
     if raw is not None and (not isinstance(raw, list) or raw):
         raise ValueError("raw is an empty list each round's readings are appended to")
     kinds = tuple(CHOICE_KINDS) if kinds is None else tuple(kinds)
-    if not kinds or len(set(kinds)) != len(kinds) or any(k not in CHOICE_KINDS for k in kinds):
-        raise ValueError(f"kinds names kinds of choice site once each: {sorted(CHOICE_KINDS)}")
+    if (not kinds or len(set(kinds)) != len(kinds)
+            or any(k not in CHOICE_KINDS and dispatch_kind(k) is None for k in kinds)):  # fmt: skip
+        raise ValueError(f"kinds names kinds of choice site once each: {sorted(CHOICE_KINDS)}, "
+                         "or dispatch:<kind>")  # fmt: skip
     spec, batch, time = trainer.spec, trainer.batch_size, trainer.context_length
-    shape = trainer_shape(trainer, steps=steps)
     decisions = trainer.program_decisions(steps=steps)
     if decisions["provider_mm"] or decisions["provider_silu"]:
         raise ValueError("a provider's calls are not BCIR's to choose: measure without one")
     defaults = default_sites(spec)
-    arms: list[tuple[str, str | None, list, list]] = []
+    host_alternatives = dispatch_alternatives(**decisions)
+    # an arm: (kind, alternative, program, its sites' labels, its launches' dispatch kinds)
+    arms: list[tuple[str, str | None, list, list, list]] = []
     labels: list = []
-    base = step_program(spec, batch, time, **decisions, labels=labels)
-    arms.append(("default", None, base, labels))
+    dispatched: list = []
+    base = step_program(spec, batch, time, **decisions, labels=labels, dispatch_labels=dispatched)
+    arms.append(("default", None, base, labels, dispatched))
     for kind in kinds:
-        for alternative in CHOICE_KINDS[kind]:
-            switched = {site: alternative for site in defaults if kind_of(site) == kind}
-            if all(defaults[site] == alternative for site in switched):
-                continue  # the default's own alternative
-            labels = []
-            program = step_program(spec, batch, time, **decisions, sites=switched, labels=labels)
+        of = dispatch_kind(kind)
+        for alternative in CHOICE_KINDS[kind] if of is None else host_alternatives[of]:
+            labels, dispatched = [], []
+            if of is None:
+                switched = {site: alternative for site in defaults if kind_of(site) == kind}
+                if all(defaults[site] == alternative for site in switched):
+                    continue  # the default's own alternative
+                program = step_program(spec, batch, time, **decisions, sites=switched,
+                                       labels=labels, dispatch_labels=dispatched)  # fmt: skip
+            else:
+                if of not in arms[0][4]:
+                    continue  # no job of the kind in this program
+                program = step_program(spec, batch, time, **decisions, dispatch={of: alternative},
+                                       labels=labels, dispatch_labels=dispatched)  # fmt: skip
             if program != base:  # else the contract or shape leaves the site one way here
-                arms.append((kind, alternative, program, labels))
-    words = [array("Q", program_words(program)) for _, _, program, _ in arms]
+                arms.append((kind, alternative, program, labels, dispatched))
+    shape = trainer_shape(
+        trainer, steps=steps, instances=any(dispatch_kind(arm[0]) for arm in arms[1:])
+    )
+    words = [array("Q", program_words(arm[2])) for arm in arms]
     starts = []
-    for _, _, program, _ in arms:
+    for _, _, program, _, _ in arms:
         at, firsts = 0, []
         for launch in program:
             firsts.append(at)
@@ -378,9 +566,12 @@ def measure(trainer, *, steps: int = 1, rounds: int = 16, generation: int = 1, k
     n = batch * time * steps
     tokens = [(7 * i + 3) % spec.vocab_size for i in range(n)]
     targets = [(5 * i + 1) % spec.vocab_size for i in range(n)]
-    measured = sorted({kind for kind, _, _, _ in arms[1:]})
+    measured = sorted({arm[0] for arm in arms[1:]})
 
     def site_ns(arm: int, ns: list[int], kind: str) -> int:
+        of = dispatch_kind(kind)
+        if of is not None:  # PX-3b: the kind's jobs, by their dispatch labels
+            return sum(ns[at] for at, label in zip(starts[arm], arms[arm][4]) if label == of)
         names = scope(kind)
         return sum(ns[at] for at, label in zip(starts[arm], arms[arm][3])
                    if label is not None and kind_of(label) in names)  # fmt: skip
@@ -389,7 +580,7 @@ def measure(trainer, *, steps: int = 1, rounds: int = 16, generation: int = 1, k
         timed_run(trainer, words[arm], tokens, targets, steps=steps)
     base_ns: dict[str, list[int]] = {kind: [] for kind in measured}
     arm_ns: list[list[int]] = [[] for _ in arms]
-    names = ["default" if alt is None else f"{kind}={alt}" for kind, alt, _, _ in arms]
+    names = ["default" if arm[1] is None else f"{arm[0]}={arm[1]}" for arm in arms]
     for r in range(rounds):
         shift = r % len(arms)
         order = list(range(shift, len(arms))) + list(range(shift))

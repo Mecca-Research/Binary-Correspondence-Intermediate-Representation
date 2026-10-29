@@ -7,10 +7,12 @@ host (or sandbox) exposes:
 
   * **cache topology** (`/sys/devices/system/cpu/cpu0/cache`): real L1/L2/L3 sizes,
     so the allocator's fast-tier capacities are the machine's, not a guess. (Read.)
-  * **cpufreq** (`/sys/.../cpufreq`, `/proc/cpuinfo`): the nominal frequency and, if
-    present, the discrete scaling steps + governor. SETTING frequency needs a
-    `userspace` governor + privilege; we report whether actuation is possible rather
-    than pretend. (Read; actuation gated.)
+  * **cpufreq** (`/sys/.../cpufreq`): the driver's `cpuinfo_max_freq` and, if present, the
+    discrete scaling steps + governor. A host without a cpufreq driver (most cloud guests) has no
+    frequency here: `/proc/cpuinfo`'s "cpu MHz" is the current or hypervisor-reported clock (on a
+    KVM guest, the TSC's rate), never taken for a nominal one. SETTING frequency needs a
+    `userspace` governor + privilege; we report whether actuation is possible rather than
+    pretend. (Read; actuation gated.)
   * **OS counters** (`resource.getrusage` when available, plus `time.*_ns` everywhere):
     real page faults, context switches, and CPU-/wall-nanoseconds to feed the telemetry ring. Hardware PMU
     counters (`perf_event_open`) are used when available and degrade gracefully when
@@ -19,11 +21,22 @@ host (or sandbox) exposes:
 Every probe is read-only and returns ``None`` / falls back cleanly when a signal is
 absent, so importing or calling this never fails on a minimal host. `summary()`
 reports the real/unavailable split for honest provenance.
+
+A value this host cannot read is ``None`` -- never 0 and never a nearby number: a counter the
+kernel refused, never ran or ran for part of its window, a read that failed or came back short, an
+energy counter that wrapped past a range nobody could read, a clock no cpufreq driver states. The
+kernel's text is read in its own grammar (`_decimal`): ASCII digits, a '-' only where a value may
+be negative, never through `int()` or `float()`, which take '+5', '1_000', 'inf' and non-ASCII
+digits. The evidence records keep the same null: a v2 record holds the PMU's three counts or three
+nulls, and getrusage's four or four nulls (`recorded_counts`), never a 0 for a count nobody read.
 """
 
 from __future__ import annotations
 
 import os
+import re
+import struct
+import sys
 import time
 from dataclasses import dataclass
 
@@ -45,16 +58,27 @@ def _read(path: str) -> str | None:
         return None
 
 
+_UNSIGNED = re.compile(r"[0-9]+", re.ASCII)
+_SIGNED = re.compile(r"-?[0-9]+", re.ASCII)
+_SIZE = re.compile(r"([0-9]+)([KMGkmg]?)", re.ASCII)
+_SIZE_UNIT = {"": 1, "K": 1024, "M": 1024 * 1024, "G": 1024 * 1024 * 1024}
+
+
+def _decimal(text: str | None, *, signed: bool = False) -> int | None:
+    """An integer the kernel wrote, in its own grammar -- ASCII digits, with a leading '-' only
+    where the file may hold a negative value (`signed`) -- or None. Never `int()`: it takes '+5',
+    '1_000', surrounding blanks and non-ASCII digits, a larger language than sysfs writes."""
+    if text is None or not (_SIGNED if signed else _UNSIGNED).fullmatch(text):
+        return None
+    return int(text)
+
+
 def _parse_size(text: str | None) -> int | None:
-    """'48K' / '2048K' / '512' -> bytes."""
-    if not text:
+    """'48K' / '2048K' / '512' -> bytes; None for any other spelling."""
+    match = _SIZE.fullmatch(text.strip()) if text else None
+    if match is None:
         return None
-    text = text.strip()
-    mult = {"K": 1024, "M": 1024 * 1024, "G": 1024 * 1024 * 1024}.get(text[-1].upper())
-    try:
-        return int(text[:-1]) * mult if mult else int(text)
-    except ValueError:
-        return None
+    return int(match.group(1)) * _SIZE_UNIT[match.group(2).upper()]
 
 
 # --- cache topology --------------------------------------------------------------
@@ -76,11 +100,11 @@ def cache_topology() -> tuple[CacheLevel, ...]:
     except OSError:
         return ()
     for d in entries:
-        level = _read(f"{base}/{d}/level")
+        level = _decimal(_read(f"{base}/{d}/level"))
         kind = _read(f"{base}/{d}/type")
         size = _parse_size(_read(f"{base}/{d}/size"))
         if level and kind and size:
-            out.append(CacheLevel(level=int(level), kind=kind, size_bytes=size))
+            out.append(CacheLevel(level=level, kind=kind, size_bytes=size))
     return tuple(out)
 
 
@@ -107,8 +131,8 @@ def tier_capacities() -> dict[MemTier, int] | None:
 
 @dataclass(frozen=True)
 class CpuFreq:
-    nominal_khz: int | None
-    steps_khz: tuple[int, ...]  # discrete scaling steps ((),) if none exposed
+    nominal_khz: int | None  # cpufreq's cpuinfo_max_freq; None without a cpufreq driver
+    steps_khz: tuple[int, ...]  # discrete scaling steps (() if none exposed)
     governor: str | None
     actuatable: bool  # can we set the frequency here?
 
@@ -120,13 +144,20 @@ class CpuFreq:
 def cpufreq_info() -> CpuFreq:
     """Read the real cpufreq table + governor; report whether DVFS can be actuated.
     Actuation needs the `userspace` governor and a writable `scaling_setspeed`
-    (root) -- absent in most sandboxes, so we never pretend to have set a clock."""
+    (root) -- absent in most sandboxes, so we never pretend to have set a clock.
+
+    The frequency is the cpufreq driver's `cpuinfo_max_freq` (its maximum: on intel_pstate the
+    turbo ceiling) or None. There is no fallback: `/proc/cpuinfo`'s "cpu MHz" is the core's current
+    clock on bare metal and the hypervisor's reported one in a guest (on a KVM guest, the TSC's
+    rate), and neither is a nominal frequency. A scaling table with one malformed entry is no
+    table: every step or none."""
     fq = f"{_SYS_CPU}/cpufreq"
     steps_raw = _read(f"{fq}/scaling_available_frequencies")
-    steps = tuple(int(x) for x in steps_raw.split()) if steps_raw else ()
+    steps = tuple(_decimal(x) for x in steps_raw.split()) if steps_raw else ()
+    if None in steps or 0 in steps:
+        steps = ()
     governor = _read(f"{fq}/scaling_governor")
-    nominal = _read(f"{fq}/cpuinfo_max_freq")
-    nominal_khz = int(nominal) if nominal else _cpuinfo_khz()
+    nominal_khz = _decimal(_read(f"{fq}/cpuinfo_max_freq")) or None  # 0 kHz is no frequency
     setspeed = f"{fq}/scaling_setspeed"
     actuatable = governor == "userspace" and os.access(setspeed, os.W_OK)
     return CpuFreq(
@@ -134,36 +165,26 @@ def cpufreq_info() -> CpuFreq:
     )
 
 
-def _cpuinfo_khz() -> int | None:
-    """Fallback nominal frequency from /proc/cpuinfo 'cpu MHz' (read-only)."""
-    try:
-        with open("/proc/cpuinfo") as f:
-            for line in f:
-                if line.startswith("cpu MHz"):
-                    return int(float(line.split(":")[1]) * 1000)
-    except OSError:
-        pass
-    return None
-
-
 # --- OS / hardware counters (the telemetry-ring feed) ----------------------------
 
 
 @dataclass(frozen=True)
 class Counters:
-    """A real measurement snapshot delta (all genuine OS/timer counters)."""
+    """A real measurement snapshot delta (all genuine OS/timer counters). The four getrusage
+    counts are None together on a host without getrusage (native Windows): never 0."""
 
     wall_ns: int
     cpu_ns: int
-    minor_faults: int
-    major_faults: int
-    vol_ctx: int
-    invol_ctx: int
+    minor_faults: int | None
+    major_faults: int | None
+    vol_ctx: int | None
+    invol_ctx: int | None
 
 
 class CounterSampler:
     """Sample real OS counters (getrusage + monotonic/CPU clocks) around a unit of
-    work -- the actual perf signal that feeds the telemetry ring."""
+    work -- the actual perf signal that feeds the telemetry ring. Without getrusage the lap's
+    four rusage counts are None; the two clocks are read everywhere."""
 
     def __init__(self):
         self._w = time.perf_counter_ns()
@@ -173,20 +194,16 @@ class CounterSampler:
     def lap(self) -> Counters:
         w, c = time.perf_counter_ns(), time.process_time_ns()
         r = _resource.getrusage(_resource.RUSAGE_SELF) if _resource is not None else None
-        out = Counters(
-            wall_ns=w - self._w,
-            cpu_ns=c - self._c,
-            minor_faults=(r.ru_minflt - self._r.ru_minflt)
-            if r is not None and self._r is not None
-            else 0,
-            major_faults=(r.ru_majflt - self._r.ru_majflt)
-            if r is not None and self._r is not None
-            else 0,
-            vol_ctx=(r.ru_nvcsw - self._r.ru_nvcsw) if r is not None and self._r is not None else 0,
-            invol_ctx=(r.ru_nivcsw - self._r.ru_nivcsw)
-            if r is not None and self._r is not None
-            else 0,
-        )
+        if r is not None and self._r is not None:
+            rusage = (
+                r.ru_minflt - self._r.ru_minflt,
+                r.ru_majflt - self._r.ru_majflt,
+                r.ru_nvcsw - self._r.ru_nvcsw,
+                r.ru_nivcsw - self._r.ru_nivcsw,
+            )
+        else:  # no getrusage at either end of the lap: no count, not a count of 0
+            rusage = (None, None, None, None)
+        out = Counters(w - self._w, c - self._c, *rusage)
         self._w, self._c, self._r = w, c, r
         return out
 
@@ -209,6 +226,26 @@ _PERF_HW = {
 }
 _IOC_ENABLE, _IOC_DISABLE, _IOC_RESET = 0x2400, 0x2401, 0x2403
 
+# perf_event_attr's flag word, the u64 after read_format (include/uapi/linux/perf_event.h).
+PERF_ATTR_DISABLED = 1 << 0
+PERF_ATTR_EXCLUDE_KERNEL = 1 << 5
+PERF_ATTR_EXCLUDE_HV = 1 << 6
+PERF_ATTR_EXCLUDE_GUEST = 1 << 20  # not ours: named so the bit it was mistaken for has a name
+#: A user-space counter, created disabled: what `perf stat -e cycles:u` asks for, and the only kind
+#: an unprivileged process may open at the default perf_event_paranoid=2.
+_PERF_USER_FLAGS = PERF_ATTR_DISABLED | PERF_ATTR_EXCLUDE_KERNEL | PERF_ATTR_EXCLUDE_HV
+# read_format: a read returns the count, then the time the event was enabled and the time it ran.
+PERF_FORMAT_TOTAL_TIME_ENABLED = 1 << 0
+PERF_FORMAT_TOTAL_TIME_RUNNING = 1 << 1
+_PERF_READ_FORMAT = PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING
+#: perf_event_attr through bp_len (PERF_ATTR_SIZE_VER1, 72 bytes): type, size, config,
+#: sample_period, sample_type, read_format, the flag word, wakeup, bp_type, bp_addr, bp_len.
+_PERF_ATTR = struct.Struct("=IIQQQQQIIQQ")
+_PERF_READING = struct.Struct("=QQQ")  # value, time_enabled, time_running
+#: The kernel allocates the flag word's bitfields from bit 0 on a little-endian host and from the
+#: top on a big-endian one; the probe opens nothing on the latter rather than ask for other bits.
+_BYTE_ORDER = sys.byteorder
+
 
 # The perf_event_open syscall number is NOT portable (298 x86_64, 241 aarch64/riscv64, 364 armv7).
 # It is owned by the host's HardwareChannel runtime -- a single source of truth, so x86's and ARM's
@@ -222,49 +259,124 @@ def _perf_syscall_nr() -> int:
 _SYS_perf_event_open = _perf_syscall_nr()  # from the host channel (the ABI differs per machine)
 
 
-def _perf_open(config: int):
+def _perf_attr(config: int) -> bytes:
+    """One user-space hardware counter's perf_event_attr, as bytes: PERF_TYPE_HARDWARE `config`,
+    created disabled, excluding the kernel and the hypervisor, reading its enabled and running
+    times beside its count."""
+    return _PERF_ATTR.pack(
+        0, _PERF_ATTR.size, config, 0, 0, _PERF_READ_FORMAT, _PERF_USER_FLAGS, 0, 0, 0, 0
+    )
+
+
+def _perf_syscall(attr: bytes) -> int:
+    """perf_event_open(attr, this thread, any CPU, no group, no flags): an fd, or -1."""
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    return int(
+        libc.syscall(
+            _SYS_perf_event_open, ctypes.create_string_buffer(attr, len(attr)), 0, -1, -1, 0
+        )
+    )
+
+
+def _perf_ioctl(fd: int, request: int) -> None:
+    import ctypes
+
+    ctypes.CDLL(None, use_errno=True).ioctl(fd, request, 0)
+
+
+def _perf_read(fd: int) -> bytes:
+    return os.read(fd, _PERF_READING.size)
+
+
+def _perf_close(fd: int) -> None:
+    os.close(fd)
+
+
+def _perf_open(config: int) -> int | None:
     """Open one user-space hardware counter; return an fd (int) or None if no PMU /
     not permitted. Caller closes the fd."""
+    if _BYTE_ORDER != "little":
+        return None
     try:
-        import ctypes
-
-        libc = ctypes.CDLL(None, use_errno=True)
-
-        class _attr(ctypes.Structure):
-            _fields_ = [
-                ("type", ctypes.c_uint32),
-                ("size", ctypes.c_uint32),
-                ("config", ctypes.c_uint64),
-                ("sample_period", ctypes.c_uint64),
-                ("sample_type", ctypes.c_uint64),
-                ("read_format", ctypes.c_uint64),
-                ("flags", ctypes.c_uint64),
-                ("wakeup", ctypes.c_uint32),
-                ("bp_type", ctypes.c_uint32),
-                ("bp_addr", ctypes.c_uint64),
-                ("bp_len", ctypes.c_uint64),
-            ]
-
-        a = _attr()
-        a.type = 0
-        a.size = ctypes.sizeof(a)
-        a.config = config
-        a.flags = (1 << 0) | (1 << 20)  # disabled + exclude_kernel
-        fd = libc.syscall(_SYS_perf_event_open, ctypes.byref(a), 0, -1, -1, 0)
-        return int(fd) if fd >= 0 else None
+        fd = _perf_syscall(_perf_attr(config))
     except Exception:
         return None
+    return fd if fd >= 0 else None
+
+
+def _perf_count(fd: int) -> int | None:
+    """One counter's count, or None: a read that failed or came back short, a counter the kernel
+    never ran (its value 0 though nothing was counted), or one it ran for only part of the time it
+    was enabled (multiplexed: the value is a sample of the work, not its count)."""
+    try:
+        raw = _perf_read(fd)
+    except OSError:
+        return None
+    if len(raw) != _PERF_READING.size:
+        return None
+    value, enabled, running = _PERF_READING.unpack(raw)
+    if running == 0 or running != enabled:
+        return None
+    return value
 
 
 @dataclass(frozen=True)
 class HwSample:
-    cycles: int
-    instructions: int
-    cache_misses: int
+    """One run's user-space PMU counts. A count this host could not read is None, never 0."""
+
+    cycles: int | None
+    instructions: int | None
+    cache_misses: int | None
 
     @property
-    def ipc_milli(self) -> int:
-        return (self.instructions * 1000) // max(1, self.cycles)
+    def ipc_milli(self) -> int | None:
+        """Instructions per thousand cycles; None unless both counts were read and cycles moved."""
+        if self.cycles is None or self.instructions is None or self.cycles <= 0:
+            return None
+        return (self.instructions * 1000) // self.cycles
+
+
+def pmu_counts(sample: HwSample | None) -> tuple[int, int, int] | None:
+    """(cycles, instructions, cache misses) when `sample` read all three, else None: the one test
+    every record makes before it carries PMU counts, so none carries two counts and a gap."""
+    if sample is None or None in (sample.cycles, sample.instructions, sample.cache_misses):
+        return None
+    return sample.cycles, sample.instructions, sample.cache_misses
+
+
+#: A recorded count is an integer below 2^63: a signed 64-bit field on every rail that reads one.
+_COUNT_LIMIT = 1 << 63
+
+
+def recorded_counts(*values) -> tuple[int, ...] | None:
+    """The counts an evidence record holds from one source read at once -- the PMU's cycles,
+    instructions and cache misses, or getrusage's faults and context switches -- by the rule
+    every v2 record (`MeasuredPlan`, `MeasuredSample`, `MeasuredScheduleCandidate`,
+    `ProviderMeasurement`; EVIDENCE-NULL) reads them by: all of them or none. Ints in [0, 2^63)
+    are the counts, a 0 among them a count the source read; all None (JSON null) says the source
+    read none, and gives None. Anything else is refused: a null beside a count (no source here
+    reads a gap: `pmu_counts` gives all three or none, getrusage all four or none), a bool, a
+    float, a negative count or one past the limit."""
+    if not values:
+        raise ValueError("a group of recorded counts names at least one count")
+    if all(value is None for value in values):
+        return None
+    if any(type(value) is not int or not 0 <= value < _COUNT_LIMIT for value in values):
+        raise ValueError("recorded counts are all integers in [0, 2^63) or all null, never a mix")
+    return values
+
+
+def v1_pmu_counts(cycles, instructions, cache_misses) -> tuple[int, int, int] | None:
+    """A v1 record's PMU counts, read only. A v1 record has no null, and its writer recorded a
+    count it could not read as 0 -- and read a multiplexed counter without scaling it -- so a 0
+    in it may be no reading at all: the three only when none is 0, else None. A None, a bool or a
+    negative count is refused (v1 has no null); v1's own bound is its record's to check."""
+    values = (cycles, instructions, cache_misses)
+    if any(type(value) is not int or value < 0 for value in values):
+        raise ValueError("a v1 record's PMU counts are three integers >= 0: v1 has no null")
+    return values if all(values) else None
 
 
 def read_hw_counters(work) -> HwSample | None:
@@ -272,9 +384,8 @@ def read_hw_counters(work) -> HwSample | None:
     cache-misses, user-space). Returns an `HwSample`, or **None when the host exposes
     no PMU** (e.g. most cloud guests: perf_event_open -> ENOENT) -- and in that case
     `work()` is NOT run, so the caller can run it once under the OS-counter fallback.
-    Closes every fd it opens."""
-    import ctypes
-
+    Once the counters are open, `work()` runs exactly once and a sample comes back, each count in
+    it None where the counter could not be read (`_perf_count`). Closes every fd it opens."""
     fds = {
         name: _perf_open(cfg)
         for name, cfg in (("cycles", 0), ("instructions", 1), ("cache_misses", 3))
@@ -282,29 +393,21 @@ def read_hw_counters(work) -> HwSample | None:
     if any(fd is None for fd in fds.values()):  # no PMU: do NOT run work here
         for fd in fds.values():
             if fd is not None:
-                os.close(fd)
+                _perf_close(fd)
         return None
-    libc = ctypes.CDLL(None, use_errno=True)
     try:
         for fd in fds.values():
-            libc.ioctl(fd, _IOC_RESET, 0)
-            libc.ioctl(fd, _IOC_ENABLE, 0)
+            _perf_ioctl(fd, _IOC_RESET)
+            _perf_ioctl(fd, _IOC_ENABLE)
         work()  # committed: work runs exactly once
-        vals = {}
+        counts = {}
         for name, fd in fds.items():
-            libc.ioctl(fd, _IOC_DISABLE, 0)
-            try:
-                vals[name] = int.from_bytes(os.read(fd, 8), "little", signed=False)
-            except OSError:
-                vals[name] = 0
-        return HwSample(
-            cycles=vals["cycles"],
-            instructions=vals["instructions"],
-            cache_misses=vals["cache_misses"],
-        )
+            _perf_ioctl(fd, _IOC_DISABLE)
+            counts[name] = _perf_count(fd)
+        return HwSample(**counts)
     finally:
         for fd in fds.values():
-            os.close(fd)
+            _perf_close(fd)
 
 
 # --- RAPL energy + on-die thermal (the real power/heat signals) ------------------
@@ -343,13 +446,7 @@ def read_rapl_uj() -> int | None:
     """Current RAPL package energy counter in microjoules, or None if unreadable.
     The counter wraps at `max_energy_range_uj`; use `RaplSampler` for deltas."""
     p = _rapl_energy_path()
-    if p is None:
-        return None
-    v = _read(p)
-    try:
-        return int(v) if v is not None else None
-    except ValueError:
-        return None
+    return None if p is None else _decimal(_read(p))
 
 
 class RaplSampler:
@@ -365,33 +462,32 @@ class RaplSampler:
     def _read_max(self) -> int | None:
         if self._path is None:
             return None
-        v = _read(self._path.replace("energy_uj", "max_energy_range_uj"))
-        try:
-            return int(v) if v else None
-        except ValueError:
-            return None
+        return _decimal(_read(self._path.replace("energy_uj", "max_energy_range_uj"))) or None
 
     def _now(self) -> int | None:
-        v = _read(self._path) if self._path else None
-        try:
-            return int(v) if v is not None else None
-        except ValueError:
-            return None
+        return _decimal(_read(self._path)) if self._path else None
 
     @property
     def available(self) -> bool:
+        """Whether the next lap has a start: RAPL is readable and its last read succeeded."""
         return self._start is not None
 
     def lap_uj(self) -> int | None:
-        """Microjoules since the last lap (or construction); None if no RAPL."""
+        """Microjoules since the last lap (or construction), or None: no RAPL; a read that failed,
+        and the lap after it, which has no start (the energy of a failed lap is in no lap); or a
+        wrap whose range is unreadable, or a reading past the range it names. A counter that
+        wrapped once gains the range back -- the powercap convention, exact to one energy unit; a
+        lap longer than a whole wrap cannot be told from a shorter one, so lap within it."""
         now = self._now()
-        if now is None or self._start is None:
+        start, self._start = self._start, now
+        if now is None or start is None:
             return None
-        delta = now - self._start
-        if delta < 0 and self._max:  # the counter wrapped
-            delta += self._max
-        self._start = now
-        return max(0, delta)
+        delta = now - start
+        if delta >= 0:
+            return delta
+        if self._max is None or now > self._max or start > self._max:
+            return None
+        return delta + self._max
 
 
 _CPU_ZONE_TYPES = ("x86_pkg_temp", "coretemp", "cpu", "soc")
@@ -408,11 +504,7 @@ def read_thermal_millideg() -> int | None:
         return None
 
     def _temp(z: str) -> int | None:
-        t = _read(f"{_THERMAL_BASE}/{z}/temp")
-        try:
-            return int(t) if t is not None else None
-        except ValueError:
-            return None
+        return _decimal(_read(f"{_THERMAL_BASE}/{z}/temp"), signed=True)  # below 0 C reads negative
 
     cpu_temps, all_temps = [], []
     for z in zones:
@@ -444,13 +536,46 @@ def thermal_pressure() -> int | None:
     return max(0, min(100, int(round((c - _THERMAL_FLOOR_C) * 100 / span))))
 
 
+def _pmu_signals(counts: tuple[int, int, int] | None) -> tuple[int, int] | None:
+    """The telemetry frame's (cycles, miss pressure) from the PMU's counts, or None without them.
+    The frame's miss signal is a 0..100 pressure (`DataDNA.misses`: the ring's write validates it,
+    and every calibrator's ingest drops a record past it), never a raw count, which a real
+    workload puts in the thousands. The PMU's pressure is its last-level-cache misses per
+    thousand instructions retired, saturating at 100: a rate, so a short run and a long run of one
+    loop read alike. A sample that retired no instruction has no rate: None, and the frame takes
+    the OS pair."""
+    if counts is None:
+        return None
+    cycles, instructions, cache_misses = counts
+    if instructions <= 0:
+        return None
+    from .telemetry import NORM_MAX
+
+    return cycles, min(NORM_MAX, cache_misses * 1000 // instructions)
+
+
+def _fault_signal(c: Counters) -> int:
+    """The telemetry frame's OS miss signal, when the PMU gave none: the lap's page faults,
+    saturating at the frame's 100 (a fresh MiB is 256 faults), or 0 on a host without getrusage.
+    The frame has no null, and 0 is its nominal value; `Counters` itself says None, and
+    `summary()["rusage_counters"]` says the host has no such counter."""
+    if c.minor_faults is None or c.major_faults is None:
+        return 0
+    from .telemetry import NORM_MAX
+
+    return min(NORM_MAX, c.minor_faults + c.major_faults)
+
+
 def silicon_dna(work, claim_id: int = 0):
     """Run `work()` once under every real signal the host exposes (PMU cache-misses,
     RAPL energy, on-die temperature, OS utilization) and assemble a `DataDNA` -- the
     *measured* telemetry that feeds the calibration loop. Returns (DataDNA,
     provenance) where `provenance` is the set of signals that were genuinely real
     (e.g. {"pmu", "rapl", "thermal", "os"}); a signal absent on this host falls back
-    to a derived/zero value and is omitted from the set (honest, never faked)."""
+    to a derived/zero value and is omitted from the set (honest, never faked). Cycles and
+    misses are the PMU's only when it counted all three and retired an instruction
+    (`_pmu_signals`: its misses a 0..100 pressure, per thousand instructions), else both the
+    OS's (`_fault_signal`)."""
     from .telemetry import DataDNA
 
     provenance: set[str] = set()
@@ -459,7 +584,8 @@ def silicon_dna(work, claim_id: int = 0):
     hw = read_hw_counters(work)  # runs work() iff a PMU is present
     if hw is None:
         work()  # no PMU: run once under OS counters
-    else:
+    pmu = _pmu_signals(pmu_counts(hw))
+    if pmu is not None:
         provenance.add("pmu")
     c = sampler.lap()
     energy_uj = rapl.lap_uj()
@@ -471,7 +597,7 @@ def silicon_dna(work, claim_id: int = 0):
     thermal = therm if therm is not None else 0
     if therm is not None:
         provenance.add("thermal")
-    misses = hw.cache_misses if hw else (c.minor_faults + c.major_faults)
+    cycles, misses = pmu if pmu is not None else (c.cpu_ns, _fault_signal(c))
     util = min(100, (c.cpu_ns * 100) // max(1, c.wall_ns))
     # Voltage axis (reserved): a coarse power proxy from RAPL (uJ over wall-ns ->
     # milliwatts), clamped to 0..100; 0 when no RAPL.
@@ -481,7 +607,7 @@ def silicon_dna(work, claim_id: int = 0):
     dna = DataDNA(
         segment_id="silicon",
         claim_id=claim_id,
-        cycles=(hw.cycles if hw else c.cpu_ns),
+        cycles=cycles,
         bytes=0,
         misses=misses,
         thermal=thermal,
@@ -496,11 +622,12 @@ def silicon_dna(work, claim_id: int = 0):
 
 def sample_into_ring(ring, claim_id: int, work) -> Counters:
     """Run `work()` once, measure it, and write one record into the zero-copy
-    telemetry ring. When a hardware PMU is present, the real cycle + cache-miss
-    counts are used (`misses` carries L*-miss counts); otherwise `cycles` = measured
-    CPU nanoseconds, falling back to measured wall nanoseconds when the host CPU clock
-    is too coarse to move during short work (notably Windows), and `misses` = page
-    faults. The raw ``Counters`` delta remains unchanged. The kernel writes, the
+    telemetry ring. When the PMU counted all three and retired an instruction, `cycles` is
+    its cycle count and `misses` its last-level misses per thousand instructions, saturating
+    at the frame's 100 (`_pmu_signals`); otherwise `cycles` = measured CPU nanoseconds,
+    falling back to measured wall nanoseconds when the host CPU clock is too coarse to move
+    during short work (notably Windows), and `misses` = page faults, saturating at 100
+    (`_fault_signal`). The raw ``Counters`` delta remains unchanged. The kernel writes, the
     consumer `drain()`s the same buffer -- a real measured signal."""
     from .telemetry import DataDNA
 
@@ -509,8 +636,12 @@ def sample_into_ring(ring, claim_id: int, work) -> Counters:
     if hw is None:
         work()  # no PMU: run once under OS counters
     c = sampler.lap()
-    cycles = hw.cycles if hw else (c.cpu_ns if c.cpu_ns > 0 else c.wall_ns)
-    misses = hw.cache_misses if hw else (c.minor_faults + c.major_faults)
+    pmu = _pmu_signals(pmu_counts(hw))
+    if pmu is not None:
+        cycles, misses = pmu
+    else:
+        cycles = c.cpu_ns if c.cpu_ns > 0 else c.wall_ns
+        misses = _fault_signal(c)
     ring.write(
         DataDNA(
             segment_id="",

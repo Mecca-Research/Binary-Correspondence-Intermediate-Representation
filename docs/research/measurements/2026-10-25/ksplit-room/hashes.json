@@ -1,0 +1,42 @@
+{
+ "what": "the sha256 of each committed tool and of the two trees' sources the records measured (NEXT-4's exploration ran on the tree before's)",
+ "before": "5973ea26c64d1dbad3fe6a2e036798224d8fa79d",
+ "after": "8d212f906413494c7fd66c6e55ccecac49282da9",
+ "tools": {
+  "measure_room.sh": "54ae6c85cdc505636bc8bbb89940a8df4ac9eb79a7fb4eaf8b23cbe87797588a",
+  "measure_room2.sh": "c8ac29480164e554c5d6d431f577eb3685bea6d7643b596e7834ac651fa723c2",
+  "room_sizes.c": "50ae13bc717a6673ab01c7b9519d8695e8fa13a7d33a6583b90150e105c80009",
+  "split_probe2.py": "c6cc7bdc818a1ed40a62d51855344850a7cc6f9cb15088ae5413e7649561204a",
+  "room_ab.py": "4ac24fdff5977696c713dcfc8feed5d0ada0ec336039b2856128851438d0dbe7",
+  "step_room_ab.c": "f9c083551344eeba7c2ce96e98b3c5a09fc1786f6a0188099df9deb7c0525da7",
+  "probe_spec.py": "65829876d804a94f37c0a915b284e9c3453b2c60a0851202016e633ca58074e8",
+  "proto_ksrows.py": "6ef8e3fc04dd204f9e14e8481ffae71d23a2e41e579fb16cfa19dffef048bd27",
+  "proto_ksrows2.py": "caacbef196e5117ec69e00151b009f8ea0e9051512382b9bf4701cb4f77d1db0",
+  "run_rows.sh": "cbfde0649b6ef2e9dd0b104264f05f0a9573895cb635ecb2f09001ce10780b8e",
+  "run_rule.sh": "b20878ca24f6e54b11f78577ea494039616937078fe31b9fe02b23d21ece47a4"
+ },
+ "formatted_after_running": {
+  "what": "the Python tools ruff 0.16.6 reformatted after they ran, each the same AST as the bytes that ran: the sha256 of the bytes that ran",
+  "ran_sha256": {
+   "proto_ksrows2.py": "c425b35dc39494456133f3303d106e76e8dc8bf6022ea22eb812f60723c23596"
+  }
+ },
+ "sources": {
+  "A/bcir_tensor.c": "8a60e37b8977e157a5ead65666adafd3b57c2d8c0c6afeb71f4267d5b3292964",
+  "A/bcir_tensor.h": "bef5d7a0b72ae5e25e01762a04b0a6a45ee0f891487fde6e4d0be77ce801ea22",
+  "A/bcir_decoder_train.c": "a3fd225537de9586319a0cb4b63a9b92b29c4467c3f1bf885d1ee7f9d8551084",
+  "A/bcir_decoder_train.h": "3c44d66cc3805c4285aa8786e8f4a4a7affb64a070e60a7de124dee06b5e08ac",
+  "A/test_decoder_train.c": "6027f4fb9b75b72fa72dc2e7b9daf263d64a604e59d515d913bac5fc0dce4e53",
+  "B/bcir_tensor.c": "18241b181820728c34121d3f0eac79eb73bc7e4bd56690663eeffda1b025b7ec",
+  "B/bcir_tensor.h": "53dca0c744329e7eee7d0a49c79da7140c3046f8a159bb9389263c86f2103df4",
+  "B/bcir_decoder_train.c": "12c8b76eaba94cf44c84e6a40cae81cd2a8f2e08511c559b1ec2d0fb32fa48c9",
+  "B/bcir_decoder_train.h": "33ec9f99f712d965ac0237fd46af7fd754a3c77a3f21b63ba65a0a516c7c37bc",
+  "B/test_decoder_train.c": "d84b72eee553605694749b4316c008549525fe10775181162ea85643c2fdf41c"
+ },
+ "explore_sources": {
+  "bcir_tensor.c": "8a60e37b8977e157a5ead65666adafd3b57c2d8c0c6afeb71f4267d5b3292964",
+  "bcir_tensor.h": "bef5d7a0b72ae5e25e01762a04b0a6a45ee0f891487fde6e4d0be77ce801ea22",
+  "bcir_decoder_train.c": "a3fd225537de9586319a0cb4b63a9b92b29c4467c3f1bf885d1ee7f9d8551084",
+  "bcir_decoder_train.h": "3c44d66cc3805c4285aa8786e8f4a4a7affb64a070e60a7de124dee06b5e08ac"
+ }
+}

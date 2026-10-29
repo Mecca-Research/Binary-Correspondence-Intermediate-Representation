@@ -1,0 +1,85 @@
+{
+ "what": "GEO-NOW (2026-10-24): the PR818 study's three models -- the global head, the query-aware head and the attention baseline -- on this branch's tensor unit, against main's (level 2, GEO-2b's builds) in one process with every trained state and logit the same bytes, and against PyTorch at fixed shapes; and two of the step's levers measured and not taken: THP-0 (the attention's buffers on transparent huge pages), WADJ-ROWS-0 (the weight adjoints' row ranges small enough for sixteen tasks) and KBK-0 (the k-blocked kernel's 448-term block in L1-sized sub-ranges). The first runs of geo_ab.py and geo_compare_static.py shared the cores with a micro-benchmark for some seconds; they were set aside and both rerun with nothing else running. Records only: no runtime change.",
+ "host": "Intel(R) Xeon(R) Processor @ 2.30GHz, 4 vCPU (AVX-512F, AMX), 2 MiB of L2 a core, 260 MiB of L3; Linux 6.18 (transparent huge pages: madvise); GCC 13.3 (the overlays' builds); clang 18 (the attention and GEMM libraries); Python 3.11, NumPy 2.2.6, torch 2.13.0+cu130 (CPU); OMP_WAIT_POLICY=PASSIVE",
+ "tree": "c49d24436a5469bffab97b1a593816745b6f3b9b",
+ "records": {
+  "geo-ab.json": "geo_ab.py: B-BEFORE (level 2: main's tensor unit at 490f5be0), B-AFTER (build_amx.py's builds: the same overlays and headers, this branch's unit) and B-AFTER-AA, 16 rotated rounds",
+  "geo-compare-now.json": "../compile-limit/geo_compare_static.py over this branch's builds, 12 rounds -- the same script and host as ../compile-limit/geo2-rerun.json's level 2",
+  "thp.json": "ab_thp.c, three runs",
+  "wadj-rows.json": "ab_gemm.c over proto_wadj.py's prototype",
+  "kbk.json": "kb_micro.c and kb_micro2.c: the k-blocked kernel's block on resident operands"
+ },
+ "verdicts": "each effect resolved where its 95% interval excludes 1 and does not meet the A/A control's",
+ "reading": {
+  "after_over_before": [
+   "train global B4T128: B-BEFORE 10.92, B-AFTER 10.22 ms; after / before 0.944 (0.926-0.963), A/A 0.998 (0.973-1.023): resolved; state the same: True",
+   "train global B4T256: B-BEFORE 21.12, B-AFTER 20.33 ms; after / before 0.963 (0.893-1.038), A/A 1.060 (0.981-1.146): not resolved: holds 1; state the same: True",
+   "train global B4T512: B-BEFORE 42.34, B-AFTER 37.62 ms; after / before 0.917 (0.898-0.936), A/A 0.999 (0.955-1.044): resolved; state the same: True",
+   "train query_full B4T128: B-BEFORE 11.39, B-AFTER 10.07 ms; after / before 0.887 (0.860-0.915), A/A 0.953 (0.907-1.001): not resolved: meets the A/A control's interval; state the same: True",
+   "train query_full B4T256: B-BEFORE 21.51, B-AFTER 18.94 ms; after / before 0.861 (0.831-0.892), A/A 1.007 (0.980-1.035): resolved; state the same: True",
+   "train query_full B4T512: B-BEFORE 42.21, B-AFTER 36.18 ms; after / before 0.851 (0.821-0.881), A/A 1.009 (0.980-1.039): resolved; state the same: True",
+   "train attention B4T128: B-BEFORE 8.38, B-AFTER 7.26 ms; after / before 0.885 (0.799-0.979), A/A 1.002 (0.933-1.076): not resolved: meets the A/A control's interval; state the same: True",
+   "train attention B4T256: B-BEFORE 18.51, B-AFTER 15.73 ms; after / before 0.848 (0.813-0.885), A/A 0.988 (0.959-1.017): resolved; state the same: True",
+   "train attention B4T512: B-BEFORE 45.23, B-AFTER 39.82 ms; after / before 0.867 (0.838-0.897), A/A 1.010 (0.967-1.056): resolved; state the same: True",
+   "infer global B4T1024: B-BEFORE 22.46, B-AFTER 18.92 ms; after / before 0.845 (0.814-0.878), A/A 1.003 (0.958-1.050): resolved; logits the same: True",
+   "infer global B4T2048: B-BEFORE 45.41, B-AFTER 37.64 ms; after / before 0.821 (0.791-0.853), A/A 0.998 (0.954-1.043): resolved; logits the same: True",
+   "infer query_full B4T1024: B-BEFORE 24.88, B-AFTER 20.37 ms; after / before 0.814 (0.800-0.827), A/A 1.011 (0.991-1.032): resolved; logits the same: True",
+   "infer query_full B4T2048: B-BEFORE 49.05, B-AFTER 41.96 ms; after / before 0.846 (0.823-0.871), A/A 1.014 (0.989-1.039): resolved; logits the same: True",
+   "infer attention B4T1024: B-BEFORE 46.26, B-AFTER 36.03 ms; after / before 0.820 (0.745-0.903), A/A 1.052 (0.942-1.175): resolved; logits the same: True",
+   "infer attention B4T2048: B-BEFORE 145.32, B-AFTER 116.55 ms; after / before 0.783 (0.755-0.812), A/A 0.990 (0.953-1.029): resolved; logits the same: True"
+  ],
+  "against_pytorch": [
+   "train global T128: B-DIRECT 10.13, P-EAGER 67.38, P-IND 29.21 ms; B-DIRECT / P-EAGER 0.149 (0.142-0.156), / P-IND 0.331 (0.302-0.363) (resolved), A/A 0.963 (0.879-1.054); level 2 in ../compile-limit/: / P-IND 0.355 (0.337-0.374); compiled: 1 graph, 0 symbols",
+   "train global T256: B-DIRECT 20.37, P-EAGER 93.00, P-IND 44.70 ms; B-DIRECT / P-EAGER 0.217 (0.208-0.226), / P-IND 0.451 (0.432-0.470) (resolved), A/A 1.000 (0.961-1.041); level 2 in ../compile-limit/: / P-IND 0.463 (0.443-0.484); compiled: 1 graph, 0 symbols",
+   "train global T512: B-DIRECT 36.81, P-EAGER 140.00, P-IND 72.39 ms; B-DIRECT / P-EAGER 0.279 (0.235-0.331), / P-IND 0.543 (0.457-0.646) (resolved), A/A 1.085 (0.918-1.283); level 2 in ../compile-limit/: / P-IND 0.540 (0.501-0.582); compiled: 1 graph, 0 symbols",
+   "train query_full T128: B-DIRECT 10.23, P-EAGER 74.45, P-IND 35.54 ms; B-DIRECT / P-EAGER 0.145 (0.129-0.163), / P-IND 0.307 (0.270-0.348) (resolved), A/A 1.048 (0.918-1.195); level 2 in ../compile-limit/: / P-IND 0.330 (0.314-0.346); compiled: 1 graph, 0 symbols",
+   "train query_full T256: B-DIRECT 18.80, P-EAGER 105.52, P-IND 52.60 ms; B-DIRECT / P-EAGER 0.182 (0.175-0.189), / P-IND 0.363 (0.339-0.389) (resolved), A/A 1.019 (0.963-1.077); level 2 in ../compile-limit/: / P-IND 0.363 (0.343-0.384); compiled: 1 graph, 0 symbols",
+   "train query_full T512: B-DIRECT 35.35, P-EAGER 173.41, P-IND 95.39 ms; B-DIRECT / P-EAGER 0.207 (0.190-0.226), / P-IND 0.386 (0.352-0.423) (resolved), A/A 0.971 (0.934-1.009); level 2 in ../compile-limit/: / P-IND 0.474 (0.450-0.499); compiled: 1 graph, 0 symbols",
+   "train attention T128: B-DIRECT 7.40, P-EAGER 37.34, P-IND 22.10 ms; B-DIRECT / P-EAGER 0.208 (0.193-0.225), / P-IND 0.347 (0.319-0.376) (resolved), A/A 1.022 (0.933-1.118); level 2 in ../compile-limit/: / P-IND 0.396 (0.359-0.436); compiled: 1 graph, 0 symbols",
+   "train attention T256: B-DIRECT 15.79, P-EAGER 50.10, P-IND 31.88 ms; B-DIRECT / P-EAGER 0.313 (0.291-0.336), / P-IND 0.496 (0.466-0.528) (resolved), A/A 0.998 (0.949-1.049); level 2 in ../compile-limit/: / P-IND 0.555 (0.516-0.597); compiled: 1 graph, 0 symbols",
+   "train attention T512: B-DIRECT 37.93, P-EAGER 73.89, P-IND 60.75 ms; B-DIRECT / P-EAGER 0.518 (0.487-0.551), / P-IND 0.621 (0.570-0.678) (resolved), A/A 0.985 (0.927-1.047); level 2 in ../compile-limit/: / P-IND 0.831 (0.774-0.892); compiled: 1 graph, 0 symbols",
+   "infer global T1024: B-DIRECT 19.71, P-EAGER 52.48, P-IND 25.80 ms; B-DIRECT / P-EAGER 0.359 (0.325-0.397), / P-IND 0.745 (0.684-0.813) (resolved), A/A 1.018 (0.926-1.120); level 2 in ../compile-limit/: / P-IND 0.883 (0.854-0.913); compiled: 1 graph, 0 symbols",
+   "infer global T2048: B-DIRECT 37.96, P-EAGER 121.58, P-IND 44.62 ms; B-DIRECT / P-EAGER 0.332 (0.278-0.397), / P-IND 0.899 (0.754-1.072) (not resolved: holds 1), A/A 1.070 (0.899-1.273); level 2 in ../compile-limit/: / P-IND 0.899 (0.809-0.999); compiled: 1 graph, 0 symbols",
+   "infer query_full T1024: B-DIRECT 20.61, P-EAGER 70.99, P-IND 32.56 ms; B-DIRECT / P-EAGER 0.310 (0.269-0.358), / P-IND 0.674 (0.590-0.771) (resolved), A/A 1.000 (0.948-1.056); level 2 in ../compile-limit/: / P-IND 0.772 (0.722-0.826); compiled: 1 graph, 0 symbols",
+   "infer query_full T2048: B-DIRECT 43.36, P-EAGER 158.12, P-IND 62.53 ms; B-DIRECT / P-EAGER 0.280 (0.251-0.311), / P-IND 0.672 (0.633-0.714) (resolved), A/A 0.949 (0.885-1.017); level 2 in ../compile-limit/: / P-IND 0.765 (0.735-0.796); compiled: 1 graph, 0 symbols",
+   "infer attention T1024: B-DIRECT 35.99, P-EAGER 39.29, P-IND 32.55 ms; B-DIRECT / P-EAGER 0.897 (0.827-0.973), / P-IND 1.039 (0.936-1.152) (not resolved: holds 1), A/A 0.983 (0.926-1.044); level 2 in ../compile-limit/: / P-IND 1.386 (1.287-1.492); compiled: 1 graph, 0 symbols",
+   "infer attention T2048: B-DIRECT 112.83, P-EAGER 105.00, P-IND 82.56 ms; B-DIRECT / P-EAGER 1.103 (1.001-1.215), / P-IND 1.351 (1.253-1.457) (resolved), A/A 1.001 (0.957-1.047); level 2 in ../compile-limit/: / P-IND 1.667 (1.482-1.875); compiled: 1 graph, 0 symbols"
+  ],
+  "thp": [
+   "B4 T2048, 4 thread(s), 16 rounds, the bits the same: True, AnonHugePages 305152 kB: forward huge 0.989 (0.909-1.076), A/A 1.029 (0.994-1.065); backward huge 0.926 (0.883-0.971), A/A 1.006 (0.968-1.046); total huge 0.951 (0.910-0.994), A/A 1.015 (0.987-1.045)",
+   "B4 T2048, 4 thread(s), 48 rounds, the bits the same: True, AnonHugePages 305152 kB: forward huge 0.978 (0.926-1.032), A/A 0.994 (0.952-1.038); backward huge 0.985 (0.947-1.024), A/A 1.038 (0.996-1.082); total huge 0.981 (0.948-1.016), A/A 1.021 (0.989-1.054)",
+   "B4 T2048, 1 thread(s), 16 rounds, the bits the same: True, AnonHugePages 299008 kB: forward huge 1.000 (0.957-1.045), A/A 1.013 (1.004-1.023); backward huge 0.913 (0.879-0.949), A/A 0.963 (0.931-0.997); total huge 0.945 (0.916-0.974), A/A 0.982 (0.960-1.003)"
+  ],
+  "wadj_rows": [
+   "g:1,0,128,128,8192: base 0.857 ms (313 GFLOP/s); proto 1.444 (1.324-1.574), A/A 0.981 (0.912-1.055)",
+   "g:1,0,256,128,8192: base 1.645 ms (326 GFLOP/s); proto 1.200 (1.109-1.299), A/A 1.011 (0.993-1.028)",
+   "g:1,0,128,256,8192: base 1.632 ms (329 GFLOP/s); proto 1.192 (1.065-1.333), A/A 0.993 (0.918-1.074)",
+   "g:1,0,260,128,8192: base 2.156 ms (253 GFLOP/s); proto 1.035 (0.985-1.087), A/A 0.988 (0.953-1.026)",
+   "g:1,0,128,128,4096: base 0.364 ms (369 GFLOP/s); proto 1.313 (1.044-1.652), A/A 0.859 (0.702-1.052)",
+   "g:1,0,128,128,2048: base 0.176 ms (381 GFLOP/s); proto 1.557 (1.413-1.716), A/A 1.043 (0.951-1.143)",
+   "g:0,0,8192,128,128: base 0.489 ms (549 GFLOP/s); proto 0.983 (0.962-1.005), A/A 0.998 (0.979-1.018)",
+   "p:0,0,8192,128,128:1,0,128,128,8192: base 1.032 ms (520 GFLOP/s); proto 1.505 (1.480-1.530), A/A 1.021 (0.995-1.047)"
+  ],
+  "kbk": [
+   "single clang K=128 lda=128: 188.3 GFLOP/s (521.993 ns a block; checksum 3.75218e+06)",
+   "single clang K=448 lda=128: 115.2 GFLOP/s (2986.714 ns a block; checksum 1.39711e+07)",
+   "tile clang same bits: yes M=128 K=448 N=48: base 188.0 GFLOP/s, sub 224 188.8 GFLOP/s (x0.995 of base's time) ",
+   "tile clang same bits: yes M=128 K=448 N=48: base 189.1 GFLOP/s, sub 150 194.1 GFLOP/s (x0.974 of base's time) ",
+   "tile clang same bits: yes M=128 K=448 N=48: base 188.6 GFLOP/s, sub 112 186.6 GFLOP/s (x1.011 of base's time) ",
+   "tile clang same bits: yes M=128 K=448 N=48: base 200.0 GFLOP/s, sub 64 199.7 GFLOP/s (x1.001 of base's time) ",
+   "single gcc K=128 lda=128: 213.9 GFLOP/s (459.639 ns a block; checksum 3.75218e+06)",
+   "single gcc K=448 lda=128: 120.1 GFLOP/s (2865.115 ns a block; checksum 1.39711e+07)",
+   "tile gcc same bits: yes M=128 K=448 N=48: base 190.7 GFLOP/s, sub 224 190.2 GFLOP/s (x1.003 of base's time) ",
+   "tile gcc same bits: yes M=128 K=448 N=48: base 200.1 GFLOP/s, sub 150 203.6 GFLOP/s (x0.983 of base's time) ",
+   "tile gcc same bits: yes M=128 K=448 N=48: base 199.7 GFLOP/s, sub 112 203.9 GFLOP/s (x0.979 of base's time) ",
+   "tile gcc same bits: yes M=128 K=448 N=48: base 197.4 GFLOP/s, sub 64 194.1 GFLOP/s (x1.017 of base's time) "
+  ]
+ },
+ "commands": [
+  "python -I geo_ab.py LEVEL2_WORK WORK geo-ab.json --rounds 16 --steps 3  # WORK: ../geo-amx/'s build_amx.py builds",
+  "python -I ../compile-limit/geo_compare_static.py WORK geo-compare-now.json --rounds 12 --steps 3",
+  "clang -std=c11 -O2 ab_thp.c -o ab_thp -ldl -lm; ab_thp LIB ROUNDS B T H KH D THREADS CONTRACT  # LIB: the tree's unit, clang -O3 -fPIC -shared",
+  "python3 -I proto_wadj.py TREE/runtime/c/bcir_tensor.c PROTO.c; ab_gemm LIB_TREE LIB_PROTO 16 4 3 CASE...",
+  "CC -std=c11 -O3 -ffp-contract=off kb_micro.c -o kb_micro; kb_micro K 128 100000 5  (K 128, 448); likewise kb_micro2 S 2000 5  (S 224, 150, 112, 64)"
+ ]
+}

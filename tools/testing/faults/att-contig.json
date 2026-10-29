@@ -1,0 +1,172 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC1 a forward task leaves its context in its copy",
+      "new": "  /* the context left in its copy */\n",
+      "old": "  att_rows_out(a->y+(r*t*nh+h)*d,yc,t,d,nh*d);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC2 a backward task copies each head's dq back to its group's first head",
+      "new": "      att_rows_out(a->dq+(r*t*nh+first)*d,dqc,t,d,nh*d);",
+      "old": "      att_rows_out(a->dq+(r*t*nh+h)*d,dqc,t,d,nh*d);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC3 a backward task leaves dk in its copy",
+      "new": "  /* dk left in its copy */\n",
+      "old": "  att_rows_out(a->dk+(r*t*nk+kh)*d,dkc,t,d,nk*d);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC4 a backward task leaves dv in its copy",
+      "new": "  /* dv left in its copy */\n",
+      "old": "  att_rows_out(a->dv+(r*t*nk+kh)*d,dvc,t,d,nk*d);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC5 a group's later query heads start dk and dv again from zero",
+      "new": "s.p=a->p+(r*nh+h)*t*t; s.acc=0;",
+      "old": "s.p=a->p+(r*nh+h)*t*t; s.acc=h!=first;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC6 the head's backward ignores the job's accumulate flag",
+      "new": "    int first=h%(nh/nk)==0;",
+      "old": "    int first=h%(nh/nk)==0 && !a->acc;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC7 the regions' choice inverted: a region a task where the workers have one each, a worker's where the tasks do",
+      "new": "a->per=att_ctg_per(a->t,a->d); a->by_worker=threads>tasks;",
+      "old": "a->per=att_ctg_per(a->t,a->d); a->by_worker=threads<=tasks;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC8 a worker's region the one after its own",
+      "new": "  return (float *)(void *)(a->ws+(a->by_worker ? (size_t)worker+1 : task)*a->per);",
+      "old": "  return (float *)(void *)(a->ws+(a->by_worker ? (size_t)worker : task)*a->per);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC9 the copies' verdict leaves out the KV head's keys",
+      "new": "    /* the keys unscanned */\n",
+      "old": "    if (ok && h%(nh/nk)==0) ok=rows_finite(a->variant,kc,t,d,d);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC10 a forward task copies its keys from the query head's index, not its KV head's",
+      "new": "  att_rows_in(qc,a->q+(r*t*nh+h)*d,t,d,nh*d);\n  att_rows_in(kc,a->k+(r*t*nk+h%nk)*d,t,d,nk*d);",
+      "old": "  att_rows_in(qc,a->q+(r*t*nh+h)*d,t,d,nh*d);\n  att_rows_in(kc,a->k+(r*t*nk+kh)*d,t,d,nk*d);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC11 a backward task copies K where it copies V",
+      "new": "  att_rows_in(vc,a->k+(r*t*nk+kh)*d,t,d,nk*d);\n  for (i=v1;i<t;i++) {",
+      "old": "  att_rows_in(vc,a->v+(r*t*nk+kh)*d,t,d,nk*d);\n  for (i=v1;i<t;i++) {",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC12 the threshold's own context runs on the rows in place",
+      "new": "  return t>BCIR_ATT_CONTIG_FROM && (nh>1 || nk>1);",
+      "old": "  return t>=BCIR_ATT_CONTIG_FROM && (nh>1 || nk>1);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC13 one head a row copies too",
+      "new": "  return t>=BCIR_ATT_CONTIG_FROM && (nh>1 || nk>0);",
+      "old": "  return t>=BCIR_ATT_CONTIG_FROM && (nh>1 || nk>1);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC14 a copy's floats rounded down to the 64-byte boundary",
+      "new": "  return n>SIZE_MAX-15 ? SIZE_MAX : n/16*16;",
+      "old": "  return n>SIZE_MAX-15 ? SIZE_MAX : (n+15)/16*16;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC15 a region the forward's four copies, not the backward's seven",
+      "new": "  return (4*f+k)*sizeof(float);\n",
+      "old": "  return (7*f+k)*sizeof(float);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC16 the sizes' products wrap past SIZE_MAX",
+      "new": "static size_t att_ctg_mul(size_t a, size_t b) { return a*b; }",
+      "old": "static size_t att_ctg_mul(size_t a, size_t b) { return a && b>SIZE_MAX/a ? SIZE_MAX : a*b; }",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC17 a pool of more workers than tasks sized a region a worker",
+      "new": "  return att_ctg_bytes(threads ? threads : tasks,t,d);",
+      "old": "  return att_ctg_bytes(threads && threads<=tasks ? threads : tasks,t,d);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC18 a workspace a byte short of the pool's need is copied into",
+      "new": "      bytes+1<bcir_tensor_attention_pool_workspace(a->b,a->t,a->nh,a->nk,a->d,threads)) return;",
+      "old": "      bytes<bcir_tensor_attention_pool_workspace(a->b,a->t,a->nh,a->nk,a->d,threads)) return;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC19 the regions from the workspace's own address, not its first 64-byte boundary",
+      "new": "  uintptr_t w=(uintptr_t)workspace,base=w;",
+      "old": "  uintptr_t w=(uintptr_t)workspace,base=(w+63)/64*64;",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC20 the trainer's need under a binary32 GEMM contract leaves out the attention's copies",
+      "new": "    g=geom(&p.spec); most=0;\n",
+      "old": "    g=geom(&p.spec); most=ws_attention32(g,threads);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC21 the bf16 GEMM contract's need leaves out the binary32 attention's copies",
+      "new": "  if (contract&BCIR_DT_CONTRACT_ATTNBF16) most=ws_most(most,ws_attention(g,threads));",
+      "old": "  most=ws_most(most,(contract&BCIR_DT_CONTRACT_ATTNBF16) ? ws_attention(g,threads) : ws_attention32(g,threads));",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC22 a workspace lent without the bf16 contract is not held apart from the state",
+      "new": "  if (s->contract&BCIR_DT_CONTRACT_BF16) {\n    size_t least=0;",
+      "old": "  if ((s->contract&BCIR_DT_CONTRACT_BF16) || s->workspace) {\n    size_t least=0;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "AC23 a caller's buffer is held apart from the workspace only under the bf16 contract",
+      "new": "    !((s->contract&BCIR_DT_CONTRACT_BF16) && overlap(p,bytes,s->workspace,s->workspace_bytes));",
+      "old": "    !(s->workspace && overlap(p,bytes,s->workspace,s->workspace_bytes));",
+      "path": "runtime/c/bcir_decoder_train.c"
+    }
+  ]
+}

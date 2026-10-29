@@ -1,0 +1,276 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_toolchain:_POSIX",
+    "--require",
+    "bcir.tests.test_build_manifest:_CMAKE",
+    "--require",
+    "bcir.tests.test_make_rails:_GENERATES",
+    "--require",
+    "bcir.tests.test_native_ai:_CC",
+    "bcir.tests.test_toolchain:test_a_manifest_option_has_one_spelling_and_applies_where_its_scopes_hold",
+    "bcir.tests.test_toolchain:test_the_machine_a_compiler_emits_for_is_its_dumpmachines_first_field",
+    "bcir.tests.test_toolchain:test_a_compilers_identity_is_its_family_and_machine_asked_once",
+    "bcir.tests.test_toolchain:test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+    "bcir.tests.test_build_manifest:test_the_manifest_reconciles_with_the_tree",
+    "bcir.tests.test_build_manifest:test_every_injected_violation_is_a_finding",
+    "bcir.tests.test_build_manifest:test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation",
+    "bcir.tests.test_build_manifest:test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+    "bcir.tests.test_build_manifest:test_m18_finds_every_module_and_gate_that_spells_the_mitigation_itself",
+    "bcir.tests.test_build_manifest:test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+    "bcir.tests.test_make_rails:test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone",
+    "bcir.tests.test_native_ai:test_the_kernels_library_takes_its_units_options_from_the_manifest",
+    "bcir.tests.test_native_ai:test_the_kernels_unit_compiles_with_the_mitigation_where_its_options_name_it",
+    "bcir.tests.test_native_ai:test_the_model_microbenchmark_times_the_kernels_as_the_manifest_builds_them",
+    "bcir.tests.test_qualification:test_the_qualification_times_the_decoder_as_the_manifest_builds_it"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_manifest_reconciles_with_the_tree",
+      "label": "KA1 the decoder's units without clang's spelling of the mitigation",
+      "new": "",
+      "old": "        \"x86_64:clang:-mbranches-within-32B-boundaries\",\n",
+      "path": "runtime/manifest.json"
+    },
+    {
+      "expects": "test_the_manifest_reconciles_with_the_tree",
+      "label": "KA2 the decoder's units without GCC's spelling of the mitigation",
+      "new": "        \"x86_64:clang:-mbranches-within-32B-boundaries\"\n",
+      "old": "        \"x86_64:clang:-mbranches-within-32B-boundaries\",\n        \"x86_64:gcc:-Wa,-mbranches-within-32B-boundaries\"\n",
+      "path": "runtime/manifest.json"
+    },
+    {
+      "expects": "test_the_manifest_reconciles_with_the_tree",
+      "label": "KA3 clang's spelling unscoped to x86-64 (an aarch64 clang refuses it)",
+      "new": "\"clang:-mbranches-within-32B-boundaries\"",
+      "old": "\"x86_64:clang:-mbranches-within-32B-boundaries\"",
+      "path": "runtime/manifest.json"
+    },
+    {
+      "expects": "test_a_manifest_option_has_one_spelling_and_applies_where_its_scopes_hold",
+      "label": "KA4 the resolver ignoring an option's target scope",
+      "new": "        if scope is None or scope == family:",
+      "old": "        if (target is None or target == machine) and (scope is None or scope == family):",
+      "path": "bcir/toolchain.py"
+    },
+    {
+      "expects": "test_a_manifest_option_has_one_spelling_and_applies_where_its_scopes_hold",
+      "label": "KA5 the resolver's target scope holding on no machine",
+      "new": "target == machine.upper())",
+      "old": "target == machine)",
+      "path": "bcir/toolchain.py"
+    },
+    {
+      "expects": "test_a_manifest_option_has_one_spelling_and_applies_where_its_scopes_hold",
+      "label": "KA6 the grammar admitting any target scope",
+      "new": "OPTION_GRAMMAR = re.compile(r\"(?:(\\w+):)?(?:(gcc|clang):)?(-\\S+)\")",
+      "old": "OPTION_GRAMMAR = re.compile(r\"(?:(x86_64):)?(?:(gcc|clang):)?(-\\S+)\")",
+      "path": "bcir/toolchain.py"
+    },
+    {
+      "expects": "test_the_machine_a_compiler_emits_for_is_its_dumpmachines_first_field",
+      "label": "KA7 amd64 and x64 not read as x86-64",
+      "new": "_X86_64_NAMES = frozenset({\"x86_64\"})",
+      "old": "_X86_64_NAMES = frozenset({\"x86_64\", \"amd64\", \"x64\"})",
+      "path": "bcir/toolchain.py"
+    },
+    {
+      "expects": "test_the_machine_a_compiler_emits_for_is_its_dumpmachines_first_field",
+      "label": "KA8 the machine read from the triple's last field",
+      "new": "field = dumpmachine.strip().rsplit(\"-\", 1)[-1].lower()",
+      "old": "field = dumpmachine.strip().split(\"-\", 1)[0].lower()",
+      "path": "bcir/toolchain.py"
+    },
+    {
+      "expects": "test_a_compilers_identity_is_its_family_and_machine_asked_once",
+      "label": "KA9 the family read from -dumpmachine's answer",
+      "new": "identity = (\"clang\" if \"clang\" in answers[1].lower() else \"gcc\", machine_of(answers[1]))",
+      "old": "identity = (\"clang\" if \"clang\" in answers[0].lower() else \"gcc\", machine_of(answers[1]))",
+      "path": "bcir/toolchain.py"
+    },
+    {
+      "expects": "test_a_compilers_identity_is_its_family_and_machine_asked_once",
+      "label": "KA10 the identity asked again every call",
+      "new": "",
+      "old": "    _IDENTITIES[cc] = identity\n",
+      "path": "bcir/toolchain.py"
+    },
+    {
+      "expects": "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+      "label": "KA11 a source's owner given none of its unit's options",
+      "new": "owners.setdefault(source, [])",
+      "old": "owners.setdefault(source, list(unit.get(\"options\", [])))",
+      "path": "bcir/toolchain.py"
+    },
+    {
+      "expects": "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+      "label": "KA12 a flag two units name passed twice",
+      "new": "            out.append(flag)",
+      "old": "            if flag not in out:\n                out.append(flag)",
+      "path": "bcir/toolchain.py"
+    },
+    {
+      "expects": "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+      "label": "KA13 a source no unit owns given no options instead of refused",
+      "new": "            continue",
+      "old": "            raise ValueError(f\"no runtime/manifest.json unit compiles {source!r}\")",
+      "path": "bcir/toolchain.py"
+    },
+    {
+      "expects": "test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone",
+      "label": "KA14 BCIR Make reading every machine as x86-64",
+      "new": "    return _toolchain().manifest_options(options, family, \"x86_64\")",
+      "old": "    return _toolchain().manifest_options(options, family, machine)",
+      "path": "tools/build/bcirfile.py"
+    },
+    {
+      "expects": "test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone",
+      "label": "KA15 BCIR Make asking the compiler its family alone",
+      "new": "    family, machine = _toolchain().compiler_identity(cc)[0], \"\"\n",
+      "old": "    family, machine = _toolchain().compiler_identity(cc)\n",
+      "path": "tools/build/bcirfile.py"
+    },
+    {
+      "expects": "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+      "label": "KA16 CMake's x86_64 scope holding on every processor",
+      "new": "",
+      "old": "      if(NOT _machine MATCHES \"^(x86_64|amd64|x64)$\")\n        set(_holds FALSE)\n      endif()\n",
+      "path": "cmake/BCIRManifest.cmake"
+    },
+    {
+      "expects": "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+      "label": "KA17 CMake not reading AMD64 as x86-64",
+      "new": "\"^(x86_64)$\"",
+      "old": "\"^(x86_64|amd64|x64)$\"",
+      "path": "cmake/BCIRManifest.cmake"
+    },
+    {
+      "expects": "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+      "label": "KA18 CMake keeping the x86_64 scope on its flag",
+      "new": "    if(_flag MATCHES \"^x86_64:(.*)$\")\n",
+      "old": "    if(_flag MATCHES \"^x86_64:(.*)$\")\n      set(_flag \"${CMAKE_MATCH_1}\")\n",
+      "path": "cmake/BCIRManifest.cmake"
+    },
+    {
+      "expects": "test_every_injected_violation_is_a_finding",
+      "label": "KA19 M18 not asking for the decoder's two options",
+      "new": "        for option in ():\n            if option not in options:",
+      "old": "        for option in JCC_OPTIONS:\n            if option not in options:",
+      "path": "tools/build/manifest.py"
+    },
+    {
+      "expects": "test_every_injected_violation_is_a_finding",
+      "label": "KA20 M18 not reading the variants' options",
+      "new": "    for k in KINDS:",
+      "old": "    for k in (*KINDS, \"variants\"):",
+      "path": "tools/build/manifest.py"
+    },
+    {
+      "expects": "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+      "label": "KA21 M18 not holding a speed build to unit_options",
+      "new": "        if False:",
+      "old": "        if not calls:",
+      "path": "tools/build/manifest.py"
+    },
+    {
+      "expects": "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+      "label": "KA22 M18 not holding a speed build to a decoder source",
+      "new": "        if False:",
+      "old": "        if not named & sources:",
+      "path": "tools/build/manifest.py"
+    },
+    {
+      "expects": "test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation",
+      "label": "KA23 M18's reader blind to the call",
+      "new": "            calls = calls or name == \"unit_option\"",
+      "old": "            calls = calls or name == \"unit_options\"",
+      "path": "tools/build/manifest.py"
+    },
+    {
+      "expects": "test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation",
+      "label": "KA24 M18 reading prose as a spelling",
+      "new": "    return any(",
+      "old": "    return bool(re.match(r\"(?:(?:x86_64|gcc|clang):)*-\", value)) and any(",
+      "path": "tools/build/manifest.py"
+    },
+    {
+      "expects": "test_m18_finds_every_module_and_gate_that_spells_the_mitigation_itself",
+      "label": "KA25 M18 not collecting a module's spelling",
+      "new": "                    if (\n                        False\n",
+      "old": "                    if (\n                        spells\n",
+      "path": "tools/build/manifest.py"
+    },
+    {
+      "expects": "test_m18_finds_every_module_and_gate_that_spells_the_mitigation_itself",
+      "label": "KA26 M18 not collecting a gate's spelling",
+      "new": "            if False:\n                self.jcc_spellings.append(rel)",
+      "old": "            if gate_spells_jcc(text):\n                self.jcc_spellings.append(rel)",
+      "path": "tools/build/manifest.py"
+    },
+    {
+      "expects": "test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation",
+      "label": "KA27 M18 reading a gate's comment line as a build",
+      "new": "    return any(JCC_WORD in line for line in text.splitlines())",
+      "old": "    return any(JCC_WORD in line for line in text.splitlines() if not line.lstrip().startswith(\"#\"))",
+      "path": "tools/build/manifest.py"
+    },
+    {
+      "expects": "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+      "label": "KA28 the native AI library without its unit's options",
+      "new": "        own = []",
+      "old": "        own = [f for f in unit_options([_SOURCE.name], compiler) if f not in _COMPILE_FLAGS]",
+      "path": "bcir/kbcir/native_ai.py"
+    },
+    {
+      "expects": "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+      "label": "KA29 the native AI library's command dropping the options it resolved",
+      "new": "        command = [compiler, *_COMPILE_FLAGS]",
+      "old": "        command = [compiler, *_COMPILE_FLAGS, *own]",
+      "path": "bcir/kbcir/native_ai.py"
+    },
+    {
+      "expects": "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+      "label": "KA30 the native AI library's stamp blind to its flags",
+      "new": "            (\"flags\", \"\"),",
+      "old": "            (\"flags\", \"\\x1f\".join(NativeAIKernels._compile_command(compiler, Path(\"<out>\")))),",
+      "path": "bcir/kbcir/native_ai.py"
+    },
+    {
+      "expects": "test_the_kernels_unit_compiles_with_the_mitigation_where_its_options_name_it",
+      "label": "KA31 clang's spelling one clang accepts that aligns no branch (-malign-branch=jcc alone)",
+      "new": "\"x86_64:clang:-malign-branch=jcc\"",
+      "old": "\"x86_64:clang:-mbranches-within-32B-boundaries\"",
+      "path": "runtime/manifest.json"
+    },
+    {
+      "expects": "test_the_model_microbenchmark_times_the_kernels_as_the_manifest_builds_them",
+      "label": "KA32 the model microbenchmark without its units' options",
+      "new": "        flags += []",
+      "old": "        flags += [f for f in unit_options([s.name for s in sources], compiler) if f not in flags]",
+      "path": "bcir/frontends/models/model_microbench.py"
+    },
+    {
+      "expects": "test_the_qualification_times_the_decoder_as_the_manifest_builds_it",
+      "label": "KA33 the qualification's bcir-qualify without its units' options",
+      "new": "",
+      "old": "    command += [f for f in unit_options(QUALIFY_SOURCES, cc) if f not in command]\n",
+      "path": "tools/models/run_qualification.py"
+    },
+    {
+      "expects": "test_the_qualification_times_the_decoder_as_the_manifest_builds_it",
+      "label": "KA34 the qualification taking its CLI's options alone",
+      "new": "unit_options(QUALIFY_SOURCES[:1], cc)",
+      "old": "unit_options(QUALIFY_SOURCES, cc)",
+      "path": "tools/models/run_qualification.py"
+    },
+    {
+      "expects": "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+      "label": "KA35 CMake refusing a joined list's empty element (a fuzzer with no options of its own)",
+      "new": "",
+      "old": "    if(_opt STREQUAL \"\")\n      # an empty element of a joined list (a closure's options and a unit's own, either empty),\n      # never a manifest option: M6 refuses an empty one\n      continue()\n    endif()\n",
+      "path": "cmake/BCIRManifest.cmake"
+    }
+  ]
+}

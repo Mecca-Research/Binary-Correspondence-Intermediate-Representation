@@ -6,6 +6,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CHECK(condition) do { if (!(condition)) { \
@@ -83,6 +84,761 @@ static int q8_matrix_test(void) {
   return 0;
 }
 
+/* Q8-LANES: every instance the host admits against the portable loops, bit for bit -- the decoder's shapes,
+ * the pair's shapes (columns a multiple of 8, a power-of-two group of at least 8: Q8-PAIR) with odd last rows,
+ * ragged ones (groups straddling rows and vectors, a group not a power of two, groups under 8),
+ * exponents across the format's range and past a normal double's (ldexp's own values), the code 0x80 --
+ * and the refusals: a non-finite output zeroes every output whichever row or column it is, an instance
+ * the host does not admit and a non-finite input write nothing. */
+#ifdef BCIR_AI_INSTANCE_PROBE
+int bcir_ai_q8_instance_probe(void);
+int bcir_ai_q8_bound_probe(void);
+int bcir_ai_q8_pair_probe(void);
+int bcir_ai_q8_columns_probe(void);
+int bcir_ai_q8_pack_probe(size_t *passes, size_t *blocks);
+#endif
+static uint64_t lanes_state = UINT64_C(0x9E3779B97F4A7C15);
+static uint32_t lanes_next(void) {
+  lanes_state ^= lanes_state << 13;
+  lanes_state ^= lanes_state >> 7;
+  lanes_state ^= lanes_state << 17;
+  return (uint32_t)(lanes_state >> 11);
+}
+static void lanes_fill(double *x, size_t in, uint8_t *codes, size_t elements, uint8_t *exps,
+                       size_t groups, int wide) {
+  size_t i;
+  for (i = 0u; i < in; ++i)
+    x[i] = ((int)(lanes_next() % 20001u) - 10000) * 1.37e-4 * ((lanes_next() & 7u) ? 1.0 : 1e-3);
+  for (i = 0u; i < elements; ++i) codes[i] = (uint8_t)lanes_next();
+  for (i = 0u; i < groups; ++i) {
+    /* the format's own range and a narrow one; past a normal double's (ldexp's subnormal scales, every
+     * output finite); and past its largest (an infinite scale: the outputs it reaches non-finite) */
+    int e = wide == 3   ? (int)(lanes_next() % 201u) + 900
+            : wide == 2 ? -(int)(lanes_next() % 201u) - 900
+            : wide      ? (int)(lanes_next() % 601u) - 300
+                        : (int)(lanes_next() % 41u) - 30;
+    uint16_t u = (uint16_t)(int16_t)e;
+    exps[2u * i] = (uint8_t)u;
+    exps[2u * i + 1u] = (uint8_t)(u >> 8);
+  }
+}
+/* every byte of an output buffer still the 0x5A the test wrote before the call */
+static int lanes_untouched(const double *buffer, size_t count) {
+  const unsigned char *bytes = (const unsigned char *)buffer;
+  size_t i;
+  for (i = 0u; i < count * sizeof *buffer; ++i)
+    if (bytes[i] != 0x5Au) return 0;
+  return 1;
+}
+#ifdef BCIR_AI_INSTANCE_PROBE
+/* Q8-BOUND's ranges at their edges: 7 inputs and 40 outputs in groups of 16 (18 groups: each range's vectors and
+ * its tail), every case every instance against the portable loops -- the status and every byte -- and the path the
+ * vector instances took: 1 every x * s proved exact (every exponent in [-300, 300], every nonzero |x| in
+ * [2^-722, 2^724)), 2 the terms as before. */
+static void bound_exponent(uint8_t *exps, size_t group, int e) {
+  uint16_t u = (uint16_t)(int16_t)e;
+  exps[2u * group] = (uint8_t)u;
+  exps[2u * group + 1u] = (uint8_t)(u >> 8);
+}
+static int q8_bound_edges(int instances, int *hoisted, int *again) {
+  enum { IN = 7, OUT = 40, G = 16, N = IN * OUT, GROUPS = (N + G - 1) / G };
+  double x[IN], ref[OUT], got[OUT];
+  uint8_t codes[N], exps[2 * GROUPS];
+  int c, inst;
+  for (c = 0; c < 11; ++c) {
+    int path = 1, e_all = c == 3 || c == 4 || c == 5 || c == 6 ? 300 : -300, zero_codes = c >= 3 && c <= 5;
+    size_t i;
+    const double edge[IN] = {0x1p-722, -0x1p-722, 0.0, -0.0, 0.5, -1.25, 3.0};
+    int sm;
+    for (i = 0u; i < IN; ++i) x[i] = c == 3 ? (i & 1u ? -1.0 : 1.0) * nextafter(0x1p724, 0.0) : edge[i];
+    for (i = 0u; i < N; ++i) codes[i] = zero_codes ? 0u : (uint8_t)(lanes_next() % 255u + 129u);
+    for (i = 0u; i < GROUPS; ++i) bound_exponent(exps, i, c == 7 ? (i & 1u ? 300 : -300) : e_all);
+    switch (c) {
+    case 1: x[6] = nextafter(0x1p-722, 0.0); path = 2; break;  /* below the range, in the scan's tail */
+    case 2: x[1] = -nextafter(0x1p-722, 0.0); path = 2; break; /* below it, in the scan's vectors */
+    case 4: x[5] = 0x1p724; path = 2; break;                   /* past it, in the tail: 0 * (x * s) would be NaN */
+    case 5: x[2] = -0x1p724; path = 2; break;                  /* past it, in the vectors */
+    case 6: bound_exponent(exps, GROUPS - 1u, 301); path = 2; break; /* an exponent past 300, in the tail */
+    case 8: bound_exponent(exps, 3u, -301); path = 2; break;          /* one below -300, in the vectors */
+    case 9: bound_exponent(exps, 5u, 301); path = 2; break;           /* one past 300, in the vectors */
+    case 10:                                                   /* every |x| below the range: x * 2^-300 subnormal */
+      for (i = 0u; i < IN; ++i)
+        x[i] = ldexp(1.0 + (double)lanes_next() * 0x1p-32 + (double)lanes_next() * 0x1p-52, -741) * (i & 1u ? -1 : 1);
+      path = 2;
+      break;
+    default: break;
+    }
+    memset(ref, 0xA5, sizeof ref);
+    (void)bcir_ai_q8_bound_probe();
+    sm = bcir_ai_q8_matvec_f64_instance(1, x, IN, codes, N, exps, GROUPS, OUT, G, ref);
+    CHECK(sm == BCIR_AI_OK || sm == BCIR_AI_INVALID_NUMBER);
+    CHECK(bcir_ai_q8_bound_probe() == 0); /* the portable loops form no x * s */
+    if (zero_codes) CHECK(sm == BCIR_AI_OK);
+    for (inst = 2; inst <= 4; inst *= 2) {
+      if (!(instances & inst)) continue;
+      memset(got, 0x5A, sizeof got);
+      CHECK(bcir_ai_q8_matvec_f64_instance(inst, x, IN, codes, N, exps, GROUPS, OUT, G, got) == sm);
+      CHECK(memcmp(ref, got, sizeof ref) == 0);
+      CHECK(bcir_ai_q8_bound_probe() == path);
+      *hoisted += path == 1;
+      *again += path == 2;
+    }
+  }
+  return 0;
+}
+#endif
+#ifdef BCIR_AI_INSTANCE_PROBE
+/* Q8-PAIR's choice at either vector instance: two rows a pass (1) where eight columns' terms lie in one group -- the
+ * columns a multiple of 8, the group a power of two of at least 8 -- the runs (2) elsewhere */
+static int pair_path(size_t out, size_t g) { return out % 8u == 0u && g >= 8u && !(g & (g - 1u)) ? 1 : 2; }
+#endif
+/* Q8-PAIR's passes at their edges: rows whose groups end in step and out of step, past a row's end, at the matrix's
+ * end and at every step; an odd last row and a lone row; columns a multiple of four and not of eight, groups under
+ * eight or not a power of two (the runs) -- each with the four exponent ranges (x * s hoisted, the terms as before,
+ * non-finite outputs zeroed), every instance against the portable loops, the status and every byte. Every buffer is
+ * allocated at its exact size, so the sanitizer builds report a read or write past a matrix's codes, its last group or
+ * its outputs. */
+static int q8_pair_edges(int instances, int *pairs, int *runs) {
+  static const size_t shapes[][3] = {
+      {1, 8, 8},    {2, 8, 8},     {3, 16, 8},    {6, 64, 32},  {7, 40, 16},  {5, 24, 64},
+      {9, 8, 64},   {4, 1032, 8},  {3, 4100, 4},  {5, 12, 4},   {4, 64, 48},  {4, 64, 4},
+      {33, 136, 128}, {2, 4096, 32}, {101, 8, 8}, {3, 344, 32}, {3, 20, 8}};
+  size_t q;
+  (void)pairs;
+  (void)runs;
+  for (q = 0u; q < sizeof shapes / sizeof *shapes; ++q) {
+    size_t in = shapes[q][0], out = shapes[q][1], g = shapes[q][2], n = in * out, groups = 1u + (n - 1u) / g;
+    double *x = malloc(in * sizeof *x), *ref = malloc(out * sizeof *ref), *got = malloc(out * sizeof *got);
+    uint8_t *codes = malloc(n), *exps = malloc(2u * groups);
+    int wide, inst, bad_wide = -1, bad_inst = 0; /* the failing case, for the message */
+    if (x == NULL || ref == NULL || got == NULL || codes == NULL || exps == NULL) bad_wide = 4;
+    for (wide = 0; wide < 4 && bad_wide < 0; ++wide) {
+      int sm;
+      lanes_fill(x, in, codes, n, exps, groups, wide);
+      memset(ref, 0xA5, out * sizeof *ref);
+      sm = bcir_ai_q8_matvec_f64_instance(1, x, in, codes, n, exps, groups, out, g, ref);
+      if (sm != BCIR_AI_OK && sm != BCIR_AI_INVALID_NUMBER) bad_wide = wide;
+      for (inst = 2; inst <= 4 && bad_wide < 0; inst *= 2) {
+        int failed;
+        if (!(instances & inst)) continue;
+        memset(got, 0x5A, out * sizeof *got);
+        failed = bcir_ai_q8_matvec_f64_instance(inst, x, in, codes, n, exps, groups, out, g, got) != sm ||
+                 memcmp(ref, got, out * sizeof *ref) != 0;
+#ifdef BCIR_AI_INSTANCE_PROBE
+        {
+          int path = bcir_ai_q8_pair_probe();
+          failed = failed || path != pair_path(out, g);
+          failed = failed || bcir_ai_q8_columns_probe() != 1; /* DECODE-THREADS: the whole call's instance */
+          *pairs += path == 1;
+          *runs += path == 2;
+        }
+#endif
+        if (failed) {
+          bad_wide = wide;
+          bad_inst = inst;
+        }
+      }
+    }
+    free(x);
+    free(ref);
+    free(got);
+    free(codes);
+    free(exps);
+    if (bad_wide >= 0) {
+      fprintf(stderr, "AI-kernel check failed: Q8-PAIR's %zu x %zu, group %zu, exponent range %d, instance %d\n",
+              in, out, g, bad_wide, bad_inst);
+      return 1;
+    }
+  }
+  return 0;
+}
+/* HEAD-PACK: the packed row dots at their edges -- a lone row, short blocks, a block, passes and the rows after them,
+ * groups of 1, 2 and 3 and a group a whole row, a wide row, the 860K decoder's head -- in the format's exponent range
+ * and a narrow one, every admitted instance and the widest against the portable row dots over the rows as they are:
+ * the status and every byte, and the 32-row passes and blocks the vector instances ran. Every buffer is allocated at
+ * its exact size, so the sanitizer build reports a read or write past a pack, an input or the outputs. */
+static int q8_pack_shapes(int instances, int *calls, size_t *passes_seen, size_t *blocks_seen) {
+  static const size_t shapes[][3] = {
+      {8, 1, 8},    {8, 7, 8},     {16, 8, 8},     {16, 9, 4},      {32, 31, 32},     {32, 32, 32},
+      {32, 33, 16}, {64, 40, 64},  {24, 70, 8},    {3, 65, 1},      {6, 100, 3},      {256, 17, 256},
+      {2048, 40, 32}, {4, 72, 2},  {128, 1000, 32}, {128, 1024, 32}};
+  int widest = instances & 4 ? 4 : instances & 2 ? 2 : 1;
+  size_t q;
+  (void)widest;
+  (void)calls;
+  (void)passes_seen;
+  (void)blocks_seen;
+  for (q = 0u; q < sizeof shapes / sizeof *shapes; ++q) {
+    size_t in = shapes[q][0], out = shapes[q][1], g = shapes[q][2], n = in * out, groups = n / g, size = 0u, i;
+    double *x, *ref, *got;
+    uint8_t *codes, *exps, *pack;
+    int wide, inst, bad_wide = -1, bad_inst = 0; /* the failing case, for the message */
+    CHECK(bcir_ai_q8_rows_pack_size(in, out, g, &size) == BCIR_AI_OK);
+    CHECK(size == (out + 7u) / 8u * (in / g) * (16u + 8u * g));
+    x = malloc(in * sizeof *x);
+    ref = malloc(out * sizeof *ref);
+    got = malloc(out * sizeof *got);
+    codes = malloc(n);
+    exps = malloc(2u * groups);
+    pack = malloc(size);
+    if (x == NULL || ref == NULL || got == NULL || codes == NULL || exps == NULL || pack == NULL) bad_wide = 2;
+    for (wide = 0; wide < 2 && bad_wide < 0; ++wide) {
+      int sr;
+      lanes_fill(x, in, codes, n, exps, groups, wide);
+      for (i = 0u; i < n; ++i)
+        if (codes[i] == 0x80u) codes[i] = 0x81u; /* the code a pack refuses, as the loader does */
+      if (bcir_ai_q8_rows_pack(codes, n, exps, groups, in, out, g, pack, size) != BCIR_AI_OK) bad_wide = wide;
+      memset(ref, 0xA5, out * sizeof *ref);
+      sr = bcir_ai_q8_rows_dot_f64_instance(1, x, in, codes, n, exps, groups, out, g, ref);
+      if (sr != BCIR_AI_OK) bad_wide = wide;
+      for (inst = 0; inst <= 4 && bad_wide < 0; inst = inst ? inst * 2 : 1) {
+        int failed;
+        if (inst && !(instances & inst)) continue;
+        memset(got, 0x5A, out * sizeof *got);
+        failed = bcir_ai_q8_rows_dot_f64_packed_instance(inst, x, in, pack, size, out, g, got) != sr ||
+                 memcmp(ref, got, out * sizeof *ref) != 0;
+#ifdef BCIR_AI_INSTANCE_PROBE
+        {
+          size_t passes = 99u, blocks = 99u;
+          int ran = inst ? inst : widest, path = bcir_ai_q8_pack_probe(&passes, &blocks);
+          failed = failed || bcir_ai_q8_instance_probe() != ran;
+          if (ran == 1)
+            failed = failed || path != 2 || passes != 0u || blocks != 0u;
+          else
+            failed = failed || path != 1 || passes != out / 32u || blocks != (out % 32u + 7u) / 8u;
+          if (inst > 1) { /* the named vector instances' calls, counted */
+            *calls += 1;
+            *passes_seen += passes;
+            *blocks_seen += blocks;
+          }
+        }
+#endif
+        if (failed) {
+          bad_wide = wide;
+          bad_inst = inst;
+        }
+      }
+    }
+    free(x);
+    free(ref);
+    free(got);
+    free(codes);
+    free(exps);
+    free(pack);
+    if (bad_wide >= 0) {
+      fprintf(stderr, "AI-kernel check failed: HEAD-PACK's %zu x %zu, group %zu, exponent range %d, instance %d\n",
+              in, out, g, bad_wide, bad_inst);
+      return 1;
+    }
+  }
+  return 0;
+}
+/* HEAD-PACK's layout pinned on a small pack (9 rows of 2 coordinates, groups of 2: two blocks, the second short);
+ * a pack of more rows serving fewer; a non-finite total in a pass and in a block zeroing every output; and the
+ * refusals: a pack's shape not a whole number of groups, a short capacity, a code or an exponent the format
+ * refuses, a short pack, a non-finite input, an instance the host does not admit -- each writing nothing. */
+static int q8_pack_test(int instances) {
+  static const uint8_t pinned[64] = {
+      0xFC, 0xFF, 0xFD, 0xFF, 0xFE, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, /* exponents */
+      1,    3,    5,    7,    9,    11,   13,   15,   2,    4,    6,    8,    10,   12,   14,   16,   /* codes */
+      0x04, 0x00, 0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    /* row 8 */
+      17,   0,    0,    0,    0,    0,    0,    0,    18,   0,    0,    0,    0,    0,    0,    0};
+  uint8_t codes[18], exps[18], pack[64], big_codes[24 * 70], big_exps[2 * 24 * 70 / 8];
+  static uint8_t big_pack[9 * 3 * 80];
+  double x[24], ref[72], got[72];
+  size_t size = 0u, i, r;
+  int inst;
+  for (r = 0u; r < 9u; ++r) { /* row r: codes 2r + 1 and 2r + 2, its one group's exponent r - 4 */
+    uint16_t u = (uint16_t)(int16_t)((int)r - 4);
+    codes[2u * r] = (uint8_t)(2u * r + 1u);
+    codes[2u * r + 1u] = (uint8_t)(2u * r + 2u);
+    exps[2u * r] = (uint8_t)u;
+    exps[2u * r + 1u] = (uint8_t)(u >> 8);
+  }
+  CHECK(bcir_ai_q8_rows_pack_size(2u, 9u, 2u, &size) == BCIR_AI_OK && size == sizeof pack);
+  memset(pack, 0x5A, sizeof pack);
+  CHECK(bcir_ai_q8_rows_pack(codes, 18u, exps, 9u, 2u, 9u, 2u, pack, sizeof pack) == BCIR_AI_OK);
+  CHECK(memcmp(pack, pinned, sizeof pack) == 0);
+  x[0] = 0.5;
+  x[1] = -2.0;
+  CHECK(bcir_ai_q8_rows_dot_f64_instance(1, x, 2u, codes, 18u, exps, 9u, 9u, 2u, ref) == BCIR_AI_OK);
+  for (inst = 1; inst <= 4; inst *= 2) {
+    if (!(instances & inst)) continue;
+    memset(got, 0x5A, sizeof got);
+    CHECK(bcir_ai_q8_rows_dot_f64_packed_instance(inst, x, 2u, pack, sizeof pack, 9u, 2u, got) == BCIR_AI_OK);
+    CHECK(memcmp(ref, got, 9u * sizeof *ref) == 0 && lanes_untouched(got + 9, 72u - 9u));
+  }
+  /* a pack of 70 rows serves a call with 33 and one with 5: their first rows' outputs */
+  lanes_fill(x, 24u, big_codes, sizeof big_codes, big_exps, sizeof big_exps / 2u, 1);
+  for (i = 0u; i < sizeof big_codes; ++i)
+    if (big_codes[i] == 0x80u) big_codes[i] = 0x7Fu;
+  CHECK(bcir_ai_q8_rows_pack_size(24u, 70u, 8u, &size) == BCIR_AI_OK && size == sizeof big_pack);
+  CHECK(bcir_ai_q8_rows_pack(big_codes, sizeof big_codes, big_exps, sizeof big_exps / 2u, 24u, 70u, 8u, big_pack,
+                             sizeof big_pack) == BCIR_AI_OK);
+  CHECK(bcir_ai_q8_rows_dot_f64_instance(1, x, 24u, big_codes, sizeof big_codes, big_exps, sizeof big_exps / 2u,
+                                         70u, 8u, ref) == BCIR_AI_OK);
+  for (inst = 1; inst <= 4; inst *= 2) {
+    if (!(instances & inst)) continue;
+    memset(got, 0x5A, sizeof got);
+    CHECK(bcir_ai_q8_rows_dot_f64_packed_instance(inst, x, 24u, big_pack, sizeof big_pack, 33u, 8u, got) ==
+          BCIR_AI_OK);
+    CHECK(memcmp(ref, got, 33u * sizeof *ref) == 0 && lanes_untouched(got + 33, 72u - 33u));
+    memset(got, 0x5A, sizeof got);
+    CHECK(bcir_ai_q8_rows_dot_f64_packed_instance(inst, x, 24u, big_pack, sizeof big_pack, 5u, 8u, got) ==
+          BCIR_AI_OK);
+    CHECK(memcmp(ref, got, 5u * sizeof *ref) == 0 && lanes_untouched(got + 5, 72u - 5u));
+  }
+  /* a total past a double's range -- row 5, in the first pass; row 67, in the last block -- zeroes every output */
+  for (r = 5u; r <= 67u; r += 62u) {
+    memset(big_codes, 1, sizeof big_codes);
+    memset(big_exps, 0, sizeof big_exps);
+    big_codes[r * 24u + 9u] = 127u;
+    big_exps[2u * ((r * 24u + 9u) / 8u)] = (uint8_t)(300 & 0xff);
+    big_exps[2u * ((r * 24u + 9u) / 8u) + 1u] = (uint8_t)(300 >> 8);
+    for (i = 0u; i < 24u; ++i) x[i] = i == 9u ? 1e300 : 0.25;
+    CHECK(bcir_ai_q8_rows_pack(big_codes, sizeof big_codes, big_exps, sizeof big_exps / 2u, 24u, 70u, 8u, big_pack,
+                               sizeof big_pack) == BCIR_AI_OK);
+    for (inst = 1; inst <= 4; inst *= 2) {
+      if (!(instances & inst)) continue;
+      memset(got, 0x5A, sizeof got);
+      CHECK(bcir_ai_q8_rows_dot_f64_packed_instance(inst, x, 24u, big_pack, sizeof big_pack, 70u, 8u, got) ==
+            BCIR_AI_INVALID_NUMBER);
+      for (i = 0u; i < 70u; ++i) CHECK(got[i] == 0.0 && !signbit(got[i]));
+      CHECK(lanes_untouched(got + 70, 2u));
+    }
+  }
+  /* refusals write nothing */
+  size = 0x5A5Au;
+  CHECK(bcir_ai_q8_rows_pack_size(10u, 4u, 4u, &size) == BCIR_AI_INVALID_ARGUMENT && size == 0x5A5Au);
+  CHECK(bcir_ai_q8_rows_pack_size(0u, 4u, 4u, &size) == BCIR_AI_INVALID_ARGUMENT && size == 0x5A5Au);
+  CHECK(bcir_ai_q8_rows_pack_size(8u, 4u, 0u, &size) == BCIR_AI_INVALID_ARGUMENT && size == 0x5A5Au);
+  CHECK(bcir_ai_q8_rows_pack_size(8u, 4u, 4u, NULL) == BCIR_AI_INVALID_ARGUMENT);
+  memset(pack, 0x5A, sizeof pack);
+  CHECK(bcir_ai_q8_rows_pack(codes, 18u, exps, 9u, 2u, 9u, 2u, pack, sizeof pack - 1u) == BCIR_AI_INVALID_ARGUMENT);
+  CHECK(bcir_ai_q8_rows_pack(codes, 17u, exps, 9u, 2u, 9u, 2u, pack, sizeof pack) == BCIR_AI_INVALID_ARGUMENT);
+  CHECK(bcir_ai_q8_rows_pack(codes, 18u, exps, 8u, 2u, 9u, 2u, pack, sizeof pack) == BCIR_AI_INVALID_ARGUMENT);
+  CHECK(bcir_ai_q8_rows_pack(NULL, 18u, exps, 9u, 2u, 9u, 2u, pack, sizeof pack) == BCIR_AI_INVALID_ARGUMENT);
+  CHECK(bcir_ai_q8_rows_pack(codes, 18u, exps, 9u, 2u, 9u, 2u, NULL, sizeof pack) == BCIR_AI_INVALID_ARGUMENT);
+  codes[17] = 0x80u; /* the code the format refuses, in the last row */
+  CHECK(bcir_ai_q8_rows_pack(codes, 18u, exps, 9u, 2u, 9u, 2u, pack, sizeof pack) == BCIR_AI_INVALID_NUMBER);
+  codes[17] = 18u;
+  for (i = 0u; i < 2u; ++i) { /* an exponent past 300, then one below -300, in the last group */
+    uint16_t u = (uint16_t)(int16_t)(i ? -301 : 301);
+    exps[16] = (uint8_t)u;
+    exps[17] = (uint8_t)(u >> 8);
+    CHECK(bcir_ai_q8_rows_pack(codes, 18u, exps, 9u, 2u, 9u, 2u, pack, sizeof pack) == BCIR_AI_INVALID_NUMBER);
+  }
+  for (i = 0u; i < sizeof pack; ++i) CHECK(pack[i] == 0x5Au);
+  x[0] = 0.5;
+  x[1] = -2.0;
+  {
+    /* never an instance, then the vector instances this host does not admit (none on an AVX-512 host) */
+    static const int refused[] = {-1, 3, 5, 6, 7, 8, 16, 2, 4};
+    for (i = 0u; i < sizeof refused / sizeof *refused; ++i) {
+      int bad = refused[i];
+      if ((bad == 2 || bad == 4) && (instances & bad)) continue;
+#ifdef BCIR_AI_INSTANCE_PROBE
+      (void)bcir_ai_q8_instance_probe();
+      (void)bcir_ai_q8_pack_probe(NULL, NULL);
+#endif
+      memset(got, 0x5A, sizeof got);
+      CHECK(bcir_ai_q8_rows_dot_f64_packed_instance(bad, x, 2u, pinned, sizeof pinned, 9u, 2u, got) ==
+            BCIR_AI_INVALID_ARGUMENT);
+      CHECK(lanes_untouched(got, 72u));
+#ifdef BCIR_AI_INSTANCE_PROBE
+      CHECK(bcir_ai_q8_instance_probe() == 0 && bcir_ai_q8_pack_probe(NULL, NULL) == 0);
+#endif
+    }
+  }
+  for (inst = 0; inst <= 4; inst = inst ? inst * 2 : 1) {
+    if (inst && !(instances & inst)) continue;
+    memset(got, 0x5A, sizeof got);
+    CHECK(bcir_ai_q8_rows_dot_f64_packed_instance(inst, x, 2u, pinned, sizeof pinned - 1u, 9u, 2u, got) ==
+          BCIR_AI_INVALID_ARGUMENT);
+    CHECK(bcir_ai_q8_rows_dot_f64_packed_instance(inst, x, 2u, NULL, sizeof pinned, 9u, 2u, got) ==
+          BCIR_AI_INVALID_ARGUMENT);
+    CHECK(bcir_ai_q8_rows_dot_f64_packed_instance(inst, x, 2u, pinned, sizeof pinned, 9u, 2u, NULL) ==
+          BCIR_AI_INVALID_ARGUMENT);
+    CHECK(bcir_ai_q8_rows_dot_f64_packed_instance(inst, x, 2u, pinned, sizeof pinned, 9u, 3u, got) ==
+          BCIR_AI_INVALID_ARGUMENT); /* 2 coordinates in groups of 3: no pack holds that shape */
+    x[1] = NAN;
+    CHECK(bcir_ai_q8_rows_dot_f64_packed_instance(inst, x, 2u, pinned, sizeof pinned, 9u, 2u, got) ==
+          BCIR_AI_INVALID_ARGUMENT);
+    x[1] = -2.0;
+    CHECK(lanes_untouched(got, 72u));
+  }
+  return 0;
+}
+/* DECODE-THREADS: one column range of a matvec on instance `inst`, against the portable loop over the same range
+ * (pref, pst) and, where the whole call succeeded, against its outputs (ref): the status, every byte in the range,
+ * and every byte outside it untouched. 0 where all of that holds. */
+static int columns_case(int inst, const double *x, size_t in, const uint8_t *codes, size_t n, const uint8_t *exps,
+                        size_t groups, size_t out, size_t g, size_t k0, size_t k1, int sm, const double *ref,
+                        const double *pref, int pst, double *got) {
+  size_t k;
+  int st;
+  memset(got, 0x5A, out * sizeof *got);
+  st = bcir_ai_q8_matvec_f64_columns_instance(inst, x, in, codes, n, exps, groups, out, g, k0, k1, got);
+  if (st != pst || (sm == BCIR_AI_OK && st != BCIR_AI_OK)) return 1;
+  if (!lanes_untouched(got, k0) || !lanes_untouched(got + k1, out - k1)) return 1;
+  if (memcmp(got + k0, pref + k0, (k1 - k0) * sizeof *got) != 0) return 1;
+  if (sm == BCIR_AI_OK && memcmp(got + k0, ref + k0, (k1 - k0) * sizeof *got) != 0) return 1;
+  for (k = k0; k < k1; ++k) /* a range with a non-finite output is zeroed; one without holds finite outputs */
+    if (st == BCIR_AI_INVALID_NUMBER ? got[k] != 0.0 || signbit(got[k]) : !isfinite(got[k])) return 1;
+  return 0;
+}
+/* DECODE-THREADS: the matvec over column ranges -- Q8-PAIR's edges' shapes and more, in the four exponent ranges --
+ * on every admitted instance and the widest. A range's outputs are the whole call's, bit for bit, and every other
+ * output is untouched: the whole range, a first and a last column, a stretch on vectors' edges and one off them.
+ * A call split into 2, 3, 4 and 7 parts, on vectors' edges and off them, has the whole call's outputs where it
+ * succeeded, and a part fails exactly where the whole call does. Every buffer is allocated at its exact size, so the
+ * sanitizer build reports a read or write past a matrix's codes, its last group or its outputs. `parts` counts the
+ * parts the named vector instances ran; with the probe, `pairs` those Q8-PAIR's kernels ran (a range starting and
+ * ending on a vector's edge in a shape whose whole call they run), and every vector range ran its kernel's whole-call
+ * instance exactly where it is the whole, [0, out), a range's elsewhere. */
+static int q8_columns_test(int instances, int *parts, int *pairs) {
+  static const size_t shapes[][3] = {
+      {1, 8, 8},      {2, 8, 8},     {3, 16, 8},   {6, 64, 32},   {7, 40, 16},  {5, 24, 64},  {9, 8, 64},
+      {4, 1032, 8},   {3, 4100, 4},  {5, 12, 4},   {4, 64, 48},   {4, 64, 4},   {33, 136, 128}, {2, 4096, 32},
+      {101, 8, 8},    {3, 344, 32},  {3, 20, 8},   {17, 33, 5},   {7, 9, 1},    {128, 344, 32}, {3, 1, 8}};
+  static const size_t splits[] = {2u, 3u, 4u, 7u};
+  size_t q;
+  (void)pairs;
+  for (q = 0u; q < sizeof shapes / sizeof *shapes; ++q) {
+    size_t in = shapes[q][0], out = shapes[q][1], g = shapes[q][2], n = in * out, groups = 1u + (n - 1u) / g;
+    double *x = malloc(in * sizeof *x), *ref = malloc(out * sizeof *ref), *got = malloc(out * sizeof *got);
+    double *pref = malloc(out * sizeof *pref);
+    uint8_t *codes = malloc(n), *exps = malloc(2u * groups);
+    size_t ranges[6][2], nr = 0u, r, s, k0 = 0u, k1 = 0u;
+    int wide, inst = 0, bad = x == NULL || ref == NULL || got == NULL || pref == NULL || codes == NULL || exps == NULL;
+    /* the whole range, the first column, the last, a stretch on vectors' edges and one off them */
+    ranges[nr][0] = 0u, ranges[nr++][1] = out;
+    ranges[nr][0] = 0u, ranges[nr++][1] = 1u;
+    ranges[nr][0] = out - 1u, ranges[nr++][1] = out;
+    if (out >= 24u) ranges[nr][0] = 8u, ranges[nr++][1] = out / 8u * 8u - 8u;
+    if (out >= 5u) ranges[nr][0] = 1u, ranges[nr++][1] = out - 2u;
+    if (out >= 16u) ranges[nr][0] = out / 2u, ranges[nr++][1] = out;
+    for (wide = 0; wide < 4 && !bad; ++wide) {
+      int sm;
+      lanes_fill(x, in, codes, n, exps, groups, wide);
+      memset(ref, 0xA5, out * sizeof *ref);
+      sm = bcir_ai_q8_matvec_f64_instance(1, x, in, codes, n, exps, groups, out, g, ref);
+      bad = sm != BCIR_AI_OK && sm != BCIR_AI_INVALID_NUMBER;
+      for (r = 0u; r < nr && !bad; ++r) {
+        int pst;
+        k0 = ranges[r][0], k1 = ranges[r][1];
+        memset(pref, 0x5A, out * sizeof *pref);
+        pst = bcir_ai_q8_matvec_f64_columns_instance(1, x, in, codes, n, exps, groups, out, g, k0, k1, pref);
+        bad = pst != BCIR_AI_OK && pst != BCIR_AI_INVALID_NUMBER;
+        for (inst = 0; inst <= 4 && !bad; inst = inst ? inst * 2 : 1) {
+          if (inst && !(instances & inst)) continue;
+          bad = columns_case(inst, x, in, codes, n, exps, groups, out, g, k0, k1, sm, ref, pref, pst, got);
+#ifdef BCIR_AI_INSTANCE_PROBE
+          if (!bad && inst != 1 && instances != 1) {
+            int path = bcir_ai_q8_pair_probe();
+            bad = path != (k0 % 8u == 0u && k1 % 8u == 0u ? pair_path(out, g) : 2) ||
+                  bcir_ai_q8_columns_probe() != (k0 == 0u && k1 == out ? 1 : 2);
+          }
+#endif
+        }
+      }
+      for (s = 0u; s < 2u * (sizeof splits / sizeof *splits) && !bad; ++s) {
+        size_t p = splits[s / 2u], chunk = (out + p - 1u) / p;
+        if (s % 2u) chunk = (chunk + 7u) / 8u * 8u; /* the parts on vectors' edges */
+        for (inst = 0; inst <= 4 && !bad; inst = inst ? inst * 2 : 1) {
+          int failed = 0;
+          if (inst && !(instances & inst)) continue;
+          memset(got, 0x5A, out * sizeof *got);
+          for (k0 = 0u; k0 < out && !bad; k0 += chunk) {
+            int st;
+            k1 = k0 + chunk < out ? k0 + chunk : out;
+            st = bcir_ai_q8_matvec_f64_columns_instance(inst, x, in, codes, n, exps, groups, out, g, k0, k1, got);
+            bad = st != BCIR_AI_OK && st != BCIR_AI_INVALID_NUMBER;
+            failed |= st == BCIR_AI_INVALID_NUMBER;
+            if (inst == 2 || inst == 4) ++*parts;
+#ifdef BCIR_AI_INSTANCE_PROBE
+            if (!bad && inst != 1 && instances != 1) {
+              int path = bcir_ai_q8_pair_probe();
+              bad = path != (k0 % 8u == 0u && k1 % 8u == 0u ? pair_path(out, g) : 2) ||
+                    bcir_ai_q8_columns_probe() != (k0 == 0u && k1 == out ? 1 : 2);
+              if (inst == 2 || inst == 4) *pairs += path == 1;
+            }
+#endif
+          }
+          /* the parts fail where the whole call fails; where it succeeds they are its outputs */
+          bad = bad || failed != (sm == BCIR_AI_INVALID_NUMBER) ||
+                (sm == BCIR_AI_OK && memcmp(ref, got, out * sizeof *ref) != 0);
+        }
+      }
+    }
+    free(x);
+    free(ref);
+    free(got);
+    free(pref);
+    free(codes);
+    free(exps);
+    if (bad) {
+      fprintf(stderr, "AI-kernel check failed: DECODE-THREADS' %zu x %zu, group %zu, columns %zu to %zu, instance %d\n",
+              in, out, g, k0, k1, inst);
+      return 1;
+    }
+  }
+  /* Q8-BOUND in a range: every exponent in [-300, 300] but that of one group of the last row, the last group a range
+   * holds there, whose subnormal scale (2^-1060) makes x * s inexact; the other rows' codes in its columns are 0, so
+   * those outputs are the last row's terms alone. A range's check reads every row's groups in it, to its last, so the
+   * vector instances take the terms as before, every byte the portable loop's; a range clear of that group proves
+   * every x * s exact. */
+  {
+    enum { IN = 5, OUT = 64, G = 8, N = IN * OUT, GROUPS = N / G };
+    static const size_t edges[][3] = {{8u, 24u, 2u}, {16u, 24u, 2u}, {0u, OUT, 2u}, {32u, 64u, 1u}};
+    double x[IN], ref[OUT], got[OUT];
+    uint8_t codes[N], exps[2 * GROUPS];
+    size_t i, e;
+    int inst;
+    lanes_fill(x, IN, codes, N, exps, GROUPS, 0);
+    for (i = 0u; i < IN; ++i) x[i] = 1.37 + (double)i;
+    for (i = 0u; i < 4u * OUT; ++i)
+      if (i % OUT >= 16u && i % OUT < 24u) codes[i] = 0u;
+    for (i = 4u * OUT + 16u; i < 4u * OUT + 24u; ++i) codes[i] = (uint8_t)(9u + i % 7u);
+    {
+      uint16_t u = (uint16_t)(int16_t)-1060;
+      exps[2u * ((4u * OUT + 16u) / G)] = (uint8_t)u;
+      exps[2u * ((4u * OUT + 16u) / G) + 1u] = (uint8_t)(u >> 8);
+    }
+    CHECK(bcir_ai_q8_matvec_f64_instance(1, x, IN, codes, N, exps, GROUPS, OUT, G, ref) == BCIR_AI_OK);
+    for (e = 0u; e < sizeof edges / sizeof *edges; ++e) {
+      for (inst = 0; inst <= 4; inst = inst ? inst * 2 : 1) {
+        if (inst && !(instances & inst)) continue;
+        memset(got, 0x5A, sizeof got);
+        CHECK(bcir_ai_q8_matvec_f64_columns_instance(inst, x, IN, codes, N, exps, GROUPS, OUT, G, edges[e][0],
+                                                     edges[e][1], got) == BCIR_AI_OK);
+        CHECK(memcmp(got + edges[e][0], ref + edges[e][0], (edges[e][1] - edges[e][0]) * sizeof *got) == 0);
+#ifdef BCIR_AI_INSTANCE_PROBE
+        if (inst != 1 && instances != 1) CHECK(bcir_ai_q8_bound_probe() == (int)edges[e][2]);
+#endif
+      }
+    }
+  }
+  /* refusals write nothing: an empty range, one past the outputs, no output, short codes, a non-finite input, an
+   * instance the host does not admit */
+  {
+    enum { IN = 3, OUT = 16, G = 8, N = IN * OUT, GROUPS = N / G };
+    static const int refused[] = {-1, 3, 5, 6, 7, 8, 16, 2, 4};
+    double x[IN], got[OUT];
+    uint8_t codes[N], exps[2 * GROUPS];
+    size_t i;
+    int inst;
+    lanes_fill(x, IN, codes, N, exps, GROUPS, 0);
+    for (inst = 0; inst <= 4; inst = inst ? inst * 2 : 1) {
+      if (inst && !(instances & inst)) continue;
+      memset(got, 0x5A, sizeof got);
+      CHECK(bcir_ai_q8_matvec_f64_columns_instance(inst, x, IN, codes, N, exps, GROUPS, OUT, G, 5u, 5u, got) ==
+            BCIR_AI_INVALID_ARGUMENT);
+      CHECK(bcir_ai_q8_matvec_f64_columns_instance(inst, x, IN, codes, N, exps, GROUPS, OUT, G, 6u, 5u, got) ==
+            BCIR_AI_INVALID_ARGUMENT);
+      CHECK(bcir_ai_q8_matvec_f64_columns_instance(inst, x, IN, codes, N, exps, GROUPS, OUT, G, 8u, OUT + 1u, got) ==
+            BCIR_AI_INVALID_ARGUMENT);
+      CHECK(bcir_ai_q8_matvec_f64_columns_instance(inst, x, IN, codes, N, exps, GROUPS, OUT, G, 0u, OUT, NULL) ==
+            BCIR_AI_INVALID_ARGUMENT);
+      CHECK(bcir_ai_q8_matvec_f64_columns_instance(inst, x, IN, codes, N - 1u, exps, GROUPS, OUT, G, 0u, 8u, got) ==
+            BCIR_AI_INVALID_ARGUMENT);
+      x[1] = NAN;
+      CHECK(bcir_ai_q8_matvec_f64_columns_instance(inst, x, IN, codes, N, exps, GROUPS, OUT, G, 0u, 8u, got) ==
+            BCIR_AI_INVALID_ARGUMENT);
+      x[1] = 0.5;
+      CHECK(lanes_untouched(got, OUT));
+    }
+    for (i = 0u; i < sizeof refused / sizeof *refused; ++i) {
+      int no = refused[i];
+      if ((no == 2 || no == 4) && (instances & no)) continue;
+      memset(got, 0x5A, sizeof got);
+      CHECK(bcir_ai_q8_matvec_f64_columns_instance(no, x, IN, codes, N, exps, GROUPS, OUT, G, 0u, 8u, got) ==
+            BCIR_AI_INVALID_ARGUMENT);
+      CHECK(lanes_untouched(got, OUT));
+    }
+    /* the widest instance's entry is the _instance entry at 0 */
+    {
+      double alone[OUT];
+      memset(got, 0x5A, sizeof got);
+      memset(alone, 0x5A, sizeof alone);
+      CHECK(bcir_ai_q8_matvec_f64_columns(x, IN, codes, N, exps, GROUPS, OUT, G, 3u, 11u, got) == BCIR_AI_OK);
+      CHECK(bcir_ai_q8_matvec_f64_columns_instance(0, x, IN, codes, N, exps, GROUPS, OUT, G, 3u, 11u, alone) ==
+            BCIR_AI_OK);
+      CHECK(memcmp(got, alone, sizeof got) == 0);
+    }
+  }
+  return 0;
+}
+static int q8_lanes_test(void) {
+  static const size_t shapes[][3] = {
+      {128, 128, 32}, {128, 64, 32}, {128, 344, 32}, {344, 128, 32}, {128, 1024, 32}, {64, 72, 16},
+      {3, 200, 8},    {5, 8, 8},     {2, 136, 64},   {17, 33, 5},    {100, 37, 64},   {64, 64, 48},
+      {9, 40, 4},     {1, 1, 32},    {3, 5, 7},      {257, 129, 32}, {7, 9, 1},       {33, 17, 7},
+      {16, 8, 16},    {24, 40, 8},   {200, 31, 48},  {128, 1023, 32}};
+  double x[400], ref[1100], got[1100];
+  static uint8_t codes[400 * 1100], exps[2 * 400 * 1100];
+  int instances = bcir_ai_q8_instances(), wide, inst, checked = 0;
+  int pairs = 0, runs = 0; /* Q8-PAIR's kernels, counted where the probe is built */
+  int packed_calls = 0;    /* HEAD-PACK's vector calls, their passes and blocks, counted where the probe is built */
+  size_t packed_passes = 0u, packed_blocks = 0u;
+  int column_parts = 0, column_pairs = 0; /* DECODE-THREADS' parts on a vector instance, and Q8-PAIR's among them */
+  size_t q, i;
+#ifdef BCIR_AI_INSTANCE_PROBE
+  int hoisted = 0, again = 0; /* Q8-BOUND's paths */
+#endif
+  CHECK((instances & 1) && !(instances & ~7));
+  for (wide = 0; wide < 4; ++wide) {
+    for (q = 0u; q < sizeof shapes / sizeof *shapes; ++q) {
+      size_t in = shapes[q][0], out = shapes[q][1], g = shapes[q][2], n = in * out;
+      size_t groups = 1u + (n - 1u) / g;
+      int sm, sr;
+      lanes_fill(x, in, codes, n, exps, groups, wide);
+      /* the matvec: in x out codes; the row dots: out rows of in coordinates (the same bytes) */
+      memset(ref, 0xA5, sizeof ref);
+#ifdef BCIR_AI_INSTANCE_PROBE
+      (void)bcir_ai_q8_bound_probe();
+#endif
+      sm = bcir_ai_q8_matvec_f64_instance(1, x, in, codes, n, exps, groups, out, g, ref);
+      CHECK(sm == BCIR_AI_OK || sm == BCIR_AI_INVALID_NUMBER);
+#ifdef BCIR_AI_INSTANCE_PROBE
+      CHECK(bcir_ai_q8_bound_probe() == 0); /* the portable loops form no x * s */
+#endif
+      for (inst = 2; inst <= 4; inst *= 2) {
+        if (!(instances & inst)) continue;
+        memset(got, 0x5A, sizeof got);
+        CHECK(bcir_ai_q8_matvec_f64_instance(inst, x, in, codes, n, exps, groups, out, g, got) == sm);
+        CHECK(memcmp(ref, got, out * sizeof *ref) == 0);
+#ifdef BCIR_AI_INSTANCE_PROBE
+        {
+          /* Q8-BOUND: the format's exponents and these inputs prove every x * s exact; the exponents past a
+           * normal double's do not */
+          int path = bcir_ai_q8_bound_probe();
+          CHECK(path == (wide < 2 ? 1 : 2));
+          hoisted += path == 1;
+          again += path == 2;
+          /* Q8-PAIR: two rows a pass where a vector's columns lie in one group, the runs elsewhere */
+          path = bcir_ai_q8_pair_probe();
+          CHECK(path == pair_path(out, g));
+          pairs += path == 1;
+          runs += path == 2;
+        }
+#endif
+        ++checked;
+      }
+      memset(ref, 0xA5, sizeof ref);
+      sr = bcir_ai_q8_rows_dot_f64_instance(1, x, in, codes, n, exps, groups, out, g, ref);
+      CHECK(sr == BCIR_AI_OK || sr == BCIR_AI_INVALID_NUMBER);
+      for (inst = 2; inst <= 4; inst *= 2) {
+        if (!(instances & inst)) continue;
+        memset(got, 0x5A, sizeof got);
+        CHECK(bcir_ai_q8_rows_dot_f64_instance(inst, x, in, codes, n, exps, groups, out, g, got) == sr);
+        CHECK(memcmp(ref, got, out * sizeof *ref) == 0);
+        ++checked;
+      }
+      CHECK(bcir_ai_q8_matvec_f64_prevalidated(x, in, codes, n, exps, groups, out, g, got) == sm);
+#ifdef BCIR_AI_INSTANCE_PROBE
+      /* the prevalidated entries run the widest instance the host admits */
+      CHECK(bcir_ai_q8_instance_probe() == (instances & 4 ? 4 : instances & 2 ? 2 : 1));
+#endif
+      CHECK(bcir_ai_q8_rows_dot_f64_prevalidated(x, in, codes, n, exps, groups, out, g, got) == sr);
+#ifdef BCIR_AI_INSTANCE_PROBE
+      CHECK(bcir_ai_q8_instance_probe() == (instances & 4 ? 4 : instances & 2 ? 2 : 1));
+      for (inst = 1; inst <= 4; inst *= 2) {
+        if (!(instances & inst)) continue;
+        CHECK(bcir_ai_q8_matvec_f64_instance(inst, x, in, codes, n, exps, groups, out, g, got) == sm);
+        CHECK(bcir_ai_q8_instance_probe() == inst);
+        CHECK(bcir_ai_q8_rows_dot_f64_instance(inst, x, in, codes, n, exps, groups, out, g, got) == sr);
+        CHECK(bcir_ai_q8_instance_probe() == inst);
+      }
+#endif
+    }
+  }
+  /* one output past a double's range, in the last block's last lane: every output zeroed */
+  {
+    size_t in = 3u, out = 72u, g = 8u, n = in * out, groups = n / g;
+    for (i = 0u; i < in; ++i) x[i] = 0.5;
+    memset(codes, 1, n);
+    memset(exps, 0, 2u * groups);
+    codes[2u * out + out - 1u] = 127;
+    exps[2u * ((2u * out + out - 1u) / g)] = (uint8_t)(1023 & 0xff);
+    exps[2u * ((2u * out + out - 1u) / g) + 1u] = (uint8_t)(1023 >> 8);
+    x[2] = 1e300;
+    for (inst = 1; inst <= 4; inst *= 2) {
+      if (!(instances & inst)) continue;
+      memset(got, 0x5A, sizeof got);
+      CHECK(bcir_ai_q8_matvec_f64_instance(inst, x, in, codes, n, exps, groups, out, g, got) ==
+            BCIR_AI_INVALID_NUMBER);
+      for (i = 0u; i < out; ++i) CHECK(got[i] == 0.0 && !signbit(got[i]));
+      /* as row dots: row 71 of 3 coordinates holds the code, its last group the scale */
+      memset(got, 0x5A, sizeof got);
+      CHECK(bcir_ai_q8_rows_dot_f64_instance(inst, x, in, codes, n, exps, groups, out, g, got) ==
+            BCIR_AI_INVALID_NUMBER);
+      for (i = 0u; i < out; ++i) CHECK(got[i] == 0.0 && !signbit(got[i]));
+    }
+  }
+  /* refusals write nothing: instances the host does not admit, and a non-finite input */
+  {
+    /* never an instance, then the vector instances this host does not admit (none on an AVX-512 host) */
+    static const int refused[] = {-1, 3, 5, 6, 7, 8, 16, 2, 4};
+    size_t in = 4u, out = 16u, g = 8u, n = in * out, groups = n / g, r;
+    lanes_fill(x, in, codes, n, exps, groups, 0);
+    for (r = 0u; r < sizeof refused / sizeof *refused; ++r) {
+      int bad = refused[r];
+      if ((bad == 2 || bad == 4) && (instances & bad)) continue;
+#ifdef BCIR_AI_INSTANCE_PROBE
+      (void)bcir_ai_q8_instance_probe();  /* clear the probe: a refusal must leave it unset */
+#endif
+      memset(got, 0x5A, sizeof got);
+      CHECK(bcir_ai_q8_matvec_f64_instance(bad, x, in, codes, n, exps, groups, out, g, got) ==
+            BCIR_AI_INVALID_ARGUMENT);
+      CHECK(bcir_ai_q8_rows_dot_f64_instance(bad, x, in, codes, n, exps, groups, out, g, got) ==
+            BCIR_AI_INVALID_ARGUMENT);
+      CHECK(lanes_untouched(got, sizeof got / sizeof *got));
+#ifdef BCIR_AI_INSTANCE_PROBE
+      CHECK(bcir_ai_q8_instance_probe() == 0);  /* a refusal runs no instance */
+#endif
+    }
+    x[3] = NAN;
+    for (inst = 0; inst <= 4; inst = inst ? inst * 2 : 1) {
+      if (inst && !(instances & inst)) continue;
+      memset(got, 0x5A, sizeof got);
+      CHECK(bcir_ai_q8_matvec_f64_instance(inst, x, in, codes, n, exps, groups, out, g, got) ==
+            BCIR_AI_INVALID_ARGUMENT);
+      CHECK(bcir_ai_q8_rows_dot_f64_instance(inst, x, in, codes, n, exps, groups, out, g, got) ==
+            BCIR_AI_INVALID_ARGUMENT);
+      CHECK(lanes_untouched(got, sizeof got / sizeof *got));
+    }
+  }
+  printf("Q8-LANES: instances %d, %d vector comparisons equal to the portable loops\n", instances, checked);
+  CHECK(checked > 0 || instances == 1);
+#ifdef BCIR_AI_INSTANCE_PROBE
+  if (q8_bound_edges(instances, &hoisted, &again)) return 1;
+  printf("Q8-BOUND: %d matvecs hoisted, %d computed again\n", hoisted, again);
+  CHECK(instances == 1 ? hoisted == 0 && again == 0 : hoisted > 0 && again > 0);
+#endif
+  if (q8_pair_edges(instances, &pairs, &runs)) return 1;
+#ifdef BCIR_AI_INSTANCE_PROBE
+  printf("Q8-PAIR: %d matvecs two rows a pass, %d in runs\n", pairs, runs);
+  CHECK(instances == 1 ? pairs == 0 && runs == 0 : pairs > 0 && runs > 0);
+#endif
+  if (q8_pack_shapes(instances, &packed_calls, &packed_passes, &packed_blocks)) return 1;
+  if (q8_pack_test(instances)) return 1;
+#ifdef BCIR_AI_INSTANCE_PROBE
+  printf("HEAD-PACK: %d packed row dots, %zu passes of 32 rows, %zu blocks\n", packed_calls, packed_passes,
+         packed_blocks);
+  CHECK(instances == 1 ? packed_calls == 0 : packed_calls > 0 && packed_passes > 0 && packed_blocks > 0);
+#endif
+  if (q8_columns_test(instances, &column_parts, &column_pairs)) return 1;
+  printf("DECODE-THREADS: %d column parts on a named vector instance equal to the whole calls' columns\n",
+         column_parts);
+  CHECK(instances == 1 ? column_parts == 0 : column_parts > 0);
+#ifdef BCIR_AI_INSTANCE_PROBE
+  printf("DECODE-THREADS: %d of them two rows a pass\n", column_pairs);
+  CHECK(instances == 1 ? column_pairs == 0 : column_pairs > 0 && column_pairs < column_parts);
+#endif
+  return 0;
+}
+
 static int q15_test(void) {
   const int16_t query[2] = {0, 0};
   const int16_t patterns[6] = {1, 0, -1, 0, 5, 5};
@@ -157,6 +913,7 @@ int main(void) {
   CHECK(bcir_ai_abi_version() == BCIR_AI_ABI_VERSION);
   CHECK(quantization_test() == 0);
   CHECK(q8_matrix_test() == 0);
+  CHECK(q8_lanes_test() == 0);
   CHECK(q15_test() == 0);
   CHECK(q4_group_test() == 0);
   puts("native AI kernels: all gates passed");

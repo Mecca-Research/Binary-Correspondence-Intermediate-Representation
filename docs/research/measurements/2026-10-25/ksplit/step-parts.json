@@ -1,0 +1,2837 @@
+{
+ "what": "../../2026-10-24/gp-lanes/probe_jobs.py's copy of each tree's tensor unit and trainer (the TSC around each pool job and each worker's tasks; every value the units compute theirs) under ../../2026-10-24/gp-lanes/probe_step.py: the GEO step (kblock+exp+reduce, four threads, 12 logged steps) at T1024 and T2048, each pool job named by its launch's claim (native_pack.op_name of the tree's own launch plan), per claim the jobs a step, the median wall time a job and the time a step -- a split call's fold job counted with its claim, so a claim whose jobs split runs twice the jobs; summary: those claims (the GEMM groups and pairs with a weight adjoint: every one splits at these contexts), the GEMM claims in all, and the pool's jobs a step in all, before and after",
+ "summary": [
+  {
+   "T": 1024,
+   "split_claims": {
+    "train.gemm.chain.nn": {
+     "jobs_a_step": [
+      6.0,
+      12.0
+     ],
+     "before_us_a_step": 13746.005478196752,
+     "after_us_a_step": 11441.981586835336
+    },
+    "train.gemm.pair.nn": {
+     "jobs_a_step": [
+      7.0,
+      14.0
+     ],
+     "before_us_a_step": 7536.234343037147,
+     "after_us_a_step": 6463.821475654413
+    }
+   },
+   "gemm_us_a_step": {
+    "before": 31504.243632957474,
+    "after": 27840.230162684304
+   },
+   "pool_jobs_us_a_step": {
+    "A": 85135.3458809767,
+    "B": 79396.06815580543
+   }
+  },
+  {
+   "T": 2048,
+   "split_claims": {
+    "train.gemm.chain.nn": {
+     "jobs_a_step": [
+      6.0,
+      12.0
+     ],
+     "before_us_a_step": 29241.856985079285,
+     "after_us_a_step": 23552.908340190625
+    },
+    "train.gemm.pair.nn": {
+     "jobs_a_step": [
+      7.0,
+      14.0
+     ],
+     "before_us_a_step": 16757.52569242113,
+     "after_us_a_step": 13382.691174936046
+    }
+   },
+   "gemm_us_a_step": {
+    "before": 66879.86656767555,
+    "after": 57454.4581666127
+   },
+   "pool_jobs_us_a_step": {
+    "A": 255544.8972239998,
+    "B": 235215.1899158616
+   }
+  }
+ ],
+ "runs": {
+  "1024": {
+   "A": {
+    "T": 1024,
+    "contract": "kblock+exp+reduce",
+    "threads": 4,
+    "rounds": 12,
+    "rows": [
+     {
+      "claim": "train.attention.vjp",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 8417.731553276692,
+      "busy_share_median": 0.9584516844366865,
+      "worker_enter_us_median": 0.8521741583213482,
+      "first_leave_us_median": 7907.324449846525,
+      "last_leave_us_median": 8407.987637428661,
+      "tasks_median": 16.0,
+      "wall_us_a_step": 26748.120887210145,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 8387.601592913685,
+        "busy_us_mean": 8379.063619441742,
+        "tasks_mean": 3.9444444444444446
+       },
+       {
+        "leave_us_mean": 8235.915776307706,
+        "busy_us_mean": 8226.802150496162,
+        "tasks_mean": 4.166666666666667
+       },
+       {
+        "leave_us_mean": 8264.460905296683,
+        "busy_us_mean": 8257.60783569134,
+        "tasks_mean": 3.861111111111111
+       },
+       {
+        "leave_us_mean": 8474.04156948418,
+        "busy_us_mean": 8465.153233592551,
+        "tasks_mean": 4.027777777777778
+       }
+      ],
+      "clock_ms_a_step_median": 25.2813895
+     },
+     {
+      "claim": "train.attention",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 5410.131122393733,
+      "busy_share_median": 0.9659838085279293,
+      "worker_enter_us_median": 0.5078262331221095,
+      "first_leave_us_median": 5070.317981108418,
+      "last_leave_us_median": 5373.965459810402,
+      "tasks_median": 16.0,
+      "wall_us_a_step": 16812.190128840324,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 5267.823424429048,
+        "busy_us_mean": 5265.184051688691,
+        "tasks_mean": 4
+       },
+       {
+        "leave_us_mean": 5245.236292324019,
+        "busy_us_mean": 5242.068078851738,
+        "tasks_mean": 4.166666666666667
+       },
+       {
+        "leave_us_mean": 5283.995047441149,
+        "busy_us_mean": 5281.539322096646,
+        "tasks_mean": 3.9444444444444446
+       },
+       {
+        "leave_us_mean": 5216.732685086124,
+        "busy_us_mean": 5213.673143142706,
+        "tasks_mean": 3.888888888888889
+       }
+      ],
+      "clock_ms_a_step_median": 16.381506
+     },
+     {
+      "claim": "train.gemm.chain.nn",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 2371.3445955780817,
+      "busy_share_median": 0.9815106995801048,
+      "worker_enter_us_median": 0.6213045266536769,
+      "first_leave_us_median": 2264.8089127404305,
+      "last_leave_us_median": 2370.859812829853,
+      "tasks_median": 42.5,
+      "wall_us_a_step": 13746.005478196752,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 2229.2719942994213,
+        "busy_us_mean": 2225.2554714042312,
+        "tasks_mean": 10.36111111111111
+       },
+       {
+        "leave_us_mean": 2234.031005331024,
+        "busy_us_mean": 2229.8298688561276,
+        "tasks_mean": 10.805555555555555
+       },
+       {
+        "leave_us_mean": 2243.9832787269484,
+        "busy_us_mean": 2239.54906247482,
+        "tasks_mean": 10.708333333333334
+       },
+       {
+        "leave_us_mean": 2238.9130840308994,
+        "busy_us_mean": 2233.5367660583347,
+        "tasks_mean": 10.625
+       }
+      ],
+      "clock_ms_a_step_median": 13.527825
+     },
+     {
+      "claim": "train.gemm.pair.nn",
+      "jobs_a_step": 7.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 1148.0007652070644,
+      "busy_share_median": 0.9765672291255447,
+      "worker_enter_us_median": 0.6113045237754161,
+      "first_leave_us_median": 1103.9816221024284,
+      "last_leave_us_median": 1147.6694607638801,
+      "tasks_median": 38.0,
+      "wall_us_a_step": 7536.234343037147,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 1056.596318608634,
+        "busy_us_mean": 1053.847114918791,
+        "tasks_mean": 7.916666666666667
+       },
+       {
+        "leave_us_mean": 1052.3009447015063,
+        "busy_us_mean": 1048.9701052334874,
+        "tasks_mean": 10.345238095238095
+       },
+       {
+        "leave_us_mean": 1052.6439468706246,
+        "busy_us_mean": 1049.479732709364,
+        "tasks_mean": 8.738095238095237
+       },
+       {
+        "leave_us_mean": 1049.9243912224415,
+        "busy_us_mean": 1045.829224412276,
+        "tasks_mean": 10.142857142857142
+       }
+      ],
+      "clock_ms_a_step_median": 7.4029335
+     },
+     {
+      "claim": "train.gemm.rest.nt",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 1181.8729488694025,
+      "busy_share_median": 0.9773783112411295,
+      "worker_enter_us_median": 0.7247828173069835,
+      "first_leave_us_median": 1144.685981644288,
+      "last_leave_us_median": 1181.3833835111018,
+      "tasks_median": 80.0,
+      "wall_us_a_step": 6722.18222467382,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 1079.940685231131,
+        "busy_us_mean": 1075.2949954881838,
+        "tasks_mean": 20.069444444444443
+       },
+       {
+        "leave_us_mean": 1098.6223572748686,
+        "busy_us_mean": 1093.6220297486877,
+        "tasks_mean": 20.680555555555557
+       },
+       {
+        "leave_us_mean": 1081.2206131357595,
+        "busy_us_mean": 1076.828365494745,
+        "tasks_mean": 19.72222222222222
+       },
+       {
+        "leave_us_mean": 1086.259274006307,
+        "busy_us_mean": 1081.113318418887,
+        "tasks_mean": 19.52777777777778
+       }
+      ],
+      "clock_ms_a_step_median": 6.633286
+     },
+     {
+      "claim": "train.gemm.alone.nt",
+      "jobs_a_step": 7.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 555.7958121463923,
+      "busy_share_median": 0.9362259991160771,
+      "worker_enter_us_median": 2.026087539682389,
+      "first_leave_us_median": 510.4762338848486,
+      "last_leave_us_median": 555.5497251190404,
+      "tasks_median": 32.0,
+      "wall_us_a_step": 3499.8215870497547,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 477.7598994164775,
+        "busy_us_mean": 466.08851924555677,
+        "tasks_mean": 7.9523809523809526
+       },
+       {
+        "leave_us_mean": 480.5425606728862,
+        "busy_us_mean": 467.1125361034424,
+        "tasks_mean": 8.19047619047619
+       },
+       {
+        "leave_us_mean": 472.7659538797113,
+        "busy_us_mean": 456.9746242827964,
+        "tasks_mean": 7.785714285714286
+       },
+       {
+        "leave_us_mean": 478.5116905231317,
+        "busy_us_mean": 465.171748795351,
+        "tasks_mean": 8.071428571428571
+       }
+      ],
+      "clock_ms_a_step_median": 3.423302
+     },
+     {
+      "claim": "train.rms.vjp.add.first",
+      "jobs_a_step": 12.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 225.83876065443857,
+      "busy_share_median": 0.8971845287464573,
+      "worker_enter_us_median": 1.4565221583553656,
+      "first_leave_us_median": 197.93397001401894,
+      "last_leave_us_median": 223.87180356655807,
+      "tasks_median": 132.0,
+      "wall_us_a_step": 2852.727850074722,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 218.61211002369606,
+        "busy_us_mean": 204.22808414446916,
+        "tasks_mean": 33.71527777777778
+       },
+       {
+        "leave_us_mean": 225.1159162434866,
+        "busy_us_mean": 209.73798307335642,
+        "tasks_mean": 31.51388888888889
+       },
+       {
+        "leave_us_mean": 217.23919296186818,
+        "busy_us_mean": 202.60578295289102,
+        "tasks_mean": 33.833333333333336
+       },
+       {
+        "leave_us_mean": 227.7736404384004,
+        "busy_us_mean": 213.0420601113122,
+        "tasks_mean": 32.9375
+       }
+      ],
+      "clock_ms_a_step_median": 2.7894665
+     },
+     {
+      "claim": "train.loss",
+      "jobs_a_step": 1.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 1651.5891710224605,
+      "busy_share_median": 0.988954334904973,
+      "worker_enter_us_median": 0.5078262331221095,
+      "first_leave_us_median": 1632.0304697407842,
+      "last_leave_us_median": 1651.1178665389807,
+      "tasks_median": 256.0,
+      "wall_us_a_step": 1704.4313601448594,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 1690.539182233286,
+        "busy_us_mean": 1681.5103390548402,
+        "tasks_mean": 62.333333333333336
+       },
+       {
+        "leave_us_mean": 1696.9002710206944,
+        "busy_us_mean": 1685.9242533687577,
+        "tasks_mean": 67.41666666666667
+       },
+       {
+        "leave_us_mean": 1693.0472264334273,
+        "busy_us_mean": 1683.3743975623793,
+        "tasks_mean": 62.666666666666664
+       },
+       {
+        "leave_us_mean": 1695.9182417525337,
+        "busy_us_mean": 1685.4538184507458,
+        "tasks_mean": 63.583333333333336
+       }
+      ],
+      "clock_ms_a_step_median": 1.6560045
+     },
+     {
+      "claim": "train.swiglu.vjp",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 384.9014151324566,
+      "busy_share_median": 0.951346534981196,
+      "worker_enter_us_median": 1.6395656893009205,
+      "first_leave_us_median": 376.4144561679501,
+      "last_leave_us_median": 384.4022845540112,
+      "tasks_median": 128.0,
+      "wall_us_a_step": 1277.3858749112296,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 419.8514493465741,
+        "busy_us_mean": 400.5248978901705,
+        "tasks_mean": 31.72222222222222
+       },
+       {
+        "leave_us_mean": 421.37852708079276,
+        "busy_us_mean": 395.71376123969986,
+        "tasks_mean": 32.611111111111114
+       },
+       {
+        "leave_us_mean": 420.6724157664445,
+        "busy_us_mean": 401.0446081846842,
+        "tasks_mean": 32.44444444444444
+       },
+       {
+        "leave_us_mean": 421.16519368605657,
+        "busy_us_mean": 398.1675300619004,
+        "tasks_mean": 31.22222222222222
+       }
+      ],
+      "clock_ms_a_step_median": 1.2439565
+     },
+     {
+      "claim": "train.rms",
+      "jobs_a_step": 7.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 105.0100302246158,
+      "busy_share_median": 0.8463660533422872,
+      "worker_enter_us_median": 0.5943479971557566,
+      "first_leave_us_median": 103.4495949928733,
+      "last_leave_us_median": 104.86829105338481,
+      "tasks_median": 256.0,
+      "wall_us_a_step": 915.6677273210853,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 129.1573663673933,
+        "busy_us_mean": 112.44833464298586,
+        "tasks_mean": 65.3452380952381
+       },
+       {
+        "leave_us_mean": 128.68656913043634,
+        "busy_us_mean": 110.67111881054598,
+        "tasks_mean": 62.154761904761905
+       },
+       {
+        "leave_us_mean": 128.37687960030587,
+        "busy_us_mean": 111.62889341334055,
+        "tasks_mean": 64.88095238095238
+       },
+       {
+        "leave_us_mean": 128.40494379057807,
+        "busy_us_mean": 111.51904866122747,
+        "tasks_mean": 63.61904761904762
+       }
+      ],
+      "clock_ms_a_step_median": 0.9079485
+     },
+     {
+      "claim": "train.silu_mul",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 278.7457324041792,
+      "busy_share_median": 0.9648344653542764,
+      "worker_enter_us_median": 1.4482612864124547,
+      "first_leave_us_median": 274.7222529852477,
+      "last_leave_us_median": 278.2652974832888,
+      "tasks_median": 128.0,
+      "wall_us_a_step": 862.7315526643886,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 284.6867969161043,
+        "busy_us_mean": 278.13338923276183,
+        "tasks_mean": 31.25
+       },
+       {
+        "leave_us_mean": 283.71706233747256,
+        "busy_us_mean": 273.82147977912183,
+        "tasks_mean": 31.77777777777778
+       },
+       {
+        "leave_us_mean": 283.8583184167771,
+        "busy_us_mean": 275.89491032759986,
+        "tasks_mean": 31.97222222222222
+       },
+       {
+        "leave_us_mean": 284.0283909294965,
+        "busy_us_mean": 275.6733160609207,
+        "tasks_mean": 33
+       }
+      ],
+      "clock_ms_a_step_median": 0.847209
+     },
+     {
+      "claim": "train.update",
+      "jobs_a_step": 2.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 261.80964057301003,
+      "busy_share_median": 0.9003371789775347,
+      "worker_enter_us_median": 0.3891305467844932,
+      "first_leave_us_median": 222.64006408159665,
+      "last_leave_us_median": 261.6835535801972,
+      "tasks_median": 133.0,
+      "wall_us_a_step": 549.3459552174921,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 267.26761315844914,
+        "busy_us_mean": 259.916306694726,
+        "tasks_mean": 36.291666666666664
+       },
+       {
+        "leave_us_mean": 240.3171706188027,
+        "busy_us_mean": 232.75162496298114,
+        "tasks_mean": 32.833333333333336
+       },
+       {
+        "leave_us_mean": 232.15147986270756,
+        "busy_us_mean": 225.08781840931238,
+        "tasks_mean": 32.791666666666664
+       },
+       {
+        "leave_us_mean": 235.03441547510005,
+        "busy_us_mean": 227.02194940078815,
+        "tasks_mean": 31.083333333333332
+       }
+      ],
+      "clock_ms_a_step_median": 0.541115
+     },
+     {
+      "claim": "train.rms.vjp.first",
+      "jobs_a_step": 2.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 184.19222692835336,
+      "busy_share_median": 0.8836346881900687,
+      "worker_enter_us_median": 1.6039135051262519,
+      "first_leave_us_median": 164.80787352294573,
+      "last_leave_us_median": 182.84831349806188,
+      "tasks_median": 132.0,
+      "wall_us_a_step": 373.27887555530356,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 172.1879481108911,
+        "busy_us_mean": 157.54732795491114,
+        "tasks_mean": 32.916666666666664
+       },
+       {
+        "leave_us_mean": 183.6125890803591,
+        "busy_us_mean": 171.6659552070248,
+        "tasks_mean": 31.416666666666668
+       },
+       {
+        "leave_us_mean": 172.3104481461498,
+        "busy_us_mean": 159.62602420538786,
+        "tasks_mean": 34.625
+       },
+       {
+        "leave_us_mean": 177.095558219081,
+        "busy_us_mean": 162.3495032501455,
+        "tasks_mean": 33.041666666666664
+       }
+      ],
+      "clock_ms_a_step_median": 0.3765205
+     },
+     {
+      "claim": "train.add",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 56.329581430508796,
+      "busy_share_median": 0.9071844653110257,
+      "worker_enter_us_median": 0.6078262619047168,
+      "first_leave_us_median": 53.2043631396854,
+      "last_leave_us_median": 55.866972601705776,
+      "tasks_median": 64.0,
+      "wall_us_a_step": 370.017642732578,
+      "idle_workers_mean": 0.013888888888888888,
+      "per_worker": [
+       {
+        "leave_us_mean": 59.48012581557821,
+        "busy_us_mean": 55.69659815653232,
+        "tasks_mean": 17.041666666666668
+       },
+       {
+        "leave_us_mean": 59.440476045711875,
+        "busy_us_mean": 54.22051077515427,
+        "tasks_mean": 15.36111111111111
+       },
+       {
+        "leave_us_mean": 59.17029480852641,
+        "busy_us_mean": 54.852600329066746,
+        "tasks_mean": 16.069444444444443
+       },
+       {
+        "leave_us_mean": 58.8057053316074,
+        "busy_us_mean": 53.8553657425198,
+        "tasks_mean": 15.527777777777779
+       }
+      ],
+      "clock_ms_a_step_median": 0.3564065
+     },
+     {
+      "claim": "train.rope.inverse",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 52.648710805841176,
+      "busy_share_median": 0.7803751321118093,
+      "worker_enter_us_median": 4.608696978676679,
+      "first_leave_us_median": 46.21740460691802,
+      "last_leave_us_median": 52.29610200869902,
+      "tasks_median": 64.0,
+      "wall_us_a_step": 364.0804671106611,
+      "idle_workers_mean": 0.013888888888888888,
+      "per_worker": [
+       {
+        "leave_us_mean": 54.68455680243858,
+        "busy_us_mean": 37.14679813142744,
+        "tasks_mean": 18.01388888888889
+       },
+       {
+        "leave_us_mean": 58.8635555898041,
+        "busy_us_mean": 31.671277231758722,
+        "tasks_mean": 15.458333333333334
+       },
+       {
+        "leave_us_mean": 55.065704255137895,
+        "busy_us_mean": 30.877834974399914,
+        "tasks_mean": 13.86111111111111
+       },
+       {
+        "leave_us_mean": 54.4814166473512,
+        "busy_us_mean": 37.44906874982974,
+        "tasks_mean": 16.666666666666668
+       }
+      ],
+      "clock_ms_a_step_median": 0.3591365
+     },
+     {
+      "claim": "train.rope",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 50.191753576925905,
+      "busy_share_median": 0.8813542946389444,
+      "worker_enter_us_median": 0.7569567396109527,
+      "first_leave_us_median": 46.75479606594107,
+      "last_leave_us_median": 49.748275188411725,
+      "tasks_median": 64.0,
+      "wall_us_a_step": 309.7769732198347,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 49.06187402466406,
+        "busy_us_mean": 45.2445420080623,
+        "tasks_mean": 16.208333333333332
+       },
+       {
+        "leave_us_mean": 48.94297302425768,
+        "busy_us_mean": 45.00138976416372,
+        "tasks_mean": 17.02777777777778
+       },
+       {
+        "leave_us_mean": 49.55007464827268,
+        "busy_us_mean": 44.26422771624053,
+        "tasks_mean": 15.11111111111111
+       },
+       {
+        "leave_us_mean": 49.2241808346652,
+        "busy_us_mean": 43.807391835959024,
+        "tasks_mean": 15.652777777777779
+       }
+      ],
+      "clock_ms_a_step_median": 0.3071735
+     },
+     {
+      "claim": "train.scan",
+      "jobs_a_step": 2.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 88.71741683952607,
+      "busy_share_median": 0.7116320980466311,
+      "worker_enter_us_median": 22.16565855376564,
+      "first_leave_us_median": 83.68437191262407,
+      "last_leave_us_median": 88.09741666107391,
+      "tasks_median": 49.0,
+      "wall_us_a_step": 204.64324730744215,
+      "idle_workers_mean": 0.041666666666666664,
+      "per_worker": [
+       {
+        "leave_us_mean": 85.49422750601131,
+        "busy_us_mean": 68.98059956455423,
+        "tasks_mean": 13.333333333333334
+       },
+       {
+        "leave_us_mean": 85.98074938517539,
+        "busy_us_mean": 58.07345874403621,
+        "tasks_mean": 12.916666666666666
+       },
+       {
+        "leave_us_mean": 98.96024587463499,
+        "busy_us_mean": 61.541140901545546,
+        "tasks_mean": 12.125
+       },
+       {
+        "leave_us_mean": 86.82730759985134,
+        "busy_us_mean": 59.80632156163974,
+        "tasks_mean": 10.625
+       }
+      ],
+      "clock_ms_a_step_median": 0.1800385
+     },
+     {
+      "claim": "train.scatter",
+      "jobs_a_step": 1.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 161.0539593989934,
+      "busy_share_median": 0.8535541633386492,
+      "worker_enter_us_median": 0.8152176259451673,
+      "first_leave_us_median": 120.0356867233033,
+      "last_leave_us_median": 160.8296115083333,
+      "tasks_median": 8.0,
+      "wall_us_a_step": 172.86889033586948,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 139.5733735061776,
+        "busy_us_mean": 138.47975000299854,
+        "tasks_mean": 2.1666666666666665
+       },
+       {
+        "leave_us_mean": 151.56924652411902,
+        "busy_us_mean": 149.47431838491235,
+        "tasks_mean": 1.9166666666666667
+       },
+       {
+        "leave_us_mean": 147.22924527495385,
+        "busy_us_mean": 145.3089548671719,
+        "tasks_mean": 2.0833333333333335
+       },
+       {
+        "leave_us_mean": 139.214025576661,
+        "busy_us_mean": 137.32888010653087,
+        "tasks_mean": 1.8333333333333333
+       }
+      ],
+      "clock_ms_a_step_median": 0.1638635
+     },
+     {
+      "claim": "train.rope.table",
+      "jobs_a_step": 1.0,
+      "tsc_per_us": 2299.999338000225,
+      "wall_us_median": 111.21698853287884,
+      "busy_share_median": 0.5677438315537091,
+      "worker_enter_us_median": 47.280448391150514,
+      "first_leave_us_median": 107.44611788230688,
+      "last_leave_us_median": 110.90655366091893,
+      "tasks_median": 64.0,
+      "wall_us_a_step": 113.83481537331397,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 112.18909026195035,
+        "busy_us_mean": 68.09857032517604,
+        "tasks_mean": 17.75
+       },
+       {
+        "leave_us_mean": 111.67459736024274,
+        "busy_us_mean": 63.072771777171326,
+        "tasks_mean": 16
+       },
+       {
+        "leave_us_mean": 112.01771340102944,
+        "busy_us_mean": 63.520235674079004,
+        "tasks_mean": 15.083333333333334
+       },
+       {
+        "leave_us_mean": 112.25988738377688,
+        "busy_us_mean": 65.45704782574677,
+        "tasks_mean": 15.166666666666666
+       }
+      ],
+      "clock_ms_a_step_median": 0.111893
+     }
+    ]
+   },
+   "B": {
+    "T": 1024,
+    "contract": "kblock+exp+reduce",
+    "threads": 4,
+    "rounds": 12,
+    "rows": [
+     {
+      "claim": "train.attention.vjp",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 8526.541120155169,
+      "busy_share_median": 0.931159890805134,
+      "worker_enter_us_median": 0.6226088726896215,
+      "first_leave_us_median": 7657.980003616531,
+      "last_leave_us_median": 8474.762409779833,
+      "tasks_median": 16.0,
+      "wall_us_a_step": 26260.16942354248,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 7726.978815506721,
+        "busy_us_mean": 7718.710938759633,
+        "tasks_mean": 4
+       },
+       {
+        "leave_us_mean": 8003.045947145892,
+        "busy_us_mean": 7997.056452689169,
+        "tasks_mean": 4.027777777777778
+       },
+       {
+        "leave_us_mean": 7932.581337737456,
+        "busy_us_mean": 7926.466577544631,
+        "tasks_mean": 4.138888888888889
+       },
+       {
+        "leave_us_mean": 8455.50358787851,
+        "busy_us_mean": 8444.601435020053,
+        "tasks_mean": 3.8333333333333335
+       }
+      ],
+      "clock_ms_a_step_median": 26.234349
+     },
+     {
+      "claim": "train.attention",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 5301.869333661703,
+      "busy_share_median": 0.9657262564291924,
+      "worker_enter_us_median": 0.4065218547240196,
+      "first_leave_us_median": 4951.789668899939,
+      "last_leave_us_median": 5263.583235818616,
+      "tasks_median": 16.0,
+      "wall_us_a_step": 16339.67899397745,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 5080.114439688319,
+        "busy_us_mean": 5078.151902898392,
+        "tasks_mean": 4.083333333333333
+       },
+       {
+        "leave_us_mean": 5115.043217736182,
+        "busy_us_mean": 5112.405366744569,
+        "tasks_mean": 4
+       },
+       {
+        "leave_us_mean": 5028.145946650324,
+        "busy_us_mean": 5025.684037737726,
+        "tasks_mean": 4
+       },
+       {
+        "leave_us_mean": 5337.8536917198635,
+        "busy_us_mean": 5334.829608734368,
+        "tasks_mean": 3.9166666666666665
+       }
+      ],
+      "clock_ms_a_step_median": 15.89406
+     },
+     {
+      "claim": "train.gemm.chain.nn",
+      "jobs_a_step": 12.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 802.9293587459591,
+      "busy_share_median": 0.9142971687611641,
+      "worker_enter_us_median": 0.8721741610442603,
+      "first_leave_us_median": 782.8150052004005,
+      "last_leave_us_median": 802.7350108646099,
+      "tasks_median": 42.0,
+      "wall_us_a_step": 11441.981586835336,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 926.3946112443333,
+        "busy_us_mean": 921.7636256280059,
+        "tasks_mean": 10.3125
+       },
+       {
+        "leave_us_mean": 929.5321664843162,
+        "busy_us_mean": 923.9682941292947,
+        "tasks_mean": 10.722222222222221
+       },
+       {
+        "leave_us_mean": 924.7082218759233,
+        "busy_us_mean": 918.9436912512847,
+        "tasks_mean": 11.118055555555555
+       },
+       {
+        "leave_us_mean": 934.7809240154361,
+        "busy_us_mean": 929.3067195603076,
+        "tasks_mean": 10.347222222222221
+       }
+      ],
+      "clock_ms_a_step_median": 11.39492
+     },
+     {
+      "claim": "train.gemm.rest.nt",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 1102.1494438285245,
+      "busy_share_median": 0.9798603906814018,
+      "worker_enter_us_median": 1.0017394152771564,
+      "first_leave_us_median": 1074.2416098060376,
+      "last_leave_us_median": 1101.7298784918307,
+      "tasks_median": 80.0,
+      "wall_us_a_step": 6485.080177351451,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 1063.2171380722198,
+        "busy_us_mean": 1058.6800836420218,
+        "tasks_mean": 20.305555555555557
+       },
+       {
+        "leave_us_mean": 1059.193489585109,
+        "busy_us_mean": 1053.8449131850261,
+        "tasks_mean": 20.041666666666668
+       },
+       {
+        "leave_us_mean": 1062.8122949619344,
+        "busy_us_mean": 1057.1658682356126,
+        "tasks_mean": 20.583333333333332
+       },
+       {
+        "leave_us_mean": 1062.9533336493814,
+        "busy_us_mean": 1057.7626075357289,
+        "tasks_mean": 19.069444444444443
+       }
+      ],
+      "clock_ms_a_step_median": 6.4465125
+     },
+     {
+      "claim": "train.gemm.pair.nn",
+      "jobs_a_step": 14.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 286.0496465549718,
+      "busy_share_median": 0.9016669683764789,
+      "worker_enter_us_median": 0.80130457567526,
+      "first_leave_us_median": 267.77616309807786,
+      "last_leave_us_median": 285.78051604366254,
+      "tasks_median": 29.5,
+      "wall_us_a_step": 6463.821475654413,
+      "idle_workers_mean": 0.011904761904761904,
+      "per_worker": [
+       {
+        "leave_us_mean": 446.95213019543377,
+        "busy_us_mean": 443.804732820147,
+        "tasks_mean": 6.583333333333333
+       },
+       {
+        "leave_us_mean": 449.249232297885,
+        "busy_us_mean": 445.58714015926876,
+        "tasks_mean": 6.5
+       },
+       {
+        "leave_us_mean": 449.27870435595474,
+        "busy_us_mean": 445.1901835246559,
+        "tasks_mean": 6.6726190476190474
+       },
+       {
+        "leave_us_mean": 451.64294415865584,
+        "busy_us_mean": 448.3292009803755,
+        "tasks_mean": 5.886904761904762
+       }
+      ],
+      "clock_ms_a_step_median": 6.518059
+     },
+     {
+      "claim": "train.gemm.alone.nt",
+      "jobs_a_step": 7.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 548.6814603641784,
+      "busy_share_median": 0.9368524172508803,
+      "worker_enter_us_median": 2.141739739433712,
+      "first_leave_us_median": 525.5758016202228,
+      "last_leave_us_median": 548.3266776546011,
+      "tasks_median": 32.0,
+      "wall_us_a_step": 3449.3469228431077,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 471.22324993331154,
+        "busy_us_mean": 461.43433410637687,
+        "tasks_mean": 8.238095238095237
+       },
+       {
+        "leave_us_mean": 473.3542029201957,
+        "busy_us_mean": 462.446384083592,
+        "tasks_mean": 8.071428571428571
+       },
+       {
+        "leave_us_mean": 473.8068738563651,
+        "busy_us_mean": 457.66892930898433,
+        "tasks_mean": 8.142857142857142
+       },
+       {
+        "leave_us_mean": 475.4563877829576,
+        "busy_us_mean": 467.6719342237099,
+        "tasks_mean": 7.5476190476190474
+       }
+      ],
+      "clock_ms_a_step_median": 3.395344
+     },
+     {
+      "claim": "train.rms.vjp.add.first",
+      "jobs_a_step": 12.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 181.65309513091427,
+      "busy_share_median": 0.9176251227730021,
+      "worker_enter_us_median": 0.7556523887811188,
+      "first_leave_us_median": 162.8604810916241,
+      "last_leave_us_median": 181.23918196974074,
+      "tasks_median": 132.0,
+      "wall_us_a_step": 2327.830879304835,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 177.47119780653537,
+        "busy_us_mean": 170.22746386273778,
+        "tasks_mean": 34.388888888888886
+       },
+       {
+        "leave_us_mean": 179.74008734057796,
+        "busy_us_mean": 172.06626873342393,
+        "tasks_mean": 32.798611111111114
+       },
+       {
+        "leave_us_mean": 174.77149897124917,
+        "busy_us_mean": 167.02463082641546,
+        "tasks_mean": 33.076388888888886
+       },
+       {
+        "leave_us_mean": 187.104093057705,
+        "busy_us_mean": 179.81790137236604,
+        "tasks_mean": 31.73611111111111
+       }
+      ],
+      "clock_ms_a_step_median": 2.2159685
+     },
+     {
+      "claim": "train.loss",
+      "jobs_a_step": 1.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 1670.5383011008053,
+      "busy_share_median": 0.98816966557539,
+      "worker_enter_us_median": 0.5321740643659894,
+      "first_leave_us_median": 1644.3974241024875,
+      "last_leave_us_median": 1670.1009096720863,
+      "tasks_median": 256.0,
+      "wall_us_a_step": 1678.2990279452317,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 1666.449749213597,
+        "busy_us_mean": 1656.6635870106336,
+        "tasks_mean": 66
+       },
+       {
+        "leave_us_mean": 1665.0759082432382,
+        "busy_us_mean": 1655.4225721650002,
+        "tasks_mean": 64.58333333333333
+       },
+       {
+        "leave_us_mean": 1668.145401869665,
+        "busy_us_mean": 1655.3227895279315,
+        "tasks_mean": 65.75
+       },
+       {
+        "leave_us_mean": 1674.0688093510744,
+        "busy_us_mean": 1662.9979366378789,
+        "tasks_mean": 59.666666666666664
+       }
+      ],
+      "clock_ms_a_step_median": 1.675606
+     },
+     {
+      "claim": "train.swiglu.vjp",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 333.5687905017173,
+      "busy_share_median": 0.9579585227706143,
+      "worker_enter_us_median": 0.5800001649217563,
+      "first_leave_us_median": 323.8057442473559,
+      "last_leave_us_median": 332.71183373630436,
+      "tasks_median": 128.0,
+      "wall_us_a_step": 1035.7988452517345,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 335.2560856674862,
+        "busy_us_mean": 326.10386084284926,
+        "tasks_mean": 32.97222222222222
+       },
+       {
+        "leave_us_mean": 332.9959884064751,
+        "busy_us_mean": 322.4461544887789,
+        "tasks_mean": 31.833333333333332
+       },
+       {
+        "leave_us_mean": 338.2203860272866,
+        "busy_us_mean": 328.0394411033721,
+        "tasks_mean": 32.55555555555556
+       },
+       {
+        "leave_us_mean": 334.4539115263463,
+        "busy_us_mean": 325.7209138740557,
+        "tasks_mean": 30.63888888888889
+       }
+      ],
+      "clock_ms_a_step_median": 1.005442
+     },
+     {
+      "claim": "train.silu_mul",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 275.46486093651595,
+      "busy_share_median": 0.9592126821988569,
+      "worker_enter_us_median": 1.0395655129894448,
+      "first_leave_us_median": 267.0631194170646,
+      "last_leave_us_median": 275.0348608142463,
+      "tasks_median": 128.0,
+      "wall_us_a_step": 843.9746602721717,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 277.00362949000333,
+        "busy_us_mean": 269.9095936564049,
+        "tasks_mean": 31.02777777777778
+       },
+       {
+        "leave_us_mean": 275.7759721360908,
+        "busy_us_mean": 268.2250762692036,
+        "tasks_mean": 33.166666666666664
+       },
+       {
+        "leave_us_mean": 275.4032184069107,
+        "busy_us_mean": 267.868361191927,
+        "tasks_mean": 31.666666666666668
+       },
+       {
+        "leave_us_mean": 275.77432962354646,
+        "busy_us_mean": 268.03413418592413,
+        "tasks_mean": 32.138888888888886
+       }
+      ],
+      "clock_ms_a_step_median": 0.847798
+     },
+     {
+      "claim": "train.rms",
+      "jobs_a_step": 7.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 99.78046315496137,
+      "busy_share_median": 0.8415860230635612,
+      "worker_enter_us_median": 0.5991306051440631,
+      "first_leave_us_median": 97.79263650277076,
+      "last_leave_us_median": 99.48915872430351,
+      "tasks_median": 256.0,
+      "wall_us_a_step": 731.3867297073195,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 101.70663347492034,
+        "busy_us_mean": 86.59356499535834,
+        "tasks_mean": 63.976190476190474
+       },
+       {
+        "leave_us_mean": 102.1783520355535,
+        "busy_us_mean": 87.2208115505261,
+        "tasks_mean": 63.92857142857143
+       },
+       {
+        "leave_us_mean": 102.06930438549843,
+        "busy_us_mean": 87.1072607936005,
+        "tasks_mean": 65.3452380952381
+       },
+       {
+        "leave_us_mean": 102.88312449268275,
+        "busy_us_mean": 87.34428984650643,
+        "tasks_mean": 62.75
+       }
+      ],
+      "clock_ms_a_step_median": 0.7285965
+     },
+     {
+      "claim": "train.update",
+      "jobs_a_step": 2.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 266.95790199584195,
+      "busy_share_median": 0.898693188697859,
+      "worker_enter_us_median": 0.5630436383610753,
+      "first_leave_us_median": 235.91137142869962,
+      "last_leave_us_median": 266.72790193044193,
+      "tasks_median": 133.0,
+      "wall_us_a_step": 509.7625362541907,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 243.19557639849782,
+        "busy_us_mean": 234.81006676772,
+        "tasks_mean": 35.958333333333336
+       },
+       {
+        "leave_us_mean": 234.24763907156304,
+        "busy_us_mean": 226.09883240664192,
+        "tasks_mean": 34
+       },
+       {
+        "leave_us_mean": 237.48988637030044,
+        "busy_us_mean": 229.65857979565976,
+        "tasks_mean": 33
+       },
+       {
+        "leave_us_mean": 235.85738590610256,
+        "busy_us_mean": 225.15752779115797,
+        "tasks_mean": 30.041666666666668
+       }
+      ],
+      "clock_ms_a_step_median": 0.508024
+     },
+     {
+      "claim": "train.rms.vjp.first",
+      "jobs_a_step": 2.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 184.53918290808866,
+      "busy_share_median": 0.8985851619418009,
+      "worker_enter_us_median": 0.764782826159947,
+      "first_leave_us_median": 158.57656683002438,
+      "last_leave_us_median": 184.2691828313147,
+      "tasks_median": 132.0,
+      "wall_us_a_step": 400.79714295128304,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 172.67280272231562,
+        "busy_us_mean": 163.79033642849018,
+        "tasks_mean": 34
+       },
+       {
+        "leave_us_mean": 170.6486354800815,
+        "busy_us_mean": 161.78037208884535,
+        "tasks_mean": 31.75
+       },
+       {
+        "leave_us_mean": 166.96722138980135,
+        "busy_us_mean": 156.88395765308252,
+        "tasks_mean": 34.833333333333336
+       },
+       {
+        "leave_us_mean": 186.51142984570427,
+        "busy_us_mean": 177.4188185645883,
+        "tasks_mean": 31.416666666666668
+       }
+      ],
+      "clock_ms_a_step_median": 0.354104
+     },
+     {
+      "claim": "train.add",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 53.556971750544875,
+      "busy_share_median": 0.8951384643641348,
+      "worker_enter_us_median": 0.6082610425228914,
+      "first_leave_us_median": 50.70436224375953,
+      "last_leave_us_median": 53.37392822023598,
+      "tasks_median": 64.0,
+      "wall_us_a_step": 339.43009651619263,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 53.8222375264557,
+        "busy_us_mean": 49.63001411218408,
+        "tasks_mean": 16.708333333333332
+       },
+       {
+        "leave_us_mean": 54.71879575240453,
+        "busy_us_mean": 50.67396368439113,
+        "tasks_mean": 15.86111111111111
+       },
+       {
+        "leave_us_mean": 53.34916975908969,
+        "busy_us_mean": 48.60385440010799,
+        "tasks_mean": 15.930555555555555
+       },
+       {
+        "leave_us_mean": 53.77124717379245,
+        "busy_us_mean": 49.555424718994075,
+        "tasks_mean": 15.5
+       }
+      ],
+      "clock_ms_a_step_median": 0.349339
+     },
+     {
+      "claim": "train.rope",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 48.72523124621543,
+      "busy_share_median": 0.8698411692788673,
+      "worker_enter_us_median": 0.7134784637455788,
+      "first_leave_us_median": 45.21827372728073,
+      "last_leave_us_median": 48.43044855369898,
+      "tasks_median": 64.0,
+      "wall_us_a_step": 305.7638550592138,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 48.77021918171297,
+        "busy_us_mean": 44.5439136321463,
+        "tasks_mean": 15.73611111111111
+       },
+       {
+        "leave_us_mean": 48.84775543564429,
+        "busy_us_mean": 44.38368411798636,
+        "tasks_mean": 16.305555555555557
+       },
+       {
+        "leave_us_mean": 48.55381815399624,
+        "busy_us_mean": 43.944203316692466,
+        "tasks_mean": 16.65277777777778
+       },
+       {
+        "leave_us_mean": 48.92968782609134,
+        "busy_us_mean": 44.27774205887646,
+        "tasks_mean": 15.305555555555555
+       }
+      ],
+      "clock_ms_a_step_median": 0.3070185
+     },
+     {
+      "claim": "train.rope.inverse",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 42.692186052471584,
+      "busy_share_median": 0.8027710924440599,
+      "worker_enter_us_median": 0.9282611335142052,
+      "first_leave_us_median": 39.26653290448169,
+      "last_leave_us_median": 42.12131632492866,
+      "tasks_median": 64.0,
+      "wall_us_a_step": 292.0824743573495,
+      "idle_workers_mean": 0.013888888888888888,
+      "per_worker": [
+       {
+        "leave_us_mean": 45.935508230741675,
+        "busy_us_mean": 34.350118463031926,
+        "tasks_mean": 18.01388888888889
+       },
+       {
+        "leave_us_mean": 46.14816529604116,
+        "busy_us_mean": 29.91574522145143,
+        "tasks_mean": 15.11111111111111
+       },
+       {
+        "leave_us_mean": 46.25152281335335,
+        "busy_us_mean": 29.771421508915722,
+        "tasks_mean": 15.097222222222221
+       },
+       {
+        "leave_us_mean": 47.46322605644919,
+        "busy_us_mean": 36.39658039759583,
+        "tasks_mean": 15.777777777777779
+       }
+      ],
+      "clock_ms_a_step_median": 0.2927255
+     },
+     {
+      "claim": "train.scatter",
+      "jobs_a_step": 1.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 200.0217960061874,
+      "busy_share_median": 0.8620708703800181,
+      "worker_enter_us_median": 1.433478668476035,
+      "first_leave_us_median": 159.7252628088274,
+      "last_leave_us_median": 199.75440462580744,
+      "tasks_median": 8.0,
+      "wall_us_a_step": 199.81375246876982,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 167.43512007357194,
+        "busy_us_mean": 166.16294579878854,
+        "tasks_mean": 2.1666666666666665
+       },
+       {
+        "leave_us_mean": 179.5514278666432,
+        "busy_us_mean": 177.8162099819335,
+        "tasks_mean": 2.0833333333333335
+       },
+       {
+        "leave_us_mean": 179.4465727643641,
+        "busy_us_mean": 177.77222446217993,
+        "tasks_mean": 2.0833333333333335
+       },
+       {
+        "leave_us_mean": 172.5903389307513,
+        "busy_us_mean": 170.4662803557655,
+        "tasks_mean": 1.6666666666666667
+       }
+      ],
+      "clock_ms_a_step_median": 0.201117
+     },
+     {
+      "claim": "train.scan",
+      "jobs_a_step": 2.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 88.264372923865,
+      "busy_share_median": 0.7340344625593882,
+      "worker_enter_us_median": 21.606093100166238,
+      "first_leave_us_median": 83.1982845268123,
+      "last_leave_us_median": 88.01698154917199,
+      "tasks_median": 49.0,
+      "wall_us_a_step": 180.7172977633731,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 87.59172780506363,
+        "busy_us_mean": 71.58929571857578,
+        "tasks_mean": 13.041666666666666
+       },
+       {
+        "leave_us_mean": 87.26882916252347,
+        "busy_us_mean": 63.93538049872376,
+        "tasks_mean": 12.083333333333334
+       },
+       {
+        "leave_us_mean": 87.21567697349673,
+        "busy_us_mean": 61.327915989181086,
+        "tasks_mean": 12.875
+       },
+       {
+        "leave_us_mean": 87.46919153833664,
+        "busy_us_mean": 59.278893667415716,
+        "tasks_mean": 11
+       }
+      ],
+      "clock_ms_a_step_median": 0.1730185
+     },
+     {
+      "claim": "train.rope.table",
+      "jobs_a_step": 1.0,
+      "tsc_per_us": 2299.999346000118,
+      "wall_us_median": 110.22655308180553,
+      "busy_share_median": 0.5515062678442998,
+      "worker_enter_us_median": 52.499145362797776,
+      "first_leave_us_median": 105.41829084502164,
+      "last_leave_us_median": 109.33655282873593,
+      "tasks_median": 64.0,
+      "wall_us_a_step": 110.33227774954926,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 108.59155261689679,
+        "busy_us_mean": 64.24545305066032,
+        "tasks_mean": 17.916666666666668
+       },
+       {
+        "leave_us_mean": 107.48778418710066,
+        "busy_us_mean": 60.845307156300166,
+        "tasks_mean": 16.25
+       },
+       {
+        "leave_us_mean": 107.98553795182424,
+        "busy_us_mean": 59.53240823225564,
+        "tasks_mean": 16
+       },
+       {
+        "leave_us_mean": 109.04300202062774,
+        "busy_us_mean": 55.55037811446699,
+        "tasks_mean": 13.833333333333334
+       }
+      ],
+      "clock_ms_a_step_median": 0.1113305
+     }
+    ]
+   }
+  },
+  "2048": {
+   "A": {
+    "T": 2048,
+    "contract": "kblock+exp+reduce",
+    "threads": 4,
+    "rounds": 12,
+    "rows": [
+     {
+      "claim": "train.attention.vjp",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 32572.740103224867,
+      "busy_share_median": 0.9651835140339872,
+      "worker_enter_us_median": 1.333478638881604,
+      "first_leave_us_median": 30306.44119990911,
+      "last_leave_us_median": 32528.397047176317,
+      "tasks_median": 16.0,
+      "wall_us_a_step": 102101.00459557638,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 31755.494533389363,
+        "busy_us_mean": 31742.910399387256,
+        "tasks_mean": 4.083333333333333
+       },
+       {
+        "leave_us_mean": 32357.469607417777,
+        "busy_us_mean": 32329.681242052462,
+        "tasks_mean": 4.027777777777778
+       },
+       {
+        "leave_us_mean": 32214.021958057852,
+        "busy_us_mean": 32201.204490656266,
+        "tasks_mean": 3.9444444444444446
+       },
+       {
+        "leave_us_mean": 32533.825237120887,
+        "busy_us_mean": 32517.93714082952,
+        "tasks_mean": 3.9444444444444446
+       }
+      ],
+      "clock_ms_a_step_median": 98.799026
+     },
+     {
+      "claim": "train.attention",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 20898.4133155476,
+      "busy_share_median": 0.95071863177583,
+      "worker_enter_us_median": 0.4852175288529085,
+      "first_leave_us_median": 19181.95239418585,
+      "last_leave_us_median": 20865.094610450302,
+      "tasks_median": 16.0,
+      "wall_us_a_step": 66231.28399251224,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 20873.61714909814,
+        "busy_us_mean": 20870.076206065372,
+        "tasks_mean": 4.055555555555555
+       },
+       {
+        "leave_us_mean": 20823.170129966595,
+        "busy_us_mean": 20818.992616705065,
+        "tasks_mean": 4.111111111111111
+       },
+       {
+        "leave_us_mean": 20711.424808434167,
+        "busy_us_mean": 20707.7401213993,
+        "tasks_mean": 3.9444444444444446
+       },
+       {
+        "leave_us_mean": 20666.9164141745,
+        "busy_us_mean": 20662.03223404598,
+        "tasks_mean": 3.888888888888889
+       }
+      ],
+      "clock_ms_a_step_median": 64.2719455
+     },
+     {
+      "claim": "train.gemm.chain.nn",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 5218.611044579523,
+      "busy_share_median": 0.9896864165662256,
+      "worker_enter_us_median": 0.5869566881285182,
+      "first_leave_us_median": 5124.281887404486,
+      "last_leave_us_median": 5218.2027835942245,
+      "tasks_median": 74.5,
+      "wall_us_a_step": 29241.856985079285,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 4746.244715021822,
+        "busy_us_mean": 4740.640486380006,
+        "tasks_mean": 20
+       },
+       {
+        "leave_us_mean": 4773.1307975226655,
+        "busy_us_mean": 4766.6341894008265,
+        "tasks_mean": 18.583333333333332
+       },
+       {
+        "leave_us_mean": 4801.282170237264,
+        "busy_us_mean": 4795.52612995821,
+        "tasks_mean": 18.27777777777778
+       },
+       {
+        "leave_us_mean": 4748.155573051431,
+        "busy_us_mean": 4742.200209044376,
+        "tasks_mean": 17.63888888888889
+       }
+      ],
+      "clock_ms_a_step_median": 28.1314435
+     },
+     {
+      "claim": "train.gemm.pair.nn",
+      "jobs_a_step": 7.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 2449.8598249164793,
+      "busy_share_median": 0.9863040788183499,
+      "worker_enter_us_median": 0.9295654809027942,
+      "first_leave_us_median": 2397.729375356028,
+      "last_leave_us_median": 2448.999824672688,
+      "tasks_median": 70.0,
+      "wall_us_a_step": 16757.52569242113,
+      "idle_workers_mean": 0.011904761904761904,
+      "per_worker": [
+       {
+        "leave_us_mean": 2315.058047572688,
+        "busy_us_mean": 2306.940291648293,
+        "tasks_mean": 15.845238095238095
+       },
+       {
+        "leave_us_mean": 2358.5728735727857,
+        "busy_us_mean": 2329.7186003828783,
+        "tasks_mean": 16.428571428571427
+       },
+       {
+        "leave_us_mean": 2335.6137987414086,
+        "busy_us_mean": 2327.685566680264,
+        "tasks_mean": 18.178571428571427
+       },
+       {
+        "leave_us_mean": 2353.2159672923153,
+        "busy_us_mean": 2343.610105356013,
+        "tasks_mean": 18.69047619047619
+       }
+      ],
+      "clock_ms_a_step_median": 15.814925
+     },
+     {
+      "claim": "train.gemm.rest.nt",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 2404.404594639611,
+      "busy_share_median": 0.986868977310841,
+      "worker_enter_us_median": 0.9021741687901299,
+      "first_leave_us_median": 2348.732404944719,
+      "last_leave_us_median": 2403.9893771306015,
+      "tasks_median": 160.0,
+      "wall_us_a_step": 13695.143302563549,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 2255.863610502504,
+        "busy_us_mean": 2247.5713859296175,
+        "tasks_mean": 40.666666666666664
+       },
+       {
+        "leave_us_mean": 2258.383164356839,
+        "busy_us_mean": 2250.4114833530807,
+        "tasks_mean": 40.763888888888886
+       },
+       {
+        "leave_us_mean": 2263.101921733151,
+        "busy_us_mean": 2222.361511633411,
+        "tasks_mean": 39.43055555555556
+       },
+       {
+        "leave_us_mean": 2257.7264733494258,
+        "busy_us_mean": 2248.540577025618,
+        "tasks_mean": 39.138888888888886
+       }
+      ],
+      "clock_ms_a_step_median": 13.2838235
+     },
+     {
+      "claim": "train.gemm.alone.nt",
+      "jobs_a_step": 7.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 1163.2225036611906,
+      "busy_share_median": 0.9588375928526578,
+      "worker_enter_us_median": 2.3000006519998974,
+      "first_leave_us_median": 1109.1042274502772,
+      "last_leave_us_median": 1162.7307643913587,
+      "tasks_median": 64.0,
+      "wall_us_a_step": 7185.340587611594,
+      "idle_workers_mean": 0.011904761904761904,
+      "per_worker": [
+       {
+        "leave_us_mean": 997.5890405586568,
+        "busy_us_mean": 983.6752892024043,
+        "tasks_mean": 16.273809523809526
+       },
+       {
+        "leave_us_mean": 993.5462133256472,
+        "busy_us_mean": 977.0000388629118,
+        "tasks_mean": 16.416666666666668
+       },
+       {
+        "leave_us_mean": 998.3219289651724,
+        "busy_us_mean": 969.5324591062647,
+        "tasks_mean": 15.5
+       },
+       {
+        "leave_us_mean": 1004.5667858079166,
+        "busy_us_mean": 985.2072151025103,
+        "tasks_mean": 15.80952380952381
+       }
+      ],
+      "clock_ms_a_step_median": 6.926379
+     },
+     {
+      "claim": "train.rms.vjp.add.first",
+      "jobs_a_step": 12.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 444.6836043189488,
+      "busy_share_median": 0.9257066678587671,
+      "worker_enter_us_median": 2.219131063857746,
+      "first_leave_us_median": 409.9327249026169,
+      "last_leave_us_median": 441.38534251439853,
+      "tasks_median": 260.0,
+      "wall_us_a_step": 5976.391476785011,
+      "idle_workers_mean": 0.013888888888888888,
+      "per_worker": [
+       {
+        "leave_us_mean": 467.85961934294863,
+        "busy_us_mean": 442.1247871684593,
+        "tasks_mean": 67.39583333333333
+       },
+       {
+        "leave_us_mean": 477.38714619838356,
+        "busy_us_mean": 440.8583375340862,
+        "tasks_mean": 65.53472222222223
+       },
+       {
+        "leave_us_mean": 470.2154412668113,
+        "busy_us_mean": 443.92877922574536,
+        "tasks_mean": 63.708333333333336
+       },
+       {
+        "leave_us_mean": 472.8179903137558,
+        "busy_us_mean": 446.3805613217382,
+        "tasks_mean": 63.361111111111114
+       }
+      ],
+      "clock_ms_a_step_median": 5.743048
+     },
+     {
+      "claim": "train.loss",
+      "jobs_a_step": 1.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 3299.2800657085454,
+      "busy_share_median": 0.9913243986862845,
+      "worker_enter_us_median": 0.6047827801383474,
+      "first_leave_us_median": 3280.0013645912813,
+      "last_leave_us_median": 3298.813109054435,
+      "tasks_median": 512.0,
+      "wall_us_a_step": 3390.902845304789,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 3380.63595833638,
+        "busy_us_mean": 3359.064647873559,
+        "tasks_mean": 128.16666666666666
+       },
+       {
+        "leave_us_mean": 3382.90733579186,
+        "busy_us_mean": 3362.92653302629,
+        "tasks_mean": 130.66666666666666
+       },
+       {
+        "leave_us_mean": 3385.6894380298004,
+        "busy_us_mean": 3361.858489245262,
+        "tasks_mean": 128.66666666666666
+       },
+       {
+        "leave_us_mean": 3381.02900192606,
+        "busy_us_mean": 3358.0096475744895,
+        "tasks_mean": 124.5
+       }
+      ],
+      "clock_ms_a_step_median": 3.3106465
+     },
+     {
+      "claim": "train.swiglu.vjp",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 819.3567540088558,
+      "busy_share_median": 0.963295843122632,
+      "worker_enter_us_median": 1.9317396780407456,
+      "first_leave_us_median": 812.1671867533794,
+      "last_leave_us_median": 818.2276232539893,
+      "tasks_median": 256.0,
+      "wall_us_a_step": 2550.6073172443066,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 843.6327995379269,
+        "busy_us_mean": 816.2736613474268,
+        "tasks_mean": 66.66666666666667
+       },
+       {
+        "leave_us_mean": 844.7002152994531,
+        "busy_us_mean": 818.508372125846,
+        "tasks_mean": 65.66666666666667
+       },
+       {
+        "leave_us_mean": 844.6885727840754,
+        "busy_us_mean": 815.4473809199576,
+        "tasks_mean": 61
+       },
+       {
+        "leave_us_mean": 844.2598770103757,
+        "busy_us_mean": 817.9621883961356,
+        "tasks_mean": 62.666666666666664
+       }
+      ],
+      "clock_ms_a_step_median": 2.467711
+     },
+     {
+      "claim": "train.rms",
+      "jobs_a_step": 7.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 239.14093735644454,
+      "busy_share_median": 0.8672029073851617,
+      "worker_enter_us_median": 0.59260886364383,
+      "first_leave_us_median": 236.9791976132038,
+      "last_leave_us_median": 238.78354595078406,
+      "tasks_median": 512.0,
+      "wall_us_a_step": 1901.914452194642,
+      "idle_workers_mean": 0.011904761904761904,
+      "per_worker": [
+       {
+        "leave_us_mean": 269.75005576430925,
+        "busy_us_mean": 236.11502552557982,
+        "tasks_mean": 133.3452380952381
+       },
+       {
+        "leave_us_mean": 269.8901386197547,
+        "busy_us_mean": 235.46657813679022,
+        "tasks_mean": 128.48809523809524
+       },
+       {
+        "leave_us_mean": 269.81184667209476,
+        "busy_us_mean": 231.6595480720732,
+        "tasks_mean": 123.32142857142857
+       },
+       {
+        "leave_us_mean": 269.65610128632943,
+        "busy_us_mean": 235.67237529657848,
+        "tasks_mean": 126.8452380952381
+       }
+      ],
+      "clock_ms_a_step_median": 1.8995115
+     },
+     {
+      "claim": "train.silu_mul",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 576.4540764556054,
+      "busy_share_median": 0.9721440180530982,
+      "worker_enter_us_median": 1.6226091556263929,
+      "first_leave_us_median": 566.2184213801079,
+      "last_leave_us_median": 576.0619024313892,
+      "tasks_median": 256.0,
+      "wall_us_a_step": 1835.7618247461664,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 582.2602133672187,
+        "busy_us_mean": 570.739702855029,
+        "tasks_mean": 64.36111111111111
+       },
+       {
+        "leave_us_mean": 597.138285217677,
+        "busy_us_mean": 582.9570010043562,
+        "tasks_mean": 66.05555555555556
+       },
+       {
+        "leave_us_mean": 589.798524682909,
+        "busy_us_mean": 577.9326034447837,
+        "tasks_mean": 60.69444444444444
+       },
+       {
+        "leave_us_mean": 581.8963243751753,
+        "busy_us_mean": 569.5892677462971,
+        "tasks_mean": 64.88888888888889
+       }
+      ],
+      "clock_ms_a_step_median": 1.7197235
+     },
+     {
+      "claim": "train.add",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 116.04394593939975,
+      "busy_share_median": 0.9211893673779511,
+      "worker_enter_us_median": 1.228696000482365,
+      "first_leave_us_median": 113.10394510597379,
+      "last_leave_us_median": 115.53133709843416,
+      "tasks_median": 128.0,
+      "wall_us_a_step": 904.3884447801476,
+      "idle_workers_mean": 0.013888888888888888,
+      "per_worker": [
+       {
+        "leave_us_mean": 120.40346408344038,
+        "busy_us_mean": 113.87028590292479,
+        "tasks_mean": 33.625
+       },
+       {
+        "leave_us_mean": 120.33426116527215,
+        "busy_us_mean": 110.75226569536274,
+        "tasks_mean": 34.013888888888886
+       },
+       {
+        "leave_us_mean": 120.87573474871976,
+        "busy_us_mean": 110.30364237978205,
+        "tasks_mean": 29.444444444444443
+       },
+       {
+        "leave_us_mean": 148.3063343121346,
+        "busy_us_mean": 141.16483470313455,
+        "tasks_mean": 30.916666666666668
+       }
+      ],
+      "clock_ms_a_step_median": 0.7044185
+     },
+     {
+      "claim": "train.rms.vjp.first",
+      "jobs_a_step": 2.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 407.87315910138375,
+      "busy_share_median": 0.89200230484473,
+      "worker_enter_us_median": 2.2530441169496163,
+      "first_leave_us_median": 355.9079269790723,
+      "last_leave_us_median": 403.51489699634647,
+      "tasks_median": 260.0,
+      "wall_us_a_step": 856.8505327534643,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 372.8427143884099,
+        "busy_us_mean": 350.30169350576966,
+        "tasks_mean": 66.58333333333333
+       },
+       {
+        "leave_us_mean": 392.6163069503128,
+        "busy_us_mean": 372.1627866594333,
+        "tasks_mean": 64.91666666666667
+       },
+       {
+        "leave_us_mean": 392.94800994289403,
+        "busy_us_mean": 369.4519525576378,
+        "tasks_mean": 62.625
+       },
+       {
+        "leave_us_mean": 383.6817392001668,
+        "busy_us_mean": 360.58035583983553,
+        "tasks_mean": 65.875
+       }
+      ],
+      "clock_ms_a_step_median": 0.803886
+     },
+     {
+      "claim": "train.rope.inverse",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 112.72351021552012,
+      "busy_share_median": 0.8313450542810656,
+      "worker_enter_us_median": 31.19435666900504,
+      "first_leave_us_median": 110.30568344316256,
+      "last_leave_us_median": 112.08046655497043,
+      "tasks_median": 128.0,
+      "wall_us_a_step": 708.5749834742112,
+      "idle_workers_mean": 0.013888888888888888,
+      "per_worker": [
+       {
+        "leave_us_mean": 111.95543028764133,
+        "busy_us_mean": 95.188879640971,
+        "tasks_mean": 34.611111111111114
+       },
+       {
+        "leave_us_mean": 111.80950029458255,
+        "busy_us_mean": 93.10985731248319,
+        "tasks_mean": 33.611111111111114
+       },
+       {
+        "leave_us_mean": 112.2722298943553,
+        "busy_us_mean": 90.60409573258936,
+        "tasks_mean": 30.625
+       },
+       {
+        "leave_us_mean": 115.96474301839673,
+        "busy_us_mean": 88.20602741993918,
+        "tasks_mean": 29.15277777777778
+       }
+      ],
+      "clock_ms_a_step_median": 0.6665095
+     },
+     {
+      "claim": "train.rope",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 95.4882879384071,
+      "busy_share_median": 0.910787201402823,
+      "worker_enter_us_median": 0.7886958757519498,
+      "first_leave_us_median": 91.06002581352638,
+      "last_leave_us_median": 94.99698345130692,
+      "tasks_median": 128.0,
+      "wall_us_a_step": 640.7640222223008,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 97.4952691836709,
+        "busy_us_mean": 91.05533982185985,
+        "tasks_mean": 33.208333333333336
+       },
+       {
+        "leave_us_mean": 97.68790208851966,
+        "busy_us_mean": 90.41947007638728,
+        "tasks_mean": 33.333333333333336
+       },
+       {
+        "leave_us_mean": 103.8648482839933,
+        "busy_us_mean": 97.14157343123198,
+        "tasks_mean": 30.27777777777778
+       },
+       {
+        "leave_us_mean": 97.65282961480926,
+        "busy_us_mean": 89.83274285692285,
+        "tasks_mean": 31.180555555555557
+       }
+      ],
+      "clock_ms_a_step_median": 0.6150395
+     },
+     {
+      "claim": "train.update",
+      "jobs_a_step": 2.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 291.12008252617835,
+      "busy_share_median": 0.8707635027129587,
+      "worker_enter_us_median": 0.6226088721481764,
+      "first_leave_us_median": 221.87875854995082,
+      "last_leave_us_median": 290.81399548288766,
+      "tasks_median": 133.0,
+      "wall_us_a_step": 568.3045813917785,
+      "idle_workers_mean": 0.08333333333333333,
+      "per_worker": [
+       {
+        "leave_us_mean": 261.8932264149167,
+        "busy_us_mean": 251.08941900444742,
+        "tasks_mean": 37.625
+       },
+       {
+        "leave_us_mean": 236.24445102810762,
+        "busy_us_mean": 202.9033183882197,
+        "tasks_mean": 31.25
+       },
+       {
+        "leave_us_mean": 249.73898383901988,
+        "busy_us_mean": 238.1504298292805,
+        "tasks_mean": 32.208333333333336
+       },
+       {
+        "leave_us_mean": 249.44680984315147,
+        "busy_us_mean": 239.30709682383699,
+        "tasks_mean": 31.916666666666668
+       }
+      ],
+      "clock_ms_a_step_median": 0.5387485
+     },
+     {
+      "claim": "train.scatter",
+      "jobs_a_step": 1.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 435.321427751933,
+      "busy_share_median": 0.8636824713322131,
+      "worker_enter_us_median": 1.2243481731628945,
+      "first_leave_us_median": 370.5109745969778,
+      "last_leave_us_median": 434.9309928586446,
+      "tasks_median": 8.0,
+      "wall_us_a_step": 451.8717222986521,
+      "idle_workers_mean": 0.08333333333333333,
+      "per_worker": [
+       {
+        "leave_us_mean": 396.20438767760015,
+        "busy_us_mean": 390.66148755558453,
+        "tasks_mean": 2.0833333333333335
+       },
+       {
+        "leave_us_mean": 415.44105979744273,
+        "busy_us_mean": 361.1716241233892,
+        "tasks_mean": 1.8333333333333333
+       },
+       {
+        "leave_us_mean": 405.9872890015634,
+        "busy_us_mean": 398.74670723887186,
+        "tasks_mean": 2.0833333333333335
+       },
+       {
+        "leave_us_mean": 402.1183023975439,
+        "busy_us_mean": 395.44634398445044,
+        "tasks_mean": 2
+       }
+      ],
+      "clock_ms_a_step_median": 0.437509
+     },
+     {
+      "claim": "train.scan",
+      "jobs_a_step": 2.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 177.5370068495989,
+      "busy_share_median": 0.6228276208171212,
+      "worker_enter_us_median": 23.98565897332294,
+      "first_leave_us_median": 143.29134496778946,
+      "last_leave_us_median": 177.23831111275126,
+      "tasks_median": 81.5,
+      "wall_us_a_step": 359.38097144186526,
+      "idle_workers_mean": 0.041666666666666664,
+      "per_worker": [
+       {
+        "leave_us_mean": 163.87682181781483,
+        "busy_us_mean": 146.79786770094242,
+        "tasks_mean": 22.208333333333332
+       },
+       {
+        "leave_us_mean": 170.80671508663588,
+        "busy_us_mean": 139.41768444940155,
+        "tasks_mean": 18.666666666666668
+       },
+       {
+        "leave_us_mean": 163.54044491086512,
+        "busy_us_mean": 137.46797375177366,
+        "tasks_mean": 20.25
+       },
+       {
+        "leave_us_mean": 166.8172574339727,
+        "busy_us_mean": 133.01920437470278,
+        "tasks_mean": 20.375
+       }
+      ],
+      "clock_ms_a_step_median": 0.333862
+     },
+     {
+      "claim": "train.rope.table",
+      "jobs_a_step": 1.0,
+      "tsc_per_us": 2299.9993480002872,
+      "wall_us_median": 181.73526890927963,
+      "busy_share_median": 0.6929106038672919,
+      "worker_enter_us_median": 59.440451632677124,
+      "first_leave_us_median": 178.16483311453044,
+      "last_leave_us_median": 181.06179045749366,
+      "tasks_median": 128.0,
+      "wall_us_a_step": 187.02889359831227,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 184.96650170932145,
+        "busy_us_mean": 136.0127921798412,
+        "tasks_mean": 34.916666666666664
+       },
+       {
+        "leave_us_mean": 185.2489655575097,
+        "busy_us_mean": 132.9054724584043,
+        "tasks_mean": 33.833333333333336
+       },
+       {
+        "leave_us_mean": 184.7419364282708,
+        "busy_us_mean": 127.86626813134932,
+        "tasks_mean": 31
+       },
+       {
+        "leave_us_mean": 184.92555966872976,
+        "busy_us_mean": 123.97112209962435,
+        "tasks_mean": 28.25
+       }
+      ],
+      "clock_ms_a_step_median": 0.1830135
+     }
+    ]
+   },
+   "B": {
+    "T": 2048,
+    "contract": "kblock+exp+reduce",
+    "threads": 4,
+    "rounds": 12,
+    "rows": [
+     {
+      "claim": "train.attention.vjp",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 31711.95071592187,
+      "busy_share_median": 0.970183560068635,
+      "worker_enter_us_median": 0.43956532976709595,
+      "first_leave_us_median": 29914.69808253745,
+      "last_leave_us_median": 31690.053319019404,
+      "tasks_median": 16.0,
+      "wall_us_a_step": 97937.0393131703,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 30956.48487061154,
+        "busy_us_mean": 30949.086390459233,
+        "tasks_mean": 4
+       },
+       {
+        "leave_us_mean": 30750.1408806612,
+        "busy_us_mean": 30645.52568483398,
+        "tasks_mean": 4.027777777777778
+       },
+       {
+        "leave_us_mean": 31201.19790418743,
+        "busy_us_mean": 31193.5212597128,
+        "tasks_mean": 3.9722222222222223
+       },
+       {
+        "leave_us_mean": 31003.785752269327,
+        "busy_us_mean": 30995.75314152012,
+        "tasks_mean": 4
+       }
+      ],
+      "clock_ms_a_step_median": 96.1261855
+     },
+     {
+      "claim": "train.attention",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 19940.83857617776,
+      "busy_share_median": 0.9752429834386833,
+      "worker_enter_us_median": 0.486521863510762,
+      "first_leave_us_median": 19023.601385162427,
+      "last_leave_us_median": 19922.84509331682,
+      "tasks_median": 16.0,
+      "wall_us_a_step": 60781.24466928651,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 19861.4498602297,
+        "busy_us_mean": 19858.136042957394,
+        "tasks_mean": 4.027777777777778
+       },
+       {
+        "leave_us_mean": 19565.428069575268,
+        "busy_us_mean": 19561.71729567974,
+        "tasks_mean": 4.027777777777778
+       },
+       {
+        "leave_us_mean": 19504.472377663315,
+        "busy_us_mean": 19500.860999928464,
+        "tasks_mean": 4
+       },
+       {
+        "leave_us_mean": 19741.32089232041,
+        "busy_us_mean": 19737.253065193505,
+        "tasks_mean": 3.9444444444444446
+       }
+      ],
+      "clock_ms_a_step_median": 60.3918825
+     },
+     {
+      "claim": "train.gemm.chain.nn",
+      "jobs_a_step": 12.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 1615.2743259917222,
+      "busy_share_median": 0.9251598698357164,
+      "worker_enter_us_median": 1.1469568149610279,
+      "first_leave_us_median": 1527.039955608335,
+      "last_leave_us_median": 1592.4947549506862,
+      "tasks_median": 67.0,
+      "wall_us_a_step": 23552.908340190625,
+      "idle_workers_mean": 0.013888888888888888,
+      "per_worker": [
+       {
+        "leave_us_mean": 1935.4930008514623,
+        "busy_us_mean": 1927.1648948576303,
+        "tasks_mean": 17.59722222222222
+       },
+       {
+        "leave_us_mean": 1933.7088699605629,
+        "busy_us_mean": 1866.491443355998,
+        "tasks_mean": 17.90972222222222
+       },
+       {
+        "leave_us_mean": 1931.9615929438194,
+        "busy_us_mean": 1894.0772897803577,
+        "tasks_mean": 16.97222222222222
+       },
+       {
+        "leave_us_mean": 1934.7013702142976,
+        "busy_us_mean": 1905.7189896164857,
+        "tasks_mean": 17.270833333333332
+       }
+      ],
+      "clock_ms_a_step_median": 23.489918
+     },
+     {
+      "claim": "train.gemm.pair.nn",
+      "jobs_a_step": 14.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 774.0815022433735,
+      "busy_share_median": 0.9093906178749462,
+      "worker_enter_us_median": 1.0452176585164181,
+      "first_leave_us_median": 580.3231918390929,
+      "last_leave_us_median": 759.3745419617694,
+      "tasks_median": 50.0,
+      "wall_us_a_step": 13382.691174936046,
+      "idle_workers_mean": 0.02976190476190476,
+      "per_worker": [
+       {
+        "leave_us_mean": 940.3284288027174,
+        "busy_us_mean": 935.4293695792483,
+        "tasks_mean": 11.547619047619047
+       },
+       {
+        "leave_us_mean": 941.1041174068209,
+        "busy_us_mean": 923.1594285542135,
+        "tasks_mean": 11.601190476190476
+       },
+       {
+        "leave_us_mean": 938.007015165765,
+        "busy_us_mean": 916.6212229489603,
+        "tasks_mean": 11.30952380952381
+       },
+       {
+        "leave_us_mean": 941.0730770262146,
+        "busy_us_mean": 935.2175786348344,
+        "tasks_mean": 11.68452380952381
+       }
+      ],
+      "clock_ms_a_step_median": 13.342104
+     },
+     {
+      "claim": "train.gemm.rest.nt",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 2202.767519663841,
+      "busy_share_median": 0.9871690960030014,
+      "worker_enter_us_median": 0.9943480802941133,
+      "first_leave_us_median": 2175.6631649084693,
+      "last_leave_us_median": 2202.363171734382,
+      "tasks_median": 160.0,
+      "wall_us_a_step": 13353.473486307063,
+      "idle_workers_mean": 0.013888888888888888,
+      "per_worker": [
+       {
+        "leave_us_mean": 2185.1247856848404,
+        "busy_us_mean": 2177.291232957539,
+        "tasks_mean": 40.18055555555556
+       },
+       {
+        "leave_us_mean": 2182.6168502610726,
+        "busy_us_mean": 2159.8816753666524,
+        "tasks_mean": 40.291666666666664
+       },
+       {
+        "leave_us_mean": 2183.881850584473,
+        "busy_us_mean": 2099.8912131700627,
+        "tasks_mean": 39.666666666666664
+       },
+       {
+        "leave_us_mean": 2208.7123037923334,
+        "busy_us_mean": 2199.238750645762,
+        "tasks_mean": 39.861111111111114
+       }
+      ],
+      "clock_ms_a_step_median": 13.0383995
+     },
+     {
+      "claim": "train.gemm.alone.nt",
+      "jobs_a_step": 7.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 1168.6863857336293,
+      "busy_share_median": 0.9603378220907617,
+      "worker_enter_us_median": 3.5682617817987703,
+      "first_leave_us_median": 1122.968982741532,
+      "last_leave_us_median": 1168.3202986835165,
+      "tasks_median": 64.0,
+      "wall_us_a_step": 7165.385165178966,
+      "idle_workers_mean": 0.05952380952380952,
+      "per_worker": [
+       {
+        "leave_us_mean": 982.4257791095062,
+        "busy_us_mean": 968.03235928073,
+        "tasks_mean": 16.333333333333332
+       },
+       {
+        "leave_us_mean": 977.5321029101874,
+        "busy_us_mean": 901.301700398952,
+        "tasks_mean": 15.345238095238095
+       },
+       {
+        "leave_us_mean": 981.7953959255731,
+        "busy_us_mean": 952.5638874172803,
+        "tasks_mean": 16.023809523809526
+       },
+       {
+        "leave_us_mean": 996.6869318237225,
+        "busy_us_mean": 978.9342047179131,
+        "tasks_mean": 16.297619047619047
+       }
+      ],
+      "clock_ms_a_step_median": 6.905687
+     },
+     {
+      "claim": "train.rms.vjp.add.first",
+      "jobs_a_step": 12.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 409.22619157604953,
+      "busy_share_median": 0.934708052821362,
+      "worker_enter_us_median": 0.7621741078948756,
+      "first_leave_us_median": 382.1274889960359,
+      "last_leave_us_median": 408.7522784114144,
+      "tasks_median": 260.0,
+      "wall_us_a_step": 5118.647757868317,
+      "idle_workers_mean": 0.034722222222222224,
+      "per_worker": [
+       {
+        "leave_us_mean": 408.2274050888236,
+        "busy_us_mean": 394.74990768192066,
+        "tasks_mean": 64.86805555555556
+       },
+       {
+        "leave_us_mean": 401.26760862354683,
+        "busy_us_mean": 377.9511231940397,
+        "tasks_mean": 67.99305555555556
+       },
+       {
+        "leave_us_mean": 398.5366417417946,
+        "busy_us_mean": 380.32910689376365,
+        "tasks_mean": 65.40972222222223
+       },
+       {
+        "leave_us_mean": 403.3489738899517,
+        "busy_us_mean": 380.86420968756863,
+        "tasks_mean": 61.729166666666664
+       }
+      ],
+      "clock_ms_a_step_median": 5.1568305
+     },
+     {
+      "claim": "train.loss",
+      "jobs_a_step": 1.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 3287.839101412476,
+      "busy_share_median": 0.9906594588259214,
+      "worker_enter_us_median": 0.5613044913247487,
+      "first_leave_us_median": 3270.2804012713837,
+      "last_leave_us_median": 3287.4230143495806,
+      "tasks_median": 512.0,
+      "wall_us_a_step": 3339.5307812942283,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 3328.765995933493,
+        "busy_us_mean": 3305.283163843101,
+        "tasks_mean": 130.25
+       },
+       {
+        "leave_us_mean": 3331.1186052305943,
+        "busy_us_mean": 3309.499179413688,
+        "tasks_mean": 129.83333333333334
+       },
+       {
+        "leave_us_mean": 3325.7241110978575,
+        "busy_us_mean": 3146.7900798457536,
+        "tasks_mean": 124.16666666666667
+       },
+       {
+        "leave_us_mean": 3331.568822736998,
+        "busy_us_mean": 3310.4667883567113,
+        "tasks_mean": 127.75
+       }
+      ],
+      "clock_ms_a_step_median": 3.3003
+     },
+     {
+      "claim": "train.swiglu.vjp",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 813.3993383820168,
+      "busy_share_median": 0.9639283641074252,
+      "worker_enter_us_median": 0.6700001712869386,
+      "first_leave_us_median": 805.7662929523519,
+      "last_leave_us_median": 812.9823817536818,
+      "tasks_median": 256.0,
+      "wall_us_a_step": 2501.570711995528,
+      "idle_workers_mean": 0.05555555555555555,
+      "per_worker": [
+       {
+        "leave_us_mean": 828.0077237591929,
+        "busy_us_mean": 802.3240215409271,
+        "tasks_mean": 62.77777777777778
+       },
+       {
+        "leave_us_mean": 825.8922642811733,
+        "busy_us_mean": 772.7428062489593,
+        "tasks_mean": 65.55555555555556
+       },
+       {
+        "leave_us_mean": 823.7196067208979,
+        "busy_us_mean": 798.534044726601,
+        "tasks_mean": 65.38888888888889
+       },
+       {
+        "leave_us_mean": 824.6976987583888,
+        "busy_us_mean": 770.4196655584251,
+        "tasks_mean": 62.27777777777778
+       }
+      ],
+      "clock_ms_a_step_median": 2.4377445
+     },
+     {
+      "claim": "train.silu_mul",
+      "jobs_a_step": 3.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 593.9501518445927,
+      "busy_share_median": 0.9701760494550113,
+      "worker_enter_us_median": 1.1356524642449601,
+      "first_leave_us_median": 586.8310195897892,
+      "last_leave_us_median": 593.6749343829285,
+      "tasks_median": 256.0,
+      "wall_us_a_step": 1843.289891530753,
+      "idle_workers_mean": 0.027777777777777776,
+      "per_worker": [
+       {
+        "leave_us_mean": 606.079526926169,
+        "busy_us_mean": 593.4694270840133,
+        "tasks_mean": 65.91666666666667
+       },
+       {
+        "leave_us_mean": 609.671991612706,
+        "busy_us_mean": 553.9174121415405,
+        "tasks_mean": 59.861111111111114
+       },
+       {
+        "leave_us_mean": 605.5906379122947,
+        "busy_us_mean": 590.7997404111642,
+        "tasks_mean": 64.41666666666667
+       },
+       {
+        "leave_us_mean": 606.5148652017155,
+        "busy_us_mean": 586.5111161263627,
+        "tasks_mean": 65.80555555555556
+       }
+      ],
+      "clock_ms_a_step_median": 1.818748
+     },
+     {
+      "claim": "train.rms",
+      "jobs_a_step": 7.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 218.57788196684706,
+      "busy_share_median": 0.8595854437457846,
+      "worker_enter_us_median": 0.7317393175054624,
+      "first_leave_us_median": 215.9657073859957,
+      "last_leave_us_median": 217.96962094177866,
+      "tasks_median": 512.0,
+      "wall_us_a_step": 1606.7770774425715,
+      "idle_workers_mean": 0.047619047619047616,
+      "per_worker": [
+       {
+        "leave_us_mean": 227.56148674799638,
+        "busy_us_mean": 198.53720396555923,
+        "tasks_mean": 128.38095238095238
+       },
+       {
+        "leave_us_mean": 228.0378947372859,
+        "busy_us_mean": 181.80636117896768,
+        "tasks_mean": 124.45238095238095
+       },
+       {
+        "leave_us_mean": 227.39610368294151,
+        "busy_us_mean": 195.73070221287452,
+        "tasks_mean": 131.39285714285714
+       },
+       {
+        "leave_us_mean": 227.5352238013236,
+        "busy_us_mean": 195.0926792754355,
+        "tasks_mean": 127.77380952380952
+       }
+      ],
+      "clock_ms_a_step_median": 1.5833305
+     },
+     {
+      "claim": "train.update",
+      "jobs_a_step": 2.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 244.30614941389743,
+      "busy_share_median": 0.8758452846108156,
+      "worker_enter_us_median": 0.5591305777255049,
+      "first_leave_us_median": 211.78396718649034,
+      "last_leave_us_median": 244.12614936788003,
+      "tasks_median": 133.0,
+      "wall_us_a_step": 884.2687043260046,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 243.78252609162624,
+        "busy_us_mean": 232.87194359216818,
+        "tasks_mean": 33.833333333333336
+       },
+       {
+        "leave_us_mean": 221.51940445798385,
+        "busy_us_mean": 212.56056158792688,
+        "tasks_mean": 34
+       },
+       {
+        "leave_us_mean": 416.87865730053426,
+        "busy_us_mean": 409.53249600218294,
+        "tasks_mean": 33.5
+       },
+       {
+        "leave_us_mean": 214.0682793646824,
+        "busy_us_mean": 202.09918210185924,
+        "tasks_mean": 31.666666666666668
+       }
+      ],
+      "clock_ms_a_step_median": 0.4970325
+     },
+     {
+      "claim": "train.rms.vjp.first",
+      "jobs_a_step": 2.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 383.20575014126075,
+      "busy_share_median": 0.9014299085947055,
+      "worker_enter_us_median": 0.6560871242517783,
+      "first_leave_us_median": 371.4757471424611,
+      "last_leave_us_median": 381.9440106882597,
+      "tasks_median": 260.0,
+      "wall_us_a_step": 799.8786827515199,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 385.03071437593263,
+        "busy_us_mean": 363.4010349332166,
+        "tasks_mean": 65.16666666666667
+       },
+       {
+        "leave_us_mean": 384.2740112839292,
+        "busy_us_mean": 363.2970856312794,
+        "tasks_mean": 65.66666666666667
+       },
+       {
+        "leave_us_mean": 386.5662582467585,
+        "busy_us_mean": 366.8125575445099,
+        "tasks_mean": 65.375
+       },
+       {
+        "leave_us_mean": 386.9411858788414,
+        "busy_us_mean": 368.01690567849096,
+        "tasks_mean": 63.791666666666664
+       }
+      ],
+      "clock_ms_a_step_median": 0.807447
+     },
+     {
+      "claim": "train.rope.inverse",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 106.45307069321001,
+      "busy_share_median": 0.7540314703264487,
+      "worker_enter_us_median": 36.29348753937521,
+      "first_leave_us_median": 104.97437466300437,
+      "last_leave_us_median": 106.26915760271396,
+      "tasks_median": 128.0,
+      "wall_us_a_step": 795.1407829895413,
+      "idle_workers_mean": 0.027777777777777776,
+      "per_worker": [
+       {
+        "leave_us_mean": 102.38710347016213,
+        "busy_us_mean": 82.33701380325218,
+        "tasks_mean": 33.34722222222222
+       },
+       {
+        "leave_us_mean": 102.1243980889913,
+        "busy_us_mean": 76.64133601863787,
+        "tasks_mean": 32.361111111111114
+       },
+       {
+        "leave_us_mean": 130.43676039956944,
+        "busy_us_mean": 102.81343208156939,
+        "tasks_mean": 30.819444444444443
+       },
+       {
+        "leave_us_mean": 102.2068498008915,
+        "busy_us_mean": 78.74136071010292,
+        "tasks_mean": 31.47222222222222
+       }
+      ],
+      "clock_ms_a_step_median": 0.6360865
+     },
+     {
+      "claim": "train.add",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 112.21741999296486,
+      "busy_share_median": 0.9149384016518209,
+      "worker_enter_us_median": 1.7065221754063815,
+      "first_leave_us_median": 109.36307143715774,
+      "last_leave_us_median": 111.60741983701703,
+      "tasks_median": 128.0,
+      "wall_us_a_step": 709.1776450708572,
+      "idle_workers_mean": 0.05555555555555555,
+      "per_worker": [
+       {
+        "leave_us_mean": 116.04768667266359,
+        "busy_us_mean": 108.67857850854251,
+        "tasks_mean": 31.84722222222222
+       },
+       {
+        "leave_us_mean": 113.70349525211014,
+        "busy_us_mean": 100.93155961978844,
+        "tasks_mean": 31.77777777777778
+       },
+       {
+        "leave_us_mean": 113.53684062013255,
+        "busy_us_mean": 100.34992903631077,
+        "tasks_mean": 31.944444444444443
+       },
+       {
+        "leave_us_mean": 113.31795167528425,
+        "busy_us_mean": 104.59881901143723,
+        "tasks_mean": 32.43055555555556
+       }
+      ],
+      "clock_ms_a_step_median": 0.681705
+     },
+     {
+      "claim": "train.rope",
+      "jobs_a_step": 6.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 91.99393656191964,
+      "busy_share_median": 0.9072529201670393,
+      "worker_enter_us_median": 0.8847828348922258,
+      "first_leave_us_median": 88.4535008741912,
+      "last_leave_us_median": 91.70524083594007,
+      "tasks_median": 128.0,
+      "wall_us_a_step": 572.3675376313004,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 93.38393691727613,
+        "busy_us_mean": 87.10426139882054,
+        "tasks_mean": 31.88888888888889
+       },
+       {
+        "leave_us_mean": 93.06614698096001,
+        "busy_us_mean": 86.11406790896054,
+        "tasks_mean": 32.333333333333336
+       },
+       {
+        "leave_us_mean": 93.3117871403768,
+        "busy_us_mean": 85.8185364324411,
+        "tasks_mean": 32.06944444444444
+       },
+       {
+        "leave_us_mean": 93.06712524207967,
+        "busy_us_mean": 85.7424373791698,
+        "tasks_mean": 31.708333333333332
+       }
+      ],
+      "clock_ms_a_step_median": 0.5850855
+     },
+     {
+      "claim": "train.scatter",
+      "jobs_a_step": 1.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 393.4574918925747,
+      "busy_share_median": 0.9466929467964975,
+      "worker_enter_us_median": 0.6078262423485659,
+      "first_leave_us_median": 333.04399818686966,
+      "last_leave_us_median": 393.03488308888166,
+      "tasks_median": 8.0,
+      "wall_us_a_step": 396.3204636389921,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 392.88234681800145,
+        "busy_us_mean": 391.39553484369196,
+        "tasks_mean": 2
+       },
+       {
+        "leave_us_mean": 366.1913979654193,
+        "busy_us_mean": 364.40262939217484,
+        "tasks_mean": 2
+       },
+       {
+        "leave_us_mean": 374.0252405478676,
+        "busy_us_mean": 372.2603850242148,
+        "tasks_mean": 2
+       },
+       {
+        "leave_us_mean": 345.787044922917,
+        "busy_us_mean": 344.2193633627156,
+        "tasks_mean": 2
+       }
+      ],
+      "clock_ms_a_step_median": 0.3948245
+     },
+     {
+      "claim": "train.scan",
+      "jobs_a_step": 2.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 133.8217733422497,
+      "busy_share_median": 0.6514601041453099,
+      "worker_enter_us_median": 48.52436023144067,
+      "first_leave_us_median": 127.72959787172888,
+      "last_leave_us_median": 133.6878602645363,
+      "tasks_median": 81.5,
+      "wall_us_a_step": 294.0284809660947,
+      "idle_workers_mean": 0.041666666666666664,
+      "per_worker": [
+       {
+        "leave_us_mean": 143.50434828138827,
+        "busy_us_mean": 124.29593757361664,
+        "tasks_mean": 21.708333333333332
+       },
+       {
+        "leave_us_mean": 143.83308024948727,
+        "busy_us_mean": 113.23966663111592,
+        "tasks_mean": 20.166666666666668
+       },
+       {
+        "leave_us_mean": 143.86072518409097,
+        "busy_us_mean": 103.5644829982148,
+        "tasks_mean": 19.5
+       },
+       {
+        "leave_us_mean": 143.282790253732,
+        "busy_us_mean": 115.5578918614562,
+        "tasks_mean": 20.125
+       }
+      ],
+      "clock_ms_a_step_median": 0.2819385
+     },
+     {
+      "claim": "train.rope.table",
+      "jobs_a_step": 1.0,
+      "tsc_per_us": 2299.999412000212,
+      "wall_us_median": 175.25265349935788,
+      "busy_share_median": 0.7006964800602125,
+      "worker_enter_us_median": 52.52914386396759,
+      "first_leave_us_median": 171.926130909795,
+      "last_leave_us_median": 174.95004472634315,
+      "tasks_median": 128.0,
+      "wall_us_a_step": 181.44924928642905,
+      "idle_workers_mean": 0,
+      "per_worker": [
+       {
+        "leave_us_mean": 178.34743689924133,
+        "busy_us_mean": 130.39112029128307,
+        "tasks_mean": 33.833333333333336
+       },
+       {
+        "leave_us_mean": 179.63453867756695,
+        "busy_us_mean": 126.02249598602938,
+        "tasks_mean": 32.166666666666664
+       },
+       {
+        "leave_us_mean": 179.2854081535284,
+        "busy_us_mean": 125.50039440327767,
+        "tasks_mean": 31.666666666666668
+       },
+       {
+        "leave_us_mean": 179.14519072637717,
+        "busy_us_mean": 124.51582893418015,
+        "tasks_mean": 30.333333333333332
+       }
+      ],
+      "clock_ms_a_step_median": 0.1764325
+     }
+    ]
+   }
+  }
+ }
+}

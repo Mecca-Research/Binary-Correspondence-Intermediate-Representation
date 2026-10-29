@@ -1,0 +1,431 @@
+{
+ "what": "the slice's exploration on the tree before (34020be1, ROPE-TABLE's records over b86bfc49): NEXT-3's GEMM forms against MKL, which found the weight adjoint at a depth of four K blocks and more, and KSPLIT-0, the prototype the slice became",
+ "tn_bench": {
+  "what": "tn_bench.py: the k-blocked GEMM's weight-adjoint form (tn: C = A^T B, A stored k x m) and its other forms at the GEO step's shapes against torch.mm (MKL), one thread and four, each arm the median of 9 rounds of 5 calls, rotated, every BCIR output checked against a double reference first; bcir_over_mkl_time the ratio of the medians",
+  "rows": [
+   {
+    "form": "tn",
+    "m": 128,
+    "n": 384,
+    "k": 1024,
+    "threads": 1,
+    "bcir_gflops": 140.78684223235783,
+    "mkl_gflops": 147.23619542724933,
+    "bcir_over_mkl_time": 1.0458093461905151
+   },
+   {
+    "form": "tn",
+    "m": 128,
+    "n": 384,
+    "k": 1024,
+    "threads": 4,
+    "bcir_gflops": 446.54894657115636,
+    "mkl_gflops": 390.36905307993953,
+    "bcir_over_mkl_time": 0.874190961768925
+   },
+   {
+    "form": "tn",
+    "m": 128,
+    "n": 128,
+    "k": 1024,
+    "threads": 1,
+    "bcir_gflops": 152.08559487876542,
+    "mkl_gflops": 149.0207326519361,
+    "bcir_over_mkl_time": 0.979847780920524
+   },
+   {
+    "form": "tn",
+    "m": 128,
+    "n": 128,
+    "k": 1024,
+    "threads": 4,
+    "bcir_gflops": 268.9565842341069,
+    "mkl_gflops": 173.9667676718657,
+    "bcir_over_mkl_time": 0.6468210033498956
+   },
+   {
+    "form": "tn",
+    "m": 128,
+    "n": 256,
+    "k": 1024,
+    "threads": 1,
+    "bcir_gflops": 141.98090274954419,
+    "mkl_gflops": 142.75808775843592,
+    "bcir_over_mkl_time": 1.0054738700335122
+   },
+   {
+    "form": "tn",
+    "m": 128,
+    "n": 256,
+    "k": 1024,
+    "threads": 4,
+    "bcir_gflops": 332.9787204333024,
+    "mkl_gflops": 314.2539286035552,
+    "bcir_over_mkl_time": 0.9437658003929478
+   },
+   {
+    "form": "tn",
+    "m": 256,
+    "n": 128,
+    "k": 1024,
+    "threads": 1,
+    "bcir_gflops": 151.22088348688877,
+    "mkl_gflops": 146.9384225180515,
+    "bcir_over_mkl_time": 0.971680756849906
+   },
+   {
+    "form": "tn",
+    "m": 256,
+    "n": 128,
+    "k": 1024,
+    "threads": 4,
+    "bcir_gflops": 372.7669616253277,
+    "mkl_gflops": 356.96204328174514,
+    "bcir_over_mkl_time": 0.9576010752812685
+   },
+   {
+    "form": "tn",
+    "m": 260,
+    "n": 128,
+    "k": 1024,
+    "threads": 1,
+    "bcir_gflops": 145.27088816824795,
+    "mkl_gflops": 155.60391438971138,
+    "bcir_over_mkl_time": 1.0711293663290338
+   },
+   {
+    "form": "tn",
+    "m": 260,
+    "n": 128,
+    "k": 1024,
+    "threads": 4,
+    "bcir_gflops": 341.48827368792035,
+    "mkl_gflops": 371.3278028412029,
+    "bcir_over_mkl_time": 1.0873808310634772
+   },
+   {
+    "form": "nn",
+    "m": 1024,
+    "n": 384,
+    "k": 128,
+    "threads": 1,
+    "bcir_gflops": 154.26440871680552,
+    "mkl_gflops": 167.00521673198054,
+    "bcir_over_mkl_time": 1.0825907162977837
+   },
+   {
+    "form": "nn",
+    "m": 1024,
+    "n": 384,
+    "k": 128,
+    "threads": 4,
+    "bcir_gflops": 559.246745989155,
+    "mkl_gflops": 439.87505957864613,
+    "bcir_over_mkl_time": 0.7865491623033533
+   },
+   {
+    "form": "nn",
+    "m": 1024,
+    "n": 256,
+    "k": 128,
+    "threads": 1,
+    "bcir_gflops": 151.33491829367608,
+    "mkl_gflops": 163.8862536336535,
+    "bcir_over_mkl_time": 1.0829374706214245
+   },
+   {
+    "form": "nn",
+    "m": 1024,
+    "n": 256,
+    "k": 128,
+    "threads": 4,
+    "bcir_gflops": 535.3479564970904,
+    "mkl_gflops": 409.3097084868006,
+    "bcir_over_mkl_time": 0.7645676116240582
+   },
+   {
+    "form": "tn",
+    "m": 128,
+    "n": 384,
+    "k": 4096,
+    "threads": 1,
+    "bcir_gflops": 112.1556998644721,
+    "mkl_gflops": 139.49079631622317,
+    "bcir_over_mkl_time": 1.2437245408372697
+   },
+   {
+    "form": "tn",
+    "m": 128,
+    "n": 384,
+    "k": 4096,
+    "threads": 4,
+    "bcir_gflops": 428.26907035960045,
+    "mkl_gflops": 495.71225408814934,
+    "bcir_over_mkl_time": 1.157478530195794
+   },
+   {
+    "form": "tn",
+    "m": 128,
+    "n": 128,
+    "k": 4096,
+    "threads": 1,
+    "bcir_gflops": 97.24160712428261,
+    "mkl_gflops": 115.28393302193889,
+    "bcir_over_mkl_time": 1.1855412146222215
+   },
+   {
+    "form": "tn",
+    "m": 128,
+    "n": 128,
+    "k": 4096,
+    "threads": 4,
+    "bcir_gflops": 240.3365550818371,
+    "mkl_gflops": 348.6881189504986,
+    "bcir_over_mkl_time": 1.450832641051074
+   },
+   {
+    "form": "tn",
+    "m": 128,
+    "n": 256,
+    "k": 4096,
+    "threads": 1,
+    "bcir_gflops": 103.75823289695465,
+    "mkl_gflops": 140.1953344116925,
+    "bcir_over_mkl_time": 1.351173111736826
+   },
+   {
+    "form": "tn",
+    "m": 128,
+    "n": 256,
+    "k": 4096,
+    "threads": 4,
+    "bcir_gflops": 276.86471284373204,
+    "mkl_gflops": 487.89343559459826,
+    "bcir_over_mkl_time": 1.7622088079891027
+   },
+   {
+    "form": "tn",
+    "m": 256,
+    "n": 128,
+    "k": 4096,
+    "threads": 1,
+    "bcir_gflops": 119.67215228131205,
+    "mkl_gflops": 147.50317678937157,
+    "bcir_over_mkl_time": 1.2325605746827164
+   },
+   {
+    "form": "tn",
+    "m": 256,
+    "n": 128,
+    "k": 4096,
+    "threads": 4,
+    "bcir_gflops": 313.3218870722647,
+    "mkl_gflops": 459.83841346894474,
+    "bcir_over_mkl_time": 1.467623017867524
+   },
+   {
+    "form": "tn",
+    "m": 260,
+    "n": 128,
+    "k": 4096,
+    "threads": 1,
+    "bcir_gflops": 78.34990917533682,
+    "mkl_gflops": 139.07086114948288,
+    "bcir_over_mkl_time": 1.7749970946138625
+   },
+   {
+    "form": "tn",
+    "m": 260,
+    "n": 128,
+    "k": 4096,
+    "threads": 4,
+    "bcir_gflops": 209.45389821583453,
+    "mkl_gflops": 472.72628891682564,
+    "bcir_over_mkl_time": 2.256946721658523
+   },
+   {
+    "form": "nn",
+    "m": 4096,
+    "n": 384,
+    "k": 128,
+    "threads": 1,
+    "bcir_gflops": 147.31867988115783,
+    "mkl_gflops": 170.4378794169612,
+    "bcir_over_mkl_time": 1.1569332521473426
+   },
+   {
+    "form": "nn",
+    "m": 4096,
+    "n": 384,
+    "k": 128,
+    "threads": 4,
+    "bcir_gflops": 555.9740312424092,
+    "mkl_gflops": 597.3496127833785,
+    "bcir_over_mkl_time": 1.0744199894525814
+   },
+   {
+    "form": "nn",
+    "m": 4096,
+    "n": 256,
+    "k": 128,
+    "threads": 1,
+    "bcir_gflops": 139.72543919245064,
+    "mkl_gflops": 163.4348839287509,
+    "bcir_over_mkl_time": 1.1696859560673423
+   },
+   {
+    "form": "nn",
+    "m": 4096,
+    "n": 256,
+    "k": 128,
+    "threads": 4,
+    "bcir_gflops": 549.3306079376289,
+    "mkl_gflops": 554.0509230324362,
+    "bcir_over_mkl_time": 1.008592849236144
+   }
+  ]
+ },
+ "ksplit_0": {
+  "what": "proto_ksplit.py, the prototype the slice became, over the tree before's tensor unit: under the AVX-512 instance, a blocked-contract weight adjoint at least four K blocks deep run a pool task a K block -- each block's product over all of C into a partials arena the copy allocates once and keeps (the kernel's accumulators stored as they are, fold 2), then a fold job, sixteen rows a task, c' + alpha*P block after block -- every value the nest's. Its docstring describes the form it began with (a slice pre-filled with -0.0 under beta 1, the accumulators added to it), which the bytes here had replaced by the raw store. steps: step_ab.c between the tree before's library (A) and the prototype's (B), the GEO dimensions at B4 (contract 14, four threads), T1024 and T2048, clang twice and gcc once, each beside its A/A control",
+  "steps": [
+   {
+    "compiler": "clang",
+    "T": 1024,
+    "ms": {
+     "A": 83.18,
+     "B": 78.87
+    },
+    "b_over_a": {
+     "geometric_mean": 0.928,
+     "ci95": [
+      0.91,
+      0.946
+     ]
+    },
+    "aa": {
+     "geometric_mean": 1.008,
+     "ci95": [
+      0.983,
+      1.032
+     ]
+    },
+    "verdict": "resolved"
+   },
+   {
+    "compiler": "clang",
+    "T": 2048,
+    "ms": {
+     "A": 232.36,
+     "B": 224.64
+    },
+    "b_over_a": {
+     "geometric_mean": 0.961,
+     "ci95": [
+      0.938,
+      0.984
+     ]
+    },
+    "aa": {
+     "geometric_mean": 1.018,
+     "ci95": [
+      0.995,
+      1.042
+     ]
+    },
+    "verdict": "resolved"
+   },
+   {
+    "compiler": "gcc",
+    "T": 1024,
+    "ms": {
+     "A": 81.77,
+     "B": 78.43
+    },
+    "b_over_a": {
+     "geometric_mean": 0.972,
+     "ci95": [
+      0.944,
+      1.0
+     ]
+    },
+    "aa": {
+     "geometric_mean": 1.002,
+     "ci95": [
+      0.973,
+      1.032
+     ]
+    },
+    "verdict": "not resolved: holds 1"
+   },
+   {
+    "compiler": "gcc",
+    "T": 2048,
+    "ms": {
+     "A": 232.88,
+     "B": 223.36
+    },
+    "b_over_a": {
+     "geometric_mean": 0.945,
+     "ci95": [
+      0.916,
+      0.976
+     ]
+    },
+    "aa": {
+     "geometric_mean": 0.989,
+     "ci95": [
+      0.971,
+      1.008
+     ]
+    },
+    "verdict": "not resolved: meets the A/A control's interval"
+   },
+   {
+    "compiler": "clang",
+    "T": 1024,
+    "ms": {
+     "A": 80.97,
+     "B": 77.49
+    },
+    "b_over_a": {
+     "geometric_mean": 0.96,
+     "ci95": [
+      0.941,
+      0.979
+     ]
+    },
+    "aa": {
+     "geometric_mean": 0.988,
+     "ci95": [
+      0.968,
+      1.008
+     ]
+    },
+    "verdict": "not resolved: meets the A/A control's interval"
+   },
+   {
+    "compiler": "clang",
+    "T": 2048,
+    "ms": {
+     "A": 234.89,
+     "B": 230.14
+    },
+    "b_over_a": {
+     "geometric_mean": 0.981,
+     "ci95": [
+      0.96,
+      1.002
+     ]
+    },
+    "aa": {
+     "geometric_mean": 0.987,
+     "ci95": [
+      0.961,
+      1.014
+     ]
+    },
+    "verdict": "not resolved: holds 1"
+   }
+  ]
+ }
+}

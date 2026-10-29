@@ -1,0 +1,130 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA1 a strip's scores start every row block at its column block",
+      "new": "      for (i0=j0;i0<rows;i0+=8) {\n",
+      "old": "      for (i0=j0>r0 ? j0 : r0;i0<rows;i0+=8) {\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA2 a strip's context reads its probabilities as the whole attention's rows",
+      "new": "      __m512 pv=_mm512_set1_ps(p[(i0+r)*ldp+j]);\n",
+      "old": "      __m512 pv=_mm512_set1_ps(p[(i0+r-r0)*ldp+j]);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA3 the v1 rows' triangle stored at the rectangle's columns",
+      "new": "    x.n=i1-v0; x.b=k+v0*ldk; x.c=s+(v0-i0)*t; x.mode=MM_LOWER; all.jb1=x.n;\n",
+      "old": "    x.n=i1-v0; x.b=k+v0*ldk; x.c=s+(v0-i0)*t+v0; x.mode=MM_LOWER; all.jb1=x.n;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA4 the v1 rows' context without its rectangle",
+      "new": "    if (0) {\n      x.k=v0; x.a=s+(v0-i0)*t; x.b=v; x.mode=MM_FULL;\n",
+      "old": "    if (v0) {\n      x.k=v0; x.a=s+(v0-i0)*t; x.b=v; x.mode=MM_FULL;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA5 a strip of rows that is not a multiple of 16",
+      "new": "  return rows<32 ? 40 : rows;\n",
+      "old": "  return rows<32 ? 32 : rows;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA6 a head's strip at its stored region, not its slot",
+      "new": "  float *s=a->p+(r*a->nh+h)*t*t;\n",
+      "old": "  float *s=a->p+(r*a->nh+h)*att_scratch_rows(t)*t;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA7 the backward's forward keeps no probabilities",
+      "new": "  rc=forward(s,tokens,g,1);\n",
+      "old": "  rc=forward(s,tokens,g,0);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA8 bcir_decoder_forward keeps its probabilities",
+      "new": "  return forward(s,tokens,g,0);\n",
+      "old": "  return forward(s,tokens,g,1);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA9 the bf16 scratch strip's future columns left unfilled",
+      "new": "    else for (u=0;u<rows/64;u++) if (r0+u+1<reach) memset(blkp+u*t+r0+u+1,0,(reach-r0-u-1)*sizeof(float));\n",
+      "old": "    else for (u=0;u<rows;u++) if (r0+u+1<reach) memset(blkp+u*t+r0+u+1,0,(reach-r0-u-1)*sizeof(float));\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA10 the bf16 strip at a 32-row slot whatever the context",
+      "new": "  float *ph=a->scratch ? a->p+(r*nh+h)*32*t : a->p+(r*nh+h)*t*t;\n",
+      "old": "  float *ph=a->scratch ? a->p+(r*nh+h)*att_scratch_rows(t)*t : a->p+(r*nh+h)*t*t;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA11 the scratch's extent counts a whole strip past a short context",
+      "new": "  f[0]=heads; f[1]=att_strip_rows(time); f[2]=time;\n",
+      "old": "  f[0]=heads; f[1]=att_scratch_rows(time); f[2]=time;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA12 the probe blind to the binary32 scratch forward",
+      "new": "      (a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u)|\n",
+      "old": "      (a.scratch ? BCIR_TENSOR_ATTENTION_SCRATCH : 0u)|(a.lower ? BCIR_TENSOR_ATTENTION_LOWER : 0u)|\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA13 the scratch scores' fused block instantiates v1's arithmetic",
+      "new": "  att512_scores_any(0,r0,rows,d,q,ldq,k,ldk,s,lds);\n",
+      "old": "  att512_scores_any(1,r0,rows,d,q,ldq,k,ldk,s,lds);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA14 the scratch context's fused block instantiates v1's arithmetic",
+      "new": "  att512_context_any(0,r0,rows,d,p,ldp,v,ldv,y,ldy,1);\n",
+      "old": "  att512_context_any(1,r0,rows,d,p,ldp,v,ldv,y,ldy,1);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA15 the trainer drops the scratch bit it was given",
+      "new": "  return attention_contract(s)|(scratch ? 0u :\n",
+      "old": "  return attention_contract(s)|(scratch ? BCIR_TENSOR_ATTENTION_SCRATCH :\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA16 the binary32 entry runs the stored forward under the scratch bit",
+      "new": "      0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,\n      att_bands(",
+      "old": "      (contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0,(contract&BCIR_TENSOR_ATTENTION_LOWER)!=0,\n      att_bands(",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "IA17 the bf16 entry runs the stored forward under the scratch bit",
+      "new": "  j.a.scratch=0;\n",
+      "old": "  j.a.scratch=(contract&BCIR_TENSOR_ATTENTION_SCRATCH)!=0;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

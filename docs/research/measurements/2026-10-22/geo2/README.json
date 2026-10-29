@@ -1,0 +1,532 @@
+{
+ "what": "GEO-2 (2026-10-22): Codex's PR818 geometric-head study rerun from its bundle -- uploaded to main on 2026-10-21 under docs/research/wedge-pr818 with the four earlier studies' bundles -- on this host as uploaded (GEO-2a) and against current main (GEO-2b), every record held to Codex's field by field (audit.py: exact equality, no tolerance); and the bundles verified against their manifests (GEO-0). The review note's section 5 reads them (docs/research/BCIR_GEOMETRIC_HEAD_REVIEW_2026-10-19.md).",
+ "host": "Intel(R) Xeon(R) Processor @ 2.80GHz (family 6, model 85: AVX-512F and VNNI, no AVX512-BF16, no AMX), 4 vCPUs, cgroup v1; GCC 13.3.0; the study's drivers under Python 3.12.3 with NumPy 2.3.5 and pyarrow 26.0.0 (the bundle's own pins). Codex's records are an AMD EPYC 9V74's (AVX-512F, no AMX): the bf16 GEMMs ran the AVX-512F instance on both, which computes the other instances' bits (NDT-BF16).",
+ "bundles": {
+  "gp-global": {
+   "manifest": "manifest.json",
+   "manifest_entries": 206,
+   "ok": 205,
+   "newline_only": [],
+   "missing": [
+    {
+     "bytes": null,
+     "path": "vendor/LICENSE"
+    }
+   ],
+   "unlisted": [],
+   "tree_files": 206,
+   "tree_bytes": 262367150
+  },
+  "wedge-integrated": {
+   "manifest": "SOURCE_MANIFEST.json",
+   "manifest_entries": 205,
+   "ok": 201,
+   "newline_only": [
+    "matched-budget/protocol.json",
+    "matched-budget/results/evaluation.json"
+   ],
+   "missing": [
+    {
+     "bytes": 8387,
+     "path": "protocol.json"
+    },
+    {
+     "bytes": 17701,
+     "path": "vendor/LICENSE"
+    }
+   ],
+   "unlisted": [],
+   "tree_files": 204,
+   "tree_bytes": 276045806
+  },
+  "wedge-next": {
+   "manifest": "SOURCE_MANIFEST.json",
+   "manifest_entries": 326,
+   "ok": 239,
+   "newline_only": [
+    "ham-artifacts/attention-96MiB.json",
+    "hybrid/protocol.json",
+    "hybrid/results/byte_lm-global-20261017.json",
+    "results/benchmark-architecture-1thread.json"
+   ],
+   "missing": [
+    {
+     "bytes": 699,
+     "path": "build/attention-build.json"
+    },
+    {
+     "bytes": 43778,
+     "path": "build/attention.c"
+    },
+    {
+     "bytes": 256808,
+     "path": "build/attention.so"
+    },
+    {
+     "bytes": 697,
+     "path": "build/baseline-build.json"
+    },
+    {
+     "bytes": 49092,
+     "path": "build/baseline.c"
+    },
+    {
+     "bytes": 257184,
+     "path": "build/baseline.so"
+    },
+    {
+     "bytes": 695,
+     "path": "build/compact-build.json"
+    },
+    {
+     "bytes": 49910,
+     "path": "build/compact.c"
+    },
+    {
+     "bytes": 257272,
+     "path": "build/compact.so"
+    },
+    {
+     "bytes": 689,
+     "path": "build/fast-build.json"
+    },
+    {
+     "bytes": 49852,
+     "path": "build/fast.c"
+    },
+    {
+     "bytes": 257272,
+     "path": "build/fast.so"
+    },
+    {
+     "bytes": 697,
+     "path": "build/ff_remat-build.json"
+    },
+    {
+     "bytes": 50126,
+     "path": "build/ff_remat.c"
+    },
+    {
+     "bytes": 261424,
+     "path": "build/ff_remat.so"
+    },
+    {
+     "bytes": 713,
+     "path": "build/frame_ff_compact-build.json"
+    },
+    {
+     "bytes": 50300,
+     "path": "build/frame_ff_compact.c"
+    },
+    {
+     "bytes": 261432,
+     "path": "build/frame_ff_compact.so"
+    },
+    {
+     "bytes": 709,
+     "path": "build/frame_ff_remat-build.json"
+    },
+    {
+     "bytes": 50276,
+     "path": "build/frame_ff_remat.c"
+    },
+    {
+     "bytes": 261432,
+     "path": "build/frame_ff_remat.so"
+    },
+    {
+     "bytes": 782,
+     "path": "build/frame_ff_remat_ubsan-build.json"
+    },
+    {
+     "bytes": 50276,
+     "path": "build/frame_ff_remat_ubsan.c"
+    },
+    {
+     "bytes": 715304,
+     "path": "build/frame_ff_remat_ubsan.so"
+    },
+    {
+     "bytes": 703,
+     "path": "build/frame_remat-build.json"
+    },
+    {
+     "bytes": 50028,
+     "path": "build/frame_remat.c"
+    },
+    {
+     "bytes": 257280,
+     "path": "build/frame_remat.so"
+    },
+    {
+     "bytes": 49092,
+     "path": "build/global_norope.c"
+    },
+    {
+     "bytes": 49092,
+     "path": "build/global_symmetric_norope.c"
+    },
+    {
+     "bytes": 693,
+     "path": "build/hybrid-build.json"
+    },
+    {
+     "bytes": 49961,
+     "path": "build/hybrid.c"
+    },
+    {
+     "bytes": 261368,
+     "path": "build/hybrid.so"
+    },
+    {
+     "bytes": 707,
+     "path": "build/layer_compact-build.json"
+    },
+    {
+     "bytes": 50190,
+     "path": "build/layer_compact.c"
+    },
+    {
+     "bytes": 261360,
+     "path": "build/layer_compact.so"
+    },
+    {
+     "bytes": 709,
+     "path": "build/layer_frame_ff-build.json"
+    },
+    {
+     "bytes": 50558,
+     "path": "build/layer_frame_ff.c"
+    },
+    {
+     "bytes": 261416,
+     "path": "build/layer_frame_ff.so"
+    },
+    {
+     "bytes": 782,
+     "path": "build/layer_frame_ff_ubsan-build.json"
+    },
+    {
+     "bytes": 50558,
+     "path": "build/layer_frame_ff_ubsan.c"
+    },
+    {
+     "bytes": 710488,
+     "path": "build/layer_frame_ff_ubsan.so"
+    },
+    {
+     "bytes": 703,
+     "path": "build/layer_remat-build.json"
+    },
+    {
+     "bytes": 50132,
+     "path": "build/layer_remat.c"
+    },
+    {
+     "bytes": 261360,
+     "path": "build/layer_remat.so"
+    },
+    {
+     "bytes": 776,
+     "path": "build/layer_remat_ubsan-build.json"
+    },
+    {
+     "bytes": 50132,
+     "path": "build/layer_remat_ubsan.c"
+    },
+    {
+     "bytes": 721376,
+     "path": "build/layer_remat_ubsan.so"
+    },
+    {
+     "bytes": 699,
+     "path": "build/lowrank32-build.json"
+    },
+    {
+     "bytes": 50088,
+     "path": "build/lowrank32.c"
+    },
+    {
+     "bytes": 261320,
+     "path": "build/lowrank32.so"
+    },
+    {
+     "bytes": 772,
+     "path": "build/lowrank32_ubsan-build.json"
+    },
+    {
+     "bytes": 50088,
+     "path": "build/lowrank32_ubsan.c"
+    },
+    {
+     "bytes": 721368,
+     "path": "build/lowrank32_ubsan.so"
+    },
+    {
+     "bytes": 695,
+     "path": "build/multi12-build.json"
+    },
+    {
+     "bytes": 48984,
+     "path": "build/multi12.c"
+    },
+    {
+     "bytes": 261368,
+     "path": "build/multi12.so"
+    },
+    {
+     "bytes": 768,
+     "path": "build/multi12_ubsan-build.json"
+    },
+    {
+     "bytes": 48984,
+     "path": "build/multi12_ubsan.c"
+    },
+    {
+     "bytes": 731768,
+     "path": "build/multi12_ubsan.so"
+    },
+    {
+     "bytes": 695,
+     "path": "build/precise-build.json"
+    },
+    {
+     "bytes": 51401,
+     "path": "build/precise.c"
+    },
+    {
+     "bytes": 261480,
+     "path": "build/precise.so"
+    },
+    {
+     "bytes": 695,
+     "path": "build/profile-build.json"
+    },
+    {
+     "bytes": 51252,
+     "path": "build/profile.c"
+    },
+    {
+     "bytes": 261600,
+     "path": "build/profile.so"
+    },
+    {
+     "bytes": 691,
+     "path": "build/reuse-build.json"
+    },
+    {
+     "bytes": 49103,
+     "path": "build/reuse.c"
+    },
+    {
+     "bytes": 257184,
+     "path": "build/reuse.so"
+    },
+    {
+     "bytes": 693,
+     "path": "build/svd128-build.json"
+    },
+    {
+     "bytes": 50102,
+     "path": "build/svd128.c"
+    },
+    {
+     "bytes": 261312,
+     "path": "build/svd128.so"
+    },
+    {
+     "bytes": 691,
+     "path": "build/svd16-build.json"
+    },
+    {
+     "bytes": 50088,
+     "path": "build/svd16.c"
+    },
+    {
+     "bytes": 261312,
+     "path": "build/svd16.so"
+    },
+    {
+     "bytes": 691,
+     "path": "build/svd32-build.json"
+    },
+    {
+     "bytes": 50088,
+     "path": "build/svd32.c"
+    },
+    {
+     "bytes": 261312,
+     "path": "build/svd32.so"
+    },
+    {
+     "bytes": 691,
+     "path": "build/svd64-build.json"
+    },
+    {
+     "bytes": 50088,
+     "path": "build/svd64.c"
+    },
+    {
+     "bytes": 261312,
+     "path": "build/svd64.so"
+    },
+    {
+     "bytes": 43778,
+     "path": "build/transformer.c"
+    },
+    {
+     "bytes": 3906,
+     "path": "protocol.json"
+    },
+    {
+     "bytes": 17701,
+     "path": "vendor/LICENSE"
+    }
+   ],
+   "unlisted": [],
+   "tree_files": 244,
+   "tree_bytes": 379655146
+  },
+  "wedge-pr818": {
+   "manifest": "MANIFEST_SHA256.json",
+   "manifest_entries": 448,
+   "ok": 442,
+   "newline_only": [
+    "baseline/results/eval-kv_curriculum-attention-20261018.json",
+    "bf16/evaluation-protocol.json",
+    "results/before-after-audit.json"
+   ],
+   "missing": [
+    {
+     "bytes": 609,
+     "path": "evaluation-protocol.json"
+    },
+    {
+     "bytes": 17701,
+     "path": "vendor-new/LICENSE"
+    },
+    {
+     "bytes": 17701,
+     "path": "vendor-old/LICENSE"
+    }
+   ],
+   "unlisted": [],
+   "tree_files": 446,
+   "tree_bytes": 497491301
+  },
+  "wedge-query-aware": {
+   "manifest": "SOURCE_MANIFEST.json",
+   "manifest_entries": 269,
+   "ok": 267,
+   "newline_only": [
+    "build/attention-build.json",
+    "results/baseline-continuity.json"
+   ],
+   "missing": [],
+   "unlisted": [],
+   "tree_files": 270,
+   "tree_bytes": 358171225
+  }
+ },
+ "geo2a_as_uploaded": {
+  "fp32": {
+   "training_runs_compared": 51,
+   "training_runs_all_equal": 51,
+   "updates_compared": 41400,
+   "evaluations_compared": 51,
+   "evaluations_all_equal": 51,
+   "evaluation_rows": 600,
+   "counterfactual_groups": 120,
+   "policy_byte_deltas": []
+  },
+  "bf16": {
+   "training_runs_compared": 15,
+   "training_runs_all_equal": 15,
+   "updates_compared": 12600,
+   "evaluations_compared": 15,
+   "evaluations_all_equal": 15,
+   "evaluation_rows": 33,
+   "counterfactual_groups": 18,
+   "policy_byte_deltas": []
+  }
+ },
+ "geo2b_current_main": {
+  "fp32": {
+   "training_runs_compared": 51,
+   "training_runs_all_equal": 51,
+   "updates_compared": 41400,
+   "evaluations_compared": 51,
+   "evaluations_all_equal": 51,
+   "evaluation_rows": 600,
+   "counterfactual_groups": 120,
+   "policy_byte_deltas": [
+    "fixed_bytes:8",
+    "policy_resident_bound_bytes:8",
+    "resident_bound_bytes:8"
+   ]
+  },
+  "bf16": {
+   "training_runs_compared": 15,
+   "training_runs_all_equal": 15,
+   "updates_compared": 12600,
+   "evaluations_compared": 15,
+   "evaluations_all_equal": 15,
+   "evaluation_rows": 33,
+   "counterfactual_groups": 18,
+   "policy_byte_deltas": [
+    "arena_bytes:-229568",
+    "arena_bytes:-426176",
+    "fixed_bytes:8",
+    "packing_bytes:-229568",
+    "packing_bytes:-426176",
+    "policy_resident_bound_bytes:-426168",
+    "policy_resident_bound_bytes:8",
+    "resident_bound_bytes:-229560",
+    "resident_bound_bytes:-426168",
+    "resident_bound_bytes:8",
+    "workspace_floats:-106544",
+    "workspace_floats:-57392"
+   ]
+  }
+ },
+ "probe": {
+  "level1": {
+   "updates_equal_to_asis": 12,
+   "decisions_equal_to_asis": 12
+  },
+  "level2": {
+   "updates_equal_to_asis": 12,
+   "decisions_equal_to_asis": 12
+  },
+  "cases": 12,
+  "updates_per_case": 6
+ },
+ "records": {
+  "bundles.json": "verify_tree.py over origin/main (490f5be0): each bundle's manifest (three spellings: MANIFEST_SHA256.json, SOURCE_MANIFEST.json, manifest.json) against the bytes the tree holds -- byte-identical, equal but for one trailing newline (GitHub's web rename adds one), absent, and files the manifest does not list",
+  "audit-asis.json": "GEO-2a: the bundle's own build (build_upgrade.py, every overlay source byte-identical to the bundle's) and drivers, run through launch.py on this cgroup-v1 host, every training and evaluation record against Codex's",
+  "audit-level2.json": "GEO-2b: the overlays grafted from origin/main's trainer (build_main.py) and compiled with its tensor unit and headers (ABI 5); the drivers' three ABI 5 lines (port/level2-host-abi5.patch, host_abi5.py); the frozen protocol carried (reprotocol.py: the port's eleven entries re-hashed, the rest held)",
+  "probe.json": "probe.py: six updates of every head under both contracts (12 cases) on the bundle's build, on level 1 (the bundle's overlays on main's tensor unit, build_level1.py) and on level 2: state digests, losses, gradient norms and the policy's decisions",
+  "geo-compare.json": "geo_compare.py: the study's models on B-DIRECT (level 2) against P-EAGER (the bundle's own Torch equations, oracle.torch_model_next) and P-IND (torch.compile, Inductor), training and inference, each beside an A/A control",
+  "port/": "the scripts that ran, each by its sha256 here"
+ },
+ "scripts_sha256": {
+  "port/launch.py": "0d401fdb300bbd6ac16282c41ad8fa34ae92f77106476cc67377775957030a14",
+  "port/build_level1.py": "594826612ae79d7974d51ffc96ee855816cd928ea708c6eed5d32b184d933611",
+  "port/build_main.py": "1b63d1bc78a54e22230578198d6d12f5291ec5e783164d76260fd9a0e6507ff6",
+  "port/host_abi5.py": "2045aa96a3b4c7dbcd9bee48b30bcf806961a000fe19b629ba8c3c46a93f4a0b",
+  "port/reprotocol.py": "06d6447a1919e8f5f10cead507d7176c28a6cdd99fa0246e091f8875cb2475d8",
+  "port/audit.py": "882a4e7737500ef9ae59632b45786773625c8102649418b4eb4c9c22eddc2cb6",
+  "port/probe.py": "6374aa971b5ce10d196acb684e9f2ae6f2a8ad1db4e6e86b9615b61900ea2c0a",
+  "port/geo_compare.py": "a0ccdbd8f261a97d0df8d3118dc7aed0e513aff26b91baffbd43e63495ec7419",
+  "port/verify_tree.py": "6d1183f43ae1dd0ae5a13a4761b9b06a528c5aae28cb061f805f30fc717e3d35"
+ },
+ "reproduce": [
+  "git archive origin/main docs/research/wedge-pr818 | tar -x -C WORK --strip-components=2  # a fresh copy",
+  "rm WORK/results/* WORK/checkpoints/* WORK/bf16/results/* WORK/bf16/checkpoints/*; cp LICENSE WORK/vendor-new/; cp LICENSE WORK/vendor-old/",
+  "python3.12 -m venv ENV && ENV/bin/pip install numpy==2.3.5 pyarrow==26.0.0",
+  "cd WORK && ENV/bin/python build_upgrade.py && for s in study evaluate_query study_bf16 evaluate_bf16; do ENV/bin/python port/launch.py WORK/$s.py; done",
+  "python3 -I port/audit.py BUNDLE WORK audit.json  # GEO-2a",
+  "python3 -I port/build_main.py WORK2 MAIN_RUNTIME_C && python3 -I port/host_abi5.py WORK2 && python3 -I port/reprotocol.py WORK2  # GEO-2b, then the same four stages and the audit"
+ ],
+ "not_measured": "the AMX timing GEO-2 planned: this session's container moved to a host without AMX; the paired old-pin/new-pin timing of Codex's benchmark_update.py (PR818's runtime against its predecessor, which the bundle measured)."
+}
