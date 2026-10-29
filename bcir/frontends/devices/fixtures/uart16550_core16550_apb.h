@@ -14,6 +14,12 @@
 
 #define UART_REG_WIDTH                 4u        /* bytes per register lane */
 
+/* The register window as a driver addresses it: uart_regs_t is one register lane, a
+ * `volatile uart_regs_t *` points at the device base, and register R is the lane
+ * u[UART_LANE(UART_R_OFF)]. */
+typedef uint32_t uart_regs_t;
+#define UART_LANE(off)                 ((off) / UART_REG_WIDTH) /* a byte offset's lane index */
+
 /* Register offsets. DLAB is the LCR[7] value a register is reachable at (x: either). */
 #define UART_RBR_OFF                   0x0u      /* slot 0, read, DLAB 0 */
 #define UART_THR_OFF                   0x0u      /* slot 0, write, DLAB 0 */
@@ -132,6 +138,15 @@
 #define UART_DLM_DIV_SHIFT             0u
 #define UART_DLM_DIV_MASK              0xffu     /* divisor bits 15:8 */
 
+/* IIR[3:0] per pending source, highest priority first (PC16550D Table 5): IIR reports the
+ * highest-priority source whose IER bit is set, and UART_IIR_NONE when there is none. */
+#define UART_IIR_NONE                  0x01u     /* no interrupt pending */
+#define UART_IIR_RLS                   0x06u     /* 1: receiver line status: OE, PE, FE or BI; cleared by reading LSR */
+#define UART_IIR_RDA                   0x04u     /* 2: received data available (trigger level); cleared by reading RBR below the trigger */
+#define UART_IIR_CTI                   0x0cu     /* 2: character timeout (FIFO mode only); cleared by reading RBR */
+#define UART_IIR_THRE                  0x02u     /* 3: transmitter holding register empty; cleared by reading IIR or writing THR */
+#define UART_IIR_MS                    0x00u     /* 4: modem status: CTS, DSR, RI or DCD; cleared by reading MSR */
+
 /* RX FIFO trigger levels: FCR[7:6] in place, each named by its byte count here. */
 typedef enum uart_rx_trigger {
     UART_RX_TRIGGER_1 = 0x00,
@@ -139,6 +154,15 @@ typedef enum uart_rx_trigger {
     UART_RX_TRIGGER_8 = 0x80,
     UART_RX_TRIGGER_14 = 0xc0
 } uart_rx_trigger_t;
+
+/* The placement's capabilities (UartPlacement) that a driver and a simulated device read. */
+#define UART_CAP_FIFO_DEPTH            16u       /* bytes in each FIFO */
+#define UART_CAP_RX_TRIGGER_BYTES      1u, 4u, 8u, 14u /* uart_rx_trigger_t's levels in bytes, by code */
+#define UART_CAP_FCR_GATED             1u        /* FCR[7:1] are programmed only with FCR[0] set in the same write */
+#define UART_CAP_FCR_IMPL              0xcfu     /* the FCR bits the part implements */
+#define UART_CAP_SCR                   1u        /* a scratch register at slot 7 */
+#define UART_CAP_MODEM                 1u        /* modem inputs wired to MSR[7:4] */
+#define UART_CAP_AFE                   0u        /* MCR[5] is autoflow enable */
 
 /* The RegMap contract's C anchor: the placement this unit was laid out for. */
 typedef struct uart_regmap_contract {

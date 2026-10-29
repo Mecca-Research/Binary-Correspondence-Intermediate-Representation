@@ -5711,8 +5711,9 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `miss-pressure.json` MP1-MP7, each caught by its own check; under the tests before DNA-PRESSURE none, the one
     test that read the PMU path asserting the raw count. SILICON-NULL's SN13 and SN14 follow the feed to its new
     lines (`test_every_committed_table_loads_and_anchors_exactly_once` refused them where they were).
-  UART U0 + U1 (2026-10-27): the 16550 device registry -- one model, three placements, the RegMap
-  contract -- and its protocol laws.
+  UART U0 + U1 + U2 (2026-10-27; U2 2026-10-29): the 16550 device registry -- one model, three
+  placements, the RegMap contract --, its protocol laws, and the polled driver running against a
+  simulated 16550.
   - `bcir/frontends/devices/uart_model.py` (blueprint slice U0, oracle rail): the normative register
     table (twelve registers over eight slots, their fields, the IIR priority ladder), the placements
     `pc16550d`, `core16550_apb` and `axi16550` with the U8 capability fields at their defaults,
@@ -5754,9 +5755,62 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `uart-model.json` UL1-UL30, and the whole table (UM1-UM23 with them) 53 of 53 caught, each by
     its own test; the sweep that first ran UL1-UL21 found UL19 (a derived pointer's scale)
     uncaught, which a 32-bit derived local in the idioms test now catches.
+  - U2, the first running BCIR-compiled driver: `runtime/c/uart_driver.c` (a probe that leaves the
+    FIFOs off whatever it finds, section 1.4's init, LSR-checked TX bursts, a drain whose one LSR
+    read per byte feeds the DR test and the OE/PE/FE/BI triage, a bounded TEMT flush, an MCR[4]
+    loopback self-test that first drains the receiver, bounded; FIFO mode only where the probe
+    found a working FIFO, 16450 mode with one-byte bursts otherwise, as Linux's 8250 core runs
+    `PORT_16450` and `PORT_16550`; FCR shadowed as its persistent bits, never the self-clearing FIFO
+    resets, and never read back; init refuses a format with set break or DLAB, and TX a state no
+    init has filled, before the device is touched) with its API `runtime/c/uart_driver.h`,
+    law-clean on every placement with its RegMap and call-ABI contracts and freestanding under
+    -Wpedantic -Werror; `runtime/c/sim16550.c`
+    (section 8's device: the two FIFOs with three error bits per received byte, the shift register,
+    the LSR/IIR/MSR state machines, the trigger level and the four-character timeout in character
+    ticks, the overrun rule, loopback, section 1.1's mux over each placement's layout, a 16550A with
+    a working SCR); and `runtime/c/uart_main.c`, whose transcript runs PG143's vector (56000 baud
+    from 100 MHz, 8E2). The driver's register window reaches the sim through Clang's load/store
+    tracing on the driver unit alone, so the unit that runs is the unit as compiled, and an untraced
+    build or a driver laid out for another placement is refused. The generated header now declares
+    the lane type `uart_regs_t`, `UART_LANE`, the IIR source codes and the placement's capabilities.
+  - The headline: the driver as the oracle and as the C twin emit it with `--linkable`, linked with
+    the sim and the harness, prints the transcript of the driver built from its source, byte for
+    byte and bus trace included, on all three placements; the axi16550 transcript is the golden
+    `runtime/c/uart_main.golden`. The C rail holds it as the `#uartdrv` section
+    (`tools/c/sections/uartdrv.sh`; the manifest's harness `uart_main` and section `uartdrv`).
+    The polled driver is the trivial case of the review's buffer-ownership law (synchronous) and
+    of its FIFO-headroom bound (a burst never exceeds the space an LSR read just showed empty: the
+    FIFO, or the one-byte holding register in 16450 mode).
+  - Checked against the documents, the blueprint's section 8 was corrected in three places (LSR7
+    is a latch, PC16550D p.22; IIR indicates only enabled sources, p.23, so the polled mode shows
+    neither the trigger nor the timeout, p.17; the divisor-latch reset), the drain's triage in
+    section 5 (OE is no byte's, p.21), and the gate's `#uartdrv` stanza is a section since BUILD-8.
+    The documents' own sequences are recorded, not adopted: PG143 p.51 and DS748 p.19 write IER
+    and FCR between the DLAB-setting LCR write and the divisor, where slot 1 is DLM, against their
+    own Example 1 (PG143 p.52, DS748 pp.19-20); and that example's IER = 0x11, meant to enable
+    the THRE and received-data interrupts, enables received data alone (IER[7:4] reserved, PG143
+    pp.21-22), the pair being 0x03.
+  - Tests: `bcir/tests/test_uart_driver.py`, the sim's spec-fidelity tests first, each driving in
+    the failure its rule exists to prevent through the harness's script console, then the driver's:
+    both rails clean, the probe, init order and values, TX bursts, RX triage, the self-test and the
+    FCR shadow read off the claim graph and the bus trace, the 16450-mode path (the transcript
+    forces the probe's verdict to no FIFO and to a broken one, since the sim answers as a 16550A),
+    the probe's end state, the format and TX refusals, the self-test's drain (a stale byte, and a
+    peer the harness plays that never stops sending), each of the driver's five waits giving up at
+    its one bound, UART_SPIN_BUDGET polls, under the sim's two fault knobs (a transmitter that never
+    drains, a loopback that delivers nothing), the H-A and untrapped refusals, and the headline.
+    `uart-driver.json` SD1-SD12, UD1-UD26 and UH1-UH3: each of the 41 caught by its own check
+    (red_sweep on a copy of the tree); under the witnesses before U2 -- U0's and U1's 24 tests --
+    none.
   - Not in these slices: the law-rail halves (U0's `bcir.regmap_contract` op; the `-bcir-verify`
     clauses, lit negatives and `check_passes.sh` stanzas of both) and U1's C-twin form, which need
-    the MLIR rail and the twin built.
+    the MLIR rail and the twin built; and the qualifiers below a parameter's top level in both
+    rails' `--linkable` emit (the defect CF-LINKTWIN pinned as `_LINKABLE_OPEN`): `uart_tx`'s
+    `const uint8_t *buf` is emitted `uint8_t *buf`, a type C does not call compatible with the
+    header's, which the harness calls through. Every ABI the program builds on passes the two
+    alike; `test_the_emitted_driver_declares_the_headers_api_but_the_open_defect` pins it as the one
+    API function so declared (`_LINKABLE_API_OPEN`). Since CF-LINKTWIN the twin's artifact, like the
+    oracle's, carries the types, prototypes and headers it names, so each rail's builds alone.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

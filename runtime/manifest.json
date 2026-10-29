@@ -187,7 +187,8 @@
     "test_x86_interrupt": {"sources": ["test_x86_interrupt.c"], "options": ["-ffreestanding"]},
     "test_link_flag_rules": {"sources": ["test_link_flag_rules.c"], "libraries": ["bcir_cfront"]},
     "test_oob_counter": {"sources": ["test_oob_counter.c"], "libraries": ["bcir_quarantine"], "link": ["pthread"]},
-    "test_extent_assert": {"sources": ["test_extent_assert.c"], "libraries": ["bcir_quarantine"]}
+    "test_extent_assert": {"sources": ["test_extent_assert.c"], "libraries": ["bcir_quarantine"]},
+    "uart_main": {"sources": ["uart_main.c", "uart_driver.c", "sim16550.c"]}
   },
   "fuzzers": {
     "fuzz_q8_model": {"sources": ["fuzz_q8_model.c"], "libraries": ["bcir_models"], "max_len": "16384"},
@@ -340,6 +341,7 @@
     "r21policy": {"script": "tools/c/sections/r21policy.sh", "harnesses": ["bcir-cc"]},
     "project": {"script": "tools/c/sections/project.sh", "harnesses": ["bcir-cc"]},
     "link": {"script": "tools/c/sections/link.sh", "harnesses": ["bcir-cc"]},
+    "uartdrv": {"script": "tools/c/sections/uartdrv.sh", "harnesses": ["bcir-cc", "uart_main"]},
     "effects": {"script": "tools/c/sections/effects.sh", "harnesses": ["bcir-cc"]},
     "linkflags": {"script": "tools/c/sections/linkflags.sh", "harnesses": ["bcir-cc"]},
     "linkflags_fftw": {"script": "tools/c/sections/linkflags_fftw.sh", "harnesses": ["test_link_flag_rules"]},

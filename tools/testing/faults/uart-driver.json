@@ -1,0 +1,330 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_uart_driver:_CC",
+    "--require",
+    "bcir.tests.test_uart_driver:_TRACE_CC",
+    "bcir.tests.test_uart_driver:test_sim_reset_states",
+    "bcir.tests.test_uart_driver:test_sim_trigger_and_timeout",
+    "bcir.tests.test_uart_driver:test_sim_overrun_discards_shift_byte_not_fifo",
+    "bcir.tests.test_uart_driver:test_sim_loopback_mirrors_mcr_to_msr",
+    "bcir.tests.test_uart_driver:test_sim_dlab_mux_and_fcr_gating",
+    "bcir.tests.test_uart_driver:test_sim_thre_semantics",
+    "bcir.tests.test_uart_driver:test_sim_lsr_errors_ride_the_fifo_and_clear_on_read",
+    "bcir.tests.test_uart_driver:test_sim_refuses_a_config_it_cannot_model",
+    "bcir.tests.test_uart_driver:test_driver_compiles_clean_on_both_rails_with_contracts",
+    "bcir.tests.test_uart_driver:test_the_emitted_driver_declares_the_headers_api_but_the_open_defect",
+    "bcir.tests.test_uart_driver:test_probe_identifies_the_sim_as_16550a",
+    "bcir.tests.test_uart_driver:test_the_probe_leaves_the_fifos_off",
+    "bcir.tests.test_uart_driver:test_init_follows_the_canonical_sequence",
+    "bcir.tests.test_uart_driver:test_init_refuses_a_format_with_break_or_dlab",
+    "bcir.tests.test_uart_driver:test_tx_bursts_never_exceed_fifo_and_never_write_without_thre",
+    "bcir.tests.test_uart_driver:test_tx_refuses_a_state_without_a_burst_cap",
+    "bcir.tests.test_uart_driver:test_rx_drain_triage_counts_the_injected_errors_exactly",
+    "bcir.tests.test_uart_driver:test_selftest_passes_in_loopback",
+    "bcir.tests.test_uart_driver:test_selftest_drains_the_receiver_first",
+    "bcir.tests.test_uart_driver:test_init_without_a_working_fifo_programs_16450_mode",
+    "bcir.tests.test_uart_driver:test_tx_without_a_working_fifo_bursts_one_byte_per_thre",
+    "bcir.tests.test_uart_driver:test_selftest_resets_the_fifos_only_in_fifo_mode",
+    "bcir.tests.test_uart_driver:test_tx_gives_up_when_thre_never_comes",
+    "bcir.tests.test_uart_driver:test_selftest_gives_up_when_the_loopback_delivers_nothing",
+    "bcir.tests.test_uart_driver:test_selftest_gives_up_when_thre_never_comes",
+    "bcir.tests.test_uart_driver:test_init_gives_up_when_the_line_never_goes_idle",
+    "bcir.tests.test_uart_driver:test_flush_gives_up_when_the_line_never_goes_idle",
+    "bcir.tests.test_uart_driver:test_the_driver_never_reads_fcr_back",
+    "bcir.tests.test_uart_driver:test_emitted_to_emitted_binary_matches_reference_behavior",
+    "bcir.tests.test_uart_driver:test_a_driver_laid_out_for_another_placement_is_refused",
+    "bcir.tests.test_uart_driver:test_an_untrapped_build_is_refused"
+  ],
+  "faults": [
+    {
+      "expects": "test_sim_trigger_and_timeout",
+      "label": "SD1 the RX trigger level reached one byte late",
+      "new": "    return dev->rx_count > sim_trigger_bytes(dev) ? 1u : 0u;",
+      "old": "    return dev->rx_count >= sim_trigger_bytes(dev) ? 1u : 0u;",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_sim_trigger_and_timeout",
+      "label": "SD2 the character timeout due after 3 character times",
+      "new": "#define SIM16550_TIMEOUT_CHARS 3u",
+      "old": "#define SIM16550_TIMEOUT_CHARS 4u",
+      "path": "runtime/c/sim16550.h"
+    },
+    {
+      "expects": "test_sim_trigger_and_timeout",
+      "label": "SD3 the character timeout due after 5 character times",
+      "new": "#define SIM16550_TIMEOUT_CHARS 5u",
+      "old": "#define SIM16550_TIMEOUT_CHARS 4u",
+      "path": "runtime/c/sim16550.h"
+    },
+    {
+      "expects": "test_sim_overrun_discards_shift_byte_not_fifo",
+      "label": "SD4 an overrun overwrites the FIFO's head byte instead of losing the shift register's",
+      "new": "        if (dev->rx_count > 0u) { /* 16450 mode: the character destroys the one held (p.21) */",
+      "old": "        if (!fifo_mode(dev)) { /* 16450 mode: the character destroys the one held (p.21) */",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_sim_lsr_errors_ride_the_fifo_and_clear_on_read",
+      "label": "SD5 an LSR read clears no error bit",
+      "new": "    dev->lsr_err &= LSR_ERRORS; /* (no bit cleared) */",
+      "old": "    dev->lsr_err = 0u; /* a read clears OE, PE, FE and BI (pp.20-21) */",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_sim_dlab_mux_and_fcr_gating",
+      "label": "SD6 FCR gating ignored: a write with FCR[0] clear programs the trigger and the resets",
+      "new": "    if (dev->cfg.fcr_gated == 2u && (v & UART_FCR_FIFOEN_MASK) == 0u) {",
+      "old": "    if (dev->cfg.fcr_gated != 0u && (v & UART_FCR_FIFOEN_MASK) == 0u) {",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_sim_loopback_mirrors_mcr_to_msr",
+      "label": "SD7 the loopback mirror crossed: DTR shown on CTS",
+      "new": "            in |= UART_MSR_CTS_MASK;",
+      "old": "            in |= UART_MSR_DSR_MASK;",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_sim_thre_semantics",
+      "label": "SD8 TEMT set with THRE: the shift register's character ignored",
+      "new": "        if (dev->tsr_busy == 0u || dev->tx_count == 0u) {",
+      "old": "        if (dev->tsr_busy == 0u) {",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_sim_reset_states",
+      "label": "SD9 IIR[7:6] = 10 with the FIFOs on: the sim answers as a 16550 with a broken FIFO",
+      "new": "    return id | (fifo_mode(dev) ? 0x80u : 0u);",
+      "old": "    return id | (fifo_mode(dev) ? UART_IIR_FIFOEN_MASK : 0u);",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_sim_dlab_mux_and_fcr_gating",
+      "label": "SD10 a DLL write reaches THR: the DLAB mux ignored on a write",
+      "new": "            thr_write(dev, v);",
+      "old": "            dev->dll = v;",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_sim_reset_states",
+      "label": "SD11 the scratch register holds nothing",
+      "new": "            dev->scr = 0u;",
+      "old": "            dev->scr = v;",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_sim_refuses_a_config_it_cannot_model",
+      "label": "SD12 a stride of 3 accepted: the configuration check fails open",
+      "new": "    return w == 1u || w == 2u || w == 3u || w == 4u || w == 8u;",
+      "old": "    return w == 1u || w == 2u || w == 4u || w == 8u;",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_tx_bursts_never_exceed_fifo_and_never_write_without_thre",
+      "label": "UD1 a TX burst of 17: the clamp one past the FIFO",
+      "new": "        cap = UART_CAP_FIFO_DEPTH + 1u;",
+      "old": "        cap = UART_CAP_FIFO_DEPTH;",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_tx_bursts_never_exceed_fifo_and_never_write_without_thre",
+      "label": "UD2 THRE checked before the first TX burst only",
+      "new": "        if ((lsr & UART_LSR_THRE_MASK) == 0u && sent == 0u) {",
+      "old": "        if ((lsr & UART_LSR_THRE_MASK) == 0u) {",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_rx_drain_triage_counts_the_injected_errors_exactly",
+      "label": "UD3 a second LSR read per RX drain iteration",
+      "new": "        if ((u[UART_LANE(UART_LSR_OFF)] & UART_LSR_DR_MASK) == 0u) {",
+      "old": "        if ((lsr & UART_LSR_DR_MASK) == 0u) {",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_the_driver_never_reads_fcr_back",
+      "label": "UD4 FCR read back: the self-test resets the FIFOs from a slot-2 read (H-E)",
+      "new": "        fcr = u[UART_LANE(UART_FCR_OFF)] | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;",
+      "old": "        fcr = st->fcr_shadow | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_init_follows_the_canonical_sequence",
+      "label": "UD5 the divisor latch bytes swapped: DLL takes the high byte",
+      "new": "    u[UART_LANE(UART_DLL_OFF)] = (divisor >> 8) & 0xffu;\n    u[UART_LANE(UART_DLM_OFF)] = divisor & 0xffu;",
+      "old": "    u[UART_LANE(UART_DLL_OFF)] = divisor & 0xffu;\n    u[UART_LANE(UART_DLM_OFF)] = (divisor >> 8) & 0xffu;",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_init_follows_the_canonical_sequence",
+      "label": "UD6 the init order changed: IER written before MCR",
+      "new": "    u[UART_LANE(UART_IER_OFF)] = 0u;\n    /* (7) polled: no interrupt source enabled */\n    u[UART_LANE(UART_MCR_OFF)] = UART_MCR_DTR_MASK | UART_MCR_RTS_MASK;",
+      "old": "    u[UART_LANE(UART_MCR_OFF)] = UART_MCR_DTR_MASK | UART_MCR_RTS_MASK;\n    /* (7) polled: no interrupt source enabled */\n    u[UART_LANE(UART_IER_OFF)] = 0u;",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_init_follows_the_canonical_sequence",
+      "label": "UD7 the init order changed: FCR written inside the DLAB bracket (DS748 p.19's hint order)",
+      "new": "    /* (5) one FCR write, shadowed less the resets, which clear themselves (PC16550D p.22): H-E */\n    u[UART_LANE(UART_FCR_OFF)] = fcr;\n    u[UART_LANE(UART_LCR_OFF)] = lcr_format & UART_FORMAT_BITS;",
+      "old": "    u[UART_LANE(UART_LCR_OFF)] = lcr_format & UART_FORMAT_BITS;\n    /* (5) one FCR write, shadowed less the resets, which clear themselves (PC16550D p.22): H-E */\n    u[UART_LANE(UART_FCR_OFF)] = fcr;",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_probe_identifies_the_sim_as_16550a",
+      "label": "UD8 the probe reads IIR before it writes FCR",
+      "new": "    iir = u[UART_LANE(UART_IIR_OFF)];\n    u[UART_LANE(UART_FCR_OFF)] = fcr;",
+      "old": "    u[UART_LANE(UART_FCR_OFF)] = fcr;\n    iir = u[UART_LANE(UART_IIR_OFF)];",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_tx_bursts_never_exceed_fifo_and_never_write_without_thre",
+      "label": "UD9 flush polls THRE, not TEMT: it returns with a character still shifting",
+      "new": "        if ((u[UART_LANE(UART_LSR_OFF)] & UART_LSR_THRE_MASK) != 0u) {",
+      "old": "        if ((u[UART_LANE(UART_LSR_OFF)] & UART_LSR_TEMT_MASK) != 0u) {",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_driver_compiles_clean_on_both_rails_with_contracts",
+      "label": "UD10 the self-test's FIFO reset without FIFO enable (H-C: it programs nothing on a gated part)",
+      "new": "        fcr = UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;",
+      "old": "        fcr = st->fcr_shadow | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_passes_in_loopback",
+      "label": "UD11 the self-test leaves the loopback on",
+      "new": "    u[UART_LANE(UART_MCR_OFF)] = mcr | UART_MCR_LOOP_MASK;",
+      "old": "    u[UART_LANE(UART_MCR_OFF)] = mcr;",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_init_follows_the_canonical_sequence",
+      "label": "UD12 two refusals share one status code in the driver's API header",
+      "new": "#define UART_ERR_FORMAT    2u      /* lcr_format has a bit outside UART_FORMAT_BITS: set break, DLAB, or past LCR */",
+      "old": "#define UART_ERR_FORMAT    3u      /* lcr_format has a bit outside UART_FORMAT_BITS: set break, DLAB, or past LCR */",
+      "path": "runtime/c/uart_driver.h"
+    },
+    {
+      "expects": "test_the_driver_never_reads_fcr_back",
+      "label": "UD13 the FCR shadow keeps the self-clearing FIFO resets: init stores the value it wrote (H-E)",
+      "new": "    st->fcr_shadow = fcr;\n    /* (6)",
+      "old": "    st->fcr_shadow = fcr & ~(UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK);\n    /* (6)",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_the_driver_never_reads_fcr_back",
+      "label": "UD14 the FCR shadow keeps the self-clearing FIFO resets: the self-test stores the value it wrote (H-E)",
+      "new": "        st->fcr_shadow = fcr;",
+      "old": "        st->fcr_shadow = fcr & ~(UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK);",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_init_without_a_working_fifo_programs_16450_mode",
+      "label": "UD15 init enables the FIFOs whatever the probe found: the fifo_ok test dropped",
+      "new": "    fcr = UART_FCR_FIFOEN_MASK | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK | trigger_code;\n    burst = UART_CAP_FIFO_DEPTH;",
+      "old": "    if (st->fifo_ok == 2u) {\n        fcr = UART_FCR_FIFOEN_MASK | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK | trigger_code;\n        burst = UART_CAP_FIFO_DEPTH;\n    } else {\n        fcr = 0u;\n        bytes = 1u;\n        burst = 1u;\n    }",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_tx_without_a_working_fifo_bursts_one_byte_per_thre",
+      "label": "UD16 TX bursts past the one-byte holding register in 16450 mode: the clamp to one byte dropped",
+      "new": "",
+      "old": "    if ((st->fcr_shadow & UART_FCR_FIFOEN_MASK) == 0u) {\n        cap = 1u;\n    }\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_resets_the_fifos_only_in_fifo_mode",
+      "label": "UD17 the self-test resets the FIFOs in 16450 mode too: FCR[2:1] written with FCR[0] clear",
+      "new": "    fcr = st->fcr_shadow | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;\n    u[UART_LANE(UART_FCR_OFF)] = fcr;\n    st->fcr_shadow = fcr & ~(UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK);",
+      "old": "    if ((st->fcr_shadow & UART_FCR_FIFOEN_MASK) != 0u) {\n        fcr = st->fcr_shadow | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;\n        u[UART_LANE(UART_FCR_OFF)] = fcr;\n        st->fcr_shadow = fcr & ~(UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK);\n    }",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_the_probe_leaves_the_fifos_off",
+      "label": "UD18 the probe leaves the FIFOs on: its closing FCR write dropped",
+      "new": "",
+      "old": "    u[UART_LANE(UART_FCR_OFF)] = 0u;\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_init_refuses_a_format_with_break_or_dlab",
+      "label": "UD19 init takes any lcr_format: the format check dropped",
+      "new": "",
+      "old": "    if ((lcr_format & ~UART_FORMAT_BITS) != 0u) {\n        return UART_ERR_FORMAT;\n    }\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_drains_the_receiver_first",
+      "label": "UD20 the self-test's drain dropped: a byte held from before comes back in place of a pattern",
+      "new": "    uint32_t msr;\n    uint32_t fcr;\n",
+      "old": "    uint32_t drained = 0u;\n    uint32_t msr;\n    uint32_t fcr;\n    /* the receiver drained of what it held before the test, bounded */\n    while ((u[UART_LANE(UART_LSR_OFF)] & UART_LSR_DR_MASK) != 0u) {\n        if (drained == UART_CAP_FIFO_DEPTH + 1u) {\n            verdict = UART_ERR_RX_STUCK;\n            break;\n        }\n        (void)u[UART_LANE(UART_RBR_OFF)];\n        drained = drained + 1u;\n    }\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_tx_refuses_a_state_without_a_burst_cap",
+      "label": "UD21 TX on a state no init filled: a cap of 0 read as the FIFO depth again",
+      "new": "    if (cap == 0u || cap > UART_CAP_FIFO_DEPTH) {",
+      "old": "    if (cap == 0u) {\n        return UART_ERR_NOT_READY;\n    }\n    if (cap > UART_CAP_FIFO_DEPTH) {",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_tx_gives_up_when_thre_never_comes",
+      "label": "UD22 TX reports a wait for THRE that gave up as done: UART_OK in place of UART_ERR_TIMEOUT",
+      "new": "    return UART_OK;\n}",
+      "old": "    return sent == len ? UART_OK : UART_ERR_TIMEOUT;\n}",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_gives_up_when_the_loopback_delivers_nothing",
+      "label": "UD23 the self-test reports a pattern that never came back as passed: UART_OK in place of UART_ERR_TIMEOUT",
+      "new": "            verdict = UART_OK;\n            break;\n        }\n        got = u[UART_LANE(UART_RBR_OFF)];",
+      "old": "            verdict = UART_ERR_TIMEOUT;\n            break;\n        }\n        got = u[UART_LANE(UART_RBR_OFF)];",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_init_gives_up_when_the_line_never_goes_idle",
+      "label": "UD24 init reports a line that never went idle as configured: UART_OK in place of UART_ERR_BUSY",
+      "new": "        if (spins == UART_SPIN_BUDGET) {\n            return UART_OK;\n        }",
+      "old": "        if (spins == UART_SPIN_BUDGET) {\n            return UART_ERR_BUSY;\n        }",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_flush_gives_up_when_the_line_never_goes_idle",
+      "label": "UD25 the flush reports a line that never went idle as flushed: UART_OK in place of UART_ERR_BUSY",
+      "new": "    *nbusy = spins;\n    return UART_OK;",
+      "old": "    *nbusy = spins;\n    return spins == UART_SPIN_BUDGET ? UART_ERR_BUSY : UART_OK;",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_gives_up_when_thre_never_comes",
+      "label": "UD26 the self-test reports a THRE that never came as passed: UART_OK in place of UART_ERR_TIMEOUT",
+      "new": "            verdict = UART_OK;\n            break;\n        }\n        u[UART_LANE(UART_THR_OFF)] = pattern;",
+      "old": "            verdict = UART_ERR_TIMEOUT;\n            break;\n        }\n        u[UART_LANE(UART_THR_OFF)] = pattern;",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_an_untrapped_build_is_refused",
+      "label": "UH1 the harness prints a transcript with nothing trapped",
+      "new": "    if (bus_reads + bus_writes + bus_misfits == 0u && trace_lost != 0u) {",
+      "old": "    if (bus_reads + bus_writes + bus_misfits == 0u) {",
+      "path": "runtime/c/uart_main.c"
+    },
+    {
+      "expects": "test_a_driver_laid_out_for_another_placement_is_refused",
+      "label": "UH2 the harness runs a driver whose accesses miss the lanes (H-A unchecked)",
+      "new": "    if (dev.bus_errors != 0u) {",
+      "old": "    if (bus_misfits != 0u || dev.bus_errors != 0u) {",
+      "path": "runtime/c/uart_main.c"
+    },
+    {
+      "expects": "test_emitted_to_emitted_binary_matches_reference_behavior",
+      "label": "UH3 the golden transcript edited: one count in its verdict",
+      "new": "rx 32 bytes with OE 0 PE 1 FE 0 BI 0",
+      "old": "rx 32 bytes with OE 1 PE 1 FE 0 BI 0",
+      "path": "runtime/c/uart_main.golden"
+    }
+  ]
+}

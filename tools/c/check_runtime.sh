@@ -248,6 +248,9 @@ show_section project || exit 1
 echo "[c-runtime] Phase 3 linking (bcir-cc prototypes): emitted caller + host linker == reference (#link)"
 show_section link || exit 1
 
+echo "[c-runtime] the polled UART driver linked from bcir-cc --linkable == the oracle's == its source, against the simulated 16550 (#uartdrv, blueprint U2)"
+show_section uartdrv || exit 1
+
 echo "[c-runtime] effect footprint + escape analysis (bcir-cc --emit-effects/--emit-escape) == oracle over the corpus, generated units and forms (#effects, G10)"
 show_section effects || exit 1
 
