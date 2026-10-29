@@ -26,22 +26,27 @@
  * (bcir/tests/test_uart_driver.py; tools/c/sections/uartdrv.sh; the golden runtime/c/uart_main.golden is
  * the axi16550 placement's).
  *
- *   uart_main            the transcript: probe, which leaves the FIFOs off; TX refused on a zeroed
- *                        state, then run before init under a plan's cap; five arguments init must
- *                        refuse before it touches the device; init with PG143's sequence and formula
- *                        (56000 baud, 8E2, trigger 8); the loopback self-test, with a byte the receiver
- *                        held from before it; TX of a 52-byte buffer under a plan cap of 64; flush; an
- *                        RX script (a burst then a gap that brings the character timeout due, a burst
- *                        to the trigger level, a parity error, an overrun), each drained; the self-test
- *                        again under a peer that never stops sending; then twice more from the probe,
+ *   uart_main            the transcript: probe, which leaves the FIFOs off; TX and the self-test
+ *                        refused on a zeroed state, then TX before init under a plan's cap, its bytes
+ *                        at LCR's reset word length (5 bits); five arguments init must refuse before
+ *                        it touches the device; init with PG143's sequence and formula (56000 baud, 8E2,
+ *                        trigger 8); the loopback self-test, with a byte the receiver held from before
+ *                        it; TX of a 52-byte buffer under a plan cap of 64; flush; the self-test right
+ *                        after a TX the line has not finished (it waits for TEMT; the line carries the
+ *                        TX alone); an RX script (a burst then a gap that brings the character timeout
+ *                        due, a burst to the trigger level, a parity error, an overrun), each drained,
+ *                        then a parity error under TX's polls and a framing error under the flush's,
+ *                        which the drain still counts; the self-test again under a peer that never
+ *                        stops sending; the self-test at 5, 6 and 7 data bits; then twice more from the
+ *                        probe,
  *                        its verdict forced to no FIFO (fifo_ok 0) and to a broken one (fifo_ok 1):
  *                        init into 16450 mode, the self-test, TX of a 40-byte buffer under a stale plan
  *                        cap of the FIFO depth, flush; and under the sim's fault knobs, after init in
  *                        FIFO mode again, TX against a transmitter that never drains and the self-test
  *                        against a loopback that delivers nothing, each giving up at the driver's bound
  *                        (their unchanging polls shown " xN" on one line); then, the transmitter stalled
- *                        again, the self-test's wait for THRE, init's wait for TEMT and the flush's,
- *                        each giving up at the same bound
+ *                        again, the self-test's wait for TEMT (it never enters the loopback), init's
+ *                        and the flush's, each giving up at the same bound
  *   uart_main --script   the device alone, driven by commands on stdin (its spec-fidelity tests)
  *
  * Exit status: 0 the transcript or the script ran; 2 usage, a malformed script line, or a placement the
@@ -424,6 +429,34 @@ static void tx_refusal(volatile uart_regs_t *u, uart_state *st, const char *what
            bus_reads + bus_writes + bus_misfits == before ? "the device untouched" : "the device TOUCHED");
 }
 
+/* A state uart_selftest must refuse: its status, and whether it touched the device first. */
+static void selftest_refusal(volatile uart_regs_t *u, uart_state *st, const char *what)
+{
+    const uint32_t before = bus_reads + bus_writes + bus_misfits;
+    uint32_t status = uart_selftest(u, st);
+    bus_flush();
+    show_trace();
+    printf("selftest(%s): returns %u (%s), %s\n", what, (unsigned)status, status_text(status),
+           bus_reads + bus_writes + bus_misfits == before ? "the device untouched" : "the device TOUCHED");
+}
+
+/* The self-test at one word length: init with it (no parity, one stop bit), then the test, whose
+ * patterns are the word length's data bits. */
+static void word_length_selftest(volatile uart_regs_t *u, uart_state *st, uint32_t divisor, uint32_t wls)
+{
+    uint32_t status = uart_init(u, st, divisor, wls, UART_RX_TRIGGER_8);
+    bus_flush();
+    show_trace();
+    printf("init: returns %u (%s); format 0x%02x, %u data bits: word_bits %u, lsr_saved 0x%02x\n",
+           (unsigned)status, status_text(status), (unsigned)wls, (unsigned)(5u + wls), (unsigned)st->word_bits,
+           (unsigned)st->lsr_saved);
+    status = uart_selftest(u, st);
+    bus_flush();
+    show_trace();
+    printf("selftest: returns %u (%s) at %u data bits; mcr 0x%02x after it\n", (unsigned)status,
+           status_text(status), (unsigned)(5u + wls), (unsigned)dev.mcr);
+}
+
 /* uart_tx of a buffer under the cap the state holds: the trace, then its status, the bytes sent and the
  * TX overflows the device counted meanwhile. Returns the bytes sent. */
 static uint32_t tx_report(volatile uart_regs_t *u, uart_state *st, const uint8_t *message, uint32_t length,
@@ -442,20 +475,33 @@ static uint32_t tx_report(volatile uart_regs_t *u, uart_state *st, const uint8_t
 }
 
 /* uart_flush, then what the line carried from byte `from` on: the trace, the busy polls and the bytes,
- * and the status on a line of its own when the flush gave up. Returns whether they are the buffer. */
-static int flush_report(volatile uart_regs_t *u, uint32_t from, const uint8_t *message, uint32_t length)
+ * and the status on a line of its own when the flush gave up. Returns whether they are the buffer --
+ * at the device's word length: a 5- to 7-bit character carries the low bits of the byte written
+ * (PC16550D p.18), and before uart_init the word length is LCR's reset value, 5 bits (Table 3). */
+static int flush_report(volatile uart_regs_t *u, uart_state *st, uint32_t from, const uint8_t *message,
+                        uint32_t length)
 {
     uint32_t busy = 0u;
-    const uint32_t status = uart_flush(u, &busy);
+    const uint32_t status = uart_flush(u, st, &busy);
+    const uint32_t bits = 5u + (dev.lcr & UART_LCR_WLS_MASK);
+    const uint32_t mask = 0xffu >> (8u - bits);
     uint32_t carried;
+    uint32_t k;
     int line_ok;
     bus_flush();
     show_trace();
     carried = dev.line_len - from;
-    line_ok = carried == length && memcmp(dev.line + from, message, length) == 0;
+    line_ok = carried == length;
+    for (k = 0u; line_ok && k < length; k++) {
+        line_ok = dev.line[from + k] == (message[k] & mask);
+    }
     printf("flush: %u busy polls; the line carried %u bytes ", (unsigned)busy, (unsigned)carried);
     print_bytes(dev.line + from, carried);
-    printf(", %s\n", line_ok ? "the buffer" : "NOT the buffer");
+    if (bits == 8u) {
+        printf(", %s\n", line_ok ? "the buffer" : "NOT the buffer");
+    } else {
+        printf(", %s at %u data bits\n", line_ok ? "the buffer" : "NOT the buffer", (unsigned)bits);
+    }
     if (status != UART_OK) {
         printf("  flush: returns %u (%s)\n", (unsigned)status, status_text(status));
     }
@@ -508,7 +554,7 @@ static void no_fifo_run(volatile uart_regs_t *u, uint32_t verdict, uint32_t divi
     (void)tx_report(u, &st, message, length, "a stale plan burst cap of");
 
     no_fifo_phase(verdict, "flush");
-    (void)flush_report(u, from, message, length);
+    (void)flush_report(u, &st, from, message, length);
 }
 
 static uint32_t rx_drain(volatile uart_regs_t *u, uart_state *st, uint32_t totals[4])
@@ -522,8 +568,8 @@ static uint32_t rx_drain(volatile uart_regs_t *u, uart_state *st, uint32_t total
     show_trace();
     printf("drain: %u bytes ", (unsigned)n);
     print_bytes(got, n);
-    printf("; OE %u PE %u FE %u BI %u\n", (unsigned)counts[0], (unsigned)counts[1],
-           (unsigned)counts[2], (unsigned)counts[3]);
+    printf("; OE %u PE %u FE %u BI %u; lsr_saved 0x%02x after it\n", (unsigned)counts[0],
+           (unsigned)counts[1], (unsigned)counts[2], (unsigned)counts[3], (unsigned)st->lsr_saved);
     for (k = 0u; k < 4u; k++) {
         totals[k] += counts[k];
     }
@@ -535,6 +581,8 @@ static int transcript_main(void)
     static const uint8_t message[] = "U2: the polled 16550 driver, emitted by both rails\r\n";
     static const uint8_t early[] = "pre-init\r\n";
     static const uint8_t pair[] = "<>";
+    static const uint8_t abc[] = "ABC";
+    const uint32_t abc_length = (uint32_t)(sizeof abc - 1u);
     const uint32_t length = (uint32_t)(sizeof message - 1u);
     const uint32_t early_length = (uint32_t)(sizeof early - 1u);
     const uint32_t pair_length = (uint32_t)(sizeof pair - 1u);
@@ -599,11 +647,14 @@ static int transcript_main(void)
     memset(&zeroed, 0, sizeof zeroed);
     tx_refusal(u, &zeroed, "a zeroed state");
 
+    phase("selftest refused: a state no init has filled");
+    selftest_refusal(u, &zeroed, "a zeroed state");
+
     phase("tx before init: the probe left the FIFOs off; a plan's cap in the state");
     st.tx_burst = UART_CAP_FIFO_DEPTH; /* a plan's cap before any init: the probe's shadow says no FIFO */
     from = dev.line_len;
     (void)tx_report(u, &st, early, early_length, "a plan burst cap of");
-    (void)flush_report(u, from, early, early_length);
+    (void)flush_report(u, &st, from, early, early_length);
 
     phase("init refusals");
     init_refusal(u, &st, "divisor 0", 0u, format, UART_RX_TRIGGER_8);
@@ -641,7 +692,20 @@ static int transcript_main(void)
     sent = tx_report(u, &st, message, length, "a plan burst cap of");
 
     phase("flush");
-    line_ok = flush_report(u, from, message, length);
+    line_ok = flush_report(u, &st, from, message, length);
+
+    phase("selftest after tx: the transmitter still busy with what uart_tx accepted");
+    sim_inject(&dev, 0x51u, SIM16550_PE); /* a byte the test drains, its error saved by TX's poll */
+    from = dev.line_len;
+    (void)tx_report(u, &st, abc, abc_length, "a plan burst cap of");
+    printf("  state: lsr_saved 0x%02x\n", (unsigned)st.lsr_saved);
+    status = uart_selftest(u, &st);
+    bus_flush();
+    show_trace();
+    printf("selftest: returns %u (%s); mcr 0x%02x after it, fcr_shadow 0x%02x\n", (unsigned)status,
+           status_text(status), (unsigned)dev.mcr, (unsigned)st.fcr_shadow);
+    printf("  state: lsr_saved 0x%02x\n", (unsigned)st.lsr_saved);
+    (void)flush_report(u, &st, from, abc, abc_length);
 
     phase("rx a: a 3-byte burst, then a gap of 4 character times");
     rx_arrivals("abc", 0u, 3u, NO_ERROR_BYTE, 0u);
@@ -668,6 +732,22 @@ static int transcript_main(void)
     rx_status();
     received += rx_drain(u, &st, totals);
 
+    phase("rx e: a parity error at the FIFO head while TX polls LSR");
+    sim_inject(&dev, 0x42u, SIM16550_PE);
+    rx_status();
+    from = dev.line_len;
+    (void)tx_report(u, &st, pair, pair_length, "a plan burst cap of");
+    (void)flush_report(u, &st, from, pair, pair_length);
+    printf("  state: lsr_saved 0x%02x\n", (unsigned)st.lsr_saved);
+    received += rx_drain(u, &st, totals);
+
+    phase("rx f: a framing error at the FIFO head while the flush polls LSR");
+    sim_inject(&dev, 0x46u, SIM16550_FE);
+    rx_status();
+    (void)flush_report(u, &st, dev.line_len, pair, 0u);
+    printf("  state: lsr_saved 0x%02x\n", (unsigned)st.lsr_saved);
+    received += rx_drain(u, &st, totals);
+
     phase("stuck selftest: a peer that sends a character every character time");
     streaming = 1;
     status = uart_selftest(u, &st);
@@ -677,6 +757,14 @@ static int transcript_main(void)
     printf("selftest: returns %u (%s); mcr 0x%02x after it, fcr_shadow 0x%02x\n", (unsigned)status,
            status_text(status), (unsigned)dev.mcr, (unsigned)st.fcr_shadow);
     printf("  device: the receiver holds %u after it\n", (unsigned)dev.rx_count);
+
+    phase("selftest at 5, 6 and 7 data bits");
+    sim_inject(&dev, 0x50u, SIM16550_BI); /* an error the flush saves, and init discards with its byte */
+    (void)flush_report(u, &st, dev.line_len, pair, 0u);
+    printf("  state: lsr_saved 0x%02x\n", (unsigned)st.lsr_saved);
+    word_length_selftest(u, &st, divisor, 0u);
+    word_length_selftest(u, &st, divisor, 1u);
+    word_length_selftest(u, &st, divisor, 2u);
 
     no_fifo_run(u, 0u, divisor, format);
     no_fifo_run(u, 1u, divisor, format);
@@ -695,7 +783,7 @@ static int transcript_main(void)
     printf("  device: the line carried %u bytes meanwhile; %u wait in the TX FIFO, %u in the shift register\n",
            (unsigned)(dev.line_len - from), (unsigned)dev.tx_count, (unsigned)dev.tsr_busy);
     sim_stall_tx(&dev, 0u); /* the transmitter resumes: what it accepted goes out */
-    (void)flush_report(u, from, message, stalled);
+    (void)flush_report(u, &st, from, message, stalled);
 
     phase("selftest timeout: a loopback that delivers nothing");
     sim_drop_loopback(&dev, 1u);
@@ -713,6 +801,7 @@ static int transcript_main(void)
     sim_stall_tx(&dev, 1u);
     from = dev.line_len;
     (void)tx_report(u, &st, pair, pair_length, "init's burst cap of"); /* one shifting, one waiting */
+    sim_inject(&dev, 0x47u, SIM16550_FE); /* after TX's poll: the self-test's polls see it first */
     collapsing = 1;
     status = uart_selftest(u, &st);
     collapsing = 0;
@@ -720,13 +809,15 @@ static int transcript_main(void)
     show_trace();
     printf("selftest: returns %u (%s); mcr 0x%02x after it, fcr_shadow 0x%02x\n", (unsigned)status,
            status_text(status), (unsigned)dev.mcr, (unsigned)st.fcr_shadow);
-    sim_stall_tx(&dev, 0u); /* the shifting character goes out; the waiting one went with the FIFO reset */
-    (void)flush_report(u, from, pair, 1u);
+    sim_stall_tx(&dev, 0u); /* the self-test left the transmitter alone: both characters go out */
+    (void)flush_report(u, &st, from, pair, pair_length);
+    received += rx_drain(u, &st, totals); /* the framing error the self-test's polls saved */
 
     phase("init busy: a transmitter that never goes idle");
     sim_stall_tx(&dev, 1u);
     from = dev.line_len;
     (void)tx_report(u, &st, pair, 1u, "init's burst cap of"); /* the one character, shifting forever */
+    sim_inject(&dev, 0x49u, SIM16550_PE); /* after TX's poll: init's polls see it first */
     collapsing = 1;
     status = uart_init(u, &st, divisor, format, UART_RX_TRIGGER_8);
     collapsing = 0;
@@ -737,14 +828,15 @@ static int transcript_main(void)
 
     phase("flush busy: the transmitter still never goes idle");
     collapsing = 1;
-    status = uart_flush(u, &busy);
+    status = uart_flush(u, &st, &busy);
     collapsing = 0;
     bus_flush();
     show_trace();
     printf("stalled flush: returns %u (%s); %u busy polls\n", (unsigned)status, status_text(status),
            (unsigned)busy);
     sim_stall_tx(&dev, 0u); /* the character finishes: the line goes idle */
-    (void)flush_report(u, from, pair, 1u);
+    (void)flush_report(u, &st, from, pair, 1u);
+    received += rx_drain(u, &st, totals); /* the parity error init's polls saved */
 
     phase("end");
     show_trace();

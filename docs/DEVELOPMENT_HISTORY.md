@@ -5802,6 +5802,24 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `uart-driver.json` SD1-SD12, UD1-UD26 and UH1-UH3: each of the 41 caught by its own check
     (red_sweep on a copy of the tree); under the witnesses before U2 -- U0's and U1's 24 tests --
     none.
+  - The review of #823 (2026-10-29) found three defects, each reproduced on the sim and fixed:
+    - the LSR polls of `uart_tx` and `uart_flush` cleared a received byte's OE, PE, FE or BI before
+      the drain could count it (PC16550D p.21: a read of LSR clears them). Every LSR read outside the
+      drain now saves them in `uart_state.lsr_saved`, which the drain counts with its first read and
+      init and the self-test clear, as Linux keeps `up->lsr_saved_flags` (8250.h `serial_lsr_in()`);
+      `uart_flush` takes the state;
+    - the self-test compared 8-bit patterns at every word length, so at 5, 6 and 7 bits it failed
+      (p.18), hidden by a sim that looped all eight bits back. Init records the word length and the
+      patterns are its data bits; the sim sends, loops and receives only those, and LCR's reset 00
+      makes a TX before init a 5-bit one;
+    - the self-test entered the loopback with bytes uart_tx had accepted still in the transmitter,
+      which looped them back and later sent a pattern on SOUT (p.23). It now waits for TEMT before
+      entering and before leaving the loopback, and resets the FIFOs while still in it.
+    Four tests added and one rewritten (`test_selftest_enters_the_loopback_only_with_the_transmitter_idle`,
+    in place of the THRE-wait test, which the TEMT wait made unreachable); `uart-driver.json` grew to
+    SD1-SD14, UD1-UD41 and UH1-UH3 (UD26 retargeted at the new TEMT wait): each of the 58 caught by
+    its own check. The three defects passed U2's tests at `e613de4` (its CI was green); each is
+    re-injected into the fixed code as a fault the new tests catch (UD27-UD28, SD13 and UD37, UD34).
   - Not in these slices: the law-rail halves (U0's `bcir.regmap_contract` op; the `-bcir-verify`
     clauses, lit negatives and `check_passes.sh` stanzas of both) and U1's C-twin form, which need
     the MLIR rail and the twin built; and the qualifiers below a parameter's top level in both

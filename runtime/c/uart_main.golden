@@ -13,6 +13,8 @@ probe: returns 2 (16550A); fifo_ok 2, scr_ok 1, fcr_shadow 0x00
   device: fifos off, iir 0x01
 -- tx refused: a state no init has filled (t=0)
 tx(a zeroed state): returns 8 (not ready), 0 bytes sent, the device untouched
+-- selftest refused: a state no init has filled (t=0)
+selftest(a zeroed state): returns 8 (not ready), the device untouched
 -- tx before init: the probe left the FIFOs off; a plan's cap in the state (t=0)
   R 0x1014 LSR 0x60
   W 0x1000 THR 0x70
@@ -36,7 +38,7 @@ tx(a zeroed state): returns 8 (not ready), 0 bytes sent, the device untouched
   W 0x1000 THR 0x0a
 tx: returns 0 (ok); 10 of 10 bytes sent under a plan burst cap of 16; tx overflows 0
   R 0x1014 LSR 0x60
-flush: 0 busy polls; the line carried 10 bytes "pre-init\r\n", the buffer
+flush: 0 busy polls; the line carried 10 bytes "\x10\x12\x05\r\x09\x0e\x09\x14\r\n", the buffer at 5 data bits
 -- init refusals (t=11)
 init(divisor 0): returns 2, the device untouched
 init(divisor 0x10000): returns 2, the device untouched
@@ -59,6 +61,7 @@ init(trigger code 0x81): returns 4, the device untouched
 init: returns 0 (ok); divisor 111 for 56000 baud from 100000000 Hz (PG143's formula): 56306 baud; format 0x1f (8E2); trigger 8 bytes, fcr_shadow 0x81, tx_burst 16
   device: divisor latch 0x006f, lcr 0x1f, mcr 0x03, ier 0x00, fifos on, trigger 8 bytes
 -- selftest: a byte the receiver held from before it (t=13)
+  R 0x1014 LSR 0x61
   R 0x1010 MCR 0x03
   R 0x1014 LSR 0x61
   R 0x1000 RBR 0x5a
@@ -75,11 +78,12 @@ init: returns 0 (ok); divisor 111 for 56000 baud from 100000000 Hz (PG143's form
   W 0x1000 THR 0xaa
   R 0x1014 LSR 0x61
   R 0x1000 RBR 0xaa
-  W 0x1010 MCR 0x03
+  R 0x1014 LSR 0x60
   W 0x1008 FCR 0x87
+  W 0x1010 MCR 0x03
   R 0x1018 MSR 0x06
 selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow 0x81
--- tx (t=19)
+-- tx (t=21)
   R 0x1014 LSR 0x60
   W 0x1000 THR 0x55
   W 0x1000 THR 0x32
@@ -181,16 +185,50 @@ selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow 0x81
   W 0x1000 THR 0x0d
   W 0x1000 THR 0x0a
 tx: returns 0 (ok); 52 of 52 bytes sent under a plan burst cap of 64; tx overflows 0
--- flush (t=67)
+-- flush (t=69)
   R 0x1014 LSR 0x00
   R 0x1014 LSR 0x00
   R 0x1014 LSR 0x00
   R 0x1014 LSR 0x20
   R 0x1014 LSR 0x60
 flush: 4 busy polls; the line carried 52 bytes "U2: the polled 16550 driver, emitted by both rails\r\n", the buffer
--- rx a: a 3-byte burst, then a gap of 4 character times (t=72)
-  device: t=77, 3 held, trigger level (8) reached: no, character timeout due: no, lsr 0x61
-  device: t=78, 3 held, trigger level (8) reached: no, character timeout due: yes, lsr 0x61
+-- selftest after tx: the transmitter still busy with what uart_tx accepted (t=74)
+  R 0x1014 LSR 0xe5
+  W 0x1000 THR 0x41
+  W 0x1000 THR 0x42
+  W 0x1000 THR 0x43
+tx: returns 0 (ok); 3 of 3 bytes sent under a plan burst cap of 64; tx overflows 0
+  state: lsr_saved 0x04
+  R 0x1014 LSR 0x81
+  R 0x1014 LSR 0xa1
+  R 0x1014 LSR 0xe1
+  R 0x1010 MCR 0x03
+  R 0x1014 LSR 0xe1
+  R 0x1000 RBR 0x51
+  R 0x1014 LSR 0xe0
+  W 0x1010 MCR 0x1a
+  R 0x1018 MSR 0x99
+  W 0x1010 MCR 0x15
+  R 0x1018 MSR 0x6b
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x55
+  R 0x1014 LSR 0x61
+  R 0x1000 RBR 0x55
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0xaa
+  R 0x1014 LSR 0x61
+  R 0x1000 RBR 0xaa
+  R 0x1014 LSR 0x60
+  W 0x1008 FCR 0x87
+  W 0x1010 MCR 0x03
+  R 0x1018 MSR 0x06
+selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow 0x81
+  state: lsr_saved 0x00
+  R 0x1014 LSR 0x60
+flush: 0 busy polls; the line carried 3 bytes "ABC", the buffer
+-- rx a: a 3-byte burst, then a gap of 4 character times (t=86)
+  device: t=91, 3 held, trigger level (8) reached: no, character timeout due: no, lsr 0x61
+  device: t=92, 3 held, trigger level (8) reached: no, character timeout due: yes, lsr 0x61
   R 0x1014 LSR 0x61
   R 0x1000 RBR 0x61
   R 0x1014 LSR 0x61
@@ -198,10 +236,10 @@ flush: 4 busy polls; the line carried 52 bytes "U2: the polled 16550 driver, emi
   R 0x1014 LSR 0x61
   R 0x1000 RBR 0x63
   R 0x1014 LSR 0x60
-drain: 3 bytes "abc"; OE 0 PE 0 FE 0 BI 0
--- rx b: an 8-byte burst at trigger 8 (t=82)
-  device: t=88, 7 held, trigger level (8) reached: no, character timeout due: no, lsr 0x61
-  device: t=89, 8 held, trigger level (8) reached: yes, character timeout due: no, lsr 0x61
+drain: 3 bytes "abc"; OE 0 PE 0 FE 0 BI 0; lsr_saved 0x00 after it
+-- rx b: an 8-byte burst at trigger 8 (t=96)
+  device: t=102, 7 held, trigger level (8) reached: no, character timeout due: no, lsr 0x61
+  device: t=103, 8 held, trigger level (8) reached: yes, character timeout due: no, lsr 0x61
   R 0x1014 LSR 0x61
   R 0x1000 RBR 0x52
   R 0x1014 LSR 0x61
@@ -219,9 +257,9 @@ drain: 3 bytes "abc"; OE 0 PE 0 FE 0 BI 0
   R 0x1014 LSR 0x61
   R 0x1000 RBR 0x74
   R 0x1014 LSR 0x60
-drain: 8 bytes "RX-burst"; OE 0 PE 0 FE 0 BI 0
--- rx c: a 5-byte burst, its third byte with a parity error (t=98)
-  device: t=102, 5 held, trigger level (8) reached: no, character timeout due: no, lsr 0xe1
+drain: 8 bytes "RX-burst"; OE 0 PE 0 FE 0 BI 0; lsr_saved 0x00 after it
+-- rx c: a 5-byte burst, its third byte with a parity error (t=112)
+  device: t=116, 5 held, trigger level (8) reached: no, character timeout due: no, lsr 0xe1
   R 0x1014 LSR 0xe1
   R 0x1000 RBR 0x41
   R 0x1014 LSR 0xe1
@@ -233,9 +271,9 @@ drain: 8 bytes "RX-burst"; OE 0 PE 0 FE 0 BI 0
   R 0x1014 LSR 0x61
   R 0x1000 RBR 0x45
   R 0x1014 LSR 0x60
-drain: 5 bytes "ABCDE"; OE 0 PE 1 FE 0 BI 0
--- rx d: 17 bytes into the 16-byte FIFO (t=108)
-  device: t=124, 16 held, trigger level (8) reached: yes, character timeout due: no, lsr 0x63
+drain: 5 bytes "ABCDE"; OE 0 PE 1 FE 0 BI 0; lsr_saved 0x00 after it
+-- rx d: 17 bytes into the 16-byte FIFO (t=122)
+  device: t=138, 16 held, trigger level (8) reached: yes, character timeout due: no, lsr 0x63
   R 0x1014 LSR 0x63
   R 0x1000 RBR 0x30
   R 0x1014 LSR 0x61
@@ -269,8 +307,32 @@ drain: 5 bytes "ABCDE"; OE 0 PE 1 FE 0 BI 0
   R 0x1014 LSR 0x61
   R 0x1000 RBR 0x66
   R 0x1014 LSR 0x60
-drain: 16 bytes "0123456789abcdef"; OE 1 PE 0 FE 0 BI 0
--- stuck selftest: a peer that sends a character every character time (t=141)
+drain: 16 bytes "0123456789abcdef"; OE 1 PE 0 FE 0 BI 0; lsr_saved 0x00 after it
+-- rx e: a parity error at the FIFO head while TX polls LSR (t=155)
+  device: t=155, 1 held, trigger level (8) reached: no, character timeout due: no, lsr 0xe5
+  R 0x1014 LSR 0xe5
+  W 0x1000 THR 0x3c
+  W 0x1000 THR 0x3e
+tx: returns 0 (ok); 2 of 2 bytes sent under a plan burst cap of 64; tx overflows 0
+  R 0x1014 LSR 0xa1
+  R 0x1014 LSR 0xe1
+flush: 1 busy polls; the line carried 2 bytes "<>", the buffer
+  state: lsr_saved 0x04
+  R 0x1014 LSR 0xe1
+  R 0x1000 RBR 0x42
+  R 0x1014 LSR 0xe0
+drain: 1 bytes "B"; OE 0 PE 1 FE 0 BI 0; lsr_saved 0x00 after it
+-- rx f: a framing error at the FIFO head while the flush polls LSR (t=160)
+  device: t=160, 1 held, trigger level (8) reached: no, character timeout due: no, lsr 0xe9
+  R 0x1014 LSR 0xe9
+flush: 0 busy polls; the line carried 0 bytes "", the buffer
+  state: lsr_saved 0x08
+  R 0x1014 LSR 0xe1
+  R 0x1000 RBR 0x46
+  R 0x1014 LSR 0xe0
+drain: 1 bytes "F"; OE 0 PE 0 FE 1 BI 0; lsr_saved 0x00 after it
+-- stuck selftest: a peer that sends a character every character time (t=163)
+  R 0x1014 LSR 0x61
   R 0x1010 MCR 0x03
   R 0x1014 LSR 0x61
   R 0x1000 RBR 0x7e
@@ -307,12 +369,115 @@ drain: 16 bytes "0123456789abcdef"; OE 1 PE 0 FE 0 BI 0
   R 0x1014 LSR 0x61
   R 0x1000 RBR 0x7e
   R 0x1014 LSR 0x61
-  W 0x1010 MCR 0x03
   W 0x1008 FCR 0x87
+  W 0x1010 MCR 0x03
   R 0x1018 MSR 0x00
 selftest: returns 9 (the receiver never emptied); mcr 0x03 after it, fcr_shadow 0x81
   device: the receiver holds 0 after it
--- fifo_ok 0 probe: the sim answers as a 16550A; the run forces the verdict after it (t=159)
+-- selftest at 5, 6 and 7 data bits (t=182)
+  R 0x1014 LSR 0xf1
+flush: 0 busy polls; the line carried 0 bytes "", the buffer
+  state: lsr_saved 0x10
+  R 0x1014 LSR 0xe1
+  W 0x100c LCR 0x80
+  W 0x1000 DLL 0x6f
+  W 0x1004 DLM 0x00
+  W 0x100c LCR 0x00
+  W 0x1008 FCR 0x87
+  W 0x1010 MCR 0x03
+  W 0x1004 IER 0x00
+  R 0x1014 LSR 0xe0
+  R 0x1000 RBR 0x7e
+  R 0x1008 IIR 0xc1
+  R 0x1018 MSR 0x00
+init: returns 0 (ok); format 0x00, 5 data bits: word_bits 5, lsr_saved 0x00
+  R 0x1014 LSR 0x60
+  R 0x1010 MCR 0x03
+  R 0x1014 LSR 0x60
+  W 0x1010 MCR 0x1a
+  R 0x1018 MSR 0x99
+  W 0x1010 MCR 0x15
+  R 0x1018 MSR 0x6b
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x15
+  R 0x1014 LSR 0x61
+  R 0x1000 RBR 0x15
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x0a
+  R 0x1014 LSR 0x61
+  R 0x1000 RBR 0x0a
+  R 0x1014 LSR 0x60
+  W 0x1008 FCR 0x87
+  W 0x1010 MCR 0x03
+  R 0x1018 MSR 0x06
+selftest: returns 0 (ok) at 5 data bits; mcr 0x03 after it
+  R 0x1014 LSR 0x60
+  W 0x100c LCR 0x81
+  W 0x1000 DLL 0x6f
+  W 0x1004 DLM 0x00
+  W 0x100c LCR 0x01
+  W 0x1008 FCR 0x87
+  W 0x1010 MCR 0x03
+  W 0x1004 IER 0x00
+  R 0x1014 LSR 0x60
+  R 0x1000 RBR 0x0a
+  R 0x1008 IIR 0xc1
+  R 0x1018 MSR 0x00
+init: returns 0 (ok); format 0x01, 6 data bits: word_bits 6, lsr_saved 0x00
+  R 0x1014 LSR 0x60
+  R 0x1010 MCR 0x03
+  R 0x1014 LSR 0x60
+  W 0x1010 MCR 0x1a
+  R 0x1018 MSR 0x99
+  W 0x1010 MCR 0x15
+  R 0x1018 MSR 0x6b
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x15
+  R 0x1014 LSR 0x61
+  R 0x1000 RBR 0x15
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x2a
+  R 0x1014 LSR 0x61
+  R 0x1000 RBR 0x2a
+  R 0x1014 LSR 0x60
+  W 0x1008 FCR 0x87
+  W 0x1010 MCR 0x03
+  R 0x1018 MSR 0x06
+selftest: returns 0 (ok) at 6 data bits; mcr 0x03 after it
+  R 0x1014 LSR 0x60
+  W 0x100c LCR 0x82
+  W 0x1000 DLL 0x6f
+  W 0x1004 DLM 0x00
+  W 0x100c LCR 0x02
+  W 0x1008 FCR 0x87
+  W 0x1010 MCR 0x03
+  W 0x1004 IER 0x00
+  R 0x1014 LSR 0x60
+  R 0x1000 RBR 0x2a
+  R 0x1008 IIR 0xc1
+  R 0x1018 MSR 0x00
+init: returns 0 (ok); format 0x02, 7 data bits: word_bits 7, lsr_saved 0x00
+  R 0x1014 LSR 0x60
+  R 0x1010 MCR 0x03
+  R 0x1014 LSR 0x60
+  W 0x1010 MCR 0x1a
+  R 0x1018 MSR 0x99
+  W 0x1010 MCR 0x15
+  R 0x1018 MSR 0x6b
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x55
+  R 0x1014 LSR 0x61
+  R 0x1000 RBR 0x55
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x2a
+  R 0x1014 LSR 0x61
+  R 0x1000 RBR 0x2a
+  R 0x1014 LSR 0x60
+  W 0x1008 FCR 0x87
+  W 0x1010 MCR 0x03
+  R 0x1018 MSR 0x06
+selftest: returns 0 (ok) at 7 data bits; mcr 0x03 after it
+-- fifo_ok 0 probe: the sim answers as a 16550A; the run forces the verdict after it (t=210)
   W 0x1008 FCR 0xc1
   R 0x1008 IIR 0xc1
   W 0x1008 FCR 0x00
@@ -322,7 +487,7 @@ selftest: returns 9 (the receiver never emptied); mcr 0x03 after it, fcr_shadow 
   R 0x101c SCR 0x5a
 probe: returns 2; fifo_ok forced to 0 (16450), scr_ok 1, fcr_shadow 0x00
   device: fifos off, iir 0x01
--- fifo_ok 0 init (t=159)
+-- fifo_ok 0 init (t=210)
   R 0x1014 LSR 0x60
   W 0x100c LCR 0x9f
   W 0x1000 DLL 0x6f
@@ -332,12 +497,13 @@ probe: returns 2; fifo_ok forced to 0 (16450), scr_ok 1, fcr_shadow 0x00
   W 0x1010 MCR 0x03
   W 0x1004 IER 0x00
   R 0x1014 LSR 0x60
-  R 0x1000 RBR 0x7e
+  R 0x1000 RBR 0x2a
   R 0x1008 IIR 0x01
   R 0x1018 MSR 0x00
 init: returns 0 (ok); trigger 1 bytes, fcr_shadow 0x00, tx_burst 1
   device: fifos off, iir 0x01
--- fifo_ok 0 selftest (t=161)
+-- fifo_ok 0 selftest (t=212)
+  R 0x1014 LSR 0x60
   R 0x1010 MCR 0x03
   R 0x1014 LSR 0x60
   W 0x1010 MCR 0x1a
@@ -352,10 +518,12 @@ init: returns 0 (ok); trigger 1 bytes, fcr_shadow 0x00, tx_burst 1
   W 0x1000 THR 0xaa
   R 0x1014 LSR 0x61
   R 0x1000 RBR 0xaa
+  R 0x1014 LSR 0x60
+  R 0x1014 LSR 0x60
   W 0x1010 MCR 0x03
   R 0x1018 MSR 0x06
 selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow 0x00
--- fifo_ok 0 tx (t=166)
+-- fifo_ok 0 tx (t=220)
   R 0x1014 LSR 0x60
   W 0x1000 THR 0x31
   R 0x1014 LSR 0x60
@@ -437,10 +605,10 @@ selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow 0x00
   R 0x1014 LSR 0x60
   W 0x1000 THR 0x0a
 tx: returns 0 (ok); 40 of 40 bytes sent under a stale plan burst cap of 16; tx overflows 0
--- fifo_ok 0 flush (t=206)
+-- fifo_ok 0 flush (t=260)
   R 0x1014 LSR 0x60
 flush: 0 busy polls; the line carried 40 bytes "16450 mode: a byte per THRE, none lost\r\n", the buffer
--- fifo_ok 1 probe: the sim answers as a 16550A; the run forces the verdict after it (t=207)
+-- fifo_ok 1 probe: the sim answers as a 16550A; the run forces the verdict after it (t=261)
   W 0x1008 FCR 0xc1
   R 0x1008 IIR 0xc1
   W 0x1008 FCR 0x00
@@ -450,7 +618,7 @@ flush: 0 busy polls; the line carried 40 bytes "16450 mode: a byte per THRE, non
   R 0x101c SCR 0x5a
 probe: returns 2; fifo_ok forced to 1 (16550 with a broken FIFO), scr_ok 1, fcr_shadow 0x00
   device: fifos off, iir 0x01
--- fifo_ok 1 init (t=207)
+-- fifo_ok 1 init (t=261)
   R 0x1014 LSR 0x60
   W 0x100c LCR 0x9f
   W 0x1000 DLL 0x6f
@@ -465,7 +633,8 @@ probe: returns 2; fifo_ok forced to 1 (16550 with a broken FIFO), scr_ok 1, fcr_
   R 0x1018 MSR 0x00
 init: returns 0 (ok); trigger 1 bytes, fcr_shadow 0x00, tx_burst 1
   device: fifos off, iir 0x01
--- fifo_ok 1 selftest (t=209)
+-- fifo_ok 1 selftest (t=263)
+  R 0x1014 LSR 0x60
   R 0x1010 MCR 0x03
   R 0x1014 LSR 0x60
   W 0x1010 MCR 0x1a
@@ -480,10 +649,12 @@ init: returns 0 (ok); trigger 1 bytes, fcr_shadow 0x00, tx_burst 1
   W 0x1000 THR 0xaa
   R 0x1014 LSR 0x61
   R 0x1000 RBR 0xaa
+  R 0x1014 LSR 0x60
+  R 0x1014 LSR 0x60
   W 0x1010 MCR 0x03
   R 0x1018 MSR 0x06
 selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow 0x00
--- fifo_ok 1 tx (t=214)
+-- fifo_ok 1 tx (t=271)
   R 0x1014 LSR 0x60
   W 0x1000 THR 0x31
   R 0x1014 LSR 0x60
@@ -565,10 +736,10 @@ selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow 0x00
   R 0x1014 LSR 0x60
   W 0x1000 THR 0x0a
 tx: returns 0 (ok); 40 of 40 bytes sent under a stale plan burst cap of 16; tx overflows 0
--- fifo_ok 1 flush (t=254)
+-- fifo_ok 1 flush (t=311)
   R 0x1014 LSR 0x60
 flush: 0 busy polls; the line carried 40 bytes "16450 mode: a byte per THRE, none lost\r\n", the buffer
--- tx timeout: a transmitter that never drains (t=255)
+-- tx timeout: a transmitter that never drains (t=312)
   R 0x1014 LSR 0x60
   W 0x100c LCR 0x9f
   W 0x1000 DLL 0x6f
@@ -619,7 +790,8 @@ tx: returns 7 (timed out); 16 of 52 bytes sent under init's burst cap of 16; tx 
   R 0x1014 LSR 0x20
   R 0x1014 LSR 0x60
 flush: 15 busy polls; the line carried 16 bytes "U2: the polled 1", the buffer
--- selftest timeout: a loopback that delivers nothing (t=65810)
+-- selftest timeout: a loopback that delivers nothing (t=65867)
+  R 0x1014 LSR 0x60
   R 0x1010 MCR 0x03
   R 0x1014 LSR 0x60
   W 0x1010 MCR 0x1a
@@ -628,42 +800,44 @@ flush: 15 busy polls; the line carried 16 bytes "U2: the polled 1", the buffer
   R 0x1018 MSR 0x6b
   R 0x1014 LSR 0x60
   W 0x1000 THR 0x55
-  R 0x1014 LSR 0x60 x65536
-  W 0x1010 MCR 0x03
+  R 0x1014 LSR 0x60 x65537
   W 0x1008 FCR 0x87
+  W 0x1010 MCR 0x03
   R 0x1018 MSR 0x06
 selftest: returns 7 (timed out); mcr 0x03 after it, fcr_shadow 0x81
   device: the loopback kept 1 characters from the receiver
--- selftest stalled: a transmitter that never drains, under the self-test (t=131348)
+-- selftest stalled: a transmitter that never drains, under the self-test (t=131407)
   R 0x1014 LSR 0x60
   W 0x1000 THR 0x3c
   W 0x1000 THR 0x3e
 tx: returns 0 (ok); 2 of 2 bytes sent under init's burst cap of 16; tx overflows 0
-  R 0x1010 MCR 0x03
-  R 0x1014 LSR 0x00
-  W 0x1010 MCR 0x1a
-  R 0x1018 MSR 0x99
-  W 0x1010 MCR 0x15
-  R 0x1018 MSR 0x6b
-  R 0x1014 LSR 0x00 x65536
-  W 0x1010 MCR 0x03
-  W 0x1008 FCR 0x87
-  R 0x1018 MSR 0x06
-selftest: returns 7 (timed out); mcr 0x03 after it, fcr_shadow 0x81
-  R 0x1014 LSR 0x60
-flush: 0 busy polls; the line carried 1 bytes "<", the buffer
--- init busy: a transmitter that never goes idle (t=196887)
+  R 0x1014 LSR 0x89
+  R 0x1014 LSR 0x81 x65535
+selftest: returns 1 (busy); mcr 0x03 after it, fcr_shadow 0x81
+  R 0x1014 LSR 0xa1
+  R 0x1014 LSR 0xe1
+flush: 1 busy polls; the line carried 2 bytes "<>", the buffer
+  R 0x1014 LSR 0xe1
+  R 0x1000 RBR 0x47
+  R 0x1014 LSR 0xe0
+drain: 1 bytes "G"; OE 0 PE 0 FE 1 BI 0; lsr_saved 0x00 after it
+-- init busy: a transmitter that never goes idle (t=196948)
   R 0x1014 LSR 0x60
   W 0x1000 THR 0x3c
 tx: returns 0 (ok); 1 of 1 bytes sent under init's burst cap of 16; tx overflows 0
-  R 0x1014 LSR 0x20 x65536
+  R 0x1014 LSR 0xa5
+  R 0x1014 LSR 0xa1 x65535
 init: returns 1 (busy); fcr_shadow 0x81, tx_burst 16
--- flush busy: the transmitter still never goes idle (t=262424)
-  R 0x1014 LSR 0x20 x65536
+-- flush busy: the transmitter still never goes idle (t=262485)
+  R 0x1014 LSR 0xa1 x65536
 stalled flush: returns 1 (busy); 65536 busy polls
-  R 0x1014 LSR 0x60
+  R 0x1014 LSR 0xe1
 flush: 0 busy polls; the line carried 1 bytes "<", the buffer
--- end (t=327961)
+  R 0x1014 LSR 0xe1
+  R 0x1000 RBR 0x49
+  R 0x1014 LSR 0xe0
+drain: 1 bytes "I"; OE 0 PE 1 FE 0 BI 0; lsr_saved 0x00 after it
+-- end (t=328024)
 lsr 0x60; device: tx overflows 0, rx overruns 1, rx dropped 0, bus errors 0, ignored writes 0, line lost 0
-bus: 328255 register accesses (328027 reads, 228 writes), 0 misfits, 0 not traced
-verdict: probe 16550A, init ok, selftest ok, tx 52/52 on the line, rx 32 bytes with OE 1 PE 1 FE 0 BI 0
+bus: 328398 register accesses (328124 reads, 274 writes), 0 misfits, 0 not traced
+verdict: probe 16550A, init ok, selftest ok, tx 52/52 on the line, rx 36 bytes with OE 1 PE 3 FE 2 BI 0

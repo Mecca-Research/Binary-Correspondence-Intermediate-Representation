@@ -69,7 +69,7 @@
 
 | Use | Today | With an event timer |
 |---|---|---|
-| Driver timeouts | A UART poll is bounded by a spin count (`uart_flush(u, spin_budget)`, UART blueprint U2). The 16550's own character timeout is internal to the device and counted in character times (UART §1.2, §8). | A deadline is counted in the timer's ticks, armed as a one-shot comparator and delivered as an event phase. The device's own timeout keeps its own clock on a shared simulated timeline (§4.5). |
+| Driver timeouts | A UART poll is bounded by a spin count (`UART_SPIN_BUDGET` polls, every wait of the U2 driver: `uart_flush(u, st, nbusy)`, UART blueprint U2). The 16550's own character timeout is internal to the device and counted in character times (UART §1.2, §8). | A deadline is counted in the timer's ticks, armed as a one-shot comparator and delivered as an event phase. The device's own timeout keeps its own clock on a shared simulated timeline (§4.5). |
 | A DMA completion bound | `dma_transfer_module` waits for `dma.done:<engine>` with no bound (`dma.py`). | A second event source, `timer.expire:<placement>.t<n>`, races the completion. Outcome rules O1–O5 decide the result (§4.5), and a timeout never proves that the engine stopped. |
 | Periodic telemetry sampling | Samples are taken wherever code happens to run. | A periodic comparator (HPET) or the PIT (AVR) paces sampling. Missed periods are counted, never silently coalesced (§5.4). |
 | A measured clock | `silicon.py` reads OS clocks. The native rig records the clocksource and the timer quantum (`microbench.NativeEvidence`). | An elapsed-time clock whose rate comes from the counter's own declaration, with that provenance recorded (T4). It is never a TSC tick count and never core cycles (§5.2). |

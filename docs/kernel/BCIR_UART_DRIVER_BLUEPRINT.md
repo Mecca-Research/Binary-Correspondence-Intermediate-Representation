@@ -768,12 +768,14 @@ law-gated. This is the first *running* BCIR-compiled driver.
          (not via LSR7: it covers PE/FE/BI anywhere in the FIFO, and OE is no byte's --
          PC16550D pp.21-22); read RBR; returns bytes drained. ONE LSR read per iteration
          feeds both the DR test and the error triage (the CSE win the plan prices).   */
-  uint32_t uart_flush(volatile uart_regs_t *u, uint32_t *nbusy);
+  uint32_t uart_flush(volatile uart_regs_t *u, uart_state *st, uint32_t *nbusy);
       /* poll LSR until TEMT, at most UART_SPIN_BUDGET polls; *nbusy = polls that
-         found it busy; returns UART_OK or UART_ERR_BUSY (U2's notes: the timeouts). */
+         found it busy; returns UART_OK or UART_ERR_BUSY (U2's notes: the timeouts).
+         Each poll's receiver errors are saved in st for the drain (U2's notes).      */
   uint32_t uart_selftest(volatile uart_regs_t *u, uart_state *st);
-      /* MCR4 loopback: pattern out, pattern back, MSR mirror check (SS1.7).
-         (The receiver drained first, bounded: U2's notes.)                            */
+      /* MCR4 loopback: pattern out, pattern back, MSR mirror check (SS1.7), at the
+         word length init programmed; entered and left only with the transmitter
+         idle (TEMT). (The receiver drained first, bounded: U2's notes.)              */
   ```
 - `runtime/c/sim16550.c` + `sim16550.h` — the simulated device (host-side, deterministic):
   a `sim16550` struct holding the two 16-deep FIFOs (RX bytes carry 3 error bits), shift-register
@@ -937,8 +939,8 @@ harness `uart_main` (built by BCIR Make and CMake with the gate's flags, untrace
   `uint32_t *nsent` for the bytes sent and returns `UART_OK`, `UART_ERR_TIMEOUT` (a wait for THRE
   gave up, `*nsent` < `len`) or `UART_ERR_NOT_READY`.
 - *The timeouts.* Every wait the driver makes — init's for TEMT, TX's for THRE, the flush's for
-  TEMT, the self-test's for THRE and for DR — gives up after exactly `UART_SPIN_BUDGET` polls that
-  find the device not ready, one bound for all five, so `uart_flush` takes no budget of its own and
+  TEMT, the self-test's for TEMT (before and after its loopback), for THRE and for DR — gives up after
+  exactly `UART_SPIN_BUDGET` polls that find the device not ready, one bound for all of them, so `uart_flush` takes no budget of its own and
   returns a status (`UART_OK`, or `UART_ERR_BUSY` when it gave up) with the busy polls in `*nbusy`.
   The transcript drives each wait to its bound with the sim's fault knobs (`sim16550.h`), which model
   what no working 16550 does and are off after `sim_init`, and the tests read the bound off
@@ -948,11 +950,50 @@ harness `uart_main` (built by BCIR Make and CMake with the gate's flags, untrace
   the shift register never finishes: after one burst THRE stays off and `uart_tx` returns
   `UART_ERR_TIMEOUT`, `*nsent` the burst the FIFO and shift register accepted
   (`test_tx_gives_up_when_thre_never_comes`; UD22); with a character waiting behind the shifting one
-  the self-test's wait for THRE gives up (`test_selftest_gives_up_when_thre_never_comes`; UD26); and
+  the self-test's wait for TEMT gives up before it touches anything else, `UART_ERR_BUSY`
+  (`test_selftest_enters_the_loopback_only_with_the_transmitter_idle`; UD26 -- its waits for THRE
+  before a pattern stay bounded, but with TEMT established first no knob reaches them, and no fault
+  targets them); and
   with one character shifting forever, init's wait for TEMT returns `UART_ERR_BUSY` before it touches
   anything else (`test_init_gives_up_when_the_line_never_goes_idle`; UD24), as the flush does
   (`test_flush_gives_up_when_the_line_never_goes_idle`; UD25). The harness shows a phase's
   unchanging polls as one trace line, " xN".
+- *The review's three findings (2026-10-29, on #823; each reproduced on the sim, fixed, and pinned).*
+  - *A TX or flush poll took a received byte's error.* A read of LSR clears OE, PE, FE and BI, and PE,
+    FE and BI describe the byte at the FIFO head (PC16550D p.21), so the LSR polls of `uart_tx` and
+    `uart_flush` erased the error of a byte waiting for the drain: a byte injected with a parity
+    error, one byte sent, then a drain gave the byte with no parity error counted. Every LSR read
+    outside the drain now ORs the four into `uart_state.lsr_saved` -- TX's, the flush's, and init's and
+    the self-test's waits -- and the drain counts them with its first read; init and the self-test,
+    which discard what the receiver held, clear them. Linux keeps the same flags the same way
+    (`drivers/tty/serial/8250/8250.h`: `serial_lsr_in()` and `up->lsr_saved_flags`, `LSR_SAVE_FLAGS`
+    = BI|FE|PE|OE in `include/linux/serial_8250.h`; merged and cleared by the receive path in
+    `8250_port.c`). `uart_flush` takes the state for it. Witnesses:
+    `test_tx_and_flush_polls_keep_the_receivers_errors_for_the_drain` (a parity error under TX's
+    polls, a framing error under the flush's), init's and the stalled self-test's polls in the
+    timeout tests, and the drain's `lsr_saved 0x00 after it` (UD27-UD33, UD39).
+  - *The self-test ignored the word length.* LCR[1:0] set the bits of each character (p.18), so a
+    0x55 cannot come back at 5 or 6 bits, nor 0xAA at 7: after an init at 5, 6 or 7 bits the test
+    failed with `UART_ERR_LOOP_DATA`. The sim had hidden it by looping all eight bits back at every
+    word length. Init now records the word length (`word_bits`), the patterns are its data bits
+    (0x15/0x0A at 5 bits) and only those bits of RBR are compared, since the PC16550D does not state
+    what the bits above them read; a state no init filled is refused (`UART_ERR_NOT_READY`). The sim
+    sends, loops and receives only the word length's bits, RBR's others reading 0, and LCR resets to
+    00, 5 bits (Table 3), so a TX before any init sends 5-bit characters, which the transcript now
+    shows. Witnesses: `test_sim_sends_and_receives_only_the_word_lengths_data_bits` (SD13, SD14),
+    `test_selftest_passes_at_every_word_length` (UD37), `test_selftest_refuses_a_state_without_a_word_length`
+    (UD38, UD40).
+  - *The self-test entered the loopback with the transmitter busy.* In the loopback the shift
+    register feeds the receiver and SOUT is held marking (p.23): TX of "ABC", the self-test and a flush
+    gave a self-test failure and the line 0x41 0x55, a payload byte lost and a pattern sent. The test
+    now waits for TEMT before it enters the loopback (`UART_ERR_BUSY` with the device as it was when
+    that wait gives up) and again before it leaves, resets the FIFOs while still in it, so a pattern
+    the transmitter holds is dropped rather than sent, and in 16450 mode reads out a looped character
+    RBR may still hold. One case remains, stated: a character the shift register never finishes
+    (TEMT never comes) cannot be taken back, and after `UART_ERR_BUSY` it may reach the line once the
+    loopback is left. Witnesses: `test_selftest_enters_the_loopback_only_with_the_transmitter_idle`
+    (the "ABC" case and the stalled transmitter; UD26, UD34), and the loopback's bus order in
+    `test_selftest_passes_in_loopback` (UD35, UD36, UD41).
 - *Buffers and headroom.* The review's buffer-ownership law (section 12: AVAILABLE → RESERVED →
   DEVICE_OWNED → COMPLETING → RETIRED, DEVICE_OWNED(B) ⇒ no reuse of B) holds trivially: the
   driver is synchronous, so a buffer is the caller's again when the call returns. The
@@ -987,19 +1028,23 @@ harness `uart_main` (built by BCIR Make and CMake with the gate's flags, untrace
   lost and counted; a byte written to an idle transmitter moves into the shift register at once
   (TL16C550D p.41), and the PC16550D's sub-character delay of that THRE (8.4.1 item 2, p.16) is not
   modeled — time is whole characters, and the driver never depends on THRE timing (section 3.2);
-  an RBR read of an empty receiver returns the last byte; the divisor latches reset to 0x0001 on
-  every placement (section 8).
+  an RBR read of an empty receiver returns the last byte; RBR's bits above the word length read 0;
+  the divisor latches reset to 0x0001 on every placement (section 8).
 - *Tests beyond the list above:* `test_sim_lsr_errors_ride_the_fifo_and_clear_on_read`,
   `test_sim_refuses_a_config_it_cannot_model`, `test_the_driver_never_reads_fcr_back` (H-E on the
   claim graph and on the bus), the three 16450-mode tests (the probe's verdict, above), the four
   named in the probe's end state, the format, the self-test and the TX bullets above, the five in
-  the timeouts bullet, `test_a_driver_laid_out_for_another_placement_is_refused` (H-A) and
+  the timeouts bullet, the review's four above, `test_a_driver_laid_out_for_another_placement_is_refused` (H-A) and
   `test_an_untrapped_build_is_refused`. The golden (`runtime/c/uart_main.golden`) is the axi16550
   placement's transcript, PG143's part and vector; on every placement the linked builds print their
-  source build's transcript. The fault table `tools/testing/faults/uart-driver.json` (SD1-SD12 the
-  sim, UD1-UD26 the driver and its API header, UH1-UH3 the harness and the golden): each of the 41
+  source build's transcript. The fault table `tools/testing/faults/uart-driver.json` (SD1-SD14 the
+  sim, UD1-UD41 the driver and its API header, UH1-UH3 the harness and the golden): each of the 58
   caught by its own check (red_sweep on a copy of the tree); under the witnesses before U2 — U0's
-  and U1's 24 tests — none.
+  and U1's 24 tests — none of U2's first 41. U2's tests from before the review's fixes cannot serve
+  as the 17 new faults' control: they fail on the fixed driver's transcript, which red_sweep refuses as
+  a control. The three defects themselves passed those tests (the green CI of `e613de4`), and each is
+  re-injected into the fixed code as a fault the new tests catch: the lost errors as UD27 and UD28, the
+  word length as SD13 and UD37, the busy transmitter as UD34.
 
 `check_passes.sh` is untouched (U2 adds no pass). Pending beside U2: U0's and U1's law-rail halves,
 and the qualifiers below a parameter's top level in both rails' `--linkable` emit (above).

@@ -191,12 +191,21 @@ static void line_put(sim16550 *dev, uint32_t byte)
 
 /* An idle shift register takes the next byte (TL16C550D p.41); the FIFO (the holding register in
  * 16450 mode) emptying is THRE, and its interrupt. */
+/* The data bits of a character at LCR[1:0]'s word length, 5 to 8 (p.18: "the number of bits in each
+ * transmitted or received serial character"; bit 0, the least significant, goes first, p.17). */
+static uint32_t word_mask(const sim16550 *dev)
+{
+    return 0xffu >> (3u - (dev->lcr & UART_LCR_WLS_MASK));
+}
+
 static void tx_start(sim16550 *dev)
 {
     if (dev->tsr_busy != 0u || dev->tx_count == 0u) {
         return;
     }
-    dev->tsr = dev->tx_data[dev->tx_head];
+    /* only the word length's data bits are shifted out -- onto SOUT, or in loopback into the receiver --
+     * so a 5- to 7-bit character carries the low bits of what was written to THR */
+    dev->tsr = dev->tx_data[dev->tx_head] & word_mask(dev);
     dev->tx_head = (dev->tx_head + 1u) % SIM16550_FIFO_MAX;
     dev->tx_count--;
     dev->tsr_busy = 1u;
@@ -520,7 +529,9 @@ void sim_inject(sim16550 *dev, uint32_t byte, uint32_t err_bits)
         dev->rx_dropped++; /* loopback disconnects SIN (p.23) */
         return;
     }
-    rx_arrive(dev, byte & 0xffu, err_bits);
+    /* a peer's character has the word length's data bits; the PC16550D does not state what RBR's bits
+     * above them read, and here they read 0 */
+    rx_arrive(dev, byte & word_mask(dev), err_bits);
 }
 
 void sim_set_modem(sim16550 *dev, uint32_t lines)
