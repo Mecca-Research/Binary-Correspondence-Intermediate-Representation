@@ -9,6 +9,7 @@
 #include "BCIR/BCIRDialect.h"
 
 #include "BCIR/BCIRAttrs.h"
+#include "BCIR/BCIRMeasured.h"
 #include "BCIR/BCIROps.h"
 #include "BCIR/BCIRTypes.h"
 
@@ -1340,6 +1341,78 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
         if (bw < 1 || lat < 1)
           return emitOpError() << "mem_tier_values: tier '" << name.getValue()
                                << "' bw_factor and lat_factor must be positive Q8 ratios";
+      }
+    }
+  }
+
+  // PX-3b-2: the measured table, the twin of cost.py MeasuredPrices.__post_init__: the four
+  // attributes travel together, hold at least one entry (n ops, n alternatives, 2n values), a
+  // positive generation, each op a non-empty string of at most 65,535 bytes never spelled as an
+  // opcode, each alternative `i<bit>` or `t<k>` (BCIRMeasured.h), each count 1 .. 2**32 - 1 and
+  // each price 1 .. 255; they are strictly ascending by (op, count, alternative), at most
+  // kMeasuredPerKeyMax sharing an op and count -- one spelling of one table, which the plan's
+  // content address (R13) folds.
+  {
+    auto gen = (*this)->getAttrOfType<::mlir::IntegerAttr>("measured_gen");
+    auto ops = getMeasuredOps();
+    auto alts = getMeasuredAlternatives();
+    auto values = getMeasuredValues();
+    const int present = (gen ? 1 : 0) + (ops ? 1 : 0) + (alts ? 1 : 0) + (values ? 1 : 0);
+    if (present != 0 && present != 4)
+      return emitOpError() << "measured_gen, measured_ops, measured_alternatives and "
+                              "measured_values are declared together";
+    if (present == 4) {
+      const size_t n = ops->size();
+      if (n == 0)
+        return emitOpError() << "a measured table holds at least one entry";
+      if (alts->size() != n || values->size() != 2 * n)
+        return emitOpError() << "a measured table holds one op, one alternative and two values "
+                                "(count, q8) per entry; got "
+                             << n << " ops, " << alts->size() << " alternatives and "
+                             << values->size() << " values";
+      if (gen.getInt() < 1)
+        return emitOpError() << "measured_gen must be a positive generation (got "
+                             << gen.getInt() << ")";
+      ::llvm::StringRef lastOp;
+      int64_t lastCount = 0;
+      std::pair<int, int64_t> lastAlt{-1, 0};
+      int run = 0; // the entries so far sharing the last entry's (op, count)
+      for (size_t i = 0; i < n; ++i) {
+        auto op = ::mlir::dyn_cast<::mlir::StringAttr>((*ops)[i]);
+        auto alt = ::mlir::dyn_cast<::mlir::StringAttr>((*alts)[i]);
+        if (!op || op.getValue().empty() || op.getValue().size() > 0xFFFF)
+          return emitOpError() << "measured_ops: every op is a non-empty string of at most "
+                                  "65535 bytes";
+        if (isOpcodeSpelled(op.getValue()))
+          return emitOpError() << "measured_ops: '" << op.getValue()
+                               << "' is spelled as an opcode (an op-less claim's op)";
+        if (!alt)
+          return emitOpError() << "measured_alternatives: every alternative is a string";
+        const std::pair<int, int64_t> key = measuredAlternativeKey(alt.getValue());
+        if (key.first < 0)
+          return emitOpError() << "measured_alternatives: '" << alt.getValue()
+                               << "' is not i<bit> (1, 2, 4 or 8) or t<workers> (1 .. 32767)";
+        const int64_t count = (*values)[2 * i], q8 = (*values)[2 * i + 1];
+        if (count < 1 || count > 0xFFFFFFFFll)
+          return emitOpError() << "measured_values: a count is 1 .. 2**32 - 1 (got " << count
+                               << ")";
+        if (q8 < 1 || q8 > 255)
+          return emitOpError() << "measured_values: a price is 1 .. 255 (got " << q8 << ")";
+        if (i > 0) {
+          const int byOp = op.getValue().compare(lastOp);
+          const bool ascending =
+              byOp > 0 || (byOp == 0 && (count > lastCount || (count == lastCount && key > lastAlt)));
+          if (!ascending)
+            return emitOpError() << "a measured table's entries are strictly ascending by (op, "
+                                    "count, alternative)";
+        }
+        run = i > 0 && op.getValue() == lastOp && count == lastCount ? run + 1 : 1;
+        if (run > kMeasuredPerKeyMax)
+          return emitOpError() << "more than " << kMeasuredPerKeyMax
+                               << " measured entries share one op and count";
+        lastOp = op.getValue();
+        lastCount = count;
+        lastAlt = key;
       }
     }
   }

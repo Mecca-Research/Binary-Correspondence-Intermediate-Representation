@@ -9,12 +9,14 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: '\.(ll|mlir)$|^training/llvm/dataset/'
+        # The five research bundles under docs/research are frozen evidence: their manifests and
+        # protocols hash every byte (a trailing newline breaks the reproduction; GEO-2).
+        exclude: '\.(ll|mlir)$|^training/llvm/dataset/|^docs/research/(gp-global|wedge-next|wedge-integrated|wedge-query-aware|wedge-pr818)/'
       - id: end-of-file-fixer
         # .ll/.mlir: the differential emits the pass corpora with a trailing blank line and CI
         # drift-gates them byte for byte; cfront_sec_lextail.c is intentionally unterminated
         # (a lexer-tail sanitizer fixture; its header says so). Hooks must not fight either.
-        exclude: '\.(ll|mlir)$|^training/llvm/dataset/|^runtime/c/cfront_sec_lextail\.c$'
+        exclude: '\.(ll|mlir)$|^training/llvm/dataset/|^runtime/c/cfront_sec_lextail\.c$|^docs/research/(gp-global|wedge-next|wedge-integrated|wedge-query-aware|wedge-pr818)/'
       - id: check-yaml
         # .clang-format is a two-document YAML stream (the per-language section).
         args: ["--allow-multiple-documents"]
@@ -25,6 +27,7 @@ repos:
         args: ["--maxkb=512"]
       - id: mixed-line-ending
         args: ["--fix=lf"]
+        exclude: '^docs/research/(gp-global|wedge-next|wedge-integrated|wedge-query-aware|wedge-pr818)/'
 
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v23.1.0

@@ -1,0 +1,213 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "bcir.tests.test_native_dispatch:test_the_host_admits_its_alternatives_and_no_other",
+  "bcir.tests.test_native_dispatch:test_a_dispatch_takes_its_alternatives_and_nothing_else",
+  "bcir.tests.test_native_dispatch:test_the_default_dispatch_is_the_program_before_it",
+  "bcir.tests.test_native_dispatch:test_the_model_resolves_the_defaults_as_the_trace_records_them",
+  "bcir.tests.test_native_dispatch:test_a_dispatch_table_names_its_instances_and_has_one_spelling",
+  "bcir.tests.test_native_dispatch:test_choose_dispatch_takes_only_alternatives_resolved_faster",
+  "bcir.tests.test_native_decoder:test_the_harness_rows_are_the_programs_numbers",
+  "bcir.tests.test_native_choose:test_a_choice_table_has_one_spelling_and_refuses_the_rest",
+  "bcir.tests.test_native_choose:test_choose_takes_only_alternatives_resolved_faster"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_host_admits_its_alternatives_and_no_other",
+   "label": "PY1 the widest instance offered as an alternative",
+   "new": "            alts += [f\"i{bit}\" for bit in (1, 2, 4, 8) if mask & bit]\n",
+   "old": "            alts += [f\"i{bit}\" for bit in (1, 2, 4, 8) if mask & bit and bit != _widest(mask)]\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_the_host_admits_its_alternatives_and_no_other",
+   "label": "PY2 all the pool's threads offered as an alternative",
+   "new": "        alts += [f\"t{k}\" for k in range(1, threads + 1)]\n",
+   "old": "        alts += [f\"t{k}\" for k in range(1, threads)]\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_the_host_admits_its_alternatives_and_no_other",
+   "label": "PY3 a provider's GEMMs offered instances",
+   "new": "        if kind in INSTANCE_KINDS:\n",
+   "old": "        if kind in INSTANCE_KINDS and not (provider_mm and kind in GEMM_DISPATCH_KINDS):\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_the_host_admits_its_alternatives_and_no_other",
+   "label": "PY4 the attention's alternatives the GEMM family's",
+   "new": "            family = \"gemm\"\n            mask = instances[family]\n",
+   "old": "            family = \"gemm\" if kind in GEMM_DISPATCH_KINDS else \"attention\"\n            mask = instances[family]\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_a_dispatch_takes_its_alternatives_and_nothing_else",
+   "label": "PY5 a worker count with a leading zero (or none) admitted",
+   "new": "    if not digits.isascii() or not digits.isdigit():\n",
+   "old": "    if not digits.isascii() or not digits.isdigit() or (digits[0] == \"0\"):\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_a_dispatch_takes_its_alternatives_and_nothing_else",
+   "label": "PY6 non-ASCII digits admitted",
+   "new": "    if not digits.isdigit() or (digits[0] == \"0\"):\n",
+   "old": "    if not digits.isascii() or not digits.isdigit() or (digits[0] == \"0\"):\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_a_dispatch_takes_its_alternatives_and_nothing_else",
+   "label": "PY7 an instance on a kernel without one admitted",
+   "new": "        if kind not in INSTANCE_KINDS and kind != \"rms\":\n",
+   "old": "        if kind not in INSTANCE_KINDS:\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_a_dispatch_takes_its_alternatives_and_nothing_else",
+   "label": "PY8 an instance the host's family lacks admitted",
+   "new": "                if instances is not None and not instances[family] & value and False:\n",
+   "old": "                if instances is not None and not instances[family] & value:\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_a_dispatch_takes_its_alternatives_and_nothing_else",
+   "label": "PY9 one worker past the pool admitted",
+   "new": "            elif value > threads + 1:\n",
+   "old": "            elif value > threads:\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_a_dispatch_takes_its_alternatives_and_nothing_else",
+   "label": "PY10 an instance on a provider's GEMM admitted",
+   "new": "                if provider_mm and kind in GEMM_DISPATCH_KINDS and False:\n",
+   "old": "                if provider_mm and kind in GEMM_DISPATCH_KINDS:\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_a_dispatch_takes_its_alternatives_and_nothing_else",
+   "label": "PY11 a dispatch written into every launch",
+   "new": "        how = next(iter(chosen_dispatch.values()), None)\n",
+   "old": "        how = chosen_dispatch.get(kind)\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_a_dispatch_takes_its_alternatives_and_nothing_else",
+   "label": "PY12 a CHECK labelled with a dispatch kind",
+   "new": "            dispatch_labels.append(kind)\n",
+   "old": "            dispatch_labels.append(None if records[0].kind == CHECK else kind)\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_a_dispatch_takes_its_alternatives_and_nothing_else",
+   "label": "PY13 the o projection's VJPs labelled the down projection's",
+   "new": "            as_gemms(\"down.vjp\")\n",
+   "old": "            as_gemms(\"o.vjp\")\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_the_model_resolves_the_defaults_as_the_trace_records_them",
+   "label": "PY14 the attention resolved as the GEMM family's widest",
+   "new": "            instance = _widest(instances[\"gemm\"])\n",
+   "old": "            instance = _widest(instances[\"attention\"])\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_the_model_resolves_the_defaults_as_the_trace_records_them",
+   "label": "PY15 a provider's GEMM resolved to an instance",
+   "new": "        if r.kind == GEMM:\n",
+   "old": "        if r.kind == GEMM and r.flags & 15 != E_PROVIDER:\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_the_model_resolves_the_defaults_as_the_trace_records_them",
+   "label": "PY16 a job of no named workers resolved to one",
+   "new": "    return replace(r, instance=instance, workers=min(r.workers, threads) or 1)\n",
+   "old": "    return replace(r, instance=instance, workers=min(r.workers, threads) or threads)\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_a_dispatch_takes_its_alternatives_and_nothing_else",
+   "label": "PY17 the two dispatch words swapped in a program",
+   "new": "            words += [r.workers, r.instance] + [0] * spare\n",
+   "old": "            words += [r.instance, r.workers] + [0] * spare\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_a_dispatch_takes_its_alternatives_and_nothing_else",
+   "label": "PY18 the trace's dispatch words read swapped",
+   "new": "        out.append((w[1], Record(w[0], w[2], tuple(w[3 : 3 + DIMS]), refs, w[WORD_WORKERS],\n                                 w[WORD_INSTANCE])))  # fmt: skip\n",
+   "old": "        out.append((w[1], Record(w[0], w[2], tuple(w[3 : 3 + DIMS]), refs, w[WORD_INSTANCE],\n                                 w[WORD_WORKERS])))  # fmt: skip\n",
+   "path": "bcir/hosted/models/native_launch.py"
+  },
+  {
+   "expects": "test_a_dispatch_table_names_its_instances_and_has_one_spelling",
+   "label": "PY19 a dispatch entry admitted without the instances it measured on",
+   "new": "                if \"instances\" not in shape and False:\n                    raise ValueError(\"a choice table that measured the dispatch names the \"\n",
+   "old": "                if \"instances\" not in shape:\n                    raise ValueError(\"a choice table that measured the dispatch names the \"\n",
+   "path": "bcir/hosted/models/native_choose.py"
+  },
+  {
+   "expects": "test_a_dispatch_table_names_its_instances_and_has_one_spelling",
+   "label": "PY20 instances admitted in a table that measured no dispatch",
+   "new": "        if \"instances\" in shape and not any(dispatch_kind(e.kind) for e in entries) and False:\n",
+   "old": "        if \"instances\" in shape and not any(dispatch_kind(e.kind) for e in entries):\n",
+   "path": "bcir/hosted/models/native_choose.py"
+  },
+  {
+   "expects": "test_a_dispatch_table_names_its_instances_and_has_one_spelling",
+   "label": "PY21 a mask without the portable bit admitted",
+   "new": "                or any(type(v) is not int or not 1 <= v <= 15\n",
+   "old": "                or any(type(v) is not int or not 1 <= v <= 15 or not v & 1\n",
+   "path": "bcir/hosted/models/native_choose.py"
+  },
+  {
+   "expects": "test_a_dispatch_table_names_its_instances_and_has_one_spelling",
+   "label": "PY22 a mask spelled as a bool admitted",
+   "new": "                or any(not isinstance(v, int) or not 1 <= v <= 15 or not v & 1\n",
+   "old": "                or any(type(v) is not int or not 1 <= v <= 15 or not v & 1\n",
+   "path": "bcir/hosted/models/native_choose.py"
+  },
+  {
+   "expects": "test_a_dispatch_table_names_its_instances_and_has_one_spelling",
+   "label": "PY23 a dispatch entry's alternative held to the grammar alone",
+   "new": "                admitted = dispatch_alternatives(threads=shape[\"threads\"] + 1,\n",
+   "old": "                admitted = dispatch_alternatives(threads=shape[\"threads\"],\n",
+   "path": "bcir/hosted/models/native_choose.py"
+  },
+  {
+   "expects": "test_choose_dispatch_takes_only_alternatives_resolved_faster",
+   "label": "PY24 the site entries chosen from as dispatch",
+   "new": "        if (dispatch_kind(e.kind) is None) != site_kinds and site_kinds:\n",
+   "old": "        if (dispatch_kind(e.kind) is None) != site_kinds:\n",
+   "path": "bcir/hosted/models/native_choose.py"
+  },
+  {
+   "expects": "test_choose_dispatch_takes_only_alternatives_resolved_faster",
+   "label": "PY25 an interval crossing 256 taken",
+   "new": "        if e.q8 < Q8 and (\n",
+   "old": "        if e.high_q8 < Q8 and (\n",
+   "path": "bcir/hosted/models/native_choose.py"
+  },
+  {
+   "expects": "test_choose_dispatch_takes_only_alternatives_resolved_faster",
+   "label": "PY26 a tie broken by the table's order, not the narrower interval",
+   "new": "            e.kind not in best or e.q8 < best[e.kind].q8\n",
+   "old": "            e.kind not in best or (e.q8, e.high_q8) < (best[e.kind].q8, best[e.kind].high_q8)\n",
+   "path": "bcir/hosted/models/native_choose.py"
+  },
+  {
+   "expects": "test_the_harness_rows_are_the_programs_numbers",
+   "label": "PY27 the dispatch row's frozen count one off",
+   "new": "        1170,\n",
+   "old": "        1171,\n",
+   "path": "tools/perf/gemplus_baseline.py"
+  },
+  {
+   "expects": "test_the_harness_rows_are_the_programs_numbers",
+   "label": "PY28 the dispatch row's runs naming a provider's GEMMs' instances",
+   "new": "        named = kind in INSTANCE_KINDS\n",
+   "old": "        named = kind in INSTANCE_KINDS and not (case.provider and kind in GEMM_DISPATCH_KINDS)\n",
+   "path": "bcir/tests/native_decoder_fixtures.py"
+  }
+ ]
+}

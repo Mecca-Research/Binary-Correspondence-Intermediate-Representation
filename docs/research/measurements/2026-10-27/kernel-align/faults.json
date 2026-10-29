@@ -1,0 +1,700 @@
+{
+ "kernel_align": {
+  "command": [
+   "@python",
+   "tools/testing/check_tests.py",
+   "--require",
+   "bcir.tests.test_toolchain:_POSIX",
+   "--require",
+   "bcir.tests.test_build_manifest:_CMAKE",
+   "--require",
+   "bcir.tests.test_make_rails:_GENERATES",
+   "--require",
+   "bcir.tests.test_native_ai:_CC",
+   "bcir.tests.test_toolchain:test_a_manifest_option_has_one_spelling_and_applies_where_its_scopes_hold",
+   "bcir.tests.test_toolchain:test_the_machine_a_compiler_emits_for_is_its_dumpmachines_first_field",
+   "bcir.tests.test_toolchain:test_a_compilers_identity_is_its_family_and_machine_asked_once",
+   "bcir.tests.test_toolchain:test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+   "bcir.tests.test_build_manifest:test_the_manifest_reconciles_with_the_tree",
+   "bcir.tests.test_build_manifest:test_every_injected_violation_is_a_finding",
+   "bcir.tests.test_build_manifest:test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation",
+   "bcir.tests.test_build_manifest:test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+   "bcir.tests.test_build_manifest:test_m18_finds_every_module_and_gate_that_spells_the_mitigation_itself",
+   "bcir.tests.test_build_manifest:test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+   "bcir.tests.test_make_rails:test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone",
+   "bcir.tests.test_native_ai:test_the_kernels_library_takes_its_units_options_from_the_manifest",
+   "bcir.tests.test_native_ai:test_the_kernels_unit_compiles_with_the_mitigation_where_its_options_name_it",
+   "bcir.tests.test_native_ai:test_the_model_microbenchmark_times_the_kernels_as_the_manifest_builds_them",
+   "bcir.tests.test_qualification:test_the_qualification_times_the_decoder_as_the_manifest_builds_it"
+  ],
+  "results": [
+   {
+    "exit_code": 1,
+    "expects": "test_the_manifest_reconciles_with_the_tree",
+    "fired": [
+     "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+     "test_every_injected_violation_is_a_finding",
+     "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+     "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+     "test_the_kernels_unit_compiles_with_the_mitigation_where_its_options_name_it",
+     "test_the_manifest_reconciles_with_the_tree",
+     "test_the_model_microbenchmark_times_the_kernels_as_the_manifest_builds_them",
+     "test_the_qualification_times_the_decoder_as_the_manifest_builds_it",
+     "test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone"
+    ],
+    "label": "KA1 the decoder's units without clang's spelling of the mitigation",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_manifest_reconciles_with_the_tree",
+    "fired": [
+     "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+     "test_every_injected_violation_is_a_finding",
+     "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+     "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+     "test_the_manifest_reconciles_with_the_tree",
+     "test_the_model_microbenchmark_times_the_kernels_as_the_manifest_builds_them",
+     "test_the_qualification_times_the_decoder_as_the_manifest_builds_it",
+     "test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone"
+    ],
+    "label": "KA2 the decoder's units without GCC's spelling of the mitigation",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_manifest_reconciles_with_the_tree",
+    "fired": [
+     "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+     "test_every_injected_violation_is_a_finding",
+     "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+     "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+     "test_the_manifest_reconciles_with_the_tree",
+     "test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone"
+    ],
+    "label": "KA3 clang's spelling unscoped to x86-64 (an aarch64 clang refuses it)",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_a_manifest_option_has_one_spelling_and_applies_where_its_scopes_hold",
+    "fired": [
+     "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+     "test_a_manifest_option_has_one_spelling_and_applies_where_its_scopes_hold",
+     "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+     "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+     "test_the_model_microbenchmark_times_the_kernels_as_the_manifest_builds_them",
+     "test_the_qualification_times_the_decoder_as_the_manifest_builds_it",
+     "test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone"
+    ],
+    "label": "KA4 the resolver ignoring an option's target scope",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_a_manifest_option_has_one_spelling_and_applies_where_its_scopes_hold",
+    "fired": [
+     "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+     "test_a_manifest_option_has_one_spelling_and_applies_where_its_scopes_hold",
+     "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+     "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+     "test_the_kernels_unit_compiles_with_the_mitigation_where_its_options_name_it",
+     "test_the_model_microbenchmark_times_the_kernels_as_the_manifest_builds_them",
+     "test_the_qualification_times_the_decoder_as_the_manifest_builds_it",
+     "test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone"
+    ],
+    "label": "KA5 the resolver's target scope holding on no machine",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_a_manifest_option_has_one_spelling_and_applies_where_its_scopes_hold",
+    "fired": [
+     "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+     "test_a_manifest_option_has_one_spelling_and_applies_where_its_scopes_hold",
+     "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+     "test_every_injected_violation_is_a_finding"
+    ],
+    "label": "KA6 the grammar admitting any target scope",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_machine_a_compiler_emits_for_is_its_dumpmachines_first_field",
+    "fired": [
+     "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+     "test_the_machine_a_compiler_emits_for_is_its_dumpmachines_first_field"
+    ],
+    "label": "KA7 amd64 and x64 not read as x86-64",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_machine_a_compiler_emits_for_is_its_dumpmachines_first_field",
+    "fired": [
+     "test_a_compilers_identity_is_its_family_and_machine_asked_once",
+     "test_the_machine_a_compiler_emits_for_is_its_dumpmachines_first_field"
+    ],
+    "label": "KA8 the machine read from the triple's last field",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_a_compilers_identity_is_its_family_and_machine_asked_once",
+    "fired": [
+     "build",
+     "test_a_compilers_identity_is_its_family_and_machine_asked_once"
+    ],
+    "label": "KA9 the family read from -dumpmachine's answer",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_a_compilers_identity_is_its_family_and_machine_asked_once",
+    "fired": [
+     "test_a_compilers_identity_is_its_family_and_machine_asked_once"
+    ],
+    "label": "KA10 the identity asked again every call",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+    "fired": [
+     "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+     "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+     "test_the_kernels_unit_compiles_with_the_mitigation_where_its_options_name_it",
+     "test_the_model_microbenchmark_times_the_kernels_as_the_manifest_builds_them",
+     "test_the_qualification_times_the_decoder_as_the_manifest_builds_it"
+    ],
+    "label": "KA11 a source's owner given none of its unit's options",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+    "fired": [
+     "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+     "test_the_qualification_times_the_decoder_as_the_manifest_builds_it"
+    ],
+    "label": "KA12 a flag two units name passed twice",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+    "fired": [
+     "test_a_build_takes_the_options_of_the_units_that_own_its_sources"
+    ],
+    "label": "KA13 a source no unit owns given no options instead of refused",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone",
+    "fired": [
+     "test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone"
+    ],
+    "label": "KA14 BCIR Make reading every machine as x86-64",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone",
+    "fired": [
+     "test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone"
+    ],
+    "label": "KA15 BCIR Make asking the compiler its family alone",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+    "fired": [
+     "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do"
+    ],
+    "label": "KA16 CMake's x86_64 scope holding on every processor",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+    "fired": [
+     "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do"
+    ],
+    "label": "KA17 CMake not reading AMD64 as x86-64",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+    "fired": [
+     "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do"
+    ],
+    "label": "KA18 CMake keeping the x86_64 scope on its flag",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_every_injected_violation_is_a_finding",
+    "fired": [
+     "test_every_injected_violation_is_a_finding"
+    ],
+    "label": "KA19 M18 not asking for the decoder's two options",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_every_injected_violation_is_a_finding",
+    "fired": [
+     "test_every_injected_violation_is_a_finding"
+    ],
+    "label": "KA20 M18 not reading the variants' options",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+    "fired": [
+     "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options"
+    ],
+    "label": "KA21 M18 not holding a speed build to unit_options",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+    "fired": [
+     "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options"
+    ],
+    "label": "KA22 M18 not holding a speed build to a decoder source",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation",
+    "fired": [
+     "test_m18_finds_every_module_and_gate_that_spells_the_mitigation_itself",
+     "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+     "test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation",
+     "test_the_manifest_reconciles_with_the_tree"
+    ],
+    "label": "KA23 M18's reader blind to the call",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation",
+    "fired": [
+     "test_m18_finds_every_module_and_gate_that_spells_the_mitigation_itself",
+     "test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation"
+    ],
+    "label": "KA24 M18 reading prose as a spelling",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_m18_finds_every_module_and_gate_that_spells_the_mitigation_itself",
+    "fired": [
+     "test_m18_finds_every_module_and_gate_that_spells_the_mitigation_itself"
+    ],
+    "label": "KA25 M18 not collecting a module's spelling",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_m18_finds_every_module_and_gate_that_spells_the_mitigation_itself",
+    "fired": [
+     "test_m18_finds_every_module_and_gate_that_spells_the_mitigation_itself"
+    ],
+    "label": "KA26 M18 not collecting a gate's spelling",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation",
+    "fired": [
+     "test_m18_finds_every_module_and_gate_that_spells_the_mitigation_itself",
+     "test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation"
+    ],
+    "label": "KA27 M18 reading a gate's comment line as a build",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+    "fired": [
+     "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+     "test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation",
+     "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+     "test_the_manifest_reconciles_with_the_tree"
+    ],
+    "label": "KA28 the native AI library without its unit's options",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+    "fired": [
+     "test_the_kernels_library_takes_its_units_options_from_the_manifest"
+    ],
+    "label": "KA29 the native AI library's command dropping the options it resolved",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+    "fired": [
+     "test_the_kernels_library_takes_its_units_options_from_the_manifest"
+    ],
+    "label": "KA30 the native AI library's stamp blind to its flags",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_kernels_unit_compiles_with_the_mitigation_where_its_options_name_it",
+    "fired": [
+     "test_a_build_takes_the_options_of_the_units_that_own_its_sources",
+     "test_every_injected_violation_is_a_finding",
+     "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+     "test_the_kernels_library_takes_its_units_options_from_the_manifest",
+     "test_the_kernels_unit_compiles_with_the_mitigation_where_its_options_name_it",
+     "test_the_manifest_reconciles_with_the_tree",
+     "test_the_model_microbenchmark_times_the_kernels_as_the_manifest_builds_them",
+     "test_the_qualification_times_the_decoder_as_the_manifest_builds_it",
+     "test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone"
+    ],
+    "label": "KA31 clang's spelling one clang accepts that aligns no branch (-malign-branch=jcc alone)",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_model_microbenchmark_times_the_kernels_as_the_manifest_builds_them",
+    "fired": [
+     "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+     "test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation",
+     "test_the_manifest_reconciles_with_the_tree",
+     "test_the_model_microbenchmark_times_the_kernels_as_the_manifest_builds_them"
+    ],
+    "label": "KA32 the model microbenchmark without its units' options",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_qualification_times_the_decoder_as_the_manifest_builds_it",
+    "fired": [
+     "test_m18_holds_every_build_that_times_the_decoder_to_the_manifests_options",
+     "test_m18_reads_each_speed_build_and_every_spelling_of_the_mitigation",
+     "test_the_manifest_reconciles_with_the_tree",
+     "test_the_qualification_times_the_decoder_as_the_manifest_builds_it"
+    ],
+    "label": "KA33 the qualification's bcir-qualify without its units' options",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_the_qualification_times_the_decoder_as_the_manifest_builds_it",
+    "fired": [
+     "test_the_qualification_times_the_decoder_as_the_manifest_builds_it"
+    ],
+    "label": "KA34 the qualification taking its CLI's options alone",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do",
+    "fired": [
+     "test_cmake_reads_the_option_scopes_as_bcir_make_and_the_python_builds_do"
+    ],
+    "label": "KA35 CMake refusing a joined list's empty element (a fuzzer with no options of its own)",
+    "verdict": "RED"
+   }
+  ],
+  "table": "tools/testing/faults/kernel-align.json"
+ },
+ "kernel_align_under_the_witnesses_before": {
+  "command": [
+   "@python",
+   "tools/testing/check_tests.py",
+   "--require",
+   "bcir.tests.test_native_ai:_CC",
+   "bcir.tests.test_build_manifest:test_the_manifest_reconciles_with_the_tree",
+   "bcir.tests.test_build_manifest:test_every_injected_violation_is_a_finding",
+   "bcir.tests.test_build_manifest:test_a_build_names_the_option_beside_the_source",
+   "bcir.tests.test_make_rails:test_the_rails_build_plans_the_manifests_targets",
+   "bcir.tests.test_toolchain:test_the_compiler_pick_honours_cc_and_never_substitutes",
+   "bcir.tests.test_native_ai:test_native_build_reuses_the_library_when_nothing_changed",
+   "bcir.tests.test_native_ai:test_native_build_recompiles_when_the_recorded_inputs_do_not_match",
+   "bcir.tests.test_native_ai:test_native_build_stamp_covers_every_translation_unit_input"
+  ],
+  "results": [
+   {
+    "exit_code": 1,
+    "expects": "test_",
+    "fired": [
+     "test_the_manifest_reconciles_with_the_tree"
+    ],
+    "label": "KA1 the decoder's units without clang's spelling of the mitigation",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_",
+    "fired": [
+     "test_the_manifest_reconciles_with_the_tree"
+    ],
+    "label": "KA2 the decoder's units without GCC's spelling of the mitigation",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_",
+    "fired": [
+     "test_the_manifest_reconciles_with_the_tree"
+    ],
+    "label": "KA3 clang's spelling unscoped to x86-64 (an aarch64 clang refuses it)",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA4 the resolver ignoring an option's target scope",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA5 the resolver's target scope holding on no machine",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA6 the grammar admitting any target scope",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA7 amd64 and x64 not read as x86-64",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA8 the machine read from the triple's last field",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_",
+    "fired": [
+     "test_native_build_recompiles_when_the_recorded_inputs_do_not_match",
+     "test_native_build_reuses_the_library_when_nothing_changed"
+    ],
+    "label": "KA9 the family read from -dumpmachine's answer",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA10 the identity asked again every call",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA11 a source's owner given none of its unit's options",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA12 a flag two units name passed twice",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA13 a source no unit owns given no options instead of refused",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA14 BCIR Make reading every machine as x86-64",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA15 BCIR Make asking the compiler its family alone",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA16 CMake's x86_64 scope holding on every processor",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA17 CMake not reading AMD64 as x86-64",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA18 CMake keeping the x86_64 scope on its flag",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA19 M18 not asking for the decoder's two options",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA20 M18 not reading the variants' options",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA21 M18 not holding a speed build to unit_options",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA22 M18 not holding a speed build to a decoder source",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_",
+    "fired": [
+     "test_the_manifest_reconciles_with_the_tree"
+    ],
+    "label": "KA23 M18's reader blind to the call",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA24 M18 reading prose as a spelling",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA25 M18 not collecting a module's spelling",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA26 M18 not collecting a gate's spelling",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA27 M18 reading a gate's comment line as a build",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_",
+    "fired": [
+     "test_the_manifest_reconciles_with_the_tree"
+    ],
+    "label": "KA28 the native AI library without its unit's options",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA29 the native AI library's command dropping the options it resolved",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_",
+    "fired": [
+     "test_native_build_stamp_covers_every_translation_unit_input"
+    ],
+    "label": "KA30 the native AI library's stamp blind to its flags",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_",
+    "fired": [
+     "test_the_manifest_reconciles_with_the_tree"
+    ],
+    "label": "KA31 clang's spelling one clang accepts that aligns no branch (-malign-branch=jcc alone)",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_",
+    "fired": [
+     "test_the_manifest_reconciles_with_the_tree"
+    ],
+    "label": "KA32 the model microbenchmark without its units' options",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 1,
+    "expects": "test_",
+    "fired": [
+     "test_the_manifest_reconciles_with_the_tree"
+    ],
+    "label": "KA33 the qualification's bcir-qualify without its units' options",
+    "verdict": "RED"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA34 the qualification taking its CLI's options alone",
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "exit_code": 0,
+    "expects": "test_",
+    "fired": [],
+    "label": "KA35 CMake refusing a joined list's empty element (a fuzzer with no options of its own)",
+    "verdict": "NOT CAUGHT"
+   }
+  ],
+  "table": "<SCRATCH>/kernel-align/kernel-align-without.json"
+ }
+}

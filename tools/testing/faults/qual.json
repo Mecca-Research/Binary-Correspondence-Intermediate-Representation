@@ -35,8 +35,8 @@
       "label": "QL2 a segment claim id below the greatest so far is never rescanned",
       "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
       "path": "runtime/c/bcir_runtime.c",
-      "old": "    else if (segment_claim_seen_before(data, body_len, hdr.version, i, v.claim_id))\n",
-      "new": "    else if (0 && segment_claim_seen_before(data, body_len, hdr.version, i, v.claim_id))\n"
+      "old": "    else if (segment_claim_seen_before(data, body_len, hdr->version, i, v.claim_id))\n",
+      "new": "    else if (0 && segment_claim_seen_before(data, body_len, hdr->version, i, v.claim_id))\n"
     },
     {
       "label": "QL3 a trace id tying the greatest so far is taken as new",
@@ -147,7 +147,7 @@
       "label": "QG3 the claim table is sized from the header before the semantic walk reads the body",
       "expects": "test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated",
       "path": "runtime/c/bcir_decoder_gem.c",
-      "old": "  if (st == BCIR_OK) st = bcir_sp_verify_semantic(pack, len, 0xFFFFFFFFu, 0xFFFFFFFFu);\n",
+      "old": "  if (st == BCIR_OK) st = bcir_sp_checked_verify_semantic(&checked, 0xFFFFFFFFu, 0xFFFFFFFFu);\n",
       "new": ""
     },
     {

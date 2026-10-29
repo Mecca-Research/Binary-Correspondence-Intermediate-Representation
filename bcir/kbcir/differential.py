@@ -1164,6 +1164,286 @@ _MATRIX_MLIR_PATH = os.path.join(
 )
 
 
+# --- PX-3b-2: measured alternatives on the law rail ------------------------------------------
+#
+# A target's measured table (cost.MeasuredPrices) offers a claim each of its realizations run each
+# measured alternative; the law rail reads the table off the capability's measured_* attributes
+# and derives the same offer (BCIRCostModel.h appendMeasured), plans it (-bcir-plan:
+# kbcir.plan_alternative where the chosen realization is a measured one), re-derives it (R9) and
+# folds the table into the target's content address (R13 hash_target). This emits every example
+# program on two targets, each under a table drawn over its own claims, as one self-checking file.
+
+#: The targets the measured fixture plans every program on.
+MEASURED_TARGETS = ("x86_avx512", "arm64_neon")
+
+
+def measured_table_for(module: Module, seed: str):
+    """A measured table over `module`'s claims, drawn by `seed` alone: each (op, count) of a claim
+    the offer measures (an op, not spelled as an opcode, of a non-control claim), with three
+    chances in four, at one or two alternatives of a fixed set, each at a price of 1 .. 255 --
+    None when nothing is drawn."""
+    from .cost import MeasuredEntry, MeasuredPrices, measured_alternative_key, spelled_as_opcode
+    from .realize import UNMEASURED_OPCODES
+
+    rng = random.Random(seed)
+    keys = sorted({(c.op, c.count) for ph in module.phases for c in ph.claims
+                   if c.op and not spelled_as_opcode(c.op)
+                   and c.opcode not in UNMEASURED_OPCODES})  # fmt: skip
+    entries = []
+    for op, count in keys:
+        if rng.random() >= 0.75:
+            continue
+        alternatives = rng.sample(
+            ("i1", "i2", "i4", "i8", "t1", "t2", "t3", "t7"), rng.choice((1, 2))
+        )
+        for alternative in sorted(alternatives, key=measured_alternative_key):
+            entries.append(MeasuredEntry(op, count, alternative, rng.randrange(1, 256)))
+    return MeasuredPrices(1, tuple(entries)) if entries else None
+
+
+def _measured_cases():
+    """(module, target name, kind, table) for the measured fixture: every example program on each
+    of `MEASURED_TARGETS` under the table `measured_table_for` draws for it ("measured"), and on
+    the first under a table naming only counts no claim has ("unread": no claim measured, the plan
+    the plain one)."""
+    from ..examples import PROGRAMS
+    from .cost import MeasuredEntry, MeasuredPrices
+
+    cases = []
+    for name, build in sorted(PROGRAMS.items()):
+        for tname in MEASURED_TARGETS:
+            module = build()
+            table = measured_table_for(module, f"plan_measured/{name}/{tname}")
+            if table is not None:
+                cases.append((module, tname, "measured", table))
+        module = build()
+        keys = sorted({(c.op, c.count) for ph in module.phases for c in ph.claims if c.op})
+        unread = MeasuredPrices(1, tuple(MeasuredEntry(op, count + 1, "t1", 1)
+                                         for op, count in keys))  # fmt: skip
+        cases.append((module, MEASURED_TARGETS[0], "unread", unread))
+    return cases
+
+
+def _named(module, name: str):
+    """`module` under `name`: the name the emitter writes it under, which its manifest's m_module
+    hashes (`provenance.canonical_stream` begins with the module's name), so a fixture holding
+    one program under several targets names each copy, and hashes it, as it emits it."""
+    import copy
+
+    out = copy.deepcopy(module)
+    out.name = name
+    out.touch()
+    return out
+
+
+def _fence_free_alias(pv) -> bool:
+    """Whether the lane segments `to_mlir` writes for the plan view `pv` -- one a claim, with no
+    fence -- put two claims of one phase on different lanes on a shared write (one writes what
+    the other writes or reads): the law rail's R10 isolation rule (BCIRVerifyPass.cpp) refuses
+    that unless a release/acquire fence pair orders it, and the emitter writes none. A fixture of
+    the verifier over emitted plans takes only plans without one."""
+    by_phase: dict = {}
+    for cv in pv.claims:
+        by_phase.setdefault(cv.phase_id, []).append(cv)
+    for group in by_phase.values():
+        for i, a in enumerate(group):
+            for b in group[i + 1 :]:
+                if a.lane == b.lane:
+                    continue
+                aw, ar, bw, br = set(a.writes), set(a.reads), set(b.writes), set(b.reads)
+                if aw & (bw | br) or bw & ar:
+                    return True
+    return False
+
+
+def emit_measured_test() -> str:
+    """Emit the measured fixture (`mlir/test/passes/plan_measured.mlir`, `_measured_cases`), each
+    module with its plan's own provenance manifest: `bcir-opt -bcir-plan -bcir-verify` must
+    reproduce the oracle's plan score, take a measured realization exactly where the oracle does
+    (kbcir.plan_alternative), and accept the plan (R9 re-derives it, R13 recomputes the manifest's
+    m_target with the table folded in)."""
+    from .provenance import build_manifest
+
+    th = Theta.cool()
+    out = [
+        "// RUN: bcir-opt -bcir-plan -bcir-verify %s | FileCheck %s",
+        "//",
+        "// PX-3b-2: measured alternatives inside K_BCIR's candidates on the law rail. Every",
+        "// example program on two targets, each under a measured table drawn over its own claims",
+        "// (bcir.target.capability's measured_* attributes: the table's generation, each entry's",
+        "// op and alternative, and its (count, q8)), and on one under a table no claim reads.",
+        "// -bcir-plan must reproduce the oracle's plan score and name kbcir.plan_alternative on",
+        "// exactly the claims whose chosen realization is a measured one; -bcir-verify must accept",
+        "// the planned module -- R9 re-derives each realization from the same offer, R13",
+        "// recomputes the manifest's m_target with the table folded in. GENERATED by the oracle;",
+        "// regenerate with `python -m bcir.kbcir.differential --emit-measured`.",
+        "",
+    ]
+    cases, omitted = [], []
+    for module, tname, kind, table in _measured_cases():
+        h = TARGETS[tname].with_measured(table)
+        named = _named(module, _module_label(module.name, f"{tname}_{kind}"))
+        res = optimize(named, h, th, PERF)
+        if kind == "unread":  # non-disturbance: the table changes no plan
+            assert res.score == optimize(named, TARGETS[tname], th, PERF).score, module.name
+        if _fence_free_alias(plan_view(named, h, th, PERF, res)):
+            omitted.append(named.name)
+            continue
+        cases.append((module, named, tname, kind, h, res))
+    if omitted:
+        out[-1:-1] = [
+            "//",
+            "// Omitted: the cases whose emitted lane segments -- fence-free, one a claim -- put two",
+            "// claims of one phase on different lanes on a shared write, which R10 refuses unless a",
+            "// fence pair orders it (the PX-3b-2 laws are R9 and R13, not the emitter's fences):",
+            *(f"//   {name}" for name in omitted),
+        ]
+    for module, named, tname, kind, h, res in cases:
+        man = build_manifest(named, h, th, PERF, fresh=True)
+        body = to_mlir(named, h, th, PERF, result=res)
+        assert body.endswith("}\n")
+        out.append(
+            body[:-2] + f"  bcir.kbcir.provenance_manifest @man {{ digest = {man.digest} : i64, "
+            f"score = {man.score} : i64, n_artifacts = 0 : i64, reproduced = true, "
+            f"m_module = {man.m_module} : i64, m_target = {man.m_target} : i64, "
+            f"m_theta = {man.m_theta} : i64, m_policy = {man.m_policy} : i64 }}\n}}"
+        )
+        out.append("")
+        out.append(f"// CHECK-LABEL: bcir.module @{named.name}")
+        out.append(f"// CHECK: kbcir.plan_score = {res.score}")
+        for cv in plan_view(named, h, th, PERF, res).claims:
+            out.append(f"// CHECK: bcir.claim @c{cv.claim_id}")
+            _, at, alternative = cv.selected.partition("@")
+            if at:
+                out.append(f'// CHECK-SAME: kbcir.plan_alternative = "{alternative}"')
+            else:
+                out.append("// CHECK-NOT: kbcir.plan_alternative")
+                out.append("// CHECK-SAME: kbcir.plan_cost")
+        out.append("")
+    return "\n".join(out) + "\n"
+
+
+def emit_measured_verify_test() -> str:
+    """Emit the measured verifier fixture (`mlir/test/passes/verify_measured.mlir`): `fused_chain`
+    on x86_avx512 under a table pricing its claims at `t2` (q8 128), annotated as `-bcir-plan`
+    writes the oracle's plan, and its near misses -- `-bcir-verify` must accept the plan (R9
+    re-derives each measured realization, R13 recomputes the manifest's m_target with the table)
+    and refuse each forgery with the diagnostic whose numbers the oracle computes: an alternative
+    the table does not price, a measured price under the claim's own realization, the claim's own
+    price under a measured alternative, and a table edited under its manifest."""
+    from ..examples import fused_chain
+    from ..lower.mlir import _ident
+    from .cost import MeasuredEntry, MeasuredPrices
+    from .provenance import build_manifest, hash_target
+
+    th = Theta.cool()
+    module = fused_chain()
+    entry = MeasuredEntry("vector.add", 1024, "t2", 128)
+    h = TARGETS["x86_avx512"].with_measured(MeasuredPrices(1, (entry,)))
+    res = optimize(module, h, th, PERF)
+    pv = plan_view(module, h, th, PERF, res)
+    man = build_manifest(module, h, th, PERF)
+    claims = {cv.claim_id: cv for cv in pv.claims}
+    first, second = (cv.claim_id for cv in pv.claims)
+
+    def own_price(cv):
+        name = cv.selected.partition("@")[0]
+        path = next(p for p in cv.paths if p.name == name)
+        return sum(c * w for c, w in zip(path.cost, pv.weights))
+
+    def manifest(of):
+        """The manifest line of `of` (a manifest of the module under its emitted name)."""
+        return (f"  bcir.kbcir.provenance_manifest @man {{ digest = {of.digest} : i64, "
+                f"score = {of.score} : i64, n_artifacts = 0 : i64, reproduced = true, "
+                f"m_module = {of.m_module} : i64, m_target = {of.m_target} : i64, "
+                f"m_theta = {of.m_theta} : i64, m_policy = {of.m_policy} : i64 }}")  # fmt: skip
+
+    def module_text(suffix, annotate=None, errors=None, table=None, with_manifest=False,
+                    manifest_error=None):  # fmt: skip
+        """The emitted module (under `table`'s target, the plan's own by default), each claim
+        annotated per `annotate[claim] = (alternative or None, cost)` and preceded by its
+        expected error, and the plan score summed as -bcir-plan sums it."""
+        target = h if table is None else TARGETS["x86_avx512"].with_measured(table)
+        named = _named(module, _ident(module.name + suffix))
+        text = to_mlir(named, target, th, PERF, result=res)
+        lines = text.rstrip("\n").split("\n")
+        out = []
+        for line in lines:
+            stripped = line.lstrip()
+            if annotate and stripped.startswith("bcir.claim @c"):
+                cid = int(stripped.split()[1][2:])
+                alternative, cost = annotate[cid]
+                extra = f", kbcir.plan_width = {claims[cid].width} : i64, kbcir.plan_cost = {cost} : i64"
+                if alternative is not None:
+                    extra += f', kbcir.plan_alternative = "{alternative}"'
+                head, _, tail = line.partition(" } {")
+                line = head + extra + " } {" + tail
+                if errors and cid in errors:
+                    out.append(f"  // expected-error @+1 {{{{{errors[cid]}}}}}")
+            if annotate and stripped.startswith("bcir.module @"):
+                score = sum(cost for _, cost in annotate.values())
+                line = line.replace(
+                    " {", f" attributes {{ kbcir.plan_score = {score} : i64 }} {{", 1
+                )
+            out.append(line)
+        if with_manifest:
+            if manifest_error:
+                out.insert(len(out) - 1, f"  // expected-error @+1 {{{{{manifest_error}}}}}")
+            # the plan's own manifest under the plan's own table (`h`): a table edited after it
+            # moves the m_target R13 recomputes from the IR
+            out.insert(len(out) - 1, manifest(build_manifest(named, h, th, PERF, fresh=True)))
+        return "\n".join(out)
+
+    plan = {cid: (cv.selected.partition("@")[2] or None, cv.score) for cid, cv in claims.items()}
+    assert all(alt == "t2" for alt, _ in plan.values()), plan  # the table's pick, every claim
+    tampered = MeasuredPrices(1, (MeasuredEntry("vector.add", 1024, "t2", 129),))
+    recomputed = hash_target(TARGETS["x86_avx512"].with_measured(tampered))
+    cases = [
+        ("// The oracle's plan under the table, annotated as -bcir-plan writes it, with its own\n"
+         "// manifest: R9 re-derives each measured realization, R13 the table's m_target.",
+         module_text("_ok", plan, with_manifest=True)),
+        ("// An alternative the table does not price (t3): no measured realization runs it.",
+         module_text("_alt_forged", {**plan, first: ("t3", plan[first][1])}, {
+             first: f"R9: claim @c{first} realized at width {claims[first].width} running 't3', "
+                    "not among the measured alternatives this target admits for it"})),
+        ("// The measured price under the claim's own realization (its alternative dropped).",
+         module_text("_alt_dropped", {**plan, first: (None, plan[first][1])}, {
+             first: f"R9: claim @c{first} realized cost {plan[first][1]} does not re-derive from "
+                    f"the scope (expected {own_price(claims[first])} for width "
+                    f"{claims[first].width})"})),
+        ("// The claim's own price under the measured alternative it names.",
+         module_text("_own_priced", {**plan, second: ("t2", own_price(claims[second]))}, {
+             second: f"R9: claim @c{second} realized cost {own_price(claims[second])} does not "
+                     f"re-derive from the scope (expected {plan[second][1]} for width "
+                     f"{claims[second].width})"})),
+        ("// The table edited under its manifest (q8 128 -> 129): the recomputed m_target moves.",
+         module_text("_table_tampered", table=tampered, with_manifest=True,
+                     manifest_error=f"R13: manifest m_target {man.m_target} does not match the "
+                                    f"value recomputed from the IR {recomputed}")),
+    ]  # fmt: skip
+    head = [
+        "// RUN: bcir-opt -bcir-verify -verify-diagnostics -split-input-file %s",
+        "//",
+        "// PX-3b-2: the verifier over measured plans. fused_chain on x86_avx512 under a table",
+        "// pricing vector.add at t2 (q8 128): the plan -bcir-plan writes is accepted, and each",
+        "// forgery is refused with the numbers the oracle computes. GENERATED by the oracle;",
+        "// regenerate with `python -m bcir.kbcir.differential --emit-measured`.",
+        "",
+    ]
+    body = "\n\n// -----\n\n".join(f"{doc}\n{text}" for doc, text in cases)
+    return "\n".join(head) + body + "\n"
+
+
+_MEASURED_VERIFY_MLIR_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "mlir", "test", "passes", "verify_measured.mlir"
+)
+
+
+_MEASURED_MLIR_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "mlir", "test", "passes", "plan_measured.mlir"
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="bcir.kbcir.differential", description="Generated Python<->MLIR differential testing"
@@ -1184,6 +1464,11 @@ def main(argv: list[str] | None = None) -> int:
         "--emit-matrix",
         action="store_true",
         help="(re)write mlir/test/passes/target_matrix.mlir (six-target parity)",
+    )
+    p.add_argument(
+        "--emit-measured",
+        action="store_true",
+        help="(re)write mlir/test/passes/plan_measured.mlir and verify_measured.mlir (PX-3b-2)",
     )
     p.add_argument(
         "--emit",
@@ -1217,6 +1502,14 @@ def main(argv: list[str] | None = None) -> int:
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(emit_target_matrix())
         print(f"[differential] wrote {path}")
+        return 0
+    if args.emit_measured:
+        for path, emit in ((_MEASURED_MLIR_PATH, emit_measured_test),
+                           (_MEASURED_VERIFY_MLIR_PATH, emit_measured_verify_test)):  # fmt: skip
+            path = os.path.normpath(path)
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(emit())
+            print(f"[differential] wrote {path}")
         return 0
 
     rep = run_campaign(n=args.n, seed=args.seed)

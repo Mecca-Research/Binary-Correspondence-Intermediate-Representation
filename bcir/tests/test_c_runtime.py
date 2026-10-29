@@ -868,27 +868,54 @@ int main(int argc, char **argv) {
 
 
 def test_the_runtime_crc_is_zlibs():
-    """`bcir_crc32` (table-driven since CXX4) is zlib's CRC-32 over random buffers of every
-    length class -- empty, one byte, around the table's byte step, large -- and over NULL with no
-    bytes; a table entry flipped is caught. Every pack, plan and record digest on the C rail
-    rests on it."""
+    """`bcir_crc32` -- eight bytes a step since CRC-SLICE, its tables and step in `bcir_crc32.h` -- is
+    zlib's CRC-32 over random buffers of every length class (empty, one byte, around the eight-byte
+    step, large) and over NULL with no bytes. Every one of the header's 8 x 256 table entries is the
+    bitwise loop's recurrence, and an entry flipped in any of the eight tables is caught by the CRCs.
+    Every pack, plan, record and model digest on the C rail rests on it (bcir_runtime.c's
+    bcir_crc32, bcir_q8_model.c's loader)."""
     import random
+    import re
     import struct
     import zlib
+
+    def bitwise(n):
+        c = n
+        for _ in range(8):
+            c = (c >> 1) ^ (0xEDB88320 & -(c & 1))
+        return c & 0xFFFFFFFF
+
+    tables = [[bitwise(n) for n in range(256)]]
+    for k in range(1, 8):
+        tables.append(
+            [(tables[k - 1][n] >> 8) ^ tables[0][tables[k - 1][n] & 0xFF] for n in range(256)]
+        )
+    with open(os.path.join(_C_DIR, "bcir_crc32.h"), encoding="utf-8") as f:
+        header = f.read()
+    first = header.index("bcir_crc32_table[8][256] = {")
+    last = header.index("};", first)
+    entries = list(re.finditer(r"0x([0-9A-F]{8})u", header[first:last]))
+    # every entry the recurrence's, table by table, and no other constant in the tables
+    assert [int(m.group(1), 16) for m in entries] == [v for table in tables for v in table]
 
     cc = which("clang") or which("cc") or which("gcc")
     if cc is None:
         return
     rng = random.Random(4)
     buffers = [b"", b"\x00", b"\xff", b"123456789"]
-    buffers += [
-        bytes(rng.randrange(256) for _ in range(n)) for n in (2, 7, 8, 9, 255, 256, 257, 4099)
-    ]
+    lengths = (2, 7, 8, 9, 15, 16, 17, 63, 64, 65, 255, 256, 257, 4099)
+    buffers += [bytes(rng.randrange(256) for _ in range(n)) for n in lengths]
     buffers.append(bytes(rng.randrange(256) for _ in range(1 << 18)))
     want = [f"{zlib.crc32(b) & 0xFFFFFFFF:08x}" for b in buffers] + ["00000000"]
     assert want[3] == "cbf43926"  # the standard check value of CRC-32 over "123456789"
     with open(os.path.join(_C_DIR, "bcir_runtime.c"), encoding="utf-8") as f:
         source = f.read()
+    variants = [("the runtime", header)]
+    for k in range(8):  # entry 1 of each table (entry 0 is 0 in all eight), its low bit flipped
+        m = entries[k * 256 + 1]
+        at, to = first + m.start(1), first + m.end(1)
+        flipped = header[:at] + f"{int(m.group(1), 16) ^ 1:08X}" + header[to:]
+        variants.append((f"table {k}'s entry 1 flipped", flipped))
     with tempfile.TemporaryDirectory() as d:
         data = os.path.join(d, "crc.in")
         with open(data, "wb") as f:
@@ -897,12 +924,12 @@ def test_the_runtime_crc_is_zlibs():
         driver = os.path.join(d, "crc.c")
         with open(driver, "w", encoding="utf-8") as f:
             f.write(_CRC_DRIVER)
-        for label, text in (
-            ("the runtime", source),
-            ("a table entry flipped", source.replace("0x77073096u", "0x77073097u", 1)),
-        ):
-            unit = os.path.join(d, "bcir_runtime.c")
-            with open(unit, "w", encoding="utf-8") as f:
+        unit = os.path.join(d, "bcir_runtime.c")
+        with open(unit, "w", encoding="utf-8") as f:
+            f.write(source)
+        for label, text in variants:
+            # the unit includes "bcir_crc32.h" from its own directory first: this copy
+            with open(os.path.join(d, "bcir_crc32.h"), "w", encoding="utf-8") as f:
                 f.write(text)
             exe = os.path.join(d, "crc")
             build = subprocess.run(
@@ -915,4 +942,4 @@ def test_the_runtime_crc_is_zlibs():
             if label == "the runtime":
                 assert run.returncode == 0 and got == want, label
             else:
-                assert got != want, "a corrupted table went unnoticed"
+                assert got != want, f"{label} went unnoticed"

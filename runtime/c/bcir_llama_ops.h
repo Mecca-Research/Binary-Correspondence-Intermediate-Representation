@@ -21,6 +21,7 @@
 #define BCIR_LLAMA_OPS_H
 
 #include "bcir_host_alloc.h"
+#include "bcir_llama.h"
 #include "bcir_q8_model.h"
 
 #include <stddef.h>
@@ -36,8 +37,11 @@ typedef struct bcir_llama_ws {
   double *x, *h, *h2, *q, *q_rope, *k, *k_rope, *v;
   double *context, *attn, *gate, *up, *ff, *gamma, *scores, *logits;
   double *k_cache, *v_cache;
+  double *rope_cs;   /* DECODE-ROW: the rotation's cosines and sines at rope_pos, head_dim values */
+  size_t rope_pos;   /* the position rope_cs holds; SIZE_MAX before any */
   size_t capacity;
   bcir_host_allocator allocator;
+  bcir_llama_runner runner; /* DECODE-THREADS (bcir_llama.h): the runner the caller lent; none, all zero, at init */
 } bcir_llama_ws;
 
 /* Nonzero when `model` is a complete, well-formed Llama/SwiGLU BCIRQ8 decoder. */
@@ -50,17 +54,22 @@ int bcir_llama_ws_init(bcir_llama_ws *w, const bcir_q8_model *model, size_t capa
                        const bcir_host_allocator *allocator);
 /* Release every buffer the workspace owns and zero it. Idempotent on a zeroed workspace. */
 void bcir_llama_ws_free(bcir_llama_ws *w);
+/* DECODE-THREADS: lend the workspace `runner` (NULL: none), which must outlive its use. 0; -1 for a runner of no
+ * function with more than one worker or of more than BCIR_LLAMA_MAX_PARTS workers, the workspace's then unchanged. */
+int bcir_llama_ws_set_runner(bcir_llama_ws *w, const bcir_llama_runner *runner);
 
 /* The logits head: the embedding table when tied, else lm_head. */
 const bcir_q8_tensor *bcir_llama_head_tensor(const bcir_q8_model *model);
 
 /* x = embedding[token]. -1 on a token outside the vocabulary. */
 int bcir_llama_op_embed(const bcir_q8_model *model, bcir_llama_ws *w, int32_t token);
-/* dst = rmsnorm(src) * gamma (gamma dequantized into the workspace's scratch). */
+/* dst = rmsnorm(src) * gamma (gamma dequantized into the workspace's scratch by bcir_q8_tensor_values, DECODE-PASSES;
+ * a gamma that is not the model's own, or shorter than a row, leaves dst a row of NaN). */
 void bcir_llama_op_rmsnorm(const bcir_q8_model *model, bcir_llama_ws *w, const double *src,
                            const bcir_q8_tensor *gamma, double *dst);
-/* y[out] = x[in] @ weight[in x out], the ascending-k order of matmul_reference. */
-int bcir_llama_op_matvec(const bcir_q8_model *model, const double *x,
+/* y[out] = x[in] @ weight[in x out], the ascending-k order of matmul_reference -- in parts of its columns on the
+ * workspace's runner where it has one and the matrix is large enough (DECODE-THREADS; w NULL: in one call). */
+int bcir_llama_op_matvec(const bcir_q8_model *model, const bcir_llama_ws *w, const double *x,
                          const bcir_q8_tensor *weight, uint32_t in, uint32_t out, double *y);
 /* q_rope, k_rope = rope(q, k) at position `pos`, head by head. */
 void bcir_llama_op_rope(const bcir_q8_model *model, bcir_llama_ws *w, size_t pos);
@@ -74,9 +83,12 @@ int bcir_llama_op_attention(const bcir_q8_model *model, bcir_llama_ws *w, uint32
 void bcir_llama_op_residual(const bcir_q8_model *model, bcir_llama_ws *w);
 /* ff = silu(gate) * up, elementwise, with the guarded two-branch sigmoid. */
 void bcir_llama_op_swiglu(const bcir_q8_model *model, bcir_llama_ws *w);
-/* logits[vocab] = head . row. */
-int bcir_llama_op_head(const bcir_q8_model *model, const double *row, double *logits);
-/* The greedy pick: the largest logit, the lowest id on a tie. */
+/* logits[vocab] = head . row (HEAD-PACK: over the model's head_pack where the loader packed the head; in parts of
+ * its rows on the workspace's runner where it has one and the pack is large enough, DECODE-THREADS; w NULL: in one
+ * call). */
+int bcir_llama_op_head(const bcir_q8_model *model, const bcir_llama_ws *w, const double *row, double *logits);
+/* The greedy pick: the largest logit, the lowest id on a tie (-0.0 ties +0.0); a NaN is never picked past id 0, and
+ * a NaN at id 0 is picked (DECODE-PASSES: the scalar loop's pick, over four lanes and a scan). */
 int32_t bcir_llama_op_argmax(const bcir_q8_model *model, const double *logits);
 
 #ifdef __cplusplus

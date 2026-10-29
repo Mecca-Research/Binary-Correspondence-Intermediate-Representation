@@ -1,0 +1,80 @@
+[
+ {
+  "tree": "before",
+  "run": 1,
+  "commit": "8d97b1cf19d96c255734f94dc2e3397ab0870cae",
+  "status": "PASS",
+  "load_ms": 2.16,
+  "trust_boundary_ms": 1.0,
+  "monolithic_median_ms": 11.408,
+  "gem_median_ms": 12.911,
+  "gem_overhead_ms": 1.503,
+  "gem_over_monolithic_median": 1.1318,
+  "time_to_first_token_ms": 2.677
+ },
+ {
+  "tree": "after",
+  "run": 1,
+  "commit": "0f29c50d80e7b9d0950e2b3824aff1af01b18ce6",
+  "status": "PASS",
+  "load_ms": 1.304,
+  "trust_boundary_ms": 0.688,
+  "monolithic_median_ms": 11.615,
+  "gem_median_ms": 12.08,
+  "gem_overhead_ms": 0.465,
+  "gem_over_monolithic_median": 1.04,
+  "time_to_first_token_ms": 1.999
+ },
+ {
+  "tree": "after",
+  "run": 2,
+  "commit": "0f29c50d80e7b9d0950e2b3824aff1af01b18ce6",
+  "status": "PASS",
+  "load_ms": 1.312,
+  "trust_boundary_ms": 0.693,
+  "monolithic_median_ms": 11.01,
+  "gem_median_ms": 11.786,
+  "gem_overhead_ms": 0.776,
+  "gem_over_monolithic_median": 1.0705,
+  "time_to_first_token_ms": 2.071
+ },
+ {
+  "tree": "before",
+  "run": 2,
+  "commit": "8d97b1cf19d96c255734f94dc2e3397ab0870cae",
+  "status": "PASS",
+  "load_ms": 2.183,
+  "trust_boundary_ms": 0.99,
+  "monolithic_median_ms": 13.218,
+  "gem_median_ms": 13.968,
+  "gem_overhead_ms": 0.75,
+  "gem_over_monolithic_median": 1.0568,
+  "time_to_first_token_ms": 2.837
+ },
+ {
+  "tree": "before",
+  "run": 3,
+  "commit": "8d97b1cf19d96c255734f94dc2e3397ab0870cae",
+  "status": "PASS",
+  "load_ms": 2.264,
+  "trust_boundary_ms": 0.976,
+  "monolithic_median_ms": 11.029,
+  "gem_median_ms": 12.899,
+  "gem_overhead_ms": 1.87,
+  "gem_over_monolithic_median": 1.1695,
+  "time_to_first_token_ms": 2.701
+ },
+ {
+  "tree": "after",
+  "run": 3,
+  "commit": "0f29c50d80e7b9d0950e2b3824aff1af01b18ce6",
+  "status": "PASS",
+  "load_ms": 1.24,
+  "trust_boundary_ms": 0.688,
+  "monolithic_median_ms": 11.532,
+  "gem_median_ms": 11.912,
+  "gem_overhead_ms": 0.379,
+  "gem_over_monolithic_median": 1.0329,
+  "time_to_first_token_ms": 2.03
+ }
+]

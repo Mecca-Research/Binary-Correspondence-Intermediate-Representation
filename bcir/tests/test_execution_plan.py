@@ -25,6 +25,7 @@ import random
 import struct
 import subprocess
 import tempfile
+import time
 
 from bcir.abi import AbiError, decode, decode_plan, encode, encode_plan
 from bcir.abi.execution_plan_abi import PLAN_HEADER_SIZE, PLAN_MAGIC, TAIL_STREAM_WIRE
@@ -70,6 +71,9 @@ from bcir.tests.plan_fixtures import (
 from bcir.verify import verify_execution_plan, verify_pack
 
 AVX, COOL = TargetProfile.x86_avx512(), Theta.cool()
+
+#: The host's C compiler, or None: the C-rail witnesses return early without one.
+_CC = compiler()
 
 
 def _corpus():
@@ -693,3 +697,221 @@ def test_the_c_twin_reads_an_explicit_placement_and_refuses_undefined_flags():
             wire[8] = mode
             code, out = run_harness(exe, tmp, reseal(bytes(wire)))
             assert code != 0 and f"status={status}" in out, (flags, mode, out)
+
+
+# --- ALIAS-SWEEP: the alias law by a sweep, every verdict the pairwise law's -------------------
+
+
+def _pairwise_first_alias(rows) -> int:
+    """The alias law as both rails judged it before ALIAS-SWEEP: each lifetime against every
+    earlier one, in order -- the first that aliases one, `len(rows)` when none does."""
+    from bcir.abi.execution_plan_abi import lifetimes_alias
+
+    for i, a in enumerate(rows):
+        if any(lifetimes_alias(b, a) for b in rows[:i]):
+            return i
+    return len(rows)
+
+
+def _crowded(rng: random.Random, n: int) -> list:
+    """`n` lifetimes in three banks over ten ticks and 128 bytes: crowded, so most draws alias and
+    many alias only late; equal ticks, touching spans and nested intervals among them."""
+    rows = []
+    for rid in range(1, n + 1):
+        first = rng.randrange(10)
+        alignment = rng.choice((1, 4, 16))
+        rows.append(Lifetime(rid=rid, bank=rng.choice(("ram", "scratch", "l2")),
+                             offset=rng.randrange(128 // alignment) * alignment,
+                             size_bytes=1 + rng.randrange(24), alignment=alignment,
+                             first_phase=first, last_phase=first, first_tick=first,
+                             last_tick=first + 1 + rng.randrange(4)))  # fmt: skip
+    return rows
+
+
+def _apart(rows: list) -> list:
+    """`rows` moved apart in one bank so that none aliases another, the ticks kept."""
+    out, at = [], 0
+    for lt in rows:
+        out.append(replace(lt, bank="ram", offset=at, alignment=1))
+        at += lt.size_bytes
+    return out
+
+
+def _reused(n: int) -> list:
+    """GEM's shape: `n` values reusing two spans of one bank as their ticks part -- value i live on
+    [i, i + 2) at the span i % 2 -- so none aliases another while every tick holds two."""
+    return [Lifetime(rid=i + 1, bank="ram", offset=64 * (i % 2), size_bytes=64, alignment=64,
+                     first_phase=i, last_phase=i + 1, first_tick=i, last_tick=i + 2)
+            for i in range(n)]  # fmt: skip
+
+
+def test_the_alias_laws_sweep_names_the_pairwise_laws_first_alias_on_every_draw():
+    """ALIAS-SWEEP on the Python rail: `first_alias` -- a sweep over the ticks deciding whether a
+    prefix holds an aliasing pair, and a binary search of sweeps for the first lifetime aliasing an
+    earlier one -- names the pairwise law's lifetime on 3,000 crowded draws of 0 to 40 lifetimes
+    and on each draw moved apart (none aliases); `validate_plan` refuses with the pairwise law's
+    message, naming the same pair. The sweep's boundaries are pinned: an interval ending at the
+    tick another starts at, and two spans that only touch, do not alias; one byte or one tick of
+    overlap does, and another bank never does."""
+    from bcir.abi.execution_plan_abi import first_alias, lifetimes_alias, validate_plan
+
+    module, target, _theta, result = audit_fixture()
+    plan = plan_from_realization(module, result, target, "eft", plan="plan0")
+    rng = random.Random(0xA11A5)
+    aliased = clean = 0
+    for draw in range(3_000):
+        rows = _crowded(rng, rng.randrange(41))
+        for case in (rows, _apart(rows)):
+            want = _pairwise_first_alias(case)
+            assert first_alias(case) == want, (draw, want)
+            aliased += want < len(case)
+            clean += want == len(case)
+        if draw % 10 == 0 and _pairwise_first_alias(rows) < len(rows):
+            first = _pairwise_first_alias(rows)
+            prior = next(r for r in rows[:first] if lifetimes_alias(r, rows[first]))
+            try:
+                validate_plan(replace(plan, lifetimes=rows, moves=[]))
+            except AbiError as exc:
+                assert str(exc) == (f"lifetimes of RIDs {prior.rid} and {rows[first].rid} alias "
+                                    f"in bank {rows[first].bank!r}"), (draw, str(exc))  # fmt: skip
+            else:
+                raise AssertionError(f"draw {draw}: an aliasing plan validated")
+    assert aliased > 1_000 and clean > 1_000, (aliased, clean)
+    a = Lifetime(1, "ram", 0, 16, 1, 0, 1, 0, 2)
+    assert first_alias([a, Lifetime(2, "ram", 0, 16, 1, 2, 3, 2, 4)]) == 2  # [0, 2) then [2, 4)
+    assert first_alias([a, Lifetime(2, "ram", 16, 16, 1, 0, 1, 0, 2)]) == 2  # touching spans
+    assert first_alias([a, Lifetime(2, "ram", 15, 16, 1, 0, 1, 0, 2)]) == 1  # one byte
+    assert first_alias([a, Lifetime(2, "ram", 0, 16, 1, 1, 1, 1, 3)]) == 1  # one tick
+    assert first_alias([a, Lifetime(2, "l2", 0, 16, 1, 0, 1, 0, 2)]) == 2  # another bank
+    assert first_alias(_reused(5_000)) == 5_000
+
+
+def test_the_alias_laws_sweep_grows_with_the_lifetimes_not_their_square():
+    """The Python rail's complexity witness: `first_alias` over GEM's shape (`_reused`, none
+    aliasing: one sweep) at 2,000 and 32,000 lifetimes -- 16x the lifetimes in under 64x the time
+    (n log n gives about 21x; the pairwise law gave 256x, 2.9 s already at 8,000 lifetimes on the
+    PX-3b host), the fastest of three runs each."""
+    from bcir.abi.execution_plan_abi import first_alias
+
+    def fastest(n: int) -> float:
+        rows = _reused(n)
+        best = None
+        for _ in range(3):
+            t0 = time.perf_counter()
+            assert first_alias(rows) == n
+            elapsed = time.perf_counter() - t0
+            best = elapsed if best is None else min(best, elapsed)
+        return max(best, 1e-6)
+
+    ratio = fastest(32_000) / fastest(2_000)
+    assert ratio < 64.0, f"2,000 -> 32,000 lifetimes cost {ratio:.0f}x (bound 64x)"
+
+
+def _sweep_verdicts(exe: str, tmp: str, blob: bytes) -> dict:
+    """The harness's `--sweep` lines over `blob`, as {key: value}."""
+    path = os.path.join(tmp, "sweep.bin")
+    with open(path, "wb") as f:
+        f.write(blob)
+    r = subprocess.run([exe, "--sweep", path], capture_output=True, text=True, timeout=300)
+    out = dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
+    assert r.returncode == 0 and out.get("canary") == "ok", r.stdout + r.stderr
+    return out
+
+
+def _own_law_breaker(rows) -> int:
+    """The first lifetime breaking a law of its own (the walk's order of them), `len(rows)` when
+    none does."""
+    prev = None
+    for i, lt in enumerate(rows):
+        if prev is not None and lt.rid <= prev:
+            return i
+        if (
+            lt.size_bytes == 0
+            or not lt.bank
+            or lt.alignment & (lt.alignment - 1)
+            or not lt.alignment
+        ):
+            return i
+        if (
+            lt.offset % lt.alignment
+            or lt.last_phase < lt.first_phase
+            or lt.last_tick <= lt.first_tick
+        ):
+            return i
+        prev = lt.rid
+    return len(rows)
+
+
+def test_the_c_twin_sweeps_the_alias_law_to_the_pairwise_laws_verdict():
+    """ALIAS-SWEEP on the C rail: `bcir_ep_verify_lent` -- the alias law swept over scratch the
+    caller lends, of exactly `bcir_ep_sweep_bytes`' length at an odd address -- returns
+    `bcir_ep_verify`'s status on 400 crowded plans, a third with a lifetime breaking a law of its
+    own at a random place (zero bytes, an empty interval, a misaligned offset, a RID out of order);
+    one byte of scratch less judges the law pairwise, the same status; the plan walk hands over the
+    same lifetimes with scratch and without -- exactly those before the first record the walk
+    refuses, an aliasing one or one breaking its own law -- and no byte past the lent scratch is
+    written. The verdict is the codec's on every plan."""
+    if compiler() is None:
+        return
+    module, target, _theta, result = audit_fixture()
+    plan = plan_from_realization(module, result, target, "eft", plan="plan0")
+    rng = random.Random(0x5EEB)
+    refused = accepted = broken = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = build_harness(tmp)
+        for draw in range(400):
+            rows = _crowded(rng, rng.randrange(1, 40))
+            if rng.random() < 0.5:
+                rows = _apart(rows)
+            if draw % 3 == 0:
+                at = rng.randrange(len(rows))
+                lt = rows[at]
+                faults = [replace(lt, size_bytes=0), replace(lt, last_tick=lt.first_tick),
+                          replace(lt, offset=2, alignment=4)]  # fmt: skip
+                if at:
+                    faults.append(replace(lt, rid=rows[at - 1].rid))  # a RID out of order
+                rows[at] = rng.choice(faults)
+                broken += 1
+            blob = raw_encode(replace(plan, lifetimes=rows, moves=[]))
+            v = _sweep_verdicts(exe, tmp, blob)
+            assert v["verify"] == v["lent"] == v["short"], (draw, v)
+            assert v["walk"] == v["walk_lent"], (draw, v)
+            first = min(
+                _pairwise_first_alias(rows[: _own_law_breaker(rows)]), _own_law_breaker(rows)
+            )
+            assert int(v["walk"].split()[1]) == first, (draw, v, first)
+            assert (v["verify"] != "BCIR_OK") == wire_refuses(blob), (draw, v)
+            refused += v["verify"] != "BCIR_OK"
+            accepted += v["verify"] == "BCIR_OK"
+    assert refused > 100 and accepted > 100 and broken > 100, (refused, accepted, broken)
+
+
+def test_the_c_twin_sweeps_the_alias_law_in_time_n_log_n():
+    """The C rail's complexity witness: `bcir_ep_verify_lent` over GEM's shape (`_reused`, none
+    aliasing) at 2,000 and 32,000 lifetimes -- 16x the lifetimes in under 64x the time (n log n:
+    about 21x; the pairwise law 256x) -- and the lent verdict under a quarter of the pairwise one's
+    time at 32,000, the fastest of several runs each."""
+    if compiler() is None:
+        return
+    module, target, _theta, result = audit_fixture()
+    plan = plan_from_realization(module, result, target, "eft", plan="plan0")
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = build_harness(tmp)
+
+        def fastest(n: int, reps: int, *mode: str) -> float:
+            path = os.path.join(tmp, f"life{n}.bin")
+            with open(path, "wb") as f:
+                f.write(raw_encode(replace(plan, lifetimes=_reused(n), moves=[])))
+            r = subprocess.run([exe, "--time", path, str(reps), *mode], capture_output=True,
+                               text=True, timeout=600)  # fmt: skip
+            assert r.returncode == 0, r.stdout + r.stderr
+            fields = r.stdout.split()
+            assert fields[:2] == ["verify", "ns"], r.stdout
+            return max(float(fields[2]), 1.0)
+
+        lent_big = fastest(32_000, 3, "lent")
+        ratio = lent_big / fastest(2_000, 7, "lent")
+        assert ratio < 64.0, f"2,000 -> 32,000 lifetimes cost {ratio:.0f}x (bound 64x)"
+        assert lent_big * 4 < fastest(32_000, 1), (
+            "the lent verdict is not under a quarter of the pairwise one's time"
+        )

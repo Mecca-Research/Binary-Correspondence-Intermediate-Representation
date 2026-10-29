@@ -1,0 +1,88 @@
+[
+ {
+  "cc": "clang",
+  "picks": "the tree after's pick the tree before's on every case",
+  "cases": 200000
+ },
+ {
+  "cc": "clang",
+  "vocab": 1024,
+  "rounds": 101,
+  "before_ns": 1734.1,
+  "after_ns": 1021.0,
+  "aa_ns": 1727.8,
+  "after_over_before": 0.5693,
+  "interval": [
+   0.5418,
+   0.5982
+  ],
+  "aa_over_before": 0.9961,
+  "aa_interval": [
+   0.9747,
+   1.0181
+  ],
+  "sink": 0
+ },
+ {
+  "cc": "clang",
+  "vocab": 32000,
+  "rounds": 101,
+  "before_ns": 54410.3,
+  "after_ns": 10630.7,
+  "aa_ns": 54406.4,
+  "after_over_before": 0.203,
+  "interval": [
+   0.1992,
+   0.207
+  ],
+  "aa_over_before": 0.9991,
+  "aa_interval": [
+   0.9904,
+   1.0078
+  ],
+  "sink": 0
+ },
+ {
+  "cc": "gcc",
+  "picks": "the tree after's pick the tree before's on every case",
+  "cases": 200000
+ },
+ {
+  "cc": "gcc",
+  "vocab": 1024,
+  "rounds": 101,
+  "before_ns": 3136.6,
+  "after_ns": 1916.5,
+  "aa_ns": 3079.7,
+  "after_over_before": 0.4661,
+  "interval": [
+   0.432,
+   0.5028
+  ],
+  "aa_over_before": 0.9885,
+  "aa_interval": [
+   0.9479,
+   1.0309
+  ],
+  "sink": 0
+ },
+ {
+  "cc": "gcc",
+  "vocab": 32000,
+  "rounds": 101,
+  "before_ns": 98043.3,
+  "after_ns": 12234.9,
+  "aa_ns": 98239.2,
+  "after_over_before": 0.1317,
+  "interval": [
+   0.128,
+   0.1356
+  ],
+  "aa_over_before": 1.0144,
+  "aa_interval": [
+   0.9963,
+   1.0329
+  ],
+  "sink": 0
+ }
+]

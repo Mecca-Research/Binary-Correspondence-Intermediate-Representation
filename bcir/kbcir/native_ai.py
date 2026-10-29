@@ -23,7 +23,7 @@ from array import array
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..toolchain import host_link_args
+from ..toolchain import host_link_args, unit_options
 from .optimization_memory import OptimizationMatch, OptimizationMemory, _prepare_optimization_query
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -185,8 +185,13 @@ class NativeAIKernels:
 
     @staticmethod
     def _compile_command(compiler: str, output: Path) -> list[str]:
-        """The exact argv a build would run. One definition, so the stamp cannot drift."""
-        command = [compiler, *_COMPILE_FLAGS]
+        """The exact argv a build would run. One definition, so the stamp cannot drift: the flags,
+        then the manifest's options for the kernels' unit under this compiler (M18,
+        bcir.toolchain.unit_options -- on x86-64 the JCC-erratum mitigation, without which their
+        vector loops ran up to x1.35 slower at some placements on the Cascade Lake core
+        KERNEL-ALIGN measured)."""
+        own = [f for f in unit_options([_SOURCE.name], compiler) if f not in _COMPILE_FLAGS]
+        command = [compiler, *_COMPILE_FLAGS, *own]
         if os.name != "nt":
             command.append("-fPIC")
         command.extend(
@@ -202,9 +207,11 @@ class NativeAIKernels:
         and *every* header beside it, which over-approximates the include graph on
         purpose -- an unrelated header change can only force a needless rebuild, never
         permit a stale reuse. The compiler is identified by its resolved path, size and
-        modification time rather than by running it: a version probe costs ~25 ms
+        modification time rather than by running it each time: a version probe costs ~25 ms
         against a ~1 ms hash, and the recorded output digest below already refuses any
-        library whose bytes are not the ones this stamp was written for.
+        library whose bytes are not the ones this stamp was written for. (The command's
+        manifest options are this compiler's -- its family and machine, asked once a process
+        by bcir.toolchain.compiler_identity.)
 
         Declared scope: a compiler swapped in place at the same path, size and
         nanosecond mtime is not distinguished. Nothing else about the build is out of
@@ -386,6 +393,63 @@ class NativeAIKernels:
         self._library.bcir_ai_q8_matvec_f64.restype = ctypes.c_int
         self._library.bcir_ai_q8_rows_dot_f64.argtypes = matrix_args
         self._library.bcir_ai_q8_rows_dot_f64.restype = ctypes.c_int
+        # Q8-LANES: the kernels' instances, and the prevalidated entries on a named one
+        self._library.bcir_ai_q8_instances.argtypes = []
+        self._library.bcir_ai_q8_instances.restype = ctypes.c_int
+        self._library.bcir_ai_q8_values_validate.argtypes = [
+            u8p,
+            ctypes.c_size_t,
+            u8p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+        ]
+        self._library.bcir_ai_q8_values_validate.restype = ctypes.c_int
+        for entry in ("bcir_ai_q8_matvec_f64_instance", "bcir_ai_q8_rows_dot_f64_instance"):
+            getattr(self._library, entry).argtypes = [ctypes.c_int, *matrix_args]
+            getattr(self._library, entry).restype = ctypes.c_int
+        # DECODE-THREADS: the matvec over a range of its columns
+        column_args = [*matrix_args[:-1], ctypes.c_size_t, ctypes.c_size_t, f64p]
+        self._library.bcir_ai_q8_matvec_f64_columns.argtypes = column_args
+        self._library.bcir_ai_q8_matvec_f64_columns.restype = ctypes.c_int
+        self._library.bcir_ai_q8_matvec_f64_columns_instance.argtypes = [ctypes.c_int, *column_args]
+        self._library.bcir_ai_q8_matvec_f64_columns_instance.restype = ctypes.c_int
+        # HEAD-PACK: the row dots' pack, and the row dots over it
+        self._library.bcir_ai_q8_rows_pack_size.argtypes = [
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            sizep,
+        ]
+        self._library.bcir_ai_q8_rows_pack_size.restype = ctypes.c_int
+        self._library.bcir_ai_q8_rows_pack.argtypes = [
+            u8p,
+            ctypes.c_size_t,
+            u8p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            u8p,
+            ctypes.c_size_t,
+        ]
+        self._library.bcir_ai_q8_rows_pack.restype = ctypes.c_int
+        packed_args = [
+            f64p,
+            ctypes.c_size_t,
+            u8p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            f64p,
+        ]
+        self._library.bcir_ai_q8_rows_dot_f64_packed.argtypes = packed_args
+        self._library.bcir_ai_q8_rows_dot_f64_packed.restype = ctypes.c_int
+        self._library.bcir_ai_q8_rows_dot_f64_packed_instance.argtypes = [
+            ctypes.c_int,
+            *packed_args,
+        ]
+        self._library.bcir_ai_q8_rows_dot_f64_packed_instance.restype = ctypes.c_int
         self._library.bcir_ai_q15_topk.argtypes = [
             i16p,
             i16p,
@@ -465,8 +529,21 @@ class NativeAIKernels:
             raise ValueError("native Q8 exponent inventory is malformed")
         return values, raw_codes, struct.pack(f"<{groups}h", *exponent_values), groups
 
+    def q8_instances(self) -> int:
+        """The Q8 matrix kernels' instances this host admits, as bits: 1 the portable loops (always), 2
+        AVX2, 4 AVX-512 (Q8-LANES) -- every one the portable loops' value for every output."""
+        return int(self._library.bcir_ai_q8_instances())
+
     def _matrix(
-        self, function, input_values, codes, exponents, *, output_count: int, group_size: int
+        self,
+        entry: str,
+        input_values,
+        codes,
+        exponents,
+        *,
+        output_count: int,
+        group_size: int,
+        instance: int | None = None,
     ) -> tuple[float, ...]:
         values, raw_codes, exponent_bytes, groups = self._matrix_inputs(
             input_values, codes, exponents, output_count, group_size
@@ -475,7 +552,20 @@ class NativeAIKernels:
         code_array = (ctypes.c_uint8 * len(raw_codes)).from_buffer_copy(raw_codes)
         exponent_array = (ctypes.c_uint8 * len(exponent_bytes)).from_buffer_copy(exponent_bytes)
         output_array = (ctypes.c_double * output_count)()
+        if instance is not None:
+            # the validating entry's own check, then the prevalidated entry on the named instance
+            if type(instance) is not int or instance not in (0, 1, 2, 4):
+                raise ValueError("native Q8 instance must be 0, 1, 2 or 4")
+            status = self._library.bcir_ai_q8_values_validate(
+                code_array, len(raw_codes), exponent_array, groups, len(raw_codes), group_size
+            )
+            if status:
+                raise RuntimeError(f"native Q8 matrix kernel failed with status {status}")
+            function, extra = getattr(self._library, entry + "_instance"), (instance,)
+        else:
+            function, extra = getattr(self._library, entry), ()
         status = function(
+            *extra,
             input_array,
             len(values),
             code_array,
@@ -491,27 +581,205 @@ class NativeAIKernels:
         return tuple(float(value) for value in output_array)
 
     def q8_matvec(
-        self, input_values, codes, exponents, *, output_count: int, group_size: int
+        self,
+        input_values,
+        codes,
+        exponents,
+        *,
+        output_count: int,
+        group_size: int,
+        instance: int | None = None,
+        columns: tuple[int, int] | None = None,
     ) -> tuple[float, ...]:
+        """`instance` (Q8-LANES): None the validating entry (the widest instance), else 0, 1, 2 or 4 --
+        the prevalidated entry on that instance after the same validation; one the host does not admit
+        raises. `columns` (DECODE-THREADS): (begin, end), the outputs begin to end - 1 alone, computed by the
+        column entry on the instance named (None the widest) after the same validation -- each the whole call's."""
+        if columns is not None:
+            return self._matvec_columns(
+                input_values,
+                codes,
+                exponents,
+                output_count=output_count,
+                group_size=group_size,
+                instance=instance,
+                columns=columns,
+            )
         return self._matrix(
-            self._library.bcir_ai_q8_matvec_f64,
+            "bcir_ai_q8_matvec_f64",
             input_values,
             codes,
             exponents,
             output_count=output_count,
             group_size=group_size,
+            instance=instance,
+        )
+
+    def _matvec_columns(
+        self,
+        input_values,
+        codes,
+        exponents,
+        *,
+        output_count: int,
+        group_size: int,
+        instance: int | None,
+        columns,
+    ) -> tuple[float, ...]:
+        """DECODE-THREADS: the column entry over [begin, end), after the validating entry's own check."""
+        values, raw_codes, exponent_bytes, groups = self._matrix_inputs(
+            input_values, codes, exponents, output_count, group_size
+        )
+        if (
+            type(columns) is not tuple
+            or len(columns) != 2
+            or any(type(edge) is not int for edge in columns)
+            or not 0 <= columns[0] < columns[1] <= output_count
+        ):
+            raise ValueError(
+                "native Q8 columns must be (begin, end) with 0 <= begin < end <= output_count"
+            )
+        if instance is not None and (type(instance) is not int or instance not in (0, 1, 2, 4)):
+            raise ValueError("native Q8 instance must be 0, 1, 2 or 4")
+        input_array = (ctypes.c_double * len(values))(*values)
+        code_array = (ctypes.c_uint8 * len(raw_codes)).from_buffer_copy(raw_codes)
+        exponent_array = (ctypes.c_uint8 * len(exponent_bytes)).from_buffer_copy(exponent_bytes)
+        output_array = (ctypes.c_double * output_count)()
+        status = self._library.bcir_ai_q8_values_validate(
+            code_array, len(raw_codes), exponent_array, groups, len(raw_codes), group_size
+        )
+        if status:
+            raise RuntimeError(f"native Q8 matrix kernel failed with status {status}")
+        if instance is None:
+            function, extra = self._library.bcir_ai_q8_matvec_f64_columns, ()
+        else:
+            function, extra = self._library.bcir_ai_q8_matvec_f64_columns_instance, (instance,)
+        status = function(
+            *extra,
+            input_array,
+            len(values),
+            code_array,
+            len(raw_codes),
+            exponent_array,
+            groups,
+            output_count,
+            group_size,
+            columns[0],
+            columns[1],
+            output_array,
+        )
+        if status:
+            raise RuntimeError(f"native Q8 matrix kernel failed with status {status}")
+        return tuple(float(value) for value in output_array[columns[0] : columns[1]])
+
+    def _pack(
+        self,
+        raw_codes: bytes,
+        exponent_bytes: bytes,
+        groups: int,
+        input_count: int,
+        output_count: int,
+        group_size: int,
+    ):
+        """HEAD-PACK: the C library's pack of validated codes and exponents, as a ctypes array of its size."""
+        size = ctypes.c_size_t()
+        if self._library.bcir_ai_q8_rows_pack_size(
+            input_count, output_count, group_size, ctypes.byref(size)
+        ):
+            raise ValueError(
+                "native Q8 rows pack shape is malformed: no pack holds rows that straddle their groups"
+            )
+        # the layout's own size, ceil(rows / 8) blocks of input_count / group_size segments of 16 + 8 * group_size
+        # bytes: a library that sizes a pack otherwise would write past the buffer allocated for it
+        if size.value != -(-output_count // 8) * (input_count // group_size) * (
+            16 + 8 * group_size
+        ):
+            raise RuntimeError(
+                "native Q8 rows pack size disagrees with the layout bcir_ai_kernels.h states"
+            )
+        code_array = (ctypes.c_uint8 * len(raw_codes)).from_buffer_copy(raw_codes)
+        exponent_array = (ctypes.c_uint8 * len(exponent_bytes)).from_buffer_copy(exponent_bytes)
+        pack = (ctypes.c_uint8 * size.value)()
+        status = self._library.bcir_ai_q8_rows_pack(
+            code_array,
+            len(raw_codes),
+            exponent_array,
+            groups,
+            input_count,
+            output_count,
+            group_size,
+            pack,
+            size.value,
+        )
+        if status:
+            raise RuntimeError(f"native Q8 rows pack failed with status {status}")
+        return pack
+
+    def q8_rows_pack(
+        self, codes, exponents, *, input_count: int, output_count: int, group_size: int
+    ) -> bytes:
+        """HEAD-PACK: `output_count` rows of `input_count` codes, and their groups' exponents, packed for the vector
+        row dots -- bcir_ai_kernels.h's layout; input_count a whole number of groups."""
+        if type(input_count) is not int or not 1 <= input_count <= _MAX_ELEMENTS:
+            raise ValueError("native Q8 matrix arguments are malformed")
+        _, raw_codes, exponent_bytes, groups = self._matrix_inputs(
+            (0.0,) * input_count, codes, exponents, output_count, group_size
+        )
+        return bytes(
+            self._pack(raw_codes, exponent_bytes, groups, input_count, output_count, group_size)
         )
 
     def q8_rows_dot(
-        self, input_values, codes, exponents, *, output_count: int, group_size: int
+        self,
+        input_values,
+        codes,
+        exponents,
+        *,
+        output_count: int,
+        group_size: int,
+        instance: int | None = None,
+        packed: bool = False,
     ) -> tuple[float, ...]:
+        """`instance` as q8_matvec's. `packed` (HEAD-PACK): the codes and exponents packed first (q8_rows_pack) and
+        the row dots taken over the pack -- every output the same; the input a whole number of groups."""
+        if packed is not False and packed is not True:
+            raise ValueError("native Q8 packed must be a bool")
+        if packed:
+            values, raw_codes, exponent_bytes, groups = self._matrix_inputs(
+                input_values, codes, exponents, output_count, group_size
+            )
+            if instance is not None and (type(instance) is not int or instance not in (0, 1, 2, 4)):
+                raise ValueError("native Q8 instance must be 0, 1, 2 or 4")
+            pack = self._pack(
+                raw_codes, exponent_bytes, groups, len(values), output_count, group_size
+            )
+            input_array = (ctypes.c_double * len(values))(*values)
+            output_array = (ctypes.c_double * output_count)()
+            if instance is None:
+                function, extra = self._library.bcir_ai_q8_rows_dot_f64_packed, ()
+            else:
+                function, extra = self._library.bcir_ai_q8_rows_dot_f64_packed_instance, (instance,)
+            status = function(
+                *extra,
+                input_array,
+                len(values),
+                pack,
+                len(pack),
+                output_count,
+                group_size,
+                output_array,
+            )
+            if status:
+                raise RuntimeError(f"native Q8 matrix kernel failed with status {status}")
+            return tuple(float(value) for value in output_array)
         return self._matrix(
-            self._library.bcir_ai_q8_rows_dot_f64,
+            "bcir_ai_q8_rows_dot_f64",
             input_values,
             codes,
             exponents,
             output_count=output_count,
             group_size=group_size,
+            instance=instance,
         )
 
     def _q15_topk(

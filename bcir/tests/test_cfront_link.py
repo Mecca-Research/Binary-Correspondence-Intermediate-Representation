@@ -10,18 +10,50 @@ A prototype whose definition lives in the SAME unit is just a forward declaratio
 definition wins and the call stays a real R18 edge. The headline is the two-TU binary:
 the bcir-EMITTED caller object, linked by the host linker against the callee TU with the
 DERIVED --emit-link-flags, behaves exactly like the all-original reference build.
-(The C-twin port -- prototypes in bcir_cfront.c -- and the linkable non-static emission
-mode are the named next steps; see the master roadmap Phase 3.)"""
+Both rails render the linkable artifact: the oracle's `emit_linkable` and the twin's `bcir-cc
+--linkable` (`bcir_cfront_compile_linkable`, CF-LINKTWIN), held to each other over the whole corpus
+(`test_the_twins_linkable_artifact_is_the_oracles_over_the_corpus`) and linked to each other here."""
 
+import glob
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 
 from bcir.frontends.cfront import compile_unit
 from bcir.frontends.cfront.linkflags import format_link_flags
+from bcir.tests.test_c_cfront import _C, _build_bcir_cc, _includes_for, _session_build_dir
 from bcir.tests.test_c_executor import _cc
 from bcir.toolchain import host_link_args
+
+
+def _twin_artifact(src: str, name: str = "unit.c", target: "str | None" = None) -> tuple:
+    """The twin's linkable artifact of `src` (`bcir-cc --linkable`, CF-LINKTWIN), for `target`'s data model (None: the
+    host's): its exit status, the artifact and the diagnostics."""
+    exe = _build_bcir_cc(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(src)
+        run = subprocess.run(
+            [exe, "--linkable", *(("--target", target) if target else ()), "-I", _C, path],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    return run.returncode, run.stdout, run.stderr
+
+
+def _artifacts(src: str) -> tuple:
+    """Each rail's linkable artifact of `src` that both render: (rail, text)."""
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    r = compile_unit(src, check_clang=False)
+    rc, twin, err = _twin_artifact(src)
+    assert rc == 0, f"the twin's linkable emit\n{err}"
+    return (("oracle", emit_linkable(r.lowered, r.emitted)), ("twin", twin))
+
 
 _MAIN = "double scale(double x);\nint main(void) { double v = scale(16.0); return (int)v; }\n"
 _LIB = "#include <math.h>\ndouble scale(double x) { return sqrt(x) + 1.0; }\n"
@@ -491,14 +523,14 @@ _LINKEMIT_GAPS = "0u, 1u, 2u, 3u, 7u, 255u, 256u, 65535u, 65536u, 0x12345678u, 0
 
 
 def test_linkable_emit_defines_what_the_source_defines():
-    """CF-LINKEMIT: each unit's linkable emit (1) builds alone under `-std=c11 -Wall -Werror` -- its struct, union and
-    typedef definitions as the source spells them, a `const` global `const`, a table of string pointers and an
-    address constant (C11 6.6p9) rendered, `<string.h>` for its own memcpy and the headers its calls need; (2) still
-    builds with another unit's declarations of what it defines after it, so each definition has the source's type (C11
-    6.2.7p2: a global defined without its `const` is another type); and (3) linked with a driver, prints what the
-    original prints, under Clang and GCC. It had named every struct undefined, spelled a typedef'd anonymous struct
-    `struct $anon0`, dropped `const`, refused `const char *tab[] = {"a"}`, and called memcpy, `va_start` and
-    `atomic_fetch_add` undeclared."""
+    """CF-LINKEMIT, CF-LINKTWIN: each unit's linkable emit, on each rail (the oracle's and the twin's `--linkable`),
+    (1) builds alone under `-std=c11 -Wall -Werror` -- its struct, union and typedef definitions as the source spells
+    them, a `const` global `const`, a table of string pointers and an address constant (C11 6.6p9) rendered,
+    `<string.h>` for its own memcpy and the headers its calls need; (2) still builds with another unit's declarations
+    of what it defines after it, so each definition has the source's type (C11 6.2.7p2: a global defined without its
+    `const` is another type); and (3) linked with a driver, prints what the original prints, under Clang and GCC. It
+    had named every struct undefined, spelled a typedef'd anonymous struct `struct $anon0`, dropped `const`, refused
+    `const char *tab[] = {"a"}`, and called memcpy, `va_start` and `atomic_fetch_add` undeclared."""
     from bcir.frontends.cfront.emit import emit_linkable
 
     runtime_c = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "runtime", "c")
@@ -508,72 +540,630 @@ def test_linkable_emit_defines_what_the_source_defines():
     for name, body, types, decls, values in _LINKEMIT_UNITS:
         src = "#include <stdint.h>\n" + body
         r = compile_unit(src, check_clang=False)
-        linkable = emit_linkable(r.lowered, r.emitted)
-        printed = " ".join(f'printf(" %u", (unsigned)({v}));' for v in values)
-        driver = (
-            f"#include <stdint.h>\n#include <stdio.h>\n{types}{decls}"
-            f"static const uint32_t lk_in[] = {{{_LINKEMIT_GAPS}}};\n"
-            "int main(void) {\n  for (unsigned n = 0; n < sizeof lk_in / sizeof lk_in[0]; n++) {\n"
-            f"    uint32_t s = lk_in[n];\n    {printed}\n    putchar('\\n');\n  }}\n  return 0;\n}}\n"
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            paths = {}
-            for label, text in (
-                ("linkable", linkable),
-                ("declared", linkable + "\n" + decls),
-                ("original", src),
-                ("driver", driver),
+        rc, twin, err = _twin_artifact(src, f"{name}.c")
+        assert rc == 0, f"{name}: the twin's linkable emit\n{err}"
+        for rail, linkable in (("oracle", emit_linkable(r.lowered, r.emitted)), ("twin", twin)):
+            _linkemit_unit_runs(
+                compilers, runtime_c, f"{name} ({rail})", name, src, linkable, types, decls, values
+            )
+
+
+def _linkemit_unit_runs(
+    compilers, runtime_c, label_of, name, src, linkable, types, decls, values
+) -> None:
+    """`test_linkable_emit_defines_what_the_source_defines` of one rail's artifact of the unit `name`."""
+    printed = " ".join(f'printf(" %u", (unsigned)({v}));' for v in values)
+    driver = (
+        f"#include <stdint.h>\n#include <stdio.h>\n{types}{decls}"
+        f"static const uint32_t lk_in[] = {{{_LINKEMIT_GAPS}}};\n"
+        "int main(void) {\n  for (unsigned n = 0; n < sizeof lk_in / sizeof lk_in[0]; n++) {\n"
+        f"    uint32_t s = lk_in[n];\n    {printed}\n    putchar('\\n');\n  }}\n  return 0;\n}}\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = {}
+        for label, text in (
+            ("linkable", linkable),
+            ("declared", linkable + "\n" + decls),
+            ("original", src),
+            ("driver", driver),
+        ):
+            paths[label] = os.path.join(tmp, f"{label}.c")
+            with open(paths[label], "w", encoding="utf-8") as f:
+                f.write(text)
+        for cc in compilers:
+            for label in ("linkable", "declared"):
+                b = subprocess.run(
+                    [
+                        cc,
+                        "-std=c11",
+                        "-Wall",
+                        "-Werror",
+                        *_LINKEMIT_QUIET.get(name, ()),
+                        "-I",
+                        runtime_c,
+                    ]
+                    + ["-c", paths[label], "-o", os.path.join(tmp, f"{label}.o")],
+                    capture_output=True,
+                    text=True,
+                )
+                assert b.returncode == 0, (
+                    f"{label_of}: the {label} linkable emit does not build ({cc})\n{b.stderr}"
+                )
+            outs = []
+            for label, parts in (
+                ("original", [paths["original"]]),
+                (
+                    "linkable",
+                    [
+                        "-I",
+                        runtime_c,
+                        paths["linkable"],
+                        os.path.join(runtime_c, "bcir_quarantine.c"),
+                    ],
+                ),
             ):
-                paths[label] = os.path.join(tmp, f"{label}.c")
-                with open(paths[label], "w", encoding="utf-8") as f:
-                    f.write(text)
-            for cc in compilers:
-                for label in ("linkable", "declared"):
-                    b = subprocess.run(
-                        [
-                            cc,
-                            "-std=c11",
-                            "-Wall",
-                            "-Werror",
-                            *_LINKEMIT_QUIET.get(name, ()),
-                            "-I",
-                            runtime_c,
-                        ]
-                        + ["-c", paths[label], "-o", os.path.join(tmp, f"{label}.o")],
-                        capture_output=True,
-                        text=True,
-                    )
-                    assert b.returncode == 0, (
-                        f"{name}: the {label} linkable emit does not build ({cc})\n{b.stderr}"
-                    )
-                outs = []
-                for label, parts in (
-                    ("original", [paths["original"]]),
-                    (
-                        "linkable",
-                        [
-                            "-I",
-                            runtime_c,
-                            paths["linkable"],
-                            os.path.join(runtime_c, "bcir_quarantine.c"),
-                        ],
+                prog = os.path.join(tmp, label)
+                b = subprocess.run(
+                    host_link_args(
+                        [cc, "-std=c11", "-O2", *parts, paths["driver"], "-o", prog, "-lm"]
                     ),
+                    capture_output=True,
+                    text=True,
+                )
+                assert b.returncode == 0, (
+                    f"{label_of}: the {label} program does not build ({cc})\n{b.stderr}"
+                )
+                outs.append(
+                    subprocess.run([prog], capture_output=True, text=True, timeout=120).stdout
+                )
+            assert outs[0] and outs[1] == outs[0], (label_of, cc, outs[0][:200], outs[1][:200])
+
+
+def _build(cc: str, tmp: str, files: dict, *flags: str, link: bool = True) -> "tuple":
+    """Write `files` (name -> text) in `tmp` and build them with `cc`: (status, the program's path, diagnostics). A
+    unit an artifact calls the quarantine from links `bcir_quarantine.c`."""
+    paths = []
+    for fname, text in files.items():
+        path = os.path.join(tmp, fname)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        paths.append(path)
+    prog = os.path.join(tmp, "prog")
+    cmd = [cc, "-std=c11", *flags, "-I", _C, *paths]
+    cmd += (
+        [os.path.join(_C, "bcir_quarantine.c"), "-o", prog, "-lm"] if link else ["-c", "-o", prog]
+    )
+    b = subprocess.run(host_link_args(cmd) if link else cmd, capture_output=True, text=True)
+    return b.returncode, prog, b.stderr
+
+
+def test_the_twins_linkable_artifacts_link_to_each_other_and_to_the_oracles():
+    """CF-LINKTWIN: the twin's linkable artifacts (`bcir-cc --linkable`) of the caller and the callee link to each
+    other, and each to the oracle's of the other, `-Wall -Werror` -- no original source in the image -- and every
+    binary behaves as the all-original build does (sqrt(16) + 1 == 5)."""
+    cc = _cc()
+    if cc is None:
+        return
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    arts = {}
+    for role, src in (("main", _MAIN), ("lib", _LIB)):
+        r = compile_unit(src, check_clang=False)
+        rc, twin, err = _twin_artifact(src, f"{role}.c")
+        assert rc == 0, err
+        arts[role] = {"oracle": emit_linkable(r.lowered, r.emitted), "twin": twin}
+    for m, li in (("twin", "twin"), ("twin", "oracle"), ("oracle", "twin")):
+        with tempfile.TemporaryDirectory() as tmp:
+            files = {"m.c": arts["main"][m], "l.c": arts["lib"][li]}
+            rc, prog, err = _build(cc, tmp, files, "-Wall", "-Werror")
+            assert rc == 0, f"{m} caller, {li} callee: {err}"
+            assert subprocess.run([prog]).returncode == 5, (m, li)
+
+
+def test_the_twins_linkable_globals_define_declare_and_refuse():
+    """CF-LINKTWIN: the twin defines a unit's globals as the oracle does -- an `extern` one declared, never defined; a
+    definition with its initializer re-spelled, a table's braces kept; the address of a global declared before it by
+    name; `sizeof` folded on the target -- and the pair links and runs (7*6+1, then *(&base) + 4*sizeof = 7+16). A
+    global whose initializer names one declared after it (no constant C takes: the name is not yet declared) is refused
+    by name, as the oracle refuses it, and so is one whose initializer reads an object."""
+    cc = _cc()
+    if cc is None:  # the twin is built, and the artifacts linked, with it
+        return
+    user_src = "extern unsigned base;\nunsigned scaled(unsigned x) { return base * x + 1u; }\n"
+    def_src = (
+        "unsigned base = 7u;\nunsigned tab[3] = {1u, 2u, 3u};\n"
+        "unsigned peek(void) { return tab[0] + base; }\n"
+    )
+    rc, u_text, err = _twin_artifact(user_src)
+    assert rc == 0, err
+    rc, d_text, err = _twin_artifact(def_src)
+    assert rc == 0, err
+    assert re.search(r"^extern uint32_t base;$", u_text, re.M), u_text
+    assert re.search(r"^uint32_t base = 7;$", d_text, re.M), d_text
+    assert re.search(r"^uint32_t tab\[3\] = \{1, 2, 3\};$", d_text, re.M), d_text
+    assert re.search(r"^uint32_t scaled\(uint32_t x\)$", u_text, re.M), (
+        u_text
+    )  # exported, its real name
+    assert not re.search(r"^static ", u_text, re.M), u_text
+    a4_src = (
+        "unsigned base = 7u;\nunsigned *pp = &base;\n"
+        "unsigned sz = sizeof(unsigned) * 4u;\n"
+        "unsigned geto(void) { return base; }\n"
+    )
+    rc, a4, err = _twin_artifact(a4_src)
+    assert rc == 0, err
+    assert re.search(r"^uint32_t \* pp = &base;$", a4, re.M), a4  # the relocation, by name
+    assert re.search(r"^uint32_t sz = 16;$", a4, re.M), a4  # sizeof folded on the ABI
+    with tempfile.TemporaryDirectory() as tmp:
+        main = "extern unsigned scaled(unsigned);\nint main(void){ return (int)scaled(6u); }\n"
+        rc, prog, err = _build(
+            cc, tmp, {"main.c": main, "a.c": u_text, "b.c": d_text}, "-Wall", "-Werror"
+        )
+        assert rc == 0, err
+        assert subprocess.run([prog]).returncode == 43
+    with tempfile.TemporaryDirectory() as tmp:
+        main = (
+            "extern unsigned *pp;\nextern unsigned sz;\nint main(void){ return (int)(*pp + sz); }\n"
+        )
+        rc, prog, err = _build(cc, tmp, {"main.c": main, "unit.c": a4}, "-Wall", "-Werror")
+        assert rc == 0, err
+        assert subprocess.run([prog]).returncode == 23
+    # the forms an entry takes, each rendered as the oracle renders it: a string's pieces one space apart, an element's
+    # address at two constant subscripts in their order, a constant's parentheses dropped -- around a floating one,
+    # its sign and an address
+    forms = (
+        "#include <stdint.h>\n"
+        "uint32_t lk_m[2][3] = {{1u, 2u, 3u}, {4u, 5u, 6u}};\nuint32_t *lk_mp = &lk_m[1][2];\n"
+        'const char *lk_cat = "ab" "cd";\n'
+        "double lk_pf = (1.5);\ndouble lk_nf = -(2.5);\nuint32_t *lk_pq = &(lk_m[0][1]);\n"
+        "uint32_t lk_forms(void) { return (uint32_t)lk_cat[2] + *lk_mp + *lk_pq + (uint32_t)lk_pf"
+        " + (uint32_t)-lk_nf; }\n"
+    )
+    spelled = {
+        "lk_mp": "&lk_m[1][2]",
+        "lk_cat": '"ab" "cd"',
+        "lk_pf": "1.5",
+        "lk_nf": "-2.5",
+        "lk_pq": "&lk_m[0][1]",
+    }
+    for rail, text in _artifacts(forms):
+        for gname, init in spelled.items():
+            assert re.search(rf"^[^=\n]*\b{gname} = {re.escape(init)};$", text, re.M), (
+                rail,
+                gname,
+                text,
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            main = "#include <stdint.h>\nuint32_t lk_forms(void);\nint main(void){ return (int)lk_forms(); }\n"
+            rc, prog, err = _build(cc, tmp, {"main.c": main, "unit.c": text}, "-Wall", "-Werror")
+            assert rc == 0, (rail, err)
+            assert subprocess.run([prog]).returncode == 99 + 6 + 2 + 1 + 2, (
+                rail
+            )  # 'c' + 6 + 2 + 1 + 2
+    for src, gname in (
+        (
+            "unsigned *qq = &later;\nunsigned later = 3u;\nunsigned geti(void) { return later; }\n",
+            "qq",
+        ),
+        ("unsigned k = 3u;\nunsigned j = k + 1u;\nunsigned getj(void) { return j; }\n", "j"),
+    ):
+        rc, out, err = _twin_artifact(src)
+        assert rc == 1 and not out, (rc, out[:200])
+        assert (
+            f"linkable emit error: linkable emit: global '{gname}' has a non-renderable constant initializer"
+            in err
+        ), err
+        from bcir.frontends.cfront.emit import emit_linkable
+
+        r = compile_unit(src, check_clang=False)
+        try:
+            emit_linkable(r.lowered, r.emitted)
+            raise AssertionError(f"the oracle rendered {gname}")
+        except ValueError as e:
+            assert f"global {gname!r} has a non-renderable constant initializer" in str(e), str(e)
+
+
+def test_the_twins_linkable_honors_source_static_and_forward_declarations():
+    """CF-LINKTWIN: the twin keeps a source-`static` function and global `static` under its real name -- two units
+    each with a same-named static helper link into one binary (fa(2) + fb(1) = 11 + 101) -- declares every function
+    before its globals, so a static callee defined after its caller compiles, and renders a pointer's string literal
+    as the address constant it is, its table sized by its entries, not the string's bytes."""
+    cc = _cc()
+    if cc is None:  # the twin is built, and the artifacts linked, with it
+        return
+    a_src = (
+        "static unsigned mix(unsigned x) { return x * 3u; }\n"
+        "static unsigned seed = 5u;\n"
+        "unsigned fa(unsigned x) { return mix(x) + seed; }\n"
+    )
+    b_src = "static unsigned mix(unsigned x) { return x + 100u; }\nunsigned fb(unsigned x) { return mix(x); }\n"
+    rc, a_text, err = _twin_artifact(a_src)
+    assert rc == 0, err
+    rc, b_text, err = _twin_artifact(b_src)
+    assert rc == 0, err
+    assert re.search(r"^static uint32_t mix\(uint32_t x\)$", a_text, re.M), a_text
+    assert re.search(r"^static uint32_t seed = 5;$", a_text, re.M), a_text
+    assert re.search(r"^uint32_t fa\(uint32_t x\)$", a_text, re.M), a_text
+    fwd_src = "static int r(int v);\nint s(int x) { return r(x); }\nstatic int r(int x) { return x + 1; }\n"
+    rc, fwd, err = _twin_artifact(fwd_src)
+    assert rc == 0, err
+    assert re.search(r"^static int32_t r\(int32_t x\);$", fwd, re.M), (
+        fwd
+    )  # every function declared up front
+    rc, ptab, err = _twin_artifact('char *tab[] = {"hi"};\nunsigned f4(void) { return 3u; }\n')
+    assert rc == 0, err
+    assert re.search(r'^char \* tab\[1\] = \{"hi"\};$', ptab, re.M), ptab
+    rc, fl, err = _twin_artifact(
+        "double dv = 1.5;\ndouble nv = -2.5;\nint off = -7;\n"
+        'char msg[] = "hi";\nfloat fs = 0.5f;\nunsigned fz(unsigned x) { return x + 1u; }\n'
+    )
+    assert rc == 0, err
+    for line in (
+        "double dv = 1.5;",
+        "double nv = -2.5;",
+        "int32_t off = -7;",
+        'char msg[3] = "hi";',
+        "float fs = 0.5f;",
+    ):
+        assert re.search("^" + re.escape(line) + "$", fl, re.M), (line, fl)
+    with tempfile.TemporaryDirectory() as tmp:
+        main = (
+            "extern unsigned fa(unsigned);\nextern unsigned fb(unsigned);\n"
+            "int main(void){ return (int)(fa(2u) + fb(1u)); }\n"
+        )
+        rc, prog, err = _build(
+            cc, tmp, {"main.c": main, "a.c": a_text, "b.c": b_text}, "-Wall", "-Werror"
+        )
+        assert rc == 0, err
+        assert subprocess.run([prog]).returncode == 112
+    for name, text in (("fwd", fwd), ("ptab", ptab), ("floats", fl)):
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, _prog, err = _build(cc, tmp, {f"{name}.c": text}, "-Wall", "-Werror", link=False)
+            assert rc == 0, (name, err)
+
+
+# CF-LINKTWIN: initializers whose value is the target's -- the sizes of `long`, a pointer, `long double`, `size_t` and a
+# struct of a `long`, and `(unsigned long)-1` -- and what each target's data model makes of them, by global
+_TARGET_INITS = (
+    "#include <stdint.h>\n#include <stddef.h>\n"
+    "unsigned long lk_l = sizeof(long);\n"
+    "unsigned lk_ps = sizeof(void *);\n"
+    "unsigned long long lk_ld = sizeof(long double);\n"
+    "unsigned long lk_max = (unsigned long)-1;\n"
+    "size_t lk_sz = sizeof(size_t) * 3u;\n"
+    "struct lk_s { char c; long l; } lk_st = {1, 2};\n"
+    "unsigned lk_sts = sizeof(struct lk_s);\n"
+    "unsigned lk_get(unsigned s) { return s + lk_ps + (unsigned)lk_l + lk_sts + (unsigned)lk_ld + (unsigned)lk_sz; }\n"
+)
+_TARGET_VALUES = {
+    "x86_64-linux": {
+        "lk_l": "8",
+        "lk_ps": "8",
+        "lk_ld": "16",
+        "lk_max": "18446744073709551615u",
+        "lk_sz": "24",
+        "lk_sts": "16",
+    },
+    "aarch64-linux": {
+        "lk_l": "8",
+        "lk_ps": "8",
+        "lk_ld": "16",
+        "lk_max": "18446744073709551615u",
+        "lk_sz": "24",
+        "lk_sts": "16",
+    },
+    "riscv64-linux": {
+        "lk_l": "8",
+        "lk_ps": "8",
+        "lk_ld": "16",
+        "lk_max": "18446744073709551615u",
+        "lk_sz": "24",
+        "lk_sts": "16",
+    },
+    "x86_64-windows": {
+        "lk_l": "4",
+        "lk_ps": "8",
+        "lk_ld": "8",
+        "lk_max": "4294967295",
+        "lk_sz": "24",
+        "lk_sts": "8",
+    },
+    "i386-linux": {
+        "lk_l": "4",
+        "lk_ps": "4",
+        "lk_ld": "12",
+        "lk_max": "4294967295",
+        "lk_sz": "12",
+        "lk_sts": "8",
+    },
+}
+
+
+def test_the_twins_linkable_initializers_fold_on_each_target_as_the_oracles():
+    """CF-LINKTWIN: on each of the five targets, each rail's linkable artifact defines the globals whose initializer
+    is the target's -- `sizeof` of `long`, a pointer, `long double`, `size_t` and a struct of a `long`, and
+    `(unsigned long)-1` -- with the value that target's data model gives it: the twin folds an initializer for the
+    target it compiles for, as the oracle does."""
+    if _cc() is None:  # the twin is built with it
+        return
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    for target, want in _TARGET_VALUES.items():
+        rc, twin, err = _twin_artifact(_TARGET_INITS, target=target)
+        assert rc == 0, (target, err)
+        r = compile_unit(_TARGET_INITS, check_clang=False, target=target)
+        for rail, text in (("oracle", emit_linkable(r.lowered, r.emitted)), ("twin", twin)):
+            for gname, value in want.items():
+                assert re.search(rf"^[^=\n]*\b{gname} = {re.escape(value)};$", text, re.M), (
+                    target,
+                    rail,
+                    gname,
+                    value,
+                )
+            assert re.search(r"^[^=\n]*\blk_st = \{1, 2\};$", text, re.M), (target, rail)
+
+
+# CF-LINKTWIN: a static function that calls an exported one. The oracle's artifact kept `static` on every line of a
+# static function's text, its forward declaration of the exported callee among them -- `static uint32_t g(uint32_t
+# x);` after g's own declaration, which no compiler takes (C11 6.2.2p7); the twin's kept it only on lines declaring a
+# static function. Both rails now keep it there alone.
+_STATIC_CALLS_EXPORTED = (
+    "#include <stdint.h>\n"
+    "uint32_t g(uint32_t x) { return x + 1u; }\n"
+    "static uint32_t h(uint32_t x) { return g(x) * 2u; }\n"
+    "uint32_t k(uint32_t x) { return h(x) + 3u; }\n"
+)
+
+
+def test_a_static_function_calling_an_exported_one_links_on_both_rails():
+    """CF-LINKTWIN: each rail's linkable artifact of a unit whose static function calls an exported one builds alone
+    under `-Wall -Werror` and, linked with a driver, returns what the original does: k(4) = (4 + 1) * 2 + 3."""
+    cc = _cc()
+    if cc is None:
+        return
+    for rail, text in _artifacts(_STATIC_CALLS_EXPORTED):
+        assert re.search(r"^static uint32_t h\(", text, re.M), (rail, text)
+        assert not re.search(r"^static uint32_t (g|k)\(", text, re.M), (rail, text)
+        with tempfile.TemporaryDirectory() as tmp:
+            main = "#include <stdint.h>\nuint32_t k(uint32_t x);\nint main(void){ return (int)k(4u); }\n"
+            rc, prog, err = _build(cc, tmp, {"main.c": main, "unit.c": text}, "-Wall", "-Werror")
+            assert rc == 0, (rail, err)
+            assert subprocess.run([prog]).returncode == 13, rail
+
+
+# CF-LINKTWIN: names a C11 header defines as macros -- `bool` (<stdbool.h>), `alignas` and `alignof` (<stdalign.h>),
+# keywords in C23 -- carried into the artifact by the source's types (and the oracle's own `bool` temps). The oracle's
+# artifact named them without the header, and did not build as C11. (`true` and `false`, the header's too, neither
+# front end reads as a constant outside `#if`.)
+_C11_MACROS = (
+    "#include <stdint.h>\n#include <stdbool.h>\n#include <stdalign.h>\n"
+    "struct flags { bool on; alignas(8) uint32_t n; };\n"
+    "struct flags lk_fl = {1, 3u};\n"
+    "bool lk_any = 0;\n"
+    "uint32_t lk_flags(uint32_t s) { lk_fl.n += s; return (uint32_t)(bool)(lk_fl.n & 2u) + lk_fl.on"
+    " + (uint32_t)alignof(struct flags) + (uint32_t)lk_any; }\n"
+)
+
+
+# ... and a unit whose global's declaration alone names `bool`, on the oracle (its `_cname`; the twin spells the global
+# `_Bool`): the oracle had read its headers off its functions and types, where none does (CF-LINKTWIN)
+_C11_BOOL_GLOBAL = (
+    "#include <stdint.h>\n#include <stdbool.h>\n"
+    "bool lk_on = 1;\n"
+    "uint32_t lk_flags(uint32_t s) { return s + (uint32_t)lk_on; }\n"
+)
+#: The names C11 spells as a header's macros, and the header each needs (`emit._C11_MACRO_HEADERS`'s, held here apart).
+_C11_NAMES = (
+    (re.compile(r"\bbool\b"), "#include <stdbool.h>\n"),
+    (re.compile(r"\b(?:alignas|alignof)\b"), "#include <stdalign.h>\n"),
+)
+
+
+def test_the_linkable_emit_includes_the_header_of_bool_and_alignas_on_both_rails():
+    """CF-LINKTWIN: each rail's linkable artifact of a C11 unit spelling `bool`, `alignas` and `alignof` -- in a
+    struct it defines, a global and a function -- includes <stdbool.h> and <stdalign.h>; the artifact of a unit whose
+    global's declaration alone names `bool` includes the header of every such name its text spells, wherever it
+    spells it; and each builds alone under `-std=c11 -Wall -Werror` and returns what the original does."""
+    cc = _cc()
+    if cc is None:
+        return
+    from bcir.frontends.cfront.emit import _code_only
+
+    for unit in (_C11_MACROS, _C11_BOOL_GLOBAL):
+        for rail, text in _artifacts(unit):
+            code = _code_only(text)
+            for name_re, include in _C11_NAMES:
+                if name_re.search(code):
+                    assert include in text, (rail, include, text[:600])
+            if unit is _C11_MACROS:  # its struct spells all three, on each rail
+                assert "#include <stdbool.h>\n" in text and "#include <stdalign.h>\n" in text, (
+                    rail,
+                    text[:400],
+                )
+            with tempfile.TemporaryDirectory() as tmp:
+                rc, _prog, err = _build(cc, tmp, {"unit.c": text}, "-Wall", "-Werror", link=False)
+                assert rc == 0, (rail, err)
+            with tempfile.TemporaryDirectory() as tmp:
+                outs = []
+                for label, files in (
+                    ("original", {"o.c": unit}),
+                    ("linkable", {"l.c": text}),
                 ):
-                    prog = os.path.join(tmp, label)
-                    b = subprocess.run(
-                        host_link_args(
-                            [cc, "-std=c11", "-O2", *parts, paths["driver"], "-o", prog, "-lm"]
-                        ),
-                        capture_output=True,
-                        text=True,
+                    d = os.path.join(tmp, label)
+                    os.mkdir(d)
+                    driver = (
+                        "#include <stdint.h>\n#include <stdio.h>\nuint32_t lk_flags(uint32_t s);\n"
+                        'int main(void){ for (uint32_t s = 0; s < 6; s++) printf("%u ", (unsigned)lk_flags(s));'
+                        " return 0; }\n"
                     )
-                    assert b.returncode == 0, (
-                        f"{name}: the {label} program does not build ({cc})\n{b.stderr}"
+                    rc, prog, err = _build(cc, d, {**files, "drv.c": driver})
+                    assert rc == 0, (rail, label, err)
+                    outs.append(subprocess.run([prog], capture_output=True, text=True).stdout)
+                assert outs[0] and outs[1] == outs[0], (rail, outs)
+
+
+# CF-LINKTWIN, the corpus: every fixture through both rails' linkable emit. The headers a fixture's original is built
+# with (its tests prepend them); the errors an artifact may not have -- C's own and the ones C23 and GCC 14 made of
+# implicit declarations and incompatible pointers -- its warnings being the source's own.
+_ORIGINAL_HEADERS = (
+    "stdint.h",
+    "stdio.h",
+    "string.h",
+    "stddef.h",
+    "stdlib.h",
+    "math.h",
+    "stdatomic.h",
+    "stdarg.h",
+    "stdbool.h",
+)
+_LINKABLE_ERRORS = (
+    "-w",
+    "-Werror=implicit-function-declaration",
+    "-Werror=implicit-int",
+    "-Werror=int-conversion",
+    "-Werror=incompatible-pointer-types",
+    "-Werror=return-type",
+)
+#: The fixtures whose artifact builds on neither rail, each with why -- an open defect both rails share, held as an
+#: exact set: a fix, or one more, changes it. The artifact defines each function with the emit's parameter types,
+#: which keep no qualifier below a parameter's top level, so a function used as a value meets a pointer whose type
+#: keeps the source's (`uint32_t (*)(const uint32_t *)` from `uint32_t (uint32_t *)`).
+_LINKABLE_OPEN = {
+    "cfront_quals_link.c": "a parameter qualified below its top level, in a function used as a value"
+}
+
+
+def _original_std(clang: str, path: str) -> "str | None":
+    """The C standard the fixture's original builds under, with its tests' headers: C11, else C2x; None when
+    neither."""
+    heads = [x for h in _ORIGINAL_HEADERS for x in ("-include", h)]
+    for std in ("c11", "c2x"):
+        b = subprocess.run(
+            [clang, f"-std={std}", *_LINKABLE_ERRORS, *heads, "-I", _C, "-fsyntax-only", path],
+            capture_output=True,
+            text=True,
+        )
+        if b.returncode == 0:
+            return std
+    return None
+
+
+def _builds_alone(clang: str, std: str, text: str, tmp: str) -> str:
+    """'' when `text` builds alone under `std` with no error `_LINKABLE_ERRORS` makes one, else its first error."""
+    path = os.path.join(tmp, "artifact.c")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    b = subprocess.run(
+        [clang, f"-std={std}", *_LINKABLE_ERRORS, "-I", _C, "-fsyntax-only", path],
+        capture_output=True,
+        text=True,
+    )
+    return "" if b.returncode == 0 else (b.stderr.strip().splitlines() or ["?"])[0]
+
+
+def test_the_twins_linkable_artifact_is_the_oracles_over_the_corpus():
+    """CF-LINKTWIN: every corpus fixture (`runtime/c/cfront_*.c`) through both rails' linkable emit -- the oracle's
+    `emit_linkable` and the twin's `bcir-cc --linkable`. The two refuse the same fixtures, for the same global; where
+    they render, the twin's artifact (1) defines the unit's types as the oracle's does, the same lines in the same
+    order, right after its attestation; (2) holds each global the oracle's does, line for line -- its storage class,
+    its thread storage, its name and dimensions, and its initializer re-spelled byte for byte -- as many times as the
+    oracle's; and (3) builds alone wherever the original does, under the original's C standard, as the oracle's does:
+    the fixtures neither builds are `_LINKABLE_OPEN`, exactly. The twin had emitted the unit's functions alone."""
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    clang = shutil.which("clang")
+    if clang is None:
+        return
+    exe = _build_bcir_cc(_session_build_dir())
+    seen = {
+        "units": 0,
+        "with_types": 0,
+        "with_globals": 0,
+        "with_inits": 0,
+        "refused": 0,
+        "built": 0,
+    }
+    fails = {"oracle": set(), "twin": set()}
+    for path in sorted(glob.glob(os.path.join(_C, "cfront_*.c"))):
+        fx = os.path.basename(path)
+        src = open(path, encoding="utf-8").read()
+        run = subprocess.run(
+            [exe, "--linkable", "-I", _C, path], capture_output=True, text=True, timeout=300
+        )
+        try:
+            r = compile_unit(src, check_clang=False, includes=_includes_for(fx))
+        except Exception as e:  # noqa: BLE001 -- a unit the oracle refuses: the twin refuses it too
+            assert run.returncode != 0, f"{fx}: the oracle refuses it ({e}), the twin renders it"
+            continue
+        if r.fallback:
+            assert run.returncode != 0, (
+                f"{fx}: the oracle falls back ({r.fallback}), the twin renders it"
+            )
+            continue
+        seen["units"] += 1
+        try:
+            oracle = emit_linkable(r.lowered, r.emitted)
+        except ValueError as e:
+            seen["refused"] += 1
+            gname = re.search(r"global '([^']+)'", str(e)).group(1)
+            assert run.returncode == 1 and f"global '{gname}'" in run.stderr, (
+                fx,
+                str(e),
+                run.stderr[-300:],
+            )
+            continue
+        assert run.returncode == 0, (
+            f"{fx}: the twin refuses what the oracle renders\n{run.stderr[-300:]}"
+        )
+        twin = run.stdout
+        defs = list(r.lowered.type_defs)
+        after = twin.split(" */\n", 1)[1]
+        if defs:
+            seen["with_types"] += 1
+            block = "\n".join(defs) + "\n"
+            assert after.startswith(block), (
+                f"{fx}: the types\n{block}\n----\n{after[: len(block) + 200]}"
+            )
+            nxt = after[len(block) :].split("\n", 1)[0]
+            assert not nxt.endswith(" ;"), f"{fx}: a type the oracle does not define: {nxt}"
+        want: dict = {}
+        threads = r.lowered.thread_globals
+        for gname, _ct, vals, is_extern, is_static in r.lowered.globals_decl:
+            tls = "_Thread_local " if gname in threads else ""
+            if is_extern:
+                pat = rf"^extern {tls}[^=\n]*\b{re.escape(gname)}(\[\d*\])*;$"
+            else:
+                store = "static " if is_static else ""
+                init = f" = {re.escape(vals[0])}" if vals else ""
+                seen["with_inits"] += bool(vals)
+                pat = rf"^(?!static |extern |\s){store}{tls}[^=\n]*\b{re.escape(gname)}(\[\d*\])*{init};$"
+                if store:
+                    pat = rf"^{store}{tls}(?!static |extern )[^=\n]*\b{re.escape(gname)}(\[\d*\])*{init};$"
+            want[pat] = want.get(pat, 0) + 1
+        seen["with_globals"] += bool(want)
+        for pat, n in want.items():
+            got = len(re.findall(pat, twin, re.M))
+            assert got == n, f"{fx}: {n} global line(s) /{pat}/, the twin's artifact has {got}"
+        std = _original_std(clang, path)
+        if std is None:
+            continue
+        seen["built"] += 1
+        with tempfile.TemporaryDirectory() as tmp:
+            for rail, text in (("oracle", oracle), ("twin", twin)):
+                err = _builds_alone(clang, std, text, tmp)
+                if err:
+                    fails[rail].add(fx)
+                    assert fx in _LINKABLE_OPEN, (
+                        f"{fx}: the {rail}'s artifact does not build alone ({std})\n{err}"
                     )
-                    outs.append(
-                        subprocess.run([prog], capture_output=True, text=True, timeout=120).stdout
-                    )
-                assert outs[0] and outs[1] == outs[0], (name, cc, outs[0][:200], outs[1][:200])
+    for rail, failed in fails.items():
+        assert failed == set(_LINKABLE_OPEN), (rail, sorted(failed))
+    # what the corpus exercises (2026-10-27: 228 units rendered and built, 118 with types, 45 with globals, 120
+    # initializers): a vacuous pass -- no fixture rendered, no global compared -- is no pass
+    assert seen["units"] >= 220 and seen["built"] >= 220, seen
+    assert seen["with_types"] >= 110 and seen["with_globals"] >= 42 and seen["with_inits"] >= 110, (
+        seen
+    )
 
 
 if __name__ == "__main__":

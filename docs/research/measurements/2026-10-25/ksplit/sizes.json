@@ -1,0 +1,535 @@
+{
+ "what": "where the split applies, on the tree after: ws_sizes.c's figures -- the state's workspace need (bcir_decoder_workspace_need at four threads; under the blocked contract the binary32 attention's copies, from ATT-CONTIG's 1,024 positions) beside the K-split partials the backward's largest GEMM group would take (blocks x m x n floats over a group's weight adjoints at least four K blocks deep) -- and split_probe.py's copy of the tree after's unit under step_ab (two rounds: nine steps, three states' warm step and two rounds' steps), which logs each call the split rule weighs: m, n, the depth, its K blocks, its partials' bytes and what its job's room had left (split where they fit, kept otherwise); lines counted with uniq -c, a_step the count over nine steps, room_bytes the most a job's room had left (its whole room, a 64-byte offset's slack past the figure); splits: step_ab lending each state the workspace for any pool (bcir_decoder_workspace_bytes), splits_at_the_need: measure_ksplit2.sh's need_ab.py copy lending the exact need at four threads (bcir_decoder_workspace_need), what the Python trainer lends (native.memory_plan). Args VOCAB WIDTH HEADS KVHEADS LAYERS FF BATCH TIME CONTRACT THREADS ROUNDS",
+ "sizes": [
+  "geo    B4 T512   contract 14: workspace need     0.00 MiB (4 threads), K-split partials' largest group     1.25 MiB (qkv 0.94, gate/up 1.25, down 0.62, o 0.31, head 0.63; 5 K blocks)",
+  "geo    B4 T1024  contract 14: workspace need     4.00 MiB (4 threads), K-split partials' largest group     2.50 MiB (qkv 1.88, gate/up 2.50, down 1.25, o 0.62, head 1.27; 10 K blocks)",
+  "geo    B4 T2048  contract 14: workspace need     8.00 MiB (4 threads), K-split partials' largest group     4.75 MiB (qkv 3.56, gate/up 4.75, down 2.38, o 1.19, head 2.41; 19 K blocks)",
+  "9.84M  B8 T128   contract 46: workspace need     0.00 MiB (4 threads), K-split partials' largest group     0.00 MiB (qkv 0.00, gate/up 0.00, down 0.00, o 0.00, head 0.00; 3 K blocks)",
+  "9.84M  B8 T512   contract 46: workspace need     0.00 MiB (4 threads), K-split partials' largest group    30.00 MiB (qkv 11.25, gate/up 30.00, down 15.00, o 5.62, head 3.81; 10 K blocks)",
+  "9.84M  B8 T1024  contract 46: workspace need     5.75 MiB (4 threads), K-split partials' largest group    57.00 MiB (qkv 21.38, gate/up 57.00, down 28.50, o 10.69, head 7.24; 19 K blocks)"
+ ],
+ "splits": [
+  {
+   "args": "260 128 4 4 3 256 4 512 14 4 2",
+   "calls": [],
+   "split_a_step": 0,
+   "kept_a_step": 0,
+   "room_bytes": 0
+  },
+  {
+   "args": "260 128 4 4 3 256 4 1024 14 4 2",
+   "calls": [
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 128,
+     "n": 128,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 655360,
+     "room_left_bytes": 15466559,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 128,
+     "n": 128,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 655360,
+     "room_left_bytes": 16121919,
+     "decision": "split"
+    },
+    {
+     "lines": 54,
+     "a_step": 6.0,
+     "m": 128,
+     "n": 128,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 655360,
+     "room_left_bytes": 16777279,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 128,
+     "n": 256,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 1310720,
+     "room_left_bytes": 16777279,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 256,
+     "n": 128,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 1310720,
+     "room_left_bytes": 15466559,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 256,
+     "n": 128,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 1310720,
+     "room_left_bytes": 16777279,
+     "decision": "split"
+    },
+    {
+     "lines": 9,
+     "a_step": 1.0,
+     "m": 260,
+     "n": 128,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 1331200,
+     "room_left_bytes": 16777279,
+     "decision": "split"
+    }
+   ],
+   "split_a_step": 22.0,
+   "kept_a_step": 0,
+   "room_bytes": 16777279
+  },
+  {
+   "args": "260 128 4 4 3 256 4 2048 14 4 2",
+   "calls": [
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 128,
+     "n": 128,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 1245184,
+     "room_left_bytes": 31064127,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 128,
+     "n": 128,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 1245184,
+     "room_left_bytes": 32309311,
+     "decision": "split"
+    },
+    {
+     "lines": 54,
+     "a_step": 6.0,
+     "m": 128,
+     "n": 128,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 1245184,
+     "room_left_bytes": 33554495,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 128,
+     "n": 256,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 2490368,
+     "room_left_bytes": 33554495,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 256,
+     "n": 128,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 2490368,
+     "room_left_bytes": 31064127,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 256,
+     "n": 128,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 2490368,
+     "room_left_bytes": 33554495,
+     "decision": "split"
+    },
+    {
+     "lines": 9,
+     "a_step": 1.0,
+     "m": 260,
+     "n": 128,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 2529280,
+     "room_left_bytes": 33554495,
+     "decision": "split"
+    }
+   ],
+   "split_a_step": 22.0,
+   "kept_a_step": 0,
+   "room_bytes": 33554495
+  },
+  {
+   "args": "260 384 8 4 6 1024 8 128 46 4 2",
+   "calls": [],
+   "split_a_step": 0,
+   "kept_a_step": 0,
+   "room_bytes": 0
+  },
+  {
+   "args": "260 384 8 4 6 1024 8 512 46 4 2",
+   "calls": [],
+   "split_a_step": 0,
+   "kept_a_step": 0,
+   "room_bytes": 0
+  },
+  {
+   "args": "260 384 8 4 6 1024 8 1024 46 4 2",
+   "calls": [
+    {
+     "lines": 54,
+     "a_step": 6.0,
+     "m": 1024,
+     "n": 384,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 29884416,
+     "room_left_bytes": 66584639,
+     "decision": "split"
+    },
+    {
+     "lines": 54,
+     "a_step": 6.0,
+     "m": 1024,
+     "n": 384,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 29884416,
+     "room_left_bytes": 96469055,
+     "decision": "split"
+    },
+    {
+     "lines": 54,
+     "a_step": 6.0,
+     "m": 192,
+     "n": 384,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 5603328,
+     "room_left_bytes": 79659071,
+     "decision": "split"
+    },
+    {
+     "lines": 54,
+     "a_step": 6.0,
+     "m": 192,
+     "n": 384,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 5603328,
+     "room_left_bytes": 85262399,
+     "decision": "split"
+    },
+    {
+     "lines": 9,
+     "a_step": 1.0,
+     "m": 260,
+     "n": 384,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 7587840,
+     "room_left_bytes": 96469055,
+     "decision": "split"
+    },
+    {
+     "lines": 54,
+     "a_step": 6.0,
+     "m": 384,
+     "n": 1024,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 29884416,
+     "room_left_bytes": 96469055,
+     "decision": "split"
+    },
+    {
+     "lines": 108,
+     "a_step": 12.0,
+     "m": 384,
+     "n": 384,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 11206656,
+     "room_left_bytes": 96469055,
+     "decision": "split"
+    }
+   ],
+   "split_a_step": 43.0,
+   "kept_a_step": 0,
+   "room_bytes": 96469055
+  }
+ ],
+ "splits_at_the_need": [
+  {
+   "args": "260 128 4 4 3 256 4 1024 14 4 2",
+   "calls": [
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 128,
+     "n": 128,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 655360,
+     "room_left_bytes": 2883647,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 128,
+     "n": 128,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 655360,
+     "room_left_bytes": 3539007,
+     "decision": "split"
+    },
+    {
+     "lines": 54,
+     "a_step": 6.0,
+     "m": 128,
+     "n": 128,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 655360,
+     "room_left_bytes": 4194367,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 128,
+     "n": 256,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 1310720,
+     "room_left_bytes": 4194367,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 256,
+     "n": 128,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 1310720,
+     "room_left_bytes": 2883647,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 256,
+     "n": 128,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 1310720,
+     "room_left_bytes": 4194367,
+     "decision": "split"
+    },
+    {
+     "lines": 9,
+     "a_step": 1.0,
+     "m": 260,
+     "n": 128,
+     "k": 4096,
+     "k_blocks": 10,
+     "partials_bytes": 1331200,
+     "room_left_bytes": 4194367,
+     "decision": "split"
+    }
+   ],
+   "split_a_step": 22.0,
+   "kept_a_step": 0,
+   "room_bytes": 4194367
+  },
+  {
+   "args": "260 128 4 4 3 256 4 2048 14 4 2",
+   "calls": [
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 128,
+     "n": 128,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 1245184,
+     "room_left_bytes": 5898303,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 128,
+     "n": 128,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 1245184,
+     "room_left_bytes": 7143487,
+     "decision": "split"
+    },
+    {
+     "lines": 54,
+     "a_step": 6.0,
+     "m": 128,
+     "n": 128,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 1245184,
+     "room_left_bytes": 8388671,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 128,
+     "n": 256,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 2490368,
+     "room_left_bytes": 8388671,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 256,
+     "n": 128,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 2490368,
+     "room_left_bytes": 5898303,
+     "decision": "split"
+    },
+    {
+     "lines": 27,
+     "a_step": 3.0,
+     "m": 256,
+     "n": 128,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 2490368,
+     "room_left_bytes": 8388671,
+     "decision": "split"
+    },
+    {
+     "lines": 9,
+     "a_step": 1.0,
+     "m": 260,
+     "n": 128,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 2529280,
+     "room_left_bytes": 8388671,
+     "decision": "split"
+    }
+   ],
+   "split_a_step": 22.0,
+   "kept_a_step": 0,
+   "room_bytes": 8388671
+  },
+  {
+   "args": "260 384 8 4 6 1024 8 1024 46 4 2",
+   "calls": [
+    {
+     "lines": 108,
+     "a_step": 12.0,
+     "m": 1024,
+     "n": 384,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 29884416,
+     "room_left_bytes": 6029375,
+     "decision": "kept"
+    },
+    {
+     "lines": 54,
+     "a_step": 6.0,
+     "m": 192,
+     "n": 384,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 5603328,
+     "room_left_bytes": 426047,
+     "decision": "kept"
+    },
+    {
+     "lines": 54,
+     "a_step": 6.0,
+     "m": 192,
+     "n": 384,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 5603328,
+     "room_left_bytes": 6029375,
+     "decision": "split"
+    },
+    {
+     "lines": 9,
+     "a_step": 1.0,
+     "m": 260,
+     "n": 384,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 7587840,
+     "room_left_bytes": 6029375,
+     "decision": "kept"
+    },
+    {
+     "lines": 54,
+     "a_step": 6.0,
+     "m": 384,
+     "n": 1024,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 29884416,
+     "room_left_bytes": 6029375,
+     "decision": "kept"
+    },
+    {
+     "lines": 108,
+     "a_step": 12.0,
+     "m": 384,
+     "n": 384,
+     "k": 8192,
+     "k_blocks": 19,
+     "partials_bytes": 11206656,
+     "room_left_bytes": 6029375,
+     "decision": "kept"
+    }
+   ],
+   "split_a_step": 6.0,
+   "kept_a_step": 37.0,
+   "room_bytes": 6029375
+  }
+ ]
+}

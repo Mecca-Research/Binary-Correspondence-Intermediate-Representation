@@ -85,6 +85,10 @@ def _build_c_cli(output: Path) -> None:
         str(runtime / "bcir_ai_kernels.c"),
         str(runtime / "bcir_llama.c"),
         str(runtime / "bcir_llama_cli.c"),
+        # DECODE-THREADS: the deterministic pool bcir-llama --threads lends the decoder (pthreads here, Win32 threads
+        # with no flag on Windows)
+        str(runtime / "bcir_tensor.c"),
+        *([] if sys.platform == "win32" else ["-pthread"]),
         "-o",
         str(output),
         *_host_link_args(),

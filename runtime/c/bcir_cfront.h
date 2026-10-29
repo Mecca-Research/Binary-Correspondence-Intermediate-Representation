@@ -78,6 +78,15 @@ int bcir_cfront_compile(const char *src, bcir_cfront_result *out);
  * selects the host (x86_64-linux LP64); an unknown name returns nonzero with diag set. `long`, the
  * pointer, and the `size_t`-class types follow the selected model; everything else is fixed by C. */
 int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_result *out);
+/* The LINKABLE artifact (Phase 3 linking; the oracle's `emit_linkable`, CF-LINKTWIN): the compile above, but `emitted`
+ * is the unit as a translation unit other units link to -- the headers its text names, its types as the source spells
+ * them, every function declared and then defined under its real name with its source linkage, and its globals defined
+ * with their initializers re-spelled (an `extern` one declared). A global the artifact cannot define -- an initializer
+ * entry no rendering spells, a type C cannot name -- fails the compile, its diag beginning "linkable emit: ". The
+ * context entry is re-entrant; the second is the NON-THREAD-SAFE compatibility wrapper. */
+int bcir_cfront_compile_linkable_context(bcir_cfront_context *context, const char *src, const char *target,
+                                         bcir_cfront_result *out);
+int bcir_cfront_compile_linkable(const char *src, const char *target, bcir_cfront_result *out);
 /* Target `target`'s character types, which the preprocessor's `#if` reads a character constant by (CF-PPARITH):
  * whether plain `char` is signed, and `wchar_t`'s size in bytes and signedness -- for `bcir_cpp_set_chars`. NULL is
  * the default target (x86-64 Linux). Returns 0, or 1 for an unknown target name (the outputs untouched). */

@@ -30,6 +30,8 @@ from bcir.hosted.models.native_launch import (
     LOSS,
     PROGRAM_KIND_NAMES,
     RECORD_WORDS,
+    ROPE,
+    ROPE_TABLE,
     SCAN,
     UPDATE,
     _layout,
@@ -178,6 +180,7 @@ def _v1_refusals(records, n, activations, tmp_offset):
     chain = next(i for i in range(len(records))
                  if records[i][0] == GEMM and records[i][2] & 15 == 5 and (records[i][2] >> 4) & 15 == 1)  # fmt: skip
     loss, update = _at(records, LOSS), _at(records, UPDATE)
+    rope, table = _at(records, ROPE), _at(records, ROPE_TABLE)
     checks = [i for i, r in enumerate(records) if r[0] == CHECK and r[2] == CHECK_LOSS]
 
     def put(i, word, value):
@@ -224,7 +227,7 @@ def _v1_refusals(records, n, activations, tmp_offset):
     y = _slot(2)
     past = activations - records[rms][y + 2] + 4
     return [
-        ("a kind no record has", put(rms, 0, 24)),
+        ("a kind no record has", put(rms, 0, ROPE_TABLE + 1)),
         ("a kind a trace alone holds", put(rms, 0, 17)),
         ("a spare word set", put(rms, _W - 1, 1)),
         ("a dimension the kind leaves unused", put(rms, 3 + 5, 1)),
@@ -267,6 +270,29 @@ def _v1_refusals(records, n, activations, tmp_offset):
             ),
         ),
         ("an RMSNorm of another eps", bump(rms, 5, 1)),
+        # ROPE-TABLE: a rotation reads its table, time x head-dim floats; the fill writes it
+        ("a rotation without its table", ops(*(put(rope, _slot(1) + k, 0) for k in range(3)))),
+        ("a rotation's table of another time", bump(rope, _slot(1) + 2, -4 * records[rope][6])),
+        (
+            "a rotation's table inside the x it writes",  # the table's size, at x's place
+            ops(
+                put(rope, _slot(1), records[rope][_slot(0)]),
+                put(rope, _slot(1) + 1, records[rope][_slot(0) + 1]),
+            ),
+        ),
+        (
+            "a table fill of an odd width",  # its size the dims', inside the arena
+            ops(
+                bump(table, 4, 1),
+                bump(table, _slot(0) + 2, 4 * records[table][3]),
+                bump(table, _slot(0) + 1, -4 * records[table][3]),
+            ),
+        ),
+        (
+            "a table fill into the weights",
+            ops(put(table, _slot(0), 1), put(table, _slot(0) + 1, 0)),
+        ),
+        ("a table fill with a dimension it leaves unused", put(table, 3 + 2, 1)),
         ("the tokens at an offset", put(_at(records, 3), _slot(0) + 1, 4)),
         ("the weights read before they are known", drop(_at(records, SCAN))),
         ("a micro-batch without its loss", drop(loss)),
@@ -400,6 +426,78 @@ def test_a_refused_program_writes_nothing():
             trainer.close()
 
 
+def test_a_blocked_job_states_its_workspace_or_is_refused():
+    """KSPLIT: under the blocked GEMM contract, in a state that lends a workspace (a long context's:
+    the attention's copies), a GEMM job with a weight adjoint states the state's whole workspace on
+    every record, and nothing else does -- a weight adjoint's job without it, one of its records
+    without it, its workspace a float short or off its start, and a job without a weight adjoint
+    lent it are each refused before anything runs (no byte written); the programs themselves run,
+    the pairs and groups of the C step's decisions and the weight adjoints alone (no pair). A short
+    context's blocked state short of four K blocks (KSPLIT-ROOM) lends none, and its program,
+    stating none, runs."""
+    from bcir.frontends.models.decode import DecoderSpec
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        lib = nf.checkout_library(Path(tmp) / "plain")
+        if lib is None:
+            return  # no C compiler, or no C units (an installed package): a documented skip
+        spec = DecoderSpec(16, 8, 2, 1, 16, activation="silu_gate", n_kv_heads=1)
+        case = nf.TraceCase(spec, 1, 1024, "kblock")
+        trainer, decisions = _trainer(lib, case)
+        try:
+            lent = decisions["workspace_bytes"]
+            assert lent > 0, decisions  # the attention's copies: the workspace the GEMMs are lent
+            ws, wrong, edits = _slot(3), [], 0
+            for choices in ({}, {"pair": False}):
+                words = program_words(step_program(spec, 1, 1024, **decisions, **choices))
+                records = _records(words)
+                jobs = [_job(records, i) for i, r in enumerate(records)
+                        if r[0] == GEMM and (not i or records[i - 1][:2] != r[:2])]  # fmt: skip
+                weight = next(j for j in jobs if any(records[i][3] == 1 for i in j)
+                              and len(j) == (1 if choices else 2))  # fmt: skip
+                other = next(j for j in jobs if all(records[i][3] == 0 for i in j))
+                assert all(records[i][ws : ws + 3] == [7, 0, lent] for i in weight), weight
+                assert all(records[i][ws : ws + 3] == [0, 0, 0] for i in other), other
+                cases = [
+                    ("a weight adjoint's job without the workspace",
+                     [(i, ws + k, 0) for i in weight for k in range(3)]),
+                    ("its workspace a float short", [(i, ws + 2, lent - 4) for i in weight]),
+                    ("its workspace off its start", [(i, ws + 1, 64) for i in weight]),
+                    ("a job without a weight adjoint lent the workspace",
+                     [(i, ws + k, (7, 0, lent)[k]) for i in other for k in range(3)]),
+                ]  # fmt: skip
+                if len(weight) > 1:
+                    cases.append(("one record of a weight adjoint's job without the workspace",
+                                  [(weight[0], ws + k, 0) for k in range(3)]))  # fmt: skip
+                before = _snapshot(trainer)
+                for name, writes in cases:
+                    edited = [list(r) for r in records]
+                    for i, word, value in writes:
+                        edited[i][word] = value
+                    rc, done = _raw(trainer, _words(edited), case)
+                    edits += 1
+                    if rc != 1 or done != 777 or _snapshot(trainer) != before:
+                        wrong.append((choices, name, rc, done))
+                assert _raw(trainer, words, case) == (0, case.steps), choices  # the base runs
+            assert not wrong, wrong
+            assert edits == 9, edits
+        finally:
+            trainer.close()
+        # a short context's blocked state four rows deep lends no workspace (no attention copies,
+        # no K block to split): its program states none, and runs
+        short = nf.TraceCase(*nf.PLAN_CORPUS[0], "kblock")
+        trainer, decisions = _trainer(lib, short)
+        try:
+            assert not decisions["workspace_bytes"], decisions
+            words = program_words(step_program(*nf.PLAN_CORPUS[0], **decisions))
+            records = _records(words)
+            assert all(r[_slot(3) : _slot(3) + 3] == [0, 0, 0] for r in records if r[0] == GEMM)
+            assert any(r[0] == GEMM and r[3] == 1 for r in records)  # it has weight adjoints
+            assert _raw(trainer, words, short) == (0, short.steps)
+        finally:
+            trainer.close()
+
+
 def _stop(trainer, words, tokens, targets, case, rates=None):
     """`case`'s run on `trainer` -- from `words` where given, else the C step's own -- as its
     (status, completed) and every byte it left (`_snapshot`)."""
@@ -490,13 +588,19 @@ def test_a_failing_run_stops_where_the_step_stops():
 
 def test_the_record_format_is_the_headers():
     """The record kinds, the check's tests and the record's words the launch model spells are
-    the header's (bcir_decoder_train.h), read from its text: two rails out of their own sources."""
+    the header's (bcir_decoder_train.h), read from its text: two rails out of their own sources --
+    PX-3b's two dispatch words among them."""
     header = _C / "bcir_decoder_train.h"
     if not header.is_file():
         return  # an installed package ships no C units: the one absence that is expected
     text = header.read_text(encoding="utf-8")
     words = re.search(r"#define BCIR_DT_RECORD_WORDS (\d+)", text)
     assert words and int(words.group(1)) == RECORD_WORDS
+    from bcir.hosted.models.native_launch import WORD_INSTANCE, WORD_WORKERS
+
+    dispatch = dict(re.findall(r"#define BCIR_DT_WORD_(INSTANCE|WORKERS) (\d+)", text))
+    assert {k: int(v) for k, v in dispatch.items()} == {
+        "INSTANCE": WORD_INSTANCE, "WORKERS": WORD_WORKERS}  # fmt: skip
     enum = re.search(r"enum \{ (BCIR_DT_REC_SCAN=1,[^}]*)\}", text, re.S)
     assert enum, "the header names no record kinds"
     names = [name.split("=")[0].strip() for name in enum.group(1).split(",") if name.strip()]

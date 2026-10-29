@@ -1,0 +1,382 @@
+{
+ "model": {
+  "layers": 6,
+  "tensors": 56,
+  "bytes": 350419424,
+  "sha256": "9574ef4e59ccdb03579c8baac7f999e6d17d3540df89a00514b79bfbf178dbeb"
+ },
+ "runs": [
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 4,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "head_pack_bytes": 69632000,
+   "unpacked_per_token_ms": 93.87825,
+   "packed": {
+    "per_token_ms": 70.87103,
+    "ratio": 0.7687,
+    "interval": [
+     0.7303,
+     0.809
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 91.71223,
+    "ratio": 0.9775,
+    "interval": [
+     0.9479,
+     1.0081
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_head_on_its_arms_path": true
+  },
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 2,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "head_pack_bytes": 69632000,
+   "unpacked_per_token_ms": 95.48688,
+   "packed": {
+    "per_token_ms": 85.99584,
+    "ratio": 0.8955,
+    "interval": [
+     0.8691,
+     0.9227
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 95.581,
+    "ratio": 0.9938,
+    "interval": [
+     0.9368,
+     1.0544
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_head_on_its_arms_path": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 4,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "head_pack_bytes": 69632000,
+   "unpacked_per_token_ms": 100.77469,
+   "packed": {
+    "per_token_ms": 73.8718,
+    "ratio": 0.7418,
+    "interval": [
+     0.6927,
+     0.7943
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 95.76383,
+    "ratio": 0.9704,
+    "interval": [
+     0.9448,
+     0.9966
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_head_on_its_arms_path": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 2,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "head_pack_bytes": 69632000,
+   "unpacked_per_token_ms": 111.29802,
+   "packed": {
+    "per_token_ms": 84.84762,
+    "ratio": 0.7634,
+    "interval": [
+     0.7409,
+     0.7866
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 113.47371,
+    "ratio": 1.0245,
+    "interval": [
+     1.0147,
+     1.0344
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_head_on_its_arms_path": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 4,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "head_pack_bytes": 69632000,
+   "unpacked_per_token_ms": 93.15263,
+   "packed": {
+    "per_token_ms": 73.36696,
+    "ratio": 0.7909,
+    "interval": [
+     0.7545,
+     0.8292
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 90.04254,
+    "ratio": 0.985,
+    "interval": [
+     0.9457,
+     1.0259
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_head_on_its_arms_path": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 2,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "head_pack_bytes": 69632000,
+   "unpacked_per_token_ms": 98.79482,
+   "packed": {
+    "per_token_ms": 91.29699,
+    "ratio": 0.9181,
+    "interval": [
+     0.829,
+     1.0169
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 98.57792,
+    "ratio": 0.98,
+    "interval": [
+     0.9317,
+     1.0309
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_head_on_its_arms_path": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 4,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "head_pack_bytes": 69632000,
+   "unpacked_per_token_ms": 99.74199,
+   "packed": {
+    "per_token_ms": 74.35472,
+    "ratio": 0.7428,
+    "interval": [
+     0.7183,
+     0.7681
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 99.9145,
+    "ratio": 1.0118,
+    "interval": [
+     0.9754,
+     1.0495
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_head_on_its_arms_path": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 2,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "head_pack_bytes": 69632000,
+   "unpacked_per_token_ms": 113.77913,
+   "packed": {
+    "per_token_ms": 86.01027,
+    "ratio": 0.741,
+    "interval": [
+     0.7174,
+     0.7654
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 114.50077,
+    "ratio": 0.9926,
+    "interval": [
+     0.9763,
+     1.0091
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_head_on_its_arms_path": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 4,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "head_pack_bytes": 69632000,
+   "unpacked_per_token_ms": 93.85247,
+   "packed": {
+    "per_token_ms": 75.11413,
+    "ratio": 0.8056,
+    "interval": [
+     0.7592,
+     0.8548
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 93.32861,
+    "ratio": 1.0011,
+    "interval": [
+     0.9306,
+     1.077
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_head_on_its_arms_path": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 2,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "head_pack_bytes": 69632000,
+   "unpacked_per_token_ms": 97.64743,
+   "packed": {
+    "per_token_ms": 87.47908,
+    "ratio": 0.8989,
+    "interval": [
+     0.8631,
+     0.9362
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 98.17217,
+    "ratio": 0.9948,
+    "interval": [
+     0.9512,
+     1.0403
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_head_on_its_arms_path": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 4,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "head_pack_bytes": 69632000,
+   "unpacked_per_token_ms": 96.20761,
+   "packed": {
+    "per_token_ms": 71.51553,
+    "ratio": 0.7405,
+    "interval": [
+     0.7071,
+     0.7755
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 95.37922,
+    "ratio": 0.9959,
+    "interval": [
+     0.968,
+     1.0246
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_head_on_its_arms_path": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 2,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "vocab": 32000,
+   "d_model": 2048,
+   "head_pack_bytes": 69632000,
+   "unpacked_per_token_ms": 109.58446,
+   "packed": {
+    "per_token_ms": 82.88671,
+    "ratio": 0.7485,
+    "interval": [
+     0.6913,
+     0.8103
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 112.47253,
+    "ratio": 1.0194,
+    "interval": [
+     0.9986,
+     1.0406
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_head_on_its_arms_path": true
+  }
+ ]
+}

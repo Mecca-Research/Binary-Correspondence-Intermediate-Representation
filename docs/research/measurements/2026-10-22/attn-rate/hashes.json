@@ -1,0 +1,44 @@
+{
+ "what": "attn_hash.c (88 cases: 11 shapes x 4 contracts x stored and scratch; y, and p when stored) and elem_hash.c (181 lines: 18 lengths x the exponential, each instance, the v2 SiLU, the SwiGLU product and its VJP, serial and pooled, on inputs with the exponential's edges; `v` reads every NaN as one quiet NaN, `raw` the bytes as written), each built from the tree before and after",
+ "compilers": {
+  "clang": {
+   "attn_hash": {
+    "lines": 88,
+    "before_equals_after": true,
+    "after_sha256": "82c1c266c72d70c53319f163de63a351199f58ea24d516aae0e03cc99fd24736"
+   },
+   "elem_hash": {
+    "lines": 181,
+    "before_equals_after": true,
+    "after_sha256": "b6a36243d5fe801a21e6e8cbad88baf392bb4006bcfa0157a83440948f5a727e"
+   },
+   "elem_hash_raw": {
+    "lines": 181,
+    "before_equals_after": true,
+    "after_sha256": "0a2afe41dd17e2bf4600fbdb05d0da45f553ff43d4b9e9a7b0cee243fb0ed096"
+   }
+  },
+  "gcc": {
+   "attn_hash": {
+    "lines": 88,
+    "before_equals_after": true,
+    "after_sha256": "82c1c266c72d70c53319f163de63a351199f58ea24d516aae0e03cc99fd24736"
+   },
+   "elem_hash": {
+    "lines": 181,
+    "before_equals_after": true,
+    "after_sha256": "b6a36243d5fe801a21e6e8cbad88baf392bb4006bcfa0157a83440948f5a727e"
+   },
+   "elem_hash_raw": {
+    "lines": 181,
+    "before_equals_after": true,
+    "after_sha256": "6fbde202c9412e9c0310e83c90af28082cc018270a26999468a193b9611ea6e5"
+   }
+  }
+ },
+ "clang_equals_gcc": {
+  "attn_hash": true,
+  "elem_hash": true,
+  "elem_hash_raw": false
+ }
+}

@@ -1,0 +1,525 @@
+{
+ "what": "tools/testing/red_sweep.py: each fault injected into the tree, its witness run, the tree restored. mm-rows.json against the slice's tree; again against it with the harness's MM-ROWS cases not called (the vacuity check: which faults only the new cases catch); and the GEMM's own tables -- ndt-kblock, ndt-threads, ndt-fma -- whole, with px-dispatch-c's PI2, against the slice's tree (their anchors beside the lines it changed; NK7 re-anchored on the moved row loop)",
+ "mm_rows": {
+  "results": [
+   {
+    "label": "MR1 a task's columns not whole blocks (the job's columns split evenly: a block straddling two tasks is computed by both, its beta applied twice)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "MR2 the serial nest's chunks stop before the ragged last one (its rows keep their first values)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "MR3 an edge block of 33 columns run as two vectors (its last column never written)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "MR4 an edge block of 17 columns run as one vector (its last column never written)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "MR5 a two-vector edge block stores its first vector alone",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "MR6 the job's order not a rotation (a lead runs the last tasks twice and the first part's never)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "MR7 a pair job's count leaves out its second part (the second call never runs on a pool)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "MR8 the partition keyed on the depth as well (a chained call of depth zero tiled apart from the chain: some of its tiles never scaled)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   }
+  ],
+  "caught": 8,
+  "injected": 8
+ },
+ "mm_rows_without_the_cases": {
+  "results": [
+   {
+    "label": "MR1 a task's columns not whole blocks (the job's columns split evenly: a block straddling two tasks is computed by both, its beta applied twice)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [],
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "label": "MR2 the serial nest's chunks stop before the ragged last one (its rows keep their first values)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [],
+    "verdict": "NOT CAUGHT"
+   },
+   {
+    "label": "MR3 an edge block of 33 columns run as two vectors (its last column never written)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "MR4 an edge block of 17 columns run as one vector (its last column never written)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "MR5 a two-vector edge block stores its first vector alone",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "MR6 the job's order not a rotation (a lead runs the last tasks twice and the first part's never)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "MR7 a pair job's count leaves out its second part (the second call never runs on a pool)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "MR8 the partition keyed on the depth as well (a chained call of depth zero tiled apart from the chain: some of its tiles never scaled)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [],
+    "verdict": "NOT CAUGHT"
+   }
+  ],
+  "caught": 5,
+  "injected": 8
+ },
+ "tables_swept_again": {
+  "ndt-kblock": {
+   "results": [
+    {
+     "label": "NK1 the split rule takes whole blocks to the end (no halving of the last two)",
+     "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_compiled_plan_and_gemm_are_the_programs"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK2 a block's chain starts from c instead of zero (the partial is added twice)",
+     "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_compiled_plan_and_gemm_are_the_programs"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK3 the partial is added with one fused rounding instead of a rounded product and a rounded sum",
+     "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_compiled_plan_and_gemm_are_the_programs"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK4 the trainer runs the fused kernel under the blocked contract (the one predicate the forward's linears and the backward's pairs read)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK5 the pool entry of one thread runs the fused kernel under the blocked contract",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK6 the admission admits a provider that differs (the differential's verdict is not read)",
+     "expects": "test_a_provider_is_admitted_under_the_blocked_contract_only_where_it_is_the_contract",
+     "fired": [
+      "test_a_provider_is_admitted_under_the_blocked_contract_only_where_it_is_the_contract"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK7 the AVX-512 instance stops before its last single row (the row keeps its beta-scaled value)",
+     "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+     "fired": [
+      "test_a_provider_is_admitted_under_the_blocked_contract_only_where_it_is_the_contract",
+      "test_native_c_harness_c11_and_c23",
+      "test_the_compiled_plan_and_gemm_are_the_programs"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK8 a pool task's column block is narrower than the AVX-512 instance's register block (tasks write each other's columns)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK9 the transposed tile's ragged columns are copied only below the whole 16 x 16 blocks (stale depths)",
+     "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+     "fired": [
+      "test_a_provider_is_admitted_under_the_blocked_contract_only_where_it_is_the_contract",
+      "test_native_c_harness_c11_and_c23",
+      "test_the_compiled_plan_and_gemm_are_the_programs"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK10 the AVX-512 instance adds a ragged block's partial with one fused rounding",
+     "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_compiled_plan_and_gemm_are_the_programs"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK3b the generic instance's first K block adds a ragged block's partial with one fused rounding (NK3's line, the block that scales c)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_compiled_plan_and_gemm_are_the_programs"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK11 the AVX-512 instance's first K block reads c under beta 0 (the zero gone: the stale value takes the terms)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_a_provider_is_admitted_under_the_blocked_contract_only_where_it_is_the_contract",
+      "test_native_c_harness_c11_and_c23",
+      "test_the_compiled_plan_and_gemm_are_the_programs"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK12 the AVX-512 instance's unread lanes are -0.0 (under beta 0 a zero product at a negative alpha stores -0.0 where the fill and the add stored +0.0)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK13 a serial blocked call of depth zero is folded (no K block runs, so c is never scaled)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK14 a pool's blocked tasks are folded at depth zero (the tasks skip the scaling no K block will do)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK15 the AVX-512 instance scales c by beta at every K block, not only the first",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK16 the AVX2 instance scales c by beta at every K block, not only the first",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NK17 the generic instance scales c by beta at every K block, not only the first",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_compiled_plan_and_gemm_are_the_programs"
+     ],
+     "verdict": "RED"
+    }
+   ],
+   "caught": 18,
+   "injected": 18
+  },
+  "ndt-threads": {
+   "results": [
+    {
+     "label": "NT1 the GEMM's row tasks stop before the ragged tail (rows past the last whole 64-row task are never computed on a pool)",
+     "expects": "test_the_training_state_is_identical_at_every_thread_count",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_training_state_is_identical_at_every_thread_count"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT2 the runner's claim stops one task short (the last task of every job never runs on a pool)",
+     "expects": "test_the_training_state_is_identical_at_every_thread_count",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_training_state_is_identical_at_every_thread_count"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT3 a GEMM task adds its terms without first scaling its elements by beta",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_training_state_is_identical_at_every_thread_count"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT4 the elementwise kernels' last chunk is dropped (at every thread count, the serial kernel keeps it)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT5 RMSNorm's last row chunk is dropped",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT6 RoPE's last position chunk is dropped",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT7 the AdamW commit's last chunk is dropped (the reference update sees it, at one thread)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT8 the backward's task runs one query head short of its KV head's group (the serial run too: the reference catches it)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT9 the pair job's second GEMM starts at the first's column count, not its task count (NDT-SCHED-0: the first's last row sets never run, the second's first tasks run twice)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT10 the pair job's serial path (no pool, one thread) skips the first GEMM (the one-thread pool's state is not the serial state, and the pair is not the two entries)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_training_state_is_identical_at_every_thread_count"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT11 a claim takes two tasks (every other task of a job never runs on a pool)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_training_state_is_identical_at_every_thread_count"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT12 the caller does not reset the claim counter (a job after the first starts where the last one's claims ended, so its first tasks never run)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_training_state_is_identical_at_every_thread_count"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT13 the group job's chain tasks start at its second call (the first chained product never reaches its C on a pool)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_training_state_is_identical_at_every_thread_count"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT14 the group job's independent calls start at their own task counts, not the running sum (a later call's tasks are never claimed, an earlier call's only in part)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_training_state_is_identical_at_every_thread_count"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT15 a chain whose calls differ in n runs as one chain (task t is a different tile in each call, so the tiles' terms land apart)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT16 the group's serial path drops its first independent call (one thread, or no pool)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_training_state_is_identical_at_every_thread_count"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT17 the grouped backward starts its input-adjoint chain adding (q's and gate's dx onto the arena's stale values; the reference catches it at every thread count)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NT18 the grouped forward drops its last linear (v and up never computed, at every thread count: the reference catches it)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    }
+   ],
+   "caught": 18,
+   "injected": 18
+  },
+  "ndt-fma": {
+   "results": [
+    {
+     "label": "NF1 the fused instance rounds each term's product and its addition apart (the v1 arithmetic under the v2 name)",
+     "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_compiled_plan_and_gemm_are_the_programs",
+      "test_the_training_state_is_identical_at_every_thread_count"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NF2 the fused serial entry runs the v1 instances",
+     "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_compiled_plan_and_gemm_are_the_programs"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NF3 the trainer's GEMM ignores the fused bit (v1 under the fused name: the forward's linears and the backward's pairs read one predicate)",
+     "expects": "test_the_training_state_is_identical_at_every_thread_count",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_training_state_is_identical_at_every_thread_count"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NF4 the pool's fused job runs the v1 instances (the pooled result is not the serial fused result)",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23",
+      "test_the_training_state_is_identical_at_every_thread_count"
+     ],
+     "verdict": "RED"
+    },
+    {
+     "label": "NF5 a contract bit the ABI does not define (128, past the bf16 attention bit) is admitted",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    }
+   ],
+   "caught": 5,
+   "injected": 5
+  },
+  "px-dispatch-c-PI2": {
+   "results": [
+    {
+     "label": "PI2 a GEMM job's kernels the widest while the entry names the request",
+     "expects": "test_native_c_harness_c11_and_c23",
+     "fired": [
+      "test_native_c_harness_c11_and_c23"
+     ],
+     "verdict": "RED"
+    }
+   ],
+   "caught": 1,
+   "injected": 1
+  }
+ }
+}

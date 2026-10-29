@@ -1,0 +1,39 @@
+{
+ "what": "the sha256 of each committed tool and of the two trees' sources the records measured",
+ "before": "36bdb11d3e053c06507c5b2d59a21c5595daaeed",
+ "after": "3577415e0cd42613b493a04ff87b8c3f0e54c6ca",
+ "tools": {
+  "measure_once.sh": "36d923fff01ed4f50938ddd57a27440212804e938308314d934e8e83d9692a4b",
+  "once_level3.py": "f6131e1bbf07347a4d4aa15690291193456830dd9e414852525c8fd86b7d5488",
+  "mk_loss_bench.py": "814590e2f1506f53aecd2bdf51f4a8cc7cbdc93c1bae77cf2e320b9d9fb18956",
+  "exp_span_check.c": "3af41207ebd14f61b134de33af165fb5ddde11ae9ef5c81241fb0da1463844cc",
+  "loss_bench.c": "7ea3059db774c5244c83a737ac5552e8278bb864128c633411fd96ab5df77385",
+  "survey_next1.sh": "e3ffdf171efca45c55d313b345a6f828ee62fd9555720a2c9d8de0e2b27b13eb",
+  "probe_tasks.py": "195fa5d96c82afec0a410c95aa5636d14b993628e55c9b13da188e66442ef269",
+  "gemm_tasks.c": "9ed406621afe9e8ebf1039a2af80afafa51d09011e882df30bf96c6ecd1b593d",
+  "count_sleeps.py": "78d5e6b9584294b1657a61db491136c4ec1210a1ae81b7744c52acfa3fec3f10",
+  "step_wall.py": "92d0afaa24b50c24f88128ffa4330d5165faa071f549dfdc59aa4ffe1089f4e9",
+  "sampler.c": "0cc500f6202a77600842495837e7bfa29728664163ec37a84cd32732f5138952",
+  "resolve_samples.py": "1419bbd7f1f4aa8be4a39209984389054565f0df9bb0d8b6e00fc9f6d5112aab",
+  "prof_study.py": "1972b09fde45798d066ab9bd13e0e545b0a3b7e02ecba8bab871ec67f00bd17f"
+ },
+ "formatted_after_running": {
+  "what": "the Python tools ruff 0.16.6 reformatted after they ran, each the same AST as the bytes that ran: the sha256 of the bytes that ran",
+  "ran_sha256": {
+   "once_level3.py": "0c2c35f0d0f66bf0bf33d38c5ef51da067c0d799c5384252914513d3a79406ec",
+   "mk_loss_bench.py": "832f4cb2bc580bc0f3c6140796b11d6d9b31dd444bce0216d79ef4f9fd919e4c",
+   "resolve_samples.py": "cfe4c1a93ee0face45e6ba002828de2cc6760c59d3995fd9431f5fcbf6c9bccb",
+   "prof_study.py": "ae225fe388aed6c422cca67d9ad17ce0f31cc52189b1510fc4e7d2b126d02a93"
+  }
+ },
+ "sources": {
+  "A/bcir_tensor.c": "40ba99cd37970d4c2ffd5fc1258081bba527a15b760443f7e8cfa843e303ba1c",
+  "A/bcir_tensor.h": "568365d6726be4e834ff33e72ef54bd9b687074a5012f1b830e0fd1138190352",
+  "A/bcir_decoder_train.c": "1e75e95e9fdeaeac13b0ef3cf3b20d8fdfd269a38d18f97e0d8ea5fba3800c38",
+  "A/bcir_decoder_train.h": "e2f30344e0aff2ffb0c08b5841006cb1b7aa4b954bf5064862f988139177fd24",
+  "B/bcir_tensor.c": "40ba99cd37970d4c2ffd5fc1258081bba527a15b760443f7e8cfa843e303ba1c",
+  "B/bcir_tensor.h": "568365d6726be4e834ff33e72ef54bd9b687074a5012f1b830e0fd1138190352",
+  "B/bcir_decoder_train.c": "f7f5dd4ce328243778df9a2b6639acbdb475089efa21860e4006ed0a147bee26",
+  "B/bcir_decoder_train.h": "e2f30344e0aff2ffb0c08b5841006cb1b7aa4b954bf5064862f988139177fd24"
+ }
+}

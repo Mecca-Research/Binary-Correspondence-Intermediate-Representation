@@ -59,8 +59,8 @@
   {
    "expects": "test_native_c_harness_c11_and_c23",
    "label": "NL8 the transposed exponentials store the diagonal block's upper lanes (future probabilities no longer zero)",
-   "new": "      __m512 x=_mm512_load_ps(blk+c*16);",
-   "old": "      __m512 x=_mm512_maskz_mov_ps(k,_mm512_load_ps(blk+c*16));",
+   "new": "        __m512 x=_mm512_maskz_mov_ps(k,v[l]);\n        s=_mm512_mask_add_ps(s,k,s,x);\n        _mm512_store_ps(blk+(c+l)*16,v[l]);\n",
+   "old": "        __m512 x=_mm512_maskz_mov_ps(k,v[l]);\n        s=_mm512_mask_add_ps(s,k,s,x);\n        _mm512_store_ps(blk+(c+l)*16,x);\n",
    "path": "runtime/c/bcir_tensor.c"
   },
   {
@@ -80,8 +80,8 @@
   {
    "expects": "test_native_c_harness_c11_and_c23",
    "label": "NL11 the transposed exponentials take libm's expf (the v2 softmax is the BCIR exponential's, in every row)",
-   "new": "    { int q; for (q=0;q<256;q++) blk[q]=expf(blk[q]); }\n",
-   "old": "    exp_inplace_avx512(256,blk);\n",
+   "new": "      for (l=0;l<4;l++) v[l]=_mm512_sub_ps(_mm512_mul_ps(_mm512_load_ps(blk+(c+l)*16),sc),mx);\n      for (l=0;l<4;l++) { _Alignas(64) float e[16]; int q; _mm512_store_ps(e,v[l]); for (q=0;q<16;q++) e[q]=expf(e[q]); v[l]=_mm512_load_ps(e); }\n",
+   "old": "      for (l=0;l<4;l++) v[l]=_mm512_sub_ps(_mm512_mul_ps(_mm512_load_ps(blk+(c+l)*16),sc),mx);\n      exp1_512n(v,4);\n",
    "path": "runtime/c/bcir_tensor.c"
   }
  ]

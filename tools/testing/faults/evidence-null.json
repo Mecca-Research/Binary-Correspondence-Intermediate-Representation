@@ -1,0 +1,274 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "bcir.tests.test_silicon:test_counter_sampler_degrades_without_posix_rusage",
+  "bcir.tests.test_silicon:test_without_getrusage_the_ring_and_the_dna_carry_no_fault_count",
+  "bcir.tests.test_silicon:test_recorded_counts_are_all_or_none_and_never_a_gap",
+  "bcir.tests.test_silicon:test_a_v1_records_pmu_counts_are_read_only_where_none_is_zero",
+  "bcir.tests.test_workload:test_a_measured_plan_records_a_pmu_sample_missing_a_count_as_null",
+  "bcir.tests.test_workload:test_a_v1_entry_reads_as_it_was_written_and_a_v2_entry_says_null",
+  "bcir.tests.test_workload:test_without_getrusage_a_measured_sample_records_four_nulls",
+  "bcir.tests.test_workload:test_b1_evidence_enters_the_corpus_with_its_counts_or_nulls",
+  "bcir.tests.test_schedule_artifact:test_a_schedule_candidate_records_a_pmu_sample_missing_a_count_as_null",
+  "bcir.tests.test_schedule_artifact:test_a_v2_artifacts_constants_are_its_winners_null_exactly_where_its_counts_are",
+  "bcir.tests.test_schedule_artifact:test_without_getrusage_a_candidate_records_four_nulls",
+  "bcir.tests.test_schedule_artifact:test_a_v1_artifact_reads_as_it_was_written_and_says_no_null",
+  "bcir.tests.test_numerical_providers:test_a_provider_measurement_records_a_pmu_sample_missing_a_count_as_null",
+  "bcir.tests.test_numerical_providers:test_provider_evidence_says_null_and_a_v1_artifact_reads_as_it_was_written"
+ ],
+ "faults": [
+  {
+   "expects": "test_recorded_counts_are_all_or_none_and_never_a_gap",
+   "label": "EN1 a gap read as no counts",
+   "new": "    if any(value is None for value in values):\n        return None\n",
+   "old": "    if all(value is None for value in values):\n        return None\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_recorded_counts_are_all_or_none_and_never_a_gap",
+   "label": "EN2 a bool taken for a count",
+   "new": "    if any(not isinstance(value, int) or not 0 <= value < _COUNT_LIMIT for value in values):\n",
+   "old": "    if any(type(value) is not int or not 0 <= value < _COUNT_LIMIT for value in values):\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_recorded_counts_are_all_or_none_and_never_a_gap",
+   "label": "EN3 a count of 2^63 admitted",
+   "new": "    if any(type(value) is not int or not 0 <= value <= _COUNT_LIMIT for value in values):\n",
+   "old": "    if any(type(value) is not int or not 0 <= value < _COUNT_LIMIT for value in values):\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_recorded_counts_are_all_or_none_and_never_a_gap",
+   "label": "EN4 an empty group read as no counts",
+   "new": "",
+   "old": "    if not values:\n        raise ValueError(\"a group of recorded counts names at least one count\")\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_v1_records_pmu_counts_are_read_only_where_none_is_zero",
+   "label": "EN5 a v1 zero read as a count",
+   "new": "    return values if values[0] else None\n",
+   "old": "    return values if all(values) else None\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_v1_records_pmu_counts_are_read_only_where_none_is_zero",
+   "label": "EN6 a null admitted in a v1 record",
+   "new": "    if any(isinstance(value, int) and value < 0 for value in values):\n",
+   "old": "    if any(type(value) is not int or value < 0 for value in values):\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_counter_sampler_degrades_without_posix_rusage",
+   "label": "EN7 no getrusage recorded as zeros",
+   "new": "            rusage = (0, 0, 0, 0)\n",
+   "old": "            rusage = (None, None, None, None)\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_without_getrusage_the_ring_and_the_dna_carry_no_fault_count",
+   "label": "EN8 the telemetry feed summing faults nobody read",
+   "new": "",
+   "old": "    if c.minor_faults is None or c.major_faults is None:\n        return 0\n",
+   "path": "bcir/silicon.py"
+  },
+  {
+   "expects": "test_a_measured_plan_records_a_pmu_sample_missing_a_count_as_null",
+   "label": "EN9 a measured plan's missing counts written as zeros",
+   "new": "        cycles, instructions, cache_misses = counts if counts is not None else (0, 0, 0)\n",
+   "old": "        cycles, instructions, cache_misses = counts if counts is not None else (None, None, None)\n",
+   "path": "bcir/kbcir/measured.py"
+  },
+  {
+   "expects": "test_a_measured_plan_records_a_pmu_sample_missing_a_count_as_null",
+   "label": "EN10 measured plans still written as v1",
+   "new": "    schema: str = SCHEMA_V1\n",
+   "old": "    schema: str = SCHEMA\n",
+   "path": "bcir/kbcir/measured.py"
+  },
+  {
+   "expects": "test_a_v1_entry_reads_as_it_was_written_and_a_v2_entry_says_null",
+   "label": "EN11 a v2 measured plan admitting a gap",
+   "new": "        if self.schema == SCHEMA:\n            pass\n",
+   "old": "        if self.schema == SCHEMA:\n            recorded_counts(self.cycles, self.instructions, self.cache_misses)\n",
+   "path": "bcir/kbcir/measured.py"
+  },
+  {
+   "expects": "test_a_v1_entry_reads_as_it_was_written_and_a_v2_entry_says_null",
+   "label": "EN12 a v1 measured plan admitting a null in a sample",
+   "new": "            if False:\n",
+   "old": "            if any(None in sample.rusage for sample in self.samples):\n",
+   "path": "bcir/kbcir/measured.py"
+  },
+  {
+   "expects": "test_a_v1_entry_reads_as_it_was_written_and_a_v2_entry_says_null",
+   "label": "EN13 a measured sample admitting a gap",
+   "new": "        pass\n",
+   "old": "        recorded_counts(*self.rusage)\n",
+   "path": "bcir/kbcir/measured.py"
+  },
+  {
+   "expects": "test_a_v1_entry_reads_as_it_was_written_and_a_v2_entry_says_null",
+   "label": "EN14 a v1 entry's zeros read as counts",
+   "new": "            return (self.cycles, self.instructions, self.cache_misses)\n",
+   "old": "            return v1_pmu_counts(self.cycles, self.instructions, self.cache_misses)\n",
+   "path": "bcir/kbcir/measured.py"
+  },
+  {
+   "expects": "test_b1_evidence_enters_the_corpus_with_its_counts_or_nulls",
+   "label": "EN15 B1's v1 zeros entering the corpus as counts",
+   "new": "        counts = recorded_counts(*candidate.pmu)\n",
+   "old": "        counts = artifact.counts_of(candidate)\n",
+   "path": "bcir/kbcir/measured.py"
+  },
+  {
+   "expects": "test_b1_evidence_enters_the_corpus_with_its_counts_or_nulls",
+   "label": "EN16 B1's entries attesting a PMU that counted nothing",
+   "new": "                True,\n",
+   "old": "                counts is not None,\n",
+   "path": "bcir/kbcir/measured.py"
+  },
+  {
+   "expects": "test_a_schedule_candidate_records_a_pmu_sample_missing_a_count_as_null",
+   "label": "EN17 a candidate's missing counts written as zeros",
+   "new": "                *(counts if counts is not None else (0, 0, 0)),\n",
+   "old": "                *(counts if counts is not None else (None, None, None)),\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_without_getrusage_a_candidate_records_four_nulls",
+   "label": "EN18 a candidate's unread rusage written as zero sums",
+   "new": "            (0, 0, 0, 0)\n            if any(None in row for row in rusage)\n",
+   "old": "            (None, None, None, None)\n            if any(None in row for row in rusage)\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_a_schedule_candidate_records_a_pmu_sample_missing_a_count_as_null",
+   "label": "EN19 constants from no counts written as zeros",
+   "new": "        return MeasuredCostConstants(ns, 0, 0)\n",
+   "old": "        return MeasuredCostConstants(ns, None, None)\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_a_v2_artifacts_constants_are_its_winners_null_exactly_where_its_counts_are",
+   "label": "EN20 cycles per instruction 0 where none were retired",
+   "new": "        (cycles << 20) // instructions if instructions else 0,\n",
+   "old": "        (cycles << 20) // instructions if instructions else None,\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_a_v2_artifacts_constants_are_its_winners_null_exactly_where_its_counts_are",
+   "label": "EN21 zero cache misses read as no reading",
+   "new": "        (cache_misses * 1000 << 20) // macs if cache_misses else None,\n",
+   "old": "        (cache_misses * 1000 << 20) // macs,\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_a_v2_artifacts_constants_are_its_winners_null_exactly_where_its_counts_are",
+   "label": "EN22 a v2 artifact's constants never held to its winner's",
+   "new": "        if self.constants != self.constants:\n",
+   "old": "        if self.constants != _constants(winner, M * N * K):\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_a_v2_artifacts_constants_are_its_winners_null_exactly_where_its_counts_are",
+   "label": "EN23 a v2 artifact measuring a plan twice",
+   "new": "        if len(set(plans)) > len(plans):\n",
+   "old": "        if len(set(plans)) != len(plans):\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_a_v2_artifacts_constants_are_its_winners_null_exactly_where_its_counts_are",
+   "label": "EN24 a v2 artifact past the shared bound",
+   "new": "            candidate.pmu\n",
+   "old": "            recorded_counts(*candidate.pmu)\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_a_v2_artifacts_constants_are_its_winners_null_exactly_where_its_counts_are",
+   "label": "EN25 a candidate admitting a gap",
+   "new": "                pass\n",
+   "old": "                recorded_counts(*values)  # a group is all null or refused\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_a_v1_artifact_reads_as_it_was_written_and_says_no_null",
+   "label": "EN26 a v1 artifact admitting a null count",
+   "new": "            if None in constants:\n",
+   "old": "            if any(nulls) or None in constants:\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_a_v1_artifact_reads_as_it_was_written_and_says_no_null",
+   "label": "EN27 a v1 artifact admitting a null constant",
+   "new": "            if any(nulls):\n",
+   "old": "            if any(nulls) or None in constants:\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_a_v1_artifact_reads_as_it_was_written_and_says_no_null",
+   "label": "EN28 a v1 artifact's zeros read as counts",
+   "new": "            return candidate.pmu\n",
+   "old": "            return v1_pmu_counts(*candidate.pmu)\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_a_v1_artifact_reads_as_it_was_written_and_says_no_null",
+   "label": "EN29 counts read for a candidate the artifact never measured",
+   "new": "        if candidate is None:\n",
+   "old": "        if candidate not in self.candidates:\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_a_schedule_candidate_records_a_pmu_sample_missing_a_count_as_null",
+   "label": "EN30 schedule artifacts still written as v1",
+   "new": "    schema: str = SCHEMA_V1\n",
+   "old": "    schema: str = SCHEMA\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  },
+  {
+   "expects": "test_a_provider_measurement_records_a_pmu_sample_missing_a_count_as_null",
+   "label": "EN31 a provider's missing counts written as zeros",
+   "new": "    cycles, instructions, cache_misses = counts if counts is not None else (0, 0, 0)\n",
+   "old": "    cycles, instructions, cache_misses = counts if counts is not None else (None, None, None)\n",
+   "path": "bcir/kbcir/numerical_providers.py"
+  },
+  {
+   "expects": "test_provider_evidence_says_null_and_a_v1_artifact_reads_as_it_was_written",
+   "label": "EN32 a provider measurement admitting a gap",
+   "new": "            pass\n",
+   "old": "            recorded_counts(*self.pmu)  # all null or refused\n",
+   "path": "bcir/kbcir/numerical_providers.py"
+  },
+  {
+   "expects": "test_provider_evidence_says_null_and_a_v1_artifact_reads_as_it_was_written",
+   "label": "EN33 a v1 provider artifact admitting a null",
+   "new": "            if any(measurement is None for measurement in measurements):\n",
+   "old": "            if any(None in measurement.pmu for measurement in measurements):\n",
+   "path": "bcir/kbcir/numerical_providers.py"
+  },
+  {
+   "expects": "test_provider_evidence_says_null_and_a_v1_artifact_reads_as_it_was_written",
+   "label": "EN34 a v2 provider artifact past the shared bound",
+   "new": "                measurement.pmu\n",
+   "old": "                recorded_counts(*measurement.pmu)\n",
+   "path": "bcir/kbcir/numerical_providers.py"
+  },
+  {
+   "expects": "test_provider_evidence_says_null_and_a_v1_artifact_reads_as_it_was_written",
+   "label": "EN35 provider evidence still written as v1",
+   "new": "    schema: str = SCHEMA_V1\n",
+   "old": "    schema: str = SCHEMA\n",
+   "path": "bcir/kbcir/numerical_providers.py"
+  },
+  {
+   "expects": "test_a_v2_artifacts_constants_are_its_winners_null_exactly_where_its_counts_are",
+   "label": "EN36 a v2 artifact's rusage past the shared bound",
+   "new": "            candidate.rusage\n",
+   "old": "            recorded_counts(*candidate.rusage)\n",
+   "path": "bcir/kbcir/schedule_artifact.py"
+  }
+ ]
+}

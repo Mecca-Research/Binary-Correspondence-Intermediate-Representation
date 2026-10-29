@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 from bcir.make import check, lower, parse, schedule
 
@@ -28,6 +29,13 @@ def _posix() -> bool:
     return os.name == "posix"
 
 
+#: Whether the rails' BCIRfile can be written here -- a POSIX host with a C compiler and an
+#: archiver -- for the witnesses that return early otherwise; a capability check_tests.py reads.
+_GENERATES = _posix() and bool(
+    (shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")) and shutil.which("ar")
+)
+
+
 def _load(name: str):
     spec = importlib.util.spec_from_file_location(
         f"bcir_build_{name}_under_test", _ROOT / "tools" / "build" / f"{name}.py"
@@ -36,6 +44,57 @@ def _load(name: str):
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def _compile_runs(text: str) -> dict[str, str]:
+    """Each target of a BCIRfile and its run lines, joined."""
+    runs: dict[str, list[str]] = {}
+    target = None
+    for line in text.splitlines():
+        if line.startswith("target "):
+            target = line.split()[1]
+            runs[target] = []
+        elif target is not None and line.lstrip().startswith("run "):
+            runs[target].append(line.strip())
+    return {name: " ".join(lines) for name, lines in runs.items()}
+
+
+def test_the_rails_build_gives_the_decoders_units_the_mitigation_on_x86_64_alone():
+    """BCIR Make reads the manifest's scopes through bcir.toolchain (M18): on x86-64 every object
+    of the decoder's units (bcir_models) compiles with the compiler's own spelling of the
+    JCC-erratum mitigation and no other object does; on another machine none does."""
+    if not _GENERATES:
+        return
+    cc = shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")
+    ar = shutil.which("ar")
+    generator = _load("bcirfile")
+    manifest = json.loads((_ROOT / "runtime" / "manifest.json").read_text(encoding="utf-8"))
+    decoder = {
+        f"bcir_models.{Path(s).stem}.o" for s in manifest["libraries"]["bcir_models"]["sources"]
+    }
+    spelling = {
+        "clang": "-mbranches-within-32B-boundaries",
+        "gcc": "-Wa,-mbranches-within-32B-boundaries",
+    }
+    for family, machine in (
+        ("clang", "x86_64"),
+        ("gcc", "x86_64"),
+        ("gcc", "aarch64"),
+        ("clang", "arm64"),
+    ):
+        with mock.patch("bcir.toolchain.compiler_identity", return_value=(family, machine)):
+            text, _planned = generator.generate(cc, None, ar, sys.executable, False)
+        runs = _compile_runs(text)
+        assert decoder <= set(runs), "the decoder's objects are targets"
+        for target, run in runs.items():
+            mitigated = "branches-within-32B-boundaries" in run
+            assert mitigated == (machine == "x86_64" and target in decoder), (
+                family,
+                machine,
+                target,
+            )
+            if mitigated:
+                assert spelling[family] in run.split(), (family, target, run)
 
 
 def test_the_rails_build_plans_the_manifests_targets():

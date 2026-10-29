@@ -1,0 +1,602 @@
+[
+ {
+  "run": 1,
+  "cc": "clang",
+  "mode": "pass",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 20000,
+  "off": {
+   "chain_ns_a_step": 0.3221,
+   "matvecs_us_a_pass": 145.38
+  },
+  "on": {
+   "chain_ns_a_step": 0.3308,
+   "matvecs_us_a_pass": 131.65,
+   "chain_over_off": 1.0212,
+   "interval": [
+    0.9828,
+    1.061
+   ],
+   "matvecs_over_off": 0.905,
+   "matvecs_interval": [
+    0.8913,
+    0.9188
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3305,
+   "matvecs_us_a_pass": 145.63,
+   "chain_over_off": 1.0059,
+   "interval": [
+    0.977,
+    1.0357
+   ],
+   "matvecs_over_off": 0.9967,
+   "matvecs_interval": [
+    0.987,
+    1.0065
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2672,
+   "chain_over_off": 0.8319,
+   "interval": [
+    0.8,
+    0.8651
+   ]
+  },
+  "every_matvec_on_its_arms_path": true,
+  "sink": 0
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "mode": "matvec",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 280000,
+  "off": {
+   "chain_ns_a_step": 0.3275,
+   "matvecs_us_a_pass": 158.15
+  },
+  "on": {
+   "chain_ns_a_step": 0.3199,
+   "matvecs_us_a_pass": 143.85,
+   "chain_over_off": 0.9759,
+   "interval": [
+    0.9583,
+    0.9937
+   ],
+   "matvecs_over_off": 0.891,
+   "matvecs_interval": [
+    0.8351,
+    0.9506
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3237,
+   "matvecs_us_a_pass": 164.26,
+   "chain_over_off": 0.9779,
+   "interval": [
+    0.962,
+    0.9941
+   ],
+   "matvecs_over_off": 0.9852,
+   "matvecs_interval": [
+    0.9581,
+    1.0131
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2695,
+   "chain_over_off": 0.827,
+   "interval": [
+    0.8077,
+    0.8467
+   ]
+  },
+  "every_matvec_on_its_arms_path": true,
+  "sink": 0
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "mode": "pass",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 20000,
+  "off": {
+   "chain_ns_a_step": 0.3152,
+   "matvecs_us_a_pass": 130.99
+  },
+  "on": {
+   "chain_ns_a_step": 0.3178,
+   "matvecs_us_a_pass": 126.48,
+   "chain_over_off": 0.9916,
+   "interval": [
+    0.9655,
+    1.0184
+   ],
+   "matvecs_over_off": 0.9755,
+   "matvecs_interval": [
+    0.9482,
+    1.0037
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3233,
+   "matvecs_us_a_pass": 132.1,
+   "chain_over_off": 1.1181,
+   "interval": [
+    0.8985,
+    1.3913
+   ],
+   "matvecs_over_off": 0.9979,
+   "matvecs_interval": [
+    0.9663,
+    1.0305
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2798,
+   "chain_over_off": 0.8772,
+   "interval": [
+    0.8511,
+    0.9041
+   ]
+  },
+  "every_matvec_on_its_arms_path": true,
+  "sink": 0
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "mode": "matvec",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 280000,
+  "off": {
+   "chain_ns_a_step": 0.3194,
+   "matvecs_us_a_pass": 140.98
+  },
+  "on": {
+   "chain_ns_a_step": 0.3116,
+   "matvecs_us_a_pass": 131.12,
+   "chain_over_off": 0.969,
+   "interval": [
+    0.9567,
+    0.9815
+   ],
+   "matvecs_over_off": 0.9399,
+   "matvecs_interval": [
+    0.9052,
+    0.976
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3204,
+   "matvecs_us_a_pass": 138.63,
+   "chain_over_off": 0.9992,
+   "interval": [
+    0.9915,
+    1.0069
+   ],
+   "matvecs_over_off": 0.9912,
+   "matvecs_interval": [
+    0.9575,
+    1.0262
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.265,
+   "chain_over_off": 0.8252,
+   "interval": [
+    0.8177,
+    0.8327
+   ]
+  },
+  "every_matvec_on_its_arms_path": true,
+  "sink": 0
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "mode": "pass",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 20000,
+  "off": {
+   "chain_ns_a_step": 0.3289,
+   "matvecs_us_a_pass": 147.03
+  },
+  "on": {
+   "chain_ns_a_step": 0.3383,
+   "matvecs_us_a_pass": 135.19,
+   "chain_over_off": 1.0271,
+   "interval": [
+    0.9994,
+    1.0555
+   ],
+   "matvecs_over_off": 0.8916,
+   "matvecs_interval": [
+    0.8639,
+    0.9202
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3269,
+   "matvecs_us_a_pass": 150.59,
+   "chain_over_off": 0.9954,
+   "interval": [
+    0.9687,
+    1.0229
+   ],
+   "matvecs_over_off": 0.9886,
+   "matvecs_interval": [
+    0.9481,
+    1.0309
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2674,
+   "chain_over_off": 0.8073,
+   "interval": [
+    0.7855,
+    0.8298
+   ]
+  },
+  "every_matvec_on_its_arms_path": true,
+  "sink": 0
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "mode": "matvec",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 280000,
+  "off": {
+   "chain_ns_a_step": 0.331,
+   "matvecs_us_a_pass": 159.27
+  },
+  "on": {
+   "chain_ns_a_step": 0.3236,
+   "matvecs_us_a_pass": 142.97,
+   "chain_over_off": 0.9761,
+   "interval": [
+    0.9554,
+    0.9974
+   ],
+   "matvecs_over_off": 0.8937,
+   "matvecs_interval": [
+    0.858,
+    0.9309
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3202,
+   "matvecs_us_a_pass": 155.39,
+   "chain_over_off": 0.9844,
+   "interval": [
+    0.9606,
+    1.0088
+   ],
+   "matvecs_over_off": 0.9834,
+   "matvecs_interval": [
+    0.9642,
+    1.0029
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2649,
+   "chain_over_off": 0.8105,
+   "interval": [
+    0.7972,
+    0.8239
+   ]
+  },
+  "every_matvec_on_its_arms_path": true,
+  "sink": 0
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "mode": "pass",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 20000,
+  "off": {
+   "chain_ns_a_step": 0.321,
+   "matvecs_us_a_pass": 131.29
+  },
+  "on": {
+   "chain_ns_a_step": 0.3169,
+   "matvecs_us_a_pass": 124.07,
+   "chain_over_off": 0.9725,
+   "interval": [
+    0.9405,
+    1.0056
+   ],
+   "matvecs_over_off": 0.947,
+   "matvecs_interval": [
+    0.9384,
+    0.9556
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3204,
+   "matvecs_us_a_pass": 130.89,
+   "chain_over_off": 0.99,
+   "interval": [
+    0.9552,
+    1.0259
+   ],
+   "matvecs_over_off": 0.9881,
+   "matvecs_interval": [
+    0.9695,
+    1.007
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2803,
+   "chain_over_off": 0.8625,
+   "interval": [
+    0.8354,
+    0.8905
+   ]
+  },
+  "every_matvec_on_its_arms_path": true,
+  "sink": 0
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "mode": "matvec",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 280000,
+  "off": {
+   "chain_ns_a_step": 0.3184,
+   "matvecs_us_a_pass": 140.58
+  },
+  "on": {
+   "chain_ns_a_step": 0.3123,
+   "matvecs_us_a_pass": 130.94,
+   "chain_over_off": 0.9508,
+   "interval": [
+    0.9209,
+    0.9818
+   ],
+   "matvecs_over_off": 0.8836,
+   "matvecs_interval": [
+    0.8339,
+    0.9364
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3182,
+   "matvecs_us_a_pass": 140.47,
+   "chain_over_off": 0.9936,
+   "interval": [
+    0.9597,
+    1.0288
+   ],
+   "matvecs_over_off": 0.9693,
+   "matvecs_interval": [
+    0.8977,
+    1.0467
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.265,
+   "chain_over_off": 0.816,
+   "interval": [
+    0.7918,
+    0.8409
+   ]
+  },
+  "every_matvec_on_its_arms_path": true,
+  "sink": 0
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "mode": "pass",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 20000,
+  "off": {
+   "chain_ns_a_step": 0.3151,
+   "matvecs_us_a_pass": 136.73
+  },
+  "on": {
+   "chain_ns_a_step": 0.3223,
+   "matvecs_us_a_pass": 123.45,
+   "chain_over_off": 1.0266,
+   "interval": [
+    1.0076,
+    1.046
+   ],
+   "matvecs_over_off": 0.9083,
+   "matvecs_interval": [
+    0.9011,
+    0.9155
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.317,
+   "matvecs_us_a_pass": 136.7,
+   "chain_over_off": 1.0159,
+   "interval": [
+    0.993,
+    1.0392
+   ],
+   "matvecs_over_off": 0.9979,
+   "matvecs_interval": [
+    0.9894,
+    1.0066
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2606,
+   "chain_over_off": 0.8312,
+   "interval": [
+    0.8164,
+    0.8462
+   ]
+  },
+  "every_matvec_on_its_arms_path": true,
+  "sink": 0
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "mode": "matvec",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 280000,
+  "off": {
+   "chain_ns_a_step": 0.321,
+   "matvecs_us_a_pass": 156.77
+  },
+  "on": {
+   "chain_ns_a_step": 0.3198,
+   "matvecs_us_a_pass": 143.19,
+   "chain_over_off": 1.0019,
+   "interval": [
+    0.9653,
+    1.0399
+   ],
+   "matvecs_over_off": 0.9391,
+   "matvecs_interval": [
+    0.8813,
+    1.0007
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3215,
+   "matvecs_us_a_pass": 159.31,
+   "chain_over_off": 1.019,
+   "interval": [
+    0.9691,
+    1.0714
+   ],
+   "matvecs_over_off": 1.0191,
+   "matvecs_interval": [
+    0.954,
+    1.0886
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2678,
+   "chain_over_off": 0.8595,
+   "interval": [
+    0.7871,
+    0.9387
+   ]
+  },
+  "every_matvec_on_its_arms_path": true,
+  "sink": 0
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "mode": "pass",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 20000,
+  "off": {
+   "chain_ns_a_step": 0.3147,
+   "matvecs_us_a_pass": 131.78
+  },
+  "on": {
+   "chain_ns_a_step": 0.3175,
+   "matvecs_us_a_pass": 125.37,
+   "chain_over_off": 1.004,
+   "interval": [
+    0.9806,
+    1.0279
+   ],
+   "matvecs_over_off": 0.9563,
+   "matvecs_interval": [
+    0.9401,
+    0.9727
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3186,
+   "matvecs_us_a_pass": 132.05,
+   "chain_over_off": 1.0031,
+   "interval": [
+    0.9816,
+    1.025
+   ],
+   "matvecs_over_off": 1.0086,
+   "matvecs_interval": [
+    0.9907,
+    1.0268
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2846,
+   "chain_over_off": 0.9024,
+   "interval": [
+    0.8809,
+    0.9244
+   ]
+  },
+  "every_matvec_on_its_arms_path": true,
+  "sink": 0
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "mode": "matvec",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 280000,
+  "off": {
+   "chain_ns_a_step": 0.3203,
+   "matvecs_us_a_pass": 144.5
+  },
+  "on": {
+   "chain_ns_a_step": 0.3054,
+   "matvecs_us_a_pass": 130.95,
+   "chain_over_off": 0.9725,
+   "interval": [
+    0.9543,
+    0.9911
+   ],
+   "matvecs_over_off": 0.9244,
+   "matvecs_interval": [
+    0.8915,
+    0.9585
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3162,
+   "matvecs_us_a_pass": 140.86,
+   "chain_over_off": 1.0102,
+   "interval": [
+    0.9811,
+    1.0401
+   ],
+   "matvecs_over_off": 0.9872,
+   "matvecs_interval": [
+    0.944,
+    1.0323
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2644,
+   "chain_over_off": 0.8529,
+   "interval": [
+    0.8083,
+    0.9
+   ]
+  },
+  "every_matvec_on_its_arms_path": true,
+  "sink": 0
+ }
+]

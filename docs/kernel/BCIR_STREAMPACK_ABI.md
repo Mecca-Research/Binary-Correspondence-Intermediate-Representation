@@ -198,6 +198,16 @@ The CRC + bounds decode is memory-safe, but a CRC-valid pack can still be
   CRC-valid bytes inserted between the declared body and a recomputed CRC are rejected
   (`BCIR_ERR_TRAILING` in C) on both rails; parsers never treat an undeclared tail as an
   extension point.
+- **Checked once a call** (SP-ONCE: `bcir_sp_check` and the `bcir_sp_checked_*` walks) — a
+  caller that walks one pack several times in one call validates it once. `bcir_sp_check`
+  runs `bcir_sp_validate` and records the bytes, their length and their header in a
+  `bcir_sp_checked` token. The checked semantic walk, generation check, segment walk and
+  block walk then run the plain walks' bodies over that token, with every bound and every
+  verdict theirs on the same bytes, and do not recompute the CRC. `bcir_sp_execute`, its R11
+  wrappers and GEM's load (`bcir_dgem_load`) use them: one CRC pass a run and a load, where
+  there were three and four. Every walk refuses a token from a refused check, or one
+  `bcir_sp_check` did not fill (no buffer, or one too short for a header and the trailer),
+  with `BCIR_ERR_TRUNCATED`. The bytes must not change between the check and the walks.
 
 These mirror `bcir/verify::verify_pack`, so the Python and C rails agree.
 

@@ -1,5 +1,6 @@
 /*===- bcir_llama_cli.c - host CLI for standalone BCIRQ8 inference ------===*/
 #include "bcir_llama.h"
+#include "bcir_tensor.h" /* DECODE-THREADS: the deterministic pool --threads lends the decoder */
 
 #include <errno.h>
 #include <stdint.h>
@@ -30,7 +31,23 @@ static FILE *cli_open_file(const char *path, const char *mode) {
 
 static void usage(const char *argv0) {
   fprintf(stderr, "usage: %s --model FILE --prompt-ids I,J,... --max-new N "
-                  "[--logits-out FILE]\n", argv0);
+                  "[--logits-out FILE] [--threads T] [--split-min W]\n", argv0);
+}
+
+/* DECODE-THREADS: the pool runs a decoder operation's parts; every token and logit is the same at every --threads */
+static void cli_pool_run(void *self, bcir_llama_task_fn task, void *ctx, size_t tasks) {
+  bcir_tensor_pool_run((bcir_tensor_pool *)self, task, ctx, tasks);
+}
+
+static int parse_size(const char *text, size_t *out) {
+  char *end;
+  unsigned long long value;
+  if (!text || *text < '0' || *text > '9') return -1;
+  errno = 0;
+  value = strtoull(text, &end, 10);
+  if (errno || *end || value > SIZE_MAX) return -1;
+  *out = (size_t)value;
+  return 0;
 }
 
 static int parse_prompt(const char *text, int32_t **out, size_t *count) {
@@ -76,8 +93,13 @@ static int write_f64_le(const char *path, const double *values, size_t count) {
 int main(int argc, char **argv) {
   const char *model_path = NULL, *prompt_text = NULL, *logits_path = NULL;
   size_t max_new = 0, prompt_count = 0, i, generated_bytes, logits_bytes;
+  size_t threads = 1, split_min = SIZE_MAX, pool_bytes = 0;
   int32_t *prompt = NULL, *generated = NULL;
   double *logits = NULL;
+  void *pool_memory = NULL;
+  bcir_tensor_pool *pool = NULL;
+  bcir_llama_runner runner;
+  bcir_host_allocator allocator = bcir_host_allocator_default();
   bcir_q8_model model;
   char error[256];
   int rc;
@@ -91,6 +113,12 @@ int main(int argc, char **argv) {
       max_new = (size_t)value;
     } else if (!strcmp(argv[i], "--logits-out") && i + 1 < (size_t)argc) {
       logits_path = argv[++i];
+    } else if (!strcmp(argv[i], "--threads") && i + 1 < (size_t)argc) {
+      if (parse_size(argv[++i], &threads) || threads < 1u || threads > BCIR_LLAMA_MAX_PARTS) {
+        usage(argv[0]); return 2;
+      }
+    } else if (!strcmp(argv[i], "--split-min") && i + 1 < (size_t)argc) {
+      if (parse_size(argv[++i], &split_min) || split_min == SIZE_MAX) { usage(argv[0]); return 2; }
     } else { usage(argv[0]); return 2; }
   }
   if (!model_path || !prompt_text || !max_new || parse_prompt(prompt_text, &prompt, &prompt_count)) {
@@ -113,7 +141,22 @@ int main(int argc, char **argv) {
   generated = (int32_t *)cli_allocate(generated_bytes);
   logits = (double *)cli_allocate(logits_bytes);
   if (!generated || !logits) { fprintf(stderr, "bcir-llama: out of memory\n"); rc = 1; goto done; }
-  rc = bcir_llama_generate_greedy(&model, prompt, prompt_count, max_new, generated, logits);
+  /* DECODE-THREADS: a pool of `threads` lent as the decoder's runner (the caller's thread its first), its
+   * thresholds the decoder's or --split-min's for both */
+  memset(&runner, 0, sizeof runner);
+  if (threads > 1u) {
+    pool_bytes = bcir_tensor_pool_size((unsigned)threads);
+    pool_memory = pool_bytes ? cli_allocate(pool_bytes) : NULL;
+    pool = pool_memory ? bcir_tensor_pool_init(pool_memory, pool_bytes, (unsigned)threads) : NULL;
+    if (!pool) { fprintf(stderr, "bcir-llama: cannot start %zu threads\n", threads); rc = 1; goto done; }
+    runner.run = cli_pool_run;
+    runner.self = pool;
+    runner.workers = (unsigned)threads;
+    runner.split_min = split_min == SIZE_MAX ? BCIR_LLAMA_SPLIT_MIN : split_min;
+    runner.head_split_min = split_min == SIZE_MAX ? BCIR_LLAMA_HEAD_SPLIT_MIN : split_min;
+  }
+  rc = bcir_llama_generate_greedy_with_runner(&model, prompt, prompt_count, max_new, generated, logits,
+                                              &allocator, pool ? &runner : NULL);
   if (rc) { fprintf(stderr, "bcir-llama: inference failed (%d)\n", rc); rc = 1; goto done; }
   fputs("{\"generated_ids\":[", stdout);
   for (i = 0; i < max_new; ++i) printf("%s%d", i ? "," : "", generated[i]);
@@ -123,6 +166,7 @@ int main(int argc, char **argv) {
   }
   rc = 0;
 done:
+  bcir_tensor_pool_stop(pool); cli_deallocate(pool_memory);
   cli_deallocate(logits); cli_deallocate(generated); cli_deallocate(prompt);
   bcir_q8_model_free(&model); return rc;
 }

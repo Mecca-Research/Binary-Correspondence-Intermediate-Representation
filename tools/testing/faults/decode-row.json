@@ -1,0 +1,120 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_ai:_CC",
+    "bcir.tests.test_decode_c_kernels:test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit",
+    "bcir.tests.test_decode_c_kernels:test_gqa_kernel_matches_the_oracle_and_the_cached_row_is_bitwise",
+    "bcir.tests.test_decode_c_kernels:test_decode_kernels_match_the_oracle_references",
+    "bcir.tests.test_model_weights_io:test_standalone_c_q8_decoder_matches_python_for_tied_and_untied_heads",
+    "bcir.tests.test_model_weights_io:test_the_decoders_rotation_is_bcir_ropes_rows_bit_for_bit"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit",
+      "label": "DR1 the scores' eight-row block's second row on the first row's keys",
+      "new": "      a1 += qc * k0[c];\n      a2 += qc * k0[2 * stride + c];\n      a3 += qc * k0[3 * stride + c];\n      a4 += qc * k0[4 * stride + c];",
+      "old": "      a1 += qc * k0[stride + c];\n      a2 += qc * k0[2 * stride + c];\n      a3 += qc * k0[3 * stride + c];\n      a4 += qc * k0[4 * stride + c];",
+      "path": "runtime/c/bcir_decode.c"
+    },
+    {
+      "expects": "test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit",
+      "label": "DR2 the eight-row block's sixth row on the seventh row's keys",
+      "new": "      a5 += qc * k0[6 * stride + c];",
+      "old": "      a5 += qc * k0[5 * stride + c];",
+      "path": "runtime/c/bcir_decode.c"
+    },
+    {
+      "expects": "test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit",
+      "label": "DR3 the four-row block's third row on the fourth row's keys",
+      "new": "      a2 += qc * k0[3 * stride + c];\n      a3 += qc * k0[3 * stride + c];\n    }\n    s[j] = a0 * sc; s[j + 1] = a1 * sc; s[j + 2] = a2 * sc; s[j + 3] = a3 * sc;\n  }\n  for (; j < n; j++) {",
+      "old": "      a2 += qc * k0[2 * stride + c];\n      a3 += qc * k0[3 * stride + c];\n    }\n    s[j] = a0 * sc; s[j + 1] = a1 * sc; s[j + 2] = a2 * sc; s[j + 3] = a3 * sc;\n  }\n  for (; j < n; j++) {",
+      "path": "runtime/c/bcir_decode.c"
+    },
+    {
+      "expects": "test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit",
+      "label": "DR4 the single rows' chains in descending channel order (a rounding difference alone)",
+      "new": "    for (int c = d_k - 1; c >= 0; c--) acc += qh[c] * kj[c];",
+      "old": "    for (int c = 0; c < d_k; c++) acc += qh[c] * kj[c];",
+      "path": "runtime/c/bcir_decode.c"
+    },
+    {
+      "expects": "test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit",
+      "label": "DR5 the context block's eighth chain a last bit off",
+      "new": "      a7 += sj * vj[7] * (1.0 + 0x1p-52);",
+      "old": "      a7 += sj * vj[7];",
+      "path": "runtime/c/bcir_decode.c"
+    },
+    {
+      "expects": "test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit",
+      "label": "DR6 the context over the scored rows alone (the masked rows' terms dropped)",
+      "new": "  gqa_context(s, v_rows + (size_t)g * d_k, stride, scored, d_k, o);",
+      "old": "  gqa_context(s, v_rows + (size_t)g * d_k, stride, t_len, d_k, o);",
+      "path": "runtime/c/bcir_decode.c"
+    },
+    {
+      "expects": "test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit",
+      "label": "DR7 the context block's seventh and eighth coordinates stored on each other",
+      "new": "    o[c + 4] = a4; o[c + 5] = a5; o[c + 6] = a7; o[c + 7] = a6;",
+      "old": "    o[c + 4] = a4; o[c + 5] = a5; o[c + 6] = a6; o[c + 7] = a7;",
+      "path": "runtime/c/bcir_decode.c"
+    },
+    {
+      "expects": "test_gqa_kernel_matches_the_oracle_and_the_cached_row_is_bitwise",
+      "label": "DR8 the context's remaining coordinates without key row 0",
+      "new": "    for (int j = 1; j < t_len; j++) acc += s[j] * vg[(size_t)j * stride + c];",
+      "old": "    for (int j = 0; j < t_len; j++) acc += s[j] * vg[(size_t)j * stride + c];",
+      "path": "runtime/c/bcir_decode.c"
+    },
+    {
+      "expects": "test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit",
+      "label": "DR9 the causal mask from one past the scored rows",
+      "new": "  for (int j = scored + 1; j < t_len; j++) s[j] = -INFINITY;",
+      "old": "  for (int j = scored; j < t_len; j++) s[j] = -INFINITY;",
+      "path": "runtime/c/bcir_decode.c"
+    },
+    {
+      "expects": "test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit",
+      "label": "DR10 the rotation's table with its cosine and sine on each other",
+      "new": "    cs[2 * k] = sin(th);\n    cs[2 * k + 1] = cos(th);",
+      "old": "    cs[2 * k] = cos(th);\n    cs[2 * k + 1] = sin(th);",
+      "path": "runtime/c/bcir_decode.c"
+    },
+    {
+      "expects": "test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit",
+      "label": "DR11 the rotation's angle through exp and log (a rounding difference)",
+      "new": "  return position * exp(log(base) * (-(2.0 * k) / dim));",
+      "old": "  return position * pow(base, -(2.0 * k) / dim);",
+      "path": "runtime/c/bcir_decode.c"
+    },
+    {
+      "expects": "test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit",
+      "label": "DR12 the table's pair applied with its cosine and sine on each other",
+      "new": "  for (int k = 0; k < dim / 2; k++) rope_pair(x + 2 * k, cs[2 * k + 1], cs[2 * k], out + 2 * k);",
+      "old": "  for (int k = 0; k < dim / 2; k++) rope_pair(x + 2 * k, cs[2 * k], cs[2 * k + 1], out + 2 * k);",
+      "path": "runtime/c/bcir_decode.c"
+    },
+    {
+      "expects": "test_the_attention_row_and_the_rotation_are_the_one_chain_loops_bit_for_bit",
+      "label": "DR13 the rotated pair's second output with its second term's sign flipped",
+      "new": "  o[1] = x0 * s - x1 * c;",
+      "old": "  o[1] = x0 * s + x1 * c;",
+      "path": "runtime/c/bcir_decode.c"
+    },
+    {
+      "expects": "test_the_decoders_rotation_is_bcir_ropes_rows_bit_for_bit",
+      "label": "DR14 the decoder's table filled once, at its first position",
+      "new": "  if (w->rope_pos == SIZE_MAX) {",
+      "old": "  if (w->rope_pos != pos) {",
+      "path": "runtime/c/bcir_llama.c"
+    },
+    {
+      "expects": "test_the_decoders_rotation_is_bcir_ropes_rows_bit_for_bit",
+      "label": "DR15 the decoder's table at the next position",
+      "new": "    bcir_rope_table((int)dk, m->rope_base, (double)(int)(pos + 1u), w->rope_cs);",
+      "old": "    bcir_rope_table((int)dk, m->rope_base, (double)(int)pos, w->rope_cs);",
+      "path": "runtime/c/bcir_llama.c"
+    }
+  ]
+}

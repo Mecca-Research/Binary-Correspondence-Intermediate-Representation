@@ -1,0 +1,134 @@
+{
+ "harness": [
+  {
+   "cc": "clang",
+   "build": "-std=c11",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "matvecs_hoisted": 94,
+   "matvecs_computed_again": 104,
+   "matvecs_two_rows_a_pass": 184,
+   "matvecs_in_runs": 128
+  },
+  {
+   "cc": "clang",
+   "build": "-std=c2x",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "matvecs_hoisted": 94,
+   "matvecs_computed_again": 104,
+   "matvecs_two_rows_a_pass": 184,
+   "matvecs_in_runs": 128
+  },
+  {
+   "cc": "clang",
+   "build": "-std=c2x -DBCIR_AI_MAX_INSTANCE=2",
+   "all_gates_passed": true,
+   "instances": 3,
+   "vector_comparisons": 176,
+   "matvecs_hoisted": 47,
+   "matvecs_computed_again": 52,
+   "matvecs_two_rows_a_pass": 92,
+   "matvecs_in_runs": 64
+  },
+  {
+   "cc": "clang",
+   "build": "-std=c2x -DBCIR_AI_NO_DISPATCH",
+   "all_gates_passed": true,
+   "instances": 1,
+   "vector_comparisons": 0,
+   "matvecs_hoisted": 0,
+   "matvecs_computed_again": 0,
+   "matvecs_two_rows_a_pass": 0,
+   "matvecs_in_runs": 0
+  },
+  {
+   "cc": "clang",
+   "build": "-std=c11 -fsanitize=address,undefined",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "matvecs_hoisted": 94,
+   "matvecs_computed_again": 104,
+   "matvecs_two_rows_a_pass": 184,
+   "matvecs_in_runs": 128
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c11",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "matvecs_hoisted": 94,
+   "matvecs_computed_again": 104,
+   "matvecs_two_rows_a_pass": 184,
+   "matvecs_in_runs": 128
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c2x",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "matvecs_hoisted": 94,
+   "matvecs_computed_again": 104,
+   "matvecs_two_rows_a_pass": 184,
+   "matvecs_in_runs": 128
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c2x -DBCIR_AI_MAX_INSTANCE=2",
+   "all_gates_passed": true,
+   "instances": 3,
+   "vector_comparisons": 176,
+   "matvecs_hoisted": 47,
+   "matvecs_computed_again": 52,
+   "matvecs_two_rows_a_pass": 92,
+   "matvecs_in_runs": 64
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c2x -DBCIR_AI_NO_DISPATCH",
+   "all_gates_passed": true,
+   "instances": 1,
+   "vector_comparisons": 0,
+   "matvecs_hoisted": 0,
+   "matvecs_computed_again": 0,
+   "matvecs_two_rows_a_pass": 0,
+   "matvecs_in_runs": 0
+  },
+  {
+   "cc": "gcc",
+   "build": "-std=c11 -fsanitize=address,undefined",
+   "all_gates_passed": true,
+   "instances": 7,
+   "vector_comparisons": 352,
+   "matvecs_hoisted": 94,
+   "matvecs_computed_again": 104,
+   "matvecs_two_rows_a_pass": 184,
+   "matvecs_in_runs": 128
+  }
+ ],
+ "witness": {
+  "tests": [
+   "bcir.tests.test_native_ai:test_native_ai_c_harness_c11_and_c23",
+   "bcir.tests.test_native_ai:test_native_ai_c_harness_under_address_sanitizer",
+   "bcir.tests.test_native_ai:test_native_q8_instances_match_the_increasing_coordinate_oracle",
+   "bcir.tests.test_native_ai:test_native_q8_matrix_kernels_match_increasing_coordinate_oracle_exactly"
+  ],
+  "required": [
+   "bcir.tests.test_native_ai:_CC",
+   "bcir.tests.test_native_ai:_ASAN"
+  ],
+  "exit": 0,
+  "output": [
+   "ok test_native_ai_c_harness_c11_and_c23",
+   "  ok test_native_ai_c_harness_under_address_sanitizer",
+   "  ok test_native_q8_instances_match_the_increasing_coordinate_oracle",
+   "  ok test_native_q8_matrix_kernels_match_increasing_coordinate_oracle_exactly",
+   "tests: 4 run, 0 finding(s)"
+  ]
+ }
+}

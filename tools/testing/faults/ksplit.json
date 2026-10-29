@@ -1,0 +1,144 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS1 the fold scales c by beta at every block, not the first's",
+      "new": "      if (j->x.fold) { for (c=0;c<n;c++) ci[c]=mm_scaled(j->x.beta,ci[c])+j->x.alpha*p[c]; }\n",
+      "old": "      if (b==0 && j->x.fold) { for (c=0;c<n;c++) ci[c]=mm_scaled(j->x.beta,ci[c])+j->x.alpha*p[c]; }\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS2 the fold adds the blocks last first",
+      "new": "      const float *p=j->ws+((j->ks-1-b)*m+i)*n;\n",
+      "old": "      const float *p=j->ws+(b*m+i)*n;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS3 the fold adds its later blocks without alpha",
+      "new": "      else for (c=0;c<n;c++) ci[c]=ci[c]+p[c];\n",
+      "old": "      else for (c=0;c<n;c++) ci[c]=ci[c]+j->x.alpha*p[c];\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS4 the fold's count of row tasks rounds down (a call's ragged last rows never folded)",
+      "new": "  f->start[f->calls+1]=f->start[f->calls]+j->x.m/BCIR_MM_FOLD_ROWS;\n",
+      "old": "  f->start[f->calls+1]=f->start[f->calls]+(j->x.m+BCIR_MM_FOLD_ROWS-1)/BCIR_MM_FOLD_ROWS;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS5 a block's first depth a whole block past the last's (the tail rule's halves ignored)",
+      "new": "  while (b--) { ls+=BCIR_MM_KBLOCK; len=kblock_next(k-ls); }\n",
+      "old": "  while (b--) { ls+=len; len=kblock_next(k-ls); }\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS6 the blocks' slices a row apart too few (each block's last row under the next's first)",
+      "new": "  xb.c=j->ws+b*(j->x.m-1)*j->x.n; xb.ldc=j->x.n; xb.fold=BCIR_MM_RAW;\n",
+      "old": "  xb.c=j->ws+b*j->x.m*j->x.n; xb.ldc=j->x.n; xb.fold=BCIR_MM_RAW;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS7 a block's rows of B at A's stride",
+      "new": "  xb.k=nl; xb.a=j->x.a+l0*j->x.lda; xb.b=j->x.b+l0*j->x.lda;\n",
+      "old": "  xb.k=nl; xb.a=j->x.a+l0*j->x.lda; xb.b=j->x.b+l0*j->x.ldb;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS8 the portable kernel's raw store leaves an edge block's last column",
+      "new": "      else for (j=0;j+1<nj;j++) ci[j]=acc[r][j];\n",
+      "old": "      else for (j=0;j<nr;j++) if (j<nj) ci[j]=acc[r][j];\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS9 the AVX-512 raw store's first vector a column short",
+      "new": "  if (x->fold==BCIR_MM_RAW) {  /* KSPLIT: the block's product as it is, the columns nj reaches */\n    __mmask16 m0=(__mmask16)(nj>=16 ? 0xffffu : ((1u<<nj)-1u)>>1);\n",
+      "old": "  if (x->fold==BCIR_MM_RAW) {  /* KSPLIT: the block's product as it is, the columns nj reaches */\n    __mmask16 m0=(__mmask16)(nj>=16 ? 0xffffu : (1u<<nj)-1u);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS10 the AVX-512 raw store leaves a block's third vector",
+      "new": "      if (nv>3) _mm512_mask_storeu_ps(ci+32,m2,acc2[r]);\n",
+      "old": "      if (nv>2) _mm512_mask_storeu_ps(ci+32,m2,acc2[r]);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS11 the AVX2 raw store's second vector a column short",
+      "new": "  if (x->fold==BCIR_MM_RAW) {  /* KSPLIT: the block's product as it is, the columns nj reaches */\n    __m256i m0=kb256_mask(nj>=8 ? 8 : nj),m1=kb256_mask(nj>9 ? nj-9 : 0);\n",
+      "old": "  if (x->fold==BCIR_MM_RAW) {  /* KSPLIT: the block's product as it is, the columns nj reaches */\n    __m256i m0=kb256_mask(nj>=8 ? 8 : nj),m1=kb256_mask(nj>8 ? nj-8 : 0);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS12 a call a block shallower than the threshold split",
+      "new": "  if (b+1<BCIR_MM_KSPLIT_BLOCKS || !m || !n || m>SIZE_MAX/n) return 0;\n",
+      "old": "  if (b<BCIR_MM_KSPLIT_BLOCKS || !m || !n || m>SIZE_MAX/n) return 0;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS13 the fit check a float generous (a call split into a float more than it was lent)",
+      "new": "  if (!step || raw>*left+sizeof(float)) return tasks;\n",
+      "old": "  if (!step || raw>*left) return tasks;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS14 the room taken at any alignment",
+      "new": "  return ws ? (unsigned char *)ws : NULL;\n",
+      "old": "  return ws && !((uintptr_t)ws%_Alignof(float)) ? (unsigned char *)ws : NULL;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS15 the room's next slice where the last one starts (a group's second weight adjoint over the first's partials)",
+      "new": "  *left-=step;\n",
+      "old": "  *room+=step; *left-=step;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS16 a group's weight adjoints never split",
+      "new": "      j.start[q+1]=j.start[q]+mm_call_init(&j.y[q],fused,variant,y+q); (void)room; (void)left;\n",
+      "old": "      j.start[q+1]=j.start[q]+mm_ksplit(&j.y[q],mm_call_init(&j.y[q],fused,variant,y+q),&room,&left);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS17 a pair's weight adjoint never split",
+      "new": "",
+      "old": "  second=mm_ksplit(&j.b,second,&room,&left);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS18 the single entry lends its call no room",
+      "new": "  mm_pool_ws_any(pool,fused,v,ta,tb,m,n,k,alpha,a,b,beta,c,NULL,0);\n",
+      "old": "  mm_pool_ws_any(pool,fused,v,ta,tb,m,n,k,alpha,a,b,beta,c,fused==MM_KBLOCK ? workspace : NULL,\n      fused==MM_KBLOCK ? bytes : 0);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KS19 a call's fold before its blocks",
+      "new": "  f.calls=0; f.start[0]=0; mm_fold_add(&f,&j);\n  mm_run_tasks(pool,mm_fold_task,&f,f.start[f.calls],0);\n  mm_run_tasks(pool,mm_task,&j,tasks,0);\n",
+      "old": "  mm_run_tasks(pool,mm_task,&j,tasks,0);\n  f.calls=0; f.start[0]=0; mm_fold_add(&f,&j);\n  mm_run_tasks(pool,mm_fold_task,&f,f.start[f.calls],0);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

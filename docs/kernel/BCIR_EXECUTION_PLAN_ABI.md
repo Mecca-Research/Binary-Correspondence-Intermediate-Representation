@@ -196,6 +196,16 @@ static memory planner (staged plan S1-D). It changes **no** v1 field offset:
   is for the StreamPack.
 - **The alias law by bytes** applies to every version: the C twin (`bcir_ep_verify`) and the
   Python codec refuse two lifetimes of one bank that are live at once at overlapping addresses.
+  Both rails judge it in O(n log n) (ALIAS-SWEEP, 2026-10-21): a sweep over the lifetimes' ticks --
+  at one tick the ends before the starts, the intervals being half-open -- keeps the live lifetimes
+  ranked by (bank, offset) in a Fenwick tree, and a lifetime that starts is checked against its two
+  neighbours alone, since until a pair is found the live lifetimes of one bank lie apart; the first
+  lifetime aliasing an earlier one -- the one the pairwise law names, refused ahead of any later
+  lifetime's own law -- is a binary search of sweeps, run only once the whole is known to hold a
+  pair. The Python codec's `first_alias` is that sweep; the C twin sweeps over scratch the caller
+  lends (`bcir_ep_verify_lent`, and the lowering's `bcir_ep_check_pack_walk`: 62 bytes a lifetime
+  and 4, `bcir_ep_sweep_bytes`, any alignment) and judges the law pairwise, heap-free, without it --
+  the verdict, and the lifetimes a walk hands over before it, the same either way.
 
 ## v3 (append-only): the move tail and the binding (G8)
 

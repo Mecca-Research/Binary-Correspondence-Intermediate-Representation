@@ -1,0 +1,614 @@
+[
+ {
+  "cc": "clang",
+  "tree": "before",
+  "repeat": 1,
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 132.5,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1501.6,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 36026.8,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 292.3,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 57.0,
+    "calls": 816
+   },
+   "attention": {
+    "us": 7347.9,
+    "calls": 816
+   },
+   "residual": {
+    "us": 92.4,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 2049.9,
+    "calls": 816
+   },
+   "head": {
+    "us": 7237.9,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 636.2,
+    "calls": 200
+   },
+   "total": {
+    "us": 55374.5
+   }
+  }
+ },
+ {
+  "cc": "clang",
+  "tree": "after",
+  "repeat": 1,
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 136.7,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1567.5,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 23231.0,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 313.3,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 55.7,
+    "calls": 816
+   },
+   "attention": {
+    "us": 6920.8,
+    "calls": 816
+   },
+   "residual": {
+    "us": 95.3,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 2103.5,
+    "calls": 816
+   },
+   "head": {
+    "us": 7167.4,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 659.0,
+    "calls": 200
+   },
+   "total": {
+    "us": 42250.2
+   }
+  }
+ },
+ {
+  "cc": "clang",
+  "tree": "after",
+  "repeat": 2,
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 141.0,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1616.5,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 26266.0,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 318.7,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 59.6,
+    "calls": 816
+   },
+   "attention": {
+    "us": 7594.4,
+    "calls": 816
+   },
+   "residual": {
+    "us": 95.4,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 2284.3,
+    "calls": 816
+   },
+   "head": {
+    "us": 8185.6,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 648.5,
+    "calls": 200
+   },
+   "total": {
+    "us": 47210.0
+   }
+  }
+ },
+ {
+  "cc": "clang",
+  "tree": "before",
+  "repeat": 2,
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 161.3,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1520.6,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 27518.2,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 365.0,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 54.0,
+    "calls": 816
+   },
+   "attention": {
+    "us": 7061.0,
+    "calls": 816
+   },
+   "residual": {
+    "us": 132.2,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 2097.1,
+    "calls": 816
+   },
+   "head": {
+    "us": 7282.7,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 639.1,
+    "calls": 200
+   },
+   "total": {
+    "us": 46831.2
+   }
+  }
+ },
+ {
+  "cc": "clang",
+  "tree": "before",
+  "repeat": 3,
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 134.2,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1535.8,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 28061.7,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 298.4,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 56.4,
+    "calls": 816
+   },
+   "attention": {
+    "us": 7092.1,
+    "calls": 816
+   },
+   "residual": {
+    "us": 93.9,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 2083.0,
+    "calls": 816
+   },
+   "head": {
+    "us": 7170.4,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 631.2,
+    "calls": 200
+   },
+   "total": {
+    "us": 47157.1
+   }
+  }
+ },
+ {
+  "cc": "clang",
+  "tree": "after",
+  "repeat": 3,
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 139.0,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1495.5,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 23202.5,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 296.1,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 51.3,
+    "calls": 816
+   },
+   "attention": {
+    "us": 6992.3,
+    "calls": 816
+   },
+   "residual": {
+    "us": 92.9,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 2047.3,
+    "calls": 816
+   },
+   "head": {
+    "us": 7306.9,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 645.6,
+    "calls": 200
+   },
+   "total": {
+    "us": 42269.4
+   }
+  }
+ },
+ {
+  "cc": "gcc",
+  "tree": "before",
+  "repeat": 1,
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 126.8,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1604.1,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 26149.1,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 258.0,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 52.7,
+    "calls": 816
+   },
+   "attention": {
+    "us": 7034.4,
+    "calls": 816
+   },
+   "residual": {
+    "us": 123.4,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 2078.0,
+    "calls": 816
+   },
+   "head": {
+    "us": 8961.2,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 677.8,
+    "calls": 200
+   },
+   "total": {
+    "us": 47065.5
+   }
+  }
+ },
+ {
+  "cc": "gcc",
+  "tree": "after",
+  "repeat": 1,
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 130.4,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1600.2,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 22611.0,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 275.3,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 51.3,
+    "calls": 816
+   },
+   "attention": {
+    "us": 7049.1,
+    "calls": 816
+   },
+   "residual": {
+    "us": 122.9,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 2029.2,
+    "calls": 816
+   },
+   "head": {
+    "us": 9137.6,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 657.9,
+    "calls": 200
+   },
+   "total": {
+    "us": 43664.9
+   }
+  }
+ },
+ {
+  "cc": "gcc",
+  "tree": "after",
+  "repeat": 2,
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 135.0,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1601.2,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 22758.1,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 283.7,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 53.1,
+    "calls": 816
+   },
+   "attention": {
+    "us": 7171.7,
+    "calls": 816
+   },
+   "residual": {
+    "us": 122.6,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 1970.5,
+    "calls": 816
+   },
+   "head": {
+    "us": 9071.3,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 642.5,
+    "calls": 200
+   },
+   "total": {
+    "us": 43809.7
+   }
+  }
+ },
+ {
+  "cc": "gcc",
+  "tree": "before",
+  "repeat": 2,
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 132.6,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1582.4,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 26725.5,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 277.1,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 53.3,
+    "calls": 816
+   },
+   "attention": {
+    "us": 7050.7,
+    "calls": 816
+   },
+   "residual": {
+    "us": 122.5,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 2065.9,
+    "calls": 816
+   },
+   "head": {
+    "us": 8990.4,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 617.1,
+    "calls": 200
+   },
+   "total": {
+    "us": 47617.5
+   }
+  }
+ },
+ {
+  "cc": "gcc",
+  "tree": "before",
+  "repeat": 3,
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 129.2,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1548.8,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 25834.2,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 268.7,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 54.8,
+    "calls": 816
+   },
+   "attention": {
+    "us": 7068.9,
+    "calls": 816
+   },
+   "residual": {
+    "us": 121.9,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 2047.7,
+    "calls": 816
+   },
+   "head": {
+    "us": 9084.2,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 622.8,
+    "calls": 200
+   },
+   "total": {
+    "us": 46781.2
+   }
+  }
+ },
+ {
+  "cc": "gcc",
+  "tree": "after",
+  "repeat": 3,
+  "runs": 5,
+  "operations": {
+   "embed": {
+    "us": 139.4,
+    "calls": 204
+   },
+   "rmsnorm": {
+    "us": 1584.5,
+    "calls": 1836
+   },
+   "matvec": {
+    "us": 23035.0,
+    "calls": 5712
+   },
+   "rope": {
+    "us": 277.5,
+    "calls": 816
+   },
+   "kv_append": {
+    "us": 54.3,
+    "calls": 816
+   },
+   "attention": {
+    "us": 7077.1,
+    "calls": 816
+   },
+   "residual": {
+    "us": 127.1,
+    "calls": 1632
+   },
+   "swiglu": {
+    "us": 2075.6,
+    "calls": 816
+   },
+   "head": {
+    "us": 9189.4,
+    "calls": 200
+   },
+   "argmax": {
+    "us": 647.1,
+    "calls": 200
+   },
+   "total": {
+    "us": 44207.0
+   }
+  }
+ }
+]

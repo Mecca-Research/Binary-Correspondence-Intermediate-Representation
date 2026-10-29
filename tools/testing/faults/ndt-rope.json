@@ -30,9 +30,9 @@
   },
   {
    "expects": "test_native_c_harness_c11_and_c23",
-   "label": "NO4 the low half's rotation adds the high half's term",
-   "new": "lo[j]=a*c[j]+z*s[j];",
-   "old": "lo[j]=a*c[j]-z*s[j];",
+   "label": "NO4 the low half's rotation adds the high half's term (rope_turn, which both rotations share since ROPE-BOUND)",
+   "new": "lo[k]=a*c[k]+z*s[k];",
+   "old": "lo[k]=a*c[k]-z*s[k];",
    "path": "runtime/c/bcir_tensor.c"
   },
   {
@@ -40,6 +40,20 @@
    "label": "NO5 a head shorter than a whole range of pairs is never turned (the ranges stop at the last whole one)",
    "new": "  for (j0=0;j0+BCIR_ROPE_J<=half;j0+=BCIR_ROPE_J) {",
    "old": "  for (j0=0;j0<half;j0+=BCIR_ROPE_J) {",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NO6 a head of one range of pairs turned one pair short (ROPE-BOUND's bound the head's half, less one)",
+   "new": "rope_turn(b,t,heads,dim,pos,0,half-1,c,s,x);",
+   "old": "rope_turn(b,t,heads,dim,pos,0,half,c,s,x);",
+   "path": "runtime/c/bcir_tensor.c"
+  },
+  {
+   "expects": "test_native_c_harness_c11_and_c23",
+   "label": "NO7 each range of a wide head turned onto its first range's pairs",
+   "new": "else rope_turn(b,t,heads,dim,pos,0,nj,c,s,x);",
+   "old": "else rope_turn(b,t,heads,dim,pos,j0,nj,c,s,x);",
    "path": "runtime/c/bcir_tensor.c"
   }
  ]

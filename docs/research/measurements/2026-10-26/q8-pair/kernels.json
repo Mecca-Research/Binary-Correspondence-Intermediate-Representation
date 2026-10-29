@@ -1,0 +1,8642 @@
+[
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "128,128,32,1,256",
+  "rounds": 9,
+  "code_bytes": 16384,
+  "avx512_off": {
+   "us_a_pass": 1017.34
+  },
+  "avx512_on": {
+   "us_a_pass": 592.58,
+   "ratio": 0.5745,
+   "interval": [
+    0.558,
+    0.5914
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 1089.62,
+   "ratio": 1.0359,
+   "interval": [
+    1.0042,
+    1.0686
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 947.06
+  },
+  "avx2_on": {
+   "us_a_pass": 677.33,
+   "ratio": 0.708,
+   "interval": [
+    0.6878,
+    0.7288
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 981.97,
+   "ratio": 1.0224,
+   "interval": [
+    0.9956,
+    1.0498
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "L3",
+  "case": "128,128,32,1024,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 2997.63
+  },
+  "avx512_on": {
+   "us_a_pass": 2682.89,
+   "ratio": 0.8935,
+   "interval": [
+    0.8852,
+    0.9018
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3070.88,
+   "ratio": 1.017,
+   "interval": [
+    1.0039,
+    1.0304
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4284.57
+  },
+  "avx2_on": {
+   "us_a_pass": 3178.48,
+   "ratio": 0.7424,
+   "interval": [
+    0.7338,
+    0.751
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4304.2,
+   "ratio": 1.0013,
+   "interval": [
+    0.9912,
+    1.0115
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "128,128,32,32768,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 134218.17
+  },
+  "avx512_on": {
+   "us_a_pass": 124588.35,
+   "ratio": 0.8608,
+   "interval": [
+    0.743,
+    0.9973
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 133280.28,
+   "ratio": 0.9158,
+   "interval": [
+    0.7792,
+    1.0763
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 251296.61
+  },
+  "avx2_on": {
+   "us_a_pass": 139576.68,
+   "ratio": 0.5827,
+   "interval": [
+    0.4892,
+    0.6941
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 252815.28,
+   "ratio": 1.0159,
+   "interval": [
+    0.9573,
+    1.078
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "128,64,32,1,512",
+  "rounds": 9,
+  "code_bytes": 8192,
+  "avx512_off": {
+   "us_a_pass": 764.93
+  },
+  "avx512_on": {
+   "us_a_pass": 692.63,
+   "ratio": 0.943,
+   "interval": [
+    0.8276,
+    1.0745
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 773.83,
+   "ratio": 0.9906,
+   "interval": [
+    0.9703,
+    1.0114
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1030.81
+  },
+  "avx2_on": {
+   "us_a_pass": 750.2,
+   "ratio": 0.8221,
+   "interval": [
+    0.7349,
+    0.9197
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1055.01,
+   "ratio": 1.0599,
+   "interval": [
+    0.9839,
+    1.1418
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "L3",
+  "case": "128,64,32,2048,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3681.18
+  },
+  "avx512_on": {
+   "us_a_pass": 3062.89,
+   "ratio": 0.8402,
+   "interval": [
+    0.8271,
+    0.8535
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3722.19,
+   "ratio": 1.0081,
+   "interval": [
+    0.9904,
+    1.0261
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4389.54
+  },
+  "avx2_on": {
+   "us_a_pass": 3859.27,
+   "ratio": 0.8831,
+   "interval": [
+    0.87,
+    0.8963
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4376.25,
+   "ratio": 1.0055,
+   "interval": [
+    0.9809,
+    1.0307
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "128,64,32,65536,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 212330.92
+  },
+  "avx512_on": {
+   "us_a_pass": 188401.42,
+   "ratio": 0.8754,
+   "interval": [
+    0.8567,
+    0.8946
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 212851.81,
+   "ratio": 0.9818,
+   "interval": [
+    0.9322,
+    1.0341
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 243592.15
+  },
+  "avx2_on": {
+   "us_a_pass": 256747.11,
+   "ratio": 1.0573,
+   "interval": [
+    1.0421,
+    1.0726
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 243898.79,
+   "ratio": 1.0189,
+   "interval": [
+    0.9756,
+    1.0642
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "128,344,32,1,96",
+  "rounds": 9,
+  "code_bytes": 44032,
+  "avx512_off": {
+   "us_a_pass": 724.76
+  },
+  "avx512_on": {
+   "us_a_pass": 581.33,
+   "ratio": 0.7981,
+   "interval": [
+    0.7652,
+    0.8324
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 718.4,
+   "ratio": 0.9865,
+   "interval": [
+    0.9659,
+    1.0076
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1041.71
+  },
+  "avx2_on": {
+   "us_a_pass": 666.31,
+   "ratio": 0.643,
+   "interval": [
+    0.6276,
+    0.6587
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1031.98,
+   "ratio": 0.9884,
+   "interval": [
+    0.9715,
+    1.0057
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "L3",
+  "case": "128,344,32,382,1",
+  "rounds": 9,
+  "code_bytes": 16820224,
+  "avx512_off": {
+   "us_a_pass": 3367.83
+  },
+  "avx512_on": {
+   "us_a_pass": 2684.5,
+   "ratio": 0.8029,
+   "interval": [
+    0.7825,
+    0.8239
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3497.86,
+   "ratio": 1.0395,
+   "interval": [
+    1.011,
+    1.0688
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4204.14
+  },
+  "avx2_on": {
+   "us_a_pass": 3067.83,
+   "ratio": 0.7265,
+   "interval": [
+    0.72,
+    0.733
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4277.08,
+   "ratio": 1.0409,
+   "interval": [
+    0.9698,
+    1.1173
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "128,344,32,12193,1",
+  "rounds": 5,
+  "code_bytes": 536882176,
+  "avx512_off": {
+   "us_a_pass": 214725.75
+  },
+  "avx512_on": {
+   "us_a_pass": 118176.84,
+   "ratio": 0.5585,
+   "interval": [
+    0.5443,
+    0.5732
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 210296.5,
+   "ratio": 0.9895,
+   "interval": [
+    0.9704,
+    1.0089
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 247211.52
+  },
+  "avx2_on": {
+   "us_a_pass": 142020.97,
+   "ratio": 0.5663,
+   "interval": [
+    0.5505,
+    0.5826
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 249049.47,
+   "ratio": 1.0172,
+   "interval": [
+    0.9278,
+    1.1153
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "344,128,32,1,96",
+  "rounds": 9,
+  "code_bytes": 44032,
+  "avx512_off": {
+   "us_a_pass": 748.97
+  },
+  "avx512_on": {
+   "us_a_pass": 582.89,
+   "ratio": 0.7929,
+   "interval": [
+    0.7488,
+    0.8396
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 725.06,
+   "ratio": 0.9596,
+   "interval": [
+    0.9183,
+    1.0027
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 982.14
+  },
+  "avx2_on": {
+   "us_a_pass": 680.48,
+   "ratio": 0.7106,
+   "interval": [
+    0.6845,
+    0.7376
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 995.7,
+   "ratio": 1.0483,
+   "interval": [
+    0.9801,
+    1.1214
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "L3",
+  "case": "344,128,32,382,1",
+  "rounds": 9,
+  "code_bytes": 16820224,
+  "avx512_off": {
+   "us_a_pass": 2997.35
+  },
+  "avx512_on": {
+   "us_a_pass": 2606.52,
+   "ratio": 0.8707,
+   "interval": [
+    0.8591,
+    0.8825
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3042.3,
+   "ratio": 1.0125,
+   "interval": [
+    0.9951,
+    1.0302
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4297.57
+  },
+  "avx2_on": {
+   "us_a_pass": 3086.68,
+   "ratio": 0.7195,
+   "interval": [
+    0.7118,
+    0.7272
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4273.85,
+   "ratio": 0.9934,
+   "interval": [
+    0.9817,
+    1.0053
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "344,128,32,12193,1",
+  "rounds": 5,
+  "code_bytes": 536882176,
+  "avx512_off": {
+   "us_a_pass": 135407.2
+  },
+  "avx512_on": {
+   "us_a_pass": 126171.98,
+   "ratio": 0.9276,
+   "interval": [
+    0.8383,
+    1.0265
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 134039.79,
+   "ratio": 0.9898,
+   "interval": [
+    0.8639,
+    1.1341
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 257798.08
+  },
+  "avx2_on": {
+   "us_a_pass": 134951.22,
+   "ratio": 0.525,
+   "interval": [
+    0.5075,
+    0.543
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 256915.2,
+   "ratio": 0.9908,
+   "interval": [
+    0.9466,
+    1.0371
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "512,512,32,1,16",
+  "rounds": 9,
+  "code_bytes": 262144,
+  "avx512_off": {
+   "us_a_pass": 658.75
+  },
+  "avx512_on": {
+   "us_a_pass": 518.18,
+   "ratio": 0.807,
+   "interval": [
+    0.7575,
+    0.8597
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 649.22,
+   "ratio": 1.008,
+   "interval": [
+    0.9711,
+    1.0463
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 889.66
+  },
+  "avx2_on": {
+   "us_a_pass": 598.67,
+   "ratio": 0.7138,
+   "interval": [
+    0.6249,
+    0.8154
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 887.86,
+   "ratio": 0.9822,
+   "interval": [
+    0.9214,
+    1.0469
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "L3",
+  "case": "512,512,32,64,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3274.41
+  },
+  "avx512_on": {
+   "us_a_pass": 2522.3,
+   "ratio": 0.747,
+   "interval": [
+    0.6871,
+    0.8122
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3400.0,
+   "ratio": 1.0034,
+   "interval": [
+    0.908,
+    1.1088
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4014.36
+  },
+  "avx2_on": {
+   "us_a_pass": 2909.08,
+   "ratio": 0.7501,
+   "interval": [
+    0.6983,
+    0.8057
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4076.27,
+   "ratio": 1.0171,
+   "interval": [
+    0.989,
+    1.0461
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "512,512,32,2048,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 181078.23
+  },
+  "avx512_on": {
+   "us_a_pass": 118039.37,
+   "ratio": 0.6642,
+   "interval": [
+    0.6133,
+    0.7194
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 182741.63,
+   "ratio": 1.0214,
+   "interval": [
+    0.9437,
+    1.1055
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 239553.33
+  },
+  "avx2_on": {
+   "us_a_pass": 127167.56,
+   "ratio": 0.5244,
+   "interval": [
+    0.5076,
+    0.5418
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 241522.93,
+   "ratio": 0.9946,
+   "interval": [
+    0.971,
+    1.0188
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "1024,1024,32,1,4",
+  "rounds": 9,
+  "code_bytes": 1048576,
+  "avx512_off": {
+   "us_a_pass": 992.99
+  },
+  "avx512_on": {
+   "us_a_pass": 549.41,
+   "ratio": 0.5407,
+   "interval": [
+    0.5194,
+    0.5629
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 1046.79,
+   "ratio": 1.1126,
+   "interval": [
+    0.9099,
+    1.3605
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 954.44
+  },
+  "avx2_on": {
+   "us_a_pass": 633.62,
+   "ratio": 0.6638,
+   "interval": [
+    0.6394,
+    0.6891
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 987.22,
+   "ratio": 1.0317,
+   "interval": [
+    0.9886,
+    1.0766
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "L3",
+  "case": "1024,1024,32,16,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3620.14
+  },
+  "avx512_on": {
+   "us_a_pass": 2555.77,
+   "ratio": 0.7085,
+   "interval": [
+    0.695,
+    0.7222
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3675.92,
+   "ratio": 1.02,
+   "interval": [
+    0.9902,
+    1.0507
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 3975.63
+  },
+  "avx2_on": {
+   "us_a_pass": 2974.68,
+   "ratio": 0.743,
+   "interval": [
+    0.7339,
+    0.7522
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4005.97,
+   "ratio": 1.011,
+   "interval": [
+    0.9982,
+    1.0239
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "1024,1024,32,512,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 288943.21
+  },
+  "avx512_on": {
+   "us_a_pass": 135666.68,
+   "ratio": 0.466,
+   "interval": [
+    0.4294,
+    0.5056
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 283787.03,
+   "ratio": 0.9718,
+   "interval": [
+    0.8887,
+    1.0627
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 218662.14
+  },
+  "avx2_on": {
+   "us_a_pass": 188688.22,
+   "ratio": 0.8017,
+   "interval": [
+    0.6959,
+    0.9237
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 212318.42,
+   "ratio": 0.9306,
+   "interval": [
+    0.8327,
+    1.04
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "2048,256,32,1,8",
+  "rounds": 9,
+  "code_bytes": 524288,
+  "avx512_off": {
+   "us_a_pass": 1072.57
+  },
+  "avx512_on": {
+   "us_a_pass": 896.73,
+   "ratio": 0.8267,
+   "interval": [
+    0.8022,
+    0.8519
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 1050.41,
+   "ratio": 1.0114,
+   "interval": [
+    0.964,
+    1.0612
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1576.06
+  },
+  "avx2_on": {
+   "us_a_pass": 1126.65,
+   "ratio": 0.6741,
+   "interval": [
+    0.5373,
+    0.8457
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1537.0,
+   "ratio": 0.9085,
+   "interval": [
+    0.7842,
+    1.0524
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "L3",
+  "case": "2048,256,32,32,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3099.2
+  },
+  "avx512_on": {
+   "us_a_pass": 2426.74,
+   "ratio": 0.7806,
+   "interval": [
+    0.7498,
+    0.8128
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3058.62,
+   "ratio": 0.9837,
+   "interval": [
+    0.9527,
+    1.0157
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 3879.32
+  },
+  "avx2_on": {
+   "us_a_pass": 2878.14,
+   "ratio": 0.7463,
+   "interval": [
+    0.7313,
+    0.7617
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 3982.2,
+   "ratio": 1.0442,
+   "interval": [
+    1.0022,
+    1.088
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "2048,256,32,1024,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 155732.83
+  },
+  "avx512_on": {
+   "us_a_pass": 111580.41,
+   "ratio": 0.7096,
+   "interval": [
+    0.6916,
+    0.7281
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 155648.14,
+   "ratio": 1.0149,
+   "interval": [
+    0.9408,
+    1.095
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 241546.31
+  },
+  "avx2_on": {
+   "us_a_pass": 135428.7,
+   "ratio": 0.5775,
+   "interval": [
+    0.5093,
+    0.6549
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 244065.33,
+   "ratio": 1.009,
+   "interval": [
+    0.9467,
+    1.0754
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "2048,2048,32,1,1",
+  "rounds": 9,
+  "code_bytes": 4194304,
+  "avx512_off": {
+   "us_a_pass": 1238.07
+  },
+  "avx512_on": {
+   "us_a_pass": 610.0,
+   "ratio": 0.4875,
+   "interval": [
+    0.4704,
+    0.5052
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 1259.99,
+   "ratio": 1.0152,
+   "interval": [
+    0.957,
+    1.0769
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 935.42
+  },
+  "avx2_on": {
+   "us_a_pass": 716.56,
+   "ratio": 0.7554,
+   "interval": [
+    0.7129,
+    0.8004
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1020.7,
+   "ratio": 1.0709,
+   "interval": [
+    1.0503,
+    1.0919
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "L3",
+  "case": "2048,2048,32,4,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 4664.87
+  },
+  "avx512_on": {
+   "us_a_pass": 2386.94,
+   "ratio": 0.4973,
+   "interval": [
+    0.4655,
+    0.5312
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 4687.71,
+   "ratio": 0.969,
+   "interval": [
+    0.8995,
+    1.0439
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 3828.23
+  },
+  "avx2_on": {
+   "us_a_pass": 3029.28,
+   "ratio": 0.7815,
+   "interval": [
+    0.7559,
+    0.8079
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 3903.7,
+   "ratio": 1.0074,
+   "interval": [
+    0.984,
+    1.0313
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "2048,2048,32,128,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 345658.35
+  },
+  "avx512_on": {
+   "us_a_pass": 158327.89,
+   "ratio": 0.4493,
+   "interval": [
+    0.4258,
+    0.4741
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 344732.56,
+   "ratio": 0.9835,
+   "interval": [
+    0.9247,
+    1.046
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 201057.77
+  },
+  "avx2_on": {
+   "us_a_pass": 166297.67,
+   "ratio": 0.8059,
+   "interval": [
+    0.6952,
+    0.9343
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 202426.79,
+   "ratio": 0.9646,
+   "interval": [
+    0.8492,
+    1.0958
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "2048,5632,32,1,1",
+  "rounds": 9,
+  "code_bytes": 11534336,
+  "avx512_off": {
+   "us_a_pass": 2912.71
+  },
+  "avx512_on": {
+   "us_a_pass": 1654.78,
+   "ratio": 0.5563,
+   "interval": [
+    0.5243,
+    0.5902
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3060.68,
+   "ratio": 1.0519,
+   "interval": [
+    0.9737,
+    1.1365
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 2579.11
+  },
+  "avx2_on": {
+   "us_a_pass": 2044.52,
+   "ratio": 0.7737,
+   "interval": [
+    0.7356,
+    0.8137
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 2665.79,
+   "ratio": 0.9936,
+   "interval": [
+    0.9224,
+    1.0703
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "L3",
+  "case": "2048,5632,32,2,1",
+  "rounds": 9,
+  "code_bytes": 23068672,
+  "avx512_off": {
+   "us_a_pass": 5811.86
+  },
+  "avx512_on": {
+   "us_a_pass": 3281.45,
+   "ratio": 0.5475,
+   "interval": [
+    0.5175,
+    0.5792
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 5859.11,
+   "ratio": 1.0028,
+   "interval": [
+    0.8544,
+    1.177
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 5184.76
+  },
+  "avx2_on": {
+   "us_a_pass": 4078.34,
+   "ratio": 0.8039,
+   "interval": [
+    0.7208,
+    0.8966
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5154.73,
+   "ratio": 1.0085,
+   "interval": [
+    0.9029,
+    1.1266
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "2048,5632,32,47,1",
+  "rounds": 5,
+  "code_bytes": 542113792,
+  "avx512_off": {
+   "us_a_pass": 337425.66
+  },
+  "avx512_on": {
+   "us_a_pass": 109044.42,
+   "ratio": 0.319,
+   "interval": [
+    0.3004,
+    0.3388
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 334095.33,
+   "ratio": 0.9615,
+   "interval": [
+    0.8981,
+    1.0294
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 155803.83
+  },
+  "avx2_on": {
+   "us_a_pass": 153160.53,
+   "ratio": 0.9534,
+   "interval": [
+    0.8133,
+    1.1176
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 157193.13,
+   "ratio": 1.0516,
+   "interval": [
+    0.8697,
+    1.2717
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "5632,2048,32,1,1",
+  "rounds": 9,
+  "code_bytes": 11534336,
+  "avx512_off": {
+   "us_a_pass": 5845.37
+  },
+  "avx512_on": {
+   "us_a_pass": 2339.9,
+   "ratio": 0.4201,
+   "interval": [
+    0.3857,
+    0.4575
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 5791.59,
+   "ratio": 1.002,
+   "interval": [
+    0.9738,
+    1.031
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4201.6
+  },
+  "avx2_on": {
+   "us_a_pass": 3056.17,
+   "ratio": 0.7373,
+   "interval": [
+    0.6831,
+    0.7958
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4015.98,
+   "ratio": 0.97,
+   "interval": [
+    0.8587,
+    1.0958
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "L3",
+  "case": "5632,2048,32,2,1",
+  "rounds": 9,
+  "code_bytes": 23068672,
+  "avx512_off": {
+   "us_a_pass": 7718.99
+  },
+  "avx512_on": {
+   "us_a_pass": 3266.87,
+   "ratio": 0.4222,
+   "interval": [
+    0.4118,
+    0.4329
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 7759.68,
+   "ratio": 0.9995,
+   "interval": [
+    0.9811,
+    1.0183
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 5217.36
+  },
+  "avx2_on": {
+   "us_a_pass": 4114.48,
+   "ratio": 0.7905,
+   "interval": [
+    0.7704,
+    0.8112
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5214.55,
+   "ratio": 1.0008,
+   "interval": [
+    0.9917,
+    1.0099
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "5632,2048,32,47,1",
+  "rounds": 5,
+  "code_bytes": 542113792,
+  "avx512_off": {
+   "us_a_pass": 356923.23
+  },
+  "avx512_on": {
+   "us_a_pass": 161206.02,
+   "ratio": 0.4439,
+   "interval": [
+    0.4108,
+    0.4798
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 343574.47,
+   "ratio": 0.9602,
+   "interval": [
+    0.8771,
+    1.0512
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 202362.77
+  },
+  "avx2_on": {
+   "us_a_pass": 165526.35,
+   "ratio": 0.8345,
+   "interval": [
+    0.7848,
+    0.8872
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 201894.35,
+   "ratio": 1.0055,
+   "interval": [
+    0.9654,
+    1.0472
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "128,128,32,1,256",
+  "rounds": 9,
+  "code_bytes": 16384,
+  "avx512_off": {
+   "us_a_pass": 675.76
+  },
+  "avx512_on": {
+   "us_a_pass": 570.14,
+   "ratio": 0.8547,
+   "interval": [
+    0.8248,
+    0.8856
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 669.26,
+   "ratio": 0.9985,
+   "interval": [
+    0.9744,
+    1.0232
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1073.51
+  },
+  "avx2_on": {
+   "us_a_pass": 632.98,
+   "ratio": 0.6003,
+   "interval": [
+    0.5722,
+    0.6299
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1041.81,
+   "ratio": 0.969,
+   "interval": [
+    0.93,
+    1.0096
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "128,128,32,1024,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 2947.66
+  },
+  "avx512_on": {
+   "us_a_pass": 2666.13,
+   "ratio": 0.8996,
+   "interval": [
+    0.8807,
+    0.919
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3099.06,
+   "ratio": 1.0482,
+   "interval": [
+    1.0297,
+    1.067
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4390.62
+  },
+  "avx2_on": {
+   "us_a_pass": 2989.81,
+   "ratio": 0.6757,
+   "interval": [
+    0.6667,
+    0.6847
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4457.59,
+   "ratio": 1.0094,
+   "interval": [
+    0.9962,
+    1.0227
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "128,128,32,32768,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 171753.78
+  },
+  "avx512_on": {
+   "us_a_pass": 128775.18,
+   "ratio": 0.766,
+   "interval": [
+    0.7117,
+    0.8244
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 172609.29,
+   "ratio": 1.006,
+   "interval": [
+    0.9545,
+    1.0603
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 248566.1
+  },
+  "avx2_on": {
+   "us_a_pass": 142244.56,
+   "ratio": 0.6256,
+   "interval": [
+    0.5209,
+    0.7514
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 249802.43,
+   "ratio": 1.0155,
+   "interval": [
+    0.9538,
+    1.0812
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "128,64,32,1,512",
+  "rounds": 9,
+  "code_bytes": 8192,
+  "avx512_off": {
+   "us_a_pass": 722.02
+  },
+  "avx512_on": {
+   "us_a_pass": 617.33,
+   "ratio": 0.861,
+   "interval": [
+    0.843,
+    0.8795
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 717.14,
+   "ratio": 1.0059,
+   "interval": [
+    0.9822,
+    1.0301
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1093.09
+  },
+  "avx2_on": {
+   "us_a_pass": 726.27,
+   "ratio": 0.6708,
+   "interval": [
+    0.6506,
+    0.6917
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1103.38,
+   "ratio": 1.0259,
+   "interval": [
+    0.9996,
+    1.0528
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "128,64,32,2048,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3390.01
+  },
+  "avx512_on": {
+   "us_a_pass": 3003.99,
+   "ratio": 0.8632,
+   "interval": [
+    0.7954,
+    0.9368
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3386.37,
+   "ratio": 0.9759,
+   "interval": [
+    0.912,
+    1.0443
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4510.33
+  },
+  "avx2_on": {
+   "us_a_pass": 3339.39,
+   "ratio": 0.7584,
+   "interval": [
+    0.6982,
+    0.8238
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4556.86,
+   "ratio": 1.0437,
+   "interval": [
+    0.9514,
+    1.1449
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "128,64,32,65536,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 185079.52
+  },
+  "avx512_on": {
+   "us_a_pass": 187822.08,
+   "ratio": 0.9709,
+   "interval": [
+    0.9001,
+    1.0473
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 186057.2,
+   "ratio": 0.9701,
+   "interval": [
+    0.9163,
+    1.0271
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 249866.69
+  },
+  "avx2_on": {
+   "us_a_pass": 182415.38,
+   "ratio": 0.7104,
+   "interval": [
+    0.6437,
+    0.7841
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 249057.66,
+   "ratio": 0.972,
+   "interval": [
+    0.9235,
+    1.023
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "128,344,32,1,96",
+  "rounds": 9,
+  "code_bytes": 44032,
+  "avx512_off": {
+   "us_a_pass": 726.21
+  },
+  "avx512_on": {
+   "us_a_pass": 586.22,
+   "ratio": 0.7708,
+   "interval": [
+    0.7154,
+    0.8305
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 767.26,
+   "ratio": 1.0325,
+   "interval": [
+    0.9532,
+    1.1185
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1235.1
+  },
+  "avx2_on": {
+   "us_a_pass": 653.96,
+   "ratio": 0.5366,
+   "interval": [
+    0.5075,
+    0.5674
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1281.1,
+   "ratio": 1.0305,
+   "interval": [
+    0.9852,
+    1.0779
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "128,344,32,382,1",
+  "rounds": 9,
+  "code_bytes": 16820224,
+  "avx512_off": {
+   "us_a_pass": 3438.8
+  },
+  "avx512_on": {
+   "us_a_pass": 2623.84,
+   "ratio": 0.8072,
+   "interval": [
+    0.7686,
+    0.8477
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3451.21,
+   "ratio": 0.9937,
+   "interval": [
+    0.9526,
+    1.0366
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4882.96
+  },
+  "avx2_on": {
+   "us_a_pass": 3053.42,
+   "ratio": 0.6339,
+   "interval": [
+    0.6032,
+    0.6661
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5422.38,
+   "ratio": 0.9961,
+   "interval": [
+    0.9135,
+    1.0862
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "128,344,32,12193,1",
+  "rounds": 5,
+  "code_bytes": 536882176,
+  "avx512_off": {
+   "us_a_pass": 204935.53
+  },
+  "avx512_on": {
+   "us_a_pass": 115664.2,
+   "ratio": 0.5781,
+   "interval": [
+    0.5443,
+    0.6141
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 206236.07,
+   "ratio": 0.9943,
+   "interval": [
+    0.9495,
+    1.0412
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 232628.87
+  },
+  "avx2_on": {
+   "us_a_pass": 135278.32,
+   "ratio": 0.5828,
+   "interval": [
+    0.56,
+    0.6066
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 238560.12,
+   "ratio": 1.009,
+   "interval": [
+    0.9827,
+    1.0359
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "344,128,32,1,96",
+  "rounds": 9,
+  "code_bytes": 44032,
+  "avx512_off": {
+   "us_a_pass": 660.53
+  },
+  "avx512_on": {
+   "us_a_pass": 554.27,
+   "ratio": 0.8326,
+   "interval": [
+    0.8186,
+    0.8469
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 659.89,
+   "ratio": 0.9935,
+   "interval": [
+    0.9687,
+    1.0189
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1068.87
+  },
+  "avx2_on": {
+   "us_a_pass": 638.24,
+   "ratio": 0.6063,
+   "interval": [
+    0.5923,
+    0.6205
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1047.26,
+   "ratio": 0.9802,
+   "interval": [
+    0.9465,
+    1.015
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "344,128,32,382,1",
+  "rounds": 9,
+  "code_bytes": 16820224,
+  "avx512_off": {
+   "us_a_pass": 2933.67
+  },
+  "avx512_on": {
+   "us_a_pass": 3074.03,
+   "ratio": 1.0291,
+   "interval": [
+    0.9955,
+    1.0639
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 2924.97,
+   "ratio": 0.9932,
+   "interval": [
+    0.9651,
+    1.0221
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4361.87
+  },
+  "avx2_on": {
+   "us_a_pass": 3001.12,
+   "ratio": 0.6801,
+   "interval": [
+    0.6706,
+    0.6898
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4419.21,
+   "ratio": 1.0025,
+   "interval": [
+    0.9783,
+    1.0274
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "344,128,32,12193,1",
+  "rounds": 5,
+  "code_bytes": 536882176,
+  "avx512_off": {
+   "us_a_pass": 131972.24
+  },
+  "avx512_on": {
+   "us_a_pass": 123131.93,
+   "ratio": 0.9462,
+   "interval": [
+    0.9138,
+    0.9798
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 131136.21,
+   "ratio": 0.9938,
+   "interval": [
+    0.9755,
+    1.0125
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 249997.98
+  },
+  "avx2_on": {
+   "us_a_pass": 144916.99,
+   "ratio": 0.577,
+   "interval": [
+    0.5651,
+    0.5892
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 250534.83,
+   "ratio": 1.0037,
+   "interval": [
+    0.9951,
+    1.0125
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "512,512,32,1,16",
+  "rounds": 9,
+  "code_bytes": 262144,
+  "avx512_off": {
+   "us_a_pass": 657.28
+  },
+  "avx512_on": {
+   "us_a_pass": 557.5,
+   "ratio": 0.8488,
+   "interval": [
+    0.823,
+    0.8753
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 683.16,
+   "ratio": 1.0423,
+   "interval": [
+    1.0106,
+    1.0749
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1065.15
+  },
+  "avx2_on": {
+   "us_a_pass": 612.79,
+   "ratio": 0.5771,
+   "interval": [
+    0.5635,
+    0.591
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1043.34,
+   "ratio": 0.9939,
+   "interval": [
+    0.9533,
+    1.0362
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "512,512,32,64,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 2987.05
+  },
+  "avx512_on": {
+   "us_a_pass": 2352.22,
+   "ratio": 0.7916,
+   "interval": [
+    0.7781,
+    0.8054
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3034.39,
+   "ratio": 1.0291,
+   "interval": [
+    0.9732,
+    1.0882
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4319.1
+  },
+  "avx2_on": {
+   "us_a_pass": 2746.59,
+   "ratio": 0.6351,
+   "interval": [
+    0.6203,
+    0.6502
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4418.88,
+   "ratio": 1.0329,
+   "interval": [
+    0.9957,
+    1.0715
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "512,512,32,2048,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 175502.83
+  },
+  "avx512_on": {
+   "us_a_pass": 117845.12,
+   "ratio": 0.6979,
+   "interval": [
+    0.6316,
+    0.7712
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 177818.27,
+   "ratio": 0.9973,
+   "interval": [
+    0.944,
+    1.0536
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 208677.27
+  },
+  "avx2_on": {
+   "us_a_pass": 127356.26,
+   "ratio": 0.6052,
+   "interval": [
+    0.5792,
+    0.6324
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 210611.69,
+   "ratio": 0.9937,
+   "interval": [
+    0.9643,
+    1.024
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "1024,1024,32,1,4",
+  "rounds": 9,
+  "code_bytes": 1048576,
+  "avx512_off": {
+   "us_a_pass": 679.45
+  },
+  "avx512_on": {
+   "us_a_pass": 546.31,
+   "ratio": 0.7863,
+   "interval": [
+    0.7677,
+    0.8053
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 682.08,
+   "ratio": 0.993,
+   "interval": [
+    0.966,
+    1.0207
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1022.4
+  },
+  "avx2_on": {
+   "us_a_pass": 634.56,
+   "ratio": 0.6058,
+   "interval": [
+    0.586,
+    0.6263
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1017.81,
+   "ratio": 0.9963,
+   "interval": [
+    0.9445,
+    1.0509
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "1024,1024,32,16,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3503.72
+  },
+  "avx512_on": {
+   "us_a_pass": 2522.73,
+   "ratio": 0.7114,
+   "interval": [
+    0.679,
+    0.7453
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3626.23,
+   "ratio": 1.0157,
+   "interval": [
+    0.9853,
+    1.0471
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4236.63
+  },
+  "avx2_on": {
+   "us_a_pass": 2797.78,
+   "ratio": 0.6576,
+   "interval": [
+    0.6469,
+    0.6684
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4332.11,
+   "ratio": 1.0185,
+   "interval": [
+    1.0032,
+    1.0341
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "1024,1024,32,512,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 311625.2
+  },
+  "avx512_on": {
+   "us_a_pass": 139674.48,
+   "ratio": 0.4501,
+   "interval": [
+    0.4225,
+    0.4795
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 310621.07,
+   "ratio": 0.9374,
+   "interval": [
+    0.8441,
+    1.0409
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 218781.49
+  },
+  "avx2_on": {
+   "us_a_pass": 169973.18,
+   "ratio": 0.784,
+   "interval": [
+    0.7413,
+    0.8291
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 219258.42,
+   "ratio": 1.0299,
+   "interval": [
+    0.9779,
+    1.0845
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "2048,256,32,1,8",
+  "rounds": 9,
+  "code_bytes": 524288,
+  "avx512_off": {
+   "us_a_pass": 670.22
+  },
+  "avx512_on": {
+   "us_a_pass": 558.51,
+   "ratio": 0.8346,
+   "interval": [
+    0.8011,
+    0.8695
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 656.1,
+   "ratio": 0.9932,
+   "interval": [
+    0.9277,
+    1.0634
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1217.6
+  },
+  "avx2_on": {
+   "us_a_pass": 631.83,
+   "ratio": 0.5245,
+   "interval": [
+    0.4981,
+    0.5523
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1191.99,
+   "ratio": 0.983,
+   "interval": [
+    0.9431,
+    1.0245
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "2048,256,32,32,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3087.18
+  },
+  "avx512_on": {
+   "us_a_pass": 2434.68,
+   "ratio": 0.7531,
+   "interval": [
+    0.6754,
+    0.8397
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3021.39,
+   "ratio": 0.9214,
+   "interval": [
+    0.8275,
+    1.0259
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4678.18
+  },
+  "avx2_on": {
+   "us_a_pass": 2770.92,
+   "ratio": 0.5899,
+   "interval": [
+    0.5693,
+    0.6112
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4788.49,
+   "ratio": 1.0163,
+   "interval": [
+    0.9774,
+    1.0568
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "2048,256,32,1024,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 154346.08
+  },
+  "avx512_on": {
+   "us_a_pass": 112415.43,
+   "ratio": 0.7448,
+   "interval": [
+    0.6755,
+    0.8212
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 154913.53,
+   "ratio": 1.0164,
+   "interval": [
+    0.9337,
+    1.1065
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 219917.41
+  },
+  "avx2_on": {
+   "us_a_pass": 122549.35,
+   "ratio": 0.5532,
+   "interval": [
+    0.5156,
+    0.5935
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 226610.64,
+   "ratio": 1.0542,
+   "interval": [
+    0.9013,
+    1.2331
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "2048,2048,32,1,1",
+  "rounds": 9,
+  "code_bytes": 4194304,
+  "avx512_off": {
+   "us_a_pass": 1299.05
+  },
+  "avx512_on": {
+   "us_a_pass": 604.71,
+   "ratio": 0.4646,
+   "interval": [
+    0.4364,
+    0.4947
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 1274.35,
+   "ratio": 0.9144,
+   "interval": [
+    0.7805,
+    1.0712
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1094.97
+  },
+  "avx2_on": {
+   "us_a_pass": 683.49,
+   "ratio": 0.6208,
+   "interval": [
+    0.5909,
+    0.6523
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1118.88,
+   "ratio": 1.079,
+   "interval": [
+    0.9471,
+    1.2293
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "2048,2048,32,4,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 4870.54
+  },
+  "avx512_on": {
+   "us_a_pass": 2385.13,
+   "ratio": 0.5023,
+   "interval": [
+    0.4696,
+    0.5372
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 4907.04,
+   "ratio": 0.9979,
+   "interval": [
+    0.9559,
+    1.0418
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4361.24
+  },
+  "avx2_on": {
+   "us_a_pass": 2732.14,
+   "ratio": 0.6243,
+   "interval": [
+    0.6108,
+    0.638
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4304.46,
+   "ratio": 0.9879,
+   "interval": [
+    0.9486,
+    1.0287
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "2048,2048,32,128,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 314757.04
+  },
+  "avx512_on": {
+   "us_a_pass": 157157.16,
+   "ratio": 0.5018,
+   "interval": [
+    0.4886,
+    0.5155
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 316636.65,
+   "ratio": 1.0379,
+   "interval": [
+    0.9519,
+    1.1317
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 216056.25
+  },
+  "avx2_on": {
+   "us_a_pass": 203183.91,
+   "ratio": 0.9247,
+   "interval": [
+    0.9069,
+    0.9428
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 220268.22,
+   "ratio": 0.9964,
+   "interval": [
+    0.9457,
+    1.0499
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "2048,5632,32,1,1",
+  "rounds": 9,
+  "code_bytes": 11534336,
+  "avx512_off": {
+   "us_a_pass": 3013.36
+  },
+  "avx512_on": {
+   "us_a_pass": 1572.61,
+   "ratio": 0.5274,
+   "interval": [
+    0.5048,
+    0.551
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3102.22,
+   "ratio": 1.0566,
+   "interval": [
+    0.9653,
+    1.1565
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 2800.11
+  },
+  "avx2_on": {
+   "us_a_pass": 1797.06,
+   "ratio": 0.6469,
+   "interval": [
+    0.6291,
+    0.6651
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 2999.61,
+   "ratio": 1.0336,
+   "interval": [
+    0.9909,
+    1.0782
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "2048,5632,32,2,1",
+  "rounds": 9,
+  "code_bytes": 23068672,
+  "avx512_off": {
+   "us_a_pass": 5860.82
+  },
+  "avx512_on": {
+   "us_a_pass": 3192.0,
+   "ratio": 0.5283,
+   "interval": [
+    0.4987,
+    0.5596
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 5905.65,
+   "ratio": 1.0093,
+   "interval": [
+    0.9267,
+    1.0993
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 5638.47
+  },
+  "avx2_on": {
+   "us_a_pass": 3632.17,
+   "ratio": 0.6458,
+   "interval": [
+    0.6317,
+    0.6603
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5702.12,
+   "ratio": 1.013,
+   "interval": [
+    0.9875,
+    1.0392
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "2048,5632,32,47,1",
+  "rounds": 5,
+  "code_bytes": 542113792,
+  "avx512_off": {
+   "us_a_pass": 285073.1
+  },
+  "avx512_on": {
+   "us_a_pass": 106626.73,
+   "ratio": 0.3942,
+   "interval": [
+    0.3437,
+    0.4521
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 287942.8,
+   "ratio": 1.0425,
+   "interval": [
+    0.957,
+    1.1355
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 156433.28
+  },
+  "avx2_on": {
+   "us_a_pass": 121122.68,
+   "ratio": 0.7656,
+   "interval": [
+    0.7327,
+    0.8001
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 157829.03,
+   "ratio": 1.0037,
+   "interval": [
+    0.9925,
+    1.0151
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "5632,2048,32,1,1",
+  "rounds": 9,
+  "code_bytes": 11534336,
+  "avx512_off": {
+   "us_a_pass": 3428.51
+  },
+  "avx512_on": {
+   "us_a_pass": 1597.92,
+   "ratio": 0.4992,
+   "interval": [
+    0.4567,
+    0.5457
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3378.31,
+   "ratio": 0.9858,
+   "interval": [
+    0.8879,
+    1.0946
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 2896.69
+  },
+  "avx2_on": {
+   "us_a_pass": 1832.12,
+   "ratio": 0.633,
+   "interval": [
+    0.6071,
+    0.66
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 2954.81,
+   "ratio": 1.0934,
+   "interval": [
+    0.9099,
+    1.314
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "5632,2048,32,2,1",
+  "rounds": 9,
+  "code_bytes": 23068672,
+  "avx512_off": {
+   "us_a_pass": 6840.14
+  },
+  "avx512_on": {
+   "us_a_pass": 3129.12,
+   "ratio": 0.4605,
+   "interval": [
+    0.446,
+    0.4754
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 6876.8,
+   "ratio": 0.9923,
+   "interval": [
+    0.9561,
+    1.0298
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 5735.83
+  },
+  "avx2_on": {
+   "us_a_pass": 3624.19,
+   "ratio": 0.6341,
+   "interval": [
+    0.624,
+    0.6444
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5718.28,
+   "ratio": 0.9996,
+   "interval": [
+    0.9853,
+    1.0141
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "5632,2048,32,47,1",
+  "rounds": 5,
+  "code_bytes": 542113792,
+  "avx512_off": {
+   "us_a_pass": 328732.46
+  },
+  "avx512_on": {
+   "us_a_pass": 154639.73,
+   "ratio": 0.4452,
+   "interval": [
+    0.4018,
+    0.4934
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 348174.55,
+   "ratio": 1.0068,
+   "interval": [
+    0.905,
+    1.12
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 213293.36
+  },
+  "avx2_on": {
+   "us_a_pass": 188275.91,
+   "ratio": 0.8647,
+   "interval": [
+    0.8098,
+    0.9233
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 211962.46,
+   "ratio": 0.9817,
+   "interval": [
+    0.8502,
+    1.1335
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "128,128,32,1,256",
+  "rounds": 9,
+  "code_bytes": 16384,
+  "avx512_off": {
+   "us_a_pass": 709.29
+  },
+  "avx512_on": {
+   "us_a_pass": 575.59,
+   "ratio": 0.7996,
+   "interval": [
+    0.789,
+    0.8104
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 704.61,
+   "ratio": 0.9764,
+   "interval": [
+    0.9583,
+    0.9948
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 931.75
+  },
+  "avx2_on": {
+   "us_a_pass": 644.78,
+   "ratio": 0.7034,
+   "interval": [
+    0.6808,
+    0.7268
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 946.37,
+   "ratio": 1.0208,
+   "interval": [
+    0.982,
+    1.0612
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "L3",
+  "case": "128,128,32,1024,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 2993.7
+  },
+  "avx512_on": {
+   "us_a_pass": 2647.51,
+   "ratio": 0.8844,
+   "interval": [
+    0.8632,
+    0.9061
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3036.14,
+   "ratio": 1.0053,
+   "interval": [
+    0.9805,
+    1.0306
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4287.08
+  },
+  "avx2_on": {
+   "us_a_pass": 3175.51,
+   "ratio": 0.745,
+   "interval": [
+    0.7258,
+    0.7648
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4296.82,
+   "ratio": 1.0179,
+   "interval": [
+    0.9873,
+    1.0494
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "128,128,32,32768,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 146465.37
+  },
+  "avx512_on": {
+   "us_a_pass": 124776.45,
+   "ratio": 0.8657,
+   "interval": [
+    0.7943,
+    0.9435
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 134411.08,
+   "ratio": 0.9827,
+   "interval": [
+    0.848,
+    1.1389
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 257451.22
+  },
+  "avx2_on": {
+   "us_a_pass": 146585.35,
+   "ratio": 0.5689,
+   "interval": [
+    0.5511,
+    0.5873
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 258704.42,
+   "ratio": 0.9961,
+   "interval": [
+    0.9517,
+    1.0426
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "128,64,32,1,512",
+  "rounds": 9,
+  "code_bytes": 8192,
+  "avx512_off": {
+   "us_a_pass": 761.7
+  },
+  "avx512_on": {
+   "us_a_pass": 661.72,
+   "ratio": 0.8746,
+   "interval": [
+    0.8514,
+    0.8985
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 757.56,
+   "ratio": 1.0005,
+   "interval": [
+    0.9862,
+    1.0151
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1043.71
+  },
+  "avx2_on": {
+   "us_a_pass": 761.22,
+   "ratio": 0.7287,
+   "interval": [
+    0.7061,
+    0.752
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1059.15,
+   "ratio": 1.0138,
+   "interval": [
+    0.9726,
+    1.0568
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "L3",
+  "case": "128,64,32,2048,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3535.03
+  },
+  "avx512_on": {
+   "us_a_pass": 3165.85,
+   "ratio": 0.8983,
+   "interval": [
+    0.8774,
+    0.9197
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3741.97,
+   "ratio": 1.0496,
+   "interval": [
+    1.0193,
+    1.0808
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4403.66
+  },
+  "avx2_on": {
+   "us_a_pass": 3854.99,
+   "ratio": 0.8755,
+   "interval": [
+    0.8642,
+    0.8869
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4385.63,
+   "ratio": 1.0,
+   "interval": [
+    0.9915,
+    1.0085
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "128,64,32,65536,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 241657.05
+  },
+  "avx512_on": {
+   "us_a_pass": 197921.92,
+   "ratio": 0.8184,
+   "interval": [
+    0.8127,
+    0.8241
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 244299.61,
+   "ratio": 1.0373,
+   "interval": [
+    0.9536,
+    1.1284
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 256096.71
+  },
+  "avx2_on": {
+   "us_a_pass": 265856.01,
+   "ratio": 1.0214,
+   "interval": [
+    0.9814,
+    1.0629
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 254779.06,
+   "ratio": 1.0019,
+   "interval": [
+    0.9925,
+    1.0114
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "128,344,32,1,96",
+  "rounds": 9,
+  "code_bytes": 44032,
+  "avx512_off": {
+   "us_a_pass": 747.13
+  },
+  "avx512_on": {
+   "us_a_pass": 581.02,
+   "ratio": 0.7599,
+   "interval": [
+    0.7197,
+    0.8024
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 754.23,
+   "ratio": 1.0028,
+   "interval": [
+    0.9516,
+    1.0567
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1035.4
+  },
+  "avx2_on": {
+   "us_a_pass": 672.31,
+   "ratio": 0.732,
+   "interval": [
+    0.5854,
+    0.9154
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1033.86,
+   "ratio": 0.9209,
+   "interval": [
+    0.6989,
+    1.2134
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "L3",
+  "case": "128,344,32,382,1",
+  "rounds": 9,
+  "code_bytes": 16820224,
+  "avx512_off": {
+   "us_a_pass": 3349.68
+  },
+  "avx512_on": {
+   "us_a_pass": 3417.18,
+   "ratio": 1.0107,
+   "interval": [
+    0.9906,
+    1.0313
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3358.68,
+   "ratio": 0.9994,
+   "interval": [
+    0.9838,
+    1.0153
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4365.7
+  },
+  "avx2_on": {
+   "us_a_pass": 3062.75,
+   "ratio": 0.7012,
+   "interval": [
+    0.689,
+    0.7136
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4391.4,
+   "ratio": 1.0089,
+   "interval": [
+    0.9928,
+    1.0252
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "128,344,32,12193,1",
+  "rounds": 5,
+  "code_bytes": 536882176,
+  "avx512_off": {
+   "us_a_pass": 215076.94
+  },
+  "avx512_on": {
+   "us_a_pass": 118530.94,
+   "ratio": 0.551,
+   "interval": [
+    0.4879,
+    0.6223
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 209091.91,
+   "ratio": 0.9647,
+   "interval": [
+    0.883,
+    1.0541
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 255074.56
+  },
+  "avx2_on": {
+   "us_a_pass": 142428.58,
+   "ratio": 0.5574,
+   "interval": [
+    0.5502,
+    0.5646
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 256389.51,
+   "ratio": 1.0086,
+   "interval": [
+    0.9931,
+    1.0244
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "344,128,32,1,96",
+  "rounds": 9,
+  "code_bytes": 44032,
+  "avx512_off": {
+   "us_a_pass": 724.55
+  },
+  "avx512_on": {
+   "us_a_pass": 628.99,
+   "ratio": 0.8403,
+   "interval": [
+    0.8004,
+    0.8821
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 719.32,
+   "ratio": 0.9739,
+   "interval": [
+    0.9286,
+    1.0214
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 986.28
+  },
+  "avx2_on": {
+   "us_a_pass": 744.42,
+   "ratio": 0.7109,
+   "interval": [
+    0.6623,
+    0.7631
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1046.16,
+   "ratio": 1.0797,
+   "interval": [
+    0.9155,
+    1.2735
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "L3",
+  "case": "344,128,32,382,1",
+  "rounds": 9,
+  "code_bytes": 16820224,
+  "avx512_off": {
+   "us_a_pass": 4121.94
+  },
+  "avx512_on": {
+   "us_a_pass": 2705.23,
+   "ratio": 0.6597,
+   "interval": [
+    0.627,
+    0.6941
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 4549.69,
+   "ratio": 1.0745,
+   "interval": [
+    1.0262,
+    1.125
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4458.95
+  },
+  "avx2_on": {
+   "us_a_pass": 3156.45,
+   "ratio": 0.7065,
+   "interval": [
+    0.6944,
+    0.7188
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4413.82,
+   "ratio": 0.9477,
+   "interval": [
+    0.8735,
+    1.0282
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "344,128,32,12193,1",
+  "rounds": 5,
+  "code_bytes": 536882176,
+  "avx512_off": {
+   "us_a_pass": 160062.61
+  },
+  "avx512_on": {
+   "us_a_pass": 120009.83,
+   "ratio": 0.7266,
+   "interval": [
+    0.6691,
+    0.7891
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 161644.07,
+   "ratio": 1.0001,
+   "interval": [
+    0.8962,
+    1.1161
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 242465.98
+  },
+  "avx2_on": {
+   "us_a_pass": 136556.01,
+   "ratio": 0.5595,
+   "interval": [
+    0.5508,
+    0.5683
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 242321.58,
+   "ratio": 1.004,
+   "interval": [
+    0.9676,
+    1.0418
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "512,512,32,1,16",
+  "rounds": 9,
+  "code_bytes": 262144,
+  "avx512_off": {
+   "us_a_pass": 694.78
+  },
+  "avx512_on": {
+   "us_a_pass": 550.44,
+   "ratio": 0.8029,
+   "interval": [
+    0.7774,
+    0.8293
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 693.09,
+   "ratio": 1.0005,
+   "interval": [
+    0.9733,
+    1.0283
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 946.67
+  },
+  "avx2_on": {
+   "us_a_pass": 632.01,
+   "ratio": 0.6794,
+   "interval": [
+    0.6566,
+    0.7029
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 947.28,
+   "ratio": 1.0101,
+   "interval": [
+    0.9727,
+    1.049
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "L3",
+  "case": "512,512,32,64,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 4145.05
+  },
+  "avx512_on": {
+   "us_a_pass": 2499.27,
+   "ratio": 0.6004,
+   "interval": [
+    0.5922,
+    0.6086
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 4553.53,
+   "ratio": 1.0749,
+   "interval": [
+    1.0247,
+    1.1275
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4065.98
+  },
+  "avx2_on": {
+   "us_a_pass": 2865.78,
+   "ratio": 0.6962,
+   "interval": [
+    0.6795,
+    0.7133
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4057.57,
+   "ratio": 0.9893,
+   "interval": [
+    0.9657,
+    1.0133
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "512,512,32,2048,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 178657.64
+  },
+  "avx512_on": {
+   "us_a_pass": 117125.02,
+   "ratio": 0.6561,
+   "interval": [
+    0.6495,
+    0.6628
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 177929.1,
+   "ratio": 0.9988,
+   "interval": [
+    0.9928,
+    1.0049
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 227699.66
+  },
+  "avx2_on": {
+   "us_a_pass": 128141.38,
+   "ratio": 0.5613,
+   "interval": [
+    0.5539,
+    0.5687
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 226599.98,
+   "ratio": 0.9959,
+   "interval": [
+    0.9742,
+    1.0181
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "1024,1024,32,1,4",
+  "rounds": 9,
+  "code_bytes": 1048576,
+  "avx512_off": {
+   "us_a_pass": 708.77
+  },
+  "avx512_on": {
+   "us_a_pass": 571.95,
+   "ratio": 0.8396,
+   "interval": [
+    0.758,
+    0.9301
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 707.09,
+   "ratio": 1.004,
+   "interval": [
+    0.9694,
+    1.0398
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 984.65
+  },
+  "avx2_on": {
+   "us_a_pass": 644.11,
+   "ratio": 0.658,
+   "interval": [
+    0.6328,
+    0.6842
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1015.97,
+   "ratio": 1.049,
+   "interval": [
+    0.9667,
+    1.1384
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "L3",
+  "case": "1024,1024,32,16,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3628.42
+  },
+  "avx512_on": {
+   "us_a_pass": 2553.86,
+   "ratio": 0.7022,
+   "interval": [
+    0.6763,
+    0.729
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3599.74,
+   "ratio": 0.9938,
+   "interval": [
+    0.9458,
+    1.0442
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 3966.35
+  },
+  "avx2_on": {
+   "us_a_pass": 2982.41,
+   "ratio": 0.7488,
+   "interval": [
+    0.7329,
+    0.7649
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4019.04,
+   "ratio": 1.0178,
+   "interval": [
+    0.9993,
+    1.0365
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "1024,1024,32,512,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 321246.03
+  },
+  "avx512_on": {
+   "us_a_pass": 137379.01,
+   "ratio": 0.4274,
+   "interval": [
+    0.4105,
+    0.445
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 309933.88,
+   "ratio": 0.9553,
+   "interval": [
+    0.8864,
+    1.0295
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 215178.23
+  },
+  "avx2_on": {
+   "us_a_pass": 170749.85,
+   "ratio": 0.793,
+   "interval": [
+    0.777,
+    0.8093
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 221145.96,
+   "ratio": 1.0086,
+   "interval": [
+    0.9811,
+    1.0368
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "2048,256,32,1,8",
+  "rounds": 9,
+  "code_bytes": 524288,
+  "avx512_off": {
+   "us_a_pass": 670.96
+  },
+  "avx512_on": {
+   "us_a_pass": 572.34,
+   "ratio": 0.8588,
+   "interval": [
+    0.8116,
+    0.9088
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 652.26,
+   "ratio": 0.971,
+   "interval": [
+    0.9296,
+    1.0142
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 955.98
+  },
+  "avx2_on": {
+   "us_a_pass": 673.09,
+   "ratio": 0.7039,
+   "interval": [
+    0.6584,
+    0.7526
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 946.4,
+   "ratio": 0.9687,
+   "interval": [
+    0.9138,
+    1.0269
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "L3",
+  "case": "2048,256,32,32,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3267.3
+  },
+  "avx512_on": {
+   "us_a_pass": 2373.01,
+   "ratio": 0.7259,
+   "interval": [
+    0.7117,
+    0.7403
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3179.81,
+   "ratio": 0.9784,
+   "interval": [
+    0.9633,
+    0.9939
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 3922.1
+  },
+  "avx2_on": {
+   "us_a_pass": 3018.39,
+   "ratio": 0.7685,
+   "interval": [
+    0.7561,
+    0.7811
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 3994.82,
+   "ratio": 1.0232,
+   "interval": [
+    0.9917,
+    1.0558
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "2048,256,32,1024,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 155754.15
+  },
+  "avx512_on": {
+   "us_a_pass": 111676.29,
+   "ratio": 0.7027,
+   "interval": [
+    0.6626,
+    0.7452
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 156081.43,
+   "ratio": 1.0528,
+   "interval": [
+    0.9547,
+    1.1611
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 248310.7
+  },
+  "avx2_on": {
+   "us_a_pass": 132517.48,
+   "ratio": 0.5354,
+   "interval": [
+    0.5308,
+    0.54
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 247325.29,
+   "ratio": 0.9982,
+   "interval": [
+    0.9852,
+    1.0113
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "2048,2048,32,1,1",
+  "rounds": 9,
+  "code_bytes": 4194304,
+  "avx512_off": {
+   "us_a_pass": 1158.98
+  },
+  "avx512_on": {
+   "us_a_pass": 574.72,
+   "ratio": 0.4752,
+   "interval": [
+    0.4317,
+    0.523
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 1136.72,
+   "ratio": 1.0055,
+   "interval": [
+    0.8879,
+    1.1387
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 918.34
+  },
+  "avx2_on": {
+   "us_a_pass": 673.08,
+   "ratio": 0.7535,
+   "interval": [
+    0.6973,
+    0.8143
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 977.33,
+   "ratio": 1.0748,
+   "interval": [
+    1.0598,
+    1.09
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "L3",
+  "case": "2048,2048,32,4,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 4671.46
+  },
+  "avx512_on": {
+   "us_a_pass": 2416.13,
+   "ratio": 0.5187,
+   "interval": [
+    0.5118,
+    0.5257
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 4695.6,
+   "ratio": 1.0107,
+   "interval": [
+    0.9913,
+    1.0304
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 3857.82
+  },
+  "avx2_on": {
+   "us_a_pass": 2899.78,
+   "ratio": 0.7477,
+   "interval": [
+    0.7371,
+    0.7584
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 3927.33,
+   "ratio": 1.0176,
+   "interval": [
+    1.007,
+    1.0283
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "2048,2048,32,128,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 312908.52
+  },
+  "avx512_on": {
+   "us_a_pass": 157185.11,
+   "ratio": 0.5004,
+   "interval": [
+    0.4432,
+    0.5651
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 308820.14,
+   "ratio": 0.9616,
+   "interval": [
+    0.9073,
+    1.0192
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 207578.37
+  },
+  "avx2_on": {
+   "us_a_pass": 163475.55,
+   "ratio": 0.7925,
+   "interval": [
+    0.7783,
+    0.807
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 207487.62,
+   "ratio": 1.0167,
+   "interval": [
+    0.9488,
+    1.0895
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "2048,5632,32,1,1",
+  "rounds": 9,
+  "code_bytes": 11534336,
+  "avx512_off": {
+   "us_a_pass": 3092.01
+  },
+  "avx512_on": {
+   "us_a_pass": 1612.22,
+   "ratio": 0.5155,
+   "interval": [
+    0.4867,
+    0.5459
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3193.57,
+   "ratio": 1.0088,
+   "interval": [
+    0.9535,
+    1.0674
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 2554.67
+  },
+  "avx2_on": {
+   "us_a_pass": 2006.99,
+   "ratio": 0.7806,
+   "interval": [
+    0.7561,
+    0.8059
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 2693.91,
+   "ratio": 1.0562,
+   "interval": [
+    0.9979,
+    1.118
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "L3",
+  "case": "2048,5632,32,2,1",
+  "rounds": 9,
+  "code_bytes": 23068672,
+  "avx512_off": {
+   "us_a_pass": 6805.89
+  },
+  "avx512_on": {
+   "us_a_pass": 3280.19,
+   "ratio": 0.4766,
+   "interval": [
+    0.4678,
+    0.4856
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 6821.76,
+   "ratio": 0.9994,
+   "interval": [
+    0.9888,
+    1.0101
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 5142.53
+  },
+  "avx2_on": {
+   "us_a_pass": 4177.12,
+   "ratio": 0.8217,
+   "interval": [
+    0.8041,
+    0.8397
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5329.78,
+   "ratio": 1.0341,
+   "interval": [
+    1.0051,
+    1.064
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "2048,5632,32,47,1",
+  "rounds": 5,
+  "code_bytes": 542113792,
+  "avx512_off": {
+   "us_a_pass": 328187.03
+  },
+  "avx512_on": {
+   "us_a_pass": 108000.67,
+   "ratio": 0.3259,
+   "interval": [
+    0.3086,
+    0.3443
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 321982.41,
+   "ratio": 0.9798,
+   "interval": [
+    0.9212,
+    1.0422
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 153356.29
+  },
+  "avx2_on": {
+   "us_a_pass": 133959.51,
+   "ratio": 0.8672,
+   "interval": [
+    0.8466,
+    0.8882
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 153465.96,
+   "ratio": 1.0532,
+   "interval": [
+    0.9098,
+    1.2192
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "5632,2048,32,1,1",
+  "rounds": 9,
+  "code_bytes": 11534336,
+  "avx512_off": {
+   "us_a_pass": 3227.81
+  },
+  "avx512_on": {
+   "us_a_pass": 1611.41,
+   "ratio": 0.496,
+   "interval": [
+    0.4894,
+    0.5026
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3311.6,
+   "ratio": 1.0129,
+   "interval": [
+    0.9874,
+    1.0392
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 2594.34
+  },
+  "avx2_on": {
+   "us_a_pass": 1871.36,
+   "ratio": 0.7143,
+   "interval": [
+    0.6771,
+    0.7536
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 2750.98,
+   "ratio": 1.0235,
+   "interval": [
+    0.9452,
+    1.1083
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "L3",
+  "case": "5632,2048,32,2,1",
+  "rounds": 9,
+  "code_bytes": 23068672,
+  "avx512_off": {
+   "us_a_pass": 6756.02
+  },
+  "avx512_on": {
+   "us_a_pass": 3269.02,
+   "ratio": 0.4757,
+   "interval": [
+    0.4676,
+    0.484
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 6762.08,
+   "ratio": 0.9992,
+   "interval": [
+    0.9714,
+    1.0277
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 5372.27
+  },
+  "avx2_on": {
+   "us_a_pass": 3987.73,
+   "ratio": 0.7338,
+   "interval": [
+    0.7172,
+    0.7507
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5314.24,
+   "ratio": 0.9813,
+   "interval": [
+    0.9562,
+    1.0069
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "5632,2048,32,47,1",
+  "rounds": 5,
+  "code_bytes": 542113792,
+  "avx512_off": {
+   "us_a_pass": 329245.69
+  },
+  "avx512_on": {
+   "us_a_pass": 155407.03,
+   "ratio": 0.4546,
+   "interval": [
+    0.4057,
+    0.5094
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 333084.41,
+   "ratio": 0.9691,
+   "interval": [
+    0.8696,
+    1.0799
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 207648.44
+  },
+  "avx2_on": {
+   "us_a_pass": 167269.87,
+   "ratio": 0.8015,
+   "interval": [
+    0.7865,
+    0.8169
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 206808.49,
+   "ratio": 1.0018,
+   "interval": [
+    0.9957,
+    1.008
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "128,128,32,1,256",
+  "rounds": 9,
+  "code_bytes": 16384,
+  "avx512_off": {
+   "us_a_pass": 697.44
+  },
+  "avx512_on": {
+   "us_a_pass": 589.93,
+   "ratio": 0.8464,
+   "interval": [
+    0.8312,
+    0.8619
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 695.21,
+   "ratio": 0.9896,
+   "interval": [
+    0.9698,
+    1.0098
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1099.82
+  },
+  "avx2_on": {
+   "us_a_pass": 668.17,
+   "ratio": 0.62,
+   "interval": [
+    0.5991,
+    0.6416
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1083.56,
+   "ratio": 0.9937,
+   "interval": [
+    0.9738,
+    1.0141
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "128,128,32,1024,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 2975.54
+  },
+  "avx512_on": {
+   "us_a_pass": 2672.66,
+   "ratio": 0.9172,
+   "interval": [
+    0.8766,
+    0.9597
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3064.75,
+   "ratio": 1.0607,
+   "interval": [
+    0.9755,
+    1.1534
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4307.92
+  },
+  "avx2_on": {
+   "us_a_pass": 2983.38,
+   "ratio": 0.6872,
+   "interval": [
+    0.6775,
+    0.6971
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4374.3,
+   "ratio": 1.009,
+   "interval": [
+    0.9975,
+    1.0207
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "128,128,32,32768,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 173565.47
+  },
+  "avx512_on": {
+   "us_a_pass": 134004.05,
+   "ratio": 0.7731,
+   "interval": [
+    0.752,
+    0.7947
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 175875.48,
+   "ratio": 1.0108,
+   "interval": [
+    0.992,
+    1.03
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 238776.44
+  },
+  "avx2_on": {
+   "us_a_pass": 154124.31,
+   "ratio": 0.6276,
+   "interval": [
+    0.5573,
+    0.7066
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 240123.49,
+   "ratio": 0.9802,
+   "interval": [
+    0.8992,
+    1.0684
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "128,64,32,1,512",
+  "rounds": 9,
+  "code_bytes": 8192,
+  "avx512_off": {
+   "us_a_pass": 737.43
+  },
+  "avx512_on": {
+   "us_a_pass": 644.64,
+   "ratio": 0.8821,
+   "interval": [
+    0.8667,
+    0.8977
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 723.97,
+   "ratio": 0.9912,
+   "interval": [
+    0.9704,
+    1.0126
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1104.96
+  },
+  "avx2_on": {
+   "us_a_pass": 729.01,
+   "ratio": 0.6592,
+   "interval": [
+    0.6377,
+    0.6813
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1120.67,
+   "ratio": 1.0208,
+   "interval": [
+    0.9895,
+    1.0532
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "128,64,32,2048,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3345.53
+  },
+  "avx512_on": {
+   "us_a_pass": 2985.1,
+   "ratio": 0.8949,
+   "interval": [
+    0.8886,
+    0.9013
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3411.77,
+   "ratio": 1.0211,
+   "interval": [
+    1.0087,
+    1.0336
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4489.01
+  },
+  "avx2_on": {
+   "us_a_pass": 3275.78,
+   "ratio": 0.7257,
+   "interval": [
+    0.7161,
+    0.7354
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4547.97,
+   "ratio": 1.0139,
+   "interval": [
+    1.0056,
+    1.0223
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "128,64,32,65536,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 181509.75
+  },
+  "avx512_on": {
+   "us_a_pass": 176801.45,
+   "ratio": 0.9759,
+   "interval": [
+    0.9594,
+    0.9926
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 183109.66,
+   "ratio": 1.0137,
+   "interval": [
+    0.9676,
+    1.0619
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 243185.44
+  },
+  "avx2_on": {
+   "us_a_pass": 181397.29,
+   "ratio": 0.7299,
+   "interval": [
+    0.6833,
+    0.7796
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 241280.13,
+   "ratio": 0.9995,
+   "interval": [
+    0.8998,
+    1.1102
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "128,344,32,1,96",
+  "rounds": 9,
+  "code_bytes": 44032,
+  "avx512_off": {
+   "us_a_pass": 715.11
+  },
+  "avx512_on": {
+   "us_a_pass": 602.35,
+   "ratio": 0.8224,
+   "interval": [
+    0.7824,
+    0.8645
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 753.66,
+   "ratio": 1.0697,
+   "interval": [
+    0.9776,
+    1.1704
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1232.44
+  },
+  "avx2_on": {
+   "us_a_pass": 651.1,
+   "ratio": 0.5312,
+   "interval": [
+    0.5113,
+    0.5518
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1272.86,
+   "ratio": 1.0322,
+   "interval": [
+    1.0092,
+    1.0556
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "128,344,32,382,1",
+  "rounds": 9,
+  "code_bytes": 16820224,
+  "avx512_off": {
+   "us_a_pass": 3544.71
+  },
+  "avx512_on": {
+   "us_a_pass": 2766.85,
+   "ratio": 0.7864,
+   "interval": [
+    0.7716,
+    0.8016
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3501.89,
+   "ratio": 1.0179,
+   "interval": [
+    0.9921,
+    1.0444
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 5086.64
+  },
+  "avx2_on": {
+   "us_a_pass": 3213.77,
+   "ratio": 0.6278,
+   "interval": [
+    0.6105,
+    0.6456
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5600.8,
+   "ratio": 1.081,
+   "interval": [
+    1.0363,
+    1.1277
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "128,344,32,12193,1",
+  "rounds": 5,
+  "code_bytes": 536882176,
+  "avx512_off": {
+   "us_a_pass": 208098.42
+  },
+  "avx512_on": {
+   "us_a_pass": 115736.79,
+   "ratio": 0.579,
+   "interval": [
+    0.5242,
+    0.6396
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 207544.14,
+   "ratio": 1.0012,
+   "interval": [
+    0.9451,
+    1.0607
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 228638.78
+  },
+  "avx2_on": {
+   "us_a_pass": 135774.71,
+   "ratio": 0.5997,
+   "interval": [
+    0.5602,
+    0.6419
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 227095.78,
+   "ratio": 0.9873,
+   "interval": [
+    0.9582,
+    1.0173
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "344,128,32,1,96",
+  "rounds": 9,
+  "code_bytes": 44032,
+  "avx512_off": {
+   "us_a_pass": 650.24
+  },
+  "avx512_on": {
+   "us_a_pass": 571.97,
+   "ratio": 0.8406,
+   "interval": [
+    0.8176,
+    0.8643
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 658.75,
+   "ratio": 0.9918,
+   "interval": [
+    0.9744,
+    1.0094
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1022.64
+  },
+  "avx2_on": {
+   "us_a_pass": 652.03,
+   "ratio": 0.6241,
+   "interval": [
+    0.6056,
+    0.6432
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1068.13,
+   "ratio": 1.0162,
+   "interval": [
+    0.9772,
+    1.0568
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "344,128,32,382,1",
+  "rounds": 9,
+  "code_bytes": 16820224,
+  "avx512_off": {
+   "us_a_pass": 2958.15
+  },
+  "avx512_on": {
+   "us_a_pass": 2648.21,
+   "ratio": 0.8584,
+   "interval": [
+    0.7804,
+    0.9442
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3119.97,
+   "ratio": 1.0057,
+   "interval": [
+    0.8646,
+    1.1698
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4522.13
+  },
+  "avx2_on": {
+   "us_a_pass": 3052.66,
+   "ratio": 0.7154,
+   "interval": [
+    0.6169,
+    0.8296
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4493.68,
+   "ratio": 1.0349,
+   "interval": [
+    0.9362,
+    1.1439
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "344,128,32,12193,1",
+  "rounds": 5,
+  "code_bytes": 536882176,
+  "avx512_off": {
+   "us_a_pass": 128713.51
+  },
+  "avx512_on": {
+   "us_a_pass": 120583.9,
+   "ratio": 0.9422,
+   "interval": [
+    0.9066,
+    0.9791
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 128579.59,
+   "ratio": 0.9924,
+   "interval": [
+    0.9742,
+    1.0109
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 247206.66
+  },
+  "avx2_on": {
+   "us_a_pass": 139046.31,
+   "ratio": 0.6025,
+   "interval": [
+    0.5276,
+    0.6881
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 245152.89,
+   "ratio": 0.9894,
+   "interval": [
+    0.9711,
+    1.008
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "512,512,32,1,16",
+  "rounds": 9,
+  "code_bytes": 262144,
+  "avx512_off": {
+   "us_a_pass": 656.62
+  },
+  "avx512_on": {
+   "us_a_pass": 547.5,
+   "ratio": 0.8291,
+   "interval": [
+    0.8173,
+    0.841
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 653.9,
+   "ratio": 0.9856,
+   "interval": [
+    0.9711,
+    1.0003
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1043.96
+  },
+  "avx2_on": {
+   "us_a_pass": 612.41,
+   "ratio": 0.5815,
+   "interval": [
+    0.5663,
+    0.5972
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1050.69,
+   "ratio": 1.0266,
+   "interval": [
+    0.9845,
+    1.0705
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "512,512,32,64,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3424.29
+  },
+  "avx512_on": {
+   "us_a_pass": 2443.07,
+   "ratio": 0.7401,
+   "interval": [
+    0.6986,
+    0.784
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3217.55,
+   "ratio": 0.9631,
+   "interval": [
+    0.906,
+    1.0238
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4320.69
+  },
+  "avx2_on": {
+   "us_a_pass": 2712.2,
+   "ratio": 0.6365,
+   "interval": [
+    0.6135,
+    0.6604
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4355.46,
+   "ratio": 1.0139,
+   "interval": [
+    0.9792,
+    1.0498
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "512,512,32,2048,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 175273.16
+  },
+  "avx512_on": {
+   "us_a_pass": 113982.05,
+   "ratio": 0.6126,
+   "interval": [
+    0.5352,
+    0.7011
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 175084.77,
+   "ratio": 0.9541,
+   "interval": [
+    0.8146,
+    1.1174
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 212885.22
+  },
+  "avx2_on": {
+   "us_a_pass": 125922.22,
+   "ratio": 0.6031,
+   "interval": [
+    0.5619,
+    0.6473
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 210941.39,
+   "ratio": 0.9784,
+   "interval": [
+    0.943,
+    1.0151
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "1024,1024,32,1,4",
+  "rounds": 9,
+  "code_bytes": 1048576,
+  "avx512_off": {
+   "us_a_pass": 644.64
+  },
+  "avx512_on": {
+   "us_a_pass": 545.48,
+   "ratio": 0.8405,
+   "interval": [
+    0.811,
+    0.8711
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 664.45,
+   "ratio": 1.0407,
+   "interval": [
+    0.9996,
+    1.0836
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1007.48
+  },
+  "avx2_on": {
+   "us_a_pass": 615.5,
+   "ratio": 0.5978,
+   "interval": [
+    0.5828,
+    0.6131
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1038.09,
+   "ratio": 1.0072,
+   "interval": [
+    0.9493,
+    1.0686
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "1024,1024,32,16,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3578.88
+  },
+  "avx512_on": {
+   "us_a_pass": 2444.85,
+   "ratio": 0.6824,
+   "interval": [
+    0.6683,
+    0.6968
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3750.59,
+   "ratio": 1.0482,
+   "interval": [
+    1.0217,
+    1.0754
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4250.91
+  },
+  "avx2_on": {
+   "us_a_pass": 2787.8,
+   "ratio": 0.6657,
+   "interval": [
+    0.6514,
+    0.6803
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4366.57,
+   "ratio": 1.025,
+   "interval": [
+    1.0033,
+    1.0472
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "1024,1024,32,512,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 304705.94
+  },
+  "avx512_on": {
+   "us_a_pass": 137495.58,
+   "ratio": 0.4471,
+   "interval": [
+    0.4257,
+    0.4697
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 312865.95,
+   "ratio": 1.0107,
+   "interval": [
+    0.9797,
+    1.0426
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 216191.79
+  },
+  "avx2_on": {
+   "us_a_pass": 167184.16,
+   "ratio": 0.7648,
+   "interval": [
+    0.7204,
+    0.8118
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 216122.08,
+   "ratio": 0.9868,
+   "interval": [
+    0.9301,
+    1.0469
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "2048,256,32,1,8",
+  "rounds": 9,
+  "code_bytes": 524288,
+  "avx512_off": {
+   "us_a_pass": 659.48
+  },
+  "avx512_on": {
+   "us_a_pass": 533.84,
+   "ratio": 0.8293,
+   "interval": [
+    0.7907,
+    0.8697
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 657.51,
+   "ratio": 1.0051,
+   "interval": [
+    0.9672,
+    1.0444
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1170.6
+  },
+  "avx2_on": {
+   "us_a_pass": 628.98,
+   "ratio": 0.5537,
+   "interval": [
+    0.5082,
+    0.6032
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1210.4,
+   "ratio": 1.0277,
+   "interval": [
+    1.0147,
+    1.041
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "2048,256,32,32,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 2986.43
+  },
+  "avx512_on": {
+   "us_a_pass": 2364.14,
+   "ratio": 0.7902,
+   "interval": [
+    0.7746,
+    0.8061
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3001.41,
+   "ratio": 1.0037,
+   "interval": [
+    0.9923,
+    1.0152
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4612.75
+  },
+  "avx2_on": {
+   "us_a_pass": 2718.89,
+   "ratio": 0.5943,
+   "interval": [
+    0.587,
+    0.6018
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4687.49,
+   "ratio": 1.0118,
+   "interval": [
+    0.9957,
+    1.0282
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "2048,256,32,1024,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 149625.45
+  },
+  "avx512_on": {
+   "us_a_pass": 108385.72,
+   "ratio": 0.7188,
+   "interval": [
+    0.6552,
+    0.7885
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 149035.59,
+   "ratio": 0.9766,
+   "interval": [
+    0.8924,
+    1.0686
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 219707.43
+  },
+  "avx2_on": {
+   "us_a_pass": 123314.18,
+   "ratio": 0.5898,
+   "interval": [
+    0.5193,
+    0.6699
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 219465.49,
+   "ratio": 1.0001,
+   "interval": [
+    0.954,
+    1.0485
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "2048,2048,32,1,1",
+  "rounds": 9,
+  "code_bytes": 4194304,
+  "avx512_off": {
+   "us_a_pass": 1156.36
+  },
+  "avx512_on": {
+   "us_a_pass": 558.51,
+   "ratio": 0.5027,
+   "interval": [
+    0.4707,
+    0.5368
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 1089.69,
+   "ratio": 0.9652,
+   "interval": [
+    0.9352,
+    0.9962
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1012.74
+  },
+  "avx2_on": {
+   "us_a_pass": 666.08,
+   "ratio": 0.6771,
+   "interval": [
+    0.6104,
+    0.7512
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1018.32,
+   "ratio": 0.9967,
+   "interval": [
+    0.9709,
+    1.0232
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "2048,2048,32,4,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 4382.47
+  },
+  "avx512_on": {
+   "us_a_pass": 2225.89,
+   "ratio": 0.5061,
+   "interval": [
+    0.4977,
+    0.5146
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 4368.22,
+   "ratio": 0.9991,
+   "interval": [
+    0.9916,
+    1.0067
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4157.23
+  },
+  "avx2_on": {
+   "us_a_pass": 2504.65,
+   "ratio": 0.6135,
+   "interval": [
+    0.6021,
+    0.6252
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4089.82,
+   "ratio": 1.0024,
+   "interval": [
+    0.9902,
+    1.0147
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "2048,2048,32,128,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 314808.67
+  },
+  "avx512_on": {
+   "us_a_pass": 153655.19,
+   "ratio": 0.4823,
+   "interval": [
+    0.4698,
+    0.4951
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 309822.97,
+   "ratio": 0.9998,
+   "interval": [
+    0.9577,
+    1.0437
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 215749.14
+  },
+  "avx2_on": {
+   "us_a_pass": 186202.69,
+   "ratio": 0.838,
+   "interval": [
+    0.6916,
+    1.0153
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 215354.24,
+   "ratio": 0.9686,
+   "interval": [
+    0.7805,
+    1.2022
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "2048,5632,32,1,1",
+  "rounds": 9,
+  "code_bytes": 11534336,
+  "avx512_off": {
+   "us_a_pass": 4358.05
+  },
+  "avx512_on": {
+   "us_a_pass": 2231.12,
+   "ratio": 0.5124,
+   "interval": [
+    0.4773,
+    0.5502
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 4201.4,
+   "ratio": 0.9868,
+   "interval": [
+    0.9293,
+    1.0478
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4354.05
+  },
+  "avx2_on": {
+   "us_a_pass": 2995.0,
+   "ratio": 0.6475,
+   "interval": [
+    0.6251,
+    0.6707
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4743.96,
+   "ratio": 1.0921,
+   "interval": [
+    0.9823,
+    1.2141
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "2048,5632,32,2,1",
+  "rounds": 9,
+  "code_bytes": 23068672,
+  "avx512_off": {
+   "us_a_pass": 6290.86
+  },
+  "avx512_on": {
+   "us_a_pass": 3150.36,
+   "ratio": 0.493,
+   "interval": [
+    0.4735,
+    0.5133
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 6279.33,
+   "ratio": 0.9705,
+   "interval": [
+    0.931,
+    1.0118
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 5567.26
+  },
+  "avx2_on": {
+   "us_a_pass": 3590.65,
+   "ratio": 0.6435,
+   "interval": [
+    0.6354,
+    0.6516
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5633.51,
+   "ratio": 1.008,
+   "interval": [
+    0.9976,
+    1.0185
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "2048,5632,32,47,1",
+  "rounds": 5,
+  "code_bytes": 542113792,
+  "avx512_off": {
+   "us_a_pass": 281521.93
+  },
+  "avx512_on": {
+   "us_a_pass": 116569.27,
+   "ratio": 0.3911,
+   "interval": [
+    0.3648,
+    0.4193
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 281852.42,
+   "ratio": 0.9992,
+   "interval": [
+    0.9729,
+    1.0261
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 156306.71
+  },
+  "avx2_on": {
+   "us_a_pass": 116292.76,
+   "ratio": 0.748,
+   "interval": [
+    0.7082,
+    0.79
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 155588.98,
+   "ratio": 0.9927,
+   "interval": [
+    0.9671,
+    1.019
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "5632,2048,32,1,1",
+  "rounds": 9,
+  "code_bytes": 11534336,
+  "avx512_off": {
+   "us_a_pass": 3295.78
+  },
+  "avx512_on": {
+   "us_a_pass": 1585.64,
+   "ratio": 0.4829,
+   "interval": [
+    0.4732,
+    0.4929
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3261.88,
+   "ratio": 1.0058,
+   "interval": [
+    0.9821,
+    1.03
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 2857.62
+  },
+  "avx2_on": {
+   "us_a_pass": 1808.97,
+   "ratio": 0.6328,
+   "interval": [
+    0.6037,
+    0.6633
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 2882.57,
+   "ratio": 1.0063,
+   "interval": [
+    0.9746,
+    1.0391
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "5632,2048,32,2,1",
+  "rounds": 9,
+  "code_bytes": 23068672,
+  "avx512_off": {
+   "us_a_pass": 7488.59
+  },
+  "avx512_on": {
+   "us_a_pass": 3143.58,
+   "ratio": 0.4133,
+   "interval": [
+    0.4023,
+    0.4245
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 7657.86,
+   "ratio": 1.0237,
+   "interval": [
+    0.967,
+    1.0837
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 5866.83
+  },
+  "avx2_on": {
+   "us_a_pass": 3615.24,
+   "ratio": 0.613,
+   "interval": [
+    0.6064,
+    0.6195
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5786.39,
+   "ratio": 0.9844,
+   "interval": [
+    0.9741,
+    0.9948
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "5632,2048,32,47,1",
+  "rounds": 5,
+  "code_bytes": 542113792,
+  "avx512_off": {
+   "us_a_pass": 347794.81
+  },
+  "avx512_on": {
+   "us_a_pass": 157665.39,
+   "ratio": 0.4617,
+   "interval": [
+    0.4204,
+    0.5069
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 379275.75,
+   "ratio": 1.068,
+   "interval": [
+    0.87,
+    1.3112
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 220161.2
+  },
+  "avx2_on": {
+   "us_a_pass": 202787.51,
+   "ratio": 0.906,
+   "interval": [
+    0.8636,
+    0.9505
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 215705.41,
+   "ratio": 1.0157,
+   "interval": [
+    0.965,
+    1.0691
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "128,128,32,1,256",
+  "rounds": 9,
+  "code_bytes": 16384,
+  "avx512_off": {
+   "us_a_pass": 697.72
+  },
+  "avx512_on": {
+   "us_a_pass": 603.46,
+   "ratio": 0.8593,
+   "interval": [
+    0.8256,
+    0.8943
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 698.43,
+   "ratio": 0.9867,
+   "interval": [
+    0.9528,
+    1.0218
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 983.27
+  },
+  "avx2_on": {
+   "us_a_pass": 684.96,
+   "ratio": 0.7081,
+   "interval": [
+    0.693,
+    0.7235
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1000.71,
+   "ratio": 1.027,
+   "interval": [
+    0.9919,
+    1.0634
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "L3",
+  "case": "128,128,32,1024,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3057.16
+  },
+  "avx512_on": {
+   "us_a_pass": 2659.87,
+   "ratio": 0.8598,
+   "interval": [
+    0.8186,
+    0.9031
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3149.22,
+   "ratio": 1.017,
+   "interval": [
+    0.9495,
+    1.0894
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4352.6
+  },
+  "avx2_on": {
+   "us_a_pass": 3142.03,
+   "ratio": 0.7296,
+   "interval": [
+    0.6947,
+    0.7663
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4239.96,
+   "ratio": 0.9909,
+   "interval": [
+    0.925,
+    1.0615
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "128,128,32,32768,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 201787.15
+  },
+  "avx512_on": {
+   "us_a_pass": 122846.49,
+   "ratio": 0.6064,
+   "interval": [
+    0.5907,
+    0.6224
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 203239.22,
+   "ratio": 1.0178,
+   "interval": [
+    0.9763,
+    1.061
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 216045.86
+  },
+  "avx2_on": {
+   "us_a_pass": 139751.75,
+   "ratio": 0.6479,
+   "interval": [
+    0.6416,
+    0.6543
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 217015.85,
+   "ratio": 1.0032,
+   "interval": [
+    0.9923,
+    1.0141
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "128,64,32,1,512",
+  "rounds": 9,
+  "code_bytes": 8192,
+  "avx512_off": {
+   "us_a_pass": 769.53
+  },
+  "avx512_on": {
+   "us_a_pass": 672.52,
+   "ratio": 0.863,
+   "interval": [
+    0.8321,
+    0.895
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 762.14,
+   "ratio": 0.8893,
+   "interval": [
+    0.6845,
+    1.1552
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1026.38
+  },
+  "avx2_on": {
+   "us_a_pass": 742.25,
+   "ratio": 0.7284,
+   "interval": [
+    0.715,
+    0.7422
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1023.3,
+   "ratio": 0.9948,
+   "interval": [
+    0.9763,
+    1.0137
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "L3",
+  "case": "128,64,32,2048,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3803.78
+  },
+  "avx512_on": {
+   "us_a_pass": 3228.51,
+   "ratio": 0.8458,
+   "interval": [
+    0.8022,
+    0.8917
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3951.55,
+   "ratio": 0.9877,
+   "interval": [
+    0.9266,
+    1.0528
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4571.79
+  },
+  "avx2_on": {
+   "us_a_pass": 4088.56,
+   "ratio": 0.8682,
+   "interval": [
+    0.8184,
+    0.921
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4537.87,
+   "ratio": 0.9615,
+   "interval": [
+    0.9142,
+    1.0112
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "128,64,32,65536,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 211322.59
+  },
+  "avx512_on": {
+   "us_a_pass": 184722.05,
+   "ratio": 0.8602,
+   "interval": [
+    0.7784,
+    0.9506
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 211535.17,
+   "ratio": 0.9833,
+   "interval": [
+    0.9237,
+    1.0467
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 242036.91
+  },
+  "avx2_on": {
+   "us_a_pass": 250550.03,
+   "ratio": 1.0345,
+   "interval": [
+    1.016,
+    1.0533
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 244944.87,
+   "ratio": 1.0282,
+   "interval": [
+    0.9776,
+    1.0815
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "128,344,32,1,96",
+  "rounds": 9,
+  "code_bytes": 44032,
+  "avx512_off": {
+   "us_a_pass": 713.89
+  },
+  "avx512_on": {
+   "us_a_pass": 585.36,
+   "ratio": 0.8149,
+   "interval": [
+    0.796,
+    0.8343
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 744.36,
+   "ratio": 1.0931,
+   "interval": [
+    0.9597,
+    1.245
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1028.5
+  },
+  "avx2_on": {
+   "us_a_pass": 665.03,
+   "ratio": 0.6439,
+   "interval": [
+    0.6207,
+    0.668
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1029.42,
+   "ratio": 0.9933,
+   "interval": [
+    0.966,
+    1.0213
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "L3",
+  "case": "128,344,32,382,1",
+  "rounds": 9,
+  "code_bytes": 16820224,
+  "avx512_off": {
+   "us_a_pass": 3623.07
+  },
+  "avx512_on": {
+   "us_a_pass": 2784.31,
+   "ratio": 0.7372,
+   "interval": [
+    0.667,
+    0.8146
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3660.7,
+   "ratio": 0.9754,
+   "interval": [
+    0.8796,
+    1.0817
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4281.3
+  },
+  "avx2_on": {
+   "us_a_pass": 3217.91,
+   "ratio": 0.7399,
+   "interval": [
+    0.723,
+    0.7572
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4432.72,
+   "ratio": 1.0462,
+   "interval": [
+    0.9788,
+    1.1183
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "128,344,32,12193,1",
+  "rounds": 5,
+  "code_bytes": 536882176,
+  "avx512_off": {
+   "us_a_pass": 213607.21
+  },
+  "avx512_on": {
+   "us_a_pass": 131250.55,
+   "ratio": 0.6157,
+   "interval": [
+    0.6093,
+    0.6222
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 213107.15,
+   "ratio": 1.0005,
+   "interval": [
+    0.9838,
+    1.0175
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 254467.81
+  },
+  "avx2_on": {
+   "us_a_pass": 141460.04,
+   "ratio": 0.5561,
+   "interval": [
+    0.5485,
+    0.5639
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 253459.5,
+   "ratio": 0.9924,
+   "interval": [
+    0.9762,
+    1.0089
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "344,128,32,1,96",
+  "rounds": 9,
+  "code_bytes": 44032,
+  "avx512_off": {
+   "us_a_pass": 789.84
+  },
+  "avx512_on": {
+   "us_a_pass": 644.62,
+   "ratio": 0.7882,
+   "interval": [
+    0.6679,
+    0.9303
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 778.95,
+   "ratio": 0.9802,
+   "interval": [
+    0.7561,
+    1.2707
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 984.61
+  },
+  "avx2_on": {
+   "us_a_pass": 685.95,
+   "ratio": 0.7262,
+   "interval": [
+    0.6634,
+    0.7948
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1016.42,
+   "ratio": 1.0135,
+   "interval": [
+    0.8089,
+    1.2699
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "L3",
+  "case": "344,128,32,382,1",
+  "rounds": 9,
+  "code_bytes": 16820224,
+  "avx512_off": {
+   "us_a_pass": 2994.95
+  },
+  "avx512_on": {
+   "us_a_pass": 2590.7,
+   "ratio": 0.8693,
+   "interval": [
+    0.8538,
+    0.885
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3028.52,
+   "ratio": 1.0076,
+   "interval": [
+    1.0009,
+    1.0143
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4193.44
+  },
+  "avx2_on": {
+   "us_a_pass": 3068.13,
+   "ratio": 0.7298,
+   "interval": [
+    0.7261,
+    0.7334
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4185.97,
+   "ratio": 0.9984,
+   "interval": [
+    0.9888,
+    1.0081
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "344,128,32,12193,1",
+  "rounds": 5,
+  "code_bytes": 536882176,
+  "avx512_off": {
+   "us_a_pass": 133664.42
+  },
+  "avx512_on": {
+   "us_a_pass": 119907.93,
+   "ratio": 0.9024,
+   "interval": [
+    0.8862,
+    0.9188
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 133533.01,
+   "ratio": 0.9987,
+   "interval": [
+    0.9939,
+    1.0035
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 246592.75
+  },
+  "avx2_on": {
+   "us_a_pass": 136181.18,
+   "ratio": 0.5519,
+   "interval": [
+    0.5474,
+    0.5565
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 245917.16,
+   "ratio": 0.9979,
+   "interval": [
+    0.9775,
+    1.0186
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "512,512,32,1,16",
+  "rounds": 9,
+  "code_bytes": 262144,
+  "avx512_off": {
+   "us_a_pass": 685.13
+  },
+  "avx512_on": {
+   "us_a_pass": 548.5,
+   "ratio": 0.8012,
+   "interval": [
+    0.7736,
+    0.8297
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 698.43,
+   "ratio": 1.0307,
+   "interval": [
+    0.9978,
+    1.0646
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 929.66
+  },
+  "avx2_on": {
+   "us_a_pass": 631.66,
+   "ratio": 0.6829,
+   "interval": [
+    0.6614,
+    0.7051
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 937.26,
+   "ratio": 1.0056,
+   "interval": [
+    0.9716,
+    1.0408
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "L3",
+  "case": "512,512,32,64,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3182.08
+  },
+  "avx512_on": {
+   "us_a_pass": 2521.25,
+   "ratio": 0.7879,
+   "interval": [
+    0.7777,
+    0.7983
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3245.6,
+   "ratio": 1.0166,
+   "interval": [
+    1.0029,
+    1.0304
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4056.43
+  },
+  "avx2_on": {
+   "us_a_pass": 2897.14,
+   "ratio": 0.7135,
+   "interval": [
+    0.7031,
+    0.724
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4049.87,
+   "ratio": 0.9967,
+   "interval": [
+    0.9872,
+    1.0064
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "512,512,32,2048,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 209897.1
+  },
+  "avx512_on": {
+   "us_a_pass": 118851.34,
+   "ratio": 0.5403,
+   "interval": [
+    0.4885,
+    0.5977
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 208260.06,
+   "ratio": 0.9492,
+   "interval": [
+    0.8524,
+    1.0571
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 219406.54
+  },
+  "avx2_on": {
+   "us_a_pass": 128869.23,
+   "ratio": 0.5806,
+   "interval": [
+    0.5675,
+    0.594
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 218435.95,
+   "ratio": 0.9872,
+   "interval": [
+    0.9569,
+    1.0185
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "1024,1024,32,1,4",
+  "rounds": 9,
+  "code_bytes": 1048576,
+  "avx512_off": {
+   "us_a_pass": 711.47
+  },
+  "avx512_on": {
+   "us_a_pass": 563.26,
+   "ratio": 0.8054,
+   "interval": [
+    0.7804,
+    0.8312
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 709.53,
+   "ratio": 1.2464,
+   "interval": [
+    0.7776,
+    1.998
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1001.94
+  },
+  "avx2_on": {
+   "us_a_pass": 663.86,
+   "ratio": 0.7945,
+   "interval": [
+    0.5019,
+    1.2577
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1008.81,
+   "ratio": 1.2418,
+   "interval": [
+    0.7812,
+    1.9738
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "L3",
+  "case": "1024,1024,32,16,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3761.08
+  },
+  "avx512_on": {
+   "us_a_pass": 2579.8,
+   "ratio": 0.6783,
+   "interval": [
+    0.6564,
+    0.7008
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3871.79,
+   "ratio": 1.0084,
+   "interval": [
+    0.9615,
+    1.0577
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4020.14
+  },
+  "avx2_on": {
+   "us_a_pass": 2950.67,
+   "ratio": 0.7482,
+   "interval": [
+    0.719,
+    0.7785
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4045.87,
+   "ratio": 1.009,
+   "interval": [
+    0.9954,
+    1.0228
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "1024,1024,32,512,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 286626.69
+  },
+  "avx512_on": {
+   "us_a_pass": 150564.39,
+   "ratio": 0.5243,
+   "interval": [
+    0.4624,
+    0.5944
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 290129.16,
+   "ratio": 1.0202,
+   "interval": [
+    0.9212,
+    1.1299
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 208468.98
+  },
+  "avx2_on": {
+   "us_a_pass": 168255.57,
+   "ratio": 0.813,
+   "interval": [
+    0.7775,
+    0.85
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 209040.0,
+   "ratio": 1.0409,
+   "interval": [
+    0.9333,
+    1.161
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "2048,256,32,1,8",
+  "rounds": 9,
+  "code_bytes": 524288,
+  "avx512_off": {
+   "us_a_pass": 658.78
+  },
+  "avx512_on": {
+   "us_a_pass": 535.64,
+   "ratio": 0.8176,
+   "interval": [
+    0.7759,
+    0.8615
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 666.36,
+   "ratio": 0.9996,
+   "interval": [
+    0.9563,
+    1.0448
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 895.36
+  },
+  "avx2_on": {
+   "us_a_pass": 609.48,
+   "ratio": 0.6943,
+   "interval": [
+    0.6716,
+    0.7178
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 878.1,
+   "ratio": 1.0041,
+   "interval": [
+    0.9716,
+    1.0377
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "L3",
+  "case": "2048,256,32,32,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3201.0
+  },
+  "avx512_on": {
+   "us_a_pass": 2448.71,
+   "ratio": 0.8267,
+   "interval": [
+    0.6571,
+    1.04
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3183.19,
+   "ratio": 0.9603,
+   "interval": [
+    0.8997,
+    1.025
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 3895.62
+  },
+  "avx2_on": {
+   "us_a_pass": 2928.67,
+   "ratio": 0.744,
+   "interval": [
+    0.7209,
+    0.7677
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 3958.06,
+   "ratio": 0.9912,
+   "interval": [
+    0.9535,
+    1.0304
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "2048,256,32,1024,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 157299.85
+  },
+  "avx512_on": {
+   "us_a_pass": 112763.68,
+   "ratio": 0.6955,
+   "interval": [
+    0.6433,
+    0.7519
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 154035.41,
+   "ratio": 0.9598,
+   "interval": [
+    0.8867,
+    1.039
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 241329.84
+  },
+  "avx2_on": {
+   "us_a_pass": 133426.35,
+   "ratio": 0.5477,
+   "interval": [
+    0.5362,
+    0.5594
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 242574.87,
+   "ratio": 0.9951,
+   "interval": [
+    0.9647,
+    1.0265
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "2048,2048,32,1,1",
+  "rounds": 9,
+  "code_bytes": 4194304,
+  "avx512_off": {
+   "us_a_pass": 1240.75
+  },
+  "avx512_on": {
+   "us_a_pass": 625.09,
+   "ratio": 0.5098,
+   "interval": [
+    0.4834,
+    0.5376
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 1262.81,
+   "ratio": 1.0045,
+   "interval": [
+    0.9505,
+    1.0614
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 999.35
+  },
+  "avx2_on": {
+   "us_a_pass": 710.5,
+   "ratio": 0.7244,
+   "interval": [
+    0.6969,
+    0.7529
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1046.24,
+   "ratio": 1.0385,
+   "interval": [
+    1.0005,
+    1.0778
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "L3",
+  "case": "2048,2048,32,4,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 4496.23
+  },
+  "avx512_on": {
+   "us_a_pass": 2296.32,
+   "ratio": 0.5118,
+   "interval": [
+    0.5053,
+    0.5183
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 4526.87,
+   "ratio": 1.007,
+   "interval": [
+    0.9947,
+    1.0195
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 3755.24
+  },
+  "avx2_on": {
+   "us_a_pass": 2837.95,
+   "ratio": 0.7571,
+   "interval": [
+    0.7412,
+    0.7732
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 3851.63,
+   "ratio": 1.0246,
+   "interval": [
+    1.0139,
+    1.0354
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "2048,2048,32,128,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 310541.97
+  },
+  "avx512_on": {
+   "us_a_pass": 151478.24,
+   "ratio": 0.4839,
+   "interval": [
+    0.45,
+    0.5204
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 301303.48,
+   "ratio": 0.9619,
+   "interval": [
+    0.8921,
+    1.0372
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 199521.19
+  },
+  "avx2_on": {
+   "us_a_pass": 162606.05,
+   "ratio": 0.8035,
+   "interval": [
+    0.7594,
+    0.8503
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 200061.3,
+   "ratio": 0.9947,
+   "interval": [
+    0.9264,
+    1.068
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "2048,5632,32,1,1",
+  "rounds": 9,
+  "code_bytes": 11534336,
+  "avx512_off": {
+   "us_a_pass": 2899.72
+  },
+  "avx512_on": {
+   "us_a_pass": 1646.24,
+   "ratio": 0.5645,
+   "interval": [
+    0.5527,
+    0.5765
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3022.38,
+   "ratio": 1.0413,
+   "interval": [
+    1.0187,
+    1.0645
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 2560.51
+  },
+  "avx2_on": {
+   "us_a_pass": 1998.07,
+   "ratio": 0.7801,
+   "interval": [
+    0.7602,
+    0.8006
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 2660.52,
+   "ratio": 1.0306,
+   "interval": [
+    1.0122,
+    1.0493
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "L3",
+  "case": "2048,5632,32,2,1",
+  "rounds": 9,
+  "code_bytes": 23068672,
+  "avx512_off": {
+   "us_a_pass": 6591.75
+  },
+  "avx512_on": {
+   "us_a_pass": 3312.87,
+   "ratio": 0.5131,
+   "interval": [
+    0.4917,
+    0.5355
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 6535.31,
+   "ratio": 0.9495,
+   "interval": [
+    0.8139,
+    1.1078
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 5167.9
+  },
+  "avx2_on": {
+   "us_a_pass": 4242.28,
+   "ratio": 0.7807,
+   "interval": [
+    0.6809,
+    0.895
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5195.1,
+   "ratio": 0.9683,
+   "interval": [
+    0.8545,
+    1.0973
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "2048,5632,32,47,1",
+  "rounds": 5,
+  "code_bytes": 542113792,
+  "avx512_off": {
+   "us_a_pass": 331444.6
+  },
+  "avx512_on": {
+   "us_a_pass": 110927.96,
+   "ratio": 0.3347,
+   "interval": [
+    0.3223,
+    0.3476
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 333094.71,
+   "ratio": 1.0016,
+   "interval": [
+    0.979,
+    1.0248
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 155520.1
+  },
+  "avx2_on": {
+   "us_a_pass": 135507.48,
+   "ratio": 0.8593,
+   "interval": [
+    0.8061,
+    0.9161
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 159780.18,
+   "ratio": 1.0292,
+   "interval": [
+    0.8878,
+    1.1932
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "repeat",
+  "case": "5632,2048,32,1,1",
+  "rounds": 9,
+  "code_bytes": 11534336,
+  "avx512_off": {
+   "us_a_pass": 3373.8
+  },
+  "avx512_on": {
+   "us_a_pass": 1639.99,
+   "ratio": 0.5011,
+   "interval": [
+    0.4767,
+    0.5268
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3468.83,
+   "ratio": 1.027,
+   "interval": [
+    1.0015,
+    1.0531
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 2644.59
+  },
+  "avx2_on": {
+   "us_a_pass": 2005.98,
+   "ratio": 0.7378,
+   "interval": [
+    0.7159,
+    0.7603
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 2798.48,
+   "ratio": 1.0359,
+   "interval": [
+    0.9923,
+    1.0814
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "L3",
+  "case": "5632,2048,32,2,1",
+  "rounds": 9,
+  "code_bytes": 23068672,
+  "avx512_off": {
+   "us_a_pass": 7632.1
+  },
+  "avx512_on": {
+   "us_a_pass": 3353.42,
+   "ratio": 0.4392,
+   "interval": [
+    0.4146,
+    0.4652
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 7482.72,
+   "ratio": 0.933,
+   "interval": [
+    0.8608,
+    1.0112
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 5236.58
+  },
+  "avx2_on": {
+   "us_a_pass": 4121.14,
+   "ratio": 0.8405,
+   "interval": [
+    0.7342,
+    0.9621
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5536.79,
+   "ratio": 1.1428,
+   "interval": [
+    0.961,
+    1.3591
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "from": "DRAM",
+  "case": "5632,2048,32,47,1",
+  "rounds": 5,
+  "code_bytes": 542113792,
+  "avx512_off": {
+   "us_a_pass": 329802.38
+  },
+  "avx512_on": {
+   "us_a_pass": 155846.74,
+   "ratio": 0.4699,
+   "interval": [
+    0.456,
+    0.4842
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 338591.77,
+   "ratio": 1.0339,
+   "interval": [
+    0.9524,
+    1.1223
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 208841.69
+  },
+  "avx2_on": {
+   "us_a_pass": 168374.18,
+   "ratio": 0.8342,
+   "interval": [
+    0.7531,
+    0.924
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 209215.11,
+   "ratio": 1.0001,
+   "interval": [
+    0.9902,
+    1.0101
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "128,128,32,1,256",
+  "rounds": 9,
+  "code_bytes": 16384,
+  "avx512_off": {
+   "us_a_pass": 702.25
+  },
+  "avx512_on": {
+   "us_a_pass": 572.66,
+   "ratio": 0.8185,
+   "interval": [
+    0.804,
+    0.8333
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 698.47,
+   "ratio": 0.9933,
+   "interval": [
+    0.9815,
+    1.0053
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1086.21
+  },
+  "avx2_on": {
+   "us_a_pass": 670.62,
+   "ratio": 0.6014,
+   "interval": [
+    0.5367,
+    0.6738
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1105.24,
+   "ratio": 0.9977,
+   "interval": [
+    0.8886,
+    1.1203
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "128,128,32,1024,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 2960.38
+  },
+  "avx512_on": {
+   "us_a_pass": 2666.17,
+   "ratio": 0.9019,
+   "interval": [
+    0.8732,
+    0.9316
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3058.41,
+   "ratio": 1.0416,
+   "interval": [
+    0.9938,
+    1.0918
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4314.97
+  },
+  "avx2_on": {
+   "us_a_pass": 2994.18,
+   "ratio": 0.6883,
+   "interval": [
+    0.6778,
+    0.699
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4357.91,
+   "ratio": 1.0024,
+   "interval": [
+    0.9879,
+    1.0172
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "128,128,32,32768,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 171795.09
+  },
+  "avx512_on": {
+   "us_a_pass": 128935.03,
+   "ratio": 0.7518,
+   "interval": [
+    0.7112,
+    0.7948
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 171595.07,
+   "ratio": 0.9984,
+   "interval": [
+    0.966,
+    1.032
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 217938.46
+  },
+  "avx2_on": {
+   "us_a_pass": 147884.13,
+   "ratio": 0.669,
+   "interval": [
+    0.6208,
+    0.7209
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 220053.63,
+   "ratio": 1.0491,
+   "interval": [
+    0.9412,
+    1.1693
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "128,64,32,1,512",
+  "rounds": 9,
+  "code_bytes": 8192,
+  "avx512_off": {
+   "us_a_pass": 724.8
+  },
+  "avx512_on": {
+   "us_a_pass": 642.42,
+   "ratio": 0.8821,
+   "interval": [
+    0.8582,
+    0.9067
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 759.22,
+   "ratio": 1.0254,
+   "interval": [
+    1.0001,
+    1.0513
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1095.14
+  },
+  "avx2_on": {
+   "us_a_pass": 732.55,
+   "ratio": 0.6728,
+   "interval": [
+    0.6484,
+    0.6982
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1126.41,
+   "ratio": 1.016,
+   "interval": [
+    0.9838,
+    1.0493
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "128,64,32,2048,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3297.78
+  },
+  "avx512_on": {
+   "us_a_pass": 2960.82,
+   "ratio": 0.8664,
+   "interval": [
+    0.8103,
+    0.9263
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3324.7,
+   "ratio": 0.9847,
+   "interval": [
+    0.9263,
+    1.0468
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4481.04
+  },
+  "avx2_on": {
+   "us_a_pass": 3311.65,
+   "ratio": 0.7703,
+   "interval": [
+    0.6967,
+    0.8517
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4575.51,
+   "ratio": 1.0168,
+   "interval": [
+    1.0037,
+    1.0302
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "128,64,32,65536,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 192510.9
+  },
+  "avx512_on": {
+   "us_a_pass": 181199.01,
+   "ratio": 0.9513,
+   "interval": [
+    0.9122,
+    0.992
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 186049.88,
+   "ratio": 0.989,
+   "interval": [
+    0.9425,
+    1.0378
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 257609.82
+  },
+  "avx2_on": {
+   "us_a_pass": 177061.86,
+   "ratio": 0.752,
+   "interval": [
+    0.6114,
+    0.925
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 240960.43,
+   "ratio": 0.9575,
+   "interval": [
+    0.9176,
+    0.9992
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "128,344,32,1,96",
+  "rounds": 9,
+  "code_bytes": 44032,
+  "avx512_off": {
+   "us_a_pass": 734.11
+  },
+  "avx512_on": {
+   "us_a_pass": 587.72,
+   "ratio": 0.8081,
+   "interval": [
+    0.778,
+    0.8394
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 727.13,
+   "ratio": 1.0306,
+   "interval": [
+    0.9708,
+    1.094
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1219.03
+  },
+  "avx2_on": {
+   "us_a_pass": 649.51,
+   "ratio": 0.5335,
+   "interval": [
+    0.5232,
+    0.544
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1271.96,
+   "ratio": 1.063,
+   "interval": [
+    0.9803,
+    1.1527
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "128,344,32,382,1",
+  "rounds": 9,
+  "code_bytes": 16820224,
+  "avx512_off": {
+   "us_a_pass": 3417.45
+  },
+  "avx512_on": {
+   "us_a_pass": 2585.46,
+   "ratio": 0.7593,
+   "interval": [
+    0.7358,
+    0.7835
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3496.15,
+   "ratio": 1.0101,
+   "interval": [
+    0.9762,
+    1.0452
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4867.08
+  },
+  "avx2_on": {
+   "us_a_pass": 2972.29,
+   "ratio": 0.6122,
+   "interval": [
+    0.6059,
+    0.6185
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4968.19,
+   "ratio": 1.0686,
+   "interval": [
+    1.0152,
+    1.1248
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "128,344,32,12193,1",
+  "rounds": 5,
+  "code_bytes": 536882176,
+  "avx512_off": {
+   "us_a_pass": 206038.5
+  },
+  "avx512_on": {
+   "us_a_pass": 113716.54,
+   "ratio": 0.5549,
+   "interval": [
+    0.5478,
+    0.5621
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 206422.97,
+   "ratio": 1.015,
+   "interval": [
+    0.9737,
+    1.0579
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 226031.04
+  },
+  "avx2_on": {
+   "us_a_pass": 132626.72,
+   "ratio": 0.5874,
+   "interval": [
+    0.5844,
+    0.5903
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 225929.01,
+   "ratio": 1.0234,
+   "interval": [
+    0.9625,
+    1.0881
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "344,128,32,1,96",
+  "rounds": 9,
+  "code_bytes": 44032,
+  "avx512_off": {
+   "us_a_pass": 682.67
+  },
+  "avx512_on": {
+   "us_a_pass": 560.41,
+   "ratio": 0.8248,
+   "interval": [
+    0.7982,
+    0.8524
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 683.92,
+   "ratio": 1.0006,
+   "interval": [
+    0.9698,
+    1.0324
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1091.35
+  },
+  "avx2_on": {
+   "us_a_pass": 677.88,
+   "ratio": 0.6173,
+   "interval": [
+    0.5913,
+    0.6444
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1095.14,
+   "ratio": 0.9998,
+   "interval": [
+    0.976,
+    1.0241
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "344,128,32,382,1",
+  "rounds": 9,
+  "code_bytes": 16820224,
+  "avx512_off": {
+   "us_a_pass": 2897.22
+  },
+  "avx512_on": {
+   "us_a_pass": 2657.7,
+   "ratio": 0.9125,
+   "interval": [
+    0.8996,
+    0.9257
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 2928.48,
+   "ratio": 1.0087,
+   "interval": [
+    0.9784,
+    1.0399
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4309.1
+  },
+  "avx2_on": {
+   "us_a_pass": 2993.68,
+   "ratio": 0.6933,
+   "interval": [
+    0.6829,
+    0.7039
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4321.56,
+   "ratio": 1.0019,
+   "interval": [
+    0.9874,
+    1.0166
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "344,128,32,12193,1",
+  "rounds": 5,
+  "code_bytes": 536882176,
+  "avx512_off": {
+   "us_a_pass": 128921.3
+  },
+  "avx512_on": {
+   "us_a_pass": 128937.31,
+   "ratio": 0.9894,
+   "interval": [
+    0.8406,
+    1.1646
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 138730.46,
+   "ratio": 1.0592,
+   "interval": [
+    0.8665,
+    1.2948
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 256371.88
+  },
+  "avx2_on": {
+   "us_a_pass": 148545.81,
+   "ratio": 0.5733,
+   "interval": [
+    0.5368,
+    0.6122
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 255269.24,
+   "ratio": 1.0069,
+   "interval": [
+    0.9178,
+    1.1047
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "512,512,32,1,16",
+  "rounds": 9,
+  "code_bytes": 262144,
+  "avx512_off": {
+   "us_a_pass": 656.7
+  },
+  "avx512_on": {
+   "us_a_pass": 548.96,
+   "ratio": 0.8483,
+   "interval": [
+    0.7963,
+    0.9036
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 649.05,
+   "ratio": 0.9877,
+   "interval": [
+    0.9401,
+    1.0377
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1065.11
+  },
+  "avx2_on": {
+   "us_a_pass": 650.15,
+   "ratio": 0.6017,
+   "interval": [
+    0.5756,
+    0.6291
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1122.2,
+   "ratio": 1.0044,
+   "interval": [
+    0.9475,
+    1.0648
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "512,512,32,64,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3068.18
+  },
+  "avx512_on": {
+   "us_a_pass": 2425.66,
+   "ratio": 0.779,
+   "interval": [
+    0.761,
+    0.7975
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3118.28,
+   "ratio": 1.0033,
+   "interval": [
+    0.9776,
+    1.0297
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4409.23
+  },
+  "avx2_on": {
+   "us_a_pass": 2830.16,
+   "ratio": 0.6363,
+   "interval": [
+    0.6272,
+    0.6455
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4479.55,
+   "ratio": 1.016,
+   "interval": [
+    0.9993,
+    1.0329
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "512,512,32,2048,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 176878.12
+  },
+  "avx512_on": {
+   "us_a_pass": 115708.87,
+   "ratio": 0.626,
+   "interval": [
+    0.5573,
+    0.7031
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 177517.61,
+   "ratio": 0.96,
+   "interval": [
+    0.8572,
+    1.0751
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 212670.16
+  },
+  "avx2_on": {
+   "us_a_pass": 127289.2,
+   "ratio": 0.597,
+   "interval": [
+    0.571,
+    0.6243
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 209589.58,
+   "ratio": 0.9711,
+   "interval": [
+    0.9325,
+    1.0113
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "1024,1024,32,1,4",
+  "rounds": 9,
+  "code_bytes": 1048576,
+  "avx512_off": {
+   "us_a_pass": 1076.49
+  },
+  "avx512_on": {
+   "us_a_pass": 870.58,
+   "ratio": 0.7741,
+   "interval": [
+    0.6965,
+    0.8602
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 1035.9,
+   "ratio": 0.9802,
+   "interval": [
+    0.9377,
+    1.0245
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1577.97
+  },
+  "avx2_on": {
+   "us_a_pass": 1091.71,
+   "ratio": 0.7306,
+   "interval": [
+    0.5388,
+    0.9906
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1654.95,
+   "ratio": 1.0788,
+   "interval": [
+    0.9402,
+    1.2378
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "1024,1024,32,16,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 3411.18
+  },
+  "avx512_on": {
+   "us_a_pass": 2397.72,
+   "ratio": 0.7008,
+   "interval": [
+    0.6649,
+    0.7386
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3509.63,
+   "ratio": 1.0225,
+   "interval": [
+    0.9807,
+    1.0661
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4199.74
+  },
+  "avx2_on": {
+   "us_a_pass": 2763.31,
+   "ratio": 0.6282,
+   "interval": [
+    0.5632,
+    0.7007
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4294.12,
+   "ratio": 0.9511,
+   "interval": [
+    0.7919,
+    1.1423
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "1024,1024,32,512,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 317278.56
+  },
+  "avx512_on": {
+   "us_a_pass": 136939.16,
+   "ratio": 0.4332,
+   "interval": [
+    0.4257,
+    0.4409
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 312807.15,
+   "ratio": 1.0015,
+   "interval": [
+    0.9597,
+    1.045
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 212207.9
+  },
+  "avx2_on": {
+   "us_a_pass": 167387.24,
+   "ratio": 0.7828,
+   "interval": [
+    0.7697,
+    0.796
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 214021.94,
+   "ratio": 1.0191,
+   "interval": [
+    0.9745,
+    1.0657
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "2048,256,32,1,8",
+  "rounds": 9,
+  "code_bytes": 524288,
+  "avx512_off": {
+   "us_a_pass": 638.4
+  },
+  "avx512_on": {
+   "us_a_pass": 544.37,
+   "ratio": 0.8378,
+   "interval": [
+    0.8163,
+    0.8598
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 647.59,
+   "ratio": 0.9981,
+   "interval": [
+    0.9724,
+    1.0246
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1147.77
+  },
+  "avx2_on": {
+   "us_a_pass": 646.41,
+   "ratio": 0.551,
+   "interval": [
+    0.5291,
+    0.5738
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1195.4,
+   "ratio": 1.0074,
+   "interval": [
+    0.9731,
+    1.0429
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "2048,256,32,32,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 2942.47
+  },
+  "avx512_on": {
+   "us_a_pass": 2241.01,
+   "ratio": 0.7765,
+   "interval": [
+    0.7543,
+    0.7993
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 2917.14,
+   "ratio": 0.9972,
+   "interval": [
+    0.9781,
+    1.0167
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4482.88
+  },
+  "avx2_on": {
+   "us_a_pass": 2681.71,
+   "ratio": 0.5966,
+   "interval": [
+    0.5899,
+    0.6034
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 4547.2,
+   "ratio": 1.0122,
+   "interval": [
+    0.9958,
+    1.0289
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "2048,256,32,1024,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 152196.27
+  },
+  "avx512_on": {
+   "us_a_pass": 109200.05,
+   "ratio": 0.7179,
+   "interval": [
+    0.7097,
+    0.7261
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 151307.19,
+   "ratio": 1.0116,
+   "interval": [
+    0.9651,
+    1.0604
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 221835.16
+  },
+  "avx2_on": {
+   "us_a_pass": 122527.19,
+   "ratio": 0.544,
+   "interval": [
+    0.5023,
+    0.5893
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 219830.18,
+   "ratio": 0.9723,
+   "interval": [
+    0.8993,
+    1.0512
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "2048,2048,32,1,1",
+  "rounds": 9,
+  "code_bytes": 4194304,
+  "avx512_off": {
+   "us_a_pass": 1085.24
+  },
+  "avx512_on": {
+   "us_a_pass": 557.48,
+   "ratio": 0.5072,
+   "interval": [
+    0.4897,
+    0.5252
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 1129.51,
+   "ratio": 1.0145,
+   "interval": [
+    0.9758,
+    1.0547
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 1009.13
+  },
+  "avx2_on": {
+   "us_a_pass": 633.4,
+   "ratio": 0.6158,
+   "interval": [
+    0.5973,
+    0.6348
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 1024.28,
+   "ratio": 1.004,
+   "interval": [
+    0.9883,
+    1.0199
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "2048,2048,32,4,1",
+  "rounds": 9,
+  "code_bytes": 16777216,
+  "avx512_off": {
+   "us_a_pass": 6400.85
+  },
+  "avx512_on": {
+   "us_a_pass": 2327.19,
+   "ratio": 0.4842,
+   "interval": [
+    0.4318,
+    0.5429
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 4724.18,
+   "ratio": 0.9524,
+   "interval": [
+    0.871,
+    1.0413
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 4282.72
+  },
+  "avx2_on": {
+   "us_a_pass": 2614.28,
+   "ratio": 0.6102,
+   "interval": [
+    0.5634,
+    0.6609
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 6662.81,
+   "ratio": 1.0927,
+   "interval": [
+    0.909,
+    1.3134
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "2048,2048,32,128,1",
+  "rounds": 5,
+  "code_bytes": 536870912,
+  "avx512_off": {
+   "us_a_pass": 318292.68
+  },
+  "avx512_on": {
+   "us_a_pass": 153188.52,
+   "ratio": 0.4847,
+   "interval": [
+    0.4659,
+    0.5043
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 317728.89,
+   "ratio": 1.0324,
+   "interval": [
+    0.9193,
+    1.1593
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 209489.44
+  },
+  "avx2_on": {
+   "us_a_pass": 186099.09,
+   "ratio": 0.8802,
+   "interval": [
+    0.8528,
+    0.9085
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 219846.59,
+   "ratio": 1.0449,
+   "interval": [
+    0.9508,
+    1.1484
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "2048,5632,32,1,1",
+  "rounds": 9,
+  "code_bytes": 11534336,
+  "avx512_off": {
+   "us_a_pass": 2758.72
+  },
+  "avx512_on": {
+   "us_a_pass": 1541.52,
+   "ratio": 0.5431,
+   "interval": [
+    0.5231,
+    0.5638
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 2883.93,
+   "ratio": 1.0346,
+   "interval": [
+    0.9668,
+    1.107
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 2777.06
+  },
+  "avx2_on": {
+   "us_a_pass": 1792.82,
+   "ratio": 0.6343,
+   "interval": [
+    0.5704,
+    0.7053
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 2962.41,
+   "ratio": 1.0465,
+   "interval": [
+    0.9065,
+    1.2081
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "2048,5632,32,2,1",
+  "rounds": 9,
+  "code_bytes": 23068672,
+  "avx512_off": {
+   "us_a_pass": 6304.59
+  },
+  "avx512_on": {
+   "us_a_pass": 3216.96,
+   "ratio": 0.5021,
+   "interval": [
+    0.4671,
+    0.5398
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 5830.75,
+   "ratio": 0.9849,
+   "interval": [
+    0.8803,
+    1.102
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 5612.53
+  },
+  "avx2_on": {
+   "us_a_pass": 3728.55,
+   "ratio": 0.6724,
+   "interval": [
+    0.6372,
+    0.7095
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5891.24,
+   "ratio": 1.0138,
+   "interval": [
+    0.9787,
+    1.05
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "2048,5632,32,47,1",
+  "rounds": 5,
+  "code_bytes": 542113792,
+  "avx512_off": {
+   "us_a_pass": 296716.78
+  },
+  "avx512_on": {
+   "us_a_pass": 105552.21,
+   "ratio": 0.3635,
+   "interval": [
+    0.3448,
+    0.3832
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 281192.77,
+   "ratio": 0.9747,
+   "interval": [
+    0.9374,
+    1.0136
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 155182.75
+  },
+  "avx2_on": {
+   "us_a_pass": 115410.53,
+   "ratio": 0.7025,
+   "interval": [
+    0.6223,
+    0.7931
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 155389.0,
+   "ratio": 0.9453,
+   "interval": [
+    0.8389,
+    1.0652
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "repeat",
+  "case": "5632,2048,32,1,1",
+  "rounds": 9,
+  "code_bytes": 11534336,
+  "avx512_off": {
+   "us_a_pass": 3438.98
+  },
+  "avx512_on": {
+   "us_a_pass": 1538.21,
+   "ratio": 0.4541,
+   "interval": [
+    0.4389,
+    0.4698
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 3484.36,
+   "ratio": 1.0084,
+   "interval": [
+    0.9727,
+    1.0455
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 2812.6
+  },
+  "avx2_on": {
+   "us_a_pass": 1768.78,
+   "ratio": 0.6274,
+   "interval": [
+    0.6159,
+    0.639
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 2830.2,
+   "ratio": 1.0102,
+   "interval": [
+    0.9959,
+    1.0246
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "L3",
+  "case": "5632,2048,32,2,1",
+  "rounds": 9,
+  "code_bytes": 23068672,
+  "avx512_off": {
+   "us_a_pass": 6426.85
+  },
+  "avx512_on": {
+   "us_a_pass": 3150.16,
+   "ratio": 0.4828,
+   "interval": [
+    0.47,
+    0.4959
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 6477.43,
+   "ratio": 0.9972,
+   "interval": [
+    0.9673,
+    1.028
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 5734.13
+  },
+  "avx2_on": {
+   "us_a_pass": 3580.41,
+   "ratio": 0.6233,
+   "interval": [
+    0.6196,
+    0.6271
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 5720.13,
+   "ratio": 0.9978,
+   "interval": [
+    0.9921,
+    1.0036
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "from": "DRAM",
+  "case": "5632,2048,32,47,1",
+  "rounds": 5,
+  "code_bytes": 542113792,
+  "avx512_off": {
+   "us_a_pass": 338418.48
+  },
+  "avx512_on": {
+   "us_a_pass": 153945.38,
+   "ratio": 0.4501,
+   "interval": [
+    0.3982,
+    0.5087
+   ]
+  },
+  "avx512_A/A": {
+   "us_a_pass": 332798.24,
+   "ratio": 0.9621,
+   "interval": [
+    0.8896,
+    1.0404
+   ]
+  },
+  "avx2_off": {
+   "us_a_pass": 219454.97
+  },
+  "avx2_on": {
+   "us_a_pass": 189970.31,
+   "ratio": 0.8529,
+   "interval": [
+    0.7919,
+    0.9185
+   ]
+  },
+  "avx2_A/A": {
+   "us_a_pass": 214577.2,
+   "ratio": 0.9733,
+   "interval": [
+    0.9146,
+    1.0357
+   ]
+  },
+  "every_output_the_portable_loops_bytes": true,
+  "every_call_on_its_arms_kernel": true
+ }
+]

@@ -1,0 +1,21 @@
+{
+ "what": "the trainer's C harness (test_decoder_train.c with the tensor unit and the trainer, -std=c2x -O3 -ffp-contract=off -fno-math-errno -pthread, no probes), each tree's own sources, clang and gcc: the tree after's output the tree before's line for line but the one new line, the KSPLIT witness's -- weight adjoints through the single, pair and group entries byte for byte the K-blocked fmaf chains, split where the room holds their partials, the room untouched otherwise and never written past what was lent; every trainer witness (the states at every thread count and contract, the programs, the probes' references) as it was",
+ "harness": {
+  "clang": {
+   "lines_before": 43,
+   "lines_after": 44,
+   "pass_lines_before": 43,
+   "pass_lines_after": 44,
+   "the_rest_line_for_line": true,
+   "new_line": "PASS native GEMM blocked contract (KSPLIT): 990 weight adjoints through the single, pair and group entries byte for byte the K-blocked fmaf chains, 432 of them split over their depth into the room lent (3 to 10 K blocks, every instance, serially and on pools of 2 and 4), 558 with the room untouched (none, a float short, misaligned or below the build's 4 blocks), nothing written past what was lent"
+  },
+  "gcc": {
+   "lines_before": 43,
+   "lines_after": 44,
+   "pass_lines_before": 43,
+   "pass_lines_after": 44,
+   "the_rest_line_for_line": true,
+   "new_line": "PASS native GEMM blocked contract (KSPLIT): 990 weight adjoints through the single, pair and group entries byte for byte the K-blocked fmaf chains, 432 of them split over their depth into the room lent (3 to 10 K blocks, every instance, serially and on pools of 2 and 4), 558 with the room untouched (none, a float short, misaligned or below the build's 4 blocks), nothing written past what was lent"
+  }
+ }
+}

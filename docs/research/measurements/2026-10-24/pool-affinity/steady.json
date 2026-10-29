@@ -1,0 +1,1809 @@
+{
+ "what": "measure_aff2.sh, declared after measure_aff.sh's one-process rows and before it ran: each library alone in its own process, the libraries alternating run by run, six runs each -- step_one.c (STEPS training steps back to back after four untimed ones on one state and one pool: 40, 20 at T1024; the GEO dimensions, contract 14, four threads) for the tree before (A), the tree after (B) and B's design variants nohead and nosteal (proto_aff_variants.py), and fwd_one.c (the inference forward, the same way) for A and B; each run's median ms; the ratios paired by run (run k of one library over run k of the other), their geometric mean and 95% interval (Student t, 5 degrees of freedom); every run's weights (step) or last logits (forward) the same digest across the libraries",
+ "step": [
+  {
+   "time": 128,
+   "runs": 6,
+   "median_ms": {
+    "A": 8.3749,
+    "B": 6.71955,
+    "nohead": 6.9296500000000005,
+    "nosteal": 6.98655
+   },
+   "over_before": {
+    "B": {
+     "geometric_mean": 0.8235256983317426,
+     "ci95": [
+      0.7780911512386905,
+      0.8716132740143945
+     ],
+     "rounds": 6
+    },
+    "nohead": {
+     "geometric_mean": 0.8416749869366584,
+     "ci95": [
+      0.8155919109326139,
+      0.8685922139967807
+     ],
+     "rounds": 6
+    },
+    "nosteal": {
+     "geometric_mean": 0.8908134050778012,
+     "ci95": [
+      0.833068420890464,
+      0.9525610415265595
+     ],
+     "rounds": 6
+    }
+   },
+   "over_after": {
+    "nohead": {
+     "geometric_mean": 1.0220385212528056,
+     "ci95": [
+      0.9918213208125614,
+      1.0531763302576027
+     ],
+     "rounds": 6
+    },
+    "nosteal": {
+     "geometric_mean": 1.0817068694788354,
+     "ci95": [
+      0.9900289519033287,
+      1.181874276735248
+     ],
+     "rounds": 6
+    }
+   },
+   "weights_fnv1a": [
+    "64e87a7b7a668d4e"
+   ]
+  },
+  {
+   "time": 256,
+   "runs": 6,
+   "median_ms": {
+    "A": 15.56965,
+    "B": 14.40885,
+    "nohead": 13.998850000000001,
+    "nosteal": 14.9225
+   },
+   "over_before": {
+    "B": {
+     "geometric_mean": 0.9437255122500973,
+     "ci95": [
+      0.898470190323352,
+      0.9912603134347536
+     ],
+     "rounds": 6
+    },
+    "nohead": {
+     "geometric_mean": 0.8928516267252015,
+     "ci95": [
+      0.8463180029610216,
+      0.9419438373716764
+     ],
+     "rounds": 6
+    },
+    "nosteal": {
+     "geometric_mean": 0.9516313514899148,
+     "ci95": [
+      0.9253234197470483,
+      0.9786872457914038
+     ],
+     "rounds": 6
+    }
+   },
+   "over_after": {
+    "nohead": {
+     "geometric_mean": 0.9460924973792446,
+     "ci95": [
+      0.9093805849350319,
+      0.9842864785388432
+     ],
+     "rounds": 6
+    },
+    "nosteal": {
+     "geometric_mean": 1.0083772655684256,
+     "ci95": [
+      0.9709138232851137,
+      1.0472862630329032
+     ],
+     "rounds": 6
+    }
+   },
+   "weights_fnv1a": [
+    "43ebeaf4ffa940c8"
+   ]
+  },
+  {
+   "time": 512,
+   "runs": 6,
+   "median_ms": {
+    "A": 34.02265,
+    "B": 31.9392,
+    "nohead": 31.115949999999998,
+    "nosteal": 33.44685
+   },
+   "over_before": {
+    "B": {
+     "geometric_mean": 0.9320509298495091,
+     "ci95": [
+      0.8650419326697805,
+      1.0042506646495226
+     ],
+     "rounds": 6
+    },
+    "nohead": {
+     "geometric_mean": 0.9021108682216181,
+     "ci95": [
+      0.8456200868088862,
+      0.9623754582682764
+     ],
+     "rounds": 6
+    },
+    "nosteal": {
+     "geometric_mean": 0.9933313680203231,
+     "ci95": [
+      0.8911375920428785,
+      1.1072445102794513
+     ],
+     "rounds": 6
+    }
+   },
+   "over_after": {
+    "nohead": {
+     "geometric_mean": 0.9678772257297944,
+     "ci95": [
+      0.9108700440524675,
+      1.0284522256529967
+     ],
+     "rounds": 6
+    },
+    "nosteal": {
+     "geometric_mean": 1.0657479502549376,
+     "ci95": [
+      0.9633847035205146,
+      1.178987676804456
+     ],
+     "rounds": 6
+    }
+   },
+   "weights_fnv1a": [
+    "e56a429d20e44af6"
+   ]
+  },
+  {
+   "time": 1024,
+   "runs": 6,
+   "median_ms": {
+    "A": 87.37180000000001,
+    "B": 89.38185,
+    "nohead": 87.6822,
+    "nosteal": 91.89150000000001
+   },
+   "over_before": {
+    "B": {
+     "geometric_mean": 0.999659404165417,
+     "ci95": [
+      0.9322365723299297,
+      1.0719585070973654
+     ],
+     "rounds": 6
+    },
+    "nohead": {
+     "geometric_mean": 1.0080973960745587,
+     "ci95": [
+      0.9343314124049624,
+      1.087687245103382
+     ],
+     "rounds": 6
+    },
+    "nosteal": {
+     "geometric_mean": 1.0483172154655194,
+     "ci95": [
+      0.9705571279708246,
+      1.1323073650894
+     ],
+     "rounds": 6
+    }
+   },
+   "over_after": {
+    "nohead": {
+     "geometric_mean": 1.0084408668332252,
+     "ci95": [
+      0.9611978843185536,
+      1.0580058471730003
+     ],
+     "rounds": 6
+    },
+    "nosteal": {
+     "geometric_mean": 1.048674389594449,
+     "ci95": [
+      0.9859140316931471,
+      1.1154298854056306
+     ],
+     "rounds": 6
+    }
+   },
+   "weights_fnv1a": [
+    "da5b63787daec30a"
+   ]
+  }
+ ],
+ "forward": [
+  {
+   "batch": 1,
+   "time": 128,
+   "runs": 6,
+   "logits_fnv1a": [
+    "f9418edf2385d60d"
+   ],
+   "median_ms": {
+    "A": 0.8214999999999999,
+    "B": 0.7142
+   },
+   "after_over_before": {
+    "geometric_mean": 0.8935374186470032,
+    "ci95": [
+     0.8460682506155144,
+     0.9436698728991514
+    ],
+    "rounds": 6
+   }
+  },
+  {
+   "batch": 1,
+   "time": 256,
+   "runs": 6,
+   "logits_fnv1a": [
+    "5ce5928c2b7b6c24"
+   ],
+   "median_ms": {
+    "A": 1.4919,
+    "B": 1.3443999999999998
+   },
+   "after_over_before": {
+    "geometric_mean": 0.9063926242925805,
+    "ci95": [
+     0.8840989187624083,
+     0.9292484946390629
+    ],
+    "rounds": 6
+   }
+  },
+  {
+   "batch": 4,
+   "time": 256,
+   "runs": 6,
+   "logits_fnv1a": [
+    "c2c2f6bc2330a679"
+   ],
+   "median_ms": {
+    "A": 4.77255,
+    "B": 3.8849
+   },
+   "after_over_before": {
+    "geometric_mean": 0.8369219934936715,
+    "ci95": [
+     0.761489183524436,
+     0.9198271470535526
+    ],
+    "rounds": 6
+   }
+  },
+  {
+   "batch": 4,
+   "time": 1024,
+   "runs": 6,
+   "logits_fnv1a": [
+    "6276d1ae99097724"
+   ],
+   "median_ms": {
+    "A": 27.8664,
+    "B": 27.25495
+   },
+   "after_over_before": {
+    "geometric_mean": 0.9724002623056673,
+    "ci95": [
+     0.9257091279446085,
+     1.0214464150651759
+    ],
+    "rounds": 6
+   }
+  }
+ ],
+ "raw": {
+  "step": [
+   {
+    "build": "A",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 8.512,
+    "min_ms": 7.4676,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "B",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.8387,
+    "min_ms": 6.2271,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "nohead",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.1847,
+    "min_ms": 6.3062,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "nosteal",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.0209,
+    "min_ms": 6.5374,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "A",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.7766,
+    "min_ms": 7.3978,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "B",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.4537,
+    "min_ms": 6.2137,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "nohead",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.5107,
+    "min_ms": 6.0971,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "nosteal",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.9134,
+    "min_ms": 6.5071,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "A",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 8.76,
+    "min_ms": 7.4623,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "B",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.753,
+    "min_ms": 6.2081,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "nohead",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.0614,
+    "min_ms": 6.2217,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "nosteal",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 8.5768,
+    "min_ms": 6.5764,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "A",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 8.7476,
+    "min_ms": 7.529,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "B",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.595,
+    "min_ms": 6.4041,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "nohead",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.6511,
+    "min_ms": 6.2712,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "nosteal",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 8.1905,
+    "min_ms": 6.4838,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "A",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 7.5596,
+    "min_ms": 7.0164,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "B",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.6861,
+    "min_ms": 6.2045,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "nohead",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.5368,
+    "min_ms": 6.2078,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "nosteal",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.6589,
+    "min_ms": 6.342,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "A",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 8.2378,
+    "min_ms": 7.0235,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "B",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.5104,
+    "min_ms": 6.2268,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "nohead",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.7979,
+    "min_ms": 6.1166,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "nosteal",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 128,
+    "steps": 40,
+    "median_ms": 6.9522,
+    "min_ms": 6.4965,
+    "weights_fnv1a": "64e87a7b7a668d4e"
+   },
+   {
+    "build": "A",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 15.6179,
+    "min_ms": 14.9565,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "B",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 14.5133,
+    "min_ms": 13.4045,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "nohead",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.5026,
+    "min_ms": 12.6157,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "nosteal",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 14.9515,
+    "min_ms": 13.9202,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "A",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 15.0092,
+    "min_ms": 14.5124,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "B",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 14.1692,
+    "min_ms": 13.0574,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "nohead",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 14.3481,
+    "min_ms": 13.0141,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "nosteal",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 14.1914,
+    "min_ms": 13.6184,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "A",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 15.5214,
+    "min_ms": 14.5591,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "B",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 15.5173,
+    "min_ms": 13.2798,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "nohead",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 14.2231,
+    "min_ms": 12.817,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "nosteal",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 14.8935,
+    "min_ms": 13.7116,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "A",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 16.0998,
+    "min_ms": 14.5733,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "B",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 15.8991,
+    "min_ms": 13.451,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "nohead",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 14.6174,
+    "min_ms": 13.0891,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "nosteal",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 15.5233,
+    "min_ms": 13.9463,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "A",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 16.1044,
+    "min_ms": 15.0428,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "B",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 14.155,
+    "min_ms": 12.8493,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "nohead",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.2778,
+    "min_ms": 12.7778,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "nosteal",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 14.587,
+    "min_ms": 13.6144,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "A",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 15.4145,
+    "min_ms": 14.7993,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "B",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 14.3044,
+    "min_ms": 12.922,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "nohead",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 13.7746,
+    "min_ms": 13.1084,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "nosteal",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 256,
+    "steps": 40,
+    "median_ms": 15.0925,
+    "min_ms": 14.2868,
+    "weights_fnv1a": "43ebeaf4ffa940c8"
+   },
+   {
+    "build": "A",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 33.0634,
+    "min_ms": 32.2426,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "B",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 32.0942,
+    "min_ms": 29.2423,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "nohead",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 30.9229,
+    "min_ms": 29.7568,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "nosteal",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 37.0264,
+    "min_ms": 31.4259,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "A",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 34.9819,
+    "min_ms": 32.356,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "B",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 35.9948,
+    "min_ms": 31.319,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "nohead",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.271,
+    "min_ms": 30.3087,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "nosteal",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 33.0786,
+    "min_ms": 31.3428,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "A",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 33.0132,
+    "min_ms": 31.7169,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "B",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.4872,
+    "min_ms": 30.7143,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "nohead",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 32.4322,
+    "min_ms": 30.7038,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "nosteal",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 33.5251,
+    "min_ms": 31.9053,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "A",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 38.2831,
+    "min_ms": 31.4402,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "B",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 32.096,
+    "min_ms": 29.9874,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "nohead",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.476,
+    "min_ms": 30.0733,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "nosteal",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 33.3686,
+    "min_ms": 30.6932,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "A",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 33.0041,
+    "min_ms": 31.0385,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "B",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 30.3682,
+    "min_ms": 29.4892,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "nohead",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 30.3118,
+    "min_ms": 29.0709,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "nosteal",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 36.7762,
+    "min_ms": 32.454,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "A",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 35.6279,
+    "min_ms": 32.2853,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "B",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 31.7842,
+    "min_ms": 30.8247,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "nohead",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 30.9609,
+    "min_ms": 30.0753,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "nosteal",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 512,
+    "steps": 40,
+    "median_ms": 32.7699,
+    "min_ms": 31.3672,
+    "weights_fnv1a": "e56a429d20e44af6"
+   },
+   {
+    "build": "A",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 82.766,
+    "min_ms": 80.573,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "B",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 82.9223,
+    "min_ms": 78.9561,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "nohead",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 90.6065,
+    "min_ms": 84.6444,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "nosteal",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 96.0981,
+    "min_ms": 85.7202,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "A",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 88.4612,
+    "min_ms": 84.2926,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "B",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 89.376,
+    "min_ms": 83.2445,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "nohead",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 86.7019,
+    "min_ms": 81.8939,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "nosteal",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 89.4993,
+    "min_ms": 83.7015,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "A",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 87.8728,
+    "min_ms": 83.6263,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "B",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 89.3877,
+    "min_ms": 84.0123,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "nohead",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 92.0111,
+    "min_ms": 84.1559,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "nosteal",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 90.7246,
+    "min_ms": 85.8061,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "A",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 97.9519,
+    "min_ms": 86.8283,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "B",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 86.1307,
+    "min_ms": 82.1605,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "nohead",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 87.047,
+    "min_ms": 82.7396,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "nosteal",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 93.0584,
+    "min_ms": 86.6215,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "A",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 86.8708,
+    "min_ms": 83.5865,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "B",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 89.8368,
+    "min_ms": 80.9406,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "nohead",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 87.4128,
+    "min_ms": 85.6069,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "nosteal",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 89.0441,
+    "min_ms": 84.6677,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "A",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 84.186,
+    "min_ms": 80.3875,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "B",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 89.7255,
+    "min_ms": 81.3506,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "nohead",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_nohead.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 87.9516,
+    "min_ms": 81.0614,
+    "weights_fnv1a": "da5b63787daec30a"
+   },
+   {
+    "build": "nosteal",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_nosteal.so",
+    "time": 1024,
+    "steps": 20,
+    "median_ms": 94.6067,
+    "min_ms": 83.6328,
+    "weights_fnv1a": "da5b63787daec30a"
+   }
+  ],
+  "forward": [
+   {
+    "build": "A",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 4,
+    "time": 256,
+    "forwards": 60,
+    "median_ms": 4.6774,
+    "min_ms": 4.4803,
+    "logits_fnv1a": "c2c2f6bc2330a679"
+   },
+   {
+    "build": "B",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 4,
+    "time": 256,
+    "forwards": 60,
+    "median_ms": 3.801,
+    "min_ms": 3.6845,
+    "logits_fnv1a": "c2c2f6bc2330a679"
+   },
+   {
+    "build": "A",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 4,
+    "time": 256,
+    "forwards": 60,
+    "median_ms": 4.6822,
+    "min_ms": 4.4855,
+    "logits_fnv1a": "c2c2f6bc2330a679"
+   },
+   {
+    "build": "B",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 4,
+    "time": 256,
+    "forwards": 60,
+    "median_ms": 4.4877,
+    "min_ms": 3.6587,
+    "logits_fnv1a": "c2c2f6bc2330a679"
+   },
+   {
+    "build": "A",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 4,
+    "time": 256,
+    "forwards": 60,
+    "median_ms": 4.6808,
+    "min_ms": 4.426,
+    "logits_fnv1a": "c2c2f6bc2330a679"
+   },
+   {
+    "build": "B",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 4,
+    "time": 256,
+    "forwards": 60,
+    "median_ms": 3.8355,
+    "min_ms": 3.6855,
+    "logits_fnv1a": "c2c2f6bc2330a679"
+   },
+   {
+    "build": "A",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 4,
+    "time": 256,
+    "forwards": 60,
+    "median_ms": 5.1382,
+    "min_ms": 4.6824,
+    "logits_fnv1a": "c2c2f6bc2330a679"
+   },
+   {
+    "build": "B",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 4,
+    "time": 256,
+    "forwards": 60,
+    "median_ms": 3.8968,
+    "min_ms": 3.7139,
+    "logits_fnv1a": "c2c2f6bc2330a679"
+   },
+   {
+    "build": "A",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 4,
+    "time": 256,
+    "forwards": 60,
+    "median_ms": 4.9502,
+    "min_ms": 4.6968,
+    "logits_fnv1a": "c2c2f6bc2330a679"
+   },
+   {
+    "build": "B",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 4,
+    "time": 256,
+    "forwards": 60,
+    "median_ms": 3.873,
+    "min_ms": 3.7433,
+    "logits_fnv1a": "c2c2f6bc2330a679"
+   },
+   {
+    "build": "A",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 4,
+    "time": 256,
+    "forwards": 60,
+    "median_ms": 4.8629,
+    "min_ms": 4.6846,
+    "logits_fnv1a": "c2c2f6bc2330a679"
+   },
+   {
+    "build": "B",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 4,
+    "time": 256,
+    "forwards": 60,
+    "median_ms": 4.4128,
+    "min_ms": 3.8228,
+    "logits_fnv1a": "c2c2f6bc2330a679"
+   },
+   {
+    "build": "A",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 4,
+    "time": 1024,
+    "forwards": 30,
+    "median_ms": 30.0908,
+    "min_ms": 26.9534,
+    "logits_fnv1a": "6276d1ae99097724"
+   },
+   {
+    "build": "B",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 4,
+    "time": 1024,
+    "forwards": 30,
+    "median_ms": 27.0447,
+    "min_ms": 25.4963,
+    "logits_fnv1a": "6276d1ae99097724"
+   },
+   {
+    "build": "A",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 4,
+    "time": 1024,
+    "forwards": 30,
+    "median_ms": 28.0038,
+    "min_ms": 26.9957,
+    "logits_fnv1a": "6276d1ae99097724"
+   },
+   {
+    "build": "B",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 4,
+    "time": 1024,
+    "forwards": 30,
+    "median_ms": 27.485,
+    "min_ms": 25.9758,
+    "logits_fnv1a": "6276d1ae99097724"
+   },
+   {
+    "build": "A",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 4,
+    "time": 1024,
+    "forwards": 30,
+    "median_ms": 27.7359,
+    "min_ms": 26.5158,
+    "logits_fnv1a": "6276d1ae99097724"
+   },
+   {
+    "build": "B",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 4,
+    "time": 1024,
+    "forwards": 30,
+    "median_ms": 27.4086,
+    "min_ms": 25.3874,
+    "logits_fnv1a": "6276d1ae99097724"
+   },
+   {
+    "build": "A",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 4,
+    "time": 1024,
+    "forwards": 30,
+    "median_ms": 27.9969,
+    "min_ms": 26.6492,
+    "logits_fnv1a": "6276d1ae99097724"
+   },
+   {
+    "build": "B",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 4,
+    "time": 1024,
+    "forwards": 30,
+    "median_ms": 26.4474,
+    "min_ms": 25.4834,
+    "logits_fnv1a": "6276d1ae99097724"
+   },
+   {
+    "build": "A",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 4,
+    "time": 1024,
+    "forwards": 30,
+    "median_ms": 27.3759,
+    "min_ms": 26.1614,
+    "logits_fnv1a": "6276d1ae99097724"
+   },
+   {
+    "build": "B",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 4,
+    "time": 1024,
+    "forwards": 30,
+    "median_ms": 28.0309,
+    "min_ms": 25.4942,
+    "logits_fnv1a": "6276d1ae99097724"
+   },
+   {
+    "build": "A",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 4,
+    "time": 1024,
+    "forwards": 30,
+    "median_ms": 27.0292,
+    "min_ms": 26.4264,
+    "logits_fnv1a": "6276d1ae99097724"
+   },
+   {
+    "build": "B",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 4,
+    "time": 1024,
+    "forwards": 30,
+    "median_ms": 27.1013,
+    "min_ms": 25.4346,
+    "logits_fnv1a": "6276d1ae99097724"
+   },
+   {
+    "build": "A",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 1,
+    "time": 128,
+    "forwards": 200,
+    "median_ms": 0.8902,
+    "min_ms": 0.7572,
+    "logits_fnv1a": "f9418edf2385d60d"
+   },
+   {
+    "build": "B",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 1,
+    "time": 128,
+    "forwards": 200,
+    "median_ms": 0.7869,
+    "min_ms": 0.736,
+    "logits_fnv1a": "f9418edf2385d60d"
+   },
+   {
+    "build": "A",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 1,
+    "time": 128,
+    "forwards": 200,
+    "median_ms": 0.8119,
+    "min_ms": 0.7088,
+    "logits_fnv1a": "f9418edf2385d60d"
+   },
+   {
+    "build": "B",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 1,
+    "time": 128,
+    "forwards": 200,
+    "median_ms": 0.7101,
+    "min_ms": 0.6488,
+    "logits_fnv1a": "f9418edf2385d60d"
+   },
+   {
+    "build": "A",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 1,
+    "time": 128,
+    "forwards": 200,
+    "median_ms": 0.7382,
+    "min_ms": 0.6631,
+    "logits_fnv1a": "f9418edf2385d60d"
+   },
+   {
+    "build": "B",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 1,
+    "time": 128,
+    "forwards": 200,
+    "median_ms": 0.7183,
+    "min_ms": 0.6527,
+    "logits_fnv1a": "f9418edf2385d60d"
+   },
+   {
+    "build": "A",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 1,
+    "time": 128,
+    "forwards": 200,
+    "median_ms": 0.7666,
+    "min_ms": 0.7149,
+    "logits_fnv1a": "f9418edf2385d60d"
+   },
+   {
+    "build": "B",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 1,
+    "time": 128,
+    "forwards": 200,
+    "median_ms": 0.6968,
+    "min_ms": 0.6349,
+    "logits_fnv1a": "f9418edf2385d60d"
+   },
+   {
+    "build": "A",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 1,
+    "time": 128,
+    "forwards": 200,
+    "median_ms": 0.8311,
+    "min_ms": 0.6889,
+    "logits_fnv1a": "f9418edf2385d60d"
+   },
+   {
+    "build": "B",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 1,
+    "time": 128,
+    "forwards": 200,
+    "median_ms": 0.745,
+    "min_ms": 0.682,
+    "logits_fnv1a": "f9418edf2385d60d"
+   },
+   {
+    "build": "A",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 1,
+    "time": 128,
+    "forwards": 200,
+    "median_ms": 0.8505,
+    "min_ms": 0.7183,
+    "logits_fnv1a": "f9418edf2385d60d"
+   },
+   {
+    "build": "B",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 1,
+    "time": 128,
+    "forwards": 200,
+    "median_ms": 0.7062,
+    "min_ms": 0.6398,
+    "logits_fnv1a": "f9418edf2385d60d"
+   },
+   {
+    "build": "A",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 1,
+    "time": 256,
+    "forwards": 120,
+    "median_ms": 1.4512,
+    "min_ms": 1.3072,
+    "logits_fnv1a": "5ce5928c2b7b6c24"
+   },
+   {
+    "build": "B",
+    "run": 1,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 1,
+    "time": 256,
+    "forwards": 120,
+    "median_ms": 1.356,
+    "min_ms": 1.2929,
+    "logits_fnv1a": "5ce5928c2b7b6c24"
+   },
+   {
+    "build": "A",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 1,
+    "time": 256,
+    "forwards": 120,
+    "median_ms": 1.5386,
+    "min_ms": 1.3645,
+    "logits_fnv1a": "5ce5928c2b7b6c24"
+   },
+   {
+    "build": "B",
+    "run": 2,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 1,
+    "time": 256,
+    "forwards": 120,
+    "median_ms": 1.3457,
+    "min_ms": 1.2801,
+    "logits_fnv1a": "5ce5928c2b7b6c24"
+   },
+   {
+    "build": "A",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 1,
+    "time": 256,
+    "forwards": 120,
+    "median_ms": 1.4942,
+    "min_ms": 1.327,
+    "logits_fnv1a": "5ce5928c2b7b6c24"
+   },
+   {
+    "build": "B",
+    "run": 3,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 1,
+    "time": 256,
+    "forwards": 120,
+    "median_ms": 1.3341,
+    "min_ms": 1.2735,
+    "logits_fnv1a": "5ce5928c2b7b6c24"
+   },
+   {
+    "build": "A",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 1,
+    "time": 256,
+    "forwards": 120,
+    "median_ms": 1.4896,
+    "min_ms": 1.3657,
+    "logits_fnv1a": "5ce5928c2b7b6c24"
+   },
+   {
+    "build": "B",
+    "run": 4,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 1,
+    "time": 256,
+    "forwards": 120,
+    "median_ms": 1.3431,
+    "min_ms": 1.266,
+    "logits_fnv1a": "5ce5928c2b7b6c24"
+   },
+   {
+    "build": "A",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 1,
+    "time": 256,
+    "forwards": 120,
+    "median_ms": 1.409,
+    "min_ms": 1.3227,
+    "logits_fnv1a": "5ce5928c2b7b6c24"
+   },
+   {
+    "build": "B",
+    "run": 5,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 1,
+    "time": 256,
+    "forwards": 120,
+    "median_ms": 1.299,
+    "min_ms": 1.2485,
+    "logits_fnv1a": "5ce5928c2b7b6c24"
+   },
+   {
+    "build": "A",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_A.so",
+    "batch": 1,
+    "time": 256,
+    "forwards": 120,
+    "median_ms": 1.8688,
+    "min_ms": 1.37,
+    "logits_fnv1a": "5ce5928c2b7b6c24"
+   },
+   {
+    "build": "B",
+    "run": 6,
+    "lib": "<OUT>/bin/libdec_clang_B.so",
+    "batch": 1,
+    "time": 256,
+    "forwards": 120,
+    "median_ms": 1.7084,
+    "min_ms": 1.4182,
+    "logits_fnv1a": "5ce5928c2b7b6c24"
+   }
+  ]
+ }
+}

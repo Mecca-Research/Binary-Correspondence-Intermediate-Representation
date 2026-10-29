@@ -52,9 +52,10 @@ printf 'unsigned g(unsigned x);\nunsigned f(unsigned y) { return g(y) + 1u; }\nu
 "${BCIR_CC}" --emit-claimgraph "${tmp}/link/fwd.c" | grep -q "c.call:g" \
   && echo "  PASS forward declaration stays a real R18 edge (definition wins)" \
   || { echo "  FAIL: forward declaration did not rewrite to c.call:g"; exit 1; }
-# ... and the LINKABLE artifact (the C twin of the oracle's emit_linkable): BOTH TUs re-rendered
-# by bcir-cc --linkable (external linkage, real names, derived includes) link TO EACH OTHER --
-# no original source in the image -- and behave exactly like the reference build.
+# ... and the LINKABLE artifact (the C twin of the oracle's emit_linkable, CF-LINKTWIN): BOTH TUs
+# re-rendered by bcir-cc --linkable (the unit's types, every function declared, the globals defined,
+# external linkage, real names, derived includes) link TO EACH OTHER -- no original source in the
+# image -- and behave exactly like the reference build.
 "${BCIR_CC}" --linkable "${tmp}/link/main.c" > "${tmp}/link/main_lk.c" || { echo "  FAIL: --linkable main"; exit 1; }
 "${BCIR_CC}" --linkable "${tmp}/link/lib.c" > "${tmp}/link/lib_lk.c" || { echo "  FAIL: --linkable lib"; exit 1; }
 "${CC}" -std=c11 "${tmp}/link/main_lk.c" "${tmp}/link/lib_lk.c" -o "${tmp}/link/prog_lk" -lm \
@@ -81,16 +82,19 @@ grep -q "^uint32_t fa(uint32_t x)" "${tmp}/link/sa_lk.c" \
 [ "${st_rc}" = "112" ] \
   && echo "  PASS source-static honoring (same-named statics per TU; rc=${st_rc})" \
   || { echo "  FAIL: source-static honoring rc=${st_rc} != 112"; exit 1; }
-# ... review-hardened edges: (1) the static-forward-declaration idiom -- the tudefs prelude
-# re-keys `extern` -> `static` for a kept-static function, so the artifact compiles (C11
-# 6.2.2p7); (2) a `_BitInt(N)` return spelling carries parens BEFORE the name -- the static
-# keeper must still find the function name (grep-only: host cc under -std=c11 has no _BitInt).
+# ... review-hardened edges: (1) the static-forward-declaration idiom -- the artifact declares every
+# function before its globals, a source-static one `static`, and never again `extern` as its prototype
+# was, so a static callee defined after its caller compiles (C11 6.2.2p7); (2) a `_BitInt(N)` return
+# spelling carries parens BEFORE the name -- the static keeper must still find the function name
+# (grep-only: host cc under -std=c11 has no _BitInt).
 printf 'static int r(int v);\nint s(int x) { return r(x); }\nstatic int r(int x) { return x + 1; }\n' > "${tmp}/link/sp.c"
 "${BCIR_CC}" --linkable "${tmp}/link/sp.c" > "${tmp}/link/sp_lk.c" || { echo "  FAIL: --linkable sp"; exit 1; }
-grep -q "^static int32_t r(int32_t);" "${tmp}/link/sp_lk.c" \
-  || { echo "  FAIL: static prototype should re-key its extern prelude to static"; exit 1; }
+grep -q "^static int32_t r(int32_t x);" "${tmp}/link/sp_lk.c" \
+  || { echo "  FAIL: a static function should be declared static before its caller"; exit 1; }
+! grep -q "^extern int32_t r(" "${tmp}/link/sp_lk.c" \
+  || { echo "  FAIL: a function the unit defines is declared extern, as its prototype was"; exit 1; }
 "${CC}" -std=c11 -Wall -Werror -c "${tmp}/link/sp_lk.c" -o "${tmp}/link/sp_lk.o" \
-  && echo "  PASS static forward declaration (extern prelude re-keyed; artifact compiles)" \
+  && echo "  PASS static forward declaration (declared static up front; artifact compiles)" \
   || { echo "  FAIL: static-forward-declaration artifact did not compile"; exit 1; }
 printf 'static _BitInt(13) bh(int x) { return (_BitInt(13))(x + 1); }\nint bu(int y) { return (int)bh(y); }\n' > "${tmp}/link/sb2.c"
 "${BCIR_CC}" --linkable "${tmp}/link/sb2.c" > "${tmp}/link/sb2_lk.c" || { echo "  FAIL: --linkable sb2"; exit 1; }

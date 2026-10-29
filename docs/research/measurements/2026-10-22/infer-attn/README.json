@@ -1,0 +1,46 @@
+{
+ "what": "INFER-ATTN (2026-10-22): the attention forward for a forward no backward reads (bcir_decoder_forward's) without its probabilities -- BCIR_TENSOR_ATTENTION_SCRATCH, each (batch, query head) a strip of rows at a time in a cache-sized slot of p -- measured on the committed tree against the tree before it: the kernel, the decoder's forward end to end, and the GEO study's attention model (the inference loss GEO-2 found).",
+ "host": "Intel(R) Xeon(R) Processor @ 2.80GHz, 4 vCPUs (family 6, model 85: AVX-512F and VNNI, no AMX); Ubuntu clang version 18.1.3 (1ubuntu1); Python 3.11.15, NumPy 2.2.6, PyTorch 2.13.0+cu130. Before: a96b15cb766e14fd75d3efd6f007c65ec993696a (bcir_tensor.c f2bf2a40df38b200...); after: a provisional commit of this change, 5013c3c6fc7e1647078116940d165cbac9127c5d (bcir_tensor.c 760f4c82f7975047...), with nothing uncommitted. Wall times are indicative: one virtualized host, one process at a time.",
+ "records": {
+  "attention.json": "attn_bench.c: stored vs scratch vs stored again (A/A), 24 rotated rounds a shape",
+  "forward.json": "fwd_rounds.py over fwd_bench.c: bcir_decoder_forward before vs after vs after again",
+  "geo-infer.json": "infer_compare.py: the GEO attention model's inference, before and after against P-EAGER and P-IND",
+  "level3-builds.json": "build_level3.py's two builds of the GEO overlay (GEO-2b's level 2, the tensor unit swapped)",
+  "logits.json": "logits.py: Codex's trained attention checkpoints' logits from both builds, byte for byte",
+  "vacuity.json": "vacuity3.py: the floats each build wrote in one forward from a zeroed arena"
+ },
+ "reading": {
+  "kernel": [
+   "4x1024x4x4x32 at 4 thread(s): scratch 0.710 (0.669-0.754) of stored, A/A 0.963 (0.913-1.016); p 64 MiB stored, 4 MiB scratch",
+   "4x2048x4x4x32 at 4 thread(s): scratch 0.677 (0.646-0.710) of stored, A/A 0.950 (0.916-0.985); p 256 MiB stored, 4 MiB scratch",
+   "4x2048x4x4x32 at 1 thread(s): scratch 0.679 (0.651-0.708) of stored, A/A 0.987 (0.953-1.022); p 256 MiB stored, 4 MiB scratch",
+   "8x128x8x4x48 at 4 thread(s): scratch 0.890 (0.864-0.917) of stored, A/A 1.030 (0.966-1.098); p 4 MiB stored, 4 MiB scratch",
+   "1x4096x8x8x64 at 4 thread(s): scratch 0.785 (0.753-0.818) of stored, A/A 1.027 (0.990-1.065); p 512 MiB stored, 4 MiB scratch",
+   "1x8192x4x4x32 at 4 thread(s): scratch 0.730 (0.702-0.759) of stored, A/A 0.982 (0.943-1.022); p 1024 MiB stored, 4 MiB scratch"
+  ],
+  "forward": [
+   "decoder-9.84M kblock+exp+reduce+attn: 79.8 -> 79.4 ms, 0.999 (0.939-1.062) of before, A/A 1.014 (0.951-1.081)",
+   "decoder-9.84M bf16+exp+reduce+attnbf16: 114.7 -> 113.9 ms, 0.988 (0.950-1.026) of before, A/A 1.031 (0.989-1.075)",
+   "geo-dims T1024 kblock+exp+reduce: 82.5 -> 65.2 ms, 0.822 (0.773-0.874) of before, A/A 0.975 (0.929-1.024)",
+   "geo-dims T2048 kblock+exp+reduce: 269.6 -> 210.5 ms, 0.786 (0.756-0.816) of before, A/A 0.977 (0.935-1.020)",
+   "geo-dims T2048 bf16+exp+reduce+attnbf16: 205.5 -> 181.6 ms, 0.883 (0.847-0.920) of before, A/A 1.020 (0.985-1.056)",
+   "geo-dims T2048 kblock+exp+reduce, one thread: 940.9 -> 716.2 ms, 0.770 (0.750-0.790) of before, A/A 0.993 (0.960-1.027)"
+  ],
+  "geo_attention_model": [
+   "T1024: after/before 0.786 (0.709-0.871), after/eager 0.632 (0.562-0.711), after/Inductor 0.910 (0.780-1.062), A/A 1.033 (0.957-1.114)",
+   "T2048: after/before 0.748 (0.717-0.780), after/eager 1.173 (1.095-1.257), after/Inductor 1.355 (1.217-1.510), A/A 1.007 (0.965-1.051)"
+  ],
+  "logits": "4 of 4 trained-checkpoint cases byte-identical (lm and kv_single, T1024 and T2048, batch 4)",
+  "vacuity": "one forward at T1024 from a zeroed arena: the stored build wrote 49,324,032 nonzero floats, the scratch build 27,182,592; the logits equal"
+ },
+ "reproduce": [
+  "git show BEFORE:runtime/c/<unit> > BEFORE_SRC/<unit>; git show AFTER:... > AFTER_SRC/<unit>  # bcir_tensor.c/.h, bcir_decoder_train.c/.h",
+  "clang -std=c11 -O3 -ffp-contract=off -fno-math-errno -pthread -I AFTER_SRC attn_bench.c AFTER_SRC/bcir_tensor.c -lm -o attn_bench; attn_bench B T H KH D THREADS 24 CONTRACT",
+  "clang ... -I SRC fwd_bench.c SRC/bcir_tensor.c SRC/bcir_decoder_train.c -lm -o fwd_X (before, after); python3 -I fwd_rounds.py fwd_before fwd_after forward.json",
+  "python3 -I ../geo2/port/build_main.py LEVEL2_WORK MAIN_SRC  # GEO-2b's level 2 (its README)",
+  "python3 -I build_level3.py LEVEL2_WORK BEFORE_WORK BEFORE_SRC MAIN_SRC; python3 -I build_level3.py LEVEL2_WORK AFTER_WORK AFTER_SRC MAIN_SRC --scratch",
+  "TORCH_PY logits.py WORK CKPT.npz T OUT.npy (each build, each checkpoint and T); TORCH_PY infer_compare.py BEFORE_WORK AFTER_WORK geo-infer.json --rounds 12 --threads 4 --times 1024,2048; TORCH_PY vacuity3.py BEFORE_WORK AFTER_WORK 1024 vacuity.json"
+ ],
+ "faults": "tools/testing/faults/infer-attn.json IA1-IA17, each injected and caught by its own witness; nine earlier faults re-anchored to the lines INFER-ATTN moved, each keeping its defect.",
+ "scripts": "the Python scripts are the ones that ran, formatted by ruff 0.16.6 (each the same AST); the C benches byte for byte"
+}

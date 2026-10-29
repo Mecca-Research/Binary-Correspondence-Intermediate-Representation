@@ -1,0 +1,17 @@
+{
+ "what": "the GEO attention model built on both units as P-BANDS's records build it: ../../2026-10-22/infer-attn/build_level3.py --scratch, ../../2026-10-23/att-contig/contig_level3.py, ../../2026-10-23/p-lower/lower_level3.py and ../p-bands/bands_level3.py (GCC, as the study builds); each step's log",
+ "logs": {
+  "before": [
+   "built <AFF>/l3-before/build/attention.so scratch 30 entries checked",
+   "contig <AFF>/l3-before/build/attention.so 3 edits, 3 entries declared",
+   "lower <AFF>/l3-before/build/attention.so 2 edits",
+   "bands <AFF>/l3-before/build/attention.so 3 edits"
+  ],
+  "after": [
+   "built <AFF>/l3-after/build/attention.so scratch 30 entries checked",
+   "contig <AFF>/l3-after/build/attention.so 3 edits, 3 entries declared",
+   "lower <AFF>/l3-after/build/attention.so 2 edits",
+   "bands <AFF>/l3-after/build/attention.so 3 edits"
+  ]
+ }
+}

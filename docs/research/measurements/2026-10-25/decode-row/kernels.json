@@ -1,0 +1,758 @@
+[
+ {
+  "cc": "clang",
+  "case": "attention row 860K, T 8",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 0.01734,
+  "after": {
+   "ms": 0.01174,
+   "ratio": 0.7324,
+   "interval": [
+    0.6313,
+    0.8497
+   ]
+  },
+  "A/A": {
+   "ms": 0.0178,
+   "ratio": 1.0414,
+   "interval": [
+    0.9652,
+    1.1236
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "attention row 860K, T 64",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 0.8573,
+  "after": {
+   "ms": 0.56264,
+   "ratio": 0.647,
+   "interval": [
+    0.629,
+    0.6656
+   ]
+  },
+  "A/A": {
+   "ms": 0.85908,
+   "ratio": 0.9925,
+   "interval": [
+    0.978,
+    1.0073
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "attention row 860K, T 205",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 12.12679,
+  "after": {
+   "ms": 5.30019,
+   "ratio": 0.4285,
+   "interval": [
+    0.4056,
+    0.4528
+   ]
+  },
+  "A/A": {
+   "ms": 12.14956,
+   "ratio": 0.9831,
+   "interval": [
+    0.9576,
+    1.0092
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "attention row 860K, T 1024",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 412.20226,
+  "after": {
+   "ms": 189.48837,
+   "ratio": 0.4724,
+   "interval": [
+    0.46,
+    0.4852
+   ]
+  },
+  "A/A": {
+   "ms": 409.43362,
+   "ratio": 0.996,
+   "interval": [
+    0.9787,
+    1.0135
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "attention row TinyLlama, T 64",
+  "heads": 32,
+  "kv_heads": 4,
+  "head_dim": 64,
+  "layers": 1,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 3.62648,
+  "after": {
+   "ms": 1.80616,
+   "ratio": 0.4975,
+   "interval": [
+    0.4858,
+    0.5096
+   ]
+  },
+  "A/A": {
+   "ms": 3.63946,
+   "ratio": 1.019,
+   "interval": [
+    0.9661,
+    1.0748
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "attention row TinyLlama, T 256",
+  "heads": 32,
+  "kv_heads": 4,
+  "head_dim": 64,
+  "layers": 1,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 82.36278,
+  "after": {
+   "ms": 27.91047,
+   "ratio": 0.3511,
+   "interval": [
+    0.3307,
+    0.3728
+   ]
+  },
+  "A/A": {
+   "ms": 82.67657,
+   "ratio": 1.0077,
+   "interval": [
+    0.9824,
+    1.0337
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "attention row TinyLlama, T 1024",
+  "heads": 32,
+  "kv_heads": 4,
+  "head_dim": 64,
+  "layers": 1,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 2549.75959,
+  "after": {
+   "ms": 1100.84691,
+   "ratio": 0.4314,
+   "interval": [
+    0.4229,
+    0.4401
+   ]
+  },
+  "A/A": {
+   "ms": 2516.31653,
+   "ratio": 0.9894,
+   "interval": [
+    0.9747,
+    1.0043
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "rope 860K, T 8",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 0.07892,
+  "after": {
+   "ms": 0.00595,
+   "ratio": 0.0789,
+   "interval": [
+    0.0726,
+    0.0857
+   ]
+  },
+  "A/A": {
+   "ms": 0.07892,
+   "ratio": 1.0395,
+   "interval": [
+    1.0004,
+    1.0802
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "rope 860K, T 64",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 0.68332,
+  "after": {
+   "ms": 0.04743,
+   "ratio": 0.0705,
+   "interval": [
+    0.0678,
+    0.0732
+   ]
+  },
+  "A/A": {
+   "ms": 0.68879,
+   "ratio": 1.0019,
+   "interval": [
+    0.9831,
+    1.0211
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "rope 860K, T 205",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 2.38387,
+  "after": {
+   "ms": 0.16889,
+   "ratio": 0.072,
+   "interval": [
+    0.0706,
+    0.0735
+   ]
+  },
+  "A/A": {
+   "ms": 2.38332,
+   "ratio": 1.0026,
+   "interval": [
+    0.9906,
+    1.0148
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "rope 860K, T 1024",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 12.9214,
+  "after": {
+   "ms": 0.98045,
+   "ratio": 0.0781,
+   "interval": [
+    0.0746,
+    0.0818
+   ]
+  },
+  "A/A": {
+   "ms": 12.9779,
+   "ratio": 1.0152,
+   "interval": [
+    1.0024,
+    1.0282
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "rope TinyLlama, T 64",
+  "heads": 32,
+  "kv_heads": 4,
+  "head_dim": 64,
+  "layers": 1,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 2.01807,
+  "after": {
+   "ms": 0.11273,
+   "ratio": 0.0567,
+   "interval": [
+    0.055,
+    0.0585
+   ]
+  },
+  "A/A": {
+   "ms": 2.02734,
+   "ratio": 1.0021,
+   "interval": [
+    0.9933,
+    1.0109
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "rope TinyLlama, T 256",
+  "heads": 32,
+  "kv_heads": 4,
+  "head_dim": 64,
+  "layers": 1,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 8.98006,
+  "after": {
+   "ms": 0.53422,
+   "ratio": 0.0628,
+   "interval": [
+    0.0586,
+    0.0672
+   ]
+  },
+  "A/A": {
+   "ms": 8.87446,
+   "ratio": 1.006,
+   "interval": [
+    0.9757,
+    1.0371
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "rope TinyLlama, T 1024",
+  "heads": 32,
+  "kv_heads": 4,
+  "head_dim": 64,
+  "layers": 1,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 38.20055,
+  "after": {
+   "ms": 3.46702,
+   "ratio": 0.0917,
+   "interval": [
+    0.0897,
+    0.0939
+   ]
+  },
+  "A/A": {
+   "ms": 38.25398,
+   "ratio": 1.0032,
+   "interval": [
+    0.9927,
+    1.0138
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "attention row 860K, T 8",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 0.01834,
+  "after": {
+   "ms": 0.01359,
+   "ratio": 0.697,
+   "interval": [
+    0.612,
+    0.7938
+   ]
+  },
+  "A/A": {
+   "ms": 0.0183,
+   "ratio": 0.989,
+   "interval": [
+    0.8271,
+    1.1826
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "attention row 860K, T 64",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 1.29013,
+  "after": {
+   "ms": 0.72265,
+   "ratio": 0.5318,
+   "interval": [
+    0.437,
+    0.6472
+   ]
+  },
+  "A/A": {
+   "ms": 1.24926,
+   "ratio": 0.9047,
+   "interval": [
+    0.7336,
+    1.1158
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "attention row 860K, T 205",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 13.27018,
+  "after": {
+   "ms": 5.45786,
+   "ratio": 0.4269,
+   "interval": [
+    0.403,
+    0.4521
+   ]
+  },
+  "A/A": {
+   "ms": 13.34867,
+   "ratio": 0.9973,
+   "interval": [
+    0.9628,
+    1.033
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "attention row 860K, T 1024",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 439.96302,
+  "after": {
+   "ms": 195.84614,
+   "ratio": 0.4433,
+   "interval": [
+    0.4384,
+    0.4483
+   ]
+  },
+  "A/A": {
+   "ms": 438.93872,
+   "ratio": 0.9941,
+   "interval": [
+    0.9841,
+    1.0043
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "attention row TinyLlama, T 64",
+  "heads": 32,
+  "kv_heads": 4,
+  "head_dim": 64,
+  "layers": 1,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 4.05043,
+  "after": {
+   "ms": 1.83896,
+   "ratio": 0.4928,
+   "interval": [
+    0.4174,
+    0.5819
+   ]
+  },
+  "A/A": {
+   "ms": 3.94148,
+   "ratio": 1.0466,
+   "interval": [
+    0.9019,
+    1.2145
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "attention row TinyLlama, T 256",
+  "heads": 32,
+  "kv_heads": 4,
+  "head_dim": 64,
+  "layers": 1,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 85.41718,
+  "after": {
+   "ms": 28.57809,
+   "ratio": 0.3366,
+   "interval": [
+    0.3032,
+    0.3737
+   ]
+  },
+  "A/A": {
+   "ms": 84.04327,
+   "ratio": 0.9682,
+   "interval": [
+    0.9108,
+    1.0293
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "attention row TinyLlama, T 1024",
+  "heads": 32,
+  "kv_heads": 4,
+  "head_dim": 64,
+  "layers": 1,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 2641.66947,
+  "after": {
+   "ms": 1087.62726,
+   "ratio": 0.4104,
+   "interval": [
+    0.4023,
+    0.4187
+   ]
+  },
+  "A/A": {
+   "ms": 2631.54587,
+   "ratio": 1.0021,
+   "interval": [
+    0.9823,
+    1.0223
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "rope 860K, T 8",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 0.06088,
+  "after": {
+   "ms": 0.00501,
+   "ratio": 0.0806,
+   "interval": [
+    0.0782,
+    0.0831
+   ]
+  },
+  "A/A": {
+   "ms": 0.06087,
+   "ratio": 1.0326,
+   "interval": [
+    0.9553,
+    1.1161
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "rope 860K, T 64",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 0.56931,
+  "after": {
+   "ms": 0.04419,
+   "ratio": 0.079,
+   "interval": [
+    0.0758,
+    0.0823
+   ]
+  },
+  "A/A": {
+   "ms": 0.56914,
+   "ratio": 1.0008,
+   "interval": [
+    0.9836,
+    1.0183
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "rope 860K, T 205",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 1.96031,
+  "after": {
+   "ms": 0.16698,
+   "ratio": 0.087,
+   "interval": [
+    0.0801,
+    0.0945
+   ]
+  },
+  "A/A": {
+   "ms": 1.94947,
+   "ratio": 0.9865,
+   "interval": [
+    0.9695,
+    1.0039
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "rope 860K, T 1024",
+  "heads": 4,
+  "kv_heads": 2,
+  "head_dim": 32,
+  "layers": 4,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 10.52914,
+  "after": {
+   "ms": 0.92573,
+   "ratio": 0.0873,
+   "interval": [
+    0.0861,
+    0.0886
+   ]
+  },
+  "A/A": {
+   "ms": 10.55438,
+   "ratio": 1.0028,
+   "interval": [
+    0.9948,
+    1.011
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "rope TinyLlama, T 64",
+  "heads": 32,
+  "kv_heads": 4,
+  "head_dim": 64,
+  "layers": 1,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 1.72339,
+  "after": {
+   "ms": 0.11391,
+   "ratio": 0.0671,
+   "interval": [
+    0.0655,
+    0.0687
+   ]
+  },
+  "A/A": {
+   "ms": 1.72191,
+   "ratio": 1.0008,
+   "interval": [
+    0.9841,
+    1.0177
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "rope TinyLlama, T 256",
+  "heads": 32,
+  "kv_heads": 4,
+  "head_dim": 64,
+  "layers": 1,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 7.41635,
+  "after": {
+   "ms": 0.54683,
+   "ratio": 0.0786,
+   "interval": [
+    0.072,
+    0.086
+   ]
+  },
+  "A/A": {
+   "ms": 7.38732,
+   "ratio": 0.9993,
+   "interval": [
+    0.9906,
+    1.0081
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "rope TinyLlama, T 1024",
+  "heads": 32,
+  "kv_heads": 4,
+  "head_dim": 64,
+  "layers": 1,
+  "rounds": 15,
+  "every_output_before_s_bytes": true,
+  "before_ms": 31.58285,
+  "after": {
+   "ms": 3.35812,
+   "ratio": 0.1025,
+   "interval": [
+    0.0972,
+    0.1081
+   ]
+  },
+  "A/A": {
+   "ms": 31.52268,
+   "ratio": 0.9955,
+   "interval": [
+    0.9912,
+    0.9997
+   ]
+  }
+ }
+]

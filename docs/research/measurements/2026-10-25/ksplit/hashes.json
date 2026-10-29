@@ -1,0 +1,34 @@
+{
+ "what": "the sha256 of each committed tool and of the two trees' sources the records measured",
+ "before": "34020be10621274ff1e116f005e00d88c853189d",
+ "after": "bb69e4fd02fc27181db008fefb2f5e24d46af956",
+ "tools": {
+  "measure_ksplit.sh": "7c9fc24387674bab0cd3d8a947be5351fc2708b25533a2e7a1284906dd71f0df",
+  "measure_ksplit2.sh": "39de1188d204202aae2c215fac087b232bc8238f9a8e65d5257753e1b40a353e",
+  "sweep_m.sh": "b11a64f5dfcfdfa1d392219d6b2708c2b44eb904c3197edb1c7d67320c26661e",
+  "need_ab.py": "26f1c0452f94fc463167a5d2845957d92e6408be23742151a9d173d4d4d95709",
+  "wadj_ab.py": "a8659fca2acb736779354c9b5e1ee9d1b9bcd04d3d1b5f6870d6c890966f162b",
+  "split_probe.py": "25967ba3df72e4f2be02f59dddd71e24e5f2e8e3342dffecfbf4579484c56975",
+  "ws_sizes.c": "c801bbae9c81a093987ae05a1237dd318554a23b82b5b31a9ca621d32a140be9",
+  "tn_bench.py": "ba8f6eaa2252b203d22353fc82ba6836fd6701e6954acad116e3ce501200d10b",
+  "proto_ksplit.py": "0f6f66741ea25a3ae7ae20d719429b2bf1dd1fe100d6693a40bc7669c62a0bfa"
+ },
+ "formatted_after_running": {
+  "what": "the Python tools ruff 0.16.6 reformatted after they ran, each the same AST as the bytes that ran: the sha256 of the bytes that ran",
+  "ran_sha256": {
+   "tn_bench.py": "490abf95d2621667938cea6363772cc92b2b21e10ee4e61ce1f446c03b451ed6"
+  }
+ },
+ "sources": {
+  "A/bcir_tensor.c": "4d270fd1ac12d403ef10a54192268857f9fee017c702bcdfbd9c39ee830963da",
+  "A/bcir_tensor.h": "0fa83694cb453a841bc68e1a39ddd505b5244eac023995f3651a3aad1a797986",
+  "A/bcir_decoder_train.c": "e561d6998c36c0dae008e055a71dd17f4666fac188eafe634b72df83e789adeb",
+  "A/bcir_decoder_train.h": "d4399e7e2cded209216f26fabf34f58e979535790df39bbf53a0e3c50f6d624a",
+  "A/test_decoder_train.c": "cd2c02bbe96f70fddf2323f90174f572ceaca2c1c887a16364988a6f9cedd586",
+  "B/bcir_tensor.c": "8a60e37b8977e157a5ead65666adafd3b57c2d8c0c6afeb71f4267d5b3292964",
+  "B/bcir_tensor.h": "bef5d7a0b72ae5e25e01762a04b0a6a45ee0f891487fde6e4d0be77ce801ea22",
+  "B/bcir_decoder_train.c": "a3fd225537de9586319a0cb4b63a9b92b29c4467c3f1bf885d1ee7f9d8551084",
+  "B/bcir_decoder_train.h": "3c44d66cc3805c4285aa8786e8f4a4a7affb64a070e60a7de124dee06b5e08ac",
+  "B/test_decoder_train.c": "6027f4fb9b75b72fa72dc2e7b9daf263d64a604e59d515d913bac5fc0dce4e53"
+ }
+}

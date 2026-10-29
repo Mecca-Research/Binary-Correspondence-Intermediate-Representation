@@ -1,0 +1,1529 @@
+{
+ "what": "../loss-once/sampler.c (SIGPROF every 100 us of the process's CPU time, no PMU on this VM), preloaded into ../loss-once/prof_study.py on the build without the lanes (once: once_level3.py's) and with them (lanes), resolved by ../loss-once/resolve_samples.py: each share of the samples by file and by function (the 40 largest); gp_kernels_share sums the functions named gp_* and gpl_* (the pair and query kernels, their lane groups and tasks, the prefix and reverse scans)",
+ "profiles": {
+  "lanes-global-infer1024": {
+   "samples": 759,
+   "gp_kernels_share": 0.054000000000000006,
+   "files": [
+    {
+     "share": 0.9179999999999999,
+     "name": "guard_compact.so"
+    },
+    {
+     "share": 0.051,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.025,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.003,
+     "name": "ld-linux-x86-64.so.2"
+    },
+    {
+     "share": 0.001,
+     "name": "_pcg64.cpython-311-x86_64-linux-gnu.so"
+    },
+    {
+     "share": 0.001,
+     "name": "libgcc_s.so.1"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.667,
+     "name": "guard_compact.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.05,
+     "name": "guard_compact.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.046,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.037000000000000005,
+     "name": "guard_compact.so:gpl_forward_group"
+    },
+    {
+     "share": 0.036000000000000004,
+     "name": "guard_compact.so:rms_task"
+    },
+    {
+     "share": 0.024,
+     "name": "guard_compact.so:ew_task"
+    },
+    {
+     "share": 0.022000000000000002,
+     "name": "guard_compact.so:scan_task"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "guard_compact.so:gp_prefix_task"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "guard_compact.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.012,
+     "name": "guard_compact.so:exp_avx512"
+    },
+    {
+     "share": 0.012,
+     "name": "guard_compact.so:pool_main"
+    },
+    {
+     "share": 0.011000000000000001,
+     "name": "guard_compact.so:pool_tasks"
+    },
+    {
+     "share": 0.008,
+     "name": "guard_compact.so:wedge_gate_fwd_task"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:gpl_ill"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:pool_dispatch.part.0"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:span_finite_avx512"
+    },
+    {
+     "share": 0.003,
+     "name": "python3.11:PyObject_IS_GC"
+    },
+    {
+     "share": 0.003,
+     "name": "python3.11:_PyObject_MakeTpCall"
+    },
+    {
+     "share": 0.003,
+     "name": "libc.so.6:pthread_mutex_lock@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyArg_ParseTuple_SizeT"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyCode_New"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2:_dl_mcount@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyFunction_Vectorcall"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:fstat@@GLIBC_2.33"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyType_CalculateMetaclass"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PySequence_Tuple"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyImport_ImportModuleLevelObject"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyThreadState_Swap"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2:_dl_fatal_printf@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.001,
+     "name": "_pcg64.cpython-311-x86_64-linux-gnu.so:__pyx_f_5numpy_6random_6_pcg64_pcg64_uint64"
+    },
+    {
+     "share": 0.001,
+     "name": "libgcc_s.so.1:_Unwind_Find_FDE@@GCC_3.0"
+    },
+    {
+     "share": 0.001,
+     "name": "guard_compact.so:_init"
+    },
+    {
+     "share": 0.001,
+     "name": "guard_compact.so:bcir_tensor_silu_mul_v2_scan_pool"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyObject_GetMethod"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyThreadState_GetDict"
+    }
+   ]
+  },
+  "lanes-global-train256": {
+   "samples": 1250,
+   "gp_kernels_share": 0.039,
+   "files": [
+    {
+     "share": 0.872,
+     "name": "guard_compact.so"
+    },
+    {
+     "share": 0.091,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.019,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.013999999999999999,
+     "name": "libm.so.6"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so"
+    },
+    {
+     "share": 0.001,
+     "name": "_pcg64.cpython-311-x86_64-linux-gnu.so"
+    },
+    {
+     "share": 0.001,
+     "name": "_ctypes.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.602,
+     "name": "guard_compact.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.076,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.031,
+     "name": "guard_compact.so:commit_avx512"
+    },
+    {
+     "share": 0.03,
+     "name": "guard_compact.so:gpl_forward_group"
+    },
+    {
+     "share": 0.027999999999999997,
+     "name": "guard_compact.so:rmsb_cols_task"
+    },
+    {
+     "share": 0.023,
+     "name": "guard_compact.so:rmsb_rows_task"
+    },
+    {
+     "share": 0.018000000000000002,
+     "name": "guard_compact.so:pool_tasks"
+    },
+    {
+     "share": 0.018000000000000002,
+     "name": "guard_compact.so:loss_task"
+    },
+    {
+     "share": 0.017,
+     "name": "guard_compact.so:rms_task"
+    },
+    {
+     "share": 0.013999999999999999,
+     "name": "guard_compact.so:wedge_gate_fwd_task"
+    },
+    {
+     "share": 0.012,
+     "name": "guard_compact.so:scan_task"
+    },
+    {
+     "share": 0.012,
+     "name": "guard_compact.so:swiglu2_avx512"
+    },
+    {
+     "share": 0.01,
+     "name": "libm.so.6:f64xsubf128@@GLIBC_2.28"
+    },
+    {
+     "share": 0.01,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.008,
+     "name": "guard_compact.so:pool_main"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "guard_compact.so:gpl_backward_group"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "guard_compact.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "guard_compact.so:rms16_stats"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "guard_compact.so:scatter_task"
+    },
+    {
+     "share": 0.006,
+     "name": "guard_compact.so:ew_task"
+    },
+    {
+     "share": 0.005,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.004,
+     "name": "python3.11:PyObject_IS_GC"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:wedge_gate_bwd_task"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:pool_dispatch.part.0"
+    },
+    {
+     "share": 0.003,
+     "name": "guard_compact.so:pair_avx512"
+    },
+    {
+     "share": 0.002,
+     "name": "guard_compact.so:_init"
+    },
+    {
+     "share": 0.002,
+     "name": "guard_compact.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.002,
+     "name": "libm.so.6:expf64@@GLIBC_2.27"
+    },
+    {
+     "share": 0.002,
+     "name": "libc.so.6:pthread_cond_broadcast@@GLIBC_2.3.2"
+    },
+    {
+     "share": 0.002,
+     "name": "libc.so.6:__nptl_death_event@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.002,
+     "name": "libm.so.6:?"
+    },
+    {
+     "share": 0.002,
+     "name": "guard_compact.so:exp_avx512"
+    },
+    {
+     "share": 0.002,
+     "name": "guard_compact.so:gp_reverse_task"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyTime_GetPerfCounter"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyObject_GC_NewVar"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2:_dl_mcount@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_Free"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:Py_CompileStringExFlags"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyUnicode_FormatAdvancedWriter"
+    }
+   ]
+  },
+  "lanes-query_full-infer1024": {
+   "samples": 905,
+   "gp_kernels_share": 0.067,
+   "files": [
+    {
+     "share": 0.912,
+     "name": "query_guard_compact.so"
+    },
+    {
+     "share": 0.066,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.019,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.001,
+     "name": "_multiarray_umath.cpython-311-x86_64-linux-gnu.so"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.684,
+     "name": "query_guard_compact.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.06,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.053,
+     "name": "query_guard_compact.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.021,
+     "name": "query_guard_compact.so:gpl_query_forward_group"
+    },
+    {
+     "share": 0.019,
+     "name": "query_guard_compact.so:gpl_forward_group"
+    },
+    {
+     "share": 0.018000000000000002,
+     "name": "query_guard_compact.so:rms_task"
+    },
+    {
+     "share": 0.018000000000000002,
+     "name": "query_guard_compact.so:scan_task"
+    },
+    {
+     "share": 0.018000000000000002,
+     "name": "query_guard_compact.so:wedge_gate_fwd_task"
+    },
+    {
+     "share": 0.013999999999999999,
+     "name": "query_guard_compact.so:gp_pair_forward_lanes"
+    },
+    {
+     "share": 0.012,
+     "name": "query_guard_compact.so:ew_task"
+    },
+    {
+     "share": 0.011000000000000001,
+     "name": "query_guard_compact.so:exp_avx512"
+    },
+    {
+     "share": 0.01,
+     "name": "query_guard_compact.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.008,
+     "name": "query_guard_compact.so:gp_query_unit_lanes"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "query_guard_compact.so:pool_main"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "query_guard_compact.so:span_finite_avx512"
+    },
+    {
+     "share": 0.004,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.004,
+     "name": "query_guard_compact.so:gp_prefix_task"
+    },
+    {
+     "share": 0.004,
+     "name": "query_guard_compact.so:pool_tasks"
+    },
+    {
+     "share": 0.003,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyObject_IS_GC"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:_PyObject_GenericGetAttrWithDict"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyArg_CheckPositional"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyTime_GetPerfCounter"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyObject_GetMethod"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyFunction_Vectorcall"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_IsSubclass"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyFunction_NewWithQualName"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyUnicode_FromFormatV"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:read@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "_multiarray_umath.cpython-311-x86_64-linux-gnu.so:BigInt_ShiftLeft"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_Malloc"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2:_dl_fatal_printf@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so:random_standard_normal"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:__nptl_death_event@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.001,
+     "name": "query_guard_compact.so:gpl_out.constprop.0"
+    },
+    {
+     "share": 0.001,
+     "name": "query_guard_compact.so:bcir_tensor_pool_run"
+    },
+    {
+     "share": 0.001,
+     "name": "query_guard_compact.so:pool_dispatch.part.0"
+    },
+    {
+     "share": 0.001,
+     "name": "query_guard_compact.so:ew_scan_run.constprop.0"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyCapsule_IsValid"
+    }
+   ]
+  },
+  "lanes-query_full-train512": {
+   "samples": 1348,
+   "gp_kernels_share": 0.065,
+   "files": [
+    {
+     "share": 0.9009999999999999,
+     "name": "query_guard_compact.so"
+    },
+    {
+     "share": 0.07400000000000001,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.013999999999999999,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "libm.so.6"
+    },
+    {
+     "share": 0.001,
+     "name": "_multiarray_umath.cpython-311-x86_64-linux-gnu.so"
+    },
+    {
+     "share": 0.001,
+     "name": "_ctypes.cpython-311-x86_64-linux-gnu.so"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.633,
+     "name": "query_guard_compact.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.065,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.024,
+     "name": "query_guard_compact.so:gpl_forward_group"
+    },
+    {
+     "share": 0.02,
+     "name": "query_guard_compact.so:rmsb_rows_task"
+    },
+    {
+     "share": 0.02,
+     "name": "query_guard_compact.so:rmsb_cols_task"
+    },
+    {
+     "share": 0.019,
+     "name": "query_guard_compact.so:rms_task"
+    },
+    {
+     "share": 0.016,
+     "name": "query_guard_compact.so:commit_avx512"
+    },
+    {
+     "share": 0.013999999999999999,
+     "name": "query_guard_compact.so:swiglu2_avx512"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "query_guard_compact.so:rms16_stats"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "query_guard_compact.so:scan_task"
+    },
+    {
+     "share": 0.011000000000000001,
+     "name": "query_guard_compact.so:gpl_query_backward_group"
+    },
+    {
+     "share": 0.01,
+     "name": "query_guard_compact.so:gpl_query_forward_group"
+    },
+    {
+     "share": 0.01,
+     "name": "query_guard_compact.so:loss_task"
+    },
+    {
+     "share": 0.01,
+     "name": "query_guard_compact.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.01,
+     "name": "query_guard_compact.so:wedge_gate_bwd_task"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "query_guard_compact.so:pool_main"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "query_guard_compact.so:pair_avx512"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "query_guard_compact.so:ew_task"
+    },
+    {
+     "share": 0.008,
+     "name": "query_guard_compact.so:pool_tasks"
+    },
+    {
+     "share": 0.006,
+     "name": "query_guard_compact.so:gp_pair_forward_lanes"
+    },
+    {
+     "share": 0.006,
+     "name": "query_guard_compact.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.005,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.005,
+     "name": "query_guard_compact.so:gp_pair_backward_lanes"
+    },
+    {
+     "share": 0.004,
+     "name": "libm.so.6:expf64@@GLIBC_2.27"
+    },
+    {
+     "share": 0.004,
+     "name": "query_guard_compact.so:wedge_gate_fwd_task"
+    },
+    {
+     "share": 0.004,
+     "name": "query_guard_compact.so:gp_query_unit_lanes"
+    },
+    {
+     "share": 0.003,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.003,
+     "name": "query_guard_compact.so:gpl_t16.constprop.0"
+    },
+    {
+     "share": 0.003,
+     "name": "query_guard_compact.so:pool_dispatch.part.0"
+    },
+    {
+     "share": 0.003,
+     "name": "query_guard_compact.so:scatter_task"
+    },
+    {
+     "share": 0.002,
+     "name": "query_guard_compact.so:exp_avx512"
+    },
+    {
+     "share": 0.002,
+     "name": "libm.so.6:?"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyCode_New"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyEval_RestoreThread"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.001,
+     "name": "query_guard_compact.so:gp_prefix_task"
+    },
+    {
+     "share": 0.001,
+     "name": "query_guard_compact.so:gpl_ill"
+    },
+    {
+     "share": 0.001,
+     "name": "query_guard_compact.so:forward"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyUnicode_AsUTF8AndSize"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyFile_WriteObject"
+    }
+   ]
+  },
+  "once-global-infer1024": {
+   "samples": 809,
+   "gp_kernels_share": 0.068,
+   "files": [
+    {
+     "share": 0.907,
+     "name": "guard_compact.so"
+    },
+    {
+     "share": 0.064,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.022000000000000002,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.002,
+     "name": "ld-linux-x86-64.so.2"
+    },
+    {
+     "share": 0.001,
+     "name": "_pcg64.cpython-311-x86_64-linux-gnu.so"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so"
+    },
+    {
+     "share": 0.001,
+     "name": "_multiarray_umath.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.639,
+     "name": "guard_compact.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.057999999999999996,
+     "name": "guard_compact.so:gp_pair_forward.part.0"
+    },
+    {
+     "share": 0.057999999999999996,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.049,
+     "name": "guard_compact.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.035,
+     "name": "guard_compact.so:rms_task"
+    },
+    {
+     "share": 0.027999999999999997,
+     "name": "guard_compact.so:scan_task"
+    },
+    {
+     "share": 0.016,
+     "name": "guard_compact.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.016,
+     "name": "guard_compact.so:wedge_gate_fwd_task"
+    },
+    {
+     "share": 0.015,
+     "name": "guard_compact.so:exp_avx512"
+    },
+    {
+     "share": 0.013999999999999999,
+     "name": "guard_compact.so:pool_tasks"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "guard_compact.so:ew_task"
+    },
+    {
+     "share": 0.006,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.006,
+     "name": "guard_compact.so:gp_prefix_task"
+    },
+    {
+     "share": 0.006,
+     "name": "guard_compact.so:span_finite_avx512"
+    },
+    {
+     "share": 0.005,
+     "name": "guard_compact.so:wedge_precise_forward"
+    },
+    {
+     "share": 0.005,
+     "name": "guard_compact.so:pool_main"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:gp_forward_task"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyUnicode_FromString"
+    },
+    {
+     "share": 0.002,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_IS_GC"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyBytes_FromString"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2:_dl_mcount@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyUnicode_AsUTF8AndSize"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:brk@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyLong_Sign"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_Py_CheckFunctionResult"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_CallOneArg"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyObject_Call_Prepend"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyNumber_InPlaceAdd"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2:_dl_fatal_printf@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyObject_GenericSetAttrWithDict"
+    },
+    {
+     "share": 0.001,
+     "name": "_pcg64.cpython-311-x86_64-linux-gnu.so:__pyx_f_5numpy_6random_6_pcg64_pcg64_uint64"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so:random_standard_normal"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:pthread_mutex_lock@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "guard_compact.so:mm_run_range"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PySequence_Check"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:pthread_mutex_unlock@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "_multiarray_umath.cpython-311-x86_64-linux-gnu.so:array_ctypes_get"
+    },
+    {
+     "share": 0.001,
+     "name": "guard_compact.so:pool_dispatch.part.0"
+    }
+   ]
+  },
+  "once-global-train256": {
+   "samples": 1222,
+   "gp_kernels_share": 0.08499999999999999,
+   "files": [
+    {
+     "share": 0.882,
+     "name": "guard_compact.so"
+    },
+    {
+     "share": 0.08199999999999999,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.018000000000000002,
+     "name": "libm.so.6"
+    },
+    {
+     "share": 0.017,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.574,
+     "name": "guard_compact.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.063,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.057999999999999996,
+     "name": "guard_compact.so:gp_pair_backward.part.0"
+    },
+    {
+     "share": 0.023,
+     "name": "guard_compact.so:gp_pair_forward.part.0"
+    },
+    {
+     "share": 0.021,
+     "name": "guard_compact.so:rmsb_rows_task"
+    },
+    {
+     "share": 0.021,
+     "name": "guard_compact.so:rms_task"
+    },
+    {
+     "share": 0.02,
+     "name": "guard_compact.so:swiglu2_avx512"
+    },
+    {
+     "share": 0.02,
+     "name": "guard_compact.so:commit_avx512"
+    },
+    {
+     "share": 0.016,
+     "name": "guard_compact.so:pool_main"
+    },
+    {
+     "share": 0.016,
+     "name": "guard_compact.so:loss_task"
+    },
+    {
+     "share": 0.015,
+     "name": "guard_compact.so:pool_tasks"
+    },
+    {
+     "share": 0.015,
+     "name": "guard_compact.so:rms16_stats"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "guard_compact.so:rmsb_cols_task"
+    },
+    {
+     "share": 0.01,
+     "name": "guard_compact.so:wedge_gate_bwd_task"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "libm.so.6:expf64@@GLIBC_2.27"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "libm.so.6:f64xsubf128@@GLIBC_2.28"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "guard_compact.so:wedge_gate_fwd_task"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "guard_compact.so:pair_avx512"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "guard_compact.so:scan_task"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "guard_compact.so:scatter_task"
+    },
+    {
+     "share": 0.006,
+     "name": "guard_compact.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.006,
+     "name": "guard_compact.so:exp_avx512"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.004,
+     "name": "guard_compact.so:pool_dispatch.part.0"
+    },
+    {
+     "share": 0.003,
+     "name": "python3.11:PyObject_IS_GC"
+    },
+    {
+     "share": 0.003,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.002,
+     "name": "guard_compact.so:_init"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.002,
+     "name": "guard_compact.so:gp_backward_task"
+    },
+    {
+     "share": 0.002,
+     "name": "guard_compact.so:gp_prefix_task"
+    },
+    {
+     "share": 0.002,
+     "name": "libc.so.6:__lll_lock_wake_private@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.002,
+     "name": "guard_compact.so:ew_task"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyBytes_AsString"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:__default_morecore@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_GenericGetDict"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:brk@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:read@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyList_Append"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyUnicode_DecodeUTF8"
+    }
+   ]
+  },
+  "once-query_full-infer1024": {
+   "samples": 862,
+   "gp_kernels_share": 0.11200000000000002,
+   "files": [
+    {
+     "share": 0.934,
+     "name": "query_guard_compact.so"
+    },
+    {
+     "share": 0.042,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.02,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.002,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2"
+    },
+    {
+     "share": 0.001,
+     "name": "_multiarray_umath.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.635,
+     "name": "query_guard_compact.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.055,
+     "name": "query_guard_compact.so:gp_query_contract_pair"
+    },
+    {
+     "share": 0.05,
+     "name": "query_guard_compact.so:gp_pair_forward"
+    },
+    {
+     "share": 0.038,
+     "name": "query_guard_compact.so:scan_task"
+    },
+    {
+     "share": 0.035,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.031,
+     "name": "query_guard_compact.so:wedge_gate_fwd_task"
+    },
+    {
+     "share": 0.03,
+     "name": "query_guard_compact.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.03,
+     "name": "query_guard_compact.so:rms_task"
+    },
+    {
+     "share": 0.017,
+     "name": "query_guard_compact.so:exp_avx512"
+    },
+    {
+     "share": 0.015,
+     "name": "query_guard_compact.so:rms16_stats.constprop.0"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "query_guard_compact.so:ew_task"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "query_guard_compact.so:pool_tasks"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "query_guard_compact.so:gp_prefix_task"
+    },
+    {
+     "share": 0.006,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.005,
+     "name": "query_guard_compact.so:pool_main"
+    },
+    {
+     "share": 0.003,
+     "name": "python3.11:PyObject_IS_GC"
+    },
+    {
+     "share": 0.003,
+     "name": "query_guard_compact.so:span_finite_avx512"
+    },
+    {
+     "share": 0.002,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so:random_standard_normal"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:__libc_sigaction@@GLIBC_PRIVATE"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyArg_ParseTupleAndKeywords_SizeT"
+    },
+    {
+     "share": 0.001,
+     "name": "ld-linux-x86-64.so.2:_dl_mcount@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:tcgetattr@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyObject_Malloc"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyObject_New"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyDescr_IsData"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyMapping_Check"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyCode_New"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:fstatat@@GLIBC_2.33"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyArg_UnpackKeywords"
+    },
+    {
+     "share": 0.001,
+     "name": "query_guard_compact.so:pool_dispatch.part.0"
+    },
+    {
+     "share": 0.001,
+     "name": "_multiarray_umath.cpython-311-x86_64-linux-gnu.so:PyArray_IntpFromIndexSequence"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:munmap@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.001,
+     "name": "libc.so.6:__default_morecore@GLIBC_2.2.5"
+    }
+   ]
+  },
+  "once-query_full-train512": {
+   "samples": 1362,
+   "gp_kernels_share": 0.139,
+   "files": [
+    {
+     "share": 0.9209999999999999,
+     "name": "query_guard_compact.so"
+    },
+    {
+     "share": 0.047,
+     "name": "libc.so.6"
+    },
+    {
+     "share": 0.017,
+     "name": "libm.so.6"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "python3.11"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so"
+    },
+    {
+     "share": 0.001,
+     "name": "mtrand.cpython-311-x86_64-linux-gnu.so"
+    }
+   ],
+   "functions": [
+    {
+     "share": 0.569,
+     "name": "query_guard_compact.so:mm_avx512_kb"
+    },
+    {
+     "share": 0.051,
+     "name": "query_guard_compact.so:gp_pair_backward.part.0"
+    },
+    {
+     "share": 0.038,
+     "name": "libc.so.6:sched_yield@@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.037000000000000005,
+     "name": "query_guard_compact.so:rmsb_cols_task"
+    },
+    {
+     "share": 0.028999999999999998,
+     "name": "query_guard_compact.so:gp_query_contract_vjp"
+    },
+    {
+     "share": 0.027999999999999997,
+     "name": "query_guard_compact.so:gp_pair_forward"
+    },
+    {
+     "share": 0.023,
+     "name": "query_guard_compact.so:loss_task"
+    },
+    {
+     "share": 0.021,
+     "name": "query_guard_compact.so:swiglu2_avx512"
+    },
+    {
+     "share": 0.018000000000000002,
+     "name": "query_guard_compact.so:gp_query_contract_pair"
+    },
+    {
+     "share": 0.016,
+     "name": "query_guard_compact.so:rms_task"
+    },
+    {
+     "share": 0.013999999999999999,
+     "name": "query_guard_compact.so:commit_avx512"
+    },
+    {
+     "share": 0.013000000000000001,
+     "name": "query_guard_compact.so:scan_task"
+    },
+    {
+     "share": 0.012,
+     "name": "query_guard_compact.so:wedge_gate_bwd_task"
+    },
+    {
+     "share": 0.011000000000000001,
+     "name": "query_guard_compact.so:wedge_gate_fwd_task"
+    },
+    {
+     "share": 0.01,
+     "name": "query_guard_compact.so:pool_tasks"
+    },
+    {
+     "share": 0.009000000000000001,
+     "name": "libm.so.6:expf64@@GLIBC_2.27"
+    },
+    {
+     "share": 0.008,
+     "name": "query_guard_compact.so:rms16_stats"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "libc.so.6:__nss_database_lookup@GLIBC_2.2.5"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "query_guard_compact.so:silu2mul_avx512"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "query_guard_compact.so:exp_avx512"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "query_guard_compact.so:pool_main"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "libm.so.6:f64xsubf128@@GLIBC_2.28"
+    },
+    {
+     "share": 0.006999999999999999,
+     "name": "query_guard_compact.so:pair_avx512"
+    },
+    {
+     "share": 0.005,
+     "name": "query_guard_compact.so:gp_query_backward_task"
+    },
+    {
+     "share": 0.005,
+     "name": "query_guard_compact.so:ew_task"
+    },
+    {
+     "share": 0.004,
+     "name": "query_guard_compact.so:span_finite_avx512"
+    },
+    {
+     "share": 0.004,
+     "name": "query_guard_compact.so:gp_prefix_task"
+    },
+    {
+     "share": 0.004,
+     "name": "query_guard_compact.so:rmsb_rows_task"
+    },
+    {
+     "share": 0.003,
+     "name": "query_guard_compact.so:gp_pair_backward"
+    },
+    {
+     "share": 0.003,
+     "name": "query_guard_compact.so:scatter_task"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyObject_IS_GC"
+    },
+    {
+     "share": 0.002,
+     "name": "python3.11:PyObject_GC_Del"
+    },
+    {
+     "share": 0.002,
+     "name": "query_guard_compact.so:_init"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyEval_EvalFrameDefault"
+    },
+    {
+     "share": 0.001,
+     "name": "_generator.cpython-311-x86_64-linux-gnu.so:random_standard_normal"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_PyArg_CheckPositional"
+    },
+    {
+     "share": 0.001,
+     "name": "query_guard_compact.so:gp_reverse_task"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyNumber_Add"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:PyConfig_SetBytesString"
+    },
+    {
+     "share": 0.001,
+     "name": "python3.11:_Py_CheckFunctionResult"
+    }
+   ]
+  }
+ }
+}

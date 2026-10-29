@@ -17,6 +17,9 @@ from bcir.toolchain import host_bash, host_link_args, resolve_llvm_tools
 
 
 _ROOT = Path(__file__).resolve().parents[2]
+#: The fake compiler of the identity witness is a POSIX shell script; a capability check_tests.py
+#: reads.
+_POSIX = os.name == "posix"
 
 
 def _exe(directory: str, name: str) -> str:
@@ -416,3 +419,150 @@ def test_the_index_pins_each_tool_once_by_an_absolute_path_and_its_bytes():
             del bad["tools"]
         problems = toolchain.deps_index_problems(bad)
         assert any(what in p for p in problems), (what, problems)
+
+
+#: The scopes' truth table over a unit's options: every family and machine a build can name.
+_SCOPED = [
+    "-ffp-contract=off",
+    "gcc:-Wno-x",
+    "x86_64:-mavx2",
+    "x86_64:clang:-mj",
+    "x86_64:gcc:-Wa,-mj",
+]
+_SCOPES = {
+    ("gcc", "x86_64"): ["-ffp-contract=off", "-Wno-x", "-mavx2", "-Wa,-mj"],
+    ("clang", "x86_64"): ["-ffp-contract=off", "-mavx2", "-mj"],
+    ("gcc", "aarch64"): ["-ffp-contract=off", "-Wno-x"],
+    ("clang", "aarch64"): ["-ffp-contract=off"],
+    ("clang", "arm64"): ["-ffp-contract=off"],
+    ("gcc", ""): ["-ffp-contract=off", "-Wno-x"],
+}
+
+
+def test_a_manifest_option_has_one_spelling_and_applies_where_its_scopes_hold():
+    """M6's grammar: a flag, optionally x86_64: and then gcc: or clang:, in that order and each
+    once, so no option reads two ways -- every other spelling refused, as the resolver refuses it
+    too (total: no option is silently dropped); and manifest_options applies an option exactly
+    where every scope it names holds, in the manifest's order."""
+    parts = {
+        "-O3": (None, None, "-O3"),
+        "gcc:-Wno-x": (None, "gcc", "-Wno-x"),
+        "x86_64:-mavx2": ("x86_64", None, "-mavx2"),
+        "x86_64:clang:-mbranches-within-32B-boundaries": (
+            "x86_64", "clang", "-mbranches-within-32B-boundaries"
+        ),
+        "x86_64:gcc:-Wa,-mbranches-within-32B-boundaries": (
+            "x86_64", "gcc", "-Wa,-mbranches-within-32B-boundaries"
+        ),
+    }  # fmt: skip
+    for option, want in parts.items():
+        assert toolchain.option_scopes(option) == want, option
+    refused = ("gcc:x86_64:-x", "x86_64:x86_64:-x", "gcc:clang:-x", "aarch64:-x", "x86_64:",
+               "x86_64:gcc:", "-", "-a b", "", "O3", "gcc:", 3, None)  # fmt: skip
+    for option in refused:
+        try:
+            toolchain.option_scopes(option)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{option!r} read as an option")
+        try:
+            toolchain.manifest_options(["-O2", option], "gcc", "x86_64")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"the resolver dropped {option!r} instead of refusing it")
+    for (family, machine), want in _SCOPES.items():
+        assert toolchain.manifest_options(_SCOPED, family, machine) == want, (family, machine)
+
+
+def test_the_machine_a_compiler_emits_for_is_its_dumpmachines_first_field():
+    """x86-64 under each of its names reads as x86_64 -- the scope's one spelling -- and every
+    other machine as its own first field; an empty answer is no machine (no x86_64 option
+    applies)."""
+    cases = {
+        "x86_64-pc-linux-gnu": "x86_64",
+        "x86_64-linux-gnu\n": "x86_64",
+        "x86_64-w64-mingw32": "x86_64",
+        "x86_64-pc-windows-msvc": "x86_64",
+        "amd64-unknown-freebsd14.1": "x86_64",
+        "aarch64-linux-gnu": "aarch64",
+        "arm64-apple-darwin23.4.0": "arm64",
+        "i686-linux-gnu": "i686",
+        "": "",
+        "  \n": "",
+    }
+    for answer, want in cases.items():
+        assert toolchain.machine_of(answer) == want, answer
+
+
+def test_a_compilers_identity_is_its_family_and_machine_asked_once():
+    """compiler_identity runs the compiler for --version and -dumpmachine once a path: "clang" where
+    its version says so, else "gcc"; a compiler that answers nothing is gcc on no machine."""
+    if not _POSIX:
+        return  # the fake compiler is a POSIX shell script
+    with tempfile.TemporaryDirectory() as tmp:
+        cc = os.path.join(tmp, "fakecc")
+
+        def answering(version: str, machine: str) -> None:
+            with open(cc, "w", encoding="utf-8") as f:
+                f.write(
+                    f'#!/bin/sh\ncase "$1" in --version) echo "{version}";; '
+                    f"-dumpmachine) echo {machine};; esac\n"
+                )
+            os.chmod(cc, 0o755)
+
+        answering("Ubuntu clang version 23.1.0", "x86_64-pc-linux-gnu")
+        toolchain._IDENTITIES.pop(cc, None)
+        try:
+            assert toolchain.compiler_identity(cc) == ("clang", "x86_64")
+            answering("gcc (Ubuntu 13.3.0) 13.3.0", "aarch64-linux-gnu")
+            assert toolchain.compiler_identity(cc) == ("clang", "x86_64"), "asked again"
+            toolchain._IDENTITIES.pop(cc)
+            assert toolchain.compiler_identity(cc) == ("gcc", "aarch64")
+        finally:
+            toolchain._IDENTITIES.pop(cc, None)
+        missing = os.path.join(tmp, "no-such-cc")
+        assert toolchain.compiler_identity(missing) == ("gcc", "")
+        toolchain._IDENTITIES.pop(missing, None)
+
+
+def test_a_build_takes_the_options_of_the_units_that_own_its_sources():
+    """unit_options: the manifest's options of each unit owning a source, resolved for the
+    compiler, units in the order their first source is named and each flag once; the decoder's
+    units (bcir_models) take the JCC-erratum mitigation on x86-64 alone, each compiler's spelling,
+    and a source no unit owns is refused."""
+    jcc_clang, jcc_gcc = "-mbranches-within-32B-boundaries", "-Wa,-mbranches-within-32B-boundaries"
+    table = {
+        ("clang", "x86_64"): ["-ffp-contract=off", jcc_clang],
+        ("gcc", "x86_64"): ["-ffp-contract=off", jcc_gcc],
+        ("gcc", "aarch64"): ["-ffp-contract=off"],
+        ("clang", "arm64"): ["-ffp-contract=off"],
+    }
+    for identity, want in table.items():
+        with mock.patch("bcir.toolchain.compiler_identity", return_value=identity):
+            assert toolchain.unit_options(["bcir_ai_kernels.c"], "cc") == want, identity
+            assert (
+                toolchain.unit_options(["bcir_ai_kernels.c", "bcir_ai_microbench.c"], "cc") == want
+            )
+            assert toolchain.unit_options(["bcir_tensor.c"], "cc") == [
+                "-ffp-contract=off",
+                "-fno-math-errno",
+                "-O3",
+            ], "the trainer's GEMM is no placement's: no mitigation"
+            assert toolchain.unit_options(["bcir_runtime.c"], "cc") == []
+            try:
+                toolchain.unit_options(["bcir_nowhere.c"], "cc")
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("a source no unit owns was given options")
+    given = {
+        "libraries": {
+            "a": {"sources": ["x.c"], "options": ["-O1", "x86_64:-Ofast"]},
+            "b": {"sources": ["y.c"], "options": ["-O1", "clang:-g"]},
+        },
+        "comment": ["not a unit kind"],
+    }
+    with mock.patch("bcir.toolchain.compiler_identity", return_value=("clang", "x86_64")):
+        assert toolchain.unit_options(["y.c", "x.c"], "cc", given) == ["-O1", "-g", "-Ofast"]

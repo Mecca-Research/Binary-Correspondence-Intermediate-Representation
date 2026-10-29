@@ -1,0 +1,40 @@
+{
+ "tools": {
+  "measure_serial.sh": "db726c2f3f2a4970d5f20e1bf14dfc76fe55d106d67fdfd2e6f6aed02ccec2d5",
+  "kernels_ab.c": "0a7f3c6afb64fa3ed92d31fb05c5a053eddcb6b7b09919ed1c805f846afade1b",
+  "kernel_code.py": "0e5a5f1740959baa0b939cc78244949a3f83ed16f54431d92c5467b00bc542a0"
+ },
+ "tools run from ../../2026-10-25/q8-lanes": {
+  "decode_ab.py": "2d115150246b72ab2b4dfc6c276504d387616d5cf7c4bb93bcb26e1247447001"
+ },
+ "sources": {
+  "before/runtime/c/bcir_ai_kernels.c": "6058db010122305081c38ceb982c71be9e0562428288950cde2abb185743158a",
+  "before/runtime/c/bcir_ai_kernels.h": "c94f373e6e546b9897b074621b379463becf442779ad55069ff8098050e61a7f",
+  "before/runtime/c/bcir_q8_model.c": "ae8b0ff55014355fac0f10c49005c22f97e7ad5921de07b4db0ca81cf331c4c0",
+  "before/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "before/runtime/c/bcir_llama.c": "eddd8fd56a5d5c1d24b73d7d3df0487fee8732046c094857dcb48adcb18dca20",
+  "before/runtime/c/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e",
+  "before/runtime/c/bcir_tensor.c": "18241b181820728c34121d3f0eac79eb73bc7e4bd56690663eeffda1b025b7ec",
+  "first/runtime/c/bcir_ai_kernels.c": "278e46ddd2e938c0d3d019a30d8308c770bc1af04e38c12073853ba45d072496",
+  "first/runtime/c/bcir_ai_kernels.h": "cb684e79f3c4120829bb3578c6da2744a13cc222a75a4a6f9f536d02fd99fe48",
+  "first/runtime/c/bcir_q8_model.c": "ae8b0ff55014355fac0f10c49005c22f97e7ad5921de07b4db0ca81cf331c4c0",
+  "first/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "first/runtime/c/bcir_llama.c": "f3a31700b5f08ad0b9b6d0a4933325ad50f333ae9ef08cc80d0585eec6fbd2da",
+  "first/runtime/c/bcir_llama_cli.c": "16ad76c8f8ec5a5ae350043f5fdb68a20e4291e0a4b5a388c65962df3bccc372",
+  "first/runtime/c/bcir_tensor.c": "18241b181820728c34121d3f0eac79eb73bc7e4bd56690663eeffda1b025b7ec",
+  "after/runtime/c/bcir_ai_kernels.c": "c751553471aea88bdde01fbe31730ea0a7f5eb0638404881eab186c06f676127",
+  "after/runtime/c/bcir_ai_kernels.h": "cb684e79f3c4120829bb3578c6da2744a13cc222a75a4a6f9f536d02fd99fe48",
+  "after/runtime/c/bcir_q8_model.c": "ae8b0ff55014355fac0f10c49005c22f97e7ad5921de07b4db0ca81cf331c4c0",
+  "after/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "after/runtime/c/bcir_llama.c": "f3a31700b5f08ad0b9b6d0a4933325ad50f333ae9ef08cc80d0585eec6fbd2da",
+  "after/runtime/c/bcir_llama_cli.c": "16ad76c8f8ec5a5ae350043f5fdb68a20e4291e0a4b5a388c65962df3bccc372",
+  "after/runtime/c/bcir_tensor.c": "18241b181820728c34121d3f0eac79eb73bc7e4bd56690663eeffda1b025b7ec",
+  "inlined/runtime/c/bcir_ai_kernels.c": "4bce681ddbf428a6db14b7532937602def0ebceec4975e5c6fb0a3ce400bf911",
+  "inlined/runtime/c/bcir_ai_kernels.h": "cb684e79f3c4120829bb3578c6da2744a13cc222a75a4a6f9f536d02fd99fe48",
+  "inlined/runtime/c/bcir_q8_model.c": "ae8b0ff55014355fac0f10c49005c22f97e7ad5921de07b4db0ca81cf331c4c0",
+  "inlined/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "inlined/runtime/c/bcir_llama.c": "f3a31700b5f08ad0b9b6d0a4933325ad50f333ae9ef08cc80d0585eec6fbd2da",
+  "inlined/runtime/c/bcir_llama_cli.c": "16ad76c8f8ec5a5ae350043f5fdb68a20e4291e0a4b5a388c65962df3bccc372",
+  "inlined/runtime/c/bcir_tensor.c": "18241b181820728c34121d3f0eac79eb73bc7e4bd56690663eeffda1b025b7ec"
+ }
+}

@@ -1,0 +1,1 @@
+{"copies": {"hoist_bench.c exponent_le": true, "hoist_bench.c q8_scale": true, "hoist_bench.c q8_terms512": true, "hoist_bench.c ref512": true, "hoist_bench.c q8_xs_exact": true, "hoist_bench.c q8_matvec_block512_xs": true, "rows_bench.c exponent_le": true, "rows_bench.c q8_scale": true, "rows_bench.c the row-dot blocks": true}, "every_copy_the_same_bytes": true}

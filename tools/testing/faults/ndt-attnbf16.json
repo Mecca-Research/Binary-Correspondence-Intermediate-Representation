@@ -32,8 +32,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AB4 the workspace sized for the GEMM groups alone (the attention's packs refused at the first step)",
-      "new": "  if (0) most=ws_most(most,ws_attention(g,threads));",
-      "old": "  if (contract&BCIR_DT_CONTRACT_ATTNBF16) most=ws_most(most,ws_attention(g,threads));",
+      "new": "  most=ws_most(most,(contract&BCIR_DT_CONTRACT_ATTNBF16) ? 0 : ws_attention32(g,threads));",
+      "old": "  most=ws_most(most,(contract&BCIR_DT_CONTRACT_ATTNBF16) ? ws_attention(g,threads) : ws_attention32(g,threads));",
       "path": "runtime/c/bcir_decoder_train.c"
     },
     {
@@ -60,8 +60,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AB8 an instance the unit does not have (2) is admitted",
-      "new": "  return (bv==1 || bv==2 || bv==4 || bv==8) && (bv==2 || (bcir_tensor_mm_bf16_variants()&bv)) ? bv : 0;",
-      "old": "  return (bv==1 || bv==4 || bv==8) && (bcir_tensor_mm_bf16_variants()&bv) ? bv : 0;",
+      "new": "static int att16_instance(int variant) { return variant==2 ? 2 : bf16_instance(variant); }",
+      "old": "static int att16_instance(int variant) { return bf16_instance(variant); }",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -102,8 +102,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AB14 the future scores are not zeroed (no row's)",
-      "new": "    att16_future(a->variant,t,r0,0,ph);",
-      "old": "    att16_future(a->variant,t,r0,rows,ph);",
+      "new": "    if (!a->scratch) att16_future(a->variant,t,r0,0,ph);\n",
+      "old": "    if (!a->scratch) att16_future(a->variant,t,r0,rows,ph);\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {
@@ -123,8 +123,8 @@
     {
       "expects": "test_native_c_harness_c11_and_c23",
       "label": "AB17 the probabilities' strip packs the key tiles before the diagonal only",
-      "new": "    att16_pack_rows(j->bv,&cy,ib,ph+r0*t,t,rows,ib);  /* the block's strip of P, key tiles 0 .. ib */",
-      "old": "    att16_pack_rows(j->bv,&cy,ib,ph+r0*t,t,rows,ib+1);  /* the block's strip of P, key tiles 0 .. ib */",
+      "new": "    att16_pack_rows(j->bv,&cy,ib,blkp,t,rows,ib);  /* the block's strip of P, key tiles 0 .. ib */\n",
+      "old": "    att16_pack_rows(j->bv,&cy,ib,blkp,t,rows,ib+1);  /* the block's strip of P, key tiles 0 .. ib */\n",
       "path": "runtime/c/bcir_tensor.c"
     },
     {

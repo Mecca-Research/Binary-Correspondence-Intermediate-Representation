@@ -56,8 +56,8 @@
     {
       "expects": "test_linkable_emit_defines_what_the_source_defines",
       "label": "FS7 the oracle's linkable emit defines none of the types it names",
-      "new": "    parts += []\n",
-      "old": "    parts += defs\n",
+      "new": "    body: list[str] = []\n",
+      "old": "    body: list[str] = list(defs)\n",
       "path": "bcir/frontends/cfront/emit.py"
     },
     {

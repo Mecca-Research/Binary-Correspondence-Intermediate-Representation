@@ -16,6 +16,7 @@
 #define BCIR_LIB_PASSES_BCIRCOSTMODEL_H
 
 #include "BCIR/BCIRDialect.h"
+#include "BCIR/BCIRMeasured.h"
 #include "BCIR/BCIROps.h"
 #include "BCIRPassSupport.h"
 
@@ -43,10 +44,12 @@ using Cost = std::array<int64_t, 12>; // DIMS order (BCIRAttrs.td / cost.py)
 using Factor = std::array<int64_t, 12>;
 constexpr Factor kIdentity = {256, 256, 256, 256, 256, 256, 256, 256, 256, 256, 256, 256};
 
-// A realization candidate: its lane width (for the path-based context factor) + cost.
+// A realization candidate: its lane width (for the path-based context factor) + cost, and --
+// PX-3b-2 -- the index of the measured entry it runs in Cap::measured (-1: its own realization).
 struct Cand {
   int64_t width;
   Cost cost;
+  int32_t measured = -1;
 };
 
 // Memory-tier Q8 factors keyed by the resource domain (constexpr port of cost.py
@@ -72,11 +75,21 @@ constexpr TierQ8 tierForDomain(Domain d) {
   return {256, 256};
 }
 
+// PX-3b-2: one measured alternative (cost.py MeasuredEntry), read off the capability's
+// measured_* attributes; the strings are the context's, valid while it lives.
+struct MeasuredEntry {
+  StringRef op;
+  int64_t count = 0;
+  StringRef alternative;
+  int64_t q8 = 256;
+};
+
 // The seeded target constants (cost.py TargetProfile), read off the capability op.
 struct Cap {
   SmallVector<int64_t> widths; // sorted unique lane widths
   int64_t gatherPenalty = 0, cacheline = 64, memUnit = 1, baseOverhead = 4;
   int64_t thermalDensity = 64, powerDensity = 64, perOpHeat = 1, elemBytes = 4;
+  SmallVector<MeasuredEntry> measured; // PX-3b-2: the measured table, in its order (verified)
 };
 
 inline Cap readCap(TargetCapabilityOp capOp) {
@@ -96,7 +109,49 @@ inline Cap readCap(TargetCapabilityOp capOp) {
   h.powerDensity = capOp.getPowerDensity();
   h.perOpHeat = capOp.getPerOpHeat();
   h.elemBytes = capOp.getElemBytes();
+  // PX-3b-2: the four measured_* attributes travel together (the op's verifier); a table the
+  // verifier would refuse is read as none rather than half.
+  auto ops = capOp.getMeasuredOps();
+  auto alts = capOp.getMeasuredAlternatives();
+  auto values = capOp.getMeasuredValues();
+  if (ops && alts && values && alts->size() == ops->size() && values->size() == 2 * ops->size())
+    for (size_t i = 0; i < ops->size(); ++i) {
+      auto op = dyn_cast<StringAttr>((*ops)[i]);
+      auto alt = dyn_cast<StringAttr>((*alts)[i]);
+      if (!op || !alt) {
+        h.measured.clear();
+        break;
+      }
+      h.measured.push_back({op.getValue(), (*values)[2 * i], alt.getValue(), (*values)[2 * i + 1]});
+    }
   return h;
+}
+
+// realize._offer_rows' measured rows (PX-3b-2): after a claim's own candidates -- the
+// intra-phase discount already applied, as the oracle derives them from its discounted rows --
+// each own candidate run each entry naming the claim's (op, count), in the order (candidate,
+// then entry): the candidate's width, its compute and memory axes scaled by q8/256 (floored),
+// every other axis kept. A control op is never measured; no entry leaves the column as it was.
+inline void appendMeasured(SmallVector<Cand> &cands, ClaimOp c, const Cap &h) {
+  if (h.measured.empty() || isMeasuredControlOpcode(static_cast<int64_t>(c.getOpcode())))
+    return;
+  StringRef op = c.getOp();
+  const int64_t count = static_cast<int64_t>(c.getCount());
+  SmallVector<int32_t> hits;
+  for (int32_t i = 0; i < static_cast<int32_t>(h.measured.size()); ++i)
+    if (h.measured[i].op == op && h.measured[i].count == count)
+      hits.push_back(i);
+  if (hits.empty())
+    return;
+  const size_t own = cands.size();
+  for (size_t k = 0; k < own; ++k)
+    for (int32_t i : hits) {
+      Cand m = cands[k];
+      m.cost[0] = saturatingMulNonnegative(m.cost[0], h.measured[i].q8) >> 8;
+      m.cost[1] = saturatingMulNonnegative(m.cost[1], h.measured[i].q8) >> 8;
+      m.measured = i;
+      cands.push_back(m);
+    }
 }
 
 inline int64_t bitLength(int64_t n) { // ceil(log2 n) for HAM
@@ -430,6 +485,7 @@ inline std::vector<Column> fusedColumns(Operation *root, const Cap &h,
     if (barriered) // ASM3b: a barriered producer fences its writes (no downstream deforest credit)
       for (StringRef w : writes)
         barrProd.insert(w);
+    appendMeasured(col.cands, c, h); // PX-3b-2: after the discount, as the oracle derives them
     cols.push_back(std::move(col));
   }
   return cols;
@@ -506,6 +562,7 @@ fusedColumnsFromClaims(ArrayRef<ClaimOp> claims, const Cap &h,
     if (barriered) // ASM3b: a barriered producer fences its writes
       for (StringRef wsym : col.writes)
         barrProd.insert(wsym);
+    appendMeasured(col.cands, c, h); // PX-3b-2: after the discount, as the oracle derives them
     cols.push_back(std::move(col));
   }
   return cols;

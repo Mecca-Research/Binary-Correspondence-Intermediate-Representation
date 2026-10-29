@@ -3,6 +3,11 @@
 Provider availability/performance is planning evidence only.  A vendor library never
 defines BCIR legality, and a provider is not probed or selected until a concrete workload
 asks for one of its declared capabilities.
+
+A measurement's PMU counts are explicit (EVIDENCE-NULL): `bcir.numerical_provider_evidence.v2`,
+the schema written, holds the PMU's three counts or three nulls when it read none -- a 0 is a
+count it read. `bcir.numerical_provider_evidence.v1` had no null (an unread count was 0) and
+still reads, to the same bytes and digest.
 """
 
 from __future__ import annotations
@@ -20,9 +25,11 @@ from pathlib import Path
 from typing import Protocol
 
 from .._artifact_json import read_bounded_text, strict_json_loads
-from ..silicon import CounterSampler, read_hw_counters
+from ..silicon import CounterSampler, pmu_counts, read_hw_counters, recorded_counts
 
 
+SCHEMA = "bcir.numerical_provider_evidence.v2"  # the schema written: counts or three nulls
+SCHEMA_V1 = "bcir.numerical_provider_evidence.v1"  # read only: no null, an unread count as 0
 _OPERATIONS = frozenset({"gemm", "fft", "linsolve", "special", "vecmath"})
 _DTYPES = frozenset({"float32", "float64", "complex64", "complex128"})
 
@@ -95,12 +102,16 @@ class LibraryProviderDescriptor:
 
 @dataclass(frozen=True)
 class ProviderMeasurement:
+    """One provider run's evidence: the median clocks over its repeats and the PMU's counts for
+    one more run, all three or all None. Whether its artifact's schema admits a None is the
+    artifact's to check."""
+
     workload_sha256: str
     wall_ns: int
     cpu_ns: int
-    cycles: int
-    instructions: int
-    cache_misses: int
+    cycles: int | None
+    instructions: int | None
+    cache_misses: int | None
     repeats: int
 
     def __post_init__(self) -> None:
@@ -111,11 +122,20 @@ class ProviderMeasurement:
             or any(character not in "0123456789abcdef" for character in self.workload_sha256)
         ):
             raise ValueError("workload_sha256 is invalid")
-        for field in ("wall_ns", "cpu_ns", "cycles", "instructions", "cache_misses"):
+        for field in ("wall_ns", "cpu_ns"):
             _positive(getattr(self, field), field, zero=True)
+        if None in self.pmu:
+            recorded_counts(*self.pmu)  # all null or refused
+        else:
+            for field in ("cycles", "instructions", "cache_misses"):
+                _positive(getattr(self, field), field, zero=True)
         _positive(self.repeats, "repeats")
         if self.wall_ns == 0:
             raise ValueError("provider measurement wall time must be positive")
+
+    @property
+    def pmu(self) -> tuple[int | None, int | None, int | None]:
+        return self.cycles, self.instructions, self.cache_misses
 
 
 @dataclass(frozen=True)
@@ -187,13 +207,16 @@ def measure_provider(
         provider.run(workload)
         laps.append(sampler.lap())
     hardware = read_hw_counters(lambda: provider.run(workload))
+    # The PMU's counts when it read all three; else three nulls.
+    counts = pmu_counts(hardware)
+    cycles, instructions, cache_misses = counts if counts is not None else (None, None, None)
     measurement = ProviderMeasurement(
         workload.digest,
         int(statistics.median(lap.wall_ns for lap in laps)),
         int(statistics.median(lap.cpu_ns for lap in laps)),
-        hardware.cycles if hardware else 0,
-        hardware.instructions if hardware else 0,
-        hardware.cache_misses if hardware else 0,
+        cycles,
+        instructions,
+        cache_misses,
         repeats,
     )
     return ProviderEvidence(descriptor.name, True, "executed", (measurement,))
@@ -265,11 +288,11 @@ class NumericalProviderRegistry:
 class NumericalEvidenceArtifact:
     host_architecture: str
     evidence: tuple[ProviderEvidence, ...]
-    schema: str = "bcir.numerical_provider_evidence.v1"
+    schema: str = SCHEMA
 
     def __post_init__(self) -> None:
         if (
-            self.schema != "bcir.numerical_provider_evidence.v1"
+            self.schema not in (SCHEMA, SCHEMA_V1)
             or not isinstance(self.host_architecture, str)
             or not self.host_architecture
             or not isinstance(self.evidence, (tuple, list))
@@ -277,6 +300,13 @@ class NumericalEvidenceArtifact:
         ):
             raise ValueError("numerical evidence artifact is malformed")
         object.__setattr__(self, "evidence", tuple(self.evidence))
+        measurements = [measurement for item in self.evidence for measurement in item.measurements]
+        if self.schema == SCHEMA_V1:
+            if any(None in measurement.pmu for measurement in measurements):
+                raise ValueError("a v1 numerical evidence artifact has no null")
+        else:
+            for measurement in measurements:  # v2: the shared rule, its bound included
+                recorded_counts(*measurement.pmu)
 
     def to_json(self) -> str:
         return _canonical(

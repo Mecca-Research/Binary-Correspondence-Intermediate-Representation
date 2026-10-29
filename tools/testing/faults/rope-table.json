@@ -1,0 +1,123 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT1 the table's sine slots hold the cosines",
+      "new": "        c[k]=(float)cos(angle); s[k]=(float)cos(angle);\n",
+      "old": "        c[k]=(float)cos(angle); s[k]=(float)sin(angle);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT2 the table's frequencies without the factor 2 (each pair's angle at half its exponent)",
+      "new": "    for (k=0;k<nk;k++) f[k]=pow(j->base,-1.0*(double)(k0+k)/(double)j->dim);\n",
+      "old": "    for (k=0;k<nk;k++) f[k]=pow(j->base,-2.0*(double)(k0+k)/(double)j->dim);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT3 the table's angles a position late",
+      "new": "        double angle=(double)(pos+1)*f[k];\n",
+      "old": "        double angle=(double)pos*f[k];\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT4 the table's angles in binary32 (the position and the frequency rounded to float first)",
+      "new": "        double angle=(double)((float)pos*(float)f[k]);\n",
+      "old": "        double angle=(double)pos*f[k];\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT5 the fill's last part task of positions dropped",
+      "new": "  pool_run(pool,rope_table_task,&j,t/BCIR_ROW_CHUNK);\n",
+      "old": "  pool_run(pool,rope_table_task,&j,(t+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT6 the lent rotation ignores inverse (the backward turns forward)",
+      "new": "    for (k=0;k<nk;k++) s[k]=sin0[k];\n",
+      "old": "    for (k=0;k<nk;k++) s[k]=sin0[k]*(j->inverse ? -1.0f : 1.0f);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT7 the lent rotation reads its sines from the cosines",
+      "new": "    const float *c=j->table+pos*j->dim+k0,*sin0=c;\n",
+      "old": "    const float *c=j->table+pos*j->dim+k0,*sin0=c+half;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT8 the lent rotation reads every range of pairs from the first range's entries",
+      "new": "    const float *c=j->table+pos*j->dim,*sin0=c+half;\n",
+      "old": "    const float *c=j->table+pos*j->dim+k0,*sin0=c+half;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT9 the rotation leaves each position's last head unturned (rope_turn, which both rotations share since ROPE-BOUND)",
+      "new": "  for (r=0;r<b;r++) for (h=0;h+1<heads;h++) {\n    float *lo=x+((r*t+pos)*heads+h)*dim+k0,*hi=lo+half;\n",
+      "old": "  for (r=0;r<b;r++) for (h=0;h<heads;h++) {\n    float *lo=x+((r*t+pos)*heads+h)*dim+k0,*hi=lo+half;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT10 the lent rotation's last part task of positions dropped",
+      "new": "  pool_run(pool,rope_lent_task,&j,t/BCIR_ROW_CHUNK);\n",
+      "old": "  pool_run(pool,rope_lent_task,&j,(t+BCIR_ROW_CHUNK-1)/BCIR_ROW_CHUNK);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT11 the rotation's sum and difference swapped (rope_turn, both rotations)",
+      "new": "    for (k=0;k<n;k++) { float a=lo[k],z=hi[k]; lo[k]=a*c[k]+z*s[k]; hi[k]=z*c[k]-a*s[k]; }\n",
+      "old": "    for (k=0;k<n;k++) { float a=lo[k],z=hi[k]; lo[k]=a*c[k]-z*s[k]; hi[k]=z*c[k]+a*s[k]; }\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT12 the forward never fills the table (every rotation reads what the arena held)",
+      "new": "",
+      "old": "  bcir_tensor_rope_table_pool(s->pool,g.t,g.hd,sp->rope_base,rope_table(s,g));  /* ROPE-TABLE */\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT13 the table inside the logits' adjoint (dl's last span, which the loss writes before the backward reads the table)",
+      "new": "  return s->scratch+5*g.nd+2*g.nk+3*g.nf+g.nv-g.t*g.hd;\n",
+      "old": "  return s->scratch+5*g.nd+2*g.nk+3*g.nf+g.nv;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT14 the backward's query rotation turns forward",
+      "new": "    bcir_tensor_rope_lent_pool(s->pool,g.b,g.t,g.h,g.hd,rope_table(s,g),dq,0);\n",
+      "old": "    bcir_tensor_rope_lent_pool(s->pool,g.b,g.t,g.h,g.hd,rope_table(s,g),dq,1);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT15 the lent rotation turns a head of one range of pairs one pair short (ROPE-BOUND's bound the head's half, less one)",
+      "new": "rope_turn(j->b,j->t,j->heads,j->dim,pos,0,half-1,c,s,j->x);",
+      "old": "rope_turn(j->b,j->t,j->heads,j->dim,pos,0,half,c,s,j->x);",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "RT16 the lent rotation turns each range of a wide head onto its first range's pairs",
+      "new": "else rope_turn(j->b,j->t,j->heads,j->dim,pos,0,nk,c,s,j->x);",
+      "old": "else rope_turn(j->b,j->t,j->heads,j->dim,pos,k0,nk,c,s,j->x);",
+      "path": "runtime/c/bcir_tensor.c"
+    }
+  ]
+}

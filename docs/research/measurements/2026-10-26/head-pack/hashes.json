@@ -1,0 +1,58 @@
+{
+ "tools": {
+  "measure_headpack.sh": "961a7454a7dda888262db1ebe7730e329e8e5015dfe3331e068e710212e6595f",
+  "headpack_kernels.c": "968e0838f2598cd1cb1ac48664161cea409839326317a49dd8cec6ec6e7d16b4",
+  "headpack_decode.c": "6a07493d736d320795a433468e14613fab611a2c2a6bdcd45a845ce326443bef"
+ },
+ "tools run from ../../2026-10-25/q8-lanes": {
+  "decode_ab.py": "2d115150246b72ab2b4dfc6c276504d387616d5cf7c4bb93bcb26e1247447001",
+  "llama_ops.py": "56a526a9e255a6ab7b9afa70e762bb22ebf02708369e59b04c46c20d99488df8",
+  "qual_summary.py": "4a4a15c7dd86bd5581bc2c31f3c0a36aa4211b028b20d767546c958598b533d5"
+ },
+ "tools run from ../q8-pair": {
+  "big_model.py": "f9d3e1f3846aa76d54f932be90f2e1847b9da12d9f4ba51134c0c67867ac89f1"
+ },
+ "sources": {
+  "before/runtime/c/bcir_ai_kernels.c": "820d811e6884f0b20a35fcf68e2c5aca2a95322d8c931b254b37a8dc2d9b939c",
+  "before/runtime/c/bcir_ai_kernels.h": "42ab07b340dfc90d03d67a857426ad448ae2ed4dabe076c4f2db2a8e1ee19006",
+  "before/runtime/c/test_ai_kernels.c": "c9a7589448259e6505efa01857a52c848da7507ec727dd6070a415b84b6b7667",
+  "before/runtime/c/bcir_q4_kernel.c": "d810ceff0f1083158369484a0eb207b2bd535b40185156135b8aa53c5a52e6e3",
+  "before/runtime/c/bcir_llama.c": "657d849e70e51e08bdf132be19a8507a7a08f9167b5c261e9d4d1421f940e90a",
+  "before/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "before/runtime/c/bcir_q8_model.c": "bcc4454b16ca005818042a13bb3b49cb58305200073636e0c0750a3cdd74fc5c",
+  "before/runtime/c/bcir_q8_model.h": "9f0712f6330d2604ad52eaec1fff77d73b329c5383c1230fda0a399b9145c8bf",
+  "before/runtime/c/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e",
+  "before/runtime/c/test_memory_discipline.c": "0912054b52a83cb4821ce129f68fb23623f52d8dc5c0a571444bbc2d68f52ba7",
+  "before/bcir/tests/test_native_ai.py": "69fa1384b492093008778f9f4a84c01573e73ed723241bff77e7943f3c8041ec",
+  "before/bcir/tests/test_model_weights_io.py": "bc398b2e8be8c7c6894943a9d6e8d37d7848fdb97d7d09c671756661ccee11e8",
+  "before/bcir/kbcir/native_ai.py": "979b41d73297d901bb11fd5d1d41e8d8eed50fc012f7062f1202a79d5ce3a315",
+  "after/runtime/c/bcir_ai_kernels.c": "6058db010122305081c38ceb982c71be9e0562428288950cde2abb185743158a",
+  "after/runtime/c/bcir_ai_kernels.h": "c94f373e6e546b9897b074621b379463becf442779ad55069ff8098050e61a7f",
+  "after/runtime/c/test_ai_kernels.c": "06e9d14c3f2ab12cd64b9d327b9f1941207c9ba7926bceed2ba7767b8e444e3e",
+  "after/runtime/c/bcir_q4_kernel.c": "d810ceff0f1083158369484a0eb207b2bd535b40185156135b8aa53c5a52e6e3",
+  "after/runtime/c/bcir_llama.c": "eddd8fd56a5d5c1d24b73d7d3df0487fee8732046c094857dcb48adcb18dca20",
+  "after/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "after/runtime/c/bcir_q8_model.c": "ae8b0ff55014355fac0f10c49005c22f97e7ad5921de07b4db0ca81cf331c4c0",
+  "after/runtime/c/bcir_q8_model.h": "568387ea97a1a6da56b81645046b0a473ac1633d1fe07b76ad72320374185c08",
+  "after/runtime/c/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e",
+  "after/runtime/c/test_memory_discipline.c": "e2b749e9386ef8d8c873f14e672358b3768362cc2c6a72822e1343d691635ee6",
+  "after/bcir/tests/test_native_ai.py": "1d2855d2d8b4f6cabd32f7cf134be8492d7342517d177cf0866e91e426edfac8",
+  "after/bcir/tests/test_model_weights_io.py": "557bd52a2a78b26b3bf9f91d2d372fdab323935d1527d348045b92bc39864321",
+  "after/bcir/kbcir/native_ai.py": "6d51003b10b630cddfd3a541cfe1955cbbc49df6c0dfa1afa70b74259aee9fdb",
+  "after/tools/testing/faults/head-pack.json": "a66d65d11d7d59152355a1130031810f097f544641b261b0a584900a08187020",
+  "without/runtime/c/bcir_ai_kernels.c": "6058db010122305081c38ceb982c71be9e0562428288950cde2abb185743158a",
+  "without/runtime/c/bcir_ai_kernels.h": "c94f373e6e546b9897b074621b379463becf442779ad55069ff8098050e61a7f",
+  "without/runtime/c/test_ai_kernels.c": "c9a7589448259e6505efa01857a52c848da7507ec727dd6070a415b84b6b7667",
+  "without/runtime/c/bcir_q4_kernel.c": "d810ceff0f1083158369484a0eb207b2bd535b40185156135b8aa53c5a52e6e3",
+  "without/runtime/c/bcir_llama.c": "eddd8fd56a5d5c1d24b73d7d3df0487fee8732046c094857dcb48adcb18dca20",
+  "without/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "without/runtime/c/bcir_q8_model.c": "ae8b0ff55014355fac0f10c49005c22f97e7ad5921de07b4db0ca81cf331c4c0",
+  "without/runtime/c/bcir_q8_model.h": "568387ea97a1a6da56b81645046b0a473ac1633d1fe07b76ad72320374185c08",
+  "without/runtime/c/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e",
+  "without/runtime/c/test_memory_discipline.c": "0912054b52a83cb4821ce129f68fb23623f52d8dc5c0a571444bbc2d68f52ba7",
+  "without/bcir/tests/test_native_ai.py": "69fa1384b492093008778f9f4a84c01573e73ed723241bff77e7943f3c8041ec",
+  "without/bcir/tests/test_model_weights_io.py": "bc398b2e8be8c7c6894943a9d6e8d37d7848fdb97d7d09c671756661ccee11e8",
+  "without/bcir/kbcir/native_ai.py": "6d51003b10b630cddfd3a541cfe1955cbbc49df6c0dfa1afa70b74259aee9fdb",
+  "without/tools/testing/faults/head-pack.json": "a66d65d11d7d59152355a1130031810f097f544641b261b0a584900a08187020"
+ }
+}

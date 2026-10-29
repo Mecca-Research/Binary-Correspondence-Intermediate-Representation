@@ -75,8 +75,10 @@ static const char *USAGE =
   "                 riscv64-linux, x86_64-windows, i386-linux\n"
   "  --fallback     total compile: a construct outside the supported subset exits 2 with\n"
   "                 'fallback to LLVM backend: <phase>: <reason>' instead of a hard error\n"
-  "  --linkable     emit the LINKABLE artifact (Phase 3): external-linkage real-name\n"
-  "                 definitions + derived #includes, so two emitted TUs link to each other\n"
+  "  --linkable     emit the LINKABLE artifact (Phase 3): the unit's types, every function\n"
+  "                 declared and defined under its real name with its source linkage, its\n"
+  "                 globals defined with their initializers and the #includes its text names,\n"
+  "                 so emitted TUs link to each other\n"
   "  --project      print the per-PROJECT verdict line over the compiled file set -- CLEAN /\n"
   "                 PARTIAL-FALLBACK / DIRTY; printed automatically for a multi-file invocation\n"
   "                 (the compile-database half of project mode, -p, stays on the Python rail)\n"
@@ -89,103 +91,6 @@ static const char *USAGE =
   "                 + each indirect call's narrowed target set (`*` = may reach unknown code)\n"
   "  --emit-link-flags  the linker flags the unit's external-call edges need (one space-separated\n"
   "                 line, e.g. -lm; empty for a pure-integer unit) -- for build-system consumption\n";
-
-/* naive whole-text replace (pat -> rep, rep no longer than pat) into `out`. */
-static void cc_replace_all(const char *in, const char *pat, const char *rep, char *out, size_t on) {
-  size_t pl = strlen(pat), rl = strlen(rep), w = 0;
-  while (*in) {
-    if (!strncmp(in, pat, pl)) {
-      if (w + rl < on) { memcpy(out + w, rep, rl); w += rl; }
-      in += pl;
-    } else if (w + 1 < on) out[w++] = *in++;
-    else in++;
-  }
-  out[w] = 0;
-}
-
-/* Phase 3 linking: re-render the emitted unit under its REAL names with SOURCE linkage (the C
- * twin of the oracle's emit_linkable): a source-`static` definition KEEPS its `static` (internal
- * linkage honored -- two TUs may each carry a same-named static helper); every other definition's
- * unindented `static ` is stripped (body statics are indented and untouched); in-unit calls are
- * unprefixed, and the derived #includes prepended (stdint always; stdlib/stdio/math by the
- * unit's external-call edges; the quarantine header when a masked access needs it). Parity note:
- * functions only -- file-scope global DEFINITIONS stay oracle-side (per the roadmap split). */
-static int cc_linkable_static_fn(const bcir_cfront_result *r, const char *line, size_t len) {
-  /* Does this unindented line name a SOURCE-static function directly before some '('? The
-   * definition line is `static RET NAME(` and the tudefs prelude line is `extern RET NAME(`
-   * -- but a RET spelling may itself carry parens (`_BitInt(13)`), so try EVERY '(' and
-   * match the identifier before it against the unit's static functions (a parameter NAME is
-   * never followed by '(', so the scan cannot false-positive on parameter lists). */
-  for (const char *par = memchr(line, '(', len); par;
-       par = memchr(par + 1, '(', len - (size_t)(par + 1 - line))) {
-    const char *b = par;
-    while (b > line && ((b[-1] >= 'a' && b[-1] <= 'z') || (b[-1] >= 'A' && b[-1] <= 'Z') ||
-                        (b[-1] >= '0' && b[-1] <= '9') || b[-1] == '_')) b--;
-    if (b == par) continue;
-    for (int f = 0; f < r->unit.n_funcs; f++)
-      if (r->unit.funcs[f].static_fn &&
-          strlen(r->unit.funcs[f].name) == (size_t)(par - b) &&
-          !strncmp(b, r->unit.funcs[f].name, (size_t)(par - b))) return 1;
-  }
-  return 0;
-}
-
-static int cc_emit_linkable(const bcir_cfront_result *r, FILE *outf) {
-  /* the renames below ping-pong between two copies of the emitted C; a rename never lengthens it (`bcir_X(` ->
-   * `X(`), so each copy is the emitted C's own size -- the emit has no fixed capacity to size them from (CF-BUF).
-   * Taken before anything is written, so a failed allocation writes nothing. */
-  bcir_host_allocator heap = bcir_host_allocator_default();
-  size_t cap = r->emitted_len + 1u;
-  char *ba = cap ? (char *)bcir_host_allocate(&heap, cap) : NULL;
-  char *bb = cap ? (char *)bcir_host_allocate(&heap, cap) : NULL;
-  if (!ba || !bb) { bcir_host_deallocate(&heap, ba); bcir_host_deallocate(&heap, bb); return 1; }
-  int need_math = 0, need_stdlib = 0, need_stdio = 0;
-  for (int f = 0; f < r->unit.n_funcs; f++)
-    for (size_t k = 0; k < r->unit.funcs[f].n_claims; k++) {
-      const char *op = r->unit.funcs[f].claims[k].op;
-      if (!strncmp(op, "c.call.libm:", 12) || !strncmp(op, "c.call.libm.void:", 17)) {
-        const char *nm = strchr(op + 7, ':') + 1;
-        if (!strcmp(nm, "malloc") || !strcmp(nm, "calloc") || !strcmp(nm, "realloc") ||
-            !strcmp(nm, "free")) need_stdlib = 1;
-        else need_math = 1;
-      } else if (!strncmp(op, "c.call.extern:", 14)) need_stdio = 1;
-    }
-  fputs("#include <stdint.h>\n", outf);
-  if (strstr(r->emitted, "BCIR_CHK")) fputs("#include \"bcir_quarantine.h\"\n", outf);
-  if (need_stdlib) fputs("#include <stdlib.h>\n", outf);
-  if (need_stdio) fputs("#include <stdio.h>\n", outf);
-  if (need_math) fputs("#include <math.h>\n", outf);
-  const char *cur = r->emitted;
-  char *nxt = ba;
-  for (int f = 0; f < r->unit.n_funcs; f++) {        /* unprefix every in-unit call/def name */
-    char pat[BCIR_CIR_NAME + 8], rep[BCIR_CIR_NAME + 2];
-    snprintf(pat, sizeof pat, "bcir_%s(", r->unit.funcs[f].name);
-    snprintf(rep, sizeof rep, "%s(", r->unit.funcs[f].name);
-    cc_replace_all(cur, pat, rep, nxt, cap);
-    cur = nxt;
-    nxt = (nxt == ba) ? bb : ba;
-  }
-  const char *s = cur;                               /* strip the unindented definition `static ` --
-                                                      * except a SOURCE-static function's (kept) */
-  while (*s) {
-    const char *nl = strchr(s, '\n');
-    size_t len = nl ? (size_t)(nl - s) + 1 : strlen(s);
-    if (!strncmp(s, "static ", 7) && !cc_linkable_static_fn(r, s, len))
-      fwrite(s + 7, 1, len - 7, outf);
-    else if (!strncmp(s, "extern ", 7) && cc_linkable_static_fn(r, s, len)) {
-      /* the tudefs prelude declared this SOURCE-static function `extern` (the prototype was
-       * parsed before its definition); the kept-static definition would then violate C11
-       * 6.2.2p7 ("static declaration follows non-static") -- re-key the declaration to
-       * `static` (same 7 bytes), the static-forward-declaration idiom the source used. */
-      fputs("static ", outf);
-      fwrite(s + 7, 1, len - 7, outf);
-    } else fwrite(s, 1, len, outf);
-    s += len;
-  }
-  bcir_host_deallocate(&heap, ba);
-  bcir_host_deallocate(&heap, bb);
-  return 0;
-}
 
 static void dirof(const char *path, char *out, size_t cap) {
   const char *s = strrchr(path, '/'), *bs = strrchr(path, '\\');
@@ -335,8 +240,14 @@ int main(int argc, char **argv) {
     if (pp_only) { fputs(src, outf); cc_release_file(src); n_clean++; continue; }
 
     static bcir_cfront_result r;
-    int compile_rc = bcir_cfront_compile_target(src, target, &r);
+    /* --linkable: the twin's linkable artifact (CF-LINKTWIN), the front end's own emit of it -- the types, the
+     * declarations and the globals need the parse, so the compile renders it whole */
+    int compile_rc = linkable ? bcir_cfront_compile_linkable(src, target, &r) : bcir_cfront_compile_target(src, target, &r);
     cc_release_file(src);        /* the result owns copies of everything it names */
+    if (compile_rc != 0 && linkable && !strncmp(r.diag, "linkable emit: ", 15)) {
+      /* a global the artifact cannot define: the oracle's CLI says it so (`bcir-cfront --linkable`) */
+      fprintf(stderr, "%s: linkable emit error: %s\n", path, r.diag); rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
+    }
     if (compile_rc != 0) {
       /* free the partial unit on the compile-error path too (the success path frees at the loop foot): `r`
        * is a reused static, so a skipped free here would leak the in-progress unit across files (the next
@@ -373,9 +284,7 @@ int main(int argc, char **argv) {
       fprintf(outf, "%s\n", lflags);
       n_clean++;
     } else if (linkable) {
-      if (cc_emit_linkable(&r, outf)) {              /* Phase 3: the externally-linkable artifact */
-        fprintf(stderr, "%s: linkable: out of memory\n", path); rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
-      }
+      fputs(r.emitted, outf);                        /* Phase 3: the externally-linkable artifact, whole */
       n_clean++;
     } else if (emit_c) {
       /* §5.12: a masked (bounds-promoted) access emits `a[BCIR_CHK(...)]`, which references the

@@ -1,0 +1,96 @@
+{
+ "what": "CRC-SLICE (2026-10-25): zlib's CRC-32 eight bytes a step (slicing-by-8, runtime/c/bcir_crc32.h) for every C unit that checks one -- bcir_runtime.c's bcir_crc32 (every StreamPack, plan, record, bundle and frame digest) and the BCIRQ8 loader, whose bitwise loop it retires -- the same CRC by definition; measured on the committed tree against the tree before, with NEXT-6 (the survey that placed it) on the tree before",
+ "host": "Intel(R) Xeon(R) Processor @ 2.30GHz, 4 vCPU (4 cores, one thread each; AVX-512F, AMX), 2 MiB of L2 a core, 260 MiB of L3; Linux 6.18; clang 18.1.3 and GCC 13.3 (-std=c11 -O2 -ffp-contract=off, the qualification's flags); the system's zlib 1.3 (crc_ab.c's third arm, Python's zlib in the 2026-10-10 note's stage); Python 3.11.15; valgrind's callgrind for the simulated rows",
+ "tree": {
+  "before": "22597719e40ced8a98a15fc223d29169ac68bbaa",
+  "after": "ce86eadb709bed70b1daf74a0a1f9aed64249c3f"
+ },
+ "records": {
+  "crc.json": "crc_ab.c, one process: the tree before's bcir_crc32 and BCIRQ8 loader (their objects' globals renamed before_*) against the tree after's, zlib's crc32 beside them, an A/A control; the 2026-10-10 note's sizes, the qualification's pack (609,997 octets) and the lab model's file (912,840), and both lab models' loads; every CRC zlib's",
+  "trust.json": "trust_parts.c built against each tree, the two in alternation five times: a CRC pass over the qualification's pack, bcir_sp_validate, bcir_sp_verify_semantic, the segment and block walks, the four as GEM's load calls them, and bcir_sp_execute with a callback that does nothing (what a GEM run pays before its kernels)",
+  "requests.json": "request_ab.py: the standalone C decoder from each tree, a whole request timed (the model's load, a 5-token prompt, 1, 8 and 64 new tokens), 24 rounds, clang and gcc, both lab models; every run's tokens and final logits the tree before's bytes",
+  "qualification.json": "qual_crc.py over run_qualification.py --require-callgrind from each tree",
+  "qualification-repeats.json": "qual_repeat.sh: run_qualification.py from each tree three times in alternation without callgrind, each run's C latency rows",
+  "note-crc.json": "the 2026-10-10 performance note's own CRC stage (../../2026-10-10/run_performance_tests.py --stage crc) on each tree",
+  "faults.json": "red_sweep.py: crc-slice.json on the committed tree's content",
+  "explore.json": "NEXT-6 on the tree before, with the commands that ran (explore_trust_parts.c and dump_pack.py the instruments written apart)",
+  "hashes.json": "the committed tools' sha256, the measured sources' and the pack's",
+  "the tools": "measure_crc.sh and qual_repeat.sh (the records' runs, the second after the first) and the instruments they ran -- crc_ab.c, trust_parts.c, request_ab.py, qual_crc.py, dump_pack.py -- the bytes that ran; the scripts' host paths as placeholders (<REPO>, <SCRATCH>, <LAB>, <LAB2>), which filled in are the run copies byte for byte"
+ },
+ "verdicts": "each effect resolved where its 95% interval excludes 1 and does not meet the A/A control's",
+ "reading": {
+  "crc": [
+   "clang crc32 16384 bytes (the run with model 4cf019ea's load): before 0.0345 ms; after x0.254 (0.241-0.267); zlib x0.090 (0.089-0.091); A/A x1.001 (0.988-1.014)",
+   "clang crc32 131072 bytes (the run with model 4cf019ea's load): before 0.2713 ms; after x0.246 (0.241-0.251); zlib x0.087 (0.085-0.090); A/A x1.004 (0.984-1.025)",
+   "clang crc32 609997 bytes (the run with model 4cf019ea's load): before 1.2533 ms; after x0.253 (0.248-0.258); zlib x0.093 (0.084-0.104); A/A x1.012 (0.987-1.037)",
+   "clang crc32 912840 bytes (the run with model 4cf019ea's load): before 1.9095 ms; after x0.247 (0.244-0.250); zlib x0.088 (0.086-0.091); A/A x0.992 (0.976-1.008)",
+   "clang crc32 1048576 bytes (the run with model 4cf019ea's load): before 2.1948 ms; after x0.251 (0.248-0.254); zlib x0.087 (0.086-0.089); A/A x1.000 (0.997-1.003)",
+   "clang crc32 8388608 bytes (the run with model 4cf019ea's load): before 17.6368 ms; after x0.251 (0.249-0.253); zlib x0.098 (0.097-0.099); A/A x0.997 (0.992-1.002)",
+   "clang model 4cf019ea bcir_q8_model_load: 8.196 -> 1.309 ms, x0.159 (0.157-0.161); A/A x0.997 (0.991-1.003)",
+   "clang crc32 16384 bytes (the run with model daea8965's load): before 0.0343 ms; after x0.241 (0.231-0.252); zlib x0.088 (0.085-0.092); A/A x0.989 (0.968-1.010)",
+   "clang crc32 131072 bytes (the run with model daea8965's load): before 0.2740 ms; after x0.250 (0.248-0.251); zlib x0.089 (0.087-0.091); A/A x0.998 (0.995-1.001)",
+   "clang crc32 609997 bytes (the run with model daea8965's load): before 1.2753 ms; after x0.246 (0.240-0.253); zlib x0.090 (0.082-0.099); A/A x1.000 (0.958-1.045)",
+   "clang crc32 912840 bytes (the run with model daea8965's load): before 1.9065 ms; after x0.248 (0.246-0.251); zlib x0.088 (0.086-0.090); A/A x1.002 (0.995-1.009)",
+   "clang crc32 1048576 bytes (the run with model daea8965's load): before 2.1956 ms; after x0.246 (0.238-0.255); zlib x0.086 (0.084-0.089); A/A x0.981 (0.949-1.014)",
+   "clang crc32 8388608 bytes (the run with model daea8965's load): before 17.5871 ms; after x0.261 (0.245-0.278); zlib x0.104 (0.094-0.116); A/A x0.997 (0.989-1.005)",
+   "clang model daea8965 bcir_q8_model_load: 8.244 -> 1.307 ms, x0.157 (0.154-0.160); A/A x1.005 (0.964-1.047)",
+   "gcc crc32 16384 bytes (the run with model 4cf019ea's load): before 0.0343 ms; after x0.195 (0.191-0.199); zlib x0.091 (0.089-0.092); A/A x0.994 (0.984-1.004)",
+   "gcc crc32 131072 bytes (the run with model 4cf019ea's load): before 0.2752 ms; after x0.195 (0.193-0.196); zlib x0.088 (0.087-0.090); A/A x1.001 (0.994-1.007)",
+   "gcc crc32 609997 bytes (the run with model 4cf019ea's load): before 1.2796 ms; after x0.194 (0.194-0.195); zlib x0.087 (0.087-0.088); A/A x1.000 (0.995-1.006)",
+   "gcc crc32 912840 bytes (the run with model 4cf019ea's load): before 1.9169 ms; after x0.194 (0.191-0.196); zlib x0.087 (0.085-0.089); A/A x0.993 (0.975-1.012)",
+   "gcc crc32 1048576 bytes (the run with model 4cf019ea's load): before 2.2018 ms; after x0.189 (0.184-0.195); zlib x0.092 (0.081-0.104); A/A x1.010 (0.958-1.065)",
+   "gcc crc32 8388608 bytes (the run with model 4cf019ea's load): before 17.6416 ms; after x0.197 (0.196-0.198); zlib x0.101 (0.100-0.102); A/A x1.002 (0.997-1.008)",
+   "gcc model 4cf019ea bcir_q8_model_load: 16.407 -> 1.109 ms, x0.069 (0.067-0.070); A/A x1.005 (0.996-1.014)",
+   "gcc crc32 16384 bytes (the run with model daea8965's load): before 0.0345 ms; after x0.194 (0.193-0.196); zlib x0.091 (0.090-0.092); A/A x1.002 (0.996-1.008)",
+   "gcc crc32 131072 bytes (the run with model daea8965's load): before 0.2819 ms; after x0.211 (0.158-0.282); zlib x0.087 (0.074-0.102); A/A x0.972 (0.881-1.071)",
+   "gcc crc32 609997 bytes (the run with model daea8965's load): before 1.2876 ms; after x0.193 (0.190-0.196); zlib x0.091 (0.086-0.097); A/A x1.020 (0.995-1.044)",
+   "gcc crc32 912840 bytes (the run with model daea8965's load): before 1.8981 ms; after x0.195 (0.192-0.197); zlib x0.088 (0.087-0.089); A/A x1.012 (0.983-1.042)",
+   "gcc crc32 1048576 bytes (the run with model daea8965's load): before 2.1908 ms; after x0.195 (0.194-0.197); zlib x0.088 (0.086-0.089); A/A x1.005 (0.996-1.014)",
+   "gcc crc32 8388608 bytes (the run with model daea8965's load): before 17.5430 ms; after x0.201 (0.196-0.206); zlib x0.110 (0.099-0.122); A/A x1.001 (0.991-1.012)",
+   "gcc model daea8965 bcir_q8_model_load: 16.091 -> 1.065 ms, x0.066 (0.066-0.067); A/A x0.997 (0.994-1.001)"
+  ],
+  "trust_boundary": [
+   "clang before, the median of 5 runs (ms): crc32 1.28, validate 1.277, verify_semantic 1.635, for_each_segment 1.362, for_each_block 1.448, gem_load_four 5.725, execute 4.284",
+   "clang after, the median of 5 runs (ms): crc32 0.318, validate 0.318, verify_semantic 0.696, for_each_segment 0.403, for_each_block 0.496, gem_load_four 1.915, execute 1.432",
+   "gcc before, the median of 5 runs (ms): crc32 1.28, validate 1.281, verify_semantic 1.7, for_each_segment 1.395, for_each_block 1.493, gem_load_four 5.868, execute 4.392",
+   "gcc after, the median of 5 runs (ms): crc32 0.251, validate 0.25, verify_semantic 0.714, for_each_segment 0.373, for_each_block 0.484, gem_load_four 1.821, execute 1.351"
+  ],
+  "requests": [
+   "clang model 1, 1 new tokens: 11.07 -> 4.07 ms x0.380 (0.357-0.403); A/A x0.974 (0.950-0.998)",
+   "clang model 1, 8 new tokens: 12.68 -> 5.62 ms x0.454 (0.427-0.481); A/A x0.978 (0.950-1.006)",
+   "clang model 1, 64 new tokens: 26.28 -> 19.25 ms x0.716 (0.674-0.760); A/A x0.957 (0.906-1.012)",
+   "clang model 2, 1 new tokens: 11.04 -> 4.30 ms x0.409 (0.350-0.477); A/A x0.988 (0.954-1.024)",
+   "clang model 2, 8 new tokens: 12.61 -> 5.73 ms x0.464 (0.427-0.504); A/A x0.995 (0.936-1.057)",
+   "clang model 2, 64 new tokens: 26.26 -> 19.45 ms x0.707 (0.651-0.768); A/A x0.982 (0.896-1.076)",
+   "gcc model 1, 1 new tokens: 18.80 -> 3.79 ms x0.203 (0.199-0.208); A/A x1.017 (0.986-1.049)",
+   "gcc model 1, 8 new tokens: 20.37 -> 5.31 ms x0.256 (0.248-0.264); A/A x0.989 (0.962-1.017)",
+   "gcc model 1, 64 new tokens: 33.80 -> 19.00 ms x0.576 (0.556-0.596); A/A x0.993 (0.983-1.002)",
+   "gcc model 2, 1 new tokens: 19.27 -> 4.03 ms x0.208 (0.200-0.216); A/A x1.005 (0.974-1.037)",
+   "gcc model 2, 8 new tokens: 20.60 -> 5.36 ms x0.266 (0.255-0.278); A/A x1.044 (0.992-1.099)",
+   "gcc model 2, 64 new tokens: 34.57 -> 19.60 ms x0.560 (0.537-0.584); A/A x0.969 (0.942-0.996)"
+  ],
+  "qualification": [
+   "one run each, --require-callgrind: GEM's load of the program (bcir_dgem_load: four CRC passes and their walks, and the binding) 6.186 -> 2.215 ms; the DER artifact converted to the native pack in C (its CRC written, then verify_semantic's pass) 7.457 -> 5.328 ms; the trust boundary alone (bcir_sp_validate and bcir_sp_verify_semantic: two passes and the R10 walk) 2.928 -> 0.998 ms; GEM 16.581 -> 15.025 ms, its overhead over the monolithic runner 4.172 -> 1.566 ms; GEM/monolithic 1.3362 -> 1.1164 (gated at 1.5); the first token of a GEM run (bcir_sp_execute's three passes, then the prompt) 5.82 -> 2.985 ms",
+   "logits sha256 2a18b8613b6b60e4 on both: True; the native pack 295a1d81bef9f878 on both: True; max |C - oracle| 0.0 / 0.0; checks 23/23 and 23/23",
+   "the monolithic runner read 12.409 -> 13.458 ms in those two runs; CRC-SLICE leaves the decoder's step as it was (see qualification_repeats and the requests' 64-token rows, which move by the load's difference alone)",
+   "simulated (callgrind): GEM instructions 230923243 -> 224747158, the monolithic runner's 210858806 -> 210858806"
+  ],
+  "qualification_repeats": [
+   "before, three runs without callgrind: load_ms [6.185, 6.326, 6.06] (median 6.185); monolithic_median_ms [12.461, 12.609, 12.114] (median 12.461); gem_median_ms [16.805, 17.027, 16.039] (median 16.805); gem_over_monolithic_median [1.3485, 1.3504, 1.324] (median 1.3485); per_token_ms_median [0.2256, 0.2342, 0.2231] (median 0.2256); trust_boundary_ms [2.935, 2.934, 2.937] (median 2.935)",
+   "after, three runs without callgrind: load_ms [2.136, 2.192, 2.279] (median 2.192); monolithic_median_ms [11.963, 12.206, 13.969] (median 12.206); gem_median_ms [13.516, 13.765, 15.475] (median 13.765); gem_over_monolithic_median [1.1298, 1.1277, 1.1079] (median 1.1277); per_token_ms_median [0.2253, 0.2303, 0.2608] (median 0.2303); trust_boundary_ms [0.995, 0.998, 1.001] (median 0.998)"
+  ],
+  "the_2026_10_10_note": [
+   "before: bcir_crc32 / zlib through Python, 16384 bytes x10.16, 131072 bytes x11.40, 1048576 bytes x10.59, 8388608 bytes x6.82",
+   "after: bcir_crc32 / zlib through Python, 16384 bytes x2.20, 131072 bytes x2.20, 1048576 bytes x2.10, 8388608 bytes x1.92"
+  ],
+  "faults": [
+   "crc-slice.json: 10 of 10 caught by their own check"
+  ]
+ },
+ "reproduce": [
+  "bash measure_crc.sh  # from <REPO> on the committed tree: HEAD CRC-SLICE, HEAD~1 the tree before",
+  "bash qual_repeat.sh  # after it",
+  "python3 tools/testing/red_sweep.py --faults tools/testing/faults/crc-slice.json",
+  "explore.json's commands, in order, on the tree before  # NEXT-6"
+ ]
+}

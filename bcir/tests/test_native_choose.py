@@ -496,7 +496,11 @@ def test_a_measurement_is_a_table_at_the_trainers_shape():
                 assert set(r["total_ns"]) == arms and set(r["site_ns"]) == readings
                 for name, ns in r["site_ns"].items():
                     assert 0 < ns < r["total_ns"][name.split("@")[0]], (name, r)
-                assert r["site_ns"]["default@qkv.vjp"] != r["site_ns"][f"default@{HEAD_SITE}"]
+            # and each kind's reading of the default arm its own launches: two kinds' sums may tie
+            # in a round where the clock ticks coarsely (CI's aarch64 runner read them equal once),
+            # but a reading of the same launches ties in every round
+            qkv = [r["site_ns"]["default@qkv.vjp"] for r in raw]
+            assert qkv != [r["site_ns"][f"default@{HEAD_SITE}"] for r in raw], raw
             assert ChoiceTable.from_json(table.to_json()) == table
             sites = choose(table, case.spec, trainer_shape(trainer))
             step_program(case.spec, case.batch, case.time, **trainer.program_decisions(),
@@ -527,8 +531,11 @@ def test_the_trainer_states_its_own_decisions():
     cases -- and `trainer_shape` the shape a table measured on it names, on cases where every
     decision but the arenas' alignment takes more than one value
     (contracts, recompute sets, the workspace's tiers and the panels' need, a provider's GEMM and
-    its SiLU, steps and accumulation), and refuses steps or an accumulation that is not a positive
-    integer."""
+    its SiLU, steps and accumulation, the pool's threads and the instances each job family admits
+    -- these last wherever the host's families differ: on a host whose families all admit the same
+    instances, an aarch64 host's the portable one alone, they take that one value, which the cases
+    spell from each contract's name rather than read off the trainer), and refuses steps or an
+    accumulation that is not a positive integer."""
     if _CC is None:
         return
     corpus = nf.trace_corpus()
@@ -543,14 +550,17 @@ def test_the_trainer_states_its_own_decisions():
             if c.spec == nf.PANELS_BENCH[0] and c.contract == "bf16" and c.threads == 1
         ),
         *(c for c in corpus if c.provider),
+        next(c for c in corpus if c.threads > 1),
     ]
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         path = nf.checkout_library(Path(tmp) / "plain")
         if path is None:
             return
         seen: dict[str, set] = {}
+        spelled: set = set()  # the host's instances, spelled from each case's contract
         for i, case in enumerate(cases):
             trainer, decisions = nf._case_trainer(path, case)
+            spelled.add(repr(decisions["instances"]))
             try:
                 got = trainer.program_decisions(
                     steps=case.steps, gradient_accumulation=case.accumulation
@@ -577,7 +587,11 @@ def test_the_trainer_states_its_own_decisions():
             finally:
                 trainer.close()
         varied = {field for field, values in seen.items() if len(values) > 1}
-        assert set(seen) - {"alignment"} <= varied, sorted(set(seen) - varied)
+        # the instances vary with the contract only where the host's families differ; where they
+        # all admit the same instances (an aarch64 host: the portable one alone) the one value is
+        # held above to the masks spelled from each contract's name
+        fixed = {"alignment"} | ({"instances"} if len(spelled) == 1 else set())
+        assert set(seen) - fixed <= varied, sorted(set(seen) - fixed - varied)
 
 
 assert DecoderSpec  # the spec type the fixtures' shapes are made of

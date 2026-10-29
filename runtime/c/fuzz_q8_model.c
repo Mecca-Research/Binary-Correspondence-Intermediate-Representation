@@ -11,7 +11,8 @@
  * -- and never reads or writes out of bounds, never leaks, and never leaves a partially
  * initialized model behind. On success, every tensor the directory declares must be
  * addressable, so this harness also walks `bcir_q8_tensor_value` over each tensor's
- * first/last/out-of-range indices, and probes the accessor with tensors it does not own.
+ * first/last/out-of-range indices, probes the accessor with tensors it does not own, and
+ * holds `bcir_q8_tensor_values` (DECODE-PASSES) to it on windows of each tensor.
  *
  * The loader takes a PATH (it owns the read), so the harness materializes each input in
  * a temp file. libFuzzer keeps this cheap: one reused path, truncated per iteration.
@@ -55,11 +56,26 @@ static int write_input(const uint8_t *data, size_t size) {
   return (fclose(f) == 0 && ok) ? 0 : -1;
 }
 
+/* DECODE-PASSES: bcir_q8_tensor_values over [start, start + count) (count at most 64) must be
+ * bcir_q8_tensor_value's values bit for bit -- a NaN where it gives a NaN -- on every model the
+ * loader accepts; a disagreement is a finding (abort), as an out-of-bounds access is. */
+static void values_window(const bcir_q8_model *m, const bcir_q8_tensor *t, uint32_t start,
+                          uint32_t count) {
+  double out[64];
+  uint32_t i;
+  if (count > 64u || bcir_q8_tensor_values(m, t, start, count, out)) return;
+  for (i = 0; i < count; ++i) {
+    double want = bcir_q8_tensor_value(m, t, start + i);
+    if (memcmp(&want, &out[i], sizeof want) != 0) abort();
+  }
+}
+
 /* Exercise every accessor a consumer would touch on a loaded model, at the boundary
  * indices where an off-by-one would show up. */
 static void walk_model(const bcir_q8_model *m) {
   uint32_t i;
   bcir_q8_tensor foreign;                          /* a tensor the model does not own */
+  double out[2];
   memset(&foreign, 0, sizeof foreign);
   for (i = 0; i < m->tensor_count; ++i) {
     const bcir_q8_tensor *t = &m->tensors[i];
@@ -67,16 +83,26 @@ static void walk_model(const bcir_q8_model *m) {
     if (!looked) continue;
     (void)bcir_q8_tensor_value(m, looked, 0u);
     if (t->element_count) {
+      uint32_t n = t->element_count, w = n < 64u ? n : 64u;
       (void)bcir_q8_tensor_value(m, looked, t->element_count - 1u);
       (void)bcir_q8_tensor_value(m, looked, t->element_count / 2u);
+      values_window(m, looked, 0u, w);                       /* the first, middle and last elements */
+      values_window(m, looked, (n - w) / 2u, w);
+      values_window(m, looked, n - w, w);
+      (void)bcir_q8_tensor_values(m, looked, n - 1u, 2u, out); /* one past the end: refused */
     }
     (void)bcir_q8_tensor_value(m, looked, t->element_count);      /* one past the end */
     (void)bcir_q8_tensor_value(m, looked, UINT32_MAX);
+    (void)bcir_q8_tensor_values(m, looked, t->element_count, 1u, out);
+    (void)bcir_q8_tensor_values(m, looked, UINT32_MAX, 2u, out);
+    (void)bcir_q8_tensor_values(m, looked, 0u, 1u, NULL);
   }
   /* A tensor pointer that is not an element of this model's directory must be rejected
    * (the delta/alignment gate), not dereferenced. */
   (void)bcir_q8_tensor_value(m, &foreign, 0u);
   (void)bcir_q8_tensor_value(m, NULL, 0u);
+  (void)bcir_q8_tensor_values(m, &foreign, 0u, 1u, out);
+  (void)bcir_q8_tensor_values(m, NULL, 0u, 1u, out);
   (void)bcir_q8_model_tensor(m, UINT16_MAX, INT16_MIN);
   (void)bcir_q8_model_tensor(NULL, 0u, 0);
 }

@@ -1,0 +1,13 @@
+{
+ "what": "NEXT-8, the reading after DECODE-ROW that placed SP-ONCE, on the tree before (8d97b1c): CRC-SLICE's committed trust-boundary record (../crc-slice/trust.json, its tree after -- the trust boundary's code is that tree's on 8d97b1c), read a part at a time; its command and output as they ran",
+ "tree": "8d97b1cf19d96c255734f94dc2e3397ab0870cae",
+ "runs": [
+  {
+   "step": 1,
+   "what": "the medians of CRC-SLICE's five alternating runs on its tree after, a part at a time on the qualification's pack: a CRC pass, bcir_sp_validate, bcir_sp_verify_semantic, the segment and block walks, the four as bcir_dgem_load called them, and bcir_sp_execute with a kernel that does nothing (ms)",
+   "command": "cd <REPO> && python3 -c \"\nimport json, statistics\nrows = json.load(open(\\\"docs/research/measurements/2026-10-25/crc-slice/trust.json\\\"))\nfor cc in (\\\"clang\\\", \\\"gcc\\\"):\n    after = [r for r in rows if r[\\\"cc\\\"] == cc and r[\\\"tree\\\"] == \\\"after\\\"]\n    print(cc, {k[:-3]: round(statistics.median(r[k] for r in after), 3) for k in after[0] if k.endswith(\\\"_ms\\\")})\n\"",
+   "output": "clang {'crc32': 0.318, 'validate': 0.318, 'verify_semantic': 0.696, 'for_each_segment': 0.403, 'for_each_block': 0.496, 'gem_load_four': 1.915, 'execute': 1.432}\ngcc {'crc32': 0.251, 'validate': 0.25, 'verify_semantic': 0.714, 'for_each_segment': 0.373, 'for_each_block': 0.484, 'gem_load_four': 1.821, 'execute': 1.351}",
+   "reading": "bcir_sp_execute (1.43 ms clang, 1.35 gcc) is a validation (0.32 / 0.25), bcir_sp_verify_semantic (0.70 / 0.71: the same CRC pass again and the R10 walk) and the segment walk (0.40 / 0.37: the CRC pass a third time and the parse): three CRC passes over one pack in one call, about 0.95 / 0.75 ms of it; bcir_dgem_load's four walks (1.92 / 1.82) four. A body over a checked header would cross the CRC once a call, every bound and verdict kept: SP-ONCE"
+  }
+ ]
+}

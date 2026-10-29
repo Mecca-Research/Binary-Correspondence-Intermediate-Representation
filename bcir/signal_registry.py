@@ -358,8 +358,9 @@ class RaplEnergyProvider(_DefinedProvider):
 
 
 class CpuFreqProvider(_DefinedProvider):
-    """The nominal CPU frequency in kHz (:func:`silicon.cpufreq_info`). KHZ, dim
-    ``compute``."""
+    """The nominal CPU frequency in kHz (:func:`silicon.cpufreq_info`): the cpufreq driver's
+    ``cpuinfo_max_freq``, unavailable on a host without one -- never /proc/cpuinfo's "cpu MHz", the
+    current or hypervisor-reported clock. KHZ, dim ``compute``."""
 
     _DEF = MetricDefinition(
         "compute.cpu_nominal_khz",
@@ -367,7 +368,8 @@ class CpuFreqProvider(_DefinedProvider):
         "compute",
         Provenance.MEASURED,
         SamplingModel.POLLED,
-        "Nominal CPU frequency in kHz from cpufreq / /proc/cpuinfo (silicon.cpufreq_info).",
+        "Nominal CPU frequency in kHz: cpufreq's cpuinfo_max_freq (silicon.cpufreq_info); "
+        "unavailable without a cpufreq driver.",
         signal_id=4,
     )
 

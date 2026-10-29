@@ -1,0 +1,140 @@
+[
+ {
+  "cc": "clang",
+  "case": "bcir_sp_execute, no kernel",
+  "rounds": 15,
+  "reps": 20,
+  "before_ms": 1.39052,
+  "after": {
+   "ms": 0.74269,
+   "ratio": 0.5303,
+   "interval": [
+    0.5263,
+    0.5344
+   ]
+  },
+  "A/A": {
+   "ms": 1.39805,
+   "ratio": 1.002,
+   "interval": [
+    0.9955,
+    1.0086
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "bcir_dgem_load + bcir_dgem_free",
+  "rounds": 15,
+  "reps": 10,
+  "before_ms": 1.97384,
+  "after": {
+   "ms": 0.97564,
+   "ratio": 0.4999,
+   "interval": [
+    0.495,
+    0.505
+   ]
+  },
+  "A/A": {
+   "ms": 1.96239,
+   "ratio": 1.0033,
+   "interval": [
+    0.9967,
+    1.0099
+   ]
+  }
+ },
+ {
+  "cc": "clang",
+  "case": "bcir_dgem_run, the whole request",
+  "rounds": 15,
+  "reps": 3,
+  "before_ms": 12.82447,
+  "after": {
+   "ms": 12.23233,
+   "ratio": 0.9412,
+   "interval": [
+    0.8923,
+    0.9928
+   ]
+  },
+  "A/A": {
+   "ms": 12.91751,
+   "ratio": 1.0046,
+   "interval": [
+    0.9717,
+    1.0386
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "bcir_sp_execute, no kernel",
+  "rounds": 15,
+  "reps": 20,
+  "before_ms": 1.28681,
+  "after": {
+   "ms": 0.75974,
+   "ratio": 0.5908,
+   "interval": [
+    0.5862,
+    0.5956
+   ]
+  },
+  "A/A": {
+   "ms": 1.28241,
+   "ratio": 1.0016,
+   "interval": [
+    0.9911,
+    1.0122
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "bcir_dgem_load + bcir_dgem_free",
+  "rounds": 15,
+  "reps": 10,
+  "before_ms": 1.84103,
+  "after": {
+   "ms": 1.06912,
+   "ratio": 0.5841,
+   "interval": [
+    0.5716,
+    0.5968
+   ]
+  },
+  "A/A": {
+   "ms": 1.8382,
+   "ratio": 0.9968,
+   "interval": [
+    0.9872,
+    1.0064
+   ]
+  }
+ },
+ {
+  "cc": "gcc",
+  "case": "bcir_dgem_run, the whole request",
+  "rounds": 15,
+  "reps": 3,
+  "before_ms": 12.56904,
+  "after": {
+   "ms": 12.07664,
+   "ratio": 0.9587,
+   "interval": [
+    0.9089,
+    1.0112
+   ]
+  },
+  "A/A": {
+   "ms": 12.51184,
+   "ratio": 0.9684,
+   "interval": [
+    0.9276,
+    1.0111
+   ]
+  }
+ }
+]

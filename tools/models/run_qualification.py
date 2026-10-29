@@ -167,10 +167,13 @@ def _valgrind_include() -> list[str]:
 
 
 def build_qualify(directory: Path, *, callgrind: bool = False) -> Path:
-    """bcir-qualify from the checkout's runtime sources, under the host C compiler; with
-    `callgrind`, its callgrind build, which brackets the first run of each rail with callgrind
-    client requests from the valgrind on PATH (<valgrind/callgrind.h>)."""
-    from bcir.toolchain import host_c_compiler, host_link_args
+    """bcir-qualify from the checkout's runtime sources, under the host C compiler, with the
+    manifest's options for the units it compiles (M18, bcir.toolchain.unit_options: their union,
+    one command -- on x86-64 the JCC-erratum mitigation the decoder's units take, so the latency
+    this times is the decoder's as built); with `callgrind`, its callgrind build, which brackets the
+    first run of each rail with callgrind client requests from the valgrind on PATH
+    (<valgrind/callgrind.h>)."""
+    from bcir.toolchain import host_c_compiler, host_link_args, unit_options
 
     cc = host_c_compiler()
     if cc is None:
@@ -178,6 +181,7 @@ def build_qualify(directory: Path, *, callgrind: bool = False) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     exe = directory / ("bcir-qualify.exe" if os.name == "nt" else "bcir-qualify")
     command = [cc, "-std=c11", "-O2", "-ffp-contract=off", "-Wall", "-Wextra", "-Werror", "-g"]
+    command += [f for f in unit_options(QUALIFY_SOURCES, cc) if f not in command]
     command += ["-DBCIR_QUALIFY_CALLGRIND", *_valgrind_include()] if callgrind else []
     command += ["-I", str(RUNTIME), *(str(RUNTIME / s) for s in QUALIFY_SOURCES)]
     command += ["-o", str(exe), *host_link_args(["-lm"])]

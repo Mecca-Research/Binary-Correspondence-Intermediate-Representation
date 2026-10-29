@@ -1,0 +1,117 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23",
+    "bcir.tests.test_native_decoder:test_the_blocked_contract_plans_the_room_its_weight_adjoints_split_in"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KR1 the need the room under every binary32 contract but the blocked one",
+      "new": "    return contract&BCIR_DT_CONTRACT_KBLOCK ? most : ws_most(most,ws_split(g));\n",
+      "old": "    return contract&BCIR_DT_CONTRACT_KBLOCK ? ws_most(most,ws_split(g)) : most;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KR2 the need the room under every binary32 contract (v1's and the fused contract's too)",
+      "new": "    return ws_most(most,ws_split(g));\n",
+      "old": "    return contract&BCIR_DT_CONTRACT_KBLOCK ? ws_most(most,ws_split(g)) : most;\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KR3 the room without the head's pair",
+      "new": "  return ws_most(gate_up,qkv);\n",
+      "old": "  return ws_most(ws_most(bcir_tensor_mm_ksplit_bytes(g.v,g.d,g.n),gate_up),qkv);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KR4 the gate and up group's room one call's slice",
+      "new": "  size_t gate_up=bcir_tensor_mm_ksplit_bytes(g.f,g.d,g.n);\n",
+      "old": "  size_t gate_up=ws_sum(bcir_tensor_mm_ksplit_bytes(g.f,g.d,g.n),bcir_tensor_mm_ksplit_bytes(g.f,g.d,g.n));\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KR5 the q, k and v group's room without the k and v calls' slices",
+      "new": "  size_t qkv=bcir_tensor_mm_ksplit_bytes(g.d,g.d,g.n);\n",
+      "old": "  size_t qkv=ws_sum(bcir_tensor_mm_ksplit_bytes(g.d,g.d,g.n),\n      ws_sum(bcir_tensor_mm_ksplit_bytes(g.k,g.d,g.n),bcir_tensor_mm_ksplit_bytes(g.k,g.d,g.n)));\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KR6 the k and v calls' slices at the model width, not the KV width",
+      "new": "      ws_sum(bcir_tensor_mm_ksplit_bytes(g.d,g.d,g.n),bcir_tensor_mm_ksplit_bytes(g.d,g.d,g.n)));\n",
+      "old": "      ws_sum(bcir_tensor_mm_ksplit_bytes(g.k,g.d,g.n),bcir_tensor_mm_ksplit_bytes(g.k,g.d,g.n)));\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KR7 the need without the room the need under the blocked contract",
+      "new": "  if (contract&(BCIR_DT_CONTRACT_BF16|BCIR_DT_CONTRACT_KBLOCK)) return bcir_decoder_workspace_need(plan,contract,threads);\n",
+      "old": "  if (contract&BCIR_DT_CONTRACT_BF16) return bcir_decoder_workspace_need(plan,contract,threads);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KR8 the need without the room under the bf16 GEMMs the binary32 attention's copies (the bf16 attention's bit tested for the GEMMs')",
+      "new": "  if (contract&BCIR_DT_CONTRACT_ATTNBF16) return bcir_decoder_workspace_need(plan,contract,threads);\n",
+      "old": "  if (contract&BCIR_DT_CONTRACT_BF16) return bcir_decoder_workspace_need(plan,contract,threads);\n",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KR9 a call's planned slice its raw partials, not the step to the next 64 bytes",
+      "new": "  size_t blocks,raw=0;\n  return mm_ksplit_step(m,n,k,&blocks,&raw) ? raw : 0;\n",
+      "old": "  size_t blocks,raw;\n  return mm_ksplit_step(m,n,k,&blocks,&raw);\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KR10 the room's slices a call's raw partials apart (the step unrounded, the plan's figure too)",
+      "new": "  return *raw;\n",
+      "old": "  return *raw%64 ? *raw+(64-*raw%64) : *raw;\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "KR11 the probe counting no split",
+      "new": "  j->ks=blocks; j->ws=(float *)(void *)*room;\n",
+      "old": "  j->ks=blocks; j->ws=(float *)(void *)*room; KSPLIT_SAW();\n",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_blocked_contract_plans_the_room_its_weight_adjoints_split_in",
+      "label": "KR12 memory_plan without the tier at the need less the room",
+      "new": "",
+      "old": "    if floor <= unsplit < need:  # KSPLIT-ROOM: the weight adjoints unsplit before a re-run layer\n        tiers.append(unsplit)\n",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_blocked_contract_plans_the_room_its_weight_adjoints_split_in",
+      "label": "KR13 memory_plan's tier without the room after the panels' (binary32's empty tier first)",
+      "new": "    if floor <= panels < tiers[-1]:\n        tiers.append(panels)\n    if floor <= unsplit < tiers[-1]:  # KSPLIT-ROOM: the weight adjoints unsplit before a re-run layer\n        tiers.append(unsplit)\n",
+      "old": "    if floor <= unsplit < need:  # KSPLIT-ROOM: the weight adjoints unsplit before a re-run layer\n        tiers.append(unsplit)\n    if floor <= panels < tiers[-1]:\n        tiers.append(panels)\n",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_blocked_contract_plans_the_room_its_weight_adjoints_split_in",
+      "label": "KR14 memory_plan taking the need for the need without the room",
+      "new": "    unsplit = need\n",
+      "old": "    unsplit = lib.bcir_decoder_workspace_unsplit(p, bits, threads)\n",
+      "path": "bcir/hosted/models/native.py"
+    },
+    {
+      "expects": "test_the_blocked_contract_plans_the_room_its_weight_adjoints_split_in",
+      "label": "KR15 the trainer's default workspace the need without the room",
+      "new": "            workspace_bytes = unsplit\n",
+      "old": "            workspace_bytes = need\n",
+      "path": "bcir/hosted/models/native.py"
+    }
+  ]
+}

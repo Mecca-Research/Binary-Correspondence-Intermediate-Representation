@@ -1,0 +1,63 @@
+{
+ "tools": {
+  "measure_align.sh": "215d2cf809bd1f11dc53d93b09f1ce85e04ef3055a5e7bd732680f47e4355251",
+  "align_ab.c": "97277e18b05a4366674870381769239c5e8d4c9bdbc07105afdc250011f9c85a",
+  "build_align.py": "6280011ff24fd6801bc5ffbaf6eff54973ecf69f70f10ff7ecfab576ab276a34",
+  "decode_place.c": "86a4c268d5545d7f701766efb67ad396af96cdfeceb4b7d6b382dee1bee3f576",
+  "build_decode.py": "47f9d9a155dff49bf4c1552061e9ee3b6b58f26ddc10436200ac9eaef6404eb1",
+  "build_so.py": "bf2f1571e4ef5d3a1b2e347230bb370b3df3ff5cee778241bbc3b735dc417ee9",
+  "kernel_code.py": "90d5c23a5a0b3f1256bc6a7cd3a4c823f29c3a8c0f3b226b89c0fdc63f7c470a"
+ },
+ "tools run from other records": {
+  "../../2026-10-26/decode-threads/synthetic_model.py": "e91c78c82cdcc4d090128b5bcc13efb01cb5bde94a20f28c8606d6fadb597368",
+  "../../2026-10-23/mm-rows/ab_gemm.c": "a656b9f01da21a083eeea01cd54bd80437a98db8972c5bc490f7d4976b557a67",
+  "../../2026-10-25/q8-lanes/qual_summary.py": "4a4a15c7dd86bd5581bc2c31f3c0a36aa4211b028b20d767546c958598b533d5"
+ },
+ "synthetic_models": {
+  "d256": "2de1f43949aa824ebcda1a3fb30b16f773a480c623ba67d59e6efe3dfdd416d6",
+  "d512": "0c134a044984cdb04eeac7ef43da44a64a1e54b36479a23cf360f94f98c41323"
+ },
+ "sources": {
+  "before/runtime/c/bcir_ai_kernels.c": "c751553471aea88bdde01fbe31730ea0a7f5eb0638404881eab186c06f676127",
+  "before/runtime/c/bcir_q8_model.c": "ae8b0ff55014355fac0f10c49005c22f97e7ad5921de07b4db0ca81cf331c4c0",
+  "before/runtime/c/bcir_llama.c": "f3a31700b5f08ad0b9b6d0a4933325ad50f333ae9ef08cc80d0585eec6fbd2da",
+  "before/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "before/runtime/c/bcir_tensor.c": "18241b181820728c34121d3f0eac79eb73bc7e4bd56690663eeffda1b025b7ec",
+  "before/runtime/manifest.json": "cd37c89aea026191595230833e5686c1cd5bf4cca9b5d6fbf6909920452283d7",
+  "before/bcir/toolchain.py": "9022e3bc8ae405f96fb39a420731f7a8675bac1a12dbcea5d4c2ce4b10f37808",
+  "before/cmake/BCIRManifest.cmake": "dc5b99bbd7b91d08331c6701bfe226e3698dd07b4a9cb90d52668a73e91dd35b",
+  "before/tools/build/manifest.py": "41d31192ae30e23c0e5f2cb400c67a859d6dd2d251778dcb98557421147b7508",
+  "before/tools/build/bcirfile.py": "6adb59a308628ebbc4f1346ad1c9b4c8a14fe8b6a865f711ddb8be7114073b7c",
+  "before/bcir/kbcir/native_ai.py": "c19e0a671a963e4c7eefb91b6b239b87acc71756b423342455b5b7758dbb3689",
+  "before/bcir/frontends/models/model_microbench.py": "c8d54e48c6bbc903ff073022fa8526ba194596c87eef88069e48aec35882f7e7",
+  "before/tools/models/run_qualification.py": "7b4532745719e8434a01934e4dd309a45e97bdfa8ed1e686d68d1df9fb0c4c4a",
+  "after/runtime/c/bcir_ai_kernels.c": "c751553471aea88bdde01fbe31730ea0a7f5eb0638404881eab186c06f676127",
+  "after/runtime/c/bcir_q8_model.c": "ae8b0ff55014355fac0f10c49005c22f97e7ad5921de07b4db0ca81cf331c4c0",
+  "after/runtime/c/bcir_llama.c": "f3a31700b5f08ad0b9b6d0a4933325ad50f333ae9ef08cc80d0585eec6fbd2da",
+  "after/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "after/runtime/c/bcir_tensor.c": "18241b181820728c34121d3f0eac79eb73bc7e4bd56690663eeffda1b025b7ec",
+  "after/runtime/manifest.json": "9e35f85218918aa691263d457e0ce4a005ae2517b7502b916fafb68e33161a53",
+  "after/bcir/toolchain.py": "11d819ccb1490a7dab5420448518a1b2876ef60f7afa6678700cd926a7af55df",
+  "after/cmake/BCIRManifest.cmake": "8874eb06d959d4aa8229511fc1554bae90b9de65b60228c6b87a68b21040ebb9",
+  "after/tools/build/manifest.py": "83557bbf907ff13028f153837183bcd4aa2c897fa9b1921c1825119777b920b4",
+  "after/tools/build/bcirfile.py": "7f4139d112e7d8cde6a3a1dc9a04d8a86a9095f7ac0adfd362da1deb7b7d7b06",
+  "after/bcir/kbcir/native_ai.py": "3e07bcd07e9d071b63e29926136f95dbb02e4a7520d10f1208f64061b447e952",
+  "after/bcir/frontends/models/model_microbench.py": "4879550d36a3e819fee55ed4b38707e2ed0b3fa3837d8ce6bb13f932cf94cdc6",
+  "after/tools/models/run_qualification.py": "56cf6a434ffc2a846c5c74ccf8214ad16d357e338fbdbc99f6f37cdf1a6dd149",
+  "after/tools/testing/faults/kernel-align.json": "bc716f6258e0741fba868b1c9e525c46ad233593c17826abda53472c19b20fbd",
+  "without/runtime/c/bcir_ai_kernels.c": "c751553471aea88bdde01fbe31730ea0a7f5eb0638404881eab186c06f676127",
+  "without/runtime/c/bcir_q8_model.c": "ae8b0ff55014355fac0f10c49005c22f97e7ad5921de07b4db0ca81cf331c4c0",
+  "without/runtime/c/bcir_llama.c": "f3a31700b5f08ad0b9b6d0a4933325ad50f333ae9ef08cc80d0585eec6fbd2da",
+  "without/runtime/c/bcir_decode.c": "e52ab1ae17c0b6c81217b2cf65f5b1905b761992ff250a04e4ddb45c218bf0d9",
+  "without/runtime/c/bcir_tensor.c": "18241b181820728c34121d3f0eac79eb73bc7e4bd56690663eeffda1b025b7ec",
+  "without/runtime/manifest.json": "9e35f85218918aa691263d457e0ce4a005ae2517b7502b916fafb68e33161a53",
+  "without/bcir/toolchain.py": "11d819ccb1490a7dab5420448518a1b2876ef60f7afa6678700cd926a7af55df",
+  "without/cmake/BCIRManifest.cmake": "8874eb06d959d4aa8229511fc1554bae90b9de65b60228c6b87a68b21040ebb9",
+  "without/tools/build/manifest.py": "83557bbf907ff13028f153837183bcd4aa2c897fa9b1921c1825119777b920b4",
+  "without/tools/build/bcirfile.py": "7f4139d112e7d8cde6a3a1dc9a04d8a86a9095f7ac0adfd362da1deb7b7d7b06",
+  "without/bcir/kbcir/native_ai.py": "3e07bcd07e9d071b63e29926136f95dbb02e4a7520d10f1208f64061b447e952",
+  "without/bcir/frontends/models/model_microbench.py": "4879550d36a3e819fee55ed4b38707e2ed0b3fa3837d8ce6bb13f932cf94cdc6",
+  "without/tools/models/run_qualification.py": "56cf6a434ffc2a846c5c74ccf8214ad16d357e338fbdbc99f6f37cdf1a6dd149",
+  "without/tools/testing/faults/kernel-align.json": "bc716f6258e0741fba868b1c9e525c46ad233593c17826abda53472c19b20fbd"
+ }
+}

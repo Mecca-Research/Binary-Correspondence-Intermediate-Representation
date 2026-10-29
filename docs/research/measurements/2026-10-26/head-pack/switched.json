@@ -1,0 +1,374 @@
+[
+ {
+  "run": 1,
+  "cc": "clang",
+  "widest": 4,
+  "rounds": 24,
+  "reps": 3,
+  "short": 8,
+  "long": 200,
+  "vocab": 1024,
+  "d_model": 128,
+  "head_pack_bytes": 139264,
+  "unpacked_per_token_ms": 0.21215,
+  "packed": {
+   "per_token_ms": 0.19139,
+   "ratio": 0.9155,
+   "interval": [
+    0.885,
+    0.9471
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.21093,
+   "ratio": 1.0031,
+   "interval": [
+    0.9806,
+    1.0261
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_head_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "widest": 2,
+  "rounds": 24,
+  "reps": 3,
+  "short": 8,
+  "long": 200,
+  "vocab": 1024,
+  "d_model": 128,
+  "head_pack_bytes": 139264,
+  "unpacked_per_token_ms": 0.22077,
+  "packed": {
+   "per_token_ms": 0.20431,
+   "ratio": 0.9397,
+   "interval": [
+    0.9165,
+    0.9634
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.2216,
+   "ratio": 0.9927,
+   "interval": [
+    0.9732,
+    1.0125
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_head_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "widest": 4,
+  "rounds": 24,
+  "reps": 3,
+  "short": 8,
+  "long": 200,
+  "vocab": 1024,
+  "d_model": 128,
+  "head_pack_bytes": 139264,
+  "unpacked_per_token_ms": 0.2178,
+  "packed": {
+   "per_token_ms": 0.19197,
+   "ratio": 0.863,
+   "interval": [
+    0.8162,
+    0.9124
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.2207,
+   "ratio": 0.978,
+   "interval": [
+    0.93,
+    1.0285
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_head_on_its_arms_path": true
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "widest": 2,
+  "rounds": 24,
+  "reps": 3,
+  "short": 8,
+  "long": 200,
+  "vocab": 1024,
+  "d_model": 128,
+  "head_pack_bytes": 139264,
+  "unpacked_per_token_ms": 0.23213,
+  "packed": {
+   "per_token_ms": 0.20088,
+   "ratio": 0.8636,
+   "interval": [
+    0.8403,
+    0.8876
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.23061,
+   "ratio": 0.9971,
+   "interval": [
+    0.974,
+    1.0209
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_head_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "widest": 4,
+  "rounds": 24,
+  "reps": 3,
+  "short": 8,
+  "long": 200,
+  "vocab": 1024,
+  "d_model": 128,
+  "head_pack_bytes": 139264,
+  "unpacked_per_token_ms": 0.21534,
+  "packed": {
+   "per_token_ms": 0.1949,
+   "ratio": 0.9203,
+   "interval": [
+    0.8994,
+    0.9416
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.2137,
+   "ratio": 0.9915,
+   "interval": [
+    0.9784,
+    1.0049
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_head_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "widest": 2,
+  "rounds": 24,
+  "reps": 3,
+  "short": 8,
+  "long": 200,
+  "vocab": 1024,
+  "d_model": 128,
+  "head_pack_bytes": 139264,
+  "unpacked_per_token_ms": 0.2231,
+  "packed": {
+   "per_token_ms": 0.20485,
+   "ratio": 0.9047,
+   "interval": [
+    0.8692,
+    0.9416
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.22173,
+   "ratio": 0.9794,
+   "interval": [
+    0.949,
+    1.0108
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_head_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "widest": 4,
+  "rounds": 24,
+  "reps": 3,
+  "short": 8,
+  "long": 200,
+  "vocab": 1024,
+  "d_model": 128,
+  "head_pack_bytes": 139264,
+  "unpacked_per_token_ms": 0.21509,
+  "packed": {
+   "per_token_ms": 0.18909,
+   "ratio": 0.8812,
+   "interval": [
+    0.8671,
+    0.8955
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.21561,
+   "ratio": 1.0403,
+   "interval": [
+    1.0026,
+    1.0794
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_head_on_its_arms_path": true
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "widest": 2,
+  "rounds": 24,
+  "reps": 3,
+  "short": 8,
+  "long": 200,
+  "vocab": 1024,
+  "d_model": 128,
+  "head_pack_bytes": 139264,
+  "unpacked_per_token_ms": 0.23372,
+  "packed": {
+   "per_token_ms": 0.20319,
+   "ratio": 0.8548,
+   "interval": [
+    0.8313,
+    0.8791
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.234,
+   "ratio": 1.0094,
+   "interval": [
+    0.9713,
+    1.049
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_head_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "widest": 4,
+  "rounds": 24,
+  "reps": 3,
+  "short": 8,
+  "long": 200,
+  "vocab": 1024,
+  "d_model": 128,
+  "head_pack_bytes": 139264,
+  "unpacked_per_token_ms": 0.21745,
+  "packed": {
+   "per_token_ms": 0.19743,
+   "ratio": 0.9219,
+   "interval": [
+    0.8962,
+    0.9484
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.2179,
+   "ratio": 1.0135,
+   "interval": [
+    0.9824,
+    1.0455
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_head_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "widest": 2,
+  "rounds": 24,
+  "reps": 3,
+  "short": 8,
+  "long": 200,
+  "vocab": 1024,
+  "d_model": 128,
+  "head_pack_bytes": 139264,
+  "unpacked_per_token_ms": 0.21803,
+  "packed": {
+   "per_token_ms": 0.20341,
+   "ratio": 0.9428,
+   "interval": [
+    0.9187,
+    0.9676
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.21856,
+   "ratio": 1.0091,
+   "interval": [
+    0.9911,
+    1.0274
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_head_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "widest": 4,
+  "rounds": 24,
+  "reps": 3,
+  "short": 8,
+  "long": 200,
+  "vocab": 1024,
+  "d_model": 128,
+  "head_pack_bytes": 139264,
+  "unpacked_per_token_ms": 0.21589,
+  "packed": {
+   "per_token_ms": 0.18825,
+   "ratio": 0.8771,
+   "interval": [
+    0.8495,
+    0.9056
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.21544,
+   "ratio": 1.0105,
+   "interval": [
+    0.9929,
+    1.0285
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_head_on_its_arms_path": true
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "widest": 2,
+  "rounds": 24,
+  "reps": 3,
+  "short": 8,
+  "long": 200,
+  "vocab": 1024,
+  "d_model": 128,
+  "head_pack_bytes": 139264,
+  "unpacked_per_token_ms": 0.23203,
+  "packed": {
+   "per_token_ms": 0.19964,
+   "ratio": 0.8466,
+   "interval": [
+    0.815,
+    0.8795
+   ]
+  },
+  "A/A": {
+   "per_token_ms": 0.23079,
+   "ratio": 0.9822,
+   "interval": [
+    0.9441,
+    1.022
+   ]
+  },
+  "every_generation_the_same_bytes": true,
+  "every_head_on_its_arms_path": true
+ }
+]

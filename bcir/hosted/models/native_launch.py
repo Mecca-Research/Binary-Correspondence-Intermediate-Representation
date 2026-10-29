@@ -36,7 +36,7 @@ projection, and a program's trace is held to the program as PX-1 holds the step'
 
 A record: kind, launch (the calls of one job share it), flags, eight dimensions, then ten operands
 as (space, byte offset, bytes) -- spaces 1-4 the parameter arenas (weights, gradients, first and
-second moments), 5 activations, 6 scratch, 7 the bf16 workspace, 8 outside the state (the
+second moments), 5 activations, 6 scratch, 7 the workspace, 8 outside the state (the
 caller's tokens and targets, offset 0); an absent operand is (0, 0, 0). A GEMM call's flags are its
 entry (0 v1, 1 fused, 2 blocked, 3 bf16 -- each a call alone; 4 a pair's call, 5 a group's, 6 a
 bf16 group's; 7 a provider's) | role << 4 (0 alone, 1 a pair's first or a chain's, 2 the pair's
@@ -51,6 +51,7 @@ from dataclasses import dataclass, replace
 
 from ...frontends.models.decode import DecoderSpec
 from .native_program import ARENAS, recompute_layers, training_step_program
+from .native_program import ROPE_TABLE as _TABLE
 
 #: Record kinds, as the probe numbers them.
 SCAN, ZERO, EMBED, RMS, GEMM, ROPE, ATTN, ATTN_VJP, ADD, SILU_MUL = range(1, 11)
@@ -58,6 +59,8 @@ SILU_MUL_PANELS, SWIGLU_VJP, SWIGLU_VJP_PANELS, RMS_VJP, LOSS, SCATTER = range(1
 PASS, PREFLIGHT, COMMIT, MUL, PROVIDER_SILU = range(17, 22)
 #: The host's records of a program (PX-2): a check, the update -- and a check's three tests.
 CHECK, UPDATE = 22, 23
+#: ROPE-TABLE: the forward's fill of the rotation's table, which every ROPE record reads.
+ROPE_TABLE = 24
 CHECK_FORWARD, CHECK_RAN, CHECK_LOSS = 1, 2, 4
 KIND_NAMES = {
     SCAN: "scan", ZERO: "zero", EMBED: "embed", RMS: "rms", GEMM: "gemm", ROPE: "rope",
@@ -65,13 +68,14 @@ KIND_NAMES = {
     SILU_MUL_PANELS: "silu_mul.panels", SWIGLU_VJP: "swiglu.vjp",
     SWIGLU_VJP_PANELS: "swiglu.vjp.panels", RMS_VJP: "rms.vjp", LOSS: "loss", SCATTER: "scatter",
     PASS: "update.pass", PREFLIGHT: "update.preflight", COMMIT: "update.commit", MUL: "mul",
-    PROVIDER_SILU: "provider.silu",
+    PROVIDER_SILU: "provider.silu", ROPE_TABLE: "rope.table",
 }  # fmt: skip
 #: Every kind a program may hold or a trace record: the trace's and the host's.
 PROGRAM_KIND_NAMES = KIND_NAMES | {CHECK: "check", UPDATE: "update"}
 #: Operand spaces: the six arenas in the state's order, then the workspace and the outside.
 SPACES = {name: i + 1 for i, name in enumerate(ARENAS)} | {"workspace": 7, "external": 8}
-#: A record's words: kind, launch, flags, 8 dimensions, 10 operands of 3 words, 7 spare.
+#: A record's words: kind, launch, flags, 8 dimensions, 10 operands of 3 words, the job's instance
+#: and workers (PX-3b: `WORD_INSTANCE`, `WORD_WORKERS`), 5 spare.
 RECORD_WORDS = 48
 DIMS, REFS = 8, 10
 #: GEMM entries (the flags' low nibble).
@@ -79,7 +83,7 @@ E_V1, E_FUSED, E_KBLOCK, E_BF16, E_PAIR, E_GROUP, E_BF16_GROUP, E_PROVIDER = ran
 
 # the state's contract bits (bcir_decoder_train.h) and the tensor unit's flags (bcir_tensor.h)
 _FUSED, _EXP, _KBLOCK, _REDUCE, _BF16, _ATTN, _ATTNBF16 = 1, 2, 4, 8, 16, 32, 64
-_ATTENTION_EXP, _ATTENTION_FUSED = 1, 2
+_ATTENTION_EXP, _ATTENTION_FUSED, _ATTENTION_LOWER, _ATTENTION_BANDS = 1, 2, 16, 32
 _RMSB_ADD, _RMSB_FIRST = 1, 2
 # loss_backward_with's facts (KNOWN, DEFER, COMMITTED) and the update's chunk rule
 _KNOWN, _DEFER, _COMMITTED = 1, 2, 4
@@ -105,13 +109,18 @@ class Record:
     flags: int
     dims: tuple[int, ...]
     refs: tuple[tuple[int, int, int], ...]
+    instance: int = 0  # PX-3b: word 41, the job's instance (0 the widest its family admits)
+    workers: int = 0  # PX-3b: word 42, the job's workers (0 all the pool's threads)
 
     def describe(self) -> str:
         operands = " ".join(
             f"{_SPACE_NAMES.get(s, s)}+{o}/{b}" for s, o, b in self.refs if (s, o, b) != _NONE
         )
         name = PROGRAM_KIND_NAMES.get(self.kind, self.kind)
-        return f"{name} flags={self.flags:#x} dims={list(self.dims)} {operands}"
+        how = (f" instance={self.instance}" if self.instance else "") + (
+            f" workers={self.workers}" if self.workers else ""
+        )
+        return f"{name} flags={self.flags:#x} dims={list(self.dims)} {operands}{how}"
 
 
 _SPACE_NAMES = {v: k for k, v in SPACES.items()}
@@ -165,11 +174,14 @@ def run_launches(
     provider_silu: bool = False,
     steps: int = 1,
     accumulation: int = 1,
+    threads: int = 1,
+    instances: dict | None = None,
 ) -> list[Launch]:
     """The launches one `bcir_decoder_run_accum(state, ..., steps, accumulation, ...)` call issues
     under the given decisions (module docstring): the launches of the program that takes the C
     step's own. `contract` is the state's bits, `alignment` each space's base address modulo 64
-    (the panels need 64-byte slots; absent: aligned)."""
+    (the panels need 64-byte slots; absent: aligned); `threads` and `instances` the host's
+    (PX-3b: what each launch is traced as running on, `program_launches`)."""
     return program_launches(
         step_program(
             spec,
@@ -184,7 +196,9 @@ def run_launches(
             provider_silu=provider_silu,
             steps=steps,
             accumulation=accumulation,
-        )  # fmt: skip
+        ),  # fmt: skip
+        threads=threads,
+        instances=instances,
     )
 
 
@@ -203,6 +217,72 @@ SITE_KINDS = {
     "qkv.vjp": ("group", "pair", "calls"),
 }
 HEAD_SITE, HEAD_ALTERNATIVES = "head.vjp", ("pair", "calls")
+
+
+#: PX-3b (DISPATCH): how a job runs, the other half of the planner's choices -- the instance of a
+#: GEMM or an attention (word 41: 0 the widest its family admits, else one bit) and the job's workers
+#: (word 42: 0 all the pool's threads, else 1 .. its threads), alike in every record of the job,
+#: each the same bits at every value (bcir_decoder_train.h). A DISPATCH KIND names the jobs a choice
+#: applies to: a GEMM job by the linear it runs -- each layer's q/k/v, o, gate/up and down
+#: projections forward (`*.fwd`) and their VJPs (`*.vjp`), the head's -- and every other job by its
+#: kernel (`KIND_NAMES`); an alternative is `i<bit>` (that instance) or `t<k>` (k workers).
+WORD_INSTANCE, WORD_WORKERS = 41, 42
+GEMM_DISPATCH_KINDS = ("qkv.fwd", "o.fwd", "gateup.fwd", "down.fwd", "head.fwd", "head.vjp",
+                       "down.vjp", "gateup.vjp", "o.vjp", "qkv.vjp")  # fmt: skip
+#: the kernels a program holds (no trace-only record, no CHECK), each a dispatch kind of its own
+KERNEL_DISPATCH_KINDS = tuple(
+    PROGRAM_KIND_NAMES[k] for k in sorted(PROGRAM_KIND_NAMES)
+    if k not in (GEMM, PASS, PREFLIGHT, COMMIT, CHECK)
+)  # fmt: skip
+DISPATCH_KINDS = GEMM_DISPATCH_KINDS + KERNEL_DISPATCH_KINDS
+#: the kinds whose jobs may name an instance (a provider's GEMM is not BCIR's to name)
+INSTANCE_KINDS = frozenset(GEMM_DISPATCH_KINDS) | {"attention", "attention.vjp"}
+#: an instance's bits, as bcir_tensor.h numbers them
+INSTANCE_BITS = {1: "portable", 2: "avx2", 4: "avx512", 8: "amx"}
+
+
+def _widest(mask: int) -> int:
+    return next(bit for bit in (8, 4, 2, 1) if mask & bit)
+
+
+def dispatch_alternatives(*, threads: int, instances: dict, provider_mm: bool = False,
+                          **_decisions) -> dict[str, tuple[str, ...]]:  # fmt: skip
+    """Every dispatch kind and the alternatives this host admits for it other than the default:
+    an instance kind each instance its family admits but the widest (`instances`: the families'
+    masks, as `NativeDecoder.program_decisions` reads them), every kind each worker count below the
+    pool's `threads`. A provider's GEMMs name no instance. Other decisions are accepted and
+    ignored, so a trainer's whole decisions can be passed."""
+    if type(threads) is not int or threads < 1:
+        raise ValueError("threads must be a positive integer")
+    out = {}
+    for kind in DISPATCH_KINDS:
+        alts = []
+        if kind in INSTANCE_KINDS and not (provider_mm and kind in GEMM_DISPATCH_KINDS):
+            family = "gemm" if kind in GEMM_DISPATCH_KINDS else "attention"
+            mask = instances[family]
+            alts += [f"i{bit}" for bit in (1, 2, 4, 8) if mask & bit and bit != _widest(mask)]
+        alts += [f"t{k}" for k in range(1, threads)]
+        out[kind] = tuple(alts)
+    return out
+
+
+def parse_dispatch(kind: str, alternative) -> tuple[str, int]:
+    """("instance" | "workers", value) for a dispatch alternative's spelling -- `i<bit>` an
+    instance (1, 2, 4 or 8, of a kind that names one), `t<k>` k workers (k >= 1, no leading zero,
+    ASCII digits) -- refusing any other."""
+    if type(alternative) is not str or len(alternative) < 2 or alternative[0] not in "it":
+        raise ValueError(f"{kind}: {alternative!r} is not i<bit> or t<workers>")
+    digits = alternative[1:]
+    if not digits.isascii() or not digits.isdigit() or (digits[0] == "0"):
+        raise ValueError(f"{kind}: {alternative!r} is not i<bit> or t<workers>")
+    value = int(digits)
+    if alternative[0] == "i":
+        if value not in INSTANCE_BITS:
+            raise ValueError(f"{kind}: {alternative!r} names no instance (1, 2, 4 or 8)")
+        if kind not in INSTANCE_KINDS:
+            raise ValueError(f"{kind}: names no instance (only a GEMM or an attention does)")
+        return "instance", value
+    return "workers", value
 
 
 def choice_sites(spec: DecoderSpec) -> dict[str, tuple[str, ...]]:
@@ -250,6 +330,10 @@ def step_program(
     facts: bool = True,
     sites: dict | None = None,
     labels: list | None = None,
+    threads: int = 1,
+    instances: dict | None = None,
+    dispatch: dict | None = None,
+    dispatch_labels: list | None = None,
 ) -> list[Launch]:
     """The program of one `bcir_decoder_run_program(state, ..., steps, accumulation, ...)` call:
     `run_launches`' walk with the host's CHECK and UPDATE records in place, under the given
@@ -263,9 +347,38 @@ def step_program(
     PX-3: `sites` takes any choice site's alternative (`choice_sites`) in place of the booleans'
     (`default_sites`) -- a site or alternative the program does not have is refused -- and a list
     passed as `labels` receives each launch's site, None for a launch no choice site holds: the
-    site's GEMMs, and the SwiGLU block's kernels for its `panels` site."""
+    site's GEMMs, and the SwiGLU block's kernels for its `panels` site.
+
+    PX-3b: `dispatch` maps a dispatch kind (`DISPATCH_KINDS`) to an alternative -- `i<bit>` the
+    instance its jobs run, `t<k>` the workers they run on -- into every record of every job of the
+    kind (words 41 and 42); a kind or alternative outside the grammar is refused, and so, given the
+    trainer's `threads` and `instances` (`NativeDecoder.program_decisions`), one this host does not
+    admit; a list passed as `dispatch_labels` receives each launch's dispatch kind."""
     if type(steps) is not int or steps < 1 or type(accumulation) is not int or accumulation < 1:
         raise ValueError("steps and accumulation must be positive integers")
+    if type(threads) is not int or threads < 1:
+        raise ValueError("threads must be a positive integer")
+    chosen_dispatch: dict[str, tuple[str, int]] = {}
+    if dispatch is not None:
+        if not isinstance(dispatch, dict):
+            raise ValueError("dispatch maps a dispatch kind to an alternative")
+        for kind, alternative in dispatch.items():
+            if type(kind) is not str or kind not in DISPATCH_KINDS:
+                raise ValueError(f"no dispatch kind {kind!r}")
+            what, value = parse_dispatch(kind, alternative)
+            if what == "instance":
+                if provider_mm and kind in GEMM_DISPATCH_KINDS:
+                    raise ValueError(f"{kind}: a provider's GEMM names no instance")
+                family = "gemm" if kind in GEMM_DISPATCH_KINDS else "attention"
+                if instances is not None and not instances[family] & value:
+                    raise ValueError(
+                        f"{kind}: the host's {family} family admits no instance {value}"
+                    )
+            elif value > threads:
+                raise ValueError(f"{kind}: {value} workers, past the pool's {threads} threads")
+            chosen_dispatch[kind] = (what, value)
+    if dispatch_labels is not None and (not isinstance(dispatch_labels, list) or dispatch_labels):
+        raise ValueError("dispatch_labels is an empty list the launches' kinds are appended to")
     if any(type(flag) is not bool for flag in (group, pair, panels, facts)):
         raise ValueError("group, pair, panels and facts are booleans")
     known = choice_sites(spec)
@@ -280,6 +393,7 @@ def step_program(
     if labels is not None and (not isinstance(labels, list) or labels):
         raise ValueError("labels is an empty list the program's sites are appended to")
     current: list = [None]
+    gemm_kind: list = [None]  # the dispatch kind of the GEMMs emitted from here on (PX-3b)
     program = training_step_program(spec, batch, time, recompute)
     lay = _layout(program)
     redone = set(recompute_layers(spec, recompute))
@@ -300,6 +414,22 @@ def step_program(
         _ATTENTION_FUSED if contract & _ATTN else 0
     )
     ws = (SPACES["workspace"], 0, workspace_bytes) if gemm_contract == 3 else _NONE
+    # ATT-CONTIG: the binary32 attention is lent the state's workspace under any contract, where it
+    # has bytes -- the entry copies a head's rows into it from its need on, and runs them in place below
+    ws_attention = (SPACES["workspace"], 0, workspace_bytes) if workspace_bytes else _NONE
+    # KSPLIT (bcir_decoder_train.c's ks_lends): a blocked-contract job with a weight adjoint -- a call
+    # with A transposed -- is lent the state's workspace where it has bytes, every record of the job
+    # stating it; the tensor unit splits the weight adjoints whose partials fit it over their depth
+    ws_split = (
+        (SPACES["workspace"], 0, workspace_bytes)
+        if gemm_contract == 2 and workspace_bytes and not provider_mm
+        else _NONE
+    )
+
+    def lent(calls) -> tuple:
+        """KSPLIT: the workspace a blocked-contract job of these calls is lent (ks_lends)."""
+        return ws_split if any(c[0] == 1 for c in calls) else _NONE
+
     out: list[Launch] = []
 
     def ref(name: str, offset: int = 0, size: int | None = None):
@@ -310,9 +440,24 @@ def step_program(
         return (SPACES["external"], 0, size)
 
     def emit(*records: Record, optional: bool = False) -> None:
+        if records[0].kind == GEMM:
+            kind = gemm_kind[0]
+            if kind is None:
+                raise AssertionError("a GEMM emitted outside a dispatch kind")
+        else:
+            kind = PROGRAM_KIND_NAMES[records[0].kind]
+        how = chosen_dispatch.get(kind)
+        if how is not None:
+            records = tuple(replace(r, **{how[0]: how[1]}) for r in records)
         out.append(Launch(tuple(records), optional))
         if labels is not None:
             labels.append(current[0])
+        if dispatch_labels is not None:
+            dispatch_labels.append(None if records[0].kind == CHECK else kind)
+
+    def as_gemms(kind: str) -> None:
+        """The dispatch kind of the GEMMs emitted from here on."""
+        gemm_kind[0] = kind
 
     def within(site: str | None) -> None:
         """The site the launches emitted from here on belong to (None: none)."""
@@ -344,7 +489,7 @@ def step_program(
         elif gemm_contract == 3:
             emit(call(E_BF16, 0, 0, 3, c, workspace=ws))
         else:
-            emit(call(gemm_contract, 0, 0, gemm_contract, c))
+            emit(call(gemm_contract, 0, 0, gemm_contract, c, workspace=lent([c])))
 
     def gemm_job(chain, rest, pre=None) -> None:
         """gemm_group_with: one job, the chain then the rest (`pre` per call, bf16 only)."""
@@ -354,7 +499,8 @@ def step_program(
             emit(*(call(E_BF16_GROUP, 1 if q < len(chain) else 2, q, 3, c, pre[q], ws)
                    for q, c in enumerate(calls)))  # fmt: skip
         else:
-            emit(*(call(E_GROUP, 1 if q < len(chain) else 2, q, gemm_contract, c)
+            loan = lent(calls)
+            emit(*(call(E_GROUP, 1 if q < len(chain) else 2, q, gemm_contract, c, workspace=loan)
                    for q, c in enumerate(calls)))  # fmt: skip
 
     def linear(rows, inp, outp, x, w, y) -> None:
@@ -369,7 +515,9 @@ def step_program(
         elif gemm_contract == 3:
             gemm_job([cx], [cw])
         else:
-            emit(call(E_PAIR, 1, 0, gemm_contract, cx), call(E_PAIR, 2, 1, gemm_contract, cw))
+            loan = lent([cx, cw])
+            emit(call(E_PAIR, 1, 0, gemm_contract, cx, workspace=loan),
+                 call(E_PAIR, 2, 1, gemm_contract, cw, workspace=loan))  # fmt: skip
 
     def linears(rows, inp, x, outs, ws_, ys, site) -> None:
         if provider_mm or chosen[site] != "group" or len(outs) > _GROUP:
@@ -395,7 +543,7 @@ def step_program(
         emit(_record(RMS, 0, (n, d, eps), (x, g, y)))
 
     def rope(x, heads, inverse) -> None:
-        emit(_record(ROPE, 0, (batch, time, heads, hd, inverse), (x,)))
+        emit(_record(ROPE, 0, (batch, time, heads, hd, inverse), (x, ref(_TABLE))))
 
     def add(x, y) -> None:
         emit(_record(ADD, 0, (nd,), (x, y)))
@@ -422,15 +570,20 @@ def step_program(
         if contract & _ATTNBF16:
             emit(_record(ATTN, attention_contract | 1 << 8, dims, (q, kk, vv, p, y, _NONE, _NONE,
                                                                    _NONE, ws)))  # fmt: skip
-        else:
-            emit(_record(ATTN, attention_contract, dims, (q, kk, vv, p, y)))
+        else:  # P-LOWER: the binary32 backward reads no probability past a row's diagonal;
+            # P-BANDS: the stored probabilities in 16-row bands where the unit admits them
+            flags = attention_contract | _ATTENTION_LOWER | _ATTENTION_BANDS
+            emit(_record(ATTN, flags, dims, (q, kk, vv, p, y, _NONE, _NONE, _NONE,
+                                             ws_attention)))  # fmt: skip
 
     def attention_backward(q, kk, vv, p, dy, dq, dk, dv) -> None:
         dims = (batch, time, h, kh, hd)
         if contract & _ATTNBF16:
             emit(_record(ATTN_VJP, 1 << 8, dims, (q, kk, vv, p, dy, dq, dk, dv, ws)))
         else:
-            emit(_record(ATTN_VJP, attention_contract, dims, (q, kk, vv, p, dy, dq, dk, dv)))
+            # P-BANDS: the layout its stored forward's word names
+            emit(_record(ATTN_VJP, attention_contract | _ATTENTION_BANDS, dims,
+                         (q, kk, vv, p, dy, dq, dk, dv, ws_attention)))  # fmt: skip
 
     def rms_backward(x, g, dy, dx, dg, inv, how) -> None:
         emit(_record(RMS_VJP, how, (n, d, eps), (x, g, dy, dx, dg, inv)))
@@ -444,19 +597,23 @@ def step_program(
         x, y = ref(f"x{layer}"), ref(f"x{layer + 1}")
         rms(x, p("norm1"), c("n1"))
         within(f"L{layer}.qkv.fwd")
+        as_gemms("qkv.fwd")
         linears(n, d, c("n1"), (d, k, k), (p("q"), p("k"), p("v")), (c("q"), c("k"), c("v")),
                 f"L{layer}.qkv.fwd")  # fmt: skip
         within(None)
         rope(c("q"), h, 0)
         rope(c("k"), kh, 0)
         attention(c("q"), c("k"), c("v"), c("p"), c("ctx"))
+        as_gemms("o.fwd")
         linear(n, d, d, c("ctx"), p("o"), c("x2"))
         add(x, c("x2"))
         rms(c("x2"), p("norm2"), c("n2"))
         within(f"L{layer}.gateup.fwd")
+        as_gemms("gateup.fwd")
         linears(n, d, c("n2"), (f, f), (p("gate"), p("up")), (c("gate"), c("up")),
                 f"L{layer}.gateup.fwd")  # fmt: skip
         within(f"L{layer}.panels")
+        as_gemms("down.fwd")
         hidden = c("hidden")
         if use_panels(hidden, hidden, f"L{layer}.panels"):
             a, b = (
@@ -478,9 +635,11 @@ def step_program(
 
     def forward() -> None:
         emit(_record(EMBED, 0, (n, d), (ext(4 * n), ref("weights:embed"), ref("x0"))))
+        emit(_record(ROPE_TABLE, 0, (time, hd), (ref(_TABLE),)))
         for layer in range(L):
             layer_forward(layer, True)
         rms(ref(f"x{L}"), ref("weights:final_norm"), ref("norm"))
+        as_gemms("head.fwd")
         linear(n, d, v, ref("norm"), ref(f"weights:{head}"), ref("logits"))
         scan(ref("logits"))
         emit(_record(CHECK, CHECK_FORWARD))
@@ -502,6 +661,7 @@ def step_program(
         dc, dg, du, dh, dl = sc("dc"), sc("dg"), sc("du"), sc("dh"), sc("dl")
         emit(_record(LOSS, 0, (n, v), (ref("logits"), ext(4 * n), dl, sc("cur", 0, 8 * n))))
         within(HEAD_SITE)
+        as_gemms("head.vjp")
         linear_backward(n, d, v, ref("norm"), ref(f"weights:{head}"), dl, dn,
                         ref(f"gradients:{head}"), 0.0, wb, HEAD_SITE)  # fmt: skip
         within(None)
@@ -517,6 +677,7 @@ def step_program(
             hidden = c("hidden")
             site = f"L{layer}.down.vjp"
             within(site)
+            as_gemms("down.vjp")
             if use_panels(hidden, hidden, f"L{layer}.panels"):
                 cx = (0, 0, n, f, d, 0.0, cur, p("down"), dh)
                 cw = (1, 0, d, f, n, wb, cur, None, q("down"))
@@ -529,6 +690,7 @@ def step_program(
             else:
                 linear_backward(n, f, d, hidden, p("down"), cur, dh, q("down"), 0.0, wb, site)
             site = f"L{layer}.gateup.vjp"
+            as_gemms("gateup.vjp")
             if use_panels(dg, du, f"L{layer}.panels"):
                 within(f"L{layer}.panels")
                 pg = (ref("dg", 0, nf * 2), ref("dg", nf * 2, nf * 2))
@@ -559,12 +721,14 @@ def step_program(
             within(None)
             rms_backward(c("x2"), p("norm2"), dn, cur, q("norm2"), inv, _RMSB_ADD | gf)
             within(f"L{layer}.o.vjp")
+            as_gemms("o.vjp")
             linear_backward(n, d, d, c("ctx"), p("o"), cur, dc, q("o"), 0.0, wb, f"L{layer}.o.vjp")
             within(None)
             attention_backward(c("q"), c("k"), c("v"), c("p"), dc, dq, dk, dv)
             rope(dq, h, 1)
             rope(dk, kh, 1)
             within(f"L{layer}.qkv.vjp")
+            as_gemms("qkv.vjp")
             linears_backward(n, d, c("n1"), (d, k, k), (p("q"), p("k"), p("v")), (dq, dk, dv), dn,
                              (q("q"), q("k"), q("v")), 0.0, wb, f"L{layer}.qkv.vjp")  # fmt: skip
             within(None)
@@ -594,10 +758,26 @@ def step_program(
     return out
 
 
-def program_launches(program: list[Launch]) -> list[Launch]:
+def _ran(r: Record, threads: int, instances: dict | None) -> Record:
+    """PX-3b: the record as the probe traces it -- the instance its job RAN (an entry's return:
+    the family's widest for a 0, given the host's `instances`; a provider's GEMM and every other
+    kernel none) and the workers its job ran on (a 0 the pool's `threads`)."""
+    instance = r.instance
+    if not instance and instances is not None:
+        if r.kind == GEMM and r.flags & 15 != E_PROVIDER:
+            instance = _widest(instances["gemm"])
+        elif r.kind in (ATTN, ATTN_VJP):
+            instance = _widest(instances["attention"])
+    return replace(r, instance=instance, workers=min(r.workers, threads) or threads)
+
+
+def program_launches(program: list[Launch], *, threads: int = 1,
+                     instances: dict | None = None) -> list[Launch]:  # fmt: skip
     """The launches a program's run issues, as the probe traces them: its kernel jobs as they
     stand, each UPDATE as the update's pass, its preflight (optional: a fact of the values) and its
-    commit; a CHECK issues none."""
+    commit; a CHECK issues none. PX-3b: each record with the instance and workers its job ran on
+    (`_ran`) for a trainer of `threads` threads and the instance families `instances` --
+    `NativeDecoder.program_decisions`' -- the defaults unresolved without `instances`."""
     out = []
     for launch in program:
         record = launch.records[0]
@@ -605,23 +785,27 @@ def program_launches(program: list[Launch]) -> list[Launch]:
             continue
         if record.kind == UPDATE:
             commit = (record.dims[0],) + (0,) * (DIMS - 1)
-            out.append(Launch((replace(record, kind=PASS),)))
-            out.append(Launch((replace(record, kind=PREFLIGHT, flags=0),), optional=True))
-            out.append(Launch((replace(record, kind=COMMIT, flags=0, dims=commit),)))
+            update = _ran(record, threads, instances)
+            out.append(Launch((replace(update, kind=PASS),)))
+            out.append(Launch((replace(update, kind=PREFLIGHT, flags=0),), optional=True))
+            out.append(Launch((replace(update, kind=COMMIT, flags=0, dims=commit),)))
         else:
-            out.append(launch)
+            out.append(Launch(tuple(_ran(r, threads, instances) for r in launch.records),
+                              launch.optional))  # fmt: skip
     return out
 
 
 def program_words(program: list[Launch]) -> list[int]:
     """A program as the `RECORD_WORDS`-word records `bcir_decoder_run_program` runs: its jobs
-    numbered from 1 in order, each record its kind, its job's number, flags, dimensions, operands
-    and seven words of zero."""
+    numbered from 1 in order, each record its kind, its job's number, flags, dimensions, operands,
+    its job's instance and workers (`WORD_INSTANCE`, `WORD_WORKERS`: PX-3b) and five words of
+    zero."""
     words: list[int] = []
+    spare = RECORD_WORDS - 3 - DIMS - 3 * REFS - 2  # after the two dispatch words (PX-3b)
     for number, launch in enumerate(program, 1):
         for r in launch.records:
             words += [r.kind, number, r.flags, *r.dims, *(x for ref in r.refs for x in ref)]
-            words += [0] * (RECORD_WORDS - 3 - DIMS - 3 * REFS)
+            words += [r.instance, r.workers] + [0] * spare
     return words
 
 
@@ -632,7 +816,8 @@ def read_trace(words, count: int) -> list[tuple[int, Record]]:
     for i in range(count):
         w = words[i * RECORD_WORDS : (i + 1) * RECORD_WORDS]
         refs = tuple(tuple(w[11 + 3 * s : 14 + 3 * s]) for s in range(REFS))
-        out.append((w[1], Record(w[0], w[2], tuple(w[3 : 3 + DIMS]), refs)))
+        out.append((w[1], Record(w[0], w[2], tuple(w[3 : 3 + DIMS]), refs, w[WORD_INSTANCE],
+                                 w[WORD_WORKERS])))  # fmt: skip
     return out
 
 
@@ -671,8 +856,13 @@ def launch_mismatches(planned: list[Launch], traced: list[tuple[int, Record]]) -
 
 
 __all__ = [
+    "DISPATCH_KINDS",
+    "GEMM_DISPATCH_KINDS",
     "HEAD_ALTERNATIVES",
     "HEAD_SITE",
+    "INSTANCE_BITS",
+    "INSTANCE_KINDS",
+    "KERNEL_DISPATCH_KINDS",
     "KIND_NAMES",
     "PROGRAM_KIND_NAMES",
     "Launch",
@@ -682,11 +872,15 @@ __all__ = [
     "SPACES",
     "choice_sites",
     "default_sites",
+    "dispatch_alternatives",
     "launch_mismatches",
+    "parse_dispatch",
     "program_launches",
     "program_words",
     "read_trace",
     "reduce_chunk",
     "run_launches",
     "step_program",
+    "WORD_INSTANCE",
+    "WORD_WORKERS",
 ]

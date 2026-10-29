@@ -1,0 +1,26 @@
+{
+ "tools": {
+  "measure_crc.sh": "a8d6722770a23d379708cd52d2084e30e7df38f17a73026f0bf63ee09025c058",
+  "crc_ab.c": "65cb17fce83dadb7f6916bcce7a1b74503add2ef0bec8e8d06366d3a551a8432",
+  "trust_parts.c": "3c11e6516cee1a1756bc6b67f676a49cb34ed0eb2ca23eabb60197fc39ae283a",
+  "request_ab.py": "7533f49b00d4355b56f6dfd03f49a9ba4a07fdcd1e253b1dfd1fcfc0e604852f",
+  "qual_crc.py": "40ce4b63c526e9da0fe2aeab193c2a629fafa82bd3d490754d1480bf1ee3c3bf",
+  "dump_pack.py": "3863a8e171b1178f587f03e2461b0adb3a3eb55e224813445baacc868697ca43",
+  "explore_trust_parts.c": "f245891c835683671c293ef4f616aef83a87292e6ff47cfc20dc8cd5c4470a4a",
+  "qual_repeat.sh": "07df14b97cec8613571a98d83191fa3637af26773f6f7e9fd783ecfaf5907caf"
+ },
+ "sources": {
+  "before/bcir_runtime.c": "4f94d96f2a459f5498969ecfd4dfc3f38fa598b76b81e63d85697c295ea166b4",
+  "before/bcir_runtime.h": "fe2beef5ae92de07b46f8f827e6245021bacadf3be7465e089865a63b4011806",
+  "before/bcir_q8_model.c": "30caa9e582859a034565b0d5378ed5b268f5ffc9777459e9f27aa235977d2693",
+  "before/bcir_exec.c": "2d9e4449931095af8028e08b1525ae3a5235393933f1d94eb5802dd1a6196d8b",
+  "before/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e",
+  "after/bcir_runtime.c": "78e63ecddb5f6b271c26d51637bae5dede3f0aac1802a228f18aeb173765f7de",
+  "after/bcir_runtime.h": "fe2beef5ae92de07b46f8f827e6245021bacadf3be7465e089865a63b4011806",
+  "after/bcir_q8_model.c": "bcc4454b16ca005818042a13bb3b49cb58305200073636e0c0750a3cdd74fc5c",
+  "after/bcir_exec.c": "2d9e4449931095af8028e08b1525ae3a5235393933f1d94eb5802dd1a6196d8b",
+  "after/bcir_llama_cli.c": "8e8b9de6e432bc087bae1dd168895d7d874c2d8a0d92d9ab2ecd0e659216608e",
+  "after/bcir_crc32.h": "47e2e27be188164a57be54f8ed152ab870533854e1c26d3fcc56737b5f960bdb"
+ },
+ "pack.bin": "295a1d81bef9f878b3f4850237339c0da6b5d4b152929d90edd250451377655a"
+}

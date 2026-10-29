@@ -1,0 +1,23 @@
+{
+ "what": "the trainer's C harness (test_decoder_train.c with the tensor unit and the trainer, -std=c2x -O3 -ffp-contract=off -fno-math-errno -pthread, no probes), each tree's own sources, clang and gcc: the tree after's output the tree before's line for line but the one new line, the ROPE-TABLE witness's -- the table's every entry the per-pair reference's own libm call, every rotation reading it byte for byte the reference's and bcir_tensor_rope_pool's (7 shapes, 4 bases, forward and inverse, serial and pools of 2 and 4), a table of another base and one read a position late both seen; every trainer witness (the states at every thread count and contract, the programs, the probes' references) as it was; and the tree after's output ROPE-TABLE's first commit's byte for byte (ROPE-BOUND changes no value)",
+ "harness": {
+  "clang": {
+   "lines_before": 42,
+   "lines_after": 43,
+   "pass_lines_before": 42,
+   "pass_lines_after": 43,
+   "the_rest_line_for_line": true,
+   "the_first_commits_byte_for_byte": true,
+   "new_line": "PASS ROPE-TABLE: the rotation's table, 201372 entries each the per-pair reference's cosine or sine, and 504 rotations reading it byte for byte the reference's and bcir_tensor_rope_pool's (7 shapes, 4 bases, forward and inverse, serial and pools of 2 and 4); 48 askew tables seen"
+  },
+  "gcc": {
+   "lines_before": 42,
+   "lines_after": 43,
+   "pass_lines_before": 42,
+   "pass_lines_after": 43,
+   "the_rest_line_for_line": true,
+   "the_first_commits_byte_for_byte": true,
+   "new_line": "PASS ROPE-TABLE: the rotation's table, 201372 entries each the per-pair reference's cosine or sine, and 504 rotations reading it byte for byte the reference's and bcir_tensor_rope_pool's (7 shapes, 4 bases, forward and inverse, serial and pools of 2 and 4); 48 askew tables seen"
+  }
+ }
+}

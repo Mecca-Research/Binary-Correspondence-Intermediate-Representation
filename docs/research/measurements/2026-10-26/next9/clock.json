@@ -1,0 +1,758 @@
+[
+ {
+  "run": 1,
+  "cc": "clang",
+  "mode": "pass",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 20000,
+  "off": {
+   "chain_ns_a_step": 0.3205,
+   "matvecs_us_a_pass": 145.62
+  },
+  "on": {
+   "chain_ns_a_step": 0.3125,
+   "matvecs_us_a_pass": 143.54,
+   "chain_over_off": 0.9804,
+   "interval": [
+    0.9589,
+    1.0024
+   ],
+   "matvecs_over_off": 0.9825,
+   "matvecs_interval": [
+    0.9719,
+    0.9933
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3376,
+   "matvecs_us_a_pass": 145.32,
+   "chain_over_off": 1.0479,
+   "interval": [
+    1.0258,
+    1.0705
+   ],
+   "matvecs_over_off": 1.0041,
+   "matvecs_interval": [
+    0.9863,
+    1.0222
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.263,
+   "chain_over_off": 0.8397,
+   "interval": [
+    0.8219,
+    0.8578
+   ]
+  },
+  "ceiling": {
+   "chain_ns_a_step": 0.3252,
+   "matvecs_us_a_pass": 127.39,
+   "chain_over_off": 1.0387,
+   "interval": [
+    1.0053,
+    1.0731
+   ],
+   "matvecs_over_off": 0.872,
+   "matvecs_interval": [
+    0.8659,
+    0.8781
+   ]
+  },
+  "sink": 0
+ },
+ {
+  "run": 1,
+  "cc": "clang",
+  "mode": "matvec",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 280000,
+  "off": {
+   "chain_ns_a_step": 0.3212,
+   "matvecs_us_a_pass": 153.14
+  },
+  "on": {
+   "chain_ns_a_step": 0.309,
+   "matvecs_us_a_pass": 152.11,
+   "chain_over_off": 0.9605,
+   "interval": [
+    0.9413,
+    0.9801
+   ],
+   "matvecs_over_off": 0.9862,
+   "matvecs_interval": [
+    0.9582,
+    1.0151
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.322,
+   "matvecs_us_a_pass": 159.55,
+   "chain_over_off": 1.0177,
+   "interval": [
+    0.9835,
+    1.053
+   ],
+   "matvecs_over_off": 1.0301,
+   "matvecs_interval": [
+    0.9942,
+    1.0673
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2645,
+   "chain_over_off": 0.8389,
+   "interval": [
+    0.8222,
+    0.8559
+   ]
+  },
+  "ceiling": {
+   "chain_ns_a_step": 0.3239,
+   "matvecs_us_a_pass": 137.31,
+   "chain_over_off": 1.0066,
+   "interval": [
+    0.9913,
+    1.022
+   ],
+   "matvecs_over_off": 0.8991,
+   "matvecs_interval": [
+    0.8843,
+    0.9141
+   ]
+  },
+  "sink": 0
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "mode": "pass",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 20000,
+  "off": {
+   "chain_ns_a_step": 0.3193,
+   "matvecs_us_a_pass": 130.04
+  },
+  "on": {
+   "chain_ns_a_step": 0.3062,
+   "matvecs_us_a_pass": 135.23,
+   "chain_over_off": 0.956,
+   "interval": [
+    0.9291,
+    0.9837
+   ],
+   "matvecs_over_off": 1.0322,
+   "matvecs_interval": [
+    1.0144,
+    1.0504
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3156,
+   "matvecs_us_a_pass": 130.84,
+   "chain_over_off": 1.0123,
+   "interval": [
+    0.9725,
+    1.0537
+   ],
+   "matvecs_over_off": 1.0078,
+   "matvecs_interval": [
+    0.9879,
+    1.0281
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2786,
+   "chain_over_off": 0.8805,
+   "interval": [
+    0.8535,
+    0.9084
+   ]
+  },
+  "ceiling": {
+   "chain_ns_a_step": 0.3093,
+   "matvecs_us_a_pass": 121.69,
+   "chain_over_off": 0.9783,
+   "interval": [
+    0.9555,
+    1.0016
+   ],
+   "matvecs_over_off": 0.9334,
+   "matvecs_interval": [
+    0.9161,
+    0.9509
+   ]
+  },
+  "sink": 0
+ },
+ {
+  "run": 1,
+  "cc": "gcc",
+  "mode": "matvec",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 280000,
+  "off": {
+   "chain_ns_a_step": 0.3152,
+   "matvecs_us_a_pass": 140.12
+  },
+  "on": {
+   "chain_ns_a_step": 0.3029,
+   "matvecs_us_a_pass": 139.35,
+   "chain_over_off": 0.9579,
+   "interval": [
+    0.9449,
+    0.971
+   ],
+   "matvecs_over_off": 0.9948,
+   "matvecs_interval": [
+    0.9792,
+    1.0106
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3147,
+   "matvecs_us_a_pass": 140.83,
+   "chain_over_off": 0.9997,
+   "interval": [
+    0.9906,
+    1.0089
+   ],
+   "matvecs_over_off": 1.0089,
+   "matvecs_interval": [
+    0.9895,
+    1.0287
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2635,
+   "chain_over_off": 0.8391,
+   "interval": [
+    0.8308,
+    0.8474
+   ]
+  },
+  "ceiling": {
+   "chain_ns_a_step": 0.2999,
+   "matvecs_us_a_pass": 125.2,
+   "chain_over_off": 0.9545,
+   "interval": [
+    0.9451,
+    0.9641
+   ],
+   "matvecs_over_off": 0.8962,
+   "matvecs_interval": [
+    0.8802,
+    0.9125
+   ]
+  },
+  "sink": 0
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "mode": "pass",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 20000,
+  "off": {
+   "chain_ns_a_step": 0.3215,
+   "matvecs_us_a_pass": 139.5
+  },
+  "on": {
+   "chain_ns_a_step": 0.3051,
+   "matvecs_us_a_pass": 143.04,
+   "chain_over_off": 0.9228,
+   "interval": [
+    0.8816,
+    0.9658
+   ],
+   "matvecs_over_off": 1.0305,
+   "matvecs_interval": [
+    0.9967,
+    1.0654
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3174,
+   "matvecs_us_a_pass": 138.01,
+   "chain_over_off": 0.9657,
+   "interval": [
+    0.9181,
+    1.0157
+   ],
+   "matvecs_over_off": 0.9579,
+   "matvecs_interval": [
+    0.9086,
+    1.0099
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2607,
+   "chain_over_off": 0.8145,
+   "interval": [
+    0.7699,
+    0.8617
+   ]
+  },
+  "ceiling": {
+   "chain_ns_a_step": 0.3143,
+   "matvecs_us_a_pass": 121.94,
+   "chain_over_off": 0.9774,
+   "interval": [
+    0.924,
+    1.0337
+   ],
+   "matvecs_over_off": 0.8778,
+   "matvecs_interval": [
+    0.8361,
+    0.9217
+   ]
+  },
+  "sink": 0
+ },
+ {
+  "run": 2,
+  "cc": "clang",
+  "mode": "matvec",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 280000,
+  "off": {
+   "chain_ns_a_step": 0.3221,
+   "matvecs_us_a_pass": 154.41
+  },
+  "on": {
+   "chain_ns_a_step": 0.305,
+   "matvecs_us_a_pass": 149.88,
+   "chain_over_off": 0.9458,
+   "interval": [
+    0.9298,
+    0.962
+   ],
+   "matvecs_over_off": 0.977,
+   "matvecs_interval": [
+    0.949,
+    1.0058
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3182,
+   "matvecs_us_a_pass": 153.3,
+   "chain_over_off": 0.9814,
+   "interval": [
+    0.9675,
+    0.9955
+   ],
+   "matvecs_over_off": 1.0005,
+   "matvecs_interval": [
+    0.984,
+    1.0173
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2649,
+   "chain_over_off": 0.8294,
+   "interval": [
+    0.8152,
+    0.8438
+   ]
+  },
+  "ceiling": {
+   "chain_ns_a_step": 0.3255,
+   "matvecs_us_a_pass": 135.75,
+   "chain_over_off": 1.0018,
+   "interval": [
+    0.9867,
+    1.0171
+   ],
+   "matvecs_over_off": 0.885,
+   "matvecs_interval": [
+    0.8662,
+    0.9042
+   ]
+  },
+  "sink": 0
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "mode": "pass",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 20000,
+  "off": {
+   "chain_ns_a_step": 0.3112,
+   "matvecs_us_a_pass": 129.24
+  },
+  "on": {
+   "chain_ns_a_step": 0.3075,
+   "matvecs_us_a_pass": 134.11,
+   "chain_over_off": 0.974,
+   "interval": [
+    0.9496,
+    0.9991
+   ],
+   "matvecs_over_off": 1.0824,
+   "matvecs_interval": [
+    1.0241,
+    1.1439
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.313,
+   "matvecs_us_a_pass": 130.28,
+   "chain_over_off": 0.9944,
+   "interval": [
+    0.9703,
+    1.0191
+   ],
+   "matvecs_over_off": 1.0122,
+   "matvecs_interval": [
+    0.9821,
+    1.0432
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2805,
+   "chain_over_off": 0.8881,
+   "interval": [
+    0.8603,
+    0.9169
+   ]
+  },
+  "ceiling": {
+   "chain_ns_a_step": 0.3117,
+   "matvecs_us_a_pass": 120.7,
+   "chain_over_off": 1.0862,
+   "interval": [
+    0.9084,
+    1.2988
+   ],
+   "matvecs_over_off": 0.935,
+   "matvecs_interval": [
+    0.9142,
+    0.9562
+   ]
+  },
+  "sink": 0
+ },
+ {
+  "run": 2,
+  "cc": "gcc",
+  "mode": "matvec",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 280000,
+  "off": {
+   "chain_ns_a_step": 0.3148,
+   "matvecs_us_a_pass": 141.86
+  },
+  "on": {
+   "chain_ns_a_step": 0.3047,
+   "matvecs_us_a_pass": 140.23,
+   "chain_over_off": 0.9912,
+   "interval": [
+    0.9349,
+    1.0509
+   ],
+   "matvecs_over_off": 0.9852,
+   "matvecs_interval": [
+    0.949,
+    1.0227
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3136,
+   "matvecs_us_a_pass": 140.9,
+   "chain_over_off": 1.017,
+   "interval": [
+    0.9733,
+    1.0627
+   ],
+   "matvecs_over_off": 0.9835,
+   "matvecs_interval": [
+    0.9409,
+    1.0281
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2645,
+   "chain_over_off": 0.8369,
+   "interval": [
+    0.8265,
+    0.8474
+   ]
+  },
+  "ceiling": {
+   "chain_ns_a_step": 0.3001,
+   "matvecs_us_a_pass": 124.84,
+   "chain_over_off": 0.977,
+   "interval": [
+    0.935,
+    1.0209
+   ],
+   "matvecs_over_off": 0.8775,
+   "matvecs_interval": [
+    0.8626,
+    0.8928
+   ]
+  },
+  "sink": 0
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "mode": "pass",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 20000,
+  "off": {
+   "chain_ns_a_step": 0.3303,
+   "matvecs_us_a_pass": 138.39
+  },
+  "on": {
+   "chain_ns_a_step": 0.3176,
+   "matvecs_us_a_pass": 143.84,
+   "chain_over_off": 0.9628,
+   "interval": [
+    0.9352,
+    0.9912
+   ],
+   "matvecs_over_off": 1.0402,
+   "matvecs_interval": [
+    1.0121,
+    1.0692
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.325,
+   "matvecs_us_a_pass": 138.15,
+   "chain_over_off": 0.9762,
+   "interval": [
+    0.9492,
+    1.004
+   ],
+   "matvecs_over_off": 0.993,
+   "matvecs_interval": [
+    0.9805,
+    1.0056
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2618,
+   "chain_over_off": 0.8104,
+   "interval": [
+    0.7744,
+    0.8482
+   ]
+  },
+  "ceiling": {
+   "chain_ns_a_step": 0.3243,
+   "matvecs_us_a_pass": 122.71,
+   "chain_over_off": 0.9822,
+   "interval": [
+    0.9497,
+    1.0158
+   ],
+   "matvecs_over_off": 0.8838,
+   "matvecs_interval": [
+    0.8709,
+    0.8969
+   ]
+  },
+  "sink": 0
+ },
+ {
+  "run": 3,
+  "cc": "clang",
+  "mode": "matvec",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 280000,
+  "off": {
+   "chain_ns_a_step": 0.3229,
+   "matvecs_us_a_pass": 153.31
+  },
+  "on": {
+   "chain_ns_a_step": 0.3014,
+   "matvecs_us_a_pass": 146.56,
+   "chain_over_off": 0.9425,
+   "interval": [
+    0.9283,
+    0.9569
+   ],
+   "matvecs_over_off": 0.9629,
+   "matvecs_interval": [
+    0.9482,
+    0.9778
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3143,
+   "matvecs_us_a_pass": 154.61,
+   "chain_over_off": 0.9877,
+   "interval": [
+    0.9759,
+    0.9995
+   ],
+   "matvecs_over_off": 1.0133,
+   "matvecs_interval": [
+    0.9913,
+    1.0359
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2637,
+   "chain_over_off": 0.8318,
+   "interval": [
+    0.8192,
+    0.8446
+   ]
+  },
+  "ceiling": {
+   "chain_ns_a_step": 0.3217,
+   "matvecs_us_a_pass": 135.32,
+   "chain_over_off": 1.002,
+   "interval": [
+    0.9902,
+    1.0139
+   ],
+   "matvecs_over_off": 0.886,
+   "matvecs_interval": [
+    0.8706,
+    0.9017
+   ]
+  },
+  "sink": 0
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "mode": "pass",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 20000,
+  "off": {
+   "chain_ns_a_step": 0.3133,
+   "matvecs_us_a_pass": 128.45
+  },
+  "on": {
+   "chain_ns_a_step": 0.2952,
+   "matvecs_us_a_pass": 132.32,
+   "chain_over_off": 0.943,
+   "interval": [
+    0.9132,
+    0.9739
+   ],
+   "matvecs_over_off": 1.0456,
+   "matvecs_interval": [
+    1.0169,
+    1.0751
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3069,
+   "matvecs_us_a_pass": 126.08,
+   "chain_over_off": 0.9871,
+   "interval": [
+    0.9631,
+    1.0118
+   ],
+   "matvecs_over_off": 0.9834,
+   "matvecs_interval": [
+    0.9672,
+    0.9998
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.271,
+   "chain_over_off": 0.8723,
+   "interval": [
+    0.853,
+    0.892
+   ]
+  },
+  "ceiling": {
+   "chain_ns_a_step": 0.3055,
+   "matvecs_us_a_pass": 119.26,
+   "chain_over_off": 0.9737,
+   "interval": [
+    0.9476,
+    1.0005
+   ],
+   "matvecs_over_off": 0.9268,
+   "matvecs_interval": [
+    0.9128,
+    0.9411
+   ]
+  },
+  "sink": 0
+ },
+ {
+  "run": 3,
+  "cc": "gcc",
+  "mode": "matvec",
+  "rounds": 24,
+  "passes": 40,
+  "chain": 280000,
+  "off": {
+   "chain_ns_a_step": 0.3165,
+   "matvecs_us_a_pass": 141.15
+  },
+  "on": {
+   "chain_ns_a_step": 0.3019,
+   "matvecs_us_a_pass": 141.08,
+   "chain_over_off": 0.9421,
+   "interval": [
+    0.9262,
+    0.9582
+   ],
+   "matvecs_over_off": 0.9927,
+   "matvecs_interval": [
+    0.953,
+    1.034
+   ]
+  },
+  "A/A": {
+   "chain_ns_a_step": 0.3143,
+   "matvecs_us_a_pass": 137.87,
+   "chain_over_off": 0.9826,
+   "interval": [
+    0.963,
+    1.0026
+   ],
+   "matvecs_over_off": 0.9671,
+   "matvecs_interval": [
+    0.9343,
+    1.0009
+   ]
+  },
+  "idle": {
+   "chain_ns_a_step": 0.2645,
+   "chain_over_off": 0.8458,
+   "interval": [
+    0.8205,
+    0.8719
+   ]
+  },
+  "ceiling": {
+   "chain_ns_a_step": 0.3057,
+   "matvecs_us_a_pass": 127.97,
+   "chain_over_off": 0.9604,
+   "interval": [
+    0.9403,
+    0.9811
+   ],
+   "matvecs_over_off": 0.9157,
+   "matvecs_interval": [
+    0.8901,
+    0.9421
+   ]
+  },
+  "sink": 0
+ }
+]

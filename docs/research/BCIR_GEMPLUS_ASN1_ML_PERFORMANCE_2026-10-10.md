@@ -176,6 +176,13 @@ bytes. Keep a portable fallback. Profile native hydration's validated counting
 and writing passes separately; use the same target/compiler/record layout for
 the profile and end-to-end test. Do not remove validation to approach `memset`.
 
+> **Update, 2026-10-25.** CRC-SLICE took the portable half of this recommendation: the C rail's CRC-32 is now
+> zlib's eight bytes a step (slicing-by-8, `runtime/c/bcir_crc32.h`), with the polynomial, the init/final
+> convention and the wire bytes kept, and the byte table and the BCIRQ8 loader's bitwise loop retired. This
+> harness's `crc` stage, re-run on the tree before and after, reads BCIR/zlib x6.8-11.4 before and x1.9-2.2 after
+> ([measurements/2026-10-25/crc-slice/](measurements/2026-10-25/crc-slice/README.json), `note-crc.json`). Hardware
+> CRC and the native hydration profile remain open. The table above is unchanged.
+
 ## 2. Latest generated ASN.1 C codecs
 
 The fixed-size schema is `SEQUENCE (SIZE(N)) OF INTEGER (0..259)`. All paths

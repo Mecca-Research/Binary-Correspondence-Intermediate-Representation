@@ -1,0 +1,114 @@
+{
+ "bcir": {
+  "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0": {
+   "contract": "v1",
+   "parts_ms": {
+    "attention_backward": 40.20954699899448,
+    "attention_forward": 42.74540000096749,
+    "gemm_backward": 1172.8786900002888,
+    "gemm_forward": 572.7052410002216,
+    "rms": 3.5900559996662196,
+    "rms_backward": 9.570014999553678,
+    "rope": 2.0952329996362096,
+    "rope_inverse": 2.017826999690442,
+    "silu": 56.68347999926482,
+    "swiglu_backward": 68.91745600023569
+   },
+   "provider": "portable-c",
+   "rest_ms": -32.83890099828568,
+   "stages_ms": {
+    "batch": 0.060538999605341814,
+    "binding": 0.45103100001142593,
+    "forward": 648.857334999775,
+    "loss_backward": 1973.9156129999174,
+    "step": 1997.4757850004607,
+    "update": 58.45071000021562
+   },
+   "threads": 1,
+   "training_step_ms": 1997.536324000066
+  }
+ },
+ "bcir-openblas": {
+  "admission": null,
+  "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "contract": "v1",
+  "openblas": "OpenBLAS 0.3.34.237.0 DYNAMIC_ARCH NO_AFFINITY SkylakeX MAX_THREADS=64 THREAD_TIMEOUT=4",
+  "parts_ms": {
+   "attention_backward": 39.97887500008801,
+   "attention_forward": 40.05076899920823,
+   "gemm_backward": 426.2048450000293,
+   "gemm_forward": 210.56174099976488,
+   "rms": 3.5306090003359714,
+   "rms_backward": 10.214028000518738,
+   "rope": 2.251769000395143,
+   "rope_inverse": 1.9765090000873897,
+   "silu": 59.19936200007214,
+   "swiglu_backward": 70.29488499938452
+  },
+  "provider": "scipy_cblas_sgemm",
+  "rest_ms": 60.614620000706054,
+  "stages_ms": {
+   "batch": 0.06526700053655077,
+   "binding": 0.4669939999075723,
+   "forward": 369.28900000020803,
+   "loss_backward": 882.2063969992087,
+   "step": 981.7644490003659,
+   "update": 56.4194429998679
+  },
+  "threads": 1,
+  "training_step_ms": 981.8297160009024
+ },
+ "environment": {
+  "commit": "67156e41804e73ca3d3aef7beae4497191afe18d",
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+  "cpus": 4,
+  "platform": "Linux-6.18.44-fc-v139-x86_64-with-glibc2.39",
+  "python": "3.11.15"
+ },
+ "rounds": 5,
+ "shape": {
+  "batch": 8,
+  "context": 128,
+  "ff": 1024,
+  "heads": 8,
+  "kvheads": 4,
+  "layers": 6,
+  "vocab": 260,
+  "width": 384
+ },
+ "torch-eager": {
+  "phases_ms": {
+   "backward": 560.1258489996326,
+   "batch": 0.2921599998444435,
+   "clip": 10.552466000262939,
+   "forward": 272.40311299919995,
+   "optimizer": 55.728737999743316,
+   "zero_grad": 0.33329899997625034
+  },
+  "profile_forward_backward_self_cpu_ms": {
+   "attention": 72.82922339999989,
+   "gemm": 600.3010075999998,
+   "other": 293.51793739999897
+  },
+  "profile_total_ms": 966.6481683999984,
+  "top_operators_ms": {
+   "MmBackward0": 2.2497552000004566,
+   "aten::_scaled_dot_product_flash_attention_for_cpu": 25.754920000000006,
+   "aten::_scaled_dot_product_flash_attention_for_cpu_backward": 46.986267599999906,
+   "aten::add": 17.609396200000084,
+   "aten::add_": 11.468596400000353,
+   "aten::cat": 5.048313000000001,
+   "aten::copy_": 14.834513800000167,
+   "aten::div": 4.599561000000114,
+   "aten::fill_": 8.632775199999948,
+   "aten::mm": 598.7433791999998,
+   "aten::mul": 140.55291699999938,
+   "aten::pow": 11.457435599999837,
+   "aten::silu": 21.8899012,
+   "aten::silu_backward": 8.676500600000017,
+   "aten::sum": 13.468507399999819
+  },
+  "torch": "2.13.0+cu130",
+  "training_step_ms": 899.4356249986595
+ }
+}

@@ -1,0 +1,92 @@
+{
+ "what": "ATTN-RATE (2026-10-22): the attention's own rate after INFER-ATTN, every value as it was -- EXP-LANES (the BCIR exponential's loops a step at a time over a block of elements, so several vectors' polynomial chains are in flight under any compiler; clang's interleave pragma on the SiLU and SwiGLU loops) and CTX-WIDTH (the AVX-512 context's 48-channel block run as the 16-lane vectors its channels reach) -- measured on the committed tree against the tree before it: the cross-build hashes, the kernels with both builds in one process, the attention's phases, the decoder's forward and training step, and the GEO study's attention model built as the study builds it.",
+ "host": "Intel(R) Xeon(R) Processor @ 2.80GHz, 4 vCPUs (family 6, model 85: AVX-512F and VNNI, no AMX); Ubuntu clang version 18.1.3 (1ubuntu1) and gcc 13.3.0; Python 3.11.15, NumPy 2.2.6, PyTorch 2.13.0+cu130. Before: 97bcba1d2c66a46c92b7620d1b08b931f1b6280e (bcir_tensor.c 760f4c82f7975047...); after: a provisional commit of this change, b4450745420391477175fa3aa6447826e98c8781 (bcir_tensor.c 0e76ef6b44701100...), with nothing uncommitted at either end. Wall times are indicative: one virtualized host, one process at a time; the kernels and the training step compare both builds inside one process (each round's outputs equal across the arms first), the forward in rotated processes, each beside an A/A control.",
+ "records": {
+  "hashes.json": "attn_hash.c and elem_hash.c from both trees, clang and gcc",
+  "kernels.json": "ab_bench.c: the elementwise kernels (both compilers, AVX-512 and AVX2 instances) and the attention forward, both tensor units in one process, A/B/A-A rounds",
+  "phases.json": "instrument.py + phase_bench.c: the scratch attention's scores, softmax and context on one core, before and after",
+  "forward.json": "bench_rounds.py over ../infer-attn/fwd_bench.c: bcir_decoder_forward in rotated processes",
+  "step.json": "step_ab.c: the training step, both trainers in one process on three identical states",
+  "geo-infer.json": "../infer-attn/infer_compare.py: the GEO attention model's inference before and after against P-EAGER and P-IND",
+  "level3-builds.json": "../infer-attn/build_level3.py's two builds (gcc, as the study's level 2 is built)",
+  "logits.json": "../infer-attn/logits.py: Codex's trained checkpoints' logits from both builds"
+ },
+ "reading": {
+  "hashes": [
+   "clang: attention 88 cases, elementwise 181 lines (NaN-canonical) and 181 raw, before == after: True/True/True",
+   "gcc: attention 88 cases, elementwise 181 lines (NaN-canonical) and 181 raw, before == after: True/True/True",
+   "clang's lines gcc's: {'attn_hash': True, 'elem_hash': True, 'elem_hash_raw': False}"
+  ],
+  "elementwise": [
+   "clang exp n=16384: 1.064 -> 0.817 ns an element, 0.751 (0.718-0.787) of before, A/A 0.976 (0.926-1.028)",
+   "clang exp n=1048576: 1.073 -> 0.840 ns an element, 0.758 (0.722-0.797) of before, A/A 0.974 (0.912-1.040)",
+   "clang exp_avx2 n=16384: 1.820 -> 1.885 ns an element, 1.019 (0.990-1.050) of before, A/A 0.994 (0.945-1.046)",
+   "clang exp_avx2 n=1048576: 1.986 -> 1.889 ns an element, 0.929 (0.881-0.979) of before, A/A 0.999 (0.953-1.048)",
+   "clang silu_mul_v2 n=16384: 1.427 -> 1.003 ns an element, 0.705 (0.642-0.774) of before, A/A 0.961 (0.900-1.026)",
+   "clang silu_mul_v2 n=1048576: 1.551 -> 1.101 ns an element, 0.712 (0.682-0.744) of before, A/A 0.987 (0.950-1.026)",
+   "clang swiglu_vjp_v2 n=16384: 1.965 -> 1.188 ns an element, 0.665 (0.639-0.693) of before, A/A 1.031 (0.946-1.125)",
+   "clang swiglu_vjp_v2 n=1048576: 2.383 -> 2.161 ns an element, 0.912 (0.853-0.975) of before, A/A 0.997 (0.941-1.057)",
+   "gcc exp n=16384: 1.052 -> 0.801 ns an element, 0.764 (0.724-0.807) of before, A/A 1.048 (0.957-1.147)",
+   "gcc exp n=1048576: 1.053 -> 0.873 ns an element, 0.805 (0.765-0.848) of before, A/A 1.020 (0.970-1.073)",
+   "gcc exp_avx2 n=16384: 8.676 -> 4.128 ns an element, 0.485 (0.441-0.533) of before, A/A 0.998 (0.921-1.082)",
+   "gcc exp_avx2 n=1048576: 9.397 -> 4.532 ns an element, 0.466 (0.428-0.507) of before, A/A 1.068 (0.970-1.176)",
+   "gcc silu_mul_v2 n=16384: 1.309 -> 1.286 ns an element, 1.005 (0.932-1.085) of before, A/A 0.986 (0.913-1.064)",
+   "gcc silu_mul_v2 n=1048576: 1.416 -> 1.440 ns an element, 1.018 (0.961-1.080) of before, A/A 1.026 (0.932-1.131)",
+   "gcc swiglu_vjp_v2 n=16384: 1.761 -> 1.734 ns an element, 0.989 (0.960-1.020) of before, A/A 1.014 (0.968-1.063)",
+   "gcc swiglu_vjp_v2 n=1048576: 2.461 -> 2.331 ns an element, 0.972 (0.932-1.014) of before, A/A 1.001 (0.962-1.041)"
+  ],
+  "attention": [
+   "clang 4x1024x4x4x32 scratch contract 1 at 4 thread(s): 13.68 -> 12.34 ms, 0.923 (0.860-0.992) of before, A/A 0.982 (0.887-1.087)",
+   "clang 4x2048x4x4x32 scratch contract 1 at 4 thread(s): 58.49 -> 45.58 ms, 0.781 (0.713-0.856) of before, A/A 1.058 (0.991-1.129)",
+   "clang 4x2048x4x4x32 scratch contract 1 at 1 thread(s): 199.06 -> 167.48 ms, 0.843 (0.786-0.904) of before, A/A 1.088 (0.999-1.186)",
+   "clang 4x2048x4x4x32 stored contract 1 at 4 thread(s): 80.90 -> 66.04 ms, 0.843 (0.801-0.887) of before, A/A 1.082 (1.021-1.147)",
+   "clang 1x8192x4x4x32 scratch contract 1 at 4 thread(s): 246.30 -> 209.90 ms, 0.879 (0.796-0.972) of before, A/A 1.021 (0.892-1.168)",
+   "clang 8x128x8x4x48 stored contract 3 at 4 thread(s): 1.08 -> 1.24 ms, 1.121 (0.951-1.322) of before, A/A 0.898 (0.782-1.032)",
+   "clang 8x128x8x4x48 scratch contract 3 at 4 thread(s): 1.06 -> 1.02 ms, 1.051 (0.900-1.227) of before, A/A 0.908 (0.787-1.047)",
+   "clang 1x4096x8x8x64 scratch contract 3 at 4 thread(s): 203.38 -> 175.82 ms, 0.834 (0.718-0.968) of before, A/A 1.020 (0.893-1.164)",
+   "gcc 4x2048x4x4x32 scratch contract 1 at 4 thread(s): 57.77 -> 50.36 ms, 0.862 (0.780-0.952) of before, A/A 0.966 (0.901-1.037)",
+   "gcc 4x2048x4x4x32 stored contract 1 at 4 thread(s): 77.75 -> 68.49 ms, 0.898 (0.835-0.967) of before, A/A 0.972 (0.908-1.040)",
+   "gcc 8x128x8x4x48 stored contract 3 at 4 thread(s): 1.33 -> 1.27 ms, 0.962 (0.917-1.010) of before, A/A 0.987 (0.927-1.050)"
+  ],
+  "phases": [
+   "4x2048x4x4x32 one core before: 596.3M TSC cycles a call -- scores 169.0M, softmax 196.1M, context 223.9M",
+   "4x2048x4x4x32 one core after: 524.4M TSC cycles a call -- scores 167.8M, softmax 169.4M, context 178.0M",
+   "8x128x8x4x48 one core before: 9.8M TSC cycles a call -- scores 3.8M, softmax 3.2M, context 2.5M",
+   "8x128x8x4x48 one core after: 9.4M TSC cycles a call -- scores 3.7M, softmax 2.8M, context 2.6M"
+  ],
+  "forward": [
+   "decoder-9.84M kblock+exp+reduce+attn: 82.7 -> 83.6 ms, 0.978 (0.912-1.050) of before, A/A 0.994 (0.912-1.084)",
+   "decoder-9.84M bf16+exp+reduce+attnbf16: 115.8 -> 116.3 ms, 1.026 (0.967-1.088) of before, A/A 0.968 (0.911-1.028)",
+   "geo-dims T1024 kblock+exp+reduce: 63.9 -> 58.1 ms, 0.899 (0.856-0.943) of before, A/A 1.026 (0.966-1.089)",
+   "geo-dims T2048 kblock+exp+reduce: 214.5 -> 191.3 ms, 0.876 (0.836-0.918) of before, A/A 1.005 (0.949-1.063)",
+   "geo-dims T2048 bf16+exp+reduce+attnbf16: 190.6 -> 184.4 ms, 0.971 (0.930-1.013) of before, A/A 1.011 (0.977-1.047)",
+   "geo-dims T2048 kblock+exp+reduce, one thread: 744.4 -> 668.2 ms, 0.896 (0.875-0.917) of before, A/A 0.992 (0.972-1.013)"
+  ],
+  "step": [
+   "clang decoder-9.84M kblock+exp+reduce+attn, step: 290.1 -> 283.4 ms, 0.967 (0.931-1.006) of before, A/A 1.016 (0.980-1.054)",
+   "clang decoder-9.84M kblock+exp+reduce+attn, step, one thread: 974.9 -> 947.1 ms, 0.984 (0.942-1.028) of before, A/A 0.983 (0.943-1.024)",
+   "clang geo-dims T512 kblock+exp+reduce, step: 85.6 -> 85.9 ms, 0.962 (0.900-1.028) of before, A/A 0.967 (0.899-1.040)",
+   "gcc decoder-9.84M kblock+exp+reduce+attn, step: 289.2 -> 275.3 ms, 0.924 (0.897-0.952) of before, A/A 1.023 (0.983-1.065)",
+   "gcc geo-dims T512 kblock+exp+reduce, step: 79.3 -> 79.1 ms, 0.975 (0.924-1.028) of before, A/A 0.960 (0.911-1.012)"
+  ],
+  "geo_attention_model": [
+   "T1024: after/before 0.878 (0.777-0.993), after/eager 0.607 (0.548-0.673), after/Inductor 0.777 (0.685-0.882), A/A 1.011 (0.917-1.116)",
+   "T2048: after/before 0.920 (0.872-0.971), after/eager 1.053 (0.961-1.155), after/Inductor 1.130 (1.076-1.186), A/A 1.028 (0.953-1.109)"
+  ],
+  "logits": "4 of 4 trained-checkpoint cases byte-identical (lm and kv_single, T1024 and T2048, batch 4)"
+ },
+ "reproduce": [
+  "git show BEFORE:runtime/c/<unit> > BEFORE_SRC/<unit>; git show AFTER:... > AFTER_SRC/<unit>  # bcir_tensor.c/.h, bcir_decoder_train.c/.h",
+  "CF='-std=c11 -O3 -ffp-contract=off -fno-math-errno -pthread'",
+  "CC $CF -I SRC attn_hash.c SRC/bcir_tensor.c -lm; CC $CF -I SRC elem_hash.c SRC/bcir_tensor.c -lm  # run each (elem_hash: and with `raw`), compare BEFORE's lines with AFTER's",
+  "CC $CF -fPIC -shared -I SRC SRC/bcir_tensor.c -lm -o libtensor_X.so; clang -O2 ab_bench.c -ldl -lm; ab_bench libtensor_BEFORE.so libtensor_AFTER.so 16 elem exp|exp_avx2|silu_mul_v2|swiglu_vjp_v2 N; ab_bench ... 12 attn B T H KH D THREADS CONTRACT SCRATCH",
+  "python3 -I instrument.py SRC/bcir_tensor.c phase_tensor.c; clang $CF -I SRC phase_bench.c phase_tensor.c -lm; phase_bench B T H KH D 1 ROUNDS CONTRACT (8 alternating rounds a side)",
+  "clang $CF -I SRC ../infer-attn/fwd_bench.c SRC/bcir_tensor.c SRC/bcir_decoder_train.c -lm -o fwd_X; python3 -I bench_rounds.py fwd_BEFORE fwd_AFTER forward.json --cases forward",
+  "CC $CF -fPIC -shared -I SRC SRC/bcir_tensor.c SRC/bcir_decoder_train.c -lm -o libdec_X.so; clang -O2 -I SRC step_ab.c -ldl -lm; step_ab libdec_BEFORE.so libdec_AFTER.so VOCAB WIDTH HEADS KVHEADS LAYERS FF BATCH TIME CONTRACT THREADS ROUNDS",
+  "python3 -I ../infer-attn/build_level3.py LEVEL2_WORK BEFORE_WORK BEFORE_SRC MAIN_SRC --scratch (and AFTER); TORCH_PY -I ../infer-attn/logits.py ...; TORCH_PY -I ../infer-attn/infer_compare.py BEFORE_WORK AFTER_WORK geo-infer.json --rounds 12 --threads 4 --times 1024,2048  # the work dirs: GEO-2b's level 2 without its build, baseline, bf16, checkpoints and results"
+ ],
+ "faults": "tools/testing/faults/attn-rate.json CW1-CW6 and EL1-EL6, each injected and caught by its own check, each compiling warning-free under GCC 13, clang 18 and clang 23; NE3 and five INFER-ATTN-era faults (IA2, NA5, NA15, NU1, NZ3) re-anchored to the lines this moved, each keeping its defect, caught again; ndt-exp.json 6 of 6 and NL11 caught on the final tree.",
+ "scripts": "the Python scripts are the ones that ran, formatted by ruff 0.16.6 (each the same AST); the C benches byte for byte",
+ "before": "97bcba1d2c66a46c92b7620d1b08b931f1b6280e",
+ "after": "b4450745420391477175fa3aa6447826e98c8781"
+}

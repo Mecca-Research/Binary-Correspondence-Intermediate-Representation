@@ -1,0 +1,296 @@
+{
+ "what": "COMPILE-LIMIT's witness: the flaw and the fix, on the bundle's attention model (oracle.torch_model_next) under\ntorch.no_grad, in one process the way geo_compare.py, train_compare.py and infer_compare.py ran their cases.\n\n1. automatic dynamic shapes: the forward compiled at T128, then a second module (a new class: one forward code\n   object for both) at T256 -- the second compile creates a symbol for L['ids'] dim 1, the tokens' time.\n2. the recompile limit: more modules at more lengths, each a recompile of the one code object; past Dynamo's limit\n   (8) a call compiles nothing and runs eagerly, warning once -- and the code object stays eager. From a fresh state\n   with fail_on_recompile_limit_hit set, the same ninth call raises.\n3. the fix: torch._dynamo.reset() before a case and dynamic=False -- its compile creates no symbol.\nEach step records the call's shape symbols (create_symbol), the graphs it compiled and Dynamo's frame counts.\nusage: python witness.py WORK OUT.json\n",
+ "torch": "2.13.0+cu130",
+ "recompile_limit": 8,
+ "automatic_dynamic_shapes": true,
+ "one_process": [
+  {
+   "time": 128,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [],
+   "graphs": 1,
+   "frames": {
+    "total": 1,
+    "ok": 1
+   }
+  },
+  {
+   "time": 144,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 144 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 2,
+    "ok": 2
+   }
+  },
+  {
+   "time": 160,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 160 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 3,
+    "ok": 3
+   }
+  },
+  {
+   "time": 176,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 176 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 4,
+    "ok": 4
+   }
+  },
+  {
+   "time": 192,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 192 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 5,
+    "ok": 5
+   }
+  },
+  {
+   "time": 208,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 208 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 6,
+    "ok": 6
+   }
+  },
+  {
+   "time": 224,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 224 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 7,
+    "ok": 7
+   }
+  },
+  {
+   "time": 240,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 240 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 8,
+    "ok": 8
+   }
+  },
+  {
+   "time": 256,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [],
+   "graphs": 0,
+   "frames": {
+    "total": 9,
+    "ok": 8
+   }
+  },
+  {
+   "time": 272,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [],
+   "graphs": 0,
+   "frames": {
+    "total": 9,
+    "ok": 8
+   }
+  }
+ ],
+ "with_fail_on_recompile_limit_hit": [
+  {
+   "time": 128,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [],
+   "graphs": 1,
+   "frames": {
+    "total": 1,
+    "ok": 1
+   }
+  },
+  {
+   "time": 144,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 144 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 2,
+    "ok": 2
+   }
+  },
+  {
+   "time": 160,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 160 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 3,
+    "ok": 3
+   }
+  },
+  {
+   "time": 176,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 176 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 4,
+    "ok": 4
+   }
+  },
+  {
+   "time": 192,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 192 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 5,
+    "ok": 5
+   }
+  },
+  {
+   "time": 208,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 208 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 6,
+    "ok": 6
+   }
+  },
+  {
+   "time": 224,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 224 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 7,
+    "ok": 7
+   }
+  },
+  {
+   "time": 240,
+   "dynamic_arg": null,
+   "raised": null,
+   "symbols": [
+    "create_symbol s27 = 240 for L['ids'].size()[1]"
+   ],
+   "graphs": 1,
+   "frames": {
+    "total": 8,
+    "ok": 8
+   }
+  },
+  {
+   "time": 256,
+   "dynamic_arg": null,
+   "raised": "FailOnRecompileLimitHit: Hard failure due to fail_on_recompile_limit_hit",
+   "symbols": [],
+   "graphs": 0,
+   "frames": {
+    "total": 9,
+    "ok": 8
+   }
+  }
+ ],
+ "past_the_limit_with_fail_on_recompile_limit_hit": {
+  "time": 256,
+  "dynamic_arg": null,
+  "raised": "FailOnRecompileLimitHit: Hard failure due to fail_on_recompile_limit_hit",
+  "symbols": [],
+  "graphs": 0,
+  "frames": {
+   "total": 9,
+   "ok": 8
+  }
+ },
+ "fixed": [
+  {
+   "time": 128,
+   "dynamic_arg": false,
+   "raised": null,
+   "symbols": [],
+   "graphs": 1,
+   "frames": {
+    "total": 1,
+    "ok": 1
+   }
+  },
+  {
+   "time": 256,
+   "dynamic_arg": false,
+   "raised": null,
+   "symbols": [],
+   "graphs": 1,
+   "frames": {
+    "total": 1,
+    "ok": 1
+   }
+  }
+ ],
+ "compiled_cases": [
+  128,
+  144,
+  160,
+  176,
+  192,
+  208,
+  224,
+  240
+ ],
+ "eager_cases": [
+  256,
+  272
+ ]
+}

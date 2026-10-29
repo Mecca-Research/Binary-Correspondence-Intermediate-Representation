@@ -11,8 +11,10 @@ import os
 import random
 import shutil
 import struct
+import subprocess
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 from bcir.frontends.models.model_microbench import run_bounded_model_microbench_native
 from bcir.frontends.models.weights_io import write_q8_decoder
@@ -140,6 +142,482 @@ def test_native_q8_matrix_kernels_match_increasing_coordinate_oracle_exactly():
     assert native.q8_rows_dot(
         inputs, quantized.codes, quantized.exponents, output_count=11, group_size=13
     ) == tuple(expected_rows)
+
+
+def _q8_oracle(inputs, signed_codes, exponents, outputs, group, rows):
+    """The increasing-coordinate oracle: a matvec (`rows` False: codes [inputs, outputs]) or the
+    row dots (`rows` True: codes [outputs, inputs]), each output's chain from +0.0."""
+    expected = []
+    for output in range(outputs):
+        total = 0.0
+        for coordinate in range(len(inputs)):
+            index = output * len(inputs) + coordinate if rows else coordinate * outputs + output
+            total += inputs[coordinate] * math.ldexp(signed_codes[index], exponents[index // group])
+        expected.append(total)
+    return tuple(expected)
+
+
+def test_native_q8_instances_match_the_increasing_coordinate_oracle():
+    """Q8-LANES: every instance of the Q8 matrix kernels the host admits -- 1 the portable loops, 2
+    AVX2, 4 AVX-512 -- is the increasing-coordinate oracle's value for every output, bit for bit:
+    at the corpus decoder's projection shapes, at the pair's (columns a multiple of 8, a power-of-two
+    group of at least 8: Q8-PAIR) with an odd last row, and at ragged ones (groups straddling rows and
+    vectors, a group not a power of two, groups under 8). 0 is the widest admitted; a name outside
+    0/1/2/4 is refused before the library, an instance the host does not admit by it."""
+    native = _native()
+    if native is None:
+        return
+    instances = native.q8_instances()
+    assert instances & 1 and not instances & ~7
+    rng = random.Random(0x0A8E5)
+    symmetric = tuple(code for code in range(256) if code != 0x80)
+    shapes = (
+        (128, 64, 32),
+        (16, 72, 16),
+        (3, 200, 8),
+        (2, 136, 64),
+        (17, 33, 5),
+        (9, 40, 4),
+        (24, 48, 48),
+        (1, 9, 7),
+        (40, 17, 32),
+    )
+    ran = 0
+    for inputs_count, outputs, group in shapes:
+        inputs = tuple(rng.uniform(-2.0, 2.0) for _ in range(inputs_count))
+        codes = bytes(rng.choice(symmetric) for _ in range(inputs_count * outputs))
+        exponents = tuple(rng.randint(-30, 30) for _ in range(-(-len(codes) // group)))
+        signed = tuple(code - 256 if code >= 128 else code for code in codes)
+        for rows, kernel in ((False, native.q8_matvec), (True, native.q8_rows_dot)):
+            expected = _q8_oracle(inputs, signed, exponents, outputs, group, rows)
+            for instance in (0, 1, 2, 4):
+                if instance and not instances & instance:
+                    continue
+                got = kernel(
+                    inputs,
+                    codes,
+                    exponents,
+                    output_count=outputs,
+                    group_size=group,
+                    instance=instance,
+                )
+                assert got == expected, (inputs_count, outputs, group, rows, instance)
+                ran += 1
+    assert ran >= 2 * len(shapes) * 2  # 0 and 1 at least, on every host
+    for refused in (-1, 3, 5, 8, True):
+        try:
+            native.q8_matvec((1.0,), b"\x01", (0,), output_count=1, group_size=32, instance=refused)
+            raise AssertionError(f"instance {refused!r} was accepted")
+        except ValueError:
+            pass
+    for absent in (2, 4):
+        if instances & absent:
+            continue
+        try:
+            native.q8_rows_dot(
+                (1.0,), b"\x01", (0,), output_count=1, group_size=32, instance=absent
+            )
+            raise AssertionError(f"instance {absent} the host does not admit was accepted")
+        except RuntimeError:
+            pass
+
+
+def test_native_q8_matvec_columns_are_the_oracles_columns():
+    """DECODE-THREADS: the matvec over a range of its columns, on every instance the host admits and on the widest,
+    is the increasing-coordinate oracle's value for every output in the range, bit for bit -- the whole range, a
+    first and a last column, stretches on vectors' edges and off them, and a call split into parts whose outputs
+    together are the whole call's -- at the decoder's shapes, the pair's and ragged ones. A range that is not
+    0 <= begin < end <= output_count is refused before the library."""
+    native = _native()
+    if native is None:
+        return
+    instances = native.q8_instances()
+    rng = random.Random(0xDEC0DE)
+    symmetric = tuple(code for code in range(256) if code != 0x80)
+    shapes = (
+        (128, 64, 32),
+        (16, 72, 16),
+        (3, 200, 8),
+        (17, 33, 5),
+        (9, 40, 4),
+        (40, 17, 32),
+        (5, 344, 32),
+    )
+    ran = 0
+    for inputs_count, outputs, group in shapes:
+        inputs = tuple(rng.uniform(-2.0, 2.0) for _ in range(inputs_count))
+        codes = bytes(rng.choice(symmetric) for _ in range(inputs_count * outputs))
+        exponents = tuple(rng.randint(-30, 30) for _ in range(-(-len(codes) // group)))
+        signed = tuple(code - 256 if code >= 128 else code for code in codes)
+        expected = _q8_oracle(inputs, signed, exponents, outputs, group, False)
+        ranges = [
+            (0, outputs),
+            (0, 1),
+            (outputs - 1, outputs),
+            (outputs // 3, outputs - outputs // 4),
+        ]
+        if outputs >= 24:
+            ranges.append((8, outputs // 8 * 8 - 8))
+        for _ in range(3):
+            begin = rng.randrange(outputs)
+            ranges.append((begin, rng.randint(begin + 1, outputs)))
+        for instance in (None, 0, 1, 2, 4):
+            if instance and not instances & instance:
+                continue
+            for begin, end in ranges:
+                got = native.q8_matvec(
+                    inputs,
+                    codes,
+                    exponents,
+                    output_count=outputs,
+                    group_size=group,
+                    instance=instance,
+                    columns=(begin, end),
+                )
+                assert got == expected[begin:end], (
+                    inputs_count,
+                    outputs,
+                    group,
+                    instance,
+                    begin,
+                    end,
+                )
+                ran += 1
+            for parts in (2, 3, 7):  # the call in parts, as the decoder's threads take it
+                chunk = -(-outputs // parts)
+                got = ()
+                for begin in range(0, outputs, chunk):
+                    got += native.q8_matvec(
+                        inputs,
+                        codes,
+                        exponents,
+                        output_count=outputs,
+                        group_size=group,
+                        instance=instance,
+                        columns=(begin, min(begin + chunk, outputs)),
+                    )
+                assert got == expected, (inputs_count, outputs, group, instance, parts)
+    assert ran >= 3 * len(shapes) * 7  # None, 0 and 1 at least, on every host
+    for refused in ((0, 0), (2, 1), (0, 2), (-1, 1), (0.0, 1), [0, 1], (0, 1, 1), "01", True):
+        try:
+            native.q8_matvec((1.0,), b"\x01", (0,), output_count=1, group_size=32, columns=refused)
+            raise AssertionError(f"columns {refused!r} were accepted")
+        except ValueError:
+            pass
+
+
+def _reference_pack(
+    codes: bytes, exponents, input_count: int, output_count: int, group_size: int
+) -> bytes:
+    """HEAD-PACK's layout as bcir_ai_kernels.h states it, built here independently of the C: the rows in blocks of
+    eight, a block's groups in order, each a segment of the eight rows' exponents (int16 little-endian) and then, a
+    coordinate at a time, the eight rows' codes; a short last block's missing rows all zero bytes."""
+    runs = input_count // group_size
+    out = bytearray()
+    for block in range(-(-output_count // 8)):
+        for run in range(runs):
+            head, body = bytearray(16), bytearray(8 * group_size)
+            for lane in range(8):
+                row = 8 * block + lane
+                if row >= output_count:
+                    continue
+                struct.pack_into("<h", head, 2 * lane, exponents[row * runs + run])
+                for k in range(group_size):
+                    body[8 * k + lane] = codes[row * input_count + run * group_size + k]
+            out += head + body
+    return bytes(out)
+
+
+def test_native_q8_packed_rows_match_the_oracle_and_the_stated_layout():
+    """HEAD-PACK: the row dots over a pack, on every instance the host admits and on the widest, are the
+    increasing-coordinate oracle's value for every output, bit for bit -- a lone short block, blocks, 32-row passes
+    and the rows after them, groups of 1, 2, 3 and a whole row, exponents across the format's range; the pack's bytes
+    are the layout bcir_ai_kernels.h states, built independently above. A shape whose rows straddle their groups has
+    no pack, a code the format refuses is refused, and `packed` is a bool."""
+    native = _native()
+    if native is None:
+        return
+    instances = native.q8_instances()
+    rng = random.Random(0x4EAD)
+    symmetric = tuple(code for code in range(256) if code != 0x80)
+    shapes = (
+        (8, 3, 8),
+        (4, 9, 2),
+        (128, 64, 32),
+        (16, 72, 16),
+        (3, 65, 1),
+        (6, 41, 3),
+        (64, 33, 64),
+        (24, 70, 8),
+    )
+    ran = 0
+    for inputs_count, outputs, group in shapes:
+        inputs = tuple(rng.uniform(-2.0, 2.0) for _ in range(inputs_count))
+        codes = bytes(rng.choice(symmetric) for _ in range(inputs_count * outputs))
+        exponents = tuple(
+            rng.choice((-300, 300, rng.randint(-30, 30))) for _ in range(len(codes) // group)
+        )
+        signed = tuple(code - 256 if code >= 128 else code for code in codes)
+        packed = native.q8_rows_pack(
+            codes, exponents, input_count=inputs_count, output_count=outputs, group_size=group
+        )
+        assert packed == _reference_pack(codes, exponents, inputs_count, outputs, group), (
+            inputs_count,
+            outputs,
+        )
+        expected = _q8_oracle(inputs, signed, exponents, outputs, group, True)
+        for instance in (None, 0, 1, 2, 4):
+            if instance and not instances & instance:
+                continue
+            got = native.q8_rows_dot(
+                inputs,
+                codes,
+                exponents,
+                output_count=outputs,
+                group_size=group,
+                instance=instance,
+                packed=True,
+            )
+            assert got == expected, (inputs_count, outputs, group, instance)
+            ran += 1
+    assert ran >= 3 * len(shapes)  # None, 0 and 1 at least, on every host
+    try:
+        native.q8_rows_dot(
+            (1.0,) * 6, b"\x01" * 24, (0,) * 6, output_count=4, group_size=4, packed=True
+        )
+        raise AssertionError("a pack of rows straddling their groups was made")
+    except ValueError:
+        pass
+    try:
+        native.q8_rows_pack(
+            b"\x01" * 15 + b"\x80", (0, 0), input_count=8, output_count=2, group_size=8
+        )
+        raise AssertionError("the code 0x80 was packed")
+    except RuntimeError:
+        pass
+    for bad in (1, "yes", None):
+        try:
+            native.q8_rows_dot((1.0,), b"\x01", (0,), output_count=1, group_size=1, packed=bad)
+            raise AssertionError(f"packed={bad!r} was accepted")
+        except ValueError:
+            pass
+
+
+def test_native_ai_c_harness_c11_and_c23():
+    """Q8-LANES: the kernel unit's C harness (runtime/c/test_ai_kernels.c) under C11 and C23, under C23
+    capped at AVX2 and with the dispatch compiled out, every build with the instance probe: each
+    admitted instance against the portable loops over the decoder's, the block's and ragged shapes,
+    exponents past a normal double's, the code 0x80, non-finite outputs zeroing every output and
+    refusals writing nothing, and the prevalidated entries on the widest instance. Q8-BOUND: the path
+    every vector matvec took -- x times a group's scale once a row and group where the call's ranges
+    prove every such product exact, the terms as before elsewhere -- over the lanes test and the
+    ranges' edges, each case every byte the portable loops'. Q8-PAIR: the kernel every vector matvec ran -- two
+    rows a pass where eight columns' terms lie in one group, the runs elsewhere -- over the lanes test and the
+    passes' edges. HEAD-PACK: the row dots over a pack on every admitted instance against the portable row dots over
+    the rows as they are, the 32-row passes and blocks the vector instances ran, the layout pinned, a pack serving
+    fewer rows, non-finite totals zeroing every output and the refusals writing nothing. DECODE-THREADS: the matvec
+    over column ranges on every admitted instance -- a range's outputs the whole call's and every other output
+    untouched; a call split into parts on vectors' edges and off them failing exactly where the whole call does --
+    the parts the named vector instances ran and those on Q8-PAIR's kernels, every vector matvec on its kernel's
+    whole-call instance exactly where its range is the whole, and the refusals writing nothing."""
+    if _CC is None:
+        return
+    import re
+    import subprocess
+
+    from bcir.toolchain import build_units, host_link_args
+
+    c = Path(__file__).resolve().parents[2] / "runtime" / "c"
+    builds = (
+        ("c11", [], None),
+        ("c2x", [], None),
+        ("c2x", ["-DBCIR_AI_MAX_INSTANCE=2"], 3),
+        ("c2x", ["-DBCIR_AI_NO_DISPATCH"], 1),
+    )
+    seen = set()
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
+        for number, (standard, options, cap) in enumerate(builds):
+            exe = Path(temporary) / f"ai-kernels-{number}"
+            cmd = [
+                _CC,
+                f"-std={standard}",
+                "-DBCIR_AI_INSTANCE_PROBE",
+                *options,
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Wpedantic",
+                "-Werror",
+                "-ffp-contract=off",
+                "-I",
+                str(c),
+                str(c / "test_ai_kernels.c"),
+                str(c / "bcir_ai_kernels.c"),
+                str(c / "bcir_q4_kernel.c"),
+                "-o",
+                str(exe),
+            ]
+            build_units(
+                cmd + host_link_args(["-lm"]), f"the AI kernels' {standard} build", timeout=120
+            )
+            result = subprocess.run(
+                [str(exe)], check=True, capture_output=True, text=True, timeout=120
+            )
+            assert "native AI kernels: all gates passed" in result.stdout
+            found = re.search(
+                r"Q8-LANES: instances (\d+), (\d+) vector comparisons equal", result.stdout
+            )
+            assert found, result.stdout
+            admitted, compared = int(found.group(1)), int(found.group(2))
+            assert admitted & 1 and not admitted & ~7
+            if cap is not None:
+                assert not admitted & ~cap, (options, admitted)
+            # 22 shapes, four exponent ranges, two kernels: 176 comparisons an admitted vector instance
+            assert compared == 176 * bin(admitted & 6).count("1"), (options, admitted, compared)
+            # Q8-BOUND, an admitted vector instance: the lanes test's 22 shapes with the format's and the narrow
+            # exponents proved (44) and with those past a normal double's not (44); the edges' 11 cases, 3 proved
+            bound = re.search(
+                r"Q8-BOUND: (\d+) matvecs hoisted, (\d+) computed again", result.stdout
+            )
+            assert bound, result.stdout
+            vector = bin(admitted & 6).count("1")
+            counts = (int(bound.group(1)), int(bound.group(2)))
+            assert counts == (47 * vector, 52 * vector), (options, admitted, counts)
+            # Q8-PAIR, two rows a pass where eight columns' terms lie in one group, an admitted vector instance: of the
+            # lanes test's 22 shapes 11 and of the edges' 17 shapes 12, each in four exponent ranges
+            pair = re.search(
+                r"Q8-PAIR: (\d+) matvecs two rows a pass, (\d+) in runs", result.stdout
+            )
+            assert pair, result.stdout
+            counts = (int(pair.group(1)), int(pair.group(2)))
+            assert counts == (92 * vector, 64 * vector), (options, admitted, counts)
+            # HEAD-PACK, the packed row dots on a named vector instance: the edges' 16 shapes in two exponent ranges,
+            # 76 passes of 32 rows and 20 blocks a range
+            pack = re.search(
+                r"HEAD-PACK: (\d+) packed row dots, (\d+) passes of 32 rows, (\d+) blocks",
+                result.stdout,
+            )
+            assert pack, result.stdout
+            counts = (int(pack.group(1)), int(pack.group(2)), int(pack.group(3)))
+            assert counts == (32 * vector, 152 * vector, 40 * vector), (options, admitted, counts)
+            # DECODE-THREADS, the matvec's column parts on a named vector instance: the 21 shapes in four exponent
+            # ranges, each split into 2, 3, 4 and 7 parts on vectors' edges and off them, 2,128 parts an instance;
+            # 648 of them on Q8-PAIR's kernels, the parts on vectors' edges of the shapes whose whole call runs there
+            parts = re.search(
+                r"DECODE-THREADS: (\d+) column parts on a named vector instance equal",
+                result.stdout,
+            )
+            assert parts, result.stdout
+            assert int(parts.group(1)) == 2128 * vector, (options, admitted, parts.group(1))
+            pairs = re.search(r"DECODE-THREADS: (\d+) of them two rows a pass", result.stdout)
+            assert pairs, result.stdout
+            assert int(pairs.group(1)) == 648 * vector, (options, admitted, pairs.group(1))
+            seen.add(admitted)
+    native = _native()
+    if native is not None:
+        assert native.q8_instances() in seen  # the default builds admit what the library does
+
+
+def _asan_compiler() -> str | None:
+    """The first C compiler here that builds a program with -fsanitize=address,undefined and runs it, or None."""
+    import subprocess
+
+    names = (_CC, shutil.which("clang"), shutil.which("gcc"), shutil.which("cc"))
+    env = dict(os.environ, ASAN_OPTIONS="detect_leaks=0")
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
+        source, exe = Path(temporary) / "probe.c", Path(temporary) / "probe"
+        source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+        for cc in dict.fromkeys(name for name in names if name):
+            try:
+                built = subprocess.run(
+                    [cc, "-fsanitize=address,undefined", str(source), "-o", str(exe)],
+                    capture_output=True,
+                    timeout=120,
+                )
+                if built.returncode != 0:
+                    continue
+                ran = subprocess.run([str(exe)], capture_output=True, timeout=60, env=env)
+                if ran.returncode == 0:
+                    return cc
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+    return None
+
+
+class _AddressSanitizer:
+    """Truthy where a C compiler here runs a program under AddressSanitizer and UBSan, probed once, when first read:
+    what `check_tests.py --require` asks of this module when `tools/testing/faults/q8-pair.json` runs the harness's
+    sanitizer build, which returns without one."""
+
+    _probed = False
+    _cc: str | None = None
+
+    def compiler(self) -> str | None:
+        if not _AddressSanitizer._probed:
+            _AddressSanitizer._cc = _asan_compiler() if _CC is not None else None
+            _AddressSanitizer._probed = True
+        return _AddressSanitizer._cc
+
+    def __bool__(self) -> bool:
+        return self.compiler() is not None
+
+
+_ASAN = _AddressSanitizer()
+
+
+def test_native_ai_c_harness_under_address_sanitizer():
+    """Q8-PAIR: the kernel unit's C harness, with the probe, under AddressSanitizer and UBSan. Its edges allocate
+    every matrix at its exact size, so a read or write past a matrix's codes, its last group or its outputs -- a
+    pass running a step past its rows' end -- stops the run; HEAD-PACK's edges allocate every pack, input and
+    output so too, and DECODE-THREADS' column ranges every matrix, input and output. Returns where no compiler here
+    runs a sanitized program."""
+    cc = _ASAN.compiler()
+    if cc is None:
+        return
+    import re
+    import subprocess
+
+    from bcir.toolchain import build_units, host_link_args
+
+    c = Path(__file__).resolve().parents[2] / "runtime" / "c"
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
+        exe = Path(temporary) / "ai-kernels-asan"
+        cmd = [
+            cc,
+            "-std=c11",
+            "-DBCIR_AI_INSTANCE_PROBE",
+            "-O1",
+            "-g",
+            "-fno-omit-frame-pointer",
+            "-ffp-contract=off",
+            "-fsanitize=address,undefined",
+            "-fno-sanitize-recover=all",
+            "-I",
+            str(c),
+            str(c / "test_ai_kernels.c"),
+            str(c / "bcir_ai_kernels.c"),
+            str(c / "bcir_q4_kernel.c"),
+            "-o",
+            str(exe),
+        ]
+        build_units(cmd + host_link_args(["-lm"]), "the AI kernels' sanitizer build", timeout=180)
+        env = dict(
+            os.environ,
+            ASAN_OPTIONS="detect_leaks=0:halt_on_error=1",
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
+        )
+        result = subprocess.run([str(exe)], capture_output=True, text=True, timeout=300, env=env)
+        assert result.returncode == 0, (result.returncode, result.stderr[-4000:])
+        assert "native AI kernels: all gates passed" in result.stdout, result.stdout
+        assert re.search(r"Q8-PAIR: \d+ matvecs two rows a pass, \d+ in runs", result.stdout), (
+            result.stdout
+        )
+        assert re.search(
+            r"HEAD-PACK: \d+ packed row dots, \d+ passes of 32 rows, \d+ blocks", result.stdout
+        ), result.stdout
+        assert re.search(
+            r"DECODE-THREADS: \d+ column parts on a named vector instance equal", result.stdout
+        ), result.stdout
 
 
 def test_native_boundary_rejects_malformed_numbers_extents_and_symmetric_codes():
@@ -311,6 +789,110 @@ def test_native_q15_returns_fewer_matches_than_asked_when_fewer_are_admitted():
     query = tuple((coordinate * 4409) % 65536 - 32768 for coordinate in range(9))
     index = NativeOptimizationIndex(native, memory)
     assert len(index.query(query, top_k=3, active_facts=(facts[0],))) == 3
+
+
+#: The JCC-erratum mitigation as each compiler spells it, on x86-64 (M18).
+_MITIGATION = {
+    "clang": "-mbranches-within-32B-boundaries",
+    "gcc": "-Wa,-mbranches-within-32B-boundaries",
+}
+
+
+def test_the_kernels_library_takes_its_units_options_from_the_manifest():
+    """M18: the native AI library's command carries its unit's options as the compiler resolves
+    them -- on x86-64 the JCC-erratum mitigation in that compiler's own spelling, on another
+    machine none -- and the build stamp, which hashes that command, moves with them, so a library
+    built without them is never reused as one built with them."""
+    out = Path("libbcir_ai_kernels.so")
+    digests = {}
+    for family, machine in (("clang", "x86_64"), ("gcc", "x86_64"), ("clang", "aarch64")):
+        with mock.patch("bcir.toolchain.compiler_identity", return_value=(family, machine)):
+            command = NativeAIKernels._compile_command("cc", out)
+            digests[family, machine] = NativeAIKernels._input_digest("cc")
+        mitigations = [a for a in command if "branches-within-32B-boundaries" in a]
+        assert mitigations == ([_MITIGATION[family]] if machine == "x86_64" else []), command
+        assert command.count("-ffp-contract=off") == 1, "a flag the manifest repeats is passed once"
+    assert len(set(digests.values())) == 3, digests
+
+
+def _elf_text_alignment(path: Path) -> int | None:
+    """The .text section's alignment in a 64-bit little-endian ELF object, None for any other."""
+    data = path.read_bytes()
+    if data[:4] != b"\x7fELF" or data[4:6] != b"\x02\x01":
+        return None
+    (shoff,) = struct.unpack_from("<Q", data, 0x28)
+    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 0x3A)
+
+    def header(index: int) -> tuple:
+        return struct.unpack_from("<IIQQQQIIQQ", data, shoff + index * shentsize)
+
+    names = header(shstrndx)[4]
+    for index in range(shnum):
+        sh = header(index)
+        start = names + sh[0]
+        if data[start : data.index(b"\0", start)] == b".text":
+            return sh[8]
+    return None
+
+
+def test_the_kernels_unit_compiles_with_the_mitigation_where_its_options_name_it():
+    """L11: the manifest's options reach the kernels' code. On an x86-64 host the kernel unit built
+    with its unit's options takes the compiler's own spelling of the JCC-erratum mitigation, and
+    the assembler -- padding every branch off a 32-byte boundary -- aligns its text to 32 bytes
+    where the unit built without them aligns it to 16; elsewhere the options name no mitigation."""
+    if _CC is None:
+        return
+    from bcir.toolchain import build_units, compiler_identity, unit_options
+
+    family, machine = compiler_identity(_CC)
+    own = unit_options(["bcir_ai_kernels.c"], _CC)
+    mitigations = [f for f in own if "branches-within-32B-boundaries" in f]
+    if machine != "x86_64":
+        assert mitigations == [], own
+        return
+    assert mitigations == [_MITIGATION[family]], own
+    c = Path(__file__).resolve().parents[2] / "runtime" / "c"
+    with tempfile.TemporaryDirectory() as tmp:
+        aligned = {}
+        for name, extra in (("without", []), ("with", own)):
+            obj = Path(tmp) / f"{name}.o"
+            build_units(
+                [_CC, "-std=c11", "-O2", "-ffp-contract=off", *extra, "-I", str(c), "-c",
+                 str(c / "bcir_ai_kernels.c"), "-o", str(obj)],
+                f"the AI kernels {name} their unit's options",
+                timeout=300,
+            )  # fmt: skip
+            aligned[name] = _elf_text_alignment(obj)
+    if aligned["without"] is None:
+        return  # not an ELF object (a COFF or Mach-O host): the alignment is read from ELF alone
+    assert aligned == {"without": 16, "with": 32}, aligned
+
+
+def test_the_model_microbenchmark_times_the_kernels_as_the_manifest_builds_them():
+    """M18: the microbenchmark compiles the kernels it times with their unit's options -- on x86-64
+    the JCC-erratum mitigation -- read from the manifest, not spelled beside its own flags."""
+    for family, machine in (("gcc", "x86_64"), ("clang", "x86_64"), ("gcc", "aarch64")):
+        built = []
+
+        def refuse(command, *, _built=built, **kwargs):
+            _built.append(command)
+            return subprocess.CompletedProcess(command, 1, "", "refused by the test")
+
+        with (
+            mock.patch("bcir.toolchain.compiler_identity", return_value=(family, machine)),
+            mock.patch("bcir.frontends.models.model_microbench.subprocess.run", side_effect=refuse),
+        ):
+            try:
+                run_bounded_model_microbench_native(
+                    dimension=8, repeats=3, weight_format="source", cc="cc"
+                )
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError("the refused build ran")
+        assert len(built) == 1, built
+        mitigations = [a for a in built[0] if "branches-within-32B-boundaries" in a]
+        assert mitigations == ([_MITIGATION[family]] if machine == "x86_64" else []), built[0]
 
 
 def test_native_model_microbench_is_bounded_and_emits_typed_intervals():

@@ -1,0 +1,737 @@
+{
+ "what": "tools/testing/red_sweep.py: each fault injected into the tree, its witness run, the tree restored. softmax-t.json against the slice's tree -- SM15's first edit left the maximum unused, which the harness's -Werror build refused (the defect never ran), so SM15 keeps it named and was swept again -- and the whole table again with the harness's exp_scalef case not called and the PASS count it asserts one less (the vacuity check: which faults only the new case catches); and the five faults of other tables whose anchors the slice rewrote, re-anchored on the new code with the same defect and swept: ndt-lanes.json NL8 and NL11 (the stored forward's transposed exponentials), scores-t.json ST5, ST6 and ST12 (the lanes softmax and context)",
+ "softmax_t": {
+  "results": [
+   {
+    "label": "SM1 the exponential's k rounded toward zero (another reduction)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM2 2^k as a float first, then the product (2^-150 rounds to zero before it scales)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM3 the low clamp at -103 (the last subnormal results computed from the wrong argument)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM4 ln(FLT_MAX) itself taken as overflow (>= for >)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM5 a NaN argument returns the clamp's exponential (the NaN select dropped)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM6 a NaN argument returns the default NaN, its sign and payload lost",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM7 the tail's mask one lane short (its first element never written)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM8 an output overlapping its input by part of a vector runs the vectors (not the element loop's order)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM9 the sigmoid's exponential of |x| for x > 0 (the half selected on the wrong side)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM10 the SwiGLU VJP's dg multiplied in another order (dy*(u*(...)))",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM11 the lanes softmax subtracts the scaled maximum before it scales (another rounding)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM12 rows 8-15 never divide key R+8 (the second pass's first key)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM13 a later channel pass divides again (heads past 48 channels)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM14 the diagonal keys never divided (the context reads their exponentials)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM15 the stored forward's one-pass block skips the maximum (exp of the scaled score)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM16 the lanes softmax sums its four columns last to first (another order of the row's sum)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   }
+  ]
+ },
+ "softmax_t_first_sweep": {
+  "results": [
+   {
+    "label": "SM1 the exponential's k rounded toward zero (another reduction)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM2 2^k as a float first, then the product (2^-150 rounds to zero before it scales)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM3 the low clamp at -103 (the last subnormal results computed from the wrong argument)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM4 ln(FLT_MAX) itself taken as overflow (>= for >)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM5 a NaN argument returns the clamp's exponential (the NaN select dropped)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM6 a NaN argument returns the default NaN, its sign and payload lost",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM7 the tail's mask one lane short (its first element never written)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM8 an output overlapping its input by part of a vector runs the vectors (not the element loop's order)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM9 the sigmoid's exponential of |x| for x > 0 (the half selected on the wrong side)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM10 the SwiGLU VJP's dg multiplied in another order (dy*(u*(...)))",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM11 the lanes softmax subtracts the scaled maximum before it scales (another rounding)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM12 rows 8-15 never divide key R+8 (the second pass's first key)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM13 a later channel pass divides again (heads past 48 channels)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM14 the diagonal keys never divided (the context reads their exponentials)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM15 the stored forward's one-pass block skips the maximum (exp of the scaled score)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "build"
+    ],
+    "verdict": "DOES NOT BUILD"
+   },
+   {
+    "label": "SM16 the lanes softmax sums its four columns last to first (another order of the row's sum)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   }
+  ]
+ },
+ "softmax_t_without_the_case": {
+  "results": [
+   {
+    "label": "SM1 the exponential's k rounded toward zero (another reduction)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM2 2^k as a float first, then the product (2^-150 rounds to zero before it scales)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM3 the low clamp at -103 (the last subnormal results computed from the wrong argument)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM4 ln(FLT_MAX) itself taken as overflow (>= for >)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM5 a NaN argument returns the clamp's exponential (the NaN select dropped)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM6 a NaN argument returns the default NaN, its sign and payload lost",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM7 the tail's mask one lane short (its first element never written)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM8 an output overlapping its input by part of a vector runs the vectors (not the element loop's order)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM9 the sigmoid's exponential of |x| for x > 0 (the half selected on the wrong side)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM10 the SwiGLU VJP's dg multiplied in another order (dy*(u*(...)))",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM11 the lanes softmax subtracts the scaled maximum before it scales (another rounding)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM12 rows 8-15 never divide key R+8 (the second pass's first key)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM13 a later channel pass divides again (heads past 48 channels)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM14 the diagonal keys never divided (the context reads their exponentials)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM15 the stored forward's one-pass block skips the maximum (exp of the scaled score)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "SM16 the lanes softmax sums its four columns last to first (another order of the row's sum)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   }
+  ]
+ },
+ "re_anchored": {
+  "results": [
+   {
+    "label": "NL8 the transposed exponentials store the diagonal block's upper lanes (future probabilities no longer zero)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "NL11 the transposed exponentials take libm's expf (the v2 softmax is the BCIR exponential's, in every row)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST5 the maximum left unscaled (every exponential's argument shifted)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST6 the future lanes' exponentials kept and summed (a row's sum takes its future keys)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   },
+   {
+    "label": "ST12 a context of 17 channels run on one 16-lane vector (its last channel never written)",
+    "expects": "test_native_c_harness_c11_and_c23",
+    "fired": [
+     "test_native_c_harness_c11_and_c23"
+    ],
+    "verdict": "RED"
+   }
+  ]
+ },
+ "the_case_alone": {
+  "what": "case_alone.py: each fault applied to a copy of the tensor unit and the trainer's C harness built whole and with exp_scalef alone in its main (clang 18, C11, -O2 -ffp-contract=off), each run, the assertion it stopped at recorded -- which case catches each defect first, and what the new case catches on its own; then SM6 with the case not called: src/without.c:3411: void attention_strips(void): Assertion `!memcmp(y0,y1,nq*sizeof(float))' failed.",
+  "results": [
+   {
+    "label": "control (no fault)",
+    "whole": {
+     "exit": 0,
+     "passes": 39,
+     "stopped_in": null,
+     "line": null,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": 0,
+     "passes": 1,
+     "stopped_in": null,
+     "line": null,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM1 the exponential's k rounded toward zero (another reduction)",
+    "whole": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "attention_fused_reference",
+     "line": 415,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_scalef",
+     "line": 3996,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM2 2^k as a float first, then the product (2^-150 rounds to zero before it scales)",
+    "whole": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_contract",
+     "line": 1206,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_scalef",
+     "line": 3996,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM3 the low clamp at -103 (the last subnormal results computed from the wrong argument)",
+    "whole": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_contract",
+     "line": 1233,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_scalef",
+     "line": 3996,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM4 ln(FLT_MAX) itself taken as overflow (>= for >)",
+    "whole": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_contract",
+     "line": 1233,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_scalef",
+     "line": 3996,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM5 a NaN argument returns the clamp's exponential (the NaN select dropped)",
+    "whole": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_contract",
+     "line": 1233,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_scalef",
+     "line": 4025,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM6 a NaN argument returns the default NaN, its sign and payload lost",
+    "whole": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_scalef",
+     "line": 4025,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_scalef",
+     "line": 4025,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM7 the tail's mask one lane short (its first element never written)",
+    "whole": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "attention_fused_reference",
+     "line": 415,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_scalef",
+     "line": 3998,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM8 an output overlapping its input by part of a vector runs the vectors (not the element loop's order)",
+    "whole": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_contract",
+     "line": 1240,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": 0,
+     "passes": 1,
+     "stopped_in": null,
+     "line": null,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM9 the sigmoid's exponential of |x| for x > 0 (the half selected on the wrong side)",
+    "whole": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_contract",
+     "line": 1247,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_scalef",
+     "line": 4004,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM10 the SwiGLU VJP's dg multiplied in another order (dy*(u*(...)))",
+    "whole": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_contract",
+     "line": 1255,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "exp_scalef",
+     "line": 4015,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM11 the lanes softmax subtracts the scaled maximum before it scales (another rounding)",
+    "whole": {
+     "exit": -6,
+     "passes": 20,
+     "stopped_in": "attention_scratch",
+     "line": 3523,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": 0,
+     "passes": 1,
+     "stopped_in": null,
+     "line": null,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM12 rows 8-15 never divide key R+8 (the second pass's first key)",
+    "whole": {
+     "exit": -6,
+     "passes": 20,
+     "stopped_in": "attention_scratch",
+     "line": 3523,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": 0,
+     "passes": 1,
+     "stopped_in": null,
+     "line": null,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM13 a later channel pass divides again (heads past 48 channels)",
+    "whole": {
+     "exit": -6,
+     "passes": 20,
+     "stopped_in": "attention_lanes",
+     "line": 3952,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": 0,
+     "passes": 1,
+     "stopped_in": null,
+     "line": null,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM14 the diagonal keys never divided (the context reads their exponentials)",
+    "whole": {
+     "exit": -6,
+     "passes": 20,
+     "stopped_in": "attention_scratch",
+     "line": 3523,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": 0,
+     "passes": 1,
+     "stopped_in": null,
+     "line": null,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM15 the stored forward's one-pass block skips the maximum (exp of the scaled score)",
+    "whole": {
+     "exit": -6,
+     "passes": 0,
+     "stopped_in": "attention_fused_reference",
+     "line": 415,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": 0,
+     "passes": 1,
+     "stopped_in": null,
+     "line": null,
+     "stderr_tail": ""
+    }
+   },
+   {
+    "label": "SM16 the lanes softmax sums its four columns last to first (another order of the row's sum)",
+    "whole": {
+     "exit": -6,
+     "passes": 20,
+     "stopped_in": "attention_scratch",
+     "line": 3523,
+     "stderr_tail": ""
+    },
+    "alone": {
+     "exit": 0,
+     "passes": 1,
+     "stopped_in": null,
+     "line": null,
+     "stderr_tail": ""
+    }
+   }
+  ]
+ }
+}

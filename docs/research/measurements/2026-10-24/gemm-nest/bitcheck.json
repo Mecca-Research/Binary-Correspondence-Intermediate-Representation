@@ -1,0 +1,15 @@
+{
+ "what": "../../2026-10-23/mm-rows/bitcheck.c 700 (712 cases: every k-blocked entry) on the tree's unit and on each prototype, clang 18 and GCC 13: the lines compared",
+ "builds": {
+  "clang": {
+   "lines": 6081,
+   "nopack_equal": true,
+   "gemm_pf_ac_equal": true
+  },
+  "gcc": {
+   "lines": 6081,
+   "nopack_equal": true,
+   "gemm_pf_ac_equal": true
+  }
+ }
+}

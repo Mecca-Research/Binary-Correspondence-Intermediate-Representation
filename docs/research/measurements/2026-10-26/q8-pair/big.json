@@ -1,0 +1,358 @@
+{
+ "model": {
+  "layers": 6,
+  "tensors": 56,
+  "bytes": 350419424,
+  "sha256": "9574ef4e59ccdb03579c8baac7f999e6d17d3540df89a00514b79bfbf178dbeb"
+ },
+ "runs": [
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 4,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "pair_calls_a_generation": 840,
+   "off_per_token_ms": 201.23715,
+   "on": {
+    "per_token_ms": 95.01761,
+    "ratio": 0.4562,
+    "interval": [
+     0.4301,
+     0.484
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 199.47196,
+    "ratio": 0.9904,
+    "interval": [
+     0.9213,
+     1.0648
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_pair_call_on_its_arms_kernel": true
+  },
+  {
+   "run": 1,
+   "cc": "clang",
+   "widest": 2,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "pair_calls_a_generation": 840,
+   "off_per_token_ms": 119.12085,
+   "on": {
+    "per_token_ms": 97.94114,
+    "ratio": 0.8439,
+    "interval": [
+     0.7769,
+     0.9168
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 115.37744,
+    "ratio": 0.9926,
+    "interval": [
+     0.9362,
+     1.0524
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_pair_call_on_its_arms_kernel": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 4,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "pair_calls_a_generation": 840,
+   "off_per_token_ms": 197.00986,
+   "on": {
+    "per_token_ms": 101.23502,
+    "ratio": 0.5171,
+    "interval": [
+     0.4634,
+     0.577
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 200.13933,
+    "ratio": 1.0087,
+    "interval": [
+     0.903,
+     1.1269
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_pair_call_on_its_arms_kernel": true
+  },
+  {
+   "run": 1,
+   "cc": "gcc",
+   "widest": 2,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "pair_calls_a_generation": 840,
+   "off_per_token_ms": 143.30716,
+   "on": {
+    "per_token_ms": 115.30439,
+    "ratio": 0.8205,
+    "interval": [
+     0.7973,
+     0.8445
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 137.42566,
+    "ratio": 0.9802,
+    "interval": [
+     0.943,
+     1.0188
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_pair_call_on_its_arms_kernel": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 4,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "pair_calls_a_generation": 840,
+   "off_per_token_ms": 203.9356,
+   "on": {
+    "per_token_ms": 96.32946,
+    "ratio": 0.4671,
+    "interval": [
+     0.4497,
+     0.4852
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 202.11462,
+    "ratio": 1.0018,
+    "interval": [
+     0.9399,
+     1.0678
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_pair_call_on_its_arms_kernel": true
+  },
+  {
+   "run": 2,
+   "cc": "clang",
+   "widest": 2,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "pair_calls_a_generation": 840,
+   "off_per_token_ms": 112.72473,
+   "on": {
+    "per_token_ms": 96.74422,
+    "ratio": 0.8958,
+    "interval": [
+     0.8085,
+     0.9925
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 115.60392,
+    "ratio": 1.0221,
+    "interval": [
+     0.9531,
+     1.0961
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_pair_call_on_its_arms_kernel": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 4,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "pair_calls_a_generation": 840,
+   "off_per_token_ms": 199.13741,
+   "on": {
+    "per_token_ms": 100.04736,
+    "ratio": 0.5074,
+    "interval": [
+     0.4741,
+     0.5431
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 193.65108,
+    "ratio": 0.9603,
+    "interval": [
+     0.9116,
+     1.0115
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_pair_call_on_its_arms_kernel": true
+  },
+  {
+   "run": 2,
+   "cc": "gcc",
+   "widest": 2,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "pair_calls_a_generation": 840,
+   "off_per_token_ms": 138.72054,
+   "on": {
+    "per_token_ms": 120.0017,
+    "ratio": 0.8528,
+    "interval": [
+     0.8142,
+     0.8931
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 142.09091,
+    "ratio": 1.0164,
+    "interval": [
+     0.9732,
+     1.0614
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_pair_call_on_its_arms_kernel": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 4,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "pair_calls_a_generation": 840,
+   "off_per_token_ms": 194.51713,
+   "on": {
+    "per_token_ms": 94.79782,
+    "ratio": 0.4744,
+    "interval": [
+     0.4318,
+     0.5213
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 203.20709,
+    "ratio": 1.033,
+    "interval": [
+     1.0047,
+     1.062
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_pair_call_on_its_arms_kernel": true
+  },
+  {
+   "run": 3,
+   "cc": "clang",
+   "widest": 2,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "pair_calls_a_generation": 840,
+   "off_per_token_ms": 117.62915,
+   "on": {
+    "per_token_ms": 101.25665,
+    "ratio": 0.881,
+    "interval": [
+     0.8215,
+     0.9449
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 118.58596,
+    "ratio": 1.0112,
+    "interval": [
+     0.9359,
+     1.0924
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_pair_call_on_its_arms_kernel": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 4,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "pair_calls_a_generation": 840,
+   "off_per_token_ms": 194.0986,
+   "on": {
+    "per_token_ms": 98.73882,
+    "ratio": 0.512,
+    "interval": [
+     0.4908,
+     0.5341
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 197.03175,
+    "ratio": 1.0156,
+    "interval": [
+     0.9427,
+     1.0941
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_pair_call_on_its_arms_kernel": true
+  },
+  {
+   "run": 3,
+   "cc": "gcc",
+   "widest": 2,
+   "rounds": 5,
+   "reps": 1,
+   "short": 4,
+   "long": 16,
+   "pair_calls_a_generation": 840,
+   "off_per_token_ms": 141.47353,
+   "on": {
+    "per_token_ms": 114.85685,
+    "ratio": 0.8095,
+    "interval": [
+     0.7833,
+     0.8367
+    ]
+   },
+   "A/A": {
+    "per_token_ms": 138.74828,
+    "ratio": 0.9871,
+    "interval": [
+     0.9477,
+     1.0282
+    ]
+   },
+   "every_generation_the_same_bytes": true,
+   "every_pair_call_on_its_arms_kernel": true
+  }
+ ]
+}

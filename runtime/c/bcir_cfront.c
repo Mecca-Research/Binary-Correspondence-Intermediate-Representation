@@ -144,6 +144,10 @@ typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int count;
                  long long dims[4];   /* 0: unsized, or not an integer literal */
                  int init_a, init_b;  /* the initializer's token range [init_a, init_b) (empty: none) --
                                        * the escape analysis marks every function it names address-taken */
+                 uint8_t lk_static, lk_extern, lk_thread;   /* the linkable emit's: its storage classes */
+                 uint8_t lk_init;     /* ... and its initializer: 0 none, 1 re-spelled (`lk_off`, `lk_len` in the
+                                       * context's `lktext`), 2 an entry no linkable rendering spells (CF-LINKTWIN) */
+                 size_t lk_off, lk_len;
                } gvar;  /* a file-scope global */
 
 /* The size-varying part of a target's C data model -- the C twin of frontends/cfront/abi.py. `long`,
@@ -315,6 +319,14 @@ typedef struct {
                                              * (a reset of the context drops them with it) */
   unsigned n_void;                          /* void values made in the unit -- a statement reading one is refused
                                              * (`void_read`; none made, none read) */
+  int linkable;                             /* the compile emits the linkable artifact (`bcir-cc --linkable`, the oracle's
+                                             * `emit_linkable`; CF-LINKTWIN): the parse records what it needs below */
+  struct lkdef { int a, b, semi; } *lkd; int nlkd, cap_lkd;   /* ... each file-scope type definition's tokens [a, b),
+                                             * in the unit's order, a ` ;` after the tokens of an aggregate's (the
+                                             * oracle's `Unit.type_defs`) */
+  ctext lktext;                             /* ... and each global's initializer, re-spelled (`gvar.lk_off`) */
+  bcir_func lkfn;                           /* ... the function, of no body, an entry is folded in (`lk_fold`): empty
+                                             * between folds, released by the failure path too */
   char err[256]; int failed;
 } CC;
 /* The recursion-depth cap for the recursive-descent parser. Comfortably below the real native-stack
@@ -455,7 +467,11 @@ static const char *char_value(const bcir_abi *a, const char *s, int n, long long
     for(int k=0;k<L.n;k++) p=((p<<8)|L.units[k])&0xFFFFFFFFu;
     *v = p>=0x80000000u ? (long long)p-(1LL<<32) : (long long)p; return NULL; }
   *v=(long long)L.units[0];
-  if(L.prefix=='L' && a->wchar_signed && bits<64 && ((unsigned long long)*v>>(bits-1))) *v-=(1LL<<bits);
+  /* a signed `wchar_t` unit with its top bit set is v - 2^bits: char_literal keeps v below 2^bits, so 2^bits - v lies
+   * in (0, 2^(bits-1)] and is taken unsigned, then negated exactly -- no shift into a signed value's sign bit, at any
+   * width below 64 */
+  if(L.prefix=='L' && a->wchar_signed && bits<64 && ((unsigned long long)*v>>(bits-1)))
+    *v=-(long long)((1ULL<<bits)-(unsigned long long)*v);
   return NULL;
 }
 
@@ -1900,13 +1916,14 @@ static uint32_t tempbi(CC *c,int bit_width,int signd){
   uint32_t r=add_res(c,BCIR_DOM_RAM,sz,1,0,BCIR_RK_SCALAR,"");
   if(c->fn->n_res){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(signd?1:0);
     c->fn->res[c->fn->n_res-1].bit_width=bit_width; } return r; }
+static const bcir_resource *res_of(const bcir_func *f,uint32_t rid);   /* (defined with the verifier) */
 /* The `_BitInt(N)` width of the value in rid (its exact N), or 0 if rid is not a `_BitInt` scalar. Drives
  * the non-promoting same-type arithmetic + the fallback-on-mix boundary in `binop_result`. */
 static int rid_bitint(CC *c,uint32_t rid,int *signd){
-  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){
-    if(c->fn->res[i].bit_width>0){ if(signd)*signd=c->fn->res[i].is_signed; return c->fn->res[i].bit_width; }
-    return 0; }
-  return 0; }
+  const bcir_resource *r=res_of(c->fn,rid);           /* the one lookup (`res_index`), as every rid_* reads it */
+  if(!r || r->bit_width<=0) return 0;
+  if(signd) *signd=r->is_signed;
+  return r->bit_width; }
 /* The temp a call returning the function pointer `rt` (kind 3) yields (CF-FPRET): a function-pointer value of its type,
  * spelled by its alias -- the oracle's `_call_result_ct`. A `uint32_t` of it did not compile, and a comparison read a
  * pointer cut to 32 bits. */
@@ -1950,12 +1967,12 @@ static uint32_t field_call_temp(CC *c, const field *ff){
   return fp_result_temp(c,&fp);
 }
 static int rid_complex(CC *c,uint32_t rid){
-  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid) return c->fn->res[i].is_complex; return 0; }
+  const bcir_resource *r=res_of(c->fn,rid); return r ? r->is_complex : 0; }
 /* The integer (width, signedness) of the value in rid; returns 0 if rid is not a plain integer scalar
  * (float / pointer / aggregate -- the usual arithmetic conversions do not apply to it). */
 static int rid_int(CC *c,uint32_t rid,int *size,int *signd){
-  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){
-    const bcir_resource *r=&c->fn->res[i];
+  const bcir_resource *r=res_of(c->fn,rid);
+  if(r){
     if(r->is_float||r->kind!=BCIR_RK_SCALAR) return 0;
     *size=(int)r->elem_bytes; *signd=r->is_signed; return 1; }
   *size=4; *signd=1; return 1;                          /* unknown -> assume int */
@@ -1963,9 +1980,9 @@ static int rid_int(CC *c,uint32_t rid,int *size,int *signd){
 /* if rid holds a float/double, returns 1 and its width (else 0) -- a float arm of a select / the usual
  * arithmetic conversions makes the result the wider float. */
 static int rid_float(CC *c,uint32_t rid,int *size){
-  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){
-    if(!c->fn->res[i].is_float) return 0; *size=(int)c->fn->res[i].elem_bytes; return 1; }
-  return 0;
+  const bcir_resource *r=res_of(c->fn,rid);
+  if(!r || !r->is_float) return 0;
+  *size=(int)r->elem_bytes; return 1;
 }
 /* integer promotion (§6.3.1.1): a sub-int rank promotes to int. */
 static void promote_i(int *size,int *signd){ if(*size<4){*size=4;*signd=1;} }
@@ -2065,7 +2082,6 @@ static int p_call_args(CC *c, uint32_t *args, int *na){
 static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si);   /* `(type){init}` (defined w/ agg_init) */
 static uint32_t p_stmt_expr(CC *c);   /* `({ ... })` -- a GCC statement expression (defined after p_stmt) */
 static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int si, int count, const int *la_dims, int la_nd);    /* `(T[N]){init}` / `(T[A][B]){init}` / `(struct P[]){init}` (defined w/ arr_init) */
-static const bcir_resource *res_of(const bcir_func *f,uint32_t rid);   /* (defined with the verifier) */
 /* A copy of `rid`'s resource, for a caller about to make a temporary: add_res may reallocate res[], so a
  * pointer into it dangles across the call (CF-UAF). 1 when `rid` names a resource, else 0 and *out zeroed. */
 static int res_copy(const CC *c,uint32_t rid,bcir_resource *out){
@@ -10098,26 +10114,40 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
   return w;
 }
 
+/* The linkable emit's record of a file-scope type definition (CF-LINKTWIN): its tokens [a, b), spelled one space
+ * apart, and ` ;` after an aggregate's, whose storage class and declarators are its globals' (the oracle's
+ * `Unit.type_defs`, `cparse._spelled`). Only a linkable compile records one. */
+static void lk_typedef(CC *c, int a, int b, int semi){
+  if(!c->linkable || c->failed || b<=a) return;
+  if(!CC_ENSURE(c,c->lkd,c->nlkd,c->cap_lkd)) return;
+  c->lkd[c->nlkd].a=a; c->lkd[c->nlkd].b=b; c->lkd[c->nlkd].semi=semi; c->nlkd++;
+}
+#define LK_STATIC 1
+#define LK_EXTERN 2
+#define LK_THREAD 4
 /* Try to parse a top-level type declaration (typedef / enum definition /
  * struct|union definition) at the current token.  Returns 1 if one was consumed,
  * 0 if the current token instead begins a function/global.  Real translation
  * units and vendor headers interleave these with functions, so this is called
  * from the main top-level loop rather than only before the first function. */
-static void p_global_declarator(CC *c, const bcir_ctype *base, int si, int btd, const int *btdd);   /* fwd (below) */
+static void p_global_declarator(CC *c, const bcir_ctype *base, int si, int btd, const int *btdd, int st);   /* fwd (below) */
 static int try_top_decl(CC *c){
   if(c->failed) return 0;
-  if(is(c,"typedef")){ p_typedef(c); return 1; }
+  if(is(c,"typedef")){ int a=c->i; p_typedef(c); lk_typedef(c,a,c->i,0); return 1; }
   if(is(c,"enum")){
     int save=c->i; c->i++; tok tag={T_END,"",0,0}; if(isk(c,T_ID)&&!is(c,"{")) tag=adv(c);
-    if(is(c,"{")){ p_enum_body(c,&tag); eat(c,";"); return 1; }
+    if(is(c,"{")){ p_enum_body(c,&tag); eat(c,";"); lk_typedef(c,save,c->i,0); return 1; }
     c->i=save; return 0;                             /* `enum tag` as a type -> a function follows */
   }
   { /* a struct *definition*?  [storage/qualifiers] struct [attrs] [TAG] [attrs] {  -- lookahead past them. A
      * declaration of objects may define the struct it declares them of, `static struct t { ... } a, b;` (C11
-     * 6.7.2.1): the definition, then its declarators, globals (the oracle's `_aggregate_definition`) */
-    int save=c->i, vol=0;
+     * 6.7.2.1): the definition, then its declarators, globals (the oracle's `_aggregate_definition`) -- `const`
+     * every one's type, as it is the oracle's, and the storage classes theirs */
+    int save=c->i, vol=0, cst=0, st=0;
     while(is(c,"static")||is(c,"extern")||is(c,"const")||is(c,"volatile")||is(c,"_Thread_local")||is(c,"thread_local")){
       if(is(c,"volatile")) vol=1;
+      else if(is(c,"const")) cst=1;
+      else st|=is(c,"static") ? LK_STATIC : is(c,"extern") ? LK_EXTERN : LK_THREAD;
       c->i++; }
     if(is(c,"struct")||is(c,"union")){
       int kw=c->i; c->i++; int pk_=0,al_=0; attrs(c,&pk_,&al_);
@@ -10125,19 +10155,21 @@ static int try_top_decl(CC *c){
       attrs(c,&pk_,&al_);
       if(is(c,"{")){
         c->i=kw; int my=p_struct_body(c);
+        if(tag.k==T_ID && my>=0) lk_typedef(c,kw,c->i,1);   /* the definition alone (the oracle's, tagged only) */
         if(is(c,";")||c->failed||my<0){ eat(c,";"); return 1; }
         if(tag.k!=T_ID){ fail(c,"an object of an untagged struct or union at file scope is not supported"); return 1; }
         bcir_ctype base; memset(&base,0,sizeof base); base.kind=1; base.signd=1; base.size=c->s[my].size;
-        base.is_union=(uint8_t)c->s[my].is_union; base.is_volatile=(uint8_t)vol; idcpy(c,base.tag,&tag);
-        for(;;){ p_global_declarator(c,&base,my,0,NULL); if(c->failed || !is(c,",")) break; c->i++; }
+        base.is_union=(uint8_t)c->s[my].is_union; base.is_volatile=(uint8_t)vol; base.is_const=(uint8_t)cst;
+        idcpy(c,base.tag,&tag);
+        for(;;){ p_global_declarator(c,&base,my,0,NULL,st); if(c->failed || !is(c,",")) break; c->i++; }
         eat(c,";"); return 1; }
     }
     c->i=save;
   }
   if(is(c,"struct")||is(c,"union")){
     if(tat(c,c->i+1)->k==T_ID && tok_is(tat(c,c->i+2),";")){   /* `struct tag;` -- a forward declaration */
-      int isu=is(c,"union"); c->i++; tok tag=adv(c); if(declare_struct(c,&tag,isu)<0) return 1;
-      eat(c,";"); return 1; }
+      int a=c->i, isu=is(c,"union"); c->i++; tok tag=adv(c); if(declare_struct(c,&tag,isu)<0) return 1;
+      eat(c,";"); lk_typedef(c,a,c->i,0); return 1; }
     return 0;                                        /* struct used as a type -> a function follows */
   }
   return 0;
@@ -10222,11 +10254,167 @@ static long long global_init_shape(CC *c, const tok *nm, const bcir_ctype *ty, i
   if(c->failed) return -1;
   return inferred ? (W.top_n<1?1:W.top_n) : -1;
 }
+/* --- a file-scope initializer as the linkable emit defines it (CF-LINKTWIN; the oracle's `_file_scope_rendering`,
+ * `_spell_init`) ---------------------------------------------------------------------------------------------------
+ * The global's initializer re-spelled from its tokens: a brace list's braces and designators kept, which C walks the
+ * same way in the artifact (CF-GBRACE), and each entry one of the forms an arithmetic or address constant takes (C11
+ * 6.6p7-9): a floating constant by its spelling, its sign with it; a string literal by its own, its pieces one space
+ * apart (a character array's initializer, or a pointer's: the address of its array); the address of an element of an
+ * array declared before it at constant subscripts, `&g[1]`; such an array as a value, by its name; a function
+ * designator, or `&` of one; the address of a global declared before it (or itself); else an integer constant
+ * expression, folded as a static's entry is, in C's own types (`kfold`), and spelled exactly (`kdigits`). Anything
+ * else is no rendering, and the emit refuses the global by name, as the oracle does. A parenthesis the oracle's parser
+ * drops, the renderer drops. */
+static void cfront_free_func(const bcir_host_allocator *allocator, bcir_func *fn);   /* fwd (below) */
+/* The bracket at token `i` -- `(`, `[` or `{` -- closes at the token returned, before `end`; -1 when none does. */
+static int lk_close(CC *c, int i, int end){
+  int d=0;
+  for(int k=i; k<end; k++){ const tok *t=&c->t[k];
+    if(t->k!=T_PUN) continue;
+    if(tok_is(t,"(")||tok_is(t,"[")||tok_is(t,"{")) d++;
+    else if(tok_is(t,")")||tok_is(t,"]")||tok_is(t,"}")){ if(--d==0) return k; if(d<0) return -1; } }
+  return -1;
+}
+/* ... and the bracket at token `i` -- `)`, `]` or `}` -- opens at the token returned, at or after `start`; -1 when none
+ * does. */
+static int lk_open(CC *c, int start, int i){
+  int d=0;
+  for(int k=i; k>=start; k--){ const tok *t=&c->t[k];
+    if(t->k!=T_PUN) continue;
+    if(tok_is(t,")")||tok_is(t,"]")||tok_is(t,"}")) d++;
+    else if(tok_is(t,"(")||tok_is(t,"[")||tok_is(t,"{")){ if(--d==0) return k; if(d<0) return -1; } }
+  return -1;
+}
+/* [*a, *b) without the parentheses around the whole of it. */
+static void lk_strip(CC *c, int *a, int *b){
+  while(*b-*a>=2 && tok_is(&c->t[*a],"(") && lk_close(c,*a,*b)==*b-1){ (*a)++; (*b)--; }
+}
+/* The end of a brace list's entry at `k`: the `,` or `}` that ends it at its own depth, or `end`. */
+static int lk_entry_end(CC *c, int k, int end){
+  int d=0;
+  for(; k<end; k++){ const tok *t=&c->t[k];
+    if(t->k!=T_PUN) continue;
+    if(tok_is(t,"(")||tok_is(t,"[")||tok_is(t,"{")) d++;
+    else if(tok_is(t,")")||tok_is(t,"]")||tok_is(t,"}")){ if(!d) return k; d--; }
+    else if(!d && tok_is(t,",")) return k; }
+  return end;
+}
+/* A designator's index, its tokens [a, b): its value as the initializer walk folded it (`ce_fold`). 0 when it is
+ * none; the cursor is as it was. */
+static int lk_index(CC *c, int a, int b, long long *v){
+  int save=c->i, ok=0; kval k;
+  c->i=a;
+  if(ce_fold(c,1,&k) && c->i==b){ *v=kvalue(&k); ok=1; }
+  c->i=save; return ok;
+}
+/* The entry [a, b) folded as a static's entry is (the oracle's `_const_value` on its `ginit`): lowered in a function
+ * of no body whose scope is the file's -- the globals and enumerators declared so far -- and the claims it made
+ * evaluated by `kfold`. A probe: every trace of the lowering is rolled back -- its claims and resources, the counters,
+ * the function-pointer typedefs and signatures it named, a failure -- and the compile goes on whatever it found. */
+static int lk_fold(CC *c, int a, int b, kval *out){
+  bcir_func *fn0=c->fn; char err0[sizeof c->err];
+  int nenv0=c->nenv, i0=c->i, failed0=c->failed, ns0=c->ns, nec0=c->nec, nsig0=c->nsig, nfp0=c->n_fpdef, depth0=c->depth;
+  int npure0=c->npure;
+  size_t fpw0=c->fpdefs.w; uint32_t rid0=c->rid, cid0=c->cid, cl0=c->cl_ctr; unsigned nvoid0=c->n_void;
+  memcpy(err0,c->err,sizeof err0);
+  memset(&c->lkfn,0,sizeof c->lkfn);
+  c->fn=&c->lkfn; c->nenv=0; c->i=a; c->failed=0; c->err[0]=0;
+  uint32_t v=p_expr(c);
+  int ok=!c->failed && c->i==b;
+  if(ok){ *out=kfold(c,0,v); ok=!c->failed; }
+  cfront_free_func(&c->allocator,&c->lkfn);
+  c->fn=fn0; c->nenv=nenv0; c->i=i0; c->failed=failed0; memcpy(c->err,err0,sizeof err0);
+  c->ns=ns0; c->nec=nec0; c->nsig=nsig0; c->n_fpdef=nfp0; c->depth=depth0; c->npure=npure0;
+  c->fpdefs.w=fpw0; if(c->fpdefs.s) c->fpdefs.s[fpw0]=0;
+  c->rid=rid0; c->cid=cid0; c->cl_ctr=cl0; c->n_void=nvoid0;
+  return ok;
+}
+/* A folded constant, spelled exactly in its own type (the oracle's `_const_spelling`). */
+static void lk_konst(CC *c, const kval *k, ctext *t){
+  char d[48]; kdigits(d,sizeof d,k->p,k->sgn && (k->p>>63)); ctext_putf(c,t,"%s",d);
+}
+/* `nm` names a function the unit has defined or declared so far (the oracle's `func_rets` and `protos`). */
+static int lk_is_func(CC *c, const tok *nm){
+  for(int i=0; c->unit && i<c->unit->n_funcs; i++)
+    if((int)strlen(c->unit->funcs[i].name)==nm->n && !strncmp(c->unit->funcs[i].name,nm->s,(size_t)nm->n)) return 1;
+  for(int k=0; k<c->n_protos; k++)
+    if((int)strlen(c->protos[k].name)==nm->n && !strncmp(c->protos[k].name,nm->s,(size_t)nm->n)) return 1;
+  return 0;
+}
+static int lk_render(CC *c, int a, int b, int depth, ctext *t);
+/* A brace list [a, b), its `}` at b - 1: each entry its designators -- `.m`, `[N]` with N folded, a chain of them --
+ * then ` = ` and its value, `, ` between entries, no trailing comma (the oracle's rendering of an `AggInit`). */
+static int lk_list(CC *c, int a, int b, int depth, ctext *t){
+  if(depth>IW_MAXFRAMES) return 0;                       /* the walk took no deeper list */
+  ctext_putn(c,t,"{",1);
+  for(int k=a+1, first=1; k<b-1; first=0){
+    if(!first) ctext_putn(c,t,", ",2);
+    if(tok_is(&c->t[k],"[") || tok_is(&c->t[k],".")){
+      while(k<b-1 && (tok_is(&c->t[k],"[") || tok_is(&c->t[k],"."))){
+        if(tok_is(&c->t[k],".")){
+          if(k+1>=b-1 || c->t[k+1].k!=T_ID) return 0;
+          ctext_putf(c,t,".%.*s",c->t[k+1].n,c->t[k+1].s); k+=2; continue; }
+        int e=lk_close(c,k,b-1); long long ix;
+        if(e<0 || !lk_index(c,k+1,e,&ix)) return 0;
+        ctext_putf(c,t,"[%lld]",ix); k=e+1; }
+      if(k>=b-1 || !tok_is(&c->t[k],"=")) return 0;
+      ctext_putn(c,t," = ",3); k++; }
+    int e=lk_entry_end(c,k,b-1);
+    if(e==k || !lk_render(c,k,e,depth+1,t)) return 0;
+    k=e; if(k<b-1 && tok_is(&c->t[k],",")) k++;
+  }
+  ctext_putn(c,t,"}",1);
+  return 1;
+}
+/* One initializer, or one entry of a brace list, [a, b). 0 when it is none of the forms above. */
+static int lk_render(CC *c, int a, int b, int depth, ctext *t){
+  if(b<=a) return 0;
+  if(tok_is(&c->t[a],"{")) return lk_close(c,a,b)==b-1 && lk_list(c,a,b,depth,t);
+  lk_strip(c,&a,&b);
+  if(b<=a) return 0;
+  const tok *t0=&c->t[a];
+  if(b-a==1 && t0->k==T_FLT){ ctext_putn(c,t,t0->s,(size_t)t0->n); return 1; }   /* a floating constant */
+  if(tok_is(t0,"-") || tok_is(t0,"+")){                  /* ... signed */
+    int x=a+1, y=b; lk_strip(c,&x,&y);
+    if(y-x==1 && c->t[x].k==T_FLT){
+      if(tok_is(t0,"-")) ctext_putn(c,t,"-",1);
+      ctext_putn(c,t,c->t[x].s,(size_t)c->t[x].n); return 1; } }
+  { int all=1; for(int k=a; k<b && all; k++) all=c->t[k].k==T_STR;
+    if(all){ for(int k=a; k<b; k++){ if(k>a) ctext_putn(c,t," ",1); ctext_putn(c,t,c->t[k].s,(size_t)c->t[k].n); }
+      return 1; } }                                      /* a string literal */
+  if(tok_is(t0,"&")){                                    /* `&g[k]...` of an array declared before it */
+    int x=a+1, y=b, sa[8], sb[8], n=0;
+    for(;;){ lk_strip(c,&x,&y);
+      if(y-x<4 || !tok_is(&c->t[y-1],"]")) break;
+      int lb=lk_open(c,x,y-1); if(lb<=x || n==8) break;
+      sa[n]=lb+1; sb[n]=y-1; n++; y=lb; }
+    if(n && y-x==1 && c->t[x].k==T_ID){ int g=find_global(c,c->t[x].s,c->t[x].n);
+      if(g>=0 && c->gv[g].is_arr){
+        ctext_putf(c,t,"&%.*s",c->t[x].n,c->t[x].s);
+        for(int k=n; k-- > 0;){ kval v; if(!lk_fold(c,sa[k],sb[k],&v)) return 0;
+          ctext_putn(c,t,"[",1); lk_konst(c,&v,t); ctext_putn(c,t,"]",1); }
+        return 1; } } }
+  if(b-a==1 && t0->k==T_ID){                             /* an array declared before it, as a value */
+    int g=find_global(c,t0->s,t0->n);
+    if(g>=0 && c->gv[g].is_arr){ ctext_putn(c,t,t0->s,(size_t)t0->n); return 1; } }
+  { int x=a, y=b, amp=tok_is(t0,"&");                    /* a function designator, or `&` of one */
+    if(amp){ x=a+1; lk_strip(c,&x,&y); }
+    if(y-x==1 && c->t[x].k==T_ID && find_global(c,c->t[x].s,c->t[x].n)<0 && lk_is_func(c,&c->t[x])){
+      if(amp) ctext_putn(c,t,"&",1);
+      ctext_putn(c,t,c->t[x].s,(size_t)c->t[x].n); return 1; } }
+  if(tok_is(t0,"&")){                                    /* `&g` of a global declared before it, or itself */
+    int x=a+1, y=b; lk_strip(c,&x,&y);
+    if(y-x==1 && c->t[x].k==T_ID && find_global(c,c->t[x].s,c->t[x].n)>=0){
+      ctext_putf(c,t,"&%.*s",c->t[x].n,c->t[x].s); return 1; } }
+  kval v; if(!lk_fold(c,a,b,&v)) return 0;               /* an arithmetic constant */
+  lk_konst(c,&v,t); return 1;
+}
+static int lk_value(CC *c, int a, int b, ctext *t){ return lk_render(c,a,b,0,t); }
 /* One declarator of a file-scope declaration off the specifier `base` -- its `*`s, name, dimensions and initializer --
  * registered as a global. The emit names a global, which the source defines, so its initializer is walked only for
  * its shape (`global_init_shape`). `si`: the specifier's struct; `btd` / `btdd`: a typedef'd array specifier's
  * dimensions, inner to the declarator's. */
-static void p_global_declarator(CC *c, const bcir_ctype *base, int si, int btd, const int *btdd){
+static void p_global_declarator(CC *c, const bcir_ctype *base, int si, int btd, const int *btdd, int st){
   if(btd && is(c,"*")){ fail(c,"a pointer to a typedef'd array is not supported"); return; }
   bcir_ctype ty=*base; apply_stars(c,&ty);
   if(c->failed) return;
@@ -10256,15 +10444,26 @@ static void p_global_declarator(CC *c, const bcir_ctype *base, int si, int btd, 
   CC_ENSURE(c, c->gv, c->ngv, c->cap_gv);
   if(c->ngv<c->cap_gv){ gvar *g=&c->gv[c->ngv++]; idcpy(c,g->name,&nm); g->ty=ty; g->count=count;
     g->is_arr=is_arr; g->init_a=init_a; g->init_b=init_b;
-    g->nd=nd; for(int d=0;d<4;d++) g->dims[d]=dims[d]; }
+    g->nd=nd; for(int d=0;d<4;d++) g->dims[d]=dims[d];
+    g->lk_static=(uint8_t)((st&LK_STATIC)!=0); g->lk_extern=(uint8_t)((st&LK_EXTERN)!=0);
+    g->lk_thread=(uint8_t)((st&LK_THREAD)!=0); g->lk_init=0; g->lk_off=g->lk_len=0;
+    if(c->linkable && init_b>init_a && !c->failed){
+      /* the initializer as the linkable emit spells it, rendered here, where C's scope is the initializer's: the
+       * globals declared so far, this one among them, and the functions declared so far (the oracle's `ginit`) */
+      size_t w0=c->lktext.w; int gi=c->ngv-1;
+      if(lk_value(c,init_a,init_b,&c->lktext)){ g=&c->gv[gi]; g->lk_init=1; g->lk_off=w0; g->lk_len=c->lktext.w-w0; }
+      else { c->lktext.w=w0; if(c->lktext.s) c->lktext.s[w0]=0; c->gv[gi].lk_init=2; }
+    } }
 }
 /* A file-scope declaration: each declarator off the one specifier a global of its own type -- `T a[3], *p, b = 5;`
  * (C11 6.7p1), a declarator's `*`s its own (the oracle's `_globals`). */
 static void p_global(CC *c){
+  c->saw_static=0; c->saw_extern=0; c->saw_thread=0;   /* THIS declaration's storage classes, wherever spelled */
   bcir_ctype base; int si; if(p_type_base(c,&base,&si)) return;
+  int st=(c->saw_static?LK_STATIC:0)|(c->saw_extern?LK_EXTERN:0)|(c->saw_thread?LK_THREAD:0);
   int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array type */
   for(;;){
-    p_global_declarator(c,&base,si,btd,btdd);
+    p_global_declarator(c,&base,si,btd,btdd,st);
     if(c->failed || !is(c,",")) break;
     c->i++;
   }
@@ -10319,8 +10518,9 @@ void bcir_cfront_context_reset(bcir_cfront_context *context) {
   sdef *s; tdef *td; econst *ec; gvar *gv; venv *env; void *protos; irange *iw_rng; iunion *iw_un; int *pure_memo;
   tok *t;
   unsigned long long *swv;
-  int cap_s,cap_td,cap_ec,cap_gv,cap_env,cap_protos,iw_caprng,iw_capun,cap_pure,cap_swv,cap_t;
-  ctext fpdefs,tudefs,anontext;
+  struct lkdef *lkd;
+  int cap_s,cap_td,cap_ec,cap_gv,cap_env,cap_protos,iw_caprng,iw_capun,cap_pure,cap_swv,cap_t,cap_lkd;
+  ctext fpdefs,tudefs,anontext,lktext;
   if(!context||!context->state) return;
   c=(CC *)context->state;
   bcir_host_arena_reset(&c->scratch);
@@ -10330,7 +10530,7 @@ void bcir_cfront_context_reset(bcir_cfront_context *context) {
   protos=c->protos;cap_protos=c->cap_protos;
   iw_rng=c->iw_rng;iw_caprng=c->iw_caprng;iw_un=c->iw_un;iw_capun=c->iw_capun;
   pure_memo=c->pure_memo;cap_pure=c->cap_pure;swv=c->swv;cap_swv=c->cap_swv;
-  fpdefs=c->fpdefs;tudefs=c->tudefs;anontext=c->anontext;
+  fpdefs=c->fpdefs;tudefs=c->tudefs;anontext=c->anontext;lktext=c->lktext;lkd=c->lkd;cap_lkd=c->cap_lkd;
   memset(c,0,sizeof *c);
   c->allocator=allocator;c->scratch=scratch;
   c->s=s;c->cap_s=cap_s;c->td=td;c->cap_td=cap_td;c->ec=ec;c->cap_ec=cap_ec;c->t=t;c->cap_t=cap_t;
@@ -10340,8 +10540,10 @@ void bcir_cfront_context_reset(bcir_cfront_context *context) {
   c->pure_memo=pure_memo;c->cap_pure=cap_pure;c->swv=swv;c->cap_swv=cap_swv;
   c->fpdefs.s=fpdefs.s;c->fpdefs.cap=fpdefs.cap;c->tudefs.s=tudefs.s;c->tudefs.cap=tudefs.cap;   /* kept, emptied */
   c->anontext.s=anontext.s;c->anontext.cap=anontext.cap;
+  c->lktext.s=lktext.s;c->lktext.cap=lktext.cap;c->lkd=lkd;c->cap_lkd=cap_lkd;   /* the linkable emit's (CF-LINKTWIN) */
   if(c->fpdefs.s) c->fpdefs.s[0]=0;
   if(c->tudefs.s) c->tudefs.s[0]=0;
+  if(c->lktext.s) c->lktext.s[0]=0;
 }
 
 void bcir_cfront_context_destroy(bcir_cfront_context *context) {
@@ -10357,6 +10559,7 @@ void bcir_cfront_context_destroy(bcir_cfront_context *context) {
   bcir_host_deallocate(&allocator,c->pure_memo);bcir_host_deallocate(&allocator,c->swv);
   bcir_host_deallocate(&allocator,c->fpdefs.s);bcir_host_deallocate(&allocator,c->tudefs.s);
   bcir_host_deallocate(&allocator,c->anontext.s);
+  bcir_host_deallocate(&allocator,c->lktext.s);bcir_host_deallocate(&allocator,c->lkd);
   memset(c,0,sizeof *c);bcir_host_deallocate(&allocator,c);
   memset(context,0,sizeof *context);
 }
@@ -10503,6 +10706,194 @@ static const char *respell_anon(CC *c, bcir_cfront_result *out){
   memcpy(out->emitted,t->s,t->w); out->emitted_len=t->w; out->emitted[t->w]=0;
   return NULL;
 }
+/* --- the linkable artifact (Phase 3 linking; CF-LINKTWIN, the oracle's `emit_linkable`) -------------------------
+ * The unit as a translation unit other units link to: the headers its own text names, the attestation, the types it
+ * defines as the source spells them, the function-pointer typedefs the twin's emit names its types by, the functions
+ * other units define, every function of the unit declared -- `static` where the source's is -- the unit's globals
+ * defined with their initializers (an `extern` one declared), then the functions under their real names with their
+ * source linkage. */
+
+/* The function of the unit that `line` [0, len) declares or defines: the one named directly before some `(` -- a
+ * return type may hold parentheses, `_BitInt(13)`, so every `(` is tried; a parameter's name is never followed by
+ * one. -1 when it names none. */
+static int lk_line_fn(const bcir_unit *u, const char *line, size_t len){
+  for(const char *par=memchr(line,'(',len); par; par=memchr(par+1,'(',len-(size_t)(par+1-line))){
+    const char *b=par;
+    while(b>line && is_idc((unsigned char)b[-1])) b--;
+    if(b==par) continue;
+    for(int f=0; f<u->n_funcs; f++)
+      if(strlen(u->funcs[f].name)==(size_t)(par-b) && !strncmp(b,u->funcs[f].name,(size_t)(par-b))) return f;
+  }
+  return -1;
+}
+/* The tail of `lktext` from `w` dropped (its scratch use after the initializers it holds). */
+static void lk_trunc(CC *c, size_t w){ c->lktext.w=w; if(c->lktext.s) c->lktext.s[w]=0; }
+/* One global's declaration without its initializer: its type as the source declares it -- the base type with its
+ * `const` and `volatile`, each `*` with the `const` and `restrict` after it -- then its name and every dimension (the
+ * oracle's `_object_declarator`). 0 when the twin cannot spell it: a dimension past the fourth, which the parse does
+ * not keep. */
+static int lk_decl(CC *c, const gvar *g, ctext *t){
+  const bcir_ctype *ty=&g->ty; char b[BCIR_EMIT_TYPE];
+  if(g->is_arr && g->nd>4) return 0;
+  ctype_str(ty,b,sizeof b);
+  int d=ptr_levels(ty);
+  if(d){ size_t k=strlen(b); while(k && b[k-1]=='*') k--; while(k && b[k-1]==' ') k--; b[k]=0; }   /* under its `*`s */
+  ctext_putf(c,t,"%s%s%s",ty->is_const?"const ":"",(ty->is_volatile && ty->kind!=2)?"volatile ":"",b);
+  for(int lv=1; lv<=d; lv++){
+    int q=lv<=8, cst=q && ((ty->ptr_const>>(lv-1))&1u), rst=q && ((ty->ptr_restrict>>(lv-1))&1u);
+    ctext_putf(c,t," *%s%s",cst?" const":"",rst?" restrict":""); }
+  ctext_putf(c,t," %s",g->name);
+  if(g->is_arr) for(int k=0; k<g->nd; k++){
+    if(g->dims[k]>0) ctext_putf(c,t,"[%lld]",g->dims[k]); else ctext_putn(c,t,"[]",2); }
+  return 1;
+}
+/* The artifact's declarations, after the attestation: the types, the twin's function-pointer typedefs, the functions
+ * other units define, every function of the unit, then the globals -- NULL, or the refusal of a global the artifact
+ * cannot define (the oracle's words). */
+static const char *lk_decls(CC *c, bcir_cfront_result *out){
+  const char *e;
+  for(int k=0; k<c->nlkd; k++){                          /* the types, as the source spells them */
+    for(int i=c->lkd[k].a; i<c->lkd[k].b; i++)
+      if((e=emit_putf(out,"%s%.*s",i>c->lkd[k].a?" ":"",c->t[i].n,c->t[i].s))) return e;
+    if((e=emit_putf(out,"%s\n",c->lkd[k].semi?" ;":""))) return e; }
+  if(c->fpdefs.w && (e=emit_putf(out,"%s",c->fpdefs.s))) return e;
+  for(size_t i=0; i<c->tudefs.w;){                       /* the prototypes of functions another unit defines */
+    const char *ln=c->tudefs.s+i, *nl=memchr(ln,'\n',c->tudefs.w-i);
+    size_t len=nl ? (size_t)(nl-ln)+1 : c->tudefs.w-i;
+    if(lk_line_fn(&out->unit,ln,len)<0 && (e=emit_putf(out,"%.*s",(int)len,ln))) return e;
+    i+=len; }
+  for(int f=0; f<out->unit.n_funcs; f++){                /* every function of the unit, before the globals */
+    const bcir_func *fn=&out->unit.funcs[f]; char one[1], pat[BCIR_CIR_NAME+8];
+    size_t n=emit_sig(fn,one,sizeof one);
+    char *s=(char *)bcir_host_arena_allocate(&c->scratch,n+1u,1u);
+    if(!s) return emit_oom;
+    emit_sig(fn,s,n+1u);
+    const char *h = !fn->static_fn && !strncmp(s,"static ",7) ? s+7 : s;
+    snprintf(pat,sizeof pat,"bcir_%s(",fn->name);
+    const char *at=strstr(h,pat);
+    if(!at) return emit_unrenderable;
+    if((e=emit_putf(out,"%.*s%s;\n",(int)(at-h),h,at+5))) return e; }
+  for(int gi=0; gi<c->ngv; gi++){                        /* the globals, in the unit's order */
+    const gvar *g=&c->gv[gi]; size_t w0=c->lktext.w;
+    if((g->ty.kind==1 || g->ty.ptr_to_struct) && is_anon_tag(g->ty.tag)){
+      int si=find_struct(c,g->ty.tag,(int)strlen(g->ty.tag)), named=si>=0 && anon_spelling(c,si,&c->lktext);
+      lk_trunc(c,w0);
+      if(!named){ snprintf(c->err,sizeof c->err,
+                           "linkable emit: global '%s' has a type C cannot name (an untagged aggregate)",g->name);
+                  return c->err; } }
+    if(!g->lk_extern && g->lk_init==2){
+      snprintf(c->err,sizeof c->err,
+               "linkable emit: global '%s' has a non-renderable constant initializer (unsupported in this slice)",
+               g->name);
+      return c->err; }
+    if(!lk_decl(c,g,&c->lktext)){
+      lk_trunc(c,w0);
+      snprintf(c->err,sizeof c->err,"linkable emit: global '%s' has more than 4 dimensions",g->name);
+      return c->err; }
+    e=emit_putf(out,"%s%s%s",g->lk_extern?"extern ":g->lk_static?"static ":"",g->lk_thread?"_Thread_local ":"",
+                c->lktext.s+w0);
+    lk_trunc(c,w0);
+    if(e) return e;
+    if(!g->lk_extern && g->lk_init==1 && (e=emit_putf(out," = %.*s",(int)g->lk_len,c->lktext.s+g->lk_off))) return e;
+    if((e=emit_putf(out,";\n"))) return e; }
+  return NULL;
+}
+/* The functions' text [from, end) of the artifact under their real names with their source linkage: every in-unit
+ * `bcir_X(` that begins an identifier is `X(`, then the `static ` that begins a line is kept only where the line declares or defines a function
+ * the source declares `static` -- a definition's and a callee's forward declaration's alike, a static function calling
+ * an exported one included (`static T f(...)` after `T f(...)` does not compile). In place: the text only shrinks. */
+static void lk_functions(CC *c, bcir_cfront_result *out, size_t from){
+  char *s=out->emitted; size_t n=out->emitted_len, w=from;
+  (void)c;
+  for(size_t i=from; i<n;){
+    if(s[i]=='b' && n-i>5 && !strncmp(s+i,"bcir_",5) && (i==from || !is_idc((unsigned char)s[i-1]))){
+      size_t j=i+5; while(j<n && is_idc((unsigned char)s[j])) j++;
+      if(j<n && s[j]=='(' && j>i+5)
+        for(int f=0; f<out->unit.n_funcs; f++)
+          if(strlen(out->unit.funcs[f].name)==j-i-5 && !strncmp(s+i+5,out->unit.funcs[f].name,j-i-5)){ i+=5; break; } }
+    s[w++]=s[i++]; }
+  n=w; w=from;
+  for(size_t i=from; i<n;){
+    const char *nl=memchr(s+i,'\n',n-i); size_t len=nl ? (size_t)(nl-(s+i))+1 : n-i, skip=0;
+    if(len>7 && !strncmp(s+i,"static ",7)){
+      int f=lk_line_fn(&out->unit,s+i,len);
+      if(f<0 || !out->unit.funcs[f].static_fn) skip=7; }
+    memmove(s+w,s+i+skip,len-skip); w+=len-skip; i+=len; }
+  out->emitted_len=w; s[w]=0;
+}
+/* The headers the artifact's own text names (the oracle's rule), read outside its literals and comments, and those
+ * its claims' calls need -- prepended. */
+static int lk_named(const char *id, size_t n, const char *const *names){
+  for(int k=0; names[k]; k++) if(strlen(names[k])==n && !strncmp(id,names[k],n)) return 1;
+  return 0;
+}
+static int lk_lower_tail(const char *s, size_t n){ if(!n) return 0;
+  for(size_t k=0; k<n; k++) if(!((s[k]>='a' && s[k]<='z') || s[k]=='_')) return 0;
+  return 1; }
+static const char *lk_includes(CC *c, bcir_cfront_result *out){
+  static const char *const stddef_names[]={"size_t","ptrdiff_t","wchar_t","max_align_t",0};
+  static const char *const mem_calls[]={"memcpy","memmove","memset",0};
+  static const char *const va_names[]={"va_list","va_start","va_arg","va_end","va_copy",0};
+  static const char *const bool_names[]={"bool","true","false",0};
+  static const char *const align_names[]={"alignas","alignof",0};
+  static const char *const cplx_bases[]={"cabs","carg","cimag","creal","cproj","cexp","clog","cpow","csqrt","csin",
+    "csinh","casin","casinh","ccos","ccosh","cacos","cacosh","ctan","ctanh","catan","catanh","conj",0};
+  static const char *const libc[]={"malloc","calloc","realloc","aligned_alloc","free",0};
+  const char *s=out->emitted; size_t n=out->emitted_len, w0=c->lktext.w;
+  for(size_t i=0; i<n;){                                 /* the code alone: literals and comments one space each */
+    if(s[i]=='"' || s[i]=='\''){ size_t j=i+1; while(j<n && s[j]!=s[i]) j += (s[j]=='\\' && j+1<n) ? 2 : 1;
+      i = j<n ? j+1 : n; ctext_putn(c,&c->lktext," ",1); continue; }
+    if(s[i]=='/' && i+1<n && s[i+1]=='*'){ size_t j=i+2; while(j+1<n && !(s[j]=='*' && s[j+1]=='/')) j++;
+      i = j+1<n ? j+2 : n; ctext_putn(c,&c->lktext," ",1); continue; }
+    if(s[i]=='/' && i+1<n && s[i+1]=='/'){ while(i<n && s[i]!='\n') i++; ctext_putn(c,&c->lktext," ",1); continue; }
+    size_t j=i+1; while(j<n && s[j]!='"' && s[j]!='\'' && s[j]!='/') j++;
+    ctext_putn(c,&c->lktext,s+i,j-i); i=j; }
+  const char *code=c->lktext.s+w0; size_t cn=c->lktext.w-w0;
+  int f_stddef=0, f_mem=0, f_va=0, f_atomic=0, f_cplx=0, f_bool=0, f_align=0;
+  for(size_t i=0; i<cn;){
+    if(!is_id0((unsigned char)code[i]) || (i && is_idc((unsigned char)code[i-1]))){ i++; continue; }
+    size_t j=i; while(j<cn && is_idc((unsigned char)code[j])) j++;
+    const char *id=code+i; size_t m=j-i, k=j;
+    while(k<cn && (code[k]==' '||code[k]=='\t'||code[k]=='\n'||code[k]=='\r'||code[k]=='\f'||code[k]=='\v')) k++;
+    int call=k<cn && code[k]=='(';
+    if(lk_named(id,m,stddef_names)) f_stddef=1;
+    if(call && lk_named(id,m,mem_calls)) f_mem=1;
+    if(lk_named(id,m,va_names)) f_va=1;
+    if((call && m>7 && !strncmp(id,"atomic_",7) && lk_lower_tail(id+7,m-7)) ||
+       (m>13 && !strncmp(id,"memory_order_",13) && lk_lower_tail(id+13,m-13))) f_atomic=1;
+    if(m==10 && !strncmp(id,"_Complex_I",10)) f_cplx=1;
+    if(call) for(int b=0; cplx_bases[b] && !f_cplx; b++){ size_t bl=strlen(cplx_bases[b]);
+      if(!strncmp(id,cplx_bases[b],bl) && (m==bl || (m==bl+1 && (id[bl]=='f' || id[bl]=='l')))) f_cplx=1; }
+    if(lk_named(id,m,bool_names)) f_bool=1;
+    if(lk_named(id,m,align_names)) f_align=1;
+    i=j; }
+  lk_trunc(c,w0);
+  int f_quar=strstr(s,"BCIR_CHK")!=NULL, f_stdlib=0, f_string=f_mem, f_cconst=0, f_extern=0, f_libm=0, f_other=0;
+  for(int f=0; f<out->unit.n_funcs; f++) for(size_t k=0; k<out->unit.funcs[f].n_claims; k++){
+    const char *op=out->unit.funcs[f].claims[k].op;
+    int libm=!strncmp(op,"c.call.libm:",12) || !strncmp(op,"c.call.libm.void:",17), ext=!strncmp(op,"c.call.extern:",14);
+    if(!strncmp(op,"c.cconst:",9)) f_cconst=1;
+    if(!libm && !ext) continue;
+    const char *nm=strchr(op,':')+1;
+    if(libm) f_libm=1;
+    if(ext) f_extern=1;
+    if(lk_named(nm,strlen(nm),libc)) f_stdlib=1;
+    else if(lk_named(nm,strlen(nm),mem_calls)) f_string=1;
+    else f_other=1; }
+  ctext_putf(c,&c->lktext,"#include <stdint.h>\n%s%s%s%s%s%s%s%s%s%s%s%s",
+             f_stddef?"#include <stddef.h>\n":"", f_quar?"#include \"bcir_quarantine.h\"\n":"",
+             f_stdlib?"#include <stdlib.h>\n":"", f_string?"#include <string.h>\n":"",
+             f_va?"#include <stdarg.h>\n":"", f_atomic?"#include <stdatomic.h>\n":"",
+             (f_cplx||f_cconst)?"#include <complex.h>\n":"", f_bool?"#include <stdbool.h>\n":"",
+             f_align?"#include <stdalign.h>\n":"", f_extern?"#include <stdio.h>\n":"",
+             (f_other && f_libm)?"#include <math.h>\n":"", "");
+  size_t k=c->lktext.w-w0;
+  if(!emit_room(out,k)){ lk_trunc(c,w0); return emit_oom; }
+  memmove(out->emitted+k,out->emitted,out->emitted_len+1u);
+  memcpy(out->emitted,c->lktext.s+w0,k); out->emitted_len+=k;
+  lk_trunc(c,w0);
+  return NULL;
+}
 /* The whole unit's verified C: the C.2 attestation, the preludes, then every function. NULL on success, else
  * the failure's diagnostic. */
 static const char *emit_unit_body(CC *c, bcir_cfront_result *out, const bcir_func *entry, const char *lflags);
@@ -10530,14 +10921,20 @@ static const char *emit_unit_body(CC *c, bcir_cfront_result *out, const bcir_fun
     " *   link_flags  %s\n */\n",
     out->ok?"clean":"DIRTY", entry?(unsigned long long)bcir_provenance_digest(entry):0ull,
     lflags[0]?lflags:"-"))) return e;
-  if(c->fpdefs.w && (e=emit_putf(out,"%s",c->fpdefs.s))) return e;   /* synthesized funcptr-param typedefs */
-  if(c->tudefs.w && (e=emit_putf(out,"%s",c->tudefs.s))) return e;   /* extern declarations, cross-TU callees */
+  if(c->linkable){ if((e=lk_decls(c,out))) return e; }   /* the linkable artifact's declarations (CF-LINKTWIN) */
+  else {
+    if(c->fpdefs.w && (e=emit_putf(out,"%s",c->fpdefs.s))) return e;   /* synthesized funcptr-param typedefs */
+    if(c->tudefs.w && (e=emit_putf(out,"%s",c->tudefs.s))) return e;   /* extern declarations, cross-TU callees */
+  }
+  size_t from=out->emitted_len;
   for(int i=0;i<out->unit.n_funcs;i++){
     if((e=emit_callee_decls(out,&out->unit.funcs[i]))) return e;
     if((e=emit_function(out,&out->unit.funcs[i]))) return e;
     if(i+1<out->unit.n_funcs && (e=emit_putf(out,"\n"))) return e;
   }
-  return respell_anon(c,out);
+  if(c->linkable) lk_functions(c,out,from);              /* real names, source linkage */
+  if((e=respell_anon(c,out))) return e;
+  return c->linkable ? lk_includes(c,out) : NULL;
 }
 
 static int cfront_failure(bcir_cfront_context *context, bcir_cfront_result *out,
@@ -10553,9 +10950,8 @@ static int cfront_failure(bcir_cfront_context *context, bcir_cfront_result *out,
   return 1;
 }
 
-int bcir_cfront_compile_target_context(bcir_cfront_context *context,
-                                       const char *src, const char *target,
-                                       bcir_cfront_result *out) {
+static int compile_target_mode(bcir_cfront_context *context, const char *src, const char *target,
+                               bcir_cfront_result *out, int linkable) {
   CC *c;
   if(!out) return 1;
   if(!context||!context->state){
@@ -10575,11 +10971,12 @@ int bcir_cfront_compile_target_context(bcir_cfront_context *context,
     snprintf(diagnostic,sizeof diagnostic,"unknown target '%s'",target?target:"");
     return cfront_failure(context,out,diagnostic);
   }
-  c->rid=100; c->cid=1000; c->unit=&out->unit;
+  c->rid=100; c->cid=1000; c->unit=&out->unit; c->linkable=linkable;
   if(setjmp(c->failure_jump)){
     c->jump_active=0;
     if(out->unit.funcs&&out->unit.n_funcs<out->unit.cap_funcs)
       cfront_free_func(&c->allocator,&out->unit.funcs[out->unit.n_funcs]);
+    cfront_free_func(&c->allocator,&c->lkfn);   /* a fold the failure interrupted (CF-LINKTWIN) */
     return cfront_failure(context,out,c->err);
   }
   c->jump_active=1;
@@ -10720,6 +11117,23 @@ int bcir_cfront_compile_target(const char *src, const char *target,
   bcir_cfront_result_init(out);
   bcir_cfront_context *context=cfront_legacy_context(out);
   return context?bcir_cfront_compile_target_context(context,src,target,out):1;
+}
+
+int bcir_cfront_compile_target_context(bcir_cfront_context *context, const char *src, const char *target,
+                                       bcir_cfront_result *out) {
+  return compile_target_mode(context,src,target,out,0);
+}
+
+/* The LINKABLE artifact (CF-LINKTWIN): the compile above, its `emitted` the unit as a translation unit others link to. */
+int bcir_cfront_compile_linkable_context(bcir_cfront_context *context, const char *src, const char *target,
+                                         bcir_cfront_result *out) {
+  return compile_target_mode(context,src,target,out,1);
+}
+
+int bcir_cfront_compile_linkable(const char *src, const char *target, bcir_cfront_result *out) {
+  bcir_cfront_result_init(out);
+  bcir_cfront_context *context=cfront_legacy_context(out);
+  return context?bcir_cfront_compile_linkable_context(context,src,target,out):1;
 }
 
 /* The host-ABI entry (the default target): byte-identical to the layout before --target existed. */

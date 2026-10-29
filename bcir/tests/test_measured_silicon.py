@@ -20,6 +20,9 @@ class _FakeSilicon:
         self.temp_milli = str(int(temp_c * 1000))
         self.step = energy_step_uj
         self.energy = 1_000_000
+        self.max_range = "262143328850"  # max_energy_range_uj's text; None: unreadable
+        self.energy_text = None  # energy_uj's text when set, in place of the counter's
+        self.fail = False  # energy_uj unreadable
 
     def __enter__(self):
         self._read, self._listdir = silicon._read, silicon.os.listdir
@@ -33,8 +36,12 @@ class _FakeSilicon:
 
     def _fake_read(self, path):
         if path.endswith("max_energy_range_uj"):
-            return "262143328850"
+            return self.max_range
         if path.endswith("energy_uj"):
+            if self.fail:
+                return None
+            if self.energy_text is not None:
+                return self.energy_text
             self.energy += self.step
             return str(self.energy)
         if "/thermal_zone" in path and path.endswith("/temp"):
@@ -86,6 +93,61 @@ def test_rapl_wraparound_is_handled():
         fk.energy = 10  # next read wraps below the start
         delta = s.lap_uj()
         assert delta is not None and delta >= 0  # wrap corrected via max_energy_range
+
+
+def test_a_rapl_wrap_gains_the_range_back_exactly():
+    with _FakeSilicon(energy_step_uj=0) as fk:
+        fk.energy = 262_143_000_000
+        s = silicon.RaplSampler()
+        fk.energy = 1_000  # the counter wrapped past max_energy_range_uj
+        assert s.lap_uj() == 1_000 - 262_143_000_000 + 262_143_328_850
+
+
+def test_a_rapl_wrap_whose_range_is_unreadable_is_none_never_zero():
+    """A wrap needs the range to be undone; without it the energy is unknown, not 0 J."""
+    for max_range in (None, "0", "26_214_332_885", "-1"):
+        with _FakeSilicon(energy_step_uj=0) as fk:
+            fk.max_range = max_range
+            fk.energy = 5_000_000
+            s = silicon.RaplSampler()
+            fk.energy = 1_000
+            assert s.lap_uj() is None, max_range
+    with _FakeSilicon(energy_step_uj=0) as fk:  # a reading past the range it names
+        fk.max_range = "1000"
+        fk.energy = 5_000
+        s = silicon.RaplSampler()
+        fk.energy = 10
+        assert s.lap_uj() is None
+
+
+def test_a_lap_after_a_failed_rapl_read_has_no_start():
+    """The energy of a lap whose read failed is in no later lap: the next lap has no start."""
+    with _FakeSilicon(energy_step_uj=0) as fk:
+        fk.energy = 1_000_000
+        s = silicon.RaplSampler()
+        fk.fail = True
+        assert s.lap_uj() is None
+        fk.fail = False
+        fk.energy = 1_400_000
+        assert s.lap_uj() is None
+        fk.energy = 1_500_000
+        assert s.lap_uj() == 100_000
+
+
+def test_rapl_and_thermal_text_is_read_in_its_own_grammar():
+    with _FakeSilicon(energy_step_uj=0) as fk:
+        fk.energy_text = "1_000_000"
+        assert silicon.read_rapl_uj() is None
+        assert silicon.RaplSampler().lap_uj() is None
+        fk.energy_text = "+1000000"
+        assert silicon.read_rapl_uj() is None
+        fk.energy_text = "1000000"
+        assert silicon.read_rapl_uj() == 1_000_000
+    with _FakeSilicon(temp_c=45) as fk:
+        fk.temp_milli = "45_000"
+        assert silicon.read_thermal_millideg() is None
+        fk.temp_milli = "-5000"  # a sensor below 0 C reads negative
+        assert silicon.read_thermal_millideg() == -5_000
 
 
 def test_silicon_dna_records_real_signal_provenance():

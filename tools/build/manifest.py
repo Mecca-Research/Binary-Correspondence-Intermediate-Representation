@@ -21,7 +21,10 @@ The rules, each with the code its findings carry:
                    one harness; every fuzz_*.c one fuzzer; every runtime/cpp/*.cpp one seam unit;
                    fixtures (cfront_*.c) are never units
   M5  references   `libraries` name known libraries, never the unit itself, with no cycle
-  M6  link/options link names are m or pthread; options are flags, optionally gcc:/clang: scoped
+  M6  link/options link names are m or pthread; options are flags, optionally x86_64: and then
+                   gcc:/clang: scoped, in that order (bcir.toolchain.OPTION_GRAMMAR: BCIR Make and
+                   the Python builds read the scopes through it, CMake through its twin, held to
+                   it by test)
   M7  classes      a library's class is one of runtime/c/MEMORY_CLASSIFICATION.txt's and every unit
                    of it carries that class there; every tool main is a hosted_tool
   M8  freestanding every freestanding check is a freestanding_core library unit, listed once, and
@@ -69,6 +72,25 @@ The rules, each with the code its findings carry:
                    under its own switch; cmake/BCIRTests.cmake registers the entries from the
                    manifest and hands the CTest c-runtime entry the switch, so `ctest` runs each
                    delegated gate once
+  M17 contraction  the decode and train kernels (bcir_decode.c, bcir_train.c) and the one-chain loops
+                   their bitwise witness holds them to (test_decode.c) compile without floating-point
+                   contraction in every build the repository writes: the manifest unit that owns one
+                   names -ffp-contract=off in its own options, unscoped (CMake and BCIR Make apply a
+                   unit's options to its own sources); no unit or variant passes an option that turns
+                   contraction back on; and a Python function under bcir/ or tools/ that names one
+                   names the option too -- in its own body or at its module's top level, or anywhere
+                   in the module for a name at the top level -- as does a gate script M9 reads
+  M18 branches     on x86-64 the decoder's units (bcir_models: the matvec and head kernels, the
+                   decode loop) build with the JCC-erratum mitigation wherever the repository times
+                   them: the unit names x86_64:clang:-mbranches-within-32B-boundaries and
+                   x86_64:gcc:-Wa,-mbranches-within-32B-boundaries in its own options, and no other
+                   unit or variant and no other spelling names the mitigation (an x86-only option,
+                   each compiler's own spelling); the Python builds that time those units -- the
+                   native AI library, the model microbenchmark and the qualification's
+                   bcir-qualify -- name one of its sources and take their flags through
+                   bcir.toolchain.unit_options; and no other Python module under bcir/ or tools/
+                   (the tests aside) and no gate script spells the mitigation itself. A correctness
+                   build (a test, a gate, a fuzzer) is outside it: layout moves no value
   D1  deps index   bcir-deps.json (written at configure) is JSON of schema bcir-deps.v1 with the
                    compilers named and one {name, found: true|false, detail} row per dependency,
                    names unique, PYTHON3 / THREADS / MLIR and every optional library among them,
@@ -77,7 +99,9 @@ The rules, each with the code its findings carry:
 
 Scope: the checker reads the gates and the Python modules as text (string literals and compile
 lines); a source list assembled at run time is outside it, and a gate that links a unit the
-manifest lacks is a finding, never a skip. Nothing here runs a compiler. The tree is read once
+manifest lacks is a finding, never a skip. M17 reads the option beside the source, in the same
+function, module or script: a build that assembles its flags elsewhere is a finding until it names
+the option where it names the source. Nothing here runs a compiler. The tree is read once
 (`Tree`) so a test can hold many manifests to the same facts.
 """
 
@@ -177,7 +201,31 @@ SEAM_PAIRS = (
 PYTHON_TREES = ("bcir", "tools")
 SOURCE_TOKEN = re.compile(r"\b((?:bcir|test|fuzz)_\w+\.(?:cpp|c))\b")
 SOURCE_LITERAL = re.compile(r"(?:bcir|test|fuzz)_\w+\.(?:cpp|c)")
-OPTION = re.compile(r"^(?:(?:gcc|clang):)?-\S+$")
+# M17: the sources every build compiles without floating-point contraction (the decode and train
+# kernels, and the one-chain loops test_decode.c's `order` mode holds them to byte for byte), the
+# option, and the spellings that turn contraction back on (the last option wins, so one after the
+# manifest's would undo it).
+CONTRACTION_FREE = ("bcir_decode.c", "bcir_train.c", "test_decode.c")
+CONTRACTION_OFF = "-ffp-contract=off"
+CONTRACTION_ON = re.compile(r"^(?:x86_64:)?(?:(?:gcc|clang):)?-ffp-contract=(?!off$)\S*$")
+CONTRACTION_IN_GATE = re.compile(r"(?<![\w-])-ffp-contract=off(?![\w=-])")
+# M18: the decoder's units take the JCC-erratum mitigation on x86-64 in every build that times them
+# (KERNEL-ALIGN: on the Cascade Lake core it measured, their vector kernels read up to x1.35 slower
+# at some placements without it): the unit, its two options, the word every spelling holds, the
+# Python builds that time the units, and the module besides the tests that may spell it (this
+# checker).
+JCC_UNIT = ("libraries", "bcir_models")
+JCC_OPTIONS = (
+    "x86_64:clang:-mbranches-within-32B-boundaries",
+    "x86_64:gcc:-Wa,-mbranches-within-32B-boundaries",
+)
+JCC_WORD = "branches-within-32B-boundaries"
+SPEED_BUILDS = (
+    "bcir/kbcir/native_ai.py",
+    "bcir/frontends/models/model_microbench.py",
+    "tools/models/run_qualification.py",
+)
+JCC_SPELLERS = ("tools/build/manifest.py",)
 
 
 class ManifestError(Exception):
@@ -337,6 +385,124 @@ def python_groups(text: str) -> list[list[str]]:
     return groups
 
 
+def _names_contraction_off(value: str) -> bool:
+    """A string literal that passes the option: the option itself, or a flags string beginning with
+    a dash that holds it as one word (never prose: a docstring that mentions it is not a build)."""
+    return value == CONTRACTION_OFF or (value.startswith("-") and CONTRACTION_OFF in value.split())
+
+
+def _is_option(option: object) -> bool:
+    """M6: a flag, optionally x86_64: and then gcc:/clang: scoped -- bcir.toolchain's grammar, the
+    one every build reads the scopes by."""
+    try:
+        _toolchain().option_scopes(option)
+    except ValueError:
+        return False
+    return True
+
+
+def _spells_jcc(value: str) -> bool:
+    """A string literal that passes the JCC-erratum mitigation: a flags string beginning with a dash
+    or a scope that holds it in one of its words (never prose: a docstring that mentions it is not
+    a build)."""
+    return bool(re.match(r"(?:(?:x86_64|gcc|clang):)*-", value)) and any(
+        JCC_WORD in word for word in value.split()
+    )
+
+
+def jcc_facts(text: str) -> tuple[set[str], bool, bool]:
+    """M18's reading of a Python module: the source basenames its string literals name, whether it
+    calls unit_options (by that name, as a function or an attribute), and whether a literal of its
+    spells the mitigation. A module that does not parse is read whole."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return set(SOURCE_LITERAL.findall(text)), "unit_options(" in text, JCC_WORD in text
+    named: set[str] = set()
+    calls = spells = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            named.update(SOURCE_LITERAL.findall(node.value))
+            spells = spells or _spells_jcc(node.value)
+        elif isinstance(node, ast.Call):
+            func = node.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else None
+            )
+            calls = calls or name == "unit_options"
+    return named, calls, spells
+
+
+def gate_spells_jcc(text: str) -> bool:
+    """Whether a gate script's lines name the JCC-erratum mitigation (a comment line is not a
+    build)."""
+    return any(JCC_WORD in line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
+def gate_contraction(text: str) -> tuple[list[str], bool]:
+    """M17's reading of a gate script: the contraction-free sources its lines name and whether its
+    lines name the option (a comment line is not a build)."""
+    plain = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    free = sorted(set(SOURCE_TOKEN.findall(plain)) & set(CONTRACTION_FREE))
+    return free, CONTRACTION_IN_GATE.search(plain) is not None
+
+
+def contraction_scopes(text: str) -> list[tuple[str, list[str], bool]]:
+    """M17's reading of a Python module: (scope, the contraction-free sources it names, whether the
+    option is named where they are) for each function -- or the module, for names outside every
+    function -- that names one. A function's option may be in its own body (a nested function is a
+    scope of its own) or at its module's top level, where shared flags live; a name at the top level
+    may be built by any function, so the option anywhere in the module answers for it. A module that
+    does not parse is one scope, its text read whole."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        found = sorted({m.group(0) for m in SOURCE_LITERAL.finditer(text)} & set(CONTRACTION_FREE))
+        return [("<module>", found, CONTRACTION_OFF in text)] if found else []
+
+    def own(scope: ast.AST) -> tuple[set[str], bool, list[ast.AST]]:
+        """The scope's own literals, not its nested functions': the sources and the option it names,
+        and the functions it defines."""
+        sources: set[str] = set()
+        option = False
+        nested: list[ast.AST] = []
+        todo = list(ast.iter_child_nodes(scope))
+        while todo:
+            node = todo.pop()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                nested.append(node)
+                continue
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if node.value in CONTRACTION_FREE:
+                    sources.add(node.value)
+                option = option or _names_contraction_off(node.value)
+            todo.extend(ast.iter_child_nodes(node))
+        return sources, option, nested
+
+    top_sources, top_option, functions = own(tree)
+    anywhere = any(
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and _names_contraction_off(node.value)
+        for node in ast.walk(tree)
+    )
+    scopes: list[tuple[str, list[str], bool]] = []
+    if top_sources:
+        scopes.append(("<module>", sorted(top_sources), anywhere))
+    while functions:
+        function = functions.pop(0)
+        sources, option, nested = own(function)
+        functions.extend(nested)
+        if sources:
+            where = f"{function.name} (line {function.lineno})"
+            scopes.append((where, sorted(sources), option or top_option))
+    return scopes
+
+
 class KernelFacts:
     """What a kernel entry is judged against (M15): the drivers under runtime/c/kernels/ and the
     functions bcir/lower/c_kernel.py defines at module level, read as text -- nothing is imported.
@@ -371,6 +537,14 @@ class Tree(KernelFacts):
         self.missing_gates: list[str] = []
         self.freestanding: set[str] = set()
         self.section_scripts = sorted(p.name for p in (root / SECTIONS_DIR).glob("*.sh"))
+        # M17: every gate script and Python scope that names a contraction-free source, with
+        # whether it names the option beside it
+        self.contraction: list[tuple[str, list[str], bool]] = []
+        # M18: each Python build that times the decoder's units -- the sources it names and whether
+        # it takes the manifest's options (None: the module is missing) -- and every module or gate
+        # script that spells the mitigation itself
+        self.speed_builds: dict[str, tuple[set[str], bool] | None] = {}
+        self.jcc_spellings: list[str] = []
         scanned = [(rel, self._read(root / rel)) for rel in GATES]
         # A section script is gate text moved out of tools/c/check_runtime.sh (BUILD-2): what it
         # compiles is held to the manifest as the gate's own lines were.
@@ -389,6 +563,11 @@ class Tree(KernelFacts):
                 (tag, self.existing(SOURCE_TOKEN.findall(body))) for tag, body in gate_groups(text)
             ]
             self.gate_tokens[rel] = self.existing(SOURCE_TOKEN.findall(text))
+            free, option = gate_contraction(text)
+            if free:
+                self.contraction.append((rel, free, option))
+            if gate_spells_jcc(text):
+                self.jcc_spellings.append(rel)
             for line in re.sub(r"\\\n\s*", " ", text).splitlines():
                 if "-ffreestanding" in line and not line.lstrip().startswith("#"):
                     self.freestanding.update(
@@ -415,6 +594,21 @@ class Tree(KernelFacts):
                     tokens = self.existing(group)
                     if tokens:
                         self.python.append((f"{rel_path} (literal group {number})", tokens))
+                if any(source in text for source in CONTRACTION_FREE):
+                    for scope, sources, option in contraction_scopes(text):
+                        self.contraction.append((f"{rel_path} {scope}", sources, option))
+                if rel_path in SPEED_BUILDS or JCC_WORD in text:
+                    named, calls, spells = jcc_facts(text)
+                    if rel_path in SPEED_BUILDS:
+                        self.speed_builds[rel_path] = (named, calls)
+                    if (
+                        spells
+                        and rel_path not in JCC_SPELLERS
+                        and not rel_path.startswith("bcir/tests/")
+                    ):
+                        self.jcc_spellings.append(rel_path)
+        for rel in SPEED_BUILDS:
+            self.speed_builds.setdefault(rel, None)
         self.seam: dict[str, tuple[set[str], set[str]] | None] = {}
         for rel, cpp_pattern, c_pattern in SEAM_PAIRS:
             text = self._read(root / rel)
@@ -557,7 +751,7 @@ def check_references(manifest: dict, errors: list[str]) -> None:
                 if sys_lib not in LINK_NAMES:
                     errors.append(f"M6: {kind}/{name} link {sys_lib!r} is not one of {LINK_NAMES}")
             for option in _list(unit, "options"):
-                if not OPTION.match(option):
+                if not _is_option(option):
                     errors.append(f"M6: {kind}/{name} option {option!r} is not a flag")
     for kind in LIBRARY_KINDS:
         for name, unit in _units(manifest, kind).items():
@@ -881,9 +1075,7 @@ def check_variants(manifest: dict, tree: Tree, errors: list[str]) -> None:
                     f"M14: {RUNTIME_GATE} shows {where}'s section without asking {SANITIZER_PROBE} whether the sanitizer runs here"
                 )
         if options is not None and (
-            not isinstance(options, list)
-            or not options
-            or any(not isinstance(o, str) or not OPTION.match(o) for o in options)
+            not isinstance(options, list) or not options or any(not _is_option(o) for o in options)
         ):
             errors.append(f"M14: {where}.options is not a non-empty list of flags")
         if name not in run:
@@ -1108,6 +1300,77 @@ def check_delegated(manifest: dict, tree: Tree, errors: list[str]) -> None:
         )
 
 
+def check_contraction(manifest: dict, tree: Tree, errors: list[str]) -> None:
+    for kind in C_KINDS:
+        for name, unit in _units(manifest, kind).items():
+            free = sorted(set(_sources(unit)) & set(CONTRACTION_FREE))
+            if free and CONTRACTION_OFF not in _list(unit, "options"):
+                errors.append(
+                    f"M17: {kind}/{name} compiles {', '.join(free)} without {CONTRACTION_OFF} "
+                    "(unscoped: clang contracts by default where the target can fuse, GCC outside ISO mode)"
+                )
+            for option in _list(unit, "options"):
+                if CONTRACTION_ON.match(option):
+                    errors.append(
+                        f"M17: {kind}/{name} passes {option}, turning contraction back on"
+                    )
+    for name, variant in _units(manifest, "variants").items():
+        for option in _list(variant, "options"):
+            if CONTRACTION_ON.match(option):
+                errors.append(f"M17: variants/{name} passes {option}, turning contraction back on")
+    for where, sources, option in tree.contraction:
+        if not option:
+            errors.append(
+                f"M17: {where} compiles {', '.join(sources)} and names no {CONTRACTION_OFF} beside it"
+            )
+
+
+def check_jcc(manifest: dict, tree: Tree, errors: list[str]) -> None:
+    kind, name = JCC_UNIT
+    unit = _units(manifest, kind).get(name)
+    sources: set[str] = set()
+    if unit is None:
+        errors.append(f"M18: {kind}/{name}, the decoder's units, is not in the manifest")
+    else:
+        sources = set(_sources(unit))
+        options = _list(unit, "options")
+        for option in JCC_OPTIONS:
+            if option not in options:
+                errors.append(
+                    f"M18: {kind}/{name} lacks {option} (on the Cascade Lake core KERNEL-ALIGN "
+                    "measured, the decoder's vector kernels read up to x1.35 slower at some "
+                    "placements without it)"
+                )
+    for k in (*KINDS, "variants"):
+        for n, u in _units(manifest, k).items():
+            for option in _list(u, "options"):
+                if JCC_WORD in option and ((k, n) != JCC_UNIT or option not in JCC_OPTIONS):
+                    errors.append(
+                        f"M18: {k}/{n} passes {option}: the mitigation is {kind}/{name}'s alone, "
+                        f"spelled {' and '.join(JCC_OPTIONS)}"
+                    )
+    for rel, facts in tree.speed_builds.items():
+        if facts is None:
+            errors.append(f"M18: {rel}, a build that times the decoder's units, is missing")
+            continue
+        named, calls = facts
+        if not named & sources:
+            errors.append(
+                f"M18: {rel} names none of {kind}/{name}'s sources: a speed build that builds no "
+                "decoder unit"
+            )
+        if not calls:
+            errors.append(
+                f"M18: {rel} builds the decoder's units without bcir.toolchain.unit_options: a "
+                "build the repository times takes the manifest's options"
+            )
+    for where in tree.jcc_spellings:
+        errors.append(
+            f"M18: {where} spells the JCC-erratum mitigation itself; take it from the manifest "
+            "(bcir.toolchain.unit_options)"
+        )
+
+
 def check(manifest: dict, tree: Tree | None = None) -> list[str]:
     """Every finding over `manifest` against the tree (empty when clean)."""
     if tree is None:
@@ -1127,6 +1390,8 @@ def check(manifest: dict, tree: Tree | None = None) -> list[str]:
     check_variants(manifest, tree, errors)
     check_kernels(manifest, tree, errors)
     check_delegated(manifest, tree, errors)
+    check_contraction(manifest, tree, errors)
+    check_jcc(manifest, tree, errors)
     check_presets(tree.presets, errors)
     return errors
 

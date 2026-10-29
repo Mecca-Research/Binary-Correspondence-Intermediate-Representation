@@ -1,0 +1,53 @@
+{
+ "what": "SP-ONCE (2026-10-25): a StreamPack validated once a call -- the walks bodies over a checked header (bcir_sp_check and the bcir_sp_checked_* walks), GEM's execution and load crossing the CRC once where they crossed it three and four times -- every bound and verdict as it was; measured on the committed tree against the tree before, with NEXT-8 (the reading that placed it) on the tree before",
+ "host": "Intel(R) Xeon(R) Processor @ 2.30GHz, 4 vCPU (4 cores, one thread each; AVX-512F, AMX), 2 MiB of L2 a core, 260 MiB of L3; Linux 6.18; clang 18.1.3 and GCC 13.3 (-std=c11 -O2 -ffp-contract=off, the qualification's flags); Python 3.11.15; valgrind's callgrind for the simulated rows",
+ "tree": {
+  "before": "8d97b1cf19d96c255734f94dc2e3397ab0870cae",
+  "after": "0f29c50d80e7b9d0950e2b3824aff1af01b18ce6"
+ },
+ "records": {
+  "once.json": "once_ab.c, one process: the tree before's GEM units (bcir_runtime.c, bcir_exec.c, bcir_decoder_gem.c and the decoder units they link, every global renamed before_*) against the tree after's, with an A/A control, on the qualification's native pack and lab model: bcir_sp_execute with a kernel that does nothing, bcir_dgem_load then bcir_dgem_free, and bcir_dgem_run (the card's prompt and 48 new tokens); every execute's result and every run's tokens and final logits the tree before's",
+  "qualification.json": "CRC-SLICE's qual_crc.py (../crc-slice/) over run_qualification.py --require-callgrind from each tree",
+  "qualification-repeats.json": "run_qualification.py from each tree three times in alternation without callgrind, each run's C latency rows",
+  "passes.json": "count_passes.sh: each tree's units built at -O0 -fno-inline (every call a call), each entry point under callgrind with a profile part dumped around each of its calls -- bcir_sp_execute, bcir_dgem_load and bcir_dgem_run on the qualification's pack (count_passes.c), bcir_decoder_lower_pack on the pack fuzz harness's first seed (replay_pack.c over fuzz_decoder_pack.c as committed, four lowerings); each call's CRC-32 calls by caller",
+  "faults.json": "red_sweep.py: sp-once.json on the committed tree's content; qual.json, the whole table, swept again on the committed tree (its QL2 and QG3 re-anchored); and qual.json's three faults that also trip a build (QL10, QL11, QL14), swept on the tree before",
+  "explore.json": "NEXT-8 on the tree before: CRC-SLICE's trust.json read a part at a time",
+  "hashes.json": "the tools' sha256 -- this directory's and those run from ../crc-slice -- the measured sources' and the pack's",
+  "the tools": "measure_once.sh (the records' run), once_ab.c, count_passes.sh (passes.json's run), count_passes.c and replay_pack.c, the bytes that ran; the scripts' host paths as placeholders (<REPO>, <SCRATCH>, <LAB>), which filled in are the run copies byte for byte"
+ },
+ "verdicts": "each effect resolved where its 95% interval excludes 1 and does not meet the A/A control's",
+ "reading": {
+  "once": [
+   "clang bcir_sp_execute, no kernel: 1.391 -> 0.743 ms, x0.530 (0.526-0.534); A/A x1.002 (0.996-1.009)",
+   "clang bcir_dgem_load + bcir_dgem_free: 1.974 -> 0.976 ms, x0.500 (0.495-0.505); A/A x1.003 (0.997-1.010)",
+   "clang bcir_dgem_run, the whole request: 12.824 -> 12.232 ms, x0.941 (0.892-0.993); A/A x1.005 (0.972-1.039)",
+   "gcc bcir_sp_execute, no kernel: 1.287 -> 0.760 ms, x0.591 (0.586-0.596); A/A x1.002 (0.991-1.012)",
+   "gcc bcir_dgem_load + bcir_dgem_free: 1.841 -> 1.069 ms, x0.584 (0.572-0.597); A/A x0.997 (0.987-1.006)",
+   "gcc bcir_dgem_run, the whole request: 12.569 -> 12.077 ms, x0.959 (0.909-1.011); A/A x0.968 (0.928-1.011)"
+  ],
+  "qualification": [
+   "one run each, --require-callgrind: GEM's load 2.242 -> 1.272 ms; the trust boundary alone (a check and the semantic walk, what bcir_sp_execute pays before dispatch) 0.988 -> 0.671 ms; GEM 15.493 -> 12.427 ms, its overhead over the monolithic runner 3.135 -> 0.789 ms; GEM/monolithic 1.2537 -> 1.0678 (gated at 1.5); the first token of a GEM run 2.887 -> 2.078 ms",
+   "the before run's GEM median (15.493 ms, a ratio of 1.2537) is that run's: the three runs more read 1.06-1.17 before (qualification_repeats)",
+   "logits sha256 2a18b8613b6b60e4 on both: True; GEM == monolithic bit for bit on both: True; max |C - oracle| 0.0 / 0.0; checks 23/23 and 23/23",
+   "simulated (callgrind): GEM instructions 214910184 -> 211104723; the monolithic runner's 201016566 -> 201016566 (SP-ONCE does not touch it)"
+  ],
+  "qualification_repeats": [
+   "before, three runs without callgrind: load_ms [2.16, 2.183, 2.264] (median 2.183); trust_boundary_ms [1.0, 0.99, 0.976] (median 0.99); gem_overhead_ms [1.503, 0.75, 1.87] (median 1.503); gem_over_monolithic_median [1.1318, 1.0568, 1.1695] (median 1.1318); time_to_first_token_ms [2.677, 2.837, 2.701] (median 2.701)",
+   "after, three runs without callgrind: load_ms [1.304, 1.312, 1.24] (median 1.304); trust_boundary_ms [0.688, 0.693, 0.688] (median 0.688); gem_overhead_ms [0.465, 0.776, 0.379] (median 0.465); gem_over_monolithic_median [1.04, 1.0705, 1.0329] (median 1.04); time_to_first_token_ms [1.999, 2.071, 2.03] (median 2.03)"
+  ],
+  "passes": [
+   "a pack's CRC passes a call, before -> after: bcir_sp_execute 3 -> 1; bcir_dgem_load 4 -> 1; bcir_dgem_run 3 -> 1; bcir_decoder_lower_pack 13 -> 9 (its two executions one each now), its plan's passes 4 -> 4",
+   "every call of an entry point made the same passes (the lowering's four alike); the run made its 48 new tokens"
+  ],
+  "faults": [
+   "sp-once.json: 11 of 11 caught by their own check",
+   "qual.json on the committed tree: 28 of 28 caught by their own check; QL10, QL11 and QL14 leave a running maximum set and unused, which a test's -Werror build reports beside the check, as on the tree before (3 of 3 there, the same findings)"
+  ]
+ },
+ "reproduce": [
+  "bash measure_once.sh  # from <REPO> on the measured tree: HEAD SP-ONCE (0f29c50), HEAD~1 the tree before",
+  "bash count_passes.sh  # the same trees, after measure_once.sh",
+  "python3 tools/testing/red_sweep.py --faults tools/testing/faults/sp-once.json",
+  "python3 tools/testing/red_sweep.py --faults tools/testing/faults/qual.json"
+ ]
+}

@@ -4,9 +4,14 @@
 # injected partition fault reported as a race
 #
 # One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: BCIR Make
-# builds them (the decoder-training harness built with -fsanitize=thread, and the same build of a
-# tensor unit whose attention backward runs one query head per task, so the query heads of one KV
-# head -- which accumulate into the same dk and dv -- are tasks two threads may claim) and runs this script as
+# builds them (the decoder-training harness built with -fsanitize=thread -- its attention's tasks on
+# copies of their heads' rows at every context, so the workers' regions of a lent workspace run under
+# the sanitizer too (ATT-CONTIG), its stored forward a strip of rows at a time at every context
+# (FWD-STRIP), and every blocked-contract weight adjoint that workspace holds split over its depth,
+# its K blocks' tasks and the fold after them on the pool (KSPLIT) -- and the same build of a tensor
+# unit whose attention backward runs
+# one query head per task, so the query heads of one KV head -- which accumulate into the same dk and
+# dv -- are tasks two threads may claim) and runs this script as
 # a task, whose verdict the gate shows; the CMake project builds the same binaries from the same
 # manifest (sanitizer `variants`) and runs this script as the `c-section-decoder_train_tsan` CTest
 # entry; tools/build/section_parity.py holds the two builds' outputs byte-identical. Whether

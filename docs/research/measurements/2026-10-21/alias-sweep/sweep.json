@@ -1,0 +1,132 @@
+{
+ "before": {
+  "commit": "8cc6b6be1c6722180065ef920af6e1b89687306a",
+  "diff": "e3b0c44298fc1c14"
+ },
+ "commit": "2dcd37ad8aae366539408840131c86678993a1f3",
+ "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+ "contract": "kblock+exp+reduce+attn",
+ "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+ "python": "3.11.15",
+ "reps": 15,
+ "reuse_shape": [
+  {
+   "lifetimes": 2000,
+   "ms": {
+    "py_pairwise": 148.20652799971867,
+    "py_sweep": 5.097048997413367
+   }
+  },
+  {
+   "lifetimes": 8000,
+   "ms": {
+    "py_pairwise": 2712.1576739955344,
+    "py_sweep": 24.214327000663616
+   }
+  },
+  {
+   "lifetimes": 32000,
+   "ms": {
+    "py_pairwise": null,
+    "py_sweep": 110.63028500211658
+   }
+  }
+ ],
+ "rows": [
+  {
+   "claims": 224,
+   "lifetimes": 372,
+   "ms": {
+    "ep_verify": 0.8982540020952001,
+    "ep_verify_lent": 0.21616600133711472,
+    "lower_pack": 2.6437869964865968,
+    "lower_pack_before": 4.639320002752356,
+    "py_pairwise": 3.649606995168142,
+    "py_sweep": 0.8410879963776097,
+    "walk": 1.2668390045291744,
+    "walk_lent": 0.572016004298348
+   },
+   "pack_bytes": 44637,
+   "plan_bytes": 31717,
+   "scratch_bytes": 23068,
+   "steps": 1
+  },
+  {
+   "claims": 447,
+   "lifetimes": 518,
+   "ms": {
+    "ep_verify": 1.6952020014286973,
+    "ep_verify_lent": 0.31772199872648343,
+    "lower_pack": 5.407206997915637,
+    "lower_pack_before": 7.353084001806565,
+    "py_pairwise": 9.352781002235133,
+    "py_sweep": 1.4024659976712428,
+    "walk": 2.4288209970109165,
+    "walk_lent": 0.9599580007488839
+   },
+   "pack_bytes": 86224,
+   "plan_bytes": 51218,
+   "scratch_bytes": 32120,
+   "steps": 2
+  },
+  {
+   "claims": 1116,
+   "lifetimes": 956,
+   "ms": {
+    "ep_verify": 6.371472001774237,
+    "ep_verify_lent": 0.7299740027519874,
+    "lower_pack": 13.24810799997067,
+    "lower_pack_before": 20.866762002697214,
+    "py_pairwise": 26.949372004310135,
+    "py_sweep": 2.9395329984254204,
+    "walk": 7.338784998864867,
+    "walk_lent": 2.6333089990657754
+   },
+   "pack_bytes": 211327,
+   "plan_bytes": 109721,
+   "scratch_bytes": 59276,
+   "steps": 5
+  },
+  {
+   "claims": 2231,
+   "lifetimes": 1686,
+   "ms": {
+    "ep_verify": 20.737746999657247,
+    "ep_verify_lent": 1.4921080000931397,
+    "lower_pack": 26.79683200403815,
+    "lower_pack_before": 51.171278006222565,
+    "py_pairwise": 82.22346999536967,
+    "py_sweep": 6.17303499893751,
+    "walk": 22.357271001965273,
+    "walk_lent": 4.800340000656433
+   },
+   "pack_bytes": 422557,
+   "plan_bytes": 207226,
+   "scratch_bytes": 104536,
+   "steps": 10
+  },
+  {
+   "claims": 4461,
+   "lifetimes": 3146,
+   "ms": {
+    "ep_verify": 70.41984599345597,
+    "ep_verify_lent": 2.7916999970329925,
+    "lower_pack": 51.154085995221976,
+    "lower_pack_before": 148.7966909990064,
+    "py_pairwise": 312.3062730010133,
+    "py_sweep": 12.558353002532385,
+    "walk": 78.74426600028528,
+    "walk_lent": 9.498403000179678
+   },
+   "pack_bytes": 845017,
+   "plan_bytes": 402236,
+   "scratch_bytes": 195056,
+   "steps": 20
+  }
+ ],
+ "trees": {
+  "bcir": "e39da781f0c6efc0315063ce2c485d47136a74c9",
+  "runtime/c": "42b3d4d5bb22e768596be63291845a6bca589cb5"
+ },
+ "worktree_diff_sha256_16": "e3b0c44298fc1c14"
+}

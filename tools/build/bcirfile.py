@@ -12,7 +12,8 @@ bytes (R1: registry-first), so the plan names what built it.
 
 Compile lines follow the CMake build's policy (cmake/BCIRCompilerFlags.cmake): C23 as the compiler
 spells it (c23, else c2x), -O2 with the asserts kept, -Wall -Wextra -Werror (not on a mutant, which
-CMake builds without the warning policy), the manifest's per-unit options (`gcc:`/`clang:` scoped),
+CMake builds without the warning policy), the manifest's per-unit options (`gcc:`/`clang:` scoped,
+and `x86_64:` before that: bcir.toolchain.manifest_options),
 and the seam as C++17 -Wpedantic. Each object reads its source and every header that source reaches
 through a quoted #include, so an edit to a header makes exactly its includers stale. The fuzzers are
 not planned: they are Clang-only libFuzzer builds (the `fuzzer` preset). A sanitizer variant is
@@ -102,13 +103,18 @@ def identity(path: str) -> str:
     return f"sha256:{h.hexdigest()}"
 
 
+def _toolchain():
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    import bcir.toolchain as toolchain
+
+    return toolchain
+
+
 def compiler_family(cc: str) -> str:
-    """`clang` or `gcc`, from what the compiler says it is (the manifest's option scopes)."""
-    try:
-        out = subprocess.run([cc, "--version"], capture_output=True, text=True, timeout=60).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        out = ""
-    return "clang" if "clang" in out.lower() else "gcc"
+    """`clang` or `gcc`, from what the compiler says it is (the manifest's compiler scopes):
+    bcir.toolchain.compiler_identity's family."""
+    return _toolchain().compiler_identity(cc)[0]
 
 
 def c23_spelling(cc: str) -> str:
@@ -150,18 +156,11 @@ def header_closure(source: str, include_dirs: tuple[str, ...]) -> list[str]:
     return sorted(seen)
 
 
-def scoped(options: list[str], family: str) -> list[str]:
-    out = []
-    for opt in options:
-        if opt.startswith("gcc:"):
-            if family == "gcc":
-                out.append(opt[4:])
-        elif opt.startswith("clang:"):
-            if family == "clang":
-                out.append(opt[6:])
-        else:
-            out.append(opt)
-    return out
+def scoped(options: list[str], family: str, machine: str) -> list[str]:
+    """A unit's options under a compiler of `family` emitting for `machine`: the one reading of the
+    manifest's scopes, bcir.toolchain.manifest_options (CMake's bcir_manifest_resolve is its
+    twin)."""
+    return _toolchain().manifest_options(options, family, machine)
 
 
 class Writer:
@@ -224,7 +223,7 @@ def generate(
     name -> sha256 identity, the configure's pins) declares those tools by their pins."""
     manifest_tool = _load("manifest")
     manifest = manifest_tool.load()
-    family = compiler_family(cc)
+    family, machine = _toolchain().compiler_identity(cc)
     std23 = c23_spelling(cc)
     w = Writer(identities)
     w.comment("The C rails' build, written by tools/build/bcirfile.py from runtime/manifest.json.")
@@ -268,7 +267,12 @@ def generate(
         return obj
 
     def c_flags(std: str, options: list[str], strict: bool = True) -> list[str]:
-        return [f"-std={std}", "-O2", *(warnings if strict else []), *scoped(options, family)]
+        return [
+            f"-std={std}",
+            "-O2",
+            *(warnings if strict else []),
+            *scoped(options, family, machine),
+        ]
 
     def link_flags(links: list[str]) -> list[str]:
         out = []

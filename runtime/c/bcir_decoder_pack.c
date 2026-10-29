@@ -19,14 +19,15 @@
 /* The claims' names but the GEMM's, in native_pack.OPS's order. */
 enum { OP_SCAN, OP_ZERO, OP_EMBED, OP_RMS, OP_ROPE, OP_ROPE_INV, OP_ATTN, OP_ATTN_VJP, OP_ADD,
   OP_MUL, OP_PSILU, OP_SILU, OP_SILU_P, OP_SWIGLU, OP_SWIGLU_P, OP_RMSV, OP_RMSV_A, OP_RMSV_F,
-  OP_RMSV_AF, OP_LOSS, OP_SCATTER, OP_CHECK_F, OP_CHECK_R, OP_CHECK_L, OP_UPDATE, OP_GEMM };
+  OP_RMSV_AF, OP_LOSS, OP_SCATTER, OP_CHECK_F, OP_CHECK_R, OP_CHECK_L, OP_UPDATE, OP_ROPE_TABLE,
+  OP_GEMM };
 static const char *const dp_names[OP_GEMM] = {
   "train.scan", "train.zero", "train.embed", "train.rms", "train.rope", "train.rope.inverse",
   "train.attention", "train.attention.vjp", "train.add", "train.mul", "train.provider.silu",
   "train.silu_mul", "train.silu_mul.panels", "train.swiglu.vjp", "train.swiglu.vjp.panels",
   "train.rms.vjp", "train.rms.vjp.add", "train.rms.vjp.first", "train.rms.vjp.add.first",
   "train.loss", "train.scatter", "train.check.forward", "train.check.ran", "train.check.loss",
-  "train.update"};
+  "train.update", "train.rope.table"};
 /* The banks, numbered as the operand spaces: the six arenas 1-6, the workspace 7, then the
  * micro-batch's tokens and targets (both space 8, told apart by the slot that takes them). */
 enum { BANK_WORKSPACE = 7, BANK_TOKENS = 8, BANK_TARGETS = 9, DP_BANKS = 9 };
@@ -40,6 +41,7 @@ typedef struct dp_claim {
   const uint8_t *rd, *wr; /* the segment's RIDs, little-endian u32, in the pack */
   uint64_t base, count;
   uint16_t n_rd, n_wr;
+  uint16_t instance, workers; /* PX-3b-2: the plan step's measured alternative (0: the default) */
   uint8_t op, form, seen;
 } dp_claim;
 typedef struct dp_life { uint64_t offset, size, first, last; uint32_t rid; unsigned bank; } dp_life;
@@ -57,6 +59,7 @@ typedef struct dp_ctx {
   /* the state's geometry and contract, as its records carry them */
   uint64_t rows, d, h, kh, hd, v, b, t, params, chunk, eps;
   unsigned gc, attn, attn_vjp, v2, reduce, provider;
+  unsigned lent; /* ATT-CONTIG: the state lends workspace bytes, which the binary32 attention copies into */
 } dp_ctx;
 
 static int dp_fail(dp_ctx *c, int why) {
@@ -129,7 +132,44 @@ static int dp_name(const char *s, size_t n, unsigned *op, unsigned *form) {
   return dp_gemm_name(s, n, form);
 }
 
+/* PX-3b-2: a measured realization's alternative, `i<bit>` (1, 2, 4 or 8) or `t<k>` (1 .. 32767,
+ * ASCII digits, no leading zero) -- cost.measured_alternative_key's grammar -- as (instance,
+ * workers); 0 for any other spelling. */
+static int dp_alternative(const char *s, size_t n, uint16_t *instance, uint16_t *workers) {
+  uint32_t v = 0;
+  size_t i;
+  if (n < 2u || n > 6u || (s[0] != 'i' && s[0] != 't') || s[1] == '0') return 0;
+  for (i = 1; i < n; i++) {
+    if (s[i] < '0' || s[i] > '9') return 0;
+    v = v * 10u + (uint32_t)(s[i] - '0');
+  }
+  if (s[0] == 'i') {
+    if (v != 1u && v != 2u && v != 4u && v != 8u) return 0;
+    *instance = (uint16_t)v;
+  } else {
+    if (v > 32767u) return 0;
+    *workers = (uint16_t)v;
+  }
+  return 1;
+}
+
 /* --- the walks ------------------------------------------------------------------------ */
+
+/* each plan step, as the walk verifies it: a measured realization (`<name>@<alternative>`, the
+ * plan's candidate string) names its claim's dispatch; any other runs the default */
+static int dp_on_step(const bcir_ep_step_view *v, void *vc) {
+  dp_ctx *c = (dp_ctx *)vc;
+  dp_claim *cl;
+  size_t at = 0;
+  if (v->claim_id >= c->n) return !dp_fail(c, BCIR_DP_CLAIMS);
+  while (at < v->candidate_len && v->candidate[at] != '@') at++;
+  if (at == v->candidate_len) return 0;
+  cl = &c->claims[v->claim_id];
+  if (!dp_alternative(v->candidate + at + 1u, v->candidate_len - at - 1u, &cl->instance,
+                      &cl->workers))
+    return !dp_fail(c, BCIR_DP_ALTERNATIVE);
+  return 0;
+}
 
 static int dp_on_life(const bcir_ep_lifetime_view *v, void *vc) {
   dp_ctx *c = (dp_ctx *)vc;
@@ -243,7 +283,7 @@ static int dp_work(const uint64_t *w, uint64_t *out) {
     return dp_mul(w[3], w[4], &x) && dp_mul(x, w[5], &x) && dp_mul(x, w[6], out);
   case BCIR_DT_REC_EMBED: case BCIR_DT_REC_SCATTER: case BCIR_DT_REC_RMS:
   case BCIR_DT_REC_RMS_VJP: case BCIR_DT_REC_LOSS: case BCIR_DT_REC_SILU_MUL_PANELS:
-  case BCIR_DT_REC_SWIGLU_VJP_PANELS:
+  case BCIR_DT_REC_SWIGLU_VJP_PANELS: case BCIR_DT_REC_ROPE_TABLE:
     return dp_mul(w[3], w[4], out);
   case BCIR_DT_REC_CHECK: *out = 1u; return 1;
   default: *out = w[3]; return 1;
@@ -263,13 +303,16 @@ static int dp_record(dp_ctx *c, const dp_claim *cl, uint64_t *w) {
   uint64_t q, work, base;
   memset(w, 0, BCIR_DT_RECORD_WORDS * sizeof *w);
   w[1] = (uint64_t)c->rank + 1u;
+  w[BCIR_DT_WORD_INSTANCE] = cl->instance; /* PX-3b-2: the plan's alternative (0: the default) */
+  w[BCIR_DT_WORD_WORKERS] = cl->workers;
   switch (op) {
   case OP_SCAN: SLOT(0, U_R, SL_RUN); break;
   case OP_ZERO: SLOT(0, U_W, SL_RUN); break;
   case OP_EMBED: SLOT(0, U_R, SL_TOKENS); SLOT(1, U_R, SL_PLAIN); SLOT(2, U_W, SL_PLAIN); break;
   case OP_RMS: case OP_SILU:
     SLOT(0, U_R, SL_PLAIN); SLOT(1, U_R, SL_PLAIN); SLOT(2, U_W, SL_PLAIN); break;
-  case OP_ROPE: case OP_ROPE_INV: SLOT(0, U_RW, SL_PLAIN); break;
+  case OP_ROPE: case OP_ROPE_INV: SLOT(0, U_RW, SL_PLAIN); SLOT(1, U_R, SL_PLAIN); break;
+  case OP_ROPE_TABLE: SLOT(0, U_W, SL_PLAIN); break;
   case OP_ATTN: case OP_ATTN_VJP:
     bf = c->attn_vjp == 256u;
     for (i = 0; i < 3u; i++) SLOT(i, U_R, SL_PLAIN);
@@ -279,7 +322,7 @@ static int dp_record(dp_ctx *c, const dp_claim *cl, uint64_t *w) {
       SLOT(3, bf ? U_R : U_RW, SL_PLAIN); SLOT(4, U_R, SL_PLAIN);
       for (i = 5; i < 8u; i++) SLOT(i, U_W, SL_PLAIN);
     }
-    if (bf) SLOT(8, U_W, SL_WS);
+    if (bf || c->lent) SLOT(8, U_W, SL_WS);
     break;
   case OP_ADD: case OP_MUL: SLOT(0, U_R, SL_PLAIN); SLOT(1, U_RW, SL_PLAIN); break;
   case OP_PSILU: SLOT(0, U_R, SL_PLAIN); SLOT(1, U_W, SL_PLAIN); break;
@@ -307,7 +350,11 @@ static int dp_record(dp_ctx *c, const dp_claim *cl, uint64_t *w) {
     if (c->index > 255u) return dp_fail(c, BCIR_DP_SLOTS);
     entry = role == 0u ? (c->provider ? 7u : c->gc) : role == 1u ? 4u : c->gc == 3u ? 6u : 5u;
     SLOT(0, U_R, SL_PLAIN); SLOT(1, U_R, SL_PLAIN); SLOT(2, acc ? U_RW : U_W, SL_PLAIN);
-    if (entry == 3u || entry == 6u) SLOT(3, U_W, SL_WS);
+    /* the bf16 GEMM's packs; KSPLIT: under the blocked contract, where the state lends bytes, a
+     * call the pack states writing the workspace -- each call of a job with a weight adjoint, which
+     * px_gemm then holds the job to */
+    if (entry == 3u || entry == 6u || (c->gc == 2u && c->lent && cl->n_wr == 2u))
+      SLOT(3, U_W, SL_WS);
     break;
   }
   for (i = 0; i < ns; i++) {
@@ -355,6 +402,16 @@ static int dp_record(dp_ctx *c, const dp_claim *cl, uint64_t *w) {
     w[4] = c->t;
     w[6] = c->hd;
     w[7] = op == OP_ROPE_INV;
+    /* ROPE-TABLE: the table a rotation reads is time x head-dim floats */
+    if (!dp_mul(4u, c->t, &q) || !dp_mul(q, c->hd, &q) || w[16] != q)
+      return dp_fail(c, BCIR_DP_SHAPE);
+    break;
+  case OP_ROPE_TABLE:
+    w[0] = BCIR_DT_REC_ROPE_TABLE;
+    w[3] = c->t;
+    w[4] = c->hd;
+    if (!dp_mul(4u, c->t, &q) || !dp_mul(q, c->hd, &q) || w[13] != q)
+      return dp_fail(c, BCIR_DP_SHAPE);
     break;
   case OP_ATTN: case OP_ATTN_VJP:
     w[0] = op == OP_ATTN ? BCIR_DT_REC_ATTN : BCIR_DT_REC_ATTN_VJP;
@@ -441,15 +498,20 @@ static int dp_on_item(const bcir_exec_item *it, void *vc) {
 
 static size_t dp_round(size_t x) { return (x + 7u) & ~(size_t)7u; }
 
-/* the claim table, the lifetime table, the segment order and the executor's two buffers */
+/* the claim table, the lifetime table, the segment order and the executor's two buffers -- the
+ * last two lent first to the plan walk's alias law (ALIAS-SWEEP: its sweep's scratch), which is
+ * done with them before the executor takes them, so they hold the larger of the two */
 static int dp_parts(size_t n, size_t nl, size_t part[5], size_t *total) {
-  size_t i;
+  size_t i, sweep;
   if (!dp_size_mul(n, sizeof(dp_claim), &part[0]) ||
       !dp_size_mul(nl, sizeof(dp_life), &part[1]) ||
       !dp_size_mul(n, sizeof(uint32_t), &part[2]) ||
       !dp_size_mul(n, sizeof(bcir_exec_item), &part[3]) ||
       !dp_size_mul(n, sizeof(bcir_phase_stat), &part[4]))
     return 0;
+  sweep = bcir_ep_sweep_bytes((uint32_t)nl);  /* nl: the plan header's u32 lifetime count */
+  if (sweep == 0u) return 0;
+  if (sweep > part[3] && sweep - part[3] > part[4]) part[4] = sweep - part[3];
   *total = 8u;
   for (i = 0; i < 5u; i++) {
     if (part[i] > SIZE_MAX - 7u) return 0;
@@ -564,15 +626,25 @@ int bcir_decoder_lower_pack(const bcir_decoder_state *s, const uint8_t *pack, si
                                                    : 0u;
   c.attn = ((s->contract & BCIR_DT_CONTRACT_EXP) ? BCIR_TENSOR_ATTENTION_EXP : 0u) |
            ((s->contract & BCIR_DT_CONTRACT_ATTN) ? BCIR_TENSOR_ATTENTION_FUSED : 0u);
-  c.attn_vjp = (s->contract & BCIR_DT_CONTRACT_ATTNBF16) ? 256u : c.attn;
-  if (s->contract & BCIR_DT_CONTRACT_ATTNBF16) c.attn |= 256u;
+  /* the binary32 backward under P-BANDS, the layout its stored forward's word names */
+  c.attn_vjp =
+      (s->contract & BCIR_DT_CONTRACT_ATTNBF16) ? 256u : c.attn | BCIR_TENSOR_ATTENTION_BANDS;
+  /* a program's forward is a stored one: the bf16 entry's flagged 256, the binary32 entry's under
+   * P-LOWER and P-BANDS (bcir_decoder_train.c's attention_forward_contract) */
+  c.attn |= (s->contract & BCIR_DT_CONTRACT_ATTNBF16)
+                ? 256u
+                : BCIR_TENSOR_ATTENTION_LOWER | BCIR_TENSOR_ATTENTION_BANDS;
   c.v2 = (s->contract & BCIR_DT_CONTRACT_EXP) != 0;
   c.reduce = (s->contract & BCIR_DT_CONTRACT_REDUCE) != 0;
   c.provider = s->provider.mm != NULL;
-  /* the two verified by their own laws, the plan's walk handing over its lifetimes as it verifies
-   * them: one walk of the plan's laws (two quadratic in its records, no heap) where a check and a
-   * lifetime walk would take two. A status refuses ahead of any reason the lifetimes gave. */
-  st = bcir_ep_check_pack_lifetimes(plan, plan_len, pack, pack_len, dp_on_life, &c);
+  c.lent = s->workspace && s->workspace_bytes;
+  /* the two verified by their own laws, the plan's walk handing over its steps (PX-3b-2: their
+   * measured alternatives) and its lifetimes as it verifies them: one walk of the plan's laws
+   * where a check and two walks would take three, its alias law swept over the executor's bytes
+   * (ALIAS-SWEEP), lent before the executor takes them. A status refuses ahead of any reason the
+   * steps or the lifetimes gave. */
+  st = bcir_ep_check_pack_walk(plan, plan_len, pack, pack_len, dp_on_step, dp_on_life, &c, at,
+                               part[3] + part[4]);
   if (st != BCIR_OK) {
     *why = (int)st;
     return BCIR_DT_INVALID;
