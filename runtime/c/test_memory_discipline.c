@@ -185,10 +185,39 @@ static int cfront_wide_source(char *src,size_t cap){
   return 0;
 }
 
-/* One compile under the fault allocator (fail_at 0: none fails). A failure is the whole compile's: no unit, no
- * emitted C -- never a partial text -- and every block released; a success emits `expect` whole. */
+/* CF-LINKTWIN: a unit whose linkable artifact takes every rendering the linkable emit makes -- a typedef, a tagged
+ * struct, an enum and a forward declaration recorded; a brace list with designators, floating constants, a string's
+ * pieces, an element's address, an array, a function and a global by name, and a folded `sizeof` as initializers;
+ * an `extern` global declared; a static function calling an exported one; the headers its text names (`memcpy`,
+ * `bool`) -- so the sweep below fails each of its allocations in turn: the records, the initializers' text, the
+ * fold's scratch function, the declarations and the headers. */
+static const char cfront_linkable_source[]=
+  "typedef bool lk_flag;\n"
+  "struct lk_pt { unsigned x, y; };\n"
+  "struct lk_fw;\n"
+  "enum lk_e { LK_A = 3, LK_B };\n"
+  "struct lk_pt lk_tab[2] = {[0] = {.y = 7u}, {1u, 2u}};\n"
+  "double lk_d = -(2.5);\n"
+  "const char *lk_s = \"ab\" \"cd\";\n"
+  "unsigned lk_m[2][3] = {{1u, 2u, 3u}, {4u, 5u, 6u}};\n"
+  "unsigned *lk_mp = &lk_m[1][2];\n"
+  "unsigned lk_arr[4] = {1u, 2u, 3u, 4u};\n"
+  "unsigned *lk_ap = lk_arr;\n"
+  "extern unsigned lk_ext;\n"
+  "unsigned lk_k = sizeof(struct lk_pt) * (unsigned)LK_B;\n"
+  "unsigned *lk_kp = &lk_k;\n"
+  "unsigned lk_g(unsigned x) { return x + lk_k; }\n"
+  "unsigned (*lk_fp)(unsigned) = lk_g;\n"
+  "static unsigned lk_h(unsigned x) { lk_flag b = x > 2u; unsigned y; memcpy(&y, &x, 4); return lk_g(y) + b; }\n"
+  "unsigned lk_entry(unsigned s) {\n"
+  "  return lk_h(s) + lk_tab[0].y + (unsigned)lk_s[1] + *lk_mp + lk_ap[2] + *lk_kp + (unsigned)lk_d;\n"
+  "}\n";
+
+/* One compile under the fault allocator (fail_at 0: none fails) -- the linkable artifact's when `linkable`. A failure
+ * is the whole compile's: no unit, no emitted C -- never a partial text -- and every block released; a success emits
+ * `expect` whole. */
 static int cfront_once(const char *source,const char *expect,size_t min_emit,fault_state *state,
-                       size_t fail_at,size_t *attempts){
+                       size_t fail_at,size_t *attempts,int linkable){
   bcir_host_allocator allocator=fault_allocator(state);
   bcir_cfront_context context;
   bcir_cfront_result result;
@@ -196,7 +225,8 @@ static int cfront_once(const char *source,const char *expect,size_t min_emit,fau
   bcir_cfront_result_init(&result);
   CHECK(!bcir_cfront_context_init(&context,&allocator));
   state->attempt=0;state->fail_at=fail_at;
-  int rc=bcir_cfront_compile_context(&context,source,&result);
+  int rc=linkable ? bcir_cfront_compile_linkable_context(&context,source,NULL,&result)
+                  : bcir_cfront_compile_context(&context,source,&result);
   *attempts=state->attempt;
   if(fail_at){
     CHECK(rc!=0);CHECK(result.unit.funcs==NULL);CHECK(result.unit.n_funcs==0);
@@ -216,23 +246,26 @@ static int cfront_once(const char *source,const char *expect,size_t min_emit,fau
   return 0;
 }
 
-static int cfront_sweep(const char *source,const char *expect,size_t min_emit,size_t min_attempts){
+static int cfront_sweep(const char *source,const char *expect,size_t min_emit,size_t min_attempts,int linkable){
   fault_state state={0};size_t attempts=0,baseline;
-  CHECK(!cfront_once(source,expect,min_emit,&state,0,&attempts));
+  CHECK(!cfront_once(source,expect,min_emit,&state,0,&attempts,linkable));
   baseline=attempts;CHECK(baseline>=min_attempts);
   for(size_t fail=1;fail<=baseline;fail++){
     memset(&state,0,sizeof state);
-    CHECK(!cfront_once(source,expect,min_emit,&state,fail,&attempts));
+    CHECK(!cfront_once(source,expect,min_emit,&state,fail,&attempts,linkable));
   }
   return 0;
 }
 
 static int cfront_fault_test(void){
   char wide[WIDE_SOURCE];
-  CHECK(!cfront_sweep(cfront_source,"hi ",1u,6u));
+  CHECK(!cfront_sweep(cfront_source,"hi ",1u,6u,0));
   CHECK(!cfront_wide_source(wide,sizeof wide));
   /* the emit's first block is 4 KiB: this one's verified C needs it grown at least three times */
-  CHECK(!cfront_sweep(wide,"typedef uint32_t (*__bcir_fp63)(uint32_t, uint32_t);",8u*4096u+1u,64u));
+  CHECK(!cfront_sweep(wide,"typedef uint32_t (*__bcir_fp63)(uint32_t, uint32_t);",8u*4096u+1u,64u,0));
+  /* the linkable artifact (CF-LINKTWIN), its prelude, types, globals and functions, each allocation failed in turn */
+  CHECK(!cfront_sweep(cfront_linkable_source,"\nuint32_t lk_k = 32;\n",1u,64u,1));
+  CHECK(!cfront_sweep(wide,"\nuint32_t wide_63(__bcir_fp63 op_63, uint32_t a, uint32_t b)",8u*4096u+1u,64u,1));
   return 0;
 }
 

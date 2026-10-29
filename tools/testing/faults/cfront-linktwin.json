@@ -1,0 +1,192 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_cfront_link:test_the_twins_linkable_artifact_is_the_oracles_over_the_corpus",
+    "bcir.tests.test_cfront_link:test_the_twins_linkable_artifacts_link_to_each_other_and_to_the_oracles",
+    "bcir.tests.test_cfront_link:test_the_twins_linkable_globals_define_declare_and_refuse",
+    "bcir.tests.test_cfront_link:test_the_twins_linkable_honors_source_static_and_forward_declarations",
+    "bcir.tests.test_cfront_link:test_a_static_function_calling_an_exported_one_links_on_both_rails",
+    "bcir.tests.test_cfront_link:test_the_linkable_emit_includes_the_header_of_bool_and_alignas_on_both_rails",
+    "bcir.tests.test_cfront_link:test_linkable_emit_defines_what_the_source_defines",
+    "bcir.tests.test_c_cfront:test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_integer_constants_are_exact_on_both_rails",
+    "bcir.tests.test_c_cfront:test_file_scope_fixture_linkable_emit_builds_alone_and_runs_as_the_original",
+    "bcir.tests.test_c_cfront:test_the_linkable_emit_includes_the_header_of_each_libc_edge",
+    "bcir.tests.test_c_cfront:test_linkable_emit_spells_an_enum_global_by_its_compatible_type",
+    "bcir.tests.test_c_cfront:test_the_emit_grows_whole_under_a_failing_allocator",
+    "bcir.tests.test_cfront_link:test_the_twins_linkable_initializers_fold_on_each_target_as_the_oracles"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_twins_linkable_artifact_is_the_oracles_over_the_corpus",
+      "label": "LT1 the twin's artifact defines none of the unit's types",
+      "new": "  for(int k=0; k<0; k++){                          /* the types, as the source spells them */\n",
+      "old": "  for(int k=0; k<c->nlkd; k++){                          /* the types, as the source spells them */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twins_linkable_artifact_is_the_oracles_over_the_corpus",
+      "label": "LT2 the twin's artifact spells a type definition's tokens without the ` ;` after an aggregate's",
+      "new": "    if((e=emit_putf(out,\"%s\\n\",\"\"))) return e; }\n",
+      "old": "    if((e=emit_putf(out,\"%s\\n\",c->lkd[k].semi?\" ;\":\"\"))) return e; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twins_linkable_artifact_is_the_oracles_over_the_corpus",
+      "label": "LT3 the twin's designator index one past the one it names",
+      "new": "        ctext_putf(c,t,\"[%lld]\",ix+1); k=e+1; }\n",
+      "old": "        ctext_putf(c,t,\"[%lld]\",ix); k=e+1; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twins_linkable_globals_define_declare_and_refuse",
+      "label": "LT4 the twin drops a floating constant's minus sign",
+      "new": "      if(0) ctext_putn(c,t,\"-\",1);\n",
+      "old": "      if(tok_is(t0,\"-\")) ctext_putn(c,t,\"-\",1);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twins_linkable_globals_define_declare_and_refuse",
+      "label": "LT5 the twin joins a string literal's pieces with no space",
+      "new": "    if(all){ for(int k=a; k<b; k++){ ctext_putn(c,t,c->t[k].s,(size_t)c->t[k].n); }\n",
+      "old": "    if(all){ for(int k=a; k<b; k++){ if(k>a) ctext_putn(c,t,\" \",1); ctext_putn(c,t,c->t[k].s,(size_t)c->t[k].n); }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twins_linkable_globals_define_declare_and_refuse",
+      "label": "LT6 the twin spells an element's address with its subscripts in reverse",
+      "new": "        for(int k=0; k<n; k++){ kval v; if(!lk_fold(c,sa[k],sb[k],&v)) return 0;\n",
+      "old": "        for(int k=n; k-- > 0;){ kval v; if(!lk_fold(c,sa[k],sb[k],&v)) return 0;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twins_linkable_globals_define_declare_and_refuse",
+      "label": "LT7 the twin keeps the parentheses around a constant",
+      "new": "  while(0 && *b-*a>=2 && tok_is(&c->t[*a],\"(\") && lk_close(c,*a,*b)==*b-1){ (*a)++; (*b)--; }\n",
+      "old": "  while(*b-*a>=2 && tok_is(&c->t[*a],\"(\") && lk_close(c,*a,*b)==*b-1){ (*a)++; (*b)--; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twins_linkable_artifact_is_the_oracles_over_the_corpus",
+      "label": "LT8 the twin folds a function designator as an integer constant",
+      "new": "    if(0 && y-x==1 && c->t[x].k==T_ID && find_global(c,c->t[x].s,c->t[x].n)<0 && lk_is_func(c,&c->t[x])){\n",
+      "old": "    if(y-x==1 && c->t[x].k==T_ID && find_global(c,c->t[x].s,c->t[x].n)<0 && lk_is_func(c,&c->t[x])){\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twins_linkable_globals_define_declare_and_refuse",
+      "label": "LT9 a fold that finds no constant fails the twin's compile",
+      "new": "  c->fn=fn0; c->nenv=nenv0; c->i=i0; c->failed=failed0|!ok; if(ok) memcpy(c->err,err0,sizeof err0);\n",
+      "old": "  c->fn=fn0; c->nenv=nenv0; c->i=i0; c->failed=failed0; memcpy(c->err,err0,sizeof err0);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twins_linkable_honors_source_static_and_forward_declarations",
+      "label": "LT10 the twin's artifact drops a static global's `static`",
+      "new": "    e=emit_putf(out,\"%s%s%s\",g->lk_extern?\"extern \":\"\",g->lk_thread?\"_Thread_local \":\"\",\n",
+      "old": "    e=emit_putf(out,\"%s%s%s\",g->lk_extern?\"extern \":g->lk_static?\"static \":\"\",g->lk_thread?\"_Thread_local \":\"\",\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+      "label": "LT11 the twin's artifact drops a global's thread storage",
+      "new": "    e=emit_putf(out,\"%s%s%s\",g->lk_extern?\"extern \":g->lk_static?\"static \":\"\",\"\",\n",
+      "old": "    e=emit_putf(out,\"%s%s%s\",g->lk_extern?\"extern \":g->lk_static?\"static \":\"\",g->lk_thread?\"_Thread_local \":\"\",\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twins_linkable_globals_define_declare_and_refuse",
+      "label": "LT12 the twin defines an `extern` global",
+      "new": "    e=emit_putf(out,\"%s%s%s\",g->lk_static?\"static \":\"\",g->lk_thread?\"_Thread_local \":\"\",\n",
+      "old": "    e=emit_putf(out,\"%s%s%s\",g->lk_extern?\"extern \":g->lk_static?\"static \":\"\",g->lk_thread?\"_Thread_local \":\"\",\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twins_linkable_honors_source_static_and_forward_declarations",
+      "label": "LT13 the twin declares a function the unit defines `extern`, as its prototype was",
+      "new": "    if((e=emit_putf(out,\"%.*s\",(int)len,ln))) return e;\n",
+      "old": "    if(lk_line_fn(&out->unit,ln,len)<0 && (e=emit_putf(out,\"%.*s\",(int)len,ln))) return e;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_static_function_calling_an_exported_one_links_on_both_rails",
+      "label": "LT14 the twin keeps `static` on a static function's declaration of an exported callee",
+      "new": "      if(f<0) skip=7; }\n",
+      "old": "      if(f<0 || !out->unit.funcs[f].static_fn) skip=7; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_emit_includes_the_header_of_bool_and_alignas_on_both_rails",
+      "label": "LT15 the twin's artifact names `bool` with no <stdbool.h>",
+      "new": "             (f_cplx||f_cconst)?\"#include <complex.h>\\n\":\"\", \"\",\n",
+      "old": "             (f_cplx||f_cconst)?\"#include <complex.h>\\n\":\"\", f_bool?\"#include <stdbool.h>\\n\":\"\",\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_emit_includes_the_header_of_bool_and_alignas_on_both_rails",
+      "label": "LT16 the twin's artifact names `alignas` with no <stdalign.h>",
+      "new": "             \"\", f_extern?\"#include <stdio.h>\\n\":\"\",\n",
+      "old": "             f_align?\"#include <stdalign.h>\\n\":\"\", f_extern?\"#include <stdio.h>\\n\":\"\",\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_emit_includes_the_header_of_bool_and_alignas_on_both_rails",
+      "label": "LT17 the oracle's artifact names `bool` with no <stdbool.h>",
+      "new": "",
+      "old": "    (\"<stdbool.h>\", re.compile(r\"\\b(?:bool|true|false)\\b\")),\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_static_function_calling_an_exported_one_links_on_both_rails",
+      "label": "LT18 the oracle keeps `static` on every line of a static function's text",
+      "new": "            if not ln.startswith(\"static \") or lowered.functions[name].static_fn\n",
+      "old": "            if not ln.startswith(\"static \") or _line_fn(ln, names) in static_fns\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_the_linkable_emit_includes_the_header_of_bool_and_alignas_on_both_rails",
+      "label": "LT19 the oracle reads the headers its artifact names off its functions and types alone",
+      "new": "    code = _code_only(\"\\n\".join([emitted[n] for n in names] + defs))\n",
+      "old": "    code = _code_only(\"\\n\".join(body))\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_the_linkable_emit_includes_the_header_of_each_libc_edge",
+      "label": "LT20 the twin's artifact calls memcpy with no <string.h>",
+      "new": "             f_stdlib?\"#include <stdlib.h>\\n\":\"\", \"\",\n",
+      "old": "             f_stdlib?\"#include <stdlib.h>\\n\":\"\", f_string?\"#include <string.h>\\n\":\"\",\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_emit_includes_the_header_of_each_libc_edge",
+      "label": "LT21 the twin reads `aligned_alloc` as no allocator, its header not <stdlib.h> (CF-RTWIDE)",
+      "new": "  static const char *const libc[]={\"malloc\",\"calloc\",\"realloc\",\"free\",0};\n",
+      "old": "  static const char *const libc[]={\"malloc\",\"calloc\",\"realloc\",\"aligned_alloc\",\"free\",0};\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_emit_grows_whole_under_a_failing_allocator",
+      "label": "LT22 a failure inside a fold leaks the fold's scratch function",
+      "new": "",
+      "old": "    cfront_free_func(&c->allocator,&c->lkfn);   /* a fold the failure interrupted (CF-LINKTWIN) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_emit_grows_whole_under_a_failing_allocator",
+      "label": "LT23 the context keeps the linkable emit's type records past its destruction",
+      "new": "  bcir_host_deallocate(&allocator,c->lktext.s);\n",
+      "old": "  bcir_host_deallocate(&allocator,c->lktext.s);bcir_host_deallocate(&allocator,c->lkd);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twins_linkable_initializers_fold_on_each_target_as_the_oracles",
+      "label": "LT24 bcir-cc's --linkable compiles for the host, whatever --target names",
+      "new": "    int compile_rc = linkable ? bcir_cfront_compile_linkable(src, NULL, &r) : bcir_cfront_compile_target(src, target, &r);\n",
+      "old": "    int compile_rc = linkable ? bcir_cfront_compile_linkable(src, target, &r) : bcir_cfront_compile_target(src, target, &r);\n",
+      "path": "runtime/c/bcir_cc.c"
+    }
+  ]
+}

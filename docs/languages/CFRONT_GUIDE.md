@@ -582,7 +582,8 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   by `char`'s signedness; GCC reads it as a signed `int` whatever `char` is.
 - The linkable emit's definitions drop a parameter's qualifiers below its top level (`uint32_t f(const uint32_t
   *p)` is defined taking `uint32_t *`), so a function pointer of the source's type takes such a function only
-  through a cast; and the C twin's `--linkable` emits the unit's functions alone. Both are recorded follow-ups.
+  through a cast -- on both rails, whose linkable artifacts (`bcir-cfront --linkable` and `bcir-cc --linkable`)
+  define the same types, functions and globals (CF-LINKTWIN). It is a recorded follow-up.
 - A subscript of a pointer member of an element of an array of structs (`gt[i].name[1]`), a pointer to an array of
   structs (`struct pt (*q)[3] = gm;`), a member through the address of an element (`(&gm[0][1])->y`), a bit-field
   of a 2-D array of structs and an element of a string literal plus an offset (`("ab" + 1)[i]`): refused on both

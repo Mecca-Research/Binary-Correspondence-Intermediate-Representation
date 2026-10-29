@@ -218,8 +218,8 @@
     {
       "expects": "test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails",
       "label": "AT3 the twin's emit keeps the synthesized tags",
-      "new": "  return NULL;",
-      "old": "  return respell_anon(c,out);",
+      "new": "",
+      "old": "  if((e=respell_anon(c,out))) return e;\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

@@ -313,6 +313,15 @@ _OWN_HEADERS = (
         ),
     ),
 )
+# ... and the names C23 spells as keywords and C11 as a header's macros, which a source's types, initializers and the
+# emit's own `bool` temps carry into the artifact (CF-LINKTWIN): an artifact naming `bool` did not build as C11
+_C11_MACRO_HEADERS = (
+    ("<stdbool.h>", re.compile(r"\b(?:bool|true|false)\b")),
+    ("<stdalign.h>", re.compile(r"\b(?:alignas|alignof)\b")),
+)
+# A line of the artifact's functions declaring or defining a function: its name, directly before a `(` -- a return type
+# may hold parentheses (`_BitInt(13)`), so each is tried; the twin's `lk_line_fn`
+_CALLED_NAME = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)\(")
 # The names an emitted function spells for itself, whatever its source names: the <string.h> and <stdlib.h> routines
 # it calls or copies through (`memcpy` spells every plain member or element store), the C11 atomics it calls, the
 # twin's store helper `_v`, and the standard type names it declares objects with. No parameter or local the emit
@@ -401,6 +410,15 @@ def _object_declarator(ct: CType, name: str, quals: tuple = ()) -> str:
     return f"{_qual_type(ct, quals)} {name}{''.join(dims)}"
 
 
+def _line_fn(line: str, names) -> "str | None":
+    """The function of the unit `line` declares or defines: the first of `names` directly before a `(` (`_CALLED_NAME`);
+    None when it names none. The twin's `lk_line_fn`."""
+    for m in _CALLED_NAME.finditer(line):
+        if m.group(1) in names:
+            return m.group(1)
+    return None
+
+
 def emit_linkable(lowered, emitted: dict) -> str:
     """The LINKABLE artifact (Phase 3 linking): the unit's emitted functions re-rendered with
     EXTERNAL linkage -- definitions non-static under their REAL names, in-unit calls unprefixed
@@ -408,15 +426,72 @@ def emit_linkable(lowered, emitted: dict) -> str:
     signed integers, float and string spellings; `extern T g;` stays a declaration), so two
     emitted TUs link TO EACH OTHER (and to any host object). SOURCE LINKAGE IS HONORED: a
     source-`static` function or global keeps `static` (internal linkage, real name -- two TUs
-    may each carry a same-named static helper); everything else exports. The default emit stays
+    may each carry a same-named static helper); everything else exports. A line of the functions'
+    text keeps the `static ` it begins with only where it declares or defines a source-`static`
+    function -- a static function's forward declaration of an exported callee loses it, since `static
+    T f(...)` after `T f(...)` does not compile (CF-LINKTWIN). The default emit stays
     `static bcir_`-prefixed (self-contained beside the source); this mode is opt-in
     (`--linkable`). A non-renderable initializer (&x, arithmetic, sizeof) raises rather than
-    mislowers."""
+    mislowers. The headers are the ones the artifact's own text names -- all of it: its types,
+    declarations and globals as well as its functions (CF-LINKTWIN) -- and its calls need. The twin's
+    `--linkable` (`bcir_cfront_compile_linkable`) renders the same artifact."""
     names = list(lowered.functions)
+    static_fns = {n for n in names if lowered.functions[n].static_fn}
     defs = list(getattr(lowered, "type_defs", ()))
     spelling = getattr(lowered, "anon_spelling", {})
-    # what the artifact itself names
-    code = _code_only("\n".join([emitted[n] for n in names] + defs))
+    # the types the artifact names, as the source defines them, in its order (CF-LINKEMIT)
+    body: list[str] = list(defs)
+    # every function declared before the globals: a static one may be DEFINED after its caller (the C
+    # static-forward-declaration idiom), and a global's initializer may name any (an ops table, CF-LINKEMIT); a
+    # function pointer parameter is its declarator with no name
+    for name in names:
+        lf = lowered.functions[name]
+        ps = ", ".join(_proto_param(p[2]) for p in lf.params) or "void"
+        if lf.variadic:
+            ps = (ps + ", ...") if ps != "void" else "..."
+        kw = "static " if lf.static_fn else ""
+        body.append(respell_anon(f"{kw}{_cname(lf.ret_type)} {name}({ps});", spelling))
+    threads = getattr(lowered, "thread_globals", frozenset())
+    quals = getattr(lowered, "global_quals", {})
+    for gname, ct, vals, is_extern, is_static in lowered.globals_decl:
+        tls = "_Thread_local " if gname in threads else ""  # each thread's own object (CF-TLS)
+        decl = respell_anon(_object_declarator(ct, gname, quals.get(gname, ())), spelling)
+        if _ANON_REF.search(decl):  # an untagged aggregate no typedef names: C names no type of it
+            raise ValueError(
+                f"linkable emit: global {gname!r} has a type C cannot name (an untagged aggregate)"
+            )
+        if is_extern:
+            body.append(f"extern {tls}{decl};")
+            continue
+        if vals is None:
+            raise ValueError(
+                f"linkable emit: global {gname!r} has a non-renderable constant "
+                f"initializer (unsupported in this slice)"
+            )
+        kw = "static " if is_static else ""  # source `static` stays file-local
+        # the initializer as the source spells it, re-spelled (`lower._file_scope_rendering`); none: a
+        # tentative definition (zero-init)
+        init = f" = {vals[0]}" if vals else ""
+        body.append(f"{kw}{tls}{decl}{init};")
+    # every in-unit call unprefixed, where `bcir_X(` begins an identifier (the twin's `lk_functions`)
+    unprefix = (
+        re.compile(r"(?<![A-Za-z0-9_])bcir_(" + "|".join(map(re.escape, names)) + r")\(")
+        if names
+        else None
+    )
+    for name in names:
+        text = unprefix.sub(r"\1(", emitted[name]) if unprefix else emitted[name]
+        # source `static` honored, line by line: the `static ` that begins a line stays only where the line
+        # declares or defines a source-static function -- body statics are indented, and untouched
+        lines = [
+            ln
+            if not ln.startswith("static ") or _line_fn(ln, names) in static_fns
+            else ln[len("static ") :]
+            for ln in text.splitlines()
+        ]
+        body.append("\n".join(lines))
+    # what the artifact itself names, all of it, outside its literals and comments
+    code = _code_only("\n".join(body))
     parts: list[str] = ["#include <stdint.h>"]  # the emitted temps are int32_t/uint32_t/...
     # a `size_t` temp (CF-SIZEOF), a `wchar_t` literal element (CF-STRELEM)
     if _STDDEF_NAME.search(code):
@@ -439,59 +514,14 @@ def emit_linkable(lowered, emitted: dict) -> str:
     # `I`, which the lowering read as <complex.h>'s imaginary unit
     if any(op.startswith("c.cconst:") for op in ops) and "#include <complex.h>" not in parts:
         parts.append("#include <complex.h>")
+    parts += [f"#include {h}" for h, names_re in _C11_MACRO_HEADERS if names_re.search(code)]
     if any(op.startswith("c.call.extern:") for op in ops):
         parts.append("#include <stdio.h>")  # the printf/scanf-family edges
     if callees - libc - _STRING_MEM and any(
         op.startswith(("c.call.libm:", "c.call.libm.void:")) for op in ops
     ):
         parts.append("#include <math.h>")  # the remaining libm edges
-    # the types the artifact names, as the source defines them, in its order (CF-LINKEMIT)
-    parts += defs
-    # every function declared before the globals: a static one may be DEFINED after its caller (the C
-    # static-forward-declaration idiom), and a global's initializer may name any (an ops table, CF-LINKEMIT); a
-    # function pointer parameter is its declarator with no name
-    for name in names:
-        lf = lowered.functions[name]
-        ps = ", ".join(_proto_param(p[2]) for p in lf.params) or "void"
-        if lf.variadic:
-            ps = (ps + ", ...") if ps != "void" else "..."
-        kw = "static " if lf.static_fn else ""
-        parts.append(respell_anon(f"{kw}{_cname(lf.ret_type)} {name}({ps});", spelling))
-    threads = getattr(lowered, "thread_globals", frozenset())
-    quals = getattr(lowered, "global_quals", {})
-    for gname, ct, vals, is_extern, is_static in lowered.globals_decl:
-        tls = "_Thread_local " if gname in threads else ""  # each thread's own object (CF-TLS)
-        decl = respell_anon(_object_declarator(ct, gname, quals.get(gname, ())), spelling)
-        if _ANON_REF.search(decl):  # an untagged aggregate no typedef names: C names no type of it
-            raise ValueError(
-                f"linkable emit: global {gname!r} has a type C cannot name (an untagged aggregate)"
-            )
-        if is_extern:
-            parts.append(f"extern {tls}{decl};")
-            continue
-        if vals is None:
-            raise ValueError(
-                f"linkable emit: global {gname!r} has a non-renderable constant "
-                f"initializer (unsupported in this slice)"
-            )
-        kw = "static " if is_static else ""  # source `static` stays file-local
-        # the initializer as the source spells it, re-spelled (`lower._file_scope_rendering`); none: a
-        # tentative definition (zero-init)
-        init = f" = {vals[0]}" if vals else ""
-        parts.append(f"{kw}{tls}{decl}{init};")
-    for name in names:
-        text = emitted[name]
-        for fn in names:  # unprefix every in-unit call site
-            text = text.replace(f"bcir_{fn}(", f"{fn}(")
-        if lowered.functions[name].static_fn:  # source `static` honored: keep the
-            parts.append(text)  # definition's internal linkage
-            continue
-        lines = [
-            ln[len("static ") :] if ln.startswith("static ") else ln  # the definition line is the
-            for ln in text.splitlines()
-        ]  # only UNINDENTED `static `
-        parts.append("\n".join(lines))
-    return "\n".join(parts) + "\n"
+    return "\n".join(parts + body) + "\n"
 
 
 class _Names:

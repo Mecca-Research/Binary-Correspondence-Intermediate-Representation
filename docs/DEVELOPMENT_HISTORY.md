@@ -8555,7 +8555,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - of the 219 linkable emits that build alone, 71 draw a `-Wall` warning: a loop's `continue` label its body never
     takes (46), a temp declared and never read (17), a bit-field's storage unit read before its first store (4), and
     four the source's own spelling carries;
-  - the twin's `--linkable` emits the unit's functions alone, without its type definitions and globals;
+  - the twin's `--linkable` emits the unit's functions alone, without its type definitions and globals (closed
+    by CF-LINKTWIN);
   - a `u8` string literal's element is `char` on both rails, as Clang 18 reads it under C23, where GCC 13 reads
     `char8_t` (`unsigned char`) under `-std=c2x`, so the two compilers disagree about such an element's sign;
   - a subscript of a pointer member of an element of an array of structs (`gt[i].name[1]`), a pointer to an array of
@@ -9188,6 +9189,59 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   expression` on the twin, both refusing -- as do the two for a lone `\r` between two directives on one line. Faults:
   `tools/testing/faults/cfront-ppsplits.json`, 18 -- 10 on the twin, 8 on the oracle; `cfront-pplimits.json`'s PO9,
   anchored in the oracle's old `#line` read, re-anchored onto the digit check.
+
+  CF-LINKTWIN (2026-10-27) brings the twin's `bcir-cc --linkable` to the oracle's `emit_linkable`, and closes three
+  defects of the oracle's the port's differential found. The twin had emitted the unit's functions alone -- no type
+  definition, no global, and the prototypes the source wrote declared `extern` with their qualifiers, so its artifact
+  of a unit that defines a struct or a global did not build alone.
+  - The twin renders the artifact in the front end, where the parse is (`bcir_cfront_compile_linkable`, its context
+    entry and the `bcir_cfront.h` declarations; `bcir-cc --linkable` prints it): each file-scope type definition's
+    tokens recorded where it is parsed, spelled one space apart as the oracle's `_spelled` does, ` ;` after an
+    aggregate's (`lk_typedef`); each global's storage classes, and its initializer re-spelled where it is parsed, in C's
+    scope -- the globals and the functions declared so far (`lk_render`): a brace list's braces and designators, the
+    designator's index folded as the walk folds it (`ce_fold`); a floating constant and a string literal by their
+    spellings, a string's pieces one space apart; `&g[k]...` of an array declared before it, the array as a value, a
+    function designator or `&` of one, `&g`; else an arithmetic constant, folded by `kfold` in a function of no body
+    whose every trace is rolled back -- its claims and resources, the counters, the typedefs and signatures it named, a
+    failure (`lk_fold`) -- and spelled by `kdigits`. A global no form renders is refused by name in the oracle's
+    words. The declarations follow the attestation (`lk_decls`): the types, the twin's `__bcir_fpN` typedefs, the
+    prototypes of functions another unit defines, every function of the unit -- `static` where the source's is -- then
+    the globals, `const`, `volatile` and each `*`'s qualifiers kept; the functions under their real names, a line's
+    `static ` kept only where it declares or defines a static function (`lk_functions`); and the headers the whole
+    artifact names and its calls need, prepended (`lk_includes`, the oracle's rule). A struct a declaration defines
+    while declaring its objects gives them its `const` too, as the oracle's does. Clang 23's analyzer then found a
+    path to a null `res` in `rid_float` (`?:` of two arms no resource names): the four `rid_*` walks of a function's
+    resources read it through `res_of` now, the one lookup (`res_index`, its binary search), every answer the same.
+  - The oracle: its artifact of a static function calling an exported one kept `static` on the forward declaration
+    of the callee in the static function's text -- `static uint32_t g(uint32_t x);` after `uint32_t g(uint32_t);`,
+    which no compiler takes (C11 6.2.2p7); a line keeps it now only where it declares or defines a static function
+    (`_line_fn`, the twin's rule). It named `bool` (`cfront_boolcast.c`'s own temps) and could name `alignas` with no
+    header, so the artifact of a C11 unit did not build; `<stdbool.h>` and `<stdalign.h>` follow the names
+    (`_C11_MACRO_HEADERS`). It read the headers off its functions and types alone; it reads the whole artifact now, its
+    declarations and globals too.
+  - Witnesses (test_cfront_link, test_c_cfront): every corpus fixture through both rails
+    (`test_the_twins_linkable_artifact_is_the_oracles_over_the_corpus`) -- the same refusals for the same global; the
+    oracle's type definitions the twin's, line for line and in order, right after its attestation; each global's line
+    the oracle's, its storage class, thread storage, name, dimensions and initializer byte for byte, as many times;
+    each artifact built alone under its original's C standard, the fixtures neither builds `_LINKABLE_OPEN`, exactly
+    -- 228 fixtures rendered on both rails, none refused, 118 defining types, 45 with globals and 120 initializers compared, every artifact built alone but `cfront_quals_link.c`'s, on each rail -- and on the four other targets
+    every fixture's type and global lines the oracle's, a unit whose initializers are the target's (`sizeof` of `long`, a
+    pointer, `long double`, `size_t`, `(unsigned long)-1`) folded on each of the five as the oracle folds it; the twin's artifacts linked to each other and to the oracle's; its globals defined, declared and
+    refused, its static and forward declarations and the initializer forms on both rails; a static function calling
+    an exported one, and a C11 unit spelling `bool`, `alignas` and `alignof`, on both rails;
+    `_LINKEMIT_UNITS`, the file-scope initializers' bytes (`cfront_gbrace.c`, in a second thread too), the integer
+    constants' globals, the file-scope fixture, the libc edges' headers and the enum globals' types on both rails;
+    the twin's allocation-failure sweep over two linkable artifacts -- each of 105 and 1,058 allocations failed in
+    turn, every failure the whole compile's, nothing leaked, under ASan, UBSan and LSan too.
+    `cfront-linktwin.json` LT1-LT24, each caught by its own check; LT19 missed at first -- the unit's struct spelled the names a narrowed scan
+    still found -- so its witness gained a unit whose global's declaration alone names `bool`; under the witnesses
+    before CF-LINKTWIN 3 of the 24, incidentally (the warning-clean build: each of those mutants leaves a flag set
+    and never read). B14,
+    AT3, FS7, GA4 and GA5 re-anchored where the slice moved their text; `link.sh`'s static-forward check reads the
+    declaration the artifact now makes.
+  - Found, not fixed: the artifact defines each function with the emit's parameter types, which keep no qualifier
+    below a parameter's top level, so a function used as a value meets a pointer whose type keeps the source's
+    (`cfront_quals_link.c`, on both rails -- the one fixture in `_LINKABLE_OPEN`).
 
 ---
 

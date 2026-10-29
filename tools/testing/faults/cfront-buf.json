@@ -112,10 +112,10 @@
     },
     {
       "expects": "test_c_preprocessor_driver_and_emitter_fail_closed_at_capacity_edges",
-      "label": "B14 bcir-cc's linkable rename holds 32 KiB of the emit",
-      "new": "  size_t cap = 32768u;\n",
-      "old": "  size_t cap = r->emitted_len + 1u;\n",
-      "path": "runtime/c/bcir_cc.c"
+      "label": "B14 the linkable emit's rename reads 32 KiB of the emit",
+      "new": "  char *s=out->emitted; size_t n=out->emitted_len<32768u?out->emitted_len:32768u, w=from;\n",
+      "old": "  char *s=out->emitted; size_t n=out->emitted_len, w=from;\n",
+      "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",

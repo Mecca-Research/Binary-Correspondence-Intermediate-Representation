@@ -3071,6 +3071,36 @@ def _build_bcir_cc(d: str) -> str:
     )
 
 
+def _twin_linkable(path: str) -> str:
+    """`bcir-cc --linkable` of the unit at `path` (CF-LINKTWIN): the twin's linkable artifact, whole -- its types,
+    declarations, globals with their initializers and functions, as `bcir_cfront_compile_linkable` renders them."""
+    exe = _build_bcir_cc(_session_build_dir())
+    run = subprocess.run(
+        [exe, "--linkable", "-I", _C, path], capture_output=True, text=True, timeout=300
+    )
+    assert run.returncode == 0, f"{os.path.basename(path)}: the twin's linkable emit\n{run.stderr}"
+    return run.stdout
+
+
+def _linkable_artifacts(fx: str, r) -> tuple:
+    """Each rail's linkable artifact of the fixture `fx`, the oracle's from its compile `r`: (rail, text)."""
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    return (
+        ("oracle", emit_linkable(r.lowered, r.emitted)),
+        ("twin", _twin_linkable(os.path.join(_C, fx))),
+    )
+
+
+def _twin_linkable_of(src: str) -> str:
+    """`_twin_linkable` of the unit `src`, written to a file of its own."""
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "unit.c")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(src)
+        return _twin_linkable(path)
+
+
 def test_file_macro_real_path_dual_rail():
     """__FILE__ reflects the actual source path the driver was given (not the "<source>" default),
     byte-identically on both rails: the C `bcir-cc -E` driver and the Python `-m bcir.frontends.cfront
@@ -10180,8 +10210,9 @@ def test_the_emit_grows_whole_under_a_failing_allocator():
     """CF-BUF: the twin's allocation-failure sweep (`runtime/c/test_memory_discipline.c`, run here for the C
     frontend alone) fails every allocation a compile makes, in turn, under an injected allocator -- now over a unit
     whose verified C outgrows the emit's first block several times and whose function-pointer parameters grow the
-    typedef prelude. Each failure is the whole compile's (`oom`): no unit, no emitted C (never a partial text), every
-    block released; the fault-free run emits the whole unit."""
+    typedef prelude, and (CF-LINKTWIN) over the linkable artifact of that unit and of one taking every rendering the
+    linkable emit makes. Each failure is the whole compile's (`oom`): no unit, no emitted C (never a partial text),
+    every block released; the fault-free run emits the whole unit."""
     if not _CC:
         return
     srcs = (
@@ -11293,31 +11324,35 @@ def test_the_linkable_emit_includes_the_header_of_each_libc_edge():
     """CF-RTWIDE: the linkable emit (`--linkable`) includes the header that declares each libc edge it calls --
     `<string.h>` for `memcpy`/`memmove`/`memset`, `<stdlib.h>` for `aligned_alloc` as for the other allocators
     -- where it had included `<math.h>` for any edge outside malloc/calloc/realloc/free, which declares neither.
-    Where a C compiler is visible, the artifact compiles with implicit declarations refused."""
+    Where a C compiler is visible, the artifact compiles with implicit declarations refused -- the twin's
+    (`bcir-cc --linkable`, CF-LINKTWIN), built with it, too."""
     from bcir.frontends.cfront.emit import emit_linkable
 
     for label, (src, want, never) in _LINKABLE_HEADERS.items():
         r = compile_unit(src, check_clang=False)
         assert r.is_clean, (label, r.diagnostics)
-        text = emit_linkable(r.lowered, r.emitted)
-        assert want in text and not any(h in text for h in never), (label, text)
+        rails = [("oracle", emit_linkable(r.lowered, r.emitted))]
         if _CC:
-            cp = subprocess.run(
-                [
-                    _CC,
-                    "-std=c11",
-                    "-fsyntax-only",
-                    "-Werror=implicit-function-declaration",
-                    "-x",
-                    "c",
-                    "-",
-                ],
-                input=text,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            assert cp.returncode == 0, (label, cp.stderr, text)
+            rails.append(("twin", _twin_linkable_of(src)))
+        for rail, text in rails:
+            assert want in text and not any(h in text for h in never), (label, rail, text)
+            if _CC:
+                cp = subprocess.run(
+                    [
+                        _CC,
+                        "-std=c11",
+                        "-fsyntax-only",
+                        "-Werror=implicit-function-declaration",
+                        "-x",
+                        "c",
+                        "-",
+                    ],
+                    input=text,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                assert cp.returncode == 0, (label, rail, cp.stderr, text)
 
 
 def _refused_on_both_rails(exe, src: str, why: str) -> None:
@@ -11627,32 +11662,35 @@ def _global_values_driver(lowered) -> str:
 
 
 def _linkable_globals_are_the_originals(fx: str, src: str, r) -> None:
-    """The oracle's linkable emit defines the unit's globals with the initializers it folded: built beside
-    `_global_values_driver` (and the quarantine its bounds guards call), under every compiler at hand, each
-    global holds what the original's does."""
-    from bcir.frontends.cfront.emit import emit_linkable
-
+    """Each rail's linkable emit defines the unit's globals with the initializers it folded (CF-LINKTWIN: the twin's
+    `--linkable` too): built beside `_global_values_driver` (and the quarantine its bounds guards call), under every
+    compiler at hand, each global holds what the original's does."""
     head = "#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
     driver = _global_values_driver(r.lowered)
-    linkable = emit_linkable(r.lowered, r.emitted)
-    # a value past LLONG_MAX is spelled unsigned and LLONG_MIN as an expression: a decimal constant past
-    # LLONG_MAX without `u` has no type both compilers agree on, and neither rail takes one back
-    for name, value in _PINNED_GLOBALS.get(fx, ()):
-        assert re.search(rf"\b{name}(\[\d+\])? = {re.escape(value)};", linkable), (fx, name, value)
     quarantine = ("-I", _C, os.path.join(_C, "bcir_quarantine.c"))
     compilers = [c for c in dict.fromkeys((_CC, shutil.which("clang"), shutil.which("gcc"))) if c]
-    with tempfile.TemporaryDirectory() as d:
-        for cc in compilers:
-            want = _build_run_c(d, cc, "original", f"{head}{src}\n{driver}")
-            got = _build_run_c(d, cc, "linkable", f"{head}{linkable}\n{driver}", quarantine)
-            assert want and got == want, (
-                f"{fx}: the linkable emit's globals are not the original's under {cc}\n"
-                + "\n".join(
-                    f"  {w!r} != {g!r}"
-                    for w, g in zip(want.splitlines(), got.splitlines())
-                    if w != g
-                )
+    for rail, linkable in _linkable_artifacts(fx, r):
+        # a value past LLONG_MAX is spelled unsigned and LLONG_MIN as an expression: a decimal constant past
+        # LLONG_MAX without `u` has no type both compilers agree on, and neither rail takes one back
+        for name, value in _PINNED_GLOBALS.get(fx, ()):
+            assert re.search(rf"\b{name}(\[\d+\])? = {re.escape(value)};", linkable), (
+                rail,
+                fx,
+                name,
+                value,
             )
+        with tempfile.TemporaryDirectory() as d:
+            for cc in compilers:
+                want = _build_run_c(d, cc, "original", f"{head}{src}\n{driver}")
+                got = _build_run_c(d, cc, "linkable", f"{head}{linkable}\n{driver}", quarantine)
+                assert want and got == want, (
+                    f"{fx}: the {rail}'s linkable emit's globals are not the original's under {cc}\n"
+                    + "\n".join(
+                        f"  {w!r} != {g!r}"
+                        for w, g in zip(want.splitlines(), got.splitlines())
+                        if w != g
+                    )
+                )
 
 
 def test_integer_constants_are_exact_on_both_rails():
@@ -11663,8 +11701,8 @@ def test_integer_constants_are_exact_on_both_rails():
     of each emit returns what the original does. The twin had saturated a constant past LLONG_MAX
     (`0xFFFFFFFFFFFFFFFFu` was 9223372036854775807) and read `017` as 17. The file-scope initializers -- a
     signed division and remainder, shifts, `~` of an unsigned int, a cast, `sizeof`, a select -- fold in C's own
-    types through the fold a static's initializer takes: the oracle's linkable emit defines each global with
-    the value the original's holds (`-7 / 2` had rendered -4, `~0u` -1)."""
+    types through the fold a static's initializer takes: each rail's linkable emit (the twin's `--linkable` too,
+    CF-LINKTWIN) defines each global with the value the original's holds (`-7 / 2` had rendered -4, `~0u` -1)."""
     if not _CC:
         return
     fx = "cfront_intconst.c"
@@ -11867,15 +11905,18 @@ int main(void) {
 
 
 def _linkable_bytes_are_the_originals(fx: str, src: str, r) -> None:
-    """The oracle's linkable emit defines each of the unit's globals as the original does: built beside a `main`
-    that dumps every global's bytes -- a static-storage object's padding is zero too (C11 6.7.9p10) -- under every
-    compiler at hand, each holds the original's bytes. The linkable emit defines the unit's structs and unions as
-    the source does (CF-LINKEMIT), so its build takes nothing of the source. Where pthreads are, `main` then
-    overwrites each thread-local global and a new thread dumps it: it holds its initial bytes again, as the
-    original's does."""
-    from bcir.frontends.cfront.emit import emit_linkable
+    """Each rail's linkable emit defines each of the unit's globals as the original does (CF-LINKTWIN: the twin's
+    `--linkable` too): built beside a `main` that dumps every global's bytes -- a static-storage object's padding is
+    zero too (C11 6.7.9p10) -- under every compiler at hand, each holds the original's bytes. The linkable emit
+    defines the unit's structs and unions as the source does (CF-LINKEMIT), so its build takes nothing of the source.
+    Where pthreads are, `main` then overwrites each thread-local global and a new thread dumps it: it holds its
+    initial bytes again, as the original's does."""
+    for rail, linkable in _linkable_artifacts(fx, r):
+        _linkable_bytes_of(fx, src, r, rail, linkable)
 
-    linkable = emit_linkable(r.lowered, r.emitted)
+
+def _linkable_bytes_of(fx: str, src: str, r, rail: str, linkable: str) -> None:
+    """`_linkable_bytes_are_the_originals` of one rail's artifact."""
     names = [g[0] for g in r.lowered.globals_decl if not g[3]]
     tls = sorted(r.lowered.thread_globals) if os.name == "posix" else []
     driver = (
@@ -11913,7 +11954,7 @@ def _linkable_bytes_are_the_originals(fx: str, src: str, r) -> None:
                 d, cc, "linkable", f"{head}{linkable}\n{driver}", quarantine + threads
             )
             assert want and got == want, (
-                f"{fx}: the linkable emit's globals are not the original's under {cc}\n"
+                f"{fx}: the {rail}'s linkable emit's globals are not the original's under {cc}\n"
                 + "\n".join(
                     f"  {w!r} != {g!r}"
                     for w, g in zip(want.splitlines(), got.splitlines())
@@ -11930,8 +11971,8 @@ def test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_
     initializer, and both rails sized an unsized global by its top-level entries; each global is now walked as a
     local is, for its shape, and both rails dropped `_Thread_local` from a static local, which both emits now keep.
     The unit lowers to one claim graph on the four targets; each function of each emit returns -- and leaves the
-    thread-local global -- as the original does, in a second thread too; and the oracle's linkable emit renders
-    each global's braces and designators, holding the original's bytes."""
+    thread-local global -- as the original does, in a second thread too; and each rail's linkable emit (the twin's
+    `--linkable` too, CF-LINKTWIN) renders each global's braces and designators, holding the original's bytes."""
     if not _CC:
         return
     fx = "cfront_gbrace.c"
@@ -15419,20 +15460,24 @@ def test_file_scope_objects_run_as_the_original_with_either_char():
 
 
 def test_file_scope_fixture_linkable_emit_builds_alone_and_runs_as_the_original():
-    """CF-LINKEMIT: the oracle's linkable emit of `cfront_filescope.c` stands alone -- its struct, union and typedef
-    definitions as the source spells them, its `const` globals `const`, its tables of string pointers and its address
-    constants (C11 6.6p9) rendered, `<string.h>` for the memcpy it calls -- and builds under `-Wall -Werror` with Clang
-    and GCC (Clang's `-Wstring-plus-int` aside: it names the source's own `"ab" + 1`); linked with a driver that calls
-    each function, it prints what the original prints. It had named each struct undefined, dropped `const`, refused
-    `const char *tab[] = {"a"}` and called memcpy undeclared."""
-    from bcir.frontends.cfront.emit import emit_linkable
-
+    """CF-LINKEMIT, CF-LINKTWIN: each rail's linkable emit of `cfront_filescope.c` -- the oracle's and the twin's
+    `--linkable` -- stands alone: its struct, union and typedef definitions as the source spells them, its `const`
+    globals `const`, its tables of string pointers and its address constants (C11 6.6p9) rendered, `<string.h>` for
+    the memcpy it calls; it builds under `-Wall -Werror` with Clang and GCC (Clang's `-Wstring-plus-int` aside: it names
+    the source's own `"ab" + 1`), and linked with a driver that calls each function, it prints what the original
+    prints. The oracle's had named each struct undefined, dropped `const`, refused `const char *tab[] = {"a"}` and
+    called memcpy undeclared; the twin's had defined no type and no global at all."""
     if not _CC:
         return
     fx = "cfront_filescope.c"
     src = open(os.path.join(_C, fx), encoding="utf-8").read()
     r = compile_unit(src, check_clang=False)
-    linkable = emit_linkable(r.lowered, r.emitted)
+    for rail, linkable in _linkable_artifacts(fx, r):
+        _filescope_linkable_runs(rail, src, linkable)
+
+
+def _filescope_linkable_runs(rail: str, src: str, linkable: str) -> None:
+    """`test_file_scope_fixture_linkable_emit_builds_alone_and_runs_as_the_original` of one rail's artifact."""
     printed = " ".join(f'printf(" %u", (unsigned){f}(s));' for f in _FILESCOPE_CALLS)
     driver = (
         "#include <stdint.h>\n#include <stdio.h>\n"
@@ -15461,7 +15506,7 @@ def test_file_scope_fixture_linkable_emit_builds_alone_and_runs_as_the_original(
                 text=True,
             )
             assert alone.returncode == 0, (
-                f"{cc}: the linkable emit does not build alone\n{alone.stderr}"
+                f"{cc}: the {rail}'s linkable emit does not build alone\n{alone.stderr}"
             )
             outs = []
             for label, parts in (
@@ -15474,11 +15519,15 @@ def test_file_scope_fixture_linkable_emit_builds_alone_and_runs_as_the_original(
                     capture_output=True,
                     text=True,
                 )
-                assert b.returncode == 0, f"{cc}: the {label} program does not build\n{b.stderr}"
+                assert b.returncode == 0, (
+                    f"{cc}: the {rail}'s {label} program does not build\n{b.stderr}"
+                )
                 outs.append(
                     subprocess.run([prog], capture_output=True, text=True, timeout=300).stdout
                 )
-            assert outs[0] and outs[1] == outs[0], f"{cc}: the linkable emit is not the original"
+            assert outs[0] and outs[1] == outs[0], (
+                f"{cc}: the {rail}'s linkable emit is not the original"
+            )
             ran += 1
     assert ran, "no compiler of the pair"
 
@@ -15602,10 +15651,11 @@ def test_enum_objects_fold_as_clang_folds_them_on_each_target():
 
 
 def test_linkable_emit_spells_an_enum_global_by_its_compatible_type():
-    """CF-ENUMOBJ: the oracle's linkable emit of `cfront_enumobj.c` declares its enum-typed globals by the integer type
-    each enumeration is compatible with, so another unit's `extern enum col gcol2;` and `extern enum sg gsg;` -- here
-    in the same translation unit, where Clang and GCC refuse two incompatible declarations of one object (C11 6.2.7p2)
-    -- name the same object. It had declared each `int`: `conflicting types` for the `enum col` one."""
+    """CF-ENUMOBJ: each rail's linkable emit of `cfront_enumobj.c` -- the oracle's and the twin's `--linkable`
+    (CF-LINKTWIN) -- declares its enum-typed globals by the integer type each enumeration is compatible with, so another
+    unit's `extern enum col gcol;` and `extern enum sg gsg;` -- here in the same translation unit, where Clang and GCC
+    refuse two incompatible declarations of one object (C11 6.2.7p2) -- name the same object. It had declared each
+    `int`: `conflicting types` for the `enum col` one."""
     if not _CC:
         return
     from bcir.frontends.cfront.emit import emit_linkable
@@ -15614,27 +15664,33 @@ def test_linkable_emit_spells_an_enum_global_by_its_compatible_type():
     # the fixture's static global made external, beside the one already external
     src = src.replace("static enum col gcol = GREEN;", "enum col gcol = GREEN;")
     r = compile_unit(src, check_clang=False)
-    linkable = emit_linkable(r.lowered, r.emitted)
-    assert "int gsg" in linkable and "gcol" in linkable, linkable
-    redeclared = linkable + "\nextern enum col gcol;\nextern enum sg gsg;\n"
+    # each rail's spelling of the two types: the twin spells the 32-bit ones by their fixed-width names
+    spelled = {"oracle": ("unsigned int gcol", "int gsg"), "twin": ("uint32_t gcol", "int32_t gsg")}
     ran = 0
-    with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, "linkable.c")
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(redeclared)
-        for cc in ("clang", "gcc"):
-            exe = shutil.which(cc)
-            if not exe:
-                continue
-            b = subprocess.run(
-                [exe, "-std=c11", "-I", _C, "-c", path, "-o", os.devnull],
-                capture_output=True,
-                text=True,
-            )
-            assert b.returncode == 0, (
-                f"{cc}: an enum global's declaration conflicts\n{b.stderr[-2000:]}"
-            )
-            ran += 1
+    for rail, linkable in (
+        ("oracle", emit_linkable(r.lowered, r.emitted)),
+        ("twin", _twin_linkable_of(src)),
+    ):
+        for decl in spelled[rail]:
+            assert re.search(rf"^{re.escape(decl)} = ", linkable, re.M), (rail, decl, linkable)
+        redeclared = linkable + "\nextern enum col gcol;\nextern enum sg gsg;\n"
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "linkable.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(redeclared)
+            for cc in ("clang", "gcc"):
+                exe = shutil.which(cc)
+                if not exe:
+                    continue
+                b = subprocess.run(
+                    [exe, "-std=c11", "-I", _C, "-c", path, "-o", os.devnull],
+                    capture_output=True,
+                    text=True,
+                )
+                assert b.returncode == 0, (
+                    f"{cc}: the {rail}'s enum global's declaration conflicts\n{b.stderr[-2000:]}"
+                )
+                ran += 1
     assert ran, "no compiler of the pair"
 
 
