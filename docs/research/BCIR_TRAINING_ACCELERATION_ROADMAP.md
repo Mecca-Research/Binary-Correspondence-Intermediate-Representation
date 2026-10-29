@@ -308,6 +308,15 @@ SCHED needs the per-call choices that THREADS and FMA create.
 
 ## 4. The protocol: test, evaluate, update, retest, reevaluate
 
+The [driver/IPC data and AI qualification extension](BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md)
+uses this backend's fixtures to qualify hardware-specific inference/training paths and the
+data services that feed them. Trace dataset/buffer/plan/submission/completion/checkpoint
+identities, actual movement and lifetime, numerical state and learning quality together.
+These measurements guide kernel IPC before physical HAM and native HAM/SYCL integration;
+UART retains its appropriate transport/lifecycle workload. Exported database fixtures are
+data inputs, preserving §5's one-way corpus law. The new qualification experiments are
+planned; full comparative model runs remain deferred until #820 completes and merges.
+
 Five instruments, each already in the tree, each run on one host in one session with the sides
 interleaved; a slice is measured with all of them before and after, and its PR quotes the outputs.
 
