@@ -5835,6 +5835,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     UL1-UL35 (58; UL19 re-anchored), each caught by its own check. Both defects pass the round-one
     tests at `64679f2`; each is re-injected into the fixed code as a fault the new tests catch
     (UD42, UL32).
+  - The third round (2026-10-30) found one more on the resolver: a pointer defined once by an
+    operation it did not know -- `(u + UART_MSR_OFF) - 1`, `&u[k]`, a select -- was still a fresh
+    device base at offset 0. Only a load, a call or a constant starts a base now; a copy, a cast,
+    `p + k`, `p - k` and the address of an element or a member are resolved exactly, and any other
+    derivation has no offset. One test added; `uart-model.json` grew to UL1-UL41 (64; UL19, UL33
+    and UL34 re-anchored), each caught by its own check.
   - Not in these slices: the law-rail halves (U0's `bcir.regmap_contract` op; the `-bcir-verify`
     clauses, lit negatives and `check_passes.sh` stanzas of both) and U1's C-twin form, which need
     the MLIR rail and the twin built; and the qualifiers below a parameter's top level in both

@@ -18,6 +18,7 @@
     "bcir.tests.test_uart_laws:test_the_canonical_driver_is_law_clean_on_every_placement",
     "bcir.tests.test_uart_laws:test_every_declared_access_idiom_resolves_its_register",
     "bcir.tests.test_uart_laws:test_a_pointer_with_no_one_definition_has_no_offset",
+    "bcir.tests.test_uart_laws:test_every_pointer_derivation_is_resolved_or_unknown",
     "bcir.tests.test_uart_laws:test_law1_only_dll_dlm_and_lcr_inside_a_dlab_bracket",
     "bcir.tests.test_uart_laws:test_law1_a_dlab_bracket_is_straight_line",
     "bcir.tests.test_uart_laws:test_law1_every_lcr_store_decides_dlab",
@@ -321,8 +322,8 @@
     {
       "expects": "test_every_declared_access_idiom_resolves_its_register",
       "label": "UL19 pointer arithmetic not scaled by the pointee size",
-      "new": "return (root, off + step)",
-      "old": "return (root, off + step * size)",
+      "new": "return (root, off + _OFFSET_OPS[op] * step)",
+      "old": "return (root, off + _OFFSET_OPS[op] * step * size)",
       "path": "bcir/frontends/devices/uart_laws.py"
     },
     {
@@ -419,15 +420,15 @@
     {
       "expects": "test_a_pointer_with_no_one_definition_has_no_offset",
       "label": "UL33 an offset added to an unresolved pointer read from offset 0",
-      "new": "            if step is not None and size is not None:\n                return (root, (off or 0) + step * size)",
-      "old": "            if step is not None and size is not None and off is not None:\n                return (root, off + step * size)",
+      "new": "            if step is None or size is None:\n                return (root, None)\n            return (root, (off or 0) + _OFFSET_OPS[op] * step * size)",
+      "old": "            if step is None or size is None or off is None:\n                return (root, None)\n            return (root, off + _OFFSET_OPS[op] * step * size)",
       "path": "bcir/frontends/devices/uart_laws.py"
     },
     {
       "expects": "test_a_pointer_with_no_one_definition_has_no_offset",
       "label": "UL34 a copy or cast read as a base of its own, not the pointer it copies",
-      "new": "            return (out, 0)",
-      "old": "            return self._root(claim.rd[0]) if claim.rd else (out, None)",
+      "new": "        if op == \"c.copy\" or op.startswith(\"c.cast:\"):\n            return (out, 0)",
+      "old": "        if op == \"c.copy\" or op.startswith(\"c.cast:\"):\n            return self._root(claim.rd[0])",
       "path": "bcir/frontends/devices/uart_laws.py"
     },
     {
@@ -435,6 +436,48 @@
       "label": "UL35 no guard for a pointer derived from itself: the resolver never ends",
       "new": "",
       "old": "            self.derived[rid] = (rid, None)  # what a pointer derived from itself meets meanwhile\n",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_pointer_derivation_is_resolved_or_unknown",
+      "label": "UL36 `p - k` resolved as `p + k`: the subtraction's sign dropped",
+      "new": "_OFFSET_OPS = {\"c.bin.add\": 1, \"c.ptradd\": 1, \"c.bin.sub\": 1, \"c.ptrsub\": 1}",
+      "old": "_OFFSET_OPS = {\"c.bin.add\": 1, \"c.ptradd\": 1, \"c.bin.sub\": -1, \"c.ptrsub\": -1}",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_pointer_derivation_is_resolved_or_unknown",
+      "label": "UL37 a derivation the resolver does not know read as a fresh device base (the review's case)",
+      "new": "            return (root, None) if k is None else (root, off + imm[0] + k * imm[1])  # `&p[k]`\n        return (out, 0)",
+      "old": "            return (root, None) if k is None else (root, off + imm[0] + k * imm[1])  # `&p[k]`\n        return (out, None)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_pointer_derivation_is_resolved_or_unknown",
+      "label": "UL38 the address of an element or a member not resolved",
+      "new": "        if op == \"c.addrof.unresolved\" and self._pointee(claim.rd[0]) is not None:",
+      "old": "        if op == \"c.addrof\" and self._pointee(claim.rd[0]) is not None:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_pointer_derivation_is_resolved_or_unknown",
+      "label": "UL39 `k + p` not resolved: the sum read only as `p + k`",
+      "new": "",
+      "old": "            if op == \"c.bin.add\" and self._pointee(base) is None:\n                base, k = k, base  # `k + p`\n",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_pointer_derivation_is_resolved_or_unknown",
+      "label": "UL40 integer arithmetic on an address followed, as if unscaled bytes",
+      "new": "            size = self._pointee(base) or 1\n            step = self.value(k)",
+      "old": "            size = self._pointee(base)\n            step = self.value(k)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_pointer_derivation_is_resolved_or_unknown",
+      "label": "UL41 an integer parameter cast to a pointer not taken for a base",
+      "new": "        self.bases = {rid for _name, rid, ct in lf.params if writers[rid] == 1 and ct.kind == \"pointer\"}",
+      "old": "        self.bases = {rid for _name, rid, _ct in lf.params if writers[rid] == 1}",
       "path": "bcir/frontends/devices/uart_laws.py"
     }
   ]

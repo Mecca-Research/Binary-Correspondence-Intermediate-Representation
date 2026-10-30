@@ -230,6 +230,66 @@ def test_a_pointer_with_no_one_definition_has_no_offset():
     assert case("", after=reassigned + "    v = *p;\n") == []  # outside the bracket: not policed
 
 
+# A bracket whose one access reads `*p`, where `p` is defined once by `@DERIVE@` (after `@PRE@`).
+_DERIVED = r"""#include "uart16550_regs.h"
+typedef struct lanes {
+    volatile uint8_t rbr, ier, iir, lcr, mcr, lsr, msr, scr;
+} lanes_t;
+uint32_t probe(volatile uint8_t *u, unsigned long a, uint32_t c, uint32_t divisor)
+{
+@PRE@    volatile uint8_t *p = @DERIVE@;
+    uint32_t v;
+    while ((u[UART_LSR_OFF] & UART_LSR_TEMT_MASK) == 0u) {
+    }
+    u[UART_LCR_OFF] = 0x03u | UART_LCR_DLAB_MASK;
+    v = *p;
+    u[UART_DLL_OFF] = divisor & 0xffu;
+    u[UART_DLM_OFF] = (divisor >> 8) & 0xffu;
+    u[UART_LCR_OFF] = 0x03u;
+    return v;
+}
+"""
+
+
+def test_every_pointer_derivation_is_resolved_or_unknown():
+    """The review of #823 (round 3): a pointer defined once by an operation the resolver did not
+    know -- `(u + UART_MSR_OFF) - 1`, which is LSR -- was taken for a fresh device base at offset 0,
+    so its read inside a DLAB bracket passed as DLL. Only a load, a call or a constant (or an
+    integer parameter or constant cast to a pointer) starts a base now. A copy, a cast, `p + k` or
+    `p - k` -- the sum in either order -- and the address of an element or a member are resolved
+    exactly, so each spelling of LSR below draws the LSR message, the one that once read MSR among
+    them; any other derivation (a select, integer arithmetic on an address) has no offset, and the
+    read is unidentified."""
+    lsr = ["probe: R3-uart: LSR access inside a DLAB=1 bracket"]
+    unidentified = ["probe: R3-uart: unidentified register access inside a DLAB=1 bracket"]
+
+    def case(derive, pre=""):
+        return _uart(_DERIVED.replace("@PRE@", pre).replace("@DERIVE@", derive))
+
+    member = "    volatile lanes_t *s = (volatile lanes_t *)u;\n"
+    assert case("&s->lsr", member) == lsr
+    for derive in (
+        "(u + UART_MSR_OFF) - 1",  # the review's case
+        "u + UART_LSR_OFF",
+        "UART_LSR_OFF + u",
+        "&u[UART_LSR_OFF]",
+        "&u[UART_MSR_OFF] - 1",
+        "(volatile uint8_t *)a + UART_LSR_OFF",  # an integer parameter is a base
+        "(volatile uint8_t *)(unsigned long)(u + UART_LSR_OFF)",
+    ):
+        assert case(derive) == lsr, derive
+    for derive in (
+        "c ? u : u + UART_LSR_OFF",
+        "(volatile uint8_t *)((unsigned long)u + UART_LSR_OFF)",
+        "(volatile uint8_t *)(UART_LSR_OFF + (unsigned long)u)",  # an integer has no pointee
+    ):
+        assert case(derive) == unidentified, derive
+    # `(u - 1)[UART_MSR_OFF]` is LSR, which the fallback had read as MSR
+    shifted = _DERIVED.replace("@PRE@", "").replace("@DERIVE@", "u - 1")
+    shifted = shifted.replace("v = *p;", "v = p[UART_MSR_OFF];")
+    assert _uart(shifted) == lsr
+
+
 def test_law1_a_dlab_bracket_is_straight_line():
     """A bracket is the straight-line run from an LCR store with bit 7 set to the next with it
     clear; a branch, a loop, a call or a return inside it -- or a bracket left open when the

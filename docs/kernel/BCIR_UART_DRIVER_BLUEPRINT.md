@@ -708,9 +708,11 @@ or could not be met as written:
   `unidentified register access inside a DLAB=1 bracket`, and an LCR store whose bit 7 it cannot
   decide as `LCR store with an undecidable DLAB bit`. Straight-line means no branch, loop, switch,
   call, jump, label or return inside a bracket, and none left open at the function's end. An offset
-  is fixed only through a pointer with one value -- a parameter the body never writes (the device
-  base), or a pointer defined once; a local assigned more than once, or a parameter the body writes,
-  has none, nor has anything derived from it (U2's notes: the review's second round).
+  is fixed only through a pointer with one value: a parameter the body never writes (the device
+  base), a value defined once by a load, a call or a constant, or one derived from those exactly --
+  a copy, a cast, `p + k` or `p - k`, `&p[k]`, `&p->member`. A local assigned more than once, a
+  parameter the body writes, and any other derivation (a select, integer arithmetic on an address)
+  have none, nor has anything derived from them (U2's notes: the review's second and third rounds).
 - *Law 2.* The rate bound reads the target the unit declares as `uart_target_baud`; the slice names
   no source for it.
 - *Law 3.* It fires when bit 0 is provably clear and the write asks for anything else: FCR = 0, the
@@ -1029,6 +1031,14 @@ harness `uart_main` (built by BCIR Make and CMake with the gate's flags, untrace
     a DLAB=1 bracket`. The resolver does not follow values along paths, and the module's scope says
     so; outside a bracket an unidentified access stays unpoliced, as before. Witness:
     `test_a_pointer_with_no_one_definition_has_no_offset` (UL31-UL35).
+- *The review's third round (2026-10-30, on #823; reproduced, fixed and pinned).* The second round's
+  resolver still took a pointer defined once, by an operation it did not know, for a fresh device
+  base at offset 0: `(u + UART_MSR_OFF) - 1`, which is LSR, read inside a DLAB bracket as DLL and
+  drew nothing; `&u[UART_LSR_OFF]` and `c ? u : u + UART_LSR_OFF` did the same, and `(u - 1)[UART_MSR_OFF]`
+  (LSR) was named MSR. Now only a load, a call or a constant starts a base (an integer parameter or
+  constant cast to a pointer among them). A copy, a cast, `p + k` and `p - k` (the sum in either
+  order) and the address of an element or a member are resolved exactly, and any other derivation
+  has no offset. Witness: `test_every_pointer_derivation_is_resolved_or_unknown` (UL36-UL41).
 - *Buffers and headroom.* The review's buffer-ownership law (section 12: AVAILABLE → RESERVED →
   DEVICE_OWNED → COMPLETING → RETIRED, DEVICE_OWNED(B) ⇒ no reuse of B) holds trivially: the
   driver is synchronous, so a buffer is the caller's again when the call returns. The

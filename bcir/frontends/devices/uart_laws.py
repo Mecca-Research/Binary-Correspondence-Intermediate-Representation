@@ -45,12 +45,15 @@ Declared scope (docs/security/laws.md L18), and what the law does not do:
   * every MMIO access with a resolvable offset in a UART unit is a UART register access; a unit
     driving a second MMIO device beside the UART is out of scope (one device per unit);
   * offsets are read for `base[k]` with a constant index, a member or a dereference, a member array
-    element `s.arr[k]`, and a base derived by `c.bin.add` of a constant, `c.copy` or a pointer cast;
-    any other access is unidentified -- illegal inside a bracket, not policed outside one;
-  * a base is a pointer parameter the body never writes (the device base), or a pointer with one
-    definition that derives it from no other (a load, a call); a pointer with no one definition -- a
-    local written more than once, or a parameter the body writes, whose value at entry is a definition
-    too -- has no offset, nor has anything derived from it: values are not followed along paths;
+    element `s.arr[k]`, and a base derived by a copy, a cast, `p + k` or `p - k` with a constant
+    `k` (scaled by the pointee), or the address of an element or a member (`&u[k]`, `&u->r`); any
+    other derivation -- a select, bitwise or integer arithmetic on an address -- has no offset, and
+    an access through it is unidentified: illegal inside a bracket, not policed outside one;
+  * a base is a pointer parameter the body never writes (the device base), or a value with one
+    definition the unit computes from nothing: a load, a call, a constant (an integer cast of one, or
+    of an integer parameter, is a base too); a pointer with no one definition -- a local written more
+    than once, or a parameter the body writes, whose value at entry is a definition too -- has no
+    offset, nor has anything derived from it: values are not followed along paths;
   * a constant is a literal, or integer arithmetic (`+ - * / % & | ^ << >>`), copies and casts over
     literals, folded exactly in the result's width, through values written once; beyond that, known
     bits flow through `|`, `&`, copies and casts (`fmt | 0x80` has bit 7 set whatever `fmt` is);
@@ -89,6 +92,10 @@ RECONFIG_REGS = ("LCR", "DLL", "DLM")
 
 _DLAB = 0x80
 _MASK = 0xFFFF_FFFF
+#: The claims that make a value from nothing the unit computes: a root of its own (besides calls).
+_FRESH = ("c.load", "c.const")
+#: The claims that move a pointer by a constant number of its elements, and in which direction.
+_OFFSET_OPS = {"c.bin.add": 1, "c.ptradd": 1, "c.bin.sub": -1, "c.ptrsub": -1}
 #: The integer operations a constant index or offset is folded through, exactly; None refuses.
 _FOLD = {
     "c.bin.add": lambda a, b: a + b,
@@ -182,21 +189,38 @@ class _Facts:
         return self.derived[rid]
 
     def _derive(self, out: int, claim) -> tuple[int, int | None]:
-        """The pointer `out`, which `claim` alone writes: `p + k`, a copy or a cast of another,
-        else a root of its own."""
-        if self._pointee(out) is None or len(claim.wr) != 1:
+        """`out`, which `claim` alone writes: a root of its own when the claim makes it from
+        nothing the unit computes -- a load, a call, a constant; else derived from another value
+        -- a copy or a cast, `p + k` or `p - k` (either operand order for the sum), the address of
+        an element or a member -- at that value's offset and the derivation's; by any other
+        operation (a select, bitwise or integer arithmetic on an address) at no known offset."""
+        op = claim.op
+        if op in _FRESH or op.startswith("c.call"):
             return (out, 0)
-        if claim.op == "c.copy" or claim.op.startswith("c.cast:"):
-            return self._root(claim.rd[0]) if claim.rd else (out, None)
-        if claim.op == "c.bin.add" and len(claim.rd) == 2:
+        if len(claim.wr) != 1 or not claim.rd:
+            return (out, None)
+        if op == "c.copy" or op.startswith("c.cast:"):
+            return self._root(claim.rd[0])
+        if op in _OFFSET_OPS and len(claim.rd) == 2:
             base, k = claim.rd
+            if op == "c.bin.add" and self._pointee(base) is None:
+                base, k = k, base  # `k + p`
             root, off = self._root(base)
             size = self._pointee(base)
             step = self.value(k)
-            if step is not None and size is not None and off is not None:
-                return (root, off + step * size)
-            return (root, None)
-        return (out, 0)
+            if step is None or size is None or off is None:
+                return (root, None)
+            return (root, off + _OFFSET_OPS[op] * step * size)
+        if op == "c.addrof" and self._pointee(claim.rd[0]) is not None:
+            root, off = self._root(claim.rd[0])
+            imm = tuple(claim.imm)
+            if off is None:
+                return (root, None)
+            if len(claim.rd) == 1:  # `&p->member`
+                return (root, off + (imm[0] if imm else 0))
+            k = self.value(claim.rd[1]) if len(claim.rd) == 2 and len(imm) == 2 else None
+            return (root, None) if k is None else (root, off + imm[0] + k * imm[1])  # `&p[k]`
+        return (out, None)
 
     def _offset(self, claim) -> int | None:
         load = claim.op == "c.load"
