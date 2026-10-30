@@ -841,6 +841,59 @@ def test_the_paired_ratio_times_this_threads_work_where_its_clock_steps_finely()
     )
 
 
+def test_one_loaded_step_does_not_flip_the_clock_choice() -> None:
+    """`thread_clock` judges a clock by the smallest of five measured steps. A load lengthens only
+    the step it lands in -- on a loaded host one step of Linux's thread clock now and then reads
+    more than 10 us, and a choice resting on that one step fell to the wall clock -- so a fine clock
+    with one lengthened step, wherever among the five it lands, is kept, and so is one whose steps
+    are all lengthened but one. A clock whose every step is coarse, however unevenly, gives way, as
+    do one that steps backwards and one that stops before its five steps are measured. A count of
+    steps below one, or not a count, is refused rather than read as a clock's step."""
+    import time
+
+    from tools.perf import gemplus_baseline as gb
+
+    def scripted(measured, settle=1e-6):
+        # a clock reading 0, then advancing by each of `measured` in turn, then by `settle` a read
+        values = [0.0]
+        for step in measured:
+            values.append(values[-1] + step)
+        state = {"reads": 0, "now": values[-1]}
+
+        def clock():
+            i = state["reads"]
+            state["reads"] = i + 1
+            if i < len(values):
+                return values[i]
+            state["now"] += settle
+            return state["now"]
+
+        return clock
+
+    for at in range(5):
+        loaded = [1e-6] * 5
+        loaded[at] = 2e-3  # the one step a load lengthened
+        clock = scripted(loaded)
+        assert gb.thread_clock(clock) is clock, f"one loaded step at {at} passed a fine clock over"
+    clock = scripted([2e-3, 3e-3, 1e-6, 2.5e-3, 4e-3])
+    assert gb.thread_clock(clock) is clock, "one quiet step among loaded ones is the clock's own"
+    coarse = scripted([0.0156, 0.0161, 0.0150, 0.0158, 0.0163], settle=0.0156)
+    assert gb.thread_clock(coarse) is time.perf_counter, "a clock coarse at every step was taken"
+    back = scripted([1e-6, -1e-6, 1e-6, 1e-6, 1e-6])
+    assert gb.thread_clock(back) is time.perf_counter, "a clock that steps backwards was taken"
+    stops = scripted([1e-6, 1e-6, 1e-6], settle=0.0)
+    assert gb.thread_clock(stops, limit_s=0.01) is time.perf_counter, (
+        "a clock that stopped after three steps was taken"
+    )
+    for bad in (0, -1, True, 2.0, None):
+        try:
+            gb.thread_clock(scripted([1e-6] * 5), steps=bad)
+        except ValueError as e:
+            assert "measured at least once" in str(e), e
+        else:
+            raise AssertionError(f"steps={bad!r} was accepted")
+
+
 def test_the_verifier_row_is_read_in_paired_rounds() -> None:
     """`verify.plan.scope.overhead` and its floor are `paired_ratios`' two readings, over the
     planner, a verify of the planner's own plan that passes, and the floor's re-derivation of the

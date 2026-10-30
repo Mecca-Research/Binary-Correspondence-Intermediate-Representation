@@ -2714,6 +2714,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     two clocks agree (medians 0.950 and 0.953, ten processes each). Windows advances thread time
     once per scheduler tick, so the clock's step is measured, not read: a clock coarser than
     10 us, one that never steps, or one that fails gives way to the wall clock.
+    THREAD-CLOCK (2026-10-30): the step is the smallest of five measured steps, not one. On a loaded
+    host one step of Linux's thread clock now and then reads more than 10 us (78 of 200 000 on a
+    container running the gates), and the one-step choice fell to the wall clock in 14 of 20 000
+    calls there, and once on a shared CI runner, where it failed the clock-choice test. Judged by
+    the smallest of five it fell in none of 20 000. Witness:
+    `test_one_loaded_step_does_not_flip_the_clock_choice`; `paired.json` gains six faults.
   - The final instrument, measured alternately with the old one: 0.90 to 0.99 in twelve processes
     with nothing else running, and 0.93 to 1.01 in twelve under the phased load, every verdict
     NO-CHANGE. The quantity, the frozen baseline (1.07) and the 25% band are unchanged. Measuring
