@@ -86,7 +86,7 @@ designed elsewhere but must not be described as operational.
 | LLVM/WASM/JVM/CIL/SPIR-V hub | **Mixed, bounded scopes** | LLVM AOT/JIT/WASM accepts one elementwise claim; JVM/CIL execute a bounded stack subset; SYCL/SPIR-V has modeled routing and portable fallback, with real SPIR-V backend/device execution tool-gated |
 | Interface-description formats | **Not implemented** | No IDL/CORBA, SDL, SGML/XML Schema, or PMML parser/generator is present. They are consume-on-demand standards, not prerequisites for the first driver |
 | ASN.1 JER schema-bound source rail | **Python oracle landed; native/compiler path missing** | X.697 values and six instruction families exist in Python, but no bounded C JER twin, MLIR family/profile, direct claim lowering, native selection certificate, or driver path exists; [`BCIR_ASN1_JSON_ROADMAP.md`](../BCIR_ASN1_JSON_ROADMAP.md) owns the promotion gates |
-| UART | **Compiler fixture only** | Register header and driver-shaped C-front fixture exist. The simulator, resident/channel-backed implementation, IRQ service, telemetry producer, learned prior, and U0–U9 program remain unbuilt; see [`BCIR_UART_DRIVER_BLUEPRINT.md`](BCIR_UART_DRIVER_BLUEPRINT.md) |
+| UART | **Device registry and protocol laws (U0–U1, oracle rail); the polled driver against a simulated 16550 (U2)** | A register header and driver-shaped C-front fixture exist (`runtime/c/uart_regs.h`, `cfront_driver_uart.c`: a compiler fixture, not the driver's header), and slices U0–U2 have landed: one normative 16550 model, three placements, the generated `runtime/c/uart16550_regs.h`, the RegMap contract, the five protocol laws as advisory `R3-uart` diagnostics (their law-rail halves pending), and the polled driver (`runtime/c/uart_driver.c`) running against the spec-tested simulated 16550 (`runtime/c/sim16550.c`) — linked from either rail's `--linkable` emit, its transcript byte-identical to the source build's and held to a golden (the C rail's `#uartdrv` section). The resident/channel-backed implementation, IRQ service, telemetry producer, learned prior, a hardware binding, and U3–U9 remain unbuilt; see [`BCIR_UART_DRIVER_BLUEPRINT.md`](BCIR_UART_DRIVER_BLUEPRINT.md) |
 | Resident hardware drivers | **Missing** | No UART, virtio, NVMe, NIC, GPU, or other device is driven through RuntimeChannel |
 | Linux UAPI/IPC adapter | **Missing** | The intended boundary is documented; no BCIR kernel module, device node, or transport has landed |
 | BCIR-Linux fork | **Missing** | The separate repository and tracking branches have not been created |
@@ -114,7 +114,7 @@ generated [`STATUS.md`](../STATUS.md) is a static inventory and does not prove a
 | **H4** | **Landed** | `_convergence.py` gates transformer, recurrent, classical, and unsupervised demonstrations; gradient and fit-quality tests pin the supported training claims | A predict-only algorithm is not relabeled trainable without a fit gate |
 | **H5** | **Honesty landed; encoder deferred** | [`test_stackify_exec.py`](../../bcir/tests/test_stackify_exec.py) differentially checks WASM/JVM/CIL mnemonics and uses real JVM/CLR execution when installed | A direct no-LLVM WASM binary encoder remains behind the native-backend G1/G2 gate |
 | **A1 / B1** | **Landed** | [`events.py`](../../bcir/kbcir/events.py), [`test_event_phases.py`](../../bcir/tests/test_event_phases.py), and MLIR EV fixtures cover asynchronous phases, arming, and interrupt-context ordering | Resident interrupt-controller and handler binding are absent |
-| **A2** | **Landed** | [`dma.py`](../../bcir/kbcir/dma.py) and [`test_dma.py`](../../bcir/tests/test_dma.py) derive and price descriptors from `StridedView` pairs | No DMA engine is programmed on hardware |
+| **A2** | **Landed** | [`dma.py`](../../bcir/kbcir/dma.py) and [`test_dma.py`](../../bcir/tests/test_dma.py) derive and price descriptors from `StridedView` pairs | No DMA engine is programmed on hardware; the controller blueprint ([`BCIR_DMA_BLUEPRINT.md`](BCIR_DMA_BLUEPRINT.md), a proposal) is the D0 research contract that comes first |
 | **A3** | **Landed** | [`paged_kv.py`](../../bcir/frontends/models/paged_kv.py) and [`test_paged_kv.py`](../../bcir/tests/test_paged_kv.py) cover page IDs, generations, admission, scheduling, and eviction claims | No accelerator-resident KV implementation is implied |
 | **A4** | **Landed subset** | [`test_cfront_link.py`](../../bcir/tests/test_cfront_link.py) covers typed cross-TU edges, derived flags, linkable globals/static objects, and real linking | This does not make C-front a complete C23 frontend or replace the system linker |
 | **A5** | **Landed for current training/channel model** | [`test_train_graph.py`](../../bcir/tests/test_train_graph.py) makes stream count a plan decision; channel-prior/calibration tests pin guided/exhaustive behavior | Per-device calibration still requires real device data |
@@ -515,7 +515,9 @@ Native work proceeds in parallel and does not block Linux-hosted driver packages
 2. Physical memory and immutable region registry.
 3. Virtual memory, page-table construction, and address-space generations.
 4. ACPI/static table and Device Tree parsers; no general AML implementation in the initial core.
-5. Clock, timer, interrupt-controller, and event-delivery substrate.
+5. Clock, timer, interrupt-controller, and event-delivery substrate. The event-timer program's
+   proposal (HPET and AVR RTC placements, the T-laws, a tick-timed simulator):
+   [`BCIR_EVENT_TIMER_BLUEPRINT.md`](BCIR_EVENT_TIMER_BLUEPRINT.md).
 6. PCIe enumeration, BAR/capability parsing, and MSI/MSI-X allocation.
 7. DMA and IOMMU isolation.
 8. Storage, network, USB, security, display, and accelerator adapters in evidence order.
@@ -796,6 +798,11 @@ Before any driver/kernel commit or PR update:
 4. Wait for the complete required GitHub Actions matrix; a pending or failing check is not a
    completed handoff.
 5. Record exact commands, skips, resource limits, and residual hardware risk in the PR.
+
+**Sources.** Everything a driver change publishes -- documents, generated headers, fixtures, tests,
+code comments, commit messages and PR descriptions -- states what public sources state and cites
+them. Nothing is reproduced, quoted, paraphrased or summarized from material distributed under
+confidentiality terms.
 
 Manual full sweeps remain required before releases, after allocator/wire/UAPI changes, and before a
 new driver family, as defined in [`C_MEMORY_DISCIPLINE.md`](../languages/C_MEMORY_DISCIPLINE.md).

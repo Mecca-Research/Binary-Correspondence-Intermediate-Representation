@@ -1,0 +1,484 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_uart_model:_CC",
+    "bcir.tests.test_uart_model:test_the_normative_table_matches_the_datasheet",
+    "bcir.tests.test_uart_model:test_headers_generate_deterministically_for_all_placements",
+    "bcir.tests.test_uart_model:test_generated_header_compiles_through_both_rails",
+    "bcir.tests.test_uart_model:test_a_tampered_regmap_contract_is_caught",
+    "bcir.tests.test_uart_model:test_checked_in_header_is_current",
+    "bcir.tests.test_uart_model:test_the_placements_match_the_documents",
+    "bcir.tests.test_uart_model:test_baud_divisors_match_the_documents_worked_examples",
+    "bcir.tests.test_uart_model:test_the_sllz058a_erratum_is_recorded_with_its_misprints_as_provenance",
+    "bcir.tests.test_uart_model:test_a_malformed_placement_is_refused_by_name",
+    "bcir.tests.test_uart_model:test_the_regeneration_command_reports_and_repairs_drift",
+    "bcir.tests.test_uart_model:test_the_golden_headers_ship_in_the_wheel",
+    "bcir.tests.test_uart_laws:test_the_canonical_driver_is_law_clean_on_every_placement",
+    "bcir.tests.test_uart_laws:test_every_declared_access_idiom_resolves_its_register",
+    "bcir.tests.test_uart_laws:test_a_pointer_with_no_one_definition_has_no_offset",
+    "bcir.tests.test_uart_laws:test_every_pointer_derivation_is_resolved_or_unknown",
+    "bcir.tests.test_uart_laws:test_law1_only_dll_dlm_and_lcr_inside_a_dlab_bracket",
+    "bcir.tests.test_uart_laws:test_law1_a_dlab_bracket_is_straight_line",
+    "bcir.tests.test_uart_laws:test_law1_every_lcr_store_decides_dlab",
+    "bcir.tests.test_uart_laws:test_law2_divisor_zero_is_forbidden",
+    "bcir.tests.test_uart_laws:test_law2_the_baud_bound_holds_a_declared_target",
+    "bcir.tests.test_uart_laws:test_law3_an_fcr_write_without_fifo_enable_programs_nothing",
+    "bcir.tests.test_uart_laws:test_law4_reconfiguration_waits_for_a_dominating_lsr_read",
+    "bcir.tests.test_uart_laws:test_the_laws_follow_every_path_through_a_function",
+    "bcir.tests.test_uart_laws:test_law5_read_effects_are_volatile_and_never_merged",
+    "bcir.tests.test_uart_laws:test_the_contract_literal_is_attested",
+    "bcir.tests.test_uart_laws:test_the_laws_are_vacuous_on_the_existing_corpus"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_normative_table_matches_the_datasheet",
+      "label": "UM1 DLL reachable at DLAB 0",
+      "new": "UartReg(\"DLL\", 0, \"rw\", 0, ((7, 0, \"DIV\", \"divisor bits 7:0\"),)),",
+      "old": "UartReg(\"DLL\", 0, \"rw\", 1, ((7, 0, \"DIV\", \"divisor bits 7:0\"),)),",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_the_normative_table_matches_the_datasheet",
+      "label": "UM2 LSR.THRE moved to bit 6",
+      "new": "(6, 6, \"THRE\", \"transmitter holding register / TX FIFO empty\"),",
+      "old": "(5, 5, \"THRE\", \"transmitter holding register / TX FIFO empty\"),",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_the_normative_table_matches_the_datasheet",
+      "label": "UM3 the character timeout's IIR code taken as 0x8",
+      "new": "(0x8, \"CTI\", 2,",
+      "old": "(0xC, \"CTI\", 2,",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_headers_generate_deterministically_for_all_placements",
+      "label": "UM4 emit_header ignores the stride",
+      "new": "f\"{p.base_offset + reg.slot:#x}u\"",
+      "old": "f\"{reg_offset(p, reg):#x}u\"",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_headers_generate_deterministically_for_all_placements",
+      "label": "UM5 emit_header ignores the base offset",
+      "new": "f\"{reg.slot * p.stride:#x}u\"",
+      "old": "f\"{reg_offset(p, reg):#x}u\"",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_headers_generate_deterministically_for_all_placements",
+      "label": "UM6 MCR.AFE rendered on a part without autoflow",
+      "new": "        or True",
+      "old": "        or getattr(p, CAPABILITY_FIELDS[(reg.name, f[2])])",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_headers_generate_deterministically_for_all_placements",
+      "label": "UM7 a 16750-family capability rendered without it",
+      "new": "    out = []",
+      "old": "    out = [name for name, default in _U0_DEFAULTS.items() if getattr(p, name) != default]",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_the_placements_match_the_documents",
+      "label": "UM8 Core16550's FCR reset taken as 0x00",
+      "new": "        fcr_reset=0x00,",
+      "old": "        fcr_reset=0x01,",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_the_placements_match_the_documents",
+      "label": "UM9 the PC16550D's FCR gating dropped (the matrix's n/a)",
+      "new": "        reg_width=1,\n        fcr_reset=0x00,\n        fcr_gated=False,",
+      "old": "        reg_width=1,\n        fcr_reset=0x00,\n        fcr_gated=True,",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_a_tampered_regmap_contract_is_caught",
+      "label": "UM10 the contract's stride never compared",
+      "new": "    if False:",
+      "old": "    if not _same(contract.stride, want.stride):",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_a_tampered_regmap_contract_is_caught",
+      "label": "UM11 an unknown placement accepted",
+      "new": "    if not isinstance(contract.placement, str):",
+      "old": "    if not isinstance(contract.placement, str) or contract.placement not in PLACEMENTS:",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_a_tampered_regmap_contract_is_caught",
+      "label": "UM12 a register offset lie not caught (names only compared)",
+      "new": "        if got[:1] != expected[:1]:",
+      "old": "        if not _same(got, expected):",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_a_tampered_regmap_contract_is_caught",
+      "label": "UM13 a value that only compares equal accepted (True for 1)",
+      "new": "    return got == want",
+      "old": "    return type(got) is type(want) and got == want",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_checked_in_header_is_current",
+      "label": "UM14 the checked-in header edited by hand",
+      "new": "#define UART_LSR_OFF                   0x6u ",
+      "old": "#define UART_LSR_OFF                   0x5u ",
+      "path": "runtime/c/uart16550_regs.h"
+    },
+    {
+      "expects": "test_headers_generate_deterministically_for_all_placements",
+      "label": "UM15 a golden header edited by hand",
+      "new": "#define UART_LSR_OFF                   0x1018u",
+      "old": "#define UART_LSR_OFF                   0x1014u",
+      "path": "bcir/frontends/devices/fixtures/uart16550_axi16550.h"
+    },
+    {
+      "expects": "test_baud_divisors_match_the_documents_worked_examples",
+      "label": "UM16 the baud formula divides by 8, not 16",
+      "new": "    return Fraction(ref_clk_hz, 8 * divisor)",
+      "old": "    return Fraction(ref_clk_hz, 16 * divisor)",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_baud_divisors_match_the_documents_worked_examples",
+      "label": "UM17 a divisor of 0 given a rate",
+      "new": "not 0 <= divisor <= 0xFFFF:",
+      "old": "not 1 <= divisor <= 0xFFFF:",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_the_sllz058a_erratum_is_recorded_with_its_misprints_as_provenance",
+      "label": "UM18 SLLZ058A's tenfold Table 2 misprint left unrecorded",
+      "new": "                cells=(),",
+      "old": "                cells=tuple((2, baud, 2) for baud in _SLLZ058A_RATES[:-1]),",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_the_sllz058a_erratum_is_recorded_with_its_misprints_as_provenance",
+      "label": "UM19 SLLZ058A's unrounded-divisor note covers Table 4 only",
+      "new": "for table in (4,) for baud",
+      "old": "for table in (3, 4) for baud",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_a_malformed_placement_is_refused_by_name",
+      "label": "UM20 an erratum id outside ERRATA accepted",
+      "new": "        unknown = []",
+      "old": "        unknown = [e for e in p.errata if e not in ERRATA]",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_the_golden_headers_ship_in_the_wheel",
+      "label": "UM21 the golden headers left out of the wheel",
+      "new": "",
+      "old": "\"bcir.frontends.devices\" = [\"fixtures/*.h\"]\n",
+      "path": "pyproject.toml"
+    },
+    {
+      "expects": "test_generated_header_compiles_through_both_rails",
+      "label": "UM22 the header no longer includes <stdint.h>",
+      "new": "        \"/* <stdint.h> omitted */\",",
+      "old": "        \"#include <stdint.h>\",",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_the_regeneration_command_reports_and_repairs_drift",
+      "label": "UM23 the regeneration command passes a stale view",
+      "new": "        if current is not None:",
+      "old": "        if current == data:",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_law1_only_dll_dlm_and_lcr_inside_a_dlab_bracket",
+      "label": "UL1 a register other than DLL/DLM/LCR accepted inside a bracket",
+      "new": "        if state.dlab == 1 and reg not in BRACKET_REGS and offset is None:",
+      "old": "        if state.dlab == 1 and reg not in BRACKET_REGS:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law1_only_dll_dlm_and_lcr_inside_a_dlab_bracket",
+      "label": "UL2 SCR joins the DLAB-bracket whitelist",
+      "new": "BRACKET_REGS = (\"DLL\", \"DLM\", \"LCR\", \"SCR\")",
+      "old": "BRACKET_REGS = (\"DLL\", \"DLM\", \"LCR\")",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law1_a_dlab_bracket_is_straight_line",
+      "label": "UL3 a call inside a bracket accepted",
+      "new": "        if c.op.startswith(\"c.call.never\"):",
+      "old": "        if c.op.startswith(\"c.call\"):",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law1_a_dlab_bracket_is_straight_line",
+      "label": "UL4 a bracket left open at the function's end accepted",
+      "new": "        self.block(self.lf.body, _State(), True)",
+      "old": "        self.closed(self.block(self.lf.body, _State(), True), True)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law1_every_lcr_store_decides_dlab",
+      "label": "UL5 an undecidable DLAB bit read as clear",
+      "new": "                state = replace(state, dlab=0, divisor=None)",
+      "old": "                self.say(\"LCR store with an undecidable DLAB bit\", report)\n                state = replace(state, dlab=None, divisor=None)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law2_divisor_zero_is_forbidden",
+      "label": "UL6 a divisor of 0 accepted",
+      "new": "        if value == -1:",
+      "old": "        if value == 0:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law2_the_baud_bound_holds_a_declared_target",
+      "label": "UL7 the divisor latches' bytes swapped",
+      "new": "        value = (low << 8) | high",
+      "old": "        value = (high << 8) | low",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law2_the_baud_bound_holds_a_declared_target",
+      "label": "UL8 the 3% baud bound loosened tenfold",
+      "new": "        if error > 10 * um.BAUD_ERROR_LIMIT:",
+      "old": "        if error > um.BAUD_ERROR_LIMIT:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law3_an_fcr_write_without_fifo_enable_programs_nothing",
+      "label": "UL9 FCR gating applied to a placement that does not gate",
+      "new": "        if reg == \"FCR\":",
+      "old": "        if reg == \"FCR\" and self.p.fcr_gated:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law3_an_fcr_write_without_fifo_enable_programs_nothing",
+      "label": "UL10 the 16450-mode FCR write of 0 refused",
+      "new": "            if zeros & 0x01:",
+      "old": "            if zeros & 0x01 and zeros & rest != rest:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law4_reconfiguration_waits_for_a_dominating_lsr_read",
+      "label": "UL11 a THR store does not void the LSR check",
+      "new": "            state = replace(state, idle=True)",
+      "old": "            state = replace(state, idle=False)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law4_reconfiguration_waits_for_a_dominating_lsr_read",
+      "label": "UL12 an LSR read on one branch arm taken as dominating",
+      "new": "        idle=any(s.idle for s in live),",
+      "old": "        idle=all(s.idle for s in live),",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law5_read_effects_are_volatile_and_never_merged",
+      "label": "UL13 a non-volatile register read accepted",
+      "new": "            if c.volatile is None:",
+      "old": "            if not c.volatile:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law5_read_effects_are_volatile_and_never_merged",
+      "label": "UL14 the plan never consulted for a merged read",
+      "new": "            if sum(1 for i in ids if i in realized) < 0:",
+      "old": "            if sum(1 for i in ids if i in realized) < len(ids):",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_law5_read_effects_are_volatile_and_never_merged",
+      "label": "UL15 LSR left out of the read-clear registers",
+      "new": "READ_CLEAR = (\"RBR\", \"IIR\", \"MSR\")",
+      "old": "READ_CLEAR = (\"RBR\", \"IIR\", \"LSR\", \"MSR\")",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_contract_literal_is_attested",
+      "label": "UL16 the contract literal's stride taken from the registry, not the unit",
+      "new": "    contract = um.RegMapContract(placement=name, stride=placement.stride if placement else stride, base_offset=base, regs=laid_out)",
+      "old": "    contract = um.RegMapContract(placement=name, stride=stride, base_offset=base, regs=laid_out)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_are_vacuous_on_the_existing_corpus",
+      "label": "UL17 every unit taken for a pc16550d UART unit",
+      "new": "    if literal is None:\n        literal = '{\"pc16550d\", 1, 0, 0, 1843200}'",
+      "old": "    if literal is None:\n        return None, []",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_canonical_driver_is_law_clean_on_every_placement",
+      "label": "UL18 the pipeline drops the UART diagnostics",
+      "new": "    res.uart_diagnostics = []",
+      "old": "    res.uart_diagnostics = [Diagnostic(\"R3\", m) for m in uart_msgs]",
+      "path": "bcir/frontends/cfront/pipeline.py"
+    },
+    {
+      "expects": "test_every_declared_access_idiom_resolves_its_register",
+      "label": "UL19 pointer arithmetic not scaled by the pointee size",
+      "new": "return (root, off + _OFFSET_OPS[op] * step)",
+      "old": "return (root, off + _OFFSET_OPS[op] * step * size)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_declared_access_idiom_resolves_its_register",
+      "label": "UL20 an index not scaled by the element size",
+      "new": "            return None if size is None else off + k",
+      "old": "            return None if size is None else off + k * size",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_declared_access_idiom_resolves_its_register",
+      "label": "UL21 constant folding loses division",
+      "new": "    \"c.bin.div\": lambda a, b: None,",
+      "old": "    \"c.bin.div\": lambda a, b: a // b if b else None,",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL22 a loop walked once, its way back to the head ignored",
+      "new": "            settled = head",
+      "old": "            settled = _join(head, back)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL23 a break's state dropped",
+      "new": "                    self.exits[-1][0].append(None)",
+      "old": "                    self.exits[-1][0].append(state)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL24 a continue's state dropped",
+      "new": "                    loops[-1].append(None)",
+      "old": "                    loops[-1].append(state)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL25 a switch without a default never falls out from its head",
+      "new": "        return _join(self.closed(state, report), *breaks)",
+      "old": "        return _join(self.closed(state, report), *breaks, None if default else entry)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL26 a case entered only from the switch head (fallthrough ignored)",
+      "new": "                state = entry",
+      "old": "                state = _join(self.closed(state, report), entry)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL27 a bracket across a case label accepted",
+      "new": "                state = _join(state, entry)",
+      "old": "                state = _join(self.closed(state, report), entry)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL28 a label keeps the state that falls into it",
+      "new": "            else:  # a label, where a jump may land, or a construct this walk does not know\n                state = state if kind == \"LabelNode\" else _ANYWHERE",
+      "old": "            else:  # a label, where a jump may land, or a construct this walk does not know\n                state = _ANYWHERE",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL29 a constant loop condition taken as an exit",
+      "new": "        always, never = False, test == 0",
+      "old": "        always, never = test not in (None, 0), test == 0",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_laws_follow_every_path_through_a_function",
+      "label": "UL30 a call to the unit's own function taken as transparent",
+      "new": "                return state",
+      "old": "                return None if idle is None else replace(state, idle=idle)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_a_pointer_with_no_one_definition_has_no_offset",
+      "label": "UL31 a parameter's value at entry not a definition: a parameter the body writes read as written once",
+      "new": "        writers: dict[int, int] = {}",
+      "old": "        writers: dict[int, int] = {rid: 1 for _name, rid, _ct in lf.params}",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_a_pointer_with_no_one_definition_has_no_offset",
+      "label": "UL32 a pointer with no one definition read as a device base at offset 0 (the review's case)",
+      "new": "            else:\n                self.derived[rid] = (rid, 0)",
+      "old": "            elif rid in self.bases:\n                self.derived[rid] = (rid, 0)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_a_pointer_with_no_one_definition_has_no_offset",
+      "label": "UL33 an offset added to an unresolved pointer read from offset 0",
+      "new": "            if step is None or size is None:\n                return (root, None)\n            return (root, (off or 0) + _OFFSET_OPS[op] * step * size)",
+      "old": "            if step is None or size is None or off is None:\n                return (root, None)\n            return (root, off + _OFFSET_OPS[op] * step * size)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_a_pointer_with_no_one_definition_has_no_offset",
+      "label": "UL34 a copy or cast read as a base of its own, not the pointer it copies",
+      "new": "        if op == \"c.copy\" or op.startswith(\"c.cast:\"):\n            return (out, 0)",
+      "old": "        if op == \"c.copy\" or op.startswith(\"c.cast:\"):\n            return self._root(claim.rd[0])",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_a_pointer_with_no_one_definition_has_no_offset",
+      "label": "UL35 no guard for a pointer derived from itself: the resolver never ends",
+      "new": "",
+      "old": "            self.derived[rid] = (rid, None)  # what a pointer derived from itself meets meanwhile\n",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_pointer_derivation_is_resolved_or_unknown",
+      "label": "UL36 `p - k` resolved as `p + k`: the subtraction's sign dropped",
+      "new": "_OFFSET_OPS = {\"c.bin.add\": 1, \"c.ptradd\": 1, \"c.bin.sub\": 1, \"c.ptrsub\": 1}",
+      "old": "_OFFSET_OPS = {\"c.bin.add\": 1, \"c.ptradd\": 1, \"c.bin.sub\": -1, \"c.ptrsub\": -1}",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_pointer_derivation_is_resolved_or_unknown",
+      "label": "UL37 a derivation the resolver does not know read as a fresh device base (the review's case)",
+      "new": "            return (root, None) if k is None else (root, off + imm[0] + k * imm[1])  # `&p[k]`\n        return (out, 0)",
+      "old": "            return (root, None) if k is None else (root, off + imm[0] + k * imm[1])  # `&p[k]`\n        return (out, None)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_pointer_derivation_is_resolved_or_unknown",
+      "label": "UL38 the address of an element or a member not resolved",
+      "new": "        if op == \"c.addrof.unresolved\" and self._pointee(claim.rd[0]) is not None:",
+      "old": "        if op == \"c.addrof\" and self._pointee(claim.rd[0]) is not None:",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_pointer_derivation_is_resolved_or_unknown",
+      "label": "UL39 `k + p` not resolved: the sum read only as `p + k`",
+      "new": "",
+      "old": "            if op == \"c.bin.add\" and self._pointee(base) is None:\n                base, k = k, base  # `k + p`\n",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_pointer_derivation_is_resolved_or_unknown",
+      "label": "UL40 integer arithmetic on an address followed, as if unscaled bytes",
+      "new": "            size = self._pointee(base) or 1\n            step = self.value(k)",
+      "old": "            size = self._pointee(base)\n            step = self.value(k)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_every_pointer_derivation_is_resolved_or_unknown",
+      "label": "UL41 an integer parameter cast to a pointer not taken for a base",
+      "new": "        self.bases = {rid for _name, rid, ct in lf.params if writers[rid] == 1 and ct.kind == \"pointer\"}",
+      "old": "        self.bases = {rid for _name, rid, _ct in lf.params if writers[rid] == 1}",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    }
+  ]
+}

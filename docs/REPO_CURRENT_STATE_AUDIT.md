@@ -341,8 +341,10 @@ refused for frozen calibration tables, so the stage is recorded as not run, neve
    or prove a direct peer path from a live topology. Static memory and paged KV remain separate
    exact reference contracts.
 7. **There is no resident UART driver or production driver telemetry ABI.** The UART register
-   header/polling source is a compiler fixture; the channel-backed driver, UART simulator,
-   IRQ service, and U0–U9 program remain planned. Telemetry has a registry, codecs, metrics,
+   header/polling source (`uart_regs.h`, `cfront_driver_uart.c`) is a compiler fixture. Of the
+   U0–U9 program, U0–U2 have landed: the device registry, the protocol laws (oracle rail) and a
+   polled driver running against a simulated 16550, linked from either rail's emit; the
+   channel-backed driver, IRQ service and U3–U9 remain planned. Telemetry has a registry, codecs, metrics,
    and deterministic serialization, but no UART egress, HTTP/Prometheus host, OTLP transport,
    Redfish/BMC client, or live provider transport. BTLM v1 lacks source/session/generation/
    clock identity and shared-ring v1 is only a quiescent snapshot; the pre-driver telemetry
