@@ -1,0 +1,158 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_cfront_link:test_the_linkable_artifact_keeps_each_functions_declared_type"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "PQ1 the oracle wraps no function: every definition keeps the emit's unqualified types",
+      "new": "        if False\n",
+      "old": "        if fn_quals.get(n) and not lf.variadic and (not lf.static_fn or n in as_value)\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "PQ2 the oracle's wrapper passes a qualified argument to the emitted parameter uncast",
+      "new": "            args.append(names[k])\n",
+      "old": "            args.append(f\"({_cname(ct)}){names[k]}\" if sig else names[k])\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "PQ3 the oracle's wrapper returns a qualified result uncast",
+      "new": "        stmt = f\"    return {call};\"\n",
+      "old": "        stmt = f\"    return ({ret}){call};\" if rsig and not _has_fp(rct) else f\"    return {call};\"\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "PQ4 the oracle declares a wrapped function with the emit's unqualified types",
+      "new": "        rsig, psigs = ((), ())\n",
+      "old": "        rsig, psigs = fn_quals.get(name, ((), ())) if name in wrapped else ((), ())\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "PQ5 the oracle exports a wrapped function's emitted definition: its `static` dropped",
+      "new": "            or False\n",
+      "old": "            or _line_fn(ln, internal) is not None\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "PQ6 the oracle unprefixes a wrapped function's calls and its emitted definition",
+      "new": "    plain = list(names)\n",
+      "old": "    plain = [n for n in names if n not in wrapped]\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "PQ7 the oracle wraps a variadic function, whose `...` a wrapper cannot pass on",
+      "new": "        if fn_quals.get(n) and (not lf.static_fn or n in as_value)\n",
+      "old": "        if fn_quals.get(n) and not lf.variadic and (not lf.static_fn or n in as_value)\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "PQ8 the oracle wraps a static function the unit only calls: a wrapper nothing names, an unused function",
+      "new": "        if fn_quals.get(n) and not lf.variadic\n",
+      "old": "        if fn_quals.get(n) and not lf.variadic and (not lf.static_fn or n in as_value)\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "PQ9 the oracle wraps no static function a file-scope initializer names: the table's pointer is the emitted function's",
+      "new": "    as_value = set() | {\n",
+      "old": "    as_value = set(getattr(lowered, \"init_refs\", ())) | {\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "PQ10 the oracle wraps no static function a function names as a value: the pointer is the emitted function's",
+      "new": "        for rid in lf.fn_types\n        if rid in lf.globals_used and False\n    }\n    wrapped = [\n",
+      "old": "        for rid in lf.fn_types\n        if rid in lf.globals_used\n    }\n    wrapped = [\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "LQ1 the twin wraps no function",
+      "new": "static int lk_wrapped(const bcir_unit *u, const bcir_func *fn){\n  if(fn->variadic || fn) return 0;\n",
+      "old": "static int lk_wrapped(const bcir_unit *u, const bcir_func *fn){\n  if(fn->variadic) return 0;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "LQ2 the twin's wrapper passes a qualified argument to the emitted parameter uncast",
+      "new": "      e=emit_putf(out,\"%s%s\",k?\", \":\"\",nm); }\n",
+      "old": "      e=emit_putf(out,\"%s(%s)%s\",k?\", \":\"\",pt,nm); }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "LQ3 the twin's wrapper returns a qualified result uncast",
+      "new": "  int is_void=!strcmp(ret0,\"void\"), cast_ret=qual_key(&fn->ret)!=0 && 0;\n",
+      "old": "  int is_void=!strcmp(ret0,\"void\"), cast_ret=qual_key(&fn->ret)!=0;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "LQ4 the twin declares a wrapped function with the emit's unqualified types",
+      "new": "    if(lk_wrapped(&out->unit,fn) && 0){                  /* of its source's type (CF-PARMQUALS) */\n",
+      "old": "    if(lk_wrapped(&out->unit,fn)){                       /* of its source's type (CF-PARMQUALS) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "LQ5 the twin exports a wrapped function's emitted definition: its `static` dropped",
+      "new": "    if(len>7 && !strncmp(s+i,\"static \",7)){\n",
+      "old": "    if(len>7 && !strncmp(s+i,\"static \",7) && lk_line_internal(&out->unit,s+i,len)<0){\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "LQ6 the twin unprefixes a wrapped function's calls and its emitted definition",
+      "new": "            i+=5;   /* a wrapped function's callers call the emitted one */\n",
+      "old": "            if(!lk_wrapped(&out->unit,&out->unit.funcs[f])) i+=5;   /* a wrapped function's callers call the emitted one */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "LQ7 the twin wraps a variadic function, whose `...` a wrapper cannot pass on",
+      "new": "static int lk_wrapped(const bcir_unit *u, const bcir_func *fn){\n  if(fn->variadic && 0) return 0;\n",
+      "old": "static int lk_wrapped(const bcir_unit *u, const bcir_func *fn){\n  if(fn->variadic) return 0;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "LQ8 the twin declares the wrapped functions and defines none",
+      "new": "      if(0 && lk_wrapped(&out->unit,&out->unit.funcs[i]) && (e=lk_wrapper(out,&out->unit.funcs[i]))) return e; }\n",
+      "old": "      if(lk_wrapped(&out->unit,&out->unit.funcs[i]) && (e=lk_wrapper(out,&out->unit.funcs[i]))) return e; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "LQ9 the twin wraps a static function the unit only calls: a wrapper nothing names, an unused function",
+      "new": "  return q;\n",
+      "old": "  return q && (!fn->static_fn || lk_named_as_value(u,fn));\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "LQ10 the twin wraps no static function a file-scope initializer names",
+      "new": "  if(0) return 1;\n",
+      "old": "  if(fn->addr_in_init) return 1;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
+      "label": "LQ11 the twin wraps no static function a function names as a value",
+      "new": "    if(0 && r->read_only && r->is_funcptr && !strcmp(r->name,fn->name)) return 1; }\n",
+      "old": "    if(r->read_only && r->is_funcptr && !strcmp(r->name,fn->name)) return 1; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

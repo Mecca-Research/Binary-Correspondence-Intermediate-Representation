@@ -10747,6 +10747,73 @@ static int lk_decl(CC *c, const gvar *g, ctext *t){
     if(g->dims[k]>0) ctext_putf(c,t,"[%lld]",g->dims[k]); else ctext_putn(c,t,"[]",2); }
   return 1;
 }
+/* Whether the unit `u` names its function `fn` as a value: a file-scope initializer does (`addr_in_init`, the
+ * oracle's `init_refs`), or a function's body does -- a designator that decays to a pointer is a read-only
+ * function-pointer resource of its name (`fn_value`, the oracle's `fn_types`). */
+static int lk_named_as_value(const bcir_unit *u, const bcir_func *fn){
+  if(fn->addr_in_init) return 1;
+  for(int f=0; f<u->n_funcs; f++) for(size_t i=0; i<u->funcs[f].n_res; i++){
+    const bcir_resource *r=&u->funcs[f].res[i];
+    if(r->read_only && r->is_funcptr && !strcmp(r->name,fn->name)) return 1; }
+  return 0;
+}
+/* Whether the artifact defines `fn` through a wrapper (CF-PARMQUALS, the oracle's `emit_linkable`): its type keeps a
+ * qualifier below a parameter's or the return's top level (`qual_key`), which the emit's own objects do not spell. A
+ * variadic one stays as it is emitted: a wrapper cannot pass its `...` on. A static one is wrapped only where the
+ * unit names it as a value: no other unit declares it, and a wrapper nothing names would be an unused function. */
+static int lk_wrapped(const bcir_unit *u, const bcir_func *fn){
+  if(fn->variadic) return 0;
+  int q=qual_key(&fn->ret)!=0;
+  for(int k=0; k<fn->n_params && !q; k++) q=qual_key(&fn->params[k].type)!=0;
+  return q && (!fn->static_fn || lk_named_as_value(u,fn));
+}
+/* The unit's function `line` [0, len) declares or defines by its emitted name, `bcir_NAME(`, where the artifact keeps
+ * that name -- a wrapped function's, which stays internal: -1 when it names none. */
+static int lk_line_internal(const bcir_unit *u, const char *line, size_t len){
+  for(const char *par=memchr(line,'(',len); par; par=memchr(par+1,'(',len-(size_t)(par+1-line))){
+    const char *b=par;
+    while(b>line && is_idc((unsigned char)b[-1])) b--;
+    if(par-b<6 || strncmp(b,"bcir_",5) || (b>line && is_idc((unsigned char)b[-1]))) continue;
+    for(int f=0; f<u->n_funcs; f++)
+      if(lk_wrapped(u,&u->funcs[f]) && strlen(u->funcs[f].name)==(size_t)(par-b-5) &&
+         !strncmp(b+5,u->funcs[f].name,(size_t)(par-b-5))) return f;
+  }
+  return -1;
+}
+/* A wrapped function's declaration under its real name, of its source's type -- `T f(const U * p)` -- with no `;`.
+ * Its parameters' names are the emitted definition's (`uniq_local`). */
+static const char *lk_wrapped_head(bcir_cfront_result *out, const bcir_func *fn){
+  char rets[BCIR_EMIT_TYPE]; const char *e;
+  ctype_qstr(&fn->ret,rets,sizeof rets);
+  if((e=emit_putf(out,"%s%s %s(",fn->static_fn?"static ":"",rets,fn->name))) return e;
+  for(int k=0; k<fn->n_params; k++){ char pt[BCIR_EMIT_TYPE], pn[BCIR_EMIT_NAME];
+    ctype_qstr(&fn->params[k].type,pt,sizeof pt);
+    if((e=emit_putf(out,"%s%s %s",k?", ":"",pt,uniq_local(fn,fn->params[k].rid,pn)))) return e; }
+  return emit_putf(out,"%s)",fn->n_params?"":"void");
+}
+/* The definition of a wrapped function (CF-PARMQUALS, the oracle's `_linkable_wrapper`): under its real name and of its
+ * source's type, calling the emitted function, `static bcir_NAME`, whose parameters and return are the emit's own
+ * unqualified types. A qualified argument meets its emitted parameter through a cast, as a qualified result meets the
+ * function's type: every other unit, the header the source declares it in, and a pointer to it meet the function's own
+ * type (C11 6.7.6.1p2, 6.7.6.3p15, 6.2.7p2). */
+static const char *lk_wrapper(bcir_cfront_result *out, const bcir_func *fn){
+  const char *e; char rets[BCIR_EMIT_TYPE], ret0[BCIR_EMIT_TYPE];
+  int nl=out->emitted_len && out->emitted[out->emitted_len-1]=='\n';   /* one line break before it, as the oracle's */
+  if((!nl && (e=emit_putf(out,"\n")))||(e=lk_wrapped_head(out,fn))) return e;
+  ctype_qstr(&fn->ret,rets,sizeof rets); ctype_str(&fn->ret,ret0,sizeof ret0);
+  int is_void=!strcmp(ret0,"void"), cast_ret=qual_key(&fn->ret)!=0;
+  if(is_void) e=emit_putf(out,"\n{\n    bcir_%s(",fn->name);
+  else if(cast_ret) e=emit_putf(out,"\n{\n    return (%s)bcir_%s(",rets,fn->name);
+  else e=emit_putf(out,"\n{\n    return bcir_%s(",fn->name);
+  if(e) return e;
+  for(int k=0; k<fn->n_params; k++){ char pt[BCIR_EMIT_TYPE], pn[BCIR_EMIT_NAME];
+    const char *nm=uniq_local(fn,fn->params[k].rid,pn);
+    if(qual_key(&fn->params[k].type)){ ctype_str(&fn->params[k].type,pt,sizeof pt);
+      e=emit_putf(out,"%s(%s)%s",k?", ":"",pt,nm); }
+    else e=emit_putf(out,"%s%s",k?", ":"",nm);
+    if(e) return e; }
+  return emit_putf(out,");\n}");
+}
 /* The artifact's declarations, after the attestation: the types, the twin's function-pointer typedefs, the functions
  * other units define, every function of the unit, then the globals -- NULL, or the refusal of a global the artifact
  * cannot define (the oracle's words). */
@@ -10764,6 +10831,9 @@ static const char *lk_decls(CC *c, bcir_cfront_result *out){
     i+=len; }
   for(int f=0; f<out->unit.n_funcs; f++){                /* every function of the unit, before the globals */
     const bcir_func *fn=&out->unit.funcs[f]; char one[1], pat[BCIR_CIR_NAME+8];
+    if(lk_wrapped(&out->unit,fn)){                       /* of its source's type (CF-PARMQUALS) */
+      if((e=lk_wrapped_head(out,fn))||(e=emit_putf(out,";\n"))) return e;
+      continue; }
     size_t n=emit_sig(fn,one,sizeof one);
     char *s=(char *)bcir_host_arena_allocate(&c->scratch,n+1u,1u);
     if(!s) return emit_oom;
@@ -10810,12 +10880,14 @@ static void lk_functions(CC *c, bcir_cfront_result *out, size_t from){
       size_t j=i+5; while(j<n && is_idc((unsigned char)s[j])) j++;
       if(j<n && s[j]=='(' && j>i+5)
         for(int f=0; f<out->unit.n_funcs; f++)
-          if(strlen(out->unit.funcs[f].name)==j-i-5 && !strncmp(s+i+5,out->unit.funcs[f].name,j-i-5)){ i+=5; break; } }
+          if(strlen(out->unit.funcs[f].name)==j-i-5 && !strncmp(s+i+5,out->unit.funcs[f].name,j-i-5)){
+            if(!lk_wrapped(&out->unit,&out->unit.funcs[f])) i+=5;   /* a wrapped function's callers call the emitted one */
+            break; } }
     s[w++]=s[i++]; }
   n=w; w=from;
   for(size_t i=from; i<n;){
     const char *nl=memchr(s+i,'\n',n-i); size_t len=nl ? (size_t)(nl-(s+i))+1 : n-i, skip=0;
-    if(len>7 && !strncmp(s+i,"static ",7)){
+    if(len>7 && !strncmp(s+i,"static ",7) && lk_line_internal(&out->unit,s+i,len)<0){
       int f=lk_line_fn(&out->unit,s+i,len);
       if(f<0 || !out->unit.funcs[f].static_fn) skip=7; }
     memmove(s+w,s+i+skip,len-skip); w+=len-skip; i+=len; }
@@ -10932,7 +11004,9 @@ static const char *emit_unit_body(CC *c, bcir_cfront_result *out, const bcir_fun
     if((e=emit_function(out,&out->unit.funcs[i]))) return e;
     if(i+1<out->unit.n_funcs && (e=emit_putf(out,"\n"))) return e;
   }
-  if(c->linkable) lk_functions(c,out,from);              /* real names, source linkage */
+  if(c->linkable){ lk_functions(c,out,from);             /* real names, source linkage */
+    for(int i=0;i<out->unit.n_funcs;i++)                 /* then each wrapped function, of its source's type */
+      if(lk_wrapped(&out->unit,&out->unit.funcs[i]) && (e=lk_wrapper(out,&out->unit.funcs[i]))) return e; }
   if((e=respell_anon(c,out))) return e;
   return c->linkable ? lk_includes(c,out) : NULL;
 }
