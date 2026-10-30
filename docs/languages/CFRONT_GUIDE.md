@@ -462,7 +462,10 @@ _mm_sfence();                      //                   store (release) fence ->
   gives it: one whose type keeps a qualifier below a parameter's or the return's top level (`const uint8_t *buf`,
   `const char *const *v`) is defined through a wrapper of the same name and type that calls the emitted function,
   `static bcir_NAME`, which spells its objects without them -- so a header declaring the function, another unit, and
-  a function pointer of the source's type all meet the function's own type (CF-PARMQUALS). A static function is so
+  a function pointer of the source's type all meet the function's own type (CF-PARMQUALS). The wrapper's parameters
+  keep the emitted function's names, but one the source names as the callee, `bcir_NAME`, which would hide it from
+  the call: that one takes the first `bcir_NAME_2`, `bcir_NAME_3`, ... that no other parameter, no name the emit
+  spells and no typedef name takes (`emit._wrapper_names`; the twin's `lk_param_name`). A static function is so
   wrapped only where the unit names it as a value (a function pointer, an ops table): one the unit only calls keeps
   the emit's types, since no other unit declares it, and a wrapper of it would be a function nothing names.
 - File-scope initializers as a local's: nested braces, brace elision and designators for arrays of structs, rows

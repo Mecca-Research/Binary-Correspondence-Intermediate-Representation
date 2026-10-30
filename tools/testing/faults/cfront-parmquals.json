@@ -4,7 +4,8 @@
     "tools/testing/check_tests.py",
     "--require",
     "bcir.tests.test_c_cfront:_CC",
-    "bcir.tests.test_cfront_link:test_the_linkable_artifact_keeps_each_functions_declared_type"
+    "bcir.tests.test_cfront_link:test_the_linkable_artifact_keeps_each_functions_declared_type",
+    "bcir.tests.test_cfront_link:test_a_wrapper_parameter_never_hides_its_callee"
   ],
   "faults": [
     {
@@ -78,6 +79,34 @@
       "path": "bcir/frontends/cfront/emit.py"
     },
     {
+      "expects": "test_a_wrapper_parameter_never_hides_its_callee",
+      "label": "PQ11 the oracle's wrapper names its parameters as the emitted definition does, one as its callee",
+      "new": "    names = _param_names(lf)\n    heads, args = [], []\n",
+      "old": "    names = _wrapper_names(lf)\n    heads, args = [], []\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_wrapper_parameter_never_hides_its_callee",
+      "label": "PQ12 the oracle's wrapper renames the callee's parameter to another parameter's name",
+      "new": "        names[names.index(callee)] = _uniq_name(callee, _spelled_names(lf) | {callee})\n",
+      "old": "        names[names.index(callee)] = _uniq_name(callee, _spelled_names(lf) | set(names))\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_wrapper_parameter_never_hides_its_callee",
+      "label": "PQ13 the oracle's wrapper renames the callee's parameter to a typedef name",
+      "new": "        names[names.index(callee)] = _uniq_name(callee, (_spelled_names(lf) - set(lf.typedef_names)) | set(names))\n",
+      "old": "        names[names.index(callee)] = _uniq_name(callee, _spelled_names(lf) | set(names))\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_wrapper_parameter_never_hides_its_callee",
+      "label": "PQ14 the oracle's wrapper renames the callee's parameter to a name the emit spells",
+      "new": "        names[names.index(callee)] = _uniq_name(callee, set(lf.typedef_names) | set(names))\n",
+      "old": "        names[names.index(callee)] = _uniq_name(callee, _spelled_names(lf) | set(names))\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
       "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
       "label": "LQ1 the twin wraps no function",
       "new": "static int lk_wrapped(const bcir_unit *u, const bcir_func *fn){\n  if(fn->variadic || fn) return 0;\n",
@@ -129,8 +158,8 @@
     {
       "expects": "test_the_linkable_artifact_keeps_each_functions_declared_type",
       "label": "LQ8 the twin declares the wrapped functions and defines none",
-      "new": "      if(0 && lk_wrapped(&out->unit,&out->unit.funcs[i]) && (e=lk_wrapper(out,&out->unit.funcs[i]))) return e; }\n",
-      "old": "      if(lk_wrapped(&out->unit,&out->unit.funcs[i]) && (e=lk_wrapper(out,&out->unit.funcs[i]))) return e; }\n",
+      "new": "      if(0 && lk_wrapped(&out->unit,&out->unit.funcs[i]) && (e=lk_wrapper(c,out,&out->unit.funcs[i]))) return e; }\n",
+      "old": "      if(lk_wrapped(&out->unit,&out->unit.funcs[i]) && (e=lk_wrapper(c,out,&out->unit.funcs[i]))) return e; }\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
@@ -152,6 +181,48 @@
       "label": "LQ11 the twin wraps no static function a function names as a value",
       "new": "    if(0 && r->read_only && r->is_funcptr && !strcmp(r->name,fn->name)) return 1; }\n",
       "old": "    if(r->read_only && r->is_funcptr && !strcmp(r->name,fn->name)) return 1; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_wrapper_parameter_never_hides_its_callee",
+      "label": "LQ12 the twin's wrapper names its parameters as the emitted definition does, one as its callee",
+      "new": "  if(1) return nm;\n",
+      "old": "  if(strncmp(nm,\"bcir_\",5) || strcmp(nm+5,fn->name)) return nm;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_wrapper_parameter_never_hides_its_callee",
+      "label": "LQ13 the twin's wrapper renames the callee's parameter to another parameter's name",
+      "new": "      taken=0 && p!=k && !strcmp(uniq_local(fn,fn->params[p].rid,pn),buf); }\n",
+      "old": "      taken=p!=k && !strcmp(uniq_local(fn,fn->params[p].rid,pn),buf); }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_wrapper_parameter_never_hides_its_callee",
+      "label": "LQ14 the twin's wrapper renames the callee's parameter to a typedef name",
+      "new": "    int taken=emit_name_taken(fn,buf) || (0 && find_typedef(c,buf,(int)strlen(buf))>=0);\n",
+      "old": "    int taken=emit_name_taken(fn,buf) || find_typedef(c,buf,(int)strlen(buf))>=0;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_wrapper_parameter_never_hides_its_callee",
+      "label": "LQ15 the twin's wrapper renames the callee's parameter to a name the emit spells",
+      "new": "    int taken=find_typedef(c,buf,(int)strlen(buf))>=0;\n",
+      "old": "    int taken=emit_name_taken(fn,buf) || find_typedef(c,buf,(int)strlen(buf))>=0;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_wrapper_parameter_never_hides_its_callee",
+      "label": "LQ16 the twin declares a wrapper's parameters by the emitted definition's names, which its call does not pass",
+      "new": "    if((e=emit_putf(out,\"%s%s %s\",k?\", \":\"\",pt,((void)c,uniq_local(fn,fn->params[k].rid,pn))))) return e; }\n",
+      "old": "    if((e=emit_putf(out,\"%s%s %s\",k?\", \":\"\",pt,lk_param_name(c,fn,k,pn)))) return e; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_wrapper_parameter_never_hides_its_callee",
+      "label": "LQ17 the twin's wrapper passes the emitted definition's names, which it does not declare",
+      "new": "    const char *nm=uniq_local(fn,fn->params[k].rid,pn);\n",
+      "old": "    const char *nm=lk_param_name(c,fn,k,pn);\n",
       "path": "runtime/c/bcir_cfront.c"
     }
   ]

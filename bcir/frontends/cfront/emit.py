@@ -716,6 +716,20 @@ def _param_names(lf: LoweredFunc) -> list:
     return [_uniq_name(pname, used) for pname, _rid, _ct in lf.params]
 
 
+def _wrapper_names(lf: LoweredFunc) -> list:
+    """The names the linkable wrapper gives the function's parameters (CF-PARMQUALS): the emitted definition's
+    (`_param_names`), but for the one named as the wrapper's callee, `bcir_NAME`. The emit keeps that name, a source
+    parameter's, wherever the function does not call itself, and in the wrapper it would hide the callee from the call
+    (`unsigned f(const unsigned *bcir_f)` called `bcir_f((unsigned int *)bcir_f)`). That one takes the first
+    `bcir_NAME_2`, `bcir_NAME_3`, ... that no other parameter, no name the emit spells and no typedef name takes. The
+    twin's `lk_param_name` decides alike."""
+    names = _param_names(lf)
+    callee = f"bcir_{lf.name}"
+    if callee in names:
+        names[names.index(callee)] = _uniq_name(callee, _spelled_names(lf) | set(names))
+    return names
+
+
 def _linkable_wrapper(lf: LoweredFunc, quals: tuple, spelling: dict) -> str:
     """The linkable artifact's definition of a function whose type keeps a qualifier below a parameter's or the
     return's top level (CF-PARMQUALS): under its real name and with the type its source declares -- `const T *p`,
@@ -727,7 +741,7 @@ def _linkable_wrapper(lf: LoweredFunc, quals: tuple, spelling: dict) -> str:
     (C11 6.7.6.1p2, 6.7.6.3p15; a program whose units declare one function with two types is undefined, 6.2.7p2).
     The twin's `lk_wrapper` writes the same definition."""
     rsig, psigs = quals or ((), ())
-    names = _param_names(lf)
+    names = _wrapper_names(lf)
     heads, args = [], []
     for k, (_pname, _rid, ct) in enumerate(lf.params):
         sig = psigs[k] if k < len(psigs) else ()

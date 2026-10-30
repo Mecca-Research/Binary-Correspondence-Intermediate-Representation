@@ -1256,6 +1256,92 @@ def test_the_linkable_artifact_keeps_each_functions_declared_type():
             assert got == want, (rail, got, want)
 
 
+# CF-PARMQUALS: wrapped functions whose source names a parameter as the wrapper's callee, `bcir_NAME`. The emit keeps
+# that name, since no call of the function's own spells it. `ps_g`'s candidates `bcir_ps_g_2` and `bcir_ps_g_3` are
+# another parameter's name and a typedef name the wrapper spells (an untagged struct's); `ps_h`'s `bcir_ps_h_2` is the
+# name the emit calls `ps_h_2` by
+_PS_TYPES = "#include <stdint.h>\ntypedef struct { uint32_t v; } bcir_ps_g_3;\n"
+_PS_LIB = (
+    _PS_TYPES
+    + r"""
+static uint32_t ps_h_2(uint32_t x) { return x + 1u; }
+uint32_t ps_f(const uint32_t *bcir_ps_f) { return bcir_ps_f[0]; }
+uint32_t ps_g(const bcir_ps_g_3 *bcir_ps_g, uint32_t bcir_ps_g_2) { return bcir_ps_g->v * 3u + bcir_ps_g_2; }
+uint32_t ps_h(const uint32_t *bcir_ps_h) { return ps_h_2(bcir_ps_h[1]); }
+"""
+)
+_PS_DECLS = """uint32_t ps_f(const uint32_t *p);
+uint32_t ps_g(const bcir_ps_g_3 *s, uint32_t k);
+uint32_t ps_h(const uint32_t *p);
+"""
+_PS_MAIN = (
+    _PS_TYPES
+    + _PS_DECLS
+    + r"""#include <stdio.h>
+int main(void) {
+  uint32_t a[2] = {4u, 9u};
+  bcir_ps_g_3 s = {5u};
+  printf("%u\n", ps_f(a) + ps_g(&s, 7u) * 10u + ps_h(a) * 100u);
+  return 0;
+}
+"""
+)
+#: each wrapper's parameters, as both rails name them: the callee's name taken by the first `bcir_NAME_<k>` that no
+#: other parameter, no name the emit spells and no typedef name takes
+_PS_PARAMS = {
+    "ps_f": ["bcir_ps_f_2"],
+    "ps_g": ["bcir_ps_g_4", "bcir_ps_g_2"],
+    "ps_h": ["bcir_ps_h_3"],
+}
+
+
+def test_a_wrapper_parameter_never_hides_its_callee():
+    """CF-PARMQUALS: a wrapper calls its function's emitted definition, `bcir_NAME`, so none of its parameters may take
+    that name, which a source may give one (`uint32_t ps_f(const uint32_t *bcir_ps_f)`). Its artifact had called
+    `bcir_ps_f((uint32_t *)bcir_ps_f)`, which does not compile, on both rails. Each rail's wrappers of `_PS_LIB` now
+    name that parameter by the first `bcir_NAME_<k>` that no other parameter (`ps_g`'s second), no name the emit
+    spells (`ps_h`'s callee `bcir_ps_h_2`) and no typedef name (`bcir_ps_g_3`, spelled in `ps_g`'s cast) takes, and
+    keep every other parameter's name. The emitted definitions keep the source's names, as before. The two rails write
+    the same wrappers. Each artifact compiles with the unit's declarations in one translation unit and, linked with a
+    caller that knows the functions only through them, prints what the original's build prints."""
+    cc = _cc()
+    if cc is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, prog, err = _build(cc, tmp, {"m.c": _PS_MAIN, "l.c": _PS_LIB}, *_PQ_ERRORS)
+        assert rc == 0, err
+        want = subprocess.run([prog], capture_output=True, text=True, timeout=60).stdout
+    assert want == "1224\n", want
+    arts = dict(_artifacts(_PS_LIB))
+    lowered = compile_unit(_PS_LIB, check_clang=False).lowered
+    ow, tw = _wrappers(arts["oracle"], lowered), _wrappers(arts["twin"], lowered)
+    assert set(ow) == set(_PS_PARAMS), sorted(ow)
+    assert tw == ow, (tw, ow)
+    for rail, art in arts.items():
+        for m in _WRAPPER.finditer(
+            art
+        ):  # each parameter's name ends its declaration; the call passes them all
+            name, head, text = m.group(2), m.group(1), m.group(0)
+            params = _split_params(head.split(f"{name}(", 1)[1][:-1])
+            got = [re.search(r"(\w+)\s*$", p).group(1) for p in params]
+            assert got == _PS_PARAMS[name], (rail, name, got, text)
+            call = text.split(f"bcir_{name}(", 1)[1]
+            assert re.findall(r"(\w+)\s*[,)]", call)[: len(got)] == got, (rail, text)
+        assert re.search(r"^static uint32_t bcir_ps_f\(uint32_t ?\* ?bcir_ps_f\)$", art, re.M), (
+            rail,
+            art[-900:],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, _o, err = _build(
+                cc, tmp, {"one.c": art + "\n" + _PS_DECLS}, *_PQ_ERRORS, link=False
+            )
+            assert rc == 0, (rail, err)
+            rc, prog, err = _build(cc, tmp, {"m.c": _PS_MAIN, "l.c": art}, *_PQ_ERRORS)
+            assert rc == 0, (rail, err)
+            got = subprocess.run([prog], capture_output=True, text=True, timeout=60).stdout
+            assert got == want, (rail, got, want)
+
+
 def test_the_twins_linkable_artifact_is_the_oracles_over_the_corpus():
     """CF-LINKTWIN: every corpus fixture (`runtime/c/cfront_*.c`) through both rails' linkable emit -- the oracle's
     `emit_linkable` and the twin's `bcir-cc --linkable`. The two refuse the same fixtures, for the same global; where

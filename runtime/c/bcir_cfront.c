@@ -10780,15 +10780,31 @@ static int lk_line_internal(const bcir_unit *u, const char *line, size_t len){
   }
   return -1;
 }
+/* The name the wrapper gives `fn`'s parameter `k` (CF-PARMQUALS, the oracle's `_wrapper_names`): the emitted
+ * definition's (`uniq_local`), but for one named as the wrapper's callee, `bcir_NAME`. The emit keeps that name, a
+ * source parameter's, wherever the function does not call itself, and in the wrapper it would hide the callee from the
+ * call (`unsigned f(const unsigned *bcir_f)` called `bcir_f((unsigned int *)bcir_f)`). That one takes the first
+ * `bcir_NAME_2`, `bcir_NAME_3`, ... that no other parameter, no name the emit spells (`emit_name_taken`) and no typedef
+ * name takes. */
+static const char *lk_param_name(CC *c, const bcir_func *fn, int k, char *buf){
+  const char *nm=uniq_local(fn,fn->params[k].rid,buf);
+  if(strncmp(nm,"bcir_",5) || strcmp(nm+5,fn->name)) return nm;
+  for(unsigned j=2;; j++){
+    snprintf(buf,BCIR_EMIT_NAME,"bcir_%s_%u",fn->name,j);
+    int taken=emit_name_taken(fn,buf) || find_typedef(c,buf,(int)strlen(buf))>=0;
+    for(int p=0; p<fn->n_params && !taken; p++){ char pn[BCIR_EMIT_NAME];
+      taken=p!=k && !strcmp(uniq_local(fn,fn->params[p].rid,pn),buf); }
+    if(!taken) return buf; }
+}
 /* A wrapped function's declaration under its real name, of its source's type -- `T f(const U * p)` -- with no `;`.
- * Its parameters' names are the emitted definition's (`uniq_local`). */
-static const char *lk_wrapped_head(bcir_cfront_result *out, const bcir_func *fn){
+ * Its parameters' names are the wrapper's (`lk_param_name`). */
+static const char *lk_wrapped_head(CC *c, bcir_cfront_result *out, const bcir_func *fn){
   char rets[BCIR_EMIT_TYPE]; const char *e;
   ctype_qstr(&fn->ret,rets,sizeof rets);
   if((e=emit_putf(out,"%s%s %s(",fn->static_fn?"static ":"",rets,fn->name))) return e;
   for(int k=0; k<fn->n_params; k++){ char pt[BCIR_EMIT_TYPE], pn[BCIR_EMIT_NAME];
     ctype_qstr(&fn->params[k].type,pt,sizeof pt);
-    if((e=emit_putf(out,"%s%s %s",k?", ":"",pt,uniq_local(fn,fn->params[k].rid,pn)))) return e; }
+    if((e=emit_putf(out,"%s%s %s",k?", ":"",pt,lk_param_name(c,fn,k,pn)))) return e; }
   return emit_putf(out,"%s)",fn->n_params?"":"void");
 }
 /* The definition of a wrapped function (CF-PARMQUALS, the oracle's `_linkable_wrapper`): under its real name and of its
@@ -10796,10 +10812,10 @@ static const char *lk_wrapped_head(bcir_cfront_result *out, const bcir_func *fn)
  * unqualified types. A qualified argument meets its emitted parameter through a cast, as a qualified result meets the
  * function's type: every other unit, the header the source declares it in, and a pointer to it meet the function's own
  * type (C11 6.7.6.1p2, 6.7.6.3p15, 6.2.7p2). */
-static const char *lk_wrapper(bcir_cfront_result *out, const bcir_func *fn){
+static const char *lk_wrapper(CC *c, bcir_cfront_result *out, const bcir_func *fn){
   const char *e; char rets[BCIR_EMIT_TYPE], ret0[BCIR_EMIT_TYPE];
   int nl=out->emitted_len && out->emitted[out->emitted_len-1]=='\n';   /* one line break before it, as the oracle's */
-  if((!nl && (e=emit_putf(out,"\n")))||(e=lk_wrapped_head(out,fn))) return e;
+  if((!nl && (e=emit_putf(out,"\n")))||(e=lk_wrapped_head(c,out,fn))) return e;
   ctype_qstr(&fn->ret,rets,sizeof rets); ctype_str(&fn->ret,ret0,sizeof ret0);
   int is_void=!strcmp(ret0,"void"), cast_ret=qual_key(&fn->ret)!=0;
   if(is_void) e=emit_putf(out,"\n{\n    bcir_%s(",fn->name);
@@ -10807,7 +10823,7 @@ static const char *lk_wrapper(bcir_cfront_result *out, const bcir_func *fn){
   else e=emit_putf(out,"\n{\n    return bcir_%s(",fn->name);
   if(e) return e;
   for(int k=0; k<fn->n_params; k++){ char pt[BCIR_EMIT_TYPE], pn[BCIR_EMIT_NAME];
-    const char *nm=uniq_local(fn,fn->params[k].rid,pn);
+    const char *nm=lk_param_name(c,fn,k,pn);
     if(qual_key(&fn->params[k].type)){ ctype_str(&fn->params[k].type,pt,sizeof pt);
       e=emit_putf(out,"%s(%s)%s",k?", ":"",pt,nm); }
     else e=emit_putf(out,"%s%s",k?", ":"",nm);
@@ -10832,7 +10848,7 @@ static const char *lk_decls(CC *c, bcir_cfront_result *out){
   for(int f=0; f<out->unit.n_funcs; f++){                /* every function of the unit, before the globals */
     const bcir_func *fn=&out->unit.funcs[f]; char one[1], pat[BCIR_CIR_NAME+8];
     if(lk_wrapped(&out->unit,fn)){                       /* of its source's type (CF-PARMQUALS) */
-      if((e=lk_wrapped_head(out,fn))||(e=emit_putf(out,";\n"))) return e;
+      if((e=lk_wrapped_head(c,out,fn))||(e=emit_putf(out,";\n"))) return e;
       continue; }
     size_t n=emit_sig(fn,one,sizeof one);
     char *s=(char *)bcir_host_arena_allocate(&c->scratch,n+1u,1u);
@@ -11006,7 +11022,7 @@ static const char *emit_unit_body(CC *c, bcir_cfront_result *out, const bcir_fun
   }
   if(c->linkable){ lk_functions(c,out,from);             /* real names, source linkage */
     for(int i=0;i<out->unit.n_funcs;i++)                 /* then each wrapped function, of its source's type */
-      if(lk_wrapped(&out->unit,&out->unit.funcs[i]) && (e=lk_wrapper(out,&out->unit.funcs[i]))) return e; }
+      if(lk_wrapped(&out->unit,&out->unit.funcs[i]) && (e=lk_wrapper(c,out,&out->unit.funcs[i]))) return e; }
   if((e=respell_anon(c,out))) return e;
   return c->linkable ? lk_includes(c,out) : NULL;
 }

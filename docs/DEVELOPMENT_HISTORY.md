@@ -9310,6 +9310,15 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `cfront-parmquals.json` PQ1-PQ10 (the oracle) and LQ1-LQ11 (the twin): each caught by its own check (red_sweep on a
     copy of the tree); under the witnesses before CF-PARMQUALS -- test_cfront_link's 16 tests but its corpus
     differential, and test_c_cfront's CF-QUALS test -- none.
+  - Review (on the first push): a wrapper named its parameters as the emitted definition does, and the emit keeps a
+    source parameter named `bcir_NAME` wherever the function does not call itself -- so `unsigned f(const unsigned
+    *bcir_f)` became a wrapper calling `bcir_f((unsigned int *)bcir_f)`, its parameter hiding the callee, and the
+    artifact did not compile, on both rails. That parameter now takes the first `bcir_NAME_2`, `bcir_NAME_3`, ... that
+    no other parameter, no name the emit spells and no typedef name takes (`emit._wrapper_names`; the twin's
+    `lk_param_name`, which its declaration of the function uses too); the emitted definition keeps the source's
+    names. Witness: `test_a_wrapper_parameter_never_hides_its_callee` (one function a case, the wrappers' names
+    pinned on both rails, each artifact built and run). PQ11-PQ14 and LQ12-LQ17: each caught by its own check;
+    under the first push's witness alone, none.
 
 ---
 
