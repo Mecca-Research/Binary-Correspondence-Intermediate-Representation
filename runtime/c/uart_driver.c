@@ -1,7 +1,7 @@
 /* uart_driver.c -- the polled 16550 driver (blueprint slice U2): probe, init, TX, RX drain, flush and
  * a loopback self-test, compiled by BCIR on both rails and linked from their emitted units.
  *
- * Its one include is its API, uart_driver.h (the state, the status codes and the six prototypes the
+ * Its one include is its API, uart_driver.h (the state, the status codes and the seven prototypes the
  * harness calls), which includes the GENERATED register map, uart16550_regs.h (the U0 registry,
  * bcir/frontends/devices/uart_model.py): the lane type, the offsets and fields, the placement's
  * capabilities and the uart_regmap_contract literal that every unit including it attests -- the
@@ -37,8 +37,8 @@
  * read-modify-write in do_set_rxtrig, while serial8250_clear_fifos writes the resets, with the FIFO
  * enable, on a part with a FIFO only). TX never waits on a THRE interrupt edge (section 3.2): each burst
  * follows an LSR read that shows THRE. Every wait the driver makes -- init's for TEMT, TX's for THRE,
- * the flush's for TEMT, the self-test's for TEMT, for THRE and for DR -- polls LSR and gives up after
- * exactly UART_SPIN_BUDGET polls that find the device not ready.
+ * the flush's for TEMT, the self-test's for TEMT, for THRE and for DR, the release's for TEMT -- polls
+ * LSR and gives up after exactly UART_SPIN_BUDGET polls that find the device not ready.
  *
  * The receiver's errors. A read of LSR clears OE, PE, FE and BI, and in FIFO mode PE, FE and BI describe
  * the character at the FIFO head, revealed when it gets there (PC16550D p.21). The drain is the one call
@@ -103,7 +103,9 @@ uint32_t uart_probe(volatile uart_regs_t *u, uart_state *st)
  * and MSR to clear stale status. Every argument is checked before the device is touched; the format is
  * LCR[5:0] (UART_FORMAT_BITS), and the LCR writes mask it so that the U1 law can read each one's bit 7.
  * The wait for TEMT gives up after exactly UART_SPIN_BUDGET polls that find the line busy, with
- * UART_ERR_BUSY and the device as it was. Returns UART_OK or the error that refused. */
+ * UART_ERR_BUSY and the device as it was. A loopback the self-test held ends here: with TEMT seen first,
+ * the character its shift register held has been looped back, and the FIFO reset (or step 8's RBR read
+ * in 16450 mode) drops it, while step 6 restores the line. Returns UART_OK or the error that refused. */
 uint32_t uart_init(volatile uart_regs_t *u, uart_state *st, uint32_t divisor, uint32_t lcr_format,
                    uint32_t trigger_code)
 {
@@ -179,6 +181,7 @@ uint32_t uart_init(volatile uart_regs_t *u, uart_state *st, uint32_t divisor, ui
     st->tx_burst = burst;
     st->word_bits = 5u + ((lcr_format & UART_LCR_WLS_MASK) >> UART_LCR_WLS_SHIFT);
     st->lsr_saved = 0u; /* the receiver's old bytes went with the FIFO reset or the RBR read, and their errors */
+    st->loop_held = 0u; /* step 6 wrote MCR, after TEMT: a loopback the self-test held is over */
     return UART_OK;
 }
 
@@ -188,8 +191,10 @@ uint32_t uart_init(volatile uart_regs_t *u, uart_state *st, uint32_t divisor, ui
  * the device was just seen to have free, whatever cap a plan left in the state, and never a byte without
  * a THRE read before its burst. A state with no cap (0) is one uart_init has not filled, and it is
  * refused before the device is touched, not read as some default cap. A wait for THRE gives up after
- * exactly UART_SPIN_BUDGET polls that find it clear. The bytes sent go to *nsent (0 when refused);
- * returns UART_OK when all len were, UART_ERR_TIMEOUT when a wait gave up, or UART_ERR_NOT_READY. */
+ * exactly UART_SPIN_BUDGET polls that find it clear. A state whose loopback the self-test holds is
+ * refused too: in the loopback the bytes would go to the receiver, never to SOUT (p.23). The bytes sent
+ * go to *nsent (0 when refused); returns UART_OK when all len were, UART_ERR_TIMEOUT when a wait gave up,
+ * UART_ERR_NOT_READY or UART_ERR_LOOP_HELD. */
 uint32_t uart_tx(volatile uart_regs_t *u, uart_state *st, const uint8_t *buf, uint32_t len,
                  uint32_t *nsent)
 {
@@ -199,6 +204,9 @@ uint32_t uart_tx(volatile uart_regs_t *u, uart_state *st, const uint8_t *buf, ui
     *nsent = 0u;
     if (cap == 0u) {
         return UART_ERR_NOT_READY;
+    }
+    if (st->loop_held != 0u) {
+        return UART_ERR_LOOP_HELD;
     }
     if (cap > UART_CAP_FIFO_DEPTH) {
         cap = UART_CAP_FIFO_DEPTH;
@@ -235,12 +243,16 @@ uint32_t uart_tx(volatile uart_regs_t *u, uart_state *st, const uint8_t *buf, ui
  * BI anywhere in the FIFO, cannot gate the triage). The read is made only when a byte could be taken,
  * so an LSR read's errors are never dropped at the cap. The errors another call's LSR read saw
  * (st->lsr_saved) are counted with the first read -- they describe the byte at the FIFO head, the first
- * the drain takes -- and kept when the cap allows no read. Returns the bytes drained. */
+ * the drain takes -- and kept when the cap allows no read. A state whose loopback the self-test holds
+ * gives nothing: its receiver holds the test's own characters, not a peer's. Returns the bytes drained. */
 uint32_t uart_rx_drain(volatile uart_regs_t *u, uart_state *st, uint8_t *buf, uint32_t cap,
                        uint32_t *err_counts)
 {
     uint32_t n = 0u;
     uint32_t saved = st->lsr_saved;
+    if (st->loop_held != 0u) {
+        return 0u;
+    }
     while (n < cap) {
         uint32_t lsr = u[UART_LANE(UART_LSR_OFF)] | saved;
         saved = 0u;
@@ -269,10 +281,15 @@ uint32_t uart_rx_drain(volatile uart_regs_t *u, uart_state *st, uint8_t *buf, ui
 /* Poll LSR until TEMT (the TX FIFO and the shift register both empty: the line is idle), giving up
  * after exactly UART_SPIN_BUDGET polls that find it busy, each poll's receiver errors saved for the
  * drain. The polls that found it busy go to *nbusy; returns UART_OK when TEMT was seen, UART_ERR_BUSY
- * when the wait gave up. */
+ * when the wait gave up, and UART_ERR_LOOP_HELD, the device untouched, for a state whose loopback the
+ * self-test holds: there TEMT would say a character went to the receiver, not that the line is idle. */
 uint32_t uart_flush(volatile uart_regs_t *u, uart_state *st, uint32_t *nbusy)
 {
     uint32_t spins = 0u;
+    *nbusy = 0u;
+    if (st->loop_held != 0u) {
+        return UART_ERR_LOOP_HELD;
+    }
     while (spins < UART_SPIN_BUDGET) {
         uint32_t lsr = u[UART_LANE(UART_LSR_OFF)];
         st->lsr_saved = st->lsr_saved | (lsr & UART_LSR_ERRORS); /* the receiver's, for the drain */
@@ -299,10 +316,16 @@ uint32_t uart_flush(volatile uart_regs_t *u, uart_state *st, uint32_t *nbusy)
  * are still the line's -- looped back they would be lost and read in place of a pattern -- and it gives up
  * after exactly UART_SPIN_BUDGET polls with UART_ERR_BUSY and the device as it was (the polls' receiver
  * errors saved for the drain). It leaves the loopback the same way, once TEMT shows that whatever it wrote
- * has been looped back rather than left for SOUT (UART_ERR_BUSY if TEMT never comes); in FIFO mode both
- * FIFOs are reset while it is still in the loopback, so a pattern the transmitter still holds is dropped,
- * not sent, and in 16450 mode, which has no FIFO to reset, a looped character the receiver still holds is
- * read out.
+ * has been looped back rather than left for SOUT; in FIFO mode both FIFOs are reset while it is still in
+ * the loopback, so a pattern the transmitter's FIFO still holds is dropped, not sent, and in 16450 mode,
+ * which has no FIFO to reset, a looped character the receiver still holds is read out. When TEMT does not
+ * come, the shift register still holds a character -- a FIFO reset does not clear it (p.22) -- and
+ * leaving the loopback would send it on SOUT, so the test holds the loopback: it keeps the MCR it found
+ * in st->mcr_saved, sets st->loop_held and returns UART_ERR_LOOP_HELD, whatever failed first. uart_tx,
+ * uart_flush and the self-test then refuse the state and uart_rx_drain takes nothing from it, until
+ * uart_selftest_release -- or uart_init -- ends the loopback once TEMT comes. A state whose loopback is
+ * held is refused before the device is touched (UART_ERR_LOOP_HELD): MCR then reads the loopback's own
+ * value, not the one to restore.
  *
  * A byte the receiver holds from before would come back in place of a pattern, so the receiver is drained
  * first, while LSR shows DR, and bounded: at most UART_CAP_FIFO_DEPTH + 1 reads, a full FIFO and the
@@ -326,6 +349,7 @@ uint32_t uart_selftest(volatile uart_regs_t *u, uart_state *st)
     uint32_t drained = 0u;
     uint32_t spins = 0u;
     uint32_t looped = 0u;
+    uint32_t held = 0u;
     uint32_t mask;
     uint32_t mcr;
     uint32_t msr;
@@ -333,6 +357,9 @@ uint32_t uart_selftest(volatile uart_regs_t *u, uart_state *st)
     uint32_t fcr;
     if (st->word_bits < 5u || st->word_bits > 8u) {
         return UART_ERR_NOT_READY;
+    }
+    if (st->loop_held != 0u) {
+        return UART_ERR_LOOP_HELD;
     }
     mask = (1u << st->word_bits) - 1u;
     /* the transmitter idle before the loopback: what uart_tx accepted is the line's */
@@ -407,8 +434,8 @@ uint32_t uart_selftest(volatile uart_regs_t *u, uart_state *st)
         while (spins < UART_SPIN_BUDGET && (u[UART_LANE(UART_LSR_OFF)] & UART_LSR_TEMT_MASK) == 0u) {
             spins = spins + 1u;
         }
-        if (spins == UART_SPIN_BUDGET && verdict == UART_OK) {
-            verdict = UART_ERR_BUSY;
+        if (spins == UART_SPIN_BUDGET) {
+            held = 1u; /* the shift register still holds a character: SOUT would carry it */
         }
     }
     if ((st->fcr_shadow & UART_FCR_FIFOEN_MASK) != 0u) {
@@ -419,7 +446,46 @@ uint32_t uart_selftest(volatile uart_regs_t *u, uart_state *st)
     } else if (looped != 0u && (u[UART_LANE(UART_LSR_OFF)] & UART_LSR_DR_MASK) != 0u) {
         (void)u[UART_LANE(UART_RBR_OFF)]; /* 16450 mode: the one looped character RBR may still hold */
     }
+    if (held != 0u) {
+        st->mcr_saved = mcr; /* the loopback stays: uart_selftest_release or uart_init ends it */
+        st->loop_held = 1u;
+        return UART_ERR_LOOP_HELD;
+    }
     u[UART_LANE(UART_MCR_OFF)] = mcr;
     (void)u[UART_LANE(UART_MSR_OFF)];
     return verdict;
+}
+
+/* Ends a loopback the self-test held (st->loop_held): its shift register held a character when the test
+ * gave up its wait for TEMT, and in the loopback that character goes to the receiver, not to SOUT (p.23),
+ * so the loopback is left only once TEMT shows it has. The wait gives up after exactly UART_SPIN_BUDGET
+ * polls that find the transmitter busy, with UART_ERR_LOOP_HELD and the loopback still held. Then, as the
+ * test leaves it: in FIFO mode both FIFOs are reset while still looped -- what the receiver holds is the
+ * test's, not a peer's -- and in 16450 mode the one character RBR may hold is read out; MCR is restored
+ * (st->mcr_saved) and MSR read once to clear the deltas. A state that holds no loopback is left as it is,
+ * the device untouched. Returns UART_OK or UART_ERR_LOOP_HELD. */
+uint32_t uart_selftest_release(volatile uart_regs_t *u, uart_state *st)
+{
+    uint32_t spins = 0u;
+    uint32_t fcr;
+    if (st->loop_held == 0u) {
+        return UART_OK;
+    }
+    while ((u[UART_LANE(UART_LSR_OFF)] & UART_LSR_TEMT_MASK) == 0u) {
+        spins = spins + 1u;
+        if (spins == UART_SPIN_BUDGET) {
+            return UART_ERR_LOOP_HELD;
+        }
+    }
+    if ((st->fcr_shadow & UART_FCR_FIFOEN_MASK) != 0u) {
+        fcr = st->fcr_shadow | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;
+        u[UART_LANE(UART_FCR_OFF)] = fcr;
+        st->fcr_shadow = fcr & ~(UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK);
+    } else if ((u[UART_LANE(UART_LSR_OFF)] & UART_LSR_DR_MASK) != 0u) {
+        (void)u[UART_LANE(UART_RBR_OFF)]; /* 16450 mode: the looped character */
+    }
+    u[UART_LANE(UART_MCR_OFF)] = st->mcr_saved;
+    (void)u[UART_LANE(UART_MSR_OFF)];
+    st->loop_held = 0u;
+    return UART_OK;
 }

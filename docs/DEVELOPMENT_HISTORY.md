@@ -5820,6 +5820,21 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     SD1-SD14, UD1-UD41 and UH1-UH3 (UD26 retargeted at the new TEMT wait): each of the 58 caught by
     its own check. The three defects passed U2's tests at `e613de4` (its CI was green); each is
     re-injected into the fixed code as a fault the new tests catch (UD27-UD28, SD13 and UD37, UD34).
+  - The review's second round (2026-10-30) found two more, each reproduced and fixed:
+    - with the transmitter stalled after a pattern, the self-test's waits for DR and TEMT gave up
+      and it restored MCR anyway; a FIFO reset does not clear the shift register (PC16550D p.22),
+      so the pattern then went out on SOUT. The test now holds the loopback (`UART_ERR_LOOP_HELD`,
+      `loop_held`, `mcr_saved`); TX, the flush and the self-test refuse a held state and the drain
+      takes nothing from it; the new `uart_selftest_release`, or `uart_init`, ends it once TEMT
+      shows the character has looped back;
+    - U1's offset resolver read a local pointer assigned twice as a device base at offset 0, so an
+      LSR read through it inside a DLAB bracket passed as DLL. A pointer with no one definition (a
+      parameter's value at entry now counts as one) has no offset, nor has anything derived from it.
+    Four tests added (three for the held loopback, one for the resolver); `uart-driver.json` grew
+    to UD1-UD55 (72 faults; UD4, UD10, UD14, UD21 and UD35 re-anchored), `uart-model.json` to
+    UL1-UL35 (58; UL19 re-anchored), each caught by its own check. Both defects pass the round-one
+    tests at `64679f2`; each is re-injected into the fixed code as a fault the new tests catch
+    (UD42, UL32).
   - Not in these slices: the law-rail halves (U0's `bcir.regmap_contract` op; the `-bcir-verify`
     clauses, lit negatives and `check_passes.sh` stanzas of both) and U1's C-twin form, which need
     the MLIR rail and the twin built; and the qualifiers below a parameter's top level in both

@@ -60,7 +60,10 @@ _CC = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
 _TRACE_CC = shutil.which("clang")
 _TRACE = "-fsanitize-coverage=func,trace-loads,trace-stores"
 _UNITS = ("uart_driver.c", "uart_driver.h", "uart_main.c", "sim16550.c", "sim16550.h")
-_FUNCTIONS = {"uart_probe", "uart_init", "uart_tx", "uart_rx_drain", "uart_flush", "uart_selftest"}
+_FUNCTIONS = {
+    "uart_probe", "uart_init", "uart_tx", "uart_rx_drain", "uart_flush", "uart_selftest",
+    "uart_selftest_release",
+}  # fmt: skip
 _TIMEOUT = 120
 #: the transcript's fixed vector: 56000 baud from the placement's reference by PG143's truncating
 #: formula, 8E2, trigger 8, and the TX buffer
@@ -1354,6 +1357,147 @@ def test_selftest_enters_the_loopback_only_with_the_transmitter_idle():
         assert drain == 'drain: 1 bytes "G"; OE 0 PE 0 FE 1 BI 0; lsr_saved 0x00 after it', drain
 
 
+#: the phases where the self-test holds its loopback over a stalled transmitter (FIFO mode, then 16450)
+_HELD = "selftest held: a pattern stuck in the shift register; "
+_HELD_REFUSALS = [
+    "tx(a held loopback): returns 10 (the loopback is held), 0 bytes sent, the device untouched",
+    "selftest(a held loopback): returns 10 (the loopback is held), the device untouched",
+    "flush(a held loopback): returns 10 (the loopback is held), 0 busy polls, the device untouched",
+    "drain(a held loopback): 0 bytes, the device untouched",
+]
+
+
+def _held_entry(lines: list, off: dict, polls: int, fifo: bool) -> None:
+    """The held self-test's own accesses and verdict: after the THR write of 0x55, LSR polled `polls`
+    times with THRE set and TEMT clear, the FIFOs reset in FIFO mode only, and MCR never written again
+    -- it reads 0x15, LOOP set -- with UART_ERR_LOOP_HELD and the MCR to restore kept; then the four
+    refusals, each with the device untouched."""
+    test = _trace(lines[: next(k for k, ln in enumerate(lines) if ln.startswith("selftest:"))])
+    thr = [k for k, e in enumerate(test) if e[0] == "W" and e[2] == "THR"]
+    assert len(thr) == 1 and test[thr[0]][3] == 0x55, test
+    tail = [("R", off["LSR"], "LSR", 0x20, polls)]
+    if fifo:
+        tail.append(("W", off["FCR"], "FCR", 0x81 | _FCR_RESETS, 1))
+    assert test[thr[0] + 1 :] == tail, test[thr[0] :]
+    assert _summary(lines, "selftest:") == (
+        "selftest: returns 10 (the loopback is held); mcr 0x15 after it, loop_held 1, mcr_saved 0x03"
+    ), lines
+    assert _summary(lines, "  device: 1 character").startswith(
+        "  device: 1 character in the shift register"
+    )
+    assert [ln for ln in lines if "(a held loopback)" in ln] == _HELD_REFUSALS, lines
+
+
+def _held_exit(lines: list, head: str) -> None:
+    """After the loopback ends: the line has carried nothing since the test began, the receiver holds
+    nothing, a release with nothing held touches nothing, and TX of "ok" reaches the line."""
+    tail = lines[next(k for k, ln in enumerate(lines) if ln.startswith(head)) :]
+    assert (
+        tail[1] == "  device: the line carried 0 bytes since the self-test; the receiver holds 0"
+    ), tail
+    assert _summary(lines, "release(no held loopback):") == (
+        "release(no held loopback): returns 0 (ok), the device untouched"
+    )
+    assert _summary(lines, "tx:").startswith("tx: returns 0 (ok); 2 of 2 bytes sent"), lines
+    assert _summary(lines, "flush:").endswith('the line carried 2 bytes "ok", the buffer'), lines
+
+
+def test_selftest_holds_the_loopback_while_the_shift_register_is_busy():
+    """The review of #823 (round 2): with the transmitter stalled after the self-test wrote a
+    pattern, its wait for DR and then its wait for TEMT both give up, and the test restored MCR
+    anyway. A FIFO reset does not clear the shift register (PC16550D p.22), so once the stall ended
+    the pattern went out on SOUT: status 7, then 0x55 on the line. Now the test holds the loopback:
+    after the THR write of 0x55 it polls LSR 2 x UART_SPIN_BUDGET times with TEMT clear (the wait for
+    DR, then for TEMT), resets the FIFOs in the loopback, never writes MCR again and returns
+    UART_ERR_LOOP_HELD with loop_held 1 and the MCR to restore (0x03) kept. TX, the self-test and the
+    flush refuse the state and the drain takes nothing, the device untouched by each; a release with
+    the transmitter still stalled polls LSR UART_SPIN_BUDGET times, writes nothing and keeps the
+    loopback. Once the character has finished -- in the loopback, into the receiver -- the release's
+    first LSR read shows TEMT, and it resets the FIFOs, writes back MCR 0x03 and reads MSR. The line
+    has carried nothing since the test began."""
+    if not (_TRACE_CC and _tree()):
+        return
+    budget = _spin_budget()
+    for name in um.PLACEMENTS:
+        off = {reg: _off(name, reg) for reg in um.REGS}
+        lines = _phases(_transcript(name))[_HELD + "the release ends the loopback"]
+        _held_entry(lines, off, 2 * budget, fifo=True)
+        stalled = _between(
+            lines, "drain(a held loopback):", "release, the transmitter still stalled:"
+        )
+        assert _trace(stalled) == [("R", off["LSR"], "LSR", 0x20, budget)], (name, stalled)
+        assert _summary(lines, "release, the transmitter still stalled:") == (
+            "release, the transmitter still stalled: returns 10 (the loopback is held); mcr 0x15, "
+            "loop_held 1"
+        )
+        release = _trace(_between(lines, "release, the transmitter still stalled:", "release:"))
+        assert [e[:3] for e in release] == [
+            ("R", off["LSR"], "LSR"), ("W", off["FCR"], "FCR"), ("W", off["MCR"], "MCR"),
+            ("R", off["MSR"], "MSR"),
+        ], (name, release)  # fmt: skip
+        assert (
+            release[0][3] & 0x40 and release[1][3] == 0x81 | _FCR_RESETS and release[2][3] == 0x03
+        )
+        assert _summary(lines, "release:") == (
+            "release: returns 0 (ok); mcr 0x03, loop_held 0, fcr_shadow 0x81"
+        )
+        _held_exit(lines, "release:")
+
+
+def test_init_ends_a_held_loopback():
+    """uart_init is the other way out of a held loopback: its wait for TEMT comes first -- the stalled
+    character has finished, into the receiver -- and its first LSR read shows TEMT; its FIFO reset
+    drops the looped character and step 6 writes MCR 0x03, LOOP clear. It returns UART_OK with
+    loop_held 0, the line has carried nothing since the test began, and TX reaches the line again."""
+    if not (_TRACE_CC and _tree()):
+        return
+    budget = _spin_budget()
+    for name in um.PLACEMENTS:
+        off = {reg: _off(name, reg) for reg in um.REGS}
+        lines = _phases(_transcript(name))[_HELD + "init ends the loopback"]
+        _held_entry(lines, off, 2 * budget, fifo=True)
+        assert [ln for ln in lines if ln.startswith("release")] == [
+            "release(no held loopback): returns 0 (ok), the device untouched"
+        ], lines  # init alone ends it
+        init = _trace(_between(lines, "drain(a held loopback):", "init:"))
+        assert init[0][:3] == ("R", off["LSR"], "LSR") and init[0][3] & 0x40, (name, init)
+        mcr = [e[3] for e in init if e[0] == "W" and e[2] == "MCR"]
+        assert mcr == [0x03], (name, init)
+        assert (
+            _summary(lines, "init:")
+            == "init: returns 0 (ok); mcr 0x03, loop_held 0, fcr_shadow 0x81"
+        )
+        _held_exit(lines, "init:")
+
+
+def test_the_release_reads_the_looped_character_out_in_16450_mode():
+    """In 16450 mode there is no FIFO to reset: the held self-test touches FCR nowhere -- its polls
+    after the pattern are the waits for DR and TEMT and the one check for a looped character, all
+    with TEMT clear -- and the release, once TEMT comes, reads the looped character (0x55) out of RBR,
+    then writes back MCR 0x03 and reads MSR. The line has carried nothing since the test began, and
+    TX of "ok" reaches it, a byte per THRE."""
+    if not (_TRACE_CC and _tree()):
+        return
+    budget = _spin_budget()
+    for name in um.PLACEMENTS:
+        off = {reg: _off(name, reg) for reg in um.REGS}
+        for verdict in _NO_FIFO:
+            phase = f"fifo_ok {verdict} {_HELD}the release ends it"
+            lines = _phases(_transcript(name))[phase]
+            _held_entry(lines, off, 2 * budget + 1, fifo=False)
+            assert not [e for e in _trace(lines) if e[2] == "FCR"], (name, verdict)
+            release = _trace(_between(lines, "release, the transmitter still stalled:", "release:"))
+            assert [e[:3] for e in release] == [
+                ("R", off["LSR"], "LSR"), ("R", off["LSR"], "LSR"), ("R", off["RBR"], "RBR"),
+                ("W", off["MCR"], "MCR"), ("R", off["MSR"], "MSR"),
+            ], (name, verdict, release)  # fmt: skip
+            assert release[0][3] & 0x41 == 0x41 and release[2][3] == 0x55 and release[3][3] == 0x03
+            assert _summary(lines, "release:") == (
+                "release: returns 0 (ok); mcr 0x03, loop_held 0, fcr_shadow 0x00"
+            )
+            _held_exit(lines, "release:")
+
+
 def test_selftest_passes_at_every_word_length():
     """The self-test's patterns are 0x55 and 0xAA at the word length init programmed: LCR[1:0] set the
     number of bits in each character (PC16550D p.18), so at 5, 6 and 7 bits a full 8-bit pattern cannot
@@ -1449,7 +1593,8 @@ def _fed_by_device(lf, rid: int) -> bool:
 
 def test_the_driver_never_reads_fcr_back():
     """Hazard H-E, on the claim graph of every placement: each store to the FCR shadow (uart_state's
-    first member) takes a value no device read feeds -- probe, init and the self-test each make one --
+    first member) takes a value no device read feeds -- probe, init, the self-test and the release
+    each make one --
     and the unit's only reads at the FCR/IIR slot are the two IIR reads section 3.1 and section 1.4
     step 8 call for. On the bus, on every placement, each shadow the transcript reports is the value
     last written to FCR less FCR[2:1], the FIFO resets, which clear themselves when written (PC16550D
@@ -1478,6 +1623,7 @@ def test_the_driver_never_reads_fcr_back():
                 slot2[fn] = len(reads)
         assert stores == {
             "uart_probe": [False], "uart_init": [False], "uart_selftest": [False],
+            "uart_selftest_release": [False],
         }, (name, stores)  # fmt: skip
         assert slot2 == {"uart_probe": 1, "uart_init": 1}, (name, slot2)
     if not _TRACE_CC:
@@ -1496,11 +1642,13 @@ def test_the_driver_never_reads_fcr_back():
         # ... so none carries the resets
         assert not [s for _w, s in reported if s & _FCR_RESETS], (name, reported)
         # the probe (it leaves the FIFOs off), init, the self-test, the one after TX and the stuck one;
-        # each 16450-mode run's probe, init and self-test; init again before the TX timeout, the
-        # self-test's timeout; then the stalled self-test (busy before it touched FCR) and the init that
-        # found the line busy (each state as it was)
+        # each 16450-mode run's probe, init, self-test and the release that ends its held loopback;
+        # init again before the TX timeout, the self-test's timeout; then the stalled self-test (busy
+        # before it touched FCR) and the init that found the line busy (each state as it was); last,
+        # the release and the init that end the FIFO-mode held loopbacks
         timeouts = [0x81, 0x81, 0x81, 0x81]
-        want = [0x00, 0x81, 0x81, 0x81, 0x81] + [0x00, 0x00, 0x00] * len(_NO_FIFO) + timeouts
+        held = [0x81, 0x81]
+        want = [0x00, 0x81, 0x81, 0x81, 0x81] + [0x00] * 4 * len(_NO_FIFO) + timeouts + held
         assert [s for _w, s in reported] == want, (name, reported)
 
 

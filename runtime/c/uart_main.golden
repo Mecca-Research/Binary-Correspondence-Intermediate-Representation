@@ -608,7 +608,41 @@ tx: returns 0 (ok); 40 of 40 bytes sent under a stale plan burst cap of 16; tx o
 -- fifo_ok 0 flush (t=260)
   R 0x1014 LSR 0x60
 flush: 0 busy polls; the line carried 40 bytes "16450 mode: a byte per THRE, none lost\r\n", the buffer
--- fifo_ok 1 probe: the sim answers as a 16550A; the run forces the verdict after it (t=261)
+-- fifo_ok 0 selftest held: a pattern stuck in the shift register; the release ends it (t=261)
+  R 0x1014 LSR 0x60
+  R 0x1010 MCR 0x03
+  R 0x1014 LSR 0x60
+  W 0x1010 MCR 0x1a
+  R 0x1018 MSR 0x99
+  W 0x1010 MCR 0x15
+  R 0x1018 MSR 0x6b
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x55
+  R 0x1014 LSR 0x20 x131073
+selftest: returns 10 (the loopback is held); mcr 0x15 after it, loop_held 1, mcr_saved 0x03
+  device: 1 character in the shift register, 0 in the TX FIFO
+tx(a held loopback): returns 10 (the loopback is held), 0 bytes sent, the device untouched
+selftest(a held loopback): returns 10 (the loopback is held), the device untouched
+flush(a held loopback): returns 10 (the loopback is held), 0 busy polls, the device untouched
+drain(a held loopback): 0 bytes, the device untouched
+  R 0x1014 LSR 0x20 x65536
+release, the transmitter still stalled: returns 10 (the loopback is held); mcr 0x15, loop_held 1
+  R 0x1014 LSR 0x61
+  R 0x1014 LSR 0x61
+  R 0x1000 RBR 0x55
+  W 0x1010 MCR 0x03
+  R 0x1018 MSR 0x06
+release: returns 0 (ok); mcr 0x03, loop_held 0, fcr_shadow 0x00
+  device: the line carried 0 bytes since the self-test; the receiver holds 0
+release(no held loopback): returns 0 (ok), the device untouched
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x6f
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x6b
+tx: returns 0 (ok); 2 of 2 bytes sent under the state's burst cap of 16; tx overflows 0
+  R 0x1014 LSR 0x60
+flush: 0 busy polls; the line carried 2 bytes "ok", the buffer
+-- fifo_ok 1 probe: the sim answers as a 16550A; the run forces the verdict after it (t=196878)
   W 0x1008 FCR 0xc1
   R 0x1008 IIR 0xc1
   W 0x1008 FCR 0x00
@@ -618,7 +652,7 @@ flush: 0 busy polls; the line carried 40 bytes "16450 mode: a byte per THRE, non
   R 0x101c SCR 0x5a
 probe: returns 2; fifo_ok forced to 1 (16550 with a broken FIFO), scr_ok 1, fcr_shadow 0x00
   device: fifos off, iir 0x01
--- fifo_ok 1 init (t=261)
+-- fifo_ok 1 init (t=196878)
   R 0x1014 LSR 0x60
   W 0x100c LCR 0x9f
   W 0x1000 DLL 0x6f
@@ -628,12 +662,12 @@ probe: returns 2; fifo_ok forced to 1 (16550 with a broken FIFO), scr_ok 1, fcr_
   W 0x1010 MCR 0x03
   W 0x1004 IER 0x00
   R 0x1014 LSR 0x60
-  R 0x1000 RBR 0xaa
+  R 0x1000 RBR 0x55
   R 0x1008 IIR 0x01
   R 0x1018 MSR 0x00
 init: returns 0 (ok); trigger 1 bytes, fcr_shadow 0x00, tx_burst 1
   device: fifos off, iir 0x01
--- fifo_ok 1 selftest (t=263)
+-- fifo_ok 1 selftest (t=196880)
   R 0x1014 LSR 0x60
   R 0x1010 MCR 0x03
   R 0x1014 LSR 0x60
@@ -654,7 +688,7 @@ init: returns 0 (ok); trigger 1 bytes, fcr_shadow 0x00, tx_burst 1
   W 0x1010 MCR 0x03
   R 0x1018 MSR 0x06
 selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow 0x00
--- fifo_ok 1 tx (t=271)
+-- fifo_ok 1 tx (t=196888)
   R 0x1014 LSR 0x60
   W 0x1000 THR 0x31
   R 0x1014 LSR 0x60
@@ -736,10 +770,44 @@ selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow 0x00
   R 0x1014 LSR 0x60
   W 0x1000 THR 0x0a
 tx: returns 0 (ok); 40 of 40 bytes sent under a stale plan burst cap of 16; tx overflows 0
--- fifo_ok 1 flush (t=311)
+-- fifo_ok 1 flush (t=196928)
   R 0x1014 LSR 0x60
 flush: 0 busy polls; the line carried 40 bytes "16450 mode: a byte per THRE, none lost\r\n", the buffer
--- tx timeout: a transmitter that never drains (t=312)
+-- fifo_ok 1 selftest held: a pattern stuck in the shift register; the release ends it (t=196929)
+  R 0x1014 LSR 0x60
+  R 0x1010 MCR 0x03
+  R 0x1014 LSR 0x60
+  W 0x1010 MCR 0x1a
+  R 0x1018 MSR 0x99
+  W 0x1010 MCR 0x15
+  R 0x1018 MSR 0x6b
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x55
+  R 0x1014 LSR 0x20 x131073
+selftest: returns 10 (the loopback is held); mcr 0x15 after it, loop_held 1, mcr_saved 0x03
+  device: 1 character in the shift register, 0 in the TX FIFO
+tx(a held loopback): returns 10 (the loopback is held), 0 bytes sent, the device untouched
+selftest(a held loopback): returns 10 (the loopback is held), the device untouched
+flush(a held loopback): returns 10 (the loopback is held), 0 busy polls, the device untouched
+drain(a held loopback): 0 bytes, the device untouched
+  R 0x1014 LSR 0x20 x65536
+release, the transmitter still stalled: returns 10 (the loopback is held); mcr 0x15, loop_held 1
+  R 0x1014 LSR 0x61
+  R 0x1014 LSR 0x61
+  R 0x1000 RBR 0x55
+  W 0x1010 MCR 0x03
+  R 0x1018 MSR 0x06
+release: returns 0 (ok); mcr 0x03, loop_held 0, fcr_shadow 0x00
+  device: the line carried 0 bytes since the self-test; the receiver holds 0
+release(no held loopback): returns 0 (ok), the device untouched
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x6f
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x6b
+tx: returns 0 (ok); 2 of 2 bytes sent under the state's burst cap of 16; tx overflows 0
+  R 0x1014 LSR 0x60
+flush: 0 busy polls; the line carried 2 bytes "ok", the buffer
+-- tx timeout: a transmitter that never drains (t=393546)
   R 0x1014 LSR 0x60
   W 0x100c LCR 0x9f
   W 0x1000 DLL 0x6f
@@ -749,7 +817,7 @@ flush: 0 busy polls; the line carried 40 bytes "16450 mode: a byte per THRE, non
   W 0x1010 MCR 0x03
   W 0x1004 IER 0x00
   R 0x1014 LSR 0x60
-  R 0x1000 RBR 0xaa
+  R 0x1000 RBR 0x55
   R 0x1008 IIR 0xc1
   R 0x1018 MSR 0x00
 init: returns 0 (ok); fcr_shadow 0x81, tx_burst 16
@@ -790,7 +858,7 @@ tx: returns 7 (timed out); 16 of 52 bytes sent under init's burst cap of 16; tx 
   R 0x1014 LSR 0x20
   R 0x1014 LSR 0x60
 flush: 15 busy polls; the line carried 16 bytes "U2: the polled 1", the buffer
--- selftest timeout: a loopback that delivers nothing (t=65867)
+-- selftest timeout: a loopback that delivers nothing (t=459101)
   R 0x1014 LSR 0x60
   R 0x1010 MCR 0x03
   R 0x1014 LSR 0x60
@@ -806,7 +874,7 @@ flush: 15 busy polls; the line carried 16 bytes "U2: the polled 1", the buffer
   R 0x1018 MSR 0x06
 selftest: returns 7 (timed out); mcr 0x03 after it, fcr_shadow 0x81
   device: the loopback kept 1 characters from the receiver
--- selftest stalled: a transmitter that never drains, under the self-test (t=131407)
+-- selftest stalled: a transmitter that never drains, under the self-test (t=524641)
   R 0x1014 LSR 0x60
   W 0x1000 THR 0x3c
   W 0x1000 THR 0x3e
@@ -821,14 +889,14 @@ flush: 1 busy polls; the line carried 2 bytes "<>", the buffer
   R 0x1000 RBR 0x47
   R 0x1014 LSR 0xe0
 drain: 1 bytes "G"; OE 0 PE 0 FE 1 BI 0; lsr_saved 0x00 after it
--- init busy: a transmitter that never goes idle (t=196948)
+-- init busy: a transmitter that never goes idle (t=590182)
   R 0x1014 LSR 0x60
   W 0x1000 THR 0x3c
 tx: returns 0 (ok); 1 of 1 bytes sent under init's burst cap of 16; tx overflows 0
   R 0x1014 LSR 0xa5
   R 0x1014 LSR 0xa1 x65535
 init: returns 1 (busy); fcr_shadow 0x81, tx_burst 16
--- flush busy: the transmitter still never goes idle (t=262485)
+-- flush busy: the transmitter still never goes idle (t=655719)
   R 0x1014 LSR 0xa1 x65536
 stalled flush: returns 1 (busy); 65536 busy polls
   R 0x1014 LSR 0xe1
@@ -837,7 +905,81 @@ flush: 0 busy polls; the line carried 1 bytes "<", the buffer
   R 0x1000 RBR 0x49
   R 0x1014 LSR 0xe0
 drain: 1 bytes "I"; OE 0 PE 1 FE 0 BI 0; lsr_saved 0x00 after it
--- end (t=328024)
+-- selftest held: a pattern stuck in the shift register; the release ends the loopback (t=721258)
+  R 0x1014 LSR 0x60
+  R 0x1010 MCR 0x03
+  R 0x1014 LSR 0x60
+  W 0x1010 MCR 0x1a
+  R 0x1018 MSR 0x99
+  W 0x1010 MCR 0x15
+  R 0x1018 MSR 0x6b
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x55
+  R 0x1014 LSR 0x20 x131072
+  W 0x1008 FCR 0x87
+selftest: returns 10 (the loopback is held); mcr 0x15 after it, loop_held 1, mcr_saved 0x03
+  device: 1 character in the shift register, 0 in the TX FIFO
+tx(a held loopback): returns 10 (the loopback is held), 0 bytes sent, the device untouched
+selftest(a held loopback): returns 10 (the loopback is held), the device untouched
+flush(a held loopback): returns 10 (the loopback is held), 0 busy polls, the device untouched
+drain(a held loopback): 0 bytes, the device untouched
+  R 0x1014 LSR 0x20 x65536
+release, the transmitter still stalled: returns 10 (the loopback is held); mcr 0x15, loop_held 1
+  R 0x1014 LSR 0x61
+  W 0x1008 FCR 0x87
+  W 0x1010 MCR 0x03
+  R 0x1018 MSR 0x06
+release: returns 0 (ok); mcr 0x03, loop_held 0, fcr_shadow 0x81
+  device: the line carried 0 bytes since the self-test; the receiver holds 0
+release(no held loopback): returns 0 (ok), the device untouched
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x6f
+  W 0x1000 THR 0x6b
+tx: returns 0 (ok); 2 of 2 bytes sent under the state's burst cap of 16; tx overflows 0
+  R 0x1014 LSR 0x20
+  R 0x1014 LSR 0x60
+flush: 1 busy polls; the line carried 2 bytes "ok", the buffer
+-- selftest held: a pattern stuck in the shift register; init ends the loopback (t=917873)
+  R 0x1014 LSR 0x60
+  R 0x1010 MCR 0x03
+  R 0x1014 LSR 0x60
+  W 0x1010 MCR 0x1a
+  R 0x1018 MSR 0x99
+  W 0x1010 MCR 0x15
+  R 0x1018 MSR 0x6b
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x55
+  R 0x1014 LSR 0x20 x131072
+  W 0x1008 FCR 0x87
+selftest: returns 10 (the loopback is held); mcr 0x15 after it, loop_held 1, mcr_saved 0x03
+  device: 1 character in the shift register, 0 in the TX FIFO
+tx(a held loopback): returns 10 (the loopback is held), 0 bytes sent, the device untouched
+selftest(a held loopback): returns 10 (the loopback is held), the device untouched
+flush(a held loopback): returns 10 (the loopback is held), 0 busy polls, the device untouched
+drain(a held loopback): 0 bytes, the device untouched
+  R 0x1014 LSR 0x61
+  W 0x100c LCR 0x9f
+  W 0x1000 DLL 0x6f
+  W 0x1004 DLM 0x00
+  W 0x100c LCR 0x1f
+  W 0x1008 FCR 0x87
+  W 0x1010 MCR 0x03
+  W 0x1004 IER 0x00
+  R 0x1014 LSR 0x60
+  R 0x1000 RBR 0x49
+  R 0x1008 IIR 0xc1
+  R 0x1018 MSR 0x06
+init: returns 0 (ok); mcr 0x03, loop_held 0, fcr_shadow 0x81
+  device: the line carried 0 bytes since the self-test; the receiver holds 0
+release(no held loopback): returns 0 (ok), the device untouched
+  R 0x1014 LSR 0x60
+  W 0x1000 THR 0x6f
+  W 0x1000 THR 0x6b
+tx: returns 0 (ok); 2 of 2 bytes sent under the state's burst cap of 16; tx overflows 0
+  R 0x1014 LSR 0x20
+  R 0x1014 LSR 0x60
+flush: 1 busy polls; the line carried 2 bytes "ok", the buffer
+-- end (t=1048953)
 lsr 0x60; device: tx overflows 0, rx overruns 1, rx dropped 0, bus errors 0, ignored writes 0, line lost 0
-bus: 328398 register accesses (328124 reads, 274 writes), 0 misfits, 0 not traced
+bus: 1049380 register accesses (1049073 reads, 307 writes), 0 misfits, 0 not traced
 verdict: probe 16550A, init ok, selftest ok, tx 52/52 on the line, rx 36 bytes with OE 1 PE 3 FE 2 BI 0

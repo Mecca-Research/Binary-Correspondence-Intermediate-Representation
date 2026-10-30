@@ -707,7 +707,10 @@ or could not be met as written:
   register but DLL, DLM and LCR, an access whose offset the claim graph cannot fix as
   `unidentified register access inside a DLAB=1 bracket`, and an LCR store whose bit 7 it cannot
   decide as `LCR store with an undecidable DLAB bit`. Straight-line means no branch, loop, switch,
-  call, jump, label or return inside a bracket, and none left open at the function's end.
+  call, jump, label or return inside a bracket, and none left open at the function's end. An offset
+  is fixed only through a pointer with one value -- a parameter the body never writes (the device
+  base), or a pointer defined once; a local assigned more than once, or a parameter the body writes,
+  has none, nor has anything derived from it (U2's notes: the review's second round).
 - *Law 2.* The rate bound reads the target the unit declares as `uart_target_baud`; the slice names
   no source for it.
 - *Law 3.* It fires when bit 0 is provably clear and the write asks for anything else: FCR = 0, the
@@ -775,7 +778,11 @@ law-gated. This is the first *running* BCIR-compiled driver.
   uint32_t uart_selftest(volatile uart_regs_t *u, uart_state *st);
       /* MCR4 loopback: pattern out, pattern back, MSR mirror check (SS1.7), at the
          word length init programmed; entered and left only with the transmitter
-         idle (TEMT). (The receiver drained first, bounded: U2's notes.)              */
+         idle (TEMT), the loopback held (UART_ERR_LOOP_HELD) when TEMT never comes
+         after a pattern. (The receiver drained first, bounded: U2's notes.)          */
+  uint32_t uart_selftest_release(volatile uart_regs_t *u, uart_state *st);
+      /* ends a loopback the self-test held, once TEMT shows the shift register has
+         looped its character back; uart_init ends it too (U2's notes).               */
   ```
 - `runtime/c/sim16550.c` + `sim16550.h` — the simulated device (host-side, deterministic):
   a `sim16550` struct holding the two 16-deep FIFOs (RX bytes carry 3 error bits), shift-register
@@ -846,7 +853,8 @@ harness `uart_main` (built by BCIR Make and CMake with the gate's flags, untrace
   byte-wide PC16550D, `uint32_t` on the cores' 4-byte lanes), with `UART_LANE(off)`, the IIR source
   codes (`UART_IIR_*`) and the placement's capabilities (`UART_CAP_*`), so neither the driver nor the
   sim restates a fact the registry holds; register R is the lane `u[UART_LANE(UART_R_OFF)]`.
-- *The API* is `runtime/c/uart_driver.h`: `uart_state`, the status codes and the six prototypes,
+- *The API* is `runtime/c/uart_driver.h`: `uart_state`, the status codes and the seven prototypes
+  (`uart_selftest_release` since the review's second round),
   included by the driver, the harness and the twin's build. It includes the generated
   `uart16550_regs.h`, which stays the driver's only device header. `uart_state` gains `scr_ok`, the
   probe's scratch verdict (section 3.1 tells a 16450 from an 8250 by SCR).
@@ -939,7 +947,8 @@ harness `uart_main` (built by BCIR Make and CMake with the gate's flags, untrace
   `uint32_t *nsent` for the bytes sent and returns `UART_OK`, `UART_ERR_TIMEOUT` (a wait for THRE
   gave up, `*nsent` < `len`) or `UART_ERR_NOT_READY`.
 - *The timeouts.* Every wait the driver makes — init's for TEMT, TX's for THRE, the flush's for
-  TEMT, the self-test's for TEMT (before and after its loopback), for THRE and for DR — gives up after
+  TEMT, the self-test's for TEMT (before and after its loopback), for THRE and for DR, the release's
+  for TEMT — gives up after
   exactly `UART_SPIN_BUDGET` polls that find the device not ready, one bound for all of them, so `uart_flush` takes no budget of its own and
   returns a status (`UART_OK`, or `UART_ERR_BUSY` when it gave up) with the busy polls in `*nbusy`.
   The transcript drives each wait to its bound with the sim's fault knobs (`sim16550.h`), which model
@@ -989,11 +998,37 @@ harness `uart_main` (built by BCIR Make and CMake with the gate's flags, untrace
     now waits for TEMT before it enters the loopback (`UART_ERR_BUSY` with the device as it was when
     that wait gives up) and again before it leaves, resets the FIFOs while still in it, so a pattern
     the transmitter holds is dropped rather than sent, and in 16450 mode reads out a looped character
-    RBR may still hold. One case remains, stated: a character the shift register never finishes
-    (TEMT never comes) cannot be taken back, and after `UART_ERR_BUSY` it may reach the line once the
-    loopback is left. Witnesses: `test_selftest_enters_the_loopback_only_with_the_transmitter_idle`
+    RBR may still hold. The case this left -- a character the shift register never finishes --
+    the review's second round closed (below). Witnesses: `test_selftest_enters_the_loopback_only_with_the_transmitter_idle`
     (the "ABC" case and the stalled transmitter; UD26, UD34), and the loopback's bus order in
     `test_selftest_passes_in_loopback` (UD35, UD36, UD41).
+- *The review's second round (2026-10-30, on #823; both findings reproduced, fixed and pinned).*
+  - *The self-test left its loopback with a character in the shift register.* With the transmitter
+    stalled after a pattern was written, the test's waits for DR and for TEMT both gave up, and it
+    restored MCR anyway. A FIFO reset does not clear the shift register (PC16550D p.22), so once the
+    stall ended the pattern went out on SOUT: status 7, then 0x55 on the line. The test now holds the
+    loopback instead: it keeps the MCR it found (`uart_state.mcr_saved`), sets `loop_held` and returns
+    `UART_ERR_LOOP_HELD`, whatever failed first. While the loopback is held, `uart_tx`, `uart_flush`
+    and `uart_selftest` refuse the state and `uart_rx_drain` takes nothing, each before it touches the
+    device: a TX would loop its bytes back, a flush's TEMT would describe the loopback, a drain would
+    return the test's own characters, and a second self-test would keep the loopback's MCR as the one
+    to restore. The API's seventh function, `uart_selftest_release`, ends the loopback once TEMT shows
+    the character has looped back. It resets the FIFOs in FIFO mode, or reads the looped character
+    out of RBR in 16450 mode, then restores MCR and reads MSR; it returns `UART_ERR_LOOP_HELD`, the
+    loopback still held, when TEMT does not come within the budget, and `UART_OK` at once, the device
+    untouched, when nothing is held. `uart_init` ends it too, since its wait for TEMT comes first.
+    Witnesses: `test_selftest_holds_the_loopback_while_the_shift_register_is_busy`,
+    `test_init_ends_a_held_loopback`, `test_the_release_reads_the_looped_character_out_in_16450_mode`
+    (UD42-UD55).
+  - *The law read an unresolved pointer as the device base* (U1's law 1). A local pointer assigned
+    twice has no one definition, and the offset resolver took it for a fresh base at offset 0: `p =
+    u`, then `p = u + UART_LSR_OFF` and `*p` inside an open DLAB bracket was read as DLL and drew
+    nothing. A pointer with no one definition -- a local written more than once, or a parameter the
+    body writes, whose value at entry counts as a definition -- now has no offset, nor has anything
+    derived from it, so an access through it inside a bracket is `unidentified register access inside
+    a DLAB=1 bracket`. The resolver does not follow values along paths, and the module's scope says
+    so; outside a bracket an unidentified access stays unpoliced, as before. Witness:
+    `test_a_pointer_with_no_one_definition_has_no_offset` (UL31-UL35).
 - *Buffers and headroom.* The review's buffer-ownership law (section 12: AVAILABLE → RESERVED →
   DEVICE_OWNED → COMPLETING → RETIRED, DEVICE_OWNED(B) ⇒ no reuse of B) holds trivially: the
   driver is synchronous, so a buffer is the caller's again when the call returns. The

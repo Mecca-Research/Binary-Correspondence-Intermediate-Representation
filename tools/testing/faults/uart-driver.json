@@ -34,6 +34,9 @@
     "bcir.tests.test_uart_driver:test_tx_gives_up_when_thre_never_comes",
     "bcir.tests.test_uart_driver:test_selftest_gives_up_when_the_loopback_delivers_nothing",
     "bcir.tests.test_uart_driver:test_selftest_enters_the_loopback_only_with_the_transmitter_idle",
+    "bcir.tests.test_uart_driver:test_selftest_holds_the_loopback_while_the_shift_register_is_busy",
+    "bcir.tests.test_uart_driver:test_init_ends_a_held_loopback",
+    "bcir.tests.test_uart_driver:test_the_release_reads_the_looped_character_out_in_16450_mode",
     "bcir.tests.test_uart_driver:test_selftest_passes_at_every_word_length",
     "bcir.tests.test_uart_driver:test_init_gives_up_when_the_line_never_goes_idle",
     "bcir.tests.test_uart_driver:test_flush_gives_up_when_the_line_never_goes_idle",
@@ -165,8 +168,8 @@
     {
       "expects": "test_the_driver_never_reads_fcr_back",
       "label": "UD4 FCR read back: the self-test resets the FIFOs from a slot-2 read (H-E)",
-      "new": "        fcr = u[UART_LANE(UART_FCR_OFF)] | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;",
-      "old": "        fcr = st->fcr_shadow | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;",
+      "new": "        /* still in the loopback: a pattern the transmitter holds is dropped, not sent */\n        fcr = u[UART_LANE(UART_FCR_OFF)] | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;",
+      "old": "        /* still in the loopback: a pattern the transmitter holds is dropped, not sent */\n        fcr = st->fcr_shadow | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;",
       "path": "runtime/c/uart_driver.c"
     },
     {
@@ -207,8 +210,8 @@
     {
       "expects": "test_driver_compiles_clean_on_both_rails_with_contracts",
       "label": "UD10 the self-test's FIFO reset without FIFO enable (H-C: it programs nothing on a gated part)",
-      "new": "        fcr = UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;",
-      "old": "        fcr = st->fcr_shadow | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;",
+      "new": "        /* still in the loopback: a pattern the transmitter holds is dropped, not sent */\n        fcr = UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;",
+      "old": "        /* still in the loopback: a pattern the transmitter holds is dropped, not sent */\n        fcr = st->fcr_shadow | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;",
       "path": "runtime/c/uart_driver.c"
     },
     {
@@ -235,8 +238,8 @@
     {
       "expects": "test_the_driver_never_reads_fcr_back",
       "label": "UD14 the FCR shadow keeps the self-clearing FIFO resets: the self-test stores the value it wrote (H-E)",
-      "new": "        st->fcr_shadow = fcr;",
-      "old": "        st->fcr_shadow = fcr & ~(UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK);",
+      "new": "        st->fcr_shadow = fcr;\n    } else if (looped != 0u",
+      "old": "        st->fcr_shadow = fcr & ~(UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK);\n    } else if (looped != 0u",
       "path": "runtime/c/uart_driver.c"
     },
     {
@@ -284,8 +287,8 @@
     {
       "expects": "test_tx_refuses_a_state_without_a_burst_cap",
       "label": "UD21 TX on a state no init filled: a cap of 0 read as the FIFO depth again",
-      "new": "    if (cap == 0u || cap > UART_CAP_FIFO_DEPTH) {",
-      "old": "    if (cap == 0u) {\n        return UART_ERR_NOT_READY;\n    }\n    if (cap > UART_CAP_FIFO_DEPTH) {",
+      "new": "    if (st->loop_held != 0u) {\n        return UART_ERR_LOOP_HELD;\n    }\n    if (cap == 0u || cap > UART_CAP_FIFO_DEPTH) {",
+      "old": "    if (cap == 0u) {\n        return UART_ERR_NOT_READY;\n    }\n    if (st->loop_held != 0u) {\n        return UART_ERR_LOOP_HELD;\n    }\n    if (cap > UART_CAP_FIFO_DEPTH) {",
       "path": "runtime/c/uart_driver.c"
     },
     {
@@ -383,7 +386,7 @@
       "expects": "test_selftest_passes_in_loopback",
       "label": "UD35 the self-test leaves the loopback without waiting for TEMT: a pattern still in the transmitter goes out on SOUT",
       "new": "",
-      "old": "    if (looped != 0u) {\n        /* out of the loopback only with the transmitter idle: what the test wrote is looped, not sent */\n        spins = 0u;\n        while (spins < UART_SPIN_BUDGET && (u[UART_LANE(UART_LSR_OFF)] & UART_LSR_TEMT_MASK) == 0u) {\n            spins = spins + 1u;\n        }\n        if (spins == UART_SPIN_BUDGET && verdict == UART_OK) {\n            verdict = UART_ERR_BUSY;\n        }\n    }\n",
+      "old": "    if (looped != 0u) {\n        /* out of the loopback only with the transmitter idle: what the test wrote is looped, not sent */\n        spins = 0u;\n        while (spins < UART_SPIN_BUDGET && (u[UART_LANE(UART_LSR_OFF)] & UART_LSR_TEMT_MASK) == 0u) {\n            spins = spins + 1u;\n        }\n        if (spins == UART_SPIN_BUDGET) {\n            held = 1u; /* the shift register still holds a character: SOUT would carry it */\n        }\n    }\n",
       "path": "runtime/c/uart_driver.c"
     },
     {
@@ -448,6 +451,104 @@
       "new": "rx 36 bytes with OE 0 PE 3 FE 2 BI 0",
       "old": "rx 36 bytes with OE 1 PE 3 FE 2 BI 0",
       "path": "runtime/c/uart_main.golden"
+    },
+    {
+      "expects": "test_selftest_holds_the_loopback_while_the_shift_register_is_busy",
+      "label": "UD42 the self-test leaves a held loopback anyway: MCR restored with a pattern in the shift register, which SOUT then carries (the review's case)",
+      "new": "            held = 0u; /* the shift register still holds a character: SOUT would carry it */",
+      "old": "            held = 1u; /* the shift register still holds a character: SOUT would carry it */",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_holds_the_loopback_while_the_shift_register_is_busy",
+      "label": "UD43 TX on a held loopback: the bytes go to the receiver, never to SOUT",
+      "new": "    if (cap > UART_CAP_FIFO_DEPTH) {",
+      "old": "    if (st->loop_held != 0u) {\n        return UART_ERR_LOOP_HELD;\n    }\n    if (cap > UART_CAP_FIFO_DEPTH) {",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_holds_the_loopback_while_the_shift_register_is_busy",
+      "label": "UD44 the flush on a held loopback: it polls a transmitter whose TEMT says nothing of the line",
+      "new": "    *nbusy = 0u;\n",
+      "old": "    *nbusy = 0u;\n    if (st->loop_held != 0u) {\n        return UART_ERR_LOOP_HELD;\n    }\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_holds_the_loopback_while_the_shift_register_is_busy",
+      "label": "UD45 the drain on a held loopback: it reads a receiver that holds the test's own characters",
+      "new": "    while (n < cap) {",
+      "old": "    if (st->loop_held != 0u) {\n        return 0u;\n    }\n    while (n < cap) {",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_holds_the_loopback_while_the_shift_register_is_busy",
+      "label": "UD46 the self-test re-run on a held loopback: it would keep the loopback's MCR as the one to restore",
+      "new": "    mask = (1u << st->word_bits) - 1u;",
+      "old": "    if (st->loop_held != 0u) {\n        return UART_ERR_LOOP_HELD;\n    }\n    mask = (1u << st->word_bits) - 1u;",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_holds_the_loopback_while_the_shift_register_is_busy",
+      "label": "UD47 the self-test keeps no MCR to restore: the release writes back 0",
+      "new": "",
+      "old": "        st->mcr_saved = mcr; /* the loopback stays: uart_selftest_release or uart_init ends it */\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_holds_the_loopback_while_the_shift_register_is_busy",
+      "label": "UD48 the release leaves the loopback without waiting for TEMT: the stalled pattern goes out on SOUT",
+      "new": "",
+      "old": "    while ((u[UART_LANE(UART_LSR_OFF)] & UART_LSR_TEMT_MASK) == 0u) {\n        spins = spins + 1u;\n        if (spins == UART_SPIN_BUDGET) {\n            return UART_ERR_LOOP_HELD;\n        }\n    }\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_holds_the_loopback_while_the_shift_register_is_busy",
+      "label": "UD49 the release keeps the looped character: no FIFO reset in FIFO mode",
+      "new": "        st->fcr_shadow = fcr & ~(UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK);\n    } else if ((u[",
+      "old": "        u[UART_LANE(UART_FCR_OFF)] = fcr;\n        st->fcr_shadow = fcr & ~(UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK);\n    } else if ((u[",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_the_release_reads_the_looped_character_out_in_16450_mode",
+      "label": "UD50 the release keeps the looped character in RBR in 16450 mode",
+      "new": "",
+      "old": "        (void)u[UART_LANE(UART_RBR_OFF)]; /* 16450 mode: the looped character */\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_holds_the_loopback_while_the_shift_register_is_busy",
+      "label": "UD51 the release restores MCR with LOOP still set: TX after it never reaches SOUT",
+      "new": "    u[UART_LANE(UART_MCR_OFF)] = st->mcr_saved | UART_MCR_LOOP_MASK;\n",
+      "old": "    u[UART_LANE(UART_MCR_OFF)] = st->mcr_saved;\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_holds_the_loopback_while_the_shift_register_is_busy",
+      "label": "UD52 the release leaves loop_held set: TX stays refused after the loopback ended",
+      "new": "    return UART_OK;\n}",
+      "old": "    st->loop_held = 0u;\n    return UART_OK;\n}",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_holds_the_loopback_while_the_shift_register_is_busy",
+      "label": "UD53 a release with nothing held touches the device: it restores an MCR no test saved",
+      "new": "",
+      "old": "    if (st->loop_held == 0u) {\n        return UART_OK;\n    }\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_init_ends_a_held_loopback",
+      "label": "UD54 init leaves loop_held set: TX stays refused after init ended the loopback",
+      "new": "",
+      "old": "    st->loop_held = 0u; /* step 6 wrote MCR, after TEMT: a loopback the self-test held is over */\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_selftest_holds_the_loopback_while_the_shift_register_is_busy",
+      "label": "UD55 the release restores MCR without reading MSR: the deltas the loopback raised stay",
+      "new": "    u[UART_LANE(UART_MCR_OFF)] = st->mcr_saved;\n",
+      "old": "    u[UART_LANE(UART_MCR_OFF)] = st->mcr_saved;\n    (void)u[UART_LANE(UART_MSR_OFF)];\n",
+      "path": "runtime/c/uart_driver.c"
     }
   ]
 }

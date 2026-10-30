@@ -17,6 +17,7 @@
     "bcir.tests.test_uart_model:test_the_golden_headers_ship_in_the_wheel",
     "bcir.tests.test_uart_laws:test_the_canonical_driver_is_law_clean_on_every_placement",
     "bcir.tests.test_uart_laws:test_every_declared_access_idiom_resolves_its_register",
+    "bcir.tests.test_uart_laws:test_a_pointer_with_no_one_definition_has_no_offset",
     "bcir.tests.test_uart_laws:test_law1_only_dll_dlm_and_lcr_inside_a_dlab_bracket",
     "bcir.tests.test_uart_laws:test_law1_a_dlab_bracket_is_straight_line",
     "bcir.tests.test_uart_laws:test_law1_every_lcr_store_decides_dlab",
@@ -320,8 +321,8 @@
     {
       "expects": "test_every_declared_access_idiom_resolves_its_register",
       "label": "UL19 pointer arithmetic not scaled by the pointee size",
-      "new": "self.derived[out] = (root, off + step)",
-      "old": "self.derived[out] = (root, off + step * size)",
+      "new": "return (root, off + step)",
+      "old": "return (root, off + step * size)",
       "path": "bcir/frontends/devices/uart_laws.py"
     },
     {
@@ -399,6 +400,41 @@
       "label": "UL30 a call to the unit's own function taken as transparent",
       "new": "                return state",
       "old": "                return None if idle is None else replace(state, idle=idle)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_a_pointer_with_no_one_definition_has_no_offset",
+      "label": "UL31 a parameter's value at entry not a definition: a parameter the body writes read as written once",
+      "new": "        writers: dict[int, int] = {}",
+      "old": "        writers: dict[int, int] = {rid: 1 for _name, rid, _ct in lf.params}",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_a_pointer_with_no_one_definition_has_no_offset",
+      "label": "UL32 a pointer with no one definition read as a device base at offset 0 (the review's case)",
+      "new": "            else:\n                self.derived[rid] = (rid, 0)",
+      "old": "            elif rid in self.bases:\n                self.derived[rid] = (rid, 0)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_a_pointer_with_no_one_definition_has_no_offset",
+      "label": "UL33 an offset added to an unresolved pointer read from offset 0",
+      "new": "            if step is not None and size is not None:\n                return (root, (off or 0) + step * size)",
+      "old": "            if step is not None and size is not None and off is not None:\n                return (root, off + step * size)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_a_pointer_with_no_one_definition_has_no_offset",
+      "label": "UL34 a copy or cast read as a base of its own, not the pointer it copies",
+      "new": "            return (out, 0)",
+      "old": "            return self._root(claim.rd[0]) if claim.rd else (out, None)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_a_pointer_with_no_one_definition_has_no_offset",
+      "label": "UL35 no guard for a pointer derived from itself: the resolver never ends",
+      "new": "",
+      "old": "            self.derived[rid] = (rid, None)  # what a pointer derived from itself meets meanwhile\n",
       "path": "bcir/frontends/devices/uart_laws.py"
     }
   ]

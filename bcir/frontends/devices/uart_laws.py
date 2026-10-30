@@ -47,6 +47,10 @@ Declared scope (docs/security/laws.md L18), and what the law does not do:
   * offsets are read for `base[k]` with a constant index, a member or a dereference, a member array
     element `s.arr[k]`, and a base derived by `c.bin.add` of a constant, `c.copy` or a pointer cast;
     any other access is unidentified -- illegal inside a bracket, not policed outside one;
+  * a base is a pointer parameter the body never writes (the device base), or a pointer with one
+    definition that derives it from no other (a load, a call); a pointer with no one definition -- a
+    local written more than once, or a parameter the body writes, whose value at entry is a definition
+    too -- has no offset, nor has anything derived from it: values are not followed along paths;
   * a constant is a literal, or integer arithmetic (`+ - * / % & | ^ << >>`), copies and casts over
     literals, folded exactly in the result's width, through values written once; beyond that, known
     bits flow through `|`, `&`, copies and casts (`fmt | 0x80` has bit 7 set whatever `fmt` is);
@@ -133,10 +137,13 @@ class _Facts:
 
     def __init__(self, lf):
         self.lf = lf
-        writers: dict[int, int] = {}
+        # a parameter's value at entry is a definition the body's writes do not see: a parameter
+        # the body writes has two, and no one value here
+        writers: dict[int, int] = {rid: 1 for _name, rid, _ct in lf.params}
         for claim in lf.claims:
             for rid in claim.wr:
                 writers[rid] = writers.get(rid, 0) + 1
+        self.bases = {rid for _name, rid, _ct in lf.params if writers[rid] == 1}
         self.defs = {rid: claim for claim in lf.claims for rid in claim.wr if writers.get(rid) == 1}
         self.consts = {
             claim.wr[0]: claim.imm[0]
@@ -147,11 +154,11 @@ class _Facts:
             and writers.get(claim.wr[0]) == 1
         }
         self.derived: dict[int, tuple[int, int | None]] = {}
-        self.offsets: dict[int, int | None] = {}
-        for claim in lf.claims:
-            self._derive(claim)
-            if claim.op in ("c.load", "c.store") and claim.domain == Domain.MMIO:
-                self.offsets[claim.id] = self._offset(claim)
+        self.offsets: dict[int, int | None] = {
+            claim.id: self._offset(claim)
+            for claim in lf.claims
+            if claim.op in ("c.load", "c.store") and claim.domain == Domain.MMIO
+        }
 
     def _pointee(self, rid: int) -> int | None:
         ct = self.lf.rid_types.get(rid)
@@ -160,26 +167,36 @@ class _Facts:
         return max(1, ct.of.size)
 
     def _root(self, rid: int) -> tuple[int, int | None]:
-        return self.derived.get(rid, (rid, 0))
+        """(root, byte offset) of the pointer `rid`; the offset None when no one value fixes it. A
+        root is a parameter the body never writes -- the device base -- or a pointer with one
+        definition that derives it from no other (a load, a call, an integer cast). A pointer with
+        no one definition -- a local written more than once, a parameter the body writes -- is no
+        base at offset 0: its offset is unknown, and so is every offset derived from it."""
+        if rid not in self.derived:
+            self.derived[rid] = (rid, None)  # what a pointer derived from itself meets meanwhile
+            claim = self.defs.get(rid)
+            if claim is not None:
+                self.derived[rid] = self._derive(rid, claim)
+            elif rid in self.bases:
+                self.derived[rid] = (rid, 0)
+        return self.derived[rid]
 
-    def _derive(self, claim) -> None:
-        """A pointer the claim makes from another: `p + k`, a copy, a cast."""
-        if len(claim.wr) != 1 or self.defs.get(claim.wr[0]) is not claim:
-            return
-        out = claim.wr[0]
-        if self._pointee(out) is None:
-            return
+    def _derive(self, out: int, claim) -> tuple[int, int | None]:
+        """The pointer `out`, which `claim` alone writes: `p + k`, a copy or a cast of another,
+        else a root of its own."""
+        if self._pointee(out) is None or len(claim.wr) != 1:
+            return (out, 0)
         if claim.op == "c.copy" or claim.op.startswith("c.cast:"):
-            self.derived[out] = self._root(claim.rd[0]) if claim.rd else (out, None)
-        elif claim.op == "c.bin.add" and len(claim.rd) == 2:
+            return self._root(claim.rd[0]) if claim.rd else (out, None)
+        if claim.op == "c.bin.add" and len(claim.rd) == 2:
             base, k = claim.rd
             root, off = self._root(base)
             size = self._pointee(base)
             step = self.value(k)
             if step is not None and size is not None and off is not None:
-                self.derived[out] = (root, off + step * size)
-            else:
-                self.derived[out] = (root, None)
+                return (root, off + step * size)
+            return (root, None)
+        return (out, 0)
 
     def _offset(self, claim) -> int | None:
         load = claim.op == "c.load"

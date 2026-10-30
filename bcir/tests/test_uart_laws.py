@@ -182,6 +182,54 @@ typedef struct axi_array {
         )
 
 
+# A bracket whose one access is `@BODY@`, through pointers the resolver must or must not fix.
+_UNRESOLVED = r"""#include "uart16550_regs.h"
+uint32_t probe(volatile uint8_t *u, volatile uint8_t *w, uint32_t divisor)
+{
+    volatile uint8_t *p = @INIT@;
+    volatile uint8_t *s;
+    uint32_t v = 0u;
+    while ((u[UART_LSR_OFF] & UART_LSR_TEMT_MASK) == 0u) {
+    }
+    u[UART_LCR_OFF] = 0x03u | UART_LCR_DLAB_MASK;
+@BODY@    u[UART_DLL_OFF] = divisor & 0xffu;
+    u[UART_DLM_OFF] = (divisor >> 8) & 0xffu;
+    u[UART_LCR_OFF] = 0x03u;
+@AFTER@    return v;
+}
+"""
+
+
+def test_a_pointer_with_no_one_definition_has_no_offset():
+    """The review of #823 (round 2): a local pointer assigned twice has no one definition, and the
+    resolver read it as a fresh device base at offset 0 -- `p = u`, then `p = u + UART_LSR_OFF` and
+    `*p` inside an open DLAB bracket was read as DLL, and drew nothing. A pointer with no one value is
+    no base: its offset is unknown, so is every offset derived from it (`p + 1`, a copy), and an
+    access through any of them inside a bracket is unidentified. A parameter's value at entry is a
+    definition too, so a parameter the body writes has two, and the same holds; a parameter the body
+    never writes is the device base, and a pointer assigned once still resolves. A pointer derived
+    from itself has no value either, and the resolver ends on it. Outside a bracket an unidentified
+    access is not policed (the module's declared scope)."""
+    unidentified = "probe: R3-uart: unidentified register access inside a DLAB=1 bracket"
+    lsr = "probe: R3-uart: LSR access inside a DLAB=1 bracket"
+
+    def case(body, init="u", after=""):
+        source = _UNRESOLVED.replace("@INIT@", init).replace("@BODY@", body)
+        return _uart(source.replace("@AFTER@", after))
+
+    reassigned = "    p = u + UART_LSR_OFF;\n"
+    assert case(reassigned + "    v = *p;\n") == [unidentified]  # the review's case
+    assert case(reassigned + "    s = p + 1;\n    v = *s;\n") == [unidentified]
+    assert case(reassigned + "    s = p;\n    v = *s;\n") == [unidentified]
+    assert case("    v = *p;\n", init="u + UART_LSR_OFF") == [lsr]  # assigned once: resolved
+    assert case("    v = *p;\n") == []  # a copy of the base: DLL, which the bracket may read
+    assert case("    v = *w;\n") == []  # a parameter the body never writes: the base, DLL
+    assert case("    v = w[UART_LSR_OFF];\n") == [lsr]
+    assert case("    v = *w;\n    w = u + UART_LSR_OFF;\n    v = v + *w;\n") == [unidentified] * 2
+    assert case("    s = s + UART_LSR_OFF;\n    v = *s;\n") == [unidentified]  # derived from itself
+    assert case("", after=reassigned + "    v = *p;\n") == []  # outside the bracket: not policed
+
+
 def test_law1_a_dlab_bracket_is_straight_line():
     """A bracket is the straight-line run from an LCR store with bit 7 set to the next with it
     clear; a branch, a loop, a call or a return inside it -- or a bracket left open when the

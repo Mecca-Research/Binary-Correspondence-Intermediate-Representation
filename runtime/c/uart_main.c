@@ -46,7 +46,12 @@
  *                        against a loopback that delivers nothing, each giving up at the driver's bound
  *                        (their unchanging polls shown " xN" on one line); then, the transmitter stalled
  *                        again, the self-test's wait for TEMT (it never enters the loopback), init's
- *                        and the flush's, each giving up at the same bound
+ *                        and the flush's, each giving up at the same bound; last, the self-test over
+ *                        a transmitter that stalls with a pattern in its shift register: it holds its
+ *                        loopback, TX, the flush and the self-test refuse the state and the drain
+ *                        takes nothing, and uart_selftest_release -- then, again, uart_init -- ends it
+ *                        once the character has looped back (16450 mode too, in the forced runs), the
+ *                        line carrying none of the test's characters
  *   uart_main --script   the device alone, driven by commands on stdin (its spec-fidelity tests)
  *
  * Exit status: 0 the transcript or the script ran; 2 usage, a malformed script line, or a placement the
@@ -355,6 +360,9 @@ static const char *status_text(uint32_t status)
     if (status == UART_ERR_BUSY) {
         return "busy";
     }
+    if (status == UART_ERR_LOOP_HELD) {
+        return "the loopback is held";
+    }
     return "refused";
 }
 
@@ -457,6 +465,17 @@ static void word_length_selftest(volatile uart_regs_t *u, uart_state *st, uint32
            status_text(status), (unsigned)(5u + wls), (unsigned)dev.mcr);
 }
 
+/* The self-test against a transmitter that stalls with a pattern in its shift register: the waits for DR
+ * and, after them, for TEMT give up, and leaving the loopback would send the pattern on SOUT -- a FIFO
+ * reset does not clear the shift register (PC16550D p.22) -- so the test holds the loopback
+ * (UART_ERR_LOOP_HELD). TX, the flush and the self-test refuse the state, the drain takes nothing, and a
+ * release while the transmitter is still stalled keeps the loopback. Once the character has finished --
+ * in the loopback, into the receiver -- the loopback is ended, by uart_selftest_release or, with
+ * `by_init`, by uart_init: the line has carried none of the test's characters, a release with nothing
+ * held leaves the device alone, and a TX after it reaches the line again. */
+static void held_selftest(volatile uart_regs_t *u, uart_state *st, int by_init, uint32_t divisor,
+                          uint32_t format);
+
 /* uart_tx of a buffer under the cap the state holds: the trace, then its status, the bytes sent and the
  * TX overflows the device counted meanwhile. Returns the bytes sent. */
 static uint32_t tx_report(volatile uart_regs_t *u, uart_state *st, const uint8_t *message, uint32_t length,
@@ -508,13 +527,89 @@ static int flush_report(volatile uart_regs_t *u, uart_state *st, uint32_t from, 
     return line_ok;
 }
 
+static void held_selftest(volatile uart_regs_t *u, uart_state *st, int by_init, uint32_t divisor,
+                          uint32_t format)
+{
+    static const uint8_t after[] = "ok";
+    const uint32_t after_length = (uint32_t)(sizeof after - 1u);
+    uint8_t got[8];
+    uint32_t counts[4] = {0u, 0u, 0u, 0u};
+    uint32_t busy = 0xffffffffu; /* the driver must say 0 */
+    uint32_t from = dev.line_len;
+    uint32_t before;
+    uint32_t status;
+    uint32_t n;
+
+    sim_stall_tx(&dev, 1u);
+    collapsing = 1;
+    status = uart_selftest(u, st);
+    collapsing = 0;
+    bus_flush();
+    show_trace();
+    printf("selftest: returns %u (%s); mcr 0x%02x after it, loop_held %u, mcr_saved 0x%02x\n",
+           (unsigned)status, status_text(status), (unsigned)dev.mcr, (unsigned)st->loop_held,
+           (unsigned)st->mcr_saved);
+    printf("  device: %u character in the shift register, %u in the TX FIFO\n", (unsigned)dev.tsr_busy,
+           (unsigned)dev.tx_count);
+    tx_refusal(u, st, "a held loopback");
+    selftest_refusal(u, st, "a held loopback");
+    before = bus_reads + bus_writes + bus_misfits;
+    status = uart_flush(u, st, &busy);
+    bus_flush();
+    show_trace();
+    printf("flush(a held loopback): returns %u (%s), %u busy polls, %s\n", (unsigned)status,
+           status_text(status), (unsigned)busy,
+           bus_reads + bus_writes + bus_misfits == before ? "the device untouched" : "the device TOUCHED");
+    before = bus_reads + bus_writes + bus_misfits;
+    n = uart_rx_drain(u, st, got, (uint32_t)sizeof got, counts);
+    bus_flush();
+    show_trace();
+    printf("drain(a held loopback): %u bytes, %s\n", (unsigned)n,
+           bus_reads + bus_writes + bus_misfits == before ? "the device untouched" : "the device TOUCHED");
+    if (!by_init) {
+        collapsing = 1;
+        status = uart_selftest_release(u, st);
+        collapsing = 0;
+        bus_flush();
+        show_trace();
+        printf("release, the transmitter still stalled: returns %u (%s); mcr 0x%02x, loop_held %u\n",
+               (unsigned)status, status_text(status), (unsigned)dev.mcr, (unsigned)st->loop_held);
+    }
+    sim_stall_tx(&dev, 0u); /* the character finishes: in the loopback, into the receiver */
+    if (by_init) {
+        status = uart_init(u, st, divisor, format, UART_RX_TRIGGER_8);
+        bus_flush();
+        show_trace();
+        printf("init: returns %u (%s); mcr 0x%02x, loop_held %u, fcr_shadow 0x%02x\n", (unsigned)status,
+               status_text(status), (unsigned)dev.mcr, (unsigned)st->loop_held, (unsigned)st->fcr_shadow);
+    } else {
+        status = uart_selftest_release(u, st);
+        bus_flush();
+        show_trace();
+        printf("release: returns %u (%s); mcr 0x%02x, loop_held %u, fcr_shadow 0x%02x\n", (unsigned)status,
+               status_text(status), (unsigned)dev.mcr, (unsigned)st->loop_held, (unsigned)st->fcr_shadow);
+    }
+    printf("  device: the line carried %u bytes since the self-test; the receiver holds %u\n",
+           (unsigned)(dev.line_len - from), (unsigned)dev.rx_count);
+    before = bus_reads + bus_writes + bus_misfits;
+    status = uart_selftest_release(u, st);
+    bus_flush();
+    show_trace();
+    printf("release(no held loopback): returns %u (%s), %s\n", (unsigned)status, status_text(status),
+           bus_reads + bus_writes + bus_misfits == before ? "the device untouched" : "the device TOUCHED");
+    from = dev.line_len;
+    (void)tx_report(u, st, after, after_length, "the state's burst cap of");
+    (void)flush_report(u, st, from, after, after_length);
+}
+
 /* A part whose probe found no working FIFO (section 3.1): fifo_ok 0, none -- a 16450 or an 8250 -- or 1,
  * the original 16550's broken FIFO. The sim answers the probe as a 16550A, so this run forces the verdict
  * after the probe, in a state of its own; the probe has left the FIFOs off, and init must keep them off
  * -- 16450 mode, where THRE means the one-byte holding register is empty (PC16550D p.22). The self-test
  * must pass with no FIFO to reset, and TX is handed a stale plan cap -- the FIFO depth, the cap a plan
  * made for the FIFO leaves -- that the driver must clamp to one byte: the line must carry the buffer with
- * no TX overflow. */
+ * no TX overflow. Last, the self-test holds its loopback over a stalled transmitter, and
+ * uart_selftest_release ends it with no FIFO to reset: it reads the looped character out of RBR. */
 static void no_fifo_run(volatile uart_regs_t *u, uint32_t verdict, uint32_t divisor, uint32_t format)
 {
     static const uint8_t message[] = "16450 mode: a byte per THRE, none lost\r\n";
@@ -555,6 +650,9 @@ static void no_fifo_run(volatile uart_regs_t *u, uint32_t verdict, uint32_t divi
 
     no_fifo_phase(verdict, "flush");
     (void)flush_report(u, &st, from, message, length);
+
+    no_fifo_phase(verdict, "selftest held: a pattern stuck in the shift register; the release ends it");
+    held_selftest(u, &st, 0, divisor, format);
 }
 
 static uint32_t rx_drain(volatile uart_regs_t *u, uart_state *st, uint32_t totals[4])
@@ -837,6 +935,12 @@ static int transcript_main(void)
     sim_stall_tx(&dev, 0u); /* the character finishes: the line goes idle */
     (void)flush_report(u, &st, from, pair, 1u);
     received += rx_drain(u, &st, totals); /* the parity error init's polls saved */
+
+    phase("selftest held: a pattern stuck in the shift register; the release ends the loopback");
+    held_selftest(u, &st, 0, divisor, format);
+
+    phase("selftest held: a pattern stuck in the shift register; init ends the loopback");
+    held_selftest(u, &st, 1, divisor, format);
 
     phase("end");
     show_trace();
