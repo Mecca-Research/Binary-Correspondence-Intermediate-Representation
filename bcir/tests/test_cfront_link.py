@@ -1024,13 +1024,74 @@ _LINKABLE_ERRORS = (
     "-Werror=incompatible-pointer-types",
     "-Werror=return-type",
 )
-#: The fixtures whose artifact builds on neither rail, each with why -- an open defect both rails share, held as an
-#: exact set: a fix, or one more, changes it. The artifact defines each function with the emit's parameter types,
-#: which keep no qualifier below a parameter's top level, so a function used as a value meets a pointer whose type
-#: keeps the source's (`uint32_t (*)(const uint32_t *)` from `uint32_t (uint32_t *)`).
-_LINKABLE_OPEN = {
-    "cfront_quals_link.c": "a parameter qualified below its top level, in a function used as a value"
+#: The corpus's functions whose type the linkable artifact does not keep, each with why -- an open case both rails
+#: share, held as an exact set: a fix, or one more, changes it. A function whose type keeps a qualifier below a
+#: parameter's or the return's top level is defined through a wrapper of its emitted function (CF-PARMQUALS); a
+#: wrapper cannot pass a variadic function's `...` on, so such a function is defined with the emit's parameter
+#: types, `char *fmt` for `const char *fmt`. Its artifact builds; another unit declaring it as its source does
+#: declares another type (C11 6.2.7p2).
+_LINKABLE_VARIADIC_OPEN = {
+    ("cfront_extvariadic.c", "ev_fwd"): "a printf-style forwarder's `const char *fmt, ...`",
 }
+#: A wrapped function's definition in an artifact: its head, then `{`, the one call of its emitted function, `}`
+_WRAPPER = re.compile(
+    r"^((?:static )?[^\n;{}]*?\b(\w+)\([^\n;{}]*\))\n\{\n    (?:return )?(?:\([^\n]*?\))?bcir_\2\([^\n]*\);\n\}",
+    re.M,
+)
+
+
+def _split_params(s: str) -> list:
+    """A parameter list's parameters, split at the commas outside parentheses."""
+    out, depth, cur = [], 0, ""
+    for ch in s:
+        depth += (ch == "(") - (ch == ")")
+        if ch == "," and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return out + [cur] if cur else out
+
+
+#: C's scalar type names as the twin spells them on the host's data model (LP64): the oracle keeps C's, `unsigned
+#: int`, the twin the exact-width name, `uint32_t` -- the one type
+_SCALAR_NAMES = (
+    (r"\bunsigned\s+long\s+long(\s+int)?\b", "uint64_t"),
+    (r"\b(signed\s+)?long\s+long(\s+int)?\b", "int64_t"),
+    (r"\bunsigned\s+long(\s+int)?\b", "uint64_t"),
+    (r"\b(signed\s+)?long(\s+int)?\b", "int64_t"),
+    (r"\bunsigned\s+short(\s+int)?\b", "uint16_t"),
+    (r"\b(signed\s+)?short(\s+int)?\b", "int16_t"),
+    (r"\bunsigned\s+char\b", "uint8_t"),
+    (r"\bsigned\s+char\b", "int8_t"),
+    (r"\bunsigned(\s+int)?\b", "uint32_t"),
+    (r"\b(signed\s+)?int\b", "int32_t"),
+)
+
+
+def _wrappers(artifact: str, lowered=None) -> dict:
+    """The artifact's wrapped functions (CF-PARMQUALS): name -> its definition, spaces aside -- the rails spell a
+    pointer's `*`s apart and together -- with C's scalar names as the twin spells them (`_SCALAR_NAMES`), and, given
+    the unit's `lowered` functions, each function-pointer parameter
+    as its position alone: the oracle spells its type inline, `RET (*f)(PARAMS)`, the twin by the typedef it names it
+    by, the one type either way (the call, compared whole, names it)."""
+    out = {}
+    for m in _WRAPPER.finditer(artifact):
+        text = m.group(0)
+        for pat, exact in _SCALAR_NAMES:
+            text = re.sub(pat, exact, text)
+        name, text = m.group(2), re.sub(r"\s+", "", text)
+        lf = lowered.functions.get(name) if lowered is not None else None
+        fps = [k for k, (_n, _r, ct) in enumerate(lf.params) if ct.kind == "funcptr"] if lf else []
+        if fps:
+            head, rest = text.split("{", 1)
+            pre, params = head.split(f"{name}(", 1)
+            parts = _split_params(params[:-1])
+            for k in fps:  # its name is the call's argument, which is compared whole
+                parts[k] = f"<fp{k}>"
+            text = f"{pre}{name}({','.join(parts)}){{{rest}"
+        out[name] = text
+    return out
 
 
 def _original_std(clang: str, path: str) -> "str | None":
@@ -1061,14 +1122,236 @@ def _builds_alone(clang: str, std: str, text: str, tmp: str) -> str:
     return "" if b.returncode == 0 else (b.stderr.strip().splitlines() or ["?"])[0]
 
 
+# CF-PARMQUALS: a unit whose functions take and return types qualified below their top level -- the API a driver's
+# header declares (`const uint8_t *buf`) -- its header, and a caller that knows the functions only through it
+_PQ_TYPES = "#include <stdint.h>\ntypedef uint32_t (*pq_cop)(const uint32_t *);\n"
+_PQ_LIB = (
+    _PQ_TYPES
+    + r"""
+static uint32_t pq_first(const uint32_t *p) { return p[0]; }
+uint32_t pq_sum(const uint32_t *p, uint32_t n) {
+  uint32_t s = 0u;
+  for (uint32_t i = 0u; i < n; i++) s += p[i];
+  return s;
+}
+uint32_t pq_names(const char *const *v, uint32_t n) { return (uint32_t)v[n - 1u][0]; }
+const uint32_t *pq_at(const uint32_t *p, uint32_t i) { return p + i; }
+const char *const *pq_next(const char *const *v) { return v + 1; }
+void pq_copy(uint32_t *restrict d, const uint32_t *restrict s, uint32_t n) {
+  for (uint32_t i = 0u; i < n; i++) d[i] = s[i];
+}
+uint32_t pq_apply(pq_cop f, const uint32_t *p) { return f(p) * 2u + pq_first(p); }
+uint32_t pq_va(const uint32_t *p, uint32_t n, ...) { return p[0] + n; }
+static uint32_t pq_last(const uint32_t *p, uint32_t n) { return p[n - 1u]; }
+static uint32_t pq_tabf(const uint32_t *p) { return p[2] * 3u; }
+static pq_cop pq_tab[1] = {pq_tabf};
+uint32_t pq_entry(uint32_t s) {
+  uint32_t a[3] = {s, s + 1u, s + 2u};
+  uint32_t b[3];
+  pq_cop g = pq_first;
+  pq_copy(b, a, 3u);
+  return pq_sum(b, 3u) + *pq_at(a, 2u) + pq_apply(g, a) + pq_apply(pq_first, b) + pq_va(a, 1u, s)
+         + pq_last(a, 3u) + pq_tab[0](b);
+}
+"""
+)
+_PQ_HEADER = (
+    _PQ_TYPES
+    + """uint32_t pq_sum(const uint32_t *p, uint32_t n);
+uint32_t pq_names(const char *const *v, uint32_t n);
+const uint32_t *pq_at(const uint32_t *p, uint32_t i);
+const char *const *pq_next(const char *const *v);
+void pq_copy(uint32_t *restrict d, const uint32_t *restrict s, uint32_t n);
+uint32_t pq_apply(pq_cop f, const uint32_t *p);
+uint32_t pq_entry(uint32_t s);
+"""
+)
+_PQ_MAIN = (
+    _PQ_HEADER
+    + r"""#include <stdio.h>
+static const char *const pq_w[3] = {"ab", "cd", "ef"};
+static uint32_t pq_second(const uint32_t *p) { return p[1]; }
+int main(void) {
+  uint32_t a[4] = {3u, 5u, 7u, 9u}, b[4];
+  pq_copy(b, a, 4u);
+  uint32_t r = pq_sum(b, 4u) + *pq_at(a, 3u) * 3u + pq_names(pq_w, 2u) + (uint32_t)pq_next(pq_w)[0][1];
+  r += pq_apply(pq_second, a) * 5u + pq_entry(10u) * 7u;
+  printf("%u\n", r);
+  return 0;
+}
+"""
+)
+#: the functions `_PQ_LIB` defines through a wrapper: each whose type keeps a qualifier below a parameter's or the
+#: return's top level -- `pq_apply`'s `const uint32_t *p` as well as a function pointer's own parameter -- but the
+#: exported variadic `pq_va`, whose `...` a wrapper cannot pass on (`_LINKABLE_VARIADIC_OPEN`; `_PQ_HEADER` leaves it
+#: out, since its definition keeps the emit's types), and the static `pq_last`, which
+#: the unit only calls: no other unit declares it, and a wrapper of it would be a function nothing names. The static
+#: `pq_first` is a pointer's value in a function, `pq_tabf` in a file-scope table
+_PQ_WRAPPED = {
+    "pq_first",
+    "pq_sum",
+    "pq_names",
+    "pq_at",
+    "pq_next",
+    "pq_copy",
+    "pq_apply",
+    "pq_tabf",
+}
+_PQ_ERRORS = (
+    "-Werror=incompatible-pointer-types",
+    "-Werror=int-conversion",
+    "-Werror=implicit-function-declaration",
+    "-Werror=unused-function",
+)
+
+
+def test_the_linkable_artifact_keeps_each_functions_declared_type():
+    """CF-PARMQUALS: each rail's linkable artifact of `_PQ_LIB` declares and defines every function with the type its
+    source does -- `const uint32_t *p`, `const char *const *v`, `const uint32_t *restrict s`, a qualified return --
+    through a wrapper of its emitted function, whose own parameters keep none (`_cname`). The emitted functions keep
+    their `static bcir_` names, so the unit's own calls call them; a pointer to a function, `pq_cop g = pq_first;`,
+    is the wrapper's, of the source's type, as is `pq_tabf` in a file-scope table. The exported variadic `pq_va` and the
+    static `pq_last`, which the unit only calls, are defined as before, under their own names: no wrapper, and none
+    unused. The two rails write the same wrappers, spaces aside. Then the artifact
+    compiles together with the unit's header in one translation unit (a declaration of another type would be an
+    error), links with a caller that knows the functions only through that header, and prints what the original's
+    build prints. Without its qualifiers the header would conflict: the check reads the declarations."""
+    cc = _cc()
+    if cc is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, prog, err = _build(cc, tmp, {"m.c": _PQ_MAIN, "l.c": _PQ_LIB}, *_PQ_ERRORS)
+        assert rc == 0, err
+        want = subprocess.run([prog], capture_output=True, text=True, timeout=60).stdout
+    assert want.strip().isdigit(), want
+    arts = dict(_artifacts(_PQ_LIB))
+    lowered = compile_unit(_PQ_LIB, check_clang=False).lowered
+    ow, tw = _wrappers(arts["oracle"], lowered), _wrappers(arts["twin"], lowered)
+    assert set(ow) == _PQ_WRAPPED, sorted(ow)
+    assert tw == ow, (tw, ow)
+    for rail, art in arts.items():
+        assert re.search(r"^static uint32_t bcir_pq_sum\(", art, re.M), (rail, art[:600])
+        assert re.search(r"^uint32_t pq_va\(uint32_t ?\* ?p, uint32_t n, \.\.\.\)$", art, re.M), (
+            rail
+        )
+        assert re.search(r"^static uint32_t pq_last\(uint32_t ?\* ?p, uint32_t n\)$", art, re.M), (
+            rail
+        )
+        assert re.search(r"^\s*pq_cop g = pq_first;|^\s*g = pq_first;", art, re.M), rail
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, _o, err = _build(
+                cc, tmp, {"one.c": art + "\n" + _PQ_HEADER}, *_PQ_ERRORS, link=False
+            )
+            assert rc == 0, (rail, err)
+            # the control: the header with one parameter's qualifier dropped is another type, and an error
+            bad = _PQ_HEADER.replace(
+                "uint32_t pq_sum(const uint32_t *p", "uint32_t pq_sum(uint32_t *p"
+            )
+            assert bad != _PQ_HEADER
+            rc, _o, err = _build(cc, tmp, {"one.c": art + "\n" + bad}, *_PQ_ERRORS, link=False)
+            assert rc != 0 and "pq_sum" in err, (rail, err[-400:])
+            rc, prog, err = _build(cc, tmp, {"m.c": _PQ_MAIN, "l.c": art}, *_PQ_ERRORS)
+            assert rc == 0, (rail, err)
+            got = subprocess.run([prog], capture_output=True, text=True, timeout=60).stdout
+            assert got == want, (rail, got, want)
+
+
+# CF-PARMQUALS: wrapped functions whose source names a parameter as the wrapper's callee, `bcir_NAME`. The emit keeps
+# that name, since no call of the function's own spells it. `ps_g`'s candidates `bcir_ps_g_2` and `bcir_ps_g_3` are
+# another parameter's name and a typedef name the wrapper spells (an untagged struct's); `ps_h`'s `bcir_ps_h_2` is the
+# name the emit calls `ps_h_2` by
+_PS_TYPES = "#include <stdint.h>\ntypedef struct { uint32_t v; } bcir_ps_g_3;\n"
+_PS_LIB = (
+    _PS_TYPES
+    + r"""
+static uint32_t ps_h_2(uint32_t x) { return x + 1u; }
+uint32_t ps_f(const uint32_t *bcir_ps_f) { return bcir_ps_f[0]; }
+uint32_t ps_g(const bcir_ps_g_3 *bcir_ps_g, uint32_t bcir_ps_g_2) { return bcir_ps_g->v * 3u + bcir_ps_g_2; }
+uint32_t ps_h(const uint32_t *bcir_ps_h) { return ps_h_2(bcir_ps_h[1]); }
+"""
+)
+_PS_DECLS = """uint32_t ps_f(const uint32_t *p);
+uint32_t ps_g(const bcir_ps_g_3 *s, uint32_t k);
+uint32_t ps_h(const uint32_t *p);
+"""
+_PS_MAIN = (
+    _PS_TYPES
+    + _PS_DECLS
+    + r"""#include <stdio.h>
+int main(void) {
+  uint32_t a[2] = {4u, 9u};
+  bcir_ps_g_3 s = {5u};
+  printf("%u\n", ps_f(a) + ps_g(&s, 7u) * 10u + ps_h(a) * 100u);
+  return 0;
+}
+"""
+)
+#: each wrapper's parameters, as both rails name them: the callee's name taken by the first `bcir_NAME_<k>` that no
+#: other parameter, no name the emit spells and no typedef name takes
+_PS_PARAMS = {
+    "ps_f": ["bcir_ps_f_2"],
+    "ps_g": ["bcir_ps_g_4", "bcir_ps_g_2"],
+    "ps_h": ["bcir_ps_h_3"],
+}
+
+
+def test_a_wrapper_parameter_never_hides_its_callee():
+    """CF-PARMQUALS: a wrapper calls its function's emitted definition, `bcir_NAME`, so none of its parameters may take
+    that name, which a source may give one (`uint32_t ps_f(const uint32_t *bcir_ps_f)`). Its artifact had called
+    `bcir_ps_f((uint32_t *)bcir_ps_f)`, which does not compile, on both rails. Each rail's wrappers of `_PS_LIB` now
+    name that parameter by the first `bcir_NAME_<k>` that no other parameter (`ps_g`'s second), no name the emit
+    spells (`ps_h`'s callee `bcir_ps_h_2`) and no typedef name (`bcir_ps_g_3`, spelled in `ps_g`'s cast) takes, and
+    keep every other parameter's name. The emitted definitions keep the source's names, as before. The two rails write
+    the same wrappers. Each artifact compiles with the unit's declarations in one translation unit and, linked with a
+    caller that knows the functions only through them, prints what the original's build prints."""
+    cc = _cc()
+    if cc is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, prog, err = _build(cc, tmp, {"m.c": _PS_MAIN, "l.c": _PS_LIB}, *_PQ_ERRORS)
+        assert rc == 0, err
+        want = subprocess.run([prog], capture_output=True, text=True, timeout=60).stdout
+    assert want == "1224\n", want
+    arts = dict(_artifacts(_PS_LIB))
+    lowered = compile_unit(_PS_LIB, check_clang=False).lowered
+    ow, tw = _wrappers(arts["oracle"], lowered), _wrappers(arts["twin"], lowered)
+    assert set(ow) == set(_PS_PARAMS), sorted(ow)
+    assert tw == ow, (tw, ow)
+    for rail, art in arts.items():
+        for m in _WRAPPER.finditer(
+            art
+        ):  # each parameter's name ends its declaration; the call passes them all
+            name, head, text = m.group(2), m.group(1), m.group(0)
+            params = _split_params(head.split(f"{name}(", 1)[1][:-1])
+            got = [re.search(r"(\w+)\s*$", p).group(1) for p in params]
+            assert got == _PS_PARAMS[name], (rail, name, got, text)
+            call = text.split(f"bcir_{name}(", 1)[1]
+            assert re.findall(r"(\w+)\s*[,)]", call)[: len(got)] == got, (rail, text)
+        assert re.search(r"^static uint32_t bcir_ps_f\(uint32_t ?\* ?bcir_ps_f\)$", art, re.M), (
+            rail,
+            art[-900:],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, _o, err = _build(
+                cc, tmp, {"one.c": art + "\n" + _PS_DECLS}, *_PQ_ERRORS, link=False
+            )
+            assert rc == 0, (rail, err)
+            rc, prog, err = _build(cc, tmp, {"m.c": _PS_MAIN, "l.c": art}, *_PQ_ERRORS)
+            assert rc == 0, (rail, err)
+            got = subprocess.run([prog], capture_output=True, text=True, timeout=60).stdout
+            assert got == want, (rail, got, want)
+
+
 def test_the_twins_linkable_artifact_is_the_oracles_over_the_corpus():
     """CF-LINKTWIN: every corpus fixture (`runtime/c/cfront_*.c`) through both rails' linkable emit -- the oracle's
     `emit_linkable` and the twin's `bcir-cc --linkable`. The two refuse the same fixtures, for the same global; where
     they render, the twin's artifact (1) defines the unit's types as the oracle's does, the same lines in the same
     order, right after its attestation; (2) holds each global the oracle's does, line for line -- its storage class,
     its thread storage, its name and dimensions, and its initializer re-spelled byte for byte -- as many times as the
-    oracle's; and (3) builds alone wherever the original does, under the original's C standard, as the oracle's does:
-    the fixtures neither builds are `_LINKABLE_OPEN`, exactly. The twin had emitted the unit's functions alone."""
+    oracle's; (3) wraps the functions the oracle's wraps, each function whose type keeps a qualifier below a
+    parameter's or the return's top level but a variadic one (`_LINKABLE_VARIADIC_OPEN`, exactly) and a static one
+    the unit only calls, with the oracle's wrapper, spaces aside (CF-PARMQUALS); and (4) builds alone wherever the original does, under the original's C
+    standard, as the oracle's does -- every one. The twin had emitted the unit's functions alone."""
     from bcir.frontends.cfront.emit import emit_linkable
 
     clang = shutil.which("clang")
@@ -1082,8 +1365,11 @@ def test_the_twins_linkable_artifact_is_the_oracles_over_the_corpus():
         "with_inits": 0,
         "refused": 0,
         "built": 0,
+        "wrapped": 0,
+        "called_only": 0,
     }
     fails = {"oracle": set(), "twin": set()}
+    variadic_open: set = set()
     for path in sorted(glob.glob(os.path.join(_C, "cfront_*.c"))):
         fx = os.path.basename(path)
         src = open(path, encoding="utf-8").read()
@@ -1144,6 +1430,33 @@ def test_the_twins_linkable_artifact_is_the_oracles_over_the_corpus():
         for pat, n in want.items():
             got = len(re.findall(pat, twin, re.M))
             assert got == n, f"{fx}: {n} global line(s) /{pat}/, the twin's artifact has {got}"
+        # the wrapped functions (CF-PARMQUALS): on both rails, each function whose type keeps a qualifier below a
+        # parameter's or the return's top level, but a variadic one and a static one the unit only calls; the same
+        # wrapper on both
+        quals = r.lowered.fn_quals
+        as_value = set(r.lowered.init_refs) | {
+            lf.globals_used[rid]
+            for lf in r.lowered.functions.values()
+            for rid in lf.fn_types
+            if rid in lf.globals_used
+        }
+        want_w = {
+            n
+            for n, lf in r.lowered.functions.items()
+            if quals.get(n) and not lf.variadic and (not lf.static_fn or n in as_value)
+        }
+        variadic_open |= {
+            (fx, n) for n, lf in r.lowered.functions.items() if quals.get(n) and lf.variadic
+        }
+        ow, tw = _wrappers(oracle, r.lowered), _wrappers(twin, r.lowered)
+        assert set(ow) == want_w and set(tw) == want_w, (fx, sorted(want_w), sorted(ow), sorted(tw))
+        assert ow == tw, (fx, ow, tw)
+        seen["wrapped"] += len(want_w)
+        seen["called_only"] += sum(
+            1
+            for n, lf in r.lowered.functions.items()
+            if quals.get(n) and not lf.variadic and lf.static_fn and n not in as_value
+        )
         std = _original_std(clang, path)
         if std is None:
             continue
@@ -1153,14 +1466,15 @@ def test_the_twins_linkable_artifact_is_the_oracles_over_the_corpus():
                 err = _builds_alone(clang, std, text, tmp)
                 if err:
                     fails[rail].add(fx)
-                    assert fx in _LINKABLE_OPEN, (
-                        f"{fx}: the {rail}'s artifact does not build alone ({std})\n{err}"
-                    )
-    for rail, failed in fails.items():
-        assert failed == set(_LINKABLE_OPEN), (rail, sorted(failed))
+                assert not err, f"{fx}: the {rail}'s artifact does not build alone ({std})\n{err}"
+    assert fails == {"oracle": set(), "twin": set()}, fails
+    assert variadic_open == set(_LINKABLE_VARIADIC_OPEN), sorted(variadic_open)
     # what the corpus exercises (2026-10-27: 228 units rendered and built, 118 with types, 45 with globals, 120
-    # initializers): a vacuous pass -- no fixture rendered, no global compared -- is no pass
-    assert seen["units"] >= 220 and seen["built"] >= 220, seen
+    # initializers; 2026-10-29: 6 wrapped functions in 4 units, and 5 static ones in 3 units left unwrapped, each
+    # only called): a vacuous pass -- no fixture rendered, no global compared, no function wrapped, none left
+    # unwrapped for being only called -- is no pass
+    assert seen["units"] >= 220 and seen["built"] >= 220 and seen["wrapped"] >= 6, seen
+    assert seen["called_only"] >= 5, seen
     assert seen["with_types"] >= 110 and seen["with_globals"] >= 42 and seen["with_inits"] >= 110, (
         seen
     )

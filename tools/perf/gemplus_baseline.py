@@ -3712,7 +3712,7 @@ def measure_native() -> dict[str, float]:
     return out
 
 
-def thread_clock(candidate=None, limit_s: float = 0.25):
+def thread_clock(candidate=None, limit_s: float = 0.25, steps: int = 5):
     """The clock `paired_ratios` times with: this thread's CPU time (`time.thread_time`) where it
     steps finely, else the wall clock (`time.perf_counter`).
 
@@ -3728,28 +3728,41 @@ def thread_clock(candidate=None, limit_s: float = 0.25):
     WHY "WHERE IT STEPS FINELY". Windows reports thread time in 100 ns units but advances it once
     per scheduler tick, about 15.6 ms, and would read the verifier floor's few milliseconds as no
     time at all. So the clock's step is measured rather than read from `time.get_clock_info`: a
-    clock that steps by more than 10 us, that does not step within `limit_s`, or that fails is
-    passed over for the wall clock.
+    clock whose smallest measured step is more than 10 us (or not forward), that does not take its
+    `steps` steps within `limit_s`, or that fails is passed over for the wall clock.
+
+    WHY THE SMALLEST OF A FEW STEPS. A clock's resolution bounds every step it takes, but a load
+    lengthens only the step it lands in: whatever runs between two reads and is charged to the
+    thread. One measured step used to decide, and on a loaded host one step of Linux's thread clock
+    reads more than 10 us now and then -- 78 of 200 000 on a container running the gates, where the
+    one-step choice fell to the wall clock in 14 of 20 000 calls, and once on a shared CI runner,
+    failing `test_the_paired_ratio_times_this_threads_work_where_its_clock_steps_finely`. Judged by
+    the smallest of five steps it fell to the wall clock in none of 20 000 calls on the same
+    container: the wall clock is taken only when every step is coarse, as each of a tick clock's is
+    (`test_one_loaded_step_does_not_flip_the_clock_choice`).
     """
     import time
 
+    if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
+        raise ValueError(f"a clock's steps are measured at least once, not {steps!r} times")
     wall = time.perf_counter
     if candidate is None:
         candidate = getattr(time, "thread_time", None)
         if candidate is None:
             return wall
     deadline = wall() + limit_s
+    sizes: list = []
     try:
-        first = candidate()
-        while (second := candidate()) == first:  # to the clock's next step ...
-            if wall() > deadline:
-                return wall
-        while (third := candidate()) == second:  # ... and the size of the one after it
-            if wall() > deadline:
-                return wall
+        now = candidate()
+        while len(sizes) < steps:  # each of the clock's next `steps` steps, and its size
+            last = now
+            while (now := candidate()) == last:
+                if wall() > deadline:
+                    return wall
+            sizes.append(now - last)
     except OSError:
         return wall
-    return candidate if 0 < third - second <= 1e-5 else wall
+    return candidate if 0 < min(sizes) <= 1e-5 else wall
 
 
 def paired_ratios(base, others, rounds: int = 16, clock=None) -> dict[str, float]:

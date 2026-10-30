@@ -439,6 +439,24 @@ def emit_linkable(lowered, emitted: dict) -> str:
     static_fns = {n for n in names if lowered.functions[n].static_fn}
     defs = list(getattr(lowered, "type_defs", ()))
     spelling = getattr(lowered, "anon_spelling", {})
+    # a function whose type keeps a qualifier below a parameter's or the return's top level: declared and defined
+    # with it, through a wrapper of its emitted function, which keeps its `static bcir_` name (CF-PARMQUALS). A
+    # variadic one stays as it is emitted: a wrapper cannot pass its `...` on. A static one is wrapped only where
+    # the unit names it as a value -- a designator in a function (`fn_types`), a file-scope initializer
+    # (`init_refs`): no other unit declares it, and a wrapper nothing names would be an unused function
+    fn_quals = getattr(lowered, "fn_quals", {})
+    as_value = set(getattr(lowered, "init_refs", ())) | {
+        lf.globals_used[rid]
+        for lf in lowered.functions.values()
+        for rid in lf.fn_types
+        if rid in lf.globals_used
+    }
+    wrapped = [
+        n
+        for n, lf in lowered.functions.items()
+        if fn_quals.get(n) and not lf.variadic and (not lf.static_fn or n in as_value)
+    ]
+    internal = {f"bcir_{n}" for n in wrapped}
     # the types the artifact names, as the source defines them, in its order (CF-LINKEMIT)
     body: list[str] = list(defs)
     # every function declared before the globals: a static one may be DEFINED after its caller (the C
@@ -446,11 +464,20 @@ def emit_linkable(lowered, emitted: dict) -> str:
     # function pointer parameter is its declarator with no name
     for name in names:
         lf = lowered.functions[name]
-        ps = ", ".join(_proto_param(p[2]) for p in lf.params) or "void"
+        rsig, psigs = fn_quals.get(name, ((), ())) if name in wrapped else ((), ())
+        ps = (
+            ", ".join(
+                _proto_param(p[2], psigs[k] if k < len(psigs) else ())
+                for k, p in enumerate(lf.params)
+            )
+            or "void"
+        )
         if lf.variadic:
             ps = (ps + ", ...") if ps != "void" else "..."
         kw = "static " if lf.static_fn else ""
-        body.append(respell_anon(f"{kw}{_cname(lf.ret_type)} {name}({ps});", spelling))
+        rct = lf.ret_type
+        ret = _cname(rct) if _has_fp(rct) else _qual_type(rct, rsig)
+        body.append(respell_anon(f"{kw}{ret} {name}({ps});", spelling))
     threads = getattr(lowered, "thread_globals", frozenset())
     quals = getattr(lowered, "global_quals", {})
     for gname, ct, vals, is_extern, is_static in lowered.globals_decl:
@@ -473,23 +500,30 @@ def emit_linkable(lowered, emitted: dict) -> str:
         # tentative definition (zero-init)
         init = f" = {vals[0]}" if vals else ""
         body.append(f"{kw}{tls}{decl}{init};")
-    # every in-unit call unprefixed, where `bcir_X(` begins an identifier (the twin's `lk_functions`)
+    # every in-unit call unprefixed, where `bcir_X(` begins an identifier (the twin's `lk_functions`) -- but a
+    # wrapped function's: its callers call the emitted function, of the emit's own types, by its `bcir_` name
+    plain = [n for n in names if n not in wrapped]
     unprefix = (
-        re.compile(r"(?<![A-Za-z0-9_])bcir_(" + "|".join(map(re.escape, names)) + r")\(")
-        if names
+        re.compile(r"(?<![A-Za-z0-9_])bcir_(" + "|".join(map(re.escape, plain)) + r")\(")
+        if plain
         else None
     )
     for name in names:
         text = unprefix.sub(r"\1(", emitted[name]) if unprefix else emitted[name]
         # source `static` honored, line by line: the `static ` that begins a line stays only where the line
-        # declares or defines a source-static function -- body statics are indented, and untouched
+        # declares or defines a source-static function, or a wrapped function's emitted one, which stays
+        # internal -- body statics are indented, and untouched
         lines = [
             ln
-            if not ln.startswith("static ") or _line_fn(ln, names) in static_fns
+            if not ln.startswith("static ")
+            or _line_fn(ln, internal) is not None
+            or _line_fn(ln, names) in static_fns
             else ln[len("static ") :]
             for ln in text.splitlines()
         ]
         body.append("\n".join(lines))
+    # ... then each wrapped function under its real name, of its source's type (CF-PARMQUALS)
+    body.extend(_linkable_wrapper(lowered.functions[n], fn_quals[n], spelling) for n in wrapped)
     # what the artifact itself names, all of it, outside its literals and comments
     code = _code_only("\n".join(body))
     parts: list[str] = ["#include <stdint.h>"]  # the emitted temps are int32_t/uint32_t/...
@@ -666,6 +700,69 @@ def _spelled_names(lf: LoweredFunc) -> set:
     return spelled
 
 
+def _uniq_name(name: str, used: set) -> str:
+    """`name`, or the first of `name_2`, `name_3`, ... that `used` does not hold -- taken (the emit's `_uniq`)."""
+    uniq, k = name, 2
+    while uniq in used:
+        uniq, k = f"{name}_{k}", k + 1
+    used.add(uniq)
+    return uniq
+
+
+def _param_names(lf: LoweredFunc) -> list:
+    """The names the emitted definition gives the function's parameters, in order: each its source name, unless the
+    emit spells that otherwise (`emit_function`, whose first names they are)."""
+    used: set[str] = _spelled_names(lf)
+    return [_uniq_name(pname, used) for pname, _rid, _ct in lf.params]
+
+
+def _wrapper_names(lf: LoweredFunc) -> list:
+    """The names the linkable wrapper gives the function's parameters (CF-PARMQUALS): the emitted definition's
+    (`_param_names`), but for the one named as the wrapper's callee, `bcir_NAME`. The emit keeps that name, a source
+    parameter's, wherever the function does not call itself, and in the wrapper it would hide the callee from the call
+    (`unsigned f(const unsigned *bcir_f)` called `bcir_f((unsigned int *)bcir_f)`). That one takes the first
+    `bcir_NAME_2`, `bcir_NAME_3`, ... that no other parameter, no name the emit spells and no typedef name takes. The
+    twin's `lk_param_name` decides alike."""
+    names = _param_names(lf)
+    callee = f"bcir_{lf.name}"
+    if callee in names:
+        names[names.index(callee)] = _uniq_name(callee, _spelled_names(lf) | set(names))
+    return names
+
+
+def _linkable_wrapper(lf: LoweredFunc, quals: tuple, spelling: dict) -> str:
+    """The linkable artifact's definition of a function whose type keeps a qualifier below a parameter's or the
+    return's top level (CF-PARMQUALS): under its real name and with the type its source declares -- `const T *p`,
+    `const char *const *v` -- calling the emitted function, `static bcir_NAME`, which spells its own objects without
+    qualifiers (`_cname`). A qualified argument meets the emitted parameter through a cast, as a qualified result
+    meets a caller's temp (`_qual_args`); the callee's type was the type the source declared, so the call is the
+    source's. Every other unit, the header the source declares the function in, and a pointer to the function --
+    `op_t f = name;` -- meet the function's own type, where the emitted definition's had dropped the qualifiers
+    (C11 6.7.6.1p2, 6.7.6.3p15; a program whose units declare one function with two types is undefined, 6.2.7p2).
+    The twin's `lk_wrapper` writes the same definition."""
+    rsig, psigs = quals or ((), ())
+    names = _wrapper_names(lf)
+    heads, args = [], []
+    for k, (_pname, _rid, ct) in enumerate(lf.params):
+        sig = psigs[k] if k < len(psigs) else ()
+        if _has_fp(ct):
+            heads.append(_funcptr_decl(ct, names[k], sig))
+            args.append(f"({_funcptr_decl(ct, '')}){names[k]}" if sig else names[k])
+        else:
+            heads.append(f"{_qual_type(ct, sig)} {names[k]}")
+            args.append(f"({_cname(ct)}){names[k]}" if sig else names[k])
+    rct = lf.ret_type
+    ret = _cname(rct) if _has_fp(rct) else _qual_type(rct, rsig)
+    kw = "static " if lf.static_fn else ""
+    call = f"bcir_{lf.name}({', '.join(args)})"
+    if _cname(rct) == "void":
+        stmt = f"    {call};"
+    else:
+        stmt = f"    return ({ret}){call};" if rsig and not _has_fp(rct) else f"    return {call};"
+    head = f"{kw}{ret} {lf.name}({', '.join(heads) or 'void'})"
+    return respell_anon(f"{head}\n{{\n{stmt}\n}}", spelling)
+
+
 def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
     """The lowered function as standalone C, named `bcir_<name>` (so it can sit beside the original).
     Walks the structured body tree, so `if`/`while`/`return` emit real C control flow; mutable named
@@ -687,13 +784,9 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
     local_name: dict[int, str] = {}
 
     def _uniq(name: str) -> str:
-        uniq, k = name, 2
-        while uniq in used:
-            uniq, k = f"{name}_{k}", k + 1
-        used.add(uniq)
-        return uniq
+        return _uniq_name(name, used)
 
-    # a parameter first: its source name, unless the emit spells that otherwise
+    # a parameter first: its source name, unless the emit spells that otherwise (`_param_names`)
     for pname, rid, _ct in lf.params:
         nm[rid] = _uniq(pname)
     params = dict(nm)

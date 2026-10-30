@@ -458,7 +458,16 @@ _mm_sfence();                      //                   store (release) fence ->
   before the globals; each global with its qualifiers and its initializer, a pointer's string literal, `&g[k]`, an
   array and a function among them as the address constants they are; and the headers its own text names (its
   copies' `<string.h>`, `<stdarg.h>`, `<stdatomic.h>`, `<complex.h>`). A global whose type is an untagged
-  aggregate no typedef names is refused by name.
+  aggregate no typedef names is refused by name. Every function is declared and defined with the type its source
+  gives it: one whose type keeps a qualifier below a parameter's or the return's top level (`const uint8_t *buf`,
+  `const char *const *v`) is defined through a wrapper of the same name and type that calls the emitted function,
+  `static bcir_NAME`, which spells its objects without them -- so a header declaring the function, another unit, and
+  a function pointer of the source's type all meet the function's own type (CF-PARMQUALS). The wrapper's parameters
+  keep the emitted function's names, but one the source names as the callee, `bcir_NAME`, which would hide it from
+  the call: that one takes the first `bcir_NAME_2`, `bcir_NAME_3`, ... that no other parameter, no name the emit
+  spells and no typedef name takes (`emit._wrapper_names`; the twin's `lk_param_name`). A static function is so
+  wrapped only where the unit names it as a value (a function pointer, an ops table): one the unit only calls keeps
+  the emit's types, since no other unit declares it, and a wrapper of it would be a function nothing names.
 - File-scope initializers as a local's: nested braces, brace elision and designators for arrays of structs, rows
   and character tables, an unsized global sized by what its initializer reaches (`struct pt g[] = {1u, 2u, 3u,
   4u};` is two elements).
@@ -580,10 +589,11 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   definition`); define the enumeration first.
 - In `#if`, a multi-character constant (`'\xff\xff\xff\xff'`) where plain `char` is unsigned reads as Clang reads it,
   by `char`'s signedness; GCC reads it as a signed `int` whatever `char` is.
-- The linkable emit's definitions drop a parameter's qualifiers below its top level (`uint32_t f(const uint32_t
-  *p)` is defined taking `uint32_t *`), so a function pointer of the source's type takes such a function only
-  through a cast -- on both rails, whose linkable artifacts (`bcir-cfront --linkable` and `bcir-cc --linkable`)
-  define the same types, functions and globals (CF-LINKTWIN). It is a recorded follow-up.
+- A variadic function whose type keeps a qualifier below a parameter's top level (`int log(const char *fmt, ...)`)
+  is defined in the linkable artifact with the emit's parameter types (`char *fmt`): a wrapper cannot pass its `...`
+  on. The artifact builds; a unit that declares the function as its source does declares another type. Both rails
+  (`bcir-cfront --linkable` and `bcir-cc --linkable`, which define the same types, functions and globals,
+  CF-LINKTWIN), pinned as `_LINKABLE_VARIADIC_OPEN` (CF-PARMQUALS).
 - A subscript of a pointer member of an element of an array of structs (`gt[i].name[1]`), a pointer to an array of
   structs (`struct pt (*q)[3] = gm;`), a member through the address of an element (`(&gm[0][1])->y`), a bit-field
   of a 2-D array of structs and an element of a string literal plus an offset (`("ab" + 1)[i]`): refused on both
