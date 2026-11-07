@@ -278,6 +278,9 @@ echo "[passes] R5 volatile-claim law (§5.14 Phase 2: is_volatile on the claim r
 echo "[passes] R12 call-ABI contract (SS5.14 Phase 2 last area: named target matrix + truthful pointer/long sizes; negatives + a legal record)"
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_abi_contract.mlir" \
   && echo "  PASS verify_abi_contract.mlir" || { echo "  FAIL verify_abi_contract.mlir"; fail=1; }
+echo "[passes] R3-uart RegMap contract (the UART blueprint's U0: a registry placement laid out truthfully -- stride, base, FCR reset, clock, every register; negatives + legal records)"
+"${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_regmap_contract.mlir" \
+  && echo "  PASS verify_regmap_contract.mlir" || { echo "  FAIL verify_regmap_contract.mlir"; fail=1; }
 echo "[passes] R22/R23 rung-5 LLM decode ops (embedding/rmsnorm/rope/gqa_attention/kv_cache: odd-dim rope, ragged head groups, over-full cache, extent + d_k + kv-head seam lies; legal chains)"
 "${BO}" -bcir-verify -verify-diagnostics -split-input-file "${T}/verify_llm_ops.mlir" \
   && echo "  PASS verify_llm_ops.mlir" || { echo "  FAIL verify_llm_ops.mlir"; fail=1; }

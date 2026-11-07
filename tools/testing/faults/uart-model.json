@@ -7,6 +7,8 @@
     "bcir.tests.test_uart_model:test_the_normative_table_matches_the_datasheet",
     "bcir.tests.test_uart_model:test_headers_generate_deterministically_for_all_placements",
     "bcir.tests.test_uart_model:test_generated_header_compiles_through_both_rails",
+    "bcir.tests.test_uart_model:test_the_placement_table_is_the_registry",
+    "bcir.tests.test_uart_model:test_the_twin_attests_the_contract_as_the_oracle_does",
     "bcir.tests.test_uart_model:test_a_tampered_regmap_contract_is_caught",
     "bcir.tests.test_uart_model:test_checked_in_header_is_current",
     "bcir.tests.test_uart_model:test_the_placements_match_the_documents",
@@ -309,7 +311,7 @@
       "expects": "test_the_laws_are_vacuous_on_the_existing_corpus",
       "label": "UL17 every unit taken for a pc16550d UART unit",
       "new": "    if literal is None:\n        literal = '{\"pc16550d\", 1, 0, 0, 1843200}'",
-      "old": "    if literal is None:\n        return None, []",
+      "old": "    if literal is None:\n        return \"none\", None, None, None, []",
       "path": "bcir/frontends/devices/uart_laws.py"
     },
     {
@@ -513,6 +515,139 @@
       "label": "UM28 the 16450's empty FCR refused as a 16750-family field: U0 renders no record without a FIFO",
       "new": "",
       "old": "        and not (name == \"fcr_impl_mask\" and p.fifo_depth == 1)\n",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UT1 the twin reports no stride lie",
+      "new": "",
+      "old": "  if (v[0] != hit->stride)\n    fprintf(outf, \"  R3-uart: regmap contract: stride: contract 0x%llx != placement 0x%llx\\n\", v[0], hit->stride);\n",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UT2 the twin holds the base offset to the placement's stride",
+      "new": "  if (v[1] != hit->stride)\n",
+      "old": "  if (v[1] != hit->base)\n",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UT3 the twin prints the FCR reset without its two digits",
+      "new": "fcr_reset 0x%llx != placement 0x%llx",
+      "old": "fcr_reset 0x%02llx != placement 0x%02llx",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UT4 the twin reports no reference-clock lie",
+      "new": "",
+      "old": "  if (v[3] != hit->ref_clk_hz)\n    fprintf(outf, \"  R3-uart: regmap contract: ref_clk_hz %llu != placement %llu\\n\", v[3], hit->ref_clk_hz);\n",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UT5 the twin joins the registry without the space",
+      "new": "fprintf(outf, \"%s%s\", i ? \",\" : \"\", uart_places[i].name);",
+      "old": "fprintf(outf, \"%s%s\", i ? \", \" : \"\", uart_places[i].name);",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UT6 the twin's literal grammar takes an upper-case name",
+      "new": "!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z'))) return 0;\n  *name = s;\n  while (s < e && ((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') ||",
+      "old": "!(*s >= 'a' && *s <= 'z')) return 0;\n  *name = s;\n  while (s < e && ((*s >= 'a' && *s <= 'z') ||",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UT7 the twin leaves the quote character unescaped",
+      "new": "    if (*p == '\\\\') { fputc('\\\\', outf); fputc(*p, outf); }",
+      "old": "    if (*p == '\\\\' || *p == (unsigned char)q) { fputc('\\\\', outf); fputc(*p, outf); }",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UT8 the twin writes a byte past ASCII as it is",
+      "new": "else if (*p < 0x20 || *p == 0x7f) fprintf(outf, \"\\\\x%02x\", *p);",
+      "old": "else if (*p < 0x20 || *p >= 0x7f) fprintf(outf, \"\\\\x%02x\", *p);",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UT9 the twin finds no global whose declarator has dimensions",
+      "new": "if (q == eq || *q == ')' || *q == ';')",
+      "old": "if (q == eq || *q == '[' || *q == ')' || *q == ';')",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UT10 the twin takes a function's static local for the global",
+      "new": "    if (eq && stop > eq + 3",
+      "old": "    if (eq && line[0] != ' ' && line[0] != '\\t' && stop > eq + 3",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UT11 the twin accepts a target of 0",
+      "new": "    if (!decimal) {",
+      "old": "    if (!decimal || !positive) {",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UT12 the twin attests the unit's default emit, not its linkable rendering",
+      "new": "    int compile_rc = linkable ? bcir_cfront_compile_linkable(src, target, &r)",
+      "old": "    int compile_rc = (linkable || emit_uart) ? bcir_cfront_compile_linkable(src, target, &r)",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UL42 the oracle's report indents its messages by one space",
+      "new": "*(f\" {m}\" for m in msgs)",
+      "old": "*(f\"  {m}\" for m in msgs)",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UL43 the oracle spells a target past ASCII as repr() does, not byte for byte",
+      "new": "return repr(text)",
+      "old": "return repr(text.encode(\"utf-8\", \"surrogatepass\"))[1:]",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UL44 the oracle reports an unknown placement as no contract",
+      "new": "        return \"none\", None, None, None, msgs\n",
+      "old": "        return \"unattested\", None, None, None, msgs\n",
+      "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_the_twin_attests_the_contract_as_the_oracle_does",
+      "label": "UL45 the oracle CLI parses --emit-uart and ignores it",
+      "new": "        elif a == \"--emit-uart\":\n            pass\n",
+      "old": "        elif a == \"--emit-uart\":\n            emit_uart = True\n",
+      "path": "bcir/frontends/cfront/__main__.py"
+    },
+    {
+      "expects": "test_the_placement_table_is_the_registry",
+      "label": "UM29 the placement table lists the registry in its insertion order",
+      "new": "    for name in PLACEMENTS:\n        p = PLACEMENTS[name]\n",
+      "old": "    for name in sorted(PLACEMENTS):\n        p = PLACEMENTS[name]\n",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_the_placement_table_is_the_registry",
+      "label": "UM30 the placement table writes the stride in the base offset's column",
+      "new": "f'UART_PLACEMENT(\"{name}\", {p.stride}, {p.stride:#x}, ",
+      "old": "f'UART_PLACEMENT(\"{name}\", {p.stride}, {p.base_offset:#x}, ",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_the_placement_table_is_the_registry",
+      "label": "UM31 the placement table drops the register table's last row",
+      "new": "lines += [f'UART_REG(\"{r.name}\", {r.slot})' for r in UART16550[:-1]]",
+      "old": "lines += [f'UART_REG(\"{r.name}\", {r.slot})' for r in UART16550]",
       "path": "bcir/frontends/devices/uart_model.py"
     }
   ]

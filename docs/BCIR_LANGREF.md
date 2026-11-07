@@ -278,8 +278,12 @@ names them — to five protocol laws under `R3-uart:` (`bcir/frontends/devices/u
 DLAB bracket (only DLL, DLM and LCR inside it, straight-line), divisor sanity (never 0; within 3% of
 a declared rate), FCR gating, reconfiguration only after an LSR read on every path, and read effects
 (a volatile read the plan never merges). They are advisory (`CompileResult.uart_diagnostics`, out
-of the frontend verdict like R21) and vacuous on a unit without the contract; their `-bcir-verify`
-clauses and the C twin's form are pending.
+of the frontend verdict like R21) and vacuous on a unit without the contract. The contract's
+attestation is on every rail: `-bcir-verify`'s R3-uart clause holds a `bcir.regmap_contract` op to
+the registry (its placement, stride, base offset, every register at base + slot × stride, its FCR
+reset and reference clock), and `bcir-cc --emit-uart` attests the literal as
+`bcir-cfront --emit-uart` does, byte for byte. The five laws' `-bcir-verify` clauses and C-twin
+form are the next slice.
 
 **Timing + lifetime laws (R19/R20/R21).** Three further laws over the
 register-transfer / naked-pointer-safety tracks. They are driven by *optional*

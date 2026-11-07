@@ -319,6 +319,7 @@ irdl.dialect @bcir {
   irdl.operation @entry
   irdl.operation @interrupt_trampoline
   irdl.operation @abi_contract
+  irdl.operation @regmap_contract
   irdl.operation @device_manifest
 
   // ---- G32: the GEM model seams (attribute-only plan records, and the matmul buffers) ----

@@ -5861,9 +5861,23 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       the sim's reading of Core16550's self-contradicting FIFO tables is stated in `sim16550.h`.
     `uart-driver.json` grew to SD1-SD20, UD1-UD59 and UH1-UH4 (83; UD15 re-anchored, UD16
     retargeted), `uart-model.json` to UM1-UM28 and UL1-UL41 (69; UM7 re-anchored).
-  - Not in these slices: the law-rail halves (U0's `bcir.regmap_contract` op; the `-bcir-verify`
-    clauses, lit negatives and `check_passes.sh` stanzas of both) and U1's C-twin form, which need
-    the MLIR rail and the twin built; and the qualifiers below a parameter's top level in both
+  - U0's law-rail half and C-twin half (2026-11-07), by the review's choice of the contract now and
+    the laws later: the `bcir.regmap_contract` op (its structural verifier refuses a stride other
+    than 1, 2, 4 or 8, a base offset that is negative or between two lanes, a wide FCR reset, a 0 Hz
+    clock and a register below the base) and `-bcir-verify`'s R3-uart clause, which holds it to the
+    registry in the oracle's order. The registry reaches C and C++ as one generated X-macro table
+    (`runtime/c/uart_placements.inc`, `mlir/lib/passes/BCIRUartPlacements.inc`), held current by
+    `uart_model --check` and parsed back against the registry by a test. `bcir-cc --emit-uart` and
+    `bcir-cfront --emit-uart` print one report, byte for byte: the twin reads the contract literal
+    and `uart_target_baud` from its own linkable rendering, as spans, so no literal is too long to
+    attest. The differential that built it found the one place exactness needed a rule: repr()
+    escapes a character it cannot print, which C cannot decide without a Unicode table, so the
+    messages spell a quoted text as repr() of its UTF-8 bytes on both rails (identical for ASCII).
+    `uart-model.json` grew to UM1-UM31, UL1-UL45 and UT1-UT12 (88), each caught by its own check;
+    three mutations of the MLIR clause and verifier, each rebuilt into `bcir-opt`, fail the lit
+    file.
+  - Not in these slices: U1's law-rail half (the five laws as `-bcir-verify` clauses with lit
+    negatives) and its C-twin form, the next slice; and the qualifiers below a parameter's top level in both
     rails' `--linkable` emit (the defect CF-LINKTWIN pinned as `_LINKABLE_OPEN`): `uart_tx`'s
     `const uint8_t *buf` is emitted `uint8_t *buf`, a type C does not call compatible with the
     header's, which the harness calls through. Every ABI the program builds on passes the two

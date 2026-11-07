@@ -594,15 +594,34 @@ def _global_init(lowered, name: str) -> str | None:
     return None
 
 
-def uart_unit_diagnostics(lowered, plans=None) -> tuple:
-    """(the RegMapContract the unit attests, its messages) -- (None, []) for a unit without the U0
-    header's `uart_regmap_contract`, which is no UART unit."""
+def _spelled(text: str) -> str:
+    """`text` as the attestation's messages spell it: repr()'s quoting over its UTF-8 bytes -- single
+    quotes unless it holds one and no double quote, the backslash and the quote escaped, \\t \\n \\r,
+    any other control byte and every byte past ASCII as \\xNN. Exact without a Unicode table, so the
+    C twin spells it the same (runtime/c/bcir_cc.c, `uart_repr`); for ASCII it is repr() itself."""
+    return repr(text.encode("utf-8", "surrogatepass"))[1:]
+
+
+def uart_contract_attestation(lowered) -> tuple:
+    """The U0 half of `uart_unit_diagnostics`, alone: (verdict, contract, placement, target_baud,
+    messages). The verdict is the placement the unit attests; "none" for a unit without the U0
+    header's `uart_regmap_contract` (no UART unit, no message); "unattested" for a literal out of the
+    U0 shape or naming a placement the registry does not hold. An attested contract's stride, base
+    offset, FCR reset and reference clock are held to its placement, and `uart_target_baud`, where the
+    unit defines one, must be a positive decimal constant. `bcir-cc --emit-uart` is its C twin
+    (runtime/c/bcir_cc.c, `uart_attest`), byte for byte through `format_uart_attestation`."""
     literal = _global_init(lowered, _CONTRACT)
     if literal is None:
-        return None, []
+        return "none", None, None, None, []
     match = _LITERAL.fullmatch(literal)
     if match is None:
-        return None, [f"R3-uart: the {_CONTRACT} literal {literal!r} is not a U0 header's"]
+        return (
+            "unattested",
+            None,
+            None,
+            None,
+            [f"R3-uart: the {_CONTRACT} literal {_spelled(literal)} is not a U0 header's"],
+        )
     name = match.group(1)
     stride, base, fcr_reset, ref_clk_hz = (int(g) for g in match.groups()[1:])
     placement = um.PLACEMENTS.get(name)
@@ -611,7 +630,7 @@ def uart_unit_diagnostics(lowered, plans=None) -> tuple:
     check = placement if placement is not None else um.PLACEMENTS[um.DEFAULT_PLACEMENT]
     msgs = [f"R3-uart: regmap contract: {m}" for m in um.verify_regmap_contract(contract, check)]
     if placement is None:
-        return None, msgs
+        return "unattested", None, None, None, msgs
     if fcr_reset != placement.fcr_reset:
         msgs.append(
             f"R3-uart: regmap contract: fcr_reset {fcr_reset:#04x} != placement "
@@ -627,6 +646,27 @@ def uart_unit_diagnostics(lowered, plans=None) -> tuple:
         if _DECIMAL.fullmatch(target_text) and int(target_text) > 0:
             target = int(target_text)
         else:
-            msgs.append(f"R3-uart: {_TARGET} {target_text!r} is not a positive integer constant")
-    msgs += verify_uart_protocol(lowered, placement, plans=plans, target_baud=target)
-    return contract, msgs
+            msgs.append(
+                f"R3-uart: {_TARGET} {_spelled(target_text)} is not a positive integer constant"
+            )
+    return name, contract, placement, target, msgs
+
+
+def format_uart_attestation(path: str, lowered) -> str:
+    """`bcir-cfront --emit-uart`'s report for one unit: `<path>: uart contract <verdict>`, then each
+    attestation message indented by two spaces. The U1 protocol laws are not in it: the C twin
+    does not run them yet (the UART blueprint's section 11 names that slice)."""
+    verdict, _contract, _placement, _target, msgs = uart_contract_attestation(lowered)
+    return "\n".join([f"{path}: uart contract {verdict}", *(f"  {m}" for m in msgs)])
+
+
+def uart_unit_diagnostics(lowered, plans=None) -> tuple:
+    """(the RegMapContract the unit attests, its messages) -- (None, []) for a unit without the U0
+    header's `uart_regmap_contract`, which is no UART unit. The attestation's messages come first,
+    then, for an attested placement, the R3-uart protocol laws'."""
+    _verdict, contract, placement, target, msgs = uart_contract_attestation(lowered)
+    if placement is None:
+        return None, msgs
+    return contract, msgs + verify_uart_protocol(
+        lowered, placement, plans=plans, target_baud=target
+    )

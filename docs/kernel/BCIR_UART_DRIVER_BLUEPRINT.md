@@ -1,15 +1,18 @@
 # BCIR UART-16550 Driver — the full build blueprint
 
-> **Implementation status (2026-10-31): U0 and U1 landed on the oracle rail; U2's polled driver
-> runs against the simulated 16550, linked from either rail's emit.**
+> **Implementation status (2026-11-07): U0 landed on all three rails, U1 on the oracle rail; U2's
+> polled driver runs against the simulated 16550, linked from either rail's emit.**
 > Slice U0's device registry — [`uart_model.py`](../../bcir/frontends/devices/uart_model.py): the
 > normative register table, four placements (three 16550s and the AXI core's 16450 build), the
 > RegMap contract and its law, an errata table —
 > and the header it generates, `runtime/c/uart16550_regs.h`, have landed on the oracle rail, and
 > so have slice U1's protocol laws ([`uart_laws.py`](../../bcir/frontends/devices/uart_laws.py):
 > advisory `R3-uart` diagnostics on a unit that embeds the U0 contract, vacuous on any other).
-> Their law-rail halves (the `bcir.regmap_contract` op, the `-bcir-verify` clauses, the lit
-> negatives) and U1's C-twin form are pending. Slice U2 has landed: the polled driver
+> U0's law-rail half has landed too: the `bcir.regmap_contract` op, `-bcir-verify`'s R3-uart clause
+> holding it to the registry (read from the table `uart_model.py` generates), its lit negatives and
+> `check_passes.sh` stanza; and its C-twin half: `bcir-cc --emit-uart` attests a unit's contract
+> literal as `bcir-cfront --emit-uart` does, byte for byte. U1's five laws on the law rail and the C
+> twin are the next slice (section 11). Slice U2 has landed: the polled driver
 > ([`uart_driver.c`](../../runtime/c/uart_driver.c), law-clean on every placement), the simulated
 > 16550 of section 8 ([`sim16550.c`](../../runtime/c/sim16550.c), spec-tested first) and the
 > harness that links them ([`uart_main.c`](../../runtime/c/uart_main.c)); the driver as the oracle
@@ -641,6 +644,24 @@ must equal `base + slot*stride`) — copy the R12 clause structure (`kMatrix` st
 verbatim, message prefix `R3-uart:`. Negatives in `mlir/test/passes/verify_regmap_contract.mlir`
 (wrong-stride lie, unknown placement, legal record) + `check_passes.sh` stanza.
 
+**As landed on the law rail and the C twin (2026-11-07).** The op carries the attestation's two
+other facts, so the law rail checks what the oracle checks: `$stride` and `$fcr_reset` are I32Attr,
+`$ref_clk_hz` I64Attr, and the structural verifier refuses a stride other than 1, 2, 4 or 8, a base
+offset that is negative or between two lanes, an FCR reset wider than a byte, a clock of 0 Hz and a
+register below the base. The clause takes no hand-written matrix: `uart_model.py` generates the
+registry as an X-macro table, `mlir/lib/passes/BCIRUartPlacements.inc` and its copy
+`runtime/c/uart_placements.inc`, which `--check` holds current and
+`test_the_placement_table_is_the_registry` parses back against the registry. It checks, in the
+oracle's order, the stride, the base offset, every register at `base + slot*stride` (named by its
+offset), the FCR reset and the reference clock. The C twin attests the
+`uart_regmap_contract` literal from its own linkable rendering of the unit's globals:
+`bcir-cc --emit-uart` prints `<file>: uart contract <placement|none|unattested>` and the
+oracle's messages, and `bcir-cfront --emit-uart` prints the same report from
+`uart_laws.uart_contract_attestation`, the attestation half of `uart_unit_diagnostics`. A text
+the messages quote is spelled byte for byte (repr() of its UTF-8 bytes), which C can match without
+a Unicode table. The cfront→MLIR emitter that would spell a compiled unit's contract as the op is
+a later increment, as it is for `bcir.abi_contract`.
+
 **Tests** (`test_uart_model.py`):
 - `test_the_normative_table_matches_the_datasheet` — pin slot/access/dlab for all 12 registers
   and the exact FCR/LCR/LSR/IIR field tables from §1.1 (golden asserts).
@@ -653,6 +674,10 @@ verbatim, message prefix `R3-uart:`. Negatives in `mlir/test/passes/verify_regma
   placement) each produce messages; the clean contract produces [].
 - `test_checked_in_header_is_current` — regenerate and byte-compare against
   `runtime/c/uart16550_regs.h` (the drift guard, like `gen_status --check`).
+- `test_the_placement_table_is_the_registry` and `test_the_twin_attests_the_contract_as_the_oracle_does`
+  (landed with the law-rail half): the generated table parsed back against the registry; the two
+  rails' `--emit-uart` reports equal byte for byte and pinned whole, over every placement and each
+  lie.
 
 **Gates.** Suite + registry guard; `check_passes.sh` (new stanza); `check_links`.
 **Commit.** `devices: U0 -- the UART16550 registry (one model, three placements, the RegMap contract)`
@@ -1124,8 +1149,9 @@ harness `uart_main` (built by BCIR Make and CMake with the gate's flags, untrace
   re-injected into the fixed code as a fault the new tests catch: the lost errors as UD27 and UD28, the
   word length as SD13 and UD37, the busy transmitter as UD34.
 
-`check_passes.sh` is untouched (U2 adds no pass). Pending beside U2: U0's and U1's law-rail halves,
-and the qualifiers below a parameter's top level in both rails' `--linkable` emit (above).
+`check_passes.sh` is untouched (U2 adds no pass). Pending beside U2: U1's law-rail half (U0's
+landed after U2, above), and the qualifiers below a parameter's top level in both rails'
+`--linkable` emit (above).
 
 **Commit.** `devices: U2 -- the polled UART driver, linked from emitted TUs, running against the spec-exact sim`
 
@@ -1426,14 +1452,19 @@ data is held, wake on RX edge / modem change / THR write — all in char-ticks.
 
 ## 11. Acceptance checklist (the definition of done for the program)
 
-- [ ] U0: three placements generate; contracts round-trip; tampering caught on both rails.
+- [x] U0: three placements generate; contracts round-trip; tampering caught on both rails.
       *Oracle rail landed 2026-10-27 (`bcir/tests/test_uart_model.py`,
-      `tools/testing/faults/uart-model.json`); the law-rail half is pending.*
+      `tools/testing/faults/uart-model.json`); the law rail and the C twin 2026-11-07
+      (`mlir/test/passes/verify_regmap_contract.mlir`, the `check_passes.sh` stanza;
+      `bcir-cc --emit-uart`, `test_the_twin_attests_the_contract_as_the_oracle_does`; the faults'
+      UT1-UT12). A compiled unit reaches the op only through a later emitter increment (U0's notes).*
 - [ ] U1: five laws fire on negatives on both rails; whole existing corpus produces zero
       UART diagnostics.
       *Oracle rail landed 2026-10-27 (`bcir/tests/test_uart_laws.py`: a negative per law, the
       corpus at zero; `tools/testing/faults/uart-model.json`); the law-rail half and the C twin
-      are pending.*
+      are the next slice: the five laws as `-bcir-verify` clauses with an `expected-error`
+      negative each, and the twin's laws held to the oracle's messages as `--emit-uart` holds
+      the attestation.*
 - [x] U2: the emitted-TUs-only binary runs the probe/init/selftest/TX/RX/flush transcript
       byte-identically to the reference build on both rails; sim passes its spec-fidelity suite.
       *Landed 2026-10-27 (`bcir/tests/test_uart_driver.py`, the C rail's `#uartdrv` section,

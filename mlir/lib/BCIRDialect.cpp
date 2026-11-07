@@ -1808,6 +1808,30 @@ static std::string joined(const char *const (&table)[N]) {
   return ::mlir::success();
 }
 
+::mlir::LogicalResult RegMapContractOp::verify() {
+  // U0's RegMap contract, well formed; -bcir-verify's R3-uart clause holds it truthful.
+  uint32_t stride = getStride();
+  if (stride != 1 && stride != 2 && stride != 4 && stride != 8)
+    return emitOpError() << "stride " << stride << " is not 1, 2, 4 or 8";
+  // The I64 attributes are read signed: a negative spelling is refused, never wrapped.
+  int64_t base = static_cast<int64_t>(getBaseOffset());
+  if (base < 0 || base % static_cast<int64_t>(stride) != 0)
+    return emitOpError() << "base_offset " << base
+                         << " is not a non-negative multiple of the stride";
+  if (getFcrReset() > 0xff)
+    return emitOpError() << "fcr_reset " << getFcrReset() << " is not a byte";
+  int64_t refClk = static_cast<int64_t>(getRefClkHz());
+  if (refClk <= 0)
+    return emitOpError() << "ref_clk_hz " << refClk << " is not positive";
+  auto offsets = getRegOffsets();
+  if (offsets.empty())
+    return emitOpError() << "reg_offsets is empty: the contract lays out no register";
+  for (size_t i = 0; i < offsets.size(); ++i)
+    if (offsets[i] < 0)
+      return emitOpError() << "register " << i << " has a negative offset";
+  return ::mlir::success();
+}
+
 ::mlir::LogicalResult DeviceManifestOp::verify() {
   // D-R1: the static hardware schema's internal consistency (the oracle twin is
   // check_device_manifest). Bank arrays parallel; capacities/tiles positive; the distance

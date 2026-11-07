@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from fractions import Fraction
 
@@ -271,6 +272,123 @@ def test_generated_header_compiles_through_both_rails():
             assert host.returncode == 0, (name, host.stderr)
 
 
+_HONEST = '    "pc16550d", 1u, 0x0u, 0x00u, 1843200u\n'
+_STATED = "R3-uart: regmap contract: "
+#: (the header's contract literal, a definition the probe adds, the verdict, the messages): what both
+#: rails' `--emit-uart` attest -- the oracle's messages (uart_laws.uart_contract_attestation), which
+#: test_uart_laws pins on the in-process compile too
+_ATTESTATIONS = (
+    (_HONEST, "", "pc16550d", []),
+    ('    "pc16550d", 4u, 0x0u, 0x00u, 1843200u\n', "", "pc16550d",
+     [_STATED + "stride: contract 0x4 != placement 0x1"]),
+    ('    "pc16550d", 1u, 0x1000u, 0x00u, 1843200u\n', "", "pc16550d",
+     [_STATED + "base offset: contract 0x1000 != placement 0x0"]),
+    ('    "pc16550d", 1u, 0x0u, 0x01u, 1843200u\n', "", "pc16550d",
+     [_STATED + "fcr_reset 0x01 != placement 0x00"]),
+    ('    "pc16550d", 1u, 0x0u, 0x00u, 18432000u\n', "", "pc16550d",
+     [_STATED + "ref_clk_hz 18432000 != placement 1843200"]),
+    ('    "pc16550d", 8u, 0x1000u, 0x100u, 4294967295u\n', "", "pc16550d",
+     [_STATED + "stride: contract 0x8 != placement 0x1",
+      _STATED + "base offset: contract 0x1000 != placement 0x0",
+      _STATED + "fcr_reset 0x100 != placement 0x00",
+      _STATED + "ref_clk_hz 4294967295 != placement 1843200"]),
+    ('    "core16550_apb", 4u, 0x0u, 0x01u, 18432000u\n', "", "core16550_apb", []),
+    ('    "pc16550x", 4u, 0x10u, 0x00u, 1843200u\n', "", "unattested",
+     [_STATED + "unknown placement 'pc16550x' "
+      "(registry: axi16450, axi16550, core16550_apb, pc16550d)"]),
+    ('    "PC16550D", 1u, 0x0u, 0x00u, 1843200u\n', "", "unattested",
+     ["R3-uart: the uart_regmap_contract literal '{\"PC16550D\", 1, 0, 0, 1843200}' is not a U0 "
+      "header's"]),
+    ('    "a\'b", 1u, 0x0u, 0x00u, 1843200u\n', "", "unattested",
+     ["R3-uart: the uart_regmap_contract literal '{\"a\\'b\", 1, 0, 0, 1843200}' is not a U0 "
+      "header's"]),
+    ('    "' + "p" * 70 + '", 1u, 0x0u, 0x00u, 1843200u\n', "", "unattested",
+     [_STATED + "unknown placement '" + "p" * 70 + "' "
+      "(registry: axi16450, axi16550, core16550_apb, pc16550d)"]),
+    ('    "pc16550d", 1u, 0x0u, 0x00u, -1\n', "", "unattested",
+     ["R3-uart: the uart_regmap_contract literal '{\"pc16550d\", 1, 0, 0, -1}' is not a U0 header's"]),
+    (_HONEST, "static const uint32_t uart_target_baud = 115200u;\n", "pc16550d", []),
+    (_HONEST, "static const uint32_t uart_target_baud = 0u;\n", "pc16550d",
+     ["R3-uart: uart_target_baud '0' is not a positive integer constant"]),
+    (_HONEST, "static const int uart_target_baud = -9600;\n", "pc16550d",
+     ["R3-uart: uart_target_baud '-9600' is not a positive integer constant"]),
+    (_HONEST, 'const char *uart_target_baud = "caf\u00e9\u00a0\\t";\n', "pc16550d",
+     ["R3-uart: uart_target_baud '\"caf\\xc3\\xa9\\xc2\\xa0\\\\t\"' is not a positive integer constant"]),
+    (_HONEST, "static const uint32_t uart_target_baud[2] = {9600u, 115200u};\n", "pc16550d",
+     ["R3-uart: uart_target_baud '{9600, 115200}' is not a positive integer constant"]),
+    (_HONEST, "uint32_t f(void) { static uint32_t uart_target_baud = 0u; return uart_target_baud; }\n",
+     "pc16550d", []),
+    (_HONEST, "extern uint32_t uart_target_baud;\n", "pc16550d", []),
+)  # fmt: skip
+
+
+def _attestations(cli: list, d: str, units: list) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [*cli, "--emit-uart", *units],
+        cwd=d,
+        env=dict(os.environ, PYTHONPATH=_ROOT + os.pathsep + os.environ.get("PYTHONPATH", "")),
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+
+
+def test_the_twin_attests_the_contract_as_the_oracle_does():
+    """U0's C-twin half: `bcir-cc --emit-uart` prints `bcir-cfront --emit-uart`'s report byte for
+    byte, attesting the `uart_regmap_contract` literal from the twin's own linkable rendering of the
+    unit's globals against the registry uart_model generates for it (`runtime/c/uart_placements.inc`).
+    The probe beside each placement's header attests that placement and draws nothing; beside a
+    header edited to lie about each contract field, about all four at once (in the oracle's order),
+    to name a placement the registry lacks (a name longer than any buffer) or out of the U0 shape, it
+    draws the oracle's messages; a `uart_target_baud` that is no positive decimal constant -- 0,
+    negative, a string past ASCII (spelled byte for byte), an array -- is named,
+    and a static local or a declaration of that name is no target; a unit with no contract is no
+    UART unit. Every unit goes through one invocation of each rail, so the project line is held
+    too, and the report is pinned whole, not only compared: two rails that printed nothing would
+    agree."""
+    if not _CC:
+        return  # the quick tier hides the compiler
+    if not os.path.isdir(os.path.join(_ROOT, "runtime", "c")):
+        from bcir.tests.run_all import _is_source_checkout  # noqa: PLC0415
+
+        assert not _is_source_checkout(), "runtime/c is missing from the checkout"
+        return  # the wheel ships no runtime/c to build the twin from
+    from bcir.tests.test_c_cfront import _build_bcir_cc  # noqa: PLC0415
+
+    honest = um.emit_header(um.PLACEMENTS["pc16550d"])
+    assert _HONEST in honest
+    with tempfile.TemporaryDirectory() as d:
+        units, want = [], []
+        for name in sorted(um.PLACEMENTS):
+            header = f"{name}_regs.h"
+            units.append(f"{name}.c")
+            want.append(f"{name}.c: uart contract {name}")
+            with open(os.path.join(d, header), "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(um.emit_header(um.PLACEMENTS[name]))
+            with open(os.path.join(d, units[-1]), "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(_PROBE.replace("uart16550_regs.h", header))
+        for i, (literal, extra, verdict, messages) in enumerate(_ATTESTATIONS):
+            header, unit = f"attest{i}_regs.h", f"attest{i}.c"
+            units.append(unit)
+            want += [f"{unit}: uart contract {verdict}", *(f"  {m}" for m in messages)]
+            with open(os.path.join(d, header), "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(honest.replace(_HONEST, literal))
+            with open(os.path.join(d, unit), "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(_PROBE.replace("uart16550_regs.h", header) + extra)
+        units.append("plain.c")
+        want.append("plain.c: uart contract none")
+        with open(os.path.join(d, "plain.c"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("int f(int x) { return x + 1; }\n")
+        want.append(f"project: CLEAN ({len(units)} files)")
+        oracle = _attestations([sys.executable, "-m", "bcir.frontends.cfront"], d, units)
+        assert (oracle.returncode, oracle.stderr) == (0, ""), oracle.stderr[-800:]
+        assert oracle.stdout.splitlines() == want, oracle.stdout
+        twin = _attestations([_build_bcir_cc(d)], d, units)
+        assert (twin.returncode, twin.stderr) == (0, ""), twin.stderr[-800:]
+        assert twin.stdout == oracle.stdout, twin.stdout
+
+
 def test_a_tampered_regmap_contract_is_caught():
     """The RegMap law (the R12 call-ABI contract pattern for the register map): every placement's
     own contract is clean, and each lie -- `dataclasses.replace` of the stride, the base offset, one
@@ -364,6 +482,50 @@ def test_checked_in_header_is_current():
     )
     assert data.startswith(b"/* GENERATED by uart_model.py -- do not edit */\n")
     assert um.main(["--check"]) == 0
+
+
+_TABLE_ROW = re.compile(
+    r'UART_PLACEMENT\("([a-z][a-z0-9_]*)", ([0-9]+), (0x[0-9a-f]+), (0x[0-9a-f]{2}), ([0-9]+)\)',
+    re.ASCII,
+)
+_REG_ROW = re.compile(r'UART_REG\("([A-Z]{3})", ([0-7])\)', re.ASCII)
+
+
+def test_the_placement_table_is_the_registry():
+    """The X-macro table the C twin and the law rail read the registry from (`bcir-cc --emit-uart`,
+    `-bcir-verify`'s R3-uart) is the registry, parsed back from what the generator writes: every
+    placement in name order -- the order the unknown-placement message lists them in -- with its
+    stride, base offset, FCR reset and reference clock; every register of the normative table with
+    its slot, in the table's order; each block under its own macro guard and nothing else in it. Both
+    checked-in copies are those bytes."""
+    text = um.emit_placement_table()
+    lines = text.split("\n")
+    assert lines[0] == um.BANNER and lines[-1] == "", lines[:1]
+    start, mid = lines.index("#ifdef UART_PLACEMENT"), lines.index("#ifdef UART_REG")
+    assert lines[mid - 1] == "#endif" and lines[-2] == "#endif" and start < mid
+    rows = [_TABLE_ROW.fullmatch(line) for line in lines[start + 1 : mid - 1]]
+    assert all(rows), lines[start + 1 : mid - 1]
+    assert [
+        (m.group(1), int(m.group(2)), int(m.group(3), 16), int(m.group(4), 16), int(m.group(5)))
+        for m in rows
+    ] == [
+        (name, p.stride, p.base_offset, p.fcr_reset, p.ref_clk_hz)
+        for name, p in sorted(um.PLACEMENTS.items())
+    ]
+    regs = [_REG_ROW.fullmatch(line) for line in lines[mid + 1 : -2]]
+    assert all(regs), lines[mid + 1 : -2]
+    assert [(m.group(1), int(m.group(2))) for m in regs] == [(r.name, r.slot) for r in um.UART16550]
+    for rel in um.PLACEMENT_TABLES:
+        path = os.path.join(_ROOT, rel)
+        if not os.path.isfile(path):
+            from bcir.tests.run_all import _is_source_checkout  # noqa: PLC0415
+
+            assert not _is_source_checkout(), f"{rel} is missing from the checkout"
+            continue  # the wheel ships neither rail's sources
+        with open(path, "rb") as fh:
+            assert fh.read() == text.encode("utf-8"), (
+                f"{rel} is stale: python3 -m bcir.frontends.devices.uart_model --write"
+            )
 
 
 # --- the facts against the documents -----------------------------------------------------------------
@@ -738,9 +900,10 @@ def test_a_malformed_placement_is_refused_by_name():
 
 
 def test_the_regeneration_command_reports_and_repairs_drift():
-    """`python3 -m bcir.frontends.devices.uart_model --check` exits 1 naming each stale view and 0
-    once `--write` has run, on a scratch root; outside a checkout both exit 2, as does a bad
-    argument -- every exit is a verdict."""
+    """`python3 -m bcir.frontends.devices.uart_model --check` exits 1 naming each stale view -- the
+    golden headers, the runtime header and the two rails' placement tables -- and 0 once `--write`
+    has run, on a scratch root; a view `--write` cannot write is named and exits 1; outside a
+    checkout both exit 2, as does a bad argument -- every exit is a verdict."""
     import contextlib  # noqa: PLC0415
     import io  # noqa: PLC0415
 
@@ -753,8 +916,11 @@ def test_the_regeneration_command_reports_and_repairs_drift():
     views = sorted(um.generated_files())
     assert views == sorted(
         [os.path.join(um.PACKAGE_DIR, um.FIXTURES, um.fixture_name(n)) for n in um.PLACEMENTS]
-        + [um.RUNTIME_HEADER]
+        + [um.RUNTIME_HEADER, *um.PLACEMENT_TABLES]
     )
+    tables = [os.path.join("mlir", "lib", "passes", "BCIRUartPlacements.inc"),
+              os.path.join("runtime", "c", "uart_placements.inc")]  # fmt: skip
+    assert sorted(um.PLACEMENT_TABLES) == tables
     stale = [
         f"stale: {rel} (python3 -m bcir.frontends.devices.uart_model --write)" for rel in views
     ]
@@ -771,6 +937,19 @@ def test_the_regeneration_command_reports_and_repairs_drift():
             os.makedirs(os.path.join(root, um.PACKAGE_DIR, um.FIXTURES))
             code, lines = run("--check")
             assert (code, sorted(lines)) == (1, stale)
+            # the law rail's table has no directory to go to yet: named, and the exit says so
+            code, lines = run("--write")
+            cannot = [line for line in lines if line.startswith("cannot write ")]
+            assert code == 1 and len(cannot) == 1, lines
+            assert cannot[0].startswith(f"cannot write {tables[0]}: "), cannot
+            assert sorted(set(lines) - set(cannot)) == [
+                f"wrote {rel}" for rel in views if rel != tables[0]
+            ]
+            assert run("--check") == (1, [stale[views.index(tables[0])]])
+            os.makedirs(os.path.join(root, "mlir", "lib", "passes"))
+            for rel in views:  # back to an empty checkout
+                if os.path.exists(os.path.join(root, rel)):
+                    os.remove(os.path.join(root, rel))
             code, lines = run("--write")
             assert (code, sorted(lines)) == (0, [f"wrote {rel}" for rel in views])
             assert run("--check") == (0, [])

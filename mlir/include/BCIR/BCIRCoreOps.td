@@ -436,6 +436,33 @@ def BCIR_AbiContractOp : BCIR_Op<"abi_contract", [Symbol]> {
   let hasVerifier = 1;
 }
 
+def BCIR_RegMapContractOp : BCIR_Op<"regmap_contract", [Symbol]> {
+  let summary = "The register map a UART unit was laid out for (U0's RegMap contract: the R12 pattern on a device's registers)";
+  // The law-rail twin of uart_model.RegMapContract (bcir/frontends/devices/uart_model.py) and of the
+  // `uart_regmap_contract` literal a unit including the generated uart16550_regs.h embeds: the
+  // placement the unit names, its stride, base offset, FCR reset and baud reference clock, and the
+  // byte offset of every register of the normative table in that table's order (RBR THR IER IIR FCR
+  // LCR MCR LSR MSR SCR DLL DLM). hasVerifier holds the record well formed; the -bcir-verify R3-uart
+  // clause holds it TRUTHFUL against the registry -- a named placement of the U0 registry, its facts,
+  // and each register at base_offset + slot * stride (hazard H-A: a stride-1 driver on a 4-byte
+  // strided core reads the wrong registers). The oracle records and attests the same contract per
+  // compile (CompileResult.regmap_contract, uart_diagnostics); the cfront->MLIR emitter wiring is a
+  // later increment, as it is for bcir.abi_contract.
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,                 // the unit the contract belongs to
+    StrAttr:$placement,                       // UartPlacement.name, e.g. "axi16550"
+    I32Attr:$stride,
+    I64Attr:$base_offset,
+    I32Attr:$fcr_reset,
+    I64Attr:$ref_clk_hz,
+    DenseI64ArrayAttr:$reg_offsets);          // one byte offset per register of the normative table
+  let assemblyFormat = "$sym_name attr-dict";
+  // Parse-time structural well-formedness: a stride of 1, 2, 4 or 8, a base offset that is a
+  // non-negative multiple of it, a byte-wide FCR reset, a positive reference clock, and at least one
+  // register offset, none negative.
+  let hasVerifier = 1;
+}
+
 def BCIR_DeviceManifestOp : BCIR_Op<"device_manifest", [Symbol]> {
   let summary = "The driver seam's static hardware schema: banks + Q8 interconnect distances (D-R1)";
   // The law-rail twin of kbcir/device_manifest.py::DeviceManifest -- the immutable type object

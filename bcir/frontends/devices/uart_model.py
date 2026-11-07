@@ -814,6 +814,41 @@ PACKAGE_DIR = os.path.join("bcir", "frontends", "devices")
 FIXTURES = "fixtures"
 #: repository-relative path of the default placement's header
 RUNTIME_HEADER = os.path.join("runtime", "c", "uart16550_regs.h")
+#: repository-relative paths of the placement table the rails outside the oracle attest a RegMap contract
+#: against: bcir-cc's --emit-uart (the C twin) and -bcir-verify's R3-uart clause (the law rail)
+PLACEMENT_TABLES = (
+    os.path.join("runtime", "c", "uart_placements.inc"),
+    os.path.join("mlir", "lib", "passes", "BCIRUartPlacements.inc"),
+)
+
+
+def emit_placement_table() -> str:
+    """The registry as an X-macro table for C and C++: one `UART_PLACEMENT(name, stride, base_offset,
+    fcr_reset, ref_clk_hz)` row per placement, sorted by name (the order the unknown-placement message
+    lists them in), and one `UART_REG(name, slot)` row per register of the normative table, in its
+    order. A consumer defines the macro it wants and includes the file; each block is skipped unless
+    its macro is defined, so one consumer can take the two in two includes."""
+    for p in PLACEMENTS.values():
+        _supported(p)
+    lines = [
+        BANNER,
+        "/* The U0 registry's placements and register slots, for the rails that attest a RegMap contract",
+        " * outside the oracle: bcir-cc --emit-uart (runtime/c/bcir_cc.c) and the R3-uart clause of",
+        " * -bcir-verify (mlir/lib/passes/BCIRVerifyPass.cpp). Regenerate with",
+        " *     python3 -m bcir.frontends.devices.uart_model --write",
+        " */",
+        "#ifdef UART_PLACEMENT",
+    ]
+    for name in sorted(PLACEMENTS):
+        p = PLACEMENTS[name]
+        lines.append(
+            f'UART_PLACEMENT("{name}", {p.stride}, {p.base_offset:#x}, {p.fcr_reset:#04x}, '
+            f"{p.ref_clk_hz})"
+        )
+    lines += ["#endif", "#ifdef UART_REG"]
+    lines += [f'UART_REG("{r.name}", {r.slot})' for r in UART16550]
+    lines += ["#endif", ""]
+    return "\n".join(lines)
 
 
 def fixture_name(placement_name: str) -> str:
@@ -841,12 +876,16 @@ def generated_files() -> dict[str, bytes]:
         for name, p in PLACEMENTS.items()
     }
     out[RUNTIME_HEADER] = emit_header(PLACEMENTS[DEFAULT_PLACEMENT]).encode("utf-8")
+    table = emit_placement_table().encode("utf-8")
+    for path in PLACEMENT_TABLES:
+        out[path] = table
     return out
 
 
 def main(argv: list[str] | None = None) -> int:
     """--check: exit 0 when every checked-in view is current, 1 when one is stale, 2 when this is
-    not a source checkout. --write: regenerate them (exit 2 outside a checkout)."""
+    not a source checkout. --write: regenerate them (exit 1 naming each view it could not write,
+    2 outside a checkout)."""
     args = sys.argv[1:] if argv is None else argv
     if args not in (["--check"], ["--write"]):
         print("usage: python3 -m bcir.frontends.devices.uart_model --check | --write")
@@ -855,7 +894,7 @@ def main(argv: list[str] | None = None) -> int:
     if not os.path.isdir(os.path.join(root, "runtime", "c")):
         print(f"not a source checkout ({root} has no runtime/c): nothing to {args[0][2:]}")
         return 2
-    stale = []
+    stale, unwritten = [], 0
     for rel, data in generated_files().items():
         path = os.path.join(root, rel)
         try:
@@ -866,14 +905,19 @@ def main(argv: list[str] | None = None) -> int:
         if current == data:
             continue
         if args == ["--write"]:
-            with open(path, "wb") as fh:
-                fh.write(data)
+            try:
+                with open(path, "wb") as fh:
+                    fh.write(data)
+            except OSError as e:  # a verdict, never a traceback (L1)
+                print(f"cannot write {rel}: {e.strerror or e}")
+                unwritten += 1
+                continue
             print(f"wrote {rel}")
         else:
             stale.append(rel)
     for rel in stale:
         print(f"stale: {rel} (python3 -m bcir.frontends.devices.uart_model --write)")
-    return 1 if stale else 0
+    return 1 if stale or unwritten else 0
 
 
 # --- provenance: what each fact was checked against ----------------------------------------------------
