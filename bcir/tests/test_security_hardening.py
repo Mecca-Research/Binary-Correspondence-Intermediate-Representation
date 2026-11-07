@@ -248,6 +248,34 @@ def test_workflow_dependencies_are_sha_pinned_and_tokens_are_read_only() -> None
             assert sha.fullmatch(revision), f"{workflow.name}: {name}@{revision} is mutable"
 
 
+def test_every_linux_runner_names_its_ubuntu_release() -> None:
+    """CI's default toolchain -- Clang 18, GCC 13, Python 3.12, the baseline AGENTS.md judges every
+    change against beside the newest releases -- is the one Ubuntu 24.04 ships. `ubuntu-latest`
+    names whatever release GitHub promotes next: on 2026-11-01 it became 26.04, whose GCC reports
+    the C23 `__STDC_VERSION__` Clang does (the preprocessor differential's impl-defined pin stopped
+    diverging) and whose archive has no LLVM 18 (the corpus baseline's `--require-baseline`), and
+    every job went red with no change to the tree. A runner's release changes only by an edit here,
+    with its baseline moved alongside. Windows stays on `windows-latest`."""
+    linux = re.compile(r"ubuntu-[0-9][0-9.]*[0-9](?:-arm)?")
+    for workflow in sorted((_ROOT / ".github/workflows").glob("*.yml")):
+        text = workflow.read_text(encoding="utf-8")
+        assert "ubuntu-latest" not in text, f"{workflow.name} runs on an unnamed Ubuntu release"
+        labels = re.findall(r"(?m)^\s*runs-on:\s*(\S+)", text)
+        labels += [
+            label.strip()
+            for row in re.findall(r"(?m)^\s*os:\s*\[([^\]]*)\]", text)
+            for label in row.split(",")
+        ]
+        assert labels, workflow.name
+        for label in labels:
+            if label.startswith("${{") or label.startswith("windows-"):
+                continue
+            assert linux.fullmatch(label), f"{workflow.name}: runner {label!r}"
+            assert label.split("-")[1] == "24.04", (
+                f"{workflow.name}: {label} is not the baseline's 24.04"
+            )
+
+
 def test_python_style_gate_and_hooks_run_one_pinned_ruff() -> None:
     """The formatter's output is version-specific, so the pre-commit hooks, the CI style job
     and the `dev` extra must name ONE ruff. A drifting trio is how a tree stops being
