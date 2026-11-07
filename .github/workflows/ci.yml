@@ -23,7 +23,7 @@ jobs:
   # from their sum to their max. Each job restores the same cached toolchain (clang/lld/llvm).
   oracle:
     name: BCIR oracle ${{ matrix.shard }}/2 (Python conformance + parity + fuzz)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The suite is sharded across two runners. A shard is a STRIDE of the discovery order,
     # not a contiguous block: `test_c_cfront` is ~60% of the suite's CPU and its tests are
     # adjacent, so contiguous halves would leave one shard doing nearly all the work.
@@ -142,10 +142,10 @@ jobs:
 
   oracle-llvm-latest:
     name: BCIR oracle ${{ matrix.shard }}/2 on LLVM 23 (the lowering rail on the latest release)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The two `oracle` shards above judge every lowering (AOT, JIT, WASM, the C twins, the
     # alias facts, escape analysis, data movement) with the clang/llvm Ubuntu ships, which
-    # on ubuntu-latest is 18 -- the same major every GEM+ slice (S0-A..S5-C) was developed
+    # on ubuntu-24.04 is 18 -- the same major every GEM+ slice (S0-A..S5-C) was developed
     # against locally. The MLIR rail moved to 23 in #752, so until this job the oracle's
     # LLVM-facing surface had never been judged by the release the law rail tracks. Same
     # tier, same shards, same requirement (BCIR_REQUIRE_LLVM: an absent tool is a failure,
@@ -225,7 +225,7 @@ jobs:
 
   c-rails-llvm-latest:
     name: BCIR C rails on clang 23 (${{ matrix.cell }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The C runtime, C analysis, cfront-UBSan and security jobs above build with Ubuntu's
     # clang 18. These cells re-run their compiler-facing gates with clang 23 + its compiler-rt
     # from apt.llvm.org: the strict -Werror C11/C23 builds, the -O0 == -O3 twins, ASan /
@@ -322,7 +322,7 @@ jobs:
 
   c-runtime:
     name: BCIR C runtime (StreamPack byte-identity + decoder fuzz)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -388,7 +388,7 @@ jobs:
   # ~3 minutes each, so the C critical path is now their max instead of their sum.
   c-analysis:
     name: BCIR C analysis (sanitizers + static analysis + decoder fuzz)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -440,7 +440,7 @@ jobs:
 
   cfront-ubsan:
     name: BCIR cfront witnesses under UBSan (every run-as-the-original program, ${{ matrix.shard }}/2)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Two cells, each the Ith stride of the witness list (`--shard I/N`: disjoint, together the whole
     # list, an empty slice refused), so the longest job of the workflow halves (8 min -> ~4).
     strategy:
@@ -484,8 +484,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        # 3.12 is the interpreter ubuntu-latest ships, the CI default every other job runs; 3.15
+        os: [ubuntu-24.04, windows-latest]
+        # 3.12 is the interpreter ubuntu-24.04 ships, the CI default every other job runs; 3.15
         # is the newest CPython the package declares (pyproject.toml's highest classifier, the
         # PYTHON_SERIES of tools/local/latest_toolchain.py) -- the posture LLVM 23 and Node 24
         # already have: a pass on the default says nothing about the newest. 3.15 is where UTF-8
@@ -596,7 +596,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
     env:
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
@@ -698,7 +698,7 @@ jobs:
 
   training-llvm:
     name: LLVM training corpus
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -956,7 +956,7 @@ jobs:
   #     instead of naming itself skipped -- this job is the owner of that skip.
   training-llvm-latest:
     name: LLVM training corpus (LLVM 23)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # Every corpus script resolves ${base}${LLVM_SUFFIX} first (tools/verify-examples.sh),
       # so this is all that is needed to point the whole corpus at the 23 toolchain.
@@ -1218,10 +1218,10 @@ jobs:
 
   mlir-rail-validate:
     name: BCIR MLIR rail (LLVM ${{ matrix.llvm }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The gating MLIR rail tracks the LATEST LLVM/MLIR release (23; 22 stays in the matrix
     # for one release cycle, as the 21->22 move did in PRs #243-#246). Ubuntu's default
-    # repos on ubuntu-latest top out near LLVM 18/19, so the toolchain comes from
+    # repos on ubuntu-24.04 top out near LLVM 18/19, so the toolchain comes from
     # apt.llvm.org (the llvm.sh helper adds the signed repo). bcir-opt builds under the
     # top-level project's `mlir` preset with MLIR_DIR set from the matrix major, and the
     # configure takes lit, FileCheck and mlir-opt from beside that LLVM (mlir-tblgen
@@ -1304,7 +1304,7 @@ jobs:
 
   cmake-build:
     name: BCIR CMake build (${{ matrix.compiler }}; manifest + build parity)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A hang guard, not a budget: on main the cells ran 9.3 (clang23), 15.3 (clang) and 20.7 (gcc)
     # minutes, and one commit's identical steps ran 1.3 times slower on one hosted runner than on
     # another (2026-10-19, BF16-ATTN-COST), so 25 left the gcc cell no headroom. On 2026-10-23 one
@@ -1401,7 +1401,7 @@ jobs:
 
   docs-governance:
     name: Docs governance (status drift + links + retired paths)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Pure-Python, no toolchain: keeps prose honest against the code. Three gates —
     #   1. docs/STATUS.md must equal a fresh generation (no hand-typed count drift),
     #   2. no broken relative Markdown links (code-aware: C++/IR snippets aren't links),
@@ -1432,7 +1432,7 @@ jobs:
 
   python-style:
     name: Python style (ruff format --check + ruff check)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     # The tree is `ruff format` clean and lint clean under the EXACT ruff pinned in the `dev`
@@ -1464,7 +1464,7 @@ jobs:
 
   python-floor:
     name: Declared Python floor (${{ matrix.python }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     strategy:
@@ -1525,14 +1525,14 @@ jobs:
 
   python-newer:
     name: Declared Python versions above the floor (${{ matrix.python }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
         # Every interpreter pyproject.toml's classifiers name above the floor, except the 3.12
-        # ubuntu-latest ships (host-portability runs it, and 3.15, on both hosts). A classifier
+        # ubuntu-24.04 ships (host-portability runs it, and 3.15, on both hosts). A classifier
         # no cell runs would be a claim nothing exercises -- what `requires-python` was before
         # the python-floor job. 3.15 is the newest: the one tools/local/check_latest.sh judges
         # every change on (PYTHON_SERIES in tools/local/latest_toolchain.py) and the interpreter
@@ -1588,7 +1588,7 @@ jobs:
 
   security-assurance:
     name: Security assurance (secrets, inventory, campaigns, review contract)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
