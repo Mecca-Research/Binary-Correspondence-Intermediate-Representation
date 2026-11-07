@@ -74,6 +74,12 @@ class CompileResult:
     #     call-ABI layout facts -- the R12 lowering-contract pattern extended to the call ABI)
     abi_diagnostics: list = field(default_factory=list)  # the R12 call-ABI law over those contracts
     #     (contract vs laid-out CTypes vs the target data model). ADVISORY, like the laws above. Empty == ok.
+    regmap_contract: object = None  # UART U0: the RegMapContract a unit that includes a generated
+    #     uart16550_regs.h attests (its `uart_regmap_contract` literal); None for any other unit
+    uart_diagnostics: list = field(default_factory=list)  # UART U1: the R3-uart protocol laws
+    #     (devices/uart_laws.py) over such a unit -- DLAB brackets, the divisor, FCR gating,
+    #     reconfiguration at idle, read effects. ADVISORY, like abi_diagnostics; always empty for a
+    #     unit without the literal (the laws are vacuous off-UART). Empty == ok.
     r18_ok: bool = True
     equivalence: str = "skip"  # match | MISMATCH | skip:<reason>
     target: str = HOST.name  # the target ABI the unit was laid out for
@@ -255,6 +261,15 @@ def compile_unit(
     # here, exactly as the C twin's unit-wide bcir_verify_unit R1.1 rejects it (ok=0). Counted into
     # `res.diagnostics`, so it couples to the cross-rail `ok` parity.
     res.diagnostics += cfront_unit_claim_ids_unique(lowered)
+
+    # --- UART U0/U1: a unit that includes a generated uart16550_regs.h embeds the
+    #     `uart_regmap_contract` literal; attest it against the device registry and run the R3-uart
+    #     protocol laws for its placement over the claim graph and the plans. ADVISORY (out of
+    #     `is_clean`), like the call-ABI law; nothing at all for a unit without the literal. ---
+    from ..devices.uart_laws import uart_unit_diagnostics  # noqa: PLC0415 -- devices imports no cfront
+
+    res.regmap_contract, uart_msgs = uart_unit_diagnostics(lowered, res.plans)
+    res.uart_diagnostics = [Diagnostic("R3", m) for m in uart_msgs]
 
     # --- the effect footprint, escape and indirect-call narrowing (G10): one points-to analysis over
     #     the whole unit. A store is `c.store rd=(base,[index,]value) wr=()`, so a footprint that took

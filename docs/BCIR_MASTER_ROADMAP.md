@@ -106,11 +106,22 @@ flowchart TD
     F --> G
     G --> H["BCIR-Linux targeted experiments"]
     G --> I["Native adapter and slim IPC"]
+    D --> P["Foundation phase: hybrid database, Unicode, SLM laboratory"]
+    P --> F
+    P --> T["Event timers, DMA, ACPI, PCIe, NVMe"]
+    T --> I
+    T --> U["Firmware program: UEFI, ACPI, TPM"]
     B --> J["ML/reference and BCIRQ8 gate"]
+    J --> P
     C --> K["Hardware-calibrated cost/telemetry loop"]
     J --> K
     K --> L["Scalable model and accelerator packages"]
 ```
+
+After UART, the foundation phase runs before deep driver and kernel work, by the owner's
+direction: the hybrid database, the Unicode infrastructure and the small-language-model laboratory
+with its initial lessons (the corpus-side roadmaps under `training/`); the device order that
+follows is the driver roadmap's §5.6.
 
 The driver and ML programs share compiler, runtime, telemetry, artifact, and validation
 machinery. Neither may bypass the other's prerequisites: model acceleration needs real device
@@ -174,6 +185,11 @@ The canonical order is evidence-first:
    inference and training support separately, with explicit provider/fallback identities.
 9. Bind physical HAM and finally native HAM/SYCL only after the relevant driver/IPC workload
    gates pass; continue existing planner/oracle and hosted-provider experiments beforehand.
+10. After UART and the foundation phase, build in the driver roadmap's §5.6 order — event timers,
+    DMA and the ownership engine, the virtio queue proof, ACPI's static tables, PCIe, NVMe, the
+    IPC rungs, UEFI with TPM, USB, memory inventory, CPU, GPUs, then the master kernel — on the one
+    driver contract of §5.5. The firmware (§5.7) and IPC (§7.4) programs are planned and not
+    started; the open-source and vendor sources are §5.8–§5.9; the fork's plan is §6.4.
 
 Driver packages reuse one authoritative device schema to generate register/packet definitions,
 assembler, decoder, verifier, simulator, RuntimeChannel binding, telemetry schema, replay corpus,
@@ -270,12 +286,16 @@ protobuf, gRPC, BMC, or UART delivery. Normative details live in
 | Foundation law/parity | Landed | R1–R25 negative coverage, generated differentials, deterministic replay |
 | C/runtime memory discipline | Landed baseline | Strict hosted/freestanding builds, allocation-failure campaign, sanitizers, idempotent teardown |
 | Pre-driver machine edge | Partial landed | Ordinary x86 edge and MC1/MC2 baselines; paranoid/reset and hardware binding remain explicit |
-| UART direct package | Open | D0–D2 schema/assembler/verifier/simulator/direct parity, faults, cancellation, saturation, replay |
+| UART direct package | Partial landed | U0 on every rail, U1 on the oracle, U2's polled driver against the simulated 16550 linked from both rails' emit; U1's law-rail half and the event-driven slices remain for D0–D2's cancellation, saturation and replay |
+| Foundation phase | Open, before deep driver work | The hybrid database's next S-slices, the Unicode database's first slices and the small-language-model laboratory with its initial lessons, each at its own roadmap's gates |
 | UART Linux adapter | Open | D3 direct/adapter behavioral parity and unload/restart safety |
 | virtio queue proof | Open | Character/event plus block/DMA lifecycle, reset and saturation evidence |
 | BCIR UAPI v1 | Gated | UART + virtio-blk evidence, generated ABI tests, compatibility and failure matrix |
 | BCIR-Linux experiment rails | Open | Reproducible LTS/next baselines; invasive patches only for measured stock-interface gaps |
 | Native kernel/IPC proof | Gated | Boot/memory/IRQ/PCIe/DMA prerequisites and direct/Linux/native parity |
+| Firmware program (UEFI, ACPI, SMBIOS, TPM) | Planned | Stage A on QEMU+OVMF+swtpm: reproducible boot, refused unauthorized image, measured runtime, validated tables (driver roadmap §5.7) |
+| IPC program I1–I8 | Planned | Each rung against its Linux or reference comparator with whole-lifecycle measurement (driver roadmap §7.4) |
+| Trust program RoT0–RoT8 (root of trust, TPM, measured kernel) | Planned | Measured boot, sealing, runtime integrity and attestation on QEMU + OVMF + swtpm, then RoT simulation and dynamic launch ([`kernel/BCIR_ROOT_OF_TRUST_ROADMAP.md`](kernel/BCIR_ROOT_OF_TRUST_ROADMAP.md)) |
 | Data/AI driver and IPC qualification | Proposed extension | Per-device capability/profile; dataset-to-completion/checkpoint evidence, model quality and measured direct/hosted/native behavior under existing D/M/OT/SI/BG gates |
 | Small real-model reference | Landed | Pinned source hashes, BCIRQ8 compactness, Python/C ID and logit parity |
 | Hosted train-to-C micro gate | Landed | Random-weight CPU training, exact resume, deterministic Safetensors/Q8 export, Python/C parity |
@@ -351,7 +371,12 @@ measurement validity, toolchain/profile identity, and honest degraded/skipped re
 - **Vendor drivers:** inherit or wrap AMDGPU/ROCm, NVIDIA/CUDA, and other vendor stacks unless
   measurement justifies an independently reviewed replacement effort.
 - **IPC:** direct in-process RuntimeChannel first. Process separation requires privilege isolation,
-  crash containment, vendor isolation, or multi-client sharing and must preserve behavior.
+  crash containment, vendor isolation, or multi-client sharing and must preserve behavior. Native
+  IPC is four primitives (shared region, doorbell, waitable word, submission/completion ring), not a
+  reimplementation of Linux's facilities, which stay the compatibility rail and the baselines.
+- **Firmware:** firmware initializes and attests the machine; BCIR owns verified runtime execution.
+  Build on EDK II or coreboot, keep resident firmware minimal, replace a PI component only with a
+  measured advantage.
 - **Linux fork:** stock interfaces and out-of-tree adapters establish the baseline. Fork patches
   require a measured residual gap, rollback, rebase, and upstreamability analysis.
 - **Learning:** no model inference on L0, no in-flight plan steering, no uncertified artifact
@@ -381,7 +406,7 @@ measurement validity, toolchain/profile identity, and honest degraded/skipped re
 | Location | Owns |
 |---|---|
 | `docs/` | Normative law, master execution order, current state, parity, releases, onboarding, history, repository structure |
-| `docs/kernel/` | Drivers, RuntimeChannel/UAPI/IPC, StreamPack, hardware validation, telemetry, channels, SYCL |
+| `docs/kernel/` | Drivers, RuntimeChannel/UAPI/IPC, StreamPack, hardware validation, telemetry, channels, SYCL, firmware and the root of trust |
 | `docs/machine-learning/` | ML/AI roadmap, model/reference ladder, language placement, model provenance, hosted-AI integration research |
 | `docs/languages/` | C frontend/memory/C++ boundary and future language-specific frontend/lowering plans |
 | `docs/research/` | Comparative/feasibility studies and non-normative optimization research |
@@ -392,22 +417,24 @@ History explains past decisions but does not reopen superseded sequencing.
 
 ## 11. Immediate priority queue
 
-1. Keep the merged correctness, portability, memory-discipline, x86-edge, StreamPack, telemetry,
-   and model gates green while this documentation taxonomy lands.
-2. Finalize version-zero driver telemetry identity and generated signal definitions.
-3. Execute UART U0–U2: authoritative schema, assembler/decoder/verifier, simulator, then direct
-   polled RuntimeChannel binding.
-4. Add event-driven UART lifecycle, replay, fault, saturation, cancellation, and teardown evidence.
-5. In parallel, prototype the A1 packed-low-bit contract and B1 measured schedule comparison on
-   available hardware without blocking the UART proof.
-6. Keep HAM hardware work at the documented HMF-D0–D5 gates: capability adapters first, then
-   GDS/P2PDMA/CXL/NVMe work only after relevant driver/kernel prerequisites and physical rigs.
-7. Start BCIR-Linux and native-kernel implementation only at their explicit dependency gates.
-8. Use the existing training backend and exported database/query fixtures to qualify each
-   driver's applicable workload profile and inform IPC experiments; preserve the one-way
-   corpus law and defer full comparative training until #820 completes and merges.
-9. Keep physical HAM and native HAM/SYCL behind the resulting driver/IPC evidence, with
-   direct/staged routing and hosted fallback labeled separately.
+1. Land the UART slices and keep CI's gates green on the runner release its baseline toolchain
+   comes from (Ubuntu 24.04: Clang 18, GCC 13, Python 3.12).
+2. Optionally finish UART's U1 law-rail half (the five laws as `-bcir-verify` clauses and the C
+   twin's form), the one UART slice left open across rails.
+3. Run the foundation phase before deep driver work: the hybrid database's next slices, the
+   Unicode infrastructure and the small-language-model laboratory with its initial lessons
+   (`training/DATABASE_ROADMAP.md`, `training/UNICODE_ROADMAP.md`, `training/SLM_ROADMAP.md`),
+   under the one-way corpus law.
+4. Then build drivers in the driver roadmap's §5.6 order on §5.5's one contract, starting with the
+   event timers and DMA, whose blueprints exist; grow the deep-learning and modeling work with
+   each driver's traces.
+5. Keep the IPC and firmware programs at their plans until their rows come up; start BCIR-Linux
+   only at §6.4's entry criteria, with the owner creating the repository.
+6. Keep HAM hardware work at the documented HMF-D0–D5 gates and physical HAM and native HAM/SYCL
+   behind the resulting driver/IPC evidence, with direct/staged routing and hosted fallback
+   labeled separately.
+7. Work one slice at a time on the bounded host; multi-agent fan-out waits for a usage budget that
+   carries it.
 
 Completed-wave details and the former master roadmap's capability-by-capability ledger are retained
 in [`DEVELOPMENT_HISTORY.md`](DEVELOPMENT_HISTORY.md).

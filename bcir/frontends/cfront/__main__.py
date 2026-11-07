@@ -38,6 +38,9 @@ Options (a cc-compatible subset):
     --emit-link-flags  print just the linker flags this unit's external-call edges need (B1), one
                     space-separated line (e.g. `-lm`); empty for a pure-integer unit. For build-system
                     consumption. Mirrors bcir-cc --emit-link-flags byte-for-byte (dual-rail parity).
+    --emit-uart     print the unit's UART RegMap contract attested against the U0 registry: one
+                    line `<file>: uart contract <placement|none|unattested>`, then each R3-uart
+                    attestation message. Mirrors bcir-cc --emit-uart byte-for-byte (dual-rail parity).
     --linkable      emit the LINKABLE artifact (Phase 3): functions with EXTERNAL linkage under
                     their real names + file-scope global definitions/declarations, so two emitted
                     TUs link to each other (and to any host object). Opt-in; the default --emit
@@ -193,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     files: list[str] = []
     std = "c23"
     pp_only = show_explain = selfcheck = syntax_only = emit_json = fallback = False
-    emit_link_flags = dep_only = project_verdict = linkable = False
+    emit_link_flags = dep_only = project_verdict = linkable = emit_uart = False
     dep_file: str | None = None
     dep_target: str | None = None
     compdb: str | None = None
@@ -217,6 +220,8 @@ def main(argv: list[str] | None = None) -> int:
             emit_link_flags = True
         elif a == "--linkable":
             linkable = True
+        elif a == "--emit-uart":
+            emit_uart = True
         elif a == "--project":
             project_verdict = True
         elif a == "-fsyntax-only":
@@ -442,6 +447,12 @@ def main(argv: list[str] | None = None) -> int:
             from .linkflags import format_link_flags  # noqa: PLC0415
 
             out.append(format_link_flags(r.link_flags))
+            outcomes.append("clean" if r.is_clean else "dirty")
+            continue
+        if emit_uart:  # U0: the RegMap contract the unit embeds, attested (bcir-cc --emit-uart)
+            from ..devices.uart_laws import format_uart_attestation  # noqa: PLC0415
+
+            out.append(format_uart_attestation(path, r.lowered))
             outcomes.append("clean" if r.is_clean else "dirty")
             continue
         if selfcheck:
