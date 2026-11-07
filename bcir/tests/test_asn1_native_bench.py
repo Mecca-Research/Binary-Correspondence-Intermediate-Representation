@@ -396,16 +396,33 @@ def test_ber_encodes_faster_than_der_because_the_standard_says_it_may():
     leave the length open and close with an EOC, so it needs one pass and no scratch. The
     gap between the two rows is therefore a property of the encodings.
 
-    Asserted on the median only. The intervals are not required to separate: on a contended
-    runner they will sometimes overlap, and widening the claim to non-overlap would make
-    this test report the runner's load as an encoding fact.
+    Asserted on each encoding's LOWER ENVELOPE -- its fastest round -- over rounds that time
+    only these two, back to back. Contention, preemption and a neighbour's cache traffic can
+    only add time to a round, never remove it, so the fastest round is the estimate closest to
+    the encoding's own cost, and a loaded runner moves it least. The medians this test used to
+    compare are where load lands: once, on a shared runner, BER's median read 108 ns against
+    DER's 95 (2026-11-07, `BCIR oracle 1/2 on LLVM 23` on #823, which touches no ASN.1 code;
+    its re-run passed). On the development host BER's fastest round is about 38 ns against DER's
+    61, BER is the faster of the pair in every round, and two busy loops sharing its CPU moved
+    the medians about twice as far as the fastest rounds.
+
+    The intervals are still not required to separate: on a contended runner they will
+    sometimes overlap, and widening the claim to non-overlap would make this test report the
+    runner's load as an encoding fact. An extra pass on BER's side does fail it: that makes
+    BER do DER's work, and its fastest round no longer beats DER's.
     """
     if not native_available():
         return
-    samples, _ = run_native_encode_bench(_RECORD, _VALUE, rounds=MIN_SAMPLES + 10)
-    der = sorted(samples["DER"])[len(samples["DER"]) // 2]
-    ber = sorted(samples["BER"])[len(samples["BER"]) // 2]
-    assert ber <= der, f"BER {ber}ns did not beat DER {der}ns; §8.1.3.6 says it should"
+    samples, _ = run_native_encode_bench(
+        _RECORD, _VALUE, rounds=4 * MIN_SAMPLES + 13, candidates=_named("DER", "BER")
+    )
+    der, ber = samples["DER"], samples["BER"]
+    assert len(der) == len(ber) >= 4 * MIN_SAMPLES, (len(der), len(ber))
+    faster = sum(b <= d for b, d in zip(ber, der))
+    assert min(ber) <= min(der), (
+        f"BER's fastest round {min(ber)}ns did not beat DER's {min(der)}ns; §8.1.3.6 says it "
+        f"should (BER was the faster of the pair in {faster} of {len(ber)} rounds)"
+    )
 
 
 def test_a_measured_table_now_carries_a_real_encode_interval():

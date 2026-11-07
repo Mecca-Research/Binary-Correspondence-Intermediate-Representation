@@ -30,6 +30,6 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # and checks it RECOVERS x_true on a well-conditioned A. The LAPACKE_sgels -> -llapack dual-rail is confirmed
 # by the #linkflags-lapack probe above (LAPACKE_sgels rides the SAME LAPACKE_* rule -- no linkflags change).
 ols_out="$("${KERNEL}")"; ols_rc=$?    # rc=0 IS the recovery check: |c0-1|<1e-3 && |c1-2|<1e-3 (in the driver)
-{ [ "${ols_rc}" = "0" ] && printf '%s' "${ols_out}" | grep -q "^c0=.* c1=.*"; } \
+{ [ "${ols_rc}" = "0" ] && printf '%s' "${ols_out}" | grep "^c0=.* c1=.*" >/dev/null; } \
   && echo "  PASS ols: normal-equations fallback recovers y=2x+1 (${ols_out}; LAPACKE_sgels -> -llapack via #linkflags-lapack)" \
   || { echo "  FAIL: OLS fallback did not recover [1,2] (rc=${ols_rc}: ${ols_out})"; exit 1; }

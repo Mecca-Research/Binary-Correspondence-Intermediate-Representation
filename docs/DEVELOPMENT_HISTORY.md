@@ -289,6 +289,70 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-07 — BER-DER-ENVELOPE: the BER-before-DER encode claim judged on lower envelopes.**
+  `test_ber_encodes_faster_than_der_because_the_standard_says_it_may` compared two independent
+  medians taken among nine interleaved candidates, and once, on a shared runner, BER's read
+  108 ns against DER's 95 (`BCIR oracle 1/2 on LLVM 23` on #823, which touches no ASN.1 code;
+  its re-run passed). The claim is unchanged -- X.690 §8.1.3.6 lets BER encode in one pass,
+  §10.1 makes DER know each length first -- but it is now timed on DER and BER alone, back to
+  back in each of 41 rounds, and asserted on each one's fastest round: load can only add time to
+  a round, so the fastest is the estimate a loaded runner moves least. On the development host
+  BER's fastest round is ~38 ns against DER's ~61 and BER wins every paired round; two busy loops
+  on its CPU moved the medians about twice as far as the minima, and neither inverted. An extra
+  BER pass injected into the harness's encode call fails it (BER the faster in 0-1 of 41
+  rounds). The intervals are still not required to separate.
+
+- **2026-11-07 — CI-ONCE: the main workflow runs once per change, and the CMake cells in half
+  the time.** Measured on #823/#824's runs: every push to a branch with a pull request ran the
+  whole workflow twice (push and pull_request, 36 jobs each; 64 minutes of wall time and 356
+  runner-minutes per push), and the second copy queued behind the first. The CMake cells were the
+  critical path -- gcc 47.8 minutes, clang23 32.3, clang 27.8 -- and `ctest -L build` was 2313 s
+  of the gcc cell's: `build-make` 1283 s and `build-section-parity` 883 s, one after the other on
+  two workers of a 4-vCPU runner, each re-running every section one at a time (the two
+  decoder-train sections are 191 s and 225 s per run on gcc).
+  - The workflow triggers on pull requests, on pushes to `main` and by hand
+    (`test_ci_runs_once_per_change` holds the three).
+  - `BCIR_GATE_WORKERS` (2, the local cap; > 0) sets the BCIR Make gates' tasks and the
+    processors CTest reserves for them; CI configures 4 and runs the build, the build label and
+    the fuzz preset at `-j 4`. The section label stays at `-j 2`: gcc's ThreadSanitizer build of
+    the decoder trainer's section ran 588 s beside three other sections against 225 s beside one
+    (its race harness reports when two pool threads split a conflicting pair, the run's timing),
+    and the label took 590 s at `-j 4` against 251 s at `-j 2`. `section_parity.py` runs every section's two runs on that many workers,
+    `make_gate.py` its sections' shell runs, `build_parity.py` its fixtures (each in a working
+    directory of its own); each reports in a fixed order, and refuses a count below one before it
+    builds (`test_each_make_gate_reserves_the_workers_it_runs`,
+    `test_the_section_parity_gate_runs_sections_at_once_and_reports_in_order`,
+    `test_the_build_parity_gate_names_a_differing_row_from_its_own_directory`). Section parity's
+    diagnostic rerun -- the second run over BCIR Make's binaries that tells a build difference from
+    undeclared nondeterminism -- first ran on the judging thread beside a full pool, so
+    `--workers 2` meant three runs at once (a review finding); it now queues on the same pool
+    (`test_the_section_parity_gates_diagnostic_rerun_takes_a_worker_slot`, three live runs before
+    the fix in 3 of 3 trials, never more than two after). A section run
+    now has one bound wherever it runs, 900 s: section-parity's was 600 against its CTest entry's
+    and the make gate's 900, and its runs now share the host
+    (`test_a_section_run_has_one_bound_wherever_it_runs`).
+  - `build-make` moved to a job of its own, `cmake-make-gate`, on the same three cells and set up
+    as they are, with `--no-tests=error`; `cmake-build` runs the build label less exactly that
+    entry (`test_the_ci_owns_the_build_gate`).
+  - The first run with sections side by side failed the clang23 cell's section parity on
+    `recover`: its CMake run printed both lines its check looks for and failed the check. Bash
+    line-buffers its builtins' output, so `printf '%s' "$out" | grep -q "^21$"` writes once per
+    line; `grep -q` matched the first line and exited, the next write took SIGPIPE, and under
+    `pipefail` the match read as a failure. A quiet host never shows the window; the load did. The
+    disassembly guard had left small writers alone as unable to fill a pipe buffer -- a premise
+    that misses line buffering. Every section's early reader (30 `grep -q`, 4 `head`) now reads
+    every line (`grep ... >/dev/null`, `sed -n '1,10p'`), which keeps each status.
+  - The same shape in the rest of `tools/` closed alike: 51 early readers in 17 gate scripts (the C
+    runtime, memory-discipline, StreamPack-semantic, fuzz, sanitizer and analyzer gates; the MLIR
+    pass, bytecode and asm-lowering checks; the IRDL corpus; `check_latest.sh`; the silicon
+    probes), among them `BO="$(find ... | head -1)"`, which under `set -e` ends the script when
+    `find` takes SIGPIPE. One predicate now holds every script under `tools/` that sets `pipefail`
+    -- 140 of them -- to readers that read every line, refusing `grep -q`, `-m`, `-l`, their long
+    spellings and `head`: `test_no_gate_pipes_a_writer_into_an_early_exiting_reader_under_pipefail`,
+    which had held only disassembly, and which also shows both halves with a pause between two
+    writes. Scripts without `pipefail` are out of its scope: there a writer's SIGPIPE cannot
+    reach the pipeline's status.
+
 - **2026-10-20 — UDSI-PLAN universal interface blueprint:** added the
   [universal serialization/interface roadmap](BCIR_UNIVERSAL_INTERFACE_ROADMAP.md), connecting
   typed service contracts, ASN.1/JER projections, foreign schema/codec providers, native

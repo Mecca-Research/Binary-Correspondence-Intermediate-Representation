@@ -79,6 +79,6 @@ if cmp -s "${tmp}/oer_O0.txt" "${tmp}/oer_O3.txt"; then
   echo "  PASS X.696 OER twin (freestanding, -Werror, -O0 == -O3 over $(wc -l < "${tmp}/oer_cases.txt") cases)"
 else
   echo "  FAIL: the OER twin's answers depend on the optimisation level"
-  diff "${tmp}/oer_O0.txt" "${tmp}/oer_O3.txt" | head -10
+  diff "${tmp}/oer_O0.txt" "${tmp}/oer_O3.txt" | sed -n '1,10p'
   exit 1
 fi

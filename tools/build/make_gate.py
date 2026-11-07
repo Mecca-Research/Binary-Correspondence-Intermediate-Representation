@@ -10,7 +10,8 @@ runs the runtime gate's sections, and holds to what the roadmap promised of it.
 3. **The sections' verdicts are their shell runs':** each section's script, run directly over the
    same binaries with the same CC and PYTHON, prints byte-identical stdout and stderr and exits with
    the same status as its task recorded -- after the section's declared `varies` masks, as the
-   section-parity gate compares.
+   section-parity gate compares. The shell runs are independent, so `--workers` of them run at
+   once, as the tasks did; each is judged against its own record.
 4. **A one-unit change executes exactly its dependents:** in a scratch copy of the tree carrying the
    first run's outputs, state and cache, one runtime unit is edited and bcir-make re-run. What it
    executes must be exactly the targets whose generation tag the edit changed, and those must be
@@ -32,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -130,10 +132,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cxx")
     parser.add_argument("--out-dir", default="build/bcir-make-gate")
     parser.add_argument("--scratch", type=Path, help="keep the change step's copy here")
-    parser.add_argument("--workers", type=int, default=2)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        help="tasks at once: BCIR Make's, then the sections' shell runs (default 2, the local cap;"
+        " CI's 4-vCPU runners pass 4)",
+    )
     args = parser.parse_args(argv)
     if not is_repo_path(args.out_dir):
         print(f"make-gate: UNUSABLE: --out-dir {args.out_dir!r} is not a repo-relative path")
+        return 2
+    if args.workers < 1:
+        print(f"make-gate: UNUSABLE: --workers {args.workers} runs nothing")
         return 2
     generator = _load("bcirfile")
     section_parity = _load("section_parity")
@@ -217,6 +228,22 @@ def main(argv: list[str] | None = None) -> int:
     shell = section_parity.posix_shell()
     manifest = json.loads((ROOT / "runtime" / "manifest.json").read_text(encoding="utf-8"))
     compared = 0
+    # the task's own argv, relative to the root both run in: a script that names its binary or
+    # itself in a diagnostic prints the same text either way
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        direct_runs = {
+            name: pool.submit(
+                section_parity.run_section,
+                shell,
+                Path(manifest["sections"][name]["script"]),
+                [Path(args.out_dir) / "bin" / b for b in manifest["sections"][name]["harnesses"]],
+                tools["python"],
+                section_parity.SECTION_TIMEOUT,
+                tools["cc"],
+            )
+            for name in planned["sections"]
+        }
+        direct_results = {name: run.result() for name, run in direct_runs.items()}
     for name in planned["sections"]:
         section = manifest["sections"][name]
         verdict = ROOT / args.out_dir / "verdicts" / name
@@ -225,12 +252,7 @@ def main(argv: list[str] | None = None) -> int:
             (verdict / "stdout").read_bytes(),
             (verdict / "stderr").read_bytes(),
         )
-        # the task's own argv, relative to the root both run in: a script that names its binary
-        # or itself in a diagnostic prints the same text either way
-        binaries = [Path(args.out_dir) / "bin" / b for b in section["harnesses"]]
-        direct = section_parity.run_section(
-            shell, Path(section["script"]), binaries, tools["python"], 900.0, tools["cc"]
-        )
+        direct = direct_results[name]
         varies = section.get("varies", [])
         if (direct[0], section_parity.mask(direct[1], varies)[0], direct[2]) != (
             recorded[0],

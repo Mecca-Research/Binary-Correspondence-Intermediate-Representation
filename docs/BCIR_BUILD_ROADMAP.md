@@ -118,7 +118,7 @@ under `harnesses/`, fuzz targets under `fuzzers/`, the dependency index at `bcir
 
 | Label | Entries (BUILD-1) | Owner on CI |
 |---|---|---|
-| `build` | `build-manifest` (the checker), `build-deps-index` (the dependency index), `build-parity` (the `bcir-cc` parity gate), `build-section-parity` (every migrated section byte-identical over the gate-built and the CMake-built harnesses), `build-install` (the install gate: an out-of-tree consumer of the installed package) | `cmake-build` (gcc + clang) |
+| `build` | `build-manifest` (the checker), `build-deps-index` (the dependency index), `build-parity` (the `bcir-cc` parity gate), `build-section-parity` (every migrated section byte-identical over the gate-built and the CMake-built harnesses), `build-install` (the install gate: an out-of-tree consumer of the installed package); `build-make` (BCIR Make's gate, §8.2) | `cmake-build` (gcc, clang, clang23), all but `build-make`; `cmake-make-gate` runs `build-make` on the same cells, beside it |
 | `section` + `c` | `c-section-<name>` for every `sections` entry of the manifest: the gate section's own script over the harnesses built here, or, for a compiler-only section, over none, under the configured compiler | `cmake-build` |
 | `python` | `python-quick` (the oracle's quick tier, `-j 2`) | the oracle jobs |
 | `train` | `train-corpus`: the train rail (TRAIN-RAIL) -- `tools/models/train_rail.sh` trains the corpus recipe (`docs/` and `training/`, read as data under the one-way corpus law of `AGENTS.md` §2) for `BCIR_TRAIN_STEPS` steps (40; `> 0`) on the native trainer compiled with the configured compiler, then reads the corpus witness (`train.corpus.unselected` 0); BCIR Make runs the same script and count as the task `train.corpus` inside `build-make` | `cmake-build` (the gcc cell runs the entry; every cell runs the task), the qualification job (200 steps, then qualified) |
@@ -131,6 +131,15 @@ under `harnesses/`, fuzz targets under `fuzzers/`, the dependency index at `bcir
 with two workers and the heavy entries serialized by `PROCESSORS 2`. A gate wrapped as an entry
 is still the gate -- same script, same output -- so the wrapping changes nothing about what is
 judged, only who schedules it.
+
+The BCIR Make gates (`build-make`, `build-parity`, `build-section-parity`) run `BCIR_GATE_WORKERS`
+tasks at once -- BCIR Make's, then their own independent runs (the sections' shell runs, each
+fixture's rows), reported in a fixed order -- and reserve as many processors (`PROCESSORS
+${BCIR_GATE_WORKERS}`). The cache variable is 2, the local cap; CI's 4-vCPU runners configure 4
+and run the build label at `-j 4` (`test_each_make_gate_reserves_the_workers_it_runs`). The section
+label stays at `-j 2` there: gcc's ThreadSanitizer build of the decoder trainer's section, its
+long pole, ran 2.6 times as long beside three other sections as beside one. `build-make` runs in
+a job of its own on CI, so the longest gate no longer queues behind the others on one runner.
 
 ## 5. Dependencies and submodules
 

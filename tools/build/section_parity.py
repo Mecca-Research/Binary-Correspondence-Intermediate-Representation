@@ -21,6 +21,10 @@ as a build difference. A `compiler_only` section takes no binary -- it judges wh
 oracle emits under CC -- so there is no build to compare: it is run twice all the same, and its
 two outputs must agree and pass, which holds its verdict to its inputs.
 
+The runs are independent -- each section's script works in its own temporary directory -- so the
+gate runs `--workers` of them at once, as BCIR Make runs its tasks and CTest the `section` label,
+and reports them in the manifest's order whatever order they finish in.
+
     section_parity.py --harness-dir build/cmake/harnesses --tool-dir build/cmake/runtime/c \
         --cc gcc [--cxx g++] [--make-dir build/bcir-make-parity] [--section runtime ...]
 
@@ -42,6 +46,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +55,10 @@ MAKE_DIR = "build/bcir-make-parity"
 
 
 STREAMS = ("status", "stdout", "stderr")
+# One bound for one run of a section, wherever it runs: the `c-section-<name>` CTest entries'
+# TIMEOUT and the make gate's shell runs give it the same. The runs share the host with
+# `--workers` - 1 others, so a section's time here is its time under that load.
+SECTION_TIMEOUT = 900.0
 
 
 def _load_tool(name: str):
@@ -142,9 +151,20 @@ def compare_section(
     build). `shell` is a probed POSIX shell (posix_shell()); without one there is nothing to run."""
     if shell is None:
         raise RuntimeError("compare_section needs a probed POSIX shell (posix_shell() found none)")
-    varies = list(varies)
     make = run_section(shell, script, make_binaries, python, timeout, cc)
     cmake = run_section(shell, script, cmake_binaries, python, timeout, cc)
+    return judge_runs(
+        make,
+        cmake,
+        varies,
+        lambda: run_section(shell, script, make_binaries, python, timeout, cc),
+    )
+
+
+def judge_runs(make: tuple, cmake: tuple, varies, rerun) -> dict:
+    """compare_section's verdict over two runs already made: `rerun` runs the section over BCIR
+    Make's binaries once more, and is called only when the two runs differ."""
+    varies = list(varies)
     make_out, stale_make = mask(make[1], varies)
     cmake_out, stale_cmake = mask(cmake[1], varies)
     masked_make = (make[0], make_out, make[2])
@@ -152,7 +172,7 @@ def compare_section(
     differ = [name for name, a, b in zip(STREAMS, masked_make, masked_cmake) if a != b]
     unstable = False
     if differ:
-        again = run_section(shell, script, make_binaries, python, timeout, cc)
+        again = rerun()
         unstable = (again[0], mask(again[1], varies)[0], again[2]) != masked_make
     passed = cmake[0] == 0 and b"PASS" in cmake[1]
     stale = sorted(set(stale_make) | set(stale_cmake))
@@ -192,7 +212,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--python", default=sys.executable, help="the interpreter the sections' fixtures run under"
     )
-    parser.add_argument("--timeout", type=float, default=600.0, help="seconds per section run")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=SECTION_TIMEOUT,
+        help=f"seconds per section run (default {SECTION_TIMEOUT:.0f}, the bound every runner of a"
+        " section gives it)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        help="tasks at once: BCIR Make's, then the section runs (default 2, the local cap; CI's"
+        " 4-vCPU runners pass 4)",
+    )
     parser.add_argument(
         "--unbuilt",
         action="append",
@@ -201,6 +234,9 @@ def main(argv: list[str] | None = None) -> int:
         help="a variant or kernel the CMake build did not build here, and why (repeatable; the build passes them)",
     )
     args = parser.parse_args(argv)
+    if args.workers < 1:
+        print(f"section-parity: UNUSABLE: --workers {args.workers} runs nothing")
+        return 2
 
     manifest_tool = _load_manifest_tool()
     generator = _load_tool("bcirfile")
@@ -285,12 +321,25 @@ def main(argv: list[str] | None = None) -> int:
 
     # BCIR Make builds every binary once; a rerun over an unchanged tree runs nothing.
     try:
-        built = generator.build(cc, args.cxx, args.make_dir)
+        built = generator.build(cc, args.cxx, args.make_dir, workers=args.workers)
     except generator.BuildError as exc:
         print(f"section-parity: UNUSABLE: BCIR Make did not build the rails: {exc}")
         return 2
     failures: list[str] = []
     compiler_only = 0
+    # every section's two runs at once, `--workers` at a time; judged below in the manifest's order
+    pool = ThreadPoolExecutor(max_workers=args.workers)
+    runs: dict[tuple[str, str], object] = {}
+    for name, section in wanted.items():
+        if all(h in built for h in section["harnesses"]):
+            script = ROOT / section["script"]
+            for side, binaries in (
+                ("make", [built[h] for h in section["harnesses"]]),
+                ("cmake", [cmake_binary(h) for h in section["harnesses"]]),
+            ):
+                runs[name, side] = pool.submit(
+                    run_section, shell, script, binaries, args.python, args.timeout, cc
+                )
     for name, section in wanted.items():
         unmade = [h for h in section["harnesses"] if h not in built]
         if unmade:
@@ -300,16 +349,16 @@ def main(argv: list[str] | None = None) -> int:
             )
             continue
         make_binaries = [built[h] for h in section["harnesses"]]
-        cmake_binaries = [cmake_binary(h) for h in section["harnesses"]]
-        result = compare_section(
-            ROOT / section["script"],
-            make_binaries,
-            cmake_binaries,
-            args.python,
-            args.timeout,
-            shell,
+        script = ROOT / section["script"]
+        result = judge_runs(
+            runs[name, "make"].result(),
+            runs[name, "cmake"].result(),
             section.get("varies", []),
-            cc,
+            # the diagnostic rerun takes a worker slot like any other run: queued behind the
+            # runs already submitted, never beside a full pool (`--workers` is the cap)
+            lambda script=script, make_binaries=make_binaries: pool.submit(
+                run_section, shell, script, make_binaries, args.python, args.timeout, cc
+            ).result(),
         )
         if result["stale"]:
             failures.append(
@@ -354,6 +403,7 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"section {name}: identical under both builds ({passes} PASS line(s), {len(section['harnesses'])} binary(ies){masked})"
             )
+    pool.shutdown()
     for name, why in skipped.items():
         print(
             f"section {name}: NOT COMPARED here -- its binaries were not built ({'; '.join(why)})"

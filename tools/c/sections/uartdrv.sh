@@ -78,7 +78,7 @@ if [ "${console_rc}" = "0" ] && cmp -s "${tmp}/console.out" "${tmp}/console.want
   echo "  PASS the sim console: LSR 0x60 at reset, and FCR 0xC1 answered by IIR 0xC1 (a 16550A)"
 else
   echo "  FAIL: the sim console (exit ${console_rc}) did not answer as a 16550A at reset"
-  sed 's/^/    /' "${tmp}/console.out" | head -5
+  sed 's/^/    /' "${tmp}/console.out" | sed -n '1,5p'
   exit 1
 fi
 
@@ -127,13 +127,13 @@ if printf 'unsigned f(volatile unsigned *p){ *p = 1u; return *p; }\n' \
     verdict="$(grep '^verdict:' "${d}/source.txt")"
     cmp -s "${d}/twin.txt" "${d}/oracle.txt" \
       && echo "  PASS bcir-cc --linkable's driver, linked with the sim and the harness, prints the oracle-emitted build's transcript (${placement})" \
-      || { echo "  FAIL: the twin-emitted build's transcript is not the oracle-emitted build's (${placement})"; diff "${d}/oracle.txt" "${d}/twin.txt" | head -8 | sed 's/^/    /'; exit 1; }
+      || { echo "  FAIL: the twin-emitted build's transcript is not the oracle-emitted build's (${placement})"; diff "${d}/oracle.txt" "${d}/twin.txt" | sed -n '1,8p' | sed 's/^/    /'; exit 1; }
     cmp -s "${d}/oracle.txt" "${d}/source.txt" \
       && echo "  PASS the oracle's --linkable driver prints the source build's transcript, byte for byte (the bus trace included; ${placement})" \
-      || { echo "  FAIL: the oracle-emitted build's transcript is not the source build's (${placement})"; diff "${d}/source.txt" "${d}/oracle.txt" | head -8 | sed 's/^/    /'; exit 1; }
+      || { echo "  FAIL: the oracle-emitted build's transcript is not the source build's (${placement})"; diff "${d}/source.txt" "${d}/oracle.txt" | sed -n '1,8p' | sed 's/^/    /'; exit 1; }
     cmp -s "${d}/source.txt" "${golden}" \
       && echo "  PASS the transcript is runtime/c/$(basename "${golden}") (${placement}); ${verdict}" \
-      || { echo "  FAIL: the source build's transcript is not runtime/c/$(basename "${golden}") (${placement})"; diff "${golden}" "${d}/source.txt" | head -8 | sed 's/^/    /'; exit 1; }
+      || { echo "  FAIL: the source build's transcript is not runtime/c/$(basename "${golden}") (${placement})"; diff "${golden}" "${d}/source.txt" | sed -n '1,8p' | sed 's/^/    /'; exit 1; }
   }
   linked_runs "${PLACEMENT}" "${GOLDEN}"
   linked_runs "${PLACEMENT_16450}" "${GOLDEN_16450}"

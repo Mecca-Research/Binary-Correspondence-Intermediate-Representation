@@ -35,7 +35,7 @@ recs=[DataDNA(segment_id='',claim_id=1,cycles=100,bytes=200,misses=5,thermal=40,
 open('${tmp}/tframe.bin','wb').write(encode_frame(recs, seq=7, timestamp=123456))
 " || { echo "  FAIL: python frame encode"; exit 1; }
 tfout="$("${HARNESS}" "${tmp}/tframe.bin" "${tmp}/tframe_reenc.bin")" || { echo "  FAIL: C frame decode"; echo "${tfout}"; exit 1; }
-echo "${tfout}" | grep -q "^OK " || { echo "  FAIL: C frame decode did not OK"; echo "${tfout}"; exit 1; }
+echo "${tfout}" | grep "^OK " >/dev/null || { echo "  FAIL: C frame decode did not OK"; echo "${tfout}"; exit 1; }
 if cmp -s "${tmp}/tframe.bin" "${tmp}/tframe_reenc.bin"; then
   echo "  PASS #telemetry-frame (C bcir_tf decode + re-encode == Python encode_frame, byte-identical; bcir_crc32 == zlib.crc32)"
 else

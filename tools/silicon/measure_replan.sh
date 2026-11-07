@@ -51,10 +51,10 @@ out="$("${PYTHON}" -m bcir.run "${PROGRAM}" --silicon 2>&1)" || { echo "  FAIL: 
 echo "${out}" | sed -n 's/^/  /p' | grep -E "silicon|win=" || true
 
 # Parse the provenance + win the loop certified.
-prov_line="$(echo "${out}" | grep -oE "provenance=\([^)]*\)" | head -1)"
-win="$(echo "${out}" | grep -oE "win=-?[0-9]+" | head -1 | cut -d= -f2)"
+prov_line="$(echo "${out}" | grep -oE "provenance=\([^)]*\)" | sed -n '1p')"
+win="$(echo "${out}" | grep -oE "win=-?[0-9]+" | sed -n '1p' | cut -d= -f2)"
 is_real=0
-echo "${prov_line}" | grep -qi "real" && is_real=1
+echo "${prov_line}" | grep -i "real" >/dev/null && is_real=1
 
 echo "[silicon] verdict:"
 if [ "${is_real}" -eq 1 ]; then

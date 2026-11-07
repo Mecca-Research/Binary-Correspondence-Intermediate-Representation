@@ -28,11 +28,11 @@ fi
 LAUNCH=()
 if command -v ccache >/dev/null 2>&1; then
   LAUNCH=(-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache)
-  echo "[build_mlir] ccache enabled ($(ccache --version | head -1))"
+  echo "[build_mlir] ccache enabled ($(ccache --version | sed -n '1p'))"
 fi
 
 echo "[build_mlir] generator=${GEN} MLIR_DIR=${MLIR_DIR}"
 cmake -G "${GEN}" -S "${ROOT}/mlir" -B "${BUILD}" \
   -DMLIR_DIR="${MLIR_DIR}" -DLLVM_DIR="${LLVM_DIR}" -DCMAKE_BUILD_TYPE=Release "${LAUNCH[@]}"
 cmake --build "${BUILD}" --target bcir-opt --parallel "${JOBS}"
-echo "[build_mlir] bcir-opt: $(find "${BUILD}" -name bcir-opt -type f | head -1)"
+echo "[build_mlir] bcir-opt: $(find "${BUILD}" -name bcir-opt -type f | sed -n '1p')"

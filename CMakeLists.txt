@@ -52,6 +52,13 @@ set(BCIR_FUZZ_RUNS 1000 CACHE STRING "libFuzzer iterations per CTest fuzz entry 
 if(NOT BCIR_FUZZ_RUNS MATCHES "^[1-9][0-9]*$")
   message(FATAL_ERROR "BCIR_FUZZ_RUNS must be a positive integer, got '${BCIR_FUZZ_RUNS}' (a zero-run fuzz is vacuous)")
 endif()
+# The BCIR Make gates' concurrent tasks (build-make, build-parity, build-section-parity), and so the
+# processors CTest reserves for each. 2 is AGENTS.md's cap for a local workstation; CI's 4-vCPU
+# hosted runners pass 4, where each of those gates runs alone on its cores.
+set(BCIR_GATE_WORKERS 2 CACHE STRING "Concurrent tasks of the BCIR Make gates (> 0; the local cap is 2)")
+if(NOT BCIR_GATE_WORKERS MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR "BCIR_GATE_WORKERS must be a positive integer, got '${BCIR_GATE_WORKERS}' (no worker runs nothing)")
+endif()
 set(BCIR_TRAIN_STEPS 40 CACHE STRING "Optimizer steps the `train-corpus` CTest entry trains the corpus recipe for (bounded; > 0; the recipe's own count is the full run: bash tools/models/train_rail.sh <dir>)")
 if(NOT BCIR_TRAIN_STEPS MATCHES "^[1-9][0-9]*$")
   message(FATAL_ERROR "BCIR_TRAIN_STEPS must be a positive integer, got '${BCIR_TRAIN_STEPS}' (a zero-step training is vacuous)")

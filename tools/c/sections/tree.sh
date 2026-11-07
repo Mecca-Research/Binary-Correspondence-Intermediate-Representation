@@ -24,6 +24,6 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 
 
 tree_out="$("${KERNEL}")"; tree_rc=$?    # rc=0 IS the check: the three leaves match exactly (driver)
-{ [ "${tree_rc}" = "0" ] && printf '%s' "${tree_out}" | grep -q "^a=.* b=.* c=.*"; } \
+{ [ "${tree_rc}" = "0" ] && printf '%s' "${tree_out}" | grep "^a=.* b=.* c=.*" >/dev/null; } \
   && echo "  PASS tree: exact threshold traversal returns the known leaves (${tree_out}; NO libm -- the EXACT half of the Area-B pattern)" \
   || { echo "  FAIL: tree predict did not return the known leaves (rc=${tree_rc}: ${tree_out})"; exit 1; }

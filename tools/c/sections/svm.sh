@@ -30,6 +30,6 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # -lm, ALREADY mapped -- no linkflags change) and the decision tree (EXACT -- pure comparisons + a leaf return,
 # NO transcendental, NO libm). C twins of kbcir.classical.svm_decision_rbf / tree_predict.
 svm_out="$("${KERNEL}")"; svm_rc=$?    # rc=0 IS the check: f matches the hand-computed value (driver)
-{ [ "${svm_rc}" = "0" ] && printf '%s' "${svm_out}" | grep -q "^f=.*"; } \
+{ [ "${svm_rc}" = "0" ] && printf '%s' "${svm_out}" | grep "^f=.*" >/dev/null; } \
   && echo "  PASS svm: RBF decision matches reference (${svm_out}; expf -> -lm via the libm rule, no linkflags change)" \
   || { echo "  FAIL: svm RBF decision did not match the reference (rc=${svm_rc}: ${svm_out})"; exit 1; }

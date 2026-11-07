@@ -44,6 +44,6 @@ done
   && echo "  PASS linkflags spans pure-int (no flags) / math.h (-lm) / free (libc-implicit, no flag)" \
   || { echo "  FAIL: linkflags gate did not span the expected cases: ${lf_seen}"; exit 1; }
 # --emit-c is self-describing: the C.2 attestation header carries the derived link_flags line.
-"${BCIR_CC}" --emit-c "${tmp}/lf/mathh.c" | grep -q "link_flags  -lm" \
+"${BCIR_CC}" --emit-c "${tmp}/lf/mathh.c" | grep "link_flags  -lm" >/dev/null \
   && echo "  PASS linkflags: --emit-c attestation header carries the derived flags (link_flags -lm)" \
   || { echo "  FAIL: --emit-c header missing the derived link_flags line"; exit 1; }

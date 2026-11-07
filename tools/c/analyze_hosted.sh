@@ -43,5 +43,5 @@ for source in ${sources}; do
     status=1
   fi
 done
-[ "${status}" -eq 0 ] && echo "analyze-hosted: PASS (${count} units, no diagnostics; $("${CLANG}" --version | head -1))"
+[ "${status}" -eq 0 ] && echo "analyze-hosted: PASS (${count} units, no diagnostics; $("${CLANG}" --version | sed -n '1p'))"
 exit "${status}"

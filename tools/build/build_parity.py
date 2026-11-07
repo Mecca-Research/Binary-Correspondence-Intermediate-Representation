@@ -7,7 +7,9 @@ run over -- and the CMake project builds it from the same manifest; this proves 
 the same compiler over the same sources with the same outcome. Both binaries run every mode over
 every fixture of the corpus; stdout, stderr, the exit status and the --emit-pack bytes must agree
 on every row. Until BUILD-8 the comparison was with the gate's own one-command recipe; those
-compile lines are retired, and BCIR Make's build is the one the gate runs.
+compile lines are retired, and BCIR Make's build is the one the gate runs. Each fixture's rows
+run in their own working directory, so `--workers` fixtures run at once; the rows are reported in
+the fixtures' order.
 
     build_parity.py --bcir-cc build/cmake/runtime/c/bcir-cc --cc gcc [--make-dir DIR]
 
@@ -25,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -75,6 +78,26 @@ def run_mode(
     return (proc.returncode, proc.stdout, proc.stderr, pack_bytes)
 
 
+def compare_fixture(
+    ours: Path, theirs: Path, fixture: Path, workdir: Path, timeout: float
+) -> list[str]:
+    """Every mode over one fixture under both binaries, in a working directory of its own (a run's
+    --emit-pack writes there): the rows that differ, each named with the streams that differ."""
+    differ: list[str] = []
+    for mode in MODES:
+        a = run_mode(ours, mode, fixture, workdir, timeout)
+        b = run_mode(theirs, mode, fixture, workdir, timeout)
+        if a != b:
+            what = [
+                name for name, x, y in zip(("status", "stdout", "stderr", "pack"), a, b) if x != y
+            ]
+            differ.append(
+                f"{fixture.name} {' '.join(mode) or '(summary)'}: {', '.join(what)} differ"
+                f" (CMake status {a[0]}, BCIR Make status {b[0]})"
+            )
+    return differ
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--bcir-cc", required=True, type=Path, help="the CMake-built bcir-cc")
@@ -92,7 +115,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--limit", type=int, default=0, help="only the first N fixtures (0 = all)")
     parser.add_argument("--timeout", type=float, default=60.0, help="seconds per bcir-cc run")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        help="tasks at once: BCIR Make's, then the fixtures' rows (default 2, the local cap; CI's"
+        " 4-vCPU runners pass 4)",
+    )
     args = parser.parse_args(argv)
+    if args.workers < 1:
+        print(f"build-parity: UNUSABLE: --workers {args.workers} runs nothing")
+        return 2
 
     if not args.bcir_cc.is_file() or not os.access(args.bcir_cc, os.X_OK):
         print(
@@ -114,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
 
     generator = _generator()
     try:
-        made = generator.build(cc, args.cxx, args.make_dir).get("bcir-cc")
+        made = generator.build(cc, args.cxx, args.make_dir, workers=args.workers).get("bcir-cc")
     except generator.BuildError as exc:
         print(f"build-parity: UNUSABLE: BCIR Make did not build the rails: {exc}")
         return 2
@@ -122,24 +155,19 @@ def main(argv: list[str] | None = None) -> int:
         print("build-parity: UNUSABLE: BCIR Make's build has no bcir-cc")
         return 2
     differ: list[str] = []
-    rows = 0
+    rows = len(fixtures) * len(MODES)
+    ours = args.bcir_cc.resolve()
     with tempfile.TemporaryDirectory(prefix="bcir-build-parity-") as tmp:
-        workdir = Path(tmp)
-        for fixture in fixtures:
-            for mode in MODES:
-                rows += 1
-                ours = run_mode(args.bcir_cc.resolve(), mode, fixture, workdir, args.timeout)
-                theirs = run_mode(made, mode, fixture, workdir, args.timeout)
-                if ours != theirs:
-                    what = [
-                        name
-                        for name, a, b in zip(("status", "stdout", "stderr", "pack"), ours, theirs)
-                        if a != b
-                    ]
-                    differ.append(
-                        f"{fixture.name} {' '.join(mode) or '(summary)'}: {', '.join(what)} differ"
-                        f" (CMake status {ours[0]}, BCIR Make status {theirs[0]})"
-                    )
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            jobs = []
+            for i, fixture in enumerate(fixtures):
+                workdir = Path(tmp) / str(i)
+                workdir.mkdir()
+                jobs.append(
+                    pool.submit(compare_fixture, ours, made, fixture, workdir, args.timeout)
+                )
+            for job in jobs:
+                differ.extend(job.result())
     print(
         f"build-parity: {len(fixtures)} fixtures x {len(MODES)} modes = {rows} rows, {len(differ)} differ"
         f" (CMake's {args.bcir_cc} vs BCIR Make's {made} under {cc})"

@@ -27,6 +27,6 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # derives `-lsleef` (the SLEEF rule), with any Sleef_* -> -lsleef too, and no regression on gsl_* -> -lgsl,
 # LAPACKE_* -> -llapack, fftwf_* -> -lfftw3f, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The
 # oracle (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_sleef.py.
-"${HARNESS}" sleef | grep -q "^OK linkflags-sleef" \
+"${HARNESS}" sleef | grep "^OK linkflags-sleef" >/dev/null \
   && echo "  PASS linkflags-sleef: C twin derives Sleef_* -> -lsleef (gsl/lapack/fftw/cblas/-lm/unknown unchanged)" \
   || { echo "  FAIL: SLEEF link-flag rule diverged on the C twin"; "${HARNESS}" sleef; exit 1; }

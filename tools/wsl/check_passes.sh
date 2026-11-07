@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/bcir-passes.XXXXXXXX")" || exit 1
 trap 'rm -rf -- "${TMP_ROOT}"' EXIT
 ERR="${TMP_ROOT}/pass.err"
-BO="${BCIR_OPT:-$(find "${ROOT}/build/mlir-build" -name bcir-opt -type f 2>/dev/null | head -1)}"
+BO="${BCIR_OPT:-$(find "${ROOT}/build/mlir-build" -name bcir-opt -type f 2>/dev/null | sed -n '1p')}"
 if [ -z "${BO}" ]; then
   echo "bcir-opt not built; run tools/wsl/build_mlir.sh first (skipping)." >&2
   exit 0
@@ -54,7 +54,7 @@ echo "[passes] -bcir-verify negative cases (-verify-diagnostics)"
   && echo "  PASS verify_plan_annotations (R9 over the emitted plan)" || { echo "  FAIL verify_plan_annotations"; fail=1; }
 # ... and accepts every plan the planner itself emits: the checkpointed pipeline over plan.mlir
 # and over the widened corpus.
-if "${BO}" -bcir-optimize "${T}/plan.mlir" 2>"${ERR}" | grep -q "kbcir.plan_score = 13696" \
+if "${BO}" -bcir-optimize "${T}/plan.mlir" 2>"${ERR}" | grep "kbcir.plan_score = 13696" >/dev/null \
    && "${BO}" -bcir-optimize "${T}/gem_corpus.mlir" >/dev/null 2>>"${ERR}"; then
   echo "  PASS bcir-optimize checkpoint accepts the emitted plan (plan.mlir 13696, gem_corpus)"
 else

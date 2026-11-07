@@ -75,7 +75,7 @@ fi
    --keep-going) > "${tmp}/make.log" 2>&1
 make_rc=$?
 grep -E '^(bcir-make|laws|plan|run):' "${tmp}/make.log" | sed 's/^/  /'
-grep -E '^  MK[0-9]' "${tmp}/make.log" | head -20
+grep -E '^  MK[0-9]' "${tmp}/make.log" | sed -n '1,20p'
 [ "${make_rc}" -le 1 ] || { echo "  FAIL: bcir-make could not judge the rails' BCIRfile"; sed 's/^/    /' "${tmp}/make.log"; exit 1; }
 # Nothing ran unless the laws passed, and then every target ran, was restored or was up to date --
 # except a section that failed, whose verdict is shown where its block stands. Anything else fails
@@ -86,12 +86,12 @@ if [ "$(grep -cx 'laws: PASS (MK0-MK5)' "${tmp}/make.log")" != 1 ]; then
 fi
 stopped="$(grep -E '^(failed|skipped) ' "${tmp}/make.log" | grep -v '^failed section\.')"
 if [ -n "${stopped}" ]; then
-  printf '%s\n' "${stopped}" | grep -E '^failed ' | head -3 | while read -r _ name _; do
+  printf '%s\n' "${stopped}" | grep -E '^failed ' | sed -n '1,3p' | while read -r _ name _; do
     log="${ROOT}/${make_meta}/logs/${name}.log"
     [ -f "${log}" ] && { echo "  --- ${name}: ${log#"${ROOT}"/} ---"; tail -30 "${log}" | sed 's/^/    /'; }
   done
   echo "  FAIL: BCIR Make did not build the rails ($(printf '%s\n' "${stopped}" | grep -c '^failed ') failed, $(printf '%s\n' "${stopped}" | grep -c '^skipped ') skipped):"
-  printf '%s\n' "${stopped}" | head -10 | sed 's/^/    /'
+  printf '%s\n' "${stopped}" | sed -n '1,10p' | sed 's/^/    /'
   exit 1
 fi
 twin="${ROOT}/${make_out}/bin/bcir-make"
@@ -104,7 +104,7 @@ if [ -x "${twin}" ]; then
     echo "  PASS the C twin plans the finished tree as the oracle does ($(wc -l < "${tmp}/oracle.plan") lines, byte-identical)"
   else
     echo "  FAIL: the C twin's plan of the finished tree is not the oracle's"
-    diff "${tmp}/oracle.plan" "${tmp}/twin.plan" | head -20 | sed 's/^/    /'; exit 1
+    diff "${tmp}/oracle.plan" "${tmp}/twin.plan" | sed -n '1,20p' | sed 's/^/    /'; exit 1
   fi
 else
   echo "  FAIL: BCIR Make did not build its C twin (${twin})"
@@ -119,7 +119,7 @@ show_section() {  # <name>: the verdict BCIR Make recorded for the section -- st
   fi
   if [ ! -f "${verdict}/status" ]; then
     echo "  FAIL: section $1 has no verdict: BCIR Make did not run it"
-    grep -E "^(failed|skipped) " "${tmp}/make.log" | head -5 | sed 's/^/    /'
+    grep -E "^(failed|skipped) " "${tmp}/make.log" | sed -n '1,5p' | sed 's/^/    /'
     return 1
   fi
   cat "${verdict}/stdout"

@@ -26,7 +26,7 @@ if [ -z "${MLIR_OPT}" ]; then
   exit 0
 fi
 
-echo "[irdl] mlir-opt: ${MLIR_OPT} ($(${MLIR_OPT} --version | head -1))"
+echo "[irdl] mlir-opt: ${MLIR_OPT} ($(${MLIR_OPT} --version | sed -n '1p'))"
 echo "[irdl] projection: ${IRDL}"
 "${MLIR_OPT}" --irdl-file="${IRDL}" /dev/null >/dev/null || { echo "[irdl] projection failed to load"; exit 1; }
 
@@ -37,7 +37,7 @@ for f in "${CORPUS}"/*.mlir; do
   n=0; miss=0
   while IFS= read -r pat; do
     n=$((n+1))
-    printf '%s' "$out" | grep -qF "$pat" || { echo "  MISS [$(basename "$f")] $pat"; miss=1; fail=1; }
+    printf '%s' "$out" | grep -F "$pat" >/dev/null || { echo "  MISS [$(basename "$f")] $pat"; miss=1; fail=1; }
   done < <(grep -oP '(?<=// CHECK: ).*' "$f")
   [ "$miss" -eq 0 ] && echo "PASS $(basename "$f") (${n} checks)"
 done

@@ -49,7 +49,7 @@ grep -q "extern double scale(double);" "${tmp}/link/main_emit.c" \
   && echo "  PASS linking (ref=${ref_rc} == bcir=${bcir_rc}; oracle accepts the caller)" \
   || { echo "  FAIL: linking (ref=${ref_rc} bcir=${bcir_rc} oracle=${py_rc})"; exit 1; }
 printf 'unsigned g(unsigned x);\nunsigned f(unsigned y) { return g(y) + 1u; }\nunsigned g(unsigned x) { return x * 2u; }\n' > "${tmp}/link/fwd.c"
-"${BCIR_CC}" --emit-claimgraph "${tmp}/link/fwd.c" | grep -q "c.call:g" \
+"${BCIR_CC}" --emit-claimgraph "${tmp}/link/fwd.c" | grep "c.call:g" >/dev/null \
   && echo "  PASS forward declaration stays a real R18 edge (definition wins)" \
   || { echo "  FAIL: forward declaration did not rewrite to c.call:g"; exit 1; }
 # ... and the LINKABLE artifact (the C twin of the oracle's emit_linkable, CF-LINKTWIN): BOTH TUs

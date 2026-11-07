@@ -97,41 +97,73 @@ def test_no_gate_pipes_a_writer_into_an_early_exiting_reader_under_pipefail() ->
 
     `printf '%s' "$blob" | grep -q PATTERN` looks exact and is a trap. `grep -q` exits at the
     first match, the writer then takes SIGPIPE, and under `set -o pipefail` the pipeline's
-    status becomes 141 — so *finding* the pattern fails the check. It stays invisible while
-    the blob fits the 64 KiB pipe buffer, which means it surfaces when some unrelated object
-    grows rather than when the thing under test changes.
+    status becomes 141 — so *finding* the pattern fails the check. `head` does the same to a
+    writer with more to say, and inside `VAR="$(writer | head -1)"` under `set -e` the 141
+    ends the script.
 
-    This is not hypothetical: it fired on `#jerindex` the moment per-tier instantiation made
-    the disassembly exceed the buffer, and reported "the tier fell back to scalar" about an
-    object that contained four NEON instructions.
+    It fired twice. On `#jerindex`, the moment per-tier instantiation made a disassembly exceed
+    the 64 KiB pipe buffer, it reported "the tier fell back to scalar" about an object that
+    contained four NEON instructions. And the buffer was never the whole condition: bash
+    line-buffers its builtins' output, so `printf '%s' "$multi_line"` writes once per line, and
+    a reader that matches an early line can exit before the next write -- a race no buffer size
+    closes. A quiet host almost never shows its window; when the section-parity gate began
+    running sections side by side, the `recover` section's CMake run failed with both of its
+    patterns in the output it printed (2026-11-07).
 
-    The fix in both gates is to write to a file and grep the file, so this refuses the shape
-    rather than trusting everyone to remember.
-
-    Scoped to **whole-object disassembly**, which is the writer that is unbounded and grows
-    with the code under test. The same shape appears about seventy times elsewhere in `tools/`
-    piping a version string, a `find` result, or one function's body out of a `.s` file; those
-    writers cannot fill a 64 KiB buffer, so they are a latent footgun rather than a live bug
-    and are deliberately left alone rather than churned into a large unrelated diff.
+    So no script under `tools/` that sets `pipefail` ends a pipeline in a reader that stops
+    early -- `grep -q`, `-m`, `-l` or their long spellings, or `head`. Reading every line
+    (`grep PATTERN >/dev/null`, `sed -n '1,10p'`) keeps the status (a match is 0, none is 1, a
+    failing writer still fails the pipeline) and closes the race whatever the writer. The same
+    two-write pipeline, with a pause between its writes, shows both halves here wherever a
+    POSIX bash is available. A script without `pipefail` is out of scope: there the pipeline's
+    status is its last command's, and a writer's SIGPIPE cannot reach it.
     """
-    offender = re.compile(r"\|\s*(?:grep\s+-[a-zA-Z]*q|head\b)")
-    unbounded = re.compile(r"objdump|disasm")
-    seen = 0
+    reader = re.compile(
+        r"(?<!\|)\|(?!\|)\s*(?:grep\s+(?:-[a-zA-Z]*[qml][a-zA-Z0-9]*\b|--(?:quiet|silent|max-count|"
+        r"files-with-matches)\b)|head\b)"
+    )
+    scanned: list[str] = []
+    full_readers = 0
     for script in sorted((_ROOT / "tools").rglob("*.sh")):
         text = script.read_text(encoding="utf-8")
-        if "pipefail" not in text or "objdump" not in text:
+        if "pipefail" not in text:
             continue
-        seen += 1
+        scanned.append(script.relative_to(_ROOT).as_posix())
         for number, line in enumerate(text.splitlines(), 1):
-            stripped = line.strip()
-            if stripped.startswith("#") or not unbounded.search(line):
+            if line.strip().startswith("#"):
                 continue
-            assert not offender.search(line), (
-                f"{script.relative_to(_ROOT)}:{number} pipes disassembly into an "
-                f"early-exiting reader under `pipefail`; a match will SIGPIPE the writer and "
-                f"be reported as a failure. Write to a file and read the file.\n  {stripped}"
+            assert not reader.search(line), (
+                f"{script.relative_to(_ROOT)}:{number} ends a pipeline in a reader that exits "
+                f"early under `pipefail`; a match can SIGPIPE the writer and be reported as a "
+                f"failure. Read every line (grep ... >/dev/null, sed -n '1,Np').\n  {line.strip()}"
             )
-    assert seen >= 2, f"expected the two SIMD gates to disassemble; found {seen}"
+            full_readers += len(re.findall(r"\|\s*grep [^|]*>/dev/null", line))
+    sections = [s for s in scanned if s.startswith("tools/c/sections/")]
+    assert len(sections) >= 100 and len(scanned) - len(sections) >= 15, (
+        "the scan no longer reaches the gate scripts",
+        len(sections),
+        len(scanned),
+    )
+    simd = [s for s in scanned if "objdump" in (_ROOT / s).read_text(encoding="utf-8")]
+    assert len(simd) >= 2, f"expected the two SIMD gates to disassemble; found {simd}"
+    assert full_readers >= 50, (
+        "the gates' pattern checks are not where this test looks",
+        full_readers,
+    )
+    bash = shutil.which("bash")
+    if os.name != "posix" or bash is None:
+        return
+    writer = '{ printf "21\\n"; sleep 0.2; printf "more\\n"; }'
+    early = subprocess.run(
+        [bash, "-c", f'set -o pipefail; {writer} | grep -q "^21$"'], capture_output=True, timeout=30
+    )
+    full = subprocess.run(
+        [bash, "-c", f'set -o pipefail; {writer} | grep "^21$" >/dev/null'],
+        capture_output=True,
+        timeout=30,
+    )
+    assert early.returncode == 141, ("the early reader no longer fails a found match", early)
+    assert full.returncode == 0, ("reading every line does not pass a found match", full)
 
 
 def test_no_workflow_step_pipes_a_network_fetch_into_another_command() -> None:
@@ -246,6 +278,29 @@ def test_workflow_dependencies_are_sha_pinned_and_tokens_are_read_only() -> None
         assert dependencies, workflow.name
         for name, revision in dependencies:
             assert sha.fullmatch(revision), f"{workflow.name}: {name}@{revision} is mutable"
+
+
+def test_ci_runs_once_per_change() -> None:
+    """The main workflow runs once per change: every pull request (its merge with main), every
+    commit main lands, and a branch without a pull request by hand. A push to every branch ran the
+    whole workflow twice for a branch with a pull request -- push and pull_request, 36 jobs each --
+    and the second copy queued behind the first (2026-11-07). Holding the triggers here keeps both
+    halves: dropping `pull_request` would leave pull requests ungated, and widening `push` again
+    would bring the doubled runs back."""
+    text = (_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    block = re.search(r"(?m)^on:\n((?:[ #].*\n|\n)*)", text)
+    assert block is not None, "ci.yml names its triggers in a block under `on:`"
+    lines = [
+        line
+        for line in block.group(1).splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert lines == [
+        "  push:",
+        "    branches: [main]",
+        "  pull_request:",
+        "  workflow_dispatch:",
+    ], lines
 
 
 def test_every_linux_runner_names_its_ubuntu_release() -> None:

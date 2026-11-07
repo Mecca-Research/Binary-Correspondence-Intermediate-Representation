@@ -11,6 +11,6 @@ if [ -z "${MLIR_OPT}" ]; then
 fi
 
 echo "mlir-opt: ${MLIR_OPT}"
-"${MLIR_OPT}" --version | head -1 || true
+"${MLIR_OPT}" --version | sed -n '1p' || true
 echo "--- IRDL-related flags ---"
 "${MLIR_OPT}" --help 2>&1 | grep -i irdl || echo "(no flag matched 'irdl' -- check this LLVM version's IRDL support)"
