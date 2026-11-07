@@ -1,9 +1,14 @@
 name: CI
 
+# Once per change: a pull request runs its merge with main, and main runs each commit it lands. A
+# push to a branch with an open pull request used to run the whole workflow twice (push and
+# pull_request), 36 jobs each, and the second copy queued behind the first for up to 24 minutes
+# (2026-11-07). A branch without a pull request runs it by hand (workflow_dispatch).
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # Every job is validation-only.  Keep the repository token read-only even if a
 # future repository default grants broader permissions.
@@ -1367,22 +1372,27 @@ jobs:
       # This job installed the ThreadSanitizer runtimes (compiler-rt for clang; gcc carries libtsan),
       # so it owns their absence (laws.md L2): BCIR_REQUIRE_TSAN makes a host where the manifest's
       # sanitizer variants cannot be built a configure failure here, not the skip it is elsewhere.
+      # Four workers, the hosted runner's vCPUs (a public repository's Linux runner has 4); the
+      # presets keep 2, AGENTS.md's cap for a local workstation. BCIR_GATE_WORKERS=4 gives each
+      # BCIR Make gate the four too.
       - name: Configure (the ${{ matrix.compiler }} preset, MLIR off, ThreadSanitizer required)
-        run: cmake --preset ${{ matrix.compiler }} -DBCIR_BUILD_MLIR=OFF -DBCIR_REQUIRE_TSAN=ON
+        run: cmake --preset ${{ matrix.compiler }} -DBCIR_BUILD_MLIR=OFF -DBCIR_REQUIRE_TSAN=ON -DBCIR_GATE_WORKERS=4
 
-      - name: Build everything the manifest lists (two workers, as the presets say)
-        run: cmake --build --preset ${{ matrix.compiler }}
+      - name: Build everything the manifest lists (four workers, the runner's vCPUs)
+        run: cmake --build --preset ${{ matrix.compiler }} --parallel 4
 
+      # build-make, BCIR Make's own gate, runs beside this job in cmake-make-gate (same cell, its own
+      # runner): it builds the rails itself and reads nothing this build makes.
       - name: Manifest reconciliation + dependency index + build parity + section parity (ctest, label build)
-        run: ctest --test-dir build/cmake-${{ matrix.compiler }} -L build -j 2 --output-on-failure
+        run: ctest --test-dir build/cmake-${{ matrix.compiler }} -L build -E '^build-make$' -j 4 --output-on-failure
 
       - name: The migrated gate sections over the CMake-built harnesses (ctest, label section)
-        run: ctest --test-dir build/cmake-${{ matrix.compiler }} -L section -j 2 --output-on-failure
+        run: ctest --test-dir build/cmake-${{ matrix.compiler }} -L section -j 4 --output-on-failure
 
       - name: The train rail (ctest, label train; gcc cell) -- the corpus recipe trained for BCIR_TRAIN_STEPS steps on the native trainer built here
         # TRAIN-RAIL: `train-corpus` runs tools/models/train_rail.sh under the configured compiler
         # (the other cells run the same script as BCIR Make's `train.corpus` task inside
-        # build-make, under `ctest -L build` above). One cell for the entry itself: the smoke is
+        # build-make, in the cmake-make-gate job). One cell for the entry itself: the smoke is
         # bounded (40 steps), and the qualification job trains the recipe for 200.
         if: matrix.compiler == 'gcc'
         run: ctest --test-dir build/cmake-${{ matrix.compiler }} -L train -j 2 --output-on-failure
@@ -1391,13 +1401,76 @@ jobs:
         if: matrix.compiler == 'clang'
         run: |
           cmake --preset fuzzer -DBCIR_BUILD_MLIR=OFF
-          cmake --build --preset fuzzer
-          ctest --test-dir build/cmake-fuzzer -L fuzz -j 2 --output-on-failure
+          cmake --build --preset fuzzer --parallel 4
+          ctest --test-dir build/cmake-fuzzer -L fuzz -j 4 --output-on-failure
 
       - name: The dependency index is well-formed and names the compilers (the predicate ctest ran)
         run: |
           python3 tools/build/manifest.py --deps-index build/cmake-${{ matrix.compiler }}/bcir-deps.json
           python3 -c "import json; d=json.load(open('build/cmake-${{ matrix.compiler }}/bcir-deps.json')); print(d['c_compiler'], '|', d['system'], '|', [r['name'] for r in d['dependencies'] if r['found']])"
+
+  cmake-make-gate:
+    name: BCIR Make gate (${{ matrix.compiler }}; every target, a no-change rerun, each section's verdict, one edit)
+    runs-on: ubuntu-24.04
+    # build-make (BUILD-7, tools/build/make_gate.py) ran inside cmake-build's `ctest -L build`, after
+    # the CMake build and before section parity: 1,283 of the gcc cell's 2,869 seconds (2026-11-07).
+    # It builds the C rails with BCIR Make from the manifest and reads nothing the CMake build makes,
+    # so it runs here, beside its cell, on the same matrix and setup, with the runner's four workers.
+    # A hang guard, not a budget.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang, clang23]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+
+      - name: Install ninja and the clang toolchain (compiler-rt for the fuzz preset and TSan)
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: ninja-build clang lld llvm libclang-rt-18-dev
+          version: train-${{ runner.arch }}-v1
+
+      - name: Add the apt.llvm.org signed repo (LLVM 23; clang23 cell)
+        if: matrix.compiler == 'clang23'
+        run: bash tools/ci/add_llvm_apt_repo.sh 23
+
+      - name: Install clang 23 + lld + compiler-rt (clang23 cell; the TSan runtime the variants need)
+        if: matrix.compiler == 'clang23'
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: clang-23 lld-23 llvm-23 libclang-rt-23-dev
+          version: cmake23-${{ runner.arch }}-v1
+
+      - name: Confirm the clang23 cell's compiler is 23 and its TSan runtime runs (anti-vacuity)
+        # The preset names clang-23 / clang++-23, so a silent fall back to 18 is impossible; this
+        # step makes an install that did not take fail here, by name, instead of in the configure.
+        if: matrix.compiler == 'clang23'
+        run: |
+          set -euo pipefail
+          case "$(clang-23 --version)" in
+            *"clang version 23."*) clang-23 --version | head -1 ;;
+            *) echo "::error::clang-23 is not 23: $(clang-23 --version | head -1)"; exit 1 ;;
+          esac
+          python3 tools/build/sanitizer.py --cc clang-23 thread
+
+      # This job installed the ThreadSanitizer runtimes (compiler-rt for clang; gcc carries libtsan),
+      # so it owns their absence (laws.md L2): BCIR_REQUIRE_TSAN makes a host where the manifest's
+      # sanitizer variants cannot be built a configure failure here, not the skip it is elsewhere.
+      - name: Configure (the ${{ matrix.compiler }} preset, MLIR off, ThreadSanitizer required, four gate workers)
+        run: cmake --preset ${{ matrix.compiler }} -DBCIR_BUILD_MLIR=OFF -DBCIR_REQUIRE_TSAN=ON -DBCIR_GATE_WORKERS=4
+
+      # --no-tests=error: a configure that did not register the gate fails here instead of passing
+      # by running nothing (laws.md L2).
+      - name: BCIR Make builds the rails, reruns nothing, matches each section's shell verdict and rebuilds one edit's dependents (ctest build-make)
+        run: ctest --test-dir build/cmake-${{ matrix.compiler }} -R '^build-make$' --no-tests=error --output-on-failure
 
   docs-governance:
     name: Docs governance (status drift + links + retired paths)

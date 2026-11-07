@@ -1035,6 +1035,149 @@ def test_the_section_parity_gate_sees_a_differing_output():
         assert drifting["differ"] == ["stdout"] and drifting["unstable"], drifting
 
 
+def test_the_section_parity_gate_runs_sections_at_once_and_reports_in_order():
+    """The gate runs `--workers` section runs at once and judges them in the manifest's order,
+    whatever order they finish in. The first section here waits for the second's run to have
+    started, so it passes only when the runs overlap, and its two builds differ, so the report must
+    name it, in its place, before the second section's parity line; with one worker it waits alone
+    and fails. BCIR Make's build and the manifest are stubbed: what is judged is the scheduling."""
+    shell = section_tool.posix_shell()
+    if shell is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        (work / "scripts").mkdir()
+        waiter = work / "scripts" / "waiter.sh"
+        waiter.write_text(
+            "#!/usr/bin/env bash\n"
+            'mark="$(dirname "$0")/started"\n'
+            "for _ in $(seq 60); do\n"
+            '  [ -e "${mark}" ] && { cat "$1"; exit 0; }\n'
+            "  sleep 0.05\n"
+            "done\n"
+            'echo "  FAIL: ran alone"; exit 1\n',
+            encoding="utf-8",
+        )
+        starter = work / "scripts" / "starter.sh"
+        starter.write_text(
+            '#!/usr/bin/env bash\ntouch "$(dirname "$0")/started"\ncat "$1"\n', encoding="utf-8"
+        )
+        made, cmade = work / "make", work / "cmake"
+        for root, waits in (
+            (made, "  PASS waited (BCIR Make)\n"),
+            (cmade, "  PASS waited (CMake)\n"),
+        ):
+            root.mkdir()
+            for name, text in (("waits", waits), ("starts", "  PASS started\n")):
+                (root / name).write_text(text, encoding="utf-8")
+                (root / name).chmod(0o755)
+        sections = {
+            "first": {"script": str(waiter), "harnesses": ["waits"]},
+            "second": {"script": str(starter), "harnesses": ["starts"]},
+        }
+
+        class Manifest:
+            ManifestError = ValueError
+
+            @staticmethod
+            def load():
+                return {"sections": sections, "tools": {}}
+
+        class Generator:
+            BuildError = RuntimeError
+
+            @staticmethod
+            def compiler_family(cc):
+                return "stub"
+
+            @staticmethod
+            def build(cc, cxx, make_dir, workers):
+                return {name: made / name for name in ("waits", "starts")}
+
+        saved = section_tool._load_manifest_tool, section_tool._load_tool
+        section_tool._load_manifest_tool = lambda: Manifest
+        section_tool._load_tool = lambda name: Generator
+        try:
+            reports = {}
+            for workers in ("4", "1"):
+                (work / "scripts" / "started").unlink(missing_ok=True)
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = section_tool.main(
+                        ["--harness-dir", str(cmade), "--cc", sys.executable, "--workers", workers]
+                    )
+                reports[workers] = (rc, out.getvalue())
+        finally:
+            section_tool._load_manifest_tool, section_tool._load_tool = saved
+    rc, report = reports["4"]
+    assert rc == 1 and "FAIL first: stdout differ" in report, report
+    assert "ran alone" not in report, ("the runs did not overlap", report)
+    assert report.index("--- first under the BCIR Make build") < report.index(
+        "section second: identical under both builds"
+    ), report
+    rc, report = reports["1"]
+    assert rc == 1 and "ran alone" in report and "first: the section does not pass" in report, (
+        report
+    )
+
+
+def test_the_build_parity_gate_names_a_differing_row_from_its_own_directory():
+    """Each fixture's rows run in a working directory of their own, so `--workers` fixtures run at
+    once, and a row whose --emit-pack bytes differ is named with the stream that differs, in the
+    fixtures' order; agreeing rows are not. Two stand-ins for bcir-cc write the pack -o names, one
+    of them differently for one fixture; BCIR Make's build is stubbed to the second."""
+    if os.name != "posix":
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        stand_ins = []
+        for side, odd in (("cmake", ""), ("make", "cfront_b.c")):
+            exe = work / side / "bcir-cc"
+            exe.parent.mkdir()
+            exe.write_text(
+                "#!/bin/sh\n"
+                'out=""; prev=""\n'
+                'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
+                'eval "src=\\${$#}"\n'
+                'name="$(basename "$src")"\n'
+                f'if [ -n "$out" ]; then if [ "$name" = "{odd}" ]; then echo odd > "$out";'
+                ' else echo "$name" > "$out"; fi; fi\n'
+                'echo "summary $name"\n',
+                encoding="utf-8",
+            )
+            exe.chmod(0o755)
+            stand_ins.append(exe)
+        fixtures = work / "fixtures"
+        fixtures.mkdir()
+        for name in ("cfront_a.c", "cfront_b.c", "cfront_c.c"):
+            (fixtures / name).write_text("int x;\n", encoding="utf-8")
+
+        class Generator:
+            BuildError = RuntimeError
+
+            @staticmethod
+            def build(cc, cxx, make_dir, workers):
+                return {"bcir-cc": stand_ins[1]}
+
+        saved = parity_tool._generator
+        parity_tool._generator = lambda: Generator
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = parity_tool.main(
+                    ["--bcir-cc", str(stand_ins[0]), "--cc", sys.executable, "--fixtures",
+                     str(fixtures), "--workers", "3"]
+                )  # fmt: skip
+        finally:
+            parity_tool._generator = saved
+    report = out.getvalue()
+    assert rc == 1 and "3 fixtures x 8 modes = 24 rows, 1 differ" in report, report
+    differ = [line.strip() for line in report.splitlines() if "DIFFER" in line]
+    assert differ == [
+        "DIFFER cfront_b.c --emit-pack: pack differ (CMake status 0, BCIR Make status 0)"
+    ], report
+
+
 def test_a_bash_that_is_not_a_shell_is_not_a_shell():
     """posix_shell() probes: a `bash` that prints a notice and exits 1 (the Windows WSL launcher)
     or exits 0 without saying ok is no shell; a real one is returned as given."""
@@ -1697,6 +1840,111 @@ def test_the_ci_owns_the_build_gate():
     assert "BCIR_REQUIRE_TSAN=ON" in body and "libclang-rt" in body, (
         "the job installs the ThreadSanitizer runtime, so it must own its absence (L2)"
     )
+    # build-make runs beside it, in its own job: what the build label leaves out there must be run,
+    # on the same cells, by the job that owns it, and fail when nothing ran (L2).
+    excluded = re.findall(r"ctest [^\n]*-L build -E '([^']*)'", body)
+    assert excluded == ["^build-make$"], (
+        "the build label must leave out build-make alone",
+        excluded,
+    )
+    gate = re.search(r"^  cmake-make-gate:\n(.*?)(?=^  [a-z0-9-]+:\n|\Z)", workflow, re.S | re.M)
+    assert gate is not None, "build-make left the build label, and no job runs it"
+    gate_body = gate.group(1)
+    assert re.search(r"ctest [^\n]*-R '\^build-make\$' --no-tests=error", gate_body), (
+        "the make-gate job does not run build-make, or would pass by running nothing"
+    )
+    cells = re.compile(r"compiler: \[([^\]]*)\]")
+    assert cells.findall(gate_body) == cells.findall(body), "the two jobs cover different cells"
+    for needed in (
+        "BCIR_BUILD_MLIR=OFF",
+        "BCIR_REQUIRE_TSAN=ON",
+        "libclang-rt",
+        "add_llvm_apt_repo.sh",
+    ):
+        assert needed in gate_body, ("the make-gate job is not set up as its cell", needed)
+
+
+def test_each_make_gate_reserves_the_workers_it_runs():
+    """The BCIR Make gates (build-make, build-parity, build-section-parity) run BCIR_GATE_WORKERS
+    tasks at once and reserve as many processors from CTest, so `ctest -j N` never puts two of them
+    on one core pair. The default is AGENTS.md's local cap of two; only a CI job raises it, to its
+    runner's four vCPUs, and runs CTest as wide. A gate that ran more tasks than it reserved would
+    oversubscribe the host; one that reserved more than it ran would idle the runner it holds. A
+    worker count below one runs nothing, so each gate refuses it as UNUSABLE before it builds."""
+    root = (_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert re.search(r"^set\(BCIR_GATE_WORKERS 2 CACHE STRING ", root, re.M), (
+        "the default is the cap"
+    )
+    tests = (_ROOT / "cmake" / "BCIRTests.cmake").read_text(encoding="utf-8")
+    passed = re.search(r"^set\(_make_parity_args (.*?)\)$", tests, re.M | re.S)
+    assert passed and '--workers "${BCIR_GATE_WORKERS}"' in passed.group(1), (
+        "the parity gates' workers"
+    )
+    for name in ("build-parity", "build-section-parity", "build-make"):
+        added = re.search(rf"add_test\(NAME {name}\n(.*?)\)\n", tests, re.S)
+        assert added is not None, name
+        command = added.group(1)
+        assert '--workers "${BCIR_GATE_WORKERS}"' in command or "${_make_parity_args}" in command, (
+            f"{name} runs BCIR Make's default workers, not the ones it reserves"
+        )
+        props = re.search(rf"set_tests_properties\({name} PROPERTIES ([^)]*)\)", tests)
+        assert props and "PROCESSORS ${BCIR_GATE_WORKERS} " in props.group(1), (
+            f"{name} reserves other than the workers it runs"
+        )
+    workflow = (_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    raised = re.findall(r"-DBCIR_GATE_WORKERS=(\S+)", workflow)
+    assert raised and set(raised) == {"4"}, raised
+    held = 0
+    for job in re.finditer(
+        r"^  ([a-z0-9-]+):\n(.*?)(?=^  [a-z0-9-]+:\n|\Z)", workflow, re.S | re.M
+    ):
+        if "-DBCIR_GATE_WORKERS=" not in job.group(2):
+            continue
+        for line in re.findall(r"(?m)^ +(?:run: )?ctest [^\n]*", job.group(2)):
+            if "-L build" in line:
+                assert "-j 4" in line, (job.group(1), line)
+                held += 1
+    assert held, "no job that raises the workers runs the build label"
+    for tool, argv in (
+        (parity_tool, ["--bcir-cc", sys.executable, "--cc", sys.executable]),
+        (section_tool, ["--harness-dir", ".", "--cc", sys.executable]),
+        (_load_tool("make_gate"), ["--cc", sys.executable, "--out-dir", "build/unused"]),
+    ):
+        for workers in ("0", "-1"):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = tool.main([*argv, "--workers", workers])
+            assert rc == 2 and "UNUSABLE" in out.getvalue() and "runs nothing" in out.getvalue(), (
+                tool.__name__,
+                workers,
+                rc,
+                out.getvalue(),
+            )
+
+
+def test_a_section_run_has_one_bound_wherever_it_runs():
+    """A section's run is bounded alike by its CTest entry, by the section-parity gate and by the
+    make gate's shell run. The gates run `--workers` runs at once, so a run's time there is its
+    time under that load; a tighter bound in one of them would fail there a section that passes
+    as its own entry (section-parity's was 600 s against the others' 900 until 2026-11-07)."""
+    tests = (_ROOT / "cmake" / "BCIRTests.cmake").read_text(encoding="utf-8")
+    entry = re.search(
+        r"set_tests_properties\(c-section-\$\{_sec\} PROPERTIES [^)]*TIMEOUT (\d+)\)", tests
+    )
+    assert entry is not None, "the section entries declare no TIMEOUT"
+    assert float(entry.group(1)) == section_tool.SECTION_TIMEOUT, (
+        entry.group(1),
+        section_tool.SECTION_TIMEOUT,
+    )
+    parser_default = re.search(
+        r"default=SECTION_TIMEOUT",
+        (_ROOT / "tools/build/section_parity.py").read_text(encoding="utf-8"),
+    )
+    assert parser_default, "section-parity's --timeout defaults to another bound"
+    gate = (_ROOT / "tools" / "build" / "make_gate.py").read_text(encoding="utf-8")
+    assert "section_parity.SECTION_TIMEOUT" in gate and not re.search(
+        r"\b\d+\.0,\n\s*tools\[\"cc\"\]", gate
+    ), "the make gate's shell runs take another bound"
 
 
 def test_a_pinned_tool_whose_bytes_moved_is_a_finding():

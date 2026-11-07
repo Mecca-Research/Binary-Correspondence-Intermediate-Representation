@@ -289,6 +289,31 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-07 — CI-ONCE: the main workflow runs once per change, and the CMake cells in half
+  the time.** Measured on #823/#824's runs: every push to a branch with a pull request ran the
+  whole workflow twice (push and pull_request, 36 jobs each; 64 minutes of wall time and 356
+  runner-minutes per push), and the second copy queued behind the first. The CMake cells were the
+  critical path -- gcc 47.8 minutes, clang23 32.3, clang 27.8 -- and `ctest -L build` was 2313 s
+  of the gcc cell's: `build-make` 1283 s and `build-section-parity` 883 s, one after the other on
+  two workers of a 4-vCPU runner, each re-running every section one at a time (the two
+  decoder-train sections are 191 s and 225 s per run on gcc).
+  - The workflow triggers on pull requests, on pushes to `main` and by hand
+    (`test_ci_runs_once_per_change` holds the three).
+  - `BCIR_GATE_WORKERS` (2, the local cap; > 0) sets the BCIR Make gates' tasks and the
+    processors CTest reserves for them; CI configures 4 and runs CTest, the build and the fuzz
+    preset at `-j 4`. `section_parity.py` runs every section's two runs on that many workers,
+    `make_gate.py` its sections' shell runs, `build_parity.py` its fixtures (each in a working
+    directory of its own); each reports in a fixed order, and refuses a count below one before it
+    builds (`test_each_make_gate_reserves_the_workers_it_runs`,
+    `test_the_section_parity_gate_runs_sections_at_once_and_reports_in_order`,
+    `test_the_build_parity_gate_names_a_differing_row_from_its_own_directory`). A section run
+    now has one bound wherever it runs, 900 s: section-parity's was 600 against its CTest entry's
+    and the make gate's 900, and its runs now share the host
+    (`test_a_section_run_has_one_bound_wherever_it_runs`).
+  - `build-make` moved to a job of its own, `cmake-make-gate`, on the same three cells and set up
+    as they are, with `--no-tests=error`; `cmake-build` runs the build label less exactly that
+    entry (`test_the_ci_owns_the_build_gate`).
+
 - **2026-10-20 — UDSI-PLAN universal interface blueprint:** added the
   [universal serialization/interface roadmap](BCIR_UNIVERSAL_INTERFACE_ROADMAP.md), connecting
   typed service contracts, ASN.1/JER projections, foreign schema/codec providers, native

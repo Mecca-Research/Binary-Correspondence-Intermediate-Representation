@@ -248,6 +248,29 @@ def test_workflow_dependencies_are_sha_pinned_and_tokens_are_read_only() -> None
             assert sha.fullmatch(revision), f"{workflow.name}: {name}@{revision} is mutable"
 
 
+def test_ci_runs_once_per_change() -> None:
+    """The main workflow runs once per change: every pull request (its merge with main), every
+    commit main lands, and a branch without a pull request by hand. A push to every branch ran the
+    whole workflow twice for a branch with a pull request -- push and pull_request, 36 jobs each --
+    and the second copy queued behind the first (2026-11-07). Holding the triggers here keeps both
+    halves: dropping `pull_request` would leave pull requests ungated, and widening `push` again
+    would bring the doubled runs back."""
+    text = (_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    block = re.search(r"(?m)^on:\n((?:[ #].*\n|\n)*)", text)
+    assert block is not None, "ci.yml names its triggers in a block under `on:`"
+    lines = [
+        line
+        for line in block.group(1).splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert lines == [
+        "  push:",
+        "    branches: [main]",
+        "  pull_request:",
+        "  workflow_dispatch:",
+    ], lines
+
+
 def test_every_linux_runner_names_its_ubuntu_release() -> None:
     """CI's default toolchain -- Clang 18, GCC 13, Python 3.12, the baseline AGENTS.md judges every
     change against beside the newest releases -- is the one Ubuntu 24.04 ships. `ubuntu-latest`

@@ -24,8 +24,12 @@ reintroduced, now merged.
 
 ## 1. The pipeline as it exists
 
-Three parallel workflows run on every push/PR; the main CI's jobs and what each
-*owns* (read `ci.yml` before trusting this list — it is the authority):
+The main workflow (`ci.yml`) runs once per change: on every pull request (its merge with
+`main`) and every commit `main` lands, and by hand (`workflow_dispatch`) for a branch without a
+pull request -- never on both a branch push and its pull request, which ran every job twice
+(`test_ci_runs_once_per_change`). The C memory deep sweep runs weekly; CodeQL is GitHub's own.
+The main CI's jobs and what each *owns* (read `ci.yml` before trusting this list — it is the
+authority):
 
 | Job | Owns |
 |---|---|
@@ -33,7 +37,8 @@ Three parallel workflows run on every push/PR; the main CI's jobs and what each
 | BCIR oracle 1/2 + 2/2 on LLVM 23 | the same thorough shards judged by apt.llvm.org's clang/lld/llvm 23 + compiler-rt and Node 24 (`oracle-llvm-latest`): the lowering rail on the release the law rail tracks, since the default `oracle` shards run Ubuntu's 18 |
 | BCIR C runtime / C analysis | StreamPack byte-identity, decoder fuzz, sanitizers, static analysis |
 | BCIR C rails on clang 23 (runtime / analysis / ubsan-1 / ubsan-2) | one job, four parallel cells (`c-rails-llvm-latest`): `check_runtime.sh` + the memory-discipline sweep; the cfront sanitizer sweep, `clang-23 --analyze`, a bounded (100,000-run) decoder fuzz, the decoder campaign and the C++ hand-off; and the UBSan witnesses in two `--shard` halves -- all under clang 23 + its compiler-rt |
-| BCIR CMake build (gcc / clang / clang23) | the top-level CMake project over `runtime/manifest.json` (`cmake-build`; the `clang23` cell builds it with apt.llvm.org's clang 23, the newest LLVM major -- skill `bcir-latest-toolchain`): every library, tool, harness, seam unit and freestanding check builds; `ctest -L build` = the manifest checker, the dependency index, the `bcir-cc` build-parity gate and the section-parity gate; `ctest -L section` = the migrated `check_runtime.sh` sections (`tools/c/sections/*.sh`) over the CMake-built harnesses; the clang cell builds the `fuzzer` preset and runs its bounded `ctest -L fuzz` |
+| BCIR CMake build (gcc / clang / clang23) | the top-level CMake project over `runtime/manifest.json` (`cmake-build`; the `clang23` cell builds it with apt.llvm.org's clang 23, the newest LLVM major -- skill `bcir-latest-toolchain`): every library, tool, harness, seam unit and freestanding check builds; `ctest -L build` (less `build-make`) = the manifest checker, the dependency index, the `bcir-cc` build-parity gate and the section-parity gate, at four workers (`BCIR_GATE_WORKERS=4`, `-j 4`); `ctest -L section` = the migrated `check_runtime.sh` sections (`tools/c/sections/*.sh`) over the CMake-built harnesses; the clang cell builds the `fuzzer` preset and runs its bounded `ctest -L fuzz` |
+| BCIR Make gate (gcc / clang / clang23) | `build-make` (`cmake-make-gate`), split from `cmake-build` so the two run side by side on the same cells: BCIR Make builds every target and runs every section as a task, a no-change rerun executes nothing, each section's recorded verdict equals its shell run, and a one-unit edit executes exactly its dependents; `--no-tests=error`, so an unregistered entry fails rather than passes |
 | BCIR MLIR rail (LLVM 22 / LLVM 23) | tblgen, `bcir-opt` build, ODS corpus, pass tests — the only place compiled-law work is verified |
 | LLVM training corpus | the separate curriculum's validators |
 | Docs governance | STATUS drift, links, retired paths, claim markers |

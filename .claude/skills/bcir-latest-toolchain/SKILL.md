@@ -78,7 +78,7 @@ bash tools/local/check_latest.sh --legs cmake,gate   # while iterating
 | `status` | the installed LLVM 23, Node 24 and Python 3.15 are the newest releases | -- |
 | `confirm` | the oracle's resolver finds one coherent LLVM 23; node is 24; `BCIR_PYTHON_LATEST` is a 3.15; clang 23's fuzzer, ASan/UBSan and TSan runtimes link and run | every `*-llvm-latest` job's confirmation step |
 | `python` | the quick tier and the three required security gates on Python 3.15 (the wheel build needs PyPI and stays CI's) | `python-newer` (its 3.15 cell) and `host-portability` (3.15 on ubuntu and windows) |
-| `cmake` | a fresh `clang23` preset tree with `BCIR_REQUIRE_TSAN=ON`: build (`-Werror`), `ctest -L section`, `ctest -L build` (section and build parity) | `cmake-build` (clang23 cell) |
+| `cmake` | a fresh `clang23` preset tree with `BCIR_REQUIRE_TSAN=ON`: build (`-Werror`), `ctest -L section`, `ctest -L build` (section and build parity, and `build-make`) | `cmake-build` and `cmake-make-gate` (clang23 cells) |
 | `fuzz` | the `fuzzer` preset on clang 23, `ctest -L fuzz` | `c-rails-llvm-latest` (analysis) |
 | `analyze` | clang 23's static analyzer over the hosted C units (`tools/c/analyze_hosted.sh`, the one list both CI analyzer steps run); any diagnostic fails it | `c-rails-llvm-latest` (analysis) |
 | `gate` | `tools/c/check_runtime.sh` on clang 23 with `BCIR_REQUIRE_TSAN=1` (`--cfront-sanitize` adds the cfront ASan/UBSan sweep) | `c-rails-llvm-latest` (runtime) |

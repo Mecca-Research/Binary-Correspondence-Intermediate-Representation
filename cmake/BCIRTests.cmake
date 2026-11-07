@@ -1,7 +1,8 @@
 # CTest registration: the gates as tests, with labels for the tiers and the two-worker law.
 #
 # `ctest -j 2` is the bounded local run; every heavy gate declares PROCESSORS 2 so two of them
-# never run at once, as AGENTS.md requires. Labels:
+# never run at once, as AGENTS.md requires. The BCIR Make gates declare BCIR_GATE_WORKERS, the tasks
+# they run at once: 2 locally, 4 on CI's 4-vCPU runners under `ctest -j 4`. Labels:
 #   build     the manifest reconciliation, the dependency index, the build-parity gate, the
 #             section-parity gate and the install gate (`ctest --preset build`)
 #   section   the gate sections that moved into tools/c/sections/, over the harnesses built here
@@ -54,13 +55,14 @@ if(_make_parity MATCHES "^\\.\\./")
   set(_make_parity_ok FALSE)
   message(STATUS "BCIR: build-parity and build-section-parity are not registered: the build tree is outside the source tree")
 endif()
-set(_make_parity_args --make-dir "${_make_parity}" --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}")
+set(_make_parity_args --make-dir "${_make_parity}" --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}"
+                      --workers "${BCIR_GATE_WORKERS}")
 if(_make_parity_ok)
   add_test(NAME build-parity
            COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/build_parity.py"
                    --bcir-cc "$<TARGET_FILE:bcir-cc>" ${_make_parity_args}
            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-  set_tests_properties(build-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 1800
+  set_tests_properties(build-parity PROPERTIES LABELS "build;c" PROCESSORS ${BCIR_GATE_WORKERS} TIMEOUT 1800
                        RESOURCE_LOCK bcir-make-parity)
 endif()
 
@@ -122,7 +124,7 @@ if(BCIR_BUILD_HARNESSES)
                      --harness-dir "${CMAKE_BINARY_DIR}/harnesses" --tool-dir "${CMAKE_BINARY_DIR}/runtime/c"
                      ${_make_parity_args} ${_parity_unbuilt}
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-    set_tests_properties(build-section-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 2400
+    set_tests_properties(build-section-parity PROPERTIES LABELS "build;c" PROCESSORS ${BCIR_GATE_WORKERS} TIMEOUT 2400
                          RESOURCE_LOCK bcir-make-parity)
   endif()
 endif()
@@ -142,14 +144,15 @@ set_tests_properties(build-make-parity PROPERTIES LABELS "build;c" PROCESSORS 2 
 # under the build tree only when that tree is inside the source tree, as the presets put it. ---
 file(RELATIVE_PATH _make_out "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/bcir-make-gate")
 if(BCIR_BUILD_HARNESSES AND NOT _make_out MATCHES "^\\.\\./")
-  # The gate's two workers are its two processors, so the train task's trainer takes one of them
-  # (BCIR_TRAIN_THREADS; the runner passes the environment to its tasks -- TRAIN-POLICY).
+  # The gate's workers are its processors (BCIR_GATE_WORKERS), so the train task's trainer takes one
+  # of them (BCIR_TRAIN_THREADS; the runner passes the environment to its tasks -- TRAIN-POLICY).
   add_test(NAME build-make
            COMMAND ${CMAKE_COMMAND} -E env "BCIR_TRAIN_THREADS=1"
                    "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/make_gate.py"
                    --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}" --out-dir "${_make_out}"
+                   --workers "${BCIR_GATE_WORKERS}"
            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-  set_tests_properties(build-make PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 3600)
+  set_tests_properties(build-make PROPERTIES LABELS "build;c" PROCESSORS ${BCIR_GATE_WORKERS} TIMEOUT 3600)
 elseif(BCIR_BUILD_HARNESSES)
   message(STATUS "BCIR: build-make is not registered: the build tree is outside the source tree")
 endif()

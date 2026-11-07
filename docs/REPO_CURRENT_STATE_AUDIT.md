@@ -136,7 +136,8 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    runtime; cross-language parity is CI-gated, and CRC-valid-but-corrupt packs are
    rejected with specific error codes by a deterministic adversarial corpus, including
    CRC-valid undeclared trailing body bytes and invalid pipeline/dispatch semantics.
-6. CI gates every push: the oracle suite (x86-64 + native arm64), the C runtime
+6. CI gates every pull request and every commit `main` lands (once each; a branch without a
+   pull request runs it by hand): the oracle suite (x86-64 + native arm64), the C runtime
    (incl. the sanitizer sweep and 500k-run libFuzzer campaigns), the LLVM-training
    validators, the full MLIR rail (tblgen, IRDL round-trip, `bcir-opt` build, ODS
    corpus, pass tests), and docs governance (generated status drift, links,
