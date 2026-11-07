@@ -1121,6 +1121,86 @@ def test_the_section_parity_gate_runs_sections_at_once_and_reports_in_order():
     )
 
 
+def test_the_section_parity_gates_diagnostic_rerun_takes_a_worker_slot():
+    """A section whose two builds differ is run once more, to tell a build difference from
+    undeclared nondeterminism -- and that run takes one of the `--workers` slots like any other.
+    It used to run on the judging thread while the pool was still full, so `--workers 2` meant
+    three runs at once: past the processors CTest reserves for the gate and AGENTS.md's local cap
+    of two, and extra contention exactly while the gate diagnoses output that may be
+    timing-sensitive (a review finding on #825). Here the first section differs between builds
+    while the next one's two slow runs hold both workers; every run records how many runs are
+    live, and none may see more than two."""
+    shell = section_tool.posix_shell()
+    if shell is None:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        scripts = work / "scripts"
+        (scripts / "live").mkdir(parents=True)
+        run = scripts / "run.sh"
+        run.write_text(
+            "#!/usr/bin/env bash\n"
+            'here="$(dirname "$0")"; mine="${here}/live/$$"\n'
+            'touch "${mine}"; echo run >> "${here}/runs"\n'
+            'for _ in 1 2 3 4; do ls "${here}/live" | wc -l >> "${here}/seen"; sleep "$(cat "$1.pause")"; done\n'
+            'rm -f "${mine}"; cat "$1"\n',
+            encoding="utf-8",
+        )
+        made, cmade = work / "make", work / "cmake"
+        for root, first in (
+            (made, "  PASS first (BCIR Make)\n"),
+            (cmade, "  PASS first (CMake)\n"),
+        ):
+            root.mkdir()
+            for name, text, pause in (
+                ("first", first, "0.01"),
+                ("second", "  PASS second\n", "0.3"),
+                ("third", "  PASS third\n", "0.3"),
+            ):
+                (root / name).write_text(text, encoding="utf-8")
+                (root / name).chmod(0o755)
+                (root / f"{name}.pause").write_text(pause, encoding="utf-8")
+        sections = {
+            name: {"script": str(run), "harnesses": [name]} for name in ("first", "second", "third")
+        }
+
+        class Manifest:
+            ManifestError = ValueError
+
+            @staticmethod
+            def load():
+                return {"sections": sections, "tools": {}}
+
+        class Generator:
+            BuildError = RuntimeError
+
+            @staticmethod
+            def compiler_family(cc):
+                return "stub"
+
+            @staticmethod
+            def build(cc, cxx, make_dir, workers):
+                return {name: made / name for name in ("first", "second", "third")}
+
+        saved = section_tool._load_manifest_tool, section_tool._load_tool
+        section_tool._load_manifest_tool = lambda: Manifest
+        section_tool._load_tool = lambda name: Generator
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = section_tool.main(
+                    ["--harness-dir", str(cmade), "--cc", sys.executable, "--workers", "2"]
+                )
+        finally:
+            section_tool._load_manifest_tool, section_tool._load_tool = saved
+        runs = (scripts / "runs").read_text(encoding="utf-8").split()
+        seen = [int(n) for n in (scripts / "seen").read_text(encoding="utf-8").split()]
+    report = out.getvalue()
+    assert rc == 1 and "FAIL first: stdout differ" in report, report
+    assert len(runs) == 7, ("six runs and the diagnostic rerun", len(runs))
+    assert max(seen) <= 2, ("more runs at once than --workers", max(seen), seen)
+
+
 def test_the_build_parity_gate_names_a_differing_row_from_its_own_directory():
     """Each fixture's rows run in a working directory of their own, so `--workers` fixtures run at
     once, and a row whose --emit-pack bytes differ is named with the stream that differs, in the

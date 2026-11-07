@@ -354,9 +354,11 @@ def main(argv: list[str] | None = None) -> int:
             runs[name, "make"].result(),
             runs[name, "cmake"].result(),
             section.get("varies", []),
-            lambda script=script, make_binaries=make_binaries: run_section(
-                shell, script, make_binaries, args.python, args.timeout, cc
-            ),
+            # the diagnostic rerun takes a worker slot like any other run: queued behind the
+            # runs already submitted, never beside a full pool (`--workers` is the cap)
+            lambda script=script, make_binaries=make_binaries: pool.submit(
+                run_section, shell, script, make_binaries, args.python, args.timeout, cc
+            ).result(),
         )
         if result["stale"]:
             failures.append(

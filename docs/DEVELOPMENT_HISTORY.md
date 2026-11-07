@@ -322,7 +322,12 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     directory of its own); each reports in a fixed order, and refuses a count below one before it
     builds (`test_each_make_gate_reserves_the_workers_it_runs`,
     `test_the_section_parity_gate_runs_sections_at_once_and_reports_in_order`,
-    `test_the_build_parity_gate_names_a_differing_row_from_its_own_directory`). A section run
+    `test_the_build_parity_gate_names_a_differing_row_from_its_own_directory`). Section parity's
+    diagnostic rerun -- the second run over BCIR Make's binaries that tells a build difference from
+    undeclared nondeterminism -- first ran on the judging thread beside a full pool, so
+    `--workers 2` meant three runs at once (a review finding); it now queues on the same pool
+    (`test_the_section_parity_gates_diagnostic_rerun_takes_a_worker_slot`, three live runs before
+    the fix in 3 of 3 trials, never more than two after). A section run
     now has one bound wherever it runs, 900 s: section-parity's was 600 against its CTest entry's
     and the make gate's 900, and its runs now share the host
     (`test_a_section_run_has_one_bound_wherever_it_runs`).
