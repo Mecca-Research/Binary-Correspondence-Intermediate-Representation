@@ -6,7 +6,9 @@
  * (direction, DLAB, FIFO mode) over a placement's layout. A placement is configured from the U0 registry
  * (sim16550_config mirrors UartPlacement's knobs; the transcript harness fills it from the generated
  * uart16550_regs.h) and the register bits are the generated header's. It identifies as a 16550A (IIR[7:6]
- * = 11 with the FIFOs on) and its scratch register works.
+ * = 11 with the FIFOs on) and its scratch register works -- or, configured with no FIFO (fifo_depth 1, no
+ * FCR bit: the AXI core's 16450 mode, DS748 p.9 and p.12), as a 16450: IIR[7:6] always 00 and a write to
+ * slot 2 reaching no register (counted in ignored_writes, the documents being silent on it).
  *
  * Time is character times and passes only in sim_tick: nothing here reads a clock, so a run is a
  * function of the calls made. The caller owns the state (a sim16550 is plain data); freestanding C.
@@ -20,7 +22,15 @@
  *   - an RBR read of an empty receiver returns the last byte read;
  *   - the divisor latches reset to 0x0001 and SCR to 0x00 on every placement (undefined on the PC16550D;
  *     Core16550 resets the latches to 0x01/0x00, the AXI core to its 9600-baud divisor: neither is a
- *     UartPlacement field), and the external modem inputs are inactive until sim_set_modem.
+ *     UartPlacement field; the documents disagree on SCR -- uart_model.PROVENANCE), and the external
+ *     modem inputs are inactive until sim_set_modem;
+ *   - FCR[0] = 0 turns the FIFOs off on every placement, IIR[7:6] then reading 00, as the PC16550D
+ *     says (p.22). Core16550 disagrees with itself here: its FCR table lets FCR[0] = 0 disable both
+ *     FIFOs (DS50003798A Table 1-4, p.6), while its IIR table gives 11 as IIR[7:6]'s only valid state
+ *     (Table 1-8, p.7). The sim follows the FCR table, so on core16550_apb the probe's closing FCR = 0
+ *     turning the FIFOs off is the sim's reading, not a documented fact; the driver does not rest on
+ *     it (with the probe's shadow 0 it sends a byte per THRE, which a FIFO also takes, and init
+ *     programs FIFO mode explicitly).
  *
  * Two fault knobs model what no working 16550 does, so that a harness can drive a driver's timeouts; both
  * are off after sim_init, and off they change nothing:
@@ -55,9 +65,11 @@ typedef struct sim16550_config {
     uint32_t reg_width;       /* bytes per register lane; the data bus is the lane's low byte */
     uint32_t fcr_reset;       /* FCR after reset (Core16550: FIFOs on) */
     uint32_t fcr_gated;       /* FCR[7:1] are programmed only with FCR[0] set in the same write */
-    uint32_t fcr_impl_mask;   /* the FCR bits that exist; FCR[0] must (a part without it is a U9 profile) */
-    uint32_t fifo_depth;      /* bytes per FIFO, 1..SIM16550_FIFO_MAX */
-    uint32_t rx_triggers[4];  /* the RX trigger level per FCR[7:6] code, in bytes, increasing */
+    uint32_t fcr_impl_mask;   /* the FCR bits that exist; FCR[0] must (a part without it is a U9 profile),
+                                 except on a part with no FIFO, which has no FCR bit at all */
+    uint32_t fifo_depth;      /* bytes per FIFO, 1..SIM16550_FIFO_MAX; 1: no FIFO (a 16450) */
+    uint32_t rx_triggers[4];  /* the RX trigger level per FCR[7:6] code, in bytes, increasing; 1 0 0 0 with
+                                 no FIFO */
     uint32_t has_scr;         /* a scratch register at slot 7 (else it reads 0) */
     uint32_t has_afe;         /* MCR[5] exists (stored; autoflow itself is slice U6) */
     uint32_t has_modem;       /* the modem inputs are wired (else MSR[7:4] read 0 outside loopback) */
@@ -103,7 +115,8 @@ typedef struct sim16550 {
     uint32_t rx_overruns;     /* characters lost to an overrun */
     uint32_t rx_dropped;      /* external characters that arrived while loopback disconnected SIN */
     uint32_t bus_errors;      /* accesses at an offset that is no register lane */
-    uint32_t ignored_writes;  /* writes to LSR or MSR, which are for factory test only */
+    uint32_t ignored_writes;  /* writes to LSR or MSR, which are for factory test only, and to slot 2 on a
+                                 part with no FCR */
     uint32_t loop_dropped;    /* loopback characters sim_drop_loopback kept from the receiver */
     /* the fault knobs (off after sim_init) */
     uint32_t tx_stall;        /* sim_stall_tx: the shift register never finishes */

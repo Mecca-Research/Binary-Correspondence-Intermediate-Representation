@@ -194,7 +194,7 @@ BAUD_ERROR_LIMIT = Fraction(3, 100)
 class UartPlacement:
     """Where a part puts the register file and what it does differently (blueprint section 2)."""
 
-    name: str  # "pc16550d" | "core16550_apb" | "axi16550"
+    name: str  # "pc16550d" | "core16550_apb" | "axi16550" | "axi16450"
     stride: int  # 1 | 4
     base_offset: int  # 0 | 0 | 0x1000
     reg_width: int  # 1 | 4 | 4 (bytes per register lane)
@@ -206,8 +206,8 @@ class UartPlacement:
     irq_level: bool  # level-sensitive interrupt output (AXI) vs pin
     # -- 16750-family capability fields (U8; every U0-era placement takes the defaults,
     #    so U8 is non-disturbing by construction -- H-F/H-K/H-L are encoded HERE) --
-    fifo_depth: int = 16  # 16 | 64 | 128 | synthesis value (H-K: data, never probed)
-    rx_triggers: tuple = (1, 4, 8, 14)  # BYTE VALUES per FCR[7:6] encoding (H-F/H-G)
+    fifo_depth: int = 16  # 16 | 64 | 128 | synthesis value (H-K: data, never probed); 1: no FIFO
+    rx_triggers: tuple = (1, 4, 8, 14)  # BYTE VALUES per FCR[7:6] encoding (H-F/H-G); (1,): no FIFO
     rx_triggers_alt: tuple = ()  # 64-byte/alternate-mode byte values, () = no alt mode
     tx_triggers: tuple = ()  # FCR[5:4] TX trigger spaces (750E), () = none
     mode64_key: str = ""  # "" | "dlab" (classic 750: FCR[5] under LCR[7]=1)
@@ -225,9 +225,14 @@ class UartPlacement:
     errata: tuple = ()  # ids into ERRATA this placement's part is subject to (none in U0)
 
 
-# The three U0 placements (blueprint section 2; the facts and their pages are in PROVENANCE).
-# Every one gates FCR: the gating sentence is the PC16550D's own (p.22), repeated by TL16C550C/D,
-# ST16C550 and Core16550, and PG143/DS748 defer to the PC16550D data sheet for register behaviour.
+# The U0 placements (blueprint section 2; the facts and their pages are in PROVENANCE): three 16550s
+# and one 16450. Every 16550 gates FCR: the gating sentence is the PC16550D's own (p.22), repeated by
+# TL16C550C/D, ST16C550 and Core16550, and PG143/DS748 defer to the PC16550D data sheet for register
+# behaviour. The 16450 is the AXI core built in its 16450 UART mode (DS748 p.7, the C_IS_A_16550
+# generic; PG143 p.55): no FIFO and no FCR (DS748 p.9 Table 4 note 3 and p.13; PG143 p.28), IIR[7:6]
+# always zero (DS748 p.12; PG143 p.26). It is the record that declares no FIFO -- the one placement a
+# driver runs in 16450 mode -- so its fifo_depth is 1 (the holding registers alone), its one RX
+# "trigger" a byte, and its FCR mask empty.
 PLACEMENTS: dict[str, UartPlacement] = {
     "pc16550d": UartPlacement(
         name="pc16550d",
@@ -264,6 +269,21 @@ PLACEMENTS: dict[str, UartPlacement] = {
         has_modem=True,
         ref_clk_hz=100_000_000,
         irq_level=True,
+    ),
+    "axi16450": UartPlacement(
+        name="axi16450",
+        stride=4,
+        base_offset=0x1000,
+        reg_width=4,
+        fcr_reset=0x00,
+        fcr_gated=False,
+        has_afe=False,
+        has_modem=True,
+        ref_clk_hz=100_000_000,
+        irq_level=True,
+        fifo_depth=1,
+        rx_triggers=(1,),
+        fcr_impl_mask=0x00,
     ),
 }
 
@@ -433,6 +453,26 @@ def _trigger_problem(label: str, triggers, limit: int | None, *, required: bool)
     return None
 
 
+def _no_fifo_problems(p) -> list[str]:
+    """A record that declares no FIFO (fifo_depth 1) is a 16450: its receiver and transmitter are the
+    one-byte holding registers, so a byte is its only RX trigger and it has no TX trigger or alternate
+    mode; and it has no FCR (the AXI core's 16450 mode: DS748 p.9 Table 4 note 3, PG143 p.28), so no
+    FCR bit exists, resets or is gated."""
+    out = []
+    if p.rx_triggers != (1,):
+        out.append(
+            f"rx_triggers {p.rx_triggers!r} on a part with no FIFO: a byte is its one level, (1,)"
+        )
+    if p.rx_triggers_alt != () or p.tx_triggers != ():
+        out.append("a part with no FIFO has no alternate RX triggers and no TX triggers")
+    if p.fcr_impl_mask != 0 or p.fcr_reset != 0 or p.fcr_gated:
+        out.append(
+            f"a part with no FIFO has no FCR: fcr_impl_mask {p.fcr_impl_mask:#04x}, fcr_reset "
+            f"{p.fcr_reset:#04x} and fcr_gated {p.fcr_gated} must be 0x00, 0x00 and False"
+        )
+    return out
+
+
 def placement_problems(p) -> list[str]:
     """Every way a placement record is not well formed; [] when it is. Total: a malformed record
     is a list of findings, never an exception."""
@@ -469,14 +509,19 @@ def placement_problems(p) -> list[str]:
         out.append(f"ref_clk_hz {p.ref_clk_hz} is not positive")
     if p.fifo_depth <= 0:
         out.append(f"fifo_depth {p.fifo_depth} is not positive")
-    for problem in (
-        _trigger_problem("rx_triggers", p.rx_triggers, p.fifo_depth, required=True),
-        # the alternate mode's depth is not a field of the record (the classic 750's 64 bytes)
-        _trigger_problem("rx_triggers_alt", p.rx_triggers_alt, None, required=False),
-        _trigger_problem("tx_triggers", p.tx_triggers, p.fifo_depth, required=False),
-    ):
-        if problem:
-            out.append(problem)
+    elif p.fifo_depth == 1:
+        out += _no_fifo_problems(p)
+    else:
+        if p.fcr_impl_mask == 0:
+            out.append(f"fifo_depth {p.fifo_depth} with fcr_impl_mask 0x00: a FIFO with no FCR")
+        for problem in (
+            _trigger_problem("rx_triggers", p.rx_triggers, p.fifo_depth, required=True),
+            # the alternate mode's depth is not a field of the record (the classic 750's 64 bytes)
+            _trigger_problem("rx_triggers_alt", p.rx_triggers_alt, None, required=False),
+            _trigger_problem("tx_triggers", p.tx_triggers, p.fifo_depth, required=False),
+        ):
+            if problem:
+                out.append(problem)
     if p.mode64_key not in _MODE64_KEYS:
         out.append(f"mode64_key {p.mode64_key!r} is not one of {_MODE64_KEYS}")
     if p.flow_mech not in _FLOW_MECHS:
@@ -513,7 +558,13 @@ _U0_DEFAULTS = {
 
 
 def _unrendered(p: UartPlacement) -> list[str]:
-    out = [name for name, default in _U0_DEFAULTS.items() if getattr(p, name) != default]
+    out = [
+        name
+        for name, default in _U0_DEFAULTS.items()
+        if getattr(p, name) != default
+        # the 16450's empty FCR is the 16550 core less its FIFO, which U0 renders (no U8 field)
+        and not (name == "fcr_impl_mask" and p.fifo_depth == 1)
+    ]
     if p.flow_mech == "efr_tcr":
         out.append("flow_mech")
     return out
@@ -633,7 +684,8 @@ def emit_header(placement: UartPlacement) -> str:
     rxtrig = next(f for f in REGS["FCR"].fields if f[2] == "RXTRIG")
     lines += [
         "",
-        "/* RX FIFO trigger levels: FCR[7:6] in place, each named by its byte count here. */",
+        "/* RX FIFO trigger levels: FCR[7:6] in place, each named by its byte count here (on a part",
+        " * with no FIFO, UART_CAP_FIFO_DEPTH 1, the one level: a byte, and no FCR to hold it). */",
         "typedef enum uart_rx_trigger {",
     ]
     for code, count in enumerate(p.rx_triggers):
@@ -644,7 +696,11 @@ def emit_header(placement: UartPlacement) -> str:
         "} uart_rx_trigger_t;",
         "",
         "/* The placement's capabilities (UartPlacement) that a driver and a simulated device read. */",
-        _define("UART_CAP_FIFO_DEPTH", f"{p.fifo_depth}u", "bytes in each FIFO"),
+        _define(
+            "UART_CAP_FIFO_DEPTH",
+            f"{p.fifo_depth}u",
+            "bytes in each FIFO; 1: no FIFO, the holding registers alone",
+        ),
         _define(
             "UART_CAP_RX_TRIGGER_BYTES", triggers, "uart_rx_trigger_t's levels in bytes, by code"
         ),
@@ -845,18 +901,26 @@ PROVENANCE: tuple = (
         "against PC16550D p.24 (CTS = RTS, DSR = DTR); the model follows the PC16550D",
     ),
     (
-        "reset values: IER 00, IIR 01, FCR 00, LCR 00, MCR 00, LSR 60, MSR XXXX0000; SCR and the "
-        "divisor latches not reset",
+        "reset values: IER 00, IIR 01, FCR 00, LCR 00, MCR 00, LSR 60, MSR XXXX0000; the divisor "
+        "latches not reset",
         "PC16550D p.19 (Table 3), p.5 (MR); TL16C550C p.22 (Table 7-2); TL16C550D p.32 (Table 2); "
         "ST16C550 p.13",
-        "agree; ST16C550 initializes SPR to FF (p.13)",
+        "agree (PC16550D p.5: MR clears all the registers except RBR, THR and the divisor latches)",
+    ),
+    (
+        "SCR at reset: not a field of the record (no driver reads it before writing it)",
+        "PC16550D p.5 (MR); TL16C550C p.22 (Table 7-2); ST16C550 p.13; Core16550 p.5 (Table 1-1), "
+        "p.10 (Table 1-14)",
+        "the documents disagree: PC16550D p.5's MR sentence would clear it, TL16C550C p.22 says a "
+        "master reset has no effect on it, ST16C550 p.13 resets SPR to FF and Core16550 resets it "
+        "to 00; the simulated device resets it to 00 (sim16550.h)",
     ),
     (
         "FCR[0] gates the other FCR bits in the same write",
         "PC16550D p.22; TL16C550C p.24; TL16C550D p.33; ST16C550 p.15; Core16550 p.6; PG143 p.26 "
         "and DS748 p.10 defer register behaviour to the PC16550D data sheet",
-        "every source: fcr_gated is True on all three placements (the blueprint's section 2 "
-        "matrix had 'n/a' for the silicon)",
+        "every source: fcr_gated is True on the three 16550 placements (the blueprint's section 2 "
+        "matrix had 'n/a' for the silicon); the 16450 has no FCR to gate (axi16450)",
     ),
     (
         "FCR[5:4] reserved on the 16550 class",
@@ -892,6 +956,18 @@ PROVENANCE: tuple = (
         "PG143 pp.17-19, pp.26-28; DS748 p.4 (level sensitive), p.5 (P3), p.7 (G7 C_IS_A_16550), "
         "p.9 (Table 4), p.13 (Table 9)",
         "agree",
+    ),
+    (
+        "axi16450: the AXI core built in 16450 UART mode -- the axi16550 layout, reference clock and "
+        "interrupt output; no FIFO and no FCR (fcr_impl_mask 0x00, fifo_depth 1, a byte the one RX "
+        "level); IIR[7:6] always 00",
+        "DS748 p.3 (the UART16550 module configured for 16450 or 16550 mode by C_IS_A_16550), p.7 "
+        "(G7: 0 is 16450 mode), p.9 (Table 4 note 3: the 16450 mode does not include FCR), p.12 "
+        "(Table 8 note 1: IIR[7:6] always zero in 16450 mode), p.13 (FCR not included); PG143 p.26 "
+        "(IIR note 1), p.28 (FCR note 1), p.55 (UART Mode)",
+        "agree. The documents do not say what a write to slot 2 does in this mode; the record has no "
+        "register there, and the simulated device counts such a write as ignored. Linux runs a "
+        "16450 with fifo_size 1, tx_loadsz 1 and no FCR value (8250_port.c, uart_config[PORT_16450])",
     ),
     (
         "axi16550: ref_clk_hz 100000000 (S_AXI_ACLK; external xin below ACLK/2 optional)",

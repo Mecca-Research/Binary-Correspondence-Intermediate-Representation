@@ -23,8 +23,8 @@
  * receiver's DR never clears. The transcript is a function of the driver's
  * register accesses and of nothing else -- no clock, no address, no host state -- so the program built
  * from the driver's source and from either rail's emit prints it byte for byte
- * (bcir/tests/test_uart_driver.py; tools/c/sections/uartdrv.sh; the golden runtime/c/uart_main.golden is
- * the axi16550 placement's).
+ * (bcir/tests/test_uart_driver.py; tools/c/sections/uartdrv.sh; the goldens runtime/c/uart_main.golden and
+ * runtime/c/uart_main_16450.golden are the axi16550 and axi16450 placements').
  *
  *   uart_main            the transcript: probe, which leaves the FIFOs off; TX and the self-test
  *                        refused on a zeroed state, then TX before init under a plan's cap, its bytes
@@ -38,11 +38,11 @@
  *                        then a parity error under TX's polls and a framing error under the flush's,
  *                        which the drain still counts; the self-test again under a peer that never
  *                        stops sending; the self-test at 5, 6 and 7 data bits; then twice more from the
- *                        probe,
- *                        its verdict forced to no FIFO (fifo_ok 0) and to a broken one (fifo_ok 1):
- *                        init into 16450 mode, the self-test, TX of a 40-byte buffer under a stale plan
- *                        cap of the FIFO depth, flush; and under the sim's fault knobs, after init in
- *                        FIFO mode again, TX against a transmitter that never drains and the self-test
+ *                        probe, its verdict forced to no FIFO (fifo_ok 0) and to a broken one
+ *                        (fifo_ok 1): init vetoes the record that declares the FIFO
+ *                        (UART_ERR_CAPS_MISMATCH) before it touches the device, and TX and the self-test
+ *                        refuse the state it leaves; and under the sim's fault knobs, after init in
+ *                        the record's mode again, TX against a transmitter that never drains and the self-test
  *                        against a loopback that delivers nothing, each giving up at the driver's bound
  *                        (their unchanging polls shown " xN" on one line); then, the transmitter stalled
  *                        again, the self-test's wait for TEMT (it never enters the loopback), init's
@@ -50,8 +50,13 @@
  *                        a transmitter that stalls with a pattern in its shift register: it holds its
  *                        loopback, TX, the flush and the self-test refuse the state and the drain
  *                        takes nothing, and uart_selftest_release -- then, again, uart_init -- ends it
- *                        once the character has looped back (16450 mode too, in the forced runs), the
- *                        line carrying none of the test's characters
+ *                        once the character has looped back, the line carrying none of the test's
+ *                        characters. On the placement whose record declares no FIFO (axi16450, a
+ *                        16450) the same transcript runs in 16450 mode: the probe finds no FIFO, every
+ *                        init asks for the one-byte trigger, and refuses a FIFO's level; the receiver's
+ *                        burst overruns the holding register, its other bytes come one at a time and
+ *                        drained between them; and the veto run forces a working FIFO (fifo_ok 2)
+ *                        against the record
  *   uart_main --script   the device alone, driven by commands on stdin (its spec-fidelity tests)
  *
  * Exit status: 0 the transcript or the script ran; 2 usage, a malformed script line, or a placement the
@@ -66,6 +71,14 @@
 #include "sim16550.h"
 #include "uart16550_regs.h"
 #include "uart_driver.h"
+
+/* The RX trigger every init in the transcript asks for: 8 bytes on a part whose record declares a FIFO, a
+ * byte -- the one level -- on one that declares none (the 16450). */
+#if UART_CAP_FIFO_DEPTH > 1
+#define INIT_TRIGGER UART_RX_TRIGGER_8
+#else
+#define INIT_TRIGGER UART_RX_TRIGGER_1
+#endif
 
 /* The register window: big enough for every U0 layout (the AXI core's registers end at 0x1020) and for
  * the stray accesses of a driver laid out for another, which land in it as misfits, never past it. The
@@ -363,6 +376,9 @@ static const char *status_text(uint32_t status)
     if (status == UART_ERR_LOOP_HELD) {
         return "the loopback is held";
     }
+    if (status == UART_ERR_CAPS_MISMATCH) {
+        return "the probe disagrees with the record";
+    }
     return "refused";
 }
 
@@ -410,11 +426,6 @@ static void rx_status(void)
            (unsigned)sim_peek(&dev, UART_LSR_OFF));
 }
 
-static void no_fifo_phase(uint32_t verdict, const char *step)
-{
-    printf("-- fifo_ok %u %s (t=%llu)\n", (unsigned)verdict, step, (unsigned long long)dev.time);
-}
-
 /* Whether the device has its FIFOs on, and what IIR would read (IIR[7:6] = 11 with them on, 00 off). */
 static void fifos_line(void)
 {
@@ -452,7 +463,7 @@ static void selftest_refusal(volatile uart_regs_t *u, uart_state *st, const char
  * patterns are the word length's data bits. */
 static void word_length_selftest(volatile uart_regs_t *u, uart_state *st, uint32_t divisor, uint32_t wls)
 {
-    uint32_t status = uart_init(u, st, divisor, wls, UART_RX_TRIGGER_8);
+    uint32_t status = uart_init(u, st, divisor, wls, INIT_TRIGGER);
     bus_flush();
     show_trace();
     printf("init: returns %u (%s); format 0x%02x, %u data bits: word_bits %u, lsr_saved 0x%02x\n",
@@ -577,7 +588,7 @@ static void held_selftest(volatile uart_regs_t *u, uart_state *st, int by_init, 
     }
     sim_stall_tx(&dev, 0u); /* the character finishes: in the loopback, into the receiver */
     if (by_init) {
-        status = uart_init(u, st, divisor, format, UART_RX_TRIGGER_8);
+        status = uart_init(u, st, divisor, format, INIT_TRIGGER);
         bus_flush();
         show_trace();
         printf("init: returns %u (%s); mcr 0x%02x, loop_held %u, fcr_shadow 0x%02x\n", (unsigned)status,
@@ -602,24 +613,20 @@ static void held_selftest(volatile uart_regs_t *u, uart_state *st, int by_init, 
     (void)flush_report(u, st, from, after, after_length);
 }
 
-/* A part whose probe found no working FIFO (section 3.1): fifo_ok 0, none -- a 16450 or an 8250 -- or 1,
- * the original 16550's broken FIFO. The sim answers the probe as a 16550A, so this run forces the verdict
- * after the probe, in a state of its own; the probe has left the FIFOs off, and init must keep them off
- * -- 16450 mode, where THRE means the one-byte holding register is empty (PC16550D p.22). The self-test
- * must pass with no FIFO to reset, and TX is handed a stale plan cap -- the FIFO depth, the cap a plan
- * made for the FIFO leaves -- that the driver must clamp to one byte: the line must carry the buffer with
- * no TX overflow. Last, the self-test holds its loopback over a stalled transmitter, and
- * uart_selftest_release ends it with no FIFO to reset: it reads the looped character out of RBR. */
-static void no_fifo_run(volatile uart_regs_t *u, uint32_t verdict, uint32_t divisor, uint32_t format)
+/* Discovery vetoes the record, never steers it (blueprint section 10.0). The probe runs, and its verdict
+ * is then forced to one that disagrees with the placement record -- no FIFO (fifo_ok 0) or a broken one
+ * (fifo_ok 1) where the record declares a FIFO, a working one (fifo_ok 2) where it declares none -- in a
+ * state of its own: init must refuse (UART_ERR_CAPS_MISMATCH) before it touches the device, rather than
+ * run the part in a mode its record does not describe, and the state it leaves is one TX and the self-test
+ * refuse (no TX burst cap, no word length). */
+static void veto_run(volatile uart_regs_t *u, uint32_t verdict, uint32_t divisor, uint32_t format)
 {
-    static const uint8_t message[] = "16450 mode: a byte per THRE, none lost\r\n";
-    const uint32_t length = (uint32_t)(sizeof message - 1u);
     uart_state st;
     uint32_t status;
-    uint32_t from;
 
     memset(&st, 0, sizeof st);
-    no_fifo_phase(verdict, "probe: the sim answers as a 16550A; the run forces the verdict after it");
+    printf("-- veto: the probe's verdict forced to fifo_ok %u, a record of %s (t=%llu)\n", (unsigned)verdict,
+           UART_CAP_FIFO_DEPTH > 1u ? "a FIFO" : "no FIFO", (unsigned long long)dev.time);
     status = uart_probe(u, &st);
     bus_flush();
     show_trace();
@@ -627,32 +634,12 @@ static void no_fifo_run(volatile uart_regs_t *u, uint32_t verdict, uint32_t divi
     printf("probe: returns %u; fifo_ok forced to %u (%s), scr_ok %u, fcr_shadow 0x%02x\n", (unsigned)status,
            (unsigned)st.fifo_ok, probe_text(&st), (unsigned)st.scr_ok, (unsigned)st.fcr_shadow);
     fifos_line();
-
-    no_fifo_phase(verdict, "init");
-    status = uart_init(u, &st, divisor, format, UART_RX_TRIGGER_8);
-    bus_flush();
-    show_trace();
-    printf("init: returns %u (%s); trigger %u bytes, fcr_shadow 0x%02x, tx_burst %u\n", (unsigned)status,
-           status_text(status), (unsigned)st.trigger, (unsigned)st.fcr_shadow, (unsigned)st.tx_burst);
-    fifos_line();
-
-    no_fifo_phase(verdict, "selftest");
-    status = uart_selftest(u, &st);
-    bus_flush();
-    show_trace();
-    printf("selftest: returns %u (%s); mcr 0x%02x after it, fcr_shadow 0x%02x\n", (unsigned)status,
-           status_text(status), (unsigned)dev.mcr, (unsigned)st.fcr_shadow);
-
-    no_fifo_phase(verdict, "tx");
-    st.tx_burst = UART_CAP_FIFO_DEPTH; /* stale: a plan made for the FIFO; the driver clamps it */
-    from = dev.line_len;
-    (void)tx_report(u, &st, message, length, "a stale plan burst cap of");
-
-    no_fifo_phase(verdict, "flush");
-    (void)flush_report(u, &st, from, message, length);
-
-    no_fifo_phase(verdict, "selftest held: a pattern stuck in the shift register; the release ends it");
-    held_selftest(u, &st, 0, divisor, format);
+    init_refusal(u, &st, "the probe against the record", divisor, format, INIT_TRIGGER);
+    printf("  state: fifo_ok %u, trigger %u, fcr_shadow 0x%02x, tx_burst %u, word_bits %u\n",
+           (unsigned)st.fifo_ok, (unsigned)st.trigger, (unsigned)st.fcr_shadow, (unsigned)st.tx_burst,
+           (unsigned)st.word_bits);
+    tx_refusal(u, &st, "the state init refused");
+    selftest_refusal(u, &st, "the state init refused");
 }
 
 static uint32_t rx_drain(volatile uart_regs_t *u, uart_state *st, uint32_t totals[4])
@@ -755,16 +742,19 @@ static int transcript_main(void)
     (void)flush_report(u, &st, from, early, early_length);
 
     phase("init refusals");
-    init_refusal(u, &st, "divisor 0", 0u, format, UART_RX_TRIGGER_8);
-    init_refusal(u, &st, "divisor 0x10000", 0x10000u, format, UART_RX_TRIGGER_8);
+    init_refusal(u, &st, "divisor 0", 0u, format, INIT_TRIGGER);
+    init_refusal(u, &st, "divisor 0x10000", 0x10000u, format, INIT_TRIGGER);
     init_refusal(u, &st, "format 0x83, with DLAB", divisor, UART_LCR_WLS_MASK | UART_LCR_DLAB_MASK,
-                 UART_RX_TRIGGER_8);
+                 INIT_TRIGGER);
     init_refusal(u, &st, "format 0x43, with set break", divisor, UART_LCR_WLS_MASK | UART_LCR_SB_MASK,
-                 UART_RX_TRIGGER_8);
+                 INIT_TRIGGER);
     init_refusal(u, &st, "trigger code 0x81", divisor, format, 0x81u);
+#if UART_CAP_FIFO_DEPTH == 1
+    init_refusal(u, &st, "trigger code 0x80, a FIFO's level", divisor, format, 0x80u);
+#endif
 
     phase("init");
-    init = uart_init(u, &st, divisor, format, UART_RX_TRIGGER_8);
+    init = uart_init(u, &st, divisor, format, INIT_TRIGGER);
     bus_flush();
     show_trace();
     printf("init: returns %u (%s); divisor %u for 56000 baud from %u Hz (PG143's formula): %u baud; "
@@ -813,6 +803,7 @@ static int transcript_main(void)
     rx_status();
     received += rx_drain(u, &st, totals);
 
+#if UART_CAP_FIFO_DEPTH > 1
     phase("rx b: an 8-byte burst at trigger 8");
     rx_arrivals("RX-burst", 0u, 7u, NO_ERROR_BYTE, 0u);
     rx_status();
@@ -829,6 +820,23 @@ static int transcript_main(void)
     rx_arrivals("0123456789abcdefg", 0u, 17u, NO_ERROR_BYTE, 0u);
     rx_status();
     received += rx_drain(u, &st, totals);
+#else
+    phase("rx b: three bytes, each drained before the next arrives");
+    rx_arrivals("one", 0u, 1u, NO_ERROR_BYTE, 0u);
+    rx_status();
+    received += rx_drain(u, &st, totals);
+    rx_arrivals("one", 1u, 2u, NO_ERROR_BYTE, 0u);
+    rx_status();
+    received += rx_drain(u, &st, totals);
+    rx_arrivals("one", 2u, 3u, NO_ERROR_BYTE, 0u);
+    rx_status();
+    received += rx_drain(u, &st, totals);
+
+    phase("rx c: a byte with a parity error");
+    rx_arrivals("E", 0u, 1u, 0u, SIM16550_PE);
+    rx_status();
+    received += rx_drain(u, &st, totals);
+#endif
 
     phase("rx e: a parity error at the FIFO head while TX polls LSR");
     sim_inject(&dev, 0x42u, SIM16550_PE);
@@ -864,11 +872,15 @@ static int transcript_main(void)
     word_length_selftest(u, &st, divisor, 1u);
     word_length_selftest(u, &st, divisor, 2u);
 
-    no_fifo_run(u, 0u, divisor, format);
-    no_fifo_run(u, 1u, divisor, format);
+#if UART_CAP_FIFO_DEPTH > 1
+    veto_run(u, 0u, divisor, format);
+    veto_run(u, 1u, divisor, format);
+#else
+    veto_run(u, 2u, divisor, format);
+#endif
 
     phase("tx timeout: a transmitter that never drains");
-    reinit = uart_init(u, &st, divisor, format, UART_RX_TRIGGER_8); /* FIFO mode again, for this state */
+    reinit = uart_init(u, &st, divisor, format, INIT_TRIGGER); /* the record's mode again, for this state */
     bus_flush();
     show_trace();
     printf("init: returns %u (%s); fcr_shadow 0x%02x, tx_burst %u\n", (unsigned)reinit,
@@ -917,7 +929,7 @@ static int transcript_main(void)
     (void)tx_report(u, &st, pair, 1u, "init's burst cap of"); /* the one character, shifting forever */
     sim_inject(&dev, 0x49u, SIM16550_PE); /* after TX's poll: init's polls see it first */
     collapsing = 1;
-    status = uart_init(u, &st, divisor, format, UART_RX_TRIGGER_8);
+    status = uart_init(u, &st, divisor, format, INIT_TRIGGER);
     collapsing = 0;
     bus_flush();
     show_trace();

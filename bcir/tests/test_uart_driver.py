@@ -5,7 +5,8 @@ program: the driver (`runtime/c/uart_driver.c`, its API `runtime/c/uart_driver.h
 (`runtime/c/sim16550.c`) and the harness (`runtime/c/uart_main.c`). The headline: the driver, emitted
 by either BCIR rail with `--linkable` and linked with the other two, prints the transcript the program
 built from the driver's source prints, on every placement; and the axi16550 placement's transcript --
-PG143's part and programming vector -- is the checked-in golden `runtime/c/uart_main.golden`. Each
+PG143's part and programming vector -- is the checked-in golden `runtime/c/uart_main.golden`, and the
+axi16450's -- the same core built as a 16450, whose record declares no FIFO -- `uart_main_16450.golden`. Each
 rail's `--linkable` artifact is self-contained (CF-LINKEMIT, CF-LINKTWIN), so each is compiled alone,
 as `tools/c/sections/uartdrv.sh` compiles it.
 
@@ -15,8 +16,10 @@ device through the harness's script console (`uart_main --script`) and drives in
 exists to prevent. Then the driver's: both rails compile it clean and law-clean with its contracts; the
 probe, the init order, the TX bursts, the RX triage and the self-test are read off the claim graph and
 off the device's own view of the bus (the transcript's trace); the probe leaves the FIFOs off, and its
-verdict is acted on -- a part without a working FIFO runs in 16450 mode, which the transcript drives by
-forcing the verdict, since the sim answers as a 16550A; init refuses a format with set break or DLAB,
+verdict vetoes, never steers (blueprint section 10.0): the placement record decides the mode -- FIFO mode
+where it declares a FIFO, 16450 mode on axi16450, which declares none and which the sim answers as a
+16450 -- and init refuses a verdict that disagrees with the record (UART_ERR_CAPS_MISMATCH), which the
+transcript drives by forcing one after the probe; init refuses a format with set break or DLAB,
 uart_tx a state no init has filled, and the self-test drains what the receiver holds first, bounded (a
 stale byte; a peer that never stops sending); each of the driver's five waits gives up at its one bound,
 UART_SPIN_BUDGET polls, under the sim's two fault knobs (a transmitter that never drains, a loopback
@@ -74,10 +77,20 @@ _MESSAGE = b"U2: the polled 16550 driver, emitted by both rails\r\n"
 _FCR_RESETS = 0x06
 #: LSR's receiver errors, OE PE FE BI: a read clears them (PC16550D p.21)
 _LSR_ERRORS = 0x1E
-#: the transcript's 16450-mode runs: the probe's verdicts it forces after the probe -- 0, no FIFO (a 16450
-#: or 8250), and 1, the original 16550's broken FIFO -- and the buffer each run sends under a stale cap
-_NO_FIFO = (0, 1)
-_NO_FIFO_MESSAGE = b"16450 mode: a byte per THRE, none lost\r\n"
+#: the placements whose record declares a FIFO, and the one whose record declares none -- a 16450, the
+#: AXI core built in its 16450 UART mode (DS748 p.7, p.9) -- whose transcript runs in 16450 mode
+_FIFO = tuple(n for n, p in um.PLACEMENTS.items() if p.fifo_depth > 1)
+_NO_FIFO = tuple(n for n, p in um.PLACEMENTS.items() if p.fifo_depth == 1)
+#: the 16450's golden: the reference build's transcript on the placement that declares no FIFO
+_GOLDEN_16450 = os.path.join(_C, "uart_main_16450.golden")
+_GOLDEN_16450_PLACEMENT = "axi16450"
+#: the veto runs (blueprint section 10.0): the probe verdicts the transcript forces against a record that
+#: declares a FIFO -- 0, none (a 16450 or 8250), and 1, the original 16550's broken FIFO -- and against
+#: one that declares none -- 2, a working FIFO
+_VETOED = {True: (0, 1), False: (2,)}
+#: UART_ERR_CAPS_MISMATCH and UART_ERR_NOT_READY (uart_driver.h)
+_CAPS_MISMATCH = 11
+_NOT_READY = 8
 
 _SESSION = None
 _BUILT: dict = {}
@@ -338,9 +351,12 @@ def _sim(*lines: str) -> list:
 
 
 def _config(p) -> str:
+    """The console's config line for a record: its four RX trigger slots, 0 past a part's levels (a
+    part with no FIFO has one, a byte), as the harness fills them from UART_CAP_RX_TRIGGER_BYTES."""
+    triggers = tuple(p.rx_triggers) + (0,) * (4 - len(p.rx_triggers))
     knobs = (
         p.stride, p.base_offset, p.reg_width, p.fcr_reset, int(p.fcr_gated), p.fcr_impl_mask,
-        p.fifo_depth, *p.rx_triggers, int(p.has_scr), int(p.has_afe), int(p.has_modem),
+        p.fifo_depth, *triggers, int(p.has_scr), int(p.has_afe), int(p.has_modem),
     )  # fmt: skip
     return f"config {p.name} " + " ".join(str(k) for k in knobs)
 
@@ -384,15 +400,20 @@ def test_sim_reset_states():
     placement's FCR reset turns the FIFOs on (Core16550: DS50003798A p.5). The FCR reset is read from
     the placement record, never assumed: pc16550d given Core16550's reset reads C1 too. The scratch
     register holds what is written (section 3.1's probe tells a 16450 from an 8250 by it), and a
-    record without one (has_scr False: Lattice's, H-L) reads 0 whatever is written."""
+    record without one (has_scr False: Lattice's, H-L) reads 0 whatever is written. Under DLAB the
+    divisor latches read 01/00 on every placement: the PC16550D leaves them undefined at reset, so
+    the sim takes Core16550's documented reset (DS50003798A p.5) for all (sim16550.h)."""
     if not (_CC and _tree()):
         return
-    want_iir = {"pc16550d": 0x01, "core16550_apb": 0xC1, "axi16550": 0x01}
+    want_iir = {"pc16550d": 0x01, "core16550_apb": 0xC1, "axi16550": 0x01, "axi16450": 0x01}
     for name, p in um.PLACEMENTS.items():
         regs = ("IER", "IIR", "LCR", "MCR", "LSR", "MSR", "SCR")
-        out = _sim(_config(p), *(_r(p, reg) for reg in regs), _w(p, "SCR", 0xA5), _r(p, "SCR"))
+        out = _sim(
+            _config(p), *(_r(p, reg) for reg in regs), _w(p, "SCR", 0xA5), _r(p, "SCR"),
+            _w(p, "LCR", 0x80), _r(p, "DLL"), _r(p, "DLM"),
+        )  # fmt: skip
         assert out[0] == f"config {name}", out
-        want = [0x00, want_iir[name], 0x00, 0x00, 0x60, 0x00, 0x00, 0xA5]
+        want = [0x00, want_iir[name], 0x00, 0x00, 0x60, 0x00, 0x00, 0xA5, 0x01, 0x00]
         assert _reads(out) == want, (name, out)
     fifo_on = dataclasses.replace(um.PLACEMENTS["pc16550d"], fcr_reset=0x01)
     assert _reads(_sim(_config(fifo_on), _r(fifo_on, "IIR"))) == [0xC1]
@@ -436,6 +457,43 @@ def test_sim_trigger_and_timeout():
         _config(p), _8bit(p), _w(p, "FCR", 0x87), "inject 0x31 0", "tick 4", iir, "status"
     )
     assert _reads(polled) == [0xC1] and _field(polled, "status", "timeout") == 1, polled
+
+
+def test_sim_iir_priority_ladder():
+    """Section 8's IIR line, PC16550D Table 5 (p.21): IIR reports the highest-priority pending source
+    whose IER bit is set, and each source clears as Table 5 says. With all four enabled and all four
+    pending -- a byte with a parity error (RLS and, at trigger 1, RDA), the THRE interrupt the FIFO
+    enable raised, a CTS change -- IIR reads C6 (RLS); an LSR read clears it to C4 (RDA); an RBR read
+    to C2 (THRE); reading IIR while it reports THRE clears that (p.21), so the next read is C0 (MS);
+    an MSR read leaves C1, none pending. The character timeout ranks with RDA: a byte held at a
+    trigger of 4 shows C1 after 3 character times and CC after 4, and an RBR read clears it. A
+    disabled source is not indicated (p.23): with only THRE and MS enabled, the pending RLS and RDA
+    are invisible (C2, then C0 with MS alone, C1 with none). In 16450 mode -- the placement whose record
+    declares no FIFO -- the same ladder reads with IIR[7:6] = 00 (06, 04, 02, 00, 01): no FIFO bits."""
+    if not (_CC and _tree()):
+        return
+    for name in ("pc16550d", *_NO_FIFO):
+        p = um.PLACEMENTS[name]
+        top = 0xC0 if p.fifo_depth > 1 else 0x00
+        out = _sim(
+            _config(p), _w(p, "FCR", 0x07), _w(p, "LCR", 0x03), _w(p, "IER", 0x0F), "modem 0x10",
+            "inject 0x41 4", _r(p, "IIR"), _r(p, "LSR"), _r(p, "IIR"), _r(p, "RBR"), _r(p, "IIR"),
+            _r(p, "IIR"), _r(p, "MSR"), _r(p, "IIR"),
+        )  # fmt: skip
+        iir = [v for k, v in enumerate(_reads(out)) if k in (0, 2, 4, 5, 7)]
+        assert iir == [top | 0x06, top | 0x04, top | 0x02, top | 0x00, top | 0x01], (name, out)
+        hidden = _sim(
+            _config(p), _w(p, "FCR", 0x07), _w(p, "LCR", 0x03), _w(p, "IER", 0x0A), "modem 0x10",
+            "inject 0x41 4", _r(p, "IIR"), _w(p, "IER", 0x08), _r(p, "IIR"), _w(p, "IER", 0x00),
+            _r(p, "IIR"),
+        )  # fmt: skip
+        assert _reads(hidden) == [top | 0x02, top | 0x00, top | 0x01], (name, hidden)
+    pc = um.PLACEMENTS["pc16550d"]
+    cti = _sim(
+        _config(pc), _w(pc, "FCR", 0x47), _w(pc, "LCR", 0x03), _w(pc, "IER", 0x01),
+        "inject 0x41 0", "tick 3", _r(pc, "IIR"), "tick 1", _r(pc, "IIR"), _r(pc, "RBR"), _r(pc, "IIR"),
+    )  # fmt: skip
+    assert _reads(cti) == [0xC1, 0xCC, 0x41, 0xC1], cti
 
 
 def test_sim_overrun_discards_shift_byte_not_fifo():
@@ -494,9 +552,11 @@ def test_sim_dlab_mux_and_fcr_gating():
     """Section 1.1's mux on every placement's layout: with DLAB set, slots 0 and 1 are DLL and DLM --
     a write there reaches neither THR nor IER -- and with it clear they are RBR/THR and IER; slot 2
     reads IIR at either DLAB. An offset that is no register lane (below the AXI base, between lanes)
-    is a bus error. FCR gating (PC16550D p.22, every placement): in 16450 mode a write with FCR[0]
+    is a bus error. FCR gating (PC16550D p.22, every 16550 placement): in 16450 mode a write with FCR[0]
     clear programs neither the RX reset nor the trigger, while an ungated record's does; FCR[5:4] are
-    not implemented and the resets clear themselves."""
+    not implemented and the resets clear themselves. A 16450 has no FCR at all (DS748 p.9, Table 4 note
+    3): a write to slot 2 reaches no register -- the byte held survives a reset request, FCR stays 00,
+    IIR[7:6] read 00 (DS748 p.12) -- and is counted as ignored."""
     if not (_CC and _tree()):
         return
     for name, p in um.PLACEMENTS.items():
@@ -520,6 +580,17 @@ def test_sim_dlab_mux_and_fcr_gating():
         if p.base_offset:
             below = _sim(_config(p), "r 0x0", "counters")
             assert _field(below, "counters", "bus_errors") == 1, (name, below)
+        if p.fifo_depth == 1:
+            none = _sim(
+                _config(p), _w(p, "FCR", 0x00), "inject 0x41 0", _w(p, "FCR", 0xC7),
+                _peek(p, "LSR"), _r(p, "IIR"), "status", "counters",
+            )  # fmt: skip
+            lsr = int([ln for ln in none if ln.startswith("peek ")][0].split()[2], 16)
+            assert lsr & 0x01, (name, none)  # the RX reset reached nothing: the byte is still held
+            assert _reads(none) == [0x01], (name, none)
+            assert _field(none, "status", "fcr") == 0x00, (name, none)
+            assert _field(none, "counters", "ignored_writes") == 2, (name, none)
+            continue
         for record, programmed in ((p, False), (dataclasses.replace(p, fcr_gated=False), True)):
             gate = _sim(
                 _config(record), _w(record, "FCR", 0x00), "inject 0x41 0",
@@ -618,6 +689,11 @@ def test_sim_refuses_a_config_it_cannot_model():
         ({"rx_triggers": (1, 4, 8, 32)}, "the RX triggers are not four increasing byte counts within the FIFO"),
         ({"fcr_impl_mask": 0xC6}, "FCR[0] is not implemented (a part with its FIFOs always on is a U9 profile)"),
         ({"fcr_reset": 0x10}, "the FCR reset sets a bit the part does not implement"),
+        # a part with no FIFO (a 16450) has no FCR, and a byte is its one RX level
+        ({"fifo_depth": 1, "rx_triggers": (1,)}, "a part with no FIFO has no FCR: its FCR bits, reset and gating must be 0"),
+        ({"fifo_depth": 1, "rx_triggers": (1,), "fcr_impl_mask": 0, "fcr_gated": False, "fcr_reset": 0x01}, "a part with no FIFO has no FCR: its FCR bits, reset and gating must be 0"),
+        ({"fifo_depth": 1, "rx_triggers": (1, 4), "fcr_impl_mask": 0, "fcr_gated": False}, "a part with no FIFO has one RX trigger, a byte: 1 0 0 0"),
+        ({"fifo_depth": 1, "rx_triggers": (4,), "fcr_impl_mask": 0, "fcr_gated": False}, "a part with no FIFO has one RX trigger, a byte: 1 0 0 0"),
     ):  # fmt: skip
         record = dataclasses.replace(pc, **change)
         out = _sim(_config(record), _config(pc), _r(pc, "LSR"))
@@ -785,29 +861,36 @@ def test_the_emitted_driver_declares_the_headers_api_but_the_open_defect():
         assert _api_conflicts(d, wrong) == _LINKABLE_API_OPEN | {"uart_flush"}, rail
 
 
-def test_probe_identifies_the_sim_as_16550a():
+def test_probe_identifies_the_part_its_record_describes():
     """Section 3.1 on every placement: the probe writes FCR = 0xC1 and only then reads IIR (so a part
     whose FIFOs are off at reset -- pc16550d, axi16550 -- answers 11 because the probe turned them
-    on), then writes FCR = 0, and writes and reads back SCR twice; the device answers as a 16550A with
-    a working scratch register, and the state records it with the shadow of that last FCR write, 0."""
+    on), then writes FCR = 0, and writes and reads back SCR twice; the device answers as the part its
+    record describes, with a working scratch register, and the state records it with the shadow of
+    that last FCR write, 0: a 16550A where the record declares a FIFO, and a 16450 on axi16450, whose
+    record declares none -- the AXI core in its 16450 mode has no FCR (DS748 p.9), so the 0xC1 reaches
+    no register and IIR[7:6] read 00 (DS748 p.12)."""
     if not (_TRACE_CC and _tree()):
         return
-    for name in um.PLACEMENTS:
+    for name, p in um.PLACEMENTS.items():
         res = _compile_driver(name)
         assert _accesses(res, "uart_probe", name) == [
             ("W", "FCR"), ("R", "IIR"), ("W", "FCR"),
             ("W", "SCR"), ("R", "SCR"), ("W", "SCR"), ("R", "SCR"),
         ]  # fmt: skip
+        fifo = p.fifo_depth > 1
         lines = _phase(_transcript(name), "probe")
         fcr, iir, scr = _off(name, "FCR"), _off(name, "IIR"), _off(name, "SCR")
         assert _events(lines) == [
-            ("W", fcr, "FCR", 0xC1), ("R", iir, "IIR", 0xC1), ("W", fcr, "FCR", 0x00),
+            ("W", fcr, "FCR", 0xC1), ("R", iir, "IIR", 0xC1 if fifo else 0x01),
+            ("W", fcr, "FCR", 0x00),
             ("W", scr, "SCR", 0xA5), ("R", scr, "SCR", 0xA5),
             ("W", scr, "SCR", 0x5A), ("R", scr, "SCR", 0x5A),
         ], (name, lines)  # fmt: skip
         assert _summary(lines, "probe:") == (
             "probe: returns 2 (16550A); fifo_ok 2, scr_ok 1, fcr_shadow 0x00"
-        )
+            if fifo
+            else "probe: returns 0 (16450); fifo_ok 0, scr_ok 1, fcr_shadow 0x00"
+        ), (name, lines)
 
 
 def test_the_probe_leaves_the_fifos_off():
@@ -849,9 +932,12 @@ def test_init_follows_the_canonical_sequence():
     reference (100 MHz: 0x6F, PG143 p.52; 1.8432 MHz: 2, p.53), 8E2 = 0x1F -- the values are LCR 0x9F,
     DLL then DLM low byte first, LCR 0x1F, FCR 0x87 (enable, both resets, trigger 8 in one write), MCR
     DTR|RTS, IER 0, and the state records the shadow 0x81 -- the write less the resets, which clear
-    themselves (H-E) -- a trigger of 8 bytes and a burst of the FIFO's 16. Each argument init refuses --
-    divisor 0 or past 16 bits, a format with DLAB or with set break, a trigger code that is none -- is
-    refused before the device is touched."""
+    themselves (H-E) -- a trigger of 8 bytes and a burst of the FIFO's 16. On the placement whose record
+    declares no FIFO the same sequence writes FCR = 0 (16450 mode; on the 16450 it reaches no
+    register), IIR reads 01, and the state records the shadow 0, a one-byte trigger and a one-byte burst.
+    Each argument init refuses -- divisor 0 or past 16 bits, a format with DLAB or with set break, a
+    trigger code that is none, and on the 16450 a FIFO's level -- is refused before the device is
+    touched."""
     if not (_TRACE_CC and _tree()):
         return
     for name, p in um.PLACEMENTS.items():
@@ -860,25 +946,29 @@ def test_init_follows_the_canonical_sequence():
             ("R", "LSR"), ("R", "LSR"), ("W", "LCR"), ("W", "DLL"), ("W", "DLM"), ("W", "LCR"), ("W", "FCR"),
             ("W", "MCR"), ("W", "IER"), ("R", "LSR"), ("R", "RBR"), ("R", "IIR"), ("R", "MSR"),
         ], name  # fmt: skip
+        fifo = p.fifo_depth > 1
         divisor = p.ref_clk_hz // (16 * _BAUD)
         off = {reg: _off(name, reg) for reg in um.REGS}
         lines = _phase(_transcript(name), "init")
         assert _events(lines) == [
             ("R", off["LSR"], "LSR", 0x60), ("W", off["LCR"], "LCR", 0x80 | _LCR_8E2),
             ("W", off["DLL"], "DLL", divisor & 0xFF), ("W", off["DLM"], "DLM", divisor >> 8),
-            ("W", off["LCR"], "LCR", _LCR_8E2), ("W", off["FCR"], "FCR", 0x87),
+            ("W", off["LCR"], "LCR", _LCR_8E2), ("W", off["FCR"], "FCR", 0x87 if fifo else 0x00),
             ("W", off["MCR"], "MCR", 0x03), ("W", off["IER"], "IER", 0x00),
             ("R", off["LSR"], "LSR", 0x60), ("R", off["RBR"], "RBR", 0x00),
-            ("R", off["IIR"], "IIR", 0xC1), ("R", off["MSR"], "MSR", 0x00),
+            ("R", off["IIR"], "IIR", 0xC1 if fifo else 0x01), ("R", off["MSR"], "MSR", 0x00),
         ], (name, lines)  # fmt: skip
         init = _summary(lines, "init:")
         assert init.startswith(
             f"init: returns 0 (ok); divisor {divisor} for 56000 baud from {p.ref_clk_hz} Hz"
         ), lines
-        assert init.endswith("trigger 8 bytes, fcr_shadow 0x81, tx_burst 16"), lines
+        if fifo:
+            assert init.endswith("trigger 8 bytes, fcr_shadow 0x81, tx_burst 16"), lines
+        else:
+            assert init.endswith("trigger 1 bytes, fcr_shadow 0x00, tx_burst 1"), lines
         assert _summary(lines, "  device:") == (
-            f"  device: divisor latch {divisor:#06x}, lcr 0x1f, mcr 0x03, ier 0x00, fifos on, "
-            "trigger 8 bytes"
+            f"  device: divisor latch {divisor:#06x}, lcr 0x1f, mcr 0x03, ier 0x00, "
+            + ("fifos on, trigger 8 bytes" if fifo else "fifos off, trigger 1 bytes")
         ), lines
         refusals = _phase(_transcript(name), "init refusals")
         assert _events(refusals) == [], refusals
@@ -888,7 +978,11 @@ def test_init_follows_the_canonical_sequence():
             "init(format 0x83, with DLAB): returns 3, the device untouched",
             "init(format 0x43, with set break): returns 3, the device untouched",
             "init(trigger code 0x81): returns 4, the device untouched",
-        ], refusals
+        ] + (
+            []
+            if fifo
+            else ["init(trigger code 0x80, a FIFO's level): returns 4, the device untouched"]
+        ), refusals
     assert um.PLACEMENTS["axi16550"].ref_clk_hz // (16 * _BAUD) == 0x6F  # PG143 p.52
 
 
@@ -924,7 +1018,8 @@ def _runs(events: list) -> list:
 
 def test_tx_bursts_never_exceed_fifo_and_never_write_without_thre():
     """The TX law and the review's FIFO-headroom bound in its polled case (blueprint section 12), in FIFO
-    mode (the 16450-mode half is test_tx_without_a_working_fifo_bursts_one_byte_per_thre): every
+    mode, on every placement whose record declares a FIFO (the 16450-mode half is
+    test_tx_in_16450_mode_bursts_one_byte_per_thre): every
     burst of THR writes follows, directly, an LSR read with THRE set -- the TX FIFO just seen empty, so
     the free FIFO is UART_CAP_FIFO_DEPTH -- and is no longer than that free FIFO; the plan's cap of 64
     is clamped, so the 52-byte buffer goes as 16, 16, 16, 4. The device loses nothing (no TX overflow)
@@ -934,6 +1029,8 @@ def test_tx_bursts_never_exceed_fifo_and_never_write_without_thre():
         return
     for name, p in um.PLACEMENTS.items():
         assert _accesses(_compile_driver(name), "uart_tx", name) == [("R", "LSR"), ("W", "THR")]
+        if name not in _FIFO:
+            continue
         transcript = _transcript(name)
         tx = _phase(transcript, "tx")
         runs = _runs(_events(tx))
@@ -946,6 +1043,48 @@ def test_tx_bursts_never_exceed_fifo_and_never_write_without_thre():
         flush = _summary(_phase(transcript, "flush"), "flush:")
         line = '"U2: the polled 16550 driver, emitted by both rails\\r\\n", the buffer'
         assert flush.endswith(line), flush
+
+
+def _tx_ops(lines: list) -> tuple:
+    """The TX phase's register accesses: (bytes written, LSR reads that found THRE, LSR reads that found
+    it clear) -- the service the CPU spends, and the polls a spinning driver spends waiting."""
+    thr = service = busy = 0
+    for kind, _o, reg, value, n in _trace(lines):
+        if kind == "W" and reg == "THR":
+            thr += n
+        elif kind == "R" and reg == "LSR":
+            if value & 0x20:
+                service += n
+            else:
+                busy += n
+    return thr, service, busy
+
+
+def test_tx_mmio_ops_per_byte_meet_the_section_6_gate():
+    """Blueprint section 6's TX lever, measured on the char-tick sim and pinned: MMIO service accesses
+    per byte sent -- each LSR read that finds THRE and each THR write -- for the 52-byte buffer under a
+    plan cap of 64. Burst 16 (FIFO mode): 4 THRE reads and 52 writes, 56/52 = 1.077 per byte, inside
+    the gate of 1.2. The byte-at-a-time baseline is 16450 mode itself (the placement whose record
+    declares no FIFO): 52 + 52, 2.0 per byte. The polls a spinning driver makes while the FIFO drains
+    are waiting, not service, and are counted apart: 44 in FIFO mode -- one a character time, the sim's
+    clock -- and none in 16450 mode, where the one byte has shifted out by the next poll; with them
+    burst 16 makes 100/52 = 1.92 accesses a byte, which only a driver that does not spin (U3's
+    interrupt-driven TX) removes."""
+    if not (_TRACE_CC and _tree()):
+        return
+    from fractions import Fraction  # noqa: PLC0415
+
+    n = len(_MESSAGE)
+    for name, p in um.PLACEMENTS.items():
+        thr, service, busy = _tx_ops(_phase(_transcript(name), "tx"))
+        assert thr == n, (name, thr)
+        per_byte = Fraction(service + thr, thr)
+        if p.fifo_depth > 1:
+            assert (service, busy) == (4, 44), (name, service, busy)
+            assert per_byte == Fraction(56, 52) and per_byte <= Fraction(6, 5), (name, per_byte)
+        else:
+            assert (service, busy) == (n, 0), (name, service, busy)
+            assert per_byte == 2, (name, per_byte)
 
 
 def test_tx_refuses_a_state_without_a_burst_cap():
@@ -982,7 +1121,8 @@ def test_rx_drain_triage_counts_the_injected_errors_exactly():
     one LSR read that shows DR. The script's errors are counted exactly -- the parity error once, the
     overrun once, nothing else -- and the bytes are the script's but the one the overrun lost. The
     device saw the gap bring the character timeout due at 4 character times, not 3, and the burst
-    reach the trigger level at its 8th byte, not its 7th."""
+    reach the trigger level at its 8th byte, not its 7th. (The FIFO placements; in 16450 mode,
+    test_rx_in_16450_mode_takes_a_byte_at_a_time.)"""
     if not (_TRACE_CC and _tree()):
         return
     want = (
@@ -995,6 +1135,8 @@ def test_rx_drain_triage_counts_the_injected_errors_exactly():
         assert _accesses(_compile_driver(name), "uart_rx_drain", name) == [
             ("R", "LSR"), ("R", "RBR"),
         ]  # fmt: skip
+        if name not in _FIFO:
+            continue
         transcript = _transcript(name)
         for phase, data, counts in want:
             lines = _phase(transcript, phase)
@@ -1018,6 +1160,42 @@ def test_rx_drain_triage_counts_the_injected_errors_exactly():
         )
 
 
+def test_rx_in_16450_mode_takes_a_byte_at_a_time():
+    """The receiver in 16450 mode holds one character, RBR (PC16550D p.21), and its one level is that
+    byte; there is no character timeout, which is FIFO mode's (p.16). On the placement whose record
+    declares no FIFO: a 3-byte burst into the holding register leaves the last byte and OE -- each
+    character transferred into RBR destroyed the one before it (p.21, OE) -- so the drain takes "c"
+    with OE counted once, and the gap brings no timeout due; three bytes each drained before the next
+    arrives come through with no error; a byte with a parity error is taken with PE counted once. On
+    every drain an RBR read follows exactly one LSR read showing DR."""
+    if not (_TRACE_CC and _tree()):
+        return
+    for name in _NO_FIFO:
+        transcript = _transcript(name)
+        a = _phase(transcript, "rx a")
+        gap = [ln for ln in a if ln.startswith("  device:")]
+        assert all("timeout due: no" in ln and "(1) reached: yes" in ln for ln in gap), (name, gap)
+        assert _summary(a, "drain:") == (
+            'drain: 1 bytes "c"; OE 1 PE 0 FE 0 BI 0; lsr_saved 0x00 after it'
+        ), (name, a)
+        b = _phase(transcript, "rx b")
+        assert [ln for ln in b if ln.startswith("drain:")] == [
+            f'drain: 1 bytes "{ch}"; OE 0 PE 0 FE 0 BI 0; lsr_saved 0x00 after it' for ch in "one"
+        ], (name, b)
+        c = _phase(transcript, "rx c")
+        assert _summary(c, "drain:") == (
+            'drain: 1 bytes "E"; OE 0 PE 1 FE 0 BI 0; lsr_saved 0x00 after it'
+        ), (name, c)
+        for lines in (a, b, c):
+            events = [(reg, value) for _k, _o, reg, value in _events(lines)]
+            for k, (reg, _value) in enumerate(events):
+                if reg == "RBR":
+                    assert k > 0 and events[k - 1][0] == "LSR" and events[k - 1][1] & 0x01, events
+        assert _summary(_phase(transcript, "end"), "verdict:").endswith(
+            "rx 9 bytes with OE 1 PE 3 FE 2 BI 0"
+        )
+
+
 def test_tx_and_flush_polls_keep_the_receivers_errors_for_the_drain():
     """A read of LSR clears OE, PE, FE and BI, and PE, FE and BI describe the byte at the FIFO head
     (PC16550D p.21), so an LSR read uart_tx or uart_flush makes while a received byte waits takes that
@@ -1027,16 +1205,20 @@ def test_tx_and_flush_polls_keep_the_receivers_errors_for_the_drain():
     TX's LSR read shows PE (0xE5) and the device's next reads show none -- the read cleared it -- yet the
     state holds PE, and the drain returns the byte with PE counted once and the state cleared; with a
     framing error, the flush's one read clears FE the same way and the drain counts it. Before the
-    review's fix the drain returned both bytes with no error counted."""
+    review's fix the drain returned both bytes with no error counted. In 16450 mode the same holds of the
+    holding register, LSR[7] -- an error in the RCVR FIFO -- reading 0 throughout (p.21)."""
     if not (_TRACE_CC and _tree()):
         return
-    for name in um.PLACEMENTS:
+    for name, p in um.PLACEMENTS.items():
         transcript = _transcript(name)
         off = {reg: _off(name, reg) for reg in um.REGS}
+        fifo = p.fifo_depth > 1
+        top = 0x80 if fifo else 0x00  # LSR[7]
         for phase, byte, err, first, after, saved, counted in (
-            ("rx e", 0x42, "PE", 0xE5, [0xA1, 0xE1], 0x04, "OE 0 PE 1 FE 0 BI 0"),
-            ("rx f", 0x46, "FE", 0xE9, [], 0x08, "OE 0 PE 0 FE 1 BI 0"),
-        ):
+            ("rx e", 0x42, "PE", 0x65 | top, [0xA1, 0xE1] if fifo else [0x61, 0x61], 0x04,
+             "OE 0 PE 1 FE 0 BI 0"),
+            ("rx f", 0x46, "FE", 0x69 | top, [], 0x08, "OE 0 PE 0 FE 1 BI 0"),
+        ):  # fmt: skip
             lines = _phase(transcript, phase)
             before = [
                 v
@@ -1047,8 +1229,8 @@ def test_tx_and_flush_polls_keep_the_receivers_errors_for_the_drain():
             assert not any(v & _LSR_ERRORS for v in after), (name, phase, after)
             assert _summary(lines, "  state:") == f"  state: lsr_saved {saved:#04x}", (name, lines)
             assert _events(_between(lines, "  state:", "drain:")) == [
-                ("R", off["LSR"], "LSR", 0xE1), ("R", off["RBR"], "RBR", byte),
-                ("R", off["LSR"], "LSR", 0xE0),
+                ("R", off["LSR"], "LSR", 0x61 | top), ("R", off["RBR"], "RBR", byte),
+                ("R", off["LSR"], "LSR", 0x60 | top),
             ], (name, phase, lines)  # fmt: skip
             assert _summary(lines, "drain:") == (
                 f'drain: 1 bytes "{chr(byte)}"; {counted}; lsr_saved 0x00 after it'
@@ -1063,12 +1245,15 @@ def test_selftest_passes_in_loopback():
     again before the loopback is left; both FIFOs reset from the FCR shadow while still in it -- the
     shadow 0x81 with both resets, FCR = 0x87 -- the shadow staying 0x81, since the resets clear
     themselves (H-E); MCR restored and MSR read once; nothing reached the line, and the test returns
-    0."""
+    0. In 16450 mode there is no FIFO to reset: in its place one more LSR read, for a looped character
+    RBR may still hold (none: both were read back), and the shadow stays 0."""
     if not (_TRACE_CC and _tree()):
         return
-    for name in um.PLACEMENTS:
+    for name, p in um.PLACEMENTS.items():
+        fifo = p.fifo_depth > 1
         off = {reg: _off(name, reg) for reg in um.REGS}
         lines = _phase(_transcript(name), "selftest")
+        leave = ("W", off["FCR"], "FCR", 0x87) if fifo else ("R", off["LSR"], "LSR", 0x60)
         assert _events(lines) == [
             ("R", off["LSR"], "LSR", 0x61), ("R", off["MCR"], "MCR", 0x03),
             ("R", off["LSR"], "LSR", 0x61), ("R", off["RBR"], "RBR", 0x5A),
@@ -1080,11 +1265,11 @@ def test_selftest_passes_in_loopback():
             ("R", off["LSR"], "LSR", 0x61), ("R", off["RBR"], "RBR", 0x55),
             ("R", off["LSR"], "LSR", 0x60), ("W", off["THR"], "THR", 0xAA),
             ("R", off["LSR"], "LSR", 0x61), ("R", off["RBR"], "RBR", 0xAA),
-            ("R", off["LSR"], "LSR", 0x60), ("W", off["FCR"], "FCR", 0x87),
+            ("R", off["LSR"], "LSR", 0x60), leave,
             ("W", off["MCR"], "MCR", 0x03), ("R", off["MSR"], "MSR", 0x06),
         ], (name, lines)  # fmt: skip
         assert _summary(lines, "selftest:") == (
-            "selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow 0x81"
+            f"selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow {0x81 if fifo else 0:#04x}"
         )
 
 
@@ -1098,10 +1283,13 @@ def test_selftest_drains_the_receiver_first():
     reads exactly UART_CAP_FIFO_DEPTH + 1 bytes, each after an LSR read showing DR, sees DR once more and
     fails with UART_ERR_RX_STUCK without entering the loopback; it still resets the FIFOs (the receiver
     is empty after it), restores MCR and reads MSR. Each run's first access is the poll that finds the
-    transmitter idle (TEMT), then the MCR read the test restores from."""
+    transmitter idle (TEMT), then the MCR read the test restores from. In 16450 mode the bound is two
+    reads -- the holding register and the character behind it, the first showing the overrun the peer
+    made (OE) -- and there is no FIFO to reset, so the receiver keeps the peer's last character."""
     if not (_TRACE_CC and _tree()):
         return
     for name, p in um.PLACEMENTS.items():
+        fifo = p.fifo_depth > 1
         transcript = _transcript(name)
         off = {reg: _off(name, reg) for reg in um.REGS}
         main = _phase(transcript, "selftest")
@@ -1113,87 +1301,124 @@ def test_selftest_drains_the_receiver_first():
         lines = _phase(transcript, "stuck selftest")
         reads = p.fifo_depth + 1  # UART_CAP_FIFO_DEPTH + 1, the drain's bound
         drain = [("R", off["LSR"], "LSR", 0x61), ("R", off["RBR"], "RBR", 0x7E)] * reads
+        if not fifo:
+            drain[0] = ("R", off["LSR"], "LSR", 0x63)  # OE: the peer overran the holding register
+        reset = [("W", off["FCR"], "FCR", 0x87)] if fifo else []
         assert _events(lines) == [
             ("R", off["LSR"], "LSR", 0x61), ("R", off["MCR"], "MCR", 0x03), *drain,
-            ("R", off["LSR"], "LSR", 0x61), ("W", off["FCR"], "FCR", 0x87),
+            ("R", off["LSR"], "LSR", 0x61), *reset,
             ("W", off["MCR"], "MCR", 0x03), ("R", off["MSR"], "MSR", 0x00),
         ], (name, lines)  # fmt: skip
         assert _summary(lines, "selftest:") == (
-            "selftest: returns 9 (the receiver never emptied); mcr 0x03 after it, fcr_shadow 0x81"
+            "selftest: returns 9 (the receiver never emptied); mcr 0x03 after it, fcr_shadow "
+            f"{0x81 if fifo else 0:#04x}"
         )
-        assert _summary(lines, "  device:") == "  device: the receiver holds 0 after it"
+        assert _summary(lines, "  device:") == (
+            f"  device: the receiver holds {0 if fifo else 1} after it"
+        )
 
 
-def _no_fifo(transcript: bytes, verdict: int, step: str) -> list:
-    """`step`'s phase of the 16450-mode run whose probe verdict the transcript forced to `verdict`."""
-    return _phase(transcript, f"fifo_ok {verdict} {step}")
+def _veto(transcript: bytes, verdict: int, fifo: bool) -> list:
+    """The veto run whose probe verdict the transcript forced to `verdict` against a record that
+    declares a FIFO (`fifo`) or none."""
+    record = "a FIFO" if fifo else "no FIFO"
+    return _phase(
+        transcript, f"veto: the probe's verdict forced to fifo_ok {verdict}, a record of {record}"
+    )
 
 
-def test_init_without_a_working_fifo_programs_16450_mode():
-    """Section 3.1's verdict acted on (blueprint section 3 item 1), on every placement. The sim answers
-    the probe as a 16550A, so the transcript forces the verdict after the probe -- once to 0, no FIFO
-    (a 16450 or 8250), once to 1, the original 16550's broken FIFO -- and init must enable no FIFO the
-    probe did not find working. The probe has left the FIFOs off; init runs section 1.4 with FCR = 0 in
-    step 5, which asks for nothing FCR[0] gates (PC16550D p.22) and keeps the part in 16450 mode --
-    IIR[7:6] read 00 after it -- and records the shadow 0, a one-byte trigger and a one-byte TX burst:
-    what Linux's 8250 core runs PORT_16450 and PORT_16550 with (drivers/tty/serial/8250/8250_port.c,
-    uart_config[]: fifo_size 1, tx_loadsz 1, no FCR enable)."""
+def test_init_vetoes_a_probe_that_disagrees_with_the_record():
+    """Discovery may veto, never steer (blueprint section 10.0; the D-R rule card, roadmap section 3):
+    the placement record decides the mode, and a probe verdict that disagrees with it refuses init
+    rather than run the part in a mode its record does not describe. On every placement the transcript
+    probes again and forces the verdict -- against a record that declares a FIFO, to 0 (none: a 16450
+    or 8250) and to 1 (the original 16550's broken FIFO); against the 16450's, to 2 (a working FIFO) --
+    and init returns UART_ERR_CAPS_MISMATCH with the device untouched; the state it leaves has no
+    trigger, no TX burst cap and no word length, so TX and the self-test refuse it (UART_ERR_NOT_READY),
+    the device untouched again."""
     if not (_TRACE_CC and _tree()):
         return
     for name, p in um.PLACEMENTS.items():
+        fifo = p.fifo_depth > 1
         transcript = _transcript(name)
-        divisor = p.ref_clk_hz // (16 * _BAUD)
-        off = {reg: _off(name, reg) for reg in um.REGS}
-        for verdict in _NO_FIFO:
-            probe = _no_fifo(transcript, verdict, "probe")
-            summary = _summary(probe, "probe:")
-            assert summary.startswith(f"probe: returns 2; fifo_ok forced to {verdict} ("), summary
-            device = _summary(probe, "  device:")
-            assert device == "  device: fifos off, iir 0x01", (name, verdict, probe)
-            lines = _no_fifo(transcript, verdict, "init")
-            # step 8's RBR read returns the byte read last before it (the sim's choice: sim16550.h)
-            seen = [(k, o, reg, None if reg == "RBR" else v) for k, o, reg, v in _events(lines)]
-            assert seen == [
-                ("R", off["LSR"], "LSR", 0x60), ("W", off["LCR"], "LCR", 0x80 | _LCR_8E2),
-                ("W", off["DLL"], "DLL", divisor & 0xFF), ("W", off["DLM"], "DLM", divisor >> 8),
-                ("W", off["LCR"], "LCR", _LCR_8E2), ("W", off["FCR"], "FCR", 0x00),
-                ("W", off["MCR"], "MCR", 0x03), ("W", off["IER"], "IER", 0x00),
-                ("R", off["LSR"], "LSR", 0x60), ("R", off["RBR"], "RBR", None),
-                ("R", off["IIR"], "IIR", 0x01), ("R", off["MSR"], "MSR", 0x00),
-            ], (name, verdict, lines)  # fmt: skip
-            want = "init: returns 0 (ok); trigger 1 bytes, fcr_shadow 0x00, tx_burst 1"
-            assert _summary(lines, "init:") == want, (name, verdict, lines)
-            device = _summary(lines, "  device:")
-            assert device == "  device: fifos off, iir 0x01", (name, verdict, lines)
+        for verdict in _VETOED[fifo]:
+            lines = _veto(transcript, verdict, fifo)
+            summary = _summary(lines, "probe:")
+            found = 2 if fifo else 0  # what the sim answers: the part the record describes
+            assert summary.startswith(f"probe: returns {found}; fifo_ok forced to {verdict} ("), (
+                summary
+            )
+            assert _summary(lines, "  device:") == "  device: fifos off, iir 0x01", (name, lines)
+            after = lines[next(k for k, ln in enumerate(lines) if ln.startswith("  device:")) + 1 :]
+            assert after == [
+                f"init(the probe against the record): returns {_CAPS_MISMATCH}, the device untouched",
+                f"  state: fifo_ok {verdict}, trigger 0, fcr_shadow 0x00, tx_burst 0, word_bits 0",
+                f"tx(the state init refused): returns {_NOT_READY} (not ready), 0 bytes sent, the "
+                "device untouched",
+                f"selftest(the state init refused): returns {_NOT_READY} (not ready), the device "
+                "untouched",
+            ], (name, verdict, after)
 
 
-def test_tx_without_a_working_fifo_bursts_one_byte_per_thre():
+def test_a_record_without_a_fifo_runs_in_16450_mode():
+    """The placement whose record declares no FIFO -- axi16450, the AXI core in its 16450 UART mode
+    (DS748 p.7, p.9) -- runs in 16450 mode, as Linux's 8250 core runs PORT_16450
+    (drivers/tty/serial/8250/8250_port.c, uart_config[]: fifo_size 1, tx_loadsz 1, no FCR value): the
+    probe finds the 16450 the record describes, and init records the shadow 0, a one-byte trigger and a
+    one-byte TX burst, the device's FIFOs off throughout. The part has no FCR, so no FCR write in the
+    transcript reaches a register -- the device counts every one as ignored, and there are no others --
+    and none asks for a FIFO reset."""
+    if not (_TRACE_CC and _tree()):
+        return
+    assert _NO_FIFO == ("axi16450",)
+    for name in _NO_FIFO:
+        transcript = _transcript(name)
+        probe = _phase(transcript, "probe")
+        assert _summary(probe, "probe:") == (
+            "probe: returns 0 (16450); fifo_ok 0, scr_ok 1, fcr_shadow 0x00"
+        ), probe
+        init = _phase(transcript, "init")
+        assert _summary(init, "init:").endswith("trigger 1 bytes, fcr_shadow 0x00, tx_burst 1"), (
+            init
+        )
+        devices = [ln for ln in transcript.decode("ascii").splitlines() if "fifos " in ln]
+        assert devices and all("fifos off" in ln for ln in devices), (name, devices)
+        fcr = [
+            v
+            for lines in _phases(transcript).values()
+            for _k, _o, reg, v in _events(lines)
+            if reg == "FCR"
+        ]
+        assert fcr and set(fcr) <= {0xC1, 0x00}, (name, fcr)  # the probe's pair; init's 0
+        end = _summary(_phase(transcript, "end"), "lsr ")
+        assert f"ignored writes {len(fcr)}," in end, (name, len(fcr), end)
+
+
+def test_tx_in_16450_mode_bursts_one_byte_per_thre():
     """The TX law and the review's headroom bound in 16450 mode (blueprint section 12; U2's notes):
     THRE says the one-byte holding register is empty (PC16550D p.22), so a THRE read shows one byte
-    free. Each 16450-mode run hands uart_tx a stale plan cap of UART_CAP_FIFO_DEPTH -- what a plan made
-    for the FIFO leaves -- and the driver clamps it to one byte, since its FCR shadow says no FIFO mode:
-    the 40-byte buffer goes as 40 one-byte bursts, each directly after an LSR read with THRE set; the
-    device loses none (no TX overflow, where a 16-byte burst after THRE loses 14 or 15 of its bytes) and
-    the line carries the buffer, in order."""
+    free. On the placement whose record declares no FIFO, uart_tx is handed a plan's cap of 64 and
+    clamps it to one byte, since its FCR shadow says no FIFO mode: the 52-byte buffer goes as 52
+    one-byte bursts, each directly after an LSR read with THRE set; the device loses none (no TX
+    overflow, where a 16-byte burst after THRE loses 14 or 15 of its bytes) and the line carries the
+    buffer, in order."""
     if not (_TRACE_CC and _tree()):
         return
-    n = len(_NO_FIFO_MESSAGE)
-    line = '"16450 mode: a byte per THRE, none lost\\r\\n", the buffer'
-    for name, p in um.PLACEMENTS.items():
+    n = len(_MESSAGE)
+    line = '"U2: the polled 16550 driver, emitted by both rails\\r\\n", the buffer'
+    for name in _NO_FIFO:
         transcript = _transcript(name)
-        for verdict in _NO_FIFO:
-            tx = _no_fifo(transcript, verdict, "tx")
-            events = _events(tx)
-            runs = _runs(events)
-            assert [count for _lsr, count in runs] == [1] * n, (name, verdict, runs)
-            assert all(lsr & 0x20 for lsr, _count in runs), (name, verdict, runs)
-            sent = bytes(value for _k, _o, reg, value in events if reg == "THR")
-            assert sent == _NO_FIFO_MESSAGE, (name, verdict, sent)
-            cap = f"a stale plan burst cap of {p.fifo_depth}"
-            want = f"tx: returns 0 (ok); {n} of {n} bytes sent under {cap}; tx overflows 0"
-            assert _summary(tx, "tx:") == want, (name, verdict, tx)
-            flush = _summary(_no_fifo(transcript, verdict, "flush"), "flush:")
-            assert flush.endswith(f"the line carried {n} bytes {line}"), (name, verdict, flush)
+        tx = _phase(transcript, "tx")
+        events = _events(tx)
+        runs = _runs(events)
+        assert [count for _lsr, count in runs] == [1] * n, (name, runs)
+        assert all(lsr & 0x20 for lsr, _count in runs), (name, runs)
+        sent = bytes(value for _k, _o, reg, value in events if reg == "THR")
+        assert sent == _MESSAGE, (name, sent)
+        want = f"tx: returns 0 (ok); {n} of {n} bytes sent under a plan burst cap of 64; tx overflows 0"
+        assert _summary(tx, "tx:") == want, (name, tx)
+        flush = _summary(_phase(transcript, "flush"), "flush:")
+        assert flush.endswith(f"the line carried {n} bytes {line}"), (name, flush)
 
 
 def test_selftest_resets_the_fifos_only_in_fifo_mode():
@@ -1201,10 +1426,10 @@ def test_selftest_resets_the_fifos_only_in_fifo_mode():
     nothing else (PC16550D p.22; the U1 law refuses such a write where it can prove bit 0 clear), and
     16450 mode has no FIFO to reset -- Linux's serial8250_clear_fifos resets them only on a part with
     UART_CAP_FIFO (drivers/tty/serial/8250/8250_port.c). So the self-test resets the FIFOs only when
-    its shadow says FIFO mode: in each 16450-mode run it passes in loopback with no FCR write at all,
-    its shadow still 0, and leaves it only after TEMT, with an LSR read for the looped character RBR may
-    still hold (none: both were read back); and on every placement no FCR write in the transcript sets
-    FCR[2:1] with FCR[0] clear."""
+    its shadow says FIFO mode: in 16450 mode it passes in loopback with no FCR write at all, its shadow
+    still 0, and leaves it only after TEMT, with an LSR read for the looped character RBR may still hold
+    (none: both were read back); and on every placement no FCR write in the transcript sets FCR[2:1]
+    with FCR[0] clear."""
     if not (_TRACE_CC and _tree()):
         return
     for name in um.PLACEMENTS:
@@ -1218,22 +1443,18 @@ def test_selftest_resets_the_fifos_only_in_fifo_mode():
         ]
         gated = [value for value in writes if value & _FCR_RESETS and not value & 0x01]
         assert writes and not gated, (name, writes)
-        for verdict in _NO_FIFO:
-            lines = _no_fifo(transcript, verdict, "selftest")
-            assert _events(lines) == [
-                ("R", off["LSR"], "LSR", 0x60), ("R", off["MCR"], "MCR", 0x03),
-                ("R", off["LSR"], "LSR", 0x60), ("W", off["MCR"], "MCR", 0x1A),
-                ("R", off["MSR"], "MSR", 0x99), ("W", off["MCR"], "MCR", 0x15),
-                ("R", off["MSR"], "MSR", 0x6B),
-                ("R", off["LSR"], "LSR", 0x60), ("W", off["THR"], "THR", 0x55),
-                ("R", off["LSR"], "LSR", 0x61), ("R", off["RBR"], "RBR", 0x55),
-                ("R", off["LSR"], "LSR", 0x60), ("W", off["THR"], "THR", 0xAA),
-                ("R", off["LSR"], "LSR", 0x61), ("R", off["RBR"], "RBR", 0xAA),
-                ("R", off["LSR"], "LSR", 0x60), ("R", off["LSR"], "LSR", 0x60),
-                ("W", off["MCR"], "MCR", 0x03), ("R", off["MSR"], "MSR", 0x06),
-            ], (name, verdict, lines)  # fmt: skip
-            want = "selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow 0x00"
-            assert _summary(lines, "selftest:") == want, (name, verdict, lines)
+        if name in _FIFO:
+            continue
+        for phase in ("selftest", "selftest timeout"):
+            lines = _phase(transcript, phase)
+            assert not [e for e in _events(lines) if e[2] == "FCR"], (name, phase, lines)
+        lines = _phase(transcript, "selftest")
+        assert _events(lines)[-4:] == [
+            ("R", off["LSR"], "LSR", 0x60), ("R", off["LSR"], "LSR", 0x60),
+            ("W", off["MCR"], "MCR", 0x03), ("R", off["MSR"], "MSR", 0x06),
+        ], (name, lines)  # fmt: skip
+        want = "selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow 0x00"
+        assert _summary(lines, "selftest:") == want, (name, lines)
 
 
 def test_tx_gives_up_when_thre_never_comes():
@@ -1242,19 +1463,31 @@ def test_tx_gives_up_when_thre_never_comes():
     TX after init in FIFO mode writes one burst after a THRE read, the FIFO depth's worth that the FIFO
     and the shift register accept, then polls LSR with THRE clear UART_SPIN_BUDGET times, the bound
     every wait of the driver gives up at, and returns UART_ERR_TIMEOUT, *nsent the bytes accepted.
-    Nothing reached the line meanwhile; once the transmitter resumes, those bytes go out, in order."""
+    Nothing reached the line meanwhile; once the transmitter resumes, those bytes go out, in order. In
+    16450 mode the transmitter accepts two: one byte moves into the shift register, the next waits in
+    the holding register, each written after its own THRE read."""
     if not (_TRACE_CC and _tree()):
         return
     budget = _spin_budget()
     for name, p in um.PLACEMENTS.items():
+        fifo = p.fifo_depth > 1
         lines = _phase(_transcript(name), "tx timeout")
         off = {reg: _off(name, reg) for reg in um.REGS}
-        accepted = _MESSAGE[: p.fifo_depth]
-        assert _summary(lines, "init:") == "init: returns 0 (ok); fcr_shadow 0x81, tx_burst 16"
+        accepted = _MESSAGE[: p.fifo_depth if fifo else 2]
+        if fifo:
+            assert _summary(lines, "init:") == "init: returns 0 (ok); fcr_shadow 0x81, tx_burst 16"
+            bursts = [
+                ("R", off["LSR"], "LSR", 0x60, 1),
+                *(("W", off["THR"], "THR", byte, 1) for byte in accepted),
+            ]
+        else:
+            assert _summary(lines, "init:") == "init: returns 0 (ok); fcr_shadow 0x00, tx_burst 1"
+            bursts = [
+                ("R", off["LSR"], "LSR", 0x60, 1), ("W", off["THR"], "THR", accepted[0], 1),
+                ("R", off["LSR"], "LSR", 0x20, 1), ("W", off["THR"], "THR", accepted[1], 1),
+            ]  # fmt: skip
         assert _trace(_between(lines, "init:", "tx:")) == [
-            ("R", off["LSR"], "LSR", 0x60, 1),
-            *(("W", off["THR"], "THR", byte, 1) for byte in accepted),
-            ("R", off["LSR"], "LSR", 0x00, budget),
+            *bursts, ("R", off["LSR"], "LSR", 0x00, budget),
         ], (name, lines)  # fmt: skip
         assert _summary(lines, "tx:") == (
             f"tx: returns 7 (timed out); {len(accepted)} of {len(_MESSAGE)} bytes sent under "
@@ -1275,26 +1508,31 @@ def test_selftest_gives_up_when_the_loopback_delivers_nothing():
     finds nothing to drain, sees the MSR mirror, writes 0x55 after a THRE read, then polls LSR with DR
     clear UART_SPIN_BUDGET times and returns UART_ERR_TIMEOUT with its loopback undone: one more LSR
     read finds the transmitter idle (TEMT; the dropped pattern left it), the FIFOs are reset from the
-    shadow while still in the loopback, MCR restored and MSR read once. The loopback kept exactly that
-    one character."""
+    shadow while still in the loopback -- in 16450 mode, in their place, one more LSR read for a looped
+    character RBR may hold -- MCR restored and MSR read once. The loopback kept exactly that one
+    character."""
     if not (_TRACE_CC and _tree()):
         return
     budget = _spin_budget()
-    for name in um.PLACEMENTS:
+    for name, p in um.PLACEMENTS.items():
+        fifo = p.fifo_depth > 1
         lines = _phase(_transcript(name), "selftest timeout")
         off = {reg: _off(name, reg) for reg in um.REGS}
+        if fifo:  # the DR wait, then the TEMT poll; then the FIFO reset
+            leave = [("R", off["LSR"], "LSR", 0x60, budget + 1), ("W", off["FCR"], "FCR", 0x87, 1)]
+        else:  # the DR wait, the TEMT poll and the looped-character check
+            leave = [("R", off["LSR"], "LSR", 0x60, budget + 2)]
         assert _trace(lines) == [
             ("R", off["LSR"], "LSR", 0x60, 1), ("R", off["MCR"], "MCR", 0x03, 1),
             ("R", off["LSR"], "LSR", 0x60, 1),
             ("W", off["MCR"], "MCR", 0x1A, 1), ("R", off["MSR"], "MSR", 0x99, 1),
             ("W", off["MCR"], "MCR", 0x15, 1), ("R", off["MSR"], "MSR", 0x6B, 1),
             ("R", off["LSR"], "LSR", 0x60, 1), ("W", off["THR"], "THR", 0x55, 1),
-            ("R", off["LSR"], "LSR", 0x60, budget + 1),  # the DR wait, then the TEMT poll
-            ("W", off["FCR"], "FCR", 0x87, 1), ("W", off["MCR"], "MCR", 0x03, 1),
+            *leave, ("W", off["MCR"], "MCR", 0x03, 1),
             ("R", off["MSR"], "MSR", 0x06, 1),
         ], (name, lines)  # fmt: skip
         assert _summary(lines, "selftest:") == (
-            "selftest: returns 7 (timed out); mcr 0x03 after it, fcr_shadow 0x81"
+            f"selftest: returns 7 (timed out); mcr 0x03 after it, fcr_shadow {0x81 if fifo else 0:#04x}"
         )
         assert _summary(lines, "  device:") == (
             "  device: the loopback kept 1 characters from the receiver"
@@ -1316,11 +1554,15 @@ def test_selftest_enters_the_loopback_only_with_the_transmitter_idle():
     FIFO reset -- and once the transmitter resumes, both characters go out; a framing error that arrived
     after TX's poll, which the test's first poll showed and cleared (0x89), it saved for the drain. (Its waits for THRE before a
     pattern stay bounded, but no sim knob reaches them now: TEMT, which implies THRE, is established
-    first, and each pattern is read back before the next is written.)"""
+    first, and each pattern is read back before the next is written.) In 16450 mode TX hands the line
+    one byte per THRE, so the transmitter has finished "ABC" by the test's first poll and the busy half
+    is a FIFO placement's; the stalled half holds there too, with the one byte the holding register
+    keeps behind the shifting one and LSR[7] 0."""
     if not (_TRACE_CC and _tree()):
         return
     budget = _spin_budget()
-    for name in um.PLACEMENTS:
+    for name, p in um.PLACEMENTS.items():
+        fifo = p.fifo_depth > 1
         transcript = _transcript(name)
         off = {reg: _off(name, reg) for reg in um.REGS}
         lines = _phase(transcript, "selftest after tx")
@@ -1328,12 +1570,14 @@ def test_selftest_enters_the_loopback_only_with_the_transmitter_idle():
         test = _events(_between(lines, "tx:", "selftest:"))  # the trace lines only
         first_mcr = next(k for k, e in enumerate(test) if e[2] == "MCR")
         polls = [v for _k, _o, reg, v in test[:first_mcr]]
-        assert polls[-1] & 0x40 and not any(v & 0x40 for v in polls[:-1]) and len(polls) > 1, polls
+        assert polls[-1] & 0x40, polls
+        if fifo:
+            assert not any(v & 0x40 for v in polls[:-1]) and len(polls) > 1, polls
         assert all(reg == "LSR" for _k, _o, reg, _v in test[:first_mcr]), test[:first_mcr]
         thr = [v for kind, _o, reg, v in test if kind == "W" and reg == "THR"]
         assert thr == [0x55, 0xAA], (name, thr)
         assert _summary(lines, "selftest:") == (
-            "selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow 0x81"
+            f"selftest: returns 0 (ok); mcr 0x03 after it, fcr_shadow {0x81 if fifo else 0:#04x}"
         ), lines
         states = [ln for ln in lines if ln.startswith("  state:")]
         assert states == ["  state: lsr_saved 0x04", "  state: lsr_saved 0x00"], (name, states)
@@ -1342,13 +1586,15 @@ def test_selftest_enters_the_loopback_only_with_the_transmitter_idle():
         )
         lines = _phase(transcript, "selftest stalled")
         assert _summary(lines, "tx:") == (
-            "tx: returns 0 (ok); 2 of 2 bytes sent under init's burst cap of 16; tx overflows 0"
+            f"tx: returns 0 (ok); 2 of 2 bytes sent under init's burst cap of {p.fifo_depth}; "
+            "tx overflows 0"
         )
+        top = 0x80 if fifo else 0x00  # LSR[7]: 0 in 16450 mode (PC16550D p.21)
         assert _trace(_between(lines, "tx:", "selftest:")) == [
-            ("R", off["LSR"], "LSR", 0x89, 1), ("R", off["LSR"], "LSR", 0x81, budget - 1),
+            ("R", off["LSR"], "LSR", 0x09 | top, 1), ("R", off["LSR"], "LSR", 0x01 | top, budget - 1),
         ], (name, lines)  # fmt: skip
         assert _summary(lines, "selftest:") == (
-            "selftest: returns 1 (busy); mcr 0x03 after it, fcr_shadow 0x81"
+            f"selftest: returns 1 (busy); mcr 0x03 after it, fcr_shadow {0x81 if fifo else 0:#04x}"
         )
         assert _summary(lines, "flush:").endswith('the line carried 2 bytes "<>", the buffer'), (
             lines
@@ -1414,11 +1660,12 @@ def test_selftest_holds_the_loopback_while_the_shift_register_is_busy():
     the transmitter still stalled polls LSR UART_SPIN_BUDGET times, writes nothing and keeps the
     loopback. Once the character has finished -- in the loopback, into the receiver -- the release's
     first LSR read shows TEMT, and it resets the FIFOs, writes back MCR 0x03 and reads MSR. The line
-    has carried nothing since the test began."""
+    has carried nothing since the test began. (The FIFO placements; in 16450 mode,
+    test_the_release_reads_the_looped_character_out_in_16450_mode.)"""
     if not (_TRACE_CC and _tree()):
         return
     budget = _spin_budget()
-    for name in um.PLACEMENTS:
+    for name in _FIFO:
         off = {reg: _off(name, reg) for reg in um.REGS}
         lines = _phases(_transcript(name))[_HELD + "the release ends the loopback"]
         _held_entry(lines, off, 2 * budget, fifo=True)
@@ -1448,11 +1695,12 @@ def test_init_ends_a_held_loopback():
     """uart_init is the other way out of a held loopback: its wait for TEMT comes first -- the stalled
     character has finished, into the receiver -- and its first LSR read shows TEMT; its FIFO reset
     drops the looped character and step 6 writes MCR 0x03, LOOP clear. It returns UART_OK with
-    loop_held 0, the line has carried nothing since the test began, and TX reaches the line again."""
+    loop_held 0, the line has carried nothing since the test began, and TX reaches the line again.
+    (The FIFO placements; in 16450 mode, test_the_release_reads_the_looped_character_out_in_16450_mode.)"""
     if not (_TRACE_CC and _tree()):
         return
     budget = _spin_budget()
-    for name in um.PLACEMENTS:
+    for name in _FIFO:
         off = {reg: _off(name, reg) for reg in um.REGS}
         lines = _phases(_transcript(name))[_HELD + "init ends the loopback"]
         _held_entry(lines, off, 2 * budget, fifo=True)
@@ -1474,28 +1722,40 @@ def test_the_release_reads_the_looped_character_out_in_16450_mode():
     """In 16450 mode there is no FIFO to reset: the held self-test touches FCR nowhere -- its polls
     after the pattern are the waits for DR and TEMT and the one check for a looped character, all
     with TEMT clear -- and the release, once TEMT comes, reads the looped character (0x55) out of RBR,
-    then writes back MCR 0x03 and reads MSR. The line has carried nothing since the test began, and
-    TX of "ok" reaches it, a byte per THRE."""
+    then writes back MCR 0x03 and reads MSR; init ends a held loopback too, its step 8 RBR read taking
+    the looped character. The line has carried nothing since the test began, and TX of "ok" reaches it,
+    a byte per THRE. On the placement whose record declares no FIFO."""
     if not (_TRACE_CC and _tree()):
         return
     budget = _spin_budget()
-    for name in um.PLACEMENTS:
+    for name in _NO_FIFO:
         off = {reg: _off(name, reg) for reg in um.REGS}
-        for verdict in _NO_FIFO:
-            phase = f"fifo_ok {verdict} {_HELD}the release ends it"
-            lines = _phases(_transcript(name))[phase]
-            _held_entry(lines, off, 2 * budget + 1, fifo=False)
-            assert not [e for e in _trace(lines) if e[2] == "FCR"], (name, verdict)
-            release = _trace(_between(lines, "release, the transmitter still stalled:", "release:"))
-            assert [e[:3] for e in release] == [
-                ("R", off["LSR"], "LSR"), ("R", off["LSR"], "LSR"), ("R", off["RBR"], "RBR"),
-                ("W", off["MCR"], "MCR"), ("R", off["MSR"], "MSR"),
-            ], (name, verdict, release)  # fmt: skip
-            assert release[0][3] & 0x41 == 0x41 and release[2][3] == 0x55 and release[3][3] == 0x03
-            assert _summary(lines, "release:") == (
-                "release: returns 0 (ok); mcr 0x03, loop_held 0, fcr_shadow 0x00"
-            )
-            _held_exit(lines, "release:")
+        phases = _phases(_transcript(name))
+        lines = phases[_HELD + "the release ends the loopback"]
+        _held_entry(lines, off, 2 * budget + 1, fifo=False)
+        assert not [e for e in _trace(lines) if e[2] == "FCR"], name
+        release = _trace(_between(lines, "release, the transmitter still stalled:", "release:"))
+        assert [e[:3] for e in release] == [
+            ("R", off["LSR"], "LSR"), ("R", off["LSR"], "LSR"), ("R", off["RBR"], "RBR"),
+            ("W", off["MCR"], "MCR"), ("R", off["MSR"], "MSR"),
+        ], (name, release)  # fmt: skip
+        assert release[0][3] & 0x41 == 0x41 and release[2][3] == 0x55 and release[3][3] == 0x03
+        assert _summary(lines, "release:") == (
+            "release: returns 0 (ok); mcr 0x03, loop_held 0, fcr_shadow 0x00"
+        )
+        _held_exit(lines, "release:")
+        lines = phases[_HELD + "init ends the loopback"]
+        _held_entry(lines, off, 2 * budget + 1, fifo=False)
+        init = _trace(_between(lines, "drain(a held loopback):", "init:"))
+        assert init[0][:3] == ("R", off["LSR"], "LSR") and init[0][3] & 0x40, (name, init)
+        rbr = [e[3] for e in init if e[2] == "RBR"]
+        assert rbr == [0x55], (name, init)  # step 8 takes the looped character
+        assert [e[3] for e in init if e[0] == "W" and e[2] == "MCR"] == [0x03], (name, init)
+        assert (
+            _summary(lines, "init:")
+            == "init: returns 0 (ok); mcr 0x03, loop_held 0, fcr_shadow 0x00"
+        )
+        _held_exit(lines, "init:")
 
 
 def test_selftest_passes_at_every_word_length():
@@ -1504,12 +1764,15 @@ def test_selftest_passes_at_every_word_length():
     come back, and the review of U2 found the test failing every word length but 8 (status 6). After an
     init at each of 5, 6 and 7 data bits -- the state records word_bits, and the init has cleared the
     break a flush saved just before it (lsr_saved 0x10, then 0x00) -- the test writes 0x15/0x0A,
-    0x15/0x2A and 0x55/0x2A, reads each back and passes."""
+    0x15/0x2A and 0x55/0x2A, reads each back and passes. In 16450 mode the stuck self-test before it
+    left the peer's last character in the holding register -- no FIFO to reset -- so the break arrives
+    as an overrun too, and the flush saves OE with BI (0x12)."""
     if not (_TRACE_CC and _tree()):
         return
-    for name in um.PLACEMENTS:
+    for name, p in um.PLACEMENTS.items():
         lines = _phase(_transcript(name), "selftest at 5, 6 and 7 data bits")
-        assert _summary(lines, "  state:") == "  state: lsr_saved 0x10", lines
+        saved = 0x10 if p.fifo_depth > 1 else 0x12
+        assert _summary(lines, "  state:") == f"  state: lsr_saved {saved:#04x}", lines
         inits = [ln for ln in lines if ln.startswith("init:")]
         tests = [ln for ln in lines if ln.startswith("selftest:")]
         assert inits == [
@@ -1534,22 +1797,28 @@ def test_init_gives_up_when_the_line_never_goes_idle():
     returns UART_ERR_BUSY having touched nothing else: no LCR, divisor or FCR write, and the state as it
     was. A byte that arrived with a parity error after TX's poll shows it at init's first poll (0xA5),
     which clears it (PC16550D p.21); init saved it, and the drain after the transmitter resumes returns
-    the byte with PE counted."""
+    the byte with PE counted. (In 16450 mode alike, LSR[7] 0: PC16550D p.21.)"""
     if not (_TRACE_CC and _tree()):
         return
     budget = _spin_budget()
-    for name in um.PLACEMENTS:
+    for name, p in um.PLACEMENTS.items():
+        fifo = p.fifo_depth > 1
+        top = 0x80 if fifo else 0x00
         lines = _phase(_transcript(name), "init busy")
         off = {reg: _off(name, reg) for reg in um.REGS}
         assert _summary(lines, "tx:") == (
-            "tx: returns 0 (ok); 1 of 1 bytes sent under init's burst cap of 16; tx overflows 0"
+            f"tx: returns 0 (ok); 1 of 1 bytes sent under init's burst cap of {p.fifo_depth}; "
+            "tx overflows 0"
         )
         assert _trace(_between(lines, "tx:", "init:")) == [
-            ("R", off["LSR"], "LSR", 0xA5, 1), ("R", off["LSR"], "LSR", 0xA1, budget - 1),
+            ("R", off["LSR"], "LSR", 0x25 | top, 1), ("R", off["LSR"], "LSR", 0x21 | top, budget - 1),
         ], (name, lines)  # fmt: skip
         drain = _summary(_phase(_transcript(name), "flush busy"), "drain:")
         assert drain == 'drain: 1 bytes "I"; OE 0 PE 1 FE 0 BI 0; lsr_saved 0x00 after it', drain
-        assert _summary(lines, "init:") == "init: returns 1 (busy); fcr_shadow 0x81, tx_burst 16"
+        assert _summary(lines, "init:") == (
+            "init: returns 1 (busy); "
+            + ("fcr_shadow 0x81, tx_burst 16" if fifo else "fcr_shadow 0x00, tx_burst 1")
+        )
 
 
 def test_flush_gives_up_when_the_line_never_goes_idle():
@@ -1561,12 +1830,13 @@ def test_flush_gives_up_when_the_line_never_goes_idle():
     if not (_TRACE_CC and _tree()):
         return
     budget = _spin_budget()
-    for name in um.PLACEMENTS:
+    for name, p in um.PLACEMENTS.items():
+        top = 0x80 if p.fifo_depth > 1 else 0x00  # LSR[7]: 0 in 16450 mode (PC16550D p.21)
         lines = _phase(_transcript(name), "flush busy")
         off = {reg: _off(name, reg) for reg in um.REGS}
         flushes = lines[: next(k for k, ln in enumerate(lines) if ln.startswith("flush:"))]
         assert _trace(flushes) == [
-            ("R", off["LSR"], "LSR", 0xA1, budget), ("R", off["LSR"], "LSR", 0xE1, 1),
+            ("R", off["LSR"], "LSR", 0x21 | top, budget), ("R", off["LSR"], "LSR", 0x61 | top, 1),
         ], (name, lines)  # fmt: skip
         stalled = _summary(lines, "stalled flush:")
         assert stalled == f"stalled flush: returns 1 (busy); {budget} busy polls", (name, stalled)
@@ -1628,7 +1898,8 @@ def test_the_driver_never_reads_fcr_back():
         assert slot2 == {"uart_probe": 1, "uart_init": 1}, (name, slot2)
     if not _TRACE_CC:
         return
-    for name in um.PLACEMENTS:
+    for name, p in um.PLACEMENTS.items():
+        fifo = p.fifo_depth > 1
         last, reported = None, []
         for line in _transcript(name).decode("ascii").splitlines():
             for _k, _o, reg, value in _events([line]):
@@ -1642,13 +1913,13 @@ def test_the_driver_never_reads_fcr_back():
         # ... so none carries the resets
         assert not [s for _w, s in reported if s & _FCR_RESETS], (name, reported)
         # the probe (it leaves the FIFOs off), init, the self-test, the one after TX and the stuck one;
-        # each 16450-mode run's probe, init, self-test and the release that ends its held loopback;
-        # init again before the TX timeout, the self-test's timeout; then the stalled self-test (busy
+        # each veto run's probe and the state init refused (the probe's FCR = 0 the last write); init
+        # again before the TX timeout, the self-test's timeout; then the stalled self-test (busy
         # before it touched FCR) and the init that found the line busy (each state as it was); last,
-        # the release and the init that end the FIFO-mode held loopbacks
-        timeouts = [0x81, 0x81, 0x81, 0x81]
-        held = [0x81, 0x81]
-        want = [0x00, 0x81, 0x81, 0x81, 0x81] + [0x00] * 4 * len(_NO_FIFO) + timeouts + held
+        # the release and the init that end the held loopbacks -- 0x81 the FIFO mode's shadow, 0 the
+        # 16450 mode's
+        mode = 0x81 if fifo else 0x00
+        want = [0x00] + [mode] * 4 + [0x00] * 2 * len(_VETOED[fifo]) + [mode] * 4 + [mode] * 2
         assert [s for _w, s in reported] == want, (name, reported)
 
 
@@ -1656,8 +1927,9 @@ def test_emitted_to_emitted_binary_matches_reference_behavior():
     """THE HEADLINE (blueprint U2): on every placement, the program linked from the driver as the
     oracle emits it with --linkable, and from the driver as bcir-cc emits it, prints the transcript of
     the same program built from the driver's source -- byte for byte, the bus trace included -- and
-    the axi16550 placement's is the checked-in golden. The transcript is a function of the layout:
-    the placements' differ, and their verdicts agree."""
+    the axi16550 placement's is the checked-in golden, the axi16450's (16450 mode) the 16450's. The
+    transcript is a function of the layout: the placements' differ, and the verdicts of the placements
+    that declare a FIFO agree."""
     if not (_TRACE_CC and _tree()):
         return
     verdicts = set()
@@ -1666,18 +1938,23 @@ def test_emitted_to_emitted_binary_matches_reference_behavior():
         assert _transcript(name, "oracle") == source, f"{name}: the oracle's emit is not the source"
         assert _transcript(name, "twin") == source, f"{name}: the twin's emit is not the source"
         verdicts.add(_summary(_phase(source, "end"), "verdict:"))
-    assert len({_transcript(name) for name in um.PLACEMENTS}) == 3
+    assert len({_transcript(name) for name in um.PLACEMENTS}) == len(um.PLACEMENTS)
     assert verdicts == {
         "verdict: probe 16550A, init ok, selftest ok, tx 52/52 on the line, rx 36 bytes with "
-        "OE 1 PE 3 FE 2 BI 0"
+        "OE 1 PE 3 FE 2 BI 0",
+        "verdict: probe 16450, init ok, selftest ok, tx 52/52 on the line, rx 9 bytes with "
+        "OE 1 PE 3 FE 2 BI 0",
     }, verdicts
-    with open(_GOLDEN, "rb") as fh:
-        golden = fh.read()
-    assert _transcript(_GOLDEN_PLACEMENT) == golden, (
-        "runtime/c/uart_main.golden is not the reference build's transcript: review the "
-        "change, then python3 -m bcir.tests.test_uart_driver --transcript axi16550 "
-        "> runtime/c/uart_main.golden"
-    )
+    for golden_path, placement in (
+        (_GOLDEN, _GOLDEN_PLACEMENT), (_GOLDEN_16450, _GOLDEN_16450_PLACEMENT),
+    ):  # fmt: skip
+        with open(golden_path, "rb") as fh:
+            golden = fh.read()
+        rel = os.path.relpath(golden_path, _ROOT)
+        assert _transcript(placement) == golden, (
+            f"{rel} is not the reference build's transcript: review the change, then python3 -m "
+            f"bcir.tests.test_uart_driver --transcript {placement} > {rel}"
+        )
 
 
 def test_a_driver_laid_out_for_another_placement_is_refused():
@@ -1711,8 +1988,8 @@ def test_an_untrapped_build_is_refused():
 
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--transcript"]:
-        # the reference build's transcript, for the golden: python3 -m bcir.tests.test_uart_driver
-        # --transcript axi16550 > runtime/c/uart_main.golden
+        # the reference build's transcript, for the goldens: python3 -m bcir.tests.test_uart_driver
+        # --transcript axi16550 > runtime/c/uart_main.golden (and axi16450 > uart_main_16450.golden)
         assert len(sys.argv) == 3 and sys.argv[2] in um.PLACEMENTS, "--transcript PLACEMENT"
         assert _TRACE_CC and _tree(), "needs clang and a source checkout"
         sys.stdout.buffer.write(_transcript(sys.argv[2]))

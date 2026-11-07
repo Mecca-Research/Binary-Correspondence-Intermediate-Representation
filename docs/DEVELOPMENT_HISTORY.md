@@ -5841,6 +5841,26 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `p + k`, `p - k` and the address of an element or a member are resolved exactly, and any other
     derivation has no offset. One test added; `uart-model.json` grew to UL1-UL41 (64; UL19, UL33
     and UL34 re-anchored), each caught by its own check.
+  - The fourth round (2026-10-31), after an audit of U0-U2 against the blueprint and the documents:
+    - discovery steered the mode: `uart_init` ran 16450 mode on any probe verdict but a working
+      FIFO, on placements whose record declares a 16-byte one (the blueprint's section 10.0 says
+      discovery may veto, never steer). The record decides now, and a verdict that disagrees with
+      it -- no working FIFO where it declares one, a working FIFO where it declares none -- is
+      `UART_ERR_CAPS_MISMATCH`, refused before the device is touched. The 16450 path keeps a
+      record of its own: `axi16450`, the AXI core built in its 16450 UART mode (DS748 p.3, p.7;
+      PG143 p.55), with no FIFO and no FCR (DS748 p.9 Table 4 note 3, p.13; PG143 p.28) and IIR[7:6]
+      always 00 (DS748 p.12). The sim models a part with no FCR (a slot-2 write reaches nothing),
+      and that placement's transcript, `runtime/c/uart_main_16450.golden`, runs the driver in 16450
+      mode end to end; the FIFO placements' transcripts force disagreeing verdicts and show init
+      refusing them. The C gate's `#uartdrv` section links all three builds on both placements;
+    - section 6's TX lever was unmeasured: 56/52 = 1.077 MMIO service accesses a byte at burst 16,
+      2.0 in 16450 mode, the 44 polls a spinning driver makes while the FIFO drains counted apart
+      (U3's to remove), pinned exactly;
+    - section 8's IIR priority ladder and the divisor latches' reset were unpinned; the SCR reset's
+      provenance row cited a page that says the opposite (the documents disagree, now recorded);
+      the sim's reading of Core16550's self-contradicting FIFO tables is stated in `sim16550.h`.
+    `uart-driver.json` grew to SD1-SD20, UD1-UD59 and UH1-UH4 (83; UD15 re-anchored, UD16
+    retargeted), `uart-model.json` to UM1-UM28 and UL1-UL41 (69; UM7 re-anchored).
   - Not in these slices: the law-rail halves (U0's `bcir.regmap_contract` op; the `-bcir-verify`
     clauses, lit negatives and `check_passes.sh` stanzas of both) and U1's C-twin form, which need
     the MLIR rail and the twin built; and the qualifiers below a parameter's top level in both

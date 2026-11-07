@@ -384,11 +384,17 @@ def test_law2_the_baud_bound_holds_a_declared_target():
 
 
 def test_law3_an_fcr_write_without_fifo_enable_programs_nothing():
-    """Hazard H-C: on a gated placement (all three; PC16550D p.22) an FCR write whose bit 0 is
-    provably clear and that asks for anything else programs nothing. FCR = 0 is the 16450-mode
-    write and programs what it says; a placement that does not gate is not held to it."""
+    """Hazard H-C: on a gated placement (the three 16550s; PC16550D p.22) an FCR write whose bit 0
+    is provably clear and that asks for anything else programs nothing. FCR = 0 is the 16450-mode
+    write and programs what it says; a placement that does not gate is not held to it -- the 16450
+    (axi16450), which has no FCR at all (DS748 p.9), among them."""
     resets = "    u[UART_FCR_OFF] = UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK;\n"
+    gated = [name for name, p in um.PLACEMENTS.items() if p.fcr_gated]
+    assert gated == ["pc16550d", "core16550_apb", "axi16550"], gated
     for name in um.PLACEMENTS:
+        if name not in gated:
+            assert _uart(_with((_FCR, resets)), name) == [], name
+            continue
         assert _uart(_with((_FCR, resets)), name) == [
             f"uart_init: R3-uart: FCR write with FIFO-enable clear programs nothing on {name}"
         ]
@@ -600,7 +606,7 @@ def test_the_contract_literal_is_attested():
         ('    "pc16550d", 1u, 0x1000u, 0x00u, 1843200u\n', "R3-uart: regmap contract: base offset: contract 0x1000 != placement 0x0"),
         ('    "pc16550d", 1u, 0x0u, 0x01u, 1843200u\n', "R3-uart: regmap contract: fcr_reset 0x01 != placement 0x00"),
         ('    "pc16550d", 1u, 0x0u, 0x00u, 18432000u\n', "R3-uart: regmap contract: ref_clk_hz 18432000 != placement 1843200"),
-        ('    "pc16550x", 1u, 0x0u, 0x00u, 1843200u\n', "R3-uart: regmap contract: unknown placement 'pc16550x' (registry: axi16550, core16550_apb, pc16550d)"),
+        ('    "pc16550x", 1u, 0x0u, 0x00u, 1843200u\n', "R3-uart: regmap contract: unknown placement 'pc16550x' (registry: axi16450, axi16550, core16550_apb, pc16550d)"),
         ('    "PC16550D", 1u, 0x0u, 0x00u, 1843200u\n', "R3-uart: the uart_regmap_contract literal '{\"PC16550D\", 1, 0, 0, 1843200}' is not a U0 header's"),
     ):  # fmt: skip
         res = _compile(probe, header=honest.replace(literal, lie))

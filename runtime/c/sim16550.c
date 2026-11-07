@@ -40,6 +40,17 @@ const char *sim_config_problem(const sim16550_config *c)
     if (c->fifo_depth == 0u || c->fifo_depth > SIM16550_FIFO_MAX) {
         return "the FIFO depth is not 1..256";
     }
+    if (c->fifo_depth == 1u) {
+        /* no FIFO: a 16450 -- the AXI core in its 16450 mode has no FCR (DS748 p.9, Table 4 note 3) */
+        if (c->fcr_impl_mask != 0u || c->fcr_reset != 0u || c->fcr_gated != 0u) {
+            return "a part with no FIFO has no FCR: its FCR bits, reset and gating must be 0";
+        }
+        if (c->rx_triggers[0] != 1u || c->rx_triggers[1] != 0u || c->rx_triggers[2] != 0u
+            || c->rx_triggers[3] != 0u) {
+            return "a part with no FIFO has one RX trigger, a byte: 1 0 0 0";
+        }
+        return NULL;
+    }
     for (k = 0u; k < 4u; k++) {
         if (c->rx_triggers[k] == 0u || c->rx_triggers[k] > c->fifo_depth
             || (k > 0u && c->rx_triggers[k] <= c->rx_triggers[k - 1u])) {
@@ -422,7 +433,11 @@ void sim_write(sim16550 *dev, uint32_t offset, uint32_t val)
         }
         break;
     case 2:
-        fcr_write(dev, v);
+        if (dev->cfg.fcr_impl_mask == 0u) {
+            dev->ignored_writes++; /* a 16450 has no FCR: the write reaches no register (DS748 p.9) */
+        } else {
+            fcr_write(dev, v);
+        }
         break;
     case 3:
         dev->lcr = v;

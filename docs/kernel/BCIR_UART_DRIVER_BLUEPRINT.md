@@ -1,9 +1,10 @@
 # BCIR UART-16550 Driver — the full build blueprint
 
-> **Implementation status (2026-10-27): U0 and U1 landed on the oracle rail; U2's polled driver
+> **Implementation status (2026-10-31): U0 and U1 landed on the oracle rail; U2's polled driver
 > runs against the simulated 16550, linked from either rail's emit.**
 > Slice U0's device registry — [`uart_model.py`](../../bcir/frontends/devices/uart_model.py): the
-> normative register table, three placements, the RegMap contract and its law, an errata table —
+> normative register table, four placements (three 16550s and the AXI core's 16450 build), the
+> RegMap contract and its law, an errata table —
 > and the header it generates, `runtime/c/uart16550_regs.h`, have landed on the oracle rail, and
 > so have slice U1's protocol laws ([`uart_laws.py`](../../bcir/frontends/devices/uart_laws.py):
 > advisory `R3-uart` diagnostics on a unit that embeds the U0 contract, vacuous on any other).
@@ -105,7 +106,7 @@ Three multiplexing dimensions (the driver's central protocol hazard):
 | 4 | x | MCR | MCR | 0x00 |
 | 5 | x | LSR | (factory test only — treat as read-only) | **0x60** (THRE|TEMT) |
 | 6 | x | MSR | (factory test only) | X on bits 7:4, 0 on 3:0 |
-| 7 | x | SCR | SCR | undefined |
+| 7 | x | SCR | SCR | the documents disagree (`uart_model.PROVENANCE`): MR clears it (PC16550D p.5), no effect (TL16C550C p.22), FF (ST16C550 p.13), 00 (Core16550 pp.5, 10) |
 
 **Bit definitions (the model's field tables):**
 
@@ -450,14 +451,18 @@ From the Linux 8250 driver corpus and public errata discussions — these harden
    FCR=0xC1 (enable + trigger 14), read IIR — IIR[7:6]=`11` → 16550A-class working FIFOs,
    `10` → broken-FIFO 16550, `00` → 16450/8250; then SCR write/read-back distinguishes
    8250 (no SCR) from 16450. U2's `uart_probe` implements exactly this, records the result in
-   the driver state and leaves the FIFOs off (FCR = 0) whatever it found, and `uart_init` acts
-   on the result: FIFO mode only on a working FIFO (the
-   16550A). A 16450 or 8250, which has none, and the broken-FIFO 16550 run in 16450 mode — FCR = 0,
-   a one-byte trigger and one-byte TX bursts, since THRE then means the one-byte holding register
-   is empty (PC16550D p.22) — as Linux's 8250 core runs `PORT_16450` and `PORT_16550` with
-   `fifo_size` 1, `tx_loadsz` 1 and no FCR enable (`drivers/tty/serial/8250/8250_port.c`,
-   `uart_config[]`). The simulator (U2's `sim16550`) answers as a 16550A, so U2's transcript forces
-   the verdict to drive the 16450-mode path.
+   the driver state and leaves the FIFOs off (FCR = 0) whatever it found, and `uart_init` holds
+   the result against the placement record, which decides the mode (§10.0: discovery may veto,
+   never steer). Where the record declares a FIFO, FIFO mode, on the FIFO the probe must have found
+   working (the 16550A). Where it declares none -- the `axi16450` placement, the AXI core built as a
+   16450 (DS748 p.7, p.9) -- 16450 mode: FCR = 0, a one-byte trigger and one-byte TX bursts, since
+   THRE then means the one-byte holding register is empty (PC16550D p.22), as Linux's 8250 core
+   runs `PORT_16450` with `fifo_size` 1, `tx_loadsz` 1 and no FCR value
+   (`drivers/tty/serial/8250/8250_port.c`, `uart_config[]`). A verdict that disagrees with the
+   record -- no working FIFO where it declares one (a 16450, an 8250, the original 16550's broken
+   FIFO), a working FIFO where it declares none -- is `UART_ERR_CAPS_MISMATCH`, refused before the
+   device is touched. The simulator (U2's `sim16550`) answers as the part its configuration
+   describes, so U2's transcript forces each disagreeing verdict after the probe to drive the veto.
 2. **THRE interrupt re-arm bugs (Linux `UART_BUG_TXEN`/THRE quirks).** Numerous clones fail to
    re-assert the THRE interrupt after it is cleared once, or assert it spuriously; Linux probes
    this at init and falls back to a timer. **Design consequence (normative for this driver):
@@ -599,7 +604,8 @@ class UartPlacement:
                                   # recorded for TL16C752C/754C/2752 as registry data)
 
 UART16550: tuple[UartReg, ...]          # THE normative table (from §1.1)
-PLACEMENTS: dict[str, UartPlacement]    # U0: the three §2 placements.
+PLACEMENTS: dict[str, UartPlacement]    # U0: the three §2 16550 placements, and axi16450: the AXI
+                                        # core built in 16450 mode (no FIFO, no FCR; U2's notes).
 # U8 adds: "tl16c750" (mode64_key="dlab", rx_triggers_alt=(1,16,32,56)),
 # "tl16c750e" (fifo_depth=128, rx_triggers=(1,4,120,124), tx_triggers=(16,32,64,120),
 #              flow_mech="efr_tcr", has_tlr/has_frac_divisor/has_sleep=True,
@@ -639,7 +645,8 @@ verbatim, message prefix `R3-uart:`. Negatives in `mlir/test/passes/verify_regma
 - `test_the_normative_table_matches_the_datasheet` — pin slot/access/dlab for all 12 registers
   and the exact FCR/LCR/LSR/IIR field tables from §1.1 (golden asserts).
 - `test_headers_generate_deterministically_for_all_placements` — same input → identical bytes;
-  the three placements produce offsets `{0,...,7}`, `{0x00..0x1C step 4}`, `{0x1000..0x101C}`.
+  the four placements produce offsets `{0,...,7}`, `{0x00..0x1C step 4}`, `{0x1000..0x101C}`
+  (axi16550 and axi16450 alike).
 - `test_generated_header_compiles_through_both_rails` — the header + a 5-line probe TU through
   `compile_unit` and (toolchain-gated) `bcir-cc`; clean.
 - `test_a_tampered_regmap_contract_is_caught` — `dataclasses.replace` lies (stride, offset,
@@ -736,9 +743,9 @@ the C twin's form.
 
 ### U2 — The polled driver + the simulated device + the linked, running binary
 
-**Goal.** The headline: a real driver, compiled by BCIR on both rails, linked as emitted
-artifacts only, running against a spec-exact simulated 16550, behavior-equivalence- and
-law-gated. This is the first *running* BCIR-compiled driver.
+**Goal.** The headline: a real driver, compiled by BCIR on both rails and linked as either
+rail emits it (the simulated device and the harness are host-built: §11's U2 note), running
+against a spec-exact simulated 16550, behavior-equivalence- and law-gated. This is the first *running* BCIR-compiled driver.
 
 **Files.**
 - `runtime/c/uart16550_regs.h` — from U0 (already checked in).
@@ -750,9 +757,11 @@ law-gated. This is the first *running* BCIR-compiled driver.
                                             last written (FIFOEN, DMA mode, RX trigger), never
                                             the self-clearing FIFO resets FCR[2:1] */
     uint32_t trigger;                    /* the configured trigger level (bytes) */
-    uint32_t fifo_ok;                    /* probe result: 0 none, 1 broken, 2 ok (16550A);
-                                            FIFO mode only on 2 */
+    uint32_t fifo_ok;                    /* probe result: 0 none, 1 broken, 2 ok (16550A); it
+                                            vetoes the record's mode, never steers it */
     uint32_t tx_burst;                   /* plan-chosen TX burst cap (<= 16; 1 in 16450 mode) */
+    /* ... and scr_ok, lsr_saved, word_bits, loop_held, mcr_saved: runtime/c/uart_driver.h, which
+       is the declaration; U2's notes say what each is for */
   } uart_state;
 
   uint32_t uart_probe(volatile uart_regs_t *u, uart_state *st);
@@ -889,22 +898,31 @@ harness `uart_main` (built by BCIR Make and CMake with the gate's flags, untrace
   `PORT_16550`). After the probe alone the sim has its FIFOs off (IIR[7:6] = 00) on every placement,
   the Core16550's, on at reset, included, and a TX before any init, under a plan's cap, bursts one
   byte per THRE (`test_the_probe_leaves_the_fifos_off`; UD18).
-- *The probe's verdict* is acted on, where section 3.1 says only that it is recorded: `uart_init`
-  enables the FIFOs only on a working FIFO (`fifo_ok` 2, the 16550A). A 16450 or 8250 has none and
-  the original 16550's is broken, so there — and on a state no probe has filled — step 5 writes
-  FCR = 0 (which asks for nothing FCR[0] gates: law 3's reading) and the state records a one-byte
-  trigger and a one-byte TX burst, since THRE then means the one-byte holding register is empty
-  (PC16550D p.22). `uart_tx` clamps any cap to one byte unless the FCR shadow says FIFO mode, so a
-  stale plan cap cannot exceed what the device holds, and the self-test resets FIFOs only in FIFO
-  mode. That is how Linux's 8250 core runs `PORT_16450` and `PORT_16550`: `fifo_size` 1, `tx_loadsz`
-  1 and no FCR enable (`drivers/tty/serial/8250/8250_port.c`, `uart_config[]`; its
-  `serial8250_clear_fifos` resets the FIFOs only on a part with `UART_CAP_FIFO`). The sim answers the
-  probe as a 16550A, so the transcript drives the path by forcing the verdict after the probe, to 0
-  and, in a run of its own, to 1: init must keep the sim in 16450 mode (FCR = 0), the self-test
-  must pass with no FCR write, and 40 bytes under a stale cap of 16 must reach the line in one-byte
-  bursts with no TX overflow (`test_init_without_a_working_fifo_programs_16450_mode`,
-  `test_tx_without_a_working_fifo_bursts_one_byte_per_thre`,
-  `test_selftest_resets_the_fifos_only_in_fifo_mode`; the fault table's UD15-UD17).
+- *The probe's verdict vetoes, never steers* (§10.0; round 4 of the review, where U2 first had it
+  steer): the placement record decides the mode, by its `fifo_depth` (`UART_CAP_FIFO_DEPTH`), and
+  `uart_init` holds the verdict against it before it touches the device. A record that declares a
+  FIFO runs in FIFO mode on the working FIFO the probe must have found (`fifo_ok` 2, the 16550A); one
+  that declares none -- `axi16450`, the AXI core built in its 16450 UART mode (DS748 p.3, G7
+  `C_IS_A_16550` = 0 p.7; PG143 p.55), with no FIFO and no FCR (DS748 p.9 Table 4 note 3, p.13;
+  PG143 p.28) and IIR[7:6] always 00 (DS748 p.12; PG143 p.26) -- runs in 16450 mode: step 5 writes
+  FCR = 0 (on the 16450 it reaches no register; the sim counts it as ignored), and the state
+  records a one-byte trigger and a one-byte TX burst, since THRE then means the one-byte holding
+  register is empty (PC16550D p.22). That is how Linux's 8250 core runs `PORT_16450`: `fifo_size` 1,
+  `tx_loadsz` 1 and no FCR value (`drivers/tty/serial/8250/8250_port.c`, `uart_config[]`). A verdict
+  that disagrees with the record -- no working FIFO where it declares one, a working FIFO where it
+  declares none -- is `UART_ERR_CAPS_MISMATCH` (11), with the device untouched and a state TX and the
+  self-test refuse. The FIFO placements' transcripts force the verdict to 0 and to 1 after a probe,
+  axi16450's to 2, and init refuses each (`test_init_vetoes_a_probe_that_disagrees_with_the_record`;
+  UD56-UD58, UH4). The 16450 path runs on axi16450's own transcript, the checked-in
+  `runtime/c/uart_main_16450.golden`: the probe finds the 16450, every init asks for its one-byte
+  level and refuses a FIFO's, the self-test passes with no FCR write and reads a looped character
+  out of RBR where it must, TX sends the 52-byte buffer as 52 one-byte bursts with no TX overflow,
+  and the receiver's burst overruns the holding register, keeping the last byte with OE (PC16550D
+  p.21) (`test_a_record_without_a_fifo_runs_in_16450_mode`, `test_tx_in_16450_mode_bursts_one_byte_per_thre`,
+  `test_rx_in_16450_mode_takes_a_byte_at_a_time`, `test_selftest_resets_the_fifos_only_in_fifo_mode`,
+  `test_the_release_reads_the_looped_character_out_in_16450_mode`; UD15-UD17). `uart_tx` still clamps
+  any cap to one byte unless the FCR shadow says FIFO mode, so a plan's cap before init cannot exceed
+  what the device holds (`test_the_probe_leaves_the_fifos_off`; UD16).
 - *The FCR shadow (H-E)* is FCR's persistent bits as last written — FIFOEN, DMA mode and the RX
   trigger — and never FCR[2:1], the FIFO resets, which clear themselves the moment they are written
   (PC16550D p.22): a read-modify-write from a shadow that kept them (a trigger or DMA-mode change)
@@ -1049,8 +1067,15 @@ harness `uart_main` (built by BCIR Make and CMake with the gate's flags, untrace
   F_free bytes: the plan's cap clamped to `UART_CAP_FIFO_DEPTH`, and to one byte unless the FCR
   shadow says FIFO mode (a 16-byte burst after THRE in 16450 mode loses 14 or 15 of its bytes).
   `test_tx_bursts_never_exceed_fifo_and_never_write_without_thre` is the witness in FIFO mode and
-  `test_tx_without_a_working_fifo_bursts_one_byte_per_thre` in 16450 mode. The law machinery itself
-  is section 12's.
+  `test_tx_in_16450_mode_bursts_one_byte_per_thre` in 16450 mode. The law machinery itself is
+  section 12's.
+- *Section 6's TX lever, measured.* MMIO service accesses per byte -- each LSR read that finds THRE
+  and each THR write -- for the 52-byte buffer: 56/52 = 1.077 at burst 16 (4 THRE reads, 52 writes),
+  inside the gate of 1.2; 2.0 at the byte-at-a-time baseline, which is 16450 mode itself on
+  axi16450. The polls a spinning driver makes while the FIFO drains are waiting, not service, and
+  are counted apart: 44 at burst 16 (one a character time, the sim's clock), none in 16450 mode;
+  with them burst 16 makes 1.92 accesses a byte, which only a driver that does not spin removes
+  (U3). Pinned exactly by `test_tx_mmio_ops_per_byte_meet_the_section_6_gate` (UD59).
 - *Equivalence.* `compile_unit(..., check_clang=False)`, as U0 and U1 do: the equivalence harness
   behind `check_clang=True` models MMIO as a 256-byte buffer, which the AXI placement's offsets
   (0x1000-0x101C) leave and which cannot answer a polled driver's waits. The linked transcript is
@@ -1074,16 +1099,24 @@ harness `uart_main` (built by BCIR Make and CMake with the gate's flags, untrace
   (TL16C550D p.41), and the PC16550D's sub-character delay of that THRE (8.4.1 item 2, p.16) is not
   modeled — time is whole characters, and the driver never depends on THRE timing (section 3.2);
   an RBR read of an empty receiver returns the last byte; RBR's bits above the word length read 0;
-  the divisor latches reset to 0x0001 on every placement (section 8).
+  the divisor latches reset to 0x0001 on every placement (section 8); FCR[0] = 0 turns the FIFOs off
+  on every placement, Core16550's included, whose FCR table allows it (DS50003798A Table 1-4, p.6)
+  while its IIR table gives 11 as IIR[7:6]'s only valid state (Table 1-8, p.7) -- the sim follows the
+  FCR table, and the driver does not rest on either reading; and SCR resets to 00, where the
+  documents disagree (`uart_model.PROVENANCE`).
 - *Tests beyond the list above:* `test_sim_lsr_errors_ride_the_fifo_and_clear_on_read`,
-  `test_sim_refuses_a_config_it_cannot_model`, `test_the_driver_never_reads_fcr_back` (H-E on the
-  claim graph and on the bus), the three 16450-mode tests (the probe's verdict, above), the four
-  named in the probe's end state, the format, the self-test and the TX bullets above, the five in
-  the timeouts bullet, the review's four above, `test_a_driver_laid_out_for_another_placement_is_refused` (H-A) and
-  `test_an_untrapped_build_is_refused`. The golden (`runtime/c/uart_main.golden`) is the axi16550
-  placement's transcript, PG143's part and vector; on every placement the linked builds print their
-  source build's transcript. The fault table `tools/testing/faults/uart-driver.json` (SD1-SD14 the
-  sim, UD1-UD41 the driver and its API header, UH1-UH3 the harness and the golden): each of the 58
+  `test_sim_refuses_a_config_it_cannot_model`, `test_sim_iir_priority_ladder` (Table 5's ladder,
+  C6 → C4 → C2 → C0 → C1, the timeout's CC, a disabled source hidden; 00-topped in 16450 mode),
+  `test_the_driver_never_reads_fcr_back` (H-E on the claim graph and on the bus), the veto and
+  16450-mode tests (the probe's verdict, above), the four named in the probe's end state, the format,
+  the self-test and the TX bullets above, the TX lever's gate, the five in the timeouts bullet, the
+  review rounds' (the held loopback, init ending it, the release in 16450 mode, the resolver's),
+  `test_a_driver_laid_out_for_another_placement_is_refused` (H-A) and
+  `test_an_untrapped_build_is_refused`. The goldens are the axi16550 placement's transcript
+  (`runtime/c/uart_main.golden`, PG143's part and vector) and the axi16450's
+  (`runtime/c/uart_main_16450.golden`, 16450 mode); on every placement the linked builds print their
+  source build's transcript. The fault table `tools/testing/faults/uart-driver.json` (SD1-SD20 the
+  sim, UD1-UD59 the driver and its API header, UH1-UH4 the harness and the goldens): each of the 83
   caught by its own check (red_sweep on a copy of the tree); under the witnesses before U2 — U0's
   and U1's 24 tests — none of U2's first 41. U2's tests from before the review's fixes cannot serve
   as the 17 new faults' control: they fail on the fixed driver's transcript, which red_sweep refuses as
@@ -1292,7 +1325,7 @@ All measured on the deterministic sim (char-tick clock), so the numbers are exac
 
 | Lever | Baseline | Expected | Gate (measure first, pin at ~⅔ of measured) |
 |---|---|---|---|
-| TX FIFO bursts vs byte-at-a-time | 1 LSR poll + 1 THR write per byte | 1 poll + ≤16 writes | MMIO ops/byte ≤ 1.2 at burst 16 (vs 2.0 baseline) |
+| TX FIFO bursts vs byte-at-a-time | 1 LSR poll + 1 THR write per byte | 1 poll + ≤16 writes | MMIO ops/byte ≤ 1.2 at burst 16 (vs 2.0 baseline) -- measured in U2: 56/52 = 1.077, and 2.0 in 16450 mode; busy polls counted apart (U2's notes) |
 | RX trigger 8/14 + timeout vs trigger 1 | 1 service per byte | 1 service per ~8–14 bytes sustained | services/byte ≤ 0.15 at trigger 8, sustained script |
 | Shared LSR read (CSE) | 2 LSR reads per drain iteration | 1 | pinned by claim-count assert in U2 |
 | Pipelined service streams (U3) | serial stage sum | token-DAG overlap | pipelined ≤ barriered, win > 0, certificate |
@@ -1365,8 +1398,9 @@ data is held, wake on RX edge / modem change / THR write — all in char-ticks.
 ## 10. Process requirements (restated, with anchors)
 
 0. **The D-R rule card** (driver/kernel roadmap §3) governs every slice: one attested
-   manifest per device build; discovery may VETO, never STEER (`uart_probe`'s `caps_mismatch`
-   is this law); memory-tier crossings are explicit `mem.move.*` casts (MMIO register I/O
+   manifest per device build; discovery may VETO, never STEER (`uart_init`'s
+   `UART_ERR_CAPS_MISMATCH` is this law: the probe's verdict is held against the placement record's
+   `fifo_depth`, U2's notes; U9 extends it to the 16750 family's capabilities); memory-tier crossings are explicit `mem.move.*` casts (MMIO register I/O
    stays under R3); movement is priced from manifest distances; allocation currency is the
    full-stride `StridedView` with native-tile divisibility (R22 on the law rail); the driver
    seam accepts StreamPacks, never instructions.

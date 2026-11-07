@@ -147,7 +147,8 @@ typedef uint32_t uart_regs_t;
 #define UART_IIR_THRE                  0x02u     /* 3: transmitter holding register empty; cleared by reading IIR or writing THR */
 #define UART_IIR_MS                    0x00u     /* 4: modem status: CTS, DSR, RI or DCD; cleared by reading MSR */
 
-/* RX FIFO trigger levels: FCR[7:6] in place, each named by its byte count here. */
+/* RX FIFO trigger levels: FCR[7:6] in place, each named by its byte count here (on a part
+ * with no FIFO, UART_CAP_FIFO_DEPTH 1, the one level: a byte, and no FCR to hold it). */
 typedef enum uart_rx_trigger {
     UART_RX_TRIGGER_1 = 0x00,
     UART_RX_TRIGGER_4 = 0x40,
@@ -156,7 +157,7 @@ typedef enum uart_rx_trigger {
 } uart_rx_trigger_t;
 
 /* The placement's capabilities (UartPlacement) that a driver and a simulated device read. */
-#define UART_CAP_FIFO_DEPTH            16u       /* bytes in each FIFO */
+#define UART_CAP_FIFO_DEPTH            16u       /* bytes in each FIFO; 1: no FIFO, the holding registers alone */
 #define UART_CAP_RX_TRIGGER_BYTES      1u, 4u, 8u, 14u /* uart_rx_trigger_t's levels in bytes, by code */
 #define UART_CAP_FCR_GATED             1u        /* FCR[7:1] are programmed only with FCR[0] set in the same write */
 #define UART_CAP_FCR_IMPL              0xcfu     /* the FCR bits the part implements */

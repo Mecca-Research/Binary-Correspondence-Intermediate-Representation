@@ -77,8 +77,8 @@
     {
       "expects": "test_headers_generate_deterministically_for_all_placements",
       "label": "UM7 a 16750-family capability rendered without it",
-      "new": "    out = []",
-      "old": "    out = [name for name, default in _U0_DEFAULTS.items() if getattr(p, name) != default]",
+      "new": "        if False\n        # the 16450's empty FCR",
+      "old": "        if getattr(p, name) != default\n        # the 16450's empty FCR",
       "path": "bcir/frontends/devices/uart_model.py"
     },
     {
@@ -479,6 +479,41 @@
       "new": "        self.bases = {rid for _name, rid, ct in lf.params if writers[rid] == 1 and ct.kind == \"pointer\"}",
       "old": "        self.bases = {rid for _name, rid, _ct in lf.params if writers[rid] == 1}",
       "path": "bcir/frontends/devices/uart_laws.py"
+    },
+    {
+      "expects": "test_a_malformed_placement_is_refused_by_name",
+      "label": "UM24 a record that declares no FIFO accepted with FCR bits, an FCR reset or gating",
+      "new": "    if False:\n",
+      "old": "    if p.fcr_impl_mask != 0 or p.fcr_reset != 0 or p.fcr_gated:\n",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_a_malformed_placement_is_refused_by_name",
+      "label": "UM25 a record that declares no FIFO accepted with more RX levels than its byte",
+      "new": "    if not p.rx_triggers:\n",
+      "old": "    if p.rx_triggers != (1,):\n",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_a_malformed_placement_is_refused_by_name",
+      "label": "UM26 a record that declares no FIFO accepted with TX triggers",
+      "new": "    if p.rx_triggers_alt != ():\n",
+      "old": "    if p.rx_triggers_alt != () or p.tx_triggers != ():\n",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_a_malformed_placement_is_refused_by_name",
+      "label": "UM27 a FIFO with no FCR accepted",
+      "new": "",
+      "old": "        if p.fcr_impl_mask == 0:\n            out.append(f\"fifo_depth {p.fifo_depth} with fcr_impl_mask 0x00: a FIFO with no FCR\")\n",
+      "path": "bcir/frontends/devices/uart_model.py"
+    },
+    {
+      "expects": "test_headers_generate_deterministically_for_all_placements",
+      "label": "UM28 the 16450's empty FCR refused as a 16750-family field: U0 renders no record without a FIFO",
+      "new": "",
+      "old": "        and not (name == \"fcr_impl_mask\" and p.fifo_depth == 1)\n",
+      "path": "bcir/frontends/devices/uart_model.py"
     }
   ]
 }

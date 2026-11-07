@@ -22,8 +22,11 @@ typedef struct uart_state {        /* driver-private, RAM domain */
                                       FCR[2:1], which clear themselves (PC16550D p.22); FCR is never read back.
                                       0 after the probe, which leaves the FIFOs off */
     uint32_t trigger;              /* the configured RX trigger level, in bytes (1 in 16450 mode) */
-    uint32_t fifo_ok;              /* the probe's verdict: 0 none (8250/16450), 1 broken (16550), 2 working (16550A);
-                                      uart_init enables the FIFOs on 2 only, and runs 16450 mode otherwise */
+    uint32_t fifo_ok;              /* the probe's verdict: 0 none (8250/16450), 1 broken (16550), 2 working (16550A).
+                                      It vetoes, never steers: uart_init runs the record's mode -- FIFO mode where
+                                      UART_CAP_FIFO_DEPTH > 1, 16450 mode where it is 1 -- and refuses
+                                      (UART_ERR_CAPS_MISMATCH) when the verdict disagrees: not 2 on a FIFO record,
+                                      2 on a record without one */
     uint32_t tx_burst;             /* the plan-chosen TX burst cap; the driver clamps it to UART_CAP_FIFO_DEPTH,
                                       and to 1 unless the FCR shadow says FIFO mode. 0 until uart_init sets it:
                                       uart_tx refuses a state without one (UART_ERR_NOT_READY) */
@@ -61,6 +64,9 @@ typedef struct uart_state {        /* driver-private, RAM domain */
 #define UART_ERR_LOOP_HELD 10u     /* the self-test holds its loopback (uart_state.loop_held): uart_tx,
                                       uart_flush and uart_selftest refuse the state until
                                       uart_selftest_release or uart_init ends it */
+#define UART_ERR_CAPS_MISMATCH 11u /* init: the probe's verdict (fifo_ok) disagrees with the placement record --
+                                      no working FIFO where UART_CAP_FIFO_DEPTH declares one, a working FIFO
+                                      where it declares none: discovery vetoes the record, never steers it */
 #define UART_SPIN_BUDGET   65536u  /* every wait gives up after exactly this many LSR polls that find it not ready */
 #define UART_LSR_ERRORS    (UART_LSR_OE_MASK | UART_LSR_PE_MASK | UART_LSR_FE_MASK | UART_LSR_BI_MASK)
 
@@ -73,11 +79,11 @@ typedef struct uart_state {        /* driver-private, RAM domain */
 /* Section 3.1's identification; records fifo_ok and scr_ok, and leaves the FIFOs off -- FCR = 0, the
  * shadow 0 -- whatever it found, for uart_init to program; returns fifo_ok. */
 uint32_t uart_probe(volatile uart_regs_t *u, uart_state *st);
-/* Section 1.4's bring-up, in FIFO mode where the probe found a working FIFO (fifo_ok 2) and in 16450 mode
- * (FCR = 0) otherwise; returns UART_OK, UART_ERR_BUSY (TEMT did not come within UART_SPIN_BUDGET polls),
- * or the argument it refused before touching the device (UART_ERR_DIVISOR, UART_ERR_FORMAT,
- * UART_ERR_TRIGGER). A loopback the self-test held ends with it: its wait for TEMT comes first, and step 6
- * writes MCR. */
+/* Section 1.4's bring-up in the record's mode: FIFO mode where UART_CAP_FIFO_DEPTH declares a FIFO, 16450
+ * mode (FCR = 0) where it is 1; returns UART_OK, UART_ERR_BUSY (TEMT did not come within UART_SPIN_BUDGET
+ * polls), or what it refused before touching the device: an argument (UART_ERR_DIVISOR, UART_ERR_FORMAT,
+ * UART_ERR_TRIGGER) or a probe verdict that disagrees with the record (UART_ERR_CAPS_MISMATCH). A loopback
+ * the self-test held ends with it: its wait for TEMT comes first, and step 6 writes MCR. */
 uint32_t uart_init(volatile uart_regs_t *u, uart_state *st, uint32_t divisor, uint32_t lcr_format,
                    uint32_t trigger_code);
 /* LSR-checked TX bursts of at most UART_CAP_FIFO_DEPTH bytes, one in 16450 mode, the bytes sent in *nsent;

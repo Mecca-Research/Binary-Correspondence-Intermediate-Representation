@@ -20,7 +20,8 @@
 #   - the program linked from bcir-cc --linkable's driver prints, byte for byte, the transcript of the
 #     program linked from the oracle's --linkable driver, which prints the transcript of the program
 #     built from the driver's source, which is the checked-in runtime/c/uart_main.golden (the axi16550
-#     placement: PG143's part and programming vector);
+#     placement: PG143's part and programming vector) -- and on the axi16450 placement, the same core
+#     built as a 16450 whose record declares no FIFO, runtime/c/uart_main_16450.golden (16450 mode);
 #   - a driver laid out for another placement is refused (exit 4, hazard H-A).
 # Each rail's --linkable artifact is self-contained (the types, the prototypes and the globals it names,
 # and the headers its text needs: CF-LINKEMIT on the oracle, CF-LINKTWIN on bcir-cc), so each builds alone.
@@ -41,6 +42,9 @@ UART_MAIN="$(abs "$2")"; [ -x "${UART_MAIN}" ] || { echo "  FAIL: ${UART_MAIN} i
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 PLACEMENT=axi16550
 GOLDEN="${C}/uart_main.golden"
+# the placement whose record declares no FIFO: its program runs the driver in 16450 mode
+PLACEMENT_16450=axi16450
+GOLDEN_16450="${C}/uart_main_16450.golden"
 TRACE="-fsanitize-coverage=func,trace-loads,trace-stores"
 UNITS=(uart_driver.c uart_driver.h uart_main.c sim16550.c sim16550.h)
 # The C23 spelling CC accepts (GCC 13 knows only -std=c2x), as the freestanding section probes it.
@@ -78,7 +82,7 @@ else
   exit 1
 fi
 
-# The units as they are, beside a placement's generated header: the program's, in units/ (axi16550),
+# The units as they are, beside a placement's generated header: each program's, in units-<placement>/,
 # and the misplaced driver's, in laid-out/ (pc16550d).
 stage() {  # <dir> <placement>
   mkdir -p "$1"
@@ -97,35 +101,43 @@ link_driver() {
 # (3) the linked runs: they need the load/store tracing, which is Clang's
 if printf 'unsigned f(volatile unsigned *p){ *p = 1u; return *p; }\n' \
     | "${CC}" "${TRACE}" -x c -c -o /dev/null - > /dev/null 2>&1; then
-  d="${tmp}/units"
-  stage "${d}" "${PLACEMENT}"
-  for unit in uart_main sim16550; do
-    "${CC}" -std=c11 -O2 -I "${d}" -c "${d}/${unit}.c" -o "${d}/${unit}.o" 2> "${tmp}/build.err" \
-      || { echo "  FAIL: ${unit}.c did not build"; head -5 "${tmp}/build.err" | sed 's/^/    /'; exit 1; }
-  done
-  # the driver as the oracle emits it, and as bcir-cc emits it
-  (cd "${d}" && "${PYTHON}" -m bcir.frontends.cfront --linkable -o driver_oracle.c uart_driver.c) 2> "${tmp}/oracle.err" \
-    || { echo "  FAIL: the oracle's --linkable emit of uart_driver.c"; head -5 "${tmp}/oracle.err" | sed 's/^/    /'; exit 1; }
-  "${BCIR_CC}" --linkable "${d}/uart_driver.c" > "${d}/driver_twin.c" 2> "${tmp}/twin.err" \
-    || { echo "  FAIL: bcir-cc --linkable uart_driver.c"; head -5 "${tmp}/twin.err" | sed 's/^/    /'; exit 1; }
-  link_driver "${d}/uart_driver.c" "${d}" uart_main_source
-  link_driver "${d}/driver_oracle.c" "${d}" uart_main_oracle
-  link_driver "${d}/driver_twin.c" "${d}" uart_main_twin
-  for rail in source oracle twin; do
-    "${d}/uart_main_${rail}" > "${d}/${rail}.txt" 2> "${tmp}/run.err"; rc=$?
-    [ "${rc}" = "0" ] \
-      || { echo "  FAIL: uart_main with the ${rail} driver exited ${rc}"; head -3 "${tmp}/run.err" | sed 's/^/    /'; exit 1; }
-  done
-  verdict="$(grep '^verdict:' "${d}/source.txt")"
-  cmp -s "${d}/twin.txt" "${d}/oracle.txt" \
-    && echo "  PASS bcir-cc --linkable's driver, linked with the sim and the harness, prints the oracle-emitted build's transcript" \
-    || { echo "  FAIL: the twin-emitted build's transcript is not the oracle-emitted build's"; diff "${d}/oracle.txt" "${d}/twin.txt" | head -8 | sed 's/^/    /'; exit 1; }
-  cmp -s "${d}/oracle.txt" "${d}/source.txt" \
-    && echo "  PASS the oracle's --linkable driver prints the source build's transcript, byte for byte (the bus trace included)" \
-    || { echo "  FAIL: the oracle-emitted build's transcript is not the source build's"; diff "${d}/source.txt" "${d}/oracle.txt" | head -8 | sed 's/^/    /'; exit 1; }
-  cmp -s "${d}/source.txt" "${GOLDEN}" \
-    && echo "  PASS the transcript is runtime/c/uart_main.golden (${PLACEMENT}); ${verdict}" \
-    || { echo "  FAIL: the source build's transcript is not runtime/c/uart_main.golden"; diff "${GOLDEN}" "${d}/source.txt" | head -8 | sed 's/^/    /'; exit 1; }
+  # <placement> <golden>: the program built from the driver's source, from the oracle's emit and from
+  # bcir-cc's, against the device configured for the placement; all three print the golden
+  linked_runs() {
+    local placement="$1" golden="$2" rail rc verdict
+    d="${tmp}/units-${placement}"
+    stage "${d}" "${placement}"
+    for unit in uart_main sim16550; do
+      "${CC}" -std=c11 -O2 -I "${d}" -c "${d}/${unit}.c" -o "${d}/${unit}.o" 2> "${tmp}/build.err" \
+        || { echo "  FAIL: ${unit}.c did not build (${placement})"; head -5 "${tmp}/build.err" | sed 's/^/    /'; exit 1; }
+    done
+    # the driver as the oracle emits it, and as bcir-cc emits it
+    (cd "${d}" && "${PYTHON}" -m bcir.frontends.cfront --linkable -o driver_oracle.c uart_driver.c) 2> "${tmp}/oracle.err" \
+      || { echo "  FAIL: the oracle's --linkable emit of uart_driver.c (${placement})"; head -5 "${tmp}/oracle.err" | sed 's/^/    /'; exit 1; }
+    "${BCIR_CC}" --linkable "${d}/uart_driver.c" > "${d}/driver_twin.c" 2> "${tmp}/twin.err" \
+      || { echo "  FAIL: bcir-cc --linkable uart_driver.c (${placement})"; head -5 "${tmp}/twin.err" | sed 's/^/    /'; exit 1; }
+    link_driver "${d}/uart_driver.c" "${d}" uart_main_source
+    link_driver "${d}/driver_oracle.c" "${d}" uart_main_oracle
+    link_driver "${d}/driver_twin.c" "${d}" uart_main_twin
+    for rail in source oracle twin; do
+      "${d}/uart_main_${rail}" > "${d}/${rail}.txt" 2> "${tmp}/run.err"; rc=$?
+      [ "${rc}" = "0" ] \
+        || { echo "  FAIL: uart_main with the ${rail} driver exited ${rc} (${placement})"; head -3 "${tmp}/run.err" | sed 's/^/    /'; exit 1; }
+    done
+    verdict="$(grep '^verdict:' "${d}/source.txt")"
+    cmp -s "${d}/twin.txt" "${d}/oracle.txt" \
+      && echo "  PASS bcir-cc --linkable's driver, linked with the sim and the harness, prints the oracle-emitted build's transcript (${placement})" \
+      || { echo "  FAIL: the twin-emitted build's transcript is not the oracle-emitted build's (${placement})"; diff "${d}/oracle.txt" "${d}/twin.txt" | head -8 | sed 's/^/    /'; exit 1; }
+    cmp -s "${d}/oracle.txt" "${d}/source.txt" \
+      && echo "  PASS the oracle's --linkable driver prints the source build's transcript, byte for byte (the bus trace included; ${placement})" \
+      || { echo "  FAIL: the oracle-emitted build's transcript is not the source build's (${placement})"; diff "${d}/source.txt" "${d}/oracle.txt" | head -8 | sed 's/^/    /'; exit 1; }
+    cmp -s "${d}/source.txt" "${golden}" \
+      && echo "  PASS the transcript is runtime/c/$(basename "${golden}") (${placement}); ${verdict}" \
+      || { echo "  FAIL: the source build's transcript is not runtime/c/$(basename "${golden}") (${placement})"; diff "${golden}" "${d}/source.txt" | head -8 | sed 's/^/    /'; exit 1; }
+  }
+  linked_runs "${PLACEMENT}" "${GOLDEN}"
+  linked_runs "${PLACEMENT_16450}" "${GOLDEN_16450}"
+  d="${tmp}/units-${PLACEMENT}"
 
   # (4) hazard H-A at run time: the driver laid out for the byte-strided pc16550d, on the AXI device
   stage "${tmp}/laid-out" pc16550d

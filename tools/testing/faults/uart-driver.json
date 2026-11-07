@@ -8,6 +8,7 @@
     "bcir.tests.test_uart_driver:_TRACE_CC",
     "bcir.tests.test_uart_driver:test_sim_reset_states",
     "bcir.tests.test_uart_driver:test_sim_trigger_and_timeout",
+    "bcir.tests.test_uart_driver:test_sim_iir_priority_ladder",
     "bcir.tests.test_uart_driver:test_sim_overrun_discards_shift_byte_not_fifo",
     "bcir.tests.test_uart_driver:test_sim_loopback_mirrors_mcr_to_msr",
     "bcir.tests.test_uart_driver:test_sim_dlab_mux_and_fcr_gating",
@@ -17,19 +18,22 @@
     "bcir.tests.test_uart_driver:test_sim_refuses_a_config_it_cannot_model",
     "bcir.tests.test_uart_driver:test_driver_compiles_clean_on_both_rails_with_contracts",
     "bcir.tests.test_uart_driver:test_the_emitted_driver_declares_the_headers_api_but_the_open_defect",
-    "bcir.tests.test_uart_driver:test_probe_identifies_the_sim_as_16550a",
+    "bcir.tests.test_uart_driver:test_probe_identifies_the_part_its_record_describes",
     "bcir.tests.test_uart_driver:test_the_probe_leaves_the_fifos_off",
     "bcir.tests.test_uart_driver:test_init_follows_the_canonical_sequence",
     "bcir.tests.test_uart_driver:test_init_refuses_a_format_with_break_or_dlab",
     "bcir.tests.test_uart_driver:test_tx_bursts_never_exceed_fifo_and_never_write_without_thre",
+    "bcir.tests.test_uart_driver:test_tx_mmio_ops_per_byte_meet_the_section_6_gate",
     "bcir.tests.test_uart_driver:test_tx_refuses_a_state_without_a_burst_cap",
     "bcir.tests.test_uart_driver:test_selftest_refuses_a_state_without_a_word_length",
     "bcir.tests.test_uart_driver:test_rx_drain_triage_counts_the_injected_errors_exactly",
+    "bcir.tests.test_uart_driver:test_rx_in_16450_mode_takes_a_byte_at_a_time",
     "bcir.tests.test_uart_driver:test_tx_and_flush_polls_keep_the_receivers_errors_for_the_drain",
     "bcir.tests.test_uart_driver:test_selftest_passes_in_loopback",
     "bcir.tests.test_uart_driver:test_selftest_drains_the_receiver_first",
-    "bcir.tests.test_uart_driver:test_init_without_a_working_fifo_programs_16450_mode",
-    "bcir.tests.test_uart_driver:test_tx_without_a_working_fifo_bursts_one_byte_per_thre",
+    "bcir.tests.test_uart_driver:test_init_vetoes_a_probe_that_disagrees_with_the_record",
+    "bcir.tests.test_uart_driver:test_a_record_without_a_fifo_runs_in_16450_mode",
+    "bcir.tests.test_uart_driver:test_tx_in_16450_mode_bursts_one_byte_per_thre",
     "bcir.tests.test_uart_driver:test_selftest_resets_the_fifos_only_in_fifo_mode",
     "bcir.tests.test_uart_driver:test_tx_gives_up_when_thre_never_comes",
     "bcir.tests.test_uart_driver:test_selftest_gives_up_when_the_loopback_delivers_nothing",
@@ -194,7 +198,7 @@
       "path": "runtime/c/uart_driver.c"
     },
     {
-      "expects": "test_probe_identifies_the_sim_as_16550a",
+      "expects": "test_probe_identifies_the_part_its_record_describes",
       "label": "UD8 the probe reads IIR before it writes FCR",
       "new": "    iir = u[UART_LANE(UART_IIR_OFF)];\n    u[UART_LANE(UART_FCR_OFF)] = fcr;",
       "old": "    u[UART_LANE(UART_FCR_OFF)] = fcr;\n    iir = u[UART_LANE(UART_IIR_OFF)];",
@@ -243,14 +247,14 @@
       "path": "runtime/c/uart_driver.c"
     },
     {
-      "expects": "test_init_without_a_working_fifo_programs_16450_mode",
-      "label": "UD15 init enables the FIFOs whatever the probe found: the fifo_ok test dropped",
+      "expects": "test_a_record_without_a_fifo_runs_in_16450_mode",
+      "label": "UD15 init enables the FIFOs on a record that declares none: the mode test dropped",
       "new": "    fcr = UART_FCR_FIFOEN_MASK | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK | trigger_code;\n    burst = UART_CAP_FIFO_DEPTH;",
-      "old": "    if (st->fifo_ok == 2u) {\n        fcr = UART_FCR_FIFOEN_MASK | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK | trigger_code;\n        burst = UART_CAP_FIFO_DEPTH;\n    } else {\n        fcr = 0u;\n        bytes = 1u;\n        burst = 1u;\n    }",
+      "old": "    if (st->fifo_ok == 2u) {\n        fcr = UART_FCR_FIFOEN_MASK | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK | trigger_code;\n        burst = UART_CAP_FIFO_DEPTH;\n    } else {\n        fcr = 0u;\n        burst = 1u;\n    }",
       "path": "runtime/c/uart_driver.c"
     },
     {
-      "expects": "test_tx_without_a_working_fifo_bursts_one_byte_per_thre",
+      "expects": "test_the_probe_leaves_the_fifos_off",
       "label": "UD16 TX bursts past the one-byte holding register in 16450 mode: the clamp to one byte dropped",
       "new": "",
       "old": "    if ((st->fcr_shadow & UART_FCR_FIFOEN_MASK) == 0u) {\n        cap = 1u;\n    }\n",
@@ -549,6 +553,83 @@
       "new": "    u[UART_LANE(UART_MCR_OFF)] = st->mcr_saved;\n",
       "old": "    u[UART_LANE(UART_MCR_OFF)] = st->mcr_saved;\n    (void)u[UART_LANE(UART_MSR_OFF)];\n",
       "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_init_vetoes_a_probe_that_disagrees_with_the_record",
+      "label": "UD56 the veto dropped: a probe verdict that disagrees with the record steers the mode",
+      "new": "",
+      "old": "    if ((UART_CAP_FIFO_DEPTH > 1u) != (st->fifo_ok == 2u)) {\n        return UART_ERR_CAPS_MISMATCH;\n    }\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_init_vetoes_a_probe_that_disagrees_with_the_record",
+      "label": "UD57 the veto one way only: a working FIFO under a record that declares none is not refused",
+      "new": "    if (UART_CAP_FIFO_DEPTH > 1u && st->fifo_ok != 2u) {\n",
+      "old": "    if ((UART_CAP_FIFO_DEPTH > 1u) != (st->fifo_ok == 2u)) {\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_init_vetoes_a_probe_that_disagrees_with_the_record",
+      "label": "UD58 the veto refuses after it touched the device: it follows init's wait for TEMT",
+      "new": "    /* FIFO mode where the record declares a FIFO. A record with none runs in 16450 mode: FCR = 0, which\n     * asks for nothing FCR[0] gates (the U1 law's reading: it programs what it says) and on the 16450\n     * reaches no register, and THRE then means the one-byte holding register is empty (PC16550D p.22), so\n     * the trigger and the TX burst are one byte each (uart_config[]'s PORT_16450: fifo_size 1, tx_loadsz 1). */\n    if (st->fifo_ok == 2u) {\n        fcr = UART_FCR_FIFOEN_MASK | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK | trigger_code;\n        burst = UART_CAP_FIFO_DEPTH;\n    } else {\n        fcr = 0u;\n        burst = 1u;\n    }\n    /* (1) reconfigure only at idle: the line may be mid-character. Each poll's receiver errors are saved:\n     * the read clears them (PC16550D p.21), and a wait that gives up leaves the receiver as it was */\n    lsr = u[UART_LANE(UART_LSR_OFF)];\n    st->lsr_saved = st->lsr_saved | (lsr & UART_LSR_ERRORS);\n    while ((lsr & UART_LSR_TEMT_MASK) == 0u) {\n        spins = spins + 1u;\n        if (spins == UART_SPIN_BUDGET) {\n            return UART_ERR_BUSY;\n        }\n        lsr = u[UART_LANE(UART_LSR_OFF)];\n        st->lsr_saved = st->lsr_saved | (lsr & UART_LSR_ERRORS);\n    }\n    if ((UART_CAP_FIFO_DEPTH > 1u) != (st->fifo_ok == 2u)) {\n        return UART_ERR_CAPS_MISMATCH;\n    }\n",
+      "old": "    if ((UART_CAP_FIFO_DEPTH > 1u) != (st->fifo_ok == 2u)) {\n        return UART_ERR_CAPS_MISMATCH;\n    }\n    /* FIFO mode where the record declares a FIFO. A record with none runs in 16450 mode: FCR = 0, which\n     * asks for nothing FCR[0] gates (the U1 law's reading: it programs what it says) and on the 16450\n     * reaches no register, and THRE then means the one-byte holding register is empty (PC16550D p.22), so\n     * the trigger and the TX burst are one byte each (uart_config[]'s PORT_16450: fifo_size 1, tx_loadsz 1). */\n    if (st->fifo_ok == 2u) {\n        fcr = UART_FCR_FIFOEN_MASK | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK | trigger_code;\n        burst = UART_CAP_FIFO_DEPTH;\n    } else {\n        fcr = 0u;\n        burst = 1u;\n    }\n    /* (1) reconfigure only at idle: the line may be mid-character. Each poll's receiver errors are saved:\n     * the read clears them (PC16550D p.21), and a wait that gives up leaves the receiver as it was */\n    lsr = u[UART_LANE(UART_LSR_OFF)];\n    st->lsr_saved = st->lsr_saved | (lsr & UART_LSR_ERRORS);\n    while ((lsr & UART_LSR_TEMT_MASK) == 0u) {\n        spins = spins + 1u;\n        if (spins == UART_SPIN_BUDGET) {\n            return UART_ERR_BUSY;\n        }\n        lsr = u[UART_LANE(UART_LSR_OFF)];\n        st->lsr_saved = st->lsr_saved | (lsr & UART_LSR_ERRORS);\n    }\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_sim_dlab_mux_and_fcr_gating",
+      "label": "SD15 a slot-2 write on a part with no FCR counted as an FCR write, not an ignored one",
+      "new": "        if (dev->cfg.fcr_impl_mask == 0xffffffffu) {\n            dev->ignored_writes++;",
+      "old": "        if (dev->cfg.fcr_impl_mask == 0u) {\n            dev->ignored_writes++;",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_sim_refuses_a_config_it_cannot_model",
+      "label": "SD16 a part with no FIFO accepted with FCR bits, an FCR reset or gating",
+      "new": "        if (c->fcr_impl_mask > 0xffu) {",
+      "old": "        if (c->fcr_impl_mask != 0u || c->fcr_reset != 0u || c->fcr_gated != 0u) {",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_sim_refuses_a_config_it_cannot_model",
+      "label": "SD17 a part with no FIFO accepted with more RX levels than its byte",
+      "new": "        if (c->rx_triggers[0] != 1u) {",
+      "old": "        if (c->rx_triggers[0] != 1u || c->rx_triggers[1] != 0u || c->rx_triggers[2] != 0u\n            || c->rx_triggers[3] != 0u) {",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_init_vetoes_a_probe_that_disagrees_with_the_record",
+      "label": "UH4 the veto run forces no verdict: it shows init on the probe's own, which agrees",
+      "new": "",
+      "old": "    st.fifo_ok = verdict;\n",
+      "path": "runtime/c/uart_main.c"
+    },
+    {
+      "expects": "test_tx_mmio_ops_per_byte_meet_the_section_6_gate",
+      "label": "UD59 an LSR read before every byte of a burst: the burst's service doubles",
+      "new": "            while (burst < cap && sent < len) {\n                (void)u[UART_LANE(UART_LSR_OFF)];\n                u[UART_LANE(UART_THR_OFF)] = buf[sent];\n",
+      "old": "            while (burst < cap && sent < len) {\n                u[UART_LANE(UART_THR_OFF)] = buf[sent];\n",
+      "path": "runtime/c/uart_driver.c"
+    },
+    {
+      "expects": "test_sim_iir_priority_ladder",
+      "label": "SD18 IIR never reports a receiver line status (RLS): its branch dropped",
+      "new": "    if (0) {\n        id = UART_IIR_RLS;\n    } else if",
+      "old": "    if ((dev->ier & UART_IER_ELSI_MASK) != 0u && (dev->lsr_err & LSR_ERRORS) != 0u) {\n        id = UART_IIR_RLS;\n    } else if",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_sim_iir_priority_ladder",
+      "label": "SD19 IIR never reports a modem status change (MS): its branch dropped",
+      "new": "    } else if (0) {",
+      "old": "    } else if ((dev->ier & UART_IER_EDSSI_MASK) != 0u && dev->msr_delta != 0u) {",
+      "path": "runtime/c/sim16550.c"
+    },
+    {
+      "expects": "test_sim_reset_states",
+      "label": "SD20 the divisor latches reset to 0x0000, not Core16550's documented 01/00",
+      "new": "    dev->dll = 0x00u;\n    dev->dlm = 0x00u;\n    return 0;",
+      "old": "    dev->dll = 0x01u;\n    dev->dlm = 0x00u;\n    return 0;",
+      "path": "runtime/c/sim16550.c"
     }
   ]
 }

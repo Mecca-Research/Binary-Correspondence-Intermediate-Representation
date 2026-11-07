@@ -119,9 +119,11 @@ _OFF = re.compile(r"^#define UART_([A-Z]+)_OFF +(0x[0-9a-f]+)u ", re.M)
 
 
 def test_headers_generate_deterministically_for_all_placements():
-    """Same input, same bytes; the three placements put the slots at {0..7} (PC16550D A2-A0,
+    """Same input, same bytes; the four placements put the slots at {0..7} (PC16550D A2-A0,
     pp.4-5), {0x00..0x1C step 4} (Core16550 PADDR, Table 1-1 p.5) and {0x1000..0x101C} (PG143
-    pp.18-19, DS748 Table 4 p.9), each register at base_offset + slot * stride; each header is its
+    pp.18-19, DS748 Table 4 p.9; the AXI core's 16450 build too), each register at base_offset + slot
+    * stride; the RX trigger enum names the four FIFO levels where the record declares a FIFO, and the
+    one byte where it declares none; each header is its
     golden fixture, read through the package as the wheel ships it. MCR's AFE field renders exactly
     where the placement has autoflow, and a placement whose capabilities U0's generator does not
     render is refused by name, never rendered without them."""
@@ -129,6 +131,7 @@ def test_headers_generate_deterministically_for_all_placements():
         "pc16550d": set(range(8)),
         "core16550_apb": set(range(0x00, 0x20, 4)),
         "axi16550": set(range(0x1000, 0x1020, 4)),
+        "axi16450": set(range(0x1000, 0x1020, 4)),
     }
     assert set(um.PLACEMENTS) == set(want)
     for name, placement in um.PLACEMENTS.items():
@@ -149,10 +152,15 @@ def test_headers_generate_deterministically_for_all_placements():
             f"{placement.fcr_reset:#04x}u, {placement.ref_clk_hz}u\n"
         )
         assert contract in text, name
-        assert (
-            "    UART_RX_TRIGGER_1 = 0x00,\n    UART_RX_TRIGGER_4 = 0x40,\n"
-            "    UART_RX_TRIGGER_8 = 0x80,\n    UART_RX_TRIGGER_14 = 0xc0\n"
-        ) in text
+        if placement.fifo_depth > 1:
+            assert (
+                "    UART_RX_TRIGGER_1 = 0x00,\n    UART_RX_TRIGGER_4 = 0x40,\n"
+                "    UART_RX_TRIGGER_8 = 0x80,\n    UART_RX_TRIGGER_14 = 0xc0\n"
+            ) in text
+        else:
+            assert "    UART_RX_TRIGGER_1 = 0x00\n} uart_rx_trigger_t;\n" in text, name
+            assert re.search(r"^#define UART_CAP_FIFO_DEPTH +1u ", text, re.M), name
+            assert re.search(r"^#define UART_CAP_FCR_IMPL +0x00u ", text, re.M), name
         assert "UART_MCR_AFE" not in text  # no U0 placement has autoflow
     # the TL16C550C/D class (a record U0 does not register): MCR[5] is AFE
     afe = dataclasses.replace(
@@ -317,7 +325,7 @@ def test_a_tampered_regmap_contract_is_caught():
         "contract placement 'axi16550' != the unit placement 'pc16550d'"
     ]
     assert verify(dataclasses.replace(clean, placement="pc16550x"), pc) == [
-        "unknown placement 'pc16550x' (registry: axi16550, core16550_apb, pc16550d)"
+        "unknown placement 'pc16550x' (registry: axi16450, axi16550, core16550_apb, pc16550d)"
     ]
     forged = dataclasses.replace(pc, stride=4, reg_width=4)
     assert verify(dataclasses.replace(clean, stride=4), forged) == [
@@ -362,7 +370,7 @@ def test_checked_in_header_is_current():
 
 
 def test_the_placements_match_the_documents():
-    """The three U0 placements (blueprint section 2), every field against its page:
+    """The four U0 placements (blueprint section 2), every field against its page:
 
     * pc16550d -- 8-bit bus on A2-A0 (PC16550D pp.4-5), FCR reset 00 (Table 3 p.19), MCR[7:5]
       permanently 0 (p.24), modem pins (pp.5-6), INTR (p.5), the 1.8432-MHz crystal of Table 4 (p.19).
@@ -372,14 +380,19 @@ def test_the_placements_match_the_documents():
     * axi16550 -- 0x1000..0x101C, 32-bit registers (PG143 pp.18-19), FCR reset 0 (PG143 pp.27-28,
       DS748 Table 9 p.13), MCR[7:5] always 000 (PG143 p.34), level-sensitive IP2INTC_Irpt (DS748
       pp.4-5), S_AXI_ACLK at the 100-MHz default (DS748 G2 p.7, notes p.8).
+    * axi16450 -- the same core built in its 16450 UART mode (DS748 p.3, G7 C_IS_A_16550 = 0 p.7;
+      PG143 p.55): the axi16550's layout, clock and interrupt, no FIFO (fifo_depth 1, a byte its one
+      RX level) and no FCR (DS748 Table 4 note 3 p.9, p.13; PG143 p.28), so fcr_impl_mask 0, an FCR
+      reset of 0 and nothing to gate; IIR[7:6] always 00 (DS748 Table 8 note 1 p.12, PG143 p.26).
 
-    FCR gating holds on all three: "This bit must be a 1 when other FCR bits are written to or they
+    FCR gating holds on the three 16550s: "This bit must be a 1 when other FCR bits are written to or they
     will not be programmed" is PC16550D p.22's own sentence, repeated by TL16C550C p.24, TL16C550D
     p.33, ST16C550 p.15 and Core16550 p.6, and PG143/DS748 defer to the PC16550D data sheet (the
     blueprint's section 2 matrix said "n/a" for the silicon). FCR[5:4] are reserved on all three
     (PC16550D p.22, Core16550 p.6, PG143 p.27): `fcr_impl_mask` 0xCF. Every U8 capability field takes
-    its default, and no U0 placement claims an erratum."""
-    assert list(um.PLACEMENTS) == ["pc16550d", "core16550_apb", "axi16550"]
+    its default -- the 16450's FIFO depth, RX level and empty FCR aside, which U0 renders -- and no U0
+    placement claims an erratum."""
+    assert list(um.PLACEMENTS) == ["pc16550d", "core16550_apb", "axi16550", "axi16450"]
 
     def facts(p):
         return (
@@ -410,6 +423,10 @@ def test_the_placements_match_the_documents():
         100_000_000,
         True,
     )
+    assert facts(um.PLACEMENTS["axi16450"]) == (
+        4, 0x1000, 4, 0x00, False, False, True, 100_000_000, True,
+    )  # fmt: skip
+    no_fifo = {"fifo_depth": 1, "rx_triggers": (1,), "fcr_impl_mask": 0x00}
     defaults = {
         f.name: f.default
         for f in dataclasses.fields(um.UartPlacement)
@@ -432,7 +449,8 @@ def test_the_placements_match_the_documents():
     }
     for name, placement in um.PLACEMENTS.items():
         assert placement.name == name
-        assert {k: getattr(placement, k) for k in defaults} == defaults, name
+        want = {**defaults, **no_fifo} if name == "axi16450" else defaults
+        assert {k: getattr(placement, k) for k in defaults} == want, name
         assert um.placement_problems(placement) == [], name
     # IIR[7:6] reads 11 whenever FCR[0] is set, so Core16550's IIR resets to C1 (Table 1-1 p.5):
     # the FCR reset is the one fact the placements differ in at reset
@@ -440,6 +458,7 @@ def test_the_placements_match_the_documents():
         "pc16550d": 0,
         "core16550_apb": 1,
         "axi16550": 0,
+        "axi16450": 0,
     }
 
 
@@ -697,6 +716,23 @@ def test_a_malformed_placement_is_refused_by_name():
                 assert str(exc) == f"malformed placement: {message}", str(exc)
             else:
                 raise AssertionError(f"{view.__name__} laid out {change}")
+    # a record that declares no FIFO is a 16450: one RX level, a byte, and no FCR at all (DS748 p.9)
+    axi = um.PLACEMENTS["axi16450"]
+    for base, change, message in (
+        (axi, {"rx_triggers": (1, 4, 8, 14)}, "rx_triggers (1, 4, 8, 14) on a part with no FIFO: a byte is its one level, (1,)"),
+        (axi, {"tx_triggers": (1, 2, 3, 4)}, "a part with no FIFO has no alternate RX triggers and no TX triggers"),
+        (axi, {"fcr_impl_mask": 0x01}, "a part with no FIFO has no FCR: fcr_impl_mask 0x01, fcr_reset 0x00 and fcr_gated False must be 0x00, 0x00 and False"),
+        (axi, {"fcr_gated": True}, "a part with no FIFO has no FCR: fcr_impl_mask 0x00, fcr_reset 0x00 and fcr_gated True must be 0x00, 0x00 and False"),
+        (pc, {"fcr_impl_mask": 0x00}, "fifo_depth 16 with fcr_impl_mask 0x00: a FIFO with no FCR"),
+    ):  # fmt: skip
+        record = dataclasses.replace(base, **change)
+        assert um.placement_problems(record) == [message], (change, um.placement_problems(record))
+        try:
+            um.emit_header(record)
+        except ValueError as exc:
+            assert str(exc) == f"malformed placement: {message}", str(exc)
+        else:
+            raise AssertionError(f"emit_header laid out {change}")
     assert um.placement_problems("pc16550d") == ["not a UartPlacement: str"]
     assert um.verify_regmap_contract(um.regmap_contract_for(pc), pc) == []
 

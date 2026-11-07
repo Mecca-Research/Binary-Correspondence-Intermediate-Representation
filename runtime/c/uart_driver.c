@@ -19,13 +19,16 @@
  * autoconfig() resets an identified port with serial8250_clear_fifos(), which ends with FCR = 0 on a part
  * with UART_CAP_FIFO; a part without one keeps the probe's FCR until serial8250_set_fcr() writes up->fcr,
  * which uart_config[] leaves 0 for PORT_16450 and PORT_16550). uart_init is section 1.4's bring-up, step
- * by step, programming FCR from that state, and it acts on the probe's verdict: FIFO mode only on a FIFO
- * the probe found working (fifo_ok 2, the 16550A). A 16450 or 8250 has no FIFO and the original 16550's
- * does not work, so there -- and on a state no probe has filled -- the part runs in 16450 mode: FCR = 0,
- * a one-byte trigger and one-byte TX bursts, as Linux's 8250 core runs PORT_16450 and PORT_16550
- * (fifo_size 1, tx_loadsz 1 and no FCR enable: uart_config[]). Every argument and state check comes
- * before the device is touched: uart_init refuses a format that is no format (LCR[6], set break, or
- * LCR[7], DLAB), and uart_tx a state no init has filled (no TX burst cap).
+ * by step, programming FCR from that state. The mode is the placement record's, never the probe's:
+ * discovery may veto, never steer (blueprint section 10.0). A record that declares a FIFO
+ * (UART_CAP_FIFO_DEPTH > 1) runs in FIFO mode, and only where the probe found that FIFO working (fifo_ok 2,
+ * the 16550A); a record that declares none -- the 16450, axi16450 -- runs in 16450 mode: FCR = 0, a
+ * one-byte trigger and one-byte TX bursts, as Linux's 8250 core runs PORT_16450 (fifo_size 1, tx_loadsz 1
+ * and no FCR value: uart_config[]). A probe that disagrees with the record -- no working FIFO where it
+ * declares one, a working FIFO where it declares none -- is UART_ERR_CAPS_MISMATCH: init refuses, the
+ * device untouched, rather than run the part in a mode its record does not describe. Every argument and
+ * state check comes before the device is touched: uart_init refuses a format that is no format (LCR[6],
+ * set break, or LCR[7], DLAB), and uart_tx a state no init has filled (no TX burst cap).
  *
  * FCR is written from values and shadowed in uart_state, never read back (hazard H-E: on the 16550 a
  * slot-2 read is IIR, and where FCR does read back -- the AXI core -- it is not relied on). The shadow is
@@ -62,14 +65,15 @@
  */
 #include "uart_driver.h"
 
-/* Section 3.1's identification: FCR = 0xC1 (FIFOs on, trigger 14), then IIR[7:6] says what answered --
+/* Section 3.1's identification: FCR = 0xC1 (FIFOs on, FCR[7:6] = 11: trigger 14 on a 16550; on a 16450,
+ * which has no FCR, the write reaches no register), then IIR[7:6] says what answered --
  * 11 a working FIFO (16550A), 10 a broken one (the original 16550), 00 none (16450/8250) -- and FCR = 0
  * turns the FIFOs off again, shadowed as 0, whatever answered: a broken FIFO is not left on, and uart_init
  * starts from a known FCR. The scratch register, written and read back twice, tells a 16450 from an 8250.
  * The verdict is recorded in the state, where uart_init acts on it; returns fifo_ok. */
 uint32_t uart_probe(volatile uart_regs_t *u, uart_state *st)
 {
-    uint32_t fcr = UART_FCR_FIFOEN_MASK | UART_RX_TRIGGER_14;
+    uint32_t fcr = UART_FCR_FIFOEN_MASK | UART_FCR_RXTRIG_MASK;
     uint32_t iir;
     uint32_t first;
     uint32_t second;
@@ -99,8 +103,9 @@ uint32_t uart_probe(volatile uart_regs_t *u, uart_state *st)
 /* Section 1.4, exactly: (1) wait for TEMT, (2) LCR with DLAB and the format in one write, (3) DLL then
  * DLM, (4) LCR with the format alone, closing the DLAB bracket, (5) FCR -- FIFO enable, both resets and
  * the trigger in one write (FCR[0] must be in it for the rest to take: PC16550D p.22), or 0 where the
- * probe found no working FIFO, (6) MCR, (7) IER last (0: polled), (8) one read each of LSR, RBR, IIR
- * and MSR to clear stale status. Every argument is checked before the device is touched; the format is
+ * record declares no FIFO, (6) MCR, (7) IER last (0: polled), (8) one read each of LSR, RBR, IIR and
+ * MSR to clear stale status. Every argument, and the probe's agreement with the record
+ * (UART_ERR_CAPS_MISMATCH), is checked before the device is touched; the format is
  * LCR[5:0] (UART_FORMAT_BITS), and the LCR writes mask it so that the U1 law can read each one's bit 7.
  * The wait for TEMT gives up after exactly UART_SPIN_BUDGET polls that find the line busy, with
  * UART_ERR_BUSY and the device as it was. A loopback the self-test held ends here: with TEMT seen first,
@@ -124,6 +129,8 @@ uint32_t uart_init(volatile uart_regs_t *u, uart_state *st, uint32_t divisor, ui
     case UART_RX_TRIGGER_1:
         bytes = 1u;
         break;
+#if UART_CAP_FIFO_DEPTH > 1
+    /* the FIFO's levels: a part with no FIFO has a byte as its one level, and no other name */
     case UART_RX_TRIGGER_4:
         bytes = 4u;
         break;
@@ -133,19 +140,25 @@ uint32_t uart_init(volatile uart_regs_t *u, uart_state *st, uint32_t divisor, ui
     case UART_RX_TRIGGER_14:
         bytes = 14u;
         break;
+#endif
     default:
         return UART_ERR_TRIGGER;
     }
-    /* FIFO mode only on a FIFO the probe found working (fifo_ok 2). Anything else runs in 16450 mode:
-     * FCR = 0, which asks for nothing FCR[0] gates (the U1 law's reading: it programs what it says), and
-     * THRE then means the one-byte holding register is empty (PC16550D p.22), so the trigger and the TX
-     * burst are one byte each (uart_config[]'s PORT_16450 and PORT_16550: fifo_size 1, tx_loadsz 1). */
+    /* The record decides the mode and the probe can only veto it: a FIFO the record declares must be the
+     * working FIFO the probe found (fifo_ok 2), and a record that declares none must not meet one. A state
+     * no probe has filled reads as no FIFO. */
+    if ((UART_CAP_FIFO_DEPTH > 1u) != (st->fifo_ok == 2u)) {
+        return UART_ERR_CAPS_MISMATCH;
+    }
+    /* FIFO mode where the record declares a FIFO. A record with none runs in 16450 mode: FCR = 0, which
+     * asks for nothing FCR[0] gates (the U1 law's reading: it programs what it says) and on the 16450
+     * reaches no register, and THRE then means the one-byte holding register is empty (PC16550D p.22), so
+     * the trigger and the TX burst are one byte each (uart_config[]'s PORT_16450: fifo_size 1, tx_loadsz 1). */
     if (st->fifo_ok == 2u) {
         fcr = UART_FCR_FIFOEN_MASK | UART_FCR_RXFIFORST_MASK | UART_FCR_TXFIFORST_MASK | trigger_code;
         burst = UART_CAP_FIFO_DEPTH;
     } else {
         fcr = 0u;
-        bytes = 1u;
         burst = 1u;
     }
     /* (1) reconfigure only at idle: the line may be mid-character. Each poll's receiver errors are saved:
