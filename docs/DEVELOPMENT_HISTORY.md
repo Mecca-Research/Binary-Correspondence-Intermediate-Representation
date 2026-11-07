@@ -2714,6 +2714,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     two clocks agree (medians 0.950 and 0.953, ten processes each). Windows advances thread time
     once per scheduler tick, so the clock's step is measured, not read: a clock coarser than
     10 us, one that never steps, or one that fails gives way to the wall clock.
+    THREAD-CLOCK (2026-10-30): the step is the smallest of five measured steps, not one. On a loaded
+    host one step of Linux's thread clock now and then reads more than 10 us (78 of 200 000 on a
+    container running the gates), and the one-step choice fell to the wall clock in 14 of 20 000
+    calls there, and once on a shared CI runner, where it failed the clock-choice test. Judged by
+    the smallest of five it fell in none of 20 000. Witness:
+    `test_one_loaded_step_does_not_flip_the_clock_choice`; `paired.json` gains six faults.
   - The final instrument, measured alternately with the old one: 0.90 to 0.99 in twelve processes
     with nothing else running, and 0.93 to 1.01 in twelve under the phased load, every verdict
     NO-CHANGE. The quantity, the frozen baseline (1.07) and the 25% band are unchanged. Measuring
@@ -9273,6 +9279,52 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Found, not fixed: the artifact defines each function with the emit's parameter types, which keep no qualifier
     below a parameter's top level, so a function used as a value meets a pointer whose type keeps the source's
     (`cfront_quals_link.c`, on both rails -- the one fixture in `_LINKABLE_OPEN`).
+  CF-PARMQUALS (2026-10-29) closes that defect on both rails: the linkable artifact declares and defines every
+  function with the type its source does. The emit spells its own objects without the qualifiers below a type's top
+  level (`_cname`), so the artifact had defined `const uint32_t *p` as `uint32_t *p`: a function used as a value met a
+  pointer whose type keeps the source's (`cfront_quals_link.c` did not build), and another unit declaring the function
+  as its header does declared another type (C11 6.7.6.1p2, 6.7.6.3p15; 6.2.7p2) -- the UART driver's `uart_tx(...,
+  const uint8_t *buf, ...)` among them.
+  - A function whose type keeps a qualifier below a parameter's or the return's top level (`LoweredUnit.fn_quals`,
+    the function types `_fn_quals` already computed; the twin's `qual_key`) is defined through a wrapper: its emitted
+    function keeps its `static bcir_` name, so the unit's own calls call it as before, and the artifact appends, under
+    the real name and of the source's type, a definition calling it -- each qualified argument cast to the emitted
+    parameter's type, a qualified result cast back (`emit._linkable_wrapper`; the twin's `lk_wrapper`). Its declaration
+    with the other functions' is of the same type (`_proto_param` with the function's qualifiers; the twin's
+    `lk_wrapped_head`), and a line declaring or defining the emitted function keeps its `static` (`_line_fn` over the
+    `bcir_` names; the twin's `lk_line_internal`). A pointer to the function -- `pq_cop g = pq_first;`, an ops
+    table -- is the wrapper's. A static function is wrapped only where the unit names it as a value, a designator in
+    a function (`fn_types`) or a file-scope initializer (`init_refs`; the twin's `lk_named_as_value`): one the unit
+    only calls keeps the emit's types, since no other unit declares it, and its wrapper would be a function nothing
+    names -- the first version wrapped every one, and the file-scope fixture's artifact (`fs_sum4`) failed its build
+    under `-Werror=unused-function`. The default emit is unchanged.
+  - Open, both rails: a variadic function cannot be wrapped -- a wrapper cannot pass its `...` on -- so it is defined
+    as before, with the emit's parameter types; in the corpus one, `cfront_extvariadic.c`'s printf-style `ev_fwd(char
+    *buf, int sz, const char *fmt, ...)`, pinned as `_LINKABLE_VARIADIC_OPEN`. Its artifact builds; a unit that
+    declares it as its source does declares another type.
+  - Witnesses (test_cfront_link): `test_the_linkable_artifact_keeps_each_functions_declared_type` -- a unit of qualified
+    parameters and returns (`const char *const *`, `const uint32_t *restrict`, a qualified result, a function pointer's
+    own parameter, a static function a pointer takes and one a file-scope table does, a static one only called and a
+    variadic one, both left unwrapped): each rail's artifact wraps the eight functions it should, the same wrappers on both rails (spaces, scalar spellings and a function pointer's
+    typedef aside), compiles in one translation unit with the unit's header -- whose declaration with one qualifier
+    dropped is an error, the control -- and, linked with a caller that knows the functions only through the header,
+    prints what the original's build prints. The corpus differential now holds every fixture's artifact to building
+    alone on both rails (`cfront_quals_link.c`'s included: `_LINKABLE_OPEN` is gone), the same functions wrapped on both
+    with the same wrappers (6, in 4 fixtures; 5 static ones in 3 fixtures, each only called, left unwrapped), and the
+    variadic set exactly. The twin's allocation-failure sweep's
+    linkable unit gained two wrapped functions, one a pointer's value; clean, under ASan, UBSan and LSan too.
+    `cfront-parmquals.json` PQ1-PQ10 (the oracle) and LQ1-LQ11 (the twin): each caught by its own check (red_sweep on a
+    copy of the tree); under the witnesses before CF-PARMQUALS -- test_cfront_link's 16 tests but its corpus
+    differential, and test_c_cfront's CF-QUALS test -- none.
+  - Review (on the first push): a wrapper named its parameters as the emitted definition does, and the emit keeps a
+    source parameter named `bcir_NAME` wherever the function does not call itself -- so `unsigned f(const unsigned
+    *bcir_f)` became a wrapper calling `bcir_f((unsigned int *)bcir_f)`, its parameter hiding the callee, and the
+    artifact did not compile, on both rails. That parameter now takes the first `bcir_NAME_2`, `bcir_NAME_3`, ... that
+    no other parameter, no name the emit spells and no typedef name takes (`emit._wrapper_names`; the twin's
+    `lk_param_name`, which its declaration of the function uses too); the emitted definition keeps the source's
+    names. Witness: `test_a_wrapper_parameter_never_hides_its_callee` (one function a case, the wrappers' names
+    pinned on both rails, each artifact built and run). PQ11-PQ14 and LQ12-LQ17: each caught by its own check;
+    under the first push's witness alone, none.
 
 ---
 

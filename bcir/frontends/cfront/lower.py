@@ -1526,6 +1526,10 @@ class LoweredUnit:
     #   parse's `Unit.type_defs`): the linkable emit defines the types it names with them (CF-LINKEMIT)
     global_quals: dict = field(default_factory=dict)  # global name -> its type's qualifier levels
     #   (`_object_quals`), which the linkable emit spells: the emit's own objects carry none (CF-LINKEMIT)
+    # function name -> its function type's qualifiers below each parameter's and the return's top level
+    # (`_fn_quals`): the linkable emit declares and defines a function the unit defines with them, through a wrapper
+    # of its emitted function (CF-PARMQUALS)
+    fn_quals: dict = field(default_factory=dict)
 
 
 # the rid `_call` returns for a void callee -- never read as a value (a void call is a statement); the
@@ -5790,6 +5794,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         anon_spelling=dict(unit.anon_spelling),
         type_defs=tuple(unit.type_defs),
         global_quals=gquals,
+        fn_quals={fn.name: fn_quals[fn.name] for fn in unit.funcs if fn_quals.get(fn.name)},
     )
 
 

@@ -189,8 +189,10 @@ static int cfront_wide_source(char *src,size_t cap){
  * struct, an enum and a forward declaration recorded; a brace list with designators, floating constants, a string's
  * pieces, an element's address, an array, a function and a global by name, and a folded `sizeof` as initializers;
  * an `extern` global declared; a static function calling an exported one; the headers its text names (`memcpy`,
- * `bool`) -- so the sweep below fails each of its allocations in turn: the records, the initializers' text, the
- * fold's scratch function, the declarations and the headers. */
+ * `bool`); and two functions whose types keep a qualifier below a parameter's or the return's top level, one of them
+ * a pointer's value, each defined through a wrapper (CF-PARMQUALS) -- so the sweep below fails each of its
+ * allocations in turn: the records, the initializers' text, the fold's scratch function, the declarations, the
+ * wrappers and the headers. */
 static const char cfront_linkable_source[]=
   "typedef bool lk_flag;\n"
   "struct lk_pt { unsigned x, y; };\n"
@@ -209,8 +211,12 @@ static const char cfront_linkable_source[]=
   "unsigned lk_g(unsigned x) { return x + lk_k; }\n"
   "unsigned (*lk_fp)(unsigned) = lk_g;\n"
   "static unsigned lk_h(unsigned x) { lk_flag b = x > 2u; unsigned y; memcpy(&y, &x, 4); return lk_g(y) + b; }\n"
+  "static unsigned lk_q(const unsigned *p, const char *const *v) { return p[0] + (unsigned)v[0][0]; }\n"
+  "const unsigned *lk_at(const unsigned *p) { return p + 1; }\n"
   "unsigned lk_entry(unsigned s) {\n"
-  "  return lk_h(s) + lk_tab[0].y + (unsigned)lk_s[1] + *lk_mp + lk_ap[2] + *lk_kp + (unsigned)lk_d;\n"
+  "  unsigned (*q)(const unsigned *, const char *const *) = lk_q;\n"
+  "  return lk_h(s) + lk_tab[0].y + (unsigned)lk_s[1] + *lk_mp + lk_ap[2] + *lk_kp + (unsigned)lk_d\n"
+  "         + q(lk_arr, &lk_s) + *lk_at(lk_arr);\n"
   "}\n";
 
 /* One compile under the fault allocator (fail_at 0: none fails) -- the linkable artifact's when `linkable`. A failure

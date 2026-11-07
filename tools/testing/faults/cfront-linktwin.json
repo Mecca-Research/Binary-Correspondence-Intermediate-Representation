@@ -142,8 +142,8 @@
     {
       "expects": "test_a_static_function_calling_an_exported_one_links_on_both_rails",
       "label": "LT18 the oracle keeps `static` on every line of a static function's text",
-      "new": "            if not ln.startswith(\"static \") or lowered.functions[name].static_fn\n",
-      "old": "            if not ln.startswith(\"static \") or _line_fn(ln, names) in static_fns\n",
+      "new": "            or lowered.functions[name].static_fn\n",
+      "old": "            or _line_fn(ln, names) in static_fns\n",
       "path": "bcir/frontends/cfront/emit.py"
     },
     {
