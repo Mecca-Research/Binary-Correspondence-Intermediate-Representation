@@ -136,7 +136,9 @@ The BCIR Make gates (`build-make`, `build-parity`, `build-section-parity`) run `
 tasks at once -- BCIR Make's, then their own independent runs (the sections' shell runs, each
 fixture's rows), reported in a fixed order -- and reserve as many processors (`PROCESSORS
 ${BCIR_GATE_WORKERS}`). The cache variable is 2, the local cap; CI's 4-vCPU runners configure 4
-and run CTest at `-j 4` (`test_each_make_gate_reserves_the_workers_it_runs`). `build-make` runs in
+and run the build label at `-j 4` (`test_each_make_gate_reserves_the_workers_it_runs`). The section
+label stays at `-j 2` there: gcc's ThreadSanitizer build of the decoder trainer's section, its
+long pole, ran 2.6 times as long beside three other sections as beside one. `build-make` runs in
 a job of its own on CI, so the longest gate no longer queues behind the others on one runner.
 
 ## 5. Dependencies and submodules

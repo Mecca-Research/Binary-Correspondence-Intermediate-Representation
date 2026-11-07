@@ -1386,8 +1386,12 @@ jobs:
       - name: Manifest reconciliation + dependency index + build parity + section parity (ctest, label build)
         run: ctest --test-dir build/cmake-${{ matrix.compiler }} -L build -E '^build-make$' -j 4 --output-on-failure
 
+      # Two at a time, not four: the decoder trainer's ThreadSanitizer section is the label's long
+      # pole, and gcc's build of it ran 588 s beside three other sections against 225 s beside one
+      # (its race harness reports when two pool threads split a conflicting pair, which is the
+      # run's timing). The label took 590 s on gcc at -j 4 and 251 s at -j 2; clang's 95 s and 115 s.
       - name: The migrated gate sections over the CMake-built harnesses (ctest, label section)
-        run: ctest --test-dir build/cmake-${{ matrix.compiler }} -L section -j 4 --output-on-failure
+        run: ctest --test-dir build/cmake-${{ matrix.compiler }} -L section -j 2 --output-on-failure
 
       - name: The train rail (ctest, label train; gcc cell) -- the corpus recipe trained for BCIR_TRAIN_STEPS steps on the native trainer built here
         # TRAIN-RAIL: `train-corpus` runs tools/models/train_rail.sh under the configured compiler

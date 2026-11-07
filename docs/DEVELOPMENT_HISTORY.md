@@ -300,8 +300,11 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
   - The workflow triggers on pull requests, on pushes to `main` and by hand
     (`test_ci_runs_once_per_change` holds the three).
   - `BCIR_GATE_WORKERS` (2, the local cap; > 0) sets the BCIR Make gates' tasks and the
-    processors CTest reserves for them; CI configures 4 and runs CTest, the build and the fuzz
-    preset at `-j 4`. `section_parity.py` runs every section's two runs on that many workers,
+    processors CTest reserves for them; CI configures 4 and runs the build, the build label and
+    the fuzz preset at `-j 4`. The section label stays at `-j 2`: gcc's ThreadSanitizer build of
+    the decoder trainer's section ran 588 s beside three other sections against 225 s beside one
+    (its race harness reports when two pool threads split a conflicting pair, the run's timing),
+    and the label took 590 s at `-j 4` against 251 s at `-j 2`. `section_parity.py` runs every section's two runs on that many workers,
     `make_gate.py` its sections' shell runs, `build_parity.py` its fixtures (each in a working
     directory of its own); each reports in a fixed order, and refuses a count below one before it
     builds (`test_each_make_gate_reserves_the_workers_it_runs`,
