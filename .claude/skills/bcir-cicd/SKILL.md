@@ -90,7 +90,12 @@ Apply them to any new checker, scanner, campaign, or CI step.
    asserting only the honest path passes against every defect. When
    parallelizing or speeding up CI, re-inject faults to prove the sped-up gates
    still fire — a `grep -q` under `pipefail` once reported a *found* pattern as
-   a failure here.
+   a failure here, and did again (2026-11-07) when sections first ran side by
+   side: bash writes `printf "$multi_line"` one line at a time, so an early
+   reader can exit between two writes whatever the buffer size. Under
+   `pipefail`, read every line (`grep PAT >/dev/null`, `sed -n '1,Np'`), never
+   `grep -q`/`-m`/`-l` or `head` (held across `tools/` by
+   `test_no_gate_pipes_a_writer_into_an_early_exiting_reader_under_pipefail`).
 5. **Bounds are enforced where the data enters.** *(L3)* A declared cap that is checked
    after materialization is not a cap. Enumerate incrementally, bound reads
    before believing declared sizes, and treat "cannot inspect" (encrypted,

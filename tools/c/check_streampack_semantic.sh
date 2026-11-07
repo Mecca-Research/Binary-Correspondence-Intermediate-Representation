@@ -57,7 +57,7 @@ m=vector_add(1024); pack=hydrate(m, optimize(m, TargetProfile.x86_avx512(), Thet
 open('${tmp}/good.bin','wb').write(encode(pack))
 " || { echo "  FAIL: python encode (good pack)"; exit 1; }
 good="$("${tmp}/test_sem" "${tmp}/good.bin")"
-echo "${good}" | grep -q "^status=0 name=BCIR_OK" \
+echo "${good}" | grep "^status=0 name=BCIR_OK" >/dev/null \
   && echo "  PASS clean pack accepted (status=BCIR_OK, no false positive)" \
   || { echo "  FAIL: clean pack rejected"; echo "${good}"; exit 1; }
 # ... and against its own live registry the v4 per-resource check is clean too.
@@ -68,7 +68,7 @@ print(' '.join(f'{r.rid}:{r.map_gen}:{r.data_gen}' for r in sorted(m.resources.v
 ")" || { echo "  FAIL: python live table"; exit 1; }
 # shellcheck disable=SC2086
 good="$("${tmp}/test_sem" "${tmp}/good.bin" --live ${good_live})"
-echo "${good}" | grep -q "^vector=BCIR_OK" && echo "${good}" | grep -q "^exec_vector=BCIR_OK" \
+echo "${good}" | grep "^vector=BCIR_OK" >/dev/null && echo "${good}" | grep "^exec_vector=BCIR_OK" >/dev/null \
   && echo "  PASS clean v4 pack accepted against its live registry (vector=BCIR_OK, no false positive)" \
   || { echo "  FAIL: clean v4 pack rejected against its live registry"; echo "${good}"; exit 1; }
 
@@ -265,7 +265,7 @@ print(chr(10).join(lines))
   mismatch=0
   while IFS= read -r line; do
     [ -z "${line}" ] && continue
-    echo "${cdec}" | grep -qxF "${line}" || { echo "    DIFF ${variant}: C decode missing '${line}'"; mismatch=1; }
+    echo "${cdec}" | grep -xF "${line}" >/dev/null || { echo "    DIFF ${variant}: C decode missing '${line}'"; mismatch=1; }
   done <<< "${pydec}"
   if [ "${mismatch}" = "0" ]; then
     echo "  PASS ${variant}: C decode == Python decode on all fields (lane/dispatch/channel/generations agree)"

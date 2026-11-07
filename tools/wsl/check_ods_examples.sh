@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/bcir-ods.XXXXXXXX")" || exit 1
 trap 'rm -rf -- "${TMP_ROOT}"' EXIT
 ERR="${TMP_ROOT}/ods.err"
-BO="${BCIR_OPT:-$(find "${ROOT}/build/mlir-build" -name bcir-opt -type f 2>/dev/null | head -1)}"
+BO="${BCIR_OPT:-$(find "${ROOT}/build/mlir-build" -name bcir-opt -type f 2>/dev/null | sed -n '1p')}"
 if [ -z "${BO}" ]; then
   echo "bcir-opt not built; run tools/wsl/build_mlir.sh first (skipping)." >&2
   exit 0

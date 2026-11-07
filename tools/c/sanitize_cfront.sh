@@ -78,7 +78,7 @@ run_san_engine() {  # <key> <label> <san-binary>
       # behavior, not a failure). Only a raw crash (rc>=128: SIGSEGV/SIGABRT not caught by ASan) OR any
       # sanitizer diagnostic (incl. ASan's rc-1 `stack-overflow` DEADLYSIGNAL, caught by the grep) is a FAIL.
       if [ "${rc}" -ge 128 ] || grep -qiE "AddressSanitizer|UndefinedBehaviorSanitizer|runtime error|heap-buffer-overflow|global-buffer-overflow|stack-overflow|use-after-free|stack-buffer|out of bounds" "${errf}"; then
-        echo "  FAIL: ${label} sanitizer diagnostic on fixture ${fx}${mode:+ ${mode}} (rc=${rc}):"; sed 's/^/    /' "${errf}" | head -25; ffail=1; fail=1
+        echo "  FAIL: ${label} sanitizer diagnostic on fixture ${fx}${mode:+ ${mode}} (rc=${rc}):"; sed 's/^/    /' "${errf}" | sed -n '1,25p'; ffail=1; fail=1
       fi
     done
   done
@@ -169,7 +169,7 @@ PY
     errf="${tmp}/secerr_${key}.txt"; outf="${tmp}/secout_${key}.txt"
     ASAN_OPTIONS="halt_on_error=1:detect_leaks=1" "${bin}" "${C}/${sec}" >"${outf}" 2>"${errf}"; rc=$?
     if [ "${rc}" -ge 128 ] || grep -qiE "AddressSanitizer|UndefinedBehaviorSanitizer|runtime error|stack-buffer|heap-buffer-overflow|global-buffer-overflow|stack-overflow|use-after-free|out of bounds|detected memory leaks" "${errf}"; then
-      echo "  FAIL: ${label} adversarial fixture ${sec} tripped the sanitizer (rc=${rc}):"; sed 's/^/    /' "${errf}" | head -25; adv_fail=1; fail=1
+      echo "  FAIL: ${label} adversarial fixture ${sec} tripped the sanitizer (rc=${rc}):"; sed 's/^/    /' "${errf}" | sed -n '1,25p'; adv_fail=1; fail=1
     fi
     # the two that must compile clean do (CF-BUF): sigoverflow's 60-parameter signature once marked its whole
     # emit impossible (`EMIT-ERR`, rc 1), which passed this stage because only a crash failed it
@@ -347,7 +347,7 @@ else
   else
     # A representative subset: the first VG_SUBSET fixtures (the foundational ones -- regmap/array/deref/
     # callgraph/branch/loops -- exercise lex/parse/lower/emit broadly).
-    VG_FIX="$(printf '%s\n' ${FIXTURES} | head -n "${VG_SUBSET}")"
+    VG_FIX="$(printf '%s\n' ${FIXTURES} | sed -n "1,${VG_SUBSET}p")"
     nvg=0; vgfail=0
     echo "[sanitize] valgrind (--leak-check=full, definite leaks) over ${VG_SUBSET} fixtures (plain -O0 -g twin)"
     for fx in ${VG_FIX}; do
@@ -355,7 +355,7 @@ else
       valgrind --leak-check=full --error-exitcode=1 --errors-for-leak-kinds=definite -q \
         "${PLAIN}" "${C}/${fx}" >/dev/null 2>"${tmp}/vg.txt"
       if [ $? -ne 0 ]; then
-        echo "  FAIL: valgrind found a definite leak / invalid access on ${fx}:"; sed 's/^/    /' "${tmp}/vg.txt" | head -30; vgfail=1; fail=1
+        echo "  FAIL: valgrind found a definite leak / invalid access on ${fx}:"; sed 's/^/    /' "${tmp}/vg.txt" | sed -n '1,30p'; vgfail=1; fail=1
       fi
     done
     [ "${vgfail}" -eq 0 ] && echo "  PASS valgrind (${nvg} fixtures, no definite leak / invalid access)"

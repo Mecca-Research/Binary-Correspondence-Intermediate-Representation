@@ -68,7 +68,7 @@ from bcir.abi import encode
 m=vector_add(1024); pack=hydrate(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()))
 open('${tmp}/pack.bin','wb').write(encode(pack))
 " || { echo "  FAIL: python encode"; exit 1; }
-"${tmp}/smoke" "${tmp}/pack.bin" | grep -q "^OK$" || { echo "  FAIL: ASan decode"; exit 1; }
+"${tmp}/smoke" "${tmp}/pack.bin" | grep "^OK$" >/dev/null || { echo "  FAIL: ASan decode"; exit 1; }
 # Truncations + single-byte flips must be rejected cleanly (no ASan/UBSan abort).
 python3 - "${tmp}/pack.bin" "${tmp}" <<'PY'
 import sys, os

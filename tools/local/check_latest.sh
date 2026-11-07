@@ -85,8 +85,8 @@ leg_confirm() {
     set -e
     export PATH="${LATEST_PATH}" LLVM_BIN
     case "$(clang --version)" in
-      *"clang version 23."*) clang --version | head -1 ;;
-      *) echo "clang on PATH is not 23: $(clang --version | head -1)"; exit 1 ;;
+      *"clang version 23."*) clang --version | sed -n '1p' ;;
+      *) echo "clang on PATH is not 23: $(clang --version | sed -n '1p')"; exit 1 ;;
     esac
     case "$(node --version)" in
       v24.*) echo "node $(node --version)" ;;
@@ -182,7 +182,7 @@ detail() {  # <leg> <log> -> the one line a reader needs from it
     status) grep -E '^latest-toolchain: [A-Z]+$' "$2" | tail -1 ;;
     confirm) grep -E 'resolved|^node v|^python 3|runtimes|sanitizer thread' "$2" | tr '\n' ' ' | cut -c1-160 ;;
     cmake) printf '%s; %s; warnings=%s' "$(grep -E 'tests passed' "$2" | tr '\n' ' ')" \
-      "$(grep -E '^section-parity: [0-9]' "${ROOT}/build/cmake-clang23/Testing/Temporary/LastTest.log" 2>/dev/null | head -1)" \
+      "$(grep -E '^section-parity: [0-9]' "${ROOT}/build/cmake-clang23/Testing/Temporary/LastTest.log" 2>/dev/null | sed -n '1p')" \
       "$(grep -c 'warning:' "$2")" ;;
     fuzz|mlir) grep -E 'tests passed' "$2" | tail -1 ;;
     analyze) grep -E '^analyze-hosted: ' "$2" | tail -1 | cut -c1-160 ;;
@@ -210,7 +210,7 @@ for leg in ${selected}; do
   summary+=("$(printf '%-9s %-7s %5ss  %s' "${leg}" "${verdict}" "$(( $(date +%s) - started ))" "$(detail "${leg}" "${log}")")")
   echo "check_latest:   ${summary[-1]}"
 done
-echo "check_latest: summary (LLVM $("${LLVM_BIN}/clang" --version | sed -n 's/.*clang version \([0-9.]*\).*/\1/p' | head -1), Node $("${BCIR_NODE_BIN}/node" --version), Python $("${PY_LATEST}" --version 2>&1 | cut -d' ' -f2))"
+echo "check_latest: summary (LLVM $("${LLVM_BIN}/clang" --version | sed -n 's/.*clang version \([0-9.]*\).*/\1/p' | sed -n '1p'), Node $("${BCIR_NODE_BIN}/node" --version), Python $("${PY_LATEST}" --version 2>&1 | cut -d' ' -f2))"
 for line in "${summary[@]}"; do echo "  ${line}"; done
 if [ "${failed}" -ne 0 ]; then
   echo "check_latest: FAIL (logs: ${out})"

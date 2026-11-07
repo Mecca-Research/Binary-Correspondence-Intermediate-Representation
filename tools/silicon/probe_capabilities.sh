@@ -27,7 +27,7 @@ emit_s() { printf '  "%s": "%s",\n' "$1" "$2"; }
 yn() { if [ "$1" = "yes" ]; then printf 'true'; else printf 'false'; fi; }
 
 have_file() { [ -e "$1" ] && echo yes || echo no; }
-read_or() { if [ -r "$1" ]; then cat "$1" 2>/dev/null | head -1; else echo "$2"; fi; }
+read_or() { if [ -r "$1" ]; then cat "$1" 2>/dev/null | sed -n '1p'; else echo "$2"; fi; }
 
 printf '{\n'
 

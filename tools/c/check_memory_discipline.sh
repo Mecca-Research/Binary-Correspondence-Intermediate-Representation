@@ -50,7 +50,7 @@ esac
 
 strict=(-std=c11 -Wall -Wextra -Wpedantic -Werror "${host_defines[@]}" -I "${C}")
 compat_warnings=(-Wno-misleading-indentation)
-if ! "${CC_BIN}" --version 2>/dev/null | head -n 1 | grep -qi clang; then
+if ! "${CC_BIN}" --version 2>/dev/null | sed -n '1p' | grep -i clang >/dev/null; then
   compat_warnings+=(-Wno-format-truncation)
 fi
 # The strict per-unit compile takes the same compatibility warnings the harness builds below

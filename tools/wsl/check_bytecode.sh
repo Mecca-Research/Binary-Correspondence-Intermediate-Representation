@@ -12,7 +12,7 @@ TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/bcir-bytecode.XXXXXXXX")" || exit 1
 trap 'rm -rf -- "${TMP_ROOT}"' EXIT
 ERR="${TMP_ROOT}/bytecode.err"
 BYTECODE="${TMP_ROOT}/module.mlirbc"
-BO="${BCIR_OPT:-$(find "${ROOT}/build/mlir-build" -name bcir-opt -type f 2>/dev/null | head -1)}"
+BO="${BCIR_OPT:-$(find "${ROOT}/build/mlir-build" -name bcir-opt -type f 2>/dev/null | sed -n '1p')}"
 if [ -z "${BO}" ]; then
   echo "bcir-opt not built; run tools/wsl/build_mlir.sh first (skipping)." >&2
   exit 0
@@ -37,7 +37,7 @@ for f in "${MODULES[@]}"; do
   if [ "${txt}" = "${bc}" ]; then
     echo "  PASS ${base} ($(wc -c <"${BYTECODE}" | tr -d ' ') B)"
   else
-    echo "  FAIL bytecode round-trip differs ${base}"; diff <(echo "${txt}") <(echo "${bc}") | head; fail=1
+    echo "  FAIL bytecode round-trip differs ${base}"; diff <(echo "${txt}") <(echo "${bc}") | sed -n '1,10p'; fail=1
   fi
 done
 

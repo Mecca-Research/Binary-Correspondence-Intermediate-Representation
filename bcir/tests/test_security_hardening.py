@@ -97,73 +97,57 @@ def test_no_gate_pipes_a_writer_into_an_early_exiting_reader_under_pipefail() ->
 
     `printf '%s' "$blob" | grep -q PATTERN` looks exact and is a trap. `grep -q` exits at the
     first match, the writer then takes SIGPIPE, and under `set -o pipefail` the pipeline's
-    status becomes 141 — so *finding* the pattern fails the check. It stays invisible while
-    the blob fits the 64 KiB pipe buffer, which means it surfaces when some unrelated object
-    grows rather than when the thing under test changes.
+    status becomes 141 — so *finding* the pattern fails the check. `head` does the same to a
+    writer with more to say, and inside `VAR="$(writer | head -1)"` under `set -e` the 141
+    ends the script.
 
-    This is not hypothetical: it fired on `#jerindex` the moment per-tier instantiation made
-    the disassembly exceed the buffer, and reported "the tier fell back to scalar" about an
-    object that contained four NEON instructions.
+    It fired twice. On `#jerindex`, the moment per-tier instantiation made a disassembly exceed
+    the 64 KiB pipe buffer, it reported "the tier fell back to scalar" about an object that
+    contained four NEON instructions. And the buffer was never the whole condition: bash
+    line-buffers its builtins' output, so `printf '%s' "$multi_line"` writes once per line, and
+    a reader that matches an early line can exit before the next write -- a race no buffer size
+    closes. A quiet host almost never shows its window; when the section-parity gate began
+    running sections side by side, the `recover` section's CMake run failed with both of its
+    patterns in the output it printed (2026-11-07).
 
-    The fix in both gates is to write to a file and grep the file, so this refuses the shape
-    rather than trusting everyone to remember.
-
-    Scoped to **whole-object disassembly**, which is the writer that is unbounded and grows
-    with the code under test. A small writer is not safe either: bash line-buffers its builtins'
-    output, so `printf '%s' "$multi_line"` writes once per line, and a reader that matches an
-    early line can exit before the next write -- a race no buffer size closes. It fired on the
-    `recover` section once its runs shared a runner (2026-11-07), and the section scripts are
-    held to the shape by `test_no_section_pipes_into_an_early_exiting_reader`. The same shape
-    remains elsewhere in `tools/`, outside both scopes.
+    So no script under `tools/` that sets `pipefail` ends a pipeline in a reader that stops
+    early -- `grep -q`, `-m`, `-l` or their long spellings, or `head`. Reading every line
+    (`grep PATTERN >/dev/null`, `sed -n '1,10p'`) keeps the status (a match is 0, none is 1, a
+    failing writer still fails the pipeline) and closes the race whatever the writer. The same
+    two-write pipeline, with a pause between its writes, shows both halves here wherever a
+    POSIX bash is available. A script without `pipefail` is out of scope: there the pipeline's
+    status is its last command's, and a writer's SIGPIPE cannot reach it.
     """
-    offender = re.compile(r"\|\s*(?:grep\s+-[a-zA-Z]*q|head\b)")
-    unbounded = re.compile(r"objdump|disasm")
-    seen = 0
+    reader = re.compile(
+        r"(?<!\|)\|(?!\|)\s*(?:grep\s+(?:-[a-zA-Z]*[qml][a-zA-Z0-9]*\b|--(?:quiet|silent|max-count|"
+        r"files-with-matches)\b)|head\b)"
+    )
+    scanned: list[str] = []
+    full_readers = 0
     for script in sorted((_ROOT / "tools").rglob("*.sh")):
         text = script.read_text(encoding="utf-8")
-        if "pipefail" not in text or "objdump" not in text:
+        if "pipefail" not in text:
             continue
-        seen += 1
-        for number, line in enumerate(text.splitlines(), 1):
-            stripped = line.strip()
-            if stripped.startswith("#") or not unbounded.search(line):
-                continue
-            assert not offender.search(line), (
-                f"{script.relative_to(_ROOT)}:{number} pipes disassembly into an "
-                f"early-exiting reader under `pipefail`; a match will SIGPIPE the writer and "
-                f"be reported as a failure. Write to a file and read the file.\n  {stripped}"
-            )
-    assert seen >= 2, f"expected the two SIMD gates to disassemble; found {seen}"
-
-
-def test_no_section_pipes_into_an_early_exiting_reader() -> None:
-    """A gate section never ends a pipeline in a reader that stops early (`grep -q`, `grep -m`,
-    `head`): every section runs under `set -o pipefail`, so a writer that takes SIGPIPE after the
-    reader's match fails the check that matched. Bash line-buffers its builtins' output, so even
-    `printf '%s' "$out" | grep -q "^21$"` writes once per line, and the reader can match the first
-    line and exit before the second write. On a quiet host the window is too short to see; when
-    the section-parity gate began running sections side by side, the `recover` section's CMake
-    run failed with both patterns in the output it printed (2026-11-07). Reading every line --
-    `grep PATTERN >/dev/null`, `sed -n '1,10p'` -- keeps the status (a match is 0, none is 1, a
-    failing writer still fails the pipeline) and closes the race. The same pipeline with a pause
-    between its writes shows both halves here, where a POSIX bash is available."""
-    reader = re.compile(r"(?<!\|)\|(?!\|)\s*(?:grep\s+-[a-zA-Z]*[qm]|head\b)")
-    sections = sorted((_ROOT / "tools" / "c" / "sections").glob("*.sh"))
-    assert len(sections) >= 100, "the section scripts moved"
-    full_readers = 0
-    for script in sections:
-        text = script.read_text(encoding="utf-8")
-        assert "pipefail" in text, f"{script.name} does not run under pipefail"
+        scanned.append(script.relative_to(_ROOT).as_posix())
         for number, line in enumerate(text.splitlines(), 1):
             if line.strip().startswith("#"):
                 continue
             assert not reader.search(line), (
-                f"{script.name}:{number} ends a pipeline in a reader that exits early; under "
-                f"`pipefail` a match can be reported as a failure. Read every line.\n  {line.strip()}"
+                f"{script.relative_to(_ROOT)}:{number} ends a pipeline in a reader that exits "
+                f"early under `pipefail`; a match can SIGPIPE the writer and be reported as a "
+                f"failure. Read every line (grep ... >/dev/null, sed -n '1,Np').\n  {line.strip()}"
             )
             full_readers += len(re.findall(r"\|\s*grep [^|]*>/dev/null", line))
-    assert full_readers >= 20, (
-        "the sections' pattern checks are not where this test looks",
+    sections = [s for s in scanned if s.startswith("tools/c/sections/")]
+    assert len(sections) >= 100 and len(scanned) - len(sections) >= 15, (
+        "the scan no longer reaches the gate scripts",
+        len(sections),
+        len(scanned),
+    )
+    simd = [s for s in scanned if "objdump" in (_ROOT / s).read_text(encoding="utf-8")]
+    assert len(simd) >= 2, f"expected the two SIMD gates to disassemble; found {simd}"
+    assert full_readers >= 50, (
+        "the gates' pattern checks are not where this test looks",
         full_readers,
     )
     bash = shutil.which("bash")

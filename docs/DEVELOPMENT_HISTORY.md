@@ -336,9 +336,17 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     `pipefail` the match read as a failure. A quiet host never shows the window; the load did. The
     disassembly guard had left small writers alone as unable to fill a pipe buffer -- a premise
     that misses line buffering. Every section's early reader (30 `grep -q`, 4 `head`) now reads
-    every line (`grep ... >/dev/null`, `sed -n '1,10p'`), which keeps each status
-    (`test_no_section_pipes_into_an_early_exiting_reader`, which also shows both halves with a
-    pause between two writes).
+    every line (`grep ... >/dev/null`, `sed -n '1,10p'`), which keeps each status.
+  - The same shape in the rest of `tools/` closed alike: 51 early readers in 17 gate scripts (the C
+    runtime, memory-discipline, StreamPack-semantic, fuzz, sanitizer and analyzer gates; the MLIR
+    pass, bytecode and asm-lowering checks; the IRDL corpus; `check_latest.sh`; the silicon
+    probes), among them `BO="$(find ... | head -1)"`, which under `set -e` ends the script when
+    `find` takes SIGPIPE. One predicate now holds every script under `tools/` that sets `pipefail`
+    -- 140 of them -- to readers that read every line, refusing `grep -q`, `-m`, `-l`, their long
+    spellings and `head`: `test_no_gate_pipes_a_writer_into_an_early_exiting_reader_under_pipefail`,
+    which had held only disassembly, and which also shows both halves with a pause between two
+    writes. Scripts without `pipefail` are out of its scope: there a writer's SIGPIPE cannot
+    reach the pipeline's status.
 
 - **2026-10-20 — UDSI-PLAN universal interface blueprint:** added the
   [universal serialization/interface roadmap](BCIR_UNIVERSAL_INTERFACE_ROADMAP.md), connecting

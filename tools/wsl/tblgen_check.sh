@@ -26,7 +26,7 @@ if [ -z "${MLIR_INCLUDE:-}" ]; then
 fi
 : "${MLIR_INCLUDE:?could not find MLIR headers; set MLIR_INCLUDE to the dir holding mlir/IR/OpBase.td}"
 
-echo "[tblgen] $(${MLIR_TBLGEN} --version | head -1)"
+echo "[tblgen] $(${MLIR_TBLGEN} --version | sed -n '1p')"
 echo "[tblgen] include: ${MLIR_INCLUDE}"
 I=(-I "${INC}" -I "${MLIR_INCLUDE}")
 run() { echo "[tblgen] $1"; "${MLIR_TBLGEN}" "$@" "${I[@]}" -o /dev/null; }

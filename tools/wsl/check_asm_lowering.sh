@@ -22,7 +22,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BO="${BCIR_OPT:-$(find "${ROOT}/build/mlir-build" -name bcir-opt -type f 2>/dev/null | head -1)}"
+BO="${BCIR_OPT:-$(find "${ROOT}/build/mlir-build" -name bcir-opt -type f 2>/dev/null | sed -n '1p')}"
 FIX="${ROOT}/mlir/test/passes/asm_lowering_smoke.mlir"
 
 # Resolve mlir-translate + llc as one coherent installation. This reuses the same
@@ -122,15 +122,15 @@ if [ "${asm_smoke_fail}" -eq 0 ]; then
   irq32_body="$(sed -n '/^bcir_irq32:/,/^[[:space:]]*\.size[[:space:]]\+bcir_irq32/p' "${ASM}")"
   pf_body="$(sed -n '/^bcir_page_fault:/,/^[[:space:]]*\.size[[:space:]]\+bcir_page_fault/p' "${ASM}")"
   boot_body="$(sed -n '/^bcir_boot:/,/^[[:space:]]*\.size[[:space:]]\+bcir_boot/p' "${ASM}")"
-  if printf '%s\n' "${boot_body}" | grep -Eq 'cli' &&
-     printf '%s\n' "${boot_body}" | grep -Eq 'andq[[:space:]]+\$-16, %rsp' &&
-     printf '%s\n' "${boot_body}" | grep -Eq 'pushq[[:space:]]+\$0'; then
+  if printf '%s\n' "${boot_body}" | grep -E 'cli' >/dev/null &&
+     printf '%s\n' "${boot_body}" | grep -E 'andq[[:space:]]+\$-16, %rsp' >/dev/null &&
+     printf '%s\n' "${boot_body}" | grep -E 'pushq[[:space:]]+\$0' >/dev/null; then
     echo "    ok   entry invariant -> interrupts masked before aligned stack handoff"
   else
     echo "    MISS entry invariant (cli + alignment + sentinel required)"; asm_smoke_fail=1
   fi
-  if printf '%s\n' "${irq32_body}" | grep -Eq 'pushq[[:space:]]+\$0' &&
-     ! printf '%s\n' "${pf_body}" | grep -Eq 'pushq[[:space:]]+\$0'; then
+  if printf '%s\n' "${irq32_body}" | grep -E 'pushq[[:space:]]+\$0' >/dev/null &&
+     ! printf '%s\n' "${pf_body}" | grep -E 'pushq[[:space:]]+\$0' >/dev/null; then
     echo "    ok   interrupt frame normalization -> IRQ synthetic error / #PF hardware error"
   else
     echo "    MISS interrupt frame normalization (IRQ32 must push zero; #PF must not)"; asm_smoke_fail=1
@@ -140,9 +140,9 @@ if [ "${asm_smoke_fail}" -eq 0 ]; then
   for vector in 10 11 12 13 17 21 30; do
     body="$(sed -n "/^bcir_error${vector}:/,/^[[:space:]]*\\.size[[:space:]]\\+bcir_error${vector}/p" "${ASM}")"
     if [ -z "${body}" ] ||
-       ! printf '%s\n' "${body}" | grep -Eq "pushq[[:space:]]+\\\$${vector}([^0-9]|$)"; then
+       ! printf '%s\n' "${body}" | grep -E "pushq[[:space:]]+\\\$${vector}([^0-9]|$)" >/dev/null; then
       echo "    MISS vector ${vector}: trampoline or vector push is absent"; error_shape_fail=1
-    elif printf '%s\n' "${body}" | grep -Eq 'pushq[[:space:]]+\$0'; then
+    elif printf '%s\n' "${body}" | grep -E 'pushq[[:space:]]+\$0' >/dev/null; then
       echo "    MISS vector ${vector}: hardware error code was double-normalized"; error_shape_fail=1
     fi
   done
@@ -155,13 +155,13 @@ if [ "${asm_smoke_fail}" -eq 0 ]; then
   # Entry and exit swapgs must be paired from the original private RPL. The
   # mutable return CS is checked against it so a handler cannot change iret shape.
   if [ "$(printf '%s\n' "${irq32_body}" | grep -Ec 'swapgs')" -eq 2 ] &&
-     printf '%s\n' "${irq32_body}" | grep -Eq 'movq[[:space:]]+144\(%rsp\), %r13' &&
-     printf '%s\n' "${irq32_body}" | grep -Eq 'cmpq[[:space:]]+\$3, %r13' &&
-     printf '%s\n' "${irq32_body}" | grep -Eq 'cmpq[[:space:]]+%r13, %rax' &&
-     printf '%s\n' "${irq32_body}" | grep -Eq 'testq[[:space:]]+%r13, %r13' &&
-     printf '%s\n' "${irq32_body}" | grep -Eq 'lfence' &&
-     printf '%s\n' "${irq32_body}" | grep -Eq 'ud2' &&
-     printf '%s\n' "${irq32_body}" | grep -Eq 'cli'; then
+     printf '%s\n' "${irq32_body}" | grep -E 'movq[[:space:]]+144\(%rsp\), %r13' >/dev/null &&
+     printf '%s\n' "${irq32_body}" | grep -E 'cmpq[[:space:]]+\$3, %r13' >/dev/null &&
+     printf '%s\n' "${irq32_body}" | grep -E 'cmpq[[:space:]]+%r13, %rax' >/dev/null &&
+     printf '%s\n' "${irq32_body}" | grep -E 'testq[[:space:]]+%r13, %r13' >/dev/null &&
+     printf '%s\n' "${irq32_body}" | grep -E 'lfence' >/dev/null &&
+     printf '%s\n' "${irq32_body}" | grep -E 'ud2' >/dev/null &&
+     printf '%s\n' "${irq32_body}" | grep -E 'cli' >/dev/null; then
     echo "    ok   entry policy -> private RPL, paired swapgs, class guard, cli + lfence"
   else
     echo "    MISS immutable swapgs pairing"; asm_smoke_fail=1
