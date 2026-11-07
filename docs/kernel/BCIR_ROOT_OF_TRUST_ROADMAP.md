@@ -3,7 +3,9 @@
 > **Status: research plan (2026-11-07); nothing built.** The owner's direction: define how a silicon
 > root of trust (RoT) with a Trusted Platform Module (TPM) carries BCIR's security workload, from
 > pre-boot to the running kernel. The mechanisms below are candidates, each cited to its public
-> source; RoT0's research slice decides between them before anything is built. Roadmaps own the
+> source; RoT0's research slice decides between them before anything is built. §6 holds RoT0's
+> draft decisions (the owner's proposal of 2026-11-07, with what checking it against the sources
+> corrected). Roadmaps own the
 > future, [`DEVELOPMENT_HISTORY.md`](../DEVELOPMENT_HISTORY.md) the past. This program sits beside
 > the firmware program ([driver roadmap §5.7](BCIR_DRIVER_KERNEL_ROADMAP.md#57-firmware-program-uefi-acpi-smbios-and-tpm-planned))
 > and follows its order (§5.6); it is not started.
@@ -42,9 +44,8 @@ contiguous artifact. The UAPI group's specification has the stub measure the sec
 canonical order into PCR 11. It carries a signed set of expected PCR 11 values (`.pcrsig`) and the
 key that signs them (`.pcrpkey`), so a disk key can be sealed to the signer rather than to one
 image's hash. systemd-stub is the reference stub, and `systemd-measure` computes the expected
-values. For BCIR-Linux the UKI is the image. For the native runtime, RoT3 decides between a UKI
-whose sections carry the BCIR loader, runtime and initial execution portfolio, which standard
-tooling can then verify and measure, and a BCAB bundle inside one such section.
+values. For BCIR-Linux the UKI is the image. For the native runtime, RoT0's draft (§6.4) is one
+BCAB bundle in one section, which the stub that loads it measures.
 
 **Dynamic launch.** A DRTM re-establishes trust after firmware ran, so firmware drops out of the
 launched kernel's trusted base. PCRs 17–22 hold all ones at boot and only the launch resets them,
@@ -55,7 +56,7 @@ stage needs physical rigs.
 ## 3. What BCIR defines
 
 ### 3.1 The trust registry
-One model, generated views, as `uart_model.py` is for the UART:
+One model, generated views, as `uart_model.py` is for the UART (a `pcr_model.py` beside it):
 - **The PCR map:** each measured artifact class with its PCR, event type and hash banks, for the
   firmware range, the OS range and the dynamic range. Machine-readable, as the firmware program
   requires.
@@ -90,7 +91,8 @@ Advisory first, as R3-uart is, then gating once the rungs below give evidence:
    is silent.
 
 ### 3.4 The TPM driver package
-The TPM is a device like the UART and climbs the same D0–D7 ladder:
+The TPM is a device like the UART and climbs the same D0–D7 ladder, as one freestanding C driver,
+`bcir_tpm`:
 - the TIS and CRB interfaces, localities, command and response framing, and timeouts on the
   event-timer substrate;
 - polled first, so the early-boot driver runs before interrupts exist;
@@ -136,17 +138,117 @@ Full-SoC Verilator builds are heavy, so CI carries them, not the bounded local h
 | **RoT7 — RoT simulation** | OpenTitan and Caliptra in Verilator (E1); DICE layers mapped onto the manifest | the RoT's measurements land in the manifest, reproducibly |
 | **RoT8 — dynamic launch** | TXT, SKINIT or Arm DRTM on a physical rig (E3), tracking TrenchBoot upstream | a launch resets PCRs 17–22 and the launched runtime's measurement is quoted |
 
-## 6. Open questions RoT0 answers
-- **Which root of trust per target class:** a discrete TPM, a firmware TPM or an integrated RoT;
-  OpenTitan or Caliptra. Decided by threat model and platform: PC, datacenter SoC or embedded.
-- **Where BCIR's artifact measurements go** in the OS range without colliding with the
-  conventions Linux and systemd already use. The UAPI group keeps a registry of Linux PCR usage.
-- **UKI sections or a BCAB bundle** for the native runtime's image (§2).
-- **Whether DRTM earns its cost** on each target, given how large its firmware trusted base is.
+## 6. RoT0's draft decisions (2026-11-07)
+
+The owner's proposal, each point checked against its sources. RoT0 confirms or revises each one
+against its threat model before RoT1 builds on it.
+
+### 6.1 One driver, a root of trust per target class
+
+`bcir_tpm` stays uniform across targets: the TIS (FIFO) and CRB register models over MMIO and SPI,
+generated from the trust registry. What the silicon root of trust is depends on the class:
+
+| Class | Silicon RoT (verification, RTM) | TPM 2.0 (storage, reporting) | Interface and bus |
+|---|---|---|---|
+| **E0 — cloud, QEMU** | none in silicon: OVMF's Secure Boot on a virtual platform, whose trust is the host's | swtpm | TIS or CRB over MMIO; the session protection of §6.2 exercised in CI |
+| **E1/E2 — open SoC, FPGA** (LiteX, VexRiscv) | OpenTitan Earl Grey | a TPM behind OpenTitan's SPI device, which carries the TPM-over-SPI transport (which TPM 2.0 implementation answers is RoT0's choice), or a firmware TPM | SPI TIS with §6.2's sessions |
+| **Datacenter and accelerator SoCs** | Caliptra 2.x: an integrated RTM with DICE and its DPE | a locality-isolated CRB TPM, or a discrete SPI TPM beside Caliptra | CRB over MMIO. Accelerators attest over DMTF's SPDM on MCTP; which block answers SPDM on a Caliptra SoC is to research |
+| **E3 — physical x86-64 and AArch64** | the platform's: Intel Boot Guard, AMD Platform Secure Boot, Pluton; on Arm, the platform's secure boot, with a firmware TPM in TrustZone | a discrete SPI TPM (preferred where the bus can be probed and recovered) or a firmware TPM (CRB) | CRB or TIS; §6.2's sessions mandatory |
+
+### 6.2 Bus protection needs a salt, not only a cipher
+
+The proposal: run salted, unbound HMAC sessions with AES-128-CFB parameter encryption inside the
+freestanding driver, adding AES to `bcir_base`, which already has SHA-256.
+
+**Correction.** The cipher alone protects nothing. Unsalted, a session's key derives from nonces
+the sniffer sees, so the salt does the work. The salt is encrypted to a TPM key whose public part
+the driver trusts, and an active interposer can substitute its own key for that one.
+
+Linux's model (6.10) is the reference:
+- it salts to a primary EC key derived from the null seed;
+- it exports that key's name, so the name can be certified against the TPM, which exposes a
+  substituted key;
+- a TPM reset changes the null seed and fails every session, which exposes a reset attack.
+
+`bcir_base` already has SHA-256, HMAC-SHA256 and Ed25519. Ed25519's curve is not one a TPM's ECC
+offers, so the sessions need, besides AES-128 (CFB uses only the forward cipher):
+- **KDFa** (SP 800-108 counter mode over HMAC-SHA256) and **KDFe** (SP 800-56A concatenation over
+  SHA-256);
+- for the salt, **NIST P-256 ECDH with a constant-time scalar multiplication**, or RSA-2048 OAEP to
+  an RSA key.
+
+Each lands with its standard's test vectors, as HMAC did with RFC 4231's. P-256 is the largest
+piece and the riskiest, because its scalar multiplication must run in constant time.
+
+### 6.3 PCR allocation: no collision with Linux and systemd
+
+The UAPI group's Linux TPM PCR Registry and systemd's documentation give the OS range as follows:
+- PCRs 8–9: the boot loader, the kernel command line and the initrd;
+- PCR 10: IMA;
+- PCR 11: the unified kernel image's sections, plus systemd's boot-phase strings;
+- PCR 12: command-line overrides, credentials and add-ons;
+- PCR 13: the initrd's system extensions;
+- PCR 14: shim's MOK;
+- PCR 15: system identity and volume keys.
+
+Outside it, PCR 16 is the debug PCR and PCR 23 is for application support.
+
+- **PCR 11 stays the UKI's**, as `systemd-measure` and `PolicyAuthorize` sealing expect. On
+  BCIR-Linux systemd also extends boot phases into it, so BCIR's predicted values include them, as
+  `systemd-measure`'s signed values do.
+- **The activation log.** The proposal puts it in PCR 23, which firmware and systemd leave alone.
+  **Correction:** software at locality 0 can reset PCR 23, and a quote does not show that a reset
+  happened, so PCR 23 alone can neither seal nor attest. (A Linux patch restricting it to the
+  kernel was proposed and not adopted.) RoT0 chooses between two candidates:
+  - **(a) An NV extend index**, an "NvPCR" as systemd implements them, outside the PCR space
+    altogether. NV indices can be deleted and recreated, so it needs an anchor; systemd anchors its
+    own.
+  - **(b) PCR 23**, with resets refused by the TPM's one owner (the native kernel; on BCIR-Linux
+    only if its kernel restricts them), and the log's head extended into a static PCR at quiescent
+    generation boundaries.
+
+  Either way a static PCR anchors the chain. On BCIR-Linux images without system extensions that
+  can be PCR 13. Otherwise it is a domain-separated event (`BCIR_ACTIVATE:<sha256>`) in PCR 11
+  after the stub, which BCIR's prediction carries.
+- **PCR 16 for `bcir-qualify`'s replayed extend chains**, which can be replayed without a reboot.
+  It is a test register only, never used to seal or attest.
+
+### 6.4 The native runtime's image: one BCAB section
+
+The decision is one BCAB v1 bundle in one PE section, rather than a section per artifact:
+- `bcir_artifact` reads it in place with no allocation;
+- R13 recomputes its module digests at the boundary;
+- the stub measures one contiguous span.
+
+**Correction:** systemd-stub measures only the sections its list names, so a section with a name of
+BCIR's own would go unmeasured. On BCIR-Linux the bundle therefore rides as the `.initrd`, which
+the stub measures into PCR 11. The native runtime's own stub measures its `.bcab` section into
+PCR 11 in the UKI's order.
+
+A section per artifact would win only if the boot loader had to choose among artifacts, which is
+the runtime control plane's job.
+
+### 6.5 Dynamic launch: last, opt-in, AMD first
+
+DRTM is deferred to RoT8, opt-in, on physical x86-64 and AArch64 only:
+- It is redundant on OpenTitan and Caliptra SoCs, whose first-stage firmware is BCIR's own and
+  verified by the RoT.
+- It cannot be verified on E0, where QEMU has none, and a skip is never reported as a pass.
+
+AMD's `SKINIT` comes first. It measures a Secure Loader Block of up to 64 KiB into PCR 17 with no
+vendor-signed module, where Intel TXT needs Intel's signed SINIT ACM. RoT0 records which current
+AMD platforms still provide it. RoT0–RoT7 rely on the static chain: PCRs 0–7 and 11.
+
+## 7. Open questions RoT0 answers
+- **Confirm or revise §6's drafts** against the threat model: the RoT and TPM per target class
+  (§6.1), the activation register (§6.3: an NV extend index or a guarded PCR 23, and its static
+  anchor), the image (§6.4) and DRTM's place (§6.5).
+- **Which TPM 2.0 implementation** answers on the open-SoC class, and which block answers SPDM on a
+  Caliptra SoC.
 - **Post-quantum signatures:** Caliptra signs firmware with ML-DSA; what the TPM side offers is to
   be researched, not assumed.
 
-## 7. Sources
+## 8. Sources
 Cited by section when a rung uses them:
 - the TCG PC Client Platform Firmware Profile, PC Client Platform TPM Profile, TPM 2.0 Library and
   D-RTM Architecture specifications;
@@ -154,6 +256,9 @@ Cited by section when a rung uses them:
 - the UAPI group's Unified Kernel Image specification and `systemd-stub(7)`;
 - the Linux kernel's TPM security documentation (bus protection, Linux 6.10) and its IMA
   documentation;
+- the UAPI group's Linux TPM PCR Registry, systemd's PCR measurement and NV-index assignment
+  documents, and the tpm2-tools manual pages (`tpm2_pcrreset`, `tpm2_nvextend`);
+- NIST SP 800-108, SP 800-56A and FIPS 197, and the DMTF's SPDM and MCTP specifications;
 - TrenchBoot's Secure Launch patch series;
 - the Intel TXT Software Development Guide, the AMD64 Architecture Programmer's Manual Volume 2
   (`SKINIT`) and Arm's DRTM architecture specification;
