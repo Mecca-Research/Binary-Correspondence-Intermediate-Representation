@@ -25,6 +25,8 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/Format.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <array>
@@ -1790,6 +1792,90 @@ struct VerifyPass : public PassWrapper<VerifyPass, OperationPass<>> {
               << "' has pointer_size=" << hit->ptr << "/long_size=" << hit->lng;
           ok = false;
         }
+      });
+    }
+
+    // R3-uart (the UART blueprint's U0, the RegMap contract): a bcir.regmap_contract must name a
+    // placement of the U0 registry and lay the normative register table out as that placement does --
+    // its stride, base offset, FCR reset and baud reference clock the placement's, and each register at
+    // base_offset + slot * stride (hazard H-A). The registry is read from BCIRUartPlacements.inc, which
+    // bcir/frontends/devices/uart_model.py generates (`--check` holds it current), so the two rails
+    // cannot disagree about a placement. The oracle's uart_model.verify_regmap_contract and uart_laws'
+    // literal attestation hold the same facts in the same order (a register is named by its offset
+    // here, where the oracle's contract carries its slot); vacuous when no contract op is present.
+    {
+      struct UP {
+        const char *name;
+        uint32_t stride;
+        int64_t base;
+        uint32_t fcrReset;
+        int64_t refClkHz;
+      };
+      static const UP kPlacements[] = {
+#define UART_PLACEMENT(n, s, b, f, r) {n, s, b, f, r},
+#include "BCIRUartPlacements.inc"
+#undef UART_PLACEMENT
+      };
+      struct UR {
+        const char *name;
+        int64_t slot;
+      };
+      static const UR kRegs[] = {
+#define UART_REG(n, s) {n, s},
+#include "BCIRUartPlacements.inc"
+#undef UART_REG
+      };
+      auto hex = [](int64_t v, unsigned width) {
+        std::string s;
+        llvm::raw_string_ostream os(s);
+        os << llvm::format_hex(static_cast<uint64_t>(v), width);
+        return os.str();
+      };
+      walkScope(root, [&](RegMapContractOp a) {
+        const UP *hit = nullptr;
+        for (const UP &p : kPlacements)
+          if (a.getPlacement() == p.name)
+            hit = &p;
+        if (!hit) {
+          std::string registry;
+          for (const UP &p : kPlacements)
+            registry += (registry.empty() ? "" : ", ") + std::string(p.name);
+          a.emitError("R3-uart: regmap_contract ")
+              << a.getSymName() << " names an unknown placement '" << a.getPlacement()
+              << "' (registry: " << registry << ")";
+          ok = false;
+          return;
+        }
+        auto lie = [&](const std::string &what) {
+          a.emitError("R3-uart: regmap_contract ") << a.getSymName() << ": " << what;
+          ok = false;
+        };
+        // The oracle's order: the RegMap law (stride, base offset, the registers), then the
+        // attestation's FCR reset and reference clock. The I64 attributes are read signed.
+        int64_t base = static_cast<int64_t>(a.getBaseOffset());
+        int64_t refClk = static_cast<int64_t>(a.getRefClkHz());
+        if (a.getStride() != hit->stride)
+          lie("stride: contract " + hex(a.getStride(), 3) + " != placement " + hex(hit->stride, 3));
+        if (base != hit->base)
+          lie("base offset: contract " + hex(base, 3) + " != placement " + hex(hit->base, 3));
+        auto offsets = a.getRegOffsets();
+        size_t model = sizeof kRegs / sizeof kRegs[0];
+        if (offsets.size() != model) {
+          lie("registers: contract lays out " + std::to_string(offsets.size()) +
+              "; the model has " + std::to_string(model));
+        } else {
+          for (size_t i = 0; i < model; ++i) {
+            int64_t want = hit->base + kRegs[i].slot * static_cast<int64_t>(hit->stride);
+            if (offsets[i] != want)
+              lie(std::string("register ") + kRegs[i].name + ": contract " + hex(offsets[i], 3) +
+                  " != laid out " + hex(want, 3));
+          }
+        }
+        if (a.getFcrReset() != hit->fcrReset)
+          lie("fcr_reset " + hex(a.getFcrReset(), 4) + " != placement " + hex(hit->fcrReset, 4));
+        if (refClk != hit->refClkHz)
+          lie("ref_clk_hz " + std::to_string(refClk) + " != placement " +
+              std::to_string(hit->refClkHz));
       });
     }
 

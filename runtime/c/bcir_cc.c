@@ -23,6 +23,10 @@
  *     --emit-effects   emit each function's read/write footprint + the commutation matrix (G10)
  *     --emit-escape    emit each function's named locals by escape verdict + its indirect calls'
  *                      narrowed target sets (G10); both byte-identical to bcir/frontends/cfront/escape.py
+ *     --emit-uart      attest the UART RegMap contract a unit embeds (the UART blueprint's U0): its
+ *                      `uart_regmap_contract` literal and `uart_target_baud`, as the twin's linkable emit
+ *                      spells them, held to the generated registry (uart_placements.inc) with the oracle's
+ *                      messages (bcir/frontends/devices/uart_laws.py, uart_unit_diagnostics' attestation)
  *     --project        print the per-PROJECT verdict line (CLEAN / PARTIAL-FALLBACK / DIRTY) over
  *                      the compiled file set; automatic for a multi-file invocation. The verdict
  *                      string, bucket rules and exit codes (a hard error 1 DOMINATES a fallback 2)
@@ -90,7 +94,158 @@ static const char *USAGE =
   "  --emit-escape  per-function named locals by escape verdict (nonescaping / lent / escaping)\n"
   "                 + each indirect call's narrowed target set (`*` = may reach unknown code)\n"
   "  --emit-link-flags  the linker flags the unit's external-call edges need (one space-separated\n"
-  "                 line, e.g. -lm; empty for a pure-integer unit) -- for build-system consumption\n";
+  "                 line, e.g. -lm; empty for a pure-integer unit) -- for build-system consumption\n"
+  "  --emit-uart    the unit's UART RegMap contract attested against the U0 registry: one line naming\n"
+  "                 the placement (none / unattested), then each R3-uart message\n";
+
+/* --- --emit-uart: the UART RegMap contract, attested by the twin ------------------------------------ */
+
+/* The U0 registry (bcir/frontends/devices/uart_model.py generates uart_placements.inc; `--check` holds it
+ * current), sorted by name: the order the unknown-placement message lists it in. */
+typedef struct { const char *name; unsigned long long stride, base, fcr_reset, ref_clk_hz; } uart_place;
+static const uart_place uart_places[] = {
+#define UART_PLACEMENT(n, s, b, f, r) {n, s, b, f, r},
+#include "uart_placements.inc"
+#undef UART_PLACEMENT
+};
+
+/* The file-scope global `name`'s initializer as the linkable artifact spells it -- the twin's own rendering,
+ * which is the oracle's `ginit` text (CF-LINKTWIN): its first byte, its length in *len; NULL when the artifact
+ * defines no such global with an initializer. The artifact defines a global on one line at column 0,
+ * `<declarator> = <initializer>;`, the declarator `[static |extern ][_Thread_local ]<type> <name>[<dims>]`
+ * (a function pointer behind a typedef) and never holding a `{` -- which every aggregate or enum body
+ * before an ` = ` does. The declarator's name is its first identifier not followed by another word or a
+ * `(`: the tag of `struct uart_regmap_contract uart_regmap_contract` is followed by the name. Spans of the
+ * artifact, never copies: no initializer is too long to attest. */
+static int uart_is_ident(char ch) {
+  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+static const char *uart_global_init(const char *text, const char *name, size_t *len) {
+  size_t n = strlen(name);
+  for (const char *line = text; line && *line;) {
+    const char *end = strchr(line, '\n');
+    const char *stop = end ? end : line + strlen(line);
+    const char *eq = NULL;
+    for (const char *p = line; p + 3 <= stop; p++)
+      if (p[0] == ' ' && p[1] == '=' && p[2] == ' ') { eq = p; break; }
+    if (eq && line[0] != ' ' && line[0] != '\t' && stop > eq + 3 && stop[-1] == ';' &&
+        !memchr(line, '{', (size_t)(eq - line))) {
+      const char *declared = NULL;
+      size_t dlen = 0;
+      for (const char *p = line; p < eq && !declared;) {
+        if (!uart_is_ident(*p) || (*p >= '0' && *p <= '9')) { p++; continue; }
+        const char *id = p;
+        while (p < eq && uart_is_ident(*p)) p++;
+        const char *q = p;
+        while (q < eq && *q == ' ') q++;
+        if (q == eq || *q == '[' || *q == ')' || *q == ';') { declared = id; dlen = (size_t)(p - id); }
+      }
+      if (declared && dlen == n && !strncmp(declared, name, n)) {
+        *len = (size_t)(stop - 1 - (eq + 3));
+        return eq + 3;
+      }
+    }
+    line = end ? end + 1 : NULL;
+  }
+  return NULL;
+}
+
+/* The oracle's literal grammar (uart_laws._LITERAL) over the n bytes at s: {"<name>", <dec>, <dec>, <dec>,
+ * <dec>}, the name a lower-case C identifier (*name, *name_len: a span of s). 0 when the text is not exactly
+ * that, or a number passes 64 bits -- which no C constant the rendering re-spells does. */
+static int uart_parse_literal(const char *s, size_t n, const char **name, size_t *name_len,
+                              unsigned long long v[4]) {
+  const char *e = s + n;
+  if (e - s < 3 || *s++ != '{' || *s++ != '"' || !(*s >= 'a' && *s <= 'z')) return 0;
+  *name = s;
+  while (s < e && ((*s >= 'a' && *s <= 'z') || (*s >= '0' && *s <= '9') || *s == '_')) s++;
+  *name_len = (size_t)(s - *name);
+  if (s == e || *s++ != '"') return 0;
+  for (int i = 0; i < 4; i++) {
+    unsigned long long x = 0;
+    if (e - s < 3 || *s++ != ',' || *s++ != ' ' || !(*s >= '0' && *s <= '9')) return 0;
+    while (s < e && *s >= '0' && *s <= '9') {
+      if (x > (~0ULL - 9) / 10) return 0;
+      x = x * 10 + (unsigned)(*s++ - '0');
+    }
+    v[i] = x;
+  }
+  return s + 1 == e && *s == '}';
+}
+
+/* The n bytes at s as the attestation's messages spell them (uart_laws._spelled: repr() of the text's UTF-8
+ * bytes): single quotes unless they hold one and no double quote, the quote and the backslash escaped,
+ * \n \r \t, any other control byte and every byte past ASCII \xNN -- exact without a Unicode table. */
+static void uart_repr(FILE *outf, const char *s, size_t n) {
+  char q = (memchr(s, '\'', n) && !memchr(s, '"', n)) ? '"' : '\'';
+  fputc(q, outf);
+  for (const unsigned char *p = (const unsigned char *)s; p < (const unsigned char *)s + n; p++) {
+    if (*p == '\\' || *p == (unsigned char)q) { fputc('\\', outf); fputc(*p, outf); }
+    else if (*p == '\n') fputs("\\n", outf);
+    else if (*p == '\r') fputs("\\r", outf);
+    else if (*p == '\t') fputs("\\t", outf);
+    else if (*p < 0x20 || *p >= 0x7f) fprintf(outf, "\\x%02x", *p);
+    else fputc(*p, outf);
+  }
+  fputc(q, outf);
+}
+
+/* The twin of uart_laws.uart_contract_attestation, message for message and in its order: a unit with no
+ * `uart_regmap_contract` is no UART unit (none, no message); a literal the grammar refuses, or a placement
+ * the registry does not hold, is unattested; otherwise the stride and base offset (the RegMap law), the FCR
+ * reset and the reference clock are held to the placement, and `uart_target_baud`, where the unit defines
+ * one, must be a positive decimal constant. Advisory, as the oracle's R3-uart is: the report carries the
+ * verdict and the exit code stays the compile's. The five U1 protocol laws are the oracle's alone (a later
+ * slice: the blueprint's section 11). */
+static void uart_attest(const char *path, const char *text, FILE *outf) {
+  size_t n = 0, name_len = 0;
+  const char *lit = uart_global_init(text, "uart_regmap_contract", &n), *name = NULL;
+  unsigned long long v[4];
+  const uart_place *hit = NULL;
+  size_t n_places = sizeof uart_places / sizeof uart_places[0];
+  if (!lit) {
+    fprintf(outf, "%s: uart contract none\n", path);
+    return;
+  }
+  if (!uart_parse_literal(lit, n, &name, &name_len, v)) {
+    fprintf(outf, "%s: uart contract unattested\n  R3-uart: the uart_regmap_contract literal ", path);
+    uart_repr(outf, lit, n);
+    fputs(" is not a U0 header's\n", outf);
+    return;
+  }
+  for (size_t i = 0; i < n_places; i++)
+    if (strlen(uart_places[i].name) == name_len && !strncmp(uart_places[i].name, name, name_len))
+      hit = &uart_places[i];
+  if (!hit) {
+    fprintf(outf, "%s: uart contract unattested\n  R3-uart: regmap contract: unknown placement '%.*s' (registry: ",
+            path, (int)name_len, name);
+    for (size_t i = 0; i < n_places; i++) fprintf(outf, "%s%s", i ? ", " : "", uart_places[i].name);
+    fputs(")\n", outf);
+    return;
+  }
+  fprintf(outf, "%s: uart contract %s\n", path, hit->name);
+  if (v[0] != hit->stride)
+    fprintf(outf, "  R3-uart: regmap contract: stride: contract 0x%llx != placement 0x%llx\n", v[0], hit->stride);
+  if (v[1] != hit->base)
+    fprintf(outf, "  R3-uart: regmap contract: base offset: contract 0x%llx != placement 0x%llx\n", v[1], hit->base);
+  if (v[2] != hit->fcr_reset)
+    fprintf(outf, "  R3-uart: regmap contract: fcr_reset 0x%02llx != placement 0x%02llx\n", v[2], hit->fcr_reset);
+  if (v[3] != hit->ref_clk_hz)
+    fprintf(outf, "  R3-uart: regmap contract: ref_clk_hz %llu != placement %llu\n", v[3], hit->ref_clk_hz);
+  const char *target = uart_global_init(text, "uart_target_baud", &n);
+  if (target) {
+    int decimal = n != 0, positive = 0;
+    for (size_t i = 0; i < n; i++) {
+      if (target[i] < '0' || target[i] > '9') decimal = 0;
+      else if (target[i] != '0') positive = 1;
+    }
+    if (!decimal || !positive) {
+      fputs("  R3-uart: uart_target_baud ", outf);
+      uart_repr(outf, target, n);
+      fputs(" is not a positive integer constant\n", outf);
+    }
+  }
+}
 
 static void dirof(const char *path, char *out, size_t cap) {
   const char *s = strrchr(path, '/'), *bs = strrchr(path, '\\');
@@ -143,6 +298,7 @@ int main(int argc, char **argv) {
   const char *files[256]; int nfiles = 0;
   const char *std = "c23", *out_path = NULL, *target = NULL;
   int pp_only = 0, emit_c = 0, emit_cg = 0, emit_pack = 0, emit_fx = 0, emit_esc = 0, emit_lf = 0, fallback = 0;
+  int emit_uart = 0;
   int project = 0, linkable = 0;
   r21_policy r21 = R21_ADVISORY;
 
@@ -162,6 +318,7 @@ int main(int argc, char **argv) {
     }
     else if (!strcmp(a, "--emit-effects")) emit_fx = 1;
     else if (!strcmp(a, "--emit-escape")) emit_esc = 1;
+    else if (!strcmp(a, "--emit-uart")) emit_uart = 1;
     else if (!strcmp(a, "--emit-link-flags")) emit_lf = 1;
     else if (!strcmp(a, "--emit-c")) emit_c = 1;
     else if (!strcmp(a, "--linkable")) linkable = 1;
@@ -242,7 +399,8 @@ int main(int argc, char **argv) {
     static bcir_cfront_result r;
     /* --linkable: the twin's linkable artifact (CF-LINKTWIN), the front end's own emit of it -- the types, the
      * declarations and the globals need the parse, so the compile renders it whole */
-    int compile_rc = linkable ? bcir_cfront_compile_linkable(src, target, &r) : bcir_cfront_compile_target(src, target, &r);
+    int compile_rc = (linkable || emit_uart) ? bcir_cfront_compile_linkable(src, target, &r)
+                                             : bcir_cfront_compile_target(src, target, &r);
     cc_release_file(src);        /* the result owns copies of everything it names */
     if (compile_rc != 0 && linkable && !strncmp(r.diag, "linkable emit: ", 15)) {
       /* a global the artifact cannot define: the oracle's CLI says it so (`bcir-cfront --linkable`) */
@@ -256,7 +414,7 @@ int main(int argc, char **argv) {
       fprintf(stderr, "%s: parse error: %s\n", path, r.diag); rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
     }
     if (!r.ok) { fprintf(stderr, "%s: verify error: %s\n", path, r.diag); rc = 1; n_dirty++; bcir_cfront_free(&r); continue; }
-    if ((emit_c || linkable) && !r.emitted_ok) {   /* a successful compile always emits (CF-BUF): defensive */
+    if ((emit_c || linkable || emit_uart) && !r.emitted_ok) {   /* a successful compile always emits (CF-BUF): defensive */
       fprintf(stderr, "%s: no emitted C\n", path);
       rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
     }
@@ -276,7 +434,10 @@ int main(int argc, char **argv) {
       }
     }
 
-    if (emit_lf) {
+    if (emit_uart) {
+      uart_attest(path, r.emitted, outf);            /* the RegMap contract, from the linkable rendering */
+      n_clean++;
+    } else if (emit_lf) {
       /* B1: just the linker flags the unit's external-call edges need (one space-separated line, e.g.
        * `-lm`; empty for a pure-integer unit) -- for build-system consumption. Byte-identical to the
        * Python rail (bcir-cfront --emit-link-flags); parity gated in check_runtime.sh. */

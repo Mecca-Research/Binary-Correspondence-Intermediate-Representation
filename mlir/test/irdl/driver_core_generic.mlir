@@ -29,6 +29,9 @@ func.func @driver(%addr: i64, %addr32: i32, %v32: i32, %v64: i64, %sel: i16, %po
 "bcir.abi_contract"() {sym_name = "f", target = "x86_64-linux", pointer_size = 8 : i32,
   long_size = 8 : i32, param_sizes = array<i64: 8, 4>, param_aligns = array<i64: 8, 4>,
   return_size = 4 : i32} : () -> ()
+"bcir.regmap_contract"() {sym_name = "uart0", placement = "axi16550", stride = 4 : i32,
+  base_offset = 4096 : i64, fcr_reset = 0 : i32, ref_clk_hz = 100000000 : i64,
+  reg_offsets = array<i64: 4096, 4096, 4100, 4104, 4104, 4108, 4112, 4116, 4120, 4124, 4096, 4100>} : () -> ()
 "bcir.device_manifest"() {sym_name = "nic0", device = "virtio-net", banks = "ram,mmio",
   domains = "RAM,MMIO", capacities = array<i64: 4096, 256>} : () -> ()
 
@@ -47,4 +50,5 @@ func.func @driver(%addr: i64, %addr32: i32, %v32: i32, %v64: i64, %sel: i16, %po
 // CHECK: "bcir.entry"
 // CHECK: "bcir.interrupt_trampoline"
 // CHECK: "bcir.abi_contract"
+// CHECK: "bcir.regmap_contract"
 // CHECK: "bcir.device_manifest"

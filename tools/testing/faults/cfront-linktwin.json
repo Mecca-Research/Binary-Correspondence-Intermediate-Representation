@@ -184,8 +184,8 @@
     {
       "expects": "test_the_twins_linkable_initializers_fold_on_each_target_as_the_oracles",
       "label": "LT24 bcir-cc's --linkable compiles for the host, whatever --target names",
-      "new": "    int compile_rc = linkable ? bcir_cfront_compile_linkable(src, NULL, &r) : bcir_cfront_compile_target(src, target, &r);\n",
-      "old": "    int compile_rc = linkable ? bcir_cfront_compile_linkable(src, target, &r) : bcir_cfront_compile_target(src, target, &r);\n",
+      "new": "    int compile_rc = (linkable || emit_uart) ? bcir_cfront_compile_linkable(src, NULL, &r)\n",
+      "old": "    int compile_rc = (linkable || emit_uart) ? bcir_cfront_compile_linkable(src, target, &r)\n",
       "path": "runtime/c/bcir_cc.c"
     }
   ]

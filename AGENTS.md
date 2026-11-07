@@ -64,6 +64,9 @@ whether the IR builds or how it verifies. Its conventions live in `CONTRIBUTING.
 - Building the decoder's units (`bcir_models`) for a time you record or ship → take their flags from the
   manifest through `bcir.toolchain.unit_options`, never spelled beside your own (M18: on x86-64 the
   JCC-erratum mitigation, an option only x86 compilers know, held in the manifest and the three speed builds).
+- Writing a driver's documents, code or tests → public sources only, cited (the Sources rule in
+  [`docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md`](docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) §8.3); nothing
+  from material distributed under confidentiality terms enters the tree, a commit message or a PR.
 - Architecture → [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md).
 
 ## Non-negotiable pre-PR validation

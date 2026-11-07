@@ -1,7 +1,9 @@
 # BCIR Driver and Kernel Roadmap v2
 
 > **Status:** canonical execution roadmap, rewritten 2026-07-15; memory-fabric boundary
-> reconciled 2026-07-18; planned data/AI workload qualification added 2026-10-20.
+> reconciled 2026-07-18; planned data/AI workload qualification added 2026-10-20; the shared
+> driver contract, the buildout order after UART, the firmware and IPC programs, the
+> open-source and vendor sources and the fork plan added 2026-11-07 (plans; nothing built).
 >
 > This document defines how BCIR develops driver/compiler packages, experiments on Linux,
 > and eventually hosts those packages in a native BCIR kernel. It replaces the historical
@@ -86,7 +88,7 @@ designed elsewhere but must not be described as operational.
 | LLVM/WASM/JVM/CIL/SPIR-V hub | **Mixed, bounded scopes** | LLVM AOT/JIT/WASM accepts one elementwise claim; JVM/CIL execute a bounded stack subset; SYCL/SPIR-V has modeled routing and portable fallback, with real SPIR-V backend/device execution tool-gated |
 | Interface-description formats | **Not implemented** | No IDL/CORBA, SDL, SGML/XML Schema, or PMML parser/generator is present. They are consume-on-demand standards, not prerequisites for the first driver |
 | ASN.1 JER schema-bound source rail | **Python oracle landed; native/compiler path missing** | X.697 values and six instruction families exist in Python, but no bounded C JER twin, MLIR family/profile, direct claim lowering, native selection certificate, or driver path exists; [`BCIR_ASN1_JSON_ROADMAP.md`](../BCIR_ASN1_JSON_ROADMAP.md) owns the promotion gates |
-| UART | **Compiler fixture only** | Register header and driver-shaped C-front fixture exist. The simulator, resident/channel-backed implementation, IRQ service, telemetry producer, learned prior, and U0–U9 program remain unbuilt; see [`BCIR_UART_DRIVER_BLUEPRINT.md`](BCIR_UART_DRIVER_BLUEPRINT.md) |
+| UART | **Device registry and protocol laws (U0–U1, oracle rail); the polled driver against a simulated 16550 (U2)** | A register header and driver-shaped C-front fixture exist (`runtime/c/uart_regs.h`, `cfront_driver_uart.c`: a compiler fixture, not the driver's header), and slices U0–U2 have landed: one normative 16550 model, three placements, the generated `runtime/c/uart16550_regs.h`, the RegMap contract, the five protocol laws as advisory `R3-uart` diagnostics (their law-rail halves pending), and the polled driver (`runtime/c/uart_driver.c`) running against the spec-tested simulated 16550 (`runtime/c/sim16550.c`) — linked from either rail's `--linkable` emit, its transcript byte-identical to the source build's and held to a golden (the C rail's `#uartdrv` section). The resident/channel-backed implementation, IRQ service, telemetry producer, learned prior, a hardware binding, and U3–U9 remain unbuilt; see [`BCIR_UART_DRIVER_BLUEPRINT.md`](BCIR_UART_DRIVER_BLUEPRINT.md) |
 | Resident hardware drivers | **Missing** | No UART, virtio, NVMe, NIC, GPU, or other device is driven through RuntimeChannel |
 | Linux UAPI/IPC adapter | **Missing** | The intended boundary is documented; no BCIR kernel module, device node, or transport has landed |
 | BCIR-Linux fork | **Missing** | The separate repository and tracking branches have not been created |
@@ -114,7 +116,7 @@ generated [`STATUS.md`](../STATUS.md) is a static inventory and does not prove a
 | **H4** | **Landed** | `_convergence.py` gates transformer, recurrent, classical, and unsupervised demonstrations; gradient and fit-quality tests pin the supported training claims | A predict-only algorithm is not relabeled trainable without a fit gate |
 | **H5** | **Honesty landed; encoder deferred** | [`test_stackify_exec.py`](../../bcir/tests/test_stackify_exec.py) differentially checks WASM/JVM/CIL mnemonics and uses real JVM/CLR execution when installed | A direct no-LLVM WASM binary encoder remains behind the native-backend G1/G2 gate |
 | **A1 / B1** | **Landed** | [`events.py`](../../bcir/kbcir/events.py), [`test_event_phases.py`](../../bcir/tests/test_event_phases.py), and MLIR EV fixtures cover asynchronous phases, arming, and interrupt-context ordering | Resident interrupt-controller and handler binding are absent |
-| **A2** | **Landed** | [`dma.py`](../../bcir/kbcir/dma.py) and [`test_dma.py`](../../bcir/tests/test_dma.py) derive and price descriptors from `StridedView` pairs | No DMA engine is programmed on hardware |
+| **A2** | **Landed** | [`dma.py`](../../bcir/kbcir/dma.py) and [`test_dma.py`](../../bcir/tests/test_dma.py) derive and price descriptors from `StridedView` pairs | No DMA engine is programmed on hardware; the controller blueprint ([`BCIR_DMA_BLUEPRINT.md`](BCIR_DMA_BLUEPRINT.md), a proposal) is the D0 research contract that comes first |
 | **A3** | **Landed** | [`paged_kv.py`](../../bcir/frontends/models/paged_kv.py) and [`test_paged_kv.py`](../../bcir/tests/test_paged_kv.py) cover page IDs, generations, admission, scheduling, and eviction claims | No accelerator-resident KV implementation is implied |
 | **A4** | **Landed subset** | [`test_cfront_link.py`](../../bcir/tests/test_cfront_link.py) covers typed cross-TU edges, derived flags, linkable globals/static objects, and real linking | This does not make C-front a complete C23 frontend or replace the system linker |
 | **A5** | **Landed for current training/channel model** | [`test_train_graph.py`](../../bcir/tests/test_train_graph.py) makes stream count a plan decision; channel-prior/calibration tests pin guided/exhaustive behavior | Per-device calibration still requires real device data |
@@ -515,13 +517,16 @@ Native work proceeds in parallel and does not block Linux-hosted driver packages
 2. Physical memory and immutable region registry.
 3. Virtual memory, page-table construction, and address-space generations.
 4. ACPI/static table and Device Tree parsers; no general AML implementation in the initial core.
-5. Clock, timer, interrupt-controller, and event-delivery substrate.
+5. Clock, timer, interrupt-controller, and event-delivery substrate. The event-timer program's
+   proposal (HPET and AVR RTC placements, the T-laws, a tick-timed simulator):
+   [`BCIR_EVENT_TIMER_BLUEPRINT.md`](BCIR_EVENT_TIMER_BLUEPRINT.md).
 6. PCIe enumeration, BAR/capability parsing, and MSI/MSI-X allocation.
 7. DMA and IOMMU isolation.
 8. Storage, network, USB, security, display, and accelerator adapters in evidence order.
 
 Firmware tables and security protocols are consumed through verified parser/marshaller kernels.
-BCIR does not reimplement UEFI firmware, a TPM, or vendor firmware.
+BCIR builds on EDK II and coreboot rather than reimplementing UEFI firmware, and it does not
+reimplement a TPM or vendor firmware; the firmware program's stages are §5.7.
 
 ### 5.4 Program milestones
 
@@ -538,6 +543,165 @@ BCIR does not reimplement UEFI firmware, a TPM, or vendor firmware.
 | **M8 — native IPC/kernel service proof** | Native RuntimeChannel adapter, slim IPC, POSIX source-compatibility slice, and preverified instance loader | Direct/Linux/native parity across UART and virtio-blk; applicable data/AI service profiles add completion, quality, tail-latency, resource and failure evidence before promotion |
 | **M9 — hardware expansion** | Physical PCIe/storage/network and vendor accelerator packages | Device-specific D7 reports and regression-free shared contracts |
 | **M10 — memory-fabric qualification** | HMF-D0 capability envelope, then separately qualified GDS/P2PDMA, CXL, and semantic-storage adapters as hardware permits; native HAM/SYCL integration afterward | Relevant drivers and IPC qualified for data/AI workloads first; direct/staged parity, topology/IOMMU/lifecycle/completion evidence, measured intervals, and no compatibility-mode result mislabeled direct |
+
+### 5.5 One contract under every driver
+
+Every driver after UART shares one lifecycle and one set of records; what stays device-specific is
+the hardware semantics (a UART FIFO, a PCIe BAR and an NVMe submission queue are not the same
+thing, and the package contract of §3 keeps their models separate). The shared layer is:
+
+- **The resource record** `R = (id, generation, owner, capabilities, address space, rights, state,
+  provenance)`: every register window, queue, buffer, interrupt vector and firmware table a driver
+  touches is one, named by a generation-tagged capability rather than a raw pointer (§7.1).
+- **The operation record** `O = (device, command, buffers, dependencies, deadline, completion,
+  verification)`: every asynchronous device operation — a UART burst, a DMA descriptor, an NVMe
+  command, an IPC message — carries one; the deadline comes from the event-timer substrate and the
+  completion is an event phase.
+- **The buffer lease**: a device may touch a buffer only while it is mapped for that device,
+  authorized for it and of the current generation — `DeviceAccess(D, B) ⇒ Mapped(D, B) ∧
+  Authorized(D, B) ∧ GenerationValid(B)`. One ownership engine (the DMA blueprint's) serves UART
+  DMA, virtio and NVMe buffers, PCIe endpoint transfers, IPC shared regions and HAM.
+- **The lifecycle**: discover → identify against the capability registry → bind → allocate and map
+  → admit the plan → submit → the device executes → completion by interrupt or poll → verify →
+  publish telemetry → release; a fault or reset quiesces the device and increments its generation,
+  which invalidates every lease and in-flight operation that named the old one.
+- **RuntimeChannel** is the one control surface over all of it (§7.1, §7.4), during boot behind a
+  firmware adapter and after handoff natively (§5.7).
+
+The UART slices already follow the discipline the records generalize: one generated device model,
+laws that refuse before cost, and discovery that may veto a record but never steer it.
+
+### 5.6 The buildout order after UART (recommended, 2026-11-07)
+
+UART U0–U2 have landed with U0 on every rail. Before deep driver and kernel work, the
+**foundation phase** runs first, by the owner's direction: mature the hybrid database (the
+retrieval rail's S-ladder, [`training/DATABASE_ROADMAP.md`](../../training/DATABASE_ROADMAP.md)),
+build the Unicode infrastructure ([`training/UNICODE_ROADMAP.md`](../../training/UNICODE_ROADMAP.md))
+and stand up the small-language-model laboratory with its initial lessons
+([`training/SLM_ROADMAP.md`](../../training/SLM_ROADMAP.md)). Those are corpus-side programs under
+the one-way corpus law (`AGENTS.md`); the deep-learning and modeling work then grows alongside the
+drivers below, each driver supplying traces and workload profiles (§4.7).
+
+The device order is dependency order — time, then memory ownership, then queues, then the bus,
+then storage, then firmware and trust, then the rest of the platform, then compute:
+
+| Order | Program | Why here | Depends on | First gate |
+|---|---|---|---|---|
+| 1 | **Event timers** ([blueprint](BCIR_EVENT_TIMER_BLUEPRINT.md)) | Every later driver needs deadlines, timeouts and timestamps; HPET and the RTC are small MMIO devices a simulator pins exactly | UART's model/law/sim pattern | T-law sim parity (D1) |
+| 2 | **DMA and the ownership engine** ([blueprint](BCIR_DMA_BLUEPRINT.md)) | The buffer lease of §5.5 is the precondition of every queue driver, IPC shared region and HAM transfer | timers (completion deadlines) | lease laws refuse unmapped/unauthorized/stale access (D1) |
+| 3 | **virtio-console, virtio-blk** (§5.2) | The deterministic queue/DMA proof UAPI v1 needs (M4, M5) | DMA, timers | QEMU lifecycle and reset parity (D2–D3) |
+| 4 | **ACPI static tables** (no AML) | MCFG, MADT, SPCR, DMAR/IVRS, SRAT/SLIT/HMAT describe the bus, the interrupt controllers, the IOMMUs and the memory topology the next rows read | the verified-parser kernels | tables parsed into the typed registry and validated (§5.7) |
+| 5 | **PCIe** | Enumeration, capabilities, BARs, MSI/MSI-X, IOMMU scopes; the fabric NVMe, USB and accelerators sit on | ACPI, DMA | QEMU enumeration and malformed-capability refusal |
+| 6 | **NVMe** | The admin/I-O submission and completion queues are the SQ/CQ ring at production scale | PCIe, DMA, timers | QEMU NVMe boot read, wraparound, timeout, reset |
+| 7 | **IPC rungs I1–I4** (§7.4) | Derived from the UART, virtio and NVMe traces, as §7.4 requires; not before | 1–6 | I1 parity with bounded overhead |
+| 8 | **UEFI stage A with the trust program** (§5.7; [root of trust and TPM](BCIR_ROOT_OF_TRUST_ROADMAP.md)) | Packages the UART, PCIe, DMA and NVMe drivers as DXE services behind a verified loader, with Secure Boot, measured boot, sealing and attestation on swtpm | 1–6; the TPM driver package (below) | reproducible QEMU/OVMF boot; unauthorized image refused; the event log replays to the PCRs |
+| 9 | **USB (xHCI)** | Rings, MSI-X and DMA again, on a bus with hotplug | PCIe, DMA | QEMU xHCI enumeration and transfer parity |
+| 10 | **DDR5 / memory inventory** | SPD and SMBIOS memory records and PI 1.10's richer resource descriptors classify memory for HAM; DRAM training stays firmware's and the silicon vendor's | ACPI, UEFI handoff | memory map and HAM classes match firmware discovery |
+| 11 | **CPU** (CPUID, MSRs, APIC/x2APIC, PMU, power states) | Needs physical hardware: the cloud host has no PMU (§2.1) | timers, ACPI | physical-rig evidence (D7 class) |
+| 12 | **GPUs and NPUs** | Bind through the vendors' supported runtimes first (§6.3); BCIR owns manifests, planning, proof and telemetry | PCIe, DMA, IPC | vendor-runtime parity (§5.9) |
+| 13 | **The master kernel**: BCIR-Linux targeted patches (K2), then native extraction (K3) and the JIT microkernel (§7.5) | Only measured requirements reach a kernel patch (§6.2) | the rows it needs | §6.2's six questions answered per patch |
+
+The TPM driver package (the trust program's RoT2) needs only MMIO and the event timers, so it may
+follow row 1 early and give the firmware and trust programs a tested driver before row 8.
+
+The IPC, UEFI and trust programs are **planned, not started**: their rungs and stages below are the plan
+those slices will follow when their row comes up. BCIR-Linux's bootstrap (M3, §6.4) can begin once
+the foundation phase is done and the UART Linux-hosted adapter (D3) needs it.
+
+### 5.7 Firmware program: UEFI, ACPI, SMBIOS and TPM (planned)
+
+Firmware initializes and attests the machine; BCIR owns verified runtime execution. Firmware is the
+trusted constructor of the runtime's state space — it discovers the machine, initializes it,
+establishes trust, publishes stable resource identities and hands over a verified execution
+environment — and it stays minimally resident afterwards (coreboot's philosophy): UEFI Runtime
+Services remain narrow (authenticated variables, reset, time, capsule update) and anything else a
+runtime needs becomes a RuntimeChannel service, never a proprietary firmware callback. BCIR builds
+on EDK II (or coreboot launching EDK II as its payload) rather than replacing firmware; it does not
+reimplement a TPM or vendor silicon initialization.
+
+| Stage | What BCIR builds | Exit evidence |
+|---|---|---|
+| **A — EDK II/OVMF compatibility** | BCIR as UEFI applications, DXE drivers and libraries; generated ACPI/SMBIOS content; the native-runtime loader; the RuntimeChannel UEFI adapter; the UART DXE console | reproducible QEMU+OVMF boot with a deterministic image hash |
+| **B — EDK II platform firmware** | EDK II's SEC/PEI/DXE/BDS with generic DXE drivers replaced by BCIR-backed device services | the same boot with BCIR services bound |
+| **C — coreboot or vendor-minimal init** | coreboot performs minimal silicon init and launches the BCIR/EDK II payload where the platform allows | parity with stage B on a supported board |
+| **D — native DXE-equivalent runtime** | selected UEFI drivers replaced after boot by native RuntimeChannel services; UEFI's outward interfaces kept | clean `ExitBootServices()`; no post-exit boot-service use; every surviving mapping accounted for |
+| **E — native platform runtime** | only the standardized preboot and runtime firmware remain; BCIR schedules, routes IPC, manages devices, HAM and telemetry | native handoff on physical reference systems |
+| **F — experimental BCIR-native firmware** | replacements for selected PI components | only with a measured advantage in security, determinism, verification or maintenance; vendor memory/silicon init remains a constraint |
+
+The firmware-side milestones in order: **firmware foundation** (OVMF build, loader, UART console,
+RuntimeChannel adapter) → **trust foundation** (Secure Boot's PK/KEK/db/dbx lifecycle, TPM 2.0
+through the TCG2 protocol, the event log, the measured BCIR runtime: the trust program's RoT1–RoT6,
+[`BCIR_ROOT_OF_TRUST_ROADMAP.md`](BCIR_ROOT_OF_TRUST_ROADMAP.md), which also plans the unified
+kernel image, sealing and lockout, runtime integrity, RoT simulation and dynamic launch) → **description foundation**
+(ACPI and SMBIOS generators and parsers, validated by ACPICA and by a parser round trip) → **driver
+foundation** (PCIe enumeration, DMA contracts, UART, the NVMe boot path) → **native handoff**
+(memory-map import, PI 1.10's richer resource-descriptor HOB carried into HAM's classes) → **HAM
+bootstrap** (SRAT/SLIT/HMAT/PCIe topology import; impossible routes refused) → **security
+hardening** (capsule recovery, rollback protection, fuzzing, SMM/MM minimization) → **physical
+qualification** → **hardware-adaptive execution** (implementations selected from CPUID, SMBIOS,
+ACPI and telemetry, beating the fixed baseline on held-out workloads).
+
+Rules the program keeps: Secure Boot and measured boot are separate layers, both required; the root
+of trust beneath them is the platform's — a TPM 2.0 through TCG2 on a PC, an integrated root of
+trust such as OpenTitan or Caliptra on an SoC (§5.8) — which BCIR measures into and attests from but
+does not reimplement; PCR use
+follows the TCG PC Client Platform Firmware Profile, recorded as a machine-readable map from each
+measured artifact class to its PCR and event type, and the raw TCG event log stays authoritative;
+ACPI describes and mediates platform capabilities while BCIR optimizes within them (AML stays
+modest — `_STA`, `_CRS`, `_PRT`, `_OSC`, `_DSM`, power resources — and `_OSC` negotiates control
+rather than assuming it); SMBIOS is a static inventory input, never dynamic execution truth; the
+UEFI Shell is a diagnostics environment whose BCIR commands are read-only first. The reference
+platform is QEMU + OVMF + swtpm; the pipeline runs specification extraction → generated firmware
+schemas → EDK II module build → static checks and reproducible hashes → QEMU boot → UEFI SCT, ACPI
+and SMBIOS validation → TPM/Secure Boot tests → driver simulation and fault injection →
+RuntimeChannel handoff → native runtime boot → telemetry → physical qualification. The cloud host
+covers every stage's architecture and functional evidence; PMU, APERF/MPERF, RAPL, hardware IOMMUs,
+real DMA timing, PCIe topology, thermals and flash-update safety wait for physical rigs (§2.1).
+
+The standards this program reads, each cited by section when a slice uses it: UEFI 2.11, PI 1.10,
+ACPI 6.6, SMBIOS 3.9, the TCG PC Client Platform Firmware Profile and TCG EFI Protocol, UEFI Shell
+2.2, PCI Firmware 3.3, NVMe Base and its PCIe transport, and DPS 1.1's packaging ideas for firmware
+provenance (source and binary identity, GUIDs and protocols, dependencies, hashes, test evidence).
+
+### 5.8 Open-source projects: what each contributes
+
+Each project is read for what BCIR's goals need, under its own license, which a slice re-reads from
+the project's own license file at D0. Code under a copyleft license never enters this repository
+(the BCIR-Linux rule of §6.1 applies to every such project); what crosses is ideas, published
+specifications, test vectors, interoperation, and permissively licensed code with its notices.
+
+| Project | What BCIR takes | How it crosses | Serves |
+|---|---|---|---|
+| **EDK II** (TianoCore) | The UEFI/PI build environment; OvmfPkg as the QEMU reference; SecurityPkg's TCG2 and Secure Boot; MdePkg's UEFI/PI/ACPI/SMBIOS definitions as a cross-check for BCIR's generated firmware schemas | build dependency of a separate firmware tree; BCIR modules as INF/DEC/DSC | §5.7 stages A–B |
+| **coreboot** | Minimal-residency initialization, the payload model (launching EDK II or a BCIR loader), its signed-capsule integration notes | interoperation and reference; GPL code stays out | §5.7 stage C |
+| **seL4** | The capability model, the IPC fastpath's preconditions, notification objects, the proof methodology, and its benchmark suite as the protected-IPC comparator | design reference and comparator; GPL kernel code stays out | §7.4 I5 |
+| **μT-Kernel 3.0** (`mtkernel_3`, TRON Forum) | A small real-time kernel's primitives (tasks, semaphores, event flags, mailboxes), its interrupt management and device-driver framework, and its microcontroller ports | reference and comparison target for a real-time native profile | §5.3, §7.5 |
+| **OpenTitan** (lowRISC) | One of the two open silicon roots of trust: register descriptions from which device interfaces are generated (the pattern `uart_model.py` follows), a secure-boot and key-manager design, its verification methodology | reference; permissively licensed code may be imported with its notices | §5.7 trust foundation; §3.1 |
+| **Caliptra** (CHIPS Alliance; specifications from the Open Compute Project) | The other: "IP and firmware for an integrated Root of Trust block" — a Root of Trust for Measurement inside an SoC giving identity, measured boot and attestation. Its specification and RTL; its firmware chain (ROM, then the First Mutable Code the ROM measures, then the runtime; Rust with a C API) and mailbox; a TCG DICE Protection Environment profile; ML-DSA (FIPS 204) firmware signatures and an identity chain beside the ECDSA one; OCP recovery. Its registers are described in SystemRDL, from which its firmware's register code is generated, and it imports OpenTitan's register definitions into SystemRDL | reference; Apache-2.0 code may be imported with its notices | §5.7 trust foundation on SoC targets; §3.1's generated device models |
+| **LitePCIe** (LiteX) | An open FPGA PCIe endpoint with DMA engines and MSI, and its host driver | open hardware to test PCIe/DMA drivers against, and the FPGA rung's starting point | §5.6 rows 2 and 5; §7.4 I8 |
+| **Vulkan-Docs** (Khronos) | The machine-readable API registry, the valid-usage statements as a law catalog, the memory model and the synchronization rules | specification and registry import, generated views as with the ASN.1 modules | §5.9 GPU contracts |
+| **Linux** | The compatibility oracle and the fork's base; futex/futex2, rseq, io_uring, eventfd, generic IRQ handling as the IPC comparators | separate repository (§6) | §6, §7.4 |
+| **QEMU, swtpm, ACPICA, UEFI SCT** | Device models (virtio, NVMe, xHCI, PCIe), the virtual TPM, ACPI compilation and validation, UEFI conformance tests | test infrastructure | §5.6, §5.7 |
+
+### 5.9 CPU, GPU and accelerator sources
+
+CPU and GPU drivers start from the vendors' official public documentation, SDKs and repositories,
+cited by document and section under §8.3's Sources rule; material distributed under
+confidentiality terms is reference for development only and never enters the tree, a commit or a
+pull request.
+
+- **Intel**: the Software Developer's Manuals and the optimization reference; the public graphics
+  programmer's references; the open `xe`/`i915`, compute-runtime and graphics-compiler repositories;
+  oneAPI Level Zero.
+- **AMD**: the AMD64 Architecture Programmer's Manuals and public processor programming references;
+  the RDNA/CDNA instruction-set guides; the `amdgpu` kernel driver and ROCm.
+- **Qualcomm**: the Hexagon programmer's references and SDK; QAIRT and its FastRPC and
+  shared-buffer documentation; the Gunyah hypervisor's public documentation.
+- **NVIDIA**: the CUDA documentation; the open GPU kernel modules and `open-gpu-doc`.
+- **Khronos**: Vulkan-Docs (§5.8) and the SPIR-V specification for portable GPU contracts.
+
+Accelerators bind through these supported runtimes first (§6.3): BCIR owns the manifests,
+planning, proof, telemetry and command graph, and a native replacement is its own reviewed program.
 
 ## 6. BCIR-Linux: compatibility oracle and experimental fork
 
@@ -596,6 +760,32 @@ Those stacks remain inherited from upstream or accessed through their supported 
 interfaces. A replacement is a separate program requiring an independently reviewed blueprint,
 hardware lab, compatibility plan, licensing analysis, and measured reason that wrapping or
 upstream contribution cannot satisfy.
+
+### 6.4 The fork, planned before it is made
+
+The owner's direction is to fork Linux's mainline (`master`) into a new repository and move it as
+far toward BCIR as measurement justifies, as the laboratory for driver, kernel and IPC experiments.
+The plan, before the repository exists:
+
+1. **Entry criteria.** The foundation phase (§5.6) is done; UART has reached D2 on every rail and
+   its Linux-hosted adapter (D3) is the first consumer; the RuntimeChannel UAPI draft (§7.1) names
+   what the bridge exports; CI runners, not the bounded local host, carry kernel builds and QEMU
+   boots.
+2. **Creation.** The owner creates the repository (an agent does not); it is GPL-2.0 with the
+   remotes and rails of §6.1: `upstream` (mainline), `bcir/next` rebased onto mainline, and
+   `bcir/lts-6.18` for reproducible measurement. This repository never imports its code; only UAPI
+   headers under the syscall note cross, as generated artifacts.
+3. **First patch queues, in order.** (a) Build, CI and the stock baseline (K0): the IPC benchmark
+   matrix of §7.4 — pipes, Unix sockets, shared memory with futex, eventfd, io_uring — and the
+   driver baselines on QEMU, recorded with configuration and toolchain. (b) The out-of-tree
+   RuntimeChannel bridge, artifact verifier and telemetry producer (K1), with the UART adapter
+   measured against the stock 8250 driver. (c) Driver experiments in §5.6's order (virtio, NVMe)
+   as K1 adapters. (d) Scheduler policy through `sched_ext` (K0). (e) Only then targeted patches
+   (K2) — IPC primitives over futex2, rseq and io_uring's registered buffers first — each answering
+   §6.2's six questions.
+4. **What "toward BCIR" means.** Behavior moves into BCIR packages and the RuntimeChannel contract,
+   which the native kernel then hosts (K3); the fork carries the smallest kernel-side change that a
+   measured requirement demands. A patch with no measured requirement is not carried.
 
 ## 7. Universal ABI, POSIX compatibility, and IPC
 
@@ -710,6 +900,50 @@ capability and integrity metadata, 192 bytes at most — and the live SPSC ring 
 BACKPRESSURE ring whose 256-byte slots hold any legal record; neither commits the native IPC
 transport or its record sizes.
 
+**The IPC program (planned, 2026-11-07; not started).** BCIR does not reimplement every Linux IPC
+facility. It standardizes four primitives and builds everything else from them, capability records,
+generations, typed schemas and plans:
+
+| Primitive | Purpose | What it inherits |
+|---|---|---|
+| **Shared region** | the payload plane | memfd, shared mappings, huge pages, dma-buf-like ownership |
+| **Doorbell / event** | notify without copying | eventfd, MSI-style notification, seL4 notification objects |
+| **Waitable word** | sleep only when userspace synchronization fails | futex/futex2 |
+| **Submission/completion ring** | batched asynchronous calls and device execution | io_uring, virtqueues, NVMe SQ/CQ |
+
+A channel is `C = (id, generation, producer, consumer, region, ring, event, rights, ordering,
+failure policy)`, validated at admission; the steady state is *write descriptor → release-store the
+tail → doorbell if the wake threshold is reached → consume*, blocking only on an empty or full ring
+or an unresolved dependency. Large payloads move ownership, not bytes. SysV IPC, pipes, Unix
+sockets, signals and the file-descriptor/VFS machinery stay on the Linux compatibility rail as
+baselines. The JIT (§7.5) may specialize the mechanics of a channel whose contract it knows —
+placement, record shape, ring mapping, wake threshold — but it may never remove the contract's
+buffer-range checks, capability and generation validity, memory ordering, ownership transitions,
+invalidation on service restart, security-domain checks where isolation exists, or failure and
+cancellation semantics. Where the cache is coherent, ring heads and tails sit on separate lines and
+queues are partitioned per producer/consumer pair.
+
+| Rung | BCIR implementation | Comparator | Promotion criterion |
+|---|---|---|---|
+| **I1 — direct RuntimeChannel** | in-process SPSC ring, fixed records, generation checks | a function call; a lock-free queue | parity and bounded overhead |
+| **I2 — shared-region IPC** | shared memory + waitable word + doorbell | memfd + futex2 + eventfd | equal semantics, equal or lower latency |
+| **I3 — asynchronous channel** | SQ/CQ with registered buffers | io_uring | throughput and tail latency |
+| **I4 — driver channel** | UART/virtio events and DMA | the Linux driver adapter | identical lifecycle and replay |
+| **I5 — native microkernel IPC** | capability endpoint + generated fastpath | the Linux syscall path; a seL4-style benchmark | fewer common-case cycles without weaker semantics |
+| **I6 — x86 placement** | PCID-aware placement, per-core rings, batching | stock Linux | repeatable gains under real PMU measurement |
+| **I7 — heterogeneous SoC** | RuntimeChannel over QAIRT shared buffers, FastRPC and Gunyah's ownership donation | FastRPC/QNN | host↔NPU latency and copies |
+| **I8 — FPGA realization** | one global address space with capability-tagged memory and hardware rings (LitePCIe, §5.8) | software BCIR | fewer crossings and translations at equal isolation |
+
+On x86 the target is a single logical resource namespace over selectively shared mappings — three
+modes (same-domain, shared-region, protected message channel) chosen by the optimizer while the
+application semantics stay fixed — never a flat unprotected address space: privilege transitions,
+TLBs, coherence, ordering, interrupts, the IOMMU and security mitigations remain. A Snapdragon port
+sits above Gunyah, Android and Linux first. Every rung is measured as a whole lifecycle —
+`T_IPC = T_submit + T_sync + T_wake + T_payload + T_schedule + T_completion` — with cycles,
+wall-clock p50/p99, copies, pinned pages, cache and TLB misses, context switches, wakeups and IPIs,
+and energy where counters exist (the cloud host gives wall-clock and functional parity only); the
+metric is verified useful transfers per unit time and resource, not syscalls avoided.
+
 ### 7.5 JIT microkernel and Linux-instance generation
 
 A BCIR “JIT microkernel” is a **preverified service bundle**, not an unconstrained kernel compiler
@@ -796,6 +1030,11 @@ Before any driver/kernel commit or PR update:
 4. Wait for the complete required GitHub Actions matrix; a pending or failing check is not a
    completed handoff.
 5. Record exact commands, skips, resource limits, and residual hardware risk in the PR.
+
+**Sources.** Everything a driver change publishes -- documents, generated headers, fixtures, tests,
+code comments, commit messages and PR descriptions -- states what public sources state and cites
+them. Nothing is reproduced, quoted, paraphrased or summarized from material distributed under
+confidentiality terms.
 
 Manual full sweeps remain required before releases, after allocator/wire/UAPI changes, and before a
 new driver family, as defined in [`C_MEMORY_DISCIPLINE.md`](../languages/C_MEMORY_DISCIPLINE.md).
