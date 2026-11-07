@@ -221,9 +221,16 @@ Outside it, PCR 16 is the debug PCR and PCR 23 is for application support.
   BCIR-Linux systemd also extends boot phases into it, so BCIR's predicted values include them, as
   `systemd-measure`'s signed values do.
 - **The activation log: PCR 23 with a single owner (decided 2026-11-07), over an NV extend index.**
-  - *Why not the NV index:* an extend index writes the TPM's non-volatile memory, which TPMs
-    limit unless the index is orderly. A PCR extend touches only volatile state. An NV index also
-    needs its own anchor against deletion, the anchoring systemd does for its NvPCRs.
+  - *Why not the NV index:* both ways of keeping one cost something a PCR does not:
+    - an ordinary extend index writes the TPM's non-volatile memory on every extend, spending its
+      write endurance;
+    - an orderly one (`TPMA_NV_ORDERLY`) stays in RAM and is saved only by an orderly
+      `TPM2_Shutdown`, so a crash or power loss rolls it back to its last saved value while the
+      event log has moved on. The register and its log desynchronize.
+
+    A PCR extend touches only volatile state, and PCRs and the TCG event log both start fresh at
+    every platform reset, so the log and its register cannot drift apart. An NV index also needs an
+    anchor against deletion, as systemd's NvPCRs have.
   - *The risk:* software at locality 0 can reset PCR 23, and a quote does not show that a reset
     happened. (A Linux patch restricting it to the kernel was proposed and not adopted; the thread
     asked whether applications rely on PCR 23.)
@@ -238,6 +245,10 @@ Outside it, PCR 16 is the debug PCR and PCR 23 is for application support.
       (invariant 6). At each one, the driver extends the new PCR 23 value into the static anchor
       too, so a compromise after an activation cannot reset PCR 23 to hide that activation. A
       verifier quotes the anchor with PCR 23.
+    - **Batching has a price.** If activations are ever batched under one anchor, the window
+      between an activation and its anchor is covered only by the driver's refusal of
+      `PCR_Reset(23)`. Every register involved stays volatile, so batching saves extends, never
+      NV wear.
   - *Conditions RoT0 states in its threat model:*
     - No other code reaches locality 0: no firmware runtime service or SMM handler, no hypervisor,
       and no DMA-capable device before the IOMMU is locked.
