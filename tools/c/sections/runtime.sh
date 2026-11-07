@@ -30,5 +30,5 @@ m=vector_add(1024); pack=hydrate(m, optimize(m, TargetProfile.x86_avx512(), Thet
 open('${tmp}/pack.bin','wb').write(encode(pack))
 " || { echo "  FAIL: python encode"; exit 1; }
 out="$("${HARNESS}" "${tmp}/pack.bin")" || { echo "  FAIL: C decode"; echo "${out}"; exit 1; }
-echo "${out}" | grep -q "^OK$" && echo "  PASS parity (Python encode -> C decode)" \
+echo "${out}" | grep "^OK$" >/dev/null && echo "  PASS parity (Python encode -> C decode)" \
   || { echo "  FAIL: parity"; echo "${out}"; exit 1; }

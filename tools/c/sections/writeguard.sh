@@ -56,7 +56,7 @@ DRV
 sw_read="$("${tmp}/sw_h" 0)"                                   # OOB read: clamps to a[7] = 21
 [ "${sw_read}" = "21" ] || { echo "  FAIL: OOB read did not clamp (got '${sw_read}', want 21)"; exit 1; }
 sw_wr="$("${tmp}/sw_h" 1 2>&1 1>/dev/null)"; sw_rc=$?          # OOB store: must abort, never reach NO-ABORT
-{ [ "${sw_rc}" != "0" ] && ! printf '%s' "${sw_wr}" | grep -q "NO-ABORT" \
-  && printf '%s' "${sw_wr}" | grep -q "out-of-bounds store cannot be clamped"; } \
+{ [ "${sw_rc}" != "0" ] && ! printf '%s' "${sw_wr}" | grep "NO-ABORT" >/dev/null \
+  && printf '%s' "${sw_wr}" | grep "out-of-bounds store cannot be clamped" >/dev/null; } \
   && echo "  PASS writeguard: OOB read clamps (a[7]=21) but OOB store ABORTS (no a[7] corruption) (#writeguard)" \
   || { echo "  FAIL: OOB store did not fail-fast (rc=${sw_rc}: ${sw_wr})"; exit 1; }

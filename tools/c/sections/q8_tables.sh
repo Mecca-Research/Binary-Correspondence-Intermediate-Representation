@@ -25,6 +25,6 @@ declare -A BY_STD=([c11]="${C11}" [c23]="${C23}")
 # runtime/c/bcir_q8_tables.h bakes runtime/c/q8_tiers.bin with C23 #embed where the compiler has
 # it and a generated array where it does not; either way the harness self-checks the table.
 for std in c11 c23; do
-  "${BY_STD[${std}]}" | grep -q "^OK q8" || { echo "  FAIL: Q8 self-check under -std=${std}"; exit 1; }
+  "${BY_STD[${std}]}" | grep "^OK q8" >/dev/null || { echo "  FAIL: Q8 self-check under -std=${std}"; exit 1; }
 done
 echo "  PASS Q8 table (#embed-guarded; fallback self-check OK under C11 + C23)"

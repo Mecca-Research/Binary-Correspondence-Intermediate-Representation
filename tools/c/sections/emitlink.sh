@@ -44,6 +44,6 @@ grep -q '#include "bcir_quarantine.h"' "${tmp}/el_emit.c" \
 elr_in="$("${tmp}/el_h" 3)"                                   # in-bounds: a[3] = 9
 [ "${elr_in}" = "9" ] || { echo "  FAIL: in-bounds masked access (got '${elr_in}', want 9)"; exit 1; }
 elr_oob="$("${tmp}/el_h" 99 2>&1 1>/dev/null)"; elr_rc=$?     # out-of-bounds: the weak handler aborts
-{ [ "${elr_rc}" != "0" ] && printf '%s' "${elr_oob}" | grep -q "el_pick:a"; } \
+{ [ "${elr_rc}" != "0" ] && printf '%s' "${elr_oob}" | grep "el_pick:a" >/dev/null; } \
   && echo "  PASS emitlink: --emit-c links the runtime; in-bounds value + OOB quarantine (site el_pick:a)" \
   || { echo "  FAIL: OOB did not quarantine via the linked runtime (rc=${elr_rc}: ${elr_oob})"; exit 1; }

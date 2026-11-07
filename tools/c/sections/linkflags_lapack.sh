@@ -27,6 +27,6 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # derives `-llapack` (the LAPACK rule), with a Fortran-ABI `sgesv_` edge -> -llapack too, and no regression
 # on fftwf_* -> -lfftw3f, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The oracle
 # (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_lapack.py.
-"${HARNESS}" lapack | grep -q "^OK linkflags-lapack" \
+"${HARNESS}" lapack | grep "^OK linkflags-lapack" >/dev/null \
   && echo "  PASS linkflags-lapack: C twin derives LAPACKE_*/sgels/sgesv_ -> -llapack (fftw/cblas/-lm/unknown unchanged)" \
   || { echo "  FAIL: LAPACK link-flag rule diverged on the C twin"; "${HARNESS}" lapack; exit 1; }

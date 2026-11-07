@@ -33,6 +33,6 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # h_prev=0, c_prev=0) and asserts it matches the hand-computed output to float round-off -- the C twin of
 # kbcir.recurrent.lstm_cell_reference.
 lstm_out="$("${KERNEL}")"; lstm_rc=$?    # rc=0 IS the check: H/C match the hand-computed reference (driver)
-{ [ "${lstm_rc}" = "0" ] && printf '%s' "${lstm_out}" | grep -q "^h=.* c=.*"; } \
+{ [ "${lstm_rc}" = "0" ] && printf '%s' "${lstm_out}" | grep "^h=.* c=.*" >/dev/null; } \
   && echo "  PASS lstm: 1x1 cell matches hand-computed forward (${lstm_out}; tanhf/expf -> -lm via the libm rule, no linkflags change)" \
   || { echo "  FAIL: lstm cell did not match the reference (rc=${lstm_rc}: ${lstm_out})"; exit 1; }

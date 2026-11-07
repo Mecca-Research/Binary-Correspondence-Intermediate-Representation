@@ -33,6 +33,6 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # normalized to mean~0 / var~1 (the property layernorm guarantees), the C twin of kbcir.transformer.layernorm_
 # reference + its layernorm_stats independent verifier.
 ln_out="$("${KERNEL}")"; ln_rc=$?    # rc=0 IS the check: each output row has mean~0 and var~1 (in the driver)
-{ [ "${ln_rc}" = "0" ] && printf '%s' "${ln_out}" | grep -q "^r0 mean=.* var=.*"; } \
+{ [ "${ln_rc}" = "0" ] && printf '%s' "${ln_out}" | grep "^r0 mean=.* var=.*" >/dev/null; } \
   && echo "  PASS layernorm: rows normalize to mean~0/var~1 (${ln_out//$'\n'/ }; sqrtf -> -lm via the libm rule, no linkflags change)" \
   || { echo "  FAIL: layernorm did not normalize rows (rc=${ln_rc}: ${ln_out})"; exit 1; }

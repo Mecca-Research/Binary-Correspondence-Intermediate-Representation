@@ -27,6 +27,6 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # bcir_cfront_link_flags over a FABRICATED unit carrying a `c.call.libm:fftwf_execute` edge and asserts it
 # derives `-lfftw3f` for fftwf_* (the B2 rule) and each other precision's library (FFTW-PRECISION), with a
 # cblas edge -> -lcblas (no B5 regression), a libm edge -> -lm, and an unknown edge -> no flag. The oracle (linkflags.library_for_callee) is pinned in test_c_cfront.py.
-"${HARNESS}" fftw | grep -q "^OK linkflags-fftw" \
+"${HARNESS}" fftw | grep "^OK linkflags-fftw" >/dev/null \
   && echo "  PASS linkflags-fftw: C twin derives fftwf_* -> -lfftw3f, fftw_* -> -lfftw3, l/q/mpi/threads (cblas/-lm/unknown unchanged)" \
   || { echo "  FAIL: FFTW link-flag rule diverged on the C twin"; "${HARNESS}" fftw; exit 1; }

@@ -48,7 +48,7 @@ for t in ${ABI_TARGETS}; do
   abi_seen="${abi_seen}${c_vals};"
 done
 # the three data models must produce distinct vectors (LP64 8/8/8, LLP64 long=4, ILP32 ptr=4 too).
-echo "${abi_seen}" | grep -q "8,8,8,4,8;" && echo "${abi_seen}" | grep -q "4,8,8,4,8;" \
-  && echo "${abi_seen}" | grep -q "4,4,4,4,8;" \
+echo "${abi_seen}" | grep "8,8,8,4,8;" >/dev/null && echo "${abi_seen}" | grep "4,8,8,4,8;" >/dev/null \
+  && echo "${abi_seen}" | grep "4,4,4,4,8;" >/dev/null \
   && echo "  PASS ABI matrix spans LP64 / LLP64 / ILP32 (distinct data models)" \
   || { echo "  FAIL: ABI matrix did not span the three data models: ${abi_seen}"; exit 1; }

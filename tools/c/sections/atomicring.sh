@@ -28,6 +28,6 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # the total equals N*M. If the freestanding build has no atomics the contract is single-threaded and this
 # hosted concurrency test is skipped.
 race_out="$("${HARNESS}")"; race_rc=$?
-{ [ "${race_rc}" = "0" ] && { printf '%s' "${race_out}" | grep -q "^EXACT" || printf '%s' "${race_out}" | grep -q "^SKIP"; }; } \
+{ [ "${race_rc}" = "0" ] && { printf '%s' "${race_out}" | grep "^EXACT" >/dev/null || printf '%s' "${race_out}" | grep "^SKIP" >/dev/null; }; } \
   && echo "  PASS atomicring: ${race_out} (concurrent OOB events do not scramble the total)" \
   || { echo "  FAIL: OOB ring counter raced (${race_out})"; exit 1; }

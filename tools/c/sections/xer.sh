@@ -68,6 +68,6 @@ if cmp -s "${tmp}/xer_O0.txt" "${tmp}/xer_O3.txt"; then
   echo "  PASS X.693 XER twin (freestanding, -Werror, -O0 == -O3 over $(wc -l < "${tmp}/xer_cases.txt") cases)"
 else
   echo "  FAIL: the XER twin's answers depend on the optimisation level"
-  diff "${tmp}/xer_O0.txt" "${tmp}/xer_O3.txt" | head -10
+  diff "${tmp}/xer_O0.txt" "${tmp}/xer_O3.txt" | sed -n '1,10p'
   exit 1
 fi

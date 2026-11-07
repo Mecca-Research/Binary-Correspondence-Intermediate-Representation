@@ -32,6 +32,6 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # positive). The LAPACKE_ssyev -> -llapack dual-rail is confirmed by the #linkflags-lapack probe above
 # (LAPACKE_ssyev rides the SAME LAPACKE_* rule -- no linkflags change).
 eigh_out="$("${KERNEL}")"; eigh_rc=$?    # rc=0 IS the recovery check: eigenvalues [5,3,1] + standard-basis vecs
-{ [ "${eigh_rc}" = "0" ] && printf '%s' "${eigh_out}" | grep -q "^l0=.* l1=.* l2=.*"; } \
+{ [ "${eigh_rc}" = "0" ] && printf '%s' "${eigh_out}" | grep "^l0=.* l1=.* l2=.*" >/dev/null; } \
   && echo "  PASS pca: Jacobi fallback recovers diag(5,3,1) (${eigh_out}; LAPACKE_ssyev -> -llapack via #linkflags-lapack)" \
   || { echo "  FAIL: PCA fallback did not recover [5,3,1] (rc=${eigh_rc}: ${eigh_out})"; exit 1; }

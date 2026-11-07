@@ -49,10 +49,10 @@ DRV
   || "${CC}" -std=c2x -O2 -I "${C}" "${tmp}/rec_main.c" "${C}/bcir_quarantine.c" "${C}/bcir_quarantine_recover.c" -o "${tmp}/rec_h" \
   || { echo "  FAIL: recovery override build"; exit 1; }
 rec_clamp="$("${tmp}/rec_h" 0)"                                # admitted: confidence 900 >= threshold 500
-{ printf '%s' "${rec_clamp}" | grep -q "^21$" \
-  && printf '%s' "${rec_clamp}" | grep -q "admitted, clamp to index 7"; } \
+{ printf '%s' "${rec_clamp}" | grep "^21$" >/dev/null \
+  && printf '%s' "${rec_clamp}" | grep "admitted, clamp to index 7" >/dev/null; } \
   || { echo "  FAIL: admitted clamp recovery (got '${rec_clamp}')"; exit 1; }
 rec_abrt="$("${tmp}/rec_h" 1 2>&1 1>/dev/null)"; rec_rc=$?     # rejected: confidence 300 < threshold 500
-{ [ "${rec_rc}" != "0" ] && printf '%s' "${rec_abrt}" | grep -q "recovery rejected"; } \
+{ [ "${rec_rc}" != "0" ] && printf '%s' "${rec_abrt}" | grep "recovery rejected" >/dev/null; } \
   && echo "  PASS recover: frozen-policy decide -> admitted clamp (a[7]=21) / under-confident abort (#recover)" \
   || { echo "  FAIL: rejected path did not fail-fast (rc=${rec_rc}: ${rec_abrt})"; exit 1; }

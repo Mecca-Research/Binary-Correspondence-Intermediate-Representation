@@ -92,6 +92,6 @@ if cmp -s "${tmp}/jer_O0.txt" "${tmp}/jer_O3.txt"; then
   echo "  PASS X.697 JER twin (freestanding, -Werror, -O0 == -O3 over $(wc -l < "${tmp}/jer_cases.txt") cases)"
 else
   echo "  FAIL: the JER twin's answers depend on the optimisation level"
-  diff "${tmp}/jer_O0.txt" "${tmp}/jer_O3.txt" | head -10
+  diff "${tmp}/jer_O0.txt" "${tmp}/jer_O3.txt" | sed -n '1,10p'
   exit 1
 fi

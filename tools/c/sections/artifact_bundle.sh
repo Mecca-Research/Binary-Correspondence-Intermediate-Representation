@@ -68,6 +68,6 @@ cmp -s "${tmp}/bundle.bcab" "${tmp}/bundle.from-der.bcab" \
   || { echo "  FAIL: BCAB native -> ASN.1 DER -> native bytes differ"; exit 1; }
 asn1_about="$("${ASN1}" "${tmp}/bundle.der")" \
   || { echo "  FAIL: BCAB ASN.1 projection C validation"; exit 1; }
-printf '%s\n' "${asn1_about}" | grep -q '^der ok$' \
+printf '%s\n' "${asn1_about}" | grep '^der ok$' >/dev/null \
   && echo "  PASS BCAB native <-> DER byte identity + generic C X.690 validation" \
   || { echo "  FAIL: C X.690 rail rejected BCAB DER projection"; printf '%s\n' "${asn1_about}"; exit 1; }

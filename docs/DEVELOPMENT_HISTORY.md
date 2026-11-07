@@ -313,6 +313,16 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
   - `build-make` moved to a job of its own, `cmake-make-gate`, on the same three cells and set up
     as they are, with `--no-tests=error`; `cmake-build` runs the build label less exactly that
     entry (`test_the_ci_owns_the_build_gate`).
+  - The first run with sections side by side failed the clang23 cell's section parity on
+    `recover`: its CMake run printed both lines its check looks for and failed the check. Bash
+    line-buffers its builtins' output, so `printf '%s' "$out" | grep -q "^21$"` writes once per
+    line; `grep -q` matched the first line and exited, the next write took SIGPIPE, and under
+    `pipefail` the match read as a failure. A quiet host never shows the window; the load did. The
+    disassembly guard had left small writers alone as unable to fill a pipe buffer -- a premise
+    that misses line buffering. Every section's early reader (30 `grep -q`, 4 `head`) now reads
+    every line (`grep ... >/dev/null`, `sed -n '1,10p'`), which keeps each status
+    (`test_no_section_pipes_into_an_early_exiting_reader`, which also shows both halves with a
+    pause between two writes).
 
 - **2026-10-20 — UDSI-PLAN universal interface blueprint:** added the
   [universal serialization/interface roadmap](BCIR_UNIVERSAL_INTERFACE_ROADMAP.md), connecting

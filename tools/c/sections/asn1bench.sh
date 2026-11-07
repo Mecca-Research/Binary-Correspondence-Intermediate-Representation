@@ -28,7 +28,7 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # evidence about a target and pinning them would invent the false precision J6 refuses.
 printf 'rounds 1 7 8\ncase DER der 3009020102040461\ncase JER jer 7b2261223a317d\nrun\n' \
   > "${tmp}/bench_cases.txt"
-if "${BENCH}" < "${tmp}/bench_cases.txt" | grep -q '^done 2$'; then
+if "${BENCH}" < "${tmp}/bench_cases.txt" | grep '^done 2$' >/dev/null; then
   echo "  PASS native ASN.1 microbench (builds -Werror, answers a two-case corpus)"
 else
   echo "  FAIL: the native ASN.1 microbench did not complete its corpus"

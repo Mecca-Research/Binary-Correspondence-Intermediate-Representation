@@ -28,6 +28,6 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # -lgsl, LAPACKE_* -> -llapack, fftwf_* -> -lfftw3f, cblas_* -> -lcblas, libm (incl. erfcf -- erfcx is a
 # symbol libm LACKS, so erfcf/erfc still map to -lm, NOT -lcerf) -> -lm, and unknown -> no flag. The oracle
 # (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_cerf.py.
-"${HARNESS}" cerf | grep -q "^OK linkflags-cerf" \
+"${HARNESS}" cerf | grep "^OK linkflags-cerf" >/dev/null \
   && echo "  PASS linkflags-cerf: C twin derives erfcx* -> -lcerf (sleef/gsl/lapack/fftw/cblas/-lm/unknown unchanged)" \
   || { echo "  FAIL: libcerf link-flag rule diverged on the C twin"; "${HARNESS}" cerf; exit 1; }

@@ -29,6 +29,6 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # NO transcendental, NO libm (needs no -lm). It returns an int cluster id, so the C-vs-oracle check is
 # INTEGER-EXACT (the same argmin). C twin of kbcir.unsupervised.kmeans_assign.
 kmeans_out="$("${KERNEL}")"; kmeans_rc=$?    # rc=0 IS the check: the three argmins match exactly (driver)
-{ [ "${kmeans_rc}" = "0" ] && printf '%s' "${kmeans_out}" | grep -q "^a=.* b=.* c=.*"; } \
+{ [ "${kmeans_rc}" = "0" ] && printf '%s' "${kmeans_out}" | grep "^a=.* b=.* c=.*" >/dev/null; } \
   && echo "  PASS kmeans: exact nearest-centroid argmin returns the known clusters (${kmeans_out}; NO libm -- the EXACT half of the Area-B pattern, integer-exact)" \
   || { echo "  FAIL: kmeans assign did not return the known clusters (rc=${kmeans_rc}: ${kmeans_out})"; exit 1; }

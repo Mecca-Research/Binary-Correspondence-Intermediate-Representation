@@ -27,6 +27,6 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # derives `-lgsl` (the GSL rule), with any gsl_* -> -lgsl too, and no regression on LAPACKE_* -> -llapack,
 # fftwf_* -> -lfftw3f, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The oracle
 # (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_gsl.py.
-"${HARNESS}" gsl | grep -q "^OK linkflags-gsl" \
+"${HARNESS}" gsl | grep "^OK linkflags-gsl" >/dev/null \
   && echo "  PASS linkflags-gsl: C twin derives gsl_* -> -lgsl (lapack/fftw/cblas/-lm/unknown unchanged)" \
   || { echo "  FAIL: GSL link-flag rule diverged on the C twin"; "${HARNESS}" gsl; exit 1; }

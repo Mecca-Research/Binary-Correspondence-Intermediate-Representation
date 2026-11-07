@@ -109,10 +109,12 @@ def test_no_gate_pipes_a_writer_into_an_early_exiting_reader_under_pipefail() ->
     rather than trusting everyone to remember.
 
     Scoped to **whole-object disassembly**, which is the writer that is unbounded and grows
-    with the code under test. The same shape appears about seventy times elsewhere in `tools/`
-    piping a version string, a `find` result, or one function's body out of a `.s` file; those
-    writers cannot fill a 64 KiB buffer, so they are a latent footgun rather than a live bug
-    and are deliberately left alone rather than churned into a large unrelated diff.
+    with the code under test. A small writer is not safe either: bash line-buffers its builtins'
+    output, so `printf '%s' "$multi_line"` writes once per line, and a reader that matches an
+    early line can exit before the next write -- a race no buffer size closes. It fired on the
+    `recover` section once its runs shared a runner (2026-11-07), and the section scripts are
+    held to the shape by `test_no_section_pipes_into_an_early_exiting_reader`. The same shape
+    remains elsewhere in `tools/`, outside both scopes.
     """
     offender = re.compile(r"\|\s*(?:grep\s+-[a-zA-Z]*q|head\b)")
     unbounded = re.compile(r"objdump|disasm")
@@ -132,6 +134,52 @@ def test_no_gate_pipes_a_writer_into_an_early_exiting_reader_under_pipefail() ->
                 f"be reported as a failure. Write to a file and read the file.\n  {stripped}"
             )
     assert seen >= 2, f"expected the two SIMD gates to disassemble; found {seen}"
+
+
+def test_no_section_pipes_into_an_early_exiting_reader() -> None:
+    """A gate section never ends a pipeline in a reader that stops early (`grep -q`, `grep -m`,
+    `head`): every section runs under `set -o pipefail`, so a writer that takes SIGPIPE after the
+    reader's match fails the check that matched. Bash line-buffers its builtins' output, so even
+    `printf '%s' "$out" | grep -q "^21$"` writes once per line, and the reader can match the first
+    line and exit before the second write. On a quiet host the window is too short to see; when
+    the section-parity gate began running sections side by side, the `recover` section's CMake
+    run failed with both patterns in the output it printed (2026-11-07). Reading every line --
+    `grep PATTERN >/dev/null`, `sed -n '1,10p'` -- keeps the status (a match is 0, none is 1, a
+    failing writer still fails the pipeline) and closes the race. The same pipeline with a pause
+    between its writes shows both halves here, where a POSIX bash is available."""
+    reader = re.compile(r"(?<!\|)\|(?!\|)\s*(?:grep\s+-[a-zA-Z]*[qm]|head\b)")
+    sections = sorted((_ROOT / "tools" / "c" / "sections").glob("*.sh"))
+    assert len(sections) >= 100, "the section scripts moved"
+    full_readers = 0
+    for script in sections:
+        text = script.read_text(encoding="utf-8")
+        assert "pipefail" in text, f"{script.name} does not run under pipefail"
+        for number, line in enumerate(text.splitlines(), 1):
+            if line.strip().startswith("#"):
+                continue
+            assert not reader.search(line), (
+                f"{script.name}:{number} ends a pipeline in a reader that exits early; under "
+                f"`pipefail` a match can be reported as a failure. Read every line.\n  {line.strip()}"
+            )
+            full_readers += len(re.findall(r"\|\s*grep [^|]*>/dev/null", line))
+    assert full_readers >= 20, (
+        "the sections' pattern checks are not where this test looks",
+        full_readers,
+    )
+    bash = shutil.which("bash")
+    if os.name != "posix" or bash is None:
+        return
+    writer = '{ printf "21\\n"; sleep 0.2; printf "more\\n"; }'
+    early = subprocess.run(
+        [bash, "-c", f'set -o pipefail; {writer} | grep -q "^21$"'], capture_output=True, timeout=30
+    )
+    full = subprocess.run(
+        [bash, "-c", f'set -o pipefail; {writer} | grep "^21$" >/dev/null'],
+        capture_output=True,
+        timeout=30,
+    )
+    assert early.returncode == 141, ("the early reader no longer fails a found match", early)
+    assert full.returncode == 0, ("reading every line does not pass a found match", full)
 
 
 def test_no_workflow_step_pipes_a_network_fetch_into_another_command() -> None:
